@@ -147,3 +147,4 @@ assets/signature/
 .DS_Store
 Thumbs.db
 desktop.ini
+paste-cache/
