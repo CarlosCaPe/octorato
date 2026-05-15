@@ -59,6 +59,24 @@ This is modeled on a nervous system. The biology grounds the design; it does not
 
 ---
 
+## Migrating from dotclaude (May 2026)
+
+The repo was renamed from `dotclaude` → `octorato`. If your laptop's `~/.claude/` still has `origin` pointing to the deleted `dotclaude` repo, **one of these options will fix it**:
+
+**Option A — automatic (run once per laptop):**
+```bash
+bash ~/.claude/scripts/migrate-octorato.sh
+```
+
+**Option B — manual one-liner:**
+```bash
+git -C ~/.claude remote set-url origin https://github.com/CarlosCaPe/octorato.git
+```
+
+After either, `ai-pull` / `ai-push` work normally. The Windows `ai-pull.ps1` / `ai-push.ps1` scripts self-heal on next run — no manual step needed there once they're updated.
+
+---
+
 ## Quick Start
 
 ```bash

@@ -33,6 +33,15 @@ if (-not (Test-Path (Join-Path $BrainPath ".git"))) {
 # -- Stage + commit --
 Push-Location $BrainPath
 try {
+    # Self-heal: rebrand May 2026 dotclaude → octorato.
+    # Idempotent. Rewrites origin silently if it still points to the deleted repo.
+    $currentOrigin = (git remote get-url origin 2>$null)
+    if ($currentOrigin -match 'dotclaude') {
+        $newOrigin = $currentOrigin -replace 'dotclaude', 'octorato'
+        Write-Host ("  Rebrand: migrating origin {0} -> {1}" -f $currentOrigin, $newOrigin) -ForegroundColor Yellow
+        git remote set-url origin $newOrigin
+    }
+
     $status = git status --porcelain
     if (-not $status) {
         Write-Host "  Nothing to commit - working tree clean." -ForegroundColor DarkGray

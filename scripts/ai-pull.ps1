@@ -38,6 +38,16 @@ if (-not (Test-Path (Join-Path $BrainPath ".git"))) {
 
 Push-Location $BrainPath
 try {
+    # -- Self-heal: rebrand May 2026 dotclaude → octorato.
+    # Existing clones may still have origin pointing to the deleted dotclaude repo.
+    # Rewrite silently so the pull doesn't 404. Idempotent.
+    $currentOrigin = (git remote get-url origin 2>$null)
+    if ($currentOrigin -match 'dotclaude') {
+        $newOrigin = $currentOrigin -replace 'dotclaude', 'octorato'
+        Write-Host ("  Rebrand: migrating origin {0} -> {1}" -f $currentOrigin, $newOrigin) -ForegroundColor Yellow
+        git remote set-url origin $newOrigin
+    }
+
     # -- Status check only --
     if ($Status) {
         git fetch origin --quiet
