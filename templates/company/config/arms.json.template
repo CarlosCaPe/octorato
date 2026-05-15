@@ -1,0 +1,14 @@
+{
+  "{{ARM_1}}": {
+    "name": "{{CLIENT_NAME_1}}",
+    "stack_keywords": [
+      "python", "postgresql", "docker", "api", "etl"
+    ]
+  },
+  "{{ARM_2}}": {
+    "name": "{{CLIENT_NAME_2}}",
+    "stack_keywords": [
+      "react", "typescript", "node", "aws", "dynamodb"
+    ]
+  }
+}

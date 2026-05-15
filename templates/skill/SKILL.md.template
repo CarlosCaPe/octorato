@@ -1,0 +1,31 @@
+# {{SKILL_NAME}}
+
+## Purpose
+
+{{ONE_LINE_DESCRIPTION}}
+
+## Triggers
+
+Use this skill when:
+- {{TRIGGER_1}}
+- {{TRIGGER_2}}
+
+## Workflow
+
+1. {{STEP_1}}
+2. {{STEP_2}}
+3. {{STEP_3}}
+
+## Best Practices
+
+- {{PRACTICE_1}}
+- {{PRACTICE_2}}
+
+## Error Handling
+
+- {{COMMON_ERROR_1}} -> {{FIX_1}}
+
+## Lessons Learned
+
+<!-- Append entries here as patterns emerge -->
+<!-- Format: YYYY-MM-DD | Error pattern | Root cause | Fix -->

@@ -1,0 +1,412 @@
+#!/usr/bin/env python3
+"""
+delegate-check — Mandatory 2D Delegate pre-flight for the Octopus brain.
+
+Scans REGISTRY.md (agents) and skills/ (techniques) for matches against
+a task description. Outputs a structured delegation report.
+
+Usage:
+    delegate-check "fix PDF signature in NDA using reportlab"
+    delegate-check "optimize PostgreSQL query performance"
+    delegate-check "write a sales proposal for new client"
+
+Exit codes:
+    0 — matches found (agent and/or skill)
+    1 — no matches found (SELF mode)
+    2 — error (missing files, bad args)
+"""
+
+import sys
+import os
+import re
+from pathlib import Path
+
+# ── Paths ──────────────────────────────────────────────────────────────
+CLAUDE_DIR = Path.home() / ".claude"
+REGISTRY_PATH = CLAUDE_DIR / "agents" / "REGISTRY.md"
+SKILLS_DIR = CLAUDE_DIR / "skills"
+
+# ── Stop words (ignore these in matching) ─────────────────────────────
+STOP_WORDS = {
+    "the", "a", "an", "in", "on", "at", "to", "for", "of", "with", "and",
+    "or", "is", "it", "this", "that", "from", "by", "as", "be", "was",
+    "are", "been", "being", "have", "has", "had", "do", "does", "did",
+    "will", "would", "could", "should", "may", "might", "can", "shall",
+    "not", "no", "nor", "but", "if", "then", "else", "when", "up", "out",
+    "so", "than", "too", "very", "just", "about", "into", "through",
+    "i", "my", "me", "we", "our", "you", "your", "he", "she", "they",
+    "fix", "change", "update", "add", "remove", "make", "create", "use",
+    "run", "check", "set", "get", "new", "file", "code", "need", "want",
+    "using", "build", "write", "read", "look", "see", "find", "show",
+    "en", "el", "la", "los", "las", "un", "una", "de", "del", "al",
+    "con", "por", "para", "que", "es", "se", "no", "lo", "le", "su",
+    "como", "más", "pero", "ya", "sin", "sobre", "entre", "después",
+    "hacer", "cambiar", "arreglar", "revisar", "crear", "usar",
+    "quiero", "necesito", "puedes", "dame", "dime", "ayuda",
+}
+
+# ── Skill cross-reference (parsed from REGISTRY.md bottom section) ────
+# Maps agent name → list of skill names they complement
+AGENT_SKILL_XREF: dict[str, list[str]] = {}
+
+
+def tokenize(text: str) -> set[str]:
+    """Extract meaningful tokens from text, lowercased, stop words removed, basic stemming.
+    Each input word generates a 'family' of variants (stem, plural, singular)
+    but they all trace back to the same source word."""
+    raw = re.findall(r"[a-záéíóúñü0-9_.-]+", text.lower())
+    tokens = set()
+    for w in raw:
+        if w in STOP_WORDS or len(w) <= 1:
+            continue
+        # Add the word + its variants as a family
+        tokens.add(w)
+        # Strip plurals: -ies→-y, -es, -s (only if result >= 3 chars)
+        if w.endswith("ies") and len(w) > 4:
+            tokens.add(w[:-3] + "y")
+        elif w.endswith("es") and len(w) > 4:
+            tokens.add(w[:-2])
+        elif w.endswith("s") and not w.endswith("ss") and len(w) > 4:
+            tokens.add(w[:-1])
+        # Add plural if singular (and word >= 3 chars)
+        if not w.endswith("s") and len(w) >= 3:
+            tokens.add(w + "s")
+    return tokens
+
+
+def count_word_matches(task_text: str, target_tokens: set[str]) -> int:
+    """Count how many distinct INPUT words match target tokens (not inflated by variants).
+    Each source word counts at most once even if multiple variants match."""
+    raw = re.findall(r"[a-záéíóúñü0-9_.-]+", task_text.lower())
+    matched_words = 0
+    for w in raw:
+        if w in STOP_WORDS or len(w) <= 1:
+            continue
+        # Generate variants for this word
+        variants = {w}
+        if w.endswith("ies") and len(w) > 4:
+            variants.add(w[:-3] + "y")
+        elif w.endswith("es") and len(w) > 4:
+            variants.add(w[:-2])
+        elif w.endswith("s") and not w.endswith("ss") and len(w) > 4:
+            variants.add(w[:-1])
+        if not w.endswith("s") and len(w) >= 3:
+            variants.add(w + "s")
+        # If ANY variant matches, count this word once
+        if variants & target_tokens:
+            matched_words += 1
+    return matched_words
+
+
+def count_source_words(text: str) -> int:
+    """Count meaningful (non-stop) words in text."""
+    raw = re.findall(r"[a-záéíóúñü0-9_.-]+", text.lower())
+    return sum(1 for w in raw if w not in STOP_WORDS and len(w) > 1)
+
+
+def parse_registry() -> list[dict]:
+    """Parse REGISTRY.md into a list of agents with triggers + cross-ref skills."""
+    global AGENT_SKILL_XREF
+
+    if not REGISTRY_PATH.exists():
+        print(f"ERROR: {REGISTRY_PATH} not found", file=sys.stderr)
+        sys.exit(2)
+
+    agents = []
+    lines = REGISTRY_PATH.read_text().splitlines()
+    current_division = ""
+    in_xref = False
+
+    for line in lines:
+        # Detect cross-reference section
+        if "Cross-Reference" in line and "Skills" in line:
+            in_xref = True
+            continue
+
+        if in_xref and line.startswith("|") and "Agent" not in line and "---" not in line:
+            # Parse: | emoji Name | `skill1`, `skill2`, ... |
+            cols = [c.strip() for c in line.split("|")]
+            if len(cols) >= 4:
+                # Strip emoji from agent name
+                agent_name = re.sub(r"^[^\w]+", "", cols[1]).strip()
+                skills_csv = cols[2]
+                # Extract skill names from backtick-wrapped or bare names
+                skill_names = re.findall(r"`([^`]+)`", skills_csv)
+                if not skill_names:
+                    skill_names = [s.strip().strip("`") for s in skills_csv.split(",") if s.strip()]
+                if agent_name and skill_names:
+                    # Use lowercase for matching; merge if already exists
+                    key = agent_name.lower()
+                    if key in AGENT_SKILL_XREF:
+                        AGENT_SKILL_XREF[key].extend(skill_names)
+                    else:
+                        AGENT_SKILL_XREF[key] = skill_names
+            continue
+
+        if in_xref and line.startswith("---"):
+            in_xref = False
+            continue
+
+        # Track division headers
+        if line.startswith("### ") and not line.startswith("### Automatic") \
+                and not line.startswith("### Manual") \
+                and not line.startswith("### Combined"):
+            current_division = line.replace("### ", "").strip()
+            continue
+
+        # Parse agent table rows: | emoji Name | [file](path) | triggers |
+        if line.startswith("|") and "[" in line and "](" in line:
+            cols = [c.strip() for c in line.split("|")]
+            if len(cols) >= 5:  # empty | name | file | triggers | empty
+                name = cols[1].strip()
+                # Remove emoji prefix
+                name_clean = re.sub(r"^[^\w]+", "", name).strip()
+                file_path = ""
+                file_match = re.search(r"\[.*?\]\((.*?)\)", cols[2])
+                if file_match:
+                    file_path = file_match.group(1)
+                triggers_raw = cols[3].strip()
+                trigger_tokens = tokenize(triggers_raw)
+
+                if trigger_tokens:  # skip header rows
+                    agents.append({
+                        "name": name_clean,
+                        "emoji": name[:len(name) - len(name_clean)].strip() if name_clean != name else "",
+                        "division": current_division,
+                        "file": file_path,
+                        "triggers": trigger_tokens,
+                        "triggers_raw": triggers_raw,
+                        "xref_skills": [],  # populated in second pass below
+                    })
+
+    # Second pass: attach xref skills to agents (xref parsed after agents)
+    for agent in agents:
+        key = agent["name"].lower()
+        if key in AGENT_SKILL_XREF:
+            agent["xref_skills"] = AGENT_SKILL_XREF[key]
+
+    return agents
+
+
+def parse_skills() -> list[dict]:
+    """Parse all skills from skills/ directory."""
+    skills = []
+    if not SKILLS_DIR.exists():
+        return skills
+
+    for skill_dir in sorted(SKILLS_DIR.iterdir()):
+        skill_file = skill_dir / "SKILL.md"
+        if not skill_file.exists():
+            continue
+
+        content = skill_file.read_text(errors="replace")
+        
+        # Extract YAML frontmatter
+        name = skill_dir.name
+        description = ""
+        
+        fm_match = re.search(r"^---\s*\n(.*?)\n---", content, re.DOTALL)
+        if fm_match:
+            fm = fm_match.group(1)
+            desc_match = re.search(r'description:\s*["\']?(.*?)["\']?\s*$', fm, re.MULTILINE)
+            if desc_match:
+                description = desc_match.group(1)
+
+        # Build token set from name + description
+        name_tokens = tokenize(name.replace("-", " "))
+        desc_tokens = tokenize(description)
+
+        skills.append({
+            "name": name,
+            "description": description[:120] + "..." if len(description) > 120 else description,
+            "tokens": name_tokens | desc_tokens,
+        })
+
+    return skills
+
+
+def score_agent(task_text: str, task_tokens: set[str], agent: dict,
+                skill_matches: list, n_task_words: int) -> float:
+    """Score an agent by trigger overlap + cross-ref skill boost.
+    Uses word-level counting to avoid inflation from stemming variants."""
+    overlap = task_tokens & agent["triggers"]
+    if not overlap:
+        return 0.0
+    
+    # Count distinct source words that match (not inflated by variants)
+    word_hits = count_word_matches(task_text, agent["triggers"])
+    trigger_word_count = count_source_words(agent["triggers_raw"])
+    
+    # Base score: fraction of task words matched
+    base = word_hits / max(n_task_words, 1)
+    
+    # Trigger density: fraction of agent's trigger words that matched
+    density = word_hits / max(trigger_word_count, 1)
+    
+    # Cross-reference boost: if agent's xref skills also matched
+    xref_boost = 0.0
+    matched_skill_names = {s[0]["name"] for s in skill_matches}
+    xref_hits = set(agent.get("xref_skills", [])) & matched_skill_names
+    if xref_hits:
+        xref_boost = 0.2 * len(xref_hits)
+    
+    # Combined score
+    return base + density * 0.5 + xref_boost
+
+
+def match_agents(task_text: str, task_tokens: set[str], agents: list[dict],
+                 skill_matches: list = None) -> list[tuple[dict, set[str], float]]:
+    """Find agents whose triggers overlap with task tokens."""
+    if skill_matches is None:
+        skill_matches = []
+    n_task_words = count_source_words(task_text)
+    results = []
+    for agent in agents:
+        overlap = task_tokens & agent["triggers"]
+        if overlap:
+            score = score_agent(task_text, task_tokens, agent, skill_matches, n_task_words)
+            results.append((agent, overlap, score))
+
+    results.sort(key=lambda x: x[2], reverse=True)
+    return results
+
+
+def score_skill(task_text: str, task_tokens: set[str], skill: dict,
+                n_task_words: int) -> float:
+    """Score a skill by token overlap quality."""
+    overlap = task_tokens & skill["tokens"]
+    if not overlap:
+        return 0.0
+    
+    # Word-level hits (not inflated)
+    word_hits = count_word_matches(task_text, skill["tokens"])
+    
+    # Base: fraction of task words matched  
+    base = word_hits / max(n_task_words, 1)
+    
+    # Name match bonus: tokens that match the skill NAME are stronger signals
+    name_tokens = tokenize(skill["name"].replace("-", " "))
+    name_overlap = task_tokens & name_tokens
+    name_hits = count_word_matches(task_text, name_tokens)
+    name_bonus = 0.3 * name_hits
+    
+    return base + name_bonus
+
+
+def match_skills(task_text: str, task_tokens: set[str],
+                 skills: list[dict]) -> list[tuple[dict, set[str], float]]:
+    """Find skills whose tokens overlap with task tokens."""
+    n_task_words = count_source_words(task_text)
+    results = []
+    for skill in skills:
+        overlap = task_tokens & skill["tokens"]
+        if overlap:
+            score = score_skill(task_text, task_tokens, skill, n_task_words)
+            results.append((skill, overlap, score))
+
+    results.sort(key=lambda x: x[2], reverse=True)
+    return results
+
+
+def make_decision(agent_matches: list, skill_matches: list) -> str:
+    """Determine delegation decision based on scores."""
+    if agent_matches and agent_matches[0][2] >= 0.4:
+        return "ACTIVATE"
+    elif agent_matches or skill_matches:
+        return "LOAD"
+    else:
+        return "SELF"
+
+
+def print_report(task: str, task_tokens: set[str], agent_matches: list,
+                 skill_matches: list, decision: str, total_skills: int,
+                 total_agents: int):
+    """Print the structured delegation report."""
+    print("=" * 60)
+    print(f"2D Delegate: {task}")
+    print("=" * 60)
+    print(f"  Task tokens:  {', '.join(sorted(task_tokens))}")
+    print()
+
+    # Agents — show top 5, with scores
+    if agent_matches:
+        print(f"  Agents matched: {len(agent_matches)} / {total_agents}")
+        for agent, tokens, score in agent_matches[:5]:
+            emoji = agent.get("emoji", "")
+            xref = agent.get("xref_skills", [])
+            xref_str = f" [xref: {', '.join(xref[:3])}]" if xref else ""
+            print(f"    {emoji} {agent['name']} ({agent['division']}) — score: {score:.2f}")
+            print(f"      Triggers hit: {', '.join(sorted(tokens))}")
+            if xref_str:
+                print(f"      Skills xref: {', '.join(xref[:4])}")
+    else:
+        print("  Agents matched: 0 / {total_agents}")
+    print()
+
+    # Skills — show top 5, filtered by minimum score
+    if skill_matches:
+        # Filter noise: only show skills with score > 0.15
+        good_skills = [(s, t, sc) for s, t, sc in skill_matches if sc > 0.15]
+        if not good_skills:
+            good_skills = skill_matches[:3]  # fallback: show top 3 anyway
+        print(f"  Skills matched: {len(skill_matches)} ({len(good_skills)} relevant) / {total_skills}")
+        for skill, tokens, score in good_skills[:5]:
+            print(f"    📘 {skill['name']} — score: {score:.2f}")
+            print(f"      Tokens hit: {', '.join(sorted(tokens))}")
+    else:
+        print(f"  Skills matched: 0 / {total_skills}")
+    print()
+
+    # Decision
+    print(f"  Decision: {decision}")
+    if decision == "ACTIVATE":
+        top = agent_matches[0][0]
+        # Prefer xref skills, then top scoring skills
+        rec_skills = top.get("xref_skills", [])[:3]
+        if not rec_skills and skill_matches:
+            rec_skills = [s[0]["name"] for s in skill_matches[:3]]
+        print(f"    → Activate: {top['emoji']} {top['name']}")
+        if rec_skills:
+            print(f"    → Load skills: {', '.join(rec_skills)}")
+    elif decision == "LOAD":
+        if skill_matches:
+            good = [sk["name"] for sk, _, sc in skill_matches[:3] if sc > 0.15]
+            if not good:
+                good = [skill_matches[0][0]["name"]]
+            print(f"    → Load skills: {', '.join(good)}")
+        if agent_matches:
+            top = agent_matches[0]
+            print(f"    → Consider: {top[0]['emoji']} {top[0]['name']} (score: {top[2]:.2f})")
+    else:
+        print("    → No matching agents or skills. Proceed with general knowledge.")
+    print("=" * 60)
+
+
+def main():
+    if len(sys.argv) < 2 or sys.argv[1] in ("--help", "-h"):
+        print(__doc__.strip())
+        sys.exit(0 if sys.argv[1:] == ["--help"] or sys.argv[1:] == ["-h"] else 2)
+
+    task = " ".join(sys.argv[1:])
+    task_tokens = tokenize(task)
+
+    if not task_tokens:
+        print("ERROR: No meaningful tokens extracted from task description", file=sys.stderr)
+        sys.exit(2)
+
+    agents = parse_registry()
+    skills = parse_skills()
+    
+    # Match skills first (agents need skill matches for xref boost)
+    skill_matches = match_skills(task, task_tokens, skills)
+    agent_matches = match_agents(task, task_tokens, agents, skill_matches)
+    decision = make_decision(agent_matches, skill_matches)
+
+    print_report(task, task_tokens, agent_matches, skill_matches, decision, len(skills), len(agents))
+
+    # Exit code: 0 = matches found, 1 = SELF mode
+    sys.exit(0 if decision != "SELF" else 1)
+
+
+if __name__ == "__main__":
+    main()

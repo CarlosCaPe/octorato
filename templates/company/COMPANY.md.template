@@ -1,0 +1,108 @@
+# {{COMPANY_NAME}} — Company Brain (Private Instance)
+
+> This file is the **company-layer OBJECT** of the Octopus Brain Framework.
+> It extends `~/.claude/CLAUDE.md` (the CLASS) with your company-specific identity,
+> arms, connections, and operational context.
+> **NEVER commit this file.** It is in `.gitignore` by design.
+> Framework rules live in `~/.claude/CLAUDE.md`. This file covers your company-only context.
+
+## Identity
+
+- **Operator:** {{OWNER_NAME}}
+- **Company:** {{COMPANY_NAME}}
+- **Role:** {{ROLE}} (e.g., Lead Engineer / Consultant / Founder)
+- **Primary identity source:** `company/skills/professional-identity/SKILL.md`
+- **Voice/communication style:** `company/skills/voice/SKILL.md` (optional)
+
+## Company-Specific Skill-First Behaviors
+
+<!-- Add rules for when specific company skills should auto-activate -->
+<!-- Examples: -->
+<!-- - Chat replies — load voice skill before drafting casual messages as the operator -->
+<!-- - Identity requests — load professional-identity skill for CV/rate/proposal context -->
+<!-- - CV sync — keep professional-identity in sync with portfolio changes -->
+
+## Arms (Client Projects)
+
+```
+ARM CODE  | CLIENT NAME                        | REPO PATH
+----------|-----------------------------------|------------------------------------------
+{{ARM_1}} | {{CLIENT_NAME_1}}                 | ~/path/to/{{ARM_1}}/
+{{ARM_2}} | {{CLIENT_NAME_2}}                 | ~/path/to/{{ARM_2}}/
+```
+
+## QueryMaster — Active Connections
+
+Config: `~/.config/querymaster/connections.json`
+History: `~/.local/share/querymaster/history/`
+
+| Connection    | Engine     | Arm       | Description                    |
+|--------------|------------|-----------|--------------------------------|
+| {{CONN_1}}   | postgresql | {{ARM_1}} | {{DESCRIPTION_1}}              |
+| {{CONN_2}}   | snowflake  | {{ARM_2}} | {{DESCRIPTION_2}}              |
+
+## Multi-Machine Sync
+
+**Machines:** {{PRIMARY_MACHINE}} (primary) + {{OTHER_MACHINES}} (secondary)
+
+```bash
+# PRIMARY: created/updated a skill -> push brain
+ai-push "added skill: my-new-skill"
+
+# SECONDARY: pull latest brain + sync to project
+ai-pull                     # pull ~/.claude/ + sync all projects
+ai-pull {{ARM_1}}           # pull + sync only one arm
+ai-pull --status            # check if updates available
+```
+
+### Active Projects (registered in sync-ai-docs)
+
+```
+{{ARM_1}}, {{ARM_2}}
+```
+
+### First-Time Setup on a New Machine
+
+```bash
+git clone {{YOUR_REPO_URL}} ~/.claude
+cp ~/.local/bin/sync-ai-docs ~/.local/bin/
+cp ~/.local/bin/ai-pull ~/.local/bin/
+cp ~/.local/bin/ai-push ~/.local/bin/
+chmod +x ~/.local/bin/{sync-ai-docs,ai-pull,ai-push}
+ai-pull   # sync everything
+```
+
+## Client Onboarding
+
+When creating a new client arm:
+
+```bash
+mkdir ~/path/to/<CLIENT_CODE>
+cd ~/path/to/<CLIENT_CODE>
+git init
+# Create .claude/CLAUDE.md from templates/arm/CLAUDE.md.template
+# Create .github/copilot-instructions.md (sync target)
+# Register in sync-ai-docs
+sync-ai-docs <CLIENT_CODE>
+```
+
+Then add to:
+1. `company/COMPANY.md` Arms table (this file)
+2. `company/config/arms.json` (connectome arm definitions)
+3. `~/.config/querymaster/connections.json` (DB connections)
+
+## Company-Specific Skills
+
+Located at `~/.claude/company/skills/`. These are loaded in addition to framework skills.
+
+<!-- Add your company-specific skills here as you create them -->
+<!-- | Skill | Purpose | -->
+<!-- |-------|---------|  -->
+<!-- | `voice/` | Your chat voice and register | -->
+<!-- | `professional-identity/` | CV, rates, certifications | -->
+
+## Assets
+
+<!-- - Signature: `company/assets/signature/` -->
+<!-- - Scripts: `company/scripts/` -->
+<!-- - Hebbian learning log: `company/neural_activity.json` -->

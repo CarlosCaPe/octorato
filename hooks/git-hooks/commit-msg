@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# commit-msg — Brain stays generic (message side).
+#
+# Companion to pre-commit. Scans the actual commit message right before Git
+# writes the commit object. Blocks any token from company/brain-blocklist.txt.
+#
+# Installed at ~/.claude/.git/hooks/commit-msg by scripts/install-git-hooks.sh.
+
+set -e
+
+CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
+CHECKER="$CLAUDE_DIR/scripts/check-generic.py"
+
+if [[ ! -x "$CHECKER" ]]; then
+    echo "⚠ commit-msg (brain-generic): $CHECKER not found — skipping enforcement" >&2
+    exit 0
+fi
+
+# $1 is the path to .git/COMMIT_EDITMSG passed by Git.
+python3 "$CHECKER" --message-file "$1" --quiet

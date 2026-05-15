@@ -1,0 +1,859 @@
+# Octopus Brain Framework
+
+> *"One brain. 167 specialists. Zero office rent."*
+
+An open-source AI agent operating system where a single human operator directs a shared brain of specialist AI agents — across clients, projects, and machines — without ever mixing their data.
+
+With nothing but natural language, you can direct a team of AI specialists to build and ship software.
+
+**Live framework**: 142 skills, 167 agent personas, 13 divisions, 6 enforcement scripts, multi-machine sync, and a neural connectome that learns over time.
+
+```
+https://github.com/CarlosCaPe/octorato
+```
+
+> **Octorato** = *octopus* + *tesseract* — eight-armed brain in a 4D activation space (Agent × Skill × Arm × 4D-phase).
+
+---
+
+## Why an Octopus?
+
+This isn't a metaphor we forced onto the software. The software emerged from studying how *Octopus vulgaris* actually works — and discovering that its neural architecture solves the exact problem we face with AI agents.
+
+### The Biology
+
+An octopus has approximately **500 million neurons**. For context, a dog has roughly 530 million in its cerebral cortex alone (and about 2 billion total in its brain). But here's what makes the octopus extraordinary: **two-thirds of its neurons live in the arms, not the central brain.**
+
+Each arm can:
+- **Taste and smell** independently (each sucker has chemotactile receptors — van Giesen, Kilian, Allard & Bellono, *Cell* 2020 — work performed in *Octopus bimaculoides*)
+- **Execute local reflexes and stereotyped reaching motions** without consulting the brain (Sumbre et al., *Science* 2001 — note: isolated arms perform programmed motor patterns, not contextual decision-making)
+- **Coordinate** with the central brain for complex tasks
+- **Operate with high autonomy** from other arms (peripheral nerve cords provide some inter-arm communication, but each arm has its own local control)
+
+Beyond the arms, the octopus has:
+- **Chromatophores** — tens of thousands of individually innervated color cells that allow real-time pattern changes in under a second
+- **A vertical lobe** — the primary learning center, where ~25 million amacrine cells converge onto ~65,000 efferent neurons (a biological dimensionality reduction system)
+- **Autotomy** — the ability to voluntarily detach an arm under threat and fully regenerate it
+- **Extensive mRNA recoding** — A-to-I RNA editing that modifies over 13,000 protein-coding sites, reshaping neural protein function in response to environmental conditions
+
+The central brain sets high-level intent. The arms execute with local intelligence. Information flows **up** (arm discoveries reach the brain) and **down** (brain strategies reach the arms). In biology, some peripheral inter-arm communication exists — but in our software, we enforce **total sideways isolation** as a deliberate design choice for client data security.
+
+### The Software
+
+> **Note on the metaphor:** the table below is a *design analogy*, not a claim of mechanistic equivalence. We borrow vocabulary because the architectural shape rhymes — but the framework's "Hebbian", "connectome", and "regeneration" are software primitives, not biology. Where the mapping would mislead an ML reader, we flag it.
+
+| Octopus Biology | Framework Architecture | What It Does |
+|----------------|----------------------|-------------|
+| Central brain | `~/.claude/` (this repo) | Shared rules, paradigms, 167 agent personas, 142 skills |
+| Arms | Client project repos | Isolated workspaces — each client is a sealed arm |
+| Neurons | Agent personas | 167 specialist processors across 13 divisions |
+| Synapses | Skills | 142 reusable techniques that connect agents to capabilities |
+| Chemoreceptors (suckers) | `query_connectome.py` | TF-IDF cosine similarity against the indexed agent/skill corpus — a sparse lexical retriever, not multimodal chemoreception |
+| Afferent/efferent signal cycle | 4D Paradigm | Sense → plan → act → evaluate, with feedback — every signal follows 4 phases |
+| Co-activation reinforcement (inspired by Hebb's principle) | Hebbian-style learning | Edge weights between agent/skill pairs are boosted when they co-fire on a successful task; stale boosts decay exponentially (half-life ~69 days) and failures subtract. **Not LTP** — there is no NMDA-style coincidence detector, no synaptic protein synthesis. Closest ML analog: bandit reward priors over a static graph. |
+| Homeostatic remodeling (≠ mRNA recoding) | Connectome regeneration | The map rebuilds from scratch on every `ai-push`. **Departs from the biology**: real octopus A-to-I editing is a narrow post-transcriptional modification, not a full graph rebuild. We use the rebuild as a software convenience, not a biological claim. |
+| Chromatophores | Dynamic agent loading | Tens of thousands of individually innervated color cells allow real-time pattern changes — the framework dynamically loads agent personas on demand |
+| Arm autonomy | Arm isolation | In biology, arms have high autonomy *with* peripheral inter-arm communication. The framework enforces **total** sideways isolation — a deliberate departure from biology for client data security. |
+
+This is modeled on a nervous system. The biology grounds the design; it does not validate the math.
+
+---
+
+## Quick Start
+
+```bash
+# 1. Clone the brain
+git clone https://github.com/CarlosCaPe/octorato.git ~/.claude
+
+# 2. Create your private company brain
+cp -r ~/.claude/templates/company/ ~/.claude/company/
+mv ~/.claude/company/COMPANY.md.template ~/.claude/company/COMPANY.md
+nano ~/.claude/company/COMPANY.md
+
+# 3. Create your first arm (client project)
+mkdir -p ~/projects/my-client/.claude
+cp ~/.claude/templates/arm/CLAUDE.md.template ~/projects/my-client/.claude/CLAUDE.md
+
+# 4. Sync across machines
+ai-pull    # on every workstation
+```
+
+See `templates/` for annotated setup guides with `{{PLACEHOLDERS}}`.
+
+---
+
+## Architecture — CLASS / OBJECT / ARM
+
+The framework uses an object-oriented inheritance model:
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│   BRAIN = CLASS (this repo, open-source, the DNA)            │
+│   ~/.claude/                                                 │
+│                                                              │
+│   What it IS:                                                │
+│     - The 4D Paradigm (Describe-Delegate-Diligent-Disclose)  │
+│     - The Octopus Architecture (brain/arm isolation)         │
+│     - The connectome engine (TF-IDF, cosine similarity)      │
+│     - 167 generic agent personas                              │
+│     - 142 generic skills (techniques, not client workflows)  │
+│     - Enforcement scripts (delegate-check, gate-check, etc.) │
+│     - Templates for creating your own company brain + arms   │
+│                                                              │
+│   What it is NOT:                                            │
+│     - Anyone's personal identity                             │
+│     - Anyone's client list or credentials                    │
+│                                                              │
+└──────────────────────┬───────────────────────────────────────┘
+                       │  instantiates
+┌──────────────────────▼───────────────────────────────────────┐
+│   COMPANY BRAIN = OBJECT (your private instance)             │
+│   ~/.claude/company/   (gitignored from framework repo)      │
+│                                                              │
+│   What it IS:                                                │
+│     - Your professional identity (name, rates, certs, CV)    │
+│     - Your arm definitions (which clients, which codes)      │
+│     - Your company-specific skills and workflows             │
+│     - Your connection configs, assets, voice style           │
+│                                                              │
+└──────────────────────┬───────────────────────────────────────┘
+                       │  manages
+┌──────────────────────▼───────────────────────────────────────┐
+│   ARMS = PROPERTIES (client projects, isolated)              │
+│   ~/projects/<client>/                                       │
+│                                                              │
+│   Each arm is an isolated client project.                    │
+│   Arms never see each other's data.                          │
+│   Each has .claude/CLAUDE.md with client-specific rules.     │
+└──────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## The 4D Paradigm — The Nervous System
+
+The 4D is not a checklist. It is the **nervous system protocol** — every signal in the octopus, from brain to arm and back, follows these four phases. No exceptions.
+
+### The Signal Flow
+
+```
+  INPUT (before acting — analysis phase):
+  ┌─────────────────────────────────────────────────────────────┐
+  │ 1D DESCRIBE  → "I will do X because Y"                     │
+  │              State: task type, scope, files involved         │
+  │                                                             │
+  │ 2D DELEGATE  → Search the connectome, find the specialist   │
+  │              Run 3 mandatory questions (see below)           │
+  │              Load the right agent + skills                   │
+  └─────────────────────────────────────────────────────────────┘
+                            │
+                    ┌───────▼───────┐
+                    │  CHANGE GATE  │  ← STOP. Manifest. Confirm.
+                    │  (4D Gate)    │     No writes without human OK.
+                    └───────┬───────┘
+                            │ confirmed
+                    ┌───────▼───────┐
+                    │   EXECUTE     │  ← Apply changes
+                    └───────┬───────┘
+                            │
+  OUTPUT (after acting — validation phase):
+  ┌─────────────────────────────────────────────────────────────┐
+  │ 3D DILIGENT  → Validate: build, lint, test. Show evidence.  │
+  │              If FAIL → fix before declaring done             │
+  │                                                             │
+  │ 4D DISCLOSE  → "Impact: N files changed, M side effects"    │
+  │              Impact Radius scan. Warnings. Next steps.       │
+  └─────────────────────────────────────────────────────────────┘
+```
+
+Think of it like `terraform plan` before `terraform apply`. The agent presents a **Change Manifest** — a table of every file it will create, modify, or delete — and waits for explicit human confirmation before touching anything.
+
+### The Change Gate (Mandatory)
+
+No file gets modified, created, or deleted without the human seeing the full manifest first:
+
+```
+## Change Manifest
+
+| # | Action | File              | Reason                     |
+|---|--------|-------------------|----------------------------|
+| 1 | MODIFY | src/auth.py:32    | Fix token refresh logic    |
+| 2 | MODIFY | tests/test_auth.py| Add regression test        |
+| 3 | DELETE | src/auth_old.py   | Orphaned after refactor    |
+
+Impact: 2 files modified, 1 orphan deleted.
+Confirm? (yes/no)
+```
+
+The agent **stops and waits**. No "fire-and-forget". This is a gate, not a suggestion.
+
+### The 3 Mandatory Questions (2D Delegate)
+
+Before any work begins, the agent must answer three questions:
+
+**Q1: WHO KNOWS? (Suction Cups — Graph Search)**
+
+```bash
+python3 ~/.claude/scripts/query_connectome.py query "optimize PostgreSQL query"
+```
+
+This searches the neural graph using TF-IDF cosine similarity. It builds a query vector from the task description using the stored IDF dictionary, then ranks agents and skills by cosine similarity against their stored TF-IDF vectors.
+
+Real output:
+```
+AGENTS (best match → least match):
+  🗄️ Database Optimizer (engineering) — score: 4.6, connections: 35
+    └─ top skills: autovacuum-bloat-management(1.00), explain-analyze-validation(1.00)
+  ⏱️ Performance Benchmarker (testing) — score: 1.0, connections: 29
+    └─ top skills: explain-analyze-validation(1.00), pg-stat-statements(1.00)
+
+SKILLS (best match → least match):
+  QueryMaster — PostgreSQL Engine Skill — score: 2.6, connections: 53
+```
+
+The suction cups compute cosine similarity against the graph and find the right neuron. No guessing.
+
+**Q2: HAS IT GOT AN API? (MCP-First — Token Efficiency + Capability)**
+
+Before any scraping or browser automation, check for a typed integration:
+
+| Priority | Access | Tokens | Why |
+|---|---|---|---|
+| 1 | **MCP server** | ~300 | Typed, schema-validated, conversation-aware — the agent's preferred action surface. See [MCP Servers](#mcp-servers--the-action-space). |
+| 2 | REST API | ~200 | Cheapest if no MCP exists for the service. |
+| 3 | SDK / CLI | ~500 | Programmatic but heavier. |
+| 4 | Scraping (last resort) | ~5,000+ | Browser snapshots are token-expensive and brittle. |
+
+If the task does not touch external data, this question is N/A.
+
+**Q3: WHO DOES IT? (Delegate-Check — Rule Match)**
+
+```bash
+python3 ~/.claude/scripts/delegate-check "optimize PostgreSQL query"
+```
+
+Parses REGISTRY.md triggers and skill descriptions. Outputs: ACTIVATE agent / LOAD skill / SELF (proceed alone).
+
+### Impact Radius
+
+The 4th D is not just "tell the user what happened." Before modifying any object, the agent scans every reference to it across the entire workspace:
+
+```
+BEFORE CHANGING OBJECT X:
+  1. WHERE is X referenced?     → grep all files
+  2. WHERE is X produced?       → find the generator
+  3. WHO consumes X downstream? → deliverables, scripts, configs
+  4. WHAT becomes orphaned?     → old files made obsolete
+  5. DISCLOSE the full radius   → list ALL affected files
+```
+
+No object is an island. Every change radiates. The agent scans the radius first.
+
+---
+
+## 4D+S — Spec-Driven Development Integration
+
+For tasks above trivial complexity, the 4D integrates with a spec-driven workflow:
+
+| Score | Level | What Activates |
+|-------|-------|---------------|
+| 0-2 | **TRIVIAL** | 4D only (no spec artifacts) |
+| 3-5 | **MEDIUM** | 4D + `plan.md` (task checklist feeds the Gate) |
+| 6+ | **LARGE** | 4D + full SDD: `feature.md` → `plan.md` → implement → `review.md` → archive |
+
+**Complexity signals:** +2 touches 4-10 files, +4 touches 10+, +2 new feature, +3 architecture decision, +5 user requests spec, +1 schema change, +1 new API.
+
+The archived specs become institutional memory — future tasks reference past decisions.
+
+---
+
+## The Corporation
+
+```
+                        ┌─────────────────┐
+                        │   HUMAN         │
+                        │   (Operator)    │
+                        │   Human Gateway │
+                        └────────┬────────┘
+                                 │
+                        ┌────────▼────────┐
+                        │   BRAIN         │
+                        │  ~/.claude/     │
+                        │  142 Skills     │
+                        │  167 Agents     │
+                        │  N Client Arms  │
+                        └────────┬────────┘
+                                 │
+            ┌──────┬──────┬──────┼──────┬──────┬──────┐
+            ▼      ▼      ▼      ▼      ▼      ▼      ▼
+         ARM 1  ARM 2  ARM 3  ARM 4  ARM 5  ARM 6  ARM N
+```
+
+### The 3-Layer Activation Stack
+
+Every task activates three layers simultaneously:
+
+```
+1. AGENT  = WHO       (persona, expertise, voice)
+2. SKILL  = HOW       (technique, workflow, best practices)
+3. ARM    = FOR WHOM  (client context, data, config)
+```
+
+**Example**: A client needs a database audit:
+- Brain activates **Database Optimizer** agent (WHO)
+- Loads `explain-analyze-validation` + `index-creation-concurrently` skills (HOW)
+- Operates within the client's arm context (FOR WHOM)
+- Result: specialist persona crafting idempotent DDL, scoped to this client only
+
+### Activation Modes
+
+| Mode | Trigger | Example |
+|------|---------|---------|
+| **Auto** | Brain detects task matches agent domain | Database query activates Database Optimizer |
+| **Manual** | User says "activate [Agent Name]" | "Use Proposal Strategist for this RFP" |
+| **Combined** | Agent + skills + arm context | Security Engineer + threat-model skill + client arm |
+
+---
+
+## The Connectome — Neural Architecture
+
+The brain maintains a **deep connectome** — a real weighted graph auto-generated by reading the FULL content of every agent and skill file, vectorizing with TF-IDF, and computing cosine similarity across all pairs.
+
+Inspired by octopus neurobiology: 500M neurons, 2/3 distributed in arms, extensive mRNA recoding that reshapes neural protein function.
+
+```
+  D1 (WHO)     D2 (HOW)     D3 (WHERE)    D4 (WHEN)
+  ────────     ────────     ─────────     ─────────
+  167          142          N             4
+  Neurons      Synapses     Regions       Phases
+  (Agents)     (Skills)     (Arms)        (4D Paradigm)
+```
+
+| Architecture | Neuroscience | Function |
+|---|---|---|
+| **Agents** | **Neurons** | Processing units — WHO does the work |
+| **Skills** | **Synapses** | Functional connections — HOW work gets done |
+| **Agent↔Agent** | **Neural Pathways** | Collaboration channels — WHO works with WHO |
+| **Skill↔Skill** | **Skill Clusters** | Capability families — related skills group |
+| **Arms** | **Brain Regions** | Specialized areas — WHERE work happens |
+| **4D Phases** | **Action Potentials** | Temporal signals — WHEN signals fire |
+
+### Querying the Connectome (The Suction Cups)
+
+A giant Pacific octopus (*Enteroctopus dofleini*) has roughly **2,240 suction cups** across its 8 arms — the common octopus (*O. vulgaris*) has fewer (~1,920). Each sucker contains chemotactile receptors that detect molecules through direct contact — the octopus touches something and *knows what it is* without looking.
+
+`query_connectome.py` is our suction cup. Give it a task description and it computes TF-IDF cosine similarity against every agent and skill in the graph:
+
+```bash
+python3 ~/.claude/scripts/query_connectome.py query "deploy Svelte app to Cloudflare Workers"
+```
+
+It builds a query vector from the task description using the stored IDF dictionary, then computes cosine similarity against every stored document vector (top-200 TF-IDF terms per agent/skill). Results are ranked by semantic similarity to the full content of each agent and skill file — not just their names or triggers.
+
+### Generating the Connectome
+
+```bash
+python3 ~/.claude/scripts/generate_neural_map.py
+```
+
+**What it produces:**
+- Agent↔Skill, Agent↔Agent, and Skill↔Skill weighted connections
+- TF-IDF vocabulary from deep content analysis
+- Hebbian learning — co-activation tracking with exponential time decay and negative signals from failed sessions
+- Hub detection (most-connected agents) and gap detection (isolated neurons)
+- Team assembly — given a task, find the optimal agent squad + skill loadout
+
+**Auto-regeneration:** Runs on every `ai-push`. When you add an agent, skill, or arm, the connectome rebuilds automatically.
+
+---
+
+## Client Arms — Total Isolation
+
+Each arm is an isolated client project. Arms never see each other's data. Only the human operator can explicitly bridge knowledge between arms.
+
+### How Knowledge Flows
+
+```
+Direction       What Flows                          What NEVER Flows
+─────────       ──────────                          ────────────────
+Arm → Brain     Generic patterns, skills, lessons   Client names, data, credentials
+Brain → Arm     Rules, paradigms, skills, identity  Other arms' data
+Arm → Arm       NOTHING (total isolation)           Everything
+Human → Agent   Explicit cross-arm requests         (human decides what to bridge)
+```
+
+### The Learning Cycle
+
+```
+1. ARM discovers pattern      → "This query fix reduced seq scans 10x"
+2. HUMAN approves capture     → "Yes, make it a skill"
+3. BRAIN stores as skill      → ~/.claude/skills/explain-analyze-validation/SKILL.md
+                                 (anonymized: no client name, no table names, no data)
+4. BRAIN distributes to ALL   → ai-push / sync-ai-docs
+5. OTHER ARMS benefit         → Next project loads the skill automatically
+```
+
+---
+
+## Org Chart — 13 Divisions, 167 Agents
+
+```mermaid
+graph TB
+    classDef ceo fill:#0D1117,stroke:#58A6FF,stroke-width:3px,color:#C9D1D9
+    classDef brain fill:#161B22,stroke:#8B949E,stroke-width:2px,color:#C9D1D9
+    classDef div fill:#21262D,stroke:#30363D,stroke-width:1px,color:#C9D1D9,font-size:12px
+
+    CEO["Human Operator"]:::ceo
+    BRAIN["BRAIN — 142 Skills · 167 Agents · N Arms"]:::brain
+    CEO --> BRAIN
+
+    BRAIN --> ENG["Engineering — 28"]:::div
+    BRAIN --> DES["Design — 8"]:::div
+    BRAIN --> MKT["Marketing — 30"]:::div
+    BRAIN --> SAL["Sales — 8"]:::div
+    BRAIN --> PRD["Product — 5"]:::div
+    BRAIN --> PM["Project Mgmt — 6"]:::div
+    BRAIN --> TST["Testing — 8"]:::div
+    BRAIN --> SUP["Support — 7"]:::div
+    BRAIN --> SPC["Specialized — 29"]:::div
+    BRAIN --> XR["Spatial — 6"]:::div
+    BRAIN --> GMD["Game Dev — 20"]:::div
+    BRAIN --> ACD["Academic — 5"]:::div
+    BRAIN --> PMA["Paid Media — 7"]:::div
+```
+
+### Engineering Division (28 agents)
+
+The backbone. These agents build, deploy, secure, and maintain everything.
+
+| Agent | Role | Specialty |
+|-------|------|-----------|
+| Backend Architect | System design & API architecture | Scalable backends, microservices |
+| Database Optimizer | Query performance & schema design | PostgreSQL, Snowflake, SQL Server |
+| Data Engineer | ETL pipelines & data platform | ADF, Dagster, dbt, Delta Lake |
+| AI Engineer | ML/AI integration & prompt engineering | LLMs, embeddings, RAG |
+| DevOps Automator | CI/CD & infrastructure | GitHub Actions, Azure DevOps, Docker |
+| Frontend Developer | UI implementation | React, Svelte, Astro |
+| Software Architect | High-level technical decisions | Architecture patterns, trade-offs |
+| Security Engineer | AppSec, threat modeling, hardening | OWASP, CSP, WAF |
+| SRE | Reliability, monitoring, incident response | Uptime, alerts, postmortems |
+| Code Reviewer | Quality gates & best practices | Clean code, testing standards |
+| Senior Developer | Full-stack implementation | End-to-end feature delivery |
+| Technical Writer | Documentation & API docs | Clear, structured, searchable |
+| Rapid Prototyper | Fast MVPs & proof of concepts | Speed over polish |
+| Git Workflow Master | Branching, PRs, release management | Conventional commits, trunk-based |
+| Incident Response Commander | Production incident handling | Triage, mitigation, RCA |
+| Mobile App Builder | Cross-platform mobile apps | React Native, Flutter |
+| CMS Developer | Content management systems | Headless CMS, WordPress |
+| Email Intelligence Engineer | Email systems & automation | IMAP, SMTP, MSAL |
+| Embedded Firmware Engineer | IoT & firmware | C/C++, RTOS |
+| Solidity Smart Contract Engineer | Blockchain development | Ethereum, Solidity |
+| Threat Detection Engineer | Security monitoring | SIEM, IDS/IPS |
+| Autonomous Optimization Architect | Self-optimizing systems | Feedback loops, auto-tuning |
+| AI Data Remediation Engineer | Data quality & cleaning | Dedup, normalization |
+| Filament Optimization Specialist | 3D printing optimization | Slicing, materials |
+| Dashboard Builder | AI-powered real-time dashboards | Infinite Monitor, multi-provider AI |
+| SP Migration Agent | Stored procedure migration | T-SQL to PL/pgSQL conversion |
+| WeChat Mini Program Developer | WeChat ecosystem | Mini programs |
+| Feishu Integration Developer | Feishu/Lark platform | Enterprise chat integrations |
+
+### Design Division (8 agents)
+
+The eye. User experience, visual identity, inclusivity.
+
+| Agent | Role |
+|-------|------|
+| UI Designer | Interface layouts, component systems |
+| UX Architect | Information architecture, user flows |
+| UX Researcher | User interviews, usability testing |
+| Brand Guardian | Brand consistency, voice & tone |
+| Visual Storyteller | Data visualization, infographics |
+| Image Prompt Engineer | AI image generation prompts |
+| Whimsy Injector | Delight, micro-animations, personality |
+| Inclusive Visuals Specialist | Accessibility, cultural sensitivity |
+
+### Marketing Division (30 agents)
+
+The megaphone. Content, growth, SEO, social media across global platforms.
+
+| Agent | Role |
+|-------|------|
+| Growth Hacker | Viral loops, referral systems, A/B testing |
+| SEO Specialist | Search optimization, technical SEO |
+| Content Creator | Blog posts, articles, copywriting |
+| LinkedIn Content Creator | Professional networking content |
+| LinkedIn Company Manager | Company page strategy & management |
+| Instagram Curator | Visual content strategy |
+| TikTok Strategist | Short-form video strategy |
+| Twitter Engager | Real-time engagement, threads |
+| Reddit Community Builder | Community engagement, AMAs |
+| Podcast Strategist | Audio content & distribution |
+| Social Media Strategist | Cross-platform strategy |
+| AI Citation Strategist | LLM/AI search optimization |
+| Video Optimization Specialist | Video SEO, thumbnails |
+| Book Co-Author | Long-form content, publishing |
+| Carousel Growth Engine | Slide-based content for social |
+| App Store Optimizer | ASO for mobile apps |
+| Livestream Commerce Coach | Live selling strategies |
+| Short Video Editing Coach | Reels/TikTok editing |
+| *+ 12 regional specialists* | Baidu, WeChat, Weibo, Douyin, Xiaohongshu, Kuaishou, Bilibili, Zhihu, China e-commerce, cross-border, market localization, private domain |
+
+### Sales Division (8 agents)
+
+The closer. From discovery to signature.
+
+| Agent | Role |
+|-------|------|
+| Proposal Strategist | Win themes, narrative architecture, RFP responses |
+| Deal Strategist | Negotiation tactics, pricing strategy |
+| Sales Engineer | Technical demos, proof of value |
+| Pipeline Analyst | Forecasting, funnel optimization |
+| Discovery Coach | Needs assessment, qualification |
+| Outbound Strategist | Cold outreach, prospecting |
+| Account Strategist | Client retention, upselling |
+| Sales Coach | Team enablement, playbooks |
+
+### Product Division (5 agents)
+
+The compass. What to build and why.
+
+| Agent | Role |
+|-------|------|
+| Product Manager | Roadmap, prioritization, stakeholder alignment |
+| Sprint Prioritizer | Backlog grooming, sprint planning |
+| Trend Researcher | Market analysis, emerging tech |
+| Feedback Synthesizer | User feedback to actionable insights |
+| Behavioral Nudge Engine | UX psychology, conversion optimization |
+
+### Project Management Division (6 agents)
+
+The clock. On time, on budget, on scope.
+
+| Agent | Role |
+|-------|------|
+| Senior PM | End-to-end project delivery |
+| Studio Producer | Creative project management |
+| Project Shepherd | Long-running initiative tracking |
+| Experiment Tracker | A/B tests, feature flags, metrics |
+| Jira Workflow Steward | Issue tracking, workflow automation |
+| Studio Operations | Resource allocation, capacity planning |
+
+### Testing Division (8 agents)
+
+The quality gate. Nothing ships without these agents signing off.
+
+| Agent | Role |
+|-------|------|
+| Reality Checker | Sanity checks, assumption validation |
+| API Tester | Endpoint testing, contract testing |
+| Performance Benchmarker | Load testing, profiling |
+| Accessibility Auditor | WCAG compliance, screen readers |
+| Evidence Collector | Test evidence for compliance |
+| Workflow Optimizer | CI/CD pipeline optimization |
+| Tool Evaluator | Vendor/tool comparison & selection |
+| Test Results Analyzer | Test report analysis, flaky test detection |
+
+### Support Division (7 agents)
+
+The backbone services. Finance, legal, analytics, infrastructure.
+
+| Agent | Role |
+|-------|------|
+| Analytics Reporter | Dashboards, KPIs, reporting |
+| Finance Tracker | Invoicing, expense tracking, forecasting |
+| Financial Modeler | Financial projections, scenario analysis |
+| Legal Compliance Checker | Contract review, regulatory compliance |
+| Infrastructure Maintainer | Server maintenance, updates |
+| Executive Summary Generator | Board reports, stakeholder updates |
+| Support Responder | Client support, ticketing |
+
+### Specialized Division (29 agents)
+
+The Swiss Army knife. Niche experts activated on demand.
+
+| Category | Notable Specialists |
+|----------|-------------------|
+| Tech | MCP Builder, Workflow Architect, LSP Index Engineer, Salesforce Architect |
+| Compliance | Compliance Auditor, Healthcare Marketing, Blockchain Security |
+| Operations | Accounts Payable, Supply Chain, Data Consolidation, Report Distribution |
+| Consulting | Government Digital Presales, French Consulting Market, Korean Business Navigator |
+| People | Recruitment Specialist, Corporate Training Designer, Study Abroad Advisor |
+| Identity | Agentic Identity & Trust, Identity Graph Operator, ZK Steward |
+| Domain | Civil Engineer, Developer Advocate, Model QA, Cultural Intelligence |
+
+### Spatial Computing Division (6 agents)
+
+The future. XR, visionOS, Metal.
+
+| Agent | Role |
+|-------|------|
+| visionOS Spatial Engineer | Apple Vision Pro development |
+| XR Immersive Developer | Cross-platform XR experiences |
+| XR Interface Architect | 3D UI/UX patterns |
+| Metal Engineer | GPU programming, shaders |
+| XR Cockpit Interaction Specialist | Vehicle/aircraft interfaces |
+| Terminal Integration Specialist | CLI + spatial computing bridge |
+
+### Game Development Division (20 agents)
+
+The playground. Unity, Unreal, Godot, Roblox, and more.
+
+| Engine | Agents |
+|--------|--------|
+| Unity | Architect, Editor Tool Developer, Multiplayer Engineer, Shader Graph Artist |
+| Unreal | Systems Engineer, Technical Artist, World Builder, Multiplayer Architect |
+| Godot | Gameplay Scripter, Multiplayer Engineer, Shader Developer |
+| Roblox | Experience Designer, Avatar Creator, Systems Scripter |
+| Blender | Addon Engineer |
+| Cross-engine | Game Designer, Level Designer, Narrative Designer, Game Audio Engineer, Technical Artist |
+
+### Academic Division (5 agents)
+
+The thinkers. Research depth when you need it.
+
+| Agent | Role |
+|-------|------|
+| Anthropologist | Cultural analysis, ethnographic methods |
+| Historian | Historical context, pattern recognition |
+| Psychologist | Behavioral analysis, cognitive models |
+| Geographer | Spatial analysis, mapping, GIS |
+| Narratologist | Story structure, narrative analysis |
+
+### Paid Media Division (7 agents)
+
+The ROI engine. Every dollar tracked.
+
+| Agent | Role |
+|-------|------|
+| PPC Strategist | Google Ads, Bing Ads, keyword strategy |
+| Programmatic Buyer | RTB, DSP management, audience targeting |
+| Tracking Specialist | Conversion tracking, attribution |
+| Paid Social Strategist | Meta Ads, LinkedIn Ads, TikTok Ads |
+| Auditor | Account audits, waste identification |
+| Creative Strategist | Ad creative, A/B testing |
+| Search Query Analyst | Search term analysis, negative keywords |
+
+---
+
+## Enforcement Scripts
+
+These are not optional helpers. They are the nervous system's enforcement layer — scripts that the agent runs at specific gates to ensure the 4D protocol is followed.
+
+| Script | When It Runs | What It Does |
+|--------|-------------|-------------|
+| `delegate-check` | Start of every task | Parses REGISTRY.md + skills, finds matching agents and skills, outputs ACTIVATE/LOAD/SELF |
+| `query_connectome.py` | Start of every task | TF-IDF cosine similarity against stored document vectors, ranks by semantic match |
+| `gate-check` | Before any file write | Validates that Describe + Delegate phases completed before allowing writes |
+| `generate_neural_map.py` | On every `ai-push` | Rebuilds the full connectome from all agent/skill content |
+| `merge-hooks.py` | On every `ai-pull` | Syncs shared hooks into local settings, validates script targets exist |
+| `eye-check.py` | On every user prompt | Detects web-related tasks, injects browser automation context |
+
+---
+
+## MCP Servers — The Action Space
+
+The brain talks to the outside world through **Model Context Protocol** servers. MCP is not a fallback when there's no API — it *is* the action space of the agent. Agents are the policies that decide what to do; skills are the manuals that teach how; **MCP servers are the typed, schema-validated tools the agent actually calls**.
+
+```
+Query → Connectome (routing) → Agent persona → Skill (manual) → MCP tool call → Tool response
+                                                                                       │
+                                       ┌──────────────── Reflection ←──────────────────┘
+                                       ▼
+                              Reward (3D Diligent PASS/FAIL) → Hebbian log → next routing
+```
+
+### Where MCP fits in the 4D paradigm
+
+| 4D phase | MCP role |
+|---|---|
+| **1D Describe** | If the task names a system (Gmail, Linear, Cloudflare), declare which MCP servers will be used. |
+| **2D Delegate — Q2** | "¿Tiene API?" is **MCP-first**: prefer an MCP tool over scraping. MCP > REST > SDK > scrape (in capability terms; tokens-wise REST is cheaper, so the agent chooses based on whether typed schema/auth/persistence matter for this call). |
+| **3D Diligent** | Validate via the same MCP server: the response shape *is* the test. |
+| **4D Disclose** | Impact Radius includes external state — what got written to Linear / sent through Gmail / deployed to Cloudflare. |
+
+### Server registry & secret management
+
+| Layer | File | Synced? | Contains |
+|---|---|---|---|
+| Global config | `~/.claude/mcp/servers.json` *(proposed — see P2 roadmap)* | Yes (via `ai-push`) | Server `{id, transport, command|url, env_refs[], capabilities, scope}` — **references**, never values |
+| Per-arm override | `<arm>/.claude/mcp/servers.local.json` | No (arm-local) | Client-specific MCP endpoints that must not leak across arms |
+| Secrets | `~/.config/octorato/secrets.env` (chmod 600) or system keychain | **No — never synced** | Tokens, API keys, OAuth refresh — resolved at startup by `env_refs[]` |
+| Capability cache | `~/.claude/mcp/capabilities/<server_id>.json` | Yes | Tool manifest fetched at connect time, dated |
+
+**Secret resolution order:** env var → user keychain (`security`/`secret-tool`/`wincred`) → company vault → **fail closed** (never prompt mid-task).
+
+**Per-arm isolation parity:** MCP follows the same arm-isolation rule as everything else. An arm's MCP config never leaks into the global registry. Arm-to-arm MCP sharing requires explicit human action — same as code-level arm isolation.
+
+### Currently common MCP servers in this brain
+
+| Server | Used for | Skill that loads it |
+|---|---|---|
+| **Cloudflare Developer Platform** | Workers, D1, R2, KV, Hyperdrive ops | `cloudflare-deploy` |
+| **Gmail** | Drafts, threads, labels (operator's mailbox) | `notion-research-documentation` (when source is mail) |
+| **Google Calendar** | Event read/write, scheduling | `notion-meeting-intelligence` |
+| **Google Drive** | File search + content read | `notion-research-documentation` |
+| **Microsoft Learn** | Official Azure/.NET docs lookup | `aspnet-core`, `winui-app` |
+| **Notion** | Doc create/update, knowledge capture | `notion-knowledge-capture`, `notion-spec-to-implementation` |
+| **Linear** | Issue read/update, project tracking | `linear` |
+| **Sentry** | Production error inspection | `sentry` |
+| **Figma** | Design context, node-to-code | `figma`, `figma-implement-design` |
+
+### MCP as a routing signal (roadmap)
+
+Today MCP servers are not first-class neurons in the connectome — Q2 is a mental check, not a graph query. The roadmap (P2) treats every MCP tool as a `mcp_tool` node alongside agents and skills:
+
+- `query_connectome.py query "send slack message"` → returns `mcp_tool: slack-send (score 0.94)`
+- Operator's *situated state* (active Linear issue, next Calendar event, recent Drive files) fuses with the query vector, so retrieval becomes context-aware without the operator typing the context
+
+This is the path the framework is on — see "10x Roadmap" below.
+
+### Adding a new MCP server
+
+1. Add the server to `~/.claude/mcp/servers.json` with `env_refs` pointing to your secret names (no values).
+2. Put the actual secrets in `~/.config/octorato/secrets.env` (chmod 600, gitignored).
+3. Run `ai-push` — the server config syncs; the secrets do not.
+4. On other machines, `ai-pull` brings the config; add the matching secrets locally.
+
+---
+
+## Multi-Tool Support
+
+The brain works simultaneously with three AI coding assistants:
+
+| Tool | Config File | Synced By |
+|------|------------|-----------|
+| **Claude Code** | `.claude/CLAUDE.md` | Source of truth (edit here) |
+| **GitHub Copilot** | `.github/copilot-instructions.md` | Auto-copied by `sync-ai-docs` |
+| **Cursor** | `.cursorrules` | Auto-copied by `sync-ai-docs` |
+
+One file to maintain. Three tools stay in sync.
+
+```bash
+sync-ai-docs          # Sync all arms
+sync-ai-docs my-client  # Sync one arm
+```
+
+---
+
+## Multi-Machine Sync
+
+The brain is a git repo. Sync it across machines so every workstation has the same agents, skills, and rules.
+
+```bash
+# Push brain changes (primary machine)
+ai-push "added skill: playwright"
+
+# Pull latest brain (any other machine)
+ai-pull
+
+# Check if updates available
+ai-pull --status
+```
+
+---
+
+## Repository Structure
+
+```
+~/.claude/
+├── CLAUDE.md                ← Global rules (The Octopus Constitution)
+├── README.md                ← You are here
+├── LICENSE                  ← MIT
+├── CONTRIBUTING.md          ← How to add agents, skills, contribute
+├── HEBBIAN_LEARNING.md      ← How the connectome learns over time
+├── hooks.json               ← Shared hooks (source of truth, synced to all machines)
+├── neural_map.json          ← The Deep Connectome (auto-generated, never edit)
+├── agents/                  ← 167 AI agent personas
+│   ├── REGISTRY.md          ← Auto-activation triggers & cross-references
+│   ├── engineering/         ← 28 agents
+│   ├── design/              ← 8 agents
+│   ├── marketing/           ← 30 agents
+│   ├── sales/               ← 8 agents
+│   ├── product/             ← 5 agents
+│   ├── project-management/  ← 6 agents
+│   ├── testing/             ← 8 agents
+│   ├── support/             ← 7 agents
+│   ├── specialized/         ← 29 agents
+│   ├── spatial-computing/   ← 6 agents
+│   ├── game-development/    ← 20 agents
+│   ├── academic/            ← 5 agents
+│   ├── paid-media/          ← 7 agents
+│   ├── strategy/            ← NEXUS orchestration playbooks and runbooks
+│   └── examples/            ← Multi-agent workflow examples
+├── skills/                  ← 142 reusable techniques
+├── scripts/
+│   ├── generate_neural_map.py  ← Connectome generator (TF-IDF + cosine + Hebbian)
+│   ├── query_connectome.py     ← Suction cups — graph search for agent/skill matching
+│   ├── delegate-check          ← 2D pre-research gate
+│   ├── gate-check              ← 4D change gate enforcement
+│   ├── merge-hooks.py          ← Hook sync with script-exists validation
+│   ├── eye-check.py            ← Browser automation detector
+│   ├── scan-external-refs      ← Scan for external URL references
+│   ├── ai-push.ps1             ← PowerShell variant for Windows
+│   ├── ai-pull.ps1             ← PowerShell variant for Windows
+│   └── sync-ai-docs.ps1        ← PowerShell variant for Windows
+├── commands/                ← Slash command definitions
+├── templates/
+│   ├── company/             ← Template for your private company brain
+│   ├── arm/                 ← Template for new client projects
+│   └── skill/               ← Template for new skills
+└── company/                 ← YOUR private brain (gitignored, never committed)
+    ├── COMPANY.md           ← Your identity, arms, connections
+    ├── skills/              ← Your company-specific skills
+    ├── assets/              ← Your signatures, logos, etc.
+    └── config/              ← Your arm definitions, connection registry
+```
+
+---
+
+## 10x Roadmap
+
+The framework is structurally sound but its retrieval and learning loop are 2012-era. A 6-discipline independent review (Data Architecture, Python, Cephalopod Neuroscience, Applied Mathematics, Data Science, Neural Networks) converged on three families of upgrades. **Numbers are estimated lifts — they become measurements once the eval framework is in place.**
+
+### Now shipping — P0 (correctness + clarity)
+- **Hebbian noise sink fix** — `query_connectome.py` was logging ~99 nodes / ~4,800 co-activation pairs per query, collapsing the learning signal to "everything connects to everything". Capped at top-5 by score.
+- **Atomic writes + flock** on `neural_activity.json`. No more silent loss under concurrent queries.
+- **Reward loop closed** — `gate-check --phase diligent PASS|FAIL` writes back to `neural_activity.json`, so the negative-weight infrastructure in `generate_neural_map.py` finally receives signal. Until now, 100% of sessions were logged `success=true` — dead branch.
+- **Fail-closed fuzzy match** — ambiguous node lookups no longer silently pick `candidates[0]`. They return `None` after surfacing similarity-ranked options.
+- **Stopword consolidation (EN + ES)** — index-time and query-time tokenization now share the same `STOP_WORDS` (including Spanish), so the same prompt produces the same vector.
+- **Description-extractor regex** — no more "## Quick Reference" being captured as a skill description.
+- **UTF-8 encoding everywhere** — Windows-safe; emojis/Spanish no longer crash `merge-hooks.py`.
+
+### Next — P1 (measurement + retrieval quality)
+| Move | Expected lift | Source |
+|---|---|---|
+| **Build a labeled eval set from `REGISTRY.md` triggers** (silver labels — no manual annotation needed) | Converts every later change from belief to delta | DS review |
+| **TF-IDF → BM25** (k1=1.2, b=0.75, smoothed IDF) | MRR +0.10–0.15 | Math review |
+| **Cross-encoder rerank** (`bge-reranker-base`, CPU, top-20) | **MRR +0.20, P@1 +0.25** | DS review (single biggest win) |
+| **Reciprocal Rank Fusion** between cosine and `delegate-check` | MRR +0.05–0.10, Q1↔Q3 agreement 70% → 90% | Math review |
+| **Bayesian Beta-Bernoulli Hebbian** — replaces the two divergent boost formulas | Stability + principled cold-start | Math review |
+| **`pyproject.toml` + pytest + CI** — `pipx install octopus-brain` becomes one line | Distribution, regression nets | Python review |
+
+### Then — P2 (architecture)
+- **Lakehouse storage** — Bronze (append-only NDJSON sessions) / Silver (TF-IDF postings parquet, co-activation rollup) / Gold (UUID-keyed nodes + edges parquet). Replaces the monolithic 4-MB `neural_map.json`. Enables scaling from 309 docs → 30,000.
+- **MCP as first-class neurons** in the connectome. Q2 stops being prose and becomes a graph query: `query_connectome.py query "send slack message"` → `mcp_tool: slack-send (score 0.94)`.
+- **MCP as situational signal** — fuse operator state (active Linear issue, next calendar event, recent Drive files) into the query vector. Routing becomes context-aware without the operator typing the context. Est. +0.15 MRR.
+- **Learned router head** — small MLP `query_embedding → agent_logits` trained on `(task, agent, success)` tuples. Converts the static gate into a learned policy.
+- **Top-K ensemble routing** — let top-2 agents fire on MEDIUM/LARGE tasks (e.g., Security Engineer + Database Optimizer for "threat-model and refactor this stored proc").
+- **Episodic memory** — index `docs/specs-archive/` as retrievable exemplars; few-shot the next similar task with past successful plans, respecting arm isolation.
+- **Sleep / consolidation cron** — offline pass replays `neural_activity.json`, prunes weak edges, proposes skill merges, synthesizes skill candidates. Today the brain *rebuilds* (recompilation), not *consolidates* (memory consolidation).
+
+The shape of the upgrade is consistent across all six reviewers: keep the octopus as the metaphor for **operator + arm isolation** (which is genuinely novel), and rebuild the retrieval/learning core using standard ML primitives (dense + sparse retrieval, cross-encoder rerank, reward signal, episodic memory).
+
+---
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to:
+- Add a new agent (which division, file format, REGISTRY update)
+- Add a new skill (directory structure, SKILL.md format)
+- Report issues and submit PRs
+- All contributions must be anonymized — no client data, no personal information
+
+## License
+
+[MIT](LICENSE)
+
+---
+
+*Created by [dataqbs](https://dataqbs.com) — Data Quality & Business Solutions*

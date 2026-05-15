@@ -1,0 +1,46 @@
+# {{PROJECT_NAME}} — Project Context
+
+> Universal constraints are in `~/.claude/CLAUDE.md`. This file covers repo-specific context only.
+> **Single source of truth.** `.github/copilot-instructions.md` is auto-synced from this file.
+> Run `sync-ai-docs {{ARM_CODE}}` to propagate changes.
+
+## Project Overview
+
+{{BRIEF_DESCRIPTION}}
+
+## Stack
+
+- **Language:** {{LANGUAGE}} (e.g., Python 3.12, TypeScript 5.x)
+- **Framework:** {{FRAMEWORK}} (e.g., FastAPI, Next.js, Astro)
+- **Database:** {{DATABASE}} (e.g., PostgreSQL 16, Snowflake)
+- **Infrastructure:** {{INFRA}} (e.g., Docker, AWS, Azure)
+
+## QueryMaster — Database Query Agent
+
+Global CLI for running queries against any database engine. Dry-run by default.
+
+### Available connections for this project
+
+| Connection    | Engine     | Auth       | Description           |
+|--------------|------------|------------|----------------------|
+| `{{CONN}}`   | {{ENGINE}} | {{AUTH}}   | {{CONN_DESCRIPTION}} |
+
+### Usage
+
+```bash
+PYTHONPATH=~/.local/bin python3 -m querymaster -e {{ENGINE}} -c {{CONN}} "SELECT 1" --execute
+```
+
+## Conventions
+
+<!-- Add project-specific conventions here -->
+<!-- - Branch naming: feature/TICKET-description -->
+<!-- - Commit format: type(scope): description -->
+<!-- - Test command: pytest / npm test -->
+
+## Key Paths
+
+<!-- List important files and directories -->
+<!-- - src/            Main source code -->
+<!-- - tests/          Test suite -->
+<!-- - docs/           Documentation -->

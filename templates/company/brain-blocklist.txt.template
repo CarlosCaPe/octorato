@@ -1,0 +1,47 @@
+# Brain Blocklist — PRIVATE (never commit this file)
+#
+# Where it lives: ~/.claude/company/brain-blocklist.txt
+# What it does:   scripts/check-generic.py reads this and blocks any commit
+#                 whose message or staged files mention these tokens.
+#
+# Why it matters: ~/.claude/ is an open-source repo. Its git log is public.
+#                 The framework is generic by design — arm codes, client
+#                 names, coworkers, internal projects, vendor incidents,
+#                 ticket numbers MUST NOT leak into git history.
+#
+# Format:
+#   • One token per line.
+#   • Comments start with '#'.
+#   • Tokens are matched case-insensitively as whole words (\b boundaries).
+#   • Multi-word tokens are matched literally (e.g. "client one project x").
+#   • Avoid generic English words — they'd produce constant false positives.
+#
+# How to use:
+#   1. Copy this file:  cp templates/company/brain-blocklist.txt.template \
+#                          company/brain-blocklist.txt
+#   2. Replace the placeholders below with YOUR sensitive tokens.
+#   3. Add new tokens whenever you onboard a new arm or partner.
+#
+# Suggested categories (delete what doesn't apply, add what does):
+
+# --- Arm codes (your private project shortnames) ---
+# arm-code-one
+# arm-code-two
+
+# --- Client / partner names ---
+# client-org-name
+# partner-vendor-name
+
+# --- People (operators, coworkers, contacts you correspond about) ---
+# given-name-coworker
+# given-name-partner
+
+# --- Internal project codenames ---
+# internal-codename-alpha
+# internal-codename-beta
+
+# --- Vendor incidents / ticket references ---
+# specific-vendor-incident-id
+# internal-ticket-prefix
+
+# --- Anything else you'd be uncomfortable seeing in a public git log ---

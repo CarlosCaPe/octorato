@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# pre-commit — Brain stays generic.
+#
+# Installed at ~/.claude/.git/hooks/pre-commit by scripts/install-git-hooks.sh.
+# Runs check-generic.py against staged files. Blocks the commit if any sensitive
+# token (arm code, client/person name, internal project, incident id) is detected.
+#
+# To bypass this hook in an emergency (you almost never should), use:
+#     git commit --no-verify
+# But that defeats the entire reason this exists. Fix the leak instead.
+
+set -e
+
+CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
+CHECKER="$CLAUDE_DIR/scripts/check-generic.py"
+
+if [[ ! -x "$CHECKER" ]]; then
+    # Checker missing — fail open (warn but allow). The CLAUDE.md rule is policy;
+    # missing the checker just means enforcement isn't installed on this clone.
+    echo "⚠ pre-commit (brain-generic): $CHECKER not found — skipping enforcement" >&2
+    exit 0
+fi
+
+# Scan staged content. We don't have the final commit message yet at pre-commit
+# stage, so we only scan staged files here. The commit-msg hook (separate) scans
+# the message. ai-push scans both before either hook fires.
+python3 "$CHECKER" --staged-only --quiet

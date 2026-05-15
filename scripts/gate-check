@@ -1,0 +1,412 @@
+#!/usr/bin/env python3
+"""
+gate-check — 4D Gate Enforcement Validator for the Octopus brain.
+
+Validates that the 4D paradigm phases are being followed before
+file write operations. Designed to be called by the AI agent itself
+as a pre-flight check before any CREATE/MODIFY/DELETE operation.
+
+Usage:
+    gate-check --phase describe "task description"
+    gate-check --phase delegate "delegate-check output summary"
+    gate-check --phase manifest "file1.py:MODIFY,file2.md:CREATE"
+    gate-check --validate-session "describe:done,delegate:done,manifest:pending"
+    gate-check --audit-log "session_id"
+
+The script maintains a session log at ~/.local/share/gate-check/sessions/
+to enable post-hoc auditing of 4D compliance.
+
+Exit codes:
+    0 — gate passed (phase completed or all phases clear)
+    1 — gate BLOCKED (missing required phase)
+    2 — error (bad args, missing dirs)
+"""
+
+import sys
+import os
+import json
+import hashlib
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+
+# ── Paths ──────────────────────────────────────────────────────────────
+GATE_DIR = Path.home() / ".local" / "share" / "gate-check"
+SESSION_DIR = GATE_DIR / "sessions"
+AUDIT_LOG = GATE_DIR / "audit.jsonl"
+NEURAL_ACTIVITY = Path.home() / ".claude" / "neural_activity.json"
+
+
+def _atomic_write_json(path, data):
+    """Atomic JSON write (tempfile + os.replace). Crash-safe."""
+    target_dir = str(path.parent) or "."
+    fd, tmp = tempfile.mkstemp(prefix=".tmp-", suffix=".json", dir=target_dir)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+        os.replace(tmp, str(path))
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def write_hebbian_outcome(success):
+    """Close the 3D Diligent → Hebbian reward loop.
+
+    Updates `success` on the most recent session in neural_activity.json. Without this
+    every session was logged with success=True, leaving the negative-weight machinery
+    in generate_neural_map.py as dead code. The 3D PASS/FAIL is the missing label.
+    """
+    if not NEURAL_ACTIVITY.exists():
+        return False, "no neural_activity.json — nothing to update"
+    try:
+        activity = json.loads(NEURAL_ACTIVITY.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        return False, f"could not read neural_activity.json: {e}"
+    sessions = activity.get("sessions", [])
+    if not sessions:
+        return False, "no sessions logged"
+    sessions[-1]["success"] = bool(success)
+    sessions[-1]["diligent_at"] = datetime.now(timezone.utc).isoformat()
+    try:
+        _atomic_write_json(NEURAL_ACTIVITY, activity)
+    except OSError as e:
+        return False, f"write failed: {e}"
+    return True, f"latest session marked success={bool(success)}"
+
+# ── 4D Phase Definitions ──────────────────────────────────────────────
+PHASES = {
+    "describe": {
+        "order": 1,
+        "required": True,
+        "label": "1D DESCRIBE",
+        "question": "What will you do and why?",
+        "validates": lambda v: len(v.strip()) >= 10,
+        "error": "Description too short. State task type, scope, files involved.",
+    },
+    "delegate": {
+        "order": 2,
+        "required": True,
+        "label": "2D DELEGATE",
+        "question": "Did you run delegate-check? What agents/skills matched?",
+        "validates": lambda v: any(kw in v.lower() for kw in [
+            "activate", "load", "self", "delegate", "agent", "skill",
+            "trivial", "follow-up", "hazlo directo"
+        ]),
+        "error": "Delegate phase must reference delegate-check result (ACTIVATE/LOAD/SELF) or exception reason.",
+    },
+    "manifest": {
+        "order": 3,
+        "required": True,
+        "label": "CHANGE GATE",
+        "question": "What files will be created/modified/deleted?",
+        "validates": lambda v: any(action in v.upper() for action in [
+            "CREATE", "MODIFY", "DELETE", "NONE"
+        ]),
+        "error": "Manifest must list file operations (CREATE/MODIFY/DELETE) or NONE for read-only.",
+    },
+    "confirmed": {
+        "order": 4,
+        "required": True,
+        "label": "HUMAN CONFIRM",
+        "question": "Did the human approve the manifest?",
+        "validates": lambda v: any(kw in v.lower() for kw in [
+            "sí", "si", "yes", "dale", "ok", "confirmed", "approved",
+            "hazlo directo", "sin confirmar", "read-only", "exception"
+        ]),
+        "error": "Human confirmation required before writes. Show manifest and wait for approval.",
+    },
+    "diligent": {
+        "order": 5,
+        "required": False,  # Post-write phase
+        "label": "3D DILIGENT",
+        "question": "Did validation PASS or FAIL? (build/lint/test result)",
+        "validates": lambda v: any(kw in v.lower() for kw in ["pass", "fail", "ok", "error"]),
+        "error": "Diligent phase must report PASS/FAIL with evidence (build/lint/test output).",
+    },
+    "disclose": {
+        "order": 6,
+        "required": False,  # Post-write phase
+        "label": "4D DISCLOSE",
+        "question": "What is the impact? (files changed, orphans, side effects)",
+        "validates": lambda v: len(v.strip()) >= 5,
+        "error": "Disclose must describe impact (file count, side effects, Impact Radius).",
+    },
+}
+
+# Phases required BEFORE any write operation
+PRE_WRITE_PHASES = ["describe", "delegate", "manifest", "confirmed"]
+
+# Phases required AFTER write operations (checked separately)
+POST_WRITE_PHASES = ["diligent", "disclose"]
+
+
+def ensure_dirs():
+    """Create gate-check directories if they don't exist."""
+    SESSION_DIR.mkdir(parents=True, exist_ok=True)
+    GATE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def session_id():
+    """Generate a session ID based on date + hour (groups related work)."""
+    now = datetime.now(timezone.utc)
+    return now.strftime("%Y%m%d_%H")
+
+
+def session_file():
+    """Get current session file path."""
+    return SESSION_DIR / f"{session_id()}.json"
+
+
+def load_session():
+    """Load current session state."""
+    sf = session_file()
+    if sf.exists():
+        with open(sf) as f:
+            return json.load(f)
+    return {"id": session_id(), "tasks": []}
+
+
+def save_session(data):
+    """Save session state."""
+    ensure_dirs()
+    with open(session_file(), "w") as f:
+        json.dump(data, f, indent=2, default=str)
+
+
+def log_audit(entry):
+    """Append to audit log (JSONL format)."""
+    ensure_dirs()
+    entry["timestamp"] = datetime.now(timezone.utc).isoformat()
+    with open(AUDIT_LOG, "a") as f:
+        f.write(json.dumps(entry, default=str) + "\n")
+
+
+def task_hash(description):
+    """Create a short hash for a task description."""
+    return hashlib.md5(description.encode()).hexdigest()[:8]
+
+
+def record_phase(phase, value, task_desc=""):
+    """Record that a 4D phase has been completed for the current task."""
+    session = load_session()
+
+    # Find or create current task
+    thash = task_hash(task_desc) if task_desc else "current"
+    task = None
+    for t in session["tasks"]:
+        if t["hash"] == thash:
+            task = t
+            break
+
+    if task is None:
+        task = {
+            "hash": thash,
+            "description": task_desc[:200],
+            "phases": {},
+            "started": datetime.now(timezone.utc).isoformat(),
+        }
+        session["tasks"].append(task)
+
+    task["phases"][phase] = {
+        "value": value[:500],
+        "completed": datetime.now(timezone.utc).isoformat(),
+    }
+
+    save_session(session)
+    log_audit({
+        "action": "phase_completed",
+        "session": session["id"],
+        "task": thash,
+        "phase": phase,
+        "value": value[:200],
+    })
+
+    return True
+
+
+def validate_phase(phase, value):
+    """Validate a single phase value."""
+    if phase not in PHASES:
+        return False, f"Unknown phase: {phase}"
+
+    phase_def = PHASES[phase]
+    if not phase_def["validates"](value):
+        return False, phase_def["error"]
+
+    return True, f"{phase_def['label']}: PASS"
+
+
+def check_pre_write_ready(task_desc=""):
+    """Check if all pre-write phases are completed for the current task."""
+    session = load_session()
+    thash = task_hash(task_desc) if task_desc else "current"
+
+    task = None
+    for t in session["tasks"]:
+        if t["hash"] == thash:
+            task = t
+            break
+
+    if task is None:
+        return False, "No phases recorded for this task. Run describe → delegate → manifest → confirm first."
+
+    missing = []
+    for phase in PRE_WRITE_PHASES:
+        if phase not in task.get("phases", {}):
+            missing.append(PHASES[phase]["label"])
+
+    if missing:
+        return False, f"BLOCKED — Missing phases: {', '.join(missing)}"
+
+    return True, "ALL PRE-WRITE GATES PASSED ✓"
+
+
+def validate_session_string(session_str):
+    """Parse and validate a session state string like 'describe:done,delegate:done,manifest:pending'."""
+    phases_status = {}
+    for pair in session_str.split(","):
+        parts = pair.strip().split(":")
+        if len(parts) == 2:
+            phases_status[parts[0].strip()] = parts[1].strip()
+
+    results = []
+    all_pass = True
+
+    for phase in PRE_WRITE_PHASES:
+        status = phases_status.get(phase, "missing")
+        phase_def = PHASES.get(phase, {})
+        label = phase_def.get("label", phase.upper())
+
+        if status in ("done", "pass", "completed", "✓"):
+            results.append(f"  ✓ {label}: PASS")
+        else:
+            results.append(f"  ✗ {label}: {status.upper()} — {phase_def.get('error', 'Not completed')}")
+            all_pass = False
+
+    return all_pass, "\n".join(results)
+
+
+def show_checklist():
+    """Print the 4D checklist as a quick reference."""
+    print("=" * 60)
+    print("4D PRE-WRITE GATE CHECKLIST")
+    print("=" * 60)
+    for phase_name in PRE_WRITE_PHASES:
+        p = PHASES[phase_name]
+        print(f"  {'☐'} {p['label']:20s} — {p['question']}")
+    print("-" * 60)
+    print("POST-WRITE (after execution):")
+    print(f"  {'☐'} 3D DILIGENT          — Validate: build/lint/test?")
+    print(f"  {'☐'} 4D DISCLOSE          — Impact: side effects, orphans?")
+    print("=" * 60)
+
+
+def audit_report(session_id_filter=None):
+    """Print audit report from JSONL log."""
+    if not AUDIT_LOG.exists():
+        print("No audit log found.")
+        return
+
+    entries = []
+    with open(AUDIT_LOG) as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                entry = json.loads(line)
+                if session_id_filter is None or entry.get("session") == session_id_filter:
+                    entries.append(entry)
+
+    if not entries:
+        print(f"No entries found{' for session ' + session_id_filter if session_id_filter else ''}.")
+        return
+
+    print(f"{'=' * 60}")
+    print(f"4D AUDIT LOG ({len(entries)} entries)")
+    print(f"{'=' * 60}")
+
+    for e in entries[-20:]:  # Last 20
+        ts = e.get("timestamp", "?")[:19]
+        action = e.get("action", "?")
+        phase = e.get("phase", "?")
+        value = e.get("value", "")[:60]
+        print(f"  [{ts}] {action:20s} | {phase:12s} | {value}")
+
+    print(f"{'=' * 60}")
+
+
+def main():
+    if len(sys.argv) < 2:
+        show_checklist()
+        sys.exit(0)
+
+    cmd = sys.argv[1]
+
+    if cmd == "--checklist":
+        show_checklist()
+        sys.exit(0)
+
+    elif cmd == "--phase" and len(sys.argv) >= 4:
+        phase = sys.argv[2]
+        value = " ".join(sys.argv[3:])
+
+        valid, msg = validate_phase(phase, value)
+        if not valid:
+            print(f"✗ GATE BLOCKED: {msg}")
+            sys.exit(1)
+
+        task_desc = value if phase == "describe" else ""
+        record_phase(phase, value, task_desc)
+        print(f"✓ {msg}")
+
+        # Close the Hebbian reward loop on Diligent: write success/fail back to neural_activity.json
+        # so the negative-weight infra in generate_neural_map.py actually receives signal.
+        if phase == "diligent":
+            success = "pass" in value.lower() or "ok" in value.lower()
+            ok, note = write_hebbian_outcome(success)
+            marker = "✓" if ok else "·"
+            print(f"  {marker} reward loop: {note}")
+        sys.exit(0)
+
+    elif cmd == "--validate-session" and len(sys.argv) >= 3:
+        session_str = sys.argv[2]
+        passed, report = validate_session_string(session_str)
+        print("=" * 60)
+        print("4D SESSION VALIDATION")
+        print("=" * 60)
+        print(report)
+        print("-" * 60)
+        if passed:
+            print("RESULT: ALL GATES PASSED ✓ — proceed with writes")
+            sys.exit(0)
+        else:
+            print("RESULT: BLOCKED ✗ — complete missing phases before writing")
+            sys.exit(1)
+
+    elif cmd == "--pre-write-check" and len(sys.argv) >= 3:
+        task_desc = " ".join(sys.argv[2:])
+        passed, msg = check_pre_write_ready(task_desc)
+        print(msg)
+        sys.exit(0 if passed else 1)
+
+    elif cmd == "--audit-log":
+        sid = sys.argv[2] if len(sys.argv) >= 3 else None
+        audit_report(sid)
+        sys.exit(0)
+
+    elif cmd == "--help":
+        print(__doc__)
+        sys.exit(0)
+
+    else:
+        print(f"Unknown command: {cmd}")
+        print("Use --help for usage.")
+        sys.exit(2)
+
+
+if __name__ == "__main__":
+    main()

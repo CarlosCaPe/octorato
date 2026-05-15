@@ -1,0 +1,15 @@
+{
+  "$schema": "Shared hooks distributed via ai-push/ai-pull. Merged into each machine's settings.json by scripts/merge-hooks.py.",
+  "UserPromptSubmit": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "python3 ~/.claude/scripts/eye-check.py",
+          "timeout": 5,
+          "statusMessage": "Checking if octopus needs eyes..."
+        }
+      ]
+    }
+  ]
+}
