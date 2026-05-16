@@ -12,6 +12,7 @@ ide/
 # Cache and backups
 cache/
 backups/
+image-cache/
 
 # Lock files
 *.lock
