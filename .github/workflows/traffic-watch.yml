@@ -1,0 +1,69 @@
+name: Octorato Traffic Watch
+
+# Daily watcher for repo traffic. Pulls Clones / Views / Stars / Forks
+# from the Traffic API, compares against the prior snapshot stored in
+# .metrics/traffic_history.json, and opens a GitHub Issue when a spike
+# is detected. Commits the fresh snapshot back so the comparison window
+# is always rolling.
+#
+# Required PERMISSIONS:
+#   contents: write   — commit the updated traffic_history.json
+#   issues:   write   — open the spike-alert issue
+#
+# The default GITHUB_TOKEN has Traffic API access because the workflow
+# lives inside the watched repo itself (same scope = no PAT needed).
+
+on:
+  schedule:
+    # 18:00 UTC daily = post US-East close + LATAM peak hours captured.
+    - cron: '0 18 * * *'
+  workflow_dispatch:
+    inputs:
+      force_alert:
+        description: 'Open an issue even if no spike (for testing the alert path)'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+
+permissions:
+  contents: write
+  issues:   write
+
+concurrency:
+  group: traffic-watch
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run traffic check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          FORCE_ALERT: ${{ github.event.inputs.force_alert }}
+        run: |
+          set -euo pipefail
+          python3 scripts/check_traffic.py
+
+      - name: Commit updated history if changed
+        run: |
+          git config user.name  'octorato-traffic-bot'
+          git config user.email 'octorato-traffic-bot@users.noreply.github.com'
+          if ! git diff --quiet -- .metrics/traffic_history.json; then
+            git add .metrics/traffic_history.json
+            git commit -m "metrics: traffic snapshot $(date -u +%Y-%m-%d)"
+            git push
+          else
+            echo "no state change to commit"
+          fi
