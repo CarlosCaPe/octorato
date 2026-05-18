@@ -14,6 +14,10 @@ config/social-video-digest.json
 state/
 digests/
 
+# Datadog Port 1 trace storage — machine-local, gitignored by design
+# (decision §9 Q3 of feature-datadog-port.md). Documented in docs/trace-storage.md.
+traces/
+
 # Cache and backups
 cache/
 backups/
