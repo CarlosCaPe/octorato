@@ -152,6 +152,8 @@ The framework uses an object-oriented inheritance model:
 
 The 4D is not a checklist. It is the **nervous system protocol** — every signal in the octopus, from brain to arm and back, follows these four phases. No exceptions.
 
+In neuroscience terms: the first two phases (Describe + Delegate) are **afferent** — sensory signals coming IN, asking *"what's the task, who can solve it, what's the plan?"*. The last two (Diligent + Disclose) are **efferent** — motor signals going OUT, reporting *"this is what happened, here's the evidence, here's the impact."* The Change Gate sits at the synapse between the two — the irreversible commit to action.
+
 ### The Signal Flow
 
 ```
@@ -653,6 +655,224 @@ The ROI engine. Every dollar tracked.
 
 ---
 
+## Synapses — The Skill Layer (153 reusable techniques)
+
+If agents are neurons — persistent processors with personality — then **skills are synapses**: the connection that makes a neuron useful for a specific task. A neuron in isolation does nothing. A neuron whose synapses know `index-creation-concurrently` and `query_connectome.py` becomes a database optimization specialist.
+
+The metaphor isn't decorative. It dictates how skills are stored, loaded, and learned:
+
+| Property | Neuron (Agent) | Synapse (Skill) |
+|----------|----------------|----------------|
+| Persistence | Always in the registry; the brain wouldn't be the brain without them | Loaded on demand; the brain forgets them between tasks unless reinforced |
+| Storage | `~/.claude/agents/<name>.md` — a full persona file | `~/.claude/skills/<name>/SKILL.md` — a technique manual |
+| Address | Name + division + cross-reference | YAML frontmatter `name:` + `description:` (the trigger) |
+| Lifecycle | Curated, edited, rarely created at runtime | Born from arms (Upward Learning), can die when stale |
+| Bandwidth | One agent ≈ one personality | One skill connects N agents to one capability |
+| Plasticity | Low (changing an agent reshapes a division) | High (skills are rewritten daily as patterns emerge) |
+
+### How a synapse fires
+
+```
+Task arrives                                              ▼
+   │
+   ▼
+2D Delegate Q1 — Ventosas (Chemoreceptor search)
+   query_connectome.py builds a TF-IDF vector of the task,
+   ranks all 153 synapses by cosine similarity to their stored
+   document vectors. Returns top matches with scores.
+   │
+   ▼
+2D Delegate Q3 — Trigger match (Rule-based reflex)
+   delegate-check scans the skill descriptions for keyword
+   triggers ("postgresql", "deploy", "claude api"). Returns
+   ACTIVATE / LOAD / SELF decision.
+   │
+   ▼
+Selected synapses LOAD into the working context
+   (the Skill tool reads the SKILL.md file into the agent's
+   running context — the equivalent of a vesicle releasing
+   neurotransmitter into the cleft)
+   │
+   ▼
+Agent executes WITH the synapse loaded
+   (the skill is now part of the agent's effective behavior
+   for this task only — it's not in the agent file)
+   │
+   ▼
+3D Diligent — if PASS: Hebbian boost on (agent ↔ skill) edge
+   (the more often this pair co-fires successfully, the higher
+   their connection weight in neural_activity.json)
+   4D Disclose — if FAIL: edge weight subtracted
+```
+
+The takeaway: **skills aren't called like functions** — they're activated by similarity + rule match, then loaded into context, then their lessons either reinforce or decay the agent↔skill edge that picked them.
+
+### Skill clusters — synaptic families
+
+Skills don't live alone. They cluster into functional families that share vocabulary, fire together, and reinforce each other in the connectome. The pattern is visible in the names:
+
+| Cluster | Skills | What it does |
+|---------|--------|--------------|
+| `querymaster-*` | `querymaster`, `querymaster-postgresql`, `querymaster-snowflake`, `querymaster-adx`, `querymaster-sqlserver`, `querymaster-sqlite`, `querymaster-databricks` | Multi-engine SQL/KQL runtime — load master skill + engine-specific |
+| `sdd-*` | `sdd-feature`, `sdd-plan`, `sdd-implement`, `sdd-review`, `sdd-archive`, `sdd-refine`, `sdd-yolo`, `sdd-init` | Spec-Driven Development pipeline — phased implementation |
+| `gsap-*` | `gsap-core`, `gsap-timeline`, `gsap-plugins`, `gsap-scrolltrigger`, `gsap-frameworks`, `gsap-performance`, `gsap-utils` | GSAP animation library reference cluster |
+| `querymaster operators` (SQL idioms) | `idempotent-sql-design`, `atomic-3phase-ddl-scripts`, `index-creation-concurrently`, `range-partitioning-growth-tables`, `pg-cron-scheduled-maintenance`, `autovacuum-bloat-management`, `connection-pooling-timeout-safety`, `fillfactor-storage-tuning`, ~20 more | PostgreSQL-specific patterns — fire as a family with querymaster-postgresql |
+| `tier-A reflexes` (recently elevated) | `workspace-skill-discovery`, `session-memory-search`, `progressive-code-exploration`, `token-efficient-prompting`, `post-check-verification`, `dry-run-gate-pattern` | Universal hygiene — fire reflexively on every non-trivial task ([[reflexes]]) |
+| `claude-* / openai-* / api-* clients` | `claude-api`, `openai-docs`, `chatgpt-apps`, `ccxt-python` | Direct API-layer skills |
+| `document-quality` | `peer-review-lifecycle`, `no-history-in-docs`, `cross-reference-integrity`, `unicode-symbol-compatibility`, `voice-and-cadence-consistency`, `source-citation-tagging`, ~5 more | Technical writing discipline |
+
+Clusters emerge bottom-up. No one designs them. They form because the operator keeps writing related skills, and the connectome's community detection (Leiden algorithm) groups them automatically. Visible in `python3 ~/.claude/scripts/query_connectome.py communities`.
+
+### God synapses — the hub skills
+
+Some skills are wired to almost everything. The connectome calls them **god nodes**: high-degree skills that show up as a "top skill" connection for dozens of agents. They're the framework's load-bearing connectors.
+
+Run `python3 ~/.claude/scripts/query_connectome.py gods 15` to see the current ranking. Typical chart-toppers:
+
+- `workspace-skill-discovery` — connects every session to its arm-local skills
+- `progressive-code-exploration` — connects every code-reading task to a token-efficient strategy
+- `4d-spec` — connects every implementation task to the orchestrator
+- `querymaster` — connects every DB engagement to the multi-engine runtime
+- `agent-browser` — connects every web-inspection task to the visual debugger
+
+A god node failing is a network-wide event. A normal skill failing is a local one.
+
+### Synapse lifecycle — birth, reinforcement, decay
+
+| Stage | What happens | Mechanism |
+|-------|--------------|-----------|
+| **Birth** | A pattern appears 3+ times in an arm, or the operator promotes a one-off solution. New `SKILL.md` written. | Auto-Skill Creation Protocol (CLAUDE.md), or manual. |
+| **Indexing** | `generate_neural_map.py` runs on `ai-push`; the new skill's TF-IDF vector and community membership are computed. | On every `ai-push` |
+| **First fire** | An arm task triggers it via Q1 (semantic) or Q3 (rule match). Edge weight 0.0 → small positive. | Q1 / Q3 of 2D Delegate |
+| **Reinforcement** | Subsequent co-firings with the same agent on successful tasks boost the edge weight exponentially. | Hebbian — `company/neural_activity.json` |
+| **Decay** | If the edge isn't fired again, the boost decays with a ~69-day half-life. | Same — applied on every regeneration |
+| **Failure penalty** | If a task using the skill fails 3D Diligent, the edge weight is subtracted. | Same |
+| **Pruning** | A skill that decays to zero AND isn't fired by any arm for >180 days is a candidate for removal — surfaced by the connectome's stats, not auto-deleted. | Manual operator review |
+| **Rebirth** | A pruned skill can be brought back from git history if the pattern re-emerges. Synapses, like real ones, leave traces. | `git show <commit>:skills/<name>/SKILL.md` |
+
+The lifecycle has a software-convenient shortcut the biology doesn't have: **the entire connectome rebuilds on every `ai-push`.** Real synapses gradually remodel. Ours regenerate from scratch from the skill content. That's a deliberate departure from the biology — we use the rebuild for index freshness, not as a claim about brain biology.
+
+### Where to actually look at synapses
+
+```bash
+ls ~/.claude/skills/                                          # All 153 by name
+~/.claude/scripts/query_connectome.py query "<task>"          # Which synapses fire for this task
+~/.claude/scripts/query_connectome.py gods 15                 # Top hub synapses
+~/.claude/scripts/query_connectome.py communities             # Skill clusters
+cat ~/.claude/skills/<name>/SKILL.md                          # The synapse itself (description + body)
+```
+
+---
+
+## Memory — Hippocampus and the Working Set
+
+A brain that can't remember is a brain that can't learn. The framework has **two memory systems** that map to two biological memory types, plus a constitutional layer above both.
+
+```
+                ┌────────────────────────────────────────────────────┐
+                │  Constitutional memory (always loaded, hard-coded) │
+                │     ~/.claude/CLAUDE.md                            │
+                │     The 4D Paradigm, octopus rules, Tier A reflexes│
+                └─────────────────────┬──────────────────────────────┘
+                                      │
+              ┌───────────────────────┴────────────────────────────┐
+              ▼                                                    ▼
+   ┌─────────────────────────────┐              ┌──────────────────────────────┐
+   │  Episodic / declarative     │              │  Working memory              │
+   │  (hippocampus-like)         │              │  (frontal cortex-like)       │
+   │                             │              │                              │
+   │  ~/.claude/projects/        │              │  The current session         │
+   │     <sanitized-cwd>/memory/ │              │  context window              │
+   │                             │              │                              │
+   │  Persists across sessions   │              │  Lives only in this session  │
+   │  Operator preferences,      │              │  Files read, tools called,   │
+   │  project state, feedback    │              │  current task                │
+   │  Per-machine (gitignored)   │              │  Cleared on /clear           │
+   └─────────────────────────────┘              └──────────────────────────────┘
+```
+
+### Why two systems
+
+| Need | Wrong fit | Right fit |
+|------|-----------|-----------|
+| "Remember that the user prefers terse answers" | Working memory — would be forgotten next session | Episodic — `MEMORY.md` entry |
+| "Remember that yesterday we decided to use Coolify over Heroku" | Working memory — gone | Episodic — saved as project memory |
+| "Hold the file I just read so I can compare with this other one" | Episodic — would clog with transient data | Working memory — context window |
+| "The 4D Paradigm" | Either — would be re-derived/re-learned each session | Constitutional — `CLAUDE.md` |
+
+The split mirrors how brains actually work: the hippocampus consolidates short-term experience into long-term memory, the cortex holds the immediate workspace, and the spinal cord runs the reflexes that don't need either. Mixing them creates either bloated sessions (everything in context) or amnesiac agents (nothing persists).
+
+### What goes where
+
+| Type | Location | Examples |
+|------|----------|----------|
+| User identity / preferences | `MEMORY.md` → `user_*.md` files | "operator is a data engineer", "prefers terse replies" |
+| Feedback / behavior corrections | `MEMORY.md` → `feedback_*.md` | "always use dry-run for destructive ops" |
+| Project context | `MEMORY.md` → `project_*.md` | "the auth rewrite is gated by legal Q3 compliance" |
+| External system pointers | `MEMORY.md` → `reference_*.md` | "incident dashboard is at grafana.internal/d/api-latency" |
+
+The index `MEMORY.md` is loaded automatically into every session. Individual memory files are loaded on demand when the agent decides they're relevant.
+
+### Why memory is per-machine (gitignored)
+
+The brain repo is open-source. The memory is not. Memory entries contain absolute paths (`/home/<operator>/...`), specific arm/client context, session traces — all of which would leak through the public git history. The rule in `~/.claude/.gitignore`:
+
+```
+projects/    # Per-machine episodic memory; never pushed to the public brain
+```
+
+Cross-machine sync is **deliberately the operator's manual decision**. The Octopus principle: brain stays generic, memory stays sovereign.
+
+### Forgetting and consolidation
+
+| Mechanism | What it does | When |
+|-----------|--------------|------|
+| Hebbian decay (connectome) | Agent↔skill edges weaken if not fired | Continuous, half-life ~69 days |
+| Session compaction | Context window gets summarized | Automatic when nearing token limit |
+| `auto-dream` | Background memory consolidation (if enabled) | Configurable in settings.json |
+| Manual `/clear` | Working memory wiped, episodic untouched | Operator decision |
+| Memory pruning | Operator removes stale entries when wrong/outdated | Manual review |
+
+Real brains forget actively. So does this one — by design, and with the operator in the loop for the irreversible parts.
+
+---
+
+## Reflexes — The Spinal Cord Layer
+
+Not every behavior needs to go through the cortex. Some are too universal, too fast, too necessary to delegate. The spinal cord handles them: hand pulled from a hot surface, knee jerk, breathing rhythm. No conscious decision, no committee.
+
+The framework has the same layer — six **Tier A reflexes** that fire automatically on every non-trivial task, without the agent having to decide:
+
+| Reflex | Stimulus | Response |
+|--------|----------|----------|
+| `workspace-skill-discovery` | Session starts in an arm | Load arm-local `.claude/skills/` alongside global skills |
+| `session-memory-search` | About to re-solve a problem | Check git log + grep + Lessons Learned — did we do this before? |
+| `progressive-code-exploration` | About to read a file >100 lines | Default to index-first, fetch-on-demand — 4–8x token savings |
+| `token-efficient-prompting` | Drafting any response | Compact tables, no preamble, no filler |
+| `post-check-verification` | About to declare "done" | Never on a write — always on a verify (build/lint/test/grep) |
+| `dry-run-gate-pattern` | About to do something destructive | Preview/dry-run first; live execution requires explicit opt-in |
+
+### Why these are in CLAUDE.md, not in skills/
+
+A reflex isn't a skill the agent decides to load. It's a constraint the agent operates under from the moment a session starts. Putting them in CLAUDE.md (constitutional memory) means they're loaded before any task arrives — like the spinal cord being wired before you have a thought.
+
+Putting them in `skills/` would make them opt-in, which defeats the point. The 4D Paradigm itself works the same way: it's not a skill, it's a constitutional reflex that fires on every task.
+
+### Reflex vs Skill — the structural difference
+
+| Property | Reflex (Tier A) | Skill (synapse) |
+|----------|-----------------|-----------------|
+| Loaded | At session start, unconditionally | On demand via Q1/Q3 match |
+| Trigger | Stimulus (file open, response draft, destructive op) | Task description + connectome match |
+| Storage | `CLAUDE.md` body, not a SKILL.md | `skills/<name>/SKILL.md` |
+| Decision required | None — fires automatically | Connectome + delegate-check decide |
+| Override | `--no-verify`, explicit "skip", or session-mode override | Don't load the skill |
+| Number | 6 (Tier A) | 147 (all others) |
+
+The reflex layer is the thinnest, but it's load-bearing. Six rules at the top of CLAUDE.md govern thousands of decisions downstream.
+
+---
+
 ## Enforcement Scripts
 
 These are not optional helpers. They are the nervous system's enforcement layer — scripts that the agent runs at specific gates to ensure the 4D protocol is followed.
@@ -755,9 +975,13 @@ sync-ai-docs my-client  # Sync one arm
 
 ---
 
-## Multi-Machine Sync
+## Multi-Machine Sync — The Glial Layer
 
-The brain is a git repo. Sync it across machines so every workstation has the same agents, skills, and rules.
+In real brains, glial cells outnumber neurons roughly 1:1 and do the unsexy work: shuttling nutrients, insulating axons, cleaning up waste, keeping the neurons alive. They don't fire signals themselves — they make signal-firing possible.
+
+The framework's glial layer is the sync + hooks infrastructure: `ai-push`, `ai-pull`, `sync-ai-docs`, `install-git-hooks.sh`, `merge-hooks.py`, `check-generic.py`, `check-readme-sync.sh`. None of these are agents. None are skills. They don't show up in the connectome. But every agent and skill depends on them being alive: distributing the brain to all workstations, enforcing the generic-leak guard, keeping arm CLAUDE.mds in sync.
+
+The brain is a git repo. The glia are what make it portable.
 
 ```bash
 # Push brain changes (primary machine)
