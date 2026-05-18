@@ -6,12 +6,14 @@ name: Octorato Traffic Watch
 # is detected. Commits the fresh snapshot back so the comparison window
 # is always rolling.
 #
-# Required PERMISSIONS:
-#   contents: write   — commit the updated traffic_history.json
-#   issues:   write   — open the spike-alert issue
-#
-# The default GITHUB_TOKEN has Traffic API access because the workflow
-# lives inside the watched repo itself (same scope = no PAT needed).
+# Required SECRETS:
+#   OCTORATO_PAT — Fine-grained PAT scoped to CarlosCaPe/octorato with
+#                  - Administration: Read    (REQUIRED for /traffic/* endpoints)
+#                  - Contents:       Read+Write  (commit traffic_history.json)
+#                  - Issues:         Read+Write  (open spike-alert issues)
+#                The default GITHUB_TOKEN cannot reach the Traffic API
+#                because it has no Administration scope — only a PAT can
+#                grant it. Rotate every ~90 days.
 
 on:
   schedule:
@@ -41,6 +43,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # PAT instead of GITHUB_TOKEN so the eventual `git push` of the
+          # snapshot file uses credentials with write access (the PAT) and
+          # so the python step inherits the same auth for the Traffic API.
+          token: ${{ secrets.OCTORATO_PAT }}
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -49,11 +56,15 @@ jobs:
 
       - name: Run traffic check
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.OCTORATO_PAT }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           FORCE_ALERT: ${{ github.event.inputs.force_alert }}
         run: |
           set -euo pipefail
+          if [ -z "${GITHUB_TOKEN:-}" ]; then
+            echo "::error::OCTORATO_PAT secret not set — see .github/workflows/traffic-watch.yml header for required scopes"
+            exit 2
+          fi
           python3 scripts/check_traffic.py
 
       - name: Commit updated history if changed
