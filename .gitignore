@@ -9,6 +9,11 @@
 # IDE transient files
 ide/
 
+# Daily worker outputs and operator-specific configs (per-machine, regenerated)
+config/social-video-digest.json
+state/
+digests/
+
 # Cache and backups
 cache/
 backups/
