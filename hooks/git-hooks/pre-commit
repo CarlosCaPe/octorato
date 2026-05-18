@@ -25,3 +25,11 @@ fi
 # stage, so we only scan staged files here. The commit-msg hook (separate) scans
 # the message. ai-push scans both before either hook fires.
 python3 "$CHECKER" --staged-only --quiet
+
+# README-sync check: warns + prompts if skills/agents/scripts changed but
+# README.md wasn't staged. Soft block — answers y to bypass. Won't break
+# automated commits (falls through if no TTY available).
+README_SYNC="$CLAUDE_DIR/scripts/check-readme-sync.sh"
+if [[ -x "$README_SYNC" ]]; then
+    "$README_SYNC"
+fi

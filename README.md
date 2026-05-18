@@ -6,7 +6,7 @@ An open-source AI agent operating system where a single human operator directs a
 
 With nothing but natural language, you can direct a team of AI specialists to build and ship software.
 
-**Live framework**: 153 skills, 167 agent personas, 13 divisions, 6 enforcement scripts, multi-machine sync, and a neural connectome that learns over time.
+**Live framework**: 153 skills, 167 agent personas, 13 divisions, 8 enforcement scripts, multi-machine sync, and a neural connectome that learns over time.
 
 ```
 https://github.com/CarlosCaPe/octorato
@@ -665,6 +665,8 @@ These are not optional helpers. They are the nervous system's enforcement layer 
 | `generate_neural_map.py` | On every `ai-push` | Rebuilds the full connectome from all agent/skill content |
 | `merge-hooks.py` | On every `ai-pull` | Syncs shared hooks into local settings, validates script targets exist |
 | `eye-check.py` | On every user prompt | Detects web-related tasks, injects browser automation context |
+| `check-generic.py` | Every git commit (pre-commit + commit-msg hooks) | Scans staged files + commit message against `company/brain-blocklist.txt`; hard-blocks commits that leak arm codes, client names, or internal tokens |
+| `check-readme-sync.sh` | Every git commit (pre-commit hook) | Soft-blocks (prompts y/N) when `skills/`, `agents/`, or `scripts/` change but `README.md` is not also staged. Won't break automation (passes through when no TTY) |
 
 ---
 
@@ -875,3 +877,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for how to:
 ---
 
 *Created by [dataqbs](https://dataqbs.com) — Data Quality & Business Solutions*
+
