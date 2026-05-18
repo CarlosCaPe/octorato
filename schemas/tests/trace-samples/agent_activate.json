@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "1.0",
+  "ts": "2026-05-18T21:43:02.118Z",
+  "event": "agent_activate",
+  "name": "database-optimizer",
+  "task_id": "a3f2b1c4d5e6f7081234567890abcdef12345678",
+  "arm": null,
+  "duration_ms": 8430,
+  "tokens": { "input": 2104, "output": 760 },
+  "status": "ok",
+  "error": null
+}

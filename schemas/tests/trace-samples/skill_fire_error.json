@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "1.0",
+  "ts": "2026-05-18T21:45:30.872Z",
+  "event": "skill_fire",
+  "name": "agent-browser",
+  "task_id": "9bd1c5b2e7f3a8b0987654321fedcba987654321",
+  "arm": "example-arm",
+  "duration_ms": 31204,
+  "tokens": { "input": 8741, "output": 0 },
+  "status": "error",
+  "error": "Upstream WAF rate-limited (429) during burst snapshot loop — page navigation count exceeded threshold."
+}

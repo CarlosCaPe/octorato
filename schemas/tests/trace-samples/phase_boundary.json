@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "1.0",
+  "ts": "2026-05-18T21:42:11.020Z",
+  "event": "phase_boundary",
+  "name": "describe",
+  "task_id": "a3f2b1c4d5e6f7081234567890abcdef12345678",
+  "arm": null,
+  "duration_ms": null,
+  "tokens": null,
+  "status": "ok",
+  "error": null
+}

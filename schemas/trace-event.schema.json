@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://octorato/schemas/trace-event-v1.json",
+  "title": "Brain Trace Event",
+  "description": "One JSONL line written by the brain's capture hooks. Phase A of the Datadog-inspired observability ports (Port 1 — Agent Trace). Three event classes are captured: skill_fire, agent_activate, phase_boundary. Strict additionalProperties to catch typos; schema evolution happens via v1 → v2 (new $id path).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "ts", "event", "name", "task_id", "status"],
+  "properties": {
+    "schemaVersion": {
+      "description": "Frozen at write-time so a future schema can identify record vintage.",
+      "type": "string",
+      "const": "1.0"
+    },
+    "ts": {
+      "description": "ISO 8601 UTC timestamp with millisecond precision, e.g. 2026-05-18T21:42:13.501Z.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "event": {
+      "description": "Event class. Determines which optional fields are meaningful.",
+      "type": "string",
+      "enum": ["skill_fire", "agent_activate", "phase_boundary"]
+    },
+    "name": {
+      "description": "For skill_fire: skill slug (e.g. 'querymaster'). For agent_activate: agent slug. For phase_boundary: one of the 4D phases.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "task_id": {
+      "description": "Stable id grouping all events of a single user task. For human-driven turns: sha1 of first user message. For autonomous turns (loop, cron, session_start with no prompt): ad-hoc UUID v4. Always a string; never null.",
+      "type": "string",
+      "minLength": 32,
+      "maxLength": 40
+    },
+    "arm": {
+      "description": "Arm slug if the event was triggered inside an arm working dir; null for brain-internal events. Arm isolation rule still applies: this is a counter signal only, the arm's own data is never written into the brain trace.",
+      "type": ["string", "null"]
+    },
+    "duration_ms": {
+      "description": "Wall-clock duration in milliseconds. Populated on agent_activate completion and on phase_boundary close events; null for fire-and-forget events.",
+      "type": ["integer", "null"],
+      "minimum": 0
+    },
+    "tokens": {
+      "description": "Token usage observed during the event, when available. null when unknown (e.g. local hooks with no LLM call).",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["input", "output"],
+          "properties": {
+            "input": { "type": "integer", "minimum": 0 },
+            "output": { "type": "integer", "minimum": 0 }
+          }
+        }
+      ]
+    },
+    "status": {
+      "description": "Outcome class. ok = clean completion. error = failed and an `error` string is required. partial = completed with degraded result (e.g. retry succeeded after transient failure).",
+      "type": "string",
+      "enum": ["ok", "error", "partial"]
+    },
+    "error": {
+      "description": "Brief error message when status=error; null otherwise. Keep <500 chars; full stack traces belong in arm logs, not the brain trace.",
+      "type": ["string", "null"],
+      "maxLength": 500
+    }
+  },
+  "allOf": [
+    {
+      "description": "When status=error, the error field must be a non-empty string.",
+      "if": { "properties": { "status": { "const": "error" } } },
+      "then": { "properties": { "error": { "type": "string", "minLength": 1 } }, "required": ["error"] }
+    },
+    {
+      "description": "phase_boundary.name is restricted to the 4D phase vocabulary.",
+      "if": { "properties": { "event": { "const": "phase_boundary" } } },
+      "then": {
+        "properties": {
+          "name": {
+            "enum": ["describe", "delegate", "gate", "execute", "diligent", "disclose"]
+          }
+        }
+      }
+    }
+  ]
+}
