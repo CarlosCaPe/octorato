@@ -6,7 +6,7 @@ An open-source AI agent operating system where a single human operator directs a
 
 With nothing but natural language, you can direct a team of AI specialists to build and ship software.
 
-**Live framework**: 142 skills, 167 agent personas, 13 divisions, 6 enforcement scripts, multi-machine sync, and a neural connectome that learns over time.
+**Live framework**: 153 skills, 167 agent personas, 13 divisions, 6 enforcement scripts, multi-machine sync, and a neural connectome that learns over time.
 
 ```
 https://github.com/CarlosCaPe/octorato
@@ -44,10 +44,10 @@ The central brain sets high-level intent. The arms execute with local intelligen
 
 | Octopus Biology | Framework Architecture | What It Does |
 |----------------|----------------------|-------------|
-| Central brain | `~/.claude/` (this repo) | Shared rules, paradigms, 167 agent personas, 142 skills |
+| Central brain | `~/.claude/` (this repo) | Shared rules, paradigms, 167 agent personas, 153 skills |
 | Arms | Client project repos | Isolated workspaces — each client is a sealed arm |
 | Neurons | Agent personas | 167 specialist processors across 13 divisions |
-| Synapses | Skills | 142 reusable techniques that connect agents to capabilities |
+| Synapses | Skills | 153 reusable techniques that connect agents to capabilities |
 | Chemoreceptors (suckers) | `query_connectome.py` | TF-IDF cosine similarity against the indexed agent/skill corpus — a sparse lexical retriever, not multimodal chemoreception |
 | Afferent/efferent signal cycle | 4D Paradigm | Sense → plan → act → evaluate, with feedback — every signal follows 4 phases |
 | Co-activation reinforcement (inspired by Hebb's principle) | Hebbian-style learning | Edge weights between agent/skill pairs are boosted when they co-fire on a successful task; stale boosts decay exponentially (half-life ~69 days) and failures subtract. **Not LTP** — there is no NMDA-style coincidence detector, no synaptic protein synthesis. Closest ML analog: bandit reward priors over a static graph. |
@@ -114,7 +114,7 @@ The framework uses an object-oriented inheritance model:
 │     - The Octopus Architecture (brain/arm isolation)         │
 │     - The connectome engine (TF-IDF, cosine similarity)      │
 │     - 167 generic agent personas                              │
-│     - 142 generic skills (techniques, not client workflows)  │
+│     - 153 generic skills (techniques, not client workflows)  │
 │     - Enforcement scripts (delegate-check, gate-check, etc.) │
 │     - Templates for creating your own company brain + arms   │
 │                                                              │
@@ -297,7 +297,7 @@ The archived specs become institutional memory — future tasks reference past d
                         ┌────────▼────────┐
                         │   BRAIN         │
                         │  ~/.claude/     │
-                        │  142 Skills     │
+                        │  153 Skills     │
                         │  167 Agents     │
                         │  N Client Arms  │
                         └────────┬────────┘
@@ -342,7 +342,7 @@ Inspired by octopus neurobiology: 500M neurons, 2/3 distributed in arms, extensi
 ```
   D1 (WHO)     D2 (HOW)     D3 (WHERE)    D4 (WHEN)
   ────────     ────────     ─────────     ─────────
-  167          142          N             4
+  167          153          N             4
   Neurons      Synapses     Regions       Phases
   (Agents)     (Skills)     (Arms)        (4D Paradigm)
 ```
@@ -422,7 +422,7 @@ graph TB
     classDef div fill:#21262D,stroke:#30363D,stroke-width:1px,color:#C9D1D9,font-size:12px
 
     CEO["Human Operator"]:::ceo
-    BRAIN["BRAIN — 142 Skills · 167 Agents · N Arms"]:::brain
+    BRAIN["BRAIN — 153 Skills · 167 Agents · N Arms"]:::brain
     CEO --> BRAIN
 
     BRAIN --> ENG["Engineering — 28"]:::div
@@ -798,7 +798,7 @@ ai-pull --status
 │   ├── paid-media/          ← 7 agents
 │   ├── strategy/            ← NEXUS orchestration playbooks and runbooks
 │   └── examples/            ← Multi-agent workflow examples
-├── skills/                  ← 142 reusable techniques
+├── skills/                  ← 153 reusable techniques
 ├── scripts/
 │   ├── generate_neural_map.py  ← Connectome generator (TF-IDF + cosine + Hebbian)
 │   ├── query_connectome.py     ← Suction cups — graph search for agent/skill matching
