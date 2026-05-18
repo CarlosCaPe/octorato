@@ -455,6 +455,13 @@ Q2 (API-first) is a mental check, no script — evaluate before scraping.
 - **Installation preference order**: `pipx` > `pip install --user` > `npm install -g` > `apt install` (needs sudo — ask first) > build from source.
 
 ## Skill-First Behavior
+- **Universal reflexes (MANDATORY at session start)** — these skills represent baseline hygiene and should fire reflexively in every arm, on every non-trivial task. Internalize them as defaults; don't wait for explicit triggers:
+  - `workspace-skill-discovery` → discover arm-level skills under `.claude/skills/` so they're loaded alongside global skills (project-level skills are easy to miss otherwise).
+  - `session-memory-search` → before re-solving a problem, check "did we already solve this in another session?" Cheap via git log + grep + Lessons Learned, expensive to skip.
+  - `progressive-code-exploration` → for files >100 lines, prefer index-first / fetch-on-demand over reading the whole file. 4-8x token reduction.
+  - `token-efficient-prompting` → meta-prompt discipline — compact tables, no preamble, no filler. The cheaper the response, the longer the session survives.
+  - `post-check-verification` → enforces 3D Diligent — never declare "done" on a write; always declare it on a verify (build/lint/test/grep evidence).
+  - `dry-run-gate-pattern` → for destructive or irreversible operations (mass deletes, force-pushes, mass renames, prod writes), default to preview/dry-run first; live execution requires explicit opt-in.
 - **Web inspection (MANDATORY)** — whenever the task involves checking, testing, screenshotting, QA, or visually verifying a website or web app, **always** use `agent-browser` (not curl, not Playwright). Load `~/.claude/skills/agent-browser/SKILL.md`. Core loop: `open URL → snapshot -i → act on @eN → re-snapshot`. Never say "I can't see the page" — you CAN, via agent-browser. Never use `curl` to verify visual appearance — curl has no eyes. A `UserPromptSubmit` hook (`eye-check.py`) will remind you, but do not depend on it — internalize this rule.
 - **Chat replies (MANDATORY)** — if your company brain defines a voice skill (`company/skills/voice/` or equivalent), load it before drafting any chat message sent as the operator (Teams, Slack, DMs). The operator's natural voice differs from AI-polished output. This rule does NOT apply to formal docs, meeting summaries, vendor emails — those keep formal register.
 - **Image requests** — whenever the user says "imagen", "mira la imagen", "foto", "screenshot", or references any image, **always** load and follow the `image-analyzer` skill. Never say "I can't see images."
