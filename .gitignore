@@ -161,3 +161,9 @@ paste-cache/
 
 # Port 4 Watchdog suppression + dedup state — machine-local
 watchdog/
+
+# Port 3 SLOs state — machine-local
+slos/
+slos.yaml
+slos.json
+SLO_REPORT.md
