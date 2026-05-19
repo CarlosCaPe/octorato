@@ -167,3 +167,6 @@ slos/
 slos.yaml
 slos.json
 SLO_REPORT.md
+
+# Port 6 incidents — private operational data, machine-local
+incidents/

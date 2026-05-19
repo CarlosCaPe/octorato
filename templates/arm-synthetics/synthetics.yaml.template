@@ -1,0 +1,22 @@
+# Brain Synthetics — per-arm health check config (Datadog Port 7).
+# Drop this into <arm>/synthetics.yaml, edit, commit. See
+# ~/.claude/skills/arm-synthetics/SKILL.md for the full schema.
+
+arm: REPLACE_WITH_ARM_SLUG       # short identifier for this arm; sourced into issue titles
+schedule: "0 */6 * * *"           # cron — default every 6 hours UTC
+
+probes:
+  - name: home-page
+    method: GET
+    url: https://example.com/
+    expect_status: 200
+    expect_regex: '<title>'        # optional — content sanity check
+    timeout_seconds: 30
+
+  # - name: api-health
+  #   method: GET
+  #   url: https://example.com/api/health
+  #   expect_status: 200
+  #   expect_json_path: '$.ok'     # optional — JSON path to evaluate
+  #   expect_json_value: true      # optional — required value at that path
+  #   timeout_seconds: 15

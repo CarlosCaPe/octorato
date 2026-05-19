@@ -1,0 +1,59 @@
+# Brain Synthetics — per-arm health-check workflow (Datadog Port 7).
+# Copy to <arm>/.github/workflows/arm-synthetics.yml and commit. The
+# cron schedule comes from <arm>/synthetics.yaml (passed via env).
+#
+# Failures open an issue ON THIS REPO (not the brain) — preserves
+# octopus arm isolation. The runner script is shared (lives in the
+# brain) so all arms get the same probe semantics without duplication.
+
+name: arm-synthetics
+
+on:
+  schedule:
+    # Override here if the yaml's `schedule:` field changes — GH Actions
+    # only reads the cron from this workflow file, not the yaml. Default
+    # every 6h matches the template.
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install PyYAML
+        run: pip install pyyaml --quiet
+
+      - name: Fetch runner script from brain
+        # The runner lives in the brain repo so all arms share the same code.
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/CarlosCaPe/octorato/master/scripts/arm-synthetics-runner.py \
+            -o /tmp/arm-synthetics-runner.py
+          test -s /tmp/arm-synthetics-runner.py
+
+      - name: Run probes
+        id: probe
+        run: |
+          python3 /tmp/arm-synthetics-runner.py --config ./synthetics.yaml --out /tmp/probe-result.json
+          cat /tmp/probe-result.json
+        continue-on-error: true
+
+      - name: Open issue on failure
+        if: steps.probe.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          FAILED=$(jq -r '.failed | join("\n")' /tmp/probe-result.json)
+          gh issue create \
+            --title "[arm-synthetics] Probe failure $(date -u +%Y-%m-%dT%H:%MZ)" \
+            --body "Failed probes:\n\n$FAILED\n\nSee workflow run for details." \
+            --label arm-synthetic-failure
