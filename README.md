@@ -873,6 +873,81 @@ The reflex layer is the thinnest, but it's load-bearing. Six rules at the top of
 
 ---
 
+## Observability — The Sensory Cortex
+
+The brain doesn't just *act* — it *observes itself acting*. A Datadog-inspired observability layer captures every skill activation, every subagent spawn, and every 4D phase boundary as structured JSONL events. Over time, this turns into a high-signal map of how the operator actually works, which feeds back into the Hebbian connectome.
+
+### The Trace Pipeline
+
+```
+Skill fires / Agent spawns / Write|Edit / Stop
+        │
+        ▼
+trace-hook.py  (PostToolUse + UserPromptSubmit + Stop hooks)
+        │
+        ▼
+~/.claude/traces/YYYY-MM-DD.jsonl  (append-only, UTC-day rotated, gitignored)
+        │
+        ├─→ trace.py grep | top | tail  (read-only inspector for the operator)
+        └─→ update_neural_activity.py   (Hebbian co-activation update → connectome)
+```
+
+### What gets captured
+
+| Event class | Triggered by | Records contain |
+|-------------|-------------|----------------|
+| `skill_fire` | PostToolUse on the Skill tool | skill name, status, error, optional token usage |
+| `agent_activate` | PostToolUse on the Agent tool | subagent_type, status, error, optional tokens |
+| `phase_boundary` | UserPromptSubmit / PreToolUse Write\|Edit / PostToolUse Write\|Edit / Stop | one of the 6 4D phases: `describe`, `delegate`, `gate`, `execute`, `diligent`, `disclose` |
+
+All three classes share a strict schema (`schemas/trace-event.schema.json`) with `task_id` (SHA-1 of session_id, 40 chars), `ts` (ISO 8601 UTC ms), `arm` (auto-derived from CWD when inside a client repo), `status`, and `error`. POSIX `O_APPEND` keeps appends atomic without locking.
+
+### Storage and privacy
+
+- One JSONL file per UTC day under `~/.claude/traces/`. **Gitignored** — traces never reach the public brain repo.
+- 30-day retention by default (operator-pruned).
+- Opt-in cross-machine backup via `TRACE_BACKUP_REPO` env var pointing at a private repo.
+- See `docs/trace-storage.md` for the full layout contract.
+
+### The CLI
+
+```bash
+trace.py grep --event phase_boundary --since 1h        # filter by event/name/status/window
+trace.py top  --by name --window 7d                    # group + count, top N
+trace.py tail -n 20 -f                                 # last N records, optional follow
+trace.py grep --event agent_activate --json | jq .     # pipe-friendly raw JSONL
+```
+
+Time windows accept `30m / 6h / 7d / 2w` or strict ISO 8601 UTC.
+
+### Hebbian update
+
+`update_neural_activity.py` reads the trace, groups by `task_id`, and increments the co-activation matrix in `company/neural_activity.json` for every observed `agent::skill` pair. Before incrementing, it applies a `0.5 ^ (days_since_last_run / 69)` decay across all existing weights — the same biological half-life the connectome uses elsewhere. A `traces_last_processed_ts` watermark in the metadata makes re-runs idempotent.
+
+```bash
+python3 ~/.claude/scripts/update_neural_activity.py --since 7d   # weekly cron-suitable
+python3 ~/.claude/scripts/update_neural_activity.py --dry-run    # preview without writing
+```
+
+### Roadmap — 7 more Datadog ports
+
+Port 1 (Agent Trace) is shipped. Seven more ports are specified in `feature-datadog-port.md` and sequenced in `plan-datadog-port.md`:
+
+| Port | Datadog analog | Brain version |
+|------|---------------|---------------|
+| 1 | APM | Agent Trace ✓ |
+| 2 | Continuous Profiler | Skill Cost Profiler (token-cost per skill) |
+| 3 | SLOs + Error Budget | Brain SLOs (auto-baselined from Watchdog) |
+| 4 | Watchdog | Statistical anomaly detection over the trace |
+| 5 | Dashboards | Brain Digest (daily markdown report) |
+| 6 | Incident Management | Per-arm post-mortem template + storage |
+| 7 | Synthetics | Per-arm health-check templates |
+| 8 | Notebooks / Bits AI | Brain Charts on Demand (ASCII + SVG renderers) |
+
+Each port is independently shippable; the trace from Port 1 is the substrate the analytics ports (2-4) read from.
+
+---
+
 ## Enforcement Scripts
 
 These are not optional helpers. They are the nervous system's enforcement layer — scripts that the agent runs at specific gates to ensure the 4D protocol is followed.
@@ -1026,16 +1101,25 @@ ai-pull --status
 │   └── examples/            ← Multi-agent workflow examples
 ├── skills/                  ← 153 reusable techniques
 ├── scripts/
-│   ├── generate_neural_map.py  ← Connectome generator (TF-IDF + cosine + Hebbian)
-│   ├── query_connectome.py     ← Suction cups — graph search for agent/skill matching
-│   ├── delegate-check          ← 2D pre-research gate
-│   ├── gate-check              ← 4D change gate enforcement
-│   ├── merge-hooks.py          ← Hook sync with script-exists validation
-│   ├── eye-check.py            ← Browser automation detector
-│   ├── scan-external-refs      ← Scan for external URL references
-│   ├── ai-push.ps1             ← PowerShell variant for Windows
-│   ├── ai-pull.ps1             ← PowerShell variant for Windows
-│   └── sync-ai-docs.ps1        ← PowerShell variant for Windows
+│   ├── generate_neural_map.py     ← Connectome generator (TF-IDF + cosine + Hebbian)
+│   ├── query_connectome.py        ← Suction cups — graph search for agent/skill matching
+│   ├── delegate-check             ← 2D pre-research gate
+│   ├── gate-check                 ← 4D change gate enforcement
+│   ├── merge-hooks.py             ← Hook sync with script-exists validation
+│   ├── eye-check.py               ← Browser automation detector
+│   ├── trace-hook.py              ← Observability capture hook (Datadog Port 1)
+│   ├── trace.py                   ← Observability query CLI (grep / top / tail)
+│   ├── update_neural_activity.py  ← Hebbian update from trace co-activations
+│   ├── scan-external-refs         ← Scan for external URL references
+│   ├── ai-push.ps1                ← PowerShell variant for Windows
+│   ├── ai-pull.ps1                ← PowerShell variant for Windows
+│   └── sync-ai-docs.ps1           ← PowerShell variant for Windows
+├── schemas/                  ← JSON schemas for structured artifacts
+│   ├── trace-event.schema.json ← Trace event contract (v1.0, strict)
+│   └── tests/trace-samples/    ← 4 validating sample records
+├── docs/                     ← Architecture + design docs
+│   └── trace-storage.md        ← Trace storage layout + retention + backup
+├── traces/                   ← (gitignored) Per-UTC-day JSONL trace files
 ├── commands/                ← Slash command definitions
 ├── templates/
 │   ├── company/             ← Template for your private company brain
