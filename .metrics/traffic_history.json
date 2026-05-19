@@ -25,5 +25,32 @@
       "count": 48,
       "uniques": 26
     }
+  },
+  {
+    "date": "2026-05-19",
+    "checked_at": "2026-05-19T16:58:31+00:00",
+    "today_clones": 0,
+    "today_unique_cloners": 0,
+    "today_views": 0,
+    "today_unique_viewers": 0,
+    "stars": 2,
+    "forks": 0,
+    "watchers": 0,
+    "stargazer_logins": [
+      "CarlosCaPe",
+      "Saltiola7"
+    ],
+    "fork_owners": [],
+    "top_referrer": {
+      "referrer": "facebook.com",
+      "count": 30,
+      "uniques": 12
+    },
+    "top_path": {
+      "path": "/CarlosCaPe/octorato",
+      "title": "Overview",
+      "count": 62,
+      "uniques": 34
+    }
   }
 ]
