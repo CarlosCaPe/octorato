@@ -196,9 +196,52 @@ If the publisher worker uploads images via Graph API by URL (most platforms), th
 - **Don't** write a UI for picking which N items to publish. Let fair rotation do its job. Adding curation here is where the project starts to scope-creep.
 - **Don't** mix prime/curated items and feed items in the same rotation pool by default. Use a `tier` column (low number = priority) so curated stuff floats to the top of the daily picks.
 
+## Tiered-rotation extension (multi-tenant marketplace variant)
+
+The base recipe above assumes one operator owns the catalog (real-estate
+broker, e-commerce store, restaurant chain). When the catalog is a
+**multi-tenant marketplace** where each tenant has its own items and pays
+for exposure tiers (FREE 1×/cycle, PRO N×/cycle), bolt on:
+
+1. **Two separate pools, not one.** Shared pool drowns FREE under PRO's
+   higher quota. Build `cycle.freePool` and `cycle.proPool` independently.
+2. **Tier-aware interleave** — e.g. 3 PRO : 1 FREE per posting slot.
+   Anchor with `interleaveCounter % 4 === 3 ? 'free' : 'pro'`. Persists
+   across cron firings inside `og:pub:cycle:current`.
+3. **Per-item quota tracking** — `cyclePostCount` on a per-item state
+   record. Free items drain after 1 post; PRO items drain after N. Once
+   drained, item moves to `cycle.consumed[]` until cycle restarts.
+4. **Cycle restart hybrid** — count-bounded primary (cycle ends when both
+   pools drained) + N-day safety ceiling (force restart if catalog grows
+   faster than cycle drains) + ISO-week label for human-readable tracking.
+5. **Eligibility gate is per-item, not per-tenant.** A PRO tenant with a
+   garbage-quality item should still see THAT item rejected (e.g.,
+   <1 photo, <40 char description). PRO buys EXPOSURE WEIGHT, not
+   bypass-quality.
+6. **Per-upload provenance gotcha** — uploads stored against draft item
+   slugs (e.g. `new-mngnuu1g`) get referenced from the final item record
+   by full URL (e.g. `/api/garage/image/<gid>/new-mngnuu1g/<file>`).
+   When mirroring photos to your downstream R2/CDN, **parse the URL** and
+   use ITS coordinates, not the final item's. Otherwise you fetch from
+   the wrong KV key and your "mediaIds=3" silently becomes a text-only
+   post (or worse, a 502 in the publisher).
+7. **Storage choice: KV-only when the catalog is already KV-native.** Don't
+   introduce a new D1 just to track publish state — it creates dual-source-
+   of-truth bugs on item delete and breaks arm-isolation if you reuse a
+   sister arm's D1. Extend the existing KV namespace with an `<feature>:pub:*`
+   prefix instead.
+
+### Calibration (multi-tenant variant)
+
+- ~5 PRO tenants × ~60 items × 3 = ~900 PRO slots per cycle
+- ~50 FREE tenants × ~20 items × 1 = ~1000 FREE slots per cycle
+- At 14-24 posts/day, full cycle = ~3-7 days
+- KV reads per bridge call: ~30-200 (cycle load + counts loop + chosen-item details)
+
 ## Related skills / patterns
 
 - `tos-safe-social-share-helper` — companion pattern when you ALSO want to fan-out posts to surfaces with no API (FB Groups, etc.)
+- `pages-function-checkpoint-debug` — when the bridge endpoint crashes with a generic 502, the checkpoint-array pattern bisects the failure in ~30 min
 - `idempotent-sql-design` — for the catalog UPSERT semantics
 - `dry-run-gate-pattern` — for safely testing the bridge before the cron goes live
 - Memory: `lesson-fb-pages-dual-id` — gotcha when wiring the bridge to a FB Page target
