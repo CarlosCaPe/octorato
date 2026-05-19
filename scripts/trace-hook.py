@@ -53,6 +53,20 @@ def _arm_from_cwd() -> str | None:
     return m.group(1) if m else None
 
 
+def _extract_tokens(tool_response: dict | None) -> dict | None:
+    # Pull `{input, output}` from tool_response.tokens if Claude Code exposes it.
+    # Returns None otherwise. Schema requires both keys to be ints when present.
+    if not isinstance(tool_response, dict):
+        return None
+    tokens = tool_response.get("tokens")
+    if isinstance(tokens, dict) and "input" in tokens and "output" in tokens:
+        try:
+            return {"input": int(tokens["input"]), "output": int(tokens["output"])}
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 def _build_skill_fire(payload: dict) -> dict | None:
     tool_input = payload.get("tool_input") or {}
     skill_name = tool_input.get("skill")
@@ -64,11 +78,32 @@ def _build_skill_fire(payload: dict) -> dict | None:
         "schemaVersion": "1.0",
         "ts": _now_iso(),
         "event": "skill_fire",
-        "name": str(skill_name),
+        "name": str(skill_name)[:200],
         "task_id": _task_id_from(payload.get("session_id") or ""),
         "arm": _arm_from_cwd(),
         "duration_ms": None,
-        "tokens": None,
+        "tokens": _extract_tokens(tool_response),
+        "status": "error" if error else "ok",
+        "error": str(error)[:500] if error else None,
+    }
+
+
+def _build_agent_activate(payload: dict) -> dict | None:
+    tool_input = payload.get("tool_input") or {}
+    name = (tool_input.get("subagent_type") or "general-purpose").strip()
+    if not name:
+        return None
+    tool_response = payload.get("tool_response") or {}
+    error = (tool_response or {}).get("error") if isinstance(tool_response, dict) else None
+    return {
+        "schemaVersion": "1.0",
+        "ts": _now_iso(),
+        "event": "agent_activate",
+        "name": str(name)[:200],
+        "task_id": _task_id_from(payload.get("session_id") or ""),
+        "arm": _arm_from_cwd(),
+        "duration_ms": None,
+        "tokens": _extract_tokens(tool_response),
         "status": "error" if error else "ok",
         "error": str(error)[:500] if error else None,
     }
@@ -89,10 +124,15 @@ def main() -> int:
         return 0  # Malformed stdin — never block the tool call.
 
     try:
-        if payload.get("tool_name") == "Skill":
+        tool = payload.get("tool_name")
+        if tool == "Skill":
             record = _build_skill_fire(payload)
-            if record is not None:
-                _append_record(record)
+        elif tool == "Agent":
+            record = _build_agent_activate(payload)
+        else:
+            record = None
+        if record is not None:
+            _append_record(record)
     except Exception:
         pass  # Best-effort. Trace failure must never affect the agent.
 
