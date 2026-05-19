@@ -109,6 +109,25 @@ def _build_agent_activate(payload: dict) -> dict | None:
     }
 
 
+def _build_phase_boundary(payload: dict, phase_name: str) -> dict:
+    # phase_name is one of the 6 4D phases; the schema enforces the enum.
+    return {
+        "schemaVersion": "1.0",
+        "ts": _now_iso(),
+        "event": "phase_boundary",
+        "name": phase_name,
+        "task_id": _task_id_from(payload.get("session_id") or ""),
+        "arm": _arm_from_cwd(),
+        "duration_ms": None,
+        "tokens": None,
+        "status": "ok",
+        "error": None,
+    }
+
+
+VALID_PHASES = ("describe", "delegate", "gate", "execute", "diligent", "disclose")
+
+
 def _append_record(record: dict) -> None:
     TRACES_DIR.mkdir(parents=True, exist_ok=True)
     line = json.dumps(record, ensure_ascii=False, separators=(",", ":"))
@@ -118,19 +137,31 @@ def _append_record(record: dict) -> None:
 
 
 def main() -> int:
+    # Optional --phase flag: when present, emit a phase_boundary record using
+    # the runtime event's session_id; ignore tool_name dispatch entirely. This
+    # is how UserPromptSubmit / PreToolUse(Write|Edit) / PostToolUse(Write|Edit)
+    # / Stop hooks call this script with different phases.
+    phase = None
+    args = sys.argv[1:]
+    if args and args[0] == "--phase" and len(args) >= 2 and args[1] in VALID_PHASES:
+        phase = args[1]
+
     try:
         payload = json.load(sys.stdin)
     except Exception:
         return 0  # Malformed stdin — never block the tool call.
 
     try:
-        tool = payload.get("tool_name")
-        if tool == "Skill":
-            record = _build_skill_fire(payload)
-        elif tool == "Agent":
-            record = _build_agent_activate(payload)
+        if phase is not None:
+            record = _build_phase_boundary(payload, phase)
         else:
-            record = None
+            tool = payload.get("tool_name")
+            if tool == "Skill":
+                record = _build_skill_fire(payload)
+            elif tool == "Agent":
+                record = _build_agent_activate(payload)
+            else:
+                record = None
         if record is not None:
             _append_record(record)
     except Exception:
