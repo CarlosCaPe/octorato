@@ -313,8 +313,8 @@ The `examples/` directory contains workflow examples — not individual agents.
 | 🔍 SEO Specialist | `cloudflare-deploy` |
 | 📣 Social Media Strategist | `llm-system-prompt-engineering` |
 | 🏛️ Software Architect | `aspnet-core`, `security-best-practices`, `security-threat-model` |
-| 🛡️ SRE | `cloudflare-deploy`, `pg-stat-statements-observability` |
-| 🚨 Incident Response Commander | `cloudflare-deploy` |
+| 🛡️ SRE | `cloudflare-deploy`, `pg-stat-statements-observability`, `arm-synthetics` |
+| 🚨 Incident Response Commander | `cloudflare-deploy`, `incident-capture` |
 | 🌿 Git Workflow Master | `yeet`, `gh-address-comments`, `gh-fix-ci` |
 | 📄 Document Generator | `doc`, `pdf`, `slides`, `spreadsheet` |
 | 🤖 AI Engineer | `llm-system-prompt-engineering`, `openai-docs`, `jupyter-notebook` |

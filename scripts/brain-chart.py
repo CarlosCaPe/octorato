@@ -30,14 +30,19 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import subprocess
 import sys
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-TRACES_DIR = Path.home() / ".claude" / "traces"
+from _brain_obs import (
+    TRACES_DIR,
+    iter_trace_records,
+    parse_record_ts,
+    parse_window as _parse_window_cutoff,
+)
+
 NEURAL_ACTIVITY = Path.home() / ".claude" / "company" / "neural_activity.json"
 SCRIPTS_DIR = Path.home() / ".claude" / "scripts"
 BRAIN_DIR = Path.home() / ".claude"
@@ -45,25 +50,17 @@ BRAIN_DIR = Path.home() / ".claude"
 # Unicode sparkline blocks — 8 levels.
 SPARK_BLOCKS = "▁▂▃▄▅▆▇█"
 
-_WINDOW_RE = re.compile(r"^(\d+)([mhdw])$")
-_WINDOW_SECONDS = {"m": 60, "h": 3600, "d": 86400, "w": 604800}
-
 
 def parse_window(s: str) -> timedelta:
-    m = _WINDOW_RE.match(s)
-    if not m:
-        raise argparse.ArgumentTypeError(
-            f"invalid window '{s}'. Use 30m / 6h / 7d / 2w."
-        )
-    n, suffix = int(m.group(1)), m.group(2)
-    return timedelta(seconds=n * _WINDOW_SECONDS[suffix])
+    # brain-chart adapters need a `timedelta` (window length) rather than a
+    # datetime cutoff. Translate via the shared parser, then subtract.
+    cutoff = _parse_window_cutoff(s)
+    if cutoff is None:
+        raise argparse.ArgumentTypeError(f"invalid window '{s}'.")
+    return datetime.now(timezone.utc) - cutoff
 
 
-def _parse_ts(ts: str) -> datetime | None:
-    try:
-        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
-    except (ValueError, AttributeError):
-        return None
+_parse_ts = parse_record_ts
 
 
 # ── ASCII sparkline ────────────────────────────────────
@@ -154,27 +151,7 @@ def adapter_trace(window: timedelta, group_by: str) -> tuple[str, list[tuple[str
     return title, c.most_common(20)
 
 
-def _iter_trace(since: datetime):
-    if not TRACES_DIR.exists():
-        return
-    cutoff = since.strftime("%Y-%m-%d")
-    for f in sorted(TRACES_DIR.glob("*.jsonl")):
-        if f.stem < cutoff:
-            continue
-        try:
-            for line in f.read_text(encoding="utf-8").splitlines():
-                if not line.strip():
-                    continue
-                try:
-                    rec = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                ts = _parse_ts(rec.get("ts", ""))
-                if ts is None or ts < since:
-                    continue
-                yield rec
-        except OSError:
-            continue
+_iter_trace = iter_trace_records  # alias to shared lib
 
 
 # ── Adapter: cost ──────────────────────────────────────

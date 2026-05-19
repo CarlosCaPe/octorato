@@ -31,9 +31,9 @@ import sys
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterator
 
-TRACES_DIR = Path.home() / ".claude" / "traces"
+from _brain_obs import iter_trace_records, parse_record_ts  # shared helpers
+
 CONFIG_YAML = Path.home() / ".claude" / "slos.yaml"
 CONFIG_JSON = Path.home() / ".claude" / "slos.json"
 REPORT_PATH = Path.home() / ".claude" / "SLO_REPORT.md"
@@ -75,37 +75,9 @@ def load_config() -> dict:
     return {}
 
 
-# ── Trace ingestion ────────────────────────────────────
-
-
-def _parse_ts(ts: str) -> datetime | None:
-    try:
-        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
-    except (ValueError, AttributeError):
-        return None
-
-
-def _iter_records(since: datetime) -> Iterator[dict]:
-    if not TRACES_DIR.exists():
-        return
-    cutoff_day = since.strftime("%Y-%m-%d")
-    for f in sorted(TRACES_DIR.glob("*.jsonl")):
-        if f.stem < cutoff_day:
-            continue
-        try:
-            for line in f.read_text(encoding="utf-8").splitlines():
-                if not line.strip():
-                    continue
-                try:
-                    rec = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                ts = _parse_ts(rec.get("ts", ""))
-                if ts is None or ts < since:
-                    continue
-                yield rec
-        except OSError:
-            continue
+# Trace ingestion + ts parsing — imported from _brain_obs.
+_parse_ts = parse_record_ts
+_iter_records = iter_trace_records
 
 
 # ── SLI computation ────────────────────────────────────

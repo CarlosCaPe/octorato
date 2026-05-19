@@ -888,7 +888,7 @@ trace-hook.py  (PostToolUse + UserPromptSubmit + Stop hooks)
         ▼
 ~/.claude/traces/YYYY-MM-DD.jsonl  (append-only, UTC-day rotated, gitignored)
         │
-        ├─→ trace.py grep | top | tail  (read-only inspector for the operator)
+        ├─→ brain-trace.py grep | top | tail  (read-only inspector for the operator)
         └─→ update_neural_activity.py   (Hebbian co-activation update → connectome)
 ```
 
@@ -912,10 +912,10 @@ All three classes share a strict schema (`schemas/trace-event.schema.json`) with
 ### The CLI
 
 ```bash
-trace.py grep --event phase_boundary --since 1h        # filter by event/name/status/window
-trace.py top  --by name --window 7d                    # group + count, top N
-trace.py tail -n 20 -f                                 # last N records, optional follow
-trace.py grep --event agent_activate --json | jq .     # pipe-friendly raw JSONL
+brain-trace.py grep --event phase_boundary --since 1h        # filter by event/name/status/window
+brain-trace.py top  --by name --window 7d                    # group + count, top N
+brain-trace.py tail -n 20 -f                                 # last N records, optional follow
+brain-trace.py grep --event agent_activate --json | jq .     # pipe-friendly raw JSONL
 ```
 
 Time windows accept `30m / 6h / 7d / 2w` or strict ISO 8601 UTC.
@@ -935,14 +935,16 @@ The full spec lives in `feature-datadog-port.md`; the build plan in `plan-datado
 
 | Port | Datadog analog | Brain version | Script / artifact |
 |------|---------------|---------------|---|
-| 1 | APM | Agent Trace ✓ | `scripts/trace-hook.py`, `scripts/trace.py`, `scripts/update_neural_activity.py` |
+| 1 | APM | Agent Trace ✓ | `scripts/trace-hook.py`, `scripts/brain-trace.py`, `scripts/update_neural_activity.py` |
 | 2 | Continuous Profiler | Skill Cost Profiler ✓ | `scripts/skill-cost-profiler.py` |
 | 3 | SLOs + Error Budget | Brain SLOs ✓ | `scripts/slos.py` |
 | 4 | Watchdog | Cliff + quality drop detector ✓ | `scripts/watchdog.py` |
 | 5 | Dashboards | Brain Digest ✓ | `scripts/brain-digest.py` |
 | 6 | Incident Management | Post-mortem capture ✓ | `skills/incident-capture/`, `scripts/incident-capture.py`, `commands/incident-capture.md` |
 | 7 | Synthetics | Per-arm health checks ✓ | `skills/arm-synthetics/`, `scripts/arm-synthetics-runner.py`, `templates/arm-synthetics/` |
-| 8 | Notebooks / Bits AI | Brain Charts on Demand ✓ | `scripts/chart.py` |
+| 8 | Notebooks / Bits AI | Brain Charts on Demand ✓ | `scripts/brain-chart.py` |
+
+All eight ports share a private library `scripts/_brain_obs.py` for trace iteration, window parsing, and the `--execute` dry-run pattern — keeps `~120 lines` from drifting across the 10 observability scripts.
 
 Each port is independently shippable; the trace from Port 1 is the substrate the analytics ports (2-4) and the visualisation ports (5, 8) read from. Ports 6 and 7 are independent of the rest.
 
@@ -1114,7 +1116,15 @@ ai-pull --status
 │   ├── merge-hooks.py             ← Hook sync with script-exists validation
 │   ├── eye-check.py               ← Browser automation detector
 │   ├── trace-hook.py              ← Observability capture hook (Datadog Port 1)
-│   ├── trace.py                   ← Observability query CLI (grep / top / tail)
+│   ├── brain-trace.py             ← Observability query CLI (grep / top / tail)
+│   ├── brain-chart.py             ← Observability charts on demand (ASCII / SVG)
+│   ├── brain-digest.py            ← Daily aggregator report
+│   ├── watchdog.py                ← Anomaly detector (cliff + quality drops)
+│   ├── slos.py                    ← SLO evaluator + error-budget burn rate
+│   ├── skill-cost-profiler.py     ← Per-skill token cost ranking
+│   ├── incident-capture.py        ← Structured post-mortem writer
+│   ├── arm-synthetics-runner.py   ← Per-arm health-check probe runner
+│   ├── _brain_obs.py              ← Shared library for the 10 obs scripts (private)
 │   ├── update_neural_activity.py  ← Hebbian update from trace co-activations
 │   ├── scan-external-refs         ← Scan for external URL references
 │   ├── ai-push.ps1                ← PowerShell variant for Windows

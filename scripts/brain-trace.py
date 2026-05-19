@@ -24,72 +24,23 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 import time
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Iterator
 
-TRACES_DIR = Path.home() / ".claude" / "traces"
+from _brain_obs import TRACES_DIR, iter_trace_records, parse_record_ts, parse_window
 
-_SINCE_RE = re.compile(r"^(\d+)([mhdw])$")
-_SUFFIX_SECONDS = {"m": 60, "h": 3600, "d": 86400, "w": 604800}
-
-
-def _parse_since(s: str | None) -> datetime | None:
-    # Returns a tz-aware UTC datetime, or None when s is falsy.
-    # Raises argparse.ArgumentTypeError on invalid input so argparse renders a
-    # clean error instead of a traceback.
-    if not s:
-        return None
-    m = _SINCE_RE.match(s)
-    if m:
-        n, suffix = int(m.group(1)), m.group(2)
-        return datetime.now(timezone.utc) - timedelta(seconds=n * _SUFFIX_SECONDS[suffix])
-    # Last resort: try ISO 8601
-    try:
-        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
-        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
-    except ValueError:
-        raise argparse.ArgumentTypeError(
-            f"invalid time value '{s}'. Use suffix (30m / 6h / 7d / 2w) or ISO 8601 UTC."
-        )
-
-
-def _parse_record_ts(ts: str) -> datetime | None:
-    # Records use 2026-05-19T00:06:07.115Z
-    try:
-        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
-    except (ValueError, AttributeError):
-        return None
+# Local idiom — names used below; resolved via the shared lib.
+_parse_since = parse_window
+_parse_record_ts = parse_record_ts
 
 
 def _iter_records(since: datetime | None = None) -> Iterator[dict]:
-    if not TRACES_DIR.exists():
-        return
-    files = sorted(TRACES_DIR.glob("*.jsonl"))
-    if since:
-        # Skip whole files whose name (UTC day) ends before `since`.
-        cutoff_day = since.strftime("%Y-%m-%d")
-        files = [f for f in files if f.stem >= cutoff_day]
-    for f in files:
-        try:
-            for line in f.read_text(encoding="utf-8").splitlines():
-                if not line.strip():
-                    continue
-                try:
-                    rec = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if since:
-                    ts = _parse_record_ts(rec.get("ts", ""))
-                    if ts is None or ts < since:
-                        continue
-                yield rec
-        except OSError:
-            continue
+    # Thin wrapper for backwards-compatible signature within this file.
+    yield from iter_trace_records(since=since)
 
 
 def _print_table(records: Iterable[dict], columns: list[str]) -> None:
