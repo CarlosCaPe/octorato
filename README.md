@@ -929,22 +929,28 @@ python3 ~/.claude/scripts/update_neural_activity.py --since 7d   # weekly cron-s
 python3 ~/.claude/scripts/update_neural_activity.py --dry-run    # preview without writing
 ```
 
-### Roadmap — 7 more Datadog ports
+### The 8 Datadog ports — all shipped
 
-Port 1 (Agent Trace) is shipped. Seven more ports are specified in `feature-datadog-port.md` and sequenced in `plan-datadog-port.md`:
+The full spec lives in `feature-datadog-port.md`; the build plan in `plan-datadog-port.md`.
 
-| Port | Datadog analog | Brain version |
-|------|---------------|---------------|
-| 1 | APM | Agent Trace ✓ |
-| 2 | Continuous Profiler | Skill Cost Profiler (token-cost per skill) |
-| 3 | SLOs + Error Budget | Brain SLOs (auto-baselined from Watchdog) |
-| 4 | Watchdog | Statistical anomaly detection over the trace |
-| 5 | Dashboards | Brain Digest (daily markdown report) |
-| 6 | Incident Management | Per-arm post-mortem template + storage |
-| 7 | Synthetics | Per-arm health-check templates |
-| 8 | Notebooks / Bits AI | Brain Charts on Demand (ASCII + SVG renderers) |
+| Port | Datadog analog | Brain version | Script / artifact |
+|------|---------------|---------------|---|
+| 1 | APM | Agent Trace ✓ | `scripts/trace-hook.py`, `scripts/trace.py`, `scripts/update_neural_activity.py` |
+| 2 | Continuous Profiler | Skill Cost Profiler ✓ | `scripts/skill-cost-profiler.py` |
+| 3 | SLOs + Error Budget | Brain SLOs ✓ | `scripts/slos.py` |
+| 4 | Watchdog | Cliff + quality drop detector ✓ | `scripts/watchdog.py` |
+| 5 | Dashboards | Brain Digest ✓ | `scripts/brain-digest.py` |
+| 6 | Incident Management | Post-mortem capture ✓ | `skills/incident-capture/`, `scripts/incident-capture.py`, `commands/incident-capture.md` |
+| 7 | Synthetics | Per-arm health checks ✓ | `skills/arm-synthetics/`, `scripts/arm-synthetics-runner.py`, `templates/arm-synthetics/` |
+| 8 | Notebooks / Bits AI | Brain Charts on Demand ✓ | `scripts/chart.py` |
 
-Each port is independently shippable; the trace from Port 1 is the substrate the analytics ports (2-4) read from.
+Each port is independently shippable; the trace from Port 1 is the substrate the analytics ports (2-4) and the visualisation ports (5, 8) read from. Ports 6 and 7 are independent of the rest.
+
+**Operator-side install (once per port):**
+- Daily cron for Port 5 digest: `0 6 * * * python3 ~/.claude/scripts/brain-digest.py`
+- Daily cron for Watchdog (Port 4) `--execute`: `0 14 * * * python3 ~/.claude/scripts/watchdog.py --execute`
+- Per-arm install for Port 7: see `skills/arm-synthetics/SKILL.md`
+- `~/.claude/slos.yaml` (or .json) for Port 3 — operator-defined targets
 
 ---
 
