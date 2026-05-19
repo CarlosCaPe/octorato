@@ -158,3 +158,6 @@ assets/signature/
 Thumbs.db
 desktop.ini
 paste-cache/
+
+# Port 4 Watchdog suppression + dedup state — machine-local
+watchdog/
