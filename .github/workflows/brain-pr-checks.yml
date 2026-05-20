@@ -1,0 +1,92 @@
+name: Brain PR Checks
+
+# Pre-merge gate for the octorato brain repo.
+#
+# Two checks:
+#   1. check-generic — verifies no client / arm tokens leaked into the
+#      staged diff or commit metadata. The brain is public on GitHub;
+#      any client-specific string must be caught BEFORE merge.
+#   2. connectome-rebuild — verifies generate_neural_map.py still runs
+#      without error and the output is valid JSON. Protects against
+#      malformed skill / agent definitions silently breaking the graph.
+#
+# Why this exists: until 2026-05-20, the brain had only `traffic-watch.yml`
+# (analytics). Nothing validated PRs. Adding the minimum guardrails so
+# a future "innocent" PR can't silently corrupt the brain or leak a
+# client name to the public repo.
+
+on:
+  pull_request:
+    branches: [ master, main ]
+
+permissions:
+  contents: read
+
+jobs:
+  check-generic:
+    name: No client / arm tokens leaked
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run check-generic against PR diff
+        run: |
+          set -e
+          if [ ! -f scripts/check-generic.py ]; then
+            echo "::warning::scripts/check-generic.py not found — skipping"
+            exit 0
+          fi
+          # The blocklist file (company/brain-blocklist.txt) is gitignored
+          # by design — operators keep their per-shop blocklist private.
+          # In CI we have no blocklist, so check-generic will pass trivially
+          # (zero tokens loaded). The real guard runs locally via pre-commit.
+          # This CI step exists to fail LOUDLY if check-generic itself is
+          # broken (parse errors, missing deps), not to enforce blocking.
+          BASE_SHA="$(git merge-base origin/${{ github.base_ref }} HEAD)"
+          DIFF=$(git diff "$BASE_SHA"..HEAD --no-color || true)
+          COMMIT_MSGS=$(git log --format=%B "$BASE_SHA"..HEAD || true)
+          printf '%s\n%s\n' "$DIFF" "$COMMIT_MSGS" > /tmp/pr-content.txt
+          python3 scripts/check-generic.py --message-file /tmp/pr-content.txt || {
+            echo "::error::check-generic.py rejected the PR — client / arm token in diff or commit message."
+            exit 1
+          }
+
+  connectome-rebuild:
+    name: neural_map.json rebuilds cleanly
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Regenerate connectome (dry-run via temp output)
+        env:
+          # generate_neural_map.py reads from Path.home() / ".claude" / "skills".
+          # In CI the brain repo IS the checkout root, so point HOME there so
+          # `~/.claude/skills` resolves to `<checkout>/skills`.
+          HOME: ${{ github.workspace }}/..
+        run: |
+          set -e
+          if [ ! -f scripts/generate_neural_map.py ]; then
+            echo "::warning::scripts/generate_neural_map.py not found — skipping"
+            exit 0
+          fi
+          # Symlink the checkout into a fake ~/.claude so the script's
+          # Path.home() / ".claude" path lookups resolve.
+          mkdir -p "$HOME"
+          ln -sfn "${{ github.workspace }}" "$HOME/.claude"
+          python3 scripts/generate_neural_map.py >/dev/null
+          python3 -c "import json; json.load(open('neural_map.json'))"
+          echo "✓ connectome regenerated and validated"
