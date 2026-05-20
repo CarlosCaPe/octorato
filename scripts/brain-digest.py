@@ -124,6 +124,46 @@ def section_watchdog() -> dict:
         return {"available": False, "error": str(e)}
 
 
+# ── Section: Anthropic billed-vs-estimated (FinOps Feature 4) ──
+
+
+def section_anthropic_reconciliation() -> dict:
+    """Read the most recent ~/.claude/analytics/anthropic-*.jsonl file (if
+    any) and total the billed USD. Returns {available: bool, billed_usd_24h: float}.
+    """
+    analytics_dir = Path.home() / ".claude" / "analytics"
+    if not analytics_dir.exists():
+        return {"available": False}
+    files = sorted(analytics_dir.glob("anthropic-*.jsonl"))
+    if not files:
+        return {"available": False}
+    latest = files[-1]
+    billed = 0.0
+    row_count = 0
+    try:
+        for line in latest.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            # Anthropic schema variants: usd_amount | usd_cost | cost_usd | amount_usd
+            for k in ("usd_amount", "usd_cost", "cost_usd", "amount_usd"):
+                if k in row and isinstance(row[k], (int, float)):
+                    billed += float(row[k])
+                    break
+            row_count += 1
+    except OSError as e:
+        return {"available": False, "error": str(e)}
+    return {
+        "available": True,
+        "billed_usd": round(billed, 2),
+        "file": str(latest.name),
+        "rows": row_count,
+    }
+
+
 # ── Section: Budget burn (FinOps Feature 3) ────────────
 
 
@@ -196,7 +236,8 @@ def section_cost_24h() -> dict:
 
 
 def render_digest(now: datetime, activity: dict, slos: dict, watchdog: dict,
-                  cost: dict, budget: dict | None = None) -> str:
+                  cost: dict, budget: dict | None = None,
+                  reconciliation: dict | None = None) -> str:
     lines: list[str] = []
     today = now.strftime("%Y-%m-%d")
     lines.append(f"# Brain Daily — {today}")
@@ -334,6 +375,22 @@ def render_digest(now: datetime, activity: dict, slos: dict, watchdog: dict,
                 )
     lines.append("")
 
+    # ── Anthropic billed-vs-estimated reconciliation (FinOps Feature 4) ──
+    if reconciliation and reconciliation.get("available"):
+        est = cost.get("total_usd_24h", 0.0) if cost.get("available") else 0.0
+        billed = reconciliation.get("billed_usd", 0.0)
+        delta_pct = ((billed - est) / est * 100) if est > 0 else None
+        lines.append("**Anthropic billed (vendor truth)** vs **Estimated (Octorato)** — 24h")
+        lines.append("")
+        lines.append(f"- Estimated (list-price math): ${est:,.2f}")
+        lines.append(f"- Billed (Anthropic Admin API): ${billed:,.2f}")
+        if delta_pct is not None:
+            sign = "+" if delta_pct >= 0 else ""
+            note = " ⚠ drift > 20%" if abs(delta_pct) > 20 else ""
+            lines.append(f"- Delta: {sign}{delta_pct:.1f}%{note}")
+        lines.append(f"- Source: `analytics/{reconciliation.get('file')}` ({reconciliation.get('rows', 0)} rows)")
+        lines.append("")
+
     # ── Budget burn (FinOps Feature 3) ─────────────────────
     if budget and budget.get("available"):
         lines.append("## Budget burn (month-to-date)")
@@ -392,8 +449,9 @@ def main(argv: list[str] | None = None) -> int:
     watchdog = section_watchdog()
     cost = section_cost_24h()
     budget = section_budget_burn()
+    reconciliation = section_anthropic_reconciliation()
 
-    digest = render_digest(now, activity, slos, watchdog, cost, budget)
+    digest = render_digest(now, activity, slos, watchdog, cost, budget, reconciliation)
 
     DIGESTS_DIR.mkdir(parents=True, exist_ok=True)
     out_path = DIGESTS_DIR / f"brain-{now.strftime('%Y-%m-%d')}.md"
