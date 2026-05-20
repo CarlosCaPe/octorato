@@ -142,15 +142,28 @@ def section_cost_24h() -> dict:
         if result.returncode != 0:
             return {"available": False, "error": result.stderr.strip()[:200]}
         data = json.loads(result.stdout)
-        total_tokens = sum(r["total_tokens"] for r in data)
-        # Top 5 cost-heaviest, EXCLUDING __conversation__ which dominates by design
-        skills_only = [r for r in data if r["skill"] != "__conversation__"][:5]
+        # Schema changed in FinOps Feature 1: top-level dict with by_skill +
+        # by_arm sublists. Fall back to flat list for backward compat.
+        if isinstance(data, dict) and "by_skill" in data:
+            skills = data.get("by_skill", [])
+            arms = data.get("by_arm", [])
+        else:
+            skills = data
+            arms = []
+        total_tokens = sum(r["total_tokens"] for r in skills)
+        total_usd = sum(r.get("usd_estimate", 0.0) for r in arms) or sum(
+            r.get("usd_estimate", 0.0) for r in skills
+        )
+        # Top 5 cost-heaviest skills, EXCLUDING __conversation__ which dominates by design
+        skills_only = [r for r in skills if r["skill"] != "__conversation__"][:5]
         return {
             "available": True,
             "total_tokens_24h": total_tokens,
+            "total_usd_24h": total_usd,
             "top5_skills": skills_only,
+            "by_arm": arms,
             "conversation_tokens": next(
-                (r["total_tokens"] for r in data if r["skill"] == "__conversation__"), 0
+                (r["total_tokens"] for r in skills if r["skill"] == "__conversation__"), 0
             ),
         }
     except (subprocess.SubprocessError, OSError, json.JSONDecodeError) as e:
@@ -261,21 +274,40 @@ def render_digest(now: datetime, activity: dict, slos: dict, watchdog: dict, cos
     else:
         total = cost.get("total_tokens_24h", 0)
         conv = cost.get("conversation_tokens", 0)
+        total_usd = cost.get("total_usd_24h", 0.0)
         skill_total = total - conv
         lines.append("")
         lines.append(f"- **Total tokens (24h)**: {total:,}")
+        lines.append(f"- **Total USD (24h, list price)**: ${total_usd:,.2f}")
         lines.append(f"- Conversation thinking: {conv:,} ({conv / total * 100 if total else 0:.1f}%)")
         lines.append(f"- Skill-attributed: {skill_total:,} ({skill_total / total * 100 if total else 0:.1f}%)")
+
+        # FinOps Feature 1: per-arm cost rollup. Lands the "I can bill
+        # Client A $X for May" claim from the roadmap.
+        arms = cost.get("by_arm", [])
+        if arms:
+            lines.append("")
+            lines.append("**Cost by arm / client (24h)**")
+            lines.append("")
+            lines.append("| Arm | Sessions | Turns | Total tokens | USD (list price) |")
+            lines.append("|---|---:|---:|---:|---:|")
+            for r in arms:
+                lines.append(
+                    f"| `{r['arm']}` | {r.get('sessions', 0):,} | {r.get('turns', 0):,} "
+                    f"| {r['in_tokens'] + r['out_tokens']:,} | ${r.get('usd_estimate', 0.0):,.2f} |"
+                )
+
         top5 = cost.get("top5_skills", [])
         if top5:
             lines.append("")
             lines.append("**Top 5 cost-heaviest skills (24h, excluding __conversation__)**")
             lines.append("")
-            lines.append("| # | Skill | Invocations | Total tokens |")
-            lines.append("|---|---|---:|---:|")
+            lines.append("| # | Skill | Invocations | Total tokens | USD |")
+            lines.append("|---|---|---:|---:|---:|")
             for i, r in enumerate(top5, 1):
+                usd = r.get("usd_estimate", 0.0)
                 lines.append(
-                    f"| {i} | `{r['skill']}` | {r['invocations']:,} | {r['total_tokens']:,} |"
+                    f"| {i} | `{r['skill']}` | {r['invocations']:,} | {r['total_tokens']:,} | ${usd:,.2f} |"
                 )
     lines.append("")
 
