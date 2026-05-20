@@ -1,18 +1,86 @@
 # Octopus Brain Framework
 
-> *"One brain. 167 specialists. Zero office rent."*
+> **Open-source agent operating system with built-in FinOps.**
+> Per-client token attribution. Air-gapped arms *(software-level isolation between client workspaces)*. Budget caps *(roadmap in flight)*.
+> The brain consultants and small agencies need to bill clients fairly —
+> the open-source FinOps brain for consultants who want to land on the right side of the
+> [Gartner 40% of agentic projects predicted to be cancelled by 2027](https://www.gartner.com/en/newsroom/press-releases/2025-06-25-gartner-predicts-over-40-percent-of-agentic-ai-projects-will-be-canceled-by-end-of-2027)
+> over unmanaged cost.
 
-An open-source AI agent operating system where a single human operator directs a shared brain of specialist AI agents — across clients, projects, and machines — without ever mixing their data.
+> *"One brain. 161 specialists. Zero office rent. One ledger per client."*
 
-With nothing but natural language, you can direct a team of AI specialists to build and ship software.
+---
 
-**Live framework**: 153 skills, 167 agent personas, 13 divisions, 8 enforcement scripts, multi-machine sync, and a neural connectome that learns over time.
+## Why now: the token economy is here
+
+The AI industry is splitting into **three billing primitives** —
+tokens ([Anthropic](https://www.anthropic.com/pricing), [OpenAI](https://openai.com/api/pricing/)),
+steps ([AWS Bedrock AgentCore](https://aws.amazon.com/bedrock/agentcore/pricing/)),
+and outcomes ([Salesforce Agentforce, ~$2/conversation](https://www.salesforce.com/agentforce/pricing/)).
+Anthropic [announced a June 2026 enterprise pricing shift](https://www.implicator.ai/anthropic-shifts-enterprise-billing-to-per-token-pricing-the-flat-fee-era-is-over/)
+moving Claude / Claude Code / Cowork to per-token pass-through.
+[a16z's State of AI](https://a16z.com/state-of-ai/) reports OpenRouter crossed **>100T tokens/year** in 2025
+with agentic workloads burning 5–30× more tokens than chatbots.
+[BCG estimates a $200B agentic TAM](https://www.bcg.com/publications/2025/rethinking-b2b-software-pricing-in-the-era-of-ai)
+in tech services and recommends outcome-based pricing for B2B SaaS.
+The [FinOps Foundation's 2026 State of FinOps](https://www.finops.org/wg/finops-for-ai-overview/) lists AI FinOps as the **#1 mandate**.
+
+Enterprises need governance. Solo consultants and small agencies need it
+*more* — they're invoiceable for the burn, not absorbing it on a runway.
+
+**Octorato is the open-source FinOps brain for that segment.** Larger teams use the same primitives at higher cardinality.
+
+---
+
+## What makes Octorato different
+
+| Layer | Crowded by | Octorato's wedge |
+|---|---|---|
+| Agent frameworks | LangGraph, CrewAI, AutoGen, LlamaIndex | We don't compete here — Octorato is an OS, not a framework. Bring your own. |
+| Agent observability | LangSmith, Langfuse, Arize, Datadog LLM Obs | Complementary. Octorato emits OpenInference-style spans; sits *above* your observability stack as the governance layer. |
+| **FinOps for AI Agents** | greenfield (Vantage, Amnic, Finout fighting for category, no Gartner MQ yet) | **Octorato leads here** — per-client attribution + air-gapped arms + consultant-grade simplicity. |
+| Compute sandboxes | e2b.dev | Complementary (arms can run in e2b sandboxes). |
+
+**Three things competing observability tools don't have:**
+
+1. **Per-arm cost attribution *(in flight — see roadmap below)*** — every trace event tags the client (`arm`), so you can produce a billable cost rollup per project, per month, per skill. Privately. On your filesystem. No SaaS dependency.
+2. **Air-gapped multi-tenancy** — clients live in sealed repos. Brain sees their cost data; the arms never see each other. Datadog can't enforce this; LangSmith Cloud isn't designed for it.
+3. **Budget caps that actually halt agents *(roadmap in flight)*** — a `PreToolUse` hook reads `budgets.yaml` and refuses to invoke `agent-browser` / subagents when a client's monthly cap is burned. CFO buy signal, not telemetry buy signal.
+
+FinOps is the wedge. The architecture under it is biology — because the same problem the operator faces (*one consciousness, many client workspaces, no cross-contamination*) is the problem an octopus solves with eight semi-autonomous arms. The cost ledger and the neural map share the same substrate: per-arm isolation.
+
+---
+
+## What it is
+
+An open-source AI agent operating system where a single human operator directs a shared brain of specialist AI agents — across clients, projects, and machines — without ever mixing their data or their bills.
+
+With nothing but natural language, you can direct a team of AI specialists to build and ship software, and bill the client honestly when it ships.
+
+**Live framework**: 164 skills, 161 agent personas across 13 divisions, 8 enforcement scripts, multi-machine sync, a neural connectome that learns over time, and a FinOps pipeline that tags every trace event with the client who incurred it. Per-arm USD rollup, cost-spike alerts, and budget caps are in-flight on the [roadmap below](#finops-roadmap-in-flight).
 
 ```
 https://github.com/CarlosCaPe/octorato
 ```
 
 > **Octorato** = *octopus* + *tesseract* — eight-armed brain in a 4D activation space (Agent × Skill × Arm × 4D-phase).
+
+---
+
+## FinOps roadmap (in flight)
+
+- [x] Trace capture per skill / agent / phase (`scripts/trace-hook.py` + 8 hook points)
+- [x] Daily brain digest with cost section (`scripts/brain-digest.py` via cron)
+- [x] Skill-level cost profiler 30-day window (`scripts/skill-cost-profiler.py`)
+- [x] SLO + watchdog infrastructure (`success_rate` SLI today)
+- [x] Per-event `arm` tagging (`trace-hook.py:51-54` reads cwd → client id)
+- [ ] **Per-arm cost rollup + USD conversion** *(in progress — `groupby('arm')` in cost-profiler + digest)*
+- [ ] **Cost-spike watchdog** *(planned — z-score over tokens/day per skill·arm)*
+- [ ] **Budget caps + PreToolUse hard-stop hook** *(planned — `budgets.yaml` + halt mechanism)*
+- [ ] **Anthropic Enterprise Analytics API ingest** *(planned — closes estimated vs billed gap)*
+- [ ] **Claude Cowork plug-in** *(after first paying client validates the integration shape)*
+
+See the [biology section](#why-an-octopus) below for *why* the architecture takes this shape.
 
 ---
 
