@@ -2,14 +2,16 @@
 """
 watchdog.py — observability surface 4 anomaly detector.
 
-Reads the JSONL trace files written by trace-hook.py and computes two
+Reads the JSONL trace files written by trace-hook.py and computes three
 anomaly classes per skill/agent name:
 
   cliff_drop   — baseline fires regularly but current 7d window = 0 (likely broken)
   quality_drop — baseline success_rate is normal but current is >2σ worse
-
-Cost spike (the third anomaly in the spec) is deferred until Port 2
-Skill Cost Profiler ships — `tokens` data is currently sparse.
+  cost_spike   — current-24h tokens per (skill, arm) exceed Poisson-projected
+                 baseline by >2σ AND clear the MIN_TOKENS_FOR_COST_SPIKE
+                 noise floor. Sources daily totals from skill-cost-profiler.py
+                 (which reads native session JSONLs — same path as the
+                 brain-digest Cost section). Closes FinOps Feature 2.
 
 Default mode is DRY-RUN (prints a markdown table to stdout). Pass
 `--execute` to actually open GitHub issues. Suppressions and dedup live
@@ -41,6 +43,13 @@ BASELINE_WINDOW_DAYS = 30
 SIGMA_THRESHOLD = 2.0
 MIN_BASELINE_FIRINGS = 5
 SUPPRESS_AFTER_DISMISS_DAYS = 14
+
+# Cost-spike tunables (FinOps Feature 2). Below 100k tokens/24h the
+# stddev-based comparison is noisy; the floor avoids alerting on a
+# 2-turn task that happens to be 2σ above a 0.1-turn baseline.
+COST_SPIKE_CURRENT_DAYS = 1
+MIN_TOKENS_FOR_COST_SPIKE = 100_000
+COST_SPIKE_SCRIPT = Path(__file__).parent / "skill-cost-profiler.py"
 
 # GH issue config.
 GH_REPO = "CarlosCaPe/octorato"
@@ -186,7 +195,85 @@ def analyse() -> list[dict]:
                         "current_total": curr["total"],
                     }
                 )
+
+    # ── Cost spike (FinOps Feature 2) ──────────────────────
+    # Sources daily token totals per skill/arm from skill-cost-profiler's
+    # JSON output. Compares observed-24h against Poisson-projected baseline
+    # (30d total / 30 days). 2σ + min-tokens floor to avoid noise alerts.
+    anomalies.extend(_detect_cost_spikes())
+
     return anomalies
+
+
+def _profile_tokens(days: int) -> dict:
+    """Invoke skill-cost-profiler.py --days N --json and return its dict.
+
+    Returns empty dict if the script is missing or fails — cost_spike is
+    a best-effort signal, never blocks the rest of the watchdog.
+    """
+    if not COST_SPIKE_SCRIPT.exists():
+        return {}
+    try:
+        result = subprocess.run(
+            [sys.executable, str(COST_SPIKE_SCRIPT), "--days", str(days), "--json"],
+            capture_output=True, text=True, timeout=120,
+        )
+        if result.returncode != 0:
+            return {}
+        data = json.loads(result.stdout)
+        return data if isinstance(data, dict) else {}
+    except (subprocess.SubprocessError, OSError, json.JSONDecodeError):
+        return {}
+
+
+def _detect_cost_spikes() -> list[dict]:
+    """Compare last-24h tokens (per arm + per skill) against 30d baseline.
+
+    Emits one anomaly per (bucket, name) pair where:
+      observed_24h_tokens > expected_per_day + SIGMA * sqrt(expected_per_day)
+      AND observed_24h_tokens >= MIN_TOKENS_FOR_COST_SPIKE.
+    """
+    out: list[dict] = []
+    current = _profile_tokens(COST_SPIKE_CURRENT_DAYS)
+    baseline = _profile_tokens(BASELINE_WINDOW_DAYS)
+    if not current or not baseline:
+        return out
+
+    def _emit_for_bucket(bucket: str, key_field: str,
+                         current_rows: list, baseline_rows: list) -> None:
+        # Index baseline by key for O(1) lookup.
+        base_by_key = {r[key_field]: r for r in baseline_rows}
+        for r in current_rows:
+            name = r[key_field]
+            obs = int(r.get("in_tokens", 0)) + int(r.get("out_tokens", 0))
+            if obs < MIN_TOKENS_FOR_COST_SPIKE:
+                continue
+            base = base_by_key.get(name)
+            if not base:
+                continue
+            base_total = int(base.get("in_tokens", 0)) + int(base.get("out_tokens", 0))
+            expected_per_day = base_total / BASELINE_WINDOW_DAYS
+            if expected_per_day < 1:
+                # Brand-new skill/arm with no baseline — can't compute σ. Skip.
+                continue
+            z = _poisson_z(obs, expected_per_day)
+            if z >= SIGMA_THRESHOLD:
+                out.append({
+                    "name": name,
+                    "event": bucket,
+                    "kind": "cost_spike",
+                    "current_24h_tokens": obs,
+                    "expected_per_day": round(expected_per_day, 0),
+                    "z": round(z, 2),
+                    "baseline_total_30d": base_total,
+                    "current_usd": r.get("usd_estimate", 0.0),
+                })
+
+    _emit_for_bucket("by_skill", "skill",
+                     current.get("by_skill", []), baseline.get("by_skill", []))
+    _emit_for_bucket("by_arm",   "arm",
+                     current.get("by_arm",   []), baseline.get("by_arm",   []))
+    return out
 
 
 # ── Reporting ──────────────────────────────────────────
@@ -198,6 +285,7 @@ def _render_markdown(anomalies: list[dict]) -> str:
     out: list[str] = []
     cliff = [a for a in anomalies if a["kind"] == "cliff_drop"]
     qual = [a for a in anomalies if a["kind"] == "quality_drop"]
+    spikes = [a for a in anomalies if a["kind"] == "cost_spike"]
     if cliff:
         out.append("### Cliff drops")
         out.append("| Event | Name | Current 7d | Expected | z-score | Baseline 30d total |")
@@ -216,6 +304,17 @@ def _render_markdown(anomalies: list[dict]) -> str:
             out.append(
                 f"| {a['event']} | `{a['name']}` | {a['current_rate']} | "
                 f"{a['baseline_rate']} | {a['z']} | {a['current_total']} |"
+            )
+        out.append("")
+    if spikes:
+        out.append("### Cost spikes (24h)")
+        out.append("| Bucket | Name | 24h tokens | Expected/day | z-score | 30d baseline | ~USD 24h |")
+        out.append("|---|---|---:|---:|---:|---:|---:|")
+        for a in spikes:
+            out.append(
+                f"| {a['event']} | `{a['name']}` | {a['current_24h_tokens']:,} | "
+                f"{int(a['expected_per_day']):,} | {a['z']} | "
+                f"{a['baseline_total_30d']:,} | ${a['current_usd']:,.2f} |"
             )
         out.append("")
     return "\n".join(out)
