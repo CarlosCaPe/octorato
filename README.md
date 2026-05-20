@@ -1,7 +1,7 @@
 # Octopus Brain Framework
 
 > **Open-source agent operating system with built-in FinOps.**
-> Per-client token attribution. Air-gapped arms *(software-level isolation between client workspaces)*. Budget caps *(roadmap in flight)*.
+> Per-client token attribution. Air-gapped arms *(software-level isolation between client workspaces)*. Budget caps with a real halt mechanism.
 > The brain consultants and small agencies need to bill clients fairly —
 > the open-source FinOps brain for consultants who want to land on the right side of the
 > [Gartner 40% of agentic projects predicted to be cancelled by 2027](https://www.gartner.com/en/newsroom/press-releases/2025-06-25-gartner-predicts-over-40-percent-of-agentic-ai-projects-will-be-canceled-by-end-of-2027)
@@ -43,9 +43,9 @@ Enterprises need governance. Solo consultants and small agencies need it
 
 **Three things competing observability tools don't have:**
 
-1. **Per-arm cost attribution *(in flight — see roadmap below)*** — every trace event tags the client (`arm`), so you can produce a billable cost rollup per project, per month, per skill. Privately. On your filesystem. No SaaS dependency.
+1. **Per-arm cost attribution** — every trace event tags the client (`arm`), and `skill-cost-profiler.py` produces a billable cost rollup per project, per month, per skill, with USD applied via the shared `_pricing.py` table. Privately. On your filesystem. No SaaS dependency.
 2. **Air-gapped multi-tenancy** — clients live in sealed repos. Brain sees their cost data; the arms never see each other. Datadog can't enforce this; LangSmith Cloud isn't designed for it.
-3. **Budget caps that actually halt agents *(roadmap in flight)*** — a `PreToolUse` hook reads `budgets.yaml` and refuses to invoke `agent-browser` / subagents when a client's monthly cap is burned. CFO buy signal, not telemetry buy signal.
+3. **Budget caps that actually halt agents** — `budget-check.py` reads `budgets.yaml`, computes month-to-date spend per arm, and exits with code 2 when the cap is burned through. A `PreToolUse` hook wires that into `Agent` / subagent / browser tools so the operator can't accidentally torch a client's budget. CFO buy signal, not telemetry buy signal.
 
 FinOps is the wedge. The architecture under it is biology — because the same problem the operator faces (*one consciousness, many client workspaces, no cross-contamination*) is the problem an octopus solves with eight semi-autonomous arms. The cost ledger and the neural map share the same substrate: per-arm isolation.
 
@@ -57,7 +57,7 @@ An open-source AI agent operating system where a single human operator directs a
 
 With nothing but natural language, you can direct a team of AI specialists to build and ship software, and bill the client honestly when it ships.
 
-**Live framework**: 164 skills, 161 agent personas across 13 divisions, 8 enforcement scripts, multi-machine sync, a neural connectome that learns over time, and a FinOps pipeline that tags every trace event with the client who incurred it. Per-arm USD rollup, cost-spike alerts, and budget caps are in-flight on the [roadmap below](#finops-roadmap-in-flight).
+**Live framework**: 164 skills, 161 agent personas across 13 divisions, 8 enforcement scripts, multi-machine sync, a neural connectome that learns over time, and a FinOps pipeline that tags every trace event with the client who incurred it — with per-arm USD rollup, cost-spike alerts, budget caps that halt agents, and Anthropic Enterprise Analytics reconciliation all shipped (see [roadmap below](#finops-roadmap)).
 
 ```
 https://github.com/CarlosCaPe/octorato
@@ -67,17 +67,17 @@ https://github.com/CarlosCaPe/octorato
 
 ---
 
-## FinOps roadmap (in flight)
+## FinOps roadmap
 
 - [x] Trace capture per skill / agent / phase (`scripts/trace-hook.py` + 8 hook points)
 - [x] Daily brain digest with cost section (`scripts/brain-digest.py` via cron)
 - [x] Skill-level cost profiler 30-day window (`scripts/skill-cost-profiler.py`)
-- [x] SLO + watchdog infrastructure (`success_rate` SLI today)
-- [x] Per-event `arm` tagging (`trace-hook.py:51-54` reads cwd → client id)
-- [ ] **Per-arm cost rollup + USD conversion** *(in progress — `groupby('arm')` in cost-profiler + digest)*
-- [ ] **Cost-spike watchdog** *(planned — z-score over tokens/day per skill·arm)*
-- [ ] **Budget caps + PreToolUse hard-stop hook** *(planned — `budgets.yaml` + halt mechanism)*
-- [ ] **Anthropic Enterprise Analytics API ingest** *(planned — closes estimated vs billed gap)*
+- [x] SLO + watchdog infrastructure (`success_rate` SLI)
+- [x] Per-event `arm` tagging (`trace-hook.py` reads cwd → client id)
+- [x] **Per-arm cost rollup + USD conversion** (`scripts/_pricing.py` + `skill-cost-profiler.py` aggregates by arm, digest renders the table)
+- [x] **Cost-spike watchdog** (`watchdog.py` z-score over tokens/day per skill·arm against 30d baseline; floor at 100k tokens to avoid noise)
+- [x] **Budget caps + PreToolUse hard-stop hook** (`scripts/budget-check.py` reads `budgets.yaml`, exit 2 = halt; see [`finops-budget-policy`](skills/finops-budget-policy/SKILL.md))
+- [x] **Anthropic Enterprise Analytics API ingest** (`scripts/anthropic-analytics-pull.py` reconciles estimated vs billed; see [`anthropic-enterprise-analytics`](skills/anthropic-enterprise-analytics/SKILL.md))
 - [ ] **Claude Cowork plug-in** *(after first paying client validates the integration shape)*
 
 See the [biology section](#why-an-octopus) below for *why* the architecture takes this shape.
