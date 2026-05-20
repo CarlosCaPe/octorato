@@ -183,3 +183,12 @@ incidents/
 /plan-*.md
 /spec.md
 /spec-*.md
+
+# FinOps — per-operator private config (cost caps + vendor analytics dumps).
+# Encodes per-client pricing decisions and may include client identifiers; must
+# NEVER enter the public brain repo. The brain code reads these at runtime
+# (budget-check.py, anthropic-analytics-pull.py); operator drops them in by
+# hand on each laptop.
+/budgets.yaml
+/budgets.json
+/analytics/
