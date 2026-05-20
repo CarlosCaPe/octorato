@@ -45,11 +45,16 @@ jobs:
             exit 0
           fi
           # The blocklist file (company/brain-blocklist.txt) is gitignored
-          # by design; in CI we can't see it. The check-generic.py script
-          # has a `--ci-mode` flag (if present) or a default-fail fallback.
-          # We invoke it with the merge-base as the diff baseline.
-          BASE_SHA="$(git merge-base origin/master HEAD 2>/dev/null || git merge-base origin/main HEAD)"
-          python3 scripts/check-generic.py --since "$BASE_SHA" || {
+          # by design — operators keep their per-shop blocklist private.
+          # In CI we have no blocklist, so check-generic will pass trivially
+          # (zero tokens loaded). The real guard runs locally via pre-commit.
+          # This CI step exists to fail LOUDLY if check-generic itself is
+          # broken (parse errors, missing deps), not to enforce blocking.
+          BASE_SHA="$(git merge-base origin/${{ github.base_ref }} HEAD)"
+          DIFF=$(git diff "$BASE_SHA"..HEAD --no-color || true)
+          COMMIT_MSGS=$(git log --format=%B "$BASE_SHA"..HEAD || true)
+          printf '%s\n%s\n' "$DIFF" "$COMMIT_MSGS" > /tmp/pr-content.txt
+          python3 scripts/check-generic.py --message-file /tmp/pr-content.txt || {
             echo "::error::check-generic.py rejected the PR — client / arm token in diff or commit message."
             exit 1
           }
@@ -67,13 +72,21 @@ jobs:
           python-version: '3.11'
 
       - name: Regenerate connectome (dry-run via temp output)
+        env:
+          # generate_neural_map.py reads from Path.home() / ".claude" / "skills".
+          # In CI the brain repo IS the checkout root, so point HOME there so
+          # `~/.claude/skills` resolves to `<checkout>/skills`.
+          HOME: ${{ github.workspace }}/..
         run: |
           set -e
           if [ ! -f scripts/generate_neural_map.py ]; then
             echo "::warning::scripts/generate_neural_map.py not found — skipping"
             exit 0
           fi
-          # Run the regen and confirm output parses as JSON.
+          # Symlink the checkout into a fake ~/.claude so the script's
+          # Path.home() / ".claude" path lookups resolve.
+          mkdir -p "$HOME"
+          ln -sfn "${{ github.workspace }}" "$HOME/.claude"
           python3 scripts/generate_neural_map.py >/dev/null
           python3 -c "import json; json.load(open('neural_map.json'))"
           echo "✓ connectome regenerated and validated"
