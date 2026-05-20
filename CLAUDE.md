@@ -133,6 +133,7 @@ The brain (`~/.claude/`) is published as **open-source**. Its git history is pub
 
 - **NEVER** commit to `~/.claude/` anything that references: arm codes, client names, coworkers' or partners' names, internal project codenames, vendor incidents, ticket IDs, internal URLs, customer data, or anything that originates *inside an arm*.
 - This applies to **commit messages, branch names, tags, PR descriptions, file contents, and filenames** — every surface git records.
+- **SDD artifacts (`feature*.md`, `plan*.md`, `spec*.md`) NEVER at brain root.** Even when they contain zero client identifiers, root-level specs leak the internal roadmap, inspiration sources, and strategic thinking. They MUST live in (a) the arm that owns the feature, (b) `docs/specs-archive/` (already-shipped, archived), (c) `templates/`, or (d) `company/` (gitignored). The brain root is for framework rules and entry points, never for in-flight specs. `check-generic.py` rejects any root-level `feature*.md`/`plan*.md`/`spec*.md`; `.gitignore` belt-and-suspenders the same paths.
 - Lessons from an arm get **distilled to a generic skill** under `skills/<name>/` (anonymized, no client identifiers) BEFORE entering the brain.
 - The operator's `company/` directory is gitignored — that's where arm definitions and identity live. Nothing from `company/` ever flows into the public repo.
 - When `ai-push` constructs a commit message (auto or user-supplied), the message must be **purely about the framework change**, never about who triggered it or where the lesson came from.

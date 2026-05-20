@@ -45,6 +45,31 @@ SKIP_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".pdf", ".ico", ".woff",
                  ".pyc", ".so", ".dylib", ".dll", ".exe", ".bin"}
 SKIP_PATH_PARTS = {"__pycache__", ".git", "node_modules", ".venv", "venv"}
 
+# Filename patterns that must NEVER appear at the brain root.
+# SDD artifacts (feature*.md, plan*.md, spec*.md) leak internal roadmap and
+# inspiration sources into the public repo even when they contain zero client
+# identifiers. They belong in the arm, in docs/specs-archive/, in templates/,
+# or in company/ (gitignored) — never at root. See CLAUDE.md §"Brain Stays Generic".
+ROOT_FORBIDDEN_PATTERNS = (
+    re.compile(r"^feature(-.+)?\.md$", re.IGNORECASE),
+    re.compile(r"^plan(-.+)?\.md$", re.IGNORECASE),
+    re.compile(r"^spec(-.+)?\.md$", re.IGNORECASE),
+)
+
+
+def check_forbidden_paths(files):
+    """Return list of files that violate root-level SDD-artifact rule."""
+    violations = []
+    for name in files:
+        p = Path(name)
+        if p.parent != Path("."):
+            continue  # only root-level files
+        for pat in ROOT_FORBIDDEN_PATTERNS:
+            if pat.match(p.name):
+                violations.append(name)
+                break
+    return violations
+
 
 def load_blocklist():
     """Return (tokens, source_msg)."""
@@ -127,6 +152,22 @@ def main():
     parser.add_argument("--staged-only", action="store_true", help="Scan staged files only (no message)")
     parser.add_argument("--quiet", action="store_true", help="Print less on success")
     args = parser.parse_args()
+
+    # Hard rule: no SDD artifacts at brain root. Runs BEFORE blocklist (doesn't
+    # need company/brain-blocklist.txt to fire) — this is a structural rule, not
+    # a token rule. The Datadog port spec slipped past blocklist enforcement
+    # because it had zero client tokens; this stops the class of leak.
+    if args.staged or args.staged_only:
+        forbidden = check_forbidden_paths(staged_files())
+        if forbidden:
+            print("✗ check-generic: BLOCKED — SDD artifacts at brain root")
+            print("  These files leak internal roadmap/sources into the public repo.")
+            print("  Move them to the arm, docs/specs-archive/, templates/, or company/.")
+            for f in forbidden:
+                print(f"    forbidden: {f}")
+            print()
+            print("Rule: CLAUDE.md §'Brain Stays Generic' — SDD artifacts NEVER at brain root.")
+            sys.exit(1)
 
     tokens, source_msg = load_blocklist()
     if tokens is None:

@@ -170,3 +170,16 @@ SLO_REPORT.md
 
 # Port 6 incidents — private operational data, machine-local
 incidents/
+
+# ── SDD artifacts NEVER at brain root ────────────────────────────
+# feature.md and plan.md belong in the ARM that owns the feature, or in
+# company/ (gitignored). At the brain root they leak internal roadmap,
+# inspiration sources, and strategic plans into the public repo even when
+# they contain zero client identifiers (check-generic.py won't catch them).
+# Root-anchored so docs/specs-archive/ and templates/ are still allowed.
+/feature.md
+/feature-*.md
+/plan.md
+/plan-*.md
+/spec.md
+/spec-*.md
