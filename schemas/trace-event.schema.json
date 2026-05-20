@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://octorato/schemas/trace-event-v1.json",
   "title": "Brain Trace Event",
-  "description": "One JSONL line written by the brain's capture hooks. Phase A of the Datadog-inspired observability ports (Port 1 — Agent Trace). Three event classes are captured: skill_fire, agent_activate, phase_boundary. Strict additionalProperties to catch typos; schema evolution happens via v1 → v2 (new $id path).",
+  "description": "One JSONL line written by the brain's capture hooks. Phase A of the observability surfaces (Surface 1 — Agent Trace). Three event classes are captured: skill_fire, agent_activate, phase_boundary. Strict additionalProperties to catch typos; schema evolution happens via v1 → v2 (new $id path).",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "ts", "event", "name", "task_id", "status"],

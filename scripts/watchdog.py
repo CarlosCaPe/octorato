@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-watchdog.py — Datadog Port 4 (Phase B, MVP) anomaly detector.
+watchdog.py — observability surface 4 anomaly detector.
 
 Reads the JSONL trace files written by trace-hook.py and computes two
 anomaly classes per skill/agent name:

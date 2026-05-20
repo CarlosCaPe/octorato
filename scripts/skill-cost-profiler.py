@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-skill-cost-profiler.py — Datadog Port 2 (Phase B).
+skill-cost-profiler.py — observability surface 2.
 
 Reads the native Claude Code session JSONL logs that live under
 ~/.claude/projects/<sanitized-cwd>/<session-uuid>.jsonl, attributes

@@ -3,9 +3,9 @@ name: arm-synthetics
 description: Per-arm health check templates. Each arm defines a synthetics.yaml with endpoints to probe + expected responses + cron schedule. The skill ships the template + GH Action runner. Failures open issues IN THE ARM REPO (not the brain) to preserve octopus arm isolation. Use when onboarding a new arm or when an arm's health monitoring needs a scheduled probe.
 ---
 
-# Brain Synthetics — Datadog Port 7 (Phase D)
+# Brain Synthetics (observability surface 7)
 
-Datadog Synthetics runs scheduled API/browser tests against a service. The brain version is **per-arm health monitoring**: each arm gets its own synthetics config, its own GH Action runner, and alerts that stay in the arm's own repo. Arm isolation is preserved — the brain never sees one arm's failures bleed into another arm's monitoring surface.
+This surface runs **per-arm health monitoring**: each arm gets its own synthetics config, its own GH Action runner, and alerts that stay in the arm's own repo. Arm isolation is preserved — the brain never sees one arm's failures bleed into another arm's monitoring surface.
 
 ## When to use
 
@@ -69,9 +69,7 @@ probes:
 
 ## Cross-references
 
-- Spec: `~/.claude/feature-datadog-port.md` §5 Port 7
-- Plan: `~/.claude/plan-datadog-port.md` task #14
-- Prior art: `sitemap-test` workflow in the dataqbs arm — covered the use case before this generalised it. New arm-synthetics CAN coexist with sitemap-test; the latter stays as the arm's specific probe.
+- Prior art: per-arm `sitemap-test`-style workflows — covered the use case before this generalised it. New arm-synthetics CAN coexist with arm-specific probes; the latter stay as the arm's specialised checks.
 
 ## Non-goals (per spec)
 

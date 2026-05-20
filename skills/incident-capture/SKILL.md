@@ -3,9 +3,9 @@ name: incident-capture
 description: Capture a structured incident when the brain produces a bad outcome — bad skill output, redone task, critical 3D Diligent failure. Writes a markdown post-mortem with frontmatter, snapshots the relevant trace, saves the lesson as auto-memory feedback, and creates follow-up TaskCreate entries. Use when something goes wrong and the operator wants to record the lesson without losing context.
 ---
 
-# Incident Capture — Datadog Port 6 (Phase D)
+# Incident Capture (observability surface 6)
 
-Datadog declares an Incident → timeline → post-mortem → remediation list. The brain version captures the same structural learning when a session produces a bad outcome (skill output broke, operator had to redo a task, 3D Diligent surfaced something critical).
+This surface captures structural learning when a session produces a bad outcome (skill output broke, operator had to redo a task, 3D Diligent surfaced something critical).
 
 ## When to use
 

@@ -1,4 +1,4 @@
-# Trace Storage Layout — Datadog Port 1 (Agent Trace)
+# Trace Storage Layout — Agent Trace (observability surface 1)
 
 > Phase A task #2 deliverable. Locks the on-disk contract for the trace
 > infrastructure before any capture hook (tasks #3-#5) or CLI query helper
@@ -126,9 +126,6 @@ to the right validator.
 
 ## Cross-references
 
-- Schema: `~/.claude/schemas/trace-event.schema.json` (Phase A task #1)
-- Plan: `~/.claude/plan-datadog-port.md` task #2 (this doc)
-- Spec: `~/.claude/feature-datadog-port.md` Port 1
-- Decisions: §9 Q3 (gitignored) — locked 2026-05-18
-- Memory: [[user-operator-runway]] (runway is clean — phase A can take the
-  time it needs)
+- Schema: `~/.claude/schemas/trace-event.schema.json`
+- Memory: [[user-operator-runway]] (runway is clean — observability surfaces
+  can take the time they need)

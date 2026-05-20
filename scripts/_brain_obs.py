@@ -1,5 +1,5 @@
 """
-_brain_obs.py — Shared helpers for the Datadog-inspired observability layer.
+_brain_obs.py — Shared helpers for the brain observability layer.
 
 NOT a CLI. Imported by:
   - trace-hook.py     (Phase A) — capture hook

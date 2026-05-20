@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-trace-hook.py — Datadog Port 1 capture hook (Phase A task #3).
+trace-hook.py — observability surface 1 — capture hook.
 
 Reads a Claude Code hook event from stdin and appends a JSONL trace record to
 ~/.claude/traces/YYYY-MM-DD.jsonl. Best-effort: any error silently swallowed

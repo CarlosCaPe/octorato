@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-update_neural_activity.py — Datadog Port 1 connectome integration (Phase A task #7).
+update_neural_activity.py — observability surface 1 — connectome integration.
 
 Reads the JSONL trace files under ~/.claude/traces/ and updates the Hebbian
 co-activation matrix in ~/.claude/company/neural_activity.json:

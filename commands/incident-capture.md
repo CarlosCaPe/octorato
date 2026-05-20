@@ -2,7 +2,7 @@
 description: Capture a structured post-mortem when something went wrong. Walks operator through 4 questions, writes ~/.claude/incidents/<date>-<slug>.md + auto-memory feedback rule + follow-up tasks.
 ---
 
-You are running the **Incident Capture** flow (Datadog Port 6 — Phase D).
+You are running the **Incident Capture** flow (observability surface 6).
 
 Load and follow the skill at `~/.claude/skills/incident-capture/SKILL.md` for the full workflow, file template, and AC.
 

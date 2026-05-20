@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-trace.py — Datadog Port 1 query helper (Phase A task #6).
+trace.py — observability surface 1 — query helper.
 
 Read-only inspector for the JSONL trace files written by trace-hook.py.
 
@@ -151,7 +151,7 @@ def cmd_tail(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Query the Datadog Port 1 trace JSONL files.",
+        description="Query the trace JSONL files (observability surface 1).",
         epilog="Time windows: 30m, 6h, 7d, 2w, or ISO 8601 (2026-05-19T00:00Z).",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)

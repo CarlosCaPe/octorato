@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-slos.py — Datadog Port 3 (Phase B). Brain SLOs + error budget burn rate.
+slos.py — observability surface 3. Brain SLOs + error budget burn rate.
 
 Reads the SLO config (`~/.claude/slos.yaml` if PyYAML is installed,
 otherwise `~/.claude/slos.json` as a stdlib fallback), computes the

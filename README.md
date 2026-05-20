@@ -875,7 +875,7 @@ The reflex layer is the thinnest, but it's load-bearing. Six rules at the top of
 
 ## Observability — The Sensory Cortex
 
-The brain doesn't just *act* — it *observes itself acting*. A Datadog-inspired observability layer captures every skill activation, every subagent spawn, and every 4D phase boundary as structured JSONL events. Over time, this turns into a high-signal map of how the operator actually works, which feeds back into the Hebbian connectome.
+The brain doesn't just *act* — it *observes itself acting*. An observability layer captures every skill activation, every subagent spawn, and every 4D phase boundary as structured JSONL events. Over time, this turns into a high-signal map of how the operator actually works, which feeds back into the Hebbian connectome.
 
 ### The Trace Pipeline
 
@@ -929,22 +929,20 @@ python3 ~/.claude/scripts/update_neural_activity.py --since 7d   # weekly cron-s
 python3 ~/.claude/scripts/update_neural_activity.py --dry-run    # preview without writing
 ```
 
-### The 8 Datadog ports — all shipped
+### The 8 observability surfaces — all shipped
 
-The full spec lives in `feature-datadog-port.md`; the build plan in `plan-datadog-port.md`.
+| Surface | Purpose | Script / artifact |
+|---------|---------|---|
+| 1 | Agent Trace (APM-style) ✓ | `scripts/trace-hook.py`, `scripts/brain-trace.py`, `scripts/update_neural_activity.py` |
+| 2 | Skill Cost Profiler ✓ | `scripts/skill-cost-profiler.py` |
+| 3 | Brain SLOs + Error Budget ✓ | `scripts/slos.py` |
+| 4 | Watchdog — cliff + quality-drop detector ✓ | `scripts/watchdog.py` |
+| 5 | Brain Digest (daily dashboard) ✓ | `scripts/brain-digest.py` |
+| 6 | Incident Capture (post-mortems) ✓ | `skills/incident-capture/`, `scripts/incident-capture.py`, `commands/incident-capture.md` |
+| 7 | Brain Synthetics — per-arm health checks ✓ | `skills/arm-synthetics/`, `scripts/arm-synthetics-runner.py`, `templates/arm-synthetics/` |
+| 8 | Brain Charts on Demand ✓ | `scripts/brain-chart.py` |
 
-| Port | Datadog analog | Brain version | Script / artifact |
-|------|---------------|---------------|---|
-| 1 | APM | Agent Trace ✓ | `scripts/trace-hook.py`, `scripts/brain-trace.py`, `scripts/update_neural_activity.py` |
-| 2 | Continuous Profiler | Skill Cost Profiler ✓ | `scripts/skill-cost-profiler.py` |
-| 3 | SLOs + Error Budget | Brain SLOs ✓ | `scripts/slos.py` |
-| 4 | Watchdog | Cliff + quality drop detector ✓ | `scripts/watchdog.py` |
-| 5 | Dashboards | Brain Digest ✓ | `scripts/brain-digest.py` |
-| 6 | Incident Management | Post-mortem capture ✓ | `skills/incident-capture/`, `scripts/incident-capture.py`, `commands/incident-capture.md` |
-| 7 | Synthetics | Per-arm health checks ✓ | `skills/arm-synthetics/`, `scripts/arm-synthetics-runner.py`, `templates/arm-synthetics/` |
-| 8 | Notebooks / Bits AI | Brain Charts on Demand ✓ | `scripts/brain-chart.py` |
-
-All eight ports share a private library `scripts/_brain_obs.py` for trace iteration, window parsing, and the `--execute` dry-run pattern — keeps `~120 lines` from drifting across the 10 observability scripts.
+All eight surfaces share a private library `scripts/_brain_obs.py` for trace iteration, window parsing, and the `--execute` dry-run pattern — keeps `~120 lines` from drifting across the 10 observability scripts.
 
 Each port is independently shippable; the trace from Port 1 is the substrate the analytics ports (2-4) and the visualisation ports (5, 8) read from. Ports 6 and 7 are independent of the rest.
 
@@ -1115,7 +1113,7 @@ ai-pull --status
 │   ├── gate-check                 ← 4D change gate enforcement
 │   ├── merge-hooks.py             ← Hook sync with script-exists validation
 │   ├── eye-check.py               ← Browser automation detector
-│   ├── trace-hook.py              ← Observability capture hook (Datadog Port 1)
+│   ├── trace-hook.py              ← Observability capture hook (trace events)
 │   ├── brain-trace.py             ← Observability query CLI (grep / top / tail)
 │   ├── brain-chart.py             ← Observability charts on demand (ASCII / SVG)
 │   ├── brain-digest.py            ← Daily aggregator report

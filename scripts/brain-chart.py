@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-chart.py — Datadog Port 8 (Phase C). Brain Charts on Demand.
+chart.py — observability surface 8. Brain Charts on Demand.
 
 Lightweight chart renderer for the brain's observability data. Reads from
 the existing adapters (trace, cost profiler, Hebbian matrix, git log) and

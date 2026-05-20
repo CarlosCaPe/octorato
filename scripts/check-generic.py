@@ -155,7 +155,7 @@ def main():
 
     # Hard rule: no SDD artifacts at brain root. Runs BEFORE blocklist (doesn't
     # need company/brain-blocklist.txt to fire) — this is a structural rule, not
-    # a token rule. The Datadog port spec slipped past blocklist enforcement
+    # a token rule. A past internal spec slipped past blocklist enforcement
     # because it had zero client tokens; this stops the class of leak.
     if args.staged or args.staged_only:
         forbidden = check_forbidden_paths(staged_files())
