@@ -174,6 +174,7 @@ The gate converts every write operation from **fire-and-forget** to **plan-appro
 | File delete | Verify no remaining references | `grep` returns 0 hits |
 | Skill/doc edit | Read back, verify structure | Section headers, no broken refs |
 | Any change | `get_errors` on modified files | 0 errors |
+| **PR for production deploy** | **`pre-merge-qa-gate` skill — dispatch QA specialist agent against test/user-case spec** | **Agent ✅ verdict with concrete evidence (file:line, curl, screenshot). Build green alone is NOT enough — see the skill for why.** |
 
 ### Mandatory Output Format
 
