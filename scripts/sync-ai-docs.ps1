@@ -38,7 +38,8 @@ function Resolve-ProjectPath {
 # To register your projects, create company/config/arms-paths.json with:
 #   { "project-name": "relative/path/from/USERPROFILE" }
 $ProjectMap = @{}
-$ArmsPathConfig = Join-Path (Split-Path $PSScriptRoot) "company" "config" "arms-paths.json"
+# PS 5.1 compatibility: chain 2-arg Join-Path calls (PS 7+ accepts variadic Join-Path).
+$ArmsPathConfig = Join-Path (Join-Path (Join-Path (Split-Path $PSScriptRoot) "company") "config") "arms-paths.json"
 if (Test-Path $ArmsPathConfig) {
     $raw = Get-Content $ArmsPathConfig -Raw | ConvertFrom-Json
     foreach ($prop in $raw.PSObject.Properties) {
