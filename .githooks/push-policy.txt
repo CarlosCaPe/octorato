@@ -1,0 +1,46 @@
+# pre-push policy for the octorato brain (~/.claude/)
+#
+# Format:
+#   [paths]   — one POSIX extended regex per line; matches paths being pushed
+#   [content] — one POSIX extended regex per line; matches lines being ADDED in
+#               the push diff or in commit messages
+#
+# Lines starting with '#' are comments. Blank lines are ignored.
+#
+# Bypass for a single push (only if you are CERTAIN it's intentional):
+#   git push --no-verify
+#
+# This file is committed (so all clones get the same baseline policy).
+# Operator-specific identifiers live in `company/brain-blocklist.txt`
+# (gitignored) and are layered on top by the hook when present.
+
+[paths]
+# Never push captured tokens, sessions, or per-user data
+\.graph-token\.json$
+\.playwright-session-[^/]*/
+^users/[^/]+/(raw|embeddings|transcripts)/
+\.env(\..+)?$
+# Operator-private dirs
+^company/
+^private/
+^local/
+^secrets/
+^analytics/
+# Personal finops config
+^budgets\.yaml$
+# Incident reports often carry client context — keep private until distilled to a skill
+^incidents/.+\.md$
+
+[content]
+# JWT bearer tokens (typical Microsoft Graph length)
+eyJ[A-Za-z0-9_=-]+\.[A-Za-z0-9_=-]+\.[A-Za-z0-9_.+/=-]{40,}
+# OpenAI / Anthropic / GitHub / Groq / Slack API key shapes
+\bsk-(ant-|proj-)?[A-Za-z0-9_-]{40,}\b
+\bgsk_[A-Za-z0-9]{50,}\b
+\bgh[ops]_[A-Za-z0-9]{36,}\b
+\bxox[baprs]-[0-9]+-[0-9]+-[A-Za-z0-9]+\b
+\bAKIA[0-9A-Z]{16}\b
+# Private key blocks
+-----BEGIN (RSA |EC |OPENSSH |DSA |ENCRYPTED |PGP )?PRIVATE KEY-----
+# Connection strings with embedded credentials
+[a-z][a-z0-9+.-]*://[^:@\s]+:[^@\s]+@[^\s]+

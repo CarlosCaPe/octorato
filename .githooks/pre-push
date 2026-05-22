@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+# pre-push — second enforcement layer for the "Brain Stays Generic" rule.
+#
+# Runs on EVERY `git push` against this repo (including direct `git push`,
+# not just the `ai-push` workflow). Replaces the blunt DO-NOT-PUSH-FROM-*
+# remote-URL guardrail with content-aware path + secret scanning.
+#
+# Bypass (intentional override):    git push --no-verify
+# Configure paths/patterns:         .githooks/push-policy.txt
+# Operator-private identifiers:     company/brain-blocklist.txt (gitignored)
+
+set -uo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+[ -z "$REPO_ROOT" ] && { echo "pre-push: not in a git repo" >&2; exit 0; }
+
+POLICY="$REPO_ROOT/.githooks/push-policy.txt"
+BLOCKLIST="$REPO_ROOT/company/brain-blocklist.txt"
+ZERO="0000000000000000000000000000000000000000"
+
+# ── Load policy ────────────────────────────────────────────────────────────
+
+DENY_PATHS=()
+DENY_CONTENT=()
+section=""
+if [ -f "$POLICY" ]; then
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      ""|\#*) continue ;;
+      "[paths]")    section="paths"; continue ;;
+      "[content]")  section="content"; continue ;;
+    esac
+    case "$section" in
+      paths)   DENY_PATHS+=("$line") ;;
+      content) DENY_CONTENT+=("$line") ;;
+    esac
+  done < "$POLICY"
+fi
+
+# Layer the private blocklist on top (case-insensitive whole-word matching)
+# This mirrors `scripts/check-generic.py` semantics but runs at push time too.
+BLOCKLIST_TOKENS=()
+if [ -f "$BLOCKLIST" ]; then
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      ""|\#*) continue ;;
+    esac
+    BLOCKLIST_TOKENS+=("$line")
+  done < "$BLOCKLIST"
+fi
+
+BLOCKLIST_RE=""
+if [ ${#BLOCKLIST_TOKENS[@]} -gt 0 ]; then
+  # join tokens with | for a single alternation; escape regex metachars
+  for t in "${BLOCKLIST_TOKENS[@]}"; do
+    esc=$(printf '%s' "$t" | sed 's/[][\\.*^$(){}?+|/]/\\&/g')
+    [ -z "$BLOCKLIST_RE" ] && BLOCKLIST_RE="$esc" || BLOCKLIST_RE="$BLOCKLIST_RE|$esc"
+  done
+fi
+
+# ── Helpers ────────────────────────────────────────────────────────────────
+
+FAIL=0
+declare -a REASONS
+
+block() { REASONS+=("$1"); FAIL=1; }
+
+scan_paths() {
+  local files="$1"
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    for pat in "${DENY_PATHS[@]}"; do
+      if printf '%s' "$f" | grep -Eq -- "$pat"; then
+        block "path '$f' matches denied pattern /$pat/"
+      fi
+    done
+  done <<EOF
+$files
+EOF
+}
+
+scan_added_content() {
+  local added="$1"
+  for pat in "${DENY_CONTENT[@]}"; do
+    if printf '%s' "$added" | grep -Eq -- "$pat"; then
+      local sample
+      sample=$(printf '%s' "$added" | grep -E -- "$pat" | head -2 | sed 's/^/      /')
+      block "added line matches denied pattern /$pat/:
+$sample"
+    fi
+  done
+  if [ -n "$BLOCKLIST_RE" ]; then
+    if printf '%s' "$added" | grep -Eiq -- "\b($BLOCKLIST_RE)\b"; then
+      local sample
+      sample=$(printf '%s' "$added" | grep -Ei -- "\b($BLOCKLIST_RE)\b" | head -2 | sed 's/^/      /')
+      block "added line matches company blocklist (company/brain-blocklist.txt):
+$sample"
+    fi
+  fi
+}
+
+scan_messages() {
+  local msgs="$1"
+  for pat in "${DENY_CONTENT[@]}"; do
+    if printf '%s' "$msgs" | grep -Eq -- "$pat"; then
+      block "commit message matches denied pattern /$pat/"
+    fi
+  done
+  if [ -n "$BLOCKLIST_RE" ]; then
+    if printf '%s' "$msgs" | grep -Eiq -- "\b($BLOCKLIST_RE)\b"; then
+      block "commit message matches company blocklist"
+    fi
+  fi
+}
+
+# ── Iterate refs being pushed ──────────────────────────────────────────────
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ "$local_sha" = "$ZERO" ] && continue   # ref deletion, nothing to scan
+
+  if [ "$remote_sha" = "$ZERO" ]; then
+    # New branch — find commits unique to this push (not in any other remote ref)
+    commits=$(git rev-list "$local_sha" --not --remotes 2>/dev/null || true)
+  else
+    commits=$(git rev-list "${remote_sha}..${local_sha}" 2>/dev/null || true)
+  fi
+  [ -z "$commits" ] && continue
+
+  files=$(printf '%s\n' "$commits" | xargs -I{} git diff-tree --no-commit-id --name-only -r {} 2>/dev/null | sort -u | grep -v '^$' || true)
+  if [ -n "$files" ]; then
+    scan_paths "$files"
+  fi
+
+  # Added lines only (^+ but not ^+++ which is a diff header)
+  added=$(printf '%s\n' "$commits" | xargs -I{} git show --no-color --format= {} 2>/dev/null | grep -E '^\+' | grep -vE '^\+\+\+' || true)
+  if [ -n "$added" ]; then
+    scan_added_content "$added"
+  fi
+
+  msgs=$(printf '%s\n' "$commits" | xargs -I{} git log --format='%B%n---%n' -1 {} 2>/dev/null || true)
+  if [ -n "$msgs" ]; then
+    scan_messages "$msgs"
+  fi
+done
+
+# ── Verdict ────────────────────────────────────────────────────────────────
+
+if [ "$FAIL" -ne 0 ]; then
+  {
+    echo ""
+    echo "✗ pre-push: REFUSED by .githooks/push-policy.txt"
+    echo ""
+    for r in "${REASONS[@]}"; do
+      echo "  • $r"
+    done
+    echo ""
+    echo "Options:"
+    echo "  • Remove the offending file or rewrite the offending content"
+    echo "  • Edit .githooks/push-policy.txt if the rule is too broad"
+    echo "  • Bypass once (only if intentional): git push --no-verify"
+  } >&2
+  exit 1
+fi
+
+exit 0
