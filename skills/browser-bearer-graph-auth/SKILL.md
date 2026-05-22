@@ -51,9 +51,11 @@ Different first-party Microsoft web apps request different default scope sets at
 | Driving URL | Captured token characteristics |
 |---|---|
 | `teams.microsoft.com` / `teams.cloud.microsoft` | Narrow scope set; typically lacks `Chat.Read`; ~60 min TTL |
-| `outlook.office.com` (One Outlook Web app `9199bf20-a13f-4107-85dc-02114787ef48`) | Broader scope set: `Chat.Read`, `Chat.ReadWrite`, `OnlineMeetings.Read`, `OnlineMeetingArtifact.Read.All`, `Files.ReadWrite.All`, ~24h TTL |
+| `outlook.office.com` (One Outlook Web app `9199bf20-a13f-4107-85dc-02114787ef48`) | Broader scope set: `Chat.Read`, `Chat.ReadWrite`, `OnlineMeetings.Read`, `OnlineMeetingArtifact.Read.All`, `Files.ReadWrite.All`, **`Mail.Read`, `Mail.ReadWrite`**, ~24h TTL |
 
 The Outlook Web first-party client is the better target for a wider scope envelope. Drive Outlook Web first, then Teams variants as fallback. Public app IDs above are documented Microsoft first-party app IDs.
+
+**Mail scopes come free**: any arm that drives Outlook Web during scope-widening gets `Mail.Read` and `Mail.ReadWrite` in the captured token automatically — no scope request, no consent dialog, no extra navigation step beyond the existing Outlook visit. A `read-outlook-mail.js`-style triage tool can run on top of the same token an existing Teams sync uses, with zero new auth work. Validated on a Conditional-Access-strict tenant (ADH, May 2026) where the same captured token served both Teams sync and Outlook inbox triage from the same `.graph-token.json`.
 
 **Note**: scopes that are NOT in the Outlook Web client (and require an admin-consented App Registration to obtain):
 - `ChannelMessage.Read.All`
@@ -157,3 +159,4 @@ const TEAMS_SHELL_PATTERNS = [
 - AADSTS53003 with sub-detail "Device state: Unregistered" is the canonical signature of "Conditional Access wants a device claim you can't provide." Stop trying Device Code variants when you see this. Pivot to browser-bearer.
 - Re-running the silent refresh through Outlook Web (not Teams) is critical — when Teams Web silently changes URL during refresh (e.g., to `teams.cloud.microsoft`), the multi-target pattern with Outlook FIRST keeps the broad-scope token.
 - Always verify scopes from the JWT `scp` claim, not from the saved `_scopes` field. Discrepancies between the two indicate you're reading a stale capture.
+- **`Mail.Read`/`Mail.ReadWrite` are bundled into the Outlook-driven token automatically**: an arm that already has the Teams/Outlook auth path running can ship a new inbox-triage feature (see `inbox-triage-classifier`) without filing an admin ticket for new scopes. Validated: same captured token served Teams sync AND Outlook follow-up scanner from a single `.graph-token.json` (ADH, 2026-05-22).

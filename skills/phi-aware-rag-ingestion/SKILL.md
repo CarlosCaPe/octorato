@@ -186,6 +186,37 @@ Every run starts with a health check that exits early on failure:
 
 If any fails, exit code 2 with a specific message. Do not proceed to fetch.
 
+## Fail-Closed Exit Codes (Mandatory Discipline)
+
+Every script in this pipeline family (ingestion, triage, classifier, ad-hoc queries) MUST honor the same exit code semantics. This is the contract that lets a wrapping shell script / cron / CI reliably distinguish "needs operator attention" from "transient infra failure":
+
+| Code | Meaning | Wrapper response |
+|---|---|---|
+| `0` | Success — all items processed cleanly | Continue / no alert |
+| `1` | Generic failure (network, parse error, unexpected) | Retry with backoff; alert after 3 |
+| `2` | Auth failure (missing token, expired refresh, scope insufficient) | Halt; surface to operator immediately. Re-auth required. |
+| `3` | **PHI detected AND local LLM unavailable** — refused to degrade to cloud | Halt; surface to operator. Start ollama and re-run. |
+
+Exit code 3 is the codified version of the fail-closed posture. The pipeline does NOT silently route PHI items to cloud as a "best-effort" when ollama is down. It refuses, reports which items were blocked, and exits non-zero.
+
+```js
+// canonical exit logic at end of orchestrator main()
+if (phiBlockedCount > 0 && !ollamaAvailable) {
+  console.error(`⚠ ${phiBlockedCount} item(s) contained PHI but ollama is down — could not classify.`);
+  console.error('  Start ollama: `ollama serve` (then pull the local LLM model)');
+  process.exit(3);
+}
+```
+
+**Why a distinct code (not just 1)**:
+- A monitoring system needs to distinguish "infra glitch, retry" (code 1) from "policy guardrail held, human action required" (code 3)
+- Exit 3 documents the fact that PHI was correctly detected and correctly NOT sent to cloud — that's a success-of-policy event worth surfacing, not just a generic failure
+- Operators can build wrappers like `&& notify` or `|| start-ollama-and-retry` that branch on the code
+
+**Anti-pattern**: catching the ollama-unavailable case and falling back to Groq with a warning log. This is the worst possible silent failure — the operator never knows PHI was leaked. There is no fallback. Halt with exit 3.
+
+Validated against ADH on 2026-05-22: with ollama deliberately stopped, 1/5 inbox items was correctly marked PHI-blocked (exit 3); subsequent run with ollama started successfully classified all 5 with zero cloud egress on the PHI-tainted item.
+
 ## Anti-patterns
 
 | Anti-pattern | Why it fails |
@@ -201,6 +232,7 @@ If any fails, exit code 2 with a specific message. Do not proceed to fetch.
 ## Composability
 
 - `browser-bearer-graph-auth` — provides the bearer token for Microsoft Graph fetches
+- `inbox-triage-classifier` — reuses this skill's PHI screen + dual-route LLM, but for stateless classification (not RAG ingestion). Shares `phi-redact.js`, `text-normalize.js`, `ollama-client.js`, `groq-client.js`, `user-paths.js` modules verbatim.
 - `stream-transcript-dom-scrape` — provides the transcript text input when file-ACL blocks download
 - `sops-age-git-encryption` — encrypts the regulated paths (`transcripts/`, `raw/`, `embeddings/`) before commit
 - `mcp-stack-setup` (existing) — exposes the resulting vector store via MCP tool calls (e.g., `mcp-teams.search_messages`)
