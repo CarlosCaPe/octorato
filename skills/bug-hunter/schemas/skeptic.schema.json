@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "schemaVersion": 1,
+  "artifact": "skeptic",
+  "title": "Bug Hunter Skeptic Artifact",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["bugId", "response", "analysisSummary"],
+    "properties": {
+      "bugId": { "type": "string", "minLength": 1 },
+      "response": {
+        "type": "string",
+        "enum": ["ACCEPT", "DISPROVE", "MANUAL_REVIEW"]
+      },
+      "analysisSummary": { "type": "string", "minLength": 1 },
+      "counterEvidence": { "type": "string", "minLength": 1 }
+    },
+    "additionalProperties": false
+  }
+}

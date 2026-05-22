@@ -1,0 +1,32 @@
+**/.DS_Store
+*.swp
+*.swo
+*~
+.env
+.env.local
+.idea/
+.vscode/
+node_modules/
+.ralph/
+.claude/settings.local.json
+.claude/bug-hunter-state.json
+.claude/bug-hunter-fix.lock
+.claude/bug-hunter-run.log
+.claude/bug-hunter-coverage.md
+.claude/bug-hunter-coverage.md.bak
+.claude/chunks/
+
+# Autoresearch (internal experiment tooling)
+autoresearch.jsonl
+autoresearch.md
+autoresearch.ideas.md
+
+# Session artifacts
+handoff.md
+
+# Test fixture git repo (self-contained for testing)
+test-fixture/.git/
+tmp/
+.bug-hunter/
+INTEGRATION-PLAN-v3.md
+FIX-PLAN*.md
