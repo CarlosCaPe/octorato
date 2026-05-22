@@ -82,7 +82,14 @@ The brain is published as **open-source**; git history is publicly visible on Gi
   - ✅ `"feat(brain): add ado-refactor-performance-gate skill"`
   - ❌ `"feat(brain): add ado-refactor-performance-gate skill from <ARM_CODE> arm"`
 
-**Enforcement:** `scripts/check-generic.py` scans staged files + commit message against `company/brain-blocklist.txt` (private). `ai-push` calls it before committing. Any blocklist hit → commit blocked. No exceptions, no `--force`. **If a leak makes it public:** rewrite history (`git filter-repo` or squash) and force-push immediately. Mention to operator; never silently fix and hope.
+**Enforcement (two layers):**
+
+1. **Commit-time** — `scripts/check-generic.py` scans staged files + commit message against `company/brain-blocklist.txt` (private, gitignored). `ai-push` calls it before committing. Soft-fails when the blocklist is missing.
+2. **Push-time** — `.githooks/pre-push` scans every commit being pushed against `.githooks/push-policy.txt` (universal: paths + secret patterns) and, when present, layers `company/brain-blocklist.txt` on top. Always runs, no soft-fail. Enable on a fresh clone with `git config core.hooksPath .githooks`. See [`.githooks/README.md`](.githooks/README.md).
+
+The push-time layer was added after a "blunt" `DO-NOT-PUSH-FROM-*` remote-URL guardrail was found to block legitimate generic-skill contributions while not actually inspecting content. Generic content now flows; sensitive content blocks regardless of the commit workflow used.
+
+Any blocklist hit → commit/push blocked. No exceptions, no `--force`. **If a leak makes it public:** rewrite history (`git filter-repo` or squash) and force-push immediately. Mention to operator; never silently fix and hope.
 
 ## Universal Code Discipline
 
