@@ -1,0 +1,105 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "schemaVersion": 1,
+  "artifact": "fix-report",
+  "title": "Bug Hunter Fix Report Artifact",
+  "type": "object",
+  "required": [
+    "version",
+    "fix_branch",
+    "base_commit",
+    "dry_run",
+    "circuit_breaker_tripped",
+    "phase2_timeout_hit",
+    "fixes",
+    "verification",
+    "summary"
+  ],
+  "properties": {
+    "version": { "type": "string", "minLength": 1 },
+    "fix_branch": { "type": "string", "minLength": 1 },
+    "base_commit": { "type": "string", "minLength": 1 },
+    "dry_run": { "type": "boolean" },
+    "circuit_breaker_tripped": { "type": "boolean" },
+    "phase2_timeout_hit": { "type": "boolean" },
+    "fixes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["bugId", "severity", "status", "files", "lines"],
+        "properties": {
+          "bugId": { "type": "string", "minLength": 1 },
+          "severity": {
+            "type": "string",
+            "enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW", "Critical", "High", "Medium", "Low"]
+          },
+          "status": { "type": "string", "minLength": 1 },
+          "files": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "lines": { "type": "string", "minLength": 1 },
+          "commit": { "type": "string", "minLength": 1 },
+          "description": { "type": "string", "minLength": 1 },
+          "reason": { "type": "string", "minLength": 1 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "verification": {
+      "type": "object",
+      "required": [
+        "baseline_pass",
+        "baseline_fail",
+        "flaky_tests",
+        "final_pass",
+        "final_fail",
+        "new_failures",
+        "resolved_failures",
+        "typecheck_pass",
+        "build_pass",
+        "fixer_bugs_found"
+      ],
+      "properties": {
+        "baseline_pass": { "type": "integer", "minimum": 0 },
+        "baseline_fail": { "type": "integer", "minimum": 0 },
+        "flaky_tests": { "type": "integer", "minimum": 0 },
+        "final_pass": { "type": "integer", "minimum": 0 },
+        "final_fail": { "type": "integer", "minimum": 0 },
+        "new_failures": { "type": "integer", "minimum": 0 },
+        "resolved_failures": { "type": "integer", "minimum": 0 },
+        "typecheck_pass": { "type": "boolean" },
+        "build_pass": { "type": "boolean" },
+        "fixer_bugs_found": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "summary": {
+      "type": "object",
+      "required": [
+        "total_confirmed",
+        "eligible",
+        "manual_review",
+        "fixed",
+        "fix_reverted",
+        "fix_failed",
+        "skipped",
+        "fixer_bug",
+        "partial"
+      ],
+      "properties": {
+        "total_confirmed": { "type": "integer", "minimum": 0 },
+        "eligible": { "type": "integer", "minimum": 0 },
+        "manual_review": { "type": "integer", "minimum": 0 },
+        "fixed": { "type": "integer", "minimum": 0 },
+        "fix_reverted": { "type": "integer", "minimum": 0 },
+        "fix_failed": { "type": "integer", "minimum": 0 },
+        "skipped": { "type": "integer", "minimum": 0 },
+        "fixer_bug": { "type": "integer", "minimum": 0 },
+        "partial": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

@@ -50,24 +50,42 @@ Either:
 
 The spec is the contract the QA agent validates against. Without it, the agent has nothing to compare to and you get "looks fine" hand-waving.
 
-### 3. Dispatch the right specialist agent
+### 3. Dispatch the gate — `/bug-hunter --pr` is the default
 
-Pick based on the diff's primary surface:
+The DEFAULT gate is now **`/bug-hunter --pr`** (the `bug-hunter` brain skill — adversarial 3-agent pipeline: Hunter → Skeptic → Referee). Single-shot reviewers (Reality Checker alone) have a documented false-approve rate on schema, contract, and framework-reactivity bugs (see "Why this upgrade" below).
 
-| Diff touches | Primary agent | Secondary agent (if relevant) |
-|---|---|---|
-| CSRF / auth / API wiring | Reality Checker | Code Reviewer |
-| Click handlers / UX flow | Evidence Collector | Reality Checker |
-| ARIA / keyboard / SR | Accessibility Auditor | — |
-| CSP / security headers | Security Engineer + Frontend Developer | — |
-| Frontend rendering / hydration | Frontend Developer | Evidence Collector |
-| Database schema / SQL | Database Optimizer + Reality Checker | — |
-| Complex multi-domain | Multiple in parallel | — |
+Invocation:
 
-Brief the agent with:
+```
+/bug-hunter --pr current --scan-only
+```
+
+`--scan-only` keeps it in review mode (no auto-fixes — the operator owns the merge). Output: `.bug-hunter/referee.json` with verdict per finding + severity. **Auto-merge gate**: only arm when no finding has `severity >= HIGH`.
+
+The 3-agent flow:
+1. **Hunter** searches the diff for bugs. Has shell/Read/Grep access — can `grep migrations/` to verify column names, `npx tsc --noEmit` for type errors, `wrangler d1 PRAGMA table_info(...)` for schema sanity.
+2. **Skeptic** tries to disprove each Hunter finding. Penalty for missing a real bug ≫ penalty for over-skepticism → less false-approve.
+3. **Referee** delivers the verdict, surviving findings only.
+
+#### When to layer additional specialist agents
+
+`bug-hunter` is general-purpose. Layer a specialist agent IN PARALLEL when the diff touches a narrow domain it doesn't deeply model:
+
+| Diff touches | Layer also |
+|---|---|
+| ARIA / keyboard / SR | Accessibility Auditor |
+| CSP / security headers | Security Engineer + Frontend Developer |
+| Cryptography / auth tokens | Security Engineer |
+| Visual rendering / animation jank | Frontend Developer + Evidence Collector |
+| Stripe / payment-flow | Stripe specialist (per arm) |
+| SDD-LARGE-score (≥6, 10+ files, multi-module) | `/ocr:review` (open-code-review) as third reviewer with `feature.md` |
+
+Reality Checker is now a **specialist** for "acceptance criteria / spec compliance" — invoke when the PR has an explicit `feature.md` or `plan.md` to verify against. It's good at that. It is NOT the default gate anymore.
+
+Brief any agent with:
 - The PR diff or branch
-- The test/user case spec
-- An explicit instruction: "Default verdict NEEDS WORK — require concrete evidence (file:line citation, curl response, agent-browser screenshot) before approving anything."
+- The test/user case spec (or `feature.md` if the PR has one)
+- An explicit instruction: "Default verdict NEEDS WORK — require concrete evidence (file:line citation, curl response, agent-browser screenshot, tsc output, grep result) before approving anything. Run shell commands to verify schema/contract claims, do not trust source-code reading alone."
 
 ### 4. Only after agent verdict, arm auto-merge
 
@@ -101,8 +119,28 @@ Both would have been caught by a pre-merge agent dispatch against the test/user 
 
 This skill captures the rule.
 
+## Why this upgrade (2026-05-22)
+
+Reality Checker (single-shot single-agent) **passed** the following bugs that hit production:
+
+- PR #96 — RE share-targets: missed `created_at` vs `added_at` column mismatch (D1 500 on first hit).
+- PR #98 — asset-derive: missed PNG poison-pill (CPU stuck reprocessing failures forever).
+- PR #100 — KPI proxy query: APPROVED `scheduled_at <= datetime('now')` where ISO `T` vs SQLite space-separator made the predicate always false → permanent 0.
+- PR #111 — status enum: APPROVED client sending `'unshared'` while server only accepts `['shared','skipped','removed']` → undo silently 400'd.
+- PR #112 — Svelte `{@const}` reactivity: missed the reactive-dep tracking gap → cell visual stuck after share.
+
+Common pattern: Reality Checker reads source files and cites file:line. It does NOT run `npx tsc`, does NOT `grep migrations/` to verify column names, does NOT send a mock request to verify server↔client contracts, does NOT inspect framework reactive graphs.
+
+`/bug-hunter` (Hunter + Skeptic + Referee) fixes the structural gap:
+- **Tool access**: Hunter can shell out (`grep`, `tsc`, `wrangler`, `sqlite3`) to verify a claim before reporting.
+- **Adversarial debate**: Skeptic is penalty-incentivized to disprove findings → over-zealous Hunter gets corrected, but under-zealous Skeptic also loses → balanced.
+- **Framework verification**: doc-lookup sub-skill (Context7) checks Svelte 4 / React / Vue reactivity docs against the diff.
+
+Reality Checker stays in the toolbox as a specialist for SDD acceptance-criteria verification, where its strength (close reading + citation) shines.
+
 ## Related
 
+- `bug-hunter` — the adversarial 3-agent gate this skill now dispatches as the default.
 - `4d-paradigm-protocol` — 3D Diligent phase already required validation evidence; this skill makes the "evidence" concrete = agent verdict, not just build pass.
 - `post-check-verification` — what to do AFTER the deploy lands (live curl + cache-bust). Complementary to the pre-merge gate.
 - `dry-run-gate-pattern` — analogous gate for destructive operations (preview before write). Pre-merge QA gate = preview before merge.

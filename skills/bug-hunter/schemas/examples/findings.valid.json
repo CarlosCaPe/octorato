@@ -1,0 +1,17 @@
+[
+  {
+    "bugId": "BUG-1",
+    "severity": "Critical",
+    "category": "security",
+    "file": "src/example.ts",
+    "lines": "12-16",
+    "claim": "Request body reaches a dangerous sink without validation.",
+    "evidence": "src/example.ts:12-16 unvalidated body flows into exec().",
+    "runtimeTrigger": "POST /api/example with body {\"command\":\"rm -rf /\"}",
+    "crossReferences": ["src/router.ts:8-14"],
+    "confidenceScore": 92,
+    "confidenceLabel": "high",
+    "stride": "Tampering",
+    "cwe": "CWE-78"
+  }
+]

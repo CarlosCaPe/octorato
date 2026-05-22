@@ -1,0 +1,46 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "schemaVersion": 1,
+  "artifact": "referee",
+  "title": "Bug Hunter Referee Artifact",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": [
+      "bugId",
+      "verdict",
+      "trueSeverity",
+      "confidenceScore",
+      "confidenceLabel",
+      "verificationMode",
+      "analysisSummary"
+    ],
+    "properties": {
+      "bugId": { "type": "string", "minLength": 1 },
+      "verdict": {
+        "type": "string",
+        "enum": ["REAL_BUG", "NOT_A_BUG", "MANUAL_REVIEW"]
+      },
+      "trueSeverity": {
+        "type": "string",
+        "enum": ["Critical", "High", "Medium", "Low"]
+      },
+      "confidenceScore": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 100
+      },
+      "confidenceLabel": {
+        "type": "string",
+        "enum": ["high", "medium", "low"]
+      },
+      "verificationMode": {
+        "type": "string",
+        "enum": ["INDEPENDENTLY_VERIFIED", "EVIDENCE_BASED"]
+      },
+      "analysisSummary": { "type": "string", "minLength": 1 },
+      "suggestedFix": { "type": "string", "minLength": 1 }
+    },
+    "additionalProperties": false
+  }
+}
