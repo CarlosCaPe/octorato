@@ -192,3 +192,10 @@ incidents/
 /budgets.yaml
 /budgets.json
 /analytics/
+
+# Runtime operational state — never commit
+/daemon.log
+/daemon/
+/jobs/
+/gh-pr-status-cache.json
+/settings.json.bak.*
