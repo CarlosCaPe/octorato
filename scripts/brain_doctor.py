@@ -496,6 +496,11 @@ def render_human(results: list[Result]) -> None:
 
 
 def main() -> int:
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except (AttributeError, OSError):
+        pass
     ap = argparse.ArgumentParser(description="Brain Doctor — health check for ~/.claude/ (octorato)")
     ap.add_argument("--fix", action="store_true", help="perform idempotent repairs (opt-in)")
     ap.add_argument("--json", action="store_true", help="emit machine-readable JSON")
