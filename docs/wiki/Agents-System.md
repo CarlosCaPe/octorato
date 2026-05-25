@@ -1,6 +1,6 @@
 # Agents System
 
-The **agent layer** is Octorato's roster of specialist personas. Where a [[Skills-System|skill]] answers *how* a task is done, an agent answers *who* does it. This page explains how that distinction works, how agents are activated, the rules they inherit, and how to add a new one. For the full agent roster (162 personas across the divisions), see [[Agents]].
+The **agent layer** is Octorato's roster of specialist personas. Where a [[Skills-System|skill]] answers *how* a task is done, an agent answers *who* does it. This page explains how that distinction works, how agents are activated, the rules they inherit, and how to add a new one. For the full agent roster (152 personas across the divisions), see [[Agents]].
 
 ---
 
