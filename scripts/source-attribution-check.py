@@ -44,8 +44,12 @@ def main():
     if not transcript_path:
         allow()
 
-    # Find the last assistant text message in the JSONL transcript.
-    last_text = ""
+    # Collect assistant text messages from the JSONL transcript.
+    # NOTE: the current turn's final message is often not flushed yet when this
+    # Stop hook runs (a race), so we tolerate it by checking the last few
+    # assistant messages, not just the single latest one. Per-turn enforcement
+    # is handled up front by the UserPromptSubmit 4d-reminder injection.
+    texts = []
     try:
         with open(transcript_path, "r", encoding="utf-8") as fh:
             for line in fh:
@@ -68,14 +72,15 @@ def main():
                 else:
                     text = str(content)
                 if text.strip():
-                    last_text = text
+                    texts.append(text)
     except Exception:
         allow()
 
-    if not last_text:
+    recent = texts[-3:]
+    if not recent:
         allow()
 
-    if MARKERS.search(last_text):
+    if any(MARKERS.search(t) for t in recent):
         allow()
 
     block(
