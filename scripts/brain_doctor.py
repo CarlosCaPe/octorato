@@ -156,6 +156,40 @@ def check_interpreter(fix: bool) -> Result:
                   "install Python 3.8+ and ensure it is on PATH")
 
 
+def check_python_deps(fix: bool) -> Result:
+    key = "python-deps"
+    req_file = CLAUDE_DIR / "requirements.txt"
+    if not req_file.exists():
+        return Result(key, WARN, "no requirements.txt at brain root",
+                      "create ~/.claude/requirements.txt listing third-party deps")
+    required = []
+    for line in req_file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        name = line.split("==")[0].split(">=")[0].split("<")[0].split("[")[0].strip()
+        if name:
+            required.append(name)
+    missing = []
+    for pkg in required:
+        probe = run([PYTHON or "python3", "-c", f"import {pkg}"])
+        if probe.returncode != 0:
+            missing.append(pkg)
+    if not missing:
+        return Result(key, PASS, f"all declared deps importable ({', '.join(required)})")
+    if fix:
+        install = run([PYTHON or "python3", "-m", "pip", "install", "--user",
+                       "-r", str(req_file)])
+        if install.returncode == 0:
+            return Result(key, PASS, f"installed missing deps: {', '.join(missing)}")
+        return Result(key, FAIL,
+                      f"pip install failed (missing: {', '.join(missing)})",
+                      f"run manually: pip install --user -r {req_file}")
+    return Result(key, FAIL,
+                  f"missing deps: {', '.join(missing)} — heartbeat/connectome will silently degrade",
+                  f"pip install --user -r {req_file}  (or rerun with --fix)")
+
+
 def check_runners_tracked(fix: bool) -> Result:
     key = "runners-tracked"
     bin_dir = HOME / ".local" / "bin"
@@ -414,6 +448,7 @@ CHECKS = [
     ("repo-identity", check_repo_identity),
     ("sync-clean", check_sync_clean),
     ("interpreter", check_interpreter),
+    ("python-deps", check_python_deps),
     ("runners-tracked", check_runners_tracked),
     ("hooks-runtime-sync", check_hooks_runtime_sync),
     ("hooks-merge-fresh", check_hooks_merge_fresh),
