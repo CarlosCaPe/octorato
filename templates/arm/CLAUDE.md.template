@@ -33,10 +33,10 @@ PYTHONPATH=~/.local/bin python3 -m querymaster -e {{ENGINE}} -c {{CONN}} "SELECT
 
 ## Conventions
 
-<!-- Add project-specific conventions here -->
-<!-- - Branch naming: feature/TICKET-description -->
-<!-- - Commit format: type(scope): description -->
-<!-- - Test command: pytest / npm test -->
+- **Branch naming:** `feature/{{TICKET}}-short-description`, `fix/{{TICKET}}-short-description`, `chore/short-description`
+- **Commit format:** `type(scope): desc` — e.g. `feat(auth): add token refresh`, `fix(api): handle empty response`
+- **Lint/format:** `{{LINT_COMMAND}}` (e.g. `ruff check .` / `eslint src/`)
+- **Test command:** `{{TEST_COMMAND}}` (e.g. `pytest` / `npm test`)
 
 ## Key Paths
 
