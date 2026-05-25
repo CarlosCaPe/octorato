@@ -58,10 +58,21 @@ What this agent produces.
 - Be specific: `querymaster-postgresql` not `database-skill`
 - Include the technique: `index-creation-concurrently` not `index-stuff`
 
+## Branching Model — PRs Target `test`, Not `master`
+
+The brain uses a **staged-promotion** workflow. Two branches matter:
+
+- **`test`** — the integration / contribution branch. **All pull requests target `test`** — community contributions, day-to-day work, and bot-authored skills alike. Iterate, review, and critique freely here.
+- **`master`** — the curated, public canonical. **Promotion-only.** Nobody opens a PR against `master` directly; it advances solely through the weekly `test → master` promotion (see below). It is a protected branch (status checks + linear history).
+
+Why: fewer, deliberate, reviewed updates to the public canonical, and a safe place for community contribution where ideas can be iterated before they become canon.
+
+> **Content exception:** the daily `dataqbs.com` blog/news/metrics feed ships to its **own repo's** `master` daily for SEO freshness. The `test → master` staging applies to the **brain** (skills, agents, rules, docs) — not that content feed.
+
 ## Submitting a PR
 
 1. Fork the repository
-2. Create a feature branch: `git checkout -b feat/add-agent-xyz`
+2. Branch off **`test`** (not `master`): `git checkout test && git pull && git checkout -b feat/add-agent-xyz`
 3. Make your changes
 4. Run the security scan:
    ```bash
@@ -69,7 +80,17 @@ What this agent produces.
    # Must return empty
    ```
 5. Regenerate the connectome if you added/modified agents or skills
-6. Submit the PR with a clear description of what you're adding and why
+6. **Open the PR against `test`** with a clear description of what you're adding and why
+
+## How Changes Reach `master`
+
+`master` is never written to directly. Once a week the operator runs the `/promote-test` ritual: review the accumulated diff on `test`, then promote `test → master` as one deliberate, reviewed update. Your merged PR ships to the public canonical at that next weekly promotion — not the moment it lands on `test`.
+
+```
+contributors ─┐
+operator work ─┼──PRs──▶  test  ──weekly /promote-test (reviewed)──▶  master  (protected, public canonical)
+bot skills    ─┘
+```
 
 ### Commit Message Format
 

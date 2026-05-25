@@ -231,6 +231,18 @@ The agent loads its persona (WHO), the connectome attaches the right skills (HOW
 
 ---
 
+## Contributing
+
+The brain uses a **staged-promotion** branching model. All pull requests — community contributions, day-to-day work, and bot-authored skills — target **`test`**, the integration branch where changes are iterated and reviewed. **`master`** is the curated, public canonical and is **promotion-only**: it advances solely through a weekly, operator-reviewed `test → master` promotion (the `/promote-test` ritual).
+
+```
+fork → branch off test → PR against test → weekly /promote-test → master
+```
+
+So: fork the repo, branch off `test`, and open your PR against `test` — never `master`. Full rules (generic-safety, agent/skill structure, commit format) are in the in-repo `CONTRIBUTING.md`. *(The daily dataqbs.com content feed is the exception — it ships to its own repo's `master` daily; staging is for the brain.)*
+
+---
+
 ## What you've built
 
 After these five steps you have: a public brain at `~/.claude/`, a secret guard that blocks leaks at push time, a private gitignored company layer, a first sealed client arm, and cross-machine sync. The first session showed you the 4D gate, skill invocation, and agent activation — the three reflexes you'll use every day.
