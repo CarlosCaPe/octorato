@@ -7,7 +7,7 @@
 > [Gartner 40% of agentic projects predicted to be cancelled by 2027](https://www.gartner.com/en/newsroom/press-releases/2025-06-25-gartner-predicts-over-40-percent-of-agentic-ai-projects-will-be-canceled-by-end-of-2027)
 > over unmanaged cost.
 
-> *"One brain. 161 specialists. Zero office rent. One ledger per client."*
+> *"One brain. 152 specialists. Zero office rent. One ledger per client."*
 
 ---
 
@@ -57,7 +57,9 @@ An open-source AI agent operating system where a single human operator directs a
 
 With nothing but natural language, you can direct a team of AI specialists to build and ship software, and bill the client honestly when it ships.
 
-**Live framework**: 164 skills, 161 agent personas across 13 divisions, 8 enforcement scripts, multi-machine sync, a neural connectome that learns over time, and a FinOps pipeline that tags every trace event with the client who incurred it — with per-arm USD rollup, cost-spike alerts, budget caps that halt agents, and Anthropic Enterprise Analytics reconciliation all shipped (see [roadmap below](#finops-roadmap)).
+**Live framework**: 180+ skills, 150+ agent personas across 13 divisions, enforcement scripts, multi-machine sync, a neural connectome that learns over time, and a FinOps pipeline that tags every trace event with the client who incurred it — with per-arm USD rollup, cost-spike alerts, budget caps that halt agents, and Anthropic Enterprise Analytics reconciliation all shipped (see [roadmap below](#finops-roadmap)).
+
+**Shipped with it**: live products built and maintained agent-first on this brain — see [Built with Octorato](SHOWCASE.md).
 
 ```
 https://github.com/CarlosCaPe/octorato
@@ -124,10 +126,10 @@ The central brain sets high-level intent. The arms execute with local intelligen
 
 | Octopus Biology | Framework Architecture | What It Does |
 |----------------|----------------------|-------------|
-| Central brain | `~/.claude/` (this repo) | Shared rules, paradigms, 167 agent personas, 153 skills |
+| Central brain | `~/.claude/` (this repo) | Shared rules, paradigms, 150+ agent personas, 180+ skills |
 | Arms | Client project repos | Isolated workspaces — each client is a sealed arm |
-| Neurons | Agent personas | 167 specialist processors across 13 divisions |
-| Synapses | Skills | 153 reusable techniques that connect agents to capabilities |
+| Neurons | Agent personas | 152 specialist processors across 13 divisions |
+| Synapses | Skills | 189 reusable techniques that connect agents to capabilities |
 | Chemoreceptors (suckers) | `query_connectome.py` | TF-IDF cosine similarity against the indexed agent/skill corpus — a sparse lexical retriever, not multimodal chemoreception |
 | Afferent/efferent signal cycle | 4D Paradigm | Sense → plan → act → evaluate, with feedback — every signal follows 4 phases |
 | Co-activation reinforcement (inspired by Hebb's principle) | Hebbian-style learning | Edge weights between agent/skill pairs are boosted when they co-fire on a successful task; stale boosts decay exponentially (half-life ~69 days) and failures subtract. **Not LTP** — there is no NMDA-style coincidence detector, no synaptic protein synthesis. Closest ML analog: bandit reward priors over a static graph. |
@@ -203,8 +205,8 @@ The framework uses an object-oriented inheritance model:
 │     - The 4D Paradigm (Describe-Delegate-Diligent-Disclose)  │
 │     - The Octopus Architecture (brain/arm isolation)         │
 │     - The connectome engine (TF-IDF, cosine similarity)      │
-│     - 167 generic agent personas                              │
-│     - 153 generic skills (techniques, not client workflows)  │
+│     - 152 generic agent personas                              │
+│     - 189 generic skills (techniques, not client workflows)  │
 │     - Enforcement scripts (delegate-check, gate-check, etc.) │
 │     - Templates for creating your own company brain + arms   │
 │                                                              │
@@ -389,8 +391,8 @@ The archived specs become institutional memory — future tasks reference past d
                         ┌────────▼────────┐
                         │   BRAIN         │
                         │  ~/.claude/     │
-                        │  153 Skills     │
-                        │  167 Agents     │
+                        │  189 Skills     │
+                        │  152 Agents     │
                         │  N Client Arms  │
                         └────────┬────────┘
                                  │
@@ -434,7 +436,7 @@ Inspired by octopus neurobiology: 500M neurons, 2/3 distributed in arms, extensi
 ```
   D1 (WHO)     D2 (HOW)     D3 (WHERE)    D4 (WHEN)
   ────────     ────────     ─────────     ─────────
-  167          153          N             4
+  150+         180+         N             4
   Neurons      Synapses     Regions       Phases
   (Agents)     (Skills)     (Arms)        (4D Paradigm)
 ```
@@ -505,7 +507,7 @@ Human → Agent   Explicit cross-arm requests         (human decides what to bri
 
 ---
 
-## Org Chart — 13 Divisions, 167 Agents
+## Org Chart — 13 Divisions, 152 Agents
 
 ```mermaid
 graph TB
@@ -514,7 +516,7 @@ graph TB
     classDef div fill:#21262D,stroke:#30363D,stroke-width:1px,color:#C9D1D9,font-size:12px
 
     CEO["Human Operator"]:::ceo
-    BRAIN["BRAIN — 153 Skills · 167 Agents · N Arms"]:::brain
+    BRAIN["BRAIN — 180+ Skills · 150+ Agents · N Arms"]:::brain
     CEO --> BRAIN
 
     BRAIN --> ENG["Engineering — 28"]:::div
@@ -527,7 +529,7 @@ graph TB
     BRAIN --> SUP["Support — 7"]:::div
     BRAIN --> SPC["Specialized — 29"]:::div
     BRAIN --> XR["Spatial — 6"]:::div
-    BRAIN --> GMD["Game Dev — 20"]:::div
+    BRAIN --> GMD["Game Dev — 5"]:::div
     BRAIN --> ACD["Academic — 5"]:::div
     BRAIN --> PMA["Paid Media — 7"]:::div
 ```
@@ -704,7 +706,7 @@ The future. XR, visionOS, Metal.
 | XR Cockpit Interaction Specialist | Vehicle/aircraft interfaces |
 | Terminal Integration Specialist | CLI + spatial computing bridge |
 
-### Game Development Division (20 agents)
+### Game Development Division (5 agents)
 
 The playground. Unity, Unreal, Godot, Roblox, and more.
 
@@ -745,7 +747,7 @@ The ROI engine. Every dollar tracked.
 
 ---
 
-## Synapses — The Skill Layer (153 reusable techniques)
+## Synapses — The Skill Layer (189 reusable techniques)
 
 If agents are neurons — persistent processors with personality — then **skills are synapses**: the connection that makes a neuron useful for a specific task. A neuron in isolation does nothing. A neuron whose synapses know `index-creation-concurrently` and `query_connectome.py` becomes a database optimization specialist.
 
@@ -768,7 +770,7 @@ Task arrives                                              ▼
    ▼
 2D Delegate Q1 — Ventosas (Chemoreceptor search)
    query_connectome.py builds a TF-IDF vector of the task,
-   ranks all 153 synapses by cosine similarity to their stored
+   ranks all 189 synapses by cosine similarity to their stored
    document vectors. Returns top matches with scores.
    │
    ▼
@@ -845,7 +847,7 @@ The lifecycle has a software-convenient shortcut the biology doesn't have: **the
 ### Where to actually look at synapses
 
 ```bash
-ls ~/.claude/skills/                                          # All 153 by name
+ls ~/.claude/skills/                                          # All 189 by name
 ~/.claude/scripts/query_connectome.py query "<task>"          # Which synapses fire for this task
 ~/.claude/scripts/query_connectome.py gods 15                 # Top hub synapses
 ~/.claude/scripts/query_connectome.py communities             # Skill clusters
@@ -1178,7 +1180,7 @@ ai-pull --status
 ├── HEBBIAN_LEARNING.md      ← How the connectome learns over time
 ├── hooks.json               ← Shared hooks (source of truth, synced to all machines)
 ├── neural_map.json          ← The Deep Connectome (auto-generated, never edit)
-├── agents/                  ← 167 AI agent personas
+├── agents/                  ← 152 AI agent personas
 │   ├── REGISTRY.md          ← Auto-activation triggers & cross-references
 │   ├── engineering/         ← 28 agents
 │   ├── design/              ← 8 agents
@@ -1190,12 +1192,12 @@ ai-pull --status
 │   ├── support/             ← 7 agents
 │   ├── specialized/         ← 29 agents
 │   ├── spatial-computing/   ← 6 agents
-│   ├── game-development/    ← 20 agents
+│   ├── game-development/    ← 5 agents
 │   ├── academic/            ← 5 agents
 │   ├── paid-media/          ← 7 agents
 │   ├── strategy/            ← NEXUS orchestration playbooks and runbooks
 │   └── examples/            ← Multi-agent workflow examples
-├── skills/                  ← 153 reusable techniques
+├── skills/                  ← 189 reusable techniques
 ├── scripts/
 │   ├── generate_neural_map.py     ← Connectome generator (TF-IDF + cosine + Hebbian)
 │   ├── query_connectome.py        ← Suction cups — graph search for agent/skill matching
