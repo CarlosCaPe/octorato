@@ -44,3 +44,11 @@ eyJ[A-Za-z0-9_=-]+\.[A-Za-z0-9_=-]+\.[A-Za-z0-9_.+/=-]{40,}
 -----BEGIN (RSA |EC |OPENSSH |DSA |ENCRYPTED |PGP )?PRIVATE KEY-----
 # Connection strings with embedded credentials
 [a-z][a-z0-9+.-]*://[^:@\s]+:[^@\s]+@[^\s]+
+# Generic bearer token in an Authorization header (covers MCP headers: supabase/vercel/linear/cloudflare PATs)
+[Aa]uthorization"?[[:space:]]*[:=][[:space:]]*"?(Bearer[[:space:]]+)?[A-Za-z0-9._-]{24,}
+# Generic x-api-key header (exa and similar)
+x-api-key"?[[:space:]]*[:=][[:space:]]*"?[A-Za-z0-9._-]{20,}
+# Figma personal access token
+\bfig[dou]_[A-Za-z0-9_-]{20,}\b
+# Notion integration / API token
+\b(secret_|ntn_)[A-Za-z0-9]{36,}\b

@@ -42,6 +42,18 @@ try {
         git remote set-url origin $newOrigin
     }
 
+    # Hooks single-source-of-truth guard (FATAL): block if live settings.json hooks
+    # diverged from tracked hooks.json (the recurring "brain never sticks" bug).
+    $DriftGuard = Join-Path $BrainPath "scripts\check-hooks-drift.py"
+    if (Test-Path $DriftGuard) {
+        python3 $DriftGuard
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  ai-push aborted: settings.json hooks diverged from hooks.json." -ForegroundColor Red
+            Write-Host "  Run merge-hooks.py (discard) or check-hooks-drift.py --adopt (publish), then retry." -ForegroundColor Red
+            exit 1
+        }
+    }
+
     $status = git status --porcelain
     if (-not $status) {
         Write-Host "  Nothing to commit - working tree clean." -ForegroundColor DarkGray
