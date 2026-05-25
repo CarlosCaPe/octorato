@@ -31,8 +31,9 @@ REMINDER = (
     "4D Gate: present a Change Manifest before the first file write and wait for confirmation.\n"
     "ALWAYS close every answer with a final source line stating on whose authority "
     "it rests (Opus's own reasoning, a vendor/doc, the operator, or <file>:<line>). "
-    "Write that line in the SAME language as the user's input: English input -> "
-    "'According to: <who>'; Spanish input -> 'Según: <quién>'. Never mismatch."
+    "Write that line in the SAME language as the user's input, using the neutral "
+    "source noun: English -> 'Source: <who>'; Spanish -> 'Fuente: <quién>'; "
+    "German -> 'Quelle: <wer>'. Never mismatch the language."
 )
 
 print(json.dumps({
