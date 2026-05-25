@@ -1,13 +1,99 @@
 {
-  "$schema": "Shared hooks distributed via ai-push/ai-pull. Merged into each machine's settings.json by scripts/merge-hooks.py.",
+  "$schema": "Shared hooks distributed via ai-push/ai-pull. Merged into each machine's settings.json by scripts/merge-hooks.py. Edit hooks HERE (tracked) — never only in settings.json (gitignored, per-machine), or other machines won't get them.",
   "UserPromptSubmit": [
     {
       "hooks": [
         {
           "type": "command",
+          "command": "python3 ~/.claude/scripts/4d-reminder.py",
+          "timeout": 5,
+          "statusMessage": "Injecting 4D reasoning..."
+        },
+        {
+          "type": "command",
           "command": "python3 ~/.claude/scripts/eye-check.py",
           "timeout": 5,
           "statusMessage": "Checking if octopus needs eyes..."
+        },
+        {
+          "type": "command",
+          "command": "python3 ~/.claude/scripts/trace-hook.py --phase describe",
+          "timeout": 5
+        },
+        {
+          "type": "command",
+          "command": "python3 ~/.claude/scripts/trace-hook.py --phase delegate",
+          "timeout": 5
+        }
+      ]
+    }
+  ],
+  "PostToolUse": [
+    {
+      "matcher": "Skill",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "python3 ~/.claude/scripts/trace-hook.py",
+          "timeout": 5
+        }
+      ]
+    },
+    {
+      "matcher": "Agent",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "python3 ~/.claude/scripts/trace-hook.py",
+          "timeout": 5
+        }
+      ]
+    },
+    {
+      "matcher": "Write|Edit",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "python3 ~/.claude/scripts/trace-hook.py --phase execute",
+          "timeout": 5
+        },
+        {
+          "type": "command",
+          "command": "python3 ~/.claude/scripts/trace-hook.py --phase diligent",
+          "timeout": 5
+        }
+      ]
+    }
+  ],
+  "PreToolUse": [
+    {
+      "matcher": "Write|Edit",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "python3 ~/.claude/scripts/trace-hook.py --phase gate",
+          "timeout": 5
+        }
+      ]
+    }
+  ],
+  "Stop": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "python3 ~/.claude/scripts/source-attribution-check.py",
+          "timeout": 5
+        },
+        {
+          "type": "command",
+          "command": "python3 ~/.claude/scripts/trace-hook.py --phase disclose",
+          "timeout": 5
+        },
+        {
+          "type": "command",
+          "command": "python3 ~/.claude/scripts/no-pause-suggestion.py",
+          "timeout": 5
         }
       ]
     }

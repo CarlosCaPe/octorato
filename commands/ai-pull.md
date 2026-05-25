@@ -23,6 +23,12 @@ Capture pre and post hash to detect what changed:
 cd ~/.claude && pre=$(git rev-parse HEAD) && git pull && post=$(git rev-parse HEAD) && git log --oneline "$pre..$post" 2>/dev/null || echo "already up to date"
 ```
 
+### 2b. Merge shared hooks into local settings.json
+`hooks.json` (tracked) is the source of truth for hooks; `settings.json` is per-machine/gitignored. Apply any new/updated hooks so they actually fire on this machine:
+```bash
+[ -f ~/.claude/scripts/merge-hooks.py ] && python3 ~/.claude/scripts/merge-hooks.py
+```
+
 ### 3. Update external reference repos
 Check and pull `claude-mem-ref`:
 ```bash
