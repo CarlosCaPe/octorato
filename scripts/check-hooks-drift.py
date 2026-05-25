@@ -165,6 +165,11 @@ def adopt(hooks_data: dict, live: dict) -> int:
 
 
 def main() -> int:
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except (AttributeError, OSError):
+        pass
     ap = argparse.ArgumentParser()
     ap.add_argument("--adopt", action="store_true",
                     help="promote settings.json.hooks into hooks.json (intentional)")
