@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security report (private)
+    url: https://github.com/CarlosCaPe/octorato/security/policy
+    about: Do NOT open a public issue for vulnerabilities. See SECURITY.md.
+  - name: Octorato product / dataqbs
+    url: https://www.dataqbs.com
+    about: Octorato is the open-source AI Agent OS, productized by dataqbs.
