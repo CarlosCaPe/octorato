@@ -18,7 +18,11 @@ import re
 import sys
 
 # Markers that count as a valid source line (case-insensitive, anywhere near end).
-MARKERS = re.compile(r"(seg[uú]n:|fuente:|according to|source:)", re.IGNORECASE)
+# Neutral source markers per locale: Source (EN) / Fuente (ES) / Quelle (DE).
+# Legacy "según" / "according to" still accepted for detection tolerance.
+MARKERS = re.compile(
+    r"(source:|fuente:|quelle:|seg[uú]n:|according to)", re.IGNORECASE
+)
 
 
 def allow():
@@ -91,8 +95,8 @@ def main():
 
     nudge(
         "Reminder: close your answer with a final source line, in the SAME "
-        "language as the user's input — 'According to: <who>' (English) / "
-        "'Según: <quién>' (Spanish)."
+        "language as the user's input — 'Source: <who>' (EN) / "
+        "'Fuente: <quién>' (ES) / 'Quelle: <wer>' (DE)."
     )
 
 
