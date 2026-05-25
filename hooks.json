@@ -11,6 +11,12 @@
         },
         {
           "type": "command",
+          "command": "python3 ~/.claude/scripts/connectome-heartbeat.py",
+          "timeout": 5,
+          "statusMessage": "♥ Circulating the connectome..."
+        },
+        {
+          "type": "command",
           "command": "python3 ~/.claude/scripts/eye-check.py",
           "timeout": 5,
           "statusMessage": "Checking if octopus needs eyes..."

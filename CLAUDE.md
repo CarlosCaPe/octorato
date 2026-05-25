@@ -146,9 +146,11 @@ At the START of every non-trivial task, run all three in this order:
 
 | Q | Question | Tool |
 |---|---|---|
-| Q1 | ¿Quién sabe? (graph search) | `python3 ~/.claude/scripts/query_connectome.py query "<task>"` |
+| Q1 | ¿Quién sabe? (graph search) | **Autonomic** — the `connectome-heartbeat` hook beats on every prompt and injects the `♥` block (relevant agents/skills + 1-hop impact). Read it. Run `python3 ~/.claude/scripts/query_connectome.py query "<task>"` manually only for a deeper traversal (god nodes, full impact radius, shortest path). |
 | Q2 | ¿Tiene API? (token-efficient access) | Mental check — REST API > MCP > SDK > scraping (last resort) |
 | Q3 | ¿Quién lo hace? (rule match) | `python3 ~/.claude/scripts/delegate-check "<task>"` |
+
+The heartbeat (`scripts/connectome-heartbeat.py`) makes Q1 involuntary — like the octopus's pulse circulating blood through its whole body and returning. It surfaces a *lean*; the model still owns Q2/Q3 and the final verdict.
 
 Combined verdict: **ACTIVATE** (agent + skills + persona), **LOAD** (skills only), or **SELF** (general knowledge — only if Q1 and Q3 both return no strong match). Report the 3-line summary in every response that involves work. Full detail in `skills/4d-paradigm-protocol/SKILL.md`.
 
