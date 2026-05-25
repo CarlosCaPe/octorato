@@ -301,16 +301,13 @@ def push(args) -> int:
         return 1
     info("✓ Pushed to remote")
 
-    # Regenerate connectome and fold into the just-pushed commit
+    # Refresh the local connectome. neural_map.json is gitignored (per-machine,
+    # regenerated on demand) — so we rebuild it locally for this machine's query/
+    # heartbeat, but never add/commit/push it. No force-push of the branch, ever.
     if (CLAUDE / "scripts" / "generate_neural_map.py").exists():
-        info("🧠 Regenerating connectome...")
+        info("🧠 Refreshing local connectome...")
         subprocess.run([py(), str(CLAUDE / "scripts" / "generate_neural_map.py")],
                        stdout=subprocess.DEVNULL)
-        if git("diff", "--quiet", "--", "neural_map.json")[0] != 0:
-            git("add", "neural_map.json")
-            git("commit", "--amend", "--no-edit")
-            git("push", "--force-with-lease", "origin", "HEAD")
-            info("✓ Connectome updated and amended")
 
     print()
     sync(None)
