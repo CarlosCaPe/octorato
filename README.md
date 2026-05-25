@@ -1,5 +1,14 @@
 # Octopus Brain Framework
 
+[![License: MIT](https://img.shields.io/github/license/CarlosCaPe/octorato)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/CarlosCaPe/octorato?style=social)](https://github.com/CarlosCaPe/octorato/stargazers)
+[![Issues](https://img.shields.io/github/issues/CarlosCaPe/octorato)](https://github.com/CarlosCaPe/octorato/issues)
+[![Good first issues](https://img.shields.io/github/issues/CarlosCaPe/octorato/good%20first%20issue?label=good%20first%20issues&color=7057ff)](https://github.com/CarlosCaPe/octorato/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+
+📣 **Launch article:** [Introducing Octorato — the open-source FinOps brain for AI agents](https://www.linkedin.com/pulse/introducing-octorato-open-source-finops-brain-ai-agents-dataqbs-trbjc) · 🛠️ [Built with Octorato](SHOWCASE.md)
+
+<!-- TODO(demo): add a terminal demo here — asciinema cast or GIF of "natural language → shipped product". Tracked as a maintainer follow-up. -->
+
 > **Open-source agent operating system with built-in FinOps.**
 > Per-client token attribution. Air-gapped arms *(software-level isolation between client workspaces)*. Budget caps with a real halt mechanism.
 > The brain consultants and small agencies need to bill clients fairly —
