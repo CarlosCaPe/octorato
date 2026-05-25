@@ -25,8 +25,12 @@ def allow():
     sys.exit(0)
 
 
-def block(reason: str):
-    print(json.dumps({"decision": "block", "reason": reason}))
+def nudge(msg: str):
+    # Advisory ONLY — never block. A Stop hook cannot reliably see the current
+    # turn's final message (transcript flush race), and tool-heavy turns emit
+    # many marker-less assistant messages, so blocking here false-positives.
+    # Hard per-turn enforcement lives in the UserPromptSubmit 4d-reminder.
+    print(json.dumps({"systemMessage": msg}))
     sys.exit(0)
 
 
@@ -76,18 +80,18 @@ def main():
     except Exception:
         allow()
 
-    recent = texts[-3:]
+    # Wide window so a prior completed turn's source line keeps the check quiet
+    # during tool-heavy turns whose final message isn't flushed yet.
+    recent = texts[-12:]
     if not recent:
         allow()
 
     if any(MARKERS.search(t) for t in recent):
         allow()
 
-    block(
-        "Falta la línea de fuente. Cierra SIEMPRE tu respuesta con una línea "
-        "final 'Según: <quién>' que indique la autoridad de lo respondido — "
-        "p.ej. 'Según: razonamiento de Opus', 'Según: docs de <vendor>', "
-        "'Según: el operador', o 'Según: <archivo>:<línea>'. Agrégala ahora."
+    nudge(
+        "Recordatorio: cierra tu respuesta con una línea final "
+        "'Según: <quién>' indicando la fuente/autoridad de lo respondido."
     )
 
 
