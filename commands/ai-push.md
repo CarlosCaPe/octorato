@@ -16,6 +16,11 @@ Commit message: use `$ARGUMENTS` if provided, otherwise auto-generate from chang
 ```bash
 cd ~/.claude && git diff --cached --name-only | head -5 | tr '\n' ', ' | sed 's/,$//'
 ```
+### 2b. Hooks drift-guard (FATAL — run before commit)
+Block if the live `settings.json` hooks diverged from the tracked `hooks.json` (the recurring "brain never sticks" bug). Resolve before committing:
+```bash
+python3 ~/.claude/scripts/check-hooks-drift.py || { echo "Hook drift — run merge-hooks.py or check-hooks-drift.py --adopt, then retry"; exit 1; }
+```
 Then commit:
 ```bash
 cd ~/.claude && git commit -m "<message>"
