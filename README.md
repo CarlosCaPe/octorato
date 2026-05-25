@@ -190,6 +190,16 @@ ai-pull    # on every workstation
 
 See `templates/` for annotated setup guides with `{{PLACEHOLDERS}}`.
 
+### Branching & contribution model
+
+The brain uses **staged promotion**. All pull requests — contributors, day-to-day work, and bot-authored skills — target **`test`**, the integration branch where ideas are iterated and reviewed. **`master`** is the curated, public canonical and is **promotion-only**: it advances solely through a weekly, operator-reviewed `test → master` promotion (the `/promote-test` ritual).
+
+```
+PRs ─▶ test ──weekly /promote-test (reviewed)──▶ master (protected, public canonical)
+```
+
+Fork → branch off `test` → PR against `test`. Full guide: [CONTRIBUTING.md](CONTRIBUTING.md). *(The daily dataqbs.com content feed is the exception — it ships to its own repo's `master` daily; staging is for the brain.)*
+
 ---
 
 ## Architecture — CLASS / OBJECT / ARM

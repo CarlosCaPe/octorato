@@ -1,6 +1,8 @@
 <!-- Octorato PR template. The brain is public + open-source; every diff is
      visible on GitHub forever. Confirm the generic-safety boxes before merge. -->
 
+> **Base branch should be `test`, not `master`** — `master` is promotion-only and advances solely through the weekly `test → master` promotion. See [CONTRIBUTING.md](../CONTRIBUTING.md).
+
 ## What & why
 
 <!-- One paragraph: what this change does and the reason. -->
