@@ -350,7 +350,7 @@ The `examples/` directory contains workflow examples — not individual agents.
 
 ## Statistics
 
-- **Total agents**: 162
+- **Total agents**: 152
 - **Divisions with agents**: 13
 - **Reference directories**: 2 (strategy, examples)
 
@@ -358,15 +358,15 @@ The `examples/` directory contains workflow examples — not individual agents.
 |----------|-------|
 | Academic | 5 |
 | Design | 8 |
-| Engineering | 26 |
-| Game Development | 20 |
-| Marketing | 29 |
+| Engineering | 28 |
+| Game Development | 5 |
+| Marketing | 30 |
 | Paid Media | 7 |
 | Product | 5 |
 | Project Management | 6 |
 | Sales | 8 |
 | Spatial Computing | 6 |
-| Specialized | 28 |
-| Support | 6 |
+| Specialized | 29 |
+| Support | 7 |
 | Testing | 8 |
-| **Total** | **162** |
+| **Total** | **152** |
