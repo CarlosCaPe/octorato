@@ -199,3 +199,7 @@ incidents/
 /jobs/
 /gh-pr-status-cache.json
 /settings.json.bak.*
+
+# Daily GH-trending digest outputs are transient data; HISTORY.md is the kept ledger
+knowledge/github-trending/20*.md
+knowledge/github-trending/20*.json

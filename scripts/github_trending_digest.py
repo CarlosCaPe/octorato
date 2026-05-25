@@ -612,6 +612,10 @@ def llm_qa_gate(candidates: list[Candidate], groq_key: str) -> list[Candidate]:
         headers={
             "Authorization": f"Bearer {groq_key}",
             "Content-Type": "application/json",
+            # Groq's API sits behind Cloudflare, which 403s the default
+            # `Python-urllib/x.y` UA with "error code: 1010" (browser-signature
+            # ban). A browser-like UA gets through. Verified 2026-05-24.
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) brain-curation/1.0",
         },
     )
     try:
@@ -852,6 +856,21 @@ def main() -> int:
     body = render_markdown(args.date, enriched)
     write_markdown(args.date, body, args.dry_run)
     write_notion(args.date, body, env, args.dry_run)
+
+    # Machine-readable sidecar — ALL candidates (incl SKIP + reasons) so the
+    # autopromote step can build the cumulative HISTORY.md audit ledger and
+    # the operator can later ask "why did you ignore X?".
+    if not args.dry_run:
+        sidecar = KNOWLEDGE_DIR / f"{args.date}.json"
+        try:
+            sidecar.write_text(json.dumps({
+                "date": args.date,
+                "scanned": len(enriched),
+                "candidates": [asdict(c) for c in enriched],
+            }, ensure_ascii=False, indent=0), encoding="utf-8")
+            log("INFO", "sidecar written", path=str(sidecar))
+        except Exception as exc:
+            log("WARN", "sidecar write failed", err=str(exc))
 
     if args.dry_run:
         print(body)
