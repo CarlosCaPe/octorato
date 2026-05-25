@@ -7,7 +7,7 @@
 > [Gartner 40% of agentic projects predicted to be cancelled by 2027](https://www.gartner.com/en/newsroom/press-releases/2025-06-25-gartner-predicts-over-40-percent-of-agentic-ai-projects-will-be-canceled-by-end-of-2027)
 > over unmanaged cost.
 
-> *"One brain. 152 specialists. Zero office rent. One ledger per client."*
+> *"One brain. 150+ specialists. Zero office rent. One ledger per client."*
 
 ---
 
@@ -128,8 +128,8 @@ The central brain sets high-level intent. The arms execute with local intelligen
 |----------------|----------------------|-------------|
 | Central brain | `~/.claude/` (this repo) | Shared rules, paradigms, 150+ agent personas, 180+ skills |
 | Arms | Client project repos | Isolated workspaces — each client is a sealed arm |
-| Neurons | Agent personas | 152 specialist processors across 13 divisions |
-| Synapses | Skills | 189 reusable techniques that connect agents to capabilities |
+| Neurons | Agent personas | 150+ specialist processors across 13 divisions |
+| Synapses | Skills | 180+ reusable techniques that connect agents to capabilities |
 | Chemoreceptors (suckers) | `query_connectome.py` | TF-IDF cosine similarity against the indexed agent/skill corpus — a sparse lexical retriever, not multimodal chemoreception |
 | Afferent/efferent signal cycle | 4D Paradigm | Sense → plan → act → evaluate, with feedback — every signal follows 4 phases |
 | Co-activation reinforcement (inspired by Hebb's principle) | Hebbian-style learning | Edge weights between agent/skill pairs are boosted when they co-fire on a successful task; stale boosts decay exponentially (half-life ~69 days) and failures subtract. **Not LTP** — there is no NMDA-style coincidence detector, no synaptic protein synthesis. Closest ML analog: bandit reward priors over a static graph. |
@@ -205,8 +205,8 @@ The framework uses an object-oriented inheritance model:
 │     - The 4D Paradigm (Describe-Delegate-Diligent-Disclose)  │
 │     - The Octopus Architecture (brain/arm isolation)         │
 │     - The connectome engine (TF-IDF, cosine similarity)      │
-│     - 152 generic agent personas                              │
-│     - 189 generic skills (techniques, not client workflows)  │
+│     - 150+ generic agent personas                              │
+│     - 180+ generic skills (techniques, not client workflows)  │
 │     - Enforcement scripts (delegate-check, gate-check, etc.) │
 │     - Templates for creating your own company brain + arms   │
 │                                                              │
@@ -391,8 +391,8 @@ The archived specs become institutional memory — future tasks reference past d
                         ┌────────▼────────┐
                         │   BRAIN         │
                         │  ~/.claude/     │
-                        │  189 Skills     │
-                        │  152 Agents     │
+                        │  180+ Skills     │
+                        │  150+ Agents     │
                         │  N Client Arms  │
                         └────────┬────────┘
                                  │
@@ -507,7 +507,7 @@ Human → Agent   Explicit cross-arm requests         (human decides what to bri
 
 ---
 
-## Org Chart — 13 Divisions, 152 Agents
+## Org Chart — 13 Divisions, 150+ Agents
 
 ```mermaid
 graph TB
@@ -747,7 +747,7 @@ The ROI engine. Every dollar tracked.
 
 ---
 
-## Synapses — The Skill Layer (189 reusable techniques)
+## Synapses — The Skill Layer (180+ reusable techniques)
 
 If agents are neurons — persistent processors with personality — then **skills are synapses**: the connection that makes a neuron useful for a specific task. A neuron in isolation does nothing. A neuron whose synapses know `index-creation-concurrently` and `query_connectome.py` becomes a database optimization specialist.
 
@@ -770,7 +770,7 @@ Task arrives                                              ▼
    ▼
 2D Delegate Q1 — Ventosas (Chemoreceptor search)
    query_connectome.py builds a TF-IDF vector of the task,
-   ranks all 189 synapses by cosine similarity to their stored
+   ranks all 180+ synapses by cosine similarity to their stored
    document vectors. Returns top matches with scores.
    │
    ▼
@@ -847,7 +847,7 @@ The lifecycle has a software-convenient shortcut the biology doesn't have: **the
 ### Where to actually look at synapses
 
 ```bash
-ls ~/.claude/skills/                                          # All 189 by name
+ls ~/.claude/skills/                                          # All 180+ by name
 ~/.claude/scripts/query_connectome.py query "<task>"          # Which synapses fire for this task
 ~/.claude/scripts/query_connectome.py gods 15                 # Top hub synapses
 ~/.claude/scripts/query_connectome.py communities             # Skill clusters
@@ -1180,7 +1180,7 @@ ai-pull --status
 ├── HEBBIAN_LEARNING.md      ← How the connectome learns over time
 ├── hooks.json               ← Shared hooks (source of truth, synced to all machines)
 ├── neural_map.json          ← The Deep Connectome (auto-generated, never edit)
-├── agents/                  ← 152 AI agent personas
+├── agents/                  ← 150+ AI agent personas
 │   ├── REGISTRY.md          ← Auto-activation triggers & cross-references
 │   ├── engineering/         ← 28 agents
 │   ├── design/              ← 8 agents
@@ -1197,7 +1197,7 @@ ai-pull --status
 │   ├── paid-media/          ← 7 agents
 │   ├── strategy/            ← NEXUS orchestration playbooks and runbooks
 │   └── examples/            ← Multi-agent workflow examples
-├── skills/                  ← 189 reusable techniques
+├── skills/                  ← 180+ reusable techniques
 ├── scripts/
 │   ├── generate_neural_map.py     ← Connectome generator (TF-IDF + cosine + Hebbian)
 │   ├── query_connectome.py        ← Suction cups — graph search for agent/skill matching
