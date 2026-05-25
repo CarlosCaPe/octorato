@@ -90,8 +90,9 @@ def main():
         allow()
 
     nudge(
-        "Recordatorio: cierra tu respuesta con una línea final "
-        "'Según: <quién>' indicando la fuente/autoridad de lo respondido."
+        "Reminder: close your answer with a final source line, in the SAME "
+        "language as the user's input — 'According to: <who>' (English) / "
+        "'Según: <quién>' (Spanish)."
     )
 
 
