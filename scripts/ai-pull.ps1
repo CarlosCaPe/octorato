@@ -73,6 +73,19 @@ finally {
     Pop-Location
 }
 
+# -- Merge shared hooks into local settings.json --
+# hooks.json (tracked) is the source of truth; merge-hooks.py applies it into the
+# per-machine settings.json without touching mcpServers/permissions. Must run on
+# every pull or new/updated hooks never reach this machine.
+$MergeHooks = Join-Path $BrainPath "scripts\merge-hooks.py"
+if (Test-Path $MergeHooks) {
+    Write-Host "  Merging shared hooks..." -ForegroundColor Yellow
+    python3 $MergeHooks
+}
+else {
+    Write-Host ("  WARN: merge-hooks.py not found at {0}" -f $MergeHooks) -ForegroundColor DarkYellow
+}
+
 # -- Sync projects --
 if (Test-Path $SyncScript) {
     Write-Host "  Syncing projects..." -ForegroundColor Yellow
