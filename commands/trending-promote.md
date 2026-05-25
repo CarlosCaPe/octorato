@@ -25,7 +25,7 @@ allowed-tools: Bash, Read, Edit, Write
 
 1. Compute `<skill-name-kebab>` from the candidate (slug it, max 60 chars, alpha-numeric + hyphens only).
 2. Create `~/.claude/skills/<skill-name-kebab>/SKILL.md` with:
-   - YAML front-matter: `name`, `description` (1-line, from digest), `metadata: { type, source, discovered_on }`
+   - YAML front-matter: `name`, `description` (1-line — **rewrite into a substantive value statement; NEVER copy the GitHub tagline verbatim**. The raw tagline is what produces the content-less "pedorra" posts the operator rejected — e.g. dumping "Official directory of high quality plugins.." sells nothing), `metadata: { type, source, discovered_on }`
    - Body: `## What it does`, `## Why we added it`, `## How to use` (TODO checklist), `## Related skills` (link to nearest brain match for cross-reference, even though similarity was low — homologation)
 3. Update `~/.claude/MEMORY.md`: add a single reference-type entry pointing at the new skill, format: `- [<title>](<file>) — one-line hook`.
 4. Hand off to the news/FB pipeline (see "Cross-cutting publish" below).
@@ -59,12 +59,25 @@ allowed-tools: Bash, Read, Edit, Write
 3. In the incumbent's SKILL.md, add a "Sub-skills" section listing the new one.
 4. News article framing: "we extended X with sub-skill Y for Z".
 
+## Quality bar (NON-NEGOTIABLE — the post must sell technical judgment)
+
+A trending post is a *consulting credibility signal*, not a link dump. If it reads
+like the GitHub tagline, it actively hurts the brand ("¿qué tecnológico vende esto?").
+Before publishing, the article AND the FB post MUST clear this bar — mirror the depth
+of an existing curated piece (open `projects/dataqbs_site/src/content/news/2026-05-18-floci-local-aws.md`
+as the reference template):
+
+- **Structure:** `## ¿Qué es?` · `## ¿Cuándo conviene usarlo?` (3-5 concrete scenarios) · `## Quickstart` (real runnable snippet).
+- **Mandatory selling angle:** a `## Por qué nos importa` section with a *technical take* — how a dataqbs/octorato operator would actually use this, what it replaces, the cost/risk it removes. This is the layer that demonstrates expertise (= what sells consulting). No angle → do not publish.
+- **No artifacts:** no doubled periods (`..`), no verbatim GitHub blurb, no "high quality / official directory" filler.
+- **FB post:** lead with a hook or a concrete claim (the cost/risk removed, the thing it replaces), never the bare repo name + tagline. End with the link.
+
 ## Cross-cutting: publish news + post to FB
 
 After any of the above (except SKIP), in order:
 
 1. `cd ~/dataqbs-local-cron/bot-worktree && git fetch origin main --quiet && git reset --hard origin/main --quiet`
-2. Run the existing news pipeline: `cd projects/dataqbs_site && npx tsx scripts/news/skill-to-news-article.ts <skill-name-kebab>` — writes `src/content/news/<date>-<slug>.md`.
+2. **Author the article to the Quality bar above** — do NOT just run the mechanical generator and ship its output. You may seed with `cd projects/dataqbs_site && npx tsx scripts/news/skill-to-news-article.ts <skill-name-kebab>` (writes `src/content/news/<date>-<slug>.md`), but then ENRICH the result until it clears the bar (¿Qué es? / ¿Cuándo conviene? / Quickstart / Por qué nos importa). A bare-description article is a failure, not a shortcut.
 3. The post-commit hook (F3) will auto-bump PATCH on the next commit. Make sure the commit author is a bot identity (`blog-bot` / `dataqbs-bot`) so PATCH (not MINOR) is bumped.
 4. Commit + push to main: standard bot-worktree pattern, `--no-verify`, `git push https://x-access-token:$BLOG_BOT_PAT@github.com/CarlosCaPe/dataqbs_site.git HEAD:main`.
 5. POST to `https://www.dataqbs.com/api/multireach/internal/news-bridge` with `{"slug":"<date>-<slug>"}` and `X-Scheduler-Secret`. The bridge queues a multireach Post for the dataqbs FB Page; `multireach-scheduler` publishes ~60s later.
