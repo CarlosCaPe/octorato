@@ -33,7 +33,8 @@ REMINDER = (
     "it rests (Opus's own reasoning, a vendor/doc, the operator, or <file>:<line>). "
     "Write that line in the SAME language as the user's input, using the neutral "
     "source noun: English -> 'Source: <who>'; Spanish -> 'Fuente: <quién>'; "
-    "German -> 'Quelle: <wer>'. Never mismatch the language."
+    "German -> 'Quelle: <wer>'; any other language -> default to English "
+    "'Source: <who>'. Never mismatch the language."
 )
 
 print(json.dumps({
