@@ -1,0 +1,11 @@
+# Third-party Python dependencies for ~/.claude/ (octorato brain).
+#
+# Install on a fresh machine with:
+#   pip install --user -r requirements.txt
+#
+# Or run `python3 scripts/brain_doctor.py --fix` to install automatically.
+#
+# Keep this list minimal — every entry is a real import in scripts/*.py.
+
+networkx>=3.0   # scripts/query_connectome.py — graph traversal for the connectome
+pyvis>=0.3      # scripts/query_connectome.py — HTML visualization of the connectome
