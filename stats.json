@@ -1,0 +1,26 @@
+{
+  "generated_at": "2026-05-25T14:17:34+00:00",
+  "skills": 189,
+  "agents": 152,
+  "divisions": 13,
+  "by_division": {
+    "academic": 5,
+    "design": 8,
+    "engineering": 28,
+    "game-development": 5,
+    "marketing": 30,
+    "paid-media": 7,
+    "product": 5,
+    "project-management": 6,
+    "sales": 8,
+    "spatial-computing": 6,
+    "specialized": 29,
+    "support": 7,
+    "testing": 8
+  },
+  "definitions": {
+    "skill": "dir under skills/ with SKILL.md",
+    "division": "immediate subdir of agents/ (excl examples,strategy) with >=1 persona",
+    "persona": "*.md directly under a division dir, excl README/REGISTRY/index"
+  }
+}
