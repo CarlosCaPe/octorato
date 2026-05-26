@@ -20,6 +20,39 @@
 
 ---
 
+## Table of Contents
+
+- [Why now: the token economy is here](#why-now-the-token-economy-is-here)
+- [What makes Octorato different](#what-makes-octorato-different)
+- [What it is](#what-it-is)
+- [FinOps roadmap](#finops-roadmap)
+- [Daily Self-Growth](#daily-self-growth)
+- [Why an Octopus?](#why-an-octopus)
+- [Migrating from dotclaude (May 2026)](#migrating-from-dotclaude-may-2026)
+- [Quick Start](#quick-start)
+- [Architecture — CLASS / OBJECT / ARM](#architecture--class--object--arm)
+- [The 4D Paradigm — The Nervous System](#the-4d-paradigm--the-nervous-system)
+- [Change Manifest](#change-manifest)
+- [4D+S — Spec-Driven Development Integration](#4ds--spec-driven-development-integration)
+- [The Corporation](#the-corporation)
+- [The Connectome — Neural Architecture](#the-connectome--neural-architecture)
+- [Client Arms — Total Isolation](#client-arms--total-isolation)
+- [Org Chart — 13 Divisions, 150+ Agents](#org-chart--13-divisions-150-agents)
+- [Synapses — The Skill Layer (180+ reusable techniques)](#synapses--the-skill-layer-180-reusable-techniques)
+- [Memory — Hippocampus and the Working Set](#memory--hippocampus-and-the-working-set)
+- [Reflexes — The Spinal Cord Layer](#reflexes--the-spinal-cord-layer)
+- [Observability — The Sensory Cortex](#observability--the-sensory-cortex)
+- [Enforcement Scripts](#enforcement-scripts)
+- [MCP Servers — The Action Space](#mcp-servers--the-action-space)
+- [Multi-Tool Support](#multi-tool-support)
+- [Multi-Machine Sync — The Glial Layer](#multi-machine-sync--the-glial-layer)
+- [Repository Structure](#repository-structure)
+- [10x Roadmap](#10x-roadmap)
+- [Contributing](#contributing)
+- [License](#license)
+
+---
+
 ## Why now: the token economy is here
 
 The AI industry is splitting into **three billing primitives** —
