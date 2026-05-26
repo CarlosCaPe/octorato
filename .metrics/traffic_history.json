@@ -222,5 +222,38 @@
       "count": 211,
       "uniques": 138
     }
+  },
+  {
+    "date": "2026-05-26",
+    "checked_at": "2026-05-26T18:47:40+00:00",
+    "today_clones": 0,
+    "today_unique_cloners": 0,
+    "today_views": 0,
+    "today_unique_viewers": 0,
+    "stars": 3,
+    "forks": 4,
+    "watchers": 0,
+    "stargazer_logins": [
+      "CarlosCaPe",
+      "MogulsGirl",
+      "Saltiola7"
+    ],
+    "fork_owners": [
+      "1663580752-wq",
+      "MogulsGirl",
+      "YuuGR1337",
+      "mahek56"
+    ],
+    "top_referrer": {
+      "referrer": "facebook.com",
+      "count": 78,
+      "uniques": 43
+    },
+    "top_path": {
+      "path": "/CarlosCaPe/octorato",
+      "title": "Overview",
+      "count": 240,
+      "uniques": 144
+    }
   }
 ]
