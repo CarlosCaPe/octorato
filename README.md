@@ -1,4 +1,4 @@
-[English](README.md) | [Español](README.es.md)
+> 🌍 This README is in English (the open-source lingua franca). Running an AI agent? Ask it to read this in your language — eating our own dog food. 🐙
 
 # Octopus Brain Framework
 
