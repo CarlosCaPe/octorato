@@ -24,7 +24,26 @@
 
 ---
 
+## 🚀 Built with Octorato — live, in production
+
+Octorato isn't a demo — it ships real software. A few of the products this brain built and maintains (full list in the **[showcase](SHOWCASE.md)**):
+
+| Product | Live |
+|---|---|
+| Trilingual Astro/Cloudflare site + RAG chatbot | **[dataqbs.com](https://dataqbs.com)** |
+| Multi-Reach — compose once, publish across 6 social channels | **[/multi-reach](https://dataqbs.com/multi-reach)** |
+| White-label real-estate catalog w/ daily FB auto-publish | **[/realestate](https://dataqbs.com/realestate)** |
+| Open Garage — commission-free marketplace, direct WhatsApp | **[/open-garage](https://dataqbs.com/open-garage)** |
+| AI persona bot — answers *as the operator* (RAG + dynamic PDF) | **[/carloscarrillo](https://dataqbs.com/carloscarrillo)** |
+| Daily AI-news blog + curated news surface | **[/blog](https://dataqbs.com/blog)** · **[/news](https://www.dataqbs.com/news)** |
+
+→ **Want to build things like these?** [Start Here](https://github.com/CarlosCaPe/octorato/issues/34) — newcomers welcome, every contributor credited. 🐙
+
+---
+
 ## Table of Contents
+
+- [🚀 Built with Octorato — live](#-built-with-octorato--live-in-production)
 
 - [Why now: the token economy is here](#why-now-the-token-economy-is-here)
 - [What makes Octorato different](#what-makes-octorato-different)

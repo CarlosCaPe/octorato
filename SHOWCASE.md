@@ -13,7 +13,7 @@ These are live products, not source dumps. The proof is the running software.
 | **Multi-Reach** | A social-distribution platform — compose once, schedule, and publish across 6 channels from one workspace | [dataqbs.com/multi-reach](https://dataqbs.com/multi-reach) |
 | **Real-estate catalog** | A white-label property catalog with daily auto-publishing to a Facebook Page, an image-review pipeline, and a config-driven brand swap in minutes | [dataqbs.com/realestate](https://dataqbs.com/realestate) |
 | **Open Garage** | A commission-free digital garage-sale marketplace — publish items, contact direct by WhatsApp, no intermediaries | [dataqbs.com/open-garage](https://dataqbs.com/open-garage) |
-| **dataqbs.news** | A curated, multilingual news surface built on a pull-model publishing pipeline | [dataqbs.news](https://dataqbs.news) |
+| **News** | A curated, multilingual news surface built on a pull-model publishing pipeline | [dataqbs.com/news](https://www.dataqbs.com/news) |
 | **Donate** | A Stripe-backed conversion page with a multi-block layout | [dataqbs.com/donate](https://dataqbs.com/donate) |
 
 Each product is a case study in a core Octorato capability:
