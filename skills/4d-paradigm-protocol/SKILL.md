@@ -176,6 +176,33 @@ The gate converts every write operation from **fire-and-forget** to **plan-appro
 | Any change | `get_errors` on modified files | 0 errors |
 | **PR for production deploy** | **`pre-merge-qa-gate` skill — dispatch QA specialist agent against test/user-case spec** | **Agent ✅ verdict with concrete evidence (file:line, curl, screenshot). Build green alone is NOT enough — see the skill for why.** |
 
+### Autonomous Loop Discipline (Stricter 3D)
+
+When the work product is **autonomous brain code** — a process that runs without the operator present and writes to memory, skills, settings, or other shared brain state (digest crons, memory consolidators, skill candidacy promoters, outcome trackers, self-refactoring proposers) — the diligence bar rises. Five rules apply *in addition* to the matrix above:
+
+1. **Una señal a la vez** — implement one signal MVP-first, expand only after it's validated end-to-end. Anti-pattern: build a 5-signal digest before any single signal has shipped useful findings.
+
+2. **Propuestas, nunca commits** — the autonomous loop emits *proposals* (markdown / JSON draft / PR description), not direct writes. The operator gate is the validation. No autonomous mutation of brain memory, skills, or settings without operator approval. The 4D Gate stays sacred even when "I" am both author and reader.
+
+3. **Cero LLM oculto en el cron** — every step inside the scheduled job must be deterministic and replayable. LLM calls live OUTSIDE the cron, inside the operator-driven review step. A hidden LLM call in a scheduled job means the loop is unauditable and the next operator who tries to debug it will hit an oracle they can't replay.
+
+4. **Honesto con el log** — the loop proposes what its inputs actually show, not what "should" appear. If the session JSONLs contain zero tool rejections this week, the digest reports "0 rejections, nothing to propose" — it does not manufacture findings to look productive.
+
+5. **Mide adopción** — track operator approval rate of past proposals. If <30% of proposals are approved over a 4-week window, the loop is mis-calibrated, not the operator distracted. Tune the signal threshold, narrow scope, or retire the loop. A loop nobody adopts is noise wearing a process costume.
+
+**Why these live under 3D Diligent (and not as a separate D or a hook):**
+
+These five are validation criteria for a *specific category* of write — code that alters future agent behavior. Standard Diligent says "validate every write with evidence"; this section says "when the write is autonomous-loop infrastructure, the evidence bar additionally includes operator-adoption metrics, determinism, and scope discipline." Same paradigm, sharper teeth.
+
+A hook was the alternative — but hooks fire on events, and there is no event for "I'm about to design a learning loop." The discipline has to live where the agent looks when it is building such a loop — and that is the 3D protocol it reads to know what "done" means.
+
+**When to apply this stricter Diligent:**
+- Building any scheduled job that reads session data (`brain-digest-nightly`, similar)
+- Adding a memory-write trigger (auto-consolidation, conflict detection, supersession protocols)
+- Promoting a recurring one-off script to a skill candidate
+- Any cron / hook that mutates `~/.claude/` without an operator in the loop
+- Any agent that writes to `~/.claude/` based on its own pattern detection
+
 ### Mandatory Output Format
 
 ```
