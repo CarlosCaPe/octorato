@@ -1,3 +1,5 @@
+[English](README.md) | [Español](README.es.md)
+
 # Octopus Brain Framework
 
 [![License: MIT](https://img.shields.io/github/license/CarlosCaPe/octorato)](LICENSE)
