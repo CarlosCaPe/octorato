@@ -13,9 +13,9 @@ Octorato uses a **staged-promotion** workflow:
   Anyone can critique and iterate freely on `test`.
 - **`master`** = the curated, public canonical. **Only updated by this weekly
   promotion.** Protected (status checks + linear history).
-- **Content** (blog / news / metrics on `dataqbs_IA`) is the exception — it
-  ships to its own `master` daily for SEO freshness. This command is about the
-  **brain** (`octorato`): skills, agents, rules, docs.
+- **Content arms** (a product site's blog / news / metrics) are the exception —
+  they ship to their own `master` daily for SEO freshness. This command is about
+  the **brain** (`octorato`): skills, agents, rules, docs.
 
 ## What this does
 
