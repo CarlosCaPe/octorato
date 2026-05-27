@@ -165,20 +165,15 @@ def main() -> int:
             f"threshold was {views_threshold:.1f} (7d avg = {avg_views:.1f})"
         )
     if prior:
+        # Social events (new stars/forks) are recorded in the snapshot/history but
+        # no longer open issues — they were vanity noise on the public tracker that
+        # newcomers see. Only a genuine traffic spike (clones/views) warrants an issue.
         new_stars = set(snapshot["stargazer_logins"]) - set(prior.get("stargazer_logins", []))
-        if new_stars:
-            kinds.add("stars")
-            reasons.append(
-                "⭐ **New stargazer(s):** "
-                + ", ".join(f"[@{s}](https://github.com/{s})" for s in sorted(new_stars))
-            )
         new_forks = set(snapshot["fork_owners"]) - set(prior.get("fork_owners", []))
+        if new_stars:
+            print(f"[traffic-watch] new stargazer(s): {', '.join(sorted(new_stars))} — logged, no issue")
         if new_forks:
-            kinds.add("forks")
-            reasons.append(
-                "🍴 **New fork(s):** "
-                + ", ".join(f"[@{f}](https://github.com/{f})" for f in sorted(new_forks))
-            )
+            print(f"[traffic-watch] new fork(s): {', '.join(sorted(new_forks))} — logged, no issue")
 
     # 4. Always save snapshot (so the next run has fresh data)
     if not history or history[-1]["date"] != today:
