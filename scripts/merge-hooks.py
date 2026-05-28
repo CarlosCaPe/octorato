@@ -21,6 +21,17 @@ import shutil
 import sys
 import tempfile
 
+# Windows consoles default to cp1252, which crashes on the Unicode glyphs this
+# script uses for status output (✓, ⚠). Force stdout/stderr to UTF-8 with
+# replacement so the script runs cleanly on Windows without requiring users to
+# set PYTHONIOENCODING themselves. Same pattern as ai_sync.py / brain_doctor.py.
+if sys.platform == "win32":
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass
+
 CLAUDE_DIR = os.path.expanduser("~/.claude")
 HOOKS_FILE = os.path.join(CLAUDE_DIR, "hooks.json")
 SETTINGS_FILE = os.path.join(CLAUDE_DIR, "settings.json")
