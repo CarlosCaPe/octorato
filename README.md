@@ -20,7 +20,7 @@
 > [Gartner 40% of agentic projects predicted to be cancelled by 2027](https://www.gartner.com/en/newsroom/press-releases/2025-06-25-gartner-predicts-over-40-percent-of-agentic-ai-projects-will-be-canceled-by-end-of-2027)
 > over unmanaged cost.
 
-> *"One brain. 150+ specialists. Zero office rent. One ledger per client."*
+> *"One brain. 180+ specialists. Zero office rent. One ledger per client."*
 
 ---
 
