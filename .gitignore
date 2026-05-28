@@ -42,6 +42,9 @@ tasks/
 # Last-cleanup timestamp (local marker, no value in public history)
 .last-cleanup
 
+# Claude Code CLI update-check result (auto-regenerated per `claude` invocation)
+.last-update-result.json
+
 # Nested project memories (per-arm .claude/ dirs)
 .claude/
 
