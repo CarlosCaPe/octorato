@@ -105,6 +105,7 @@ Enterprises need governance. Solo consultants and small agencies need it
 | Agent observability | LangSmith, Langfuse, Arize, Datadog LLM Obs | Complementary. Octorato emits OpenInference-style spans; sits *above* your observability stack as the governance layer. |
 | **FinOps for AI Agents** | greenfield (Vantage, Amnic, Finout fighting for category, no Gartner MQ yet) | **Octorato leads here** — per-client attribution + air-gapped arms + consultant-grade simplicity. |
 | Compute sandboxes | e2b.dev | Complementary (arms can run in e2b sandboxes). |
+| **Operator brains / `~/.claude` distributions** | ECC (`affaan-m/ECC`), dotclaude variants, claude-flow, wshobson/agents collections | Most are *one bag of skills*. Octorato is an **OS with multi-tenant isolation**: per-client arms, per-client cost ledger, per-client budget caps. We learn from peer brains daily (`repo-watch` skill) without absorbing their multi-tenancy gap. |
 
 **Three things competing observability tools don't have:**
 
@@ -156,6 +157,7 @@ See the [biology section](#why-an-octopus) below for *why* the architecture take
 The brain grows itself. Every day a scheduled loop scans GitHub Trending, Hacker News, and Product Hunt for new tools, runs each candidate through a deterministic brain-fit classifier plus an LLM quality gate, and **auto-promotes** the survivors that clear the bar into real skills — then publishes what it learned.
 
 - **Discover** → [`github-trending-curation`](skills/github-trending-curation/SKILL.md) pulls multi-source trending, dedupes against the existing connectome (TF-IDF cosine), and tags each candidate with an integration *action*: `ADD` / `MERGE-WITH` / `REPLACE` / `EXTEND` / `SKIP`. The point is **harmonization, not accretion** — the brain is a connected graph, not a pile of skills.
+- **Watch peers** → [`repo-watch`](skills/repo-watch/SKILL.md) is the *targeted* sibling of trending: a curated 7-repo daily monitor (competitors, peer brains, upstream Claude Code projects) that classifies each day's diff as HIGH / LOW / EMPTY / BASELINE signal and drops a **file-based trigger** into `knowledge/repo-watch/triggers/` for [`repo-deep-learn`](skills/repo-deep-learn/SKILL.md) to pick up out-of-band. Detection state ≠ action state — the cron stays fast and the analysis stays deliberate.
 - **Decide** → an LLM QA gate drops low-value noise; only net-new `ADD` candidates auto-apply (structural `MERGE`/`REPLACE`/`EXTEND` are left for human review).
 - **Grow & publish** → survivors become `skills/<name>/SKILL.md`, a changelog article on the public `/news` feed (crediting the source repo — *it's a community to grow with*), and a social post. Every day's decisions — added, deferred, and **ignored-with-reason** — are appended to a single audit ledger (`knowledge/github-trending/HISTORY.md`) so the operator can scroll the whole history and challenge any call.
 
