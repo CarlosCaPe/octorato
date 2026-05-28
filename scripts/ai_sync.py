@@ -14,7 +14,11 @@ So this file carries no client data and is safe in the public repo.
 
 Verbs:
   pull   [arm…|--status]   git pull + merge hooks + ensure leak-guard + refresh connectome + sync
-  push   ["msg"]           guarded stage + commit + push + amend connectome + sync
+  push   ["msg"]           guarded stage + commit + push + amend connectome + sync.
+                           If HEAD is on a PR-protected branch (master/main with
+                           branch protection requiring PR), auto-creates a feature
+                           branch, opens a PR via gh, waits for required checks,
+                           squash-merges, and returns to the protected branch.
   sync   [arm…]            project CLAUDE.md -> copilot-instructions.md + .cursorrules
   status                   alias for `pull --status`
 """
@@ -24,8 +28,10 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 # Windows consoles default to cp1252, which crashes on the Unicode glyphs this
@@ -262,6 +268,93 @@ def pull(args) -> int:
 
 # ── push ──────────────────────────────────────────────────────────────────────
 
+# ─── PR-flow helpers ──────────────────────────────────────────────────────────
+# Octorato master is PR-protected (enforce_admins=true, required_pull_request_reviews).
+# When ai-push runs from HEAD=master/main, route through gh CLI: branch → push →
+# PR → wait checks → squash-merge → return. Falls back gracefully if gh is missing.
+
+def _owner_repo() -> str:
+    """Parse `owner/repo` from the origin URL. Empty string if not a github remote."""
+    _, url, _ = git("remote", "get-url", "origin")
+    m = re.search(r'github\.com[:/]([^/]+)/([^/.\s]+?)(?:\.git)?/?$', url)
+    return f"{m.group(1)}/{m.group(2)}" if m else ""
+
+
+def _is_pr_required(branch: str) -> bool:
+    """True if `branch` has protection requiring a PR (via gh REST)."""
+    if not shutil.which("gh"):
+        return False
+    repo = _owner_repo()
+    if not repo:
+        return False
+    p = subprocess.run(
+        ["gh", "api", f"repos/{repo}/branches/{branch}/protection",
+         "--jq", ".required_pull_request_reviews != null"],
+        cwd=CLAUDE, capture_output=True, text=True,
+    )
+    return p.returncode == 0 and p.stdout.strip() == "true"
+
+
+def _branch_slug(msg: str) -> str:
+    """First line of commit msg → kebab slug + short timestamp, max 40+6 chars."""
+    first = msg.splitlines()[0].lower()
+    first = re.sub(r'^[a-z]+(\([^)]+\))?:\s*', '', first)  # strip conv-commit prefix
+    slug = re.sub(r'[^a-z0-9]+', '-', first)[:40].strip('-') or "update"
+    return f"{slug}-{int(time.time()) % 100000}"
+
+
+def _push_via_pr(branch: str, target: str, msg: str) -> int:
+    """Push current branch → open PR → watch checks → squash-merge → return to target."""
+    code, _, e = git("push", "-u", "origin", branch)
+    if code != 0:
+        warn(f"⚠ Push of {branch} failed: {e}")
+        return 1
+    info(f"✓ Pushed branch {branch}")
+
+    if not shutil.which("gh"):
+        warn(f"⚠ gh CLI not found — open the PR manually:")
+        warn(f"   https://github.com/{_owner_repo()}/pull/new/{branch}")
+        return 0
+
+    title = msg.splitlines()[0][:72]
+    body = (f"Auto-opened by `ai-push` ({target} is PR-protected).\n\n"
+            f"```\n{msg}\n```\n\n"
+            "🤖 Generated with [Claude Code](https://claude.com/claude-code)")
+    rc = subprocess.run(
+        ["gh", "pr", "create", "--base", target, "--head", branch,
+         "--title", title, "--body", body],
+        cwd=CLAUDE,
+    ).returncode
+    if rc != 0:
+        err("⚠ gh pr create failed — branch is pushed; open PR manually.")
+        return 1
+    info("✓ PR opened")
+
+    info("⏳ Waiting for required checks (timeout 5 min)...")
+    rc = subprocess.run(
+        ["gh", "pr", "checks", "--watch", "--required"],
+        cwd=CLAUDE, timeout=300,
+    ).returncode
+    if rc != 0:
+        warn("⚠ Required checks failed — PR left open for manual review.")
+        return 1
+    info("✓ Required checks passed")
+
+    rc = subprocess.run(
+        ["gh", "pr", "merge", "--squash", "--delete-branch"],
+        cwd=CLAUDE,
+    ).returncode
+    if rc != 0:
+        warn("⚠ Squash-merge failed — PR left open.")
+        return 1
+    info("✓ Merged + branch deleted")
+
+    git("checkout", target)
+    git("pull", "--ff-only")
+    info(f"✓ Local {target} synced")
+    return 0
+
+
 def push(args) -> int:
     # Anything to do?
     dirty = git("diff", "--quiet")[0] or git("diff", "--cached", "--quiet")[0] \
@@ -271,6 +364,25 @@ def push(args) -> int:
         sync(None)
         return 0
 
+    # Compose message early so we can derive a branch slug if needed
+    # (staging happens below; message uses staged names as fallback later if empty).
+    raw_msg = " ".join(args.message) if args.message else None
+
+    # Detect PR-protected HEAD before staging, so we can branch-off cleanly.
+    _, current_branch, _ = git("rev-parse", "--abbrev-ref", "HEAD")
+    use_pr_flow = (current_branch in ("master", "main")
+                   and _is_pr_required(current_branch))
+    target_branch = current_branch
+    if use_pr_flow:
+        # Provisional slug from msg (or "update" fallback); stage+commit follow.
+        slug = _branch_slug(raw_msg or "update")
+        feat_branch = f"auto/{slug}"
+        info(f"🛡  {current_branch} is PR-protected — auto-branching to {feat_branch}")
+        rc, _, e = git("checkout", "-b", feat_branch)
+        if rc != 0:
+            err(f"⚠ checkout -b {feat_branch} failed: {e}")
+            return 1
+
     for p in BRAIN_PATHS:
         if (CLAUDE / p).exists():
             git("add", p)
@@ -278,7 +390,7 @@ def push(args) -> int:
     _, dels, _ = git("diff", "--cached", "--name-only", "--diff-filter=D")
     # (already staged by add of the dir; explicit re-add not needed)
 
-    msg = " ".join(args.message) if args.message else None
+    msg = raw_msg
     if not msg:
         _, names, _ = git("diff", "--cached", "--name-only")
         msg = "update: " + ", ".join(names.splitlines()[:5])
@@ -306,11 +418,16 @@ def push(args) -> int:
     git("commit", "-m", msg, check=True)
     info(f"✓ Committed: {msg}")
 
-    code, _, e = git("push", "origin", "HEAD")
-    if code != 0:
-        warn(f"⚠ Push failed: {e}")
-        return 1
-    info("✓ Pushed to remote")
+    if use_pr_flow:
+        rc = _push_via_pr(git("rev-parse", "--abbrev-ref", "HEAD")[1], target_branch, msg)
+        if rc != 0:
+            return rc
+    else:
+        code, _, e = git("push", "origin", "HEAD")
+        if code != 0:
+            warn(f"⚠ Push failed: {e}")
+            return 1
+        info("✓ Pushed to remote")
 
     # Refresh the local connectome. neural_map.json is gitignored (per-machine,
     # regenerated on demand) — so we rebuild it locally for this machine's query/
