@@ -1,0 +1,53 @@
+# Daily-watch targets for repo-watch skill.
+# Add a repo here ONLY if all are true:
+#   1. It's in the agent-OS / Claude Code ecosystem (your competitive space).
+#   2. You expect architectural lessons, not just feature lessons.
+#   3. You have a thesis you're testing against it.
+# Drop a repo to weekly cadence (or remove) when 3 consecutive digests yield
+# zero "steal/decide" items. Cap watchlist at 7 entries (Trend Researcher rule).
+#
+# threshold_files: minimum changed files in 24h to consider HIGH-SIGNAL
+# threshold_signal_paths: paths that promote any change to HIGH-SIGNAL
+# cadence: daily | weekly
+watchlist:
+  - owner: affaan-m
+    repo: ECC
+    cadence: daily
+    threshold_files: 5
+    threshold_signal_paths: [agents/, skills/, commands/, AGENTS.md, CLAUDE.md, ecc2/]
+    why: 197K-star MIT parallel of octorato; multi-harness, daily commits, direct learning target
+
+  - owner: wshobson
+    repo: agents
+    cadence: weekly
+    threshold_files: 3
+    threshold_signal_paths: [.]
+    why: largest community-curated Claude Code sub-agent collection; sets persona conventions
+
+  - owner: hesreallyhim
+    repo: awesome-claude-code
+    cadence: weekly
+    threshold_files: 1
+    threshold_signal_paths: [README.md]
+    why: aggregator → leading indicator of which agent frameworks gain mindshare
+
+  - owner: disler
+    repo: claude-code-hooks-mastery
+    cadence: weekly
+    threshold_files: 3
+    threshold_signal_paths: [hooks/, README.md]
+    why: reference impl for hooks; slow but load-bearing changes
+
+  - owner: anthropics
+    repo: skills
+    cadence: daily
+    threshold_files: 2
+    threshold_signal_paths: [.]
+    why: upstream skill conventions from Anthropic — changes propagate to whole ecosystem
+
+  - owner: anthropics
+    repo: claude-plugins-official
+    cadence: daily
+    threshold_files: 2
+    threshold_signal_paths: [.]
+    why: official plugin marketplace — new entries = new ecosystem capabilities
