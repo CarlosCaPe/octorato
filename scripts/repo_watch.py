@@ -232,12 +232,25 @@ def main() -> int:
         digest_path = KNOWLEDGE / f"{today}.md"
         is_new = not digest_path.exists()
 
+        # Header per run — keeps multiple same-day runs visually separated.
+        # First run of the day prints the H1 title; subsequent runs print an H3
+        # divider with the run timestamp + a fresh table header.
+        now_utc = dt.datetime.now(dt.timezone.utc)
+        run_hms = now_utc.strftime("%H:%M:%S UTC")
+
         lines: list[str] = []
         if is_new:
             lines.append(f"# repo-watch digest — {today}")
             lines.append("")
-            lines.append("| repo | verdict | sha | changes |")
-            lines.append("|---|---|---|---|")
+            lines.append(f"### Run {run_hms}")
+        else:
+            lines.append("")
+            lines.append("---")
+            lines.append("")
+            lines.append(f"### Run {run_hms}")
+        lines.append("")
+        lines.append("| repo | verdict | sha | changes |")
+        lines.append("|---|---|---|---|")
 
         # Per-repo loop
         for entry in watchlist:
@@ -249,7 +262,7 @@ def main() -> int:
 
         # Footer
         lines.append("")
-        lines.append(f"_run at {dt.datetime.now(dt.timezone.utc).isoformat()}_")
+        lines.append(f"_completed at {now_utc.isoformat()}_")
 
         # Persist
         if args.dry_run:
