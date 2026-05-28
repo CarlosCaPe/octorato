@@ -1,0 +1,10 @@
+# Octorato brain — code ownership
+#
+# Single-owner repo: every change to the brain pings @CarlosCaPe for
+# review on the PR. External contributor PRs auto-request his review.
+#
+# This file complements branch protection on master (PR-only, no direct
+# pushes, no admin bypass) — see .github/workflows/brain-pr-checks.yml
+# and brain-pr-review.yml for the enforcement gates.
+
+* @CarlosCaPe
