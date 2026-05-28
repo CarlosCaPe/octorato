@@ -337,11 +337,11 @@ def _push_via_pr(branch: str, target: str, msg: str) -> int:
     # if no check actually failed (still racing).
     info("⏳ Waiting 15s for checks to register...")
     time.sleep(15)
-    info("⏳ Watching required checks (timeout 5 min)...")
+    info("⏳ Watching required checks (timeout 10 min)...")
     watch_start = time.time()
     rc = subprocess.run(
         ["gh", "pr", "checks", "--watch", "--required", "--interval", "10"],
-        cwd=CLAUDE, timeout=300,
+        cwd=CLAUDE, timeout=600,
     ).returncode
     if rc != 0 and (time.time() - watch_start) < 30:
         # Early exit — likely race. Confirm no actual failure before retrying.
@@ -355,7 +355,7 @@ def _push_via_pr(branch: str, target: str, msg: str) -> int:
             time.sleep(10)
             rc = subprocess.run(
                 ["gh", "pr", "checks", "--watch", "--required", "--interval", "10"],
-                cwd=CLAUDE, timeout=300,
+                cwd=CLAUDE, timeout=600,
             ).returncode
     if rc != 0:
         warn("⚠ Required checks failed — PR left open for manual review.")
