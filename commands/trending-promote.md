@@ -94,6 +94,38 @@ When done, print a single summary block:
    Version:  bumped <X.Y.Z-1> → <X.Y.Z> (PATCH, bot identity)
 ```
 
+## Issue-resolution scan (canonical operator rule, codified 2026-05-28)
+
+After the skill is promoted (action = ADD / MERGE / REPLACE / EXTEND), but BEFORE printing the summary block, scan open octorato issues to see if the newly-promoted knowledge resolves any of them. **Strict 3-rule filter:**
+
+```bash
+gh issue list --repo CarlosCaPe/octorato --state open \
+  --json number,title,assignees,body,labels \
+  --jq '.[] | select(.assignees == [] or any(.assignees[]; .login == "CarlosCaPe"))'
+```
+
+For each surviving open issue:
+1. **Semantic match** — does the promoted skill's description / capabilities resolve this issue's request? Use connectome similarity (≥ 0.4) + manual read of the issue body.
+2. **Third-party PR linked?** Check `gh issue view <num> --json` and inspect linked PRs. If a contributor (≠ CarlosCaPe) already has an open PR proposing a fix → **DO NOT CLOSE**. Let them close their own proposal when merged. Operator rule: *"si lo trae otro no lo cierres, déjalo que cierre su propuesta"*.
+3. **If resolved AND no third-party PR:** propose close.
+
+**Dry-run first.** Print the candidate list and wait for explicit "ciérralos" / "sí" / "ok" before invoking:
+
+```bash
+gh issue close <num> --repo CarlosCaPe/octorato \
+  --comment "Resolved by promotion of [[<skill-name>]] from <repo-url> on <date>. See SKILL.md for usage."
+```
+
+Add the closed-issue list to the summary block:
+
+```
+✅ Promoted <candidate> with action=<ACTION>
+   …
+   Issues closed: #N (<title>), #M (<title>)   ← only if any
+```
+
+If no issues resolved → no extra output line. Silent unless action taken.
+
 ## Failure modes
 
 - Digest file missing → fail loud, point at the cron.
