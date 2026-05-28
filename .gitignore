@@ -45,6 +45,11 @@ tasks/
 # Claude Code CLI update-check result (auto-regenerated per `claude` invocation)
 .last-update-result.json
 
+# Per-machine working notes (daily trending digests, repo-deep-learn clones + reports).
+# Reports live here as evidence of analysis; never auto-staged by ai-push (knowledge/
+# not in BRAIN_PATHS allowlist). Keeping the dir itself out of git status reduces noise.
+knowledge/
+
 # Nested project memories (per-arm .claude/ dirs)
 .claude/
 
