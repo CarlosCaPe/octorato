@@ -330,11 +330,33 @@ def _push_via_pr(branch: str, target: str, msg: str) -> int:
         return 1
     info("✓ PR opened")
 
-    info("⏳ Waiting for required checks (timeout 5 min)...")
+    # GH Actions takes ~5-15s to register check runs after pr create.
+    # `gh pr checks --watch --required` exits immediately with "no checks
+    # reported" if invoked too early (race seen during dogfood). Sleep first,
+    # then watch with an explicit poll interval. Retry once on early exit
+    # if no check actually failed (still racing).
+    info("⏳ Waiting 15s for checks to register...")
+    time.sleep(15)
+    info("⏳ Watching required checks (timeout 5 min)...")
+    watch_start = time.time()
     rc = subprocess.run(
-        ["gh", "pr", "checks", "--watch", "--required"],
+        ["gh", "pr", "checks", "--watch", "--required", "--interval", "10"],
         cwd=CLAUDE, timeout=300,
     ).returncode
+    if rc != 0 and (time.time() - watch_start) < 30:
+        # Early exit — likely race. Confirm no actual failure before retrying.
+        p = subprocess.run(
+            ["gh", "pr", "view", "--json", "statusCheckRollup",
+             "--jq", "[.statusCheckRollup[].conclusion] | unique | join(\",\")"],
+            cwd=CLAUDE, capture_output=True, text=True,
+        )
+        if "FAILURE" not in p.stdout and "CANCELLED" not in p.stdout:
+            info("⏳ Early exit detected — retrying watch...")
+            time.sleep(10)
+            rc = subprocess.run(
+                ["gh", "pr", "checks", "--watch", "--required", "--interval", "10"],
+                cwd=CLAUDE, timeout=300,
+            ).returncode
     if rc != 0:
         warn("⚠ Required checks failed — PR left open for manual review.")
         return 1
