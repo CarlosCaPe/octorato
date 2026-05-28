@@ -51,10 +51,14 @@ ARMS_CFG = CLAUDE / "company" / "config" / "arms-paths.json"
 POLICY = CLAUDE / ".githooks" / "push-policy.txt"
 
 # Staged on push — allowlist, never `git add -A`, so personal files never slip in.
+# Top-level governance docs (CHANGELOG, SUPPORT, etc.) must be listed explicitly;
+# otherwise `ai-push` silently drops them with no warning (lesson 2026-05-28).
 BRAIN_PATHS = ["CLAUDE.md", "README.md", "CONTRIBUTING.md", "HEBBIAN_LEARNING.md",
-               "LICENSE", "hooks.json", "hooks.schema.json", "skills/", "agents/",
+               "CODE_OF_CONDUCT.md", "SECURITY.md", "SUPPORT.md", "CHANGELOG.md",
+               "ROADMAP.md", "SHOWCASE.md", "LICENSE",
+               "hooks.json", "hooks.schema.json", "skills/", "agents/",
                "scripts/", "hooks/", ".githooks/", "commands/", ".gitignore",
-               "assets/", "templates/"]
+               "assets/", "templates/", ".github/"]
 
 _USE_COLOR = sys.stdout.isatty() and os.name != "nt"
 def _c(code, s): return f"\033[{code}m{s}\033[0m" if _USE_COLOR else s
