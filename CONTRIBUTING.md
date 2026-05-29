@@ -49,7 +49,7 @@ What this agent produces.
 
 1. **Create the directory**: `skills/<skill-name>/`
 2. **Create SKILL.md** using `templates/skill/SKILL.md.template` as a starting point
-3. **Include**: Purpose, Triggers, Workflow, Best Practices, Lessons Learned
+3. **Include**: a `---` YAML frontmatter block (`name` kebab-case slug, `description`, `metadata.type`) followed by Purpose, Triggers, Workflow, Best Practices, Lessons Learned
 4. **Regenerate the connectome**: `python3 scripts/generate_neural_map.py`
 
 ### Skill Naming Convention
