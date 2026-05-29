@@ -50,6 +50,14 @@ tasks/
 # not in BRAIN_PATHS allowlist). Keeping the dir itself out of git status reduces noise.
 knowledge/
 
+# Session-extracted draft skills — produced by /learn (session-learn-extractor).
+# MUST stay local until the operator manually promotes a draft via
+#   mv skills/learned/<slug> skills/<slug>
+# Drafts are unreviewed scaffolds; pushing them would pollute the public connectome
+# with provisional content. This rule is the canonical companion of skills/learned/
+# (see skills/session-learn-extractor/SKILL.md).
+skills/learned/
+
 # Nested project memories (per-arm .claude/ dirs)
 .claude/
 
