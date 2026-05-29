@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://www.dataqbs.com/banner-octorato.webp?v=3" alt="Octorato — the open-source AI Agent OS" width="100%">
+  <img src="https://www.dataqbs.com/octorato-sigil.webp?v=3" alt="Octorato — the open-source AI Agent OS" width="100%">
 </p>
 
 > 🌍 This README is in English (the open-source lingua franca). Running an AI agent? Ask it to read this in your language — eating our own dog food. 🐙
