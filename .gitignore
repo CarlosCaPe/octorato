@@ -84,7 +84,10 @@ settings.local.json
 neural_map.json
 stats-cache.json
 connectome.html
-lib/
+# `lib/` was intended for Python venv-style local libs; rooted to repo root
+# so it doesn't accidentally swallow legitimate `scripts/lib/` source code
+# (the hook_flags.py drop, caught 2026-05-28).
+/lib/
 
 # ── SECURITY: Binary & personal file blanket blocks ──────────────
 # The brain must ONLY contain text-based skills, agents, and config.
