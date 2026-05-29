@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://octorato/schemas/skill-manifest-v1.json",
+  "title": "Octorato Skill Manifest",
+  "description": "Machine-readable manifest for a distributable skill (Milestone M5 — Distribution). Lets a stranger safely install a versioned skill: identity (name), vintage (semver version), terms (license), and the privileged actions it declares (capabilities). additionalProperties is false so typos surface instead of being silently ignored. Schema evolution happens via v1 → v2 (new $id path).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "version", "license"],
+  "properties": {
+    "name": {
+      "description": "Skill slug — lowercase kebab-case, matches the skills/<name>/ directory.",
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "minLength": 2,
+      "maxLength": 64
+    },
+    "version": {
+      "description": "Semantic version (semver 2.0.0). Required so installs are reproducible and upgradeable.",
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$"
+    },
+    "license": {
+      "description": "SPDX license identifier (e.g. MIT, Apache-2.0, AGPL-3.0-only) or 'proprietary'.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "description": {
+      "description": "One-line summary, mirrors the skill's front-matter description.",
+      "type": "string",
+      "maxLength": 1024
+    },
+    "capabilities": {
+      "description": "Privileged tools/actions the skill declares it needs (from the capability vocabulary). Lets an installer reason about the blast radius before trusting the skill.",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "Bash", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit",
+          "Grep", "Glob", "Agent", "Task", "WebFetch", "WebSearch",
+          "Skill", "TodoWrite"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "dependencies": {
+      "description": "Other skills this skill requires, keyed by skill slug → semver range string.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      },
+      "propertyNames": {
+        "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+      }
+    },
+    "author": {
+      "description": "Optional author/maintainer attribution.",
+      "type": "string",
+      "maxLength": 256
+    },
+    "homepage": {
+      "description": "Optional source/documentation URL.",
+      "type": "string",
+      "format": "uri"
+    }
+  }
+}
