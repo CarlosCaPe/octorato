@@ -71,8 +71,8 @@ Octorato isn't a demo — it ships real software. A few of the products this bra
 - [The Corporation](#the-corporation)
 - [The Connectome — Neural Architecture](#the-connectome--neural-architecture)
 - [Client Arms — Total Isolation](#client-arms--total-isolation)
-- [Org Chart — 13 Divisions, 150+ Agents](#org-chart--13-divisions-150-agents)
-- [Synapses — The Skill Layer (190+ reusable techniques)](#synapses--the-skill-layer-190-reusable-techniques)
+- [Org Chart — 13 Divisions, 183 Agents](#org-chart--13-divisions-183-agents)
+- [Synapses — The Skill Layer (197 reusable techniques)](#synapses--the-skill-layer-197-reusable-techniques)
 - [Memory — Hippocampus and the Working Set](#memory--hippocampus-and-the-working-set)
 - [Reflexes — The Spinal Cord Layer](#reflexes--the-spinal-cord-layer)
 - [Observability — The Sensory Cortex](#observability--the-sensory-cortex)
@@ -204,10 +204,10 @@ The central brain sets high-level intent. The arms execute with local intelligen
 
 | Octopus Biology | Framework Architecture | What It Does |
 |----------------|----------------------|-------------|
-| Central brain | `~/.claude/` (this repo) | Shared rules, paradigms, 150+ agent personas, 190+ skills |
+| Central brain | `~/.claude/` (this repo) | Shared rules, paradigms, 183 agent personas, 197 skills |
 | Arms | Client project repos | Isolated workspaces — each client is a sealed arm |
-| Neurons | Agent personas | 150+ specialist processors across 13 divisions |
-| Synapses | Skills | 190+ reusable techniques that connect agents to capabilities |
+| Neurons | Agent personas | 183 specialist processors across 13 divisions |
+| Synapses | Skills | 197 reusable techniques that connect agents to capabilities |
 | Chemoreceptors (suckers) | `query_connectome.py` | TF-IDF cosine similarity against the indexed agent/skill corpus — a sparse lexical retriever, not multimodal chemoreception |
 | Afferent/efferent signal cycle | 4D Paradigm | Sense → plan → act → evaluate, with feedback — every signal follows 4 phases |
 | Co-activation reinforcement (inspired by Hebb's principle) | Hebbian-style learning | Edge weights between agent/skill pairs are boosted when they co-fire on a successful task; stale boosts decay exponentially (half-life ~69 days) and failures subtract. **Not LTP** — there is no NMDA-style coincidence detector, no synaptic protein synthesis. Closest ML analog: bandit reward priors over a static graph. |
@@ -293,8 +293,8 @@ The framework uses an object-oriented inheritance model:
 │     - The 4D Paradigm (Describe-Delegate-Diligent-Disclose)  │
 │     - The Octopus Architecture (brain/arm isolation)         │
 │     - The connectome engine (TF-IDF, cosine similarity)      │
-│     - 150+ generic agent personas                              │
-│     - 190+ generic skills (techniques, not client workflows)  │
+│     - 183 generic agent personas                               │
+│     - 197 generic skills (techniques, not client workflows)   │
 │     - Enforcement scripts (delegate-check, gate-check, etc.) │
 │     - Templates for creating your own company brain + arms   │
 │                                                              │
@@ -479,8 +479,8 @@ The archived specs become institutional memory — future tasks reference past d
                         ┌────────▼────────┐
                         │   BRAIN         │
                         │  ~/.claude/     │
-                        │  190+ Skills     │
-                        │  150+ Agents     │
+                        │  197 Skills      │
+                        │  183 Agents      │
                         │  N Client Arms  │
                         └────────┬────────┘
                                  │
@@ -524,7 +524,7 @@ Inspired by octopus neurobiology: 500M neurons, 2/3 distributed in arms, extensi
 ```
   D1 (WHO)     D2 (HOW)     D3 (WHERE)    D4 (WHEN)
   ────────     ────────     ─────────     ─────────
-  150+         190+         N             4
+  183          197          N             4
   Neurons      Synapses     Regions       Phases
   (Agents)     (Skills)     (Arms)        (4D Paradigm)
 ```
@@ -595,7 +595,7 @@ Human → Agent   Explicit cross-arm requests         (human decides what to bri
 
 ---
 
-## Org Chart — 13 Divisions, 150+ Agents
+## Org Chart — 13 Divisions, 183 Agents
 
 ```mermaid
 graph TB
@@ -604,7 +604,7 @@ graph TB
     classDef div fill:#21262D,stroke:#30363D,stroke-width:1px,color:#C9D1D9,font-size:12px
 
     CEO["Human Operator"]:::ceo
-    BRAIN["BRAIN — 190+ Skills · 150+ Agents · N Arms"]:::brain
+    BRAIN["BRAIN — 197 Skills · 183 Agents · N Arms"]:::brain
     CEO --> BRAIN
 
     BRAIN --> ENG["Engineering — 28"]:::div
@@ -835,7 +835,7 @@ The ROI engine. Every dollar tracked.
 
 ---
 
-## Synapses — The Skill Layer (190+ reusable techniques)
+## Synapses — The Skill Layer (197 reusable techniques)
 
 If agents are neurons — persistent processors with personality — then **skills are synapses**: the connection that makes a neuron useful for a specific task. A neuron in isolation does nothing. A neuron whose synapses know `index-creation-concurrently` and `query_connectome.py` becomes a database optimization specialist.
 
@@ -858,7 +858,7 @@ Task arrives                                              ▼
    ▼
 2D Delegate Q1 — Ventosas (Chemoreceptor search)
    query_connectome.py builds a TF-IDF vector of the task,
-   ranks all 190+ synapses by cosine similarity to their stored
+   ranks all 197 synapses by cosine similarity to their stored
    document vectors. Returns top matches with scores.
    │
    ▼
@@ -935,7 +935,7 @@ The lifecycle has a software-convenient shortcut the biology doesn't have: **the
 ### Where to actually look at synapses
 
 ```bash
-ls ~/.claude/skills/                                          # All 190+ by name
+ls ~/.claude/skills/                                          # All 197 by name
 ~/.claude/scripts/query_connectome.py query "<task>"          # Which synapses fire for this task
 ~/.claude/scripts/query_connectome.py gods 15                 # Top hub synapses
 ~/.claude/scripts/query_connectome.py communities             # Skill clusters
@@ -1268,7 +1268,7 @@ ai-pull --status
 ├── HEBBIAN_LEARNING.md      ← How the connectome learns over time
 ├── hooks.json               ← Shared hooks (source of truth, synced to all machines)
 ├── neural_map.json          ← The Deep Connectome (auto-generated, never edit)
-├── agents/                  ← 150+ AI agent personas
+├── agents/                  ← 183 AI agent personas
 │   ├── REGISTRY.md          ← Auto-activation triggers & cross-references
 │   ├── engineering/         ← 28 agents
 │   ├── design/              ← 8 agents
@@ -1285,7 +1285,7 @@ ai-pull --status
 │   ├── paid-media/          ← 7 agents
 │   ├── strategy/            ← NEXUS orchestration playbooks and runbooks
 │   └── examples/            ← Multi-agent workflow examples
-├── skills/                  ← 190+ reusable techniques
+├── skills/                  ← 197 reusable techniques
 ├── scripts/
 │   ├── generate_neural_map.py     ← Connectome generator (TF-IDF + cosine + Hebbian)
 │   ├── query_connectome.py        ← Suction cups — graph search for agent/skill matching
