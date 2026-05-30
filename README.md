@@ -4,9 +4,13 @@
 
 > 🌍 This README is in English (the open-source lingua franca). Running an AI agent? Ask it to read this in your language — eating our own dog food. 🐙
 
-# Octopus Brain Framework
+# Octorato
 
-> **Octorato is an open-source AI agent operating system** — one file-native "brain" (190+ skills, 160+ specialist agents, all plain markdown under git) that a single operator runs across many sealed client "arms," with per-client token billing and hard budget halts. *An organic agent you can read, diff, and own as text — grown by use, isolated by cell.*
+> *an Octorato (n.) — an organic, file-native AI agent: one brain, many sealed arms. The same wall that seals a client is the wall that bills them.*
+>
+> <sub>the Octopus Brain Framework</sub>
+
+> **Octorato is an open-source, file-native AI agent OS** — one "brain" (197 skills, 183 specialist agents, all plain markdown under git) that a single operator runs across many sealed client "arms." Because each arm is a sealed cell no other arm can see, every token it spends bills to exactly one client by construction: **cellular isolation IS per-client FinOps.** *An organic agent you can read, diff, and own as text — grown by use, isolated by cell.*
 
 [![License: MIT](https://img.shields.io/github/license/CarlosCaPe/octorato)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/CarlosCaPe/octorato?style=social)](https://github.com/CarlosCaPe/octorato/stargazers)
@@ -19,14 +23,15 @@
 
 <!-- TODO(demo): add a terminal demo here — asciinema cast or GIF of "natural language → shipped product". Tracked as a maintainer follow-up. -->
 
-> **Open-source agent operating system with built-in FinOps.**
-> Per-client token attribution. Air-gapped arms *(software-level isolation between client workspaces)*. Budget caps with a real halt mechanism.
-> The brain consultants and small agencies need to bill clients fairly —
-> the open-source FinOps brain for consultants who want to land on the right side of the
-> [Gartner 40% of agentic projects predicted to be cancelled by 2027](https://www.gartner.com/en/newsroom/press-releases/2025-06-25-gartner-predicts-over-40-percent-of-agentic-ai-projects-will-be-canceled-by-end-of-2027)
+> **An Octorato is an organic, file-native AI agent OS — and because its arms are sealed cells, it has built-in FinOps.**
+> One brain (197 skills, 183 specialist agents, all plain markdown under git) that a single operator runs across many sealed client *arms*. Because each arm is a sealed cell no other arm can see, every token it spends bills to exactly one client by construction — **cellular isolation IS per-client FinOps: the wall that seals a client is the wall that bills them.**
+> The brain consultants and small agencies need to bill clients fairly — and land on the right side of the
+> [Gartner prediction that 40% of agentic AI projects will be canceled by 2027](https://www.gartner.com/en/newsroom/press-releases/2025-06-25-gartner-predicts-over-40-percent-of-agentic-ai-projects-will-be-canceled-by-end-of-2027)
 > over unmanaged cost.
+>
+> *Honest scope: per-client cost is an **estimate** from local session logs at list price, attributed by repo path (a small unattributed remainder is expected). The budget halt is real code — `budget-check.py` exits 2 and a `PreToolUse` hook refuses the tool — but it arms itself only once you configure `budgets.yaml`. The mechanism is real; the precision is opt-in, and we say which is which.*
 
-> *"One brain. 160+ specialist agents. Zero office rent. One ledger per client."*
+> *"One brain. Sealed arms. One ledger per client — because the arm IS the ledger."*
 
 ---
 
@@ -109,14 +114,14 @@ Enterprises need governance. Solo consultants and small agencies need it
 |---|---|---|
 | Agent frameworks | LangGraph, CrewAI, AutoGen, LlamaIndex | We don't compete here — Octorato is an OS, not a framework. Bring your own. |
 | Agent observability | LangSmith, Langfuse, Arize, Datadog LLM Obs | Complementary. Octorato emits OpenInference-style spans; sits *above* your observability stack as the governance layer. |
-| **FinOps for AI Agents** | greenfield (Vantage, Amnic, Finout fighting for category, no Gartner MQ yet) | **Octorato leads here** — per-client attribution + air-gapped arms + consultant-grade simplicity. |
+| **FinOps for AI Agents** | greenfield (Vantage, Amnic, Finout fighting for category, no Gartner MQ yet) | **The only one of these that ships per-client isolation + cost ledger + budget halt as open-source files** — because the arm is both the security cell and the billing line item. We don't claim to lead a quadrant; we occupy an intersection no one else does. |
 | Compute sandboxes | e2b.dev | Complementary (arms can run in e2b sandboxes). |
 | **Operator brains / `~/.claude` distributions** | ECC (`affaan-m/ECC`), dotclaude variants, claude-flow, wshobson/agents collections | Most are *one bag of skills*. Octorato is an **OS with multi-tenant isolation**: per-client arms, per-client cost ledger, per-client budget caps. We learn from peer brains daily (`repo-watch` skill) without absorbing their multi-tenancy gap. |
 
 **Three things competing observability tools don't have:**
 
 1. **Per-arm cost attribution** — every trace event tags the client (`arm`), and `skill-cost-profiler.py` produces a billable cost rollup per project, per month, per skill, with USD applied via the shared `_pricing.py` table. Privately. On your filesystem. No SaaS dependency.
-2. **Air-gapped multi-tenancy** — clients live in sealed repos. Brain sees their cost data; the arms never see each other. Datadog can't enforce this; LangSmith Cloud isn't designed for it.
+2. **Sealed multi-tenancy** — clients live in sealed repos (software-level isolation — no shared state, no cross-arm reads). The brain sees their cost data read-only; the arms never see each other. Datadog can't enforce this; LangSmith Cloud isn't designed for it.
 3. **Budget caps that actually halt agents** — `budget-check.py` reads `budgets.yaml`, computes month-to-date spend per arm, and exits with code 2 when the cap is burned through. A `PreToolUse` hook wires that into `Agent` / subagent / browser tools so the operator can't accidentally torch a client's budget. CFO buy signal, not telemetry buy signal.
 
 FinOps is the wedge. The architecture under it is biology — because the same problem the operator faces (*one consciousness, many client workspaces, no cross-contamination*) is the problem an octopus solves with eight semi-autonomous arms. The cost ledger and the neural map share the same substrate: per-arm isolation.
@@ -129,7 +134,7 @@ An open-source AI agent operating system where a single human operator directs a
 
 With nothing but natural language, you can direct a team of AI specialists to build and ship software, and bill the client honestly when it ships.
 
-**Live framework**: 190+ skills, 150+ agent personas across 13 divisions, enforcement scripts, multi-machine sync, a neural connectome that learns over time, and a FinOps pipeline that tags every trace event with the client who incurred it — with per-arm USD rollup, cost-spike alerts, budget caps that halt agents, and Anthropic Enterprise Analytics reconciliation all shipped (see [roadmap below](#finops-roadmap)).
+**Live framework**: 197 skills, 183 agent personas across 13 divisions, enforcement scripts, multi-machine sync, a neural connectome that learns over time, and a FinOps pipeline that tags every trace event with the client who incurred it — with per-arm USD rollup and a `PreToolUse` budget halt **shipped, opt-in** (configure `budgets.yaml` to arm caps; run the `anthropic-enterprise-analytics` pull to reconcile estimate against billed cost). See [roadmap below](#finops-roadmap).
 
 **Shipped with it**: live products built and maintained agent-first on this brain — see [Built with Octorato](SHOWCASE.md).
 

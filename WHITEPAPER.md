@@ -1,6 +1,6 @@
 # Octorato: An Organic, File-Native Model of Artificial Agency
 
-*Carlos Carrillo · dataqbs · v0.1 · open source (MIT)*
+*Carlos Carrillo · dataqbs · v0.2 · open source (MIT)*
 
 > **An Octorato** *(n.)* — an organic, file-native AI agent: one brain, many sealed
 > arms, that grows by use, isolates by cell, and carries its whole self in plain files.
@@ -18,6 +18,11 @@ version control, many arms that never know each other, knowledge that rises from
 and a four-phase nervous system that makes every action describable, delegated,
 verified, and disclosed. The agent you can hold in your hand as text — portable across
 any runtime, sealed per client, grown rather than configured. We call it an **Octorato**.
+
+And because each arm is a sealed cell that no other arm can see, every action it takes —
+every token, every trace — belongs to exactly one principal: cellular isolation and
+per-client cost attribution are the same boundary seen from two sides. The organism,
+accounted, is a ledger.
 
 ## 1. Introduction
 
@@ -50,6 +55,18 @@ between arms; the only bridge is the human operator. Isolation is not a feature 
 it is enforced at commit and at push, before anything leaves the body. This is the
 property no single-tenant framework offers and no platform owner will build.
 
+Isolation has two readings on the same boundary. Read one way it is **leak-prevention**:
+client data, names, and secrets never flow OUT of an arm into the public brain — enforced
+at commit and at push. Read the other way it is **attribution**: because the arm is the
+sealed unit, the arm is also the natural unit of cost. The same per-arm boundary the
+leak-guards seal is the boundary along which every token is metered, capped, and billed —
+in code, the arm is identified as one path segment, and that one identifier serves both
+the privacy wall and the cost ledger. Structurally it is privacy; accounted, it is FinOps.
+*(Honest scope: today that ledger is an estimate computed from local session logs at list
+price and attributed by repo path, with a small unattributed remainder; the budget halt is
+real but arms itself only once a budget is configured. The boundary is structural and
+exact; the precision is opt-in — we say which is which.)*
+
 ## 5. Upward Learning
 
 Knowledge rises from the arms but never as raw client data. A lesson learned in an arm is
@@ -73,10 +90,13 @@ nodes activated together strengthen their bond. Routing is organic, not a static
 
 ## 8. Organic Scaling
 
-The brain scales by **accretion without a central bottleneck**: new skills, new agents,
-new arms attach to the body without a coordinator. Because the self is files and isolation
-is per-arm, one operator can run many principals at once. Native organicity and native
-scalability are the same property seen from two sides.
+The brain scales by **accretion without a central _runtime_ bottleneck**: new skills, new
+agents, new arms attach to the body without a coordinator. The operator remains the sole
+human gateway — the deliberate point of control where cross-arm bridging and cost
+aggregation converge. Runtime decentralization and a single accountable operator are not in
+tension; that one gateway is exactly what makes one clean per-client ledger possible. Native
+organicity, native scalability, and native attributability are the same property seen from
+three sides.
 
 ## 9. Runtime Neutrality
 
@@ -88,7 +108,11 @@ can absorb it, because no platform builds for its competitors. Neutrality is the
 
 We have described an agent that is an organism, not a library: a file-native self, sealed
 arms, upward learning, a four-phase nervous system, and an adaptive connectome. It does
-not compete with the frameworks; it **opens a different market** — agents you grow and own.
+not compete with the frameworks; it **opens a different market**. Brain-clones already share
+the form — files, agents, git, self-improvement — but make isolation only a confidentiality
+property; FinOps tools meter agents they do not own. The empty intersection is isolation that
+is also accounting: an agent whose sealed cells are independently billable. That is the market
+an Octorato opens — agents you grow, own, and can put on an invoice, one client per arm.
 This is not a better framework. It is a new kind of thing. It is an Octorato.
 
 ---
@@ -105,6 +129,7 @@ Unlike most white papers (a promise before code), every claim here maps to a fil
 | §5 Upward Learning | `HEBBIAN_LEARNING.md` |
 | §6 4D Nervous System | `skills/4d-paradigm-protocol/` |
 | §7 Connectome | `scripts/generate_neural_map.py` · `neural_map.json` |
+| §4 Attribution corollary | `scripts/skill-cost-profiler.py` (`_arm_from_session_path`) · `scripts/budget-check.py` (exit 2 → PreToolUse halt) · `scripts/_pricing.py` |
 
 *This document is the canonical source. The dataqbs.com manifesto page, the LinkedIn
 article, and the serialized blog posts all derive from it — one source, many views.*
