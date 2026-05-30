@@ -55,7 +55,7 @@ POLICY = CLAUDE / ".githooks" / "push-policy.txt"
 # otherwise `ai-push` silently drops them with no warning (lesson 2026-05-28).
 BRAIN_PATHS = ["CLAUDE.md", "README.md", "CONTRIBUTING.md", "HEBBIAN_LEARNING.md",
                "CODE_OF_CONDUCT.md", "SECURITY.md", "SUPPORT.md", "CHANGELOG.md",
-               "ROADMAP.md", "SHOWCASE.md", "LICENSE",
+               "ROADMAP.md", "SHOWCASE.md", "WHITEPAPER.md", "LICENSE",
                "hooks.json", "hooks.schema.json", "skills/", "agents/",
                "scripts/", "hooks/", ".githooks/", "commands/", ".gitignore",
                "assets/", "templates/", ".github/"]
