@@ -6,6 +6,8 @@
 
 # Octopus Brain Framework
 
+> **Octorato is an open-source AI agent operating system** — one file-native "brain" (197 skills, 160 specialist agents, all plain markdown under git) that a single operator runs across many sealed client "arms," with per-client token billing and hard budget halts. *An organic agent you can read, diff, and own as text — grown by use, isolated by cell.*
+
 [![License: MIT](https://img.shields.io/github/license/CarlosCaPe/octorato)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/CarlosCaPe/octorato?style=social)](https://github.com/CarlosCaPe/octorato/stargazers)
 [![Issues](https://img.shields.io/github/issues/CarlosCaPe/octorato)](https://github.com/CarlosCaPe/octorato/issues)
@@ -24,7 +26,7 @@
 > [Gartner 40% of agentic projects predicted to be cancelled by 2027](https://www.gartner.com/en/newsroom/press-releases/2025-06-25-gartner-predicts-over-40-percent-of-agentic-ai-projects-will-be-canceled-by-end-of-2027)
 > over unmanaged cost.
 
-> *"One brain. 180+ specialists. Zero office rent. One ledger per client."*
+> *"One brain. 160+ specialist agents. Zero office rent. One ledger per client."*
 
 ---
 
@@ -1370,6 +1372,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for how to:
 [MIT](LICENSE)
 
 ---
+
+> **Octorato powers the AI Agent OS at [dataqbs.com](https://dataqbs.com) — built & operated there.**
 
 *Created by [dataqbs](https://dataqbs.com) — Data Quality & Business Solutions*
 
