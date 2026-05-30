@@ -6,7 +6,7 @@
 
 # Octopus Brain Framework
 
-> **Octorato is an open-source AI agent operating system** — one file-native "brain" (197 skills, 160 specialist agents, all plain markdown under git) that a single operator runs across many sealed client "arms," with per-client token billing and hard budget halts. *An organic agent you can read, diff, and own as text — grown by use, isolated by cell.*
+> **Octorato is an open-source AI agent operating system** — one file-native "brain" (190+ skills, 160+ specialist agents, all plain markdown under git) that a single operator runs across many sealed client "arms," with per-client token billing and hard budget halts. *An organic agent you can read, diff, and own as text — grown by use, isolated by cell.*
 
 [![License: MIT](https://img.shields.io/github/license/CarlosCaPe/octorato)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/CarlosCaPe/octorato?style=social)](https://github.com/CarlosCaPe/octorato/stargazers)
