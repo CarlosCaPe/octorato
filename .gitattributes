@@ -1,0 +1,13 @@
+# GitHub Linguist / CodeQL language-surface control.
+#
+# The brain's canonical languages are Python + JavaScript. A handful of
+# standalone platform-helper scripts (.swift macOS helpers, vendored repos
+# under knowledge/) are NOT part of the project's build and have no Xcode
+# project or Swift package. When Linguist counts them, GitHub default-setup
+# auto-suggests a Swift CodeQL analysis whose autobuild then fails with
+# "No Xcode project or workspace found". Mark them vendored so they stay out
+# of language detection and CodeQL never re-enables Swift.
+*.swift linguist-vendored
+
+# Vendored external repos cloned for deep-learning are not our source.
+knowledge/repo-deep-learn/** linguist-vendored
