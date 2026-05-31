@@ -71,7 +71,7 @@
         {
           "type": "command",
           "command": "python3 ~/.claude/scripts/canon-heal-hook.py",
-          "timeout": 20,
+          "timeout": 5,
           "statusMessage": "♥ healing canon to unison..."
         }
       ]
