@@ -1,0 +1,15 @@
+{
+  "_comment": "Octorato Harmony source of truth — copy to <arm>/tokens/canon.json. One entry per property = one atomic gene every cell reads. CHECKER is generic (brain); VALUES are the arm's (Arm Isolation). Numeric tokens converge within _epsilon (10,12 -> 11); colors match exactly, never average. Mark per-instance brand keys perArm:true (fachada/cimientos).",
+  "_epsilon": 1,
+  "tokens": {
+    "space.gutter": { "value": 11, "unit": "px" },
+    "space.icon": { "value": 4, "unit": "px" },
+    "radius.card": { "value": 8, "unit": "px" },
+    "radius.btn": { "value": 6, "unit": "px" },
+    "duration.fast": { "value": 150, "unit": "ms" },
+    "duration.slow": { "value": 250, "unit": "ms" },
+    "color.brand": { "value": "#2563eb", "perArm": true },
+    "color.accent": { "value": "#60a5fa", "perArm": true },
+    "color.alert": { "value": "#e11d48" }
+  }
+}
