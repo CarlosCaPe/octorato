@@ -37,10 +37,13 @@ def count_skills() -> int:
 
 
 def count_agents() -> int:
+    # Match brain-stats.py exactly: recursive personas, excluding the reference
+    # divisions (examples/, strategy/ — playbooks/runbooks/briefs, not personas).
     return sum(
         1 for p in (ROOT / "agents").rglob("*.md")
-        if not p.name.upper().startswith(("README", "REGISTRY", "_"))
+        if not p.name.upper().startswith(("README", "REGISTRY", "_", "INDEX"))
         and "examples" not in p.parts
+        and "strategy" not in p.parts
     )
 
 
