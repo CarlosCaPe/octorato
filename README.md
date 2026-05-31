@@ -10,7 +10,7 @@
 >
 > <sub>the Octopus Brain Framework</sub>
 
-> **Octorato is an open-source, file-native AI agent OS** — one "brain" (190+ skills, 180+ specialist agents, all plain markdown under git) that a single operator runs across many sealed client "arms." Because each arm is a sealed cell no other arm can see, every token it spends bills to exactly one client by construction: **cellular isolation IS per-client FinOps.** *An organic agent you can read, diff, and own as text — grown by use, isolated by cell.*
+> **Octorato is an open-source AI agent operating system: one file-native "brain" — 190+ skills and 180+ specialist agents in plain markdown under git — that one operator runs across many isolated client "arms."**
 
 [![License: MIT](https://img.shields.io/github/license/CarlosCaPe/octorato)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/CarlosCaPe/octorato?style=social)](https://github.com/CarlosCaPe/octorato/stargazers)
@@ -24,7 +24,6 @@
 <!-- TODO(demo): add a terminal demo here — asciinema cast or GIF of "natural language → shipped product". Tracked as a maintainer follow-up. -->
 
 > **An Octorato is an organic, file-native AI agent OS — and because its arms are sealed cells, it has built-in FinOps.**
-> One brain (190+ skills, 180+ specialist agents, all plain markdown under git) that a single operator runs across many sealed client *arms*. Because each arm is a sealed cell no other arm can see, every token it spends bills to exactly one client by construction — **cellular isolation IS per-client FinOps: the wall that seals a client is the wall that bills them.**
 > The brain consultants and small agencies need to bill clients fairly — and land on the right side of the
 > [Gartner prediction that 40% of agentic AI projects will be canceled by 2027](https://www.gartner.com/en/newsroom/press-releases/2025-06-25-gartner-predicts-over-40-percent-of-agentic-ai-projects-will-be-canceled-by-end-of-2027)
 > over unmanaged cost.
