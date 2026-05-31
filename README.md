@@ -10,7 +10,7 @@
 >
 > <sub>the Octopus Brain Framework</sub>
 
-> **Octorato is an open-source AI agent operating system: one file-native "brain" — 190+ skills and 180+ specialist agents in plain markdown under git — that one operator runs across many isolated client "arms."**
+> **Octorato is an open-source AI agent operating system: one file-native "brain" — <!--canon:skills.count-->190+<!--/canon--> skills and <!--canon:agents.count-->160+<!--/canon--> specialist agents in plain markdown under git — that one operator runs across many isolated client "arms."**
 
 [![License: MIT](https://img.shields.io/github/license/CarlosCaPe/octorato)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/CarlosCaPe/octorato?style=social)](https://github.com/CarlosCaPe/octorato/stargazers)
@@ -70,7 +70,7 @@ Octorato isn't a demo — it ships real software. A few of the products this bra
 - [The Corporation](#the-corporation)
 - [The Connectome — Neural Architecture](#the-connectome--neural-architecture)
 - [Client Arms — Total Isolation](#client-arms--total-isolation)
-- [Org Chart — 13 Divisions, 180+ Agents](#org-chart--13-divisions-180-agents)
+- [Org Chart — 13 Divisions, 160+ Agents](#org-chart--13-divisions-160-agents)
 - [Synapses — The Skill Layer (190+ reusable techniques)](#synapses--the-skill-layer-190-reusable-techniques)
 - [Memory — Hippocampus and the Working Set](#memory--hippocampus-and-the-working-set)
 - [Reflexes — The Spinal Cord Layer](#reflexes--the-spinal-cord-layer)
@@ -133,7 +133,7 @@ An open-source AI agent operating system where a single human operator directs a
 
 With nothing but natural language, you can direct a team of AI specialists to build and ship software, and bill the client honestly when it ships.
 
-**Live framework**: 190+ skills, 180+ agent personas across 13 divisions, enforcement scripts, multi-machine sync, a neural connectome that learns over time, and a FinOps pipeline that tags every trace event with the client who incurred it — with per-arm USD rollup and a `PreToolUse` budget halt **shipped, opt-in** (configure `budgets.yaml` to arm caps; run the `anthropic-enterprise-analytics` pull to reconcile estimate against billed cost). See [roadmap below](#finops-roadmap).
+**Live framework**: 190+ skills, 160+ agent personas across 13 divisions, enforcement scripts, multi-machine sync, a neural connectome that learns over time, and a FinOps pipeline that tags every trace event with the client who incurred it — with per-arm USD rollup and a `PreToolUse` budget halt **shipped, opt-in** (configure `budgets.yaml` to arm caps; run the `anthropic-enterprise-analytics` pull to reconcile estimate against billed cost). See [roadmap below](#finops-roadmap).
 
 **Shipped with it**: live products built and maintained agent-first on this brain — see [Built with Octorato](SHOWCASE.md).
 
@@ -203,9 +203,9 @@ The central brain sets high-level intent. The arms execute with local intelligen
 
 | Octopus Biology | Framework Architecture | What It Does |
 |----------------|----------------------|-------------|
-| Central brain | `~/.claude/` (this repo) | Shared rules, paradigms, 180+ specialist agents, 190+ skills |
+| Central brain | `~/.claude/` (this repo) | Shared rules, paradigms, 160+ specialist agents, 190+ skills |
 | Arms | Client project repos | Isolated workspaces — each client is a sealed arm |
-| Neurons | Agent personas | 180+ specialist agents across 13 divisions |
+| Neurons | Agent personas | 160+ specialist agents across 13 divisions |
 | Synapses | Skills | 190+ reusable techniques that connect agents to capabilities |
 | Chemoreceptors (suckers) | `query_connectome.py` | TF-IDF cosine similarity against the indexed agent/skill corpus — a sparse lexical retriever, not multimodal chemoreception |
 | Afferent/efferent signal cycle | 4D Paradigm | Sense → plan → act → evaluate, with feedback — every signal follows 4 phases |
@@ -292,7 +292,7 @@ The framework uses an object-oriented inheritance model:
 │     - The 4D Paradigm (Describe-Delegate-Diligent-Disclose)  │
 │     - The Octopus Architecture (brain/arm isolation)         │
 │     - The connectome engine (TF-IDF, cosine similarity)      │
-│     - 180+ generic agent personas                              │
+│     - 160+ generic agent personas                              │
 │     - 190+ generic skills (techniques, not client workflows)  │
 │     - Enforcement scripts (delegate-check, gate-check, etc.) │
 │     - Templates for creating your own company brain + arms   │
@@ -479,7 +479,7 @@ The archived specs become institutional memory — future tasks reference past d
                         │   BRAIN         │
                         │  ~/.claude/     │
                         │  190+ Skills     │
-                        │  180+ Agents     │
+                        │  160+ Agents     │
                         │  N Client Arms  │
                         └────────┬────────┘
                                  │
@@ -594,7 +594,7 @@ Human → Agent   Explicit cross-arm requests         (human decides what to bri
 
 ---
 
-## Org Chart — 13 Divisions, 180+ Agents
+## Org Chart — 13 Divisions, 160+ Agents
 
 ```mermaid
 graph TB
@@ -603,7 +603,7 @@ graph TB
     classDef div fill:#21262D,stroke:#30363D,stroke-width:1px,color:#C9D1D9,font-size:12px
 
     CEO["Human Operator"]:::ceo
-    BRAIN["BRAIN — 190+ Skills · 180+ specialist agents · N Arms"]:::brain
+    BRAIN["BRAIN — 190+ Skills · 160+ specialist agents · N Arms"]:::brain
     CEO --> BRAIN
 
     BRAIN --> ENG["Engineering — 28"]:::div
@@ -1267,7 +1267,7 @@ ai-pull --status
 ├── HEBBIAN_LEARNING.md      ← How the connectome learns over time
 ├── hooks.json               ← Shared hooks (source of truth, synced to all machines)
 ├── neural_map.json          ← The Deep Connectome (auto-generated, never edit)
-├── agents/                  ← 180+ specialist agents
+├── agents/                  ← 160+ specialist agents
 │   ├── REGISTRY.md          ← Auto-activation triggers & cross-references
 │   ├── engineering/         ← 28 agents
 │   ├── design/              ← 8 agents
