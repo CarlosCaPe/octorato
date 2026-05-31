@@ -33,6 +33,12 @@ meta:
   # not a unilateral one. See the PR coordination note.
   targets:
     - "content/*.md"
+    # README.md joined 2026-05-30: the hero-line counts are now wrapped in canon
+    # markers, which removes them from sync-readme-counts.py's regex reach (the
+    # comment tag breaks the number+noun adjacency) and hands those occurrences to
+    # canon-render. sync-readme still owns the ASCII-box / TOC-anchor / heading
+    # counts it handles specially — coexistence, the converge-not-fork migration.
+    - "README.md"
 
 facts:
   - id: repo.url
@@ -59,9 +65,12 @@ facts:
       json: agents
     citation: "scripts/brain-stats.py"
     note: >
-      DIVERGENCE FLAGGED 2026-05-30 — brain-stats counts 152 personas (floor 150+),
-      but README prose currently reads "180+". Two counting RULES disagree (personas
-      under a division vs the connectome's total). The count DEFINITION must be
-      converged with the counts-triad owner BEFORE wiring this fact to README/FAQ.
-      Until then it renders to the fixture only — which is the canon catching its
-      first real drift, exactly as designed.
+      CONVERGED 2026-05-30 — the earlier divergence (brain-stats 152 vs README 180+)
+      was a real bug: brain-stats counted personas non-recursively (missed 15 nested
+      in sub-categories like game-development/godot/), while sync-readme counted
+      recursively but wrongly INCLUDED the 16 strategy/ reference docs (playbooks,
+      runbooks — not personas). Both fixed to ONE rule: recursive personas under a
+      division, excluding examples/ + strategy/. True count = 167 → floor 160+.
+      brain-stats.py + sync-readme-counts.py + canon all agree now. (The connectome's
+      ~183 is indexed agent-RELATED nodes for retrieval, a different metric from
+      persona headcount — keep them distinct; the public count is brain-stats.)
