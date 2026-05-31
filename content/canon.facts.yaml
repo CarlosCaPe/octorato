@@ -1,0 +1,67 @@
+# Octorato canonical fact registry — the genome every surface reads.
+#
+# One canonical value per fact, propagated to every surface, copied NOWHERE.
+# This is the CONTENT counterpart of tokens/canon.json (which governs design
+# VALUES). A surface subscribes to a fact by embedding a marker:
+#
+#     <!--canon:octorato.tagline-->...anything...<!--/canon-->
+#
+# `canon-render.py` rewrites the span between the markers to the canonical
+# rendered value. The marker IS the subscription — a file opts in by carrying
+# one. See skills/octorato-harmony/SKILL.md for the why (the octopus moves as
+# one; no value is copied, only cited).
+#
+# kind:
+#   asserted — the operator is the ONLY editor; canon-render snaps every
+#              subscribed surface to `value`. (positioning, tagline, urls)
+#   derived  — `value` is RECOMPUTED from `derive` (a command + a JSON key);
+#              never hand-set. Reuses the existing source of truth.
+#   floored  — derived, then rounded DOWN to the nearest ten and suffixed "+"
+#              (the operator's stat convention: a floor is always TRUE and
+#              stable across small changes; also enforced by check-stats-drift.py).
+#
+# Averaging is BANNED for content. Only design-token VALUES average to the
+# middle (10,12 -> 11). Facts converge to canon BY TYPE, never by arithmetic
+# mean — a half-true sentence is worse than either source.
+
+meta:
+  schema: 1
+  # canon-render only ever touches files matching these globs (relative to the
+  # brain root). README.md / FAQ.md are intentionally ABSENT: their counts are
+  # still owned by the counts-triad (sync-readme-counts.py + brain-stats.py +
+  # check-stats-drift.py). Adding them here is the COORDINATED convergence step,
+  # not a unilateral one. See the PR coordination note.
+  targets:
+    - "content/*.md"
+
+facts:
+  - id: repo.url
+    kind: asserted
+    value: "https://github.com/CarlosCaPe/octorato"
+    citation: 'CLAUDE.md "Self-Awareness — You Are Running on Octorato"'
+
+  - id: octorato.tagline
+    kind: asserted
+    value: "an organic, file-native AI agent operating system — one brain, many sealed arms"
+    citation: "README.md hero (line 13)"
+
+  - id: skills.count
+    kind: floored
+    derive:
+      cmd: "python3 scripts/brain-stats.py --json"
+      json: skills
+    citation: "scripts/brain-stats.py — the single source of truth for headline counts"
+
+  - id: agents.count
+    kind: floored
+    derive:
+      cmd: "python3 scripts/brain-stats.py --json"
+      json: agents
+    citation: "scripts/brain-stats.py"
+    note: >
+      DIVERGENCE FLAGGED 2026-05-30 — brain-stats counts 152 personas (floor 150+),
+      but README prose currently reads "180+". Two counting RULES disagree (personas
+      under a division vs the connectome's total). The count DEFINITION must be
+      converged with the counts-triad owner BEFORE wiring this fact to README/FAQ.
+      Until then it renders to the fixture only — which is the canon catching its
+      first real drift, exactly as designed.
