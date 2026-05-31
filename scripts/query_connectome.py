@@ -1030,8 +1030,12 @@ def _fuzzy_match(G, query):
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
-    if len(sys.argv) < 2:
+    # No args or an explicit help flag: print usage + the full command list and
+    # exit 0, without touching the connectome (help must work even if
+    # neural_map.json is missing). delegate-check already supports -h/--help.
+    if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help", "help"):
         print(__doc__)
+        print("Commands: stats, gods, path, query, impact, communities, viz, 4d")
         return 0
 
     cmd = sys.argv[1].lower()

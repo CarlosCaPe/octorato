@@ -1,3 +1,10 @@
+---
+name: "{{SKILL_SLUG}}"
+description: "{{ONE_LINE_DESCRIPTION}}"
+metadata:
+  type: "{{SKILL_TYPE}}"
+---
+
 # {{SKILL_NAME}}
 
 ## Purpose

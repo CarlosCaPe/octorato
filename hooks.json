@@ -67,6 +67,12 @@
           "type": "command",
           "command": "python3 ~/.claude/scripts/trace-hook.py --phase diligent",
           "timeout": 5
+        },
+        {
+          "type": "command",
+          "command": "python3 ~/.claude/scripts/canon-heal-hook.py",
+          "timeout": 20,
+          "statusMessage": "♥ healing canon to unison..."
         }
       ]
     }

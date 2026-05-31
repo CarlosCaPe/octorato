@@ -12,8 +12,8 @@ CANONICAL DEFINITIONS (explicit so they're unambiguous forever):
   • Skill     = a directory under  ~/.claude/skills/<name>/  containing SKILL.md
   • Division  = an immediate subdirectory of ~/.claude/agents/ that is NOT in
                 EXCLUDED_AGENT_DIRS and that contains >= 1 persona file
-  • Persona   = a *.md file DIRECTLY under a division dir (non-recursive),
-                excluding README.md and index files
+  • Persona   = a *.md file under a division dir (recursive — personas may be
+                nested in sub-categories), excluding README.md and index files
 
 EXCLUDED_AGENT_DIRS are reference material, not specialist personas:
   • examples/  — workflow examples + README
@@ -50,8 +50,8 @@ def agent_divisions() -> dict[str, int]:
         if not d.is_dir() or d.name in EXCLUDED_AGENT_DIRS:
             continue
         personas = [
-            f for f in d.glob("*.md")          # non-recursive: direct children only
-            if f.name not in NON_PERSONA_FILES
+            f for f in d.rglob("*.md")         # recursive: personas may be nested in
+            if f.name not in NON_PERSONA_FILES  # sub-categories (e.g. game-development/godot/)
         ]
         if personas:
             out[d.name] = len(personas)
@@ -69,7 +69,7 @@ def compute() -> dict:
         "definitions": {
             "skill": "dir under skills/ with SKILL.md",
             "division": "immediate subdir of agents/ (excl examples,strategy) with >=1 persona",
-            "persona": "*.md directly under a division dir, excl README/REGISTRY/index",
+            "persona": "*.md under a division dir (recursive), excl README/REGISTRY/index",
         },
     }
 

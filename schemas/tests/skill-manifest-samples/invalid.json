@@ -1,0 +1,6 @@
+{
+  "name": "QueryMaster",
+  "version": "1.4",
+  "capabilities": ["Bash", "Telepathy"],
+  "unknown_field": true
+}

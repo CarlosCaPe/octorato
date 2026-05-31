@@ -1,0 +1,76 @@
+# Octorato canonical fact registry — the genome every surface reads.
+#
+# One canonical value per fact, propagated to every surface, copied NOWHERE.
+# This is the CONTENT counterpart of tokens/canon.json (which governs design
+# VALUES). A surface subscribes to a fact by embedding a marker:
+#
+#     <!--canon:octorato.tagline-->...anything...<!--/canon-->
+#
+# `canon-render.py` rewrites the span between the markers to the canonical
+# rendered value. The marker IS the subscription — a file opts in by carrying
+# one. See skills/octorato-harmony/SKILL.md for the why (the octopus moves as
+# one; no value is copied, only cited).
+#
+# kind:
+#   asserted — the operator is the ONLY editor; canon-render snaps every
+#              subscribed surface to `value`. (positioning, tagline, urls)
+#   derived  — `value` is RECOMPUTED from `derive` (a command + a JSON key);
+#              never hand-set. Reuses the existing source of truth.
+#   floored  — derived, then rounded DOWN to the nearest ten and suffixed "+"
+#              (the operator's stat convention: a floor is always TRUE and
+#              stable across small changes; also enforced by check-stats-drift.py).
+#
+# Averaging is BANNED for content. Only design-token VALUES average to the
+# middle (10,12 -> 11). Facts converge to canon BY TYPE, never by arithmetic
+# mean — a half-true sentence is worse than either source.
+
+meta:
+  schema: 1
+  # canon-render only ever touches files matching these globs (relative to the
+  # brain root). README.md / FAQ.md are intentionally ABSENT: their counts are
+  # still owned by the counts-triad (sync-readme-counts.py + brain-stats.py +
+  # check-stats-drift.py). Adding them here is the COORDINATED convergence step,
+  # not a unilateral one. See the PR coordination note.
+  targets:
+    - "content/*.md"
+    # README.md joined 2026-05-30: the hero-line counts are now wrapped in canon
+    # markers, which removes them from sync-readme-counts.py's regex reach (the
+    # comment tag breaks the number+noun adjacency) and hands those occurrences to
+    # canon-render. sync-readme still owns the ASCII-box / TOC-anchor / heading
+    # counts it handles specially — coexistence, the converge-not-fork migration.
+    - "README.md"
+
+facts:
+  - id: repo.url
+    kind: asserted
+    value: "https://github.com/CarlosCaPe/octorato"
+    citation: 'CLAUDE.md "Self-Awareness — You Are Running on Octorato"'
+
+  - id: octorato.tagline
+    kind: asserted
+    value: "an organic, file-native AI agent operating system — one brain, many sealed arms"
+    citation: "README.md hero (line 13)"
+
+  - id: skills.count
+    kind: floored
+    derive:
+      cmd: "python3 scripts/brain-stats.py --json"
+      json: skills
+    citation: "scripts/brain-stats.py — the single source of truth for headline counts"
+
+  - id: agents.count
+    kind: floored
+    derive:
+      cmd: "python3 scripts/brain-stats.py --json"
+      json: agents
+    citation: "scripts/brain-stats.py"
+    note: >
+      CONVERGED 2026-05-30 — the earlier divergence (brain-stats 152 vs README 180+)
+      was a real bug: brain-stats counted personas non-recursively (missed 15 nested
+      in sub-categories like game-development/godot/), while sync-readme counted
+      recursively but wrongly INCLUDED the 16 strategy/ reference docs (playbooks,
+      runbooks — not personas). Both fixed to ONE rule: recursive personas under a
+      division, excluding examples/ + strategy/. True count = 167 → floor 160+.
+      brain-stats.py + sync-readme-counts.py + canon all agree now. (The connectome's
+      ~183 is indexed agent-RELATED nodes for retrieval, a different metric from
+      persona headcount — keep them distinct; the public count is brain-stats.)

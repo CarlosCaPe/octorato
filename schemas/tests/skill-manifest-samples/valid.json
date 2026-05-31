@@ -1,0 +1,12 @@
+{
+  "name": "querymaster",
+  "version": "1.4.0",
+  "license": "MIT",
+  "description": "Global database query agent — dry-run by default across 6 engines.",
+  "capabilities": ["Bash", "Read", "Write"],
+  "dependencies": {
+    "token-efficient-prompting": ">=1.0.0"
+  },
+  "author": "octorato",
+  "homepage": "https://github.com/CarlosCaPe/octorato"
+}
