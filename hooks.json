@@ -73,6 +73,12 @@
           "command": "python3 ~/.claude/scripts/canon-heal-hook.py",
           "timeout": 5,
           "statusMessage": "♥ healing canon to unison..."
+        },
+        {
+          "type": "command",
+          "command": "python3 ~/.claude/scripts/impact-radius-hook.py",
+          "timeout": 5,
+          "statusMessage": "♥ scanning impact radius..."
         }
       ]
     }

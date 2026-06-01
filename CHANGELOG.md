@@ -15,6 +15,23 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-06-01] — v3.0.0 "Proprioception"
+
+Major: the brain grew new **organs** — cross-cutting faculties that govern *how* every arm acts — not just arms (skills). It moved from **reactive to reflexive**: it now senses and coordinates itself.
+
+### Added — organs
+- **Proprioception** — the one-line **Provenance footer** (Basis · Engine · Touched · Verified) ends every response: the brain sensing its own action. (`scripts/4d-reminder.py`, `scripts/source-attribution-check.py`)
+- **The reflective WHILE** — 4D codified as a loop, not a one-shot: `while (open / remnants / Touched≠intent): 4D()`; exit on reconciliation, never on "looks done". (`skills/4d-paradigm-protocol`)
+- **The cerebellum** — precision without tremor: feedforward Manifest (enumerated target) ⇄ binary `Touched` reconcile ⇄ involuntary firing. `scripts/impact-radius.py` (tool) + `scripts/impact-radius-hook.py` (PostToolUse `Write|Edit` reflex). Closes the #1 recurrent failure — codify-in-one-place / leave-refs-stale ("pixelation") and its twin, touching or creating more than needed.
+- **Metabolic sense (FinOps)** — `scripts/finops-digest.py` (per-arm $, routing KPI vs all-Opus, est-vs-billed), `scripts/cost-vs-change.py` (marginal cost of each new capability), folded into `brain-digest.py`; `skills/finops-observability`; `budgets.yaml.example` + brain_doctor enforcement-status check.
+- **Gap sense** — `scripts/gap-capture.py`: 2D `SELF` ("nobody does it") misses logged; recurrence ≥3× graduates to a skill-creator candidate.
+- **Model routing** — `skills/model-routing-by-complexity` (Opus brain, Haiku arms); the engine is disclosed in the Provenance footer.
+
+### Changed
+- **ULTRA rule** — every concept change runs an Impact Radius scan and reconciles `Touched`; a concept codified with stale references is a coherence bug. (`CLAUDE.md` §4D + `skills/4d-paradigm-protocol`)
+- "Source line" → "Provenance footer" across `CLAUDE.md` / `README.md` / the 4D skill.
+- `skills/octorato-symbolism` — the tesseract's operator-facing meaning (Octorato as the vehicle into the 4D a single human can't inhabit) + the arm-is-an-octopus recursion.
+
 ## [2026-05-29] — v2.1.0 "Contributor-Ready"
 
 ### Added
