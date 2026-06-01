@@ -270,8 +270,18 @@ BEFORE CHANGING OBJECT X:
 
 ### Scan Command
 
+For BRAIN concepts (a skill, convention, primitive, term), use the tool — it is the manual grep automated, so it can't be silently skipped:
+
 ```bash
-# Run BEFORE modifying any shared file/image/config/path
+python3 ~/.claude/scripts/impact-radius.py "<concept>"     # every file referencing it
+python3 ~/.claude/scripts/impact-radius.py --file <path>   # derive the term from a changed file
+```
+
+Then **reconcile the Provenance footer's `Touched` against the result** — files the radius lists that you did NOT touch = a SKIP; files you touched it does NOT imply = over-reach. The loop (the 4D WHILE) does not exit until they reconcile: **no skip, no excess.** This closes the #1 recurrent failure — codifying a concept in one place and leaving its references stale ("pixelation") — which is an intent↔effect precision gap, not malice.
+
+For arbitrary shared files/images/paths, the raw grep still applies:
+
+```bash
 OBJECT="signature_file"
 grep -rn "$OBJECT" . --include="*.py" --include="*.md" --include="*.sh" \
   --include="*.json" --include="*.yaml" --include="*.svg" --include="*.html"
