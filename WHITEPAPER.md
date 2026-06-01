@@ -138,7 +138,7 @@ Unlike most white papers (a promise before code), every claim here maps to a fil
 | §2 Organism / brain | `CLAUDE.md` |
 | §4 Cellular Isolation | `scripts/check-generic.py` · `.githooks/pre-push` |
 | §5 Upward Learning | `HEBBIAN_LEARNING.md` |
-| §6 4D Nervous System | `skills/4d-paradigm-protocol/` |
+| §6 4D Nervous System | `skills/4d-paradigm-protocol/` · `scripts/impact-radius.py` · `scripts/impact-radius-hook.py` |
 | §7 Connectome | `scripts/generate_neural_map.py` · `neural_map.json` |
 | §4 Attribution corollary | `scripts/skill-cost-profiler.py` (`_arm_from_session_path`) · `scripts/budget-check.py` (exit 2 → PreToolUse halt) · `scripts/_pricing.py` |
 
