@@ -82,6 +82,17 @@ evidence), **Disclose** (state side effects and blast radius). Describe and Dele
 before action; Diligent and Disclose after. This is the trust mechanism: no silent
 change, no unverified claim, no hidden consequence.
 
+The four phases run inside a **loop**, not once: `while (open work or unreconciled
+effect): 4D()`. Each response closes with a one-line **provenance footer** — basis,
+engine, files touched, evidence — the system sensing its own action (proprioception)
+and the condition that decides whether to iterate again. Precision comes from a
+*cerebellar* discipline: a manifest predicts the exact target set before acting
+(feedforward), the provenance footer reconciles what was actually touched against it
+(feedback), and an involuntary hook surfaces a concept's other references the moment it
+is edited — so a change is neither under-applied (a stale reference) nor over-applied
+(an unintended edit). Feedback alone is tremor; feedforward plus involuntary feedback is
+a steady reach.
+
 ## 7. The Connectome
 
 The brain's skills and agents form a graph — a TF-IDF and co-activation map that routes
