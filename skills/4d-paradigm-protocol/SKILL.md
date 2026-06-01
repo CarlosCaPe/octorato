@@ -82,6 +82,16 @@ The WHILE is necessary but **not sufficient**: a pure feedback loop corrects *af
 
 Why the WHILE alone doesn't close it: feedback-only is reactive, the exit condition is fuzzy if the target isn't enumerated, and it stays voluntary. The cerebellum supplies the missing three: predict the target (Manifest), compare binary (Touched==set), fire involuntarily (the hook). Octopus note: a real octopus has **no cerebellum** yet reaches with precision — it reduces degrees of freedom locally (bend-propagation, a temporary stiffened "joint"). Same lesson: precision comes from a sharp predicted target + local correction, not from raw force.
 
+### Graph before grep — the seek IS the cerebellum's eye
+
+The feedforward target (the Manifest) is only as good as how you find it. **A grep finds it by table scan; the graph finds it by seek.** A grep depends on the input string, so its coverage is stochastic and partial — it reconstructs a different, incomplete answer every query, is blind to off-repo and derived surfaces, and pulls ~100x the tokens of a seek (measured ~1737 vs ~16 for one concept). The graph **is** — `connectome/lineage.yaml` (a persistent, declared surface/derivation graph, merged at seek time with the gitignored `company/connectome/lineage.yaml` private layer for arm/CV surfaces). You traverse it; you don't rebuild it.
+
+So the reflex: **before grep'ing the brain for where a concept lives, SEEK** — `impact-radius.py --file <path>` (or `"<concept>"`). It returns every impacted surface deterministically (in-repo + off-repo), each tagged with its corrective verb (`projects_to`→re-publish, `generated_by`→regenerate, `claim_maps_to`→add-file-row, `appears_in`→converge), and emits a one-line machine **receipt** to the per-turn ledger (`.cache/graph-ledger/`). The Provenance `Graph:` field quotes that receipt verbatim — never prose:
+- `SEEK-COMPLETE` — ≥1 edge matched; the WHILE may exit in one beat.
+- `GREP-FALLBACK(unlit:<x>)` — no edge yet (an *unlit neuron*); grep ran, a candidate was filed to `lineage.unverified.yaml`. This is a **PASS that grows the graph**, not a failure.
+
+The 3D Diligent gate now also asks **"¿se usó el grafo?"** — a turn that grep'd brain surfaces and then WROTE files with no seek receipt is a coherence FAILURE (the graph is the octopus's blood; without it you pixelate). FinOps corollary: the seek is the same lookup at ~1% of the tokens and converges the WHILE in one beat instead of several — graph-use is both a coherence signal and a cost signal. *(Increment 1 ships the seek + receipt + advisory `grafo-ledger-check` Stop hook + reflex; the blocking teeth — a PreToolUse Bash gate on impact-shaped scans + a Stop `decision:block` + a fold of lineage into `neural_map.json` so `query_connectome` traverses it — are increment 2.)*
+
 ## 2D Delegate Gate — 3 Mandatory Questions (full detail)
 
 **Trigger:** At the START of every task, before any file reads or code generation.

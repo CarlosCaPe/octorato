@@ -88,10 +88,14 @@ def beat(prompt: str) -> str:
     gods = {b["id"] if isinstance(b, dict) else b
             for b in data.get("diagnostics", {}).get("busiest_neurons", [])}
 
+    reflex = ("  ¿y el grafo? Before grep'ing the brain for where a concept lives, SEEK it: "
+              "impact-radius.py --file <path> (seek > scan, ~100x cheaper, deterministic). "
+              "grep+write without a seek receipt = FAILURE.")
+
     scored = score(prompt, data, qc)
     if not scored:
         return ("♥ connectome heartbeat: no strong match for this prompt — "
-                "2D leans SELF; confirm with delegate-check before deciding.")
+                "2D leans SELF; confirm with delegate-check before deciding.\n" + reflex)
 
     agents = [(i, s) for i, k, s in scored if k == "agent"][:3]
     skills = [(i, s) for i, k, s in scored if k == "skill"][:5]
@@ -110,6 +114,7 @@ def beat(prompt: str) -> str:
             else "LOAD" if skills else "SELF")
     lines.append(f"  Heartbeat lean: {lean}. Still run Q2 (API?) + Q3 (delegate-check) "
                  "and state the verdict.")
+    lines.append(reflex)
     return "\n".join(lines)
 
 
