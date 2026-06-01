@@ -81,13 +81,26 @@ def main():
         term, rel = " ".join(sys.argv[1:]), None
     files = scan(term, exclude=rel)
     if not files:
-        print(f"Impact Radius of '{term}': no other references found.")
-        return
-    print(f"Impact Radius of '{term}' — referenced in {len(files)} file(s):")
-    for f in files:
-        print(f"  {f}")
-    print("\nReconcile your Provenance `Touched` against this list: "
-          "every relevant file here must be updated or consciously skipped.")
+        print(f"Impact Radius of '{term}': no other references found in the repo.")
+    else:
+        print(f"Impact Radius of '{term}' — referenced in {len(files)} repo file(s):")
+        for f in files:
+            print(f"  {f}")
+        print("\nReconcile your Provenance `Touched` against this list: "
+              "every relevant file here must be updated or consciously skipped.")
+    print(off_repo_reminder())
+
+
+def off_repo_reminder() -> str:
+    # The repo grep cannot see these surfaces — they must be checked by hand
+    # when a concept changes, or the concept goes stale off-repo (the wiki-skip
+    # failure). Reconcile or consciously annotate each; never silently leave.
+    return (
+        "\n⚠ OFF-REPO surfaces this scan can NOT see — reconcile each by hand:\n"
+        "  • the GitHub wiki (separate `octorato.wiki` repo)\n"
+        "  • arm-rendered pages (e.g. dataqbs.com/octorato) + their RAG knowledge files\n"
+        "  • external posts (dev.to, Wikidata) — point-in-time: update or annotate, don't leave stale"
+    )
 
 
 if __name__ == "__main__":
