@@ -163,6 +163,8 @@ Every signal — brain ↔ arm ↔ agent ↔ human — follows four phases:
 
 **The 4D runs in a WHILE, not once** — `while (open work / remnants / Touched ≠ intent): 4D()`. Exit only when the Provenance footer's self-read reconciles (no skip, no excess), never on "looks done". The footer is proprioception: comparing what you *touched* against what you *meant* is what closes the gap between intent and effect — and that gap, not malice, is the recurrent failure.
 
+**The cerebellum (precision without tremor).** The reach hits exactly — no skip, no excess — only when three things hold together: (1) **feedforward** — the 4D Gate Manifest enumerates the EXACT target file-set *before* acting (a sharp predicted target, not a vague intent); (2) **binary feedback** — the Provenance `Touched` is reconciled as set-equality against that Manifest + `impact-radius.py`, not a "I think I got it"; (3) **involuntary firing** — the `impact-radius-hook` (PostToolUse `Write|Edit`) surfaces a concept's other references the moment you edit it, so the scan fires without you choosing to. Feedback alone is tremor (correct-after-miss = the "Parkinson" mode); feedforward + binary + involuntary feedback is the cerebellum — take exactly what you want, at speed, without dysmetria.
+
 **Signal flow:** 1D + 2D fire BEFORE action; 3D + 4D fire AFTER. The 4D Gate sits in the middle (mandatory pre-flight Change Manifest, blocks writes until confirmed). **Full protocols, gate formats, validation matrix, the WHILE loop, the Provenance footer, and the Impact Radius scan (`impact-radius.py`) live in `skills/4d-paradigm-protocol/SKILL.md`.**
 
 ### 2D Delegate Gate (3 Mandatory Questions)
