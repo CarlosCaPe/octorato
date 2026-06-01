@@ -35,6 +35,43 @@ SALIDA (after acting):
 
 **Rule:** 1D+2D fire BEFORE action; 3D+4D fire AFTER. Gate sits in the middle. The agent MUST visibly report all 4 phases or the response is incomplete.
 
+## The Reflective WHILE — 4D runs in a loop, not once
+
+The Four Phases are ONE contraction (begin→end). A single 4D pass is a function call; a living brain LOOPS:
+
+```
+while (open work / remnants / something to improve):
+    4D()                       # Describe → Delegate → [Gate] → act → Diligent → Disclose
+    read the Provenance footer # the loop CONDITION and the trigger of the next beat
+# exit only when the footer's self-read shows zero open remnants — never on "looks done"
+```
+
+- **The WHILE is the heartbeat.** The `connectome-heartbeat` hook is this pulse (it beats every prompt). Don't exit a task on green; exit when the footer reports nothing open. See [[do-not-ask-to-pause]].
+- **The Provenance footer is proprioception** — the brain sensing its own action (what it touched, which engine/arm, on whose authority, verified how). Self-modeling is what makes the loop reflective rather than blind. It sits at the systole→diastole boundary: reading it both (a) evaluates continue-vs-exit and (b) ends the response, firing the Stop hook + the next prompt's hooks. The end of one beat IS the trigger of the next.
+- **Who fires the hooks?** The harness, autonomically, on events (the involuntary reflex arc). But the footer's CONTENT is authored by the agent looking at its own trace — reflex fires it, reflection fills it, and both operator and agent act on it.
+- **Octopus morphology:** brain = orchestrator running 4D · arms = sub-agents/hooks (semi-autonomous reflexes) · heartbeat = the WHILE · proprioception = the Provenance footer. Full model in [[feedback_4d_while_reflective_loop]].
+
+**Three hearts, one circulation — NOT three identical whiles.** An octopus has 3 hearts (2 branchial that *oxygenate*, 1 systemic that *distributes*) — differentiated pumps serving one bloodstream, not three copies of the same pump. So the brain runs loops differentiated by SCOPE/cadence sharing ONE signal (the footer/heartbeat), never replicated whiles:
+
+| Heart | Loop | Cadence |
+|---|---|---|
+| Systemic (distributes) | the per-response **4D while** (the task beat) | fast, per turn |
+| Branchial (oxygenates) | the **autonomic per-prompt** loop (connectome-heartbeat: refresh context + route before acting) | each prompt |
+| Branchial (oxygenates) | the **learning/observability** loop (gap→graduate at 3×, finops/brain digests, repo-watch) | slow, cross-session |
+
+Writing three identical whiles "because three hearts" is cargo-culting the metaphor — redundant loops contend and dilute (see [[harmonization-over-accretion]]). Map the metaphor's *function* (differentiated pumps), never its *count*. Loops must share state, or they desync like divergent counts.
+
+### The Provenance footer (materialized 4D Disclose)
+
+Every response ends with a one-line footer (label **Provenance / Procedencia / Herkunft**, matching the user's language). Named fields, ` · `-separated, each included ONLY when it applies:
+
+- **Basis** — on whose authority (own reasoning / vendor·doc / operator / `file:line`).
+- **Engine** — main-loop model + any sub-agent/sub-tool on a different engine (e.g. a Haiku arm). Makes [[model-routing-by-complexity]] visible.
+- **Touched** — files written this turn (`+` created, `~` modified, `-` deleted). OMIT on read-only turns.
+- **Verified** — one-line 3D evidence. OMIT when nothing was written.
+
+This IS 4D Disclose made concrete — the Impact Radius, post-write, every turn. Injector: `scripts/4d-reminder.py`; Stop-hook check: `scripts/source-attribution-check.py`.
+
 ## 2D Delegate Gate — 3 Mandatory Questions (full detail)
 
 **Trigger:** At the START of every task, before any file reads or code generation.
