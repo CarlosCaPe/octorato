@@ -108,6 +108,18 @@ Post-deploy live verification (cache-bust curl + agent-browser screenshot) is st
 
 If the operator explicitly says "hazlo directo" / "ship it now" for a TRIVIAL-but-urgent fix (incident response, hotfix to recover from a previous deploy), the gate can be bypassed with an explicit note in the PR body: `QA-gate-bypass: operator-authorized hotfix for <incident-id>`. The bypass is loggable; the rule still applies for everything else.
 
+## Paired / continuous milestone QA (coworking)
+
+Operator directive (2026-06-01): for any non-trivial **developer-agent** task, pair it with a QA counterpart that reviews **each milestone as it lands**, not only the final diff — shift-left, continuous review ("its QA counterpart monitoring/reading it as it works"). Grounded in market practice: pair programming (driver/navigator), shift-left QA, continuous/adversarial review. Proven the same session: milestone QA caught a `160+` agent-count regression that the developer agent **and** the orchestrator both missed, before it shipped.
+
+**Honest realization in this harness.** Sub-agents don't stream intermediate work to a live watcher — they run to completion and return. So "QA watches the developer live" is realized as **milestone-gated review**; the closer the milestones, the closer to continuous:
+
+- **Workflow orchestration (preferred):** `pipeline(items, devStage, qaVerifyStage)` — each milestone flows dev → independent QA before the next; or per-milestone `agent(dev) → agent(qa, {schema: VERDICT})`, advancing only on approve, else feeding findings back to the dev stage.
+- **Single Agent calls:** split the dev brief into explicit milestones; after each, dispatch a QA agent (Reality Checker / Evidence Collector / Code Reviewer / `bug-hunter`) against that milestone's diff + acceptance criteria; approve → continue, findings → fix before proceeding.
+- QA persona is **independent and adversarial** (default verdict NEEDS WORK, evidence required) — never the same agent grading itself.
+
+**Scale to task size** (don't double cost on trivial work): TRIVIAL → no milestone QA; MEDIUM → QA the final diff (the gate below); LARGE / risky / visual / correctness-critical → QA each milestone (this section). This is the continuous-review front-half; the pre-merge gate below is the final-half — same discipline, applied earlier and more often.
+
 ## Why this exists
 
 A session 2026-05-21 shipped multiple PRs through `gh pr merge --auto --squash` after `npx astro build` passed. Two HIGH-severity bugs only surfaced when specialist agents were finally dispatched after operator complaints:
