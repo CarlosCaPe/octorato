@@ -72,6 +72,16 @@ Every response ends with a one-line footer (label **Provenance / Procedencia / H
 
 This IS 4D Disclose made concrete — the Impact Radius, post-write, every turn. Injector: `scripts/4d-reminder.py`; Stop-hook check: `scripts/source-attribution-check.py`.
 
+### The cerebellum — precision without tremor
+
+The WHILE is necessary but **not sufficient**: a pure feedback loop corrects *after* the miss — that is tremor (the "Parkinson" mode: undershoot or overshoot, wobble toward the target). To take exactly what you want, at speed, without dysmetria (skip OR excess), three properties must hold together — this is the cerebellum:
+
+1. **Feedforward (a sharp predicted target).** The 4D Gate Manifest must enumerate the EXACT file-set you intend to touch — `+`/`~`/`-` per file — *before* acting. A vague "intent" makes the loop reactive tremor; a crisp enumerated target makes the first reach almost right.
+2. **Binary feedback (set-equality, not vibes).** Reconcile `Touched` against `impact-radius.py <concept>` + the Manifest as **set equality**: radius/Manifest files not in Touched = SKIP; Touched files not predicted = over-reach. Not "I think I reconciled" — a binary comparison.
+3. **Involuntary firing.** `scripts/impact-radius-hook.py` (PostToolUse `Write|Edit`) runs the radius the moment a `SKILL.md` is edited and surfaces the other references via `systemMessage` — so the scan can't be skipped by forgetting. A reflex, not a decision.
+
+Why the WHILE alone doesn't close it: feedback-only is reactive, the exit condition is fuzzy if the target isn't enumerated, and it stays voluntary. The cerebellum supplies the missing three: predict the target (Manifest), compare binary (Touched==set), fire involuntarily (the hook). Octopus note: a real octopus has **no cerebellum** yet reaches with precision — it reduces degrees of freedom locally (bend-propagation, a temporary stiffened "joint"). Same lesson: precision comes from a sharp predicted target + local correction, not from raw force.
+
 ## 2D Delegate Gate — 3 Mandatory Questions (full detail)
 
 **Trigger:** At the START of every task, before any file reads or code generation.
