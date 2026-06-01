@@ -129,3 +129,50 @@ edges:
       ~1737 tokens) and converges the WHILE in one beat. Codifying this concept
       must hit EVERY surface above in one deterministic sweep — pixelating it
       would be the very failure it cures.
+
+  # ── Lit on 2026-06-01: the octopus↔OS analysis that birthed two skills. ──
+  # These three edges turn the session's unlit neurons into deterministic seeks.
+
+  - id: runtime-adaptation-over-source-edit
+    concept: "runtime adaptation over source edit / ARN-not-ADN / edit skill-memory-config-hook not CLAUDE.md core"
+    appears_in:
+      - skills/runtime-adaptation-over-source-edit/SKILL.md   # the source of truth
+      - skills/harmonization-over-accretion/SKILL.md          # lean-core sibling (imports half)
+      - skills/skill-creator/SKILL.md                         # the RNA answer "= a new skill"
+      - skills/peripheral-parallel-dispatch/SKILL.md          # octopus↔OS sibling
+      - skills/octorato-symbolism/SKILL.md                    # the organic-brain anchor
+      - CLAUDE.md                                             # Brain-Stays-Generic + Config-first (the DNA layer)
+    kind: appears_in
+    note: >-
+      Default behaviour goes to the runtime layer (skill/memory/hook/config),
+      never the core. If the criterion changes, every surface above must stay
+      coherent — the core stays lean because this edge says where else it lives.
+
+  - id: peripheral-parallel-dispatch
+    concept: "peripheral parallel dispatch / fan-out to arms vs central / 8 arms reconcile not redo"
+    appears_in:
+      - skills/peripheral-parallel-dispatch/SKILL.md          # the source of truth
+      - skills/4d-paradigm-protocol/SKILL.md                  # Delegate (the who-does-it half)
+      - skills/orchestrated-planning/SKILL.md                 # multi-agent planning counterpart
+      - skills/harmonization-over-accretion/SKILL.md          # restraint on the how-many
+      - skills/runtime-adaptation-over-source-edit/SKILL.md   # octopus↔OS sibling
+      - CLAUDE.md                                             # The Octopus Architecture + Delegate
+    kind: appears_in
+    note: >-
+      The center sets intent and reconciles (set-equality, schemas, pipeline>barrier);
+      it must NOT redo the arms' work. Changing the fan-out criterion must touch
+      every surface above so delegation stays coherent end to end.
+
+  - id: octopus-os-mapping
+    concept: "octopus↔OS symbolism mapping / octorato symbolism octopus / organic-brain-as-operating-system"
+    appears_in:
+      - skills/octorato-symbolism/SKILL.md                    # the naming/symbolism anchor
+      - skills/runtime-adaptation-over-source-edit/SKILL.md   # RNA-not-DNA instance
+      - skills/peripheral-parallel-dispatch/SKILL.md          # 8-arms-parallel instance
+      - CLAUDE.md                                             # §The Octopus Architecture
+    kind: appears_in
+    note: >-
+      The umbrella concept: the brain IS an octopus-shaped OS. New instances of
+      the octopus↔OS pattern (skills like the two above) must hang off this edge,
+      not re-derive the metaphor. Also lights the original 'octorato symbolism
+      octopus' seek that fell back to grep on 2026-06-01.
