@@ -1,0 +1,29 @@
+# budgets.yaml — per-arm monthly USD budget caps (FinOps enforcement)
+# ---------------------------------------------------------------------------
+# Copy this file to ~/.claude/budgets.yaml to ARM enforcement:
+#     cp budgets.yaml.example budgets.yaml
+# The real budgets.yaml is gitignored (it holds your pricing assumptions).
+# Until budgets.yaml exists, caps are NOT enforced — budget-check.py exits 0
+# (OK) and the PreToolUse hook never blocks. brain_doctor reports this as a WARN.
+#
+# How it enforces: a PreToolUse hook calls scripts/budget-check.py before
+# expensive tools (Agent / subagent dispatch / browser automation). When an
+# arm's grace-adjusted spend is breached with action_on_breach: hard_stop,
+# the check exits 2 and the tool is refused.
+#
+# action_on_breach: alert | warn | hard_stop
+#   alert     — log only
+#   warn      — print a warning line, do not block (exit 0)
+#   hard_stop — refuse the expensive tool (exit 2) once spend ≥ cap × grace_pct/100
+
+arms:
+  example_arm:
+    monthly_usd_cap: 200.0
+    grace_pct: 110            # allow 10% over cap before hard_stop trips
+    action_on_breach: hard_stop
+
+  # Optional fallback for any arm not listed above:
+  default:
+    monthly_usd_cap: 100.0
+    grace_pct: 110
+    action_on_breach: warn

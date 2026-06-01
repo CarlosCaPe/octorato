@@ -17,11 +17,12 @@ import json
 import re
 import sys
 
-# Markers that count as a valid source line (case-insensitive, anywhere near end).
-# Neutral source markers per locale: Source (EN) / Fuente (ES) / Quelle (DE).
-# Legacy "según" / "according to" still accepted for detection tolerance.
+# Markers that count as a valid provenance/source footer (case-insensitive, near end).
+# Current: Provenance (EN) / Procedencia (ES) / Herkunft (DE) — the one-line footer.
+# Back-compat: Source / Fuente / Quelle and legacy "según" / "according to".
 MARKERS = re.compile(
-    r"(source:|fuente:|quelle:|seg[uú]n:|according to)", re.IGNORECASE
+    r"(provenance|procedencia|herkunft|source:|fuente:|quelle:|seg[uú]n:|according to)",
+    re.IGNORECASE,
 )
 
 
