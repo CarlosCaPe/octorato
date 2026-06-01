@@ -1,11 +1,27 @@
 ---
 name: model-routing-by-complexity
-description: "Route agent/sub-agent work to the cheapest model that can do it — deterministic/mechanical work to Haiku, hard reasoning to Opus/Sonnet — so per-client token spend drops at the baseline, not just at the cap. Load when fanning out many sub-agents (Workflow/Agent), when an arm's FinOps cost needs lowering without changing the deliverable, or when deciding the `model` override for a Workflow stage or Agent call. Pairs with budget caps: caps stop runaway spend; routing lowers the floor."
+description: "Opus brain, Haiku arms: keep the orchestrator on a frontier model and DELEGATE mechanical work to sub-agents running cheap engines — never downgrade the main loop itself. Deterministic/mechanical work (grep, extract, transform, format-check) goes to a Haiku sub-agent in an isolated context; reasoning, synthesis and verification stay on Opus/Sonnet. Cuts per-client token spend at the baseline, not just at the cap. Load when fanning out many sub-agents (Workflow/Agent), when an arm's FinOps cost needs lowering without changing the deliverable, or when deciding the `model` override for a Workflow stage or Agent call. Pairs with budget caps: caps stop runaway spend; routing lowers the floor."
 ---
 
 # Model Routing by Complexity
 
 **Principle:** the expensive model is the default reflex, not the default *requirement*. Most of any multi-agent run is mechanical (grep, list, transform, extract, format-check, summarize-one-file). That 80% does not need frontier reasoning. Route it to a cheap model; reserve Opus/Sonnet for the hard 20% (architecture, ambiguous synthesis, adversarial verification, anything where a wrong answer is expensive).
+
+## The shape: Opus brain, Haiku arms
+
+There are two ways to use a cheaper model. Only one is correct:
+
+| Approach | Verdict |
+|---|---|
+| Downgrade the **main loop / orchestrator** for "simple" turns | ❌ You degrade the thing that *decides everything downstream*. Pennies saved, decision quality risked. |
+| Keep the orchestrator on a frontier model and **delegate mechanical work to sub-agents on cheap engines** | ✅ Reasoning stays sharp; the grep/extract/format goes to a cheap arm. |
+
+This is the octopus made literal: an expensive **brain** (Opus) that reasons and orchestrates, plus cheap **arms** (Haiku sub-agents) that execute the mechanical work. It wins twice:
+
+1. **Decision quality intact** — the agent that delegates the work stays frontier-grade.
+2. **Context stays cheap too** — a sub-agent reads the 20 files in *its own* ephemeral context and returns only the conclusion; the expensive main context never pays to read those 20 files. You save on **tier** *and* on **context tokens** at once.
+
+The decision "do I (Opus) do this, or hand it to a Haiku arm?" *is* the 2D-Delegate decision — the moment the brain hands a task to an arm is the moment it sizes the effort.
 
 This is the FinOps complement to [[finops-budget-policy]]:
 - **Budget caps** = the ceiling (hard_stop refuses the tool when an arm burns through its cap).
@@ -35,6 +51,7 @@ Both layers already expose a per-call `model` override — **default to omitting
 - **Measure, don't assume.** A cheap model that fails the task and triggers a retry/rework can cost *more* than doing it once on the strong model. Downgrade only where output quality holds.
 - **Verify after downgrading** (3D Diligent): spot-check that the cheap-tier output is actually correct before trusting it in a pipeline. Silent quality loss is the real risk, not token cost.
 - **Verification stays strong.** Never route the adversarial/verify step to the cheapest tier — that's the step whose job is to catch the others' mistakes.
+- **Spawn overhead is real — don't delegate the trivial.** Spawning a sub-agent costs a fixed amount (latency + the orchestrator pays to read the returned summary). For a one-line grep, doing it inline on the brain is cheaper than dispatching a Haiku arm. The win is for mechanical work that is **token-heavy or parallelizable** (read many files, bulk extract/transform). Rule of thumb: *delegate the heavy mechanical 80%; keep the trivial and the reasoning in the brain.*
 - **Routing is opt-in per call**, like the budget cap is opt-in per arm. The mechanism is real; the savings depend on actually classifying the work.
 
 ## Net
