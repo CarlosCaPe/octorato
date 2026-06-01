@@ -59,7 +59,7 @@ BRAIN_PATHS = ["CLAUDE.md", "README.md", "CONTRIBUTING.md", "HEBBIAN_LEARNING.md
                "budgets.yaml.example",
                "hooks.json", "hooks.schema.json", "skills/", "agents/",
                "scripts/", "hooks/", ".githooks/", "commands/", ".gitignore",
-               "assets/", "templates/", ".github/"]
+               "assets/", "templates/", ".github/", "connectome/", "docs/"]
 
 _USE_COLOR = sys.stdout.isatty() and os.name != "nt"
 def _c(code, s): return f"\033[{code}m{s}\033[0m" if _USE_COLOR else s

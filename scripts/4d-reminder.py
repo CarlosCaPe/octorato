@@ -41,6 +41,12 @@ REMINDER = (
     "- deleted); OMIT entirely on read-only turns.\n"
     "  Verified: one-line 3D evidence (build/lint/grep/run); OMIT when nothing "
     "was written.\n"
+    "  Graph: ¿y el grafo? Before grep'ing the brain for where a concept lives, SEEK "
+    "it — `python3 ~/.claude/scripts/impact-radius.py --file <path>` (or \"<concept>\"). "
+    "A seek is deterministic and ~100x cheaper than a scan. Quote the tool's RECEIPT "
+    "verbatim here (SEEK-COMPLETE / SEEK-PARTIAL:n / GREP-FALLBACK). A turn that grep'd "
+    "brain surfaces and then WROTE files without a seek receipt is a FAILURE, not a style "
+    "choice — the graph is the octopus's blood. OMIT only when no surface lookup was needed.\n"
     "Keep paths relative and the whole footer to one line. Never mismatch the language."
 )
 
