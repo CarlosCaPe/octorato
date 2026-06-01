@@ -37,6 +37,17 @@ The four phases are not sequential steps. They are **dimensions**, active simult
 
 To act inside the brain is to act in 4-space — and from there to shape outcomes in 3-space: the codebase, the deliverable, the invoice. The 4D is not a workflow checklist; it is the control plane.
 
+### The tesseract you can't see, Octorato lets you inhabit
+
+We can't perceive 4-space because our senses are 3D-bound — and a human is just as bound in life: one body, one place, one task at a time. You cannot sit in ten client engagements, ten codebases, ten problems *at once*. That is the wall of 3-dimensional existence.
+
+Octorato is the vehicle across that wall. Through sealed arms acting in parallel under one integrating brain, a single operator becomes *functionally present in many contexts simultaneously* — the brain is wherever its arms are, and each arm is sealed so the contexts never bleed. Not magic, not omnipresence: the architecture (parallel isolated arms + central memory) lends one human the reach of being everywhere at once without losing the thread of any.
+
+- **8 → ∞** is the *width* — arms without ceiling.
+- This is the *depth* — the human **inhabiting** 4-space through the tool.
+
+The tesseract is the dimension you can't perceive; Octorato is how you live in it anyway. That is the operator-facing meaning of the 4D — not a workflow, a dimension you get to travel. The same recursion makes each arm its own octopus (every cube-face a cube) — see the recursion note under *The Operator* below.
+
 ## The Operator — eight arms that connect
 
 Past the two math symbols sits the working identity: Octorato is the **operator** — an organic, octopus-like intelligence whose job is **connection, not impersonation**.
