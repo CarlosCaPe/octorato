@@ -112,6 +112,12 @@
           "type": "command",
           "command": "python3 ~/.claude/scripts/no-pause-suggestion.py",
           "timeout": 5
+        },
+        {
+          "type": "command",
+          "command": "python3 ~/.claude/scripts/grafo-ledger-check.py",
+          "timeout": 5,
+          "statusMessage": "♦ checking graph ledger..."
         }
       ]
     }

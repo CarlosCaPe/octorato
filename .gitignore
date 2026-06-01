@@ -222,3 +222,9 @@ incidents/
 # Daily GH-trending digest outputs are transient data; HISTORY.md is the kept ledger
 knowledge/github-trending/20*.md
 knowledge/github-trending/20*.json
+
+# Lineage graph — per-turn ledger + unlit-neuron candidates are local scratch.
+# A grep fallback can capture an arm path, so these never leave the machine until
+# an arm-token redactor exists. The canonical graph (connectome/lineage.yaml) IS tracked.
+/.cache/graph-ledger/
+/connectome/lineage.unverified.yaml
