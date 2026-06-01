@@ -404,6 +404,18 @@ def main():
 
     print_report(task, task_tokens, agent_matches, skill_matches, decision, len(skills), len(agents))
 
+    # SELF = "nadie lo hace" → log it as a capability-gap signal (best-effort;
+    # never break the gate). Recurring gaps graduate to skill-creator candidates.
+    if decision == "SELF":
+        try:
+            import subprocess
+            subprocess.run(
+                [sys.executable, str(CLAUDE_DIR / "scripts" / "gap-capture.py"), task],
+                timeout=5, check=False,
+            )
+        except Exception:
+            pass
+
     # Exit code: 0 = matches found, 1 = SELF mode
     sys.exit(0 if decision != "SELF" else 1)
 
