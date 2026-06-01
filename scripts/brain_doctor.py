@@ -444,6 +444,17 @@ def check_blocklist(fix: bool) -> Result:
 # Driver
 # ---------------------------------------------------------------------------
 
+def check_finops_enforcement(fix: bool) -> Result:
+    key = "finops-enforcement"
+    cfg = CLAUDE_DIR / "budgets.yaml"
+    if not cfg.exists():
+        return Result(key, WARN,
+                      "budgets.yaml absent — per-arm budget caps are NOT enforced (FinOps off)",
+                      "cp budgets.yaml.example budgets.yaml, then set monthly_usd_cap per arm")
+    n = cfg.read_text(errors="ignore").count("monthly_usd_cap")
+    return Result(key, PASS, f"FinOps enforcement ON — budgets.yaml present ({n} cap line(s))")
+
+
 CHECKS = [
     ("repo-identity", check_repo_identity),
     ("sync-clean", check_sync_clean),
@@ -457,6 +468,7 @@ CHECKS = [
     ("arms-config", check_arms_config),
     ("sync-targets", check_sync_targets),
     ("blocklist", check_blocklist),
+    ("finops-enforcement", check_finops_enforcement),
 ]
 
 STATUS_ICON = {PASS: "✓", WARN: "!", FAIL: "✗"}
