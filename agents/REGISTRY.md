@@ -73,6 +73,8 @@ Agents load their persona + the relevant skills for the active arm. Example:
 | 🔒 Security Engineer | [engineering/engineering-security-engineer.md](engineering/engineering-security-engineer.md) | threat modeling, vulnerability assessment, secure code review, security architecture |
 | 💎 Senior Developer | [engineering/engineering-senior-developer.md](engineering/engineering-senior-developer.md) | Laravel, Livewire, Three.js, advanced CSS, full-stack |
 | 🏛️ Software Architect | [engineering/engineering-software-architect.md](engineering/engineering-software-architect.md) | system design, domain-driven design, architectural patterns, scalability |
+| 📊 Dashboard Builder | [engineering/engineering-dashboard-builder.md](engineering/engineering-dashboard-builder.md) | AI dashboards, Infinite Monitor, real-time widgets, plain-English config |
+| 🔄 SP Migration Agent | [engineering/sp-migration.agent.md](engineering/sp-migration.agent.md) | T-SQL → PL/pgSQL, stored procedure conversion, batch migration |
 | ⛓️ Solidity Smart Contract Engineer | [engineering/engineering-solidity-smart-contract-engineer.md](engineering/engineering-solidity-smart-contract-engineer.md) | Solidity, EVM, smart contracts, DeFi, gas optimization |
 | 🛡️ SRE (Site Reliability Engineer) | [engineering/engineering-sre.md](engineering/engineering-sre.md) | SLOs, error budgets, observability, chaos engineering, toil reduction |
 | 📚 Technical Writer | [engineering/engineering-technical-writer.md](engineering/engineering-technical-writer.md) | documentation, API references, README, tutorials |
@@ -137,6 +139,7 @@ Agents load their persona + the relevant skills for the active arm. Example:
 | 🔥 Weibo Strategist | [marketing/marketing-weibo-strategist.md](marketing/marketing-weibo-strategist.md) | Weibo, trending topics, fan economy, public sentiment |
 | 🌸 Xiaohongshu Specialist | [marketing/marketing-xiaohongshu-specialist.md](marketing/marketing-xiaohongshu-specialist.md) | Xiaohongshu, 小红书, lifestyle content, aesthetic storytelling |
 | 🧠 Zhihu Strategist | [marketing/marketing-zhihu-strategist.md](marketing/marketing-zhihu-strategist.md) | Zhihu, 知乎, knowledge sharing, Q&A authority |
+| 🔗 LinkedIn Company Manager | [marketing/marketing-linkedin-company-manager.md](marketing/marketing-linkedin-company-manager.md) | LinkedIn company page, employer brand, page analytics, Playwright admin |
 
 ### Paid Media
 
@@ -227,6 +230,7 @@ Agents load their persona + the relevant skills for the active arm. Example:
 | 🎓 Study Abroad Advisor | [specialized/study-abroad-advisor.md](specialized/study-abroad-advisor.md) | study abroad, application strategy, visa, school selection |
 | 🔗 Supply Chain Strategist | [specialized/supply-chain-strategist.md](specialized/supply-chain-strategist.md) | supply chain, procurement, sourcing, quality control |
 | 🗃️ ZK Steward | [specialized/zk-steward.md](specialized/zk-steward.md) | Zettelkasten, knowledge base, atomic notes, cross-domain |
+| 📈 Market Research Analyst | [specialized/market-research-analyst.md](specialized/market-research-analyst.md) | TAM sizing, competitive landscape, segmentation, SWOT/Porter |
 
 ### Support
 
@@ -238,6 +242,7 @@ Agents load their persona + the relevant skills for the active arm. Example:
 | 🏢 Infrastructure Maintainer | [support/support-infrastructure-maintainer.md](support/support-infrastructure-maintainer.md) | system reliability, performance, technical operations |
 | ⚖️ Legal Compliance Checker | [support/support-legal-compliance-checker.md](support/support-legal-compliance-checker.md) | legal, compliance, regulations, data handling, jurisdictions |
 | 💬 Support Responder | [support/support-support-responder.md](support/support-support-responder.md) | customer support, issue resolution, user experience |
+| 💰 Financial Modeler | [support/support-financial-modeler.md](support/support-financial-modeler.md) | unit economics, revenue projections, break-even, sensitivity, investor model |
 
 ### Testing
 

@@ -88,30 +88,42 @@ def parse_skills():
     return skills
 
 
-def parse_agents():
-    """Parse REGISTRY.md: `### Division` headers + table rows linking to a .md file."""
-    divisions, cur = {}, None
+EXCLUDED_AGENT_DIRS = {"examples", "strategy"}
+
+
+def _registry_triggers():
+    """slug -> triggers, harvested from REGISTRY.md rows. Best-effort enrichment only;
+    correctness of the count never depends on REGISTRY (it comes from the filesystem)."""
+    out = {}
+    if not REGISTRY.exists():
+        return out
     for line in REGISTRY.read_text(encoding="utf-8", errors="replace").splitlines():
-        h = re.match(r"^###\s+(.+?)\s*$", line)
-        if h:
-            cur = h.group(1).strip()
-            # Skip non-persona sections (e.g. "Examples (reference materials)",
-            # "Strategy (reference materials)") — these are not specialist divisions.
-            if "reference material" in cur.lower():
-                cur = None
-                continue
-            divisions.setdefault(cur, [])
+        m = re.search(r"\]\(([a-z0-9/_.-]+?\.md)\)\s*\|\s*(.*?)\s*\|?\s*$", line)
+        if m:
+            out[Path(m.group(1)).stem] = m.group(2).strip()
+    return out
+
+
+def parse_agents():
+    """Source of truth = the filesystem, matching brain-stats.py / count_agents()
+    EXACTLY: every persona `*.md` under agents/, excluding meta files and the
+    reference divisions (examples/, strategy/). Grouped by top-level division dir.
+    REGISTRY.md is used only to enrich the Triggers column, never to count."""
+    triggers = _registry_triggers()
+    agents_root = ROOT / "agents"
+    divisions = {}
+    for p in sorted(agents_root.rglob("*.md")):
+        rel = p.relative_to(agents_root)
+        if rel.parts[0] in EXCLUDED_AGENT_DIRS:
             continue
-        if cur is None:
+        if p.name.upper().startswith(("README", "REGISTRY", "_", "INDEX")):
             continue
-        if cur and line.startswith("|") and "](" in line and ".md)" in line:
-            cells = [c.strip() for c in line.strip().strip("|").split("|")]
-            name = re.sub(r"^[^\w]*\s*", "", cells[0]).strip()  # drop leading emoji
-            triggers = cells[-1] if len(cells) >= 3 else ""
-            if triggers.lower() in ("triggers", "---", ""):
-                triggers = ""
-            divisions[cur].append({"name": name, "triggers": triggers})
-    return {d: a for d, a in divisions.items() if a}
+        fm = _frontmatter(p.read_text(encoding="utf-8", errors="replace"))
+        divisions.setdefault(rel.parts[0], []).append({
+            "name": fm.get("name", p.stem),
+            "triggers": triggers.get(p.stem, ""),
+        })
+    return {d: sorted(a, key=lambda x: x["name"].lower()) for d, a in divisions.items() if a}
 
 
 def render_skills(skills):
@@ -134,7 +146,8 @@ def render_skills(skills):
 def render_agents(divisions, total):
     out = [f"# Agents — the *WHO* ({total} personas, {len(divisions)} divisions)", "",
            "Specialist personas the brain activates as subagents. Agent = who (role), "
-           "skill = how (technique), arm = for whom (client). Source: `agents/REGISTRY.md`.", ""]
+           "skill = how (technique), arm = for whom (client). Source: persona files on "
+           "disk under `agents/` (count matches brain-stats), enriched by `agents/REGISTRY.md`.", ""]
     for d in sorted(divisions, key=str.lower):
         agents = divisions[d]
         out.append(f"## {d.lower()} ({len(agents)})")
