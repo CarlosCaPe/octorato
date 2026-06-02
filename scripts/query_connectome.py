@@ -756,8 +756,26 @@ def cmd_4d(G, data, task_text):
         if score > 0:
             scores[node_id] = score
 
+    _opinion_re_4d = re.compile(
+        r"\b("
+        r"qu[eé]\s+opinas|tu\s+opini[oó]n|qu[eé]\s+crees|t[uú]\s+qu[eé]"
+        r"|recomiendas|recomi[eé]ndame|qu[eé]\s+recomiendas|sugieres"
+        r"|qu[eé]\s+prefieres"
+        r"|what\s+do\s+you\s+think|your\s+opinion|your\s+take"
+        r"|do\s+you\s+recommend|would\s+you\s+recommend"
+        r"|should\s+i|what\s+would\s+you|thoughts\?|your\s+call"
+        r")\b",
+        re.IGNORECASE,
+    )
+    _is_opinion = bool(_opinion_re_4d.search(task_text))
+
     if not scores:
         print("    No matching nodes. Task is outside the connectome's knowledge.")
+        # Emit a Decision even on no-match so the output is consistent with the non-empty path.
+        if _is_opinion:
+            print("\n    Decision: SELF")
+        else:
+            print("\n    Decision: LOAD")
         return
 
     ranked = sorted(scores.items(), key=lambda x: -x[1])
@@ -804,7 +822,15 @@ def cmd_4d(G, data, task_text):
                 except nx.NetworkXNoPath:
                     print(f"\n    WARNING: No path from {best_agent} to {best_skill}")
 
-    decision = "ACTIVATE" if top_agents and top_agents[0][1] >= 2 else "LOAD" if top_skills else "SELF"
+    # SELF only on explicit opinion request with no graph signal; else default to LOAD (connector bias)
+    if _is_opinion and not top_agents and not top_skills:
+        decision = "SELF"
+    elif top_agents and top_agents[0][1] >= 2:
+        decision = "ACTIVATE"
+    elif top_agents or top_skills:
+        decision = "LOAD"
+    else:
+        decision = "LOAD"  # no graph match → still LOAD, not SELF
     print(f"\n    Decision: {decision}")
 
     # ── 3D DILIGENT: Impact preview ──

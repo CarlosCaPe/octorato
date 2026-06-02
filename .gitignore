@@ -228,3 +228,7 @@ knowledge/github-trending/20*.json
 # an arm-token redactor exists. The canonical graph (connectome/lineage.yaml) IS tracked.
 /.cache/graph-ledger/
 /connectome/lineage.unverified.yaml
+
+# 4D session-dimension registry + merge approvals (per-machine runtime state)
+connectome/sessions.json
+connectome/merge-approvals.json
