@@ -39,10 +39,12 @@ STOP_WORDS = {
     "run", "check", "set", "get", "new", "file", "code", "need", "want",
     "using", "build", "write", "read", "look", "see", "find", "show",
     "en", "el", "la", "los", "las", "un", "una", "de", "del", "al",
-    "con", "por", "para", "que", "es", "se", "no", "lo", "le", "su",
-    "como", "más", "pero", "ya", "sin", "sobre", "entre", "después",
+    "con", "por", "para", "que", "qué", "es", "se", "no", "lo", "le", "su",
+    "como", "cómo", "más", "pero", "ya", "sin", "sobre", "entre", "después",
     "hacer", "cambiar", "arreglar", "revisar", "crear", "usar",
     "quiero", "necesito", "puedes", "dame", "dime", "ayuda",
+    "opinas", "opina", "opinión", "opinion", "crees", "recomiendas",
+    "sugieres", "prefieres",
 }
 
 # ── Skill cross-reference (parsed from REGISTRY.md bottom section) ────
@@ -308,14 +310,51 @@ def match_skills(task_text: str, task_tokens: set[str],
     return results
 
 
-def make_decision(agent_matches: list, skill_matches: list) -> str:
-    """Determine delegation decision based on scores."""
-    if agent_matches and agent_matches[0][2] >= 0.4:
-        return "ACTIVATE"
-    elif agent_matches or skill_matches:
-        return "LOAD"
-    else:
+_OPINION_RE = re.compile(
+    r"\b("
+    r"qu[eé]\s+opinas|tu\s+opini[oó]n|qu[eé]\s+crees|t[uú]\s+qu[eé]"
+    r"|recomiendas|recomi[eé]ndame|qu[eé]\s+recomiendas|sugieres"
+    r"|qu[eé]\s+prefieres"
+    r"|what\s+do\s+you\s+think|your\s+opinion|your\s+take"
+    r"|do\s+you\s+recommend|would\s+you\s+recommend"
+    r"|should\s+i|what\s+would\s+you|thoughts\?|your\s+call"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def is_opinion_request(task: str) -> bool:
+    """Return True if the task is explicitly asking for the agent's personal opinion/judgment."""
+    return bool(_OPINION_RE.search(task))
+
+
+def make_decision(task: str, agent_matches: list, skill_matches: list) -> str:
+    """Determine delegation decision based on scores.
+
+    Default is CONNECT (LOAD or ACTIVATE). SELF is returned ONLY when the user
+    explicitly asks for the agent's opinion AND no strong graph match exists —
+    because even then the answer must come from sourced data, not encyclopedia recall.
+    """
+    # Relevance floor: only matches above this threshold count as real signal
+    _RELEVANCE_FLOOR = 0.15
+    strong_agents = [m for m in agent_matches if m[2] >= _RELEVANCE_FLOOR]
+    strong_skills = [m for m in skill_matches if m[2] > _RELEVANCE_FLOOR]
+
+    # Legitimate SELF: explicit opinion request with no meaningful graph signal
+    if is_opinion_request(task) and not strong_agents and not strong_skills:
         return "SELF"
+
+    # ACTIVATE: clear agent match at lowered threshold (connector bias)
+    if strong_agents and strong_agents[0][2] >= 0.25:
+        return "ACTIVATE"
+
+    # LOAD: any meaningful agent or skill match
+    if strong_agents or strong_skills:
+        return "LOAD"
+
+    # No graph match at all — still default to LOAD (connector loads general technique)
+    # rather than pretending to be an encyclopedia. SELF as bare fallback is eliminated.
+    return "LOAD"
 
 
 def print_report(task: str, task_tokens: set[str], agent_matches: list,
@@ -378,7 +417,7 @@ def print_report(task: str, task_tokens: set[str], agent_matches: list,
             top = agent_matches[0]
             print(f"    → Consider: {top[0]['emoji']} {top[0]['name']} (score: {top[2]:.2f})")
     else:
-        print("    → No matching agents or skills. Proceed with general knowledge.")
+        print("    → Opinion/judgment requested with no graph match. Answer as sourced connector — cite the data.")
     print("=" * 60)
 
 
@@ -400,12 +439,12 @@ def main():
     # Match skills first (agents need skill matches for xref boost)
     skill_matches = match_skills(task, task_tokens, skills)
     agent_matches = match_agents(task, task_tokens, agents, skill_matches)
-    decision = make_decision(agent_matches, skill_matches)
+    decision = make_decision(task, agent_matches, skill_matches)
 
     print_report(task, task_tokens, agent_matches, skill_matches, decision, len(skills), len(agents))
 
-    # SELF = "nadie lo hace" → log it as a capability-gap signal (best-effort;
-    # never break the gate). Recurring gaps graduate to skill-creator candidates.
+    # SELF = explicit opinion request with no graph match → log as capability-gap signal
+    # (best-effort; never break the gate). Recurring gaps graduate to skill-creator candidates.
     if decision == "SELF":
         try:
             import subprocess
