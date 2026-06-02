@@ -90,3 +90,28 @@ jobs:
           python3 scripts/generate_neural_map.py >/dev/null
           python3 -c "import json; json.load(open('neural_map.json'))"
           echo "✓ connectome regenerated and validated"
+
+  lineage-sound:
+    name: lineage graph is sound (no dangling edges / cycles)
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run lineage-doctor (fail-closed)
+        run: |
+          set -e
+          if [ ! -f scripts/lineage-doctor.py ] || [ ! -f connectome/lineage.yaml ]; then
+            echo "::warning::lineage-doctor or connectome/lineage.yaml not found — skipping"
+            exit 0
+          fi
+          pip install --quiet pyyaml
+          python3 scripts/lineage-doctor.py || {
+            echo "::error::lineage graph is unsound — a seek over it would lie. Fix connectome/lineage.yaml."
+            exit 1
+          }
