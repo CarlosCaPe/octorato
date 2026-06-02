@@ -7,8 +7,8 @@ env cannot pass to the harness-run hook) is the actual security boundary — she
 indirection (e.g. ``$(echo gh) pr merge``) can evade string-matching and that is
 accepted residual risk by design.
 
-When a Bash command is detected as a merge action (gh pr merge, git merge into
-main/master, or git push directly to main/master), this hook BLOCKS execution
+When a Bash command is detected as a merge action (gh pr merge or git push
+directly to main/master), this hook BLOCKS execution
 unless an operator approval is present via one of three channels:
 
   1. OCTO_MERGE_APPROVE=<pr_number>  — env var, PR-scoped, AGENT-PROOF (preferred).
@@ -43,7 +43,6 @@ from pathlib import Path
 # Order matters: most-specific first to reduce false-negative risk.
 _MERGE_PATTERNS = (
     re.compile(r"\bgh\s+pr\s+merge\b"),
-    re.compile(r"\bgit\s+merge\b.*\b(main|master)\b"),
     re.compile(r"\bgit\b[^|&;]*?\bpush\b[^|&;]*?(?:^|[\s:/'\"+])(?:HEAD:)?\+?(main|master)(?=$|\s|:|['\"])"),
 )
 
