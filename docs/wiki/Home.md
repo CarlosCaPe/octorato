@@ -6,7 +6,7 @@
 > agents across clients, projects, and machines — without ever mixing their data
 > or their bills.
 
-**Live as of 2026-05-25:** 189 skills · 152 agent personas across
+**Live as of 2026-06-01:** 201 skills · 162 agent personas across
 13 divisions · 8 enforcement scripts · multi-machine sync · a neural
 connectome that learns over time · a FinOps pipeline that tags every trace event
 with the client who incurred it.
@@ -39,7 +39,7 @@ experience → more skills → more leverage.
 1. **[[Architecture]]** — CLASS / OBJECT / ARM, the activation stack, and why an
    octopus.
 2. **[[The-4D-Paradigm]]** — the nervous-system protocol every action follows.
-3. **[[Skills]]** — the full catalog of 189 techniques (the *HOW*).
+3. **[[Skills]]** — the full catalog of 201 techniques (the *HOW*).
 4. **[[Agents]]** — the full roster of 152 specialist personas
    (the *WHO*).
 5. **[[Self-Growth]]** — the daily auto-curation loop.
