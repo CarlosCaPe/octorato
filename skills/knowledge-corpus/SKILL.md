@@ -36,23 +36,16 @@ The neural map (`~/.claude/neural_map.json`) provides:
 Identify what the brain knows about the topic:
 
 ```bash
-# Find skills by keyword
-grep -rl "keyword" ~/.claude/skills/*/SKILL.md | head -20
+# Find the relevant skills AND agents by need — SEEK the connectome (associative
+# recall, deterministic, ~100x cheaper than scanning skills/). This is the seek;
+# grep skills/ is a cold-start fallback only when this returns nothing above the floor.
+python3 ~/.claude/scripts/query_connectome.py query "<need>"
 
-# Find skills by neural map cluster
-python3 -c "
-import json
-m = json.load(open('$HOME/.claude/neural_map.json'))
-# Find skills connected to a known skill
-for edge in m.get('skill_skill_edges', []):
-    if 'target-skill' in [edge.get('source'), edge.get('target')]:
-        print(f\"{edge.get('source')} <-> {edge.get('target')} ({edge.get('weight', 0):.2f})\")
-" 2>/dev/null | head -10
+# Structural neighbours of a known node (god nodes, shortest path, N-hop impact)
+python3 ~/.claude/scripts/query_connectome.py impact "<skill-or-agent>" --hops 2
 
-# Find agents with domain expertise
-grep -n "keyword" ~/.claude/agents/REGISTRY.md | head -10
-
-# Find in external refs
+# Find in external refs (NOT brain memory — the connectome does not index ref
+# repos, so a content grep is correct here)
 grep -rl "keyword" ~/.claude/*-ref/ 2>/dev/null | head -10
 ```
 

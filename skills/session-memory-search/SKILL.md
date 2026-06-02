@@ -28,10 +28,10 @@ Pick the best index for the question:
 | Past code changes | `git log --all --oneline --grep="keyword" -20` | Commit SHAs + messages |
 | Code that contained X | `git log --all --oneline -S "keyword" -20` | Commits where string was added/removed |
 | Past file modifications | `git log --oneline --follow -- path/to/file -20` | File history |
-| Error patterns | `grep -rn "keyword" ~/.claude/skills/*/SKILL.md \| grep -i "lesson"` | Lessons Learned sections |
+| Which skill/agent knows X (brain knowledge) | `python3 ~/.claude/scripts/query_connectome.py query "<need>"` — **SEEK the connectome** (associative recall, ~100x cheaper than scanning `skills/`) | Ranked skills + agents |
+| Error patterns / lessons | `query_connectome.py query "<error>"` first; grep `~/.claude/skills/*/SKILL.md \| grep -i "lesson"` ONLY as a cold-start fallback (lessons not yet graph-indexed) | Relevant skills, then Lessons Learned |
 | Past decisions | `git log --all --oneline --grep="decision\|chose\|decided" -20` | Decision commits |
 | Date range | `git log --oneline --since="2025-01-01" --until="2025-02-01" -20` | Period activity |
-| Brain knowledge | `grep -rn "keyword" ~/.claude/skills/*/SKILL.md` | Matching skills |
 
 ### Layer 2: Filter (visual scan - 0 tokens)
 
@@ -79,7 +79,9 @@ git show abc1234 -- src/auth/handler.ts
 
 **Check if this error pattern was seen before:**
 ```bash
-# Layer 1: Search Lessons Learned
+# Layer 1: SEEK the connectome for the skill that knows this (associative recall)
+python3 ~/.claude/scripts/query_connectome.py query "ConnectionTimeout ETIMEDOUT"
+# cold-start fallback only (lessons not yet graph-indexed):
 grep -rn "ConnectionTimeout\|ETIMEDOUT" ~/.claude/skills/*/SKILL.md
 
 # Layer 2: Filter -> relevant skill found
