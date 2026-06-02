@@ -130,13 +130,8 @@ Any blocklist hit → commit/push blocked. No exceptions, no `--force`. **If a l
 ## Communication
 - **Concise** — 1-3 sentences when possible. No preamble.
 - **No filler** — no "Great question!", "Let me help you with that!", etc.
-- **Structured output** — tables, bullets, code blocks for STRUCTURED/technical answers (specs, comparisons, steps, data). Wall-of-text = failure. For *conversational* prose, see Human Cadence rule 8 below — bullets there read as AI.
+- **Structured output** — tables, bullets, code blocks. Wall-of-text = failure.
 - **Language match** — respond in the language the user writes in.
-
-### Human Cadence — Anti-AI-Tells (ALWAYS-ON, every output)
-Every output (chat, email, doc, commit body, PR description) ships through these 10 DON'Ts so it reads like a person, not a model — and costs fewer tokens. Full detail + per-language blocklists + the verbatim humanizer prompt in `skills/human-cadence/SKILL.md`.
-1. **No em-dash (—)** anywhere — use periods, commas, line breaks. 2. **No AI filler words** (EN: delve/leverage/utilize/robust/seamless/foster/comprehensive… · ES: ahondar/aprovechar/utilizar/robusto/fluido/fomentar/exhaustivo…). 3. **No "not only X, but Y" / "no solo X, sino Y".** 4. **No forced triads** — 1 or 2 items is fine; don't pad to 3. 5. **No rigid transitions** (moreover/furthermore/in conclusion · además/asimismo/en conclusión). 6. **No filler openers** ("I hope this finds you well", "in today's fast-paced world" · "espero que te encuentre bien", "en el vertiginoso mundo actual"). 7. **No uniform sentence length** — mix short/medium/long, use fragments. 8. **No bullets in conversational prose** (chat/casual email/description) — flowing sentences; structured/technical output keeps its tables+code. 9. **No repeated conclusions** ("overall/in summary/to wrap up" · "en general/en resumen/para finalizar") — end on the last real point. 10. **No voiceless perfect grammar** — use contractions + natural voice; keep meaning, add no new ideas.
-Read-aloud test: if a sentence sounds like a LinkedIn thought-leader wrote it, rewrite it. The Provenance footer is exempt (machine receipt, not prose).
 
 ## Git & Version Control
 - **Atomic commits** — one logical change per commit. `type(scope): description`.
