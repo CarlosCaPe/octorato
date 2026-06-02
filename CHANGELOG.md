@@ -15,6 +15,9 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+### Added
+- **Release/news cadence sense** — `brain_doctor` check `release-drift`: flags when the top CHANGELOG version has no matching git tag (the gap that left v3.0.0 documented-but-unreleased, with no news cut). News is the brain's top-of-funnel marketing reflex — a major bump with no news = lost reach. Points at both `gh release create` and `/dataqbs-news`.
+
 ## [2026-06-01] — v3.0.0 "Proprioception"
 
 Major: the brain grew new **organs** — cross-cutting faculties that govern *how* every arm acts — not just arms (skills). It moved from **reactive to reflexive**: it now senses and coordinates itself.
