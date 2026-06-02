@@ -30,6 +30,11 @@
           "type": "command",
           "command": "python3 ~/.claude/scripts/trace-hook.py --phase delegate",
           "timeout": 5
+        },
+        {
+          "type": "command",
+          "command": "python3 ~/.claude/scripts/grafo-turn-reset.py",
+          "timeout": 5
         }
       ]
     }
@@ -90,6 +95,16 @@
         {
           "type": "command",
           "command": "python3 ~/.claude/scripts/trace-hook.py --phase gate",
+          "timeout": 5
+        }
+      ]
+    },
+    {
+      "matcher": "Bash",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "python3 ~/.claude/scripts/grafo-gate.py",
           "timeout": 5
         }
       ]

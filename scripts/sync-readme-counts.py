@@ -20,8 +20,8 @@ Two output formats:
 anchor slugs or fixed-width borders).
 
 Counting rule (matches `delegate-check` / the connectome's reported totals):
-  skills = number of directories under skills/
-  agents = number of *.md under agents/ excluding meta (README/REGISTRY/_*) and examples/
+  skills = number of directories under skills/ containing a SKILL.md (excl. staging)
+  agents = number of *.md under agents/ excluding meta (README/REGISTRY/_*), examples/ and strategy/
 """
 from __future__ import annotations
 import re
@@ -33,7 +33,11 @@ TARGETS = [ROOT / "README.md", ROOT / "FAQ.md"]
 
 
 def count_skills() -> int:
-    return sum(1 for p in (ROOT / "skills").iterdir() if p.is_dir())
+    # Match brain-stats.py exactly: a skill is a directory CONTAINING SKILL.md.
+    # The bare iterdir() variant over-counted staging dirs (e.g. skills/learned/,
+    # which holds unpublished drafts and has no SKILL.md of its own).
+    return sum(1 for d in (ROOT / "skills").iterdir()
+               if d.is_dir() and (d / "SKILL.md").is_file())
 
 
 def count_agents() -> int:
