@@ -263,6 +263,6 @@ Creating a new client arm (per-client repo): full step-by-step in **`skills/arm-
 
 **Self-verifying:** `pull` aborts on a failed `git pull`, merges shared hooks, auto-enables the `core.hooksPath` leak-guard, regenerates a stale connectome, syncs copilot+cursor, and ends with `scripts/brain_doctor.py`. `push` is gated by `check-generic.py` + the hooks drift-guard + an in-script fail-closed secret scan before it commits.
 
-**Health check:** `python3 ~/.claude/scripts/brain_doctor.py` (or `/brain-doctor`) — 17 read-only assertions; `--fix` for idempotent repairs.
+**Health check:** `python3 ~/.claude/scripts/brain_doctor.py` (or `/brain-doctor`) — 15 read-only assertions; `--fix` for idempotent repairs.
 
 **First-time setup:** clone `octorato` to `~/.claude`, run `python3 ~/.claude/scripts/install-runners.py` (creates the bin thunks), then `ai-pull`.
