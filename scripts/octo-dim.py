@@ -41,6 +41,7 @@ except ImportError:
 BRAIN = Path.home() / ".claude"
 REGISTRY_DIR = BRAIN / "connectome"
 REGISTRY = REGISTRY_DIR / "sessions.json"
+APPROVALS_FILE = REGISTRY_DIR / "merge-approvals.json"
 DIM_ROOT = Path.home() / ".octorato" / "dim"
 
 # ── registry helpers ──────────────────────────────────────────────────────────
@@ -183,6 +184,83 @@ def _age_str(entry: dict) -> str:
         return "?"
 
 
+# ── merge-approvals helpers ───────────────────────────────────────────────────
+
+@contextlib.contextmanager
+def _approvals_lock():
+    """Exclusive advisory lock on merge-approvals.json.lock (POSIX only)."""
+    lock_path = REGISTRY_DIR / "merge-approvals.json.lock"
+    if not _HAS_FCNTL:
+        yield
+        return
+    try:
+        REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
+        lf = open(lock_path, "w")  # noqa: WPS515
+        try:
+            _fcntl.flock(lf.fileno(), _fcntl.LOCK_EX)
+            yield
+        finally:
+            _fcntl.flock(lf.fileno(), _fcntl.LOCK_UN)
+            lf.close()
+    except Exception:
+        yield  # fail-open
+
+
+def _load_approvals() -> dict:
+    """Return the approvals dict; empty on any error."""
+    try:
+        raw = APPROVALS_FILE.read_text(encoding="utf-8")
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            return {}
+        approvals = data.get("approvals", {})
+        return approvals if isinstance(approvals, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_approvals(approvals: dict) -> None:
+    """Atomic write of merge-approvals.json under advisory lock."""
+    REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        with _approvals_lock():
+            # Re-read + merge under lock to survive concurrent writes
+            try:
+                raw = APPROVALS_FILE.read_text(encoding="utf-8")
+                on_disk = json.loads(raw)
+                if not isinstance(on_disk, dict) or not isinstance(on_disk.get("approvals"), dict):
+                    on_disk = {"approvals": {}}
+            except Exception:
+                on_disk = {"approvals": {}}
+            on_disk["approvals"].update(approvals)
+            merged = on_disk
+            fd, tmp = tempfile.mkstemp(dir=REGISTRY_DIR, prefix=".approvals.tmp.")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                    json.dump(merged, fh, indent=2)
+                os.replace(tmp, APPROVALS_FILE)
+            except Exception:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+                raise
+    except Exception:
+        pass  # fail-open
+
+
+def _is_fresh(record: dict) -> bool:
+    """True if (now - ts) <= ttl seconds."""
+    try:
+        ts_dt = datetime.fromisoformat(record.get("ts", ""))
+        if ts_dt.tzinfo is None:
+            ts_dt = ts_dt.replace(tzinfo=timezone.utc)
+        delta = (datetime.now(timezone.utc) - ts_dt).total_seconds()
+        return 0 <= delta <= int(record.get("ttl", 900))
+    except Exception:
+        return False
+
+
 # ── subcommand handlers ───────────────────────────────────────────────────────
 
 def cmd_register(args) -> int:
@@ -317,6 +395,76 @@ def cmd_unregister(args) -> int:
     return 0
 
 
+def cmd_approve_merge(args) -> int:
+    """Upsert a PR/branch approval into merge-approvals.json."""
+    pr_id = str(args.pr_or_branch)
+    by = args.by or os.environ.get("USER", "operator")
+    ttl = int(args.ttl)
+    record = {"by": by, "ts": _now_iso(), "ttl": ttl}
+    _save_approvals({pr_id: record})
+    print(
+        f"approved: PR/branch '{pr_id}' by '{by}' "
+        f"(ttl={ttl}s, expires in {ttl // 60}m{ttl % 60}s)"
+    )
+    return 0
+
+
+def cmd_approvals(args) -> int:
+    """List current approvals with freshness status."""
+    approvals = _load_approvals()
+    if not approvals:
+        print("(no merge approvals on record)")
+        return 0
+    show_all = getattr(args, "all", False)
+    print(f"{'STATUS':<6}  {'PR/BRANCH':<20}  {'BY':<16}  {'TS':<25}  {'TTL'}")
+    print("-" * 80)
+    for pr_id, record in approvals.items():
+        fresh = _is_fresh(record)
+        if not fresh and not show_all:
+            continue
+        status = "LIVE  " if fresh else "STALE "
+        by = (record.get("by") or "?")[:16]
+        ts = (record.get("ts") or "?")[:25]
+        ttl = record.get("ttl", "?")
+        print(f"{status}  {pr_id[:20]:<20}  {by:<16}  {ts:<25}  {ttl}s")
+    return 0
+
+
+def cmd_revoke_merge(args) -> int:
+    """Remove an approval from merge-approvals.json."""
+    pr_id = str(args.pr_or_branch)
+    REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        with _approvals_lock():
+            try:
+                raw = APPROVALS_FILE.read_text(encoding="utf-8")
+                data = json.loads(raw)
+                if not isinstance(data, dict) or not isinstance(data.get("approvals"), dict):
+                    data = {"approvals": {}}
+            except Exception:
+                data = {"approvals": {}}
+            if pr_id not in data["approvals"]:
+                print(f"(no approval found for '{pr_id}')")
+                return 0
+            del data["approvals"][pr_id]
+            fd, tmp = tempfile.mkstemp(dir=REGISTRY_DIR, prefix=".approvals.tmp.")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                    json.dump(data, fh, indent=2)
+                os.replace(tmp, APPROVALS_FILE)
+            except Exception:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+                raise
+    except Exception as exc:
+        print(f"revoke warning (non-fatal): {exc}", file=sys.stderr)
+        return 0
+    print(f"revoked: approval for '{pr_id}' removed")
+    return 0
+
+
 def cmd_worktree_init(args) -> int:
     """Idempotently create a git worktree for this dimension."""
     sid = _resolve_session(args)
@@ -383,6 +531,17 @@ def build_parser() -> argparse.ArgumentParser:
     wi.add_argument("--session-id", dest="session_id", default="",
                     help="Use this session id instead of auto-resolved")
 
+    am = sub.add_parser("approve-merge", help="Grant operator approval for a PR/branch merge")
+    am.add_argument("pr_or_branch", help="PR number or branch name (e.g. 96 or main)")
+    am.add_argument("--by", default="", help="Approver name (default: $USER or 'operator')")
+    am.add_argument("--ttl", type=int, default=900, help="Approval TTL in seconds (default 900)")
+
+    apv = sub.add_parser("approvals", help="List current merge approvals")
+    apv.add_argument("--all", action="store_true", help="Show stale approvals too")
+
+    rv = sub.add_parser("revoke-merge", help="Revoke a merge approval")
+    rv.add_argument("pr_or_branch", help="PR number or branch name to revoke")
+
     return p
 
 
@@ -394,6 +553,9 @@ HANDLERS = {
     "claim": cmd_claim,
     "unregister": cmd_unregister,
     "worktree-init": cmd_worktree_init,
+    "approve-merge": cmd_approve_merge,
+    "approvals": cmd_approvals,
+    "revoke-merge": cmd_revoke_merge,
 }
 
 

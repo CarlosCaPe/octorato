@@ -229,5 +229,6 @@ knowledge/github-trending/20*.json
 /.cache/graph-ledger/
 /connectome/lineage.unverified.yaml
 
-# 4D session-dimension registry (per-machine runtime state)
+# 4D session-dimension registry + merge approvals (per-machine runtime state)
 connectome/sessions.json
+connectome/merge-approvals.json

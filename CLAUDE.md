@@ -182,7 +182,7 @@ At the START of every non-trivial task, run all three in this order:
 The heartbeat (`scripts/connectome-heartbeat.py`) makes Q1 involuntary — like the octopus's pulse circulating blood through its whole body and returning. It surfaces a *lean*; the model still owns Q2/Q3 and the final verdict.
 
 **Combined verdict — SELF is the rare exception, NEVER the default.** The agent is a **connector to real sources, not an encyclopedia**: answering "from my own knowledge" fabricates authority and is exactly what makes people distrust AI. So the default is to **CONNECT**:
-- **ACTIVATE** (agent + skills + persona) when an agent fits — and pair non-trivial developer work with an independent **coworking QA** counterpart (Reality Checker / Evidence Collector / Code Reviewer). The QA verdict is the merge gate, not green CI.
+- **ACTIVATE** (agent + skills + persona) when an agent fits — and pair non-trivial developer work with an independent **coworking QA** counterpart (Reality Checker / Evidence Collector / Code Reviewer). The QA verdict is the merge gate, not green CI. Merges are **fail-closed** (`qa-merge-gate`): the operator approves a specific PR via `OCTO_MERGE_APPROVE=<pr>` (agent-proof env — an inline env never reaches the hook) or `octo-dim approve-merge <pr>`; **the agent cannot self-approve its own gate**.
 - **LOAD** (skills) for technique — this is the default *even with no graph match* (load general technique; do not answer as an oracle).
 - **SELF** ONLY when the operator explicitly asks for my opinion/judgment ("¿qué opinas?", "recomiendas?", "what do you think?") — and even then the opinion is **sourced**, never an unsourced gut-call.
 
