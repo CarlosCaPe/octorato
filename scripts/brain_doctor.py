@@ -455,6 +455,22 @@ def check_finops_enforcement(fix: bool) -> Result:
     return Result(key, PASS, f"FinOps enforcement ON — budgets.yaml present ({n} cap line(s))")
 
 
+def check_lineage_sound(fix: bool) -> Result:
+    key = "lineage-sound"
+    lineage = CLAUDE_DIR / "connectome" / "lineage.yaml"
+    doctor = CLAUDE_DIR / "scripts" / "lineage-doctor.py"
+    if not lineage.exists():
+        return Result(key, WARN, "connectome/lineage.yaml absent (graph organ not initialized)")
+    if not doctor.exists():
+        return Result(key, WARN, "scripts/lineage-doctor.py missing")
+    cp = run([PYTHON or "python3", str(doctor), "--quiet"], cwd=CLAUDE_DIR)
+    if cp.returncode == 0:
+        return Result(key, PASS, "lineage graph sound — no dangling edges, no cycles; the seek can be trusted")
+    detail = (cp.stderr or cp.stdout or "").strip().splitlines()
+    return Result(key, FAIL, "lineage graph UNSOUND — a seek over it would lie",
+                  detail[0] if detail else "run `python3 scripts/lineage-doctor.py`")
+
+
 CHECKS = [
     ("repo-identity", check_repo_identity),
     ("sync-clean", check_sync_clean),
@@ -469,6 +485,7 @@ CHECKS = [
     ("sync-targets", check_sync_targets),
     ("blocklist", check_blocklist),
     ("finops-enforcement", check_finops_enforcement),
+    ("lineage-sound", check_lineage_sound),
 ]
 
 STATUS_ICON = {PASS: "✓", WARN: "!", FAIL: "✗"}
