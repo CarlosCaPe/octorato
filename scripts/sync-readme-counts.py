@@ -33,7 +33,13 @@ TARGETS = [ROOT / "README.md", ROOT / "FAQ.md"]
 
 
 def count_skills() -> int:
-    return sum(1 for p in (ROOT / "skills").iterdir() if p.is_dir())
+    # A skill is a dir that actually carries a SKILL.md — container dirs like
+    # learned/ (draft staging) don't count. Matches the wiki catalog's rule so
+    # the public exact numbers agree everywhere.
+    return sum(
+        1 for p in (ROOT / "skills").iterdir()
+        if p.is_dir() and (p / "SKILL.md").exists()
+    )
 
 
 def count_agents() -> int:
