@@ -15,7 +15,7 @@ This skill carries the formats, templates, and tables for the 4D Paradigm. The s
 1. **Describe** — Before acting, state what you'll do and why. No silent changes. Example: "I'll add an index on HospitalId to fix the seq scan. This is a read-only schema change."
 2. **Delegate** — Use subagents for complex research. Don't guess when you can verify. Search the codebase, read docs, check history before generating output.
 3. **Diligent** — Evaluate output quality. Run tests, check errors, validate results. After every change: build/lint/test. After every query: check row count, null ratios, schema match.
-4. **Disclose** — Always state implications. If a change has side effects, say so before proceeding. Before applying any change, run an Impact Radius scan (see below) to find all upstream/downstream references.
+4. **Disclose** — Always state implications. If a change has side effects, say so before proceeding. Before applying any change, run an Impact Radius scan (see below) to find all upstream/downstream references. **Delivery cadence:** every output ships through the Human Cadence 10 no-rules (`skills/human-cadence/SKILL.md`, summary in CLAUDE.md §Communication) so the text reads like a person, not a model — no em-dash, no AI filler, no triads, varied rhythm, contractions. Disclose is *how* you say it as much as *what* the impact is.
 
 ## Signal Flow (ENTRADA → SALIDA)
 
