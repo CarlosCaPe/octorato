@@ -203,3 +203,23 @@ edges:
       arm-brain. Change the memory model and EVERY surface above must stay
       coherent, or the label pixelates. Brain memory data + the private remote URL
       NEVER appear in any public surface (mechanism is public, data is private).
+
+  # ── Lit on 2026-06-03: the anchor isomorphism — the three anchors share one structure. ──
+  - id: anchor-isomorphism-invariant
+    concept: "anchor isomorphism / invariant / octopus ∧ linux ∧ tesseract intersection / the three anchors share structure / intersection over quotient-by-synonymy / abstraction = upward learning / structural metaphor not decorative"
+    appears_in:
+      - skills/octorato-isomorphism/SKILL.md                  # the method (⋂ over V/~ = abstraction; CCA / structure-mapping / GEB isomorphism)
+      - skills/octorato-isomorphism/anchors.yaml              # the three descriptor sets + synonym groups + invariant→primitive map (config-first)
+      - scripts/octorato-isomorphism.py                       # computes the invariant from the data; no corpus generation
+      - skills/octorato-symbolism/SKILL.md                    # OWNS the fractal/self-similar primitive this skill only measures (no fork)
+      - skills/harmonization-over-accretion/SKILL.md          # the no-fork stance: two skills, one primitive, measurement ≠ second home
+    kind: appears_in
+    note: >-
+      The three anchors (octopus = architecture, linux = OS, tesseract = 4D) are
+      one structure shown three times (an isomorphism). The shared descriptors —
+      computed as a set intersection over the quotient-by-synonymy, NOT by brute-
+      force corpus generation — ARE the brain's required primitives; the brain
+      already embodies all ten. self-similar/fractal lives in octorato-symbolism
+      (the WHY); this skill is the MEASUREMENT that proves the metaphor is
+      structural. If a new anchor/metaphor is added, run it through the
+      intersection: share the invariant or it is decoration, not structure.
