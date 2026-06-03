@@ -43,7 +43,7 @@ Octorato is an object-oriented inheritance model expressed in the filesystem. Th
                        │  manages
 ┌──────────────────────▼───────────────────────────────────────┐
 │   ARMS = PROPERTIES  (client projects, isolated)             │
-│   ~/projects/<client>/                                       │
+│   ~/Documents/github/<CLIENT>/                               │
 │                                                              │
 │   Each arm is a sealed client repo.                          │
 │   Arms never see each other's data.                          │
@@ -131,7 +131,7 @@ Four architectural layers, each with a fixed location on disk and a defined isol
 | **Brain** | `~/.claude/` | Shared across all arms — the generic CLASS. |
 | **Agents** | `~/.claude/agents/` (+ `REGISTRY.md`) | Generic personas, no client data. |
 | **Skills** | `~/.claude/skills/` | Generic techniques, no client data. |
-| **Arm** | `<CLIENT>/` (per-client repo, e.g. `~/projects/<client>/`) | Per-client repo, fully sealed. |
+| **Arm** | `<CLIENT>/` (per-client repo, e.g. `~/Documents/github/<CLIENT>/`) | Per-client repo, fully sealed. |
 | **Arm instructions** | `<CLIENT>/.claude/CLAUDE.md` | Single source of truth for that arm. |
 
 Two properties to internalize:

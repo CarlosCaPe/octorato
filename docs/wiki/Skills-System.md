@@ -212,7 +212,7 @@ This is enforced at commit-time (`check-generic.py`) and push-time (`.githooks/p
 
 ## 6. How skills are born — the self-improvement loop
 
-Skills are created via the **`skill-creator`** skill, which formalizes a six-step process: understand the use cases with concrete examples → plan reusable contents (scripts/references/assets) → initialize with `init_skill.py` → edit and write `SKILL.md` → validate with `quick_validate.py` → iterate on real usage.
+Skills are created via the **`skill-creator`** skill (`skills/skill-creator/SKILL.md`), which formalizes a six-step process: understand the use cases with concrete examples → plan reusable contents (scripts/references/assets) → scaffold the skill folder and write `SKILL.md` → validate generically with `python3 scripts/check-generic.py` before pushing → iterate on real usage.
 
 Two triggers spawn a new skill automatically:
 

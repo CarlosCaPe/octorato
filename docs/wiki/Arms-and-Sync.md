@@ -115,7 +115,7 @@ Skipping this is the most common onboarding mistake: Copilot and Cursor go stale
 
 If the arm should participate in `ai-push` / `ai-pull` cascades:
 
-1. Add the arm's path to the active-projects list in `~/.claude/scripts/sync-ai-docs.ps1` (or the bash equivalent).
+1. Add the arm's path to `~/.claude/company/config/arms-paths.json` (a string or candidate-array path relative to `$HOME`, gitignored) — this is what `scripts/ai_sync.py` reads for all sync operations.
 2. Add the arm code + path to `~/.claude/company/COMPANY.md` — the private operator config, gitignored, never published.
 3. Claude Code session logs written from the arm auto-tag by `cwd`, so the FinOps cost-rollup picks the arm up with no extra wiring.
 
@@ -220,7 +220,7 @@ Three scripts live in `~/.local/bin/`:
 | `ai-push` | Commit + push the brain, regenerate the connectome, sync all arms. |
 | `ai-pull` | Pull the brain from remote, sync. |
 
-Active projects are registered in `~/.claude/scripts/sync-ai-docs.ps1` and in the private `~/.claude/company/COMPANY.md`.
+Active projects are registered in `~/.claude/company/config/arms-paths.json` (read by `scripts/ai_sync.py`) and in the private `~/.claude/company/COMPANY.md`.
 
 ### First-time setup on a new machine
 
@@ -231,9 +231,8 @@ git clone git@github.com:CarlosCaPe/octorato.git ~/.claude
 # 2. Enable the push-time generic-content guard (pre-push hook)
 git -C ~/.claude config core.hooksPath .githooks
 
-# 3. Put the three sync scripts on PATH and make them executable
-cp ~/.claude/scripts/{sync-ai-docs,ai-push,ai-pull} ~/.local/bin/   # adjust to your script locations
-chmod +x ~/.local/bin/{sync-ai-docs,ai-push,ai-pull}
+# 3. Generate the sync script thunks in ~/.local/bin/
+python3 ~/.claude/scripts/install-runners.py
 
 # 4. Pull + sync everything
 ai-pull

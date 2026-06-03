@@ -21,7 +21,7 @@ Sync script (in `~/.local/bin/`) that pulls the latest brain from the `octorato`
 Sync script that commits and pushes all `~/.claude/` changes to GitHub, regenerates the [[#Connectome (neural_map.json)]], and syncs every arm. It runs [[#check-generic]] first as a safety gate. The "broadcast" half of multi-machine sync. Usage: `ai-push "feat(brain): add new skill"`.
 
 ### Arm
-An **isolated client project** — one sealed repo per client, living outside the brain (e.g. `~/projects/<client>/`). Each arm carries its own `.claude/CLAUDE.md` as its single source of truth and its own sealed **[[#Arm memory]]** repo for client-specific knowledge. Arms are the *PROPERTIES* in the [[#CLASS / OBJECT / ARM]] model and the *WHERE* (FOR WHOM) in the [[#Activation stack]]. Named for the octopus's eight semi-autonomous arms, two-thirds of whose neurons live in the limb, not the central brain — most operational knowledge is arm-local.
+An **isolated client project** — one sealed repo per client, living outside the brain (e.g. `~/Documents/github/<CLIENT>/`). Each arm carries its own `.claude/CLAUDE.md` as its single source of truth and its own sealed **[[#Arm memory]]** repo for client-specific knowledge. Arms are the *PROPERTIES* in the [[#CLASS / OBJECT / ARM]] model and the *WHERE* (FOR WHOM) in the [[#Activation stack]]. Named for the octopus's eight semi-autonomous arms, two-thirds of whose neurons live in the limb, not the central brain — most operational knowledge is arm-local.
 
 ### Arm isolation
 The framework's hardest invariant: **an arm never knows another arm exists.** No client data, names, or credentials ever flow arm→arm. The brain sees each arm's cost data but the arms never see each other. This is a *deliberate departure from the biology* — real octopus arms have some peripheral cross-talk; Octorato enforces total sideways isolation for client-data security. Marketed as "air-gapped arms" (software-level isolation between workspaces).
@@ -77,7 +77,7 @@ The brain's **weighted knowledge graph** — `~/.claude/neural_map.json`, auto-g
 ## D
 
 ### Delegate
-The **2D phase** of the [[#4D Paradigm]] (afferent — "who can solve this, what's the plan?"). Before any work, the agent answers three mandatory questions: **Q1 ¿Quién sabe?** (graph search via `query_connectome.py`), **Q2 ¿Tiene API?** (MCP-first capability check: MCP > REST > SDK > scraping), **Q3 ¿Quién lo hace?** (rule match via [[#Delegate-check]]). The combined verdict is ACTIVATE / LOAD / SELF.
+The **2D phase** of the [[#4D Paradigm]] (afferent — "who can solve this, what's the plan?"). Before any work, the agent answers three mandatory questions: **Q1 ¿Quién sabe?** (graph search via `query_connectome.py`), **Q2 ¿Tiene API?** (API-first capability check: REST API > MCP > SDK > scraping), **Q3 ¿Quién lo hace?** (rule match via [[#Delegate-check]]). The combined verdict is ACTIVATE / LOAD / SELF.
 
 ### Delegate-check
 `scripts/delegate-check` — the Q3 tool of 2D [[#Delegate]]. It parses `agents/REGISTRY.md` triggers and skill descriptions to rule-match a task to agents and skills, outputting **ACTIVATE** (agent + skills + persona), **LOAD** (skills only), or **SELF** (proceed on general knowledge — only when Q1 and Q3 both find no strong match).
@@ -158,7 +158,7 @@ The brain's **multi-engine database CLI** — `qm -e <engine> -c <conn> "<query>
 ## S
 
 ### Self-growth loop
-The daily routine by which **the brain grows itself**. A scheduled loop scans GitHub Trending, Hacker News, and Product Hunt for new tools, runs each candidate through a deterministic brain-fit classifier plus an LLM quality gate, [[#Harmonization (ADD / MERGE / REPLACE / EXTEND)|harmonizes]] it against the existing connectome, and **auto-promotes** survivors into real [[Skills]] — then publishes what it learned. Discovery lives in the `github-trending-curation` skill; promotion via [[#trending-promote]]; the audit trail in the [[#HISTORY ledger]].
+The daily routine by which **the brain grows itself**. A scheduled loop scans GitHub Trending, Hacker News, Product Hunt, and short-form tech video (TikTok/Shorts) for new tools, runs each candidate through a deterministic brain-fit classifier plus an LLM quality gate, [[#Harmonization (ADD / MERGE / REPLACE / EXTEND)|harmonizes]] it against the existing connectome, and **auto-promotes** survivors into real [[Skills]] — then publishes what it learned. Discovery lives in the `github-trending-curation` skill; promotion via [[#trending-promote]]; the audit trail in the [[#HISTORY ledger]].
 
 ### Skill
 A reusable **technique** — the **synapse** of the brain. Stored as `~/.claude/skills/<name>/SKILL.md` with YAML frontmatter (`name:` + `description:` = the trigger). Skills are *HOW* work gets done: loaded on demand when 2D [[#Delegate]] matches them (semantic Q1 + rule Q3), then reinforced or decayed by [[#Hebbian learning]]. One skill connects N agents to one capability. They are born from arms ([[#Upward learning]]), can be pruned when stale, and cluster into families (e.g. `querymaster-*`, `sdd-*`). See [[Skills]].

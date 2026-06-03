@@ -350,7 +350,8 @@ The paradigm is not aspirational; three scripts enforce it at the boundaries.
 
 | Script | Phase | When to run |
 |---|---|---|
-| `~/.claude/scripts/query_connectome.py query "<task>"` | 2D · Q1 (ventosas) | START of every task |
+| `~/.claude/scripts/connectome-heartbeat.py` | 2D · Q1 (ventosas) — **autonomic** | Fires on every prompt via hook; injects the `♥` block (relevant agents/skills + 1-hop impact) automatically — no manual call needed |
+| `~/.claude/scripts/query_connectome.py query "<task>"` | 2D · Q1 (ventosas) — deeper traversal | Run manually only when you need god-node analysis, full impact radius, or shortest-path beyond what the heartbeat surfaced |
 | `~/.claude/scripts/delegate-check "<task>"` | 2D · Q3 (rule match) | START of every task |
 | `~/.claude/scripts/gate-check` | 4D Gate | BEFORE any file write — flags: `--validate-session`, `--checklist`, `--audit-log` |
 

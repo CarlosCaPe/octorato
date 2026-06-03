@@ -130,12 +130,13 @@ Only you, the human operator, ever bridge knowledge between arms. The agent neve
 
 `~/.claude/` is a git repo, so syncing the brain across laptops is just push/pull — wrapped in three helper scripts that also regenerate the connectome and propagate brain rules down into every arm's AI-doc files.
 
-**One-time setup per machine** — copy the helpers onto your `PATH` and make them executable:
+**One-time setup per machine** — run the installer to generate the helper thunks in `~/.local/bin/`:
 
 ```bash
-cp ~/.claude/scripts/ai-push ~/.claude/scripts/ai-pull ~/.claude/scripts/sync-ai-docs ~/.local/bin/
-chmod +x ~/.local/bin/ai-push ~/.local/bin/ai-pull ~/.local/bin/sync-ai-docs
+python3 ~/.claude/scripts/install-runners.py
 ```
+
+This creates `ai-push`, `ai-pull`, and `sync-ai-docs` in `~/.local/bin/` for both POSIX and Windows.
 
 **Daily workflow:**
 
@@ -147,7 +148,7 @@ chmod +x ~/.local/bin/ai-push ~/.local/bin/ai-pull ~/.local/bin/sync-ai-docs
 | `ai-pull --status` | Shows sync status without changing anything |
 | `sync-ai-docs` | Cascades brain rules into each arm's `.github/copilot-instructions.md` + `.cursorrules` |
 
-On a brand-new workstation the bootstrap is: clone the brain (Step 1), enable the hook (Step 2), copy the three scripts (above), then run `ai-pull`. From then on, `ai-pull` at the start of a work block and `ai-push "..."` when you've improved the brain.
+On a brand-new workstation the bootstrap is: clone the brain (Step 1), enable the hook (Step 2), run the installer (above), then run `ai-pull`. From then on, `ai-pull` at the start of a work block and `ai-push "..."` when you've improved the brain.
 
 > **Note:** episodic memory (`~/.claude/projects/`) is gitignored and stays per-machine by design — it contains absolute paths and arm context that must not go public. Brain stays generic; memory stays sovereign.
 
