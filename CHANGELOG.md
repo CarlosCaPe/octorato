@@ -15,8 +15,27 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
-### Added
-- **Release/news cadence sense** — `brain_doctor` check `release-drift`: flags when the top CHANGELOG version has no matching git tag (the gap that left v3.0.0 documented-but-unreleased, with no news cut). News is the brain's top-of-funnel marketing reflex — a major bump with no news = lost reach. Points at both `gh release create` and `/dataqbs-news`.
+## [2026-06-02] — v3.1.0 "Reflexes"
+
+Major step: the brain moved from **sensing** itself (3.0 Proprioception) to **enforcing** itself — principles became involuntary reflexes wired as hooks, not advisory prose the model can skip. And it learned to run as **one self across many parallel dimensions**.
+
+### Added — reflexes
+- **Connector verdict, enforced** — the 2D Delegate verdict is inverted: **SELF is the rare exception, the default is CONNECT** (LOAD/ACTIVATE). The agent is a connector to real sources, not an encyclopedia; SELF fires only when the operator explicitly asks for an opinion. (`scripts/delegate-check`, `scripts/query_connectome.py`, `CLAUDE.md` §2D)
+- **Delegation reflex** — `scripts/delegate-gate.py` (PreToolUse, fail-open): nudges substantive/batchable work toward the cheapest sufficient model (Haiku/Sonnet/Opus) instead of the main loop.
+- **QA merge gate** — `scripts/qa-merge-gate.py` (PreToolUse, fail-closed): no publish-to-main without an operator approval the **agent provably cannot self-grant** (PR-scoped `OCTO_MERGE_APPROVE` env — an inline env never reaches the harness-run hook — or `octo-dim approve-merge`). Detection is **command-boundary-anchored** so it gates real invocations, not mentions in quoted args.
+- **Dimension awareness** — `scripts/dimension-awareness-hook.py` (PreToolUse, fail-open): warns when other live sessions share the working tree.
+
+### Added — 4D session dimensions
+- **One tentacle, N parallel dimensions** — `scripts/octo-dim.py` (register / heartbeat / list / prune / worktree-init / approve-merge) + a blackboard registry (`connectome/sessions.json`, gitignored): the same session-id runs in isolated git worktrees, reconciled into one `.git`. Isolation is the enabler of the 4D superpower, not a constraint. (`skills/session-isolation`)
+- **Human-cadence delivery rules** — `skills/human-cadence`.
+
+### Added — architecture
+- **Hook orchestration, formalized + cited** — `docs/architecture/hook-orchestration.md`: a **Reactive Control Architecture with Adaptive Recall** (ECA atoms · Behavior-Tree priority · Statechart 4D · Spreading-Activation recall · Marr–Albus control loop · contextual-bandit tier-routing). L4 bandit router + activation-decay connectome are specified as the next build, not yet implemented.
+- **Release/news cadence sense** — `brain_doctor` check `release-drift`: flags a top CHANGELOG version with no matching git tag (the gap that left v3.0.0 documented-but-unreleased). News is the brain's top-of-funnel reflex — a bump with no news = lost reach.
+
+### Changed
+- `brain_doctor` assertion count converged (`CLAUDE.md`) and the doctor grew to 15 checks (lineage-sound, release-drift).
+- The qa-merge-gate enforces a hard rule now in `CLAUDE.md` §2D: the agent cannot self-approve its own merge gate.
 
 ## [2026-06-01] — v3.0.0 "Proprioception"
 
