@@ -12,7 +12,7 @@ Octorato is an open-source AI-agent operating system. Its name fuses two ideas �
 The three layers that fire **simultaneously** on every task: **Agent** (WHO — persona/expertise), **Skill** (HOW — technique), and **Arm** (FOR WHOM — client context). A database audit, for example, activates the *Database Optimizer* agent, loads the `explain-analyze-validation` skill, and operates inside one client's arm — never blending into another. See [[The-4D-Paradigm|4D Paradigm]] and [[Agents]].
 
 ### Agent (persona)
-A specialist AI persona — the **neuron** of the brain. Each agent is a full persona file under `~/.claude/agents/<division>/<name>.md` with expertise, voice, and cross-references. There are 152 agents across 13 [[Agents]] divisions. Agents are *WHO* does the work; they inherit all brain rules (4D, security, arm isolation) and complement — never replace — [[Skills]]. See [[Agents]].
+A specialist AI persona — the **neuron** of the brain. Each agent is a full persona file under `~/.claude/agents/<division>/<name>.md` with expertise, voice, and cross-references. There are <!--canon:agents.count-->160+<!--/canon--> agents across 13 [[Agents]] divisions. Agents are *WHO* does the work; they inherit all brain rules (4D, security, arm isolation) and complement — never replace — [[Skills]]. See [[Agents]].
 
 ### ai-pull
 Sync script (in `~/.local/bin/`) that pulls the latest brain from the `octorato` GitHub remote into `~/.claude/` on any workstation, then runs `sync-ai-docs` to refresh arm config. `ai-pull --status` checks for available updates without applying them. The "absorb" half of multi-machine sync; see also [[#ai-push]] and [[#sync-ai-docs]].

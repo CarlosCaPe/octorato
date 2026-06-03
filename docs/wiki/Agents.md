@@ -1,4 +1,4 @@
-# Agents — the *WHO* (162 personas, 13 divisions)
+# Agents — the *WHO* (167 personas, 13 divisions)
 
 Specialist personas the brain activates as subagents. Agent = who (role), skill = how (technique), arm = for whom (client). Source: `agents/REGISTRY.md`.
 
@@ -25,7 +25,7 @@ Specialist personas the brain activates as subagents. Agent = who (role), skill 
 | Visual Storyteller | visual narratives, multimedia, brand storytelling, emotional engagement |
 | Whimsy Injector | personality, delight, playful elements, whimsy, memorable interactions |
 
-## engineering (26)
+## engineering (28)
 
 | Agent | Triggers |
 |---|---|
@@ -36,6 +36,7 @@ Specialist personas the brain activates as subagents. Agent = who (role), skill 
 | CMS Developer | Drupal, WordPress, theme development, plugins, CMS |
 | Code Reviewer | code review, correctness, maintainability, security, performance |
 | Data Engineer | data pipelines, ETL, lakehouse, Spark, dbt, streaming |
+| Dashboard Builder | Infinite Monitor, AI-powered dashboards, widgets, real-time analytics, monitoring |
 | Database Optimizer | schema design, query optimization, indexing, PostgreSQL, performance tuning |
 | DevOps Automator | infrastructure automation, CI/CD, cloud operations, deployment |
 | Email Intelligence Engineer | email parsing, MIME, structured extraction, AI agents |
@@ -50,6 +51,7 @@ Specialist personas the brain activates as subagents. Agent = who (role), skill 
 | Security Engineer | threat modeling, vulnerability assessment, secure code review, security architecture |
 | Senior Developer | Laravel, Livewire, Three.js, advanced CSS, full-stack |
 | Software Architect | system design, domain-driven design, architectural patterns, scalability |
+| SP Migration Agent | T-SQL to PL/pgSQL, stored procedure conversion, SQL Server to PostgreSQL migration |
 | Solidity Smart Contract Engineer | Solidity, EVM, smart contracts, DeFi, gas optimization |
 | SRE (Site Reliability Engineer) | SLOs, error budgets, observability, chaos engineering, toil reduction |
 | Technical Writer | documentation, API references, README, tutorials |
@@ -81,7 +83,7 @@ Specialist personas the brain activates as subagents. Agent = who (role), skill 
 | Unreal Technical Artist | Material Editor, Niagara VFX, PCG, UE5 art pipeline |
 | Unreal World Builder | World Partition, Landscape, procedural foliage, open-world |
 
-## marketing (29)
+## marketing (30)
 
 | Agent | Triggers |
 |---|---|
@@ -100,6 +102,7 @@ Specialist personas the brain activates as subagents. Agent = who (role), skill 
 | Instagram Curator | Instagram, visual storytelling, community building, aesthetic |
 | Kuaishou Strategist | Kuaishou, 快手, live commerce, grassroots audience |
 | LinkedIn Content Creator | LinkedIn, thought leadership, personal brand, professional content |
+| LinkedIn Company Manager | LinkedIn company page, employer brand, profile optimization, Playwright automation |
 | Livestream Commerce Coach | livestream, host training, Taobao Live, conversion closing |
 | Podcast Strategist | podcast, Xiaoyuzhou, Ximalaya, audio platforms, show positioning |
 | Private Domain Operator | WeCom, private domain, SCRM, Mini Program commerce |
@@ -172,7 +175,7 @@ Specialist personas the brain activates as subagents. Agent = who (role), skill 
 | XR Immersive Developer | WebXR, AR/VR, browser-based, immersive applications |
 | XR Interface Architect | spatial interaction, XR interface design, AR/VR environments |
 
-## specialized (28)
+## specialized (29)
 
 | Agent | Triggers |
 |---|---|
@@ -188,6 +191,7 @@ Specialist personas the brain activates as subagents. Agent = who (role), skill 
 | Healthcare Marketing Compliance Specialist | healthcare compliance, Advertising Law, pharma, medical devices |
 | Identity Graph Operator | identity graph, entity resolution, multi-agent, canonical |
 | LSP/Index Engineer | LSP, code intelligence, semantic indexing, language server |
+| Market Research Analyst | TAM/SAM/SOM sizing, competitive landscape, Porter's Five Forces, consulting-grade market intelligence |
 | Recruitment Specialist | recruitment, talent acquisition, hiring platforms, labor law |
 | Report Distribution Agent | report distribution, sales reports, territorial, automation |
 | Sales Data Extraction Agent | Excel monitoring, sales metrics, MTD, YTD, live reporting |
@@ -205,13 +209,14 @@ Specialist personas the brain activates as subagents. Agent = who (role), skill 
 | Supply Chain Strategist | supply chain, procurement, sourcing, quality control |
 | ZK Steward | Zettelkasten, knowledge base, atomic notes, cross-domain |
 
-## support (6)
+## support (7)
 
 | Agent | Triggers |
 |---|---|
 | Analytics Reporter | dashboards, statistical analysis, KPIs, data visualization |
 | Executive Summary Generator | executive summary, McKinsey SCQA, C-suite, strategy consulting |
 | Finance Tracker | financial planning, budget, cash flow, forecasting |
+| Financial Modeler | unit economics, revenue projections, break-even analysis, investor-ready financial models |
 | Infrastructure Maintainer | system reliability, performance, technical operations |
 | Legal Compliance Checker | legal, compliance, regulations, data handling, jurisdictions |
 | Support Responder | customer support, issue resolution, user experience |

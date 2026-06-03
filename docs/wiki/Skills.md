@@ -1,4 +1,4 @@
-# Skills — the *HOW* (201 total)
+# Skills — the *HOW* (207 total)
 
 Every technique the brain can apply. Grouped by declared `type`. Each skill lives at `skills/<slug>/SKILL.md` in the repo.
 
@@ -199,9 +199,16 @@ Every technique the brain can apply. Grouped by declared `type`. Each skill live
 - **[`wrangler`](https://github.com/CarlosCaPe/octorato/blob/master/skills/wrangler/SKILL.md)** — Cloudflare Workers CLI for deploying, developing, and managing Workers, KV, R2, D1, Vectorize, Hyperdrive, Workers AI, Containers, Queues, Workflows, Pipelines, and Secrets Store. Load before running wrangler commands to ensure correct syntax and best practices. Biases towards …
 - **[`yeet`](https://github.com/CarlosCaPe/octorato/blob/master/skills/yeet/SKILL.md)** — Use only when the user explicitly asks to stage, commit, push, and open a GitHub pull request in one flow using the GitHub CLI (`gh`).
 
-## identity (1)
+## identity (2)
 
+- **[`octorato-isomorphism`](https://github.com/CarlosCaPe/octorato/blob/master/skills/octorato-isomorphism/SKILL.md)** — The three Octorato anchors (octopus = architecture, Linux = OS, tesseract = 4D paradigm) are not three brands stuck together — they are one abstract structure shown three times (an isomorphism). This skill names the method for finding what they share: set intersection over a qu …
 - **[`octorato-symbolism`](https://github.com/CarlosCaPe/octorato/blob/master/skills/octorato-symbolism/SKILL.md)** — The two symbolic anchors of the Octorato framework — the 8 → ∞ (lay the octopus's eight arms sideways and you get the lemniscate, the unbounded) and the Tesseract → 4D (the four-phase paradigm is the 4-dimensional analog of a cube). Invoke when explaining naming rationale, bran …
+
+## lesson-learned (3)
+
+- **[`agent-proof-approval-gate`](https://github.com/CarlosCaPe/octorato/blob/master/skills/agent-proof-approval-gate/SKILL.md)** — Build a fail-closed PreToolUse gate for merge/deploy/destructive actions that the AI agent provably cannot self-bypass. Use when you need human-only override for a consequential action the agent orchestrates.
+- **[`command-boundary-hook-matching`](https://github.com/CarlosCaPe/octorato/blob/master/skills/command-boundary-hook-matching/SKILL.md)** — Pattern-match what a Bash command actually does in a PreToolUse hook without false-firing on mentions inside quoted args, commit messages, or echo strings. Use when building any hook that decides based on command semantics.
+- **[`stacked-pr-squash-delete-gotcha`](https://github.com/CarlosCaPe/octorato/blob/master/skills/stacked-pr-squash-delete-gotcha/SKILL.md)** — Recover from and prevent stacked-PR breakage caused by squash-merge + auto-delete-branch on the base PR. Use when working with stacked branches or any PR whose base branch is another PR's head.
 
 ## paradigm-protocol (1)
 
@@ -214,10 +221,12 @@ Every technique the brain can apply. Grouped by declared `type`. Each skill live
 - **[`peripheral-parallel-dispatch`](https://github.com/CarlosCaPe/octorato/blob/master/skills/peripheral-parallel-dispatch/SKILL.md)** — Decision rule for WHEN to fan work out to N parallel sub-agents/arms vs solve it centrally, and HOW the center reconciles divergent results without becoming the bottleneck. Use before launching multiple agents or a Workflow, or when one context can't hold the whole job.
 - **[`runtime-adaptation-over-source-edit`](https://github.com/CarlosCaPe/octorato/blob/master/skills/runtime-adaptation-over-source-edit/SKILL.md)** — Decision rule for WHERE a new behavior or lesson belongs — the runtime layer (skill / memory / config / hook) vs the core source (CLAUDE.md). Default to the runtime layer; touch the core only when the change is a true invariant. Use whenever a lesson, preference, or new capabil …
 
-## reference (2)
+## reference (4)
 
 - **[`claude-plugins-official`](https://github.com/CarlosCaPe/octorato/blob/master/skills/claude-plugins-official/SKILL.md)** — Official, Anthropic-managed directory of high quality Claude Code Plugins.
+- **[`human-cadence`](https://github.com/CarlosCaPe/octorato/blob/master/skills/human-cadence/SKILL.md)** — The 10 no-rules that strip AI-tells from any written output so text reads like a person, not a model, and costs fewer tokens. Inverted from the soyfelixgo TikTok 'humanizer' prompt into hard DON'Ts. ALWAYS-ON delivery discipline: every output (chat, email, doc, commit body, PR …
 - **[`openstock`](https://github.com/CarlosCaPe/octorato/blob/master/skills/openstock/SKILL.md)** — OpenStock is an open-source alternative to expensive market platforms. Track real-time prices, set personalized alerts, and explore detailed company insights — built openly, for ev
+- **[`session-isolation`](https://github.com/CarlosCaPe/octorato/blob/master/skills/session-isolation/SKILL.md)** — MANDATORY isolation for concurrent Claude Code sessions on one repo (especially ~/.claude itself). The same arm can run in two dimensions at once, but each live session MUST have its own git worktree + session id. Never two on one shared working tree. Documents the real collisi …
 
 ## runtime-pattern (1)
 

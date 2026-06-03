@@ -6,8 +6,8 @@
 > agents across clients, projects, and machines — without ever mixing their data
 > or their bills.
 
-**Live as of 2026-06-03:** 200+ skills · 160+ agent personas across
-13 divisions · 8 enforcement scripts · multi-machine sync · a neural
+**Live:** <!--canon:skills.count-->200+<!--/canon--> skills · <!--canon:agents.count-->160+<!--/canon--> agent personas across
+13 divisions · hook-enforced gates · multi-machine sync · a neural
 connectome that learns over time · a FinOps pipeline that tags every trace event
 with the client who incurred it.
 
@@ -39,8 +39,8 @@ experience → more skills → more leverage.
 1. **[[Architecture]]** — CLASS / OBJECT / ARM, the activation stack, and why an
    octopus.
 2. **[[The-4D-Paradigm]]** — the nervous-system protocol every action follows.
-3. **[[Skills]]** — the full catalog of 201 techniques (the *HOW*).
-4. **[[Agents]]** — the full roster of 152 specialist personas
+3. **[[Skills]]** — the full catalog of <!--canon:skills.count-->200+<!--/canon--> techniques (the *HOW*).
+4. **[[Agents]]** — the full roster of <!--canon:agents.count-->160+<!--/canon--> specialist personas
    (the *WHO*).
 5. **[[Self-Growth]]** — the daily auto-curation loop.
 6. **[[Security]]** — why the brain stays generic, and how that's enforced.

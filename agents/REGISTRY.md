@@ -59,6 +59,7 @@ Agents load their persona + the relevant skills for the active arm. Example:
 | 🧱 CMS Developer | [engineering/engineering-cms-developer.md](engineering/engineering-cms-developer.md) | Drupal, WordPress, theme development, plugins, CMS |
 | 👁️ Code Reviewer | [engineering/engineering-code-reviewer.md](engineering/engineering-code-reviewer.md) | code review, correctness, maintainability, security, performance |
 | 🔧 Data Engineer | [engineering/engineering-data-engineer.md](engineering/engineering-data-engineer.md) | data pipelines, ETL, lakehouse, Spark, dbt, streaming |
+| 📊 Dashboard Builder | [engineering/engineering-dashboard-builder.md](engineering/engineering-dashboard-builder.md) | Infinite Monitor, AI-powered dashboards, widgets, real-time analytics, monitoring |
 | 🗄️ Database Optimizer | [engineering/engineering-database-optimizer.md](engineering/engineering-database-optimizer.md) | schema design, query optimization, indexing, PostgreSQL, performance tuning |
 | ⚙️ DevOps Automator | [engineering/engineering-devops-automator.md](engineering/engineering-devops-automator.md) | infrastructure automation, CI/CD, cloud operations, deployment |
 | 📧 Email Intelligence Engineer | [engineering/engineering-email-intelligence-engineer.md](engineering/engineering-email-intelligence-engineer.md) | email parsing, MIME, structured extraction, AI agents |
@@ -73,6 +74,7 @@ Agents load their persona + the relevant skills for the active arm. Example:
 | 🔒 Security Engineer | [engineering/engineering-security-engineer.md](engineering/engineering-security-engineer.md) | threat modeling, vulnerability assessment, secure code review, security architecture |
 | 💎 Senior Developer | [engineering/engineering-senior-developer.md](engineering/engineering-senior-developer.md) | Laravel, Livewire, Three.js, advanced CSS, full-stack |
 | 🏛️ Software Architect | [engineering/engineering-software-architect.md](engineering/engineering-software-architect.md) | system design, domain-driven design, architectural patterns, scalability |
+| 🗃️ SP Migration Agent | [engineering/sp-migration.agent.md](engineering/sp-migration.agent.md) | T-SQL to PL/pgSQL, stored procedure conversion, SQL Server to PostgreSQL migration |
 | ⛓️ Solidity Smart Contract Engineer | [engineering/engineering-solidity-smart-contract-engineer.md](engineering/engineering-solidity-smart-contract-engineer.md) | Solidity, EVM, smart contracts, DeFi, gas optimization |
 | 🛡️ SRE (Site Reliability Engineer) | [engineering/engineering-sre.md](engineering/engineering-sre.md) | SLOs, error budgets, observability, chaos engineering, toil reduction |
 | 📚 Technical Writer | [engineering/engineering-technical-writer.md](engineering/engineering-technical-writer.md) | documentation, API references, README, tutorials |
@@ -123,6 +125,7 @@ Agents load their persona + the relevant skills for the active arm. Example:
 | 📸 Instagram Curator | [marketing/marketing-instagram-curator.md](marketing/marketing-instagram-curator.md) | Instagram, visual storytelling, community building, aesthetic |
 | 🎥 Kuaishou Strategist | [marketing/marketing-kuaishou-strategist.md](marketing/marketing-kuaishou-strategist.md) | Kuaishou, 快手, live commerce, grassroots audience |
 | 💼 LinkedIn Content Creator | [marketing/marketing-linkedin-content-creator.md](marketing/marketing-linkedin-content-creator.md) | LinkedIn, thought leadership, personal brand, professional content |
+| 🏢 LinkedIn Company Manager | [marketing/marketing-linkedin-company-manager.md](marketing/marketing-linkedin-company-manager.md) | LinkedIn company page, employer brand, profile optimization, Playwright automation |
 | 🎙️ Livestream Commerce Coach | [marketing/marketing-livestream-commerce-coach.md](marketing/marketing-livestream-commerce-coach.md) | livestream, host training, Taobao Live, conversion closing |
 | 🎧 Podcast Strategist | [marketing/marketing-podcast-strategist.md](marketing/marketing-podcast-strategist.md) | podcast, Xiaoyuzhou, Ximalaya, audio platforms, show positioning |
 | 🔒 Private Domain Operator | [marketing/marketing-private-domain-operator.md](marketing/marketing-private-domain-operator.md) | WeCom, private domain, SCRM, Mini Program commerce |
@@ -211,6 +214,7 @@ Agents load their persona + the relevant skills for the active arm. Example:
 | ⚕️ Healthcare Marketing Compliance Specialist | [specialized/healthcare-marketing-compliance.md](specialized/healthcare-marketing-compliance.md) | healthcare compliance, Advertising Law, pharma, medical devices |
 | 🕸️ Identity Graph Operator | [specialized/identity-graph-operator.md](specialized/identity-graph-operator.md) | identity graph, entity resolution, multi-agent, canonical |
 | 🔎 LSP/Index Engineer | [specialized/lsp-index-engineer.md](specialized/lsp-index-engineer.md) | LSP, code intelligence, semantic indexing, language server |
+| 📊 Market Research Analyst | [specialized/market-research-analyst.md](specialized/market-research-analyst.md) | TAM/SAM/SOM sizing, competitive landscape, Porter's Five Forces, consulting-grade market intelligence |
 | 🎯 Recruitment Specialist | [specialized/recruitment-specialist.md](specialized/recruitment-specialist.md) | recruitment, talent acquisition, hiring platforms, labor law |
 | 📤 Report Distribution Agent | [specialized/report-distribution-agent.md](specialized/report-distribution-agent.md) | report distribution, sales reports, territorial, automation |
 | 📊 Sales Data Extraction Agent | [specialized/sales-data-extraction-agent.md](specialized/sales-data-extraction-agent.md) | Excel monitoring, sales metrics, MTD, YTD, live reporting |
@@ -235,6 +239,7 @@ Agents load their persona + the relevant skills for the active arm. Example:
 | 📊 Analytics Reporter | [support/support-analytics-reporter.md](support/support-analytics-reporter.md) | dashboards, statistical analysis, KPIs, data visualization |
 | 📝 Executive Summary Generator | [support/support-executive-summary-generator.md](support/support-executive-summary-generator.md) | executive summary, McKinsey SCQA, C-suite, strategy consulting |
 | 💰 Finance Tracker | [support/support-finance-tracker.md](support/support-finance-tracker.md) | financial planning, budget, cash flow, forecasting |
+| 💹 Financial Modeler | [support/support-financial-modeler.md](support/support-financial-modeler.md) | unit economics, revenue projections, break-even analysis, investor-ready financial models |
 | 🏢 Infrastructure Maintainer | [support/support-infrastructure-maintainer.md](support/support-infrastructure-maintainer.md) | system reliability, performance, technical operations |
 | ⚖️ Legal Compliance Checker | [support/support-legal-compliance-checker.md](support/support-legal-compliance-checker.md) | legal, compliance, regulations, data handling, jurisdictions |
 | 💬 Support Responder | [support/support-support-responder.md](support/support-support-responder.md) | customer support, issue resolution, user experience |
@@ -350,16 +355,20 @@ The `examples/` directory contains workflow examples — not individual agents.
 
 ## Statistics
 
-- **Total agents**: 152
+- **Total agents**: 167
 - **Divisions with agents**: 13
 - **Reference directories**: 2 (strategy, examples)
+
+<!-- Counts below = recursive persona files under each division, excluding
+     examples/ + strategy/ (the same rule brain-stats.py uses). Recompute from
+     disk; never bump by hand-arithmetic. -->
 
 | Division | Count |
 |----------|-------|
 | Academic | 5 |
 | Design | 8 |
 | Engineering | 28 |
-| Game Development | 5 |
+| Game Development | 20 |
 | Marketing | 30 |
 | Paid Media | 7 |
 | Product | 5 |
@@ -369,4 +378,4 @@ The `examples/` directory contains workflow examples — not individual agents.
 | Specialized | 29 |
 | Support | 7 |
 | Testing | 8 |
-| **Total** | **152** |
+| **Total** | **167** |
