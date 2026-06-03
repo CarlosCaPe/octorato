@@ -29,9 +29,11 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Windows consoles default to cp1252, which crashes on the Unicode glyphs this
@@ -382,7 +384,63 @@ def _push_via_pr(branch: str, target: str, msg: str) -> int:
     return 0
 
 
+# ── co-tenancy guard (reuses the dimension-awareness-hook / octo-dim registry) ──
+SESSIONS_REGISTRY = CLAUDE / "connectome" / "sessions.json"
+_DIM_TTL = 900          # seconds; matches dimension-awareness-hook DEFAULT_TTL
+_DIM_FUTURE_SKEW = 120  # heartbeat this far ahead of now → clock skew → not live
+
+
+def _live_dimensions() -> list:
+    """All sessions with a fresh heartbeat in connectome/sessions.json.
+
+    Reuses the exact liveness semantics of scripts/dimension-awareness-hook.py
+    (heartbeat within TTL, future-skew guard). More than one live session means
+    co-tenancy on this brain tree (one of them is us), so we count rather than
+    try to identify self, which a subprocess can't do reliably without the
+    session id. Returns [(session_id, branch), ...].
+
+    FAIL-OPEN: any read/parse error returns [] so a broken registry never bricks
+    ai-push (same discipline as the hook it mirrors).
+    """
+    try:
+        with SESSIONS_REGISTRY.open(encoding="utf-8") as fh:
+            data = json.load(fh)
+        sessions = data.get("sessions", {}) if isinstance(data, dict) else {}
+        now = datetime.now(timezone.utc)
+        live = []
+        for sid, entry in sessions.items():
+            hb = (entry or {}).get("heartbeat", "")
+            if not hb:
+                continue
+            try:
+                hb_dt = datetime.fromisoformat(hb)
+            except (ValueError, TypeError):
+                continue
+            if hb_dt.tzinfo is None:
+                hb_dt = hb_dt.replace(tzinfo=timezone.utc)
+            delta = (now - hb_dt).total_seconds()
+            if -_DIM_FUTURE_SKEW <= delta <= _DIM_TTL:
+                live.append((sid, (entry or {}).get("branch") or "no-branch"))
+        return live
+    except Exception:
+        return []  # fail-open: unreadable registry → no guard, never brick ai-push
+
+
 def push(args) -> int:
+    # Co-tenancy guard: never commit in a tree another live session shares. ai-push
+    # stages whole BRAIN_PATHS dirs and then commits the entire index, so a second
+    # writer's uncommitted work gets swallowed into the wrong commit (CLAUDE.md Core
+    # Principle #7, skills/session-isolation). Override only when you own the tree.
+    live = _live_dimensions()
+    if len(live) > 1 and os.environ.get("OCTO_ALLOW_SHARED") != "1":
+        err(f"⚠ ai-push aborted: {len(live)} live sessions share this brain tree:")
+        for sid, branch in live:
+            err(f"     {sid[:20]}… ({branch})")
+        err("   Two writers on one tree corrupt each other's commits.")
+        err("   Isolate first: python3 scripts/octo-dim.py worktree-init")
+        err("   Override (only if you own the whole tree): OCTO_ALLOW_SHARED=1 ai-push \"msg\"")
+        return 1
+
     # Anything to do?
     dirty = git("diff", "--quiet")[0] or git("diff", "--cached", "--quiet")[0] \
         or bool(git("ls-files", "--others", "--exclude-standard")[1])
