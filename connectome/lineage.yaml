@@ -204,6 +204,29 @@ edges:
       coherent, or the label pixelates. Brain memory data + the private remote URL
       NEVER appear in any public surface (mechanism is public, data is private).
 
+  # ── Lit on 2026-06-03: doc anatomy — every doc is an organ; placement follows morphology. ──
+  - id: doc-anatomy-morphology
+    concept: "doc anatomy / organ line / morphology-anchored documentation / where docs live / wiki organs vs architecture specs / trace storage / capability inventory"
+    appears_in:
+      - docs/wiki/Home.md                                     # central brain (the lobby that routes to organs)
+      - docs/wiki/_Sidebar.md                                 # the organism's index, ordered by anatomy
+      - docs/wiki/Architecture.md                             # anatomy atlas (the canonical organ map)
+      - docs/architecture/trace-storage.md                    # sensory nerves (moved here from docs/ root)
+      - docs/architecture/capability-inventory.md             # generated census (moved here from docs/ root)
+      - docs/architecture/hook-orchestration.md               # nervous-system spec (linked from wiki Architecture)
+      - docs/architecture/memory-model.md                     # brain memory spec (1+N)
+      - README.md                                             # organism overview (diet: organs carry the depth)
+    kind: appears_in
+    note: >-
+      The documentation IS the organism: docs/wiki/ pages are operator-facing
+      ORGANS (each carries a one-line "> **Organ:** ..." anchor under its H1),
+      docs/architecture/ holds internal specs, and the root GitHub-special files
+      (SECURITY/SUPPORT/CONTRIBUTING) are the skin. A new doc must name its
+      organ and live in the layer that matches its reader; a doc that explains
+      octopus lore apart from its technique is the pixelation failure this
+      edge exists to prevent. Counts on any of these surfaces are canon-owned
+      (content/canon.facts.yaml) — never hand-edited.
+
   # ── Lit on 2026-06-03: the anchor isomorphism — the three anchors share one structure. ──
   - id: anchor-isomorphism-invariant
     concept: "anchor isomorphism / invariant / octopus ∧ linux ∧ tesseract intersection / the three anchors share structure / intersection over quotient-by-synonymy / abstraction = upward learning / structural metaphor not decorative"

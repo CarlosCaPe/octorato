@@ -1,8 +1,11 @@
 # Trace Storage Layout — Agent Trace (observability surface 1)
 
-> Phase A task #2 deliverable. Locks the on-disk contract for the trace
-> infrastructure before any capture hook (tasks #3-#5) or CLI query helper
-> (task #6) is written. Subsequent tasks read from / depend on this layout.
+> **Organ:** sensory nerves — every tool call leaves a trace; the organism can replay what its body did.
+
+> Status: **shipped**. This is the on-disk contract for the trace infrastructure.
+> The capture hook (`scripts/trace-hook.py`), the query CLI (`scripts/brain-trace.py`)
+> and the Hebbian updater (`scripts/update_neural_activity.py`) all read and write
+> this layout.
 
 ## Where traces live
 
@@ -16,7 +19,7 @@
 
 - One file per **UTC day**, name format `YYYY-MM-DD.jsonl`.
 - Path is **gitignored** at the brain level (entry added to `~/.claude/.gitignore`).
-- Each line conforms to `~/.claude/schemas/trace-event.schema.json` (Phase A task #1).
+- Each line conforms to `~/.claude/schemas/trace-event.schema.json`.
 - The directory is created lazily on first write — no init step needed.
 
 ## Privacy stance
@@ -41,10 +44,9 @@ Files older than 30 days are **deleted, not archived**.
 | What if I want longer history? | Enable the backup opt-in (see below) to sync `.jsonl` files to a private repo before they hit the 30d cutoff |
 | Manual override per file? | None. The sweep is unconditional. If a specific day matters, copy it out of `~/.claude/traces/` before day 30 |
 
-**Sweep mechanism** (implemented in Phase A task #7 or a sibling cron job):
+**Sweep mechanism** (a daily cron job):
 
 ```bash
-# Run from a daily cron or via ~/.claude/scripts (Phase A wiring)
 find ~/.claude/traces -name "*.jsonl" -mtime +30 -delete
 ```
 
@@ -60,7 +62,7 @@ arbitrarily long history, set the environment variable:
 export TRACE_BACKUP_REPO=git@github.com:<operator>/<private-traces-repo>.git
 ```
 
-When set, a daily backup hook will (Phase A task #7+ scope):
+When set, the daily backup hook will:
 1. `git clone --depth 1` the repo to a temp dir if not cached
 2. Copy any `~/.claude/traces/*.jsonl` files newer than the last backup marker
 3. Commit + push with message `chore(backup): traces YYYY-MM-DD`
@@ -106,7 +108,7 @@ Each record carries `schemaVersion: "1.0"`. When the schema bumps:
 | New event class | Add to the enum, bump version (minor or major depending on whether existing readers can ignore unknown classes) |
 
 Old `.jsonl` files keep their original `schemaVersion` forever. The query
-tooling (Phase A task #6 `trace.py`) reads the version per-record and dispatches
+tooling (`scripts/brain-trace.py`) reads the version per-record and dispatches
 to the right validator.
 
 ## What this storage layout does NOT do
@@ -127,5 +129,5 @@ to the right validator.
 ## Cross-references
 
 - Schema: `~/.claude/schemas/trace-event.schema.json`
-- Memory: [[user-operator-runway]] (runway is clean — observability surfaces
-  can take the time they need)
+- Capture: `scripts/trace-hook.py` · Query CLI: `scripts/brain-trace.py` · Hebbian updater: `scripts/update_neural_activity.py`
+- Consumer: the FinOps pipeline (`docs/wiki/FinOps.md`) tags every trace event with the arm that incurred it

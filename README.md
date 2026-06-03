@@ -539,7 +539,7 @@ brain-trace.py top  --by name --window 7d               # top skills/agents
 brain-trace.py tail -n 20 -f                            # live tail
 ```
 
-Full schema, storage layout, and cron setup: [`docs/trace-storage.md`](docs/trace-storage.md).
+Full schema, storage layout, and cron setup: [`docs/architecture/trace-storage.md`](docs/architecture/trace-storage.md).
 
 ---
 
