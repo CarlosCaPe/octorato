@@ -490,8 +490,14 @@ def cmd_dead(G):
     def _info(node):
         t = G.nodes[node].get("type", "?")
         name = G.nodes[node].get("name", node) or node
-        guess = (BRAIN_DIR / "agents" / f"{node}.md") if t == "agent" \
-            else (BRAIN_DIR / "skills" / node / "SKILL.md")
+        if t == "agent":
+            # Agents are nested by division (agents/<division>/<id>.md); the node
+            # id is just the stem. Glob for the real path so the "file gone" check
+            # and the suggested prune target are TRUE, not a flat no-op guess.
+            guess = next(BRAIN_DIR.glob(f"agents/**/{node}.md"),
+                         BRAIN_DIR / "agents" / f"{node}.md")
+        else:
+            guess = BRAIN_DIR / "skills" / node / "SKILL.md"
         return t, name, guess
 
     for label, bucket in (("DEAD (degree 0)", dead), ("DYING (degree 1)", dying)):
