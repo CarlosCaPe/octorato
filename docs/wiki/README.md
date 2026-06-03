@@ -16,7 +16,7 @@ UI** (GitHub only provisions `repo.wiki.git` after that).
 2. Run the publisher (regenerates the indexes from the live brain + pushes all
    pages):
    ```bash
-   python3 ~/dataqbs-local-cron/scripts/generate-octorato-wiki.py   # Skills/Agents/Home/Sidebar
+   python3 ~/.claude/scripts/generate-octorato-wiki.py --write   # Skills/Agents/Home/Sidebar (omit --write = dry-run)
    # then push the reviewed prose pages from this dir:
    cd /tmp && rm -rf owiki && \
      git clone "https://x-access-token:$(gh auth token)@github.com/CarlosCaPe/octorato.wiki.git" owiki && \
