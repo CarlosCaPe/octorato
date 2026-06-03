@@ -139,6 +139,19 @@ Two properties to internalize:
 - **The Agents and Skills layers live *inside* the Brain layer** and inherit its genericity. An agent or skill that referenced a client name would corrupt the public CLASS — so the [[Agents-System]] and [[Skills-System]] are curated to be technique-only.
 - **The Arm layer is the only place client data legally exists.** Its instructions file (`<CLIENT>/.claude/CLAUDE.md`) is the *single source of truth* for that client and is generated/maintained per the [[Arms-and-Sync]] onboarding flow. Brain-side AI docs (`copilot-instructions.md`, `.cursorrules`) are auto-synced down from the brain — never hand-edited per arm.
 
+### 4a. Two-tier memory model
+
+The `1 + N` brain count the octopus biology implies extends to *memory*. Most operational knowledge lives arm-local (recall: two-thirds of an octopus's neurons are in its arms); the central brain stays lean and generic.
+
+| Tier | Scope | Location | What lives here |
+|---|---|---|---|
+| **Brain memory** | Cross-arm, generic | Private `octorato-memory` repo (gitignored from this public repo, holds its own `.git` → private remote) | Operator identity, cross-arm lessons already distilled to generic, global context that survives arm changes |
+| **Arm memory** | Per-arm, client-specific | Each arm's own private repo, loaded via symlink | Client-specific facts, project history, local lessons not yet (or never) promoted |
+
+The wall between tiers mirrors the Arm Isolation invariant: arm memory never crosses to another arm or enters the public brain. Only the mechanism ships publicly (`scripts/memory_sync.py` + a template); the private remote URL and any memory content stay out of this repo entirely — same boundary as `company/`.
+
+Generic lessons distil **upward** (arm memory → brain memory, stripped of client details) following the same cycle as skills: see [§6](#6-upward-learning-and-downward-distribution). The full data model, sync protocol, and directory layout are in [`docs/architecture/memory-model.md`](../architecture/memory-model.md).
+
 ---
 
 ## 5. Information-flow rules

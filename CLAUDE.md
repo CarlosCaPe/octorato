@@ -77,8 +77,12 @@ AI AGENT — nervous system, executes via 4D paradigm
 | **Brain** | `~/.claude/` | Shared across all arms |
 | **Agents** | `~/.claude/agents/` (+ `REGISTRY.md`) | Generic personas, no client data |
 | **Skills** | `~/.claude/skills/` | Generic techniques, no client data |
+| **Brain memory** | private `octorato-memory` repo (nested `.git` in the gitignored memory dir) | Central brain-brain: generic lessons + operator identity; never public, never in an arm |
 | **Arm** | `~/Documents/github/<CLIENT>/` | Per-client repo, sealed |
 | **Arm Instructions** | `<CLIENT>/.claude/CLAUDE.md` | Single source of truth per arm |
+| **Arm memory** | `<CLIENT>/.claude/memory/` (symlinked to the harness) | The arm-brain: client-specific facts, sealed in the arm's own repo |
+
+**Memory = the octopus's brains (1 + N).** A real octopus has nine brains (1 central + 8 arms, ~2/3 of its neurons in the arms); Octorato is **1 + N** — one central brain-memory (`octorato-memory`) plus one sealed arm-brain per arm, N unbounded (the `8 → ∞` anchor applied to brains). Memory is two-tier by scope: generic cross-arm lessons + operator identity → central brain memory; client-specific facts → that arm's memory, sealed, distilling *upward* only once generic. The public framework ships the **mechanism** (`scripts/memory_sync.py` + `templates/memory/` + docs), never the data or the private remote URL. Full model: `docs/architecture/memory-model.md`.
 
 **Agent Layer:** 13 specialist divisions (Engineering, Design, Marketing, Sales, Product, Project Mgmt, Testing, Support, Specialized, Spatial Computing, Game Dev, Academic, Paid Media) — full taxonomy + triggers in `agents/REGISTRY.md`. Agents inherit ALL brain rules (4D, security, arm isolation), never access another arm's data, always complement (don't replace) skills.
 
