@@ -465,37 +465,130 @@ def cmd_revoke_merge(args) -> int:
     return 0
 
 
-def cmd_worktree_init(args) -> int:
-    """Idempotently create a git worktree for this dimension."""
-    sid = _resolve_session(args)
+def _worktree_init_core(sid: str) -> tuple[Path, str, bool]:
+    """Shared helper: idempotently create/attach a worktree for *sid*.
+
+    Returns (target_path, branch_name, already_existed).
+    Never raises — caller handles the result.
+    """
     short = sid[:8]
     target = DIM_ROOT / short
     branch = f"dim/{short}"
 
-    # Only short-circuit if target is actually a git worktree (has a .git entry)
+    # Already a valid git worktree checkout — reuse it
     if target.exists() and (target / ".git").exists():
-        print(str(target))
-        return 0
+        return target, branch, True
 
     DIM_ROOT.mkdir(parents=True, exist_ok=True)
 
-    # Try with -b (new branch)
+    # Try with -b (new branch); fall back to attaching an existing branch
     result = subprocess.run(
         ["git", "-C", str(BRAIN), "worktree", "add", str(target), "-b", branch],
         capture_output=True, text=True,
     )
     if result.returncode != 0:
-        # Branch may already exist; try attaching without -b
         result2 = subprocess.run(
             ["git", "-C", str(BRAIN), "worktree", "add", str(target), branch],
             capture_output=True, text=True,
         )
         if result2.returncode != 0:
             msg = result2.stderr.strip() or result.stderr.strip()
-            print(f"worktree-init: could not create worktree: {msg}")
-            return 0  # never hard-fail
+            raise RuntimeError(f"could not create worktree: {msg}")
 
-    print(str(target))
+    return target, branch, False
+
+
+def cmd_worktree_init(args) -> int:
+    """Idempotently create a git worktree for this dimension."""
+    sid = _resolve_session(args)
+    try:
+        target, _branch, _existed = _worktree_init_core(sid)
+        print(str(target))
+    except RuntimeError as exc:
+        print(f"worktree-init: {exc}")
+    return 0  # never hard-fail
+
+
+def cmd_start(args) -> int:
+    """Launch-time helper: provision a dimension and tell the operator how to enter it.
+
+    Workflow:
+      1. Resolve session id.
+      2. Idempotently create/attach the worktree via _worktree_init_core.
+      3. Register the session in the blackboard registry.
+      4. Warn if OTHER live sessions still share the main tree (no true isolation yet).
+      5. Print a copy-pasteable `cd ... && claude` instruction.
+
+    NOTE: a hook running inside an active agent CANNOT re-root that agent's process.
+    Hooks are subprocesses; chdir inside a subprocess does not affect the parent.
+    True isolation requires the OPERATOR to launch `claude` from inside the new
+    worktree directory BEFORE the session starts — that is why this subcommand exists.
+    """
+    try:
+        sid = _resolve_session(args)
+        short = sid[:8]
+
+        # Step 1: provision worktree
+        try:
+            target, branch, existed = _worktree_init_core(sid)
+        except RuntimeError as exc:
+            print(f"start: worktree error (non-fatal): {exc}", file=sys.stderr)
+            # Still register so the heartbeat can track the session
+            target = DIM_ROOT / short
+            branch = f"dim/{short}"
+            existed = False
+
+        # Step 2: register / upsert in blackboard
+        now = _now_iso()
+        data = _load()
+        existing = data["sessions"].get(sid, {})
+        entry = {
+            "session_id": sid,
+            "branch": branch,
+            "worktree": str(target),
+            "pid": os.getpid(),
+            "host": socket.gethostname(),
+            "started": existing.get("started", now),
+            "heartbeat": now,
+            "lanes": existing.get("lanes", []),
+        }
+        data["sessions"][sid] = entry
+        _save(data)
+
+        # Step 3: check for other live sessions on the MAIN tree (no worktree / empty worktree)
+        ttl = 900
+        warn_sessions = []
+        for other_sid, other_entry in data["sessions"].items():
+            if other_sid == sid:
+                continue
+            if not _is_live(other_entry, ttl):
+                continue
+            other_wt = (other_entry.get("worktree") or "").strip()
+            # "sharing main tree" = worktree is empty OR equals the BRAIN path
+            if not other_wt or Path(other_wt) == BRAIN:
+                warn_sessions.append(other_sid)
+
+        # Step 4: emit output
+        status = "already exists" if existed else "created"
+        print(f"dimension ready ({status}): {target}  (branch {branch})")
+        print()
+        print("Start your session there (the agent cannot re-root itself")
+        print("— the operator must launch claude from this directory):")
+        print()
+        print(f"    cd {target} && claude")
+        print()
+
+        if warn_sessions:
+            names = ", ".join(w[:12] for w in warn_sessions)
+            print(
+                f"WARNING: {len(warn_sessions)} other live session(s) still share the main "
+                f"working tree [{names}]. They are NOT isolated. Ask them to run `octo-dim start` too."
+            )
+
+    except Exception as exc:
+        # Top-level guard — start must never crash the operator's shell
+        print(f"start warning (non-fatal): {exc}", file=sys.stderr)
+
     return 0
 
 
@@ -531,6 +624,16 @@ def build_parser() -> argparse.ArgumentParser:
     wi.add_argument("--session-id", dest="session_id", default="",
                     help="Use this session id instead of auto-resolved")
 
+    st = sub.add_parser(
+        "start",
+        help="Provision a dimension worktree and print the cd+claude launch command",
+    )
+    st.add_argument(
+        "--session-id", dest="session_id", default="",
+        help="Pin a session id (default: CLAUDE_SESSION_ID env → hostname-pid)",
+    )
+    del st  # suppress unused-variable lint
+
     am = sub.add_parser("approve-merge", help="Grant operator approval for a PR/branch merge")
     am.add_argument("pr_or_branch", help="PR number or branch name (e.g. 96 or main)")
     am.add_argument("--by", default="", help="Approver name (default: $USER or 'operator')")
@@ -553,6 +656,7 @@ HANDLERS = {
     "claim": cmd_claim,
     "unregister": cmd_unregister,
     "worktree-init": cmd_worktree_init,
+    "start": cmd_start,
     "approve-merge": cmd_approve_merge,
     "approvals": cmd_approvals,
     "revoke-merge": cmd_revoke_merge,
