@@ -1,5 +1,7 @@
 # Octorato — the AI Agent OS that grows itself
 
+> **Organ:** central brain — receives intent from the human, distributes generic knowledge to every arm, and routes you to the organ that handles each concern.
+
 > **Octorato** = *octopus* + *tesseract* — an eight-armed brain in a 4D
 > activation space (Agent × Skill × Arm × 4D-phase). Open-source AI-agent
 > operating system for a single operator directing a shared brain of specialist
@@ -36,14 +38,14 @@ experience → more skills → more leverage.
 
 ## Start here
 
-1. **[[Architecture]]** — CLASS / OBJECT / ARM, the activation stack, and why an
-   octopus.
-2. **[[The-4D-Paradigm]]** — the nervous-system protocol every action follows.
-3. **[[Skills]]** — the full catalog of <!--canon:skills.count-->200+<!--/canon--> techniques (the *HOW*).
-4. **[[Agents]]** — the full roster of <!--canon:agents.count-->160+<!--/canon--> specialist personas
-   (the *WHO*).
-5. **[[Self-Growth]]** — the daily auto-curation loop.
-6. **[[Security]]** — why the brain stays generic, and how that's enforced.
+Each page is an organ. This brain routes you to whichever one you need.
+
+1. **[[Architecture]]** — the anatomy atlas: CLASS / OBJECT / ARM, the activation stack, and why an octopus.
+2. **[[The-4D-Paradigm]]** — the nervous signal: every action follows Describe → Delegate → Diligent → Disclose.
+3. **[[Skills]]** — the synapse catalog: <!--canon:skills.count-->200+<!--/canon--> learned techniques (the *HOW*).
+4. **[[Agents]]** — the neuron roster: <!--canon:agents.count-->160+<!--/canon--> specialist personas (the *WHO*).
+5. **[[Self-Growth]]** — neurogenesis and pruning: the daily auto-curation loop.
+6. **[[Security]]** — the immune system: why the brain stays generic, and how that's enforced.
 
 ## Quick start (run the brain yourself)
 

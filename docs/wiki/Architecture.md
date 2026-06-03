@@ -1,5 +1,7 @@
 # Architecture
 
+> **Organ:** anatomy atlas — the complete map of every layer, how they inherit, and why the organism takes this shape.
+
 The deep architecture reference for Octorato — the open-source AI-agent operating system that lives in `~/.claude/`. This page explains *why* the framework takes the shape it does, the object model that governs inheritance, the activation stack that fires on every task, the layers and their isolation guarantees, and the connectome that wires it all together.
 
 If you want the philosophy in one sentence: **one human consciousness directs a shared brain of specialist agents across many sealed client workspaces, and the data never crosses sideways.** That single constraint — and the biology that solves it — produces everything below.
@@ -308,3 +310,4 @@ The intellectual lineage is math and biology, deliberately: **∞** from John Wa
 - [[Agents-System]] — the *WHO* layer: 13 divisions, personas, activation modes.
 - [[Arms-and-Sync]] — the *FOR WHOM* layer: arm onboarding, isolation, multi-machine sync.
 - [[Self-Growth]] — upward learning, auto-skill creation, the daily discovery loop.
+- [`docs/architecture/hook-orchestration.md`](../architecture/hook-orchestration.md) — the reactive-control spec: ECA atoms, Behavior-Tree priority, Statechart 4D, Spreading-Activation recall, and Bandit tier-routing that wire the hooks into an autonomous reflex layer.

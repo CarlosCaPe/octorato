@@ -1,5 +1,7 @@
 # Agents System
 
+> **Organ:** neurons — specialist personas that supply the WHO, firing when the connectome routes a task to their domain.
+
 The **agent layer** is Octorato's roster of specialist personas. Where a [[Skills-System|skill]] answers *how* a task is done, an agent answers *who* does it. This page explains how that distinction works, how agents are activated, the rules they inherit, and how to add a new one. For the full agent roster (<!--canon:agents.count-->160+<!--/canon--> personas across the divisions), see [[Agents]].
 
 ---

@@ -1,5 +1,7 @@
 # The Skills System
 
+> **Organ:** synapses — learned reflexes that connect any agent to a validated technique, loaded on demand, never all at once.
+
 > How Octorato turns a general-purpose model into a specialist on demand — without ever loading everything at once.
 
 A **skill** is the smallest unit of reusable know-how in the Octorato brain: a self-contained folder holding a procedure, a convention, or a tool integration that the agent should reach for in a specific situation. Skills are the **HOW** layer of the framework. They sit between the rules in [`CLAUDE.md`](Home) and the per-client context of an [[Arms-and-Sync|arm]], and they are loaded *progressively* so that the context window stays cheap.

@@ -1,5 +1,7 @@
 # Arms and Sync
 
+> **Organ:** limbs and circulation — sealed arms execute in total isolation; sync is the bloodstream that keeps every machine and every arm current with the brain.
+
 > **The operations reference for client workspaces and multi-machine brain replication.** An *arm* is one sealed client repo that never knows another arm exists. The *brain* is the shared `~/.claude/` repo that cascades rules and skills down to every arm and absorbs anonymized lessons back up. This page covers how to onboard an arm, how knowledge flows both directions, and how to keep the brain consistent across machines.
 
 If you have not yet read [[Architecture]], do that first — it explains *why* arms are isolated. This page explains *how* to run them.

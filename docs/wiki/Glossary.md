@@ -1,5 +1,7 @@
 # Glossary
 
+> **Organ:** the genome's index — every term decoded so each page can be read without ambiguity.
+
 > Every Octorato concept and term in one place, A→Z. If a word on another wiki page is unfamiliar, decode it here; entries cross-link to the deeper page where one exists.
 
 Octorato is an open-source AI-agent operating system. Its name fuses two ideas — *octopus* + *tesseract* — and that fusion runs all the way down through the architecture. Most of the vocabulary below falls into one of five families: **structure** (Brain, Arm, Company brain, CLASS/OBJECT/ARM), **flow** (4D Paradigm and its gates), **intelligence** (Connectome, Skills, Agents, Divisions), **money** (FinOps, Budget cap, Trace event), and **operations** (the sync scripts, the generic-safety guard, the self-growth loop).
