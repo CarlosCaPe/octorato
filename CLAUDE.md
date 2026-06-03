@@ -187,7 +187,12 @@ At the START of every non-trivial task, run all three in this order:
 
 The heartbeat (`scripts/connectome-heartbeat.py`) makes Q1 involuntary — like the octopus's pulse circulating blood through its whole body and returning. It surfaces a *lean*; the model still owns Q2/Q3 and the final verdict.
 
-Combined verdict: **ACTIVATE** (agent + skills + persona), **LOAD** (skills only), or **SELF** (general knowledge — only if Q1 and Q3 both return no strong match). Report the 3-line summary in every response that involves work. Full detail in `skills/4d-paradigm-protocol/SKILL.md`.
+**Combined verdict — SELF is the rare exception, NEVER the default.** The agent is a **connector to real sources, not an encyclopedia**: answering "from my own knowledge" fabricates authority and is exactly what makes people distrust AI. So the default is to **CONNECT**:
+- **ACTIVATE** (agent + skills + persona) when an agent fits — and pair non-trivial developer work with an independent **coworking QA** counterpart (Reality Checker / Evidence Collector / Code Reviewer). The QA verdict is the merge gate, not green CI. Merges are **fail-closed** (`qa-merge-gate`): the operator approves a specific PR via `OCTO_MERGE_APPROVE=<pr>` (agent-proof env — an inline env never reaches the hook) or `octo-dim approve-merge <pr>`; **the agent cannot self-approve its own gate**.
+- **LOAD** (skills) for technique — this is the default *even with no graph match* (load general technique; do not answer as an oracle).
+- **SELF** ONLY when the operator explicitly asks for my opinion/judgment ("¿qué opinas?", "recomiendas?", "what do you think?") — and even then the opinion is **sourced**, never an unsourced gut-call.
+
+**Route work by complexity across all THREE models** (`model-routing-by-complexity`): mechanical → Haiku sub-agent · build → Sonnet · risky review / orchestration → Opus. Never burn Opus on what a cheaper engine does — delegating *is* Q3 (¿quién lo hace?), not optional. These verdicts are meant to fire as **reflexes via hooks**, not depend on discipline — see `docs/architecture/hook-orchestration.md` (the Reactive Control Architecture: ECA atoms · Behavior-Tree priority · Statechart 4D · Spreading-Activation recall · Bandit tier-routing). Report the 3-line summary in every response that involves work. Full detail in `skills/4d-paradigm-protocol/SKILL.md`.
 
 ### 4D Gate (Pre-Write Manifest)
 

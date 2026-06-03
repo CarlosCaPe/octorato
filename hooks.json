@@ -5,6 +5,12 @@
       "hooks": [
         {
           "type": "command",
+          "command": "python3 ~/.claude/scripts/grafo-turn-reset.py",
+          "timeout": 5,
+          "statusMessage": "♦ resetting turn ledger..."
+        },
+        {
+          "type": "command",
           "command": "python3 ~/.claude/scripts/4d-reminder.py",
           "timeout": 5,
           "statusMessage": "Injecting 4D reasoning..."
@@ -91,6 +97,47 @@
           "type": "command",
           "command": "python3 ~/.claude/scripts/trace-hook.py --phase gate",
           "timeout": 5
+        },
+        {
+          "type": "command",
+          "command": "python3 ~/.claude/scripts/delegate-gate.py",
+          "timeout": 5,
+          "statusMessage": "♦ delegate reflex (connect, don't SELF)..."
+        },
+        {
+          "type": "command",
+          "command": "python3 ~/.claude/scripts/dimension-awareness-hook.py",
+          "timeout": 5,
+          "statusMessage": "♦ 4D: checking parallel dimensions..."
+        }
+      ]
+    },
+    {
+      "matcher": "Bash",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "python3 ~/.claude/scripts/qa-merge-gate.py",
+          "timeout": 5,
+          "statusMessage": "♦ QA gate (fail-closed on merge)..."
+        },
+        {
+          "type": "command",
+          "command": "python3 ~/.claude/scripts/grafo-gate.py",
+          "timeout": 5,
+          "statusMessage": "♦ ¿y el grafo? (seek > scan)..."
+        },
+        {
+          "type": "command",
+          "command": "python3 ~/.claude/scripts/delegate-gate.py",
+          "timeout": 5,
+          "statusMessage": "♦ delegate reflex (connect, don't SELF)..."
+        },
+        {
+          "type": "command",
+          "command": "python3 ~/.claude/scripts/dimension-awareness-hook.py",
+          "timeout": 5,
+          "statusMessage": "♦ 4D: checking parallel dimensions..."
         }
       ]
     }
