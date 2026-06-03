@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -194,7 +195,18 @@ def check_runners_tracked(fix: bool) -> Result:
     key = "runners-tracked"
     bin_dir = HOME / ".local" / "bin"
     names = ["ai-pull", "ai-push", "sync-ai-docs"]
-    missing = [n for n in names if not (bin_dir / n).exists()]
+    # On Windows the runners are .cmd/.ps1 thunks, not extensionless POSIX files.
+    exts = ["", ".cmd", ".ps1", ".bat"] if os.name == "nt" else [""]
+
+    def resolve_runner(n):
+        for ext in exts:
+            cand = bin_dir / (n + ext)
+            if cand.exists():
+                return cand
+        return None
+
+    resolved = {n: resolve_runner(n) for n in names}
+    missing = [n for n, p in resolved.items() if p is None]
     if missing:
         return Result(key, FAIL, f"missing runner(s): {', '.join(missing)}",
                       "reinstall runners into ~/.local/bin/ (see arm-onboarding skill)")
@@ -202,7 +214,7 @@ def check_runners_tracked(fix: bool) -> Result:
     untracked = []
     scripts_dir = (CLAUDE_DIR / "scripts").resolve()
     for n in names:
-        p = bin_dir / n
+        p = resolved[n]
         try:
             real = p.resolve()
         except Exception:
@@ -471,6 +483,51 @@ def check_lineage_sound(fix: bool) -> Result:
                   detail[0] if detail else "run `python3 scripts/lineage-doctor.py`")
 
 
+def check_release_drift(fix: bool) -> Result:
+    """News is the brain's marketing reflex: a documented version that was never
+    tagged/released = a growth moment (GH release + /dataqbs-news → site/FB) silently
+    skipped. Flags when CHANGELOG's top version has no matching git tag — checking the
+    remote too, so an un-fetched fresh clone doesn't false-positive on a real release."""
+    key = "release-drift"
+    changelog = CLAUDE_DIR / "CHANGELOG.md"
+    if not changelog.exists():
+        return Result(key, WARN, "CHANGELOG.md absent — cannot verify release/news cadence",
+                      "create CHANGELOG.md at brain root")
+    top_version = None
+    for line in changelog.read_text(encoding="utf-8", errors="ignore").splitlines():
+        if not line.startswith("## ") or "unreleased" in line.lower():
+            continue
+        m = re.search(r"v(\d+\.\d+\.\d+)", line)
+        if m:
+            top_version = m.group(1)
+            break
+    if not top_version:
+        return Result(key, WARN, "no versioned heading found in CHANGELOG.md",
+                      "use `## [date] — vX.Y.Z` headings when cutting a release")
+    tags_cp = git("tag", "--list")
+    local_tags = set(tags_cp.stdout.split()) if tags_cp.returncode == 0 else set()
+    if f"v{top_version}" in local_tags:
+        return Result(key, PASS, f"CHANGELOG top v{top_version} has a matching git tag — released")
+    # A fresh clone may not have fetched tags. "Released" = the remote tag / GH release
+    # exists, not whether this working copy happened to pull it — so fall back to the
+    # remote before declaring drift, or the check false-positives on every un-fetched clone.
+    try:
+        ls = subprocess.run(
+            ["git", "ls-remote", "--tags", "origin", f"v{top_version}"],
+            cwd=str(CLAUDE_DIR), capture_output=True, text=True, timeout=10,
+        )
+        if ls.returncode == 0 and f"refs/tags/v{top_version}" in ls.stdout:
+            return Result(key, PASS,
+                          f"CHANGELOG top v{top_version} released (remote tag exists; "
+                          f"not fetched locally — `git fetch --tags` to sync)")
+    except (subprocess.TimeoutExpired, OSError):
+        pass  # offline — fall through to the local-only verdict below
+    return Result(key, WARN,
+                  f"CHANGELOG declares v{top_version} but no git tag v{top_version} (local or remote) — "
+                  f"release & news never cut (news = top-of-funnel marketing; a major bump with no news = lost reach)",
+                  f"gh release create v{top_version} (notes from CHANGELOG); then run /dataqbs-news in the arm")
+
+
 CHECKS = [
     ("repo-identity", check_repo_identity),
     ("sync-clean", check_sync_clean),
@@ -486,6 +543,7 @@ CHECKS = [
     ("blocklist", check_blocklist),
     ("finops-enforcement", check_finops_enforcement),
     ("lineage-sound", check_lineage_sound),
+    ("release-drift", check_release_drift),
 ]
 
 STATUS_ICON = {PASS: "✓", WARN: "!", FAIL: "✗"}
