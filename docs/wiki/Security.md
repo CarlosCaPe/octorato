@@ -1,5 +1,9 @@
 # Security
 
+> **Organ:** immune system — defends the organism's generic identity by blocking private content from ever entering the public brain.
+
+> The root `SECURITY.md` in the repo is the GitHub vulnerability-report entry point; this page is the full threat model.
+
 Octorato has an unusual security posture. Most projects defend a private codebase against external attackers. Octorato is the opposite: **the repository *is* a running brain, and it is published open-source.** The artifact you are reading — `~/.claude/` — is simultaneously the operator's live working memory *and* a public GitHub repo (`github.com/CarlosCaPe/octorato`) whose every commit, branch, tag, and filename is visible to the world forever.
 
 That inversion drives the entire model. The primary threat is not someone breaking *in*; it is the operator's private world leaking *out* — a client name, a coworker, a secret, a ticket ID — committed once and preserved in public git history permanently. Git is append-only by design; a leak is not a bug you patch, it is a disclosure you cannot fully retract.

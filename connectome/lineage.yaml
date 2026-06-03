@@ -177,6 +177,76 @@ edges:
       not re-derive the metaphor. Also lights the original 'octorato symbolism
       octopus' seek that fell back to grep on 2026-06-01.
 
+  # ── Lit on 2026-06-03: the memory model — Octorato has 1+N brains, not 9. ──
+  - id: memory-two-tier-n-brains
+    concept: "two-tier memory / nine brains / 1+N brains / central brain vs arm brains / brain memory vs arm memory / octorato-memory standalone repo / memory sync"
+    appears_in:
+      - docs/architecture/memory-model.md                     # the source of truth (two tiers, neurobiology)
+      - skills/octorato-symbolism/SKILL.md                    # 8→∞ EXTENDS to brains: 9 fixed → 1+N unbounded
+      - scripts/memory_sync.py                                # the public mechanism (engine, not data)
+      - templates/memory/MEMORY.template.md                  # empty index adopters copy
+      - skills/arm-onboarding/SKILL.md                        # a new arm = a new arm-brain (its own .claude/memory)
+      - CLAUDE.md                                             # §The Octopus Architecture + Information Flow (memory routing)
+      - README.md                                            # brain/arms labels + counts framing
+      - docs/wiki/Glossary.md                                # define brain memory / arm memory / 1+N brains
+      - docs/wiki/Architecture.md                            # the two-tier memory in the architecture map
+      - "<each arm>/.claude/memory/ (symlinked to the harness; sealed arm-brain)"  # off-repo, per-arm
+    kind: appears_in
+    offrepo: true
+    note: >-
+      A biological octopus is fixed at 9 brains (1 central + 8 arms). Octorato is
+      1+N: one central brain (this repo + the private octorato-memory store) plus
+      one sealed arm-brain per arm (<each arm>/.claude/memory, version-controlled
+      in the arm's own private repo, loaded via symlink). N is unbounded — the
+      8→∞ anchor applied to brains. Routing: a lesson that helps a different
+      client distils UP to the central brain; an arm-specific fact stays in the
+      arm-brain. Change the memory model and EVERY surface above must stay
+      coherent, or the label pixelates. Brain memory data + the private remote URL
+      NEVER appear in any public surface (mechanism is public, data is private).
+
+  # ── Lit on 2026-06-03: doc anatomy — every doc is an organ; placement follows morphology. ──
+  - id: doc-anatomy-morphology
+    concept: "doc anatomy / organ line / morphology-anchored documentation / where docs live / wiki organs vs architecture specs / trace storage / capability inventory"
+    appears_in:
+      - docs/wiki/Home.md                                     # central brain (the lobby that routes to organs)
+      - docs/wiki/_Sidebar.md                                 # the organism's index, ordered by anatomy
+      - docs/wiki/Architecture.md                             # anatomy atlas (the canonical organ map)
+      - docs/architecture/trace-storage.md                    # sensory nerves (moved here from docs/ root)
+      - docs/architecture/capability-inventory.md             # generated census (moved here from docs/ root)
+      - docs/architecture/hook-orchestration.md               # nervous-system spec (linked from wiki Architecture)
+      - docs/architecture/memory-model.md                     # brain memory spec (1+N)
+      - README.md                                             # organism overview (diet: organs carry the depth)
+    kind: appears_in
+    note: >-
+      The documentation IS the organism: docs/wiki/ pages are operator-facing
+      ORGANS (each carries a one-line "> **Organ:** ..." anchor under its H1),
+      docs/architecture/ holds internal specs, and the root GitHub-special files
+      (SECURITY/SUPPORT/CONTRIBUTING) are the skin. A new doc must name its
+      organ and live in the layer that matches its reader; a doc that explains
+      octopus lore apart from its technique is the pixelation failure this
+      edge exists to prevent. Counts on any of these surfaces are canon-owned
+      (content/canon.facts.yaml) — never hand-edited.
+
+  # ── Lit on 2026-06-03: the anchor isomorphism — the three anchors share one structure. ──
+  - id: anchor-isomorphism-invariant
+    concept: "anchor isomorphism / invariant / octopus ∧ linux ∧ tesseract intersection / the three anchors share structure / intersection over quotient-by-synonymy / abstraction = upward learning / structural metaphor not decorative"
+    appears_in:
+      - skills/octorato-isomorphism/SKILL.md                  # the method (⋂ over V/~ = abstraction; CCA / structure-mapping / GEB isomorphism)
+      - skills/octorato-isomorphism/anchors.yaml              # the three descriptor sets + synonym groups + invariant→primitive map (config-first)
+      - scripts/octorato-isomorphism.py                       # computes the invariant from the data; no corpus generation
+      - skills/octorato-symbolism/SKILL.md                    # OWNS the fractal/self-similar primitive this skill only measures (no fork)
+      - skills/harmonization-over-accretion/SKILL.md          # the no-fork stance: two skills, one primitive, measurement ≠ second home
+    kind: appears_in
+    note: >-
+      The three anchors (octopus = architecture, linux = OS, tesseract = 4D) are
+      one structure shown three times (an isomorphism). The shared descriptors —
+      computed as a set intersection over the quotient-by-synonymy, NOT by brute-
+      force corpus generation — ARE the brain's required primitives; the brain
+      already embodies all ten. self-similar/fractal lives in octorato-symbolism
+      (the WHY); this skill is the MEASUREMENT that proves the metaphor is
+      structural. If a new anchor/metaphor is added, run it through the
+      intersection: share the invariant or it is decoration, not structure.
+
   - id: session-isolation
     concept: "session/instance isolation / two live dimensions share one worktree / co-tenancy guard / each session its own git worktree"
     appears_in:

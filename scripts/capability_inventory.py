@@ -9,14 +9,14 @@ which tools / privileged actions each one declares or invokes:
   - Skills rarely declare front-matter tools; they reference tool names in their
     body (e.g. "use Bash to…", "@Agent"). We count whole-word body references.
 
-Output: a Markdown frequency table written to `docs/capability-inventory.md`
+Output: a Markdown frequency table written to `docs/architecture/capability-inventory.md`
 (tool → agent count → skill count → total → example files). This is the input
 to the M1 Kernel-ABI RFC: it shows what privileged actions agents actually take.
 
 Pure stdlib, read-only, no network. Deterministic output (sorted), so re-runs
 produce a stable diff.
 
-    python3 scripts/capability_inventory.py            # writes docs/capability-inventory.md
+    python3 scripts/capability_inventory.py            # writes docs/architecture/capability-inventory.md
     python3 scripts/capability_inventory.py --stdout   # print to stdout instead
     python3 scripts/capability_inventory.py --check     # exit 1 if output is stale
 """
@@ -29,7 +29,7 @@ from pathlib import Path
 CLAUDE_DIR = Path(os.environ.get("CLAUDE_DIR", Path.home() / ".claude"))
 AGENTS_DIR = CLAUDE_DIR / "agents"
 SKILLS_DIR = CLAUDE_DIR / "skills"
-OUTPUT = CLAUDE_DIR / "docs" / "capability-inventory.md"
+OUTPUT = CLAUDE_DIR / "docs" / "architecture" / "capability-inventory.md"
 
 # The Claude Code tool vocabulary we census. Whole-word, case-sensitive match
 # (these are PascalCase tool identifiers, distinct from common English words).
@@ -171,7 +171,7 @@ def main():
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     ap.add_argument("--stdout", action="store_true", help="print to stdout instead of writing the file")
-    ap.add_argument("--check", action="store_true", help="exit 1 if docs/capability-inventory.md is stale")
+    ap.add_argument("--check", action="store_true", help="exit 1 if docs/architecture/capability-inventory.md is stale")
     args = ap.parse_args()
 
     inv, all_tools_agents, unscoped_agents = scan()

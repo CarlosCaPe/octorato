@@ -4,7 +4,7 @@
 # This is the CONTENT counterpart of tokens/canon.json (which governs design
 # VALUES). A surface subscribes to a fact by embedding a marker:
 #
-#     <!--canon:octorato.tagline-->...anything...<!--/canon-->
+#     <!--canon:octorato.tagline-->an organic, file-native AI agent operating system — one brain, many sealed arms<!--/canon-->
 #
 # `canon-render.py` rewrites the span between the markers to the canonical
 # rendered value. The marker IS the subscription — a file opts in by carrying
@@ -33,6 +33,11 @@ meta:
   # not a unilateral one. See the PR coordination note.
   targets:
     - "content/*.md"
+    # docs/wiki joined 2026-06-03 (doc-harmonization): Home/_Sidebar/Glossary/
+    # Agents-System counts had drifted to three different stale values
+    # (201/152/162) while the canon held 200+/160+. The wiki organs now cite
+    # the genome via markers instead of carrying copies.
+    - "docs/wiki/*.md"
     # README.md joined 2026-05-30: the hero-line counts are now wrapped in canon
     # markers, which removes them from sync-readme-counts.py's regex reach (the
     # comment tag breaks the number+noun adjacency) and hands those occurrences to

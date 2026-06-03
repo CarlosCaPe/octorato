@@ -27,8 +27,8 @@ STATS = BRAIN / "scripts" / "brain-stats.py"
 # Floors currently asserted in prose (README + site). Keep in sync with the
 # tokens actually written. {label: (floor, next_round)}
 FLOORS = {
-    "skills": (180, 190),   # "180+"; bump to 190+ when real >= 190
-    "agents": (150, 160),   # "150+"; bump to 160+ when real >= 160
+    "skills": (200, 210),   # "200+"; bump to 210+ when real >= 210
+    "agents": (160, 170),   # "160+"; bump to 170+ when real >= 170
 }
 FORBIDDEN_STALE = ["162 agent", "110 reusable", "110 skill", "4,621", "4.621"]
 

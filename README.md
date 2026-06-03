@@ -66,13 +66,12 @@ Octorato isn't a demo — it ships real software. A few of the products this bra
 - [Quick Start](#quick-start)
 - [Architecture — CLASS / OBJECT / ARM](#architecture--class--object--arm)
 - [The 4D Paradigm — The Nervous System](#the-4d-paradigm--the-nervous-system)
-- [Change Manifest](#change-manifest)
 - [4D+S — Spec-Driven Development Integration](#4ds--spec-driven-development-integration)
 - [The Corporation](#the-corporation)
 - [The Connectome — Neural Architecture](#the-connectome--neural-architecture)
 - [Client Arms — Total Isolation](#client-arms--total-isolation)
-- [Org Chart — 13 Divisions, 160+ Agents](#org-chart--13-divisions-160-agents)
-- [Synapses — The Skill Layer (200+ reusable techniques)](#synapses--the-skill-layer-200-reusable-techniques)
+- [Org Chart — 13 Divisions, 167 Agents](#org-chart--13-divisions-167-agents)
+- [Synapses — The Skill Layer](#synapses--the-skill-layer)
 - [Memory — Hippocampus and the Working Set](#memory--hippocampus-and-the-working-set)
 - [Reflexes — The Spinal Cord Layer](#reflexes--the-spinal-cord-layer)
 - [Observability — The Sensory Cortex](#observability--the-sensory-cortex)
@@ -134,7 +133,7 @@ An open-source AI agent operating system where a single human operator directs a
 
 With nothing but natural language, you can direct a team of AI specialists to build and ship software, and bill the client honestly when it ships.
 
-**Live framework**: 200+ skills, 160+ agent personas across 13 divisions, enforcement scripts, multi-machine sync, a neural connectome that learns over time, and a FinOps pipeline that tags every trace event with the client who incurred it — with per-arm USD rollup and a `PreToolUse` budget halt **shipped, opt-in** (configure `budgets.yaml` to arm caps; run the `anthropic-enterprise-analytics` pull to reconcile estimate against billed cost). See [roadmap below](#finops-roadmap).
+**Live framework**: 208 skills, 167 agent personas across 13 divisions, enforcement scripts, multi-machine sync, a neural connectome that learns over time, and a FinOps pipeline that tags every trace event with the client who incurred it — with per-arm USD rollup and a `PreToolUse` budget halt **shipped, opt-in** (configure `budgets.yaml` to arm caps; run the `anthropic-enterprise-analytics` pull to reconcile estimate against billed cost). See [roadmap below](#finops-roadmap).
 
 **Shipped with it**: live products built and maintained agent-first on this brain — see [Built with Octorato](SHOWCASE.md).
 
@@ -198,24 +197,7 @@ Beyond the arms, the octopus has:
 
 The central brain sets high-level intent. The arms execute with local intelligence. Information flows **up** (arm discoveries reach the brain) and **down** (brain strategies reach the arms). In biology, some peripheral inter-arm communication exists — but in our software, we enforce **total sideways isolation** as a deliberate design choice for client data security.
 
-### The Software
-
-> **Note on the metaphor:** the table below is a *design analogy*, not a claim of mechanistic equivalence. We borrow vocabulary because the architectural shape rhymes — but the framework's "Hebbian", "connectome", and "regeneration" are software primitives, not biology. Where the mapping would mislead an ML reader, we flag it.
-
-| Octopus Biology | Framework Architecture | What It Does |
-|----------------|----------------------|-------------|
-| Central brain | `~/.claude/` (this repo) | Shared rules, paradigms, 160+ specialist agents, 200+ skills |
-| Arms | Client project repos | Isolated workspaces — each client is a sealed arm |
-| Neurons | Agent personas | 160+ specialist agents across 13 divisions |
-| Synapses | Skills | 200+ reusable techniques that connect agents to capabilities |
-| Chemoreceptors (suckers) | `query_connectome.py` | TF-IDF cosine similarity against the indexed agent/skill corpus — a sparse lexical retriever, not multimodal chemoreception |
-| Afferent/efferent signal cycle | 4D Paradigm | Sense → plan → act → evaluate, with feedback — every signal follows 4 phases |
-| Co-activation reinforcement (inspired by Hebb's principle) | Hebbian-style learning | Edge weights between agent/skill pairs are boosted when they co-fire on a successful task; stale boosts decay exponentially (half-life ~69 days) and failures subtract. **Not LTP** — there is no NMDA-style coincidence detector, no synaptic protein synthesis. Closest ML analog: bandit reward priors over a static graph. |
-| Homeostatic remodeling (≠ mRNA recoding) | Connectome regeneration | The map rebuilds from scratch on every `ai-push`. **Departs from the biology**: real octopus A-to-I editing is a narrow post-transcriptional modification, not a full graph rebuild. We use the rebuild as a software convenience, not a biological claim. |
-| Chromatophores | Dynamic agent loading | Tens of thousands of individually innervated color cells allow real-time pattern changes — the framework dynamically loads agent personas on demand |
-| Arm autonomy | Arm isolation | In biology, arms have high autonomy *with* peripheral inter-arm communication. The framework enforces **total** sideways isolation — a deliberate departure from biology for client data security. |
-
-This is modeled on a nervous system. The biology grounds the design; it does not validate the math.
+The full biology-to-software mapping table (with ML-accuracy notes on each analogy) lives in [wiki Architecture §9](https://github.com/CarlosCaPe/octorato/wiki/Architecture#the-software-mapping).
 
 ### The 8 and the Tesseract
 
@@ -284,176 +266,25 @@ Fork → branch off `test` → PR against `test`. Full guide: [CONTRIBUTING.md](
 
 ## Architecture — CLASS / OBJECT / ARM
 
-> The reactive control architecture that governs how hooks compose, arbitrate, and enforce the 4D phase machine is documented in [`docs/architecture/hook-orchestration.md`](docs/architecture/hook-orchestration.md): ECA atoms (L1) · Behavior-Tree priority (L2) · Statechart 4D phase machine + Blackboard (L3) · Contextual-Bandit model-tier routing (L4, specified). That document is the authoritative spec for adding or restructuring hooks.
+The framework uses an object-oriented inheritance model: **BRAIN = CLASS** (this public repo, the DNA) → **COMPANY BRAIN = OBJECT** (your private `~/.claude/company/`, gitignored) → **ARMS = PROPERTIES** (isolated per-client repos that never see each other).
 
-The framework uses an object-oriented inheritance model:
+The brain ships the engine — 4D Paradigm, connectome, agents, skills, enforcement scripts, templates. The company brain holds your identity and arm definitions. Each arm holds one client's context, sealed.
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│   BRAIN = CLASS (this repo, open-source, the DNA)            │
-│   ~/.claude/                                                 │
-│                                                              │
-│   What it IS:                                                │
-│     - The 4D Paradigm (Describe-Delegate-Diligent-Disclose)  │
-│     - The Octopus Architecture (brain/arm isolation)         │
-│     - The connectome engine (TF-IDF, cosine similarity)      │
-│     - 160+ generic agent personas                              │
-│     - 200+ generic skills (techniques, not client workflows)  │
-│     - Enforcement scripts (delegate-check, gate-check, etc.) │
-│     - Templates for creating your own company brain + arms   │
-│                                                              │
-│   What it is NOT:                                            │
-│     - Anyone's personal identity                             │
-│     - Anyone's client list or credentials                    │
-│                                                              │
-└──────────────────────┬───────────────────────────────────────┘
-                       │  instantiates
-┌──────────────────────▼───────────────────────────────────────┐
-│   COMPANY BRAIN = OBJECT (your private instance)             │
-│   ~/.claude/company/   (gitignored from framework repo)      │
-│                                                              │
-│   What it IS:                                                │
-│     - Your professional identity (name, rates, certs, CV)    │
-│     - Your arm definitions (which clients, which codes)      │
-│     - Your company-specific skills and workflows             │
-│     - Your connection configs, assets, voice style           │
-│                                                              │
-└──────────────────────┬───────────────────────────────────────┘
-                       │  manages
-┌──────────────────────▼───────────────────────────────────────┐
-│   ARMS = PROPERTIES (client projects, isolated)              │
-│   ~/projects/<client>/                                       │
-│                                                              │
-│   Each arm is an isolated client project.                    │
-│   Arms never see each other's data.                          │
-│   Each has .claude/CLAUDE.md with client-specific rules.     │
-└──────────────────────────────────────────────────────────────┘
-```
+The reactive control architecture (ECA atoms · Behavior-Tree priority · Statechart 4D · Bandit routing) that governs hook composition is in [`docs/architecture/hook-orchestration.md`](docs/architecture/hook-orchestration.md). Full CLASS/OBJECT/ARM anatomy, biology mapping, and information-flow rules: [wiki Architecture](https://github.com/CarlosCaPe/octorato/wiki/Architecture).
 
 ---
 
 ## The 4D Paradigm — The Nervous System
 
-The 4D is not a checklist. It is the **nervous system protocol** — every signal in the octopus, from brain to arm and back, follows these four phases. No exceptions.
+The 4D is not a checklist. It is the **nervous system protocol** — every signal in the octopus follows four phases. No exceptions.
 
-In neuroscience terms: the first two phases (Describe + Delegate) are **afferent** — sensory signals coming IN, asking *"what's the task, who can solve it, what's the plan?"*. The last two (Diligent + Disclose) are **efferent** — motor signals going OUT, reporting *"this is what happened, here's the evidence, here's the impact."* The Change Gate sits at the synapse between the two — the irreversible commit to action.
+**1D Describe** → state what and why before acting. **2D Delegate** → search the connectome (Q1: who knows?), check for an API (Q2: MCP first), run delegate-check (Q3: who does it?). **Change Gate** → present a full manifest of every file to create/modify/delete, wait for explicit confirmation. **3D Diligent** → validate with evidence (build/lint/test); FAIL means fix, not ship. **4D Disclose** → scan the Impact Radius; every change radiates.
 
-### The Signal Flow
+Think of it like `terraform plan` before `terraform apply`. The agent presents a **Change Manifest** and stops and waits. No fire-and-forget. This is a gate, not a suggestion.
 
-```
-  INPUT (before acting — analysis phase):
-  ┌─────────────────────────────────────────────────────────────┐
-  │ 1D DESCRIBE  → "I will do X because Y"                     │
-  │              State: task type, scope, files involved         │
-  │                                                             │
-  │ 2D DELEGATE  → Search the connectome, find the specialist   │
-  │              Run 3 mandatory questions (see below)           │
-  │              Load the right agent + skills                   │
-  │              ← delegate-gate (fail-open)                     │
-  └─────────────────────────────────────────────────────────────┘
-                            │
-                    ┌───────▼───────┐
-                    │  CHANGE GATE  │  ← STOP. Manifest. Confirm.
-                    │  (4D Gate)    │     No writes without human OK.
-                    │               │  ← qa-merge-gate (fail-closed)
-                    └───────┬───────┘
-                            │ confirmed
-                    ┌───────▼───────┐
-                    │   EXECUTE     │  ← Apply changes
-                    └───────┬───────┘
-                            │
-  OUTPUT (after acting — validation phase):
-  ┌─────────────────────────────────────────────────────────────┐
-  │ 3D DILIGENT  → Validate: build, lint, test. Show evidence.  │
-  │              If FAIL → fix before declaring done             │
-  │                                                             │
-  │ 4D DISCLOSE  → "Impact: N files changed, M side effects"    │
-  │              Impact Radius scan. Warnings. Next steps.       │
-  └─────────────────────────────────────────────────────────────┘
-```
+The 4D runs in a **WHILE** — `while (open work / Touched ≠ intent): 4D()`. Each response ends with a *Provenance* footer (Basis · Engine · Touched · Verified): the brain's proprioception, and the loop condition for the next beat.
 
-Think of it like `terraform plan` before `terraform apply`. The agent presents a **Change Manifest** — a table of every file it will create, modify, or delete — and waits for explicit human confirmation before touching anything.
-
-### The Change Gate (Mandatory)
-
-No file gets modified, created, or deleted without the human seeing the full manifest first:
-
-```
-## Change Manifest
-
-| # | Action | File              | Reason                     |
-|---|--------|-------------------|----------------------------|
-| 1 | MODIFY | src/auth.py:32    | Fix token refresh logic    |
-| 2 | MODIFY | tests/test_auth.py| Add regression test        |
-| 3 | DELETE | src/auth_old.py   | Orphaned after refactor    |
-
-Impact: 2 files modified, 1 orphan deleted.
-Confirm? (yes/no)
-```
-
-The agent **stops and waits**. No "fire-and-forget". This is a gate, not a suggestion.
-
-### The 3 Mandatory Questions (2D Delegate)
-
-Before any work begins, the agent must answer three questions:
-
-**Q1: WHO KNOWS? (Suction Cups — Graph Search)**
-
-```bash
-python3 ~/.claude/scripts/query_connectome.py query "optimize PostgreSQL query"
-```
-
-This searches the neural graph using TF-IDF cosine similarity. It builds a query vector from the task description using the stored IDF dictionary, then ranks agents and skills by cosine similarity against their stored TF-IDF vectors.
-
-Real output:
-```
-AGENTS (best match → least match):
-  🗄️ Database Optimizer (engineering) — score: 4.6, connections: 35
-    └─ top skills: autovacuum-bloat-management(1.00), explain-analyze-validation(1.00)
-  ⏱️ Performance Benchmarker (testing) — score: 1.0, connections: 29
-    └─ top skills: explain-analyze-validation(1.00), pg-stat-statements(1.00)
-
-SKILLS (best match → least match):
-  QueryMaster — PostgreSQL Engine Skill — score: 2.6, connections: 53
-```
-
-The suction cups compute cosine similarity against the graph and find the right neuron. No guessing.
-
-**Q2: HAS IT GOT AN API? (MCP-First — Token Efficiency + Capability)**
-
-Before any scraping or browser automation, check for a typed integration:
-
-| Priority | Access | Tokens | Why |
-|---|---|---|---|
-| 1 | **MCP server** | ~300 | Typed, schema-validated, conversation-aware — the agent's preferred action surface. See [MCP Servers](#mcp-servers--the-action-space). |
-| 2 | REST API | ~200 | Cheapest if no MCP exists for the service. |
-| 3 | SDK / CLI | ~500 | Programmatic but heavier. |
-| 4 | Scraping (last resort) | ~5,000+ | Browser snapshots are token-expensive and brittle. |
-
-If the task does not touch external data, this question is N/A.
-
-**Q3: WHO DOES IT? (Delegate-Check — Rule Match)**
-
-```bash
-python3 ~/.claude/scripts/delegate-check "optimize PostgreSQL query"
-```
-
-Parses REGISTRY.md triggers and skill descriptions. Outputs: ACTIVATE agent / LOAD skill / SELF (proceed alone).
-
-### Impact Radius
-
-The 4th D is not just "tell the user what happened." Before modifying any object, the agent scans every reference to it across the entire workspace:
-
-```
-BEFORE CHANGING OBJECT X:
-  1. WHERE is X referenced?     → grep all files
-  2. WHERE is X produced?       → find the generator
-  3. WHO consumes X downstream? → deliverables, scripts, configs
-  4. WHAT becomes orphaned?     → old files made obsolete
-  5. DISCLOSE the full radius   → list ALL affected files
-```
-
-No object is an island. Every change radiates. The agent scans the radius first.
+Full protocol, gate formats, validation matrix, enforcement scripts, and the WHILE loop: [wiki The-4D-Paradigm](https://github.com/CarlosCaPe/octorato/wiki/The-4D-Paradigm) · [`skills/4d-paradigm-protocol/SKILL.md`](skills/4d-paradigm-protocol/SKILL.md).
 
 ---
 
@@ -485,8 +316,8 @@ The archived specs become institutional memory — future tasks reference past d
                         ┌────────▼────────┐
                         │   BRAIN         │
                         │  ~/.claude/     │
-                        │  200+ Skills     │
-                        │  160+ Agents     │
+                        │  208 Skills      │
+                        │  167 Agents      │
                         │  N Client Arms  │
                         │  HOOKS — enforcement reflexes           │
                         │  (delegate · qa-merge · dimension-awareness) │
@@ -549,32 +380,14 @@ Inspired by octopus neurobiology: 500M neurons, 2/3 distributed in arms, extensi
 | **Arms** | **Brain Regions** | Specialized areas — WHERE work happens |
 | **4D Phases** | **Action Potentials** | Temporal signals — WHEN signals fire |
 
-### Querying the Connectome (The Suction Cups)
-
-A giant Pacific octopus (*Enteroctopus dofleini*) has roughly **2,240 suction cups** across its 8 arms — the common octopus (*O. vulgaris*) has fewer (~1,920). Each sucker contains chemotactile receptors that detect molecules through direct contact — the octopus touches something and *knows what it is* without looking.
-
-`query_connectome.py` is our suction cup. Give it a task description and it computes TF-IDF cosine similarity against every agent and skill in the graph:
+### Querying and generating
 
 ```bash
 python3 ~/.claude/scripts/query_connectome.py query "deploy Svelte app to Cloudflare Workers"
+python3 ~/.claude/scripts/generate_neural_map.py   # auto-runs on every ai-push
 ```
 
-It builds a query vector from the task description using the stored IDF dictionary, then computes cosine similarity against every stored document vector (top-200 TF-IDF terms per agent/skill). Results are ranked by semantic similarity to the full content of each agent and skill file — not just their names or triggers.
-
-### Generating the Connectome
-
-```bash
-python3 ~/.claude/scripts/generate_neural_map.py
-```
-
-**What it produces:**
-- Agent↔Skill, Agent↔Agent, and Skill↔Skill weighted connections
-- TF-IDF vocabulary from deep content analysis
-- Hebbian learning — co-activation tracking with exponential time decay and negative signals from failed sessions
-- Hub detection (most-connected agents) and gap detection (isolated neurons)
-- Team assembly — given a task, find the optimal agent squad + skill loadout
-
-**Auto-regeneration:** Runs on every `ai-push`. When you add an agent, skill, or arm, the connectome rebuilds automatically.
+`query_connectome.py` builds a TF-IDF vector from the task, ranks every agent and skill by cosine similarity, and returns the best matches with scores — not just name/trigger matching, but full-content semantic similarity. `generate_neural_map.py` produces Agent↔Skill, Agent↔Agent, and Skill↔Skill weighted connections with Hebbian learning, hub detection, and gap detection. Rebuilds from scratch on every `ai-push`.
 
 ---
 
@@ -582,16 +395,7 @@ python3 ~/.claude/scripts/generate_neural_map.py
 
 Each arm is an isolated client project. Arms never see each other's data. Only the human operator can explicitly bridge knowledge between arms.
 
-### How Knowledge Flows
-
-```
-Direction       What Flows                          What NEVER Flows
-─────────       ──────────                          ────────────────
-Arm → Brain     Generic patterns, skills, lessons   Client names, data, credentials
-Brain → Arm     Rules, paradigms, skills, identity  Other arms' data
-Arm → Arm       NOTHING (total isolation)           Everything
-Human → Agent   Explicit cross-arm requests         (human decides what to bridge)
-```
+Information flows strictly one-way: generic lessons rise from arm to brain (anonymized), brain rules and skills descend to all arms, and arms never communicate sideways — only the human operator bridges knowledge between them. Full flow rules: [wiki Architecture §5](https://github.com/CarlosCaPe/octorato/wiki/Architecture#information-flow-rules).
 
 ### The Learning Cycle
 
@@ -606,7 +410,7 @@ Human → Agent   Explicit cross-arm requests         (human decides what to bri
 
 ---
 
-## Org Chart — 13 Divisions, 160+ Agents
+## Org Chart — 13 Divisions, 167 Agents
 
 ```mermaid
 graph TB
@@ -615,7 +419,7 @@ graph TB
     classDef div fill:#21262D,stroke:#30363D,stroke-width:1px,color:#C9D1D9,font-size:12px
 
     CEO["Human Operator"]:::ceo
-    BRAIN["BRAIN — 200+ Skills · 160+ specialist agents · N Arms"]:::brain
+    BRAIN["BRAIN — 208 Skills · 167 specialist agents · N Arms"]:::brain
     CEO --> BRAIN
 
     BRAIN --> ENG["Engineering — 28"]:::div
@@ -633,401 +437,29 @@ graph TB
     BRAIN --> PMA["Paid Media — 7"]:::div
 ```
 
-### Engineering Division (28 agents)
-
-The backbone. These agents build, deploy, secure, and maintain everything.
-
-| Agent | Role | Specialty |
-|-------|------|-----------|
-| Backend Architect | System design & API architecture | Scalable backends, microservices |
-| Database Optimizer | Query performance & schema design | PostgreSQL, Snowflake, SQL Server |
-| Data Engineer | ETL pipelines & data platform | ADF, Dagster, dbt, Delta Lake |
-| AI Engineer | ML/AI integration & prompt engineering | LLMs, embeddings, RAG |
-| DevOps Automator | CI/CD & infrastructure | GitHub Actions, Azure DevOps, Docker |
-| Frontend Developer | UI implementation | React, Svelte, Astro |
-| Software Architect | High-level technical decisions | Architecture patterns, trade-offs |
-| Security Engineer | AppSec, threat modeling, hardening | OWASP, CSP, WAF |
-| SRE | Reliability, monitoring, incident response | Uptime, alerts, postmortems |
-| Code Reviewer | Quality gates & best practices | Clean code, testing standards |
-| Senior Developer | Full-stack implementation | End-to-end feature delivery |
-| Technical Writer | Documentation & API docs | Clear, structured, searchable |
-| Rapid Prototyper | Fast MVPs & proof of concepts | Speed over polish |
-| Git Workflow Master | Branching, PRs, release management | Conventional commits, trunk-based |
-| Incident Response Commander | Production incident handling | Triage, mitigation, RCA |
-| Mobile App Builder | Cross-platform mobile apps | React Native, Flutter |
-| CMS Developer | Content management systems | Headless CMS, WordPress |
-| Email Intelligence Engineer | Email systems & automation | IMAP, SMTP, MSAL |
-| Embedded Firmware Engineer | IoT & firmware | C/C++, RTOS |
-| Solidity Smart Contract Engineer | Blockchain development | Ethereum, Solidity |
-| Threat Detection Engineer | Security monitoring | SIEM, IDS/IPS |
-| Autonomous Optimization Architect | Self-optimizing systems | Feedback loops, auto-tuning |
-| AI Data Remediation Engineer | Data quality & cleaning | Dedup, normalization |
-| Filament Optimization Specialist | 3D printing optimization | Slicing, materials |
-| Dashboard Builder | AI-powered real-time dashboards | Infinite Monitor, multi-provider AI |
-| SP Migration Agent | Stored procedure migration | T-SQL to PL/pgSQL conversion |
-| WeChat Mini Program Developer | WeChat ecosystem | Mini programs |
-| Feishu Integration Developer | Feishu/Lark platform | Enterprise chat integrations |
-
-### Design Division (8 agents)
-
-The eye. User experience, visual identity, inclusivity.
-
-| Agent | Role |
-|-------|------|
-| UI Designer | Interface layouts, component systems |
-| UX Architect | Information architecture, user flows |
-| UX Researcher | User interviews, usability testing |
-| Brand Guardian | Brand consistency, voice & tone |
-| Visual Storyteller | Data visualization, infographics |
-| Image Prompt Engineer | AI image generation prompts |
-| Whimsy Injector | Delight, micro-animations, personality |
-| Inclusive Visuals Specialist | Accessibility, cultural sensitivity |
-
-### Marketing Division (30 agents)
-
-The megaphone. Content, growth, SEO, social media across global platforms.
-
-| Agent | Role |
-|-------|------|
-| Growth Hacker | Viral loops, referral systems, A/B testing |
-| SEO Specialist | Search optimization, technical SEO |
-| Content Creator | Blog posts, articles, copywriting |
-| LinkedIn Content Creator | Professional networking content |
-| LinkedIn Company Manager | Company page strategy & management |
-| Instagram Curator | Visual content strategy |
-| TikTok Strategist | Short-form video strategy |
-| Twitter Engager | Real-time engagement, threads |
-| Reddit Community Builder | Community engagement, AMAs |
-| Podcast Strategist | Audio content & distribution |
-| Social Media Strategist | Cross-platform strategy |
-| AI Citation Strategist | LLM/AI search optimization |
-| Video Optimization Specialist | Video SEO, thumbnails |
-| Book Co-Author | Long-form content, publishing |
-| Carousel Growth Engine | Slide-based content for social |
-| App Store Optimizer | ASO for mobile apps |
-| Livestream Commerce Coach | Live selling strategies |
-| Short Video Editing Coach | Reels/TikTok editing |
-| *+ 12 regional specialists* | Baidu, WeChat, Weibo, Douyin, Xiaohongshu, Kuaishou, Bilibili, Zhihu, China e-commerce, cross-border, market localization, private domain |
-
-### Sales Division (8 agents)
-
-The closer. From discovery to signature.
-
-| Agent | Role |
-|-------|------|
-| Proposal Strategist | Win themes, narrative architecture, RFP responses |
-| Deal Strategist | Negotiation tactics, pricing strategy |
-| Sales Engineer | Technical demos, proof of value |
-| Pipeline Analyst | Forecasting, funnel optimization |
-| Discovery Coach | Needs assessment, qualification |
-| Outbound Strategist | Cold outreach, prospecting |
-| Account Strategist | Client retention, upselling |
-| Sales Coach | Team enablement, playbooks |
-
-### Product Division (5 agents)
-
-The compass. What to build and why.
-
-| Agent | Role |
-|-------|------|
-| Product Manager | Roadmap, prioritization, stakeholder alignment |
-| Sprint Prioritizer | Backlog grooming, sprint planning |
-| Trend Researcher | Market analysis, emerging tech |
-| Feedback Synthesizer | User feedback to actionable insights |
-| Behavioral Nudge Engine | UX psychology, conversion optimization |
-
-### Project Management Division (6 agents)
-
-The clock. On time, on budget, on scope.
-
-| Agent | Role |
-|-------|------|
-| Senior PM | End-to-end project delivery |
-| Studio Producer | Creative project management |
-| Project Shepherd | Long-running initiative tracking |
-| Experiment Tracker | A/B tests, feature flags, metrics |
-| Jira Workflow Steward | Issue tracking, workflow automation |
-| Studio Operations | Resource allocation, capacity planning |
-
-### Testing Division (8 agents)
-
-The quality gate. Nothing ships without these agents signing off.
-
-| Agent | Role |
-|-------|------|
-| Reality Checker | Sanity checks, assumption validation |
-| API Tester | Endpoint testing, contract testing |
-| Performance Benchmarker | Load testing, profiling |
-| Accessibility Auditor | WCAG compliance, screen readers |
-| Evidence Collector | Test evidence for compliance |
-| Workflow Optimizer | CI/CD pipeline optimization |
-| Tool Evaluator | Vendor/tool comparison & selection |
-| Test Results Analyzer | Test report analysis, flaky test detection |
-
-### Support Division (7 agents)
-
-The backbone services. Finance, legal, analytics, infrastructure.
-
-| Agent | Role |
-|-------|------|
-| Analytics Reporter | Dashboards, KPIs, reporting |
-| Finance Tracker | Invoicing, expense tracking, forecasting |
-| Financial Modeler | Financial projections, scenario analysis |
-| Legal Compliance Checker | Contract review, regulatory compliance |
-| Infrastructure Maintainer | Server maintenance, updates |
-| Executive Summary Generator | Board reports, stakeholder updates |
-| Support Responder | Client support, ticketing |
-
-### Specialized Division (29 agents)
-
-The Swiss Army knife. Niche experts activated on demand.
-
-| Category | Notable Specialists |
-|----------|-------------------|
-| Tech | MCP Builder, Workflow Architect, LSP Index Engineer, Salesforce Architect |
-| Compliance | Compliance Auditor, Healthcare Marketing, Blockchain Security |
-| Operations | Accounts Payable, Supply Chain, Data Consolidation, Report Distribution |
-| Consulting | Government Digital Presales, French Consulting Market, Korean Business Navigator |
-| People | Recruitment Specialist, Corporate Training Designer, Study Abroad Advisor |
-| Identity | Agentic Identity & Trust, Identity Graph Operator, ZK Steward |
-| Domain | Civil Engineer, Developer Advocate, Model QA, Cultural Intelligence |
-
-### Spatial Computing Division (6 agents)
-
-The future. XR, visionOS, Metal.
-
-| Agent | Role |
-|-------|------|
-| visionOS Spatial Engineer | Apple Vision Pro development |
-| XR Immersive Developer | Cross-platform XR experiences |
-| XR Interface Architect | 3D UI/UX patterns |
-| Metal Engineer | GPU programming, shaders |
-| XR Cockpit Interaction Specialist | Vehicle/aircraft interfaces |
-| Terminal Integration Specialist | CLI + spatial computing bridge |
-
-### Game Development Division (5 agents)
-
-The playground. Unity, Unreal, Godot, Roblox, and more.
-
-| Engine | Agents |
-|--------|--------|
-| Unity | Architect, Editor Tool Developer, Multiplayer Engineer, Shader Graph Artist |
-| Unreal | Systems Engineer, Technical Artist, World Builder, Multiplayer Architect |
-| Godot | Gameplay Scripter, Multiplayer Engineer, Shader Developer |
-| Roblox | Experience Designer, Avatar Creator, Systems Scripter |
-| Blender | Addon Engineer |
-| Cross-engine | Game Designer, Level Designer, Narrative Designer, Game Audio Engineer, Technical Artist |
-
-### Academic Division (5 agents)
-
-The thinkers. Research depth when you need it.
-
-| Agent | Role |
-|-------|------|
-| Anthropologist | Cultural analysis, ethnographic methods |
-| Historian | Historical context, pattern recognition |
-| Psychologist | Behavioral analysis, cognitive models |
-| Geographer | Spatial analysis, mapping, GIS |
-| Narratologist | Story structure, narrative analysis |
-
-### Paid Media Division (7 agents)
-
-The ROI engine. Every dollar tracked.
-
-| Agent | Role |
-|-------|------|
-| PPC Strategist | Google Ads, Bing Ads, keyword strategy |
-| Programmatic Buyer | RTB, DSP management, audience targeting |
-| Tracking Specialist | Conversion tracking, attribution |
-| Paid Social Strategist | Meta Ads, LinkedIn Ads, TikTok Ads |
-| Auditor | Account audits, waste identification |
-| Creative Strategist | Ad creative, A/B testing |
-| Search Query Analyst | Search term analysis, negative keywords |
+Full roster with per-agent triggers and specialties: [GitHub wiki — Agents](https://github.com/CarlosCaPe/octorato/wiki/Agents) · [`agents/REGISTRY.md`](agents/REGISTRY.md).
 
 ---
 
-## Synapses — The Skill Layer (200+ reusable techniques)
+## Synapses — The Skill Layer
 
-If agents are neurons — persistent processors with personality — then **skills are synapses**: the connection that makes a neuron useful for a specific task. A neuron in isolation does nothing. A neuron whose synapses know `index-creation-concurrently` and `query_connectome.py` becomes a database optimization specialist.
+If agents are neurons, **skills are synapses**: the connection that makes a neuron useful for a specific task. A neuron in isolation does nothing. A neuron whose synapses know `index-creation-concurrently` and `query_connectome.py` becomes a database optimization specialist.
 
-The metaphor isn't decorative. It dictates how skills are stored, loaded, and learned:
-
-| Property | Neuron (Agent) | Synapse (Skill) |
-|----------|----------------|----------------|
-| Persistence | Always in the registry; the brain wouldn't be the brain without them | Loaded on demand; the brain forgets them between tasks unless reinforced |
-| Storage | `~/.claude/agents/<name>.md` — a full persona file | `~/.claude/skills/<name>/SKILL.md` — a technique manual |
-| Address | Name + division + cross-reference | YAML frontmatter `name:` + `description:` (the trigger) |
-| Lifecycle | Curated, edited, rarely created at runtime | Born from arms (Upward Learning), can die when stale |
-| Bandwidth | One agent ≈ one personality | One skill connects N agents to one capability |
-| Plasticity | Low (changing an agent reshapes a division) | High (skills are rewritten daily as patterns emerge) |
-
-### How a synapse fires
-
-```
-Task arrives                                              ▼
-   │
-   ▼
-2D Delegate Q1 — Ventosas (Chemoreceptor search)
-   query_connectome.py builds a TF-IDF vector of the task,
-   ranks all 200+ synapses by cosine similarity to their stored
-   document vectors. Returns top matches with scores.
-   │
-   ▼
-2D Delegate Q3 — Trigger match (Rule-based reflex)
-   delegate-check scans the skill descriptions for keyword
-   triggers ("postgresql", "deploy", "claude api"). Returns
-   ACTIVATE / LOAD / SELF decision.
-   │
-   ▼
-Selected synapses LOAD into the working context
-   (the Skill tool reads the SKILL.md file into the agent's
-   running context — the equivalent of a vesicle releasing
-   neurotransmitter into the cleft)
-   │
-   ▼
-↓ delegate-gate (fail-open — route to cheapest sufficient model)
-   │
-   ▼
-Agent executes WITH the synapse loaded
-   (the skill is now part of the agent's effective behavior
-   for this task only — it's not in the agent file)
-   │
-   ▼
-3D Diligent — if PASS: Hebbian boost on (agent ↔ skill) edge
-   (the more often this pair co-fires successfully, the higher
-   their connection weight in neural_activity.json)
-   4D Disclose — if FAIL: edge weight subtracted
-```
-
-The takeaway: **skills aren't called like functions** — they're activated by similarity + rule match, then loaded into context, then their lessons either reinforce or decay the agent↔skill edge that picked them.
-
-### Skill clusters — synaptic families
-
-Skills don't live alone. They cluster into functional families that share vocabulary, fire together, and reinforce each other in the connectome. The pattern is visible in the names:
-
-| Cluster | Skills | What it does |
-|---------|--------|--------------|
-| `querymaster-*` | `querymaster`, `querymaster-postgresql`, `querymaster-snowflake`, `querymaster-adx`, `querymaster-sqlserver`, `querymaster-sqlite`, `querymaster-databricks` | Multi-engine SQL/KQL runtime — load master skill + engine-specific |
-| `sdd-*` | `sdd-feature`, `sdd-plan`, `sdd-implement`, `sdd-review`, `sdd-archive`, `sdd-refine`, `sdd-yolo`, `sdd-init` | Spec-Driven Development pipeline — phased implementation |
-| `gsap-*` | `gsap-core`, `gsap-timeline`, `gsap-plugins`, `gsap-scrolltrigger`, `gsap-frameworks`, `gsap-performance`, `gsap-utils` | GSAP animation library reference cluster |
-| `querymaster operators` (SQL idioms) | `idempotent-sql-design`, `atomic-3phase-ddl-scripts`, `index-creation-concurrently`, `range-partitioning-growth-tables`, `pg-cron-scheduled-maintenance`, `autovacuum-bloat-management`, `connection-pooling-timeout-safety`, `fillfactor-storage-tuning`, ~20 more | PostgreSQL-specific patterns — fire as a family with querymaster-postgresql |
-| `tier-A reflexes` (recently elevated) | `workspace-skill-discovery`, `session-memory-search`, `progressive-code-exploration`, `token-efficient-prompting`, `post-check-verification`, `dry-run-gate-pattern` | Universal hygiene — fire reflexively on every non-trivial task ([[reflexes]]) |
-| `claude-* / openai-* / api-* clients` | `claude-api`, `openai-docs`, `chatgpt-apps`, `ccxt-python` | Direct API-layer skills |
-| `document-quality` | `peer-review-lifecycle`, `no-history-in-docs`, `cross-reference-integrity`, `unicode-symbol-compatibility`, `voice-and-cadence-consistency`, `source-citation-tagging`, ~5 more | Technical writing discipline |
-
-Clusters emerge bottom-up. No one designs them. They form because the operator keeps writing related skills, and the connectome's community detection (Leiden algorithm) groups them automatically. Visible in `python3 ~/.claude/scripts/query_connectome.py communities`.
-
-### God synapses — the hub skills
-
-Some skills are wired to almost everything. The connectome calls them **god nodes**: high-degree skills that show up as a "top skill" connection for dozens of agents. They're the framework's load-bearing connectors.
-
-Run `python3 ~/.claude/scripts/query_connectome.py gods 15` to see the current ranking. Typical chart-toppers:
-
-- `workspace-skill-discovery` — connects every session to its arm-local skills
-- `progressive-code-exploration` — connects every code-reading task to a token-efficient strategy
-- `4d-spec` — connects every implementation task to the orchestrator
-- `querymaster` — connects every DB engagement to the multi-engine runtime
-- `agent-browser` — connects every web-inspection task to the visual debugger
-
-A god node failing is a network-wide event. A normal skill failing is a local one.
-
-### Synapse lifecycle — birth, reinforcement, decay
-
-| Stage | What happens | Mechanism |
-|-------|--------------|-----------|
-| **Birth** | A pattern appears 3+ times in an arm, or the operator promotes a one-off solution. New `SKILL.md` written. | Auto-Skill Creation Protocol (CLAUDE.md), or manual. |
-| **Indexing** | `generate_neural_map.py` runs on `ai-push`; the new skill's TF-IDF vector and community membership are computed. | On every `ai-push` |
-| **First fire** | An arm task triggers it via Q1 (semantic) or Q3 (rule match). Edge weight 0.0 → small positive. | Q1 / Q3 of 2D Delegate |
-| **Reinforcement** | Subsequent co-firings with the same agent on successful tasks boost the edge weight exponentially. | Hebbian — `company/neural_activity.json` |
-| **Decay** | If the edge isn't fired again, the boost decays with a ~69-day half-life. | Same — applied on every regeneration |
-| **Failure penalty** | If a task using the skill fails 3D Diligent, the edge weight is subtracted. | Same |
-| **Pruning** | A skill that decays to zero AND isn't fired by any arm for >180 days is a candidate for removal — surfaced by the connectome's stats, not auto-deleted. | Manual operator review |
-| **Rebirth** | A pruned skill can be brought back from git history if the pattern re-emerges. Synapses, like real ones, leave traces. | `git show <commit>:skills/<name>/SKILL.md` |
-
-The lifecycle has a software-convenient shortcut the biology doesn't have: **the entire connectome rebuilds on every `ai-push`.** Real synapses gradually remodel. Ours regenerate from scratch from the skill content. That's a deliberate departure from the biology — we use the rebuild for index freshness, not as a claim about brain biology.
-
-### Where to actually look at synapses
+Skills are loaded on demand via Q1 (TF-IDF cosine similarity) or Q3 (keyword trigger match), injected into the agent's context for the duration of the task, and then either reinforce or decay the agent↔skill edge in the connectome based on 3D Diligent outcome. Lifecycle: **ADD** (pattern appears 3+ times) → **MERGE** (two skills converge) → **REPLACE** (better technique found) → **EXTEND** (new engine/variant). The full cycle — birth, Hebbian reinforcement, decay (~69-day half-life), failure penalty, pruning, rebirth — is in [wiki Skills-System](https://github.com/CarlosCaPe/octorato/wiki/Skills-System). The full catalog: [wiki Skills](https://github.com/CarlosCaPe/octorato/wiki/Skills).
 
 ```bash
-ls ~/.claude/skills/                                          # All 200+ by name
-~/.claude/scripts/query_connectome.py query "<task>"          # Which synapses fire for this task
-~/.claude/scripts/query_connectome.py gods 15                 # Top hub synapses
-~/.claude/scripts/query_connectome.py communities             # Skill clusters
-cat ~/.claude/skills/<name>/SKILL.md                          # The synapse itself (description + body)
+python3 ~/.claude/scripts/query_connectome.py query "<task>"   # which skills fire
+python3 ~/.claude/scripts/query_connectome.py gods 15          # hub skills
+python3 ~/.claude/scripts/query_connectome.py communities      # skill clusters
 ```
 
 ---
 
 ## Memory — Hippocampus and the Working Set
 
-A brain that can't remember is a brain that can't learn. The framework has **two memory systems** that map to two biological memory types, plus a constitutional layer above both.
+Three layers: **Constitutional** (`CLAUDE.md` — always loaded, 4D rules + reflexes) · **Episodic** (`~/.claude/projects/<cwd>/memory/` — persists across sessions, gitignored, per-machine) · **Working** (the current context window, cleared on `/clear`).
 
-```
-                ┌────────────────────────────────────────────────────┐
-                │  Constitutional memory (always loaded, hard-coded) │
-                │     ~/.claude/CLAUDE.md                            │
-                │     The 4D Paradigm, octopus rules, Tier A reflexes│
-                └─────────────────────┬──────────────────────────────┘
-                                      │
-              ┌───────────────────────┴────────────────────────────┐
-              ▼                                                    ▼
-   ┌─────────────────────────────┐              ┌──────────────────────────────┐
-   │  Episodic / declarative     │              │  Working memory              │
-   │  (hippocampus-like)         │              │  (frontal cortex-like)       │
-   │                             │              │                              │
-   │  ~/.claude/projects/        │              │  The current session         │
-   │     <sanitized-cwd>/memory/ │              │  context window              │
-   │                             │              │                              │
-   │  Persists across sessions   │              │  Lives only in this session  │
-   │  Operator preferences,      │              │  Files read, tools called,   │
-   │  project state, feedback    │              │  current task                │
-   │  Per-machine (gitignored)   │              │  Cleared on /clear           │
-   └─────────────────────────────┘              └──────────────────────────────┘
-```
-
-### Why two systems
-
-| Need | Wrong fit | Right fit |
-|------|-----------|-----------|
-| "Remember that the user prefers terse answers" | Working memory — would be forgotten next session | Episodic — `MEMORY.md` entry |
-| "Remember that yesterday we decided to use Coolify over Heroku" | Working memory — gone | Episodic — saved as project memory |
-| "Hold the file I just read so I can compare with this other one" | Episodic — would clog with transient data | Working memory — context window |
-| "The 4D Paradigm" | Either — would be re-derived/re-learned each session | Constitutional — `CLAUDE.md` |
-
-The split mirrors how brains actually work: the hippocampus consolidates short-term experience into long-term memory, the cortex holds the immediate workspace, and the spinal cord runs the reflexes that don't need either. Mixing them creates either bloated sessions (everything in context) or amnesiac agents (nothing persists).
-
-### What goes where
-
-| Type | Location | Examples |
-|------|----------|----------|
-| User identity / preferences | `MEMORY.md` → `user_*.md` files | "operator is a data engineer", "prefers terse replies" |
-| Feedback / behavior corrections | `MEMORY.md` → `feedback_*.md` | "always use dry-run for destructive ops" |
-| Project context | `MEMORY.md` → `project_*.md` | "the auth rewrite is gated by legal Q3 compliance" |
-| External system pointers | `MEMORY.md` → `reference_*.md` | "incident dashboard is at grafana.internal/d/api-latency" |
-
-The index `MEMORY.md` is loaded automatically into every session. Individual memory files are loaded on demand when the agent decides they're relevant.
-
-### Why memory is per-machine (gitignored)
-
-The brain repo is open-source. The memory is not. Memory entries contain absolute paths (`/home/<operator>/...`), specific arm/client context, session traces — all of which would leak through the public git history. The rule in `~/.claude/.gitignore`:
-
-```
-projects/    # Per-machine episodic memory; never pushed to the public brain
-```
-
-Cross-machine sync is **deliberately the operator's manual decision**. The Octopus principle: brain stays generic, memory stays sovereign.
-
-### Forgetting and consolidation
-
-| Mechanism | What it does | When |
-|-----------|--------------|------|
-| Hebbian decay (connectome) | Agent↔skill edges weaken if not fired | Continuous, half-life ~69 days |
-| Session compaction | Context window gets summarized | Automatic when nearing token limit |
-| `auto-dream` | Background memory consolidation (if enabled) | Configurable in settings.json |
-| Manual `/clear` | Working memory wiped, episodic untouched | Operator decision |
-| Memory pruning | Operator removes stale entries when wrong/outdated | Manual review |
-
-Real brains forget actively. So does this one — by design, and with the operator in the loop for the irreversible parts.
+Memory is two-tier by scope: generic cross-arm lessons and operator preferences go into a private standalone brain-memory repo (`1 + N` octopus brains — one central + one per arm). Arm memory is sealed in that arm's own repo. The public framework ships the engine (`scripts/memory_sync.py`, `templates/memory/`), never anyone's actual data. Full model: [`docs/architecture/memory-model.md`](docs/architecture/memory-model.md).
 
 ---
 
@@ -1080,104 +512,34 @@ octo-dim prune                  # remove stale dimension entries
 
 The architecture spec for all three enforcement hooks, the ECA atom formalism, Behavior Tree priority, and the Statechart 4D phase machine lives in [`docs/architecture/hook-orchestration.md`](docs/architecture/hook-orchestration.md).
 
-### Why these are in CLAUDE.md, not in skills/
-
-A reflex isn't a skill the agent decides to load. It's a constraint the agent operates under from the moment a session starts. Putting them in CLAUDE.md (constitutional memory) means they're loaded before any task arrives — like the spinal cord being wired before you have a thought.
-
-Putting them in `skills/` would make them opt-in, which defeats the point. The 4D Paradigm itself works the same way: it's not a skill, it's a constitutional reflex that fires on every task.
-
-### Reflex vs Skill vs Hook — the structural difference
-
-| Property | Reflex (Tier A) | Skill (synapse) | Enforcement hook |
-|----------|-----------------|-----------------|-----------------|
-| Loaded | At session start, unconditionally | On demand via Q1/Q3 match | Always — harness evaluates on every matching event |
-| Trigger | Stimulus (file open, response draft, destructive op) | Task description + connectome match | Specific tool event (PreToolUse / PostToolUse) |
-| Storage | `CLAUDE.md` body | `skills/<name>/SKILL.md` | `hooks.json` + `scripts/<name>.py` |
-| Model can skip | No (constitutional) | Yes (must not load) | **No** (harness-enforced) |
-| Failure mode | Prose — model complies | N/A | Fail-open (warn) or fail-closed (block) |
-
-The reflex layer is the thinnest, but it's load-bearing. Six constitutional rules + three harness hooks govern thousands of decisions downstream.
+Reflexes live in `CLAUDE.md` (constitutional, loaded before any task), not in `skills/` (opt-in). Six constitutional rules + three harness hooks govern thousands of decisions downstream.
 
 ---
 
 ## Observability — The Sensory Cortex
 
-The brain doesn't just *act* — it *observes itself acting*. An observability layer captures every skill activation, every subagent spawn, and every 4D phase boundary as structured JSONL events. Over time, this turns into a high-signal map of how the operator actually works, which feeds back into the Hebbian connectome.
+The brain observes itself acting. Every skill activation, subagent spawn, and 4D phase boundary is captured as a structured JSONL event (`schemas/trace-event.schema.json`) in `~/.claude/traces/YYYY-MM-DD.jsonl` (gitignored, 30-day retention). The trace feeds back into the Hebbian connectome via `update_neural_activity.py`.
 
-### The Trace Pipeline
+Eight shipped surfaces:
 
-```
-Skill fires / Agent spawns / Write|Edit / Stop
-        │
-        ▼
-trace-hook.py  (PostToolUse + UserPromptSubmit + Stop hooks)
-        │
-        ▼
-~/.claude/traces/YYYY-MM-DD.jsonl  (append-only, UTC-day rotated, gitignored)
-        │
-        ├─→ brain-trace.py grep | top | tail  (read-only inspector for the operator)
-        └─→ update_neural_activity.py   (Hebbian co-activation update → connectome)
-```
-
-### What gets captured
-
-| Event class | Triggered by | Records contain |
-|-------------|-------------|----------------|
-| `skill_fire` | PostToolUse on the Skill tool | skill name, status, error, optional token usage |
-| `agent_activate` | PostToolUse on the Agent tool | subagent_type, status, error, optional tokens |
-| `phase_boundary` | UserPromptSubmit / PreToolUse Write\|Edit / PostToolUse Write\|Edit / Stop | one of the 6 4D phases: `describe`, `delegate`, `gate`, `execute`, `diligent`, `disclose` |
-
-All three classes share a strict schema (`schemas/trace-event.schema.json`) with `task_id` (SHA-1 of session_id, 40 chars), `ts` (ISO 8601 UTC ms), `arm` (auto-derived from CWD when inside a client repo), `status`, and `error`. POSIX `O_APPEND` keeps appends atomic without locking.
-
-### Storage and privacy
-
-- One JSONL file per UTC day under `~/.claude/traces/`. **Gitignored** — traces never reach the public brain repo.
-- 30-day retention by default (operator-pruned).
-- Opt-in cross-machine backup via `TRACE_BACKUP_REPO` env var pointing at a private repo.
-- See `docs/trace-storage.md` for the full layout contract.
-
-### The CLI
+| # | Surface | Script |
+|---|---------|--------|
+| 1 | Agent Trace (APM-style) | `trace-hook.py` · `brain-trace.py` · `update_neural_activity.py` |
+| 2 | Skill Cost Profiler | `skill-cost-profiler.py` |
+| 3 | Brain SLOs + Error Budget | `slos.py` |
+| 4 | Watchdog (cliff + quality-drop) | `watchdog.py` |
+| 5 | Brain Digest (daily dashboard) | `brain-digest.py` |
+| 6 | Incident Capture (post-mortems) | `incident-capture.py` |
+| 7 | Brain Synthetics (per-arm health) | `arm-synthetics-runner.py` |
+| 8 | Brain Charts on Demand | `brain-chart.py` |
 
 ```bash
-brain-trace.py grep --event phase_boundary --since 1h        # filter by event/name/status/window
-brain-trace.py top  --by name --window 7d                    # group + count, top N
-brain-trace.py tail -n 20 -f                                 # last N records, optional follow
-brain-trace.py grep --event agent_activate --json | jq .     # pipe-friendly raw JSONL
+brain-trace.py grep --event phase_boundary --since 1h   # filter traces
+brain-trace.py top  --by name --window 7d               # top skills/agents
+brain-trace.py tail -n 20 -f                            # live tail
 ```
 
-Time windows accept `30m / 6h / 7d / 2w` or strict ISO 8601 UTC.
-
-### Hebbian update
-
-`update_neural_activity.py` reads the trace, groups by `task_id`, and increments the co-activation matrix in `company/neural_activity.json` for every observed `agent::skill` pair. Before incrementing, it applies a `0.5 ^ (days_since_last_run / 69)` decay across all existing weights — the same biological half-life the connectome uses elsewhere. A `traces_last_processed_ts` watermark in the metadata makes re-runs idempotent.
-
-```bash
-python3 ~/.claude/scripts/update_neural_activity.py --since 7d   # weekly cron-suitable
-python3 ~/.claude/scripts/update_neural_activity.py --dry-run    # preview without writing
-```
-
-### The 8 observability surfaces — all shipped
-
-| Surface | Purpose | Script / artifact |
-|---------|---------|---|
-| 1 | Agent Trace (APM-style) ✓ | `scripts/trace-hook.py`, `scripts/brain-trace.py`, `scripts/update_neural_activity.py` |
-| 2 | Skill Cost Profiler ✓ | `scripts/skill-cost-profiler.py` |
-| 3 | Brain SLOs + Error Budget ✓ | `scripts/slos.py` |
-| 4 | Watchdog — cliff + quality-drop detector ✓ | `scripts/watchdog.py` |
-| 5 | Brain Digest (daily dashboard) ✓ | `scripts/brain-digest.py` |
-| 6 | Incident Capture (post-mortems) ✓ | `skills/incident-capture/`, `scripts/incident-capture.py`, `commands/incident-capture.md` |
-| 7 | Brain Synthetics — per-arm health checks ✓ | `skills/arm-synthetics/`, `scripts/arm-synthetics-runner.py`, `templates/arm-synthetics/` |
-| 8 | Brain Charts on Demand ✓ | `scripts/brain-chart.py` |
-
-All eight surfaces share a private library `scripts/_brain_obs.py` for trace iteration, window parsing, and the `--execute` dry-run pattern — keeps `~120 lines` from drifting across the 10 observability scripts.
-
-Each port is independently shippable; the trace from Port 1 is the substrate the analytics ports (2-4) and the visualisation ports (5, 8) read from. Ports 6 and 7 are independent of the rest.
-
-**Operator-side install (once per port):**
-- Daily cron for Port 5 digest: `0 6 * * * python3 ~/.claude/scripts/brain-digest.py`
-- Daily cron for Watchdog (Port 4) `--execute`: `0 14 * * * python3 ~/.claude/scripts/watchdog.py --execute`
-- Per-arm install for Port 7: see `skills/arm-synthetics/SKILL.md`
-- `~/.claude/slos.yaml` (or .json) for Port 3 — operator-defined targets
+Full schema, storage layout, and cron setup: [`docs/architecture/trace-storage.md`](docs/architecture/trace-storage.md).
 
 ---
 
@@ -1223,10 +585,10 @@ Query → Connectome (routing) → Agent persona → Skill (manual) → MCP tool
 
 | Layer | File | Synced? | Contains |
 |---|---|---|---|
-| Global config | `~/.claude/mcp/servers.json` *(proposed — see P2 roadmap)* | Yes (via `ai-push`) | Server `{id, transport, command|url, env_refs[], capabilities, scope}` — **references**, never values |
+| Global config | `~/.claude/mcp/servers.json` **(P2 roadmap — not yet in repo)** | Planned | Server `{id, transport, command|url, env_refs[], capabilities, scope}` — references, never values |
 | Per-arm override | `<arm>/.claude/mcp/servers.local.json` | No (arm-local) | Client-specific MCP endpoints that must not leak across arms |
 | Secrets | `~/.config/octorato/secrets.env` (chmod 600) or system keychain | **No — never synced** | Tokens, API keys, OAuth refresh — resolved at startup by `env_refs[]` |
-| Capability cache | `~/.claude/mcp/capabilities/<server_id>.json` | Yes | Tool manifest fetched at connect time, dated |
+| Capability cache | `~/.claude/mcp/capabilities/<server_id>.json` | Planned | Tool manifest fetched at connect time, dated |
 
 **Secret resolution order:** env var → user keychain (`security`/`secret-tool`/`wincred`) → company vault → **fail closed** (never prompt mid-task).
 
@@ -1256,6 +618,8 @@ Today MCP servers are not first-class neurons in the connectome — Q2 is a ment
 This is the path the framework is on — see "10x Roadmap" below.
 
 ### Adding a new MCP server
+
+> `mcp/servers.json` is **P2 roadmap** — the `mcp/` directory does not yet exist in the repo. Today, MCP servers are configured directly in Claude Code's settings. Steps below describe the planned workflow once P2 lands.
 
 1. Add the server to `~/.claude/mcp/servers.json` with `env_refs` pointing to your secret names (no values).
 2. Put the actual secrets in `~/.config/octorato/secrets.env` (chmod 600, gitignored).
@@ -1315,7 +679,7 @@ ai-pull --status
 ├── HEBBIAN_LEARNING.md      ← How the connectome learns over time
 ├── hooks.json               ← Shared hooks (source of truth, synced to all machines)
 ├── neural_map.json          ← The Deep Connectome (auto-generated, never edit)
-├── agents/                  ← 160+ specialist agents
+├── agents/                  ← 167 specialist agents
 │   ├── REGISTRY.md          ← Auto-activation triggers & cross-references
 │   ├── engineering/         ← 28 agents
 │   ├── design/              ← 8 agents
@@ -1327,13 +691,14 @@ ai-pull --status
 │   ├── support/             ← 7 agents
 │   ├── specialized/         ← 29 agents
 │   ├── spatial-computing/   ← 6 agents
-│   ├── game-development/    ← 5 agents
+│   ├── game-development/    ← 20 agents
 │   ├── academic/            ← 5 agents
 │   ├── paid-media/          ← 7 agents
 │   ├── strategy/            ← NEXUS orchestration playbooks and runbooks
 │   └── examples/            ← Multi-agent workflow examples
-├── skills/                  ← 200+ reusable techniques
+├── skills/                  ← 208 reusable techniques
 ├── scripts/
+│   ├── ai_sync.py                 ← Multi-machine sync engine (pull/push/sync/status verbs)
 │   ├── generate_neural_map.py     ← Connectome generator (TF-IDF + cosine + Hebbian)
 │   ├── query_connectome.py        ← Suction cups — graph search for agent/skill matching
 │   ├── delegate-check             ← 2D pre-research gate

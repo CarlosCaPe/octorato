@@ -1,5 +1,7 @@
 # Self-Growth
 
+> **Organ:** neurogenesis and pruning — the brain grows new tissue daily and trims what the graph no longer feeds.
+
 > How Octorato grows itself — every day, on a schedule, without waiting for permission.
 
 A brain that only changes when a human edits it falls behind the moment the human gets busy. The AI tooling market does not slow down for anyone: a new agent framework, a new MCP server, a new open-source replacement for some $50/mo SaaS ships **every single day**. Octorato treats *staying current* as a first-class system function, not a chore. This page documents the self-growth loop — the daily pipeline that scans the open-source frontier, decides how each discovery should integrate with what the brain already knows, and grows the brain (and the operator's public products) automatically inside a tight safety boundary.
