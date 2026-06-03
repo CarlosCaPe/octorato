@@ -195,7 +195,18 @@ def check_runners_tracked(fix: bool) -> Result:
     key = "runners-tracked"
     bin_dir = HOME / ".local" / "bin"
     names = ["ai-pull", "ai-push", "sync-ai-docs"]
-    missing = [n for n in names if not (bin_dir / n).exists()]
+    # On Windows the runners are .cmd/.ps1 thunks, not extensionless POSIX files.
+    exts = ["", ".cmd", ".ps1", ".bat"] if os.name == "nt" else [""]
+
+    def resolve_runner(n):
+        for ext in exts:
+            cand = bin_dir / (n + ext)
+            if cand.exists():
+                return cand
+        return None
+
+    resolved = {n: resolve_runner(n) for n in names}
+    missing = [n for n, p in resolved.items() if p is None]
     if missing:
         return Result(key, FAIL, f"missing runner(s): {', '.join(missing)}",
                       "reinstall runners into ~/.local/bin/ (see arm-onboarding skill)")
@@ -203,7 +214,7 @@ def check_runners_tracked(fix: bool) -> Result:
     untracked = []
     scripts_dir = (CLAUDE_DIR / "scripts").resolve()
     for n in names:
-        p = bin_dir / n
+        p = resolved[n]
         try:
             real = p.resolve()
         except Exception:
