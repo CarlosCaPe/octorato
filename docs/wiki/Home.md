@@ -6,7 +6,7 @@
 > agents across clients, projects, and machines — without ever mixing their data
 > or their bills.
 
-**Live as of 2026-06-01:** 201 skills · 162 agent personas across
+**Live as of 2026-06-01:** 201 skills · 167 agent personas across
 13 divisions · 8 enforcement scripts · multi-machine sync · a neural
 connectome that learns over time · a FinOps pipeline that tags every trace event
 with the client who incurred it.
