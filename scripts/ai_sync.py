@@ -55,7 +55,7 @@ POLICY = CLAUDE / ".githooks" / "push-policy.txt"
 # Staged on push — allowlist, never `git add -A`, so personal files never slip in.
 # Top-level governance docs (CHANGELOG, SUPPORT, etc.) must be listed explicitly;
 # otherwise `ai-push` silently drops them with no warning (lesson 2026-05-28).
-BRAIN_PATHS = ["CLAUDE.md", "README.md", "CONTRIBUTING.md", "HEBBIAN_LEARNING.md",
+BRAIN_PATHS = ["CLAUDE.md", "README.md", "FAQ.md", "CONTRIBUTING.md", "HEBBIAN_LEARNING.md",
                "CODE_OF_CONDUCT.md", "SECURITY.md", "SUPPORT.md", "CHANGELOG.md",
                "ROADMAP.md", "SHOWCASE.md", "WHITEPAPER.md", "LICENSE",
                "budgets.yaml.example",

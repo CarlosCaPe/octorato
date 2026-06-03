@@ -168,12 +168,14 @@ def write_candidate(term: str, hits):
 
 
 def emit_receipt(line: str, payload: dict):
-    """Append the machine receipt to the per-turn ledger and return the line."""
+    """Append the machine receipt to the session AND per-turn ledgers, return the line.
+    The per-turn ledger is what the Stop-hook teeth read to know a seek happened THIS turn."""
     try:
         LEDGER_DIR.mkdir(parents=True, exist_ok=True)
         sid = os.environ.get("CLAUDE_SESSION_ID", "adhoc")
-        (LEDGER_DIR / f"{sid}.jsonl").open("a", encoding="utf-8").write(
-            json.dumps(payload, ensure_ascii=False) + "\n")
+        row = json.dumps(payload, ensure_ascii=False) + "\n"
+        (LEDGER_DIR / f"{sid}.jsonl").open("a", encoding="utf-8").write(row)
+        (LEDGER_DIR / f"{sid}.turn.jsonl").open("a", encoding="utf-8").write(row)
     except OSError:
         pass
     return line

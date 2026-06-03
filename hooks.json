@@ -36,6 +36,11 @@
           "type": "command",
           "command": "python3 ~/.claude/scripts/trace-hook.py --phase delegate",
           "timeout": 5
+        },
+        {
+          "type": "command",
+          "command": "python3 ~/.claude/scripts/grafo-turn-reset.py",
+          "timeout": 5
         }
       ]
     }
@@ -138,6 +143,16 @@
           "command": "python3 ~/.claude/scripts/dimension-awareness-hook.py",
           "timeout": 5,
           "statusMessage": "♦ 4D: checking parallel dimensions..."
+        }
+      ]
+    },
+    {
+      "matcher": "Bash",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "python3 ~/.claude/scripts/grafo-gate.py",
+          "timeout": 5
         }
       ]
     }
