@@ -139,7 +139,10 @@ Unlike most white papers (a promise before code), every claim here maps to a fil
 | §4 Cellular Isolation | `scripts/check-generic.py` · `.githooks/pre-push` |
 | §5 Upward Learning | `HEBBIAN_LEARNING.md` |
 | §6 4D Nervous System | `skills/4d-paradigm-protocol/` · `scripts/impact-radius.py` · `scripts/impact-radius-hook.py` |
+| §6 Reflex enforcement (v3.1) | `scripts/delegate-gate.py` (fail-open, model-tier nudge) · `scripts/qa-merge-gate.py` (fail-closed, operator-approval gate) · `scripts/dimension-awareness-hook.py` (fail-open, worktree collision) — all wired in `hooks.json` |
+| §6 Parallel dimensions (v3.1) | `scripts/octo-dim.py` · `connectome/sessions.json` (blackboard registry) · `skills/session-isolation/` |
 | §7 Connectome | `scripts/generate_neural_map.py` · `neural_map.json` |
+| §7 Reactive control architecture (v3.1) | `docs/architecture/hook-orchestration.md` — ECA atoms · Behavior-Tree priority · Statechart 4D · Spreading-Activation recall · Bandit tier-routing |
 | §4 Attribution corollary | `scripts/skill-cost-profiler.py` (`_arm_from_session_path`) · `scripts/budget-check.py` (exit 2 → PreToolUse halt) · `scripts/_pricing.py` |
 
 *This document is the canonical source. The dataqbs.com manifesto page, the LinkedIn

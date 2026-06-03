@@ -10,12 +10,13 @@
 >
 > <sub>the Octopus Brain Framework</sub>
 
-> **Octorato is an open-source AI agent operating system: one file-native "brain" — <!--canon:skills.count-->190+<!--/canon--> skills and <!--canon:agents.count-->160+<!--/canon--> specialist agents in plain markdown under git — that one operator runs across many isolated client "arms."**
+> **Octorato is an open-source AI agent operating system: one file-native "brain" — <!--canon:skills.count-->200+<!--/canon--> skills and <!--canon:agents.count-->160+<!--/canon--> specialist agents in plain markdown under git — that one operator runs across many isolated client "arms."**
 
 [![License: MIT](https://img.shields.io/github/license/CarlosCaPe/octorato)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/CarlosCaPe/octorato?style=social)](https://github.com/CarlosCaPe/octorato/stargazers)
 [![Issues](https://img.shields.io/github/issues/CarlosCaPe/octorato)](https://github.com/CarlosCaPe/octorato/issues)
 [![Good first issues](https://img.shields.io/github/issues/CarlosCaPe/octorato/good%20first%20issue?label=good%20first%20issues&color=7057ff)](https://github.com/CarlosCaPe/octorato/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+[![Version](https://img.shields.io/badge/version-v3.1.0%20%22Reflexes%22-blueviolet)](CHANGELOG.md)
 
 📄 **White paper:** [Octorato — An Organic, File-Native Model of Artificial Agency](WHITEPAPER.md) · 🌐 [Live: dataqbs.com/octorato](https://www.dataqbs.com/octorato) · 📣 [Launch article](https://www.linkedin.com/pulse/introducing-octorato-open-source-finops-brain-ai-agents-dataqbs-trbjc) · 🛠️ [Built with Octorato](SHOWCASE.md) · 📘 [dataqbs on Facebook](https://www.facebook.com/dataQBS/)
 
@@ -283,6 +284,8 @@ Fork → branch off `test` → PR against `test`. Full guide: [CONTRIBUTING.md](
 
 ## Architecture — CLASS / OBJECT / ARM
 
+> The reactive control architecture that governs how hooks compose, arbitrate, and enforce the 4D phase machine is documented in [`docs/architecture/hook-orchestration.md`](docs/architecture/hook-orchestration.md): ECA atoms (L1) · Behavior-Tree priority (L2) · Statechart 4D phase machine + Blackboard (L3) · Contextual-Bandit model-tier routing (L4, specified). That document is the authoritative spec for adding or restructuring hooks.
+
 The framework uses an object-oriented inheritance model:
 
 ```
@@ -346,11 +349,13 @@ In neuroscience terms: the first two phases (Describe + Delegate) are **afferent
   │ 2D DELEGATE  → Search the connectome, find the specialist   │
   │              Run 3 mandatory questions (see below)           │
   │              Load the right agent + skills                   │
+  │              ← delegate-gate (fail-open)                     │
   └─────────────────────────────────────────────────────────────┘
                             │
                     ┌───────▼───────┐
                     │  CHANGE GATE  │  ← STOP. Manifest. Confirm.
                     │  (4D Gate)    │     No writes without human OK.
+                    │               │  ← qa-merge-gate (fail-closed)
                     └───────┬───────┘
                             │ confirmed
                     ┌───────▼───────┐
@@ -483,6 +488,8 @@ The archived specs become institutional memory — future tasks reference past d
                         │  200+ Skills     │
                         │  160+ Agents     │
                         │  N Client Arms  │
+                        │  HOOKS — enforcement reflexes           │
+                        │  (delegate · qa-merge · dimension-awareness) │
                         └────────┬────────┘
                                  │
             ┌──────┬──────┬──────┼──────┬──────┬──────┐
@@ -523,11 +530,14 @@ The brain maintains a **deep connectome** — a real weighted graph auto-generat
 Inspired by octopus neurobiology: 500M neurons, 2/3 distributed in arms, extensive mRNA recoding that reshapes neural protein function.
 
 ```
-  D1 (WHO)     D2 (HOW)     D3 (WHERE)    D4 (WHEN)
-  ────────     ────────     ─────────     ─────────
-  183          197          N             4
-  Neurons      Synapses     Regions       Phases
-  (Agents)     (Skills)     (Arms)        (4D Paradigm)
+  D1 (WHO)     D2 (HOW)     D3 (WHERE)           D4 (WHEN)
+  ────────     ────────     ─────────             ─────────
+  160+         200+         N                     4
+  Neurons      Synapses     Regions               Phases
+  (Agents)     (Skills)     (Arms + parallel      (4D Paradigm)
+                             git-worktree
+                             session dims
+                             v3.1.0)
 ```
 
 | Architecture | Neuroscience | Function |
@@ -618,7 +628,7 @@ graph TB
     BRAIN --> SUP["Support — 7"]:::div
     BRAIN --> SPC["Specialized — 29"]:::div
     BRAIN --> XR["Spatial — 6"]:::div
-    BRAIN --> GMD["Game Dev — 5"]:::div
+    BRAIN --> GMD["Game Dev — 20"]:::div
     BRAIN --> ACD["Academic — 5"]:::div
     BRAIN --> PMA["Paid Media — 7"]:::div
 ```
@@ -875,6 +885,9 @@ Selected synapses LOAD into the working context
    neurotransmitter into the cleft)
    │
    ▼
+↓ delegate-gate (fail-open — route to cheapest sufficient model)
+   │
+   ▼
 Agent executes WITH the synapse loaded
    (the skill is now part of the agent's effective behavior
    for this task only — it's not in the agent file)
@@ -1020,9 +1033,15 @@ Real brains forget actively. So does this one — by design, and with the operat
 
 ## Reflexes — The Spinal Cord Layer
 
+> **v3.1.0 "Reflexes"** — the brain moved from _sensing_ itself (3.0 Proprioception) to _enforcing_ itself. Principles that were advisory prose became involuntary hooks wired at the harness level: they fire whether the model chooses to or not.
+
 Not every behavior needs to go through the cortex. Some are too universal, too fast, too necessary to delegate. The spinal cord handles them: hand pulled from a hot surface, knee jerk, breathing rhythm. No conscious decision, no committee.
 
-The framework has the same layer — six **Tier A reflexes** that fire automatically on every non-trivial task, without the agent having to decide:
+The framework has two reflex sub-layers: **Tier A cognitive reflexes** (constitutional, loaded at session start) and **enforcement hooks** (harness-level, fire on specific tool events regardless of the model's intent).
+
+### Tier A — Cognitive reflexes (6, constitutional)
+
+These fire automatically on every non-trivial task without the agent having to decide:
 
 | Reflex | Stimulus | Response |
 |--------|----------|----------|
@@ -1033,24 +1052,51 @@ The framework has the same layer — six **Tier A reflexes** that fire automatic
 | `post-check-verification` | About to declare "done" | Never on a write — always on a verify (build/lint/test/grep) |
 | `dry-run-gate-pattern` | About to do something destructive | Preview/dry-run first; live execution requires explicit opt-in |
 
+### Enforcement hooks — v3.1.0 additions (3, harness-wired)
+
+These are `hooks.json` entries that the harness evaluates on every matching tool event. The model cannot skip them.
+
+| Hook | Event | Coupling | What it enforces |
+|------|-------|----------|-----------------|
+| `delegate-gate` (`scripts/delegate-gate.py`) | PreToolUse | **Fail-open** | Nudges substantive/batchable work toward the cheapest sufficient model tier (Haiku/Sonnet/Opus); never blocks a turn on failure |
+| `qa-merge-gate` (`scripts/qa-merge-gate.py`) | PreToolUse | **Fail-closed** | Blocks publish-to-main unless an operator approval the agent provably cannot self-grant is present (`OCTO_MERGE_APPROVE=<pr>` env or `octo-dim approve-merge <pr>`); detection is command-boundary-anchored so it gates real invocations, not quoted mentions |
+| `dimension-awareness-hook` (`scripts/dimension-awareness-hook.py`) | PreToolUse | **Fail-open** | Warns when other live sessions share the working tree; surfaces the collision risk before a write, never after |
+
+**Connector verdict enforcement.** The 2D Delegate verdict is now inverted by default: **SELF is the rare exception, CONNECT is the default**. The delegate-gate hook reinforces this at the harness level — answering "from my own knowledge" on a task that has a skill or agent match is caught before the tool fires.
+
+### 4D Session dimensions — v3.1.0
+
+The brain can run as **one session-id across N parallel isolated git worktrees**, each reconciled into one `.git`. This is the octopus superpower applied to time: many arms acting in parallel under one brain, without collision.
+
+`scripts/octo-dim.py` manages the blackboard registry (`connectome/sessions.json`, gitignored):
+
+```bash
+octo-dim worktree-init          # fork a new isolated dimension (new worktree + session id)
+octo-dim list                   # show all live dimensions on this machine
+octo-dim heartbeat              # signal this dimension is still alive
+octo-dim approve-merge <pr>     # grant the qa-merge-gate approval (operator-only)
+octo-dim prune                  # remove stale dimension entries
+```
+
+The architecture spec for all three enforcement hooks, the ECA atom formalism, Behavior Tree priority, and the Statechart 4D phase machine lives in [`docs/architecture/hook-orchestration.md`](docs/architecture/hook-orchestration.md).
+
 ### Why these are in CLAUDE.md, not in skills/
 
 A reflex isn't a skill the agent decides to load. It's a constraint the agent operates under from the moment a session starts. Putting them in CLAUDE.md (constitutional memory) means they're loaded before any task arrives — like the spinal cord being wired before you have a thought.
 
 Putting them in `skills/` would make them opt-in, which defeats the point. The 4D Paradigm itself works the same way: it's not a skill, it's a constitutional reflex that fires on every task.
 
-### Reflex vs Skill — the structural difference
+### Reflex vs Skill vs Hook — the structural difference
 
-| Property | Reflex (Tier A) | Skill (synapse) |
-|----------|-----------------|-----------------|
-| Loaded | At session start, unconditionally | On demand via Q1/Q3 match |
-| Trigger | Stimulus (file open, response draft, destructive op) | Task description + connectome match |
-| Storage | `CLAUDE.md` body, not a SKILL.md | `skills/<name>/SKILL.md` |
-| Decision required | None — fires automatically | Connectome + delegate-check decide |
-| Override | `--no-verify`, explicit "skip", or session-mode override | Don't load the skill |
-| Number | 6 (Tier A) | 147 (all others) |
+| Property | Reflex (Tier A) | Skill (synapse) | Enforcement hook |
+|----------|-----------------|-----------------|-----------------|
+| Loaded | At session start, unconditionally | On demand via Q1/Q3 match | Always — harness evaluates on every matching event |
+| Trigger | Stimulus (file open, response draft, destructive op) | Task description + connectome match | Specific tool event (PreToolUse / PostToolUse) |
+| Storage | `CLAUDE.md` body | `skills/<name>/SKILL.md` | `hooks.json` + `scripts/<name>.py` |
+| Model can skip | No (constitutional) | Yes (must not load) | **No** (harness-enforced) |
+| Failure mode | Prose — model complies | N/A | Fail-open (warn) or fail-closed (block) |
 
-The reflex layer is the thinnest, but it's load-bearing. Six rules at the top of CLAUDE.md govern thousands of decisions downstream.
+The reflex layer is the thinnest, but it's load-bearing. Six constitutional rules + three harness hooks govern thousands of decisions downstream.
 
 ---
 
@@ -1306,6 +1352,10 @@ ai-pull --status
 │   ├── _brain_obs.py              ← Shared library for the 10 obs scripts (private)
 │   ├── update_neural_activity.py  ← Hebbian update from trace co-activations
 │   ├── scan-external-refs         ← Scan for external URL references
+│   ├── delegate-gate.py           ← v3.1 hook: model-tier routing nudge (fail-open)
+│   ├── qa-merge-gate.py           ← v3.1 hook: operator-approval gate for merges (fail-closed)
+│   ├── dimension-awareness-hook.py← v3.1 hook: shared-worktree collision warning (fail-open)
+│   ├── octo-dim.py                ← v3.1: session-dimension registry (worktree-init / list / approve-merge)
 │   ├── ai-push.ps1                ← PowerShell variant for Windows
 │   ├── ai-pull.ps1                ← PowerShell variant for Windows
 │   └── sync-ai-docs.ps1           ← PowerShell variant for Windows
@@ -1313,6 +1363,8 @@ ai-pull --status
 │   ├── trace-event.schema.json ← Trace event contract (v1.0, strict)
 │   └── tests/trace-samples/    ← 4 validating sample records
 ├── docs/                     ← Architecture + design docs
+│   ├── architecture/
+│   │   └── hook-orchestration.md ← v3.1 Reactive Control Architecture spec (ECA · BT · Statechart · Bandit)
 │   └── trace-storage.md        ← Trace storage layout + retention + backup
 ├── traces/                   ← (gitignored) Per-UTC-day JSONL trace files
 ├── commands/                ← Slash command definitions
