@@ -301,6 +301,8 @@ The framework uses an object-oriented inheritance model:
 │     - 200+ generic skills (techniques, not client workflows)  │
 │     - Enforcement scripts (delegate-check, gate-check, etc.) │
 │     - Templates for creating your own company brain + arms   │
+│     - Two-tier memory mechanism (format + scripts +          │
+│       templates) — ship the engine, not the data             │
 │                                                              │
 │   What it is NOT:                                            │
 │     - Anyone's personal identity                             │
@@ -1006,6 +1008,14 @@ The split mirrors how brains actually work: the hippocampus consolidates short-t
 | External system pointers | `MEMORY.md` → `reference_*.md` | "incident dashboard is at grafana.internal/d/api-latency" |
 
 The index `MEMORY.md` is loaded automatically into every session. Individual memory files are loaded on demand when the agent decides they're relevant.
+
+### Two-tier memory — brain vs arm
+
+The 8 → ∞ anchor applies to brains, not just arms. Octorato runs as **1 + N brains**: one central brain (`~/.claude/`) plus N sealed arm-brains, one per client, N unbounded. Memory follows the same split.
+
+**Brain memory** holds generic, operator-level knowledge: preferences, cross-project lessons, feedback corrections. It lives in a private standalone repo (separate from this public framework repo) and never contains client data. **Arm memory** is client-specific, sealed inside each arm's own repo, and never visible to any other arm or the public brain.
+
+The public framework ships the **memory mechanism** — the format, `scripts/memory_sync.py`, `templates/memory/MEMORY.template.md`, and `docs/architecture/memory-model.md` — never anyone's actual memory data or private remote URL. Ship the engine, not the data. See [`docs/architecture/memory-model.md`](docs/architecture/memory-model.md) for the full model.
 
 ### Why memory is per-machine (gitignored)
 

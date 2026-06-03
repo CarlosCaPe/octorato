@@ -21,10 +21,13 @@ Sync script (in `~/.local/bin/`) that pulls the latest brain from the `octorato`
 Sync script that commits and pushes all `~/.claude/` changes to GitHub, regenerates the [[#Connectome (neural_map.json)]], and syncs every arm. It runs [[#check-generic]] first as a safety gate. The "broadcast" half of multi-machine sync. Usage: `ai-push "feat(brain): add new skill"`.
 
 ### Arm
-An **isolated client project** — one sealed repo per client, living outside the brain (e.g. `~/projects/<client>/`). Each arm carries its own `.claude/CLAUDE.md` as its single source of truth. Arms are the *PROPERTIES* in the [[#CLASS / OBJECT / ARM]] model and the *WHERE* (FOR WHOM) in the [[#Activation stack]]. Named for the octopus's eight semi-autonomous arms, two-thirds of whose neurons live in the limb, not the central brain.
+An **isolated client project** — one sealed repo per client, living outside the brain (e.g. `~/projects/<client>/`). Each arm carries its own `.claude/CLAUDE.md` as its single source of truth and its own sealed **[[#Arm memory]]** repo for client-specific knowledge. Arms are the *PROPERTIES* in the [[#CLASS / OBJECT / ARM]] model and the *WHERE* (FOR WHOM) in the [[#Activation stack]]. Named for the octopus's eight semi-autonomous arms, two-thirds of whose neurons live in the limb, not the central brain — most operational knowledge is arm-local.
 
 ### Arm isolation
 The framework's hardest invariant: **an arm never knows another arm exists.** No client data, names, or credentials ever flow arm→arm. The brain sees each arm's cost data but the arms never see each other. This is a *deliberate departure from the biology* — real octopus arms have some peripheral cross-talk; Octorato enforces total sideways isolation for client-data security. Marketed as "air-gapped arms" (software-level isolation between workspaces).
+
+### Arm memory
+Per-arm, client-specific knowledge — facts, conventions, and context that belong to one arm only. Stored in that arm's own **private** repo (loaded via symlink into the arm; never synced to the central brain or to another arm). A lesson that would help other arms is distilled up to the central brain as a generic skill — see [[#Upward learning]]. See [[#Two-tier memory]] and `docs/architecture/memory-model.md`.
 
 ### Arm onboarding
 The procedure for creating a new client arm: scaffold `.claude/CLAUDE.md` (source of truth), `.github/copilot-instructions.md` + `.cursorrules` (auto-synced via [[#sync-ai-docs]]), `README.md`, and a `.gitignore` that **must** include `.env`, `.env.*`, and `.dev.vars`. Full step-by-step lives in `skills/arm-onboarding/SKILL.md`.
@@ -34,7 +37,10 @@ The procedure for creating a new client arm: scaffold `.claude/CLAUDE.md` (sourc
 ## B
 
 ### Brain
-The shared, open-source core: `~/.claude/` itself — *which IS the `octorato` repo*. It holds the rules (`CLAUDE.md`), the [[Skills]] (HOW), the [[Agents]] (WHO), the [[#Connectome (neural_map.json)]], the enforcement scripts, and templates. It is the **CLASS** (the DNA) in the [[#CLASS / OBJECT / ARM]] model and the central brain in the octopus metaphor: it sets high-level intent and distributes generic knowledge down to the arms. It is *not* anyone's identity, client list, or credentials — those live in the [[#Company brain]].
+The shared, open-source core: `~/.claude/` itself — *which IS the `octorato` repo*. It holds the rules (`CLAUDE.md`), the [[Skills]] (HOW), the [[Agents]] (WHO), the [[#Connectome (neural_map.json)]], the enforcement scripts, and templates. It is the **CLASS** (the DNA) in the [[#CLASS / OBJECT / ARM]] model and the central brain in the octopus metaphor: sets high-level intent, distributes generic knowledge down to arms. Octorato runs **1 + N brains** (applying the [[#8→∞ (lemniscate)]] anchor): one central brain here, plus one sealed [[#Arm memory]] brain per arm, N unbounded. It is *not* anyone's identity, client list, or credentials — those live in the [[#Company brain]].
+
+### Brain memory
+Cross-arm, generic knowledge held in the central brain: distilled lessons, operator identity, framework rules. Lives in a **private standalone repo** owned by the brain (separate from the public `octorato` repo and from any arm repo); the public framework ships only the mechanism, never the content. Loaded into `~/.claude/` at runtime. See [[#Two-tier memory]] and `docs/architecture/memory-model.md`.
 
 ### Brain stays generic
 See [[#Generic-safety / "brain stays generic"]].
@@ -172,6 +178,9 @@ The sync script that propagates one arm's `.claude/CLAUDE.md` into the tool-spec
 
 ### Tesseract
 The 4-dimensional analog of a cube (a hypercube) — the second symbol behind the name *Octorato* and the namesake of the [[#4D Paradigm]]. The point: the four phases (Describe/Delegate/Diligent/Disclose) are **dimensions active simultaneously**, not sequential steps. To act inside the brain is to act in 4-space and from there shape 3-space outcomes: the codebase, the deliverable, the invoice. Intellectual lineage: Charles Howard Hinton, *A New Era of Thought* (1888) — *not* the Marvel artifact. See `skills/octorato-symbolism/SKILL.md`.
+
+### Two-tier memory
+The memory architecture Octorato uses across its **1 + N brains**: a **central tier** ([[#Brain memory]] — generic, cross-arm lessons + operator identity, in a private brain-owned repo) and an **arm tier** ([[#Arm memory]] — client-specific facts, sealed in each arm's own private repo). Knowledge flows up (arm lesson → distilled generic skill → central brain) but never sideways (arm → arm). The public framework ships the mechanism; both tiers' content stays private. See `docs/architecture/memory-model.md`.
 
 ### Trace event
 The atomic unit of [[#FinOps]] and observability — a structured JSONL record appended to `~/.claude/traces/YYYY-MM-DD.jsonl` (gitignored, 30-day retention) by `trace-hook.py`. Three classes: `skill_fire`, `agent_activate`, and `phase_boundary` (one of the six 4D phases). Each shares a strict schema with `task_id`, `ts` (ISO 8601 UTC), **`arm`** (auto-derived from CWD — this is what enables per-client cost attribution), `status`, and optional token usage. Read by the cost profiler, [[#Cost-spike watchdog]], SLOs, and the Hebbian updater.
