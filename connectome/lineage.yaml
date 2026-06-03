@@ -176,3 +176,19 @@ edges:
       the octopus↔OS pattern (skills like the two above) must hang off this edge,
       not re-derive the metaphor. Also lights the original 'octorato symbolism
       octopus' seek that fell back to grep on 2026-06-01.
+
+  - id: session-isolation
+    concept: "session/instance isolation / two live dimensions share one worktree / co-tenancy guard / each session its own git worktree"
+    appears_in:
+      - skills/session-isolation/SKILL.md                     # canonical principle + protocol + recovery
+      - CLAUDE.md                                             # Core Principle #7 (Session/Instance Isolation)
+      - scripts/ai_sync.py                                    # ai-push co-tenancy guard (aborts on shared tree)
+      - scripts/octo-dim.py                                   # dimension registry (sessions.json) + worktree-init
+      - scripts/dimension-awareness-hook.py                   # the "you are NOT isolated" PreToolUse warning
+    kind: appears_in
+    note: >-
+      Session/Instance Isolation = Arm Isolation across time. Canonical in the
+      skill + CLAUDE.md #7; ENFORCED by ai-push's co-tenancy abort, octo-dim's
+      sessions.json registry, and the dimension-awareness hook. Change the rule,
+      reconcile all four enforcement surfaces. Lights the session-isolation seek
+      that fell back to grep repeatedly on 2026-06-02/03.
