@@ -18,7 +18,7 @@ Subcommands:
 Time windows: 30m, 6h, 7d, 2w (digits + suffix m/h/d/w).
 
 Schema: ~/.claude/schemas/trace-event.schema.json
-Storage: ~/.claude/docs/trace-storage.md
+Storage: ~/.claude/docs/architecture/trace-storage.md
 """
 from __future__ import annotations
 

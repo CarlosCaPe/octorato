@@ -22,6 +22,26 @@ Octorato is not built for 8 clients, or 80, or 800. The number 8 is symbolic: a 
 
 Multi-tenancy without ceiling. The 8 is symbolic; the ∞ is the engineering claim.
 
+### Nine brains → 1 + N brains
+
+A real octopus does not have one brain. It has **nine**: one central brain plus
+one in each of its eight arms, with about **two-thirds of its neurons living in the
+arms**. The arms sense, decide, and act semi-autonomously; the center sets intent
+and coordinates, it does not micromanage.
+
+That neuroanatomy is the memory model. The biological octopus is fixed at nine
+(its body plan caps it at eight arms). Octorato is **1 + N**: one central brain
+(`~/.claude/` + the private `octorato-memory` store) plus **one sealed arm-brain
+per arm** (`<arm>/.claude/memory`, version-controlled in the arm's own private
+repo, loaded via symlink). N is unbounded — the same `8 → ∞` move, now applied to
+brains: 9 is the body, 1+N is the engineering claim.
+
+So memory is **two-tier by scope**: generic, cross-arm lessons + operator identity
+live in the central brain; a client's specific facts stay in that client's
+arm-brain, sealed, and only distil *upward* once made generic. Most knowledge is
+arm-local (the 2/3), so the central brain — and the public framework that ships it —
+stays lean. Full model: `docs/architecture/memory-model.md`.
+
 ## The Tesseract → 4D
 
 The 4D Paradigm — **D**escribe → **D**elegate → **D**iligent → **D**isclose — is named *4D* deliberately. A tesseract is the 4-dimensional analog of a cube: a hypercube.

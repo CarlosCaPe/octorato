@@ -25,7 +25,7 @@ A few minutes of due diligence saves everyone time:
 1. **Search the repo** — [open issues](https://github.com/CarlosCaPe/octorato/issues) and [closed issues](https://github.com/CarlosCaPe/octorato/issues?q=is%3Aissue+is%3Aclosed). Your question may already be answered.
 2. **Check the wiki** — [Architecture](https://github.com/CarlosCaPe/octorato/wiki/Architecture), [Self-Growth](https://github.com/CarlosCaPe/octorato/wiki/Self-Growth), [Skills System](https://github.com/CarlosCaPe/octorato/wiki/Skills-System), [FinOps](https://github.com/CarlosCaPe/octorato/wiki/FinOps).
 3. **Read the relevant `SKILL.md`** — every skill in `skills/` documents its own usage and front-matter.
-4. **Try `brain_doctor`** — `python3 ~/.claude/scripts/brain_doctor.py` runs 17 read-only health checks if something feels off after install or sync.
+4. **Try `brain_doctor`** — `python3 ~/.claude/scripts/brain_doctor.py` runs 15+ read-only health checks (plus one per synced arm) if something feels off after install or sync.
 
 ## Response expectations
 

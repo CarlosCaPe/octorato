@@ -1,5 +1,7 @@
 # Architecture
 
+> **Organ:** anatomy atlas — the complete map of every layer, how they inherit, and why the organism takes this shape.
+
 The deep architecture reference for Octorato — the open-source AI-agent operating system that lives in `~/.claude/`. This page explains *why* the framework takes the shape it does, the object model that governs inheritance, the activation stack that fires on every task, the layers and their isolation guarantees, and the connectome that wires it all together.
 
 If you want the philosophy in one sentence: **one human consciousness directs a shared brain of specialist agents across many sealed client workspaces, and the data never crosses sideways.** That single constraint — and the biology that solves it — produces everything below.
@@ -43,7 +45,7 @@ Octorato is an object-oriented inheritance model expressed in the filesystem. Th
                        │  manages
 ┌──────────────────────▼───────────────────────────────────────┐
 │   ARMS = PROPERTIES  (client projects, isolated)             │
-│   ~/projects/<client>/                                       │
+│   ~/Documents/github/<CLIENT>/                               │
 │                                                              │
 │   Each arm is a sealed client repo.                          │
 │   Arms never see each other's data.                          │
@@ -131,13 +133,26 @@ Four architectural layers, each with a fixed location on disk and a defined isol
 | **Brain** | `~/.claude/` | Shared across all arms — the generic CLASS. |
 | **Agents** | `~/.claude/agents/` (+ `REGISTRY.md`) | Generic personas, no client data. |
 | **Skills** | `~/.claude/skills/` | Generic techniques, no client data. |
-| **Arm** | `<CLIENT>/` (per-client repo, e.g. `~/projects/<client>/`) | Per-client repo, fully sealed. |
+| **Arm** | `<CLIENT>/` (per-client repo, e.g. `~/Documents/github/<CLIENT>/`) | Per-client repo, fully sealed. |
 | **Arm instructions** | `<CLIENT>/.claude/CLAUDE.md` | Single source of truth for that arm. |
 
 Two properties to internalize:
 
 - **The Agents and Skills layers live *inside* the Brain layer** and inherit its genericity. An agent or skill that referenced a client name would corrupt the public CLASS — so the [[Agents-System]] and [[Skills-System]] are curated to be technique-only.
 - **The Arm layer is the only place client data legally exists.** Its instructions file (`<CLIENT>/.claude/CLAUDE.md`) is the *single source of truth* for that client and is generated/maintained per the [[Arms-and-Sync]] onboarding flow. Brain-side AI docs (`copilot-instructions.md`, `.cursorrules`) are auto-synced down from the brain — never hand-edited per arm.
+
+### 4a. Two-tier memory model
+
+The `1 + N` brain count the octopus biology implies extends to *memory*. Most operational knowledge lives arm-local (recall: two-thirds of an octopus's neurons are in its arms); the central brain stays lean and generic.
+
+| Tier | Scope | Location | What lives here |
+|---|---|---|---|
+| **Brain memory** | Cross-arm, generic | Private `octorato-memory` repo (gitignored from this public repo, holds its own `.git` → private remote) | Operator identity, cross-arm lessons already distilled to generic, global context that survives arm changes |
+| **Arm memory** | Per-arm, client-specific | Each arm's own private repo, loaded via symlink | Client-specific facts, project history, local lessons not yet (or never) promoted |
+
+The wall between tiers mirrors the Arm Isolation invariant: arm memory never crosses to another arm or enters the public brain. Only the mechanism ships publicly (`scripts/memory_sync.py` + a template); the private remote URL and any memory content stay out of this repo entirely — same boundary as `company/`.
+
+Generic lessons distil **upward** (arm memory → brain memory, stripped of client details) following the same cycle as skills: see [§6](#6-upward-learning-and-downward-distribution). The full data model, sync protocol, and directory layout are in [`docs/architecture/memory-model.md`](../architecture/memory-model.md).
 
 ---
 
@@ -295,3 +310,4 @@ The intellectual lineage is math and biology, deliberately: **∞** from John Wa
 - [[Agents-System]] — the *WHO* layer: 13 divisions, personas, activation modes.
 - [[Arms-and-Sync]] — the *FOR WHOM* layer: arm onboarding, isolation, multi-machine sync.
 - [[Self-Growth]] — upward learning, auto-skill creation, the daily discovery loop.
+- [`docs/architecture/hook-orchestration.md`](../architecture/hook-orchestration.md) — the reactive-control spec: ECA atoms, Behavior-Tree priority, Statechart 4D, Spreading-Activation recall, and Bandit tier-routing that wire the hooks into an autonomous reflex layer.

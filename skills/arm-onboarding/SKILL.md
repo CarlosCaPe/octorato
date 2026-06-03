@@ -22,6 +22,7 @@ Every arm MUST have:
 | `README.md` | Human-readable repo intro | Project overview + quick-start |
 | `.gitignore` | Must include `.env`, `.env.*`, `.dev.vars` | Belt-and-suspenders against secret leaks |
 | `.env` | Local secrets, never committed | Gitignored — only on operator's machine |
+| `.claude/memory/` | Arm-brain: arm-specific memories, MEMORY.md index, one-fact-per-file | Committed to the arm's own private repo; loaded by the harness via a symlink from `~/.claude/projects/<arm-slug>/memory` |
 
 ## Sequence
 
@@ -39,11 +40,20 @@ touch README.md .gitignore .env
 # 4. Sync — propagates .claude/CLAUDE.md → .github/copilot-instructions.md + .cursorrules
 ~/.local/bin/sync-ai-docs <ARM_CODE>   # or sync-ai-docs (no arg = all arms)
 
-# 5. (Optional) Register database connections in QueryMaster
+# 5. Wire the arm-brain (two-tier memory model)
+mkdir -p .claude/memory
+# Create MEMORY.md index inside the arm (committed to the arm's private repo)
+# Then link it into the brain's harness so it loads automatically:
+ln -sfn "$(pwd)/.claude/memory" ~/.claude/projects/<arm-slug>/memory
+# Arm-specific facts stay here. A lesson useful to OTHER arms distils UP to the
+# central brain (generic, anonymized) — see docs/architecture/memory-model.md
+# and the feedback_brain_is_independent lesson in the brain memory.
+
+# 6. (Optional) Register database connections in QueryMaster
 # Edit ~/.config/querymaster/connections.json — add the arm's DB connections
 # Connections live OUTSIDE the arm repo (operator-side, not committed)
 
-# 6. First commit
+# 7. First commit
 git add . && git commit -m "chore: bootstrap arm with brain-aligned structure"
 ```
 

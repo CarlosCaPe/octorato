@@ -462,6 +462,67 @@ def cmd_gods(G, top_n=20):
     print(f"\n  God agents: {len(agent_gods)} | God skills: {len(skill_gods)}")
 
 
+def cmd_dead(G):
+    """Dead cells — orphan/leaf nodes the graph no longer connects (prune candidates).
+
+    The inverse of cmd_gods: instead of the highest-betweenness highways, surface
+    the nodes with (near-)zero degree — skills/agents nothing routes to and that
+    route to nothing. degree-0 = dead (isolated tissue); degree-1 = a dying leaf
+    (one thread left). Read-only: it SUGGESTS the prune, never runs it — the
+    operator approves the cut (fail-closed, same stance as merges). A brand-new,
+    not-yet-linked node also shows degree-0, so an orphan is a *candidate*, not a
+    verdict: an unlit neuron gets an edge, dead tissue gets removed.
+    """
+    print("=" * 60)
+    print("DEAD CELLS — orphan/leaf nodes (prune candidates)")
+    print("=" * 60)
+    print("  (Inverse of `gods`: degree-0 = dead/isolated, degree-1 = dying leaf)")
+    print("  Read-only — SUGGESTS prune, never runs it. Operator approves.\n")
+
+    dead, dying = [], []
+    for node in G.nodes():
+        deg = G.degree(node)
+        if deg == 0:
+            dead.append(node)
+        elif deg == 1:
+            dying.append(node)
+
+    def _info(node):
+        t = G.nodes[node].get("type", "?")
+        name = G.nodes[node].get("name", node) or node
+        if t == "agent":
+            # Agents are nested by division (agents/<division>/<id>.md); the node
+            # id is just the stem. Glob for the real path so the "file gone" check
+            # and the suggested prune target are TRUE, not a flat no-op guess.
+            guess = next(BRAIN_DIR.glob(f"agents/**/{node}.md"),
+                         BRAIN_DIR / "agents" / f"{node}.md")
+        else:
+            guess = BRAIN_DIR / "skills" / node / "SKILL.md"
+        return t, name, guess
+
+    for label, bucket in (("DEAD (degree 0)", dead), ("DYING (degree 1)", dying)):
+        print(f"  {label}: {len(bucket)}")
+        for node in sorted(bucket):
+            t, name, guess = _info(node)
+            missing = "" if guess.exists() else "  ⚠ file already gone"
+            rel = guess.relative_to(BRAIN_DIR) if str(guess).startswith(str(BRAIN_DIR)) else guess
+            print(f"    • {t:<5} {str(name)[:38]:<38} {rel}{missing}")
+        print()
+
+    # Machine RECEIPT — quote verbatim in the Provenance `Graph:` field.
+    line = (f"DEAD-SCAN connectome dead={len(dead)} dying={len(dying)} "
+            f"→ {'suggest-prune (operator approves)' if (dead or dying) else 'clean'}")
+    print(f"📋 RECEIPT:\n  {line}")
+
+    if dead:
+        print("\n  ☠ Suggested prune (review first, NEVER auto-run):")
+        for node in sorted(dead):
+            t, _, guess = _info(node)
+            target = guess.parent if t == "skill" else guess
+            print(f"    rm -rf {target}")
+        print("    python3 scripts/generate_neural_map.py   # rebuild the graph after")
+
+
 def cmd_path(G, node_a, node_b):
     """Find shortest path between two nodes."""
     # Fuzzy match node IDs
@@ -1061,7 +1122,7 @@ def main():
     # neural_map.json is missing). delegate-check already supports -h/--help.
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help", "help"):
         print(__doc__)
-        print("Commands: stats, gods, path, query, impact, communities, viz, 4d")
+        print("Commands: stats, gods, dead, path, query, impact, communities, viz, 4d")
         return 0
 
     cmd = sys.argv[1].lower()
@@ -1075,6 +1136,9 @@ def main():
     elif cmd == "gods":
         top_n = int(sys.argv[2]) if len(sys.argv) > 2 else 20
         cmd_gods(G, top_n)
+
+    elif cmd == "dead":
+        cmd_dead(G)
 
     elif cmd == "path":
         if len(sys.argv) < 4:
@@ -1118,7 +1182,7 @@ def main():
 
     else:
         print(f"Unknown command: {cmd}")
-        print("Commands: stats, gods, path, query, impact, communities, viz, 4d")
+        print("Commands: stats, gods, dead, path, query, impact, communities, viz, 4d")
         return 1
 
     # Log session for Hebbian learning (only for graph-traversal commands)

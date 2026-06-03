@@ -1,5 +1,7 @@
 # Getting Started
 
+> **Organ:** embryology — the organism grows step by step, from a bare clone to a fully wired brain with sealed arms and cross-machine circulation.
+
 This is the install-and-first-run guide for adopting **Octorato** — the open-source AI-agent operating system that lives in `~/.claude/`. By the end you will have a working brain, a private company layer that never leaks to the public, your first client *arm*, multi-machine sync, and a feel for how the agent greets you and gates its first file change.
 
 If you only read one thing: **the brain (`~/.claude/`) is a public git repo.** Everything in Step 2 and Step 3 exists to keep your private world out of it.
@@ -22,7 +24,7 @@ A blank slate is fine. You do not need to know the architecture before starting 
 
 ---
 
-## Step 1 — Clone the brain to `~/.claude`
+## Step 1 — Clone the brain to `~/.claude` (the central brain)
 
 The brain installs *as* your Claude Code config directory. Claude Code reads `~/.claude/CLAUDE.md` on every session; cloning Octorato there is what turns a stock Claude Code into Octorato.
 
@@ -42,7 +44,7 @@ All three paths should exist. `CLAUDE.md` is the constitution Claude reads every
 
 ---
 
-## Step 2 — Enable the push-time secret guard
+## Step 2 — Enable the push-time secret guard (the immune membrane)
 
 **Do this before you ever push.** The brain is published open-source, and git history is permanent and public. One leaked secret or client name in a commit lives on GitHub forever.
 
@@ -69,7 +71,7 @@ git -C ~/.claude config --get core.hooksPath   # → .githooks
 
 ---
 
-## Step 3 — Create your private company brain
+## Step 3 — Create your private company brain (the cortex, your private OBJECT)
 
 The public brain is the **CLASS** (generic DNA). Your **company brain** is the private **OBJECT** that instantiates it: your identity, your rates, your client/arm list, your voice, your connection configs. It lives at `~/.claude/company/` and is **gitignored** — nothing in it ever flows to the public repo.
 
@@ -98,7 +100,7 @@ If that command prints nothing, **stop** — `company/` is *not* ignored and you
 
 ---
 
-## Step 4 — Create your first client arm
+## Step 4 — Create your first client arm (the first limb, sealed)
 
 An **arm** is a sealed, per-client repo (a **PROPERTY** in the inheritance model). Arms never see each other — that is the core isolation guarantee. Each arm's single source of truth is its own `.claude/CLAUDE.md`, which inherits all brain rules and adds client-specific context.
 
@@ -126,16 +128,17 @@ Only you, the human operator, ever bridge knowledge between arms. The agent neve
 
 ---
 
-## Step 5 — Multi-machine sync
+## Step 5 — Multi-machine sync (the glial layer)
 
 `~/.claude/` is a git repo, so syncing the brain across laptops is just push/pull — wrapped in three helper scripts that also regenerate the connectome and propagate brain rules down into every arm's AI-doc files.
 
-**One-time setup per machine** — copy the helpers onto your `PATH` and make them executable:
+**One-time setup per machine** — run the installer to generate the helper thunks in `~/.local/bin/`:
 
 ```bash
-cp ~/.claude/scripts/ai-push ~/.claude/scripts/ai-pull ~/.claude/scripts/sync-ai-docs ~/.local/bin/
-chmod +x ~/.local/bin/ai-push ~/.local/bin/ai-pull ~/.local/bin/sync-ai-docs
+python3 ~/.claude/scripts/install-runners.py
 ```
+
+This creates `ai-push`, `ai-pull`, and `sync-ai-docs` in `~/.local/bin/` for both POSIX and Windows.
 
 **Daily workflow:**
 
@@ -147,7 +150,7 @@ chmod +x ~/.local/bin/ai-push ~/.local/bin/ai-pull ~/.local/bin/sync-ai-docs
 | `ai-pull --status` | Shows sync status without changing anything |
 | `sync-ai-docs` | Cascades brain rules into each arm's `.github/copilot-instructions.md` + `.cursorrules` |
 
-On a brand-new workstation the bootstrap is: clone the brain (Step 1), enable the hook (Step 2), copy the three scripts (above), then run `ai-pull`. From then on, `ai-pull` at the start of a work block and `ai-push "..."` when you've improved the brain.
+On a brand-new workstation the bootstrap is: clone the brain (Step 1), enable the hook (Step 2), run the installer (above), then run `ai-pull`. From then on, `ai-pull` at the start of a work block and `ai-push "..."` when you've improved the brain.
 
 > **Note:** episodic memory (`~/.claude/projects/`) is gitignored and stays per-machine by design — it contains absolute paths and arm context that must not go public. Brain stays generic; memory stays sovereign.
 

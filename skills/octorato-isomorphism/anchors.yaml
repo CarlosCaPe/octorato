@@ -1,0 +1,47 @@
+# Octorato Isomorphism — anchor descriptor sets (config-first; behavior lives here, not in code).
+#
+# Each anchor is a SET of distinct concepts (no synonyms WITHIN a set). The script
+# collapses cross-set synonyms via `synonyms` groups (work in the quotient V/~),
+# then intersects. The result is the INVARIANT: structure shared by all three anchors.
+#
+# Honesty rule: a word belongs to an anchor only if it literally, defensibly describes it.
+# adaptive/autonomous describe an octopus and Linux but NOT a tesseract -> they drop out.
+# That drop-out is the point: the script corrects hand-waved intersections.
+
+anchors:
+  octopus:
+    [distributed, isolated, interconnected, layered, parallel, nested, recursive,
+     symmetric, emergent, bounded, adaptive, autonomous, regenerative, boneless,
+     camouflaging, predatory, marine, suckered, inky, soft-bodied, intelligent, sensing]
+  linux:
+    [distributed, isolated, interconnected, layered, parallel, nested, recursive,
+     symmetric, emergent, bounded, adaptive, autonomous, modular, forking, open-source,
+     kernelled, permissioned, scheduled, mounted, daemonized, scriptable, portable, free]
+  tesseract:
+    [distributed, isolated, interconnected, layered, parallel, nested, recursive,
+     symmetric, emergent, bounded, four-dimensional, hypercubic, projecting, unfolding,
+     vertexed, edged, faced, celled, rotating, geometric, abstract, infinite]
+
+# Synonym groups: first element is the canonical form. The corpus is quotiented by these
+# before intersecting, so "fractal" and "recursive" count as one invariant, not two.
+synonyms:
+  - [self-similar, recursive, fractal]
+  - [interconnected, networked, connected]
+  - [isolated, sealed, sandboxed]
+  - [unfolding, projecting, casting]
+  - [bounded, finite, capped]
+
+# Invariant -> the Octorato primitive it implies. `kind` records WHERE the primitive lives
+# (skill = skills/<target>/SKILL.md; core = CLAUDE.md law; script = scripts/; memory = memory store).
+# Only `skill` kinds are existence-checked against the filesystem.
+skill_map:
+  distributed:    {target: octopus-architecture, kind: core,   note: "1 brain, N sealed arms"}
+  isolated:       {target: arm-isolation,         kind: core,   note: "an arm never sees another"}
+  interconnected: {target: connectome,            kind: script, note: "TF-IDF + cosine graph"}
+  layered:        {target: layer-architecture,    kind: core,   note: "Brain/Agents/Skills/Arm"}
+  parallel:       {target: session-isolation,     kind: skill,  note: "N worktree dimensions, one .git"}
+  nested:         {target: two-tier-memory,       kind: memory, note: "1 central + N arm-brains"}
+  symmetric:      {target: octorato-harmony,      kind: skill,  note: "converge divergent values to the middle"}
+  self-similar:   {target: octorato-symbolism,    kind: skill,  note: "arm = brain + arm; fractal primitive OWNED by octorato-symbolism (recursion=8→∞)"}
+  emergent:       {target: upward-learning,       kind: core,   note: "generic pattern emerges from arms (CLAUDE.md law)"}
+  bounded:        {target: pre-merge-qa-gate,     kind: skill,  note: "fail-closed boundary; operator approves"}
