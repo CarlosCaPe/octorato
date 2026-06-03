@@ -441,6 +441,12 @@ def generate_connectome():
 
     for skill_dir in sorted(SKILLS_DIR.iterdir()):
         if skill_dir.is_dir() and not skill_dir.name.startswith("."):
+            # A dir with no direct SKILL.md is a container, not a skill — e.g. the
+            # learned/ draft pen (holds learned/<slug>/SKILL.md). Indexing it would
+            # mint a contentless degree-0 orphan that `query_connectome.py dead`
+            # then flags forever. Skip it at the source.
+            if not (skill_dir / "SKILL.md").exists():
+                continue
             meta = read_skill(skill_dir)
             synapses.append(meta)
             skill_docs[meta["id"]] = meta["text"]
