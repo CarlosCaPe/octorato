@@ -1,4 +1,4 @@
-# Skills — the *HOW* (207 total)
+# Skills — the *HOW* (208 total)
 
 Every technique the brain can apply. Grouped by declared `type`. Each skill lives at `skills/<slug>/SKILL.md` in the repo.
 
@@ -204,10 +204,11 @@ Every technique the brain can apply. Grouped by declared `type`. Each skill live
 - **[`octorato-isomorphism`](https://github.com/CarlosCaPe/octorato/blob/master/skills/octorato-isomorphism/SKILL.md)** — The three Octorato anchors (octopus = architecture, Linux = OS, tesseract = 4D paradigm) are not three brands stuck together — they are one abstract structure shown three times (an isomorphism). This skill names the method for finding what they share: set intersection over a qu …
 - **[`octorato-symbolism`](https://github.com/CarlosCaPe/octorato/blob/master/skills/octorato-symbolism/SKILL.md)** — The two symbolic anchors of the Octorato framework — the 8 → ∞ (lay the octopus's eight arms sideways and you get the lemniscate, the unbounded) and the Tesseract → 4D (the four-phase paradigm is the 4-dimensional analog of a cube). Invoke when explaining naming rationale, bran …
 
-## lesson-learned (3)
+## lesson-learned (4)
 
 - **[`agent-proof-approval-gate`](https://github.com/CarlosCaPe/octorato/blob/master/skills/agent-proof-approval-gate/SKILL.md)** — Build a fail-closed PreToolUse gate for merge/deploy/destructive actions that the AI agent provably cannot self-bypass. Use when you need human-only override for a consequential action the agent orchestrates.
 - **[`command-boundary-hook-matching`](https://github.com/CarlosCaPe/octorato/blob/master/skills/command-boundary-hook-matching/SKILL.md)** — Pattern-match what a Bash command actually does in a PreToolUse hook without false-firing on mentions inside quoted args, commit messages, or echo strings. Use when building any hook that decides based on command semantics.
+- **[`coworking-concept-collision`](https://github.com/CarlosCaPe/octorato/blob/master/skills/coworking-concept-collision/SKILL.md)** — Protocol for when two live sessions are codifying the SAME concept concurrently (not just sharing a working tree). Detect semantic friction BEFORE committing, defer ownership to whoever is further ahead, and integrate from an isolated dimension. Trigger — a file you are about t …
 - **[`stacked-pr-squash-delete-gotcha`](https://github.com/CarlosCaPe/octorato/blob/master/skills/stacked-pr-squash-delete-gotcha/SKILL.md)** — Recover from and prevent stacked-PR breakage caused by squash-merge + auto-delete-branch on the base PR. Use when working with stacked branches or any PR whose base branch is another PR's head.
 
 ## paradigm-protocol (1)

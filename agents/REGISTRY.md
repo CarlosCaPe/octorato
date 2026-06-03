@@ -74,7 +74,7 @@ Agents load their persona + the relevant skills for the active arm. Example:
 | 🔒 Security Engineer | [engineering/engineering-security-engineer.md](engineering/engineering-security-engineer.md) | threat modeling, vulnerability assessment, secure code review, security architecture |
 | 💎 Senior Developer | [engineering/engineering-senior-developer.md](engineering/engineering-senior-developer.md) | Laravel, Livewire, Three.js, advanced CSS, full-stack |
 | 🏛️ Software Architect | [engineering/engineering-software-architect.md](engineering/engineering-software-architect.md) | system design, domain-driven design, architectural patterns, scalability |
-| 🗃️ SP Migration Agent | [engineering/sp-migration.agent.md](engineering/sp-migration.agent.md) | T-SQL to PL/pgSQL, stored procedure conversion, SQL Server to PostgreSQL migration |
+| 🔄 SP Migration Agent | [engineering/sp-migration.agent.md](engineering/sp-migration.agent.md) | T-SQL → PL/pgSQL, stored procedure conversion, batch migration |
 | ⛓️ Solidity Smart Contract Engineer | [engineering/engineering-solidity-smart-contract-engineer.md](engineering/engineering-solidity-smart-contract-engineer.md) | Solidity, EVM, smart contracts, DeFi, gas optimization |
 | 🛡️ SRE (Site Reliability Engineer) | [engineering/engineering-sre.md](engineering/engineering-sre.md) | SLOs, error budgets, observability, chaos engineering, toil reduction |
 | 📚 Technical Writer | [engineering/engineering-technical-writer.md](engineering/engineering-technical-writer.md) | documentation, API references, README, tutorials |

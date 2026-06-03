@@ -55,7 +55,7 @@ POLICY = CLAUDE / ".githooks" / "push-policy.txt"
 # Staged on push — allowlist, never `git add -A`, so personal files never slip in.
 # Top-level governance docs (CHANGELOG, SUPPORT, etc.) must be listed explicitly;
 # otherwise `ai-push` silently drops them with no warning (lesson 2026-05-28).
-BRAIN_PATHS = ["CLAUDE.md", "README.md", "CONTRIBUTING.md", "HEBBIAN_LEARNING.md",
+BRAIN_PATHS = ["CLAUDE.md", "README.md", "FAQ.md", "CONTRIBUTING.md", "HEBBIAN_LEARNING.md",
                "CODE_OF_CONDUCT.md", "SECURITY.md", "SUPPORT.md", "CHANGELOG.md",
                "ROADMAP.md", "SHOWCASE.md", "WHITEPAPER.md", "LICENSE",
                "budgets.yaml.example",
@@ -386,18 +386,33 @@ def _push_via_pr(branch: str, target: str, msg: str) -> int:
 
 # ── co-tenancy guard (reuses the dimension-awareness-hook / octo-dim registry) ──
 SESSIONS_REGISTRY = CLAUDE / "connectome" / "sessions.json"
-_DIM_TTL = 900          # seconds; matches dimension-awareness-hook DEFAULT_TTL
+_DIM_TTL = 900          # seconds; the "live" window dimension-awareness-hook displays
 _DIM_FUTURE_SKEW = 120  # heartbeat this far ahead of now → clock skew → not live
 
 
-def _live_dimensions() -> list:
-    """All sessions with a fresh heartbeat in connectome/sessions.json.
+def _cotenant_window() -> int:
+    """Safety window (seconds) for the co-tenancy ABORT decision.
 
-    Reuses the exact liveness semantics of scripts/dimension-awareness-hook.py
-    (heartbeat within TTL, future-skew guard). More than one live session means
-    co-tenancy on this brain tree (one of them is us), so we count rather than
-    try to identify self, which a subprocess can't do reliably without the
-    session id. Returns [(session_id, branch), ...].
+    Wider than the 900s live-display TTL on purpose: a guard must err conservative.
+    A neighbor session idle but not yet aged out is probably still holding the tree
+    (its branch checked out, its work uncommitted) even though its heartbeat went
+    stale past the live TTL. This closes the real gap from 2026-06-03 where a
+    co-tenant at 1122s age slipped under the 900s window and ai-push would not have
+    aborted. Tunable via OCTO_COTENANCY_GRACE; never narrower than the live TTL.
+    """
+    try:
+        return max(int(os.environ.get("OCTO_COTENANCY_GRACE", "1800")), _DIM_TTL)
+    except (ValueError, TypeError):
+        return 1800
+
+
+def _dimensions_seen(ttl: int) -> list:
+    """Sessions whose heartbeat falls within `ttl` seconds (future-skew guarded).
+
+    Reuses the registry + parse semantics of scripts/dimension-awareness-hook.py.
+    More than one means co-tenancy on this brain tree (one of them is us), so we
+    count rather than identify self, which a subprocess can't do reliably without
+    the session id. Returns [(session_id, branch, age_seconds), ...].
 
     FAIL-OPEN: any read/parse error returns [] so a broken registry never bricks
     ai-push (same discipline as the hook it mirrors).
@@ -407,7 +422,7 @@ def _live_dimensions() -> list:
             data = json.load(fh)
         sessions = data.get("sessions", {}) if isinstance(data, dict) else {}
         now = datetime.now(timezone.utc)
-        live = []
+        seen = []
         for sid, entry in sessions.items():
             hb = (entry or {}).get("heartbeat", "")
             if not hb:
@@ -419,23 +434,26 @@ def _live_dimensions() -> list:
             if hb_dt.tzinfo is None:
                 hb_dt = hb_dt.replace(tzinfo=timezone.utc)
             delta = (now - hb_dt).total_seconds()
-            if -_DIM_FUTURE_SKEW <= delta <= _DIM_TTL:
-                live.append((sid, (entry or {}).get("branch") or "no-branch"))
-        return live
+            if -_DIM_FUTURE_SKEW <= delta <= ttl:
+                seen.append((sid, (entry or {}).get("branch") or "no-branch", int(max(delta, 0))))
+        return seen
     except Exception:
         return []  # fail-open: unreadable registry → no guard, never brick ai-push
 
 
 def push(args) -> int:
-    # Co-tenancy guard: never commit in a tree another live session shares. ai-push
-    # stages whole BRAIN_PATHS dirs and then commits the entire index, so a second
-    # writer's uncommitted work gets swallowed into the wrong commit (CLAUDE.md Core
-    # Principle #7, skills/session-isolation). Override only when you own the tree.
-    live = _live_dimensions()
-    if len(live) > 1 and os.environ.get("OCTO_ALLOW_SHARED") != "1":
-        err(f"⚠ ai-push aborted: {len(live)} live sessions share this brain tree:")
-        for sid, branch in live:
-            err(f"     {sid[:20]}… ({branch})")
+    # Co-tenancy guard: never commit in a tree another session shares. ai-push stages
+    # whole BRAIN_PATHS dirs and then commits the entire index, so a second writer's
+    # uncommitted work gets swallowed into the wrong commit (CLAUDE.md Core Principle
+    # #7, skills/session-isolation). A conservative grace window keeps a recently idle
+    # neighbor counted. Override only when you own the tree.
+    window = _cotenant_window()
+    seen = _dimensions_seen(window)
+    if len(seen) > 1 and os.environ.get("OCTO_ALLOW_SHARED") != "1":
+        err(f"⚠ ai-push aborted: {len(seen)} sessions recently active on this brain tree "
+            f"(co-tenancy window {window}s):")
+        for sid, branch, age in seen:
+            err(f"     {sid[:20]}… ({branch}, last seen {age}s ago)")
         err("   Two writers on one tree corrupt each other's commits.")
         err("   Isolate first: python3 scripts/octo-dim.py worktree-init")
         err("   Override (only if you own the whole tree): OCTO_ALLOW_SHARED=1 ai-push \"msg\"")
