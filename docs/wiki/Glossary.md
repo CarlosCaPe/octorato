@@ -29,6 +29,9 @@ The framework's hardest invariant: **an arm never knows another arm exists.** No
 ### Arm memory
 Per-arm, client-specific knowledge — facts, conventions, and context that belong to one arm only. Stored in that arm's own **private** repo (loaded via symlink into the arm; never synced to the central brain or to another arm). A lesson that would help other arms is distilled up to the central brain as a generic skill — see [[#Upward learning]]. See [[#Two-tier memory]] and `docs/architecture/memory-model.md`.
 
+### Arm lineage graph
+Each arm carries its **own sealed** `​.claude/connectome/lineage.yaml` (seeded from `templates/arm/connectome/`) declaring the arm's internal sync surfaces. `impact-radius.py` auto-detects it when run from inside the arm and traverses the arm's graph instead of the brain's (`layer=arm` receipts) — [[#Arm isolation]] applied to the graph: one graph per seek, never merged across arms.
+
 ### Arm onboarding
 The procedure for creating a new client arm: scaffold `.claude/CLAUDE.md` (source of truth), `.github/copilot-instructions.md` + `.cursorrules` (auto-synced via [[#sync-ai-docs]]), `README.md`, and a `.gitignore` that **must** include `.env`, `.env.*`, and `.dev.vars`. Full step-by-step lives in `skills/arm-onboarding/SKILL.md`.
 
