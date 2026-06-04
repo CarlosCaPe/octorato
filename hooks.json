@@ -1,158 +1,131 @@
 {
   "$schema": "Shared hooks distributed via ai-push/ai-pull. Merged into each machine's settings.json by scripts/merge-hooks.py. Edit hooks HERE (tracked) — never only in settings.json (gitignored, per-machine), or other machines won't get them.",
-  "UserPromptSubmit": [
-    {
-      "hooks": [
-        {
-          "type": "command",
-          "command": "python3 ~/.claude/scripts/grafo-turn-reset.py",
-          "timeout": 5,
-          "statusMessage": "♦ resetting turn ledger..."
-        },
-        {
-          "type": "command",
-          "command": "python3 ~/.claude/scripts/4d-reminder.py",
-          "timeout": 5,
-          "statusMessage": "Injecting 4D reasoning..."
-        },
-        {
-          "type": "command",
-          "command": "python3 ~/.claude/scripts/connectome-heartbeat.py",
-          "timeout": 5,
-          "statusMessage": "♥ Circulating the connectome..."
-        },
-        {
-          "type": "command",
-          "command": "python3 ~/.claude/scripts/eye-check.py",
-          "timeout": 5,
-          "statusMessage": "Checking if octopus needs eyes..."
-        },
-        {
-          "type": "command",
-          "command": "python3 ~/.claude/scripts/trace-hook.py --phase describe",
-          "timeout": 5
-        },
-        {
-          "type": "command",
-          "command": "python3 ~/.claude/scripts/trace-hook.py --phase delegate",
-          "timeout": 5
-        },
-        {
-          "type": "command",
-          "command": "python3 ~/.claude/scripts/grafo-turn-reset.py",
-          "timeout": 5
-        }
-      ]
-    }
-  ],
   "PostToolUse": [
     {
-      "matcher": "Skill",
       "hooks": [
         {
-          "type": "command",
           "command": "python3 ~/.claude/scripts/trace-hook.py",
-          "timeout": 5
+          "timeout": 5,
+          "type": "command"
         }
-      ]
+      ],
+      "matcher": "Skill"
     },
     {
-      "matcher": "Agent",
       "hooks": [
         {
-          "type": "command",
           "command": "python3 ~/.claude/scripts/trace-hook.py",
-          "timeout": 5
+          "timeout": 5,
+          "type": "command"
         }
-      ]
+      ],
+      "matcher": "Agent"
     },
     {
-      "matcher": "Write|Edit",
       "hooks": [
         {
-          "type": "command",
           "command": "python3 ~/.claude/scripts/trace-hook.py --phase execute",
-          "timeout": 5
+          "timeout": 5,
+          "type": "command"
         },
         {
-          "type": "command",
           "command": "python3 ~/.claude/scripts/trace-hook.py --phase diligent",
-          "timeout": 5
+          "timeout": 5,
+          "type": "command"
         },
         {
-          "type": "command",
           "command": "python3 ~/.claude/scripts/canon-heal-hook.py",
+          "statusMessage": "♥ healing canon to unison...",
           "timeout": 5,
-          "statusMessage": "♥ healing canon to unison..."
+          "type": "command"
         },
         {
-          "type": "command",
           "command": "python3 ~/.claude/scripts/impact-radius-hook.py",
+          "statusMessage": "♥ scanning impact radius...",
           "timeout": 5,
-          "statusMessage": "♥ scanning impact radius..."
+          "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/cadence-lint.py --hook",
+          "statusMessage": "✍ cadence lint (anti AI-tells)...",
+          "timeout": 5,
+          "type": "command"
         }
-      ]
+      ],
+      "matcher": "Write|Edit"
     }
   ],
   "PreToolUse": [
     {
-      "matcher": "Write|Edit",
       "hooks": [
         {
-          "type": "command",
           "command": "python3 ~/.claude/scripts/trace-hook.py --phase gate",
-          "timeout": 5
+          "timeout": 5,
+          "type": "command"
         },
         {
-          "type": "command",
           "command": "python3 ~/.claude/scripts/delegate-gate.py",
+          "statusMessage": "♦ delegate reflex (connect, don't SELF)...",
           "timeout": 5,
-          "statusMessage": "♦ delegate reflex (connect, don't SELF)..."
+          "type": "command"
         },
         {
-          "type": "command",
           "command": "python3 ~/.claude/scripts/dimension-awareness-hook.py",
+          "statusMessage": "♦ 4D: checking parallel dimensions...",
           "timeout": 5,
-          "statusMessage": "♦ 4D: checking parallel dimensions..."
+          "type": "command"
         }
-      ]
+      ],
+      "matcher": "Write|Edit"
     },
     {
-      "matcher": "Bash",
       "hooks": [
         {
-          "type": "command",
           "command": "python3 ~/.claude/scripts/qa-merge-gate.py",
+          "statusMessage": "♦ QA gate (fail-closed on merge)...",
           "timeout": 5,
-          "statusMessage": "♦ QA gate (fail-closed on merge)..."
+          "type": "command"
         },
         {
-          "type": "command",
           "command": "python3 ~/.claude/scripts/grafo-gate.py",
+          "statusMessage": "♦ ¿y el grafo? (seek > scan)...",
           "timeout": 5,
-          "statusMessage": "♦ ¿y el grafo? (seek > scan)..."
+          "type": "command"
         },
         {
-          "type": "command",
           "command": "python3 ~/.claude/scripts/delegate-gate.py",
+          "statusMessage": "♦ delegate reflex (connect, don't SELF)...",
           "timeout": 5,
-          "statusMessage": "♦ delegate reflex (connect, don't SELF)..."
+          "type": "command"
         },
         {
-          "type": "command",
           "command": "python3 ~/.claude/scripts/dimension-awareness-hook.py",
+          "statusMessage": "♦ 4D: checking parallel dimensions...",
           "timeout": 5,
-          "statusMessage": "♦ 4D: checking parallel dimensions..."
+          "type": "command"
         }
-      ]
+      ],
+      "matcher": "Bash"
     },
     {
-      "matcher": "Bash",
       "hooks": [
         {
-          "type": "command",
           "command": "python3 ~/.claude/scripts/grafo-gate.py",
-          "timeout": 5
+          "timeout": 5,
+          "type": "command"
+        }
+      ],
+      "matcher": "Bash"
+    }
+  ],
+  "SessionStart": [
+    {
+      "hooks": [
+        {
+          "command": "python3 ~/.claude/scripts/session-isolation-hook.py",
+          "statusMessage": "♦ 4D: dimension isolation (auto-fork)...",
+          "timeout": 15,
+          "type": "command"
         }
       ]
     }
@@ -161,25 +134,76 @@
     {
       "hooks": [
         {
-          "type": "command",
+          "command": "python3 ~/.claude/scripts/cadence-stop-hook.py",
+          "statusMessage": "✍ cadence check on the reply...",
+          "timeout": 10,
+          "type": "command"
+        },
+        {
           "command": "python3 ~/.claude/scripts/source-attribution-check.py",
-          "timeout": 5
-        },
-        {
-          "type": "command",
-          "command": "python3 ~/.claude/scripts/trace-hook.py --phase disclose",
-          "timeout": 5
-        },
-        {
-          "type": "command",
-          "command": "python3 ~/.claude/scripts/no-pause-suggestion.py",
-          "timeout": 5
-        },
-        {
-          "type": "command",
-          "command": "python3 ~/.claude/scripts/grafo-ledger-check.py",
           "timeout": 5,
-          "statusMessage": "♦ checking graph ledger..."
+          "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/trace-hook.py --phase disclose",
+          "timeout": 5,
+          "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/no-pause-suggestion.py",
+          "timeout": 5,
+          "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/grafo-ledger-check.py",
+          "statusMessage": "♦ checking graph ledger...",
+          "timeout": 5,
+          "type": "command"
+        }
+      ]
+    }
+  ],
+  "UserPromptSubmit": [
+    {
+      "hooks": [
+        {
+          "command": "python3 ~/.claude/scripts/grafo-turn-reset.py",
+          "statusMessage": "♦ resetting turn ledger...",
+          "timeout": 5,
+          "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/4d-reminder.py",
+          "statusMessage": "Injecting 4D reasoning...",
+          "timeout": 5,
+          "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/connectome-heartbeat.py",
+          "statusMessage": "♥ Circulating the connectome...",
+          "timeout": 5,
+          "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/eye-check.py",
+          "statusMessage": "Checking if octopus needs eyes...",
+          "timeout": 5,
+          "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/trace-hook.py --phase describe",
+          "timeout": 5,
+          "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/trace-hook.py --phase delegate",
+          "timeout": 5,
+          "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/grafo-turn-reset.py",
+          "timeout": 5,
+          "type": "command"
         }
       ]
     }
