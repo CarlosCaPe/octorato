@@ -333,6 +333,23 @@ edges:
       - scripts/cadence-lint.py                               # mechanical enforcement (hook + CLI)
       - scripts/cadence-stop-hook.py                          # chat-reply enforcement (Stop hook, blocks once)
     kind: appears_in
+
+  - id: qa-merge-gate
+    concept: "qa merge gate / fail-closed merge approval / OCTO_MERGE_APPROVE / protected repos / repo-scoped publish gate"
+    appears_in:
+      - scripts/qa-merge-gate.py                              # the PreToolUse gate (patterns + repo scope + approval channels)
+      - scripts/octo-dim.py                                   # approve-merge / approvals / revoke-merge verbs
+      - skills/agent-proof-approval-gate/SKILL.md             # the design pattern (agent-proof env channel)
+      - skills/pre-merge-qa-gate/SKILL.md                     # the QA-before-approval discipline
+      - CLAUDE.md                                             # 2D verdict: merges fail-closed, operator approves
+      - hooks.json                                            # the PreToolUse Bash wiring
+    kind: appears_in
+    note: >-
+      The gate guards PROTECTED repos only: the brain (+ its worktrees and any
+      clone sharing its remote slug) and the operator-owned gitignored
+      company/config/protected-repos.json list. Change an approval channel, a
+      pattern, or the scope rule, reconcile all six surfaces. Lit 2026-06-04
+      after the seek fell back to grep (unlit, 0 hits).
     note: >-
       The 10 no-rules are canon in the skill; CLAUDE.md carries the summary;
       cadence-lint.py is the reflex (PostToolUse on prose writes + CLI for
