@@ -70,7 +70,7 @@ Octorato isn't a demo — it ships real software. A few of the products this bra
 - [The Corporation](#the-corporation)
 - [The Connectome — Neural Architecture](#the-connectome--neural-architecture)
 - [Client Arms — Total Isolation](#client-arms--total-isolation)
-- [Org Chart — 13 Divisions, 167 Agents](#org-chart--13-divisions-167-agents)
+- [Org Chart — 13 Divisions, 160+ Agents](#org-chart--13-divisions-160-agents)
 - [Synapses — The Skill Layer](#synapses--the-skill-layer)
 - [Memory — Hippocampus and the Working Set](#memory--hippocampus-and-the-working-set)
 - [Reflexes — The Spinal Cord Layer](#reflexes--the-spinal-cord-layer)
@@ -133,7 +133,7 @@ An open-source AI agent operating system where a single human operator directs a
 
 With nothing but natural language, you can direct a team of AI specialists to build and ship software, and bill the client honestly when it ships.
 
-**Live framework**: 208 skills, 167 agent personas across 13 divisions, enforcement scripts, multi-machine sync, a neural connectome that learns over time, and a FinOps pipeline that tags every trace event with the client who incurred it — with per-arm USD rollup and a `PreToolUse` budget halt **shipped, opt-in** (configure `budgets.yaml` to arm caps; run the `anthropic-enterprise-analytics` pull to reconcile estimate against billed cost). See [roadmap below](#finops-roadmap).
+**Live framework**: 200+ skills, 160+ agent personas across 13 divisions, enforcement scripts, multi-machine sync, a neural connectome that learns over time, and a FinOps pipeline that tags every trace event with the client who incurred it — with per-arm USD rollup and a `PreToolUse` budget halt **shipped, opt-in** (configure `budgets.yaml` to arm caps; run the `anthropic-enterprise-analytics` pull to reconcile estimate against billed cost). See [roadmap below](#finops-roadmap).
 
 **Shipped with it**: live products built and maintained agent-first on this brain — see [Built with Octorato](SHOWCASE.md).
 
@@ -316,8 +316,8 @@ The archived specs become institutional memory — future tasks reference past d
                         ┌────────▼────────┐
                         │   BRAIN         │
                         │  ~/.claude/     │
-                        │  208 Skills      │
-                        │  167 Agents      │
+                        │  200+ Skills     │
+                        │  160+ Agents     │
                         │  N Client Arms  │
                         │  HOOKS — enforcement reflexes           │
                         │  (delegate · qa-merge · dimension-awareness) │
@@ -410,7 +410,7 @@ Information flows strictly one-way: generic lessons rise from arm to brain (anon
 
 ---
 
-## Org Chart — 13 Divisions, 167 Agents
+## Org Chart — 13 Divisions, 160+ Agents
 
 ```mermaid
 graph TB
@@ -419,7 +419,7 @@ graph TB
     classDef div fill:#21262D,stroke:#30363D,stroke-width:1px,color:#C9D1D9,font-size:12px
 
     CEO["Human Operator"]:::ceo
-    BRAIN["BRAIN — 208 Skills · 167 specialist agents · N Arms"]:::brain
+    BRAIN["BRAIN — 200+ Skills · 160+ specialist agents · N Arms"]:::brain
     CEO --> BRAIN
 
     BRAIN --> ENG["Engineering — 28"]:::div
@@ -679,7 +679,7 @@ ai-pull --status
 ├── HEBBIAN_LEARNING.md      ← How the connectome learns over time
 ├── hooks.json               ← Shared hooks (source of truth, synced to all machines)
 ├── neural_map.json          ← The Deep Connectome (auto-generated, never edit)
-├── agents/                  ← 167 specialist agents
+├── agents/                  ← 160+ specialist agents
 │   ├── REGISTRY.md          ← Auto-activation triggers & cross-references
 │   ├── engineering/         ← 28 agents
 │   ├── design/              ← 8 agents
@@ -696,7 +696,7 @@ ai-pull --status
 │   ├── paid-media/          ← 7 agents
 │   ├── strategy/            ← NEXUS orchestration playbooks and runbooks
 │   └── examples/            ← Multi-agent workflow examples
-├── skills/                  ← 208 reusable techniques
+├── skills/                  ← 200+ reusable techniques
 ├── scripts/
 │   ├── ai_sync.py                 ← Multi-machine sync engine (pull/push/sync/status verbs)
 │   ├── generate_neural_map.py     ← Connectome generator (TF-IDF + cosine + Hebbian)
