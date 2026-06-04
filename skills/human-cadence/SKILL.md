@@ -71,6 +71,15 @@ The canonical "rewrite to sound human" prompt these rules were inverted from:
 
 Use this prompt directly when the operator hands you AI text and says "humanize this".
 
+## Enforcement (reflex, not discipline — added 2026-06-04)
+
+The rules shipped as instruction only and violations kept reaching delivered texts: instructions depend on discipline and never reach sub-agents or arm content pipelines at all. `scripts/cadence-lint.py` turns the regex-provable subset (rules 1, 2, 3, 5, 6, 9) into a mechanical check:
+
+- **Hook mode** (`--hook`, PostToolUse `Write|Edit`): lints the newly written content of prose files (`.md`/`.txt`) and injects the violation list back into context, so the agent corrects before shipping. Never blocks; fail-open.
+- **CLI mode** (`--file <path>` or stdin): exit 1 on violations — usable in any arm's CI or before publishing generated copy. Arms whose texts come from production LLM pipelines (not from a Claude session) should ALSO embed the verbatim humanizer prompt below in their generation prompt; the linter is the net under that wire.
+
+Rules 4/7/8/10 (triads, rhythm, bullets-in-prose, voice) stay with the model: regex can't prove them. Canon files quoting the blocklists (this skill, CLAUDE.md, `cadence-*` files) are excluded, and a line containing `cadence-ok` is skipped. One deliberate canon/linter divergence: the ES `navegar` family is NOT linted (navegador/navegación are everyday technical Spanish; flagging them would bury real hits) — the word stays on the writing blocklist above, the regex just doesn't police it.
+
 ## Related
 
 - `token-efficient-prompting`: the same edit from the cost angle (filler = tokens).

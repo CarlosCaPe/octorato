@@ -254,11 +254,88 @@ edges:
       - CLAUDE.md                                             # Core Principle #7 (Session/Instance Isolation)
       - scripts/ai_sync.py                                    # ai-push co-tenancy guard (aborts on shared tree)
       - scripts/octo-dim.py                                   # dimension registry (sessions.json) + worktree-init
-      - scripts/dimension-awareness-hook.py                   # the "you are NOT isolated" PreToolUse warning
+      - scripts/dimension-awareness-hook.py                   # warning + the fail-closed broad-staging deny gate
+      - scripts/session-isolation-hook.py                     # SessionStart auto-fork (isolation by default)
     kind: appears_in
     note: >-
       Session/Instance Isolation = Arm Isolation across time. Canonical in the
       skill + CLAUDE.md #7; ENFORCED by ai-push's co-tenancy abort, octo-dim's
-      sessions.json registry, and the dimension-awareness hook. Change the rule,
-      reconcile all four enforcement surfaces. Lights the session-isolation seek
-      that fell back to grep repeatedly on 2026-06-02/03.
+      sessions.json registry, the dimension-awareness deny gate, and the
+      SessionStart auto-fork. Change the rule, reconcile all five enforcement
+      surfaces. Lights the session-isolation seek that fell back to grep
+      repeatedly on 2026-06-02/03.
+
+  - id: arm-lineage-template
+    from: templates/arm/connectome/lineage.yaml
+    to:
+      - "<each arm>/.claude/connectome/lineage.yaml"
+    kind: projects_to
+    offrepo: true
+    publish: "arm-onboarding step 6 seeds it; existing arms copy + tailor (arms resolved from company/config/arms-paths.json — never named here)"
+    note: >-
+      Every arm carries its OWN sealed lineage graph; impact-radius.py
+      auto-detects it when run from inside the arm (layer=arm receipts).
+      A contract change in the template must reach the arm seeds — and a
+      schema change in impact-radius.py must stay compatible with both layers.
+
+  - id: arm-onboarding
+    concept: "arm onboarding / create a new client arm / new arm checklist"
+    appears_in:
+      - skills/arm-onboarding/SKILL.md      # canonical step-by-step
+      - CLAUDE.md                           # Arm Onboarding quick reference
+      - templates/arm/                      # the files every new arm is born with
+      - docs/wiki/Glossary.md               # Arm onboarding entry
+    kind: appears_in
+    single_source: "skills/arm-onboarding/SKILL.md"
+    note: >-
+      Lights the unlit neuron filed by the 2026-06-04 GREP-FALLBACK. A new
+      onboarding step (e.g. the arm lineage graph) must land in the skill AND
+      its mirrors, or new arms are born without it.
+
+  - id: brain-ci
+    concept: "brain PR checks / required brain checks / CI gate octorato / counts-render check"
+    appears_in:
+      - .github/workflows/brain-pr-checks.yml   # los 4 jobs requeridos
+      - scripts/check-generic.py                # job check-generic
+      - scripts/generate_neural_map.py          # job connectome-rebuild
+      - scripts/lineage-doctor.py               # job lineage-sound
+      - scripts/sync-readme-counts.py           # job counts-render (junto con canon-render.py)
+      - scripts/canon-render.py                 # job counts-render
+    kind: appears_in
+    single_source: ".github/workflows/brain-pr-checks.yml"
+    note: >-
+      Cada check requerido del brain mapea a su script ejecutor. Renombrar un
+      job o mover un script sin reconciliar el otro lado rompe la protección
+      de rama (check requerido que nunca reporta) — la misma clase de deadlock
+      que el twin de Astro resolvió en un arm el 2026-06-04.
+
+  - id: disclose-suggestions
+    concept: "prune-suggestion / unlock-suggestion / disclose-time suggestions / dead cells / capability gap"
+    appears_in:
+      - CLAUDE.md                                   # ambas ULTRA RULES (☠ Prune + 💡 Unlock)
+      - skills/4d-paradigm-protocol/SKILL.md        # protocolo Disclose completo
+      - scripts/query_connectome.py                 # `dead` alimenta la sugerencia de poda
+    kind: appears_in
+    single_source: "CLAUDE.md"
+    note: >-
+      Las dos sugerencias de cierre (poda de células muertas y destrabe de
+      límites de capacidad) son gemelas: el agente propone en una línea, el
+      operador decide. Cambiar el formato de una exige reconciliar la otra.
+      Enciende la neurona apagada filed el 2026-06-04.
+
+  - id: human-cadence
+    concept: "human cadence / 10 anti-AI-tell no-rules / em-dash filler triads / cadence lint / humanizer"
+    appears_in:
+      - skills/human-cadence/SKILL.md                         # canon: 10 rules + blocklists + verbatim humanizer prompt
+      - CLAUDE.md                                             # §Communication always-on summary
+      - skills/4d-paradigm-protocol/SKILL.md                  # fires at 4D Disclose (delivery boundary)
+      - docs/wiki/Skills.md                                   # wiki listing
+      - scripts/cadence-lint.py                               # mechanical enforcement (hook + CLI)
+    kind: appears_in
+    note: >-
+      The 10 no-rules are canon in the skill; CLAUDE.md carries the summary;
+      cadence-lint.py is the reflex (PostToolUse on prose writes + CLI for
+      arms/CI). Change a rule or a blocklist, reconcile skill + CLAUDE.md +
+      linter regexes together — the linter quoting the blocklist means a
+      one-sided edit silently splits canon from enforcement. Edge added
+      2026-06-04 after the seek fell back to grep (unlit neuron).

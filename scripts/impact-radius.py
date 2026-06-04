@@ -32,14 +32,48 @@ import subprocess
 from pathlib import Path
 
 CLAUDE_DIR = Path(__file__).resolve().parent.parent
-LINEAGE = CLAUDE_DIR / "connectome" / "lineage.yaml"
-# Private layer: arm/CV/client edges that must NOT enter the public brain. Read
-# locally and merged at seek time; gitignored (company/), never committed. This
-# mirrors the brain/arm isolation — the seek sees everything, the repo sees only
-# the generic edges.
-PRIVATE_LINEAGE = CLAUDE_DIR / "company" / "connectome" / "lineage.yaml"
-UNVERIFIED = CLAUDE_DIR / "connectome" / "lineage.unverified.yaml"
+
+
+def _detect_arm_root():
+    """Arm-aware seek: when CWD is inside an arm repo that carries its own sealed
+    graph (.claude/connectome/lineage.yaml), the seek traverses THAT graph instead
+    of the brain's. Walk up to the first repo root (.git); an arm is any such root
+    that is not the brain itself. Returns the arm root Path or None (brain mode).
+    Arm Isolation holds: one graph per seek, never merged across arms.
+    Known limit: a vendored submodule INSIDE an arm stops the walk at the
+    inner .git and falls back to brain mode (fail-safe, never cross-graph)."""
+    cur = Path.cwd().resolve()
+    if cur == CLAUDE_DIR or CLAUDE_DIR in cur.parents:
+        return None
+    for p in (cur, *cur.parents):
+        if (p / ".git").exists():
+            if (p / ".claude" / "connectome" / "lineage.yaml").exists():
+                return p
+            return None  # repo without an arm graph → brain mode (unlit arm)
+    return None
+
+
+ARM_ROOT = _detect_arm_root()
+if ARM_ROOT:
+    # Arm mode: the arm's sealed graph + optional private layer, both inside the
+    # arm repo (never the brain's, never another arm's).
+    GRAPH_ROOT = ARM_ROOT
+    LINEAGE = ARM_ROOT / ".claude" / "connectome" / "lineage.yaml"
+    PRIVATE_LINEAGE = ARM_ROOT / ".claude" / "connectome" / "lineage.private.yaml"
+    UNVERIFIED = ARM_ROOT / ".claude" / "connectome" / "lineage.unverified.yaml"
+else:
+    GRAPH_ROOT = CLAUDE_DIR
+    LINEAGE = CLAUDE_DIR / "connectome" / "lineage.yaml"
+    # Private layer: arm/CV/client edges that must NOT enter the public brain. Read
+    # locally and merged at seek time; gitignored (company/), never committed. This
+    # mirrors the brain/arm isolation — the seek sees everything, the repo sees only
+    # the generic edges.
+    PRIVATE_LINEAGE = CLAUDE_DIR / "company" / "connectome" / "lineage.yaml"
+    UNVERIFIED = CLAUDE_DIR / "connectome" / "lineage.unverified.yaml"
 LEDGER_DIR = CLAUDE_DIR / ".cache" / "graph-ledger"
+# Printed receipts stay generic ("layer=arm"); the arm's name only lands in the
+# local gitignored ledger, never in a footer that could reach a public PR.
+LAYER_TAG = " layer=arm" if ARM_ROOT else ""
 
 # Repo roots the grep fallback may scan (the same surfaces the graph indexes).
 SCAN = ["CLAUDE.md", "README.md", "WHITEPAPER.md", "ROADMAP.md", "SHOWCASE.md",
@@ -80,7 +114,10 @@ def load_lineage():
 def _matches(target: str, edge: dict) -> bool:
     """Does this edge fire for the given path/concept target?"""
     t = target.strip().lower()
-    frm = (edge.get("from") or "").strip().lower()
+    # Field aliases: early arm seeds used source/target/members for from/to/
+    # appears_in. The reader tolerates both; the canonical schema is from/to/
+    # appears_in (see templates/arm/connectome/lineage.yaml).
+    frm = (edge.get("from") or edge.get("source") or "").strip().lower()
     if frm:
         if t == frm or t.startswith(frm) or (frm.endswith("/") and t.startswith(frm)):
             return True
@@ -89,7 +126,7 @@ def _matches(target: str, edge: dict) -> bool:
     concept = (edge.get("concept") or "").strip().lower()
     if concept and (t in concept or concept in t) and t:
         return True
-    for m in (edge.get("appears_in") or []):
+    for m in (edge.get("appears_in") or edge.get("members") or []):
         if t == str(m).strip().lower():
             return True
     return False
@@ -100,10 +137,11 @@ def _downstream(target: str, edge: dict):
     kind = edge.get("kind", "?")
     offrepo = bool(edge.get("offrepo"))
     out = []
-    for s in (edge.get("to") or []):
+    tos = edge.get("to") or edge.get("target") or []
+    for s in (tos if isinstance(tos, list) else [tos]):
         out.append((str(s), kind, offrepo))
     # appears_in: the OTHER copies plus the single source.
-    members = [str(m) for m in (edge.get("appears_in") or [])]
+    members = [str(m) for m in (edge.get("appears_in") or edge.get("members") or [])]
     if members:
         tl = target.strip().lower()
         for m in members:
@@ -128,10 +166,16 @@ def seek(target: str):
 
 
 def grep_fallback(term: str):
-    targets = [str(CLAUDE_DIR / g) for g in SCAN if (CLAUDE_DIR / g).exists()]
+    if ARM_ROOT:
+        # Arm mode: the fallback scans the arm's own surfaces only (sealed).
+        targets = [str(ARM_ROOT)]
+    else:
+        targets = [str(CLAUDE_DIR / g) for g in SCAN if (CLAUDE_DIR / g).exists()]
     try:
         out = subprocess.run(
             ["grep", "-rilF", "--include=*.md", "--include=*.py", "--include=*.json",
+             "--exclude-dir=.git", "--exclude-dir=node_modules", "--exclude-dir=dist",
+             "--exclude-dir=.venv", "--exclude-dir=__pycache__", "--exclude-dir=.next",
              "--", term, *targets],
             capture_output=True, text=True, timeout=30,
         ).stdout
@@ -143,7 +187,7 @@ def grep_fallback(term: str):
         if not p:
             continue
         try:
-            files.add(Path(p).resolve().relative_to(CLAUDE_DIR).as_posix())
+            files.add(Path(p).resolve().relative_to(GRAPH_ROOT).as_posix())
         except ValueError:
             continue
     return sorted(files)
@@ -203,9 +247,10 @@ def main():
 
     if hits:
         line = (f"SEEK-COMPLETE lineage@{sha} hits={len(hits)} "
-                f"via {{{','.join(kinds)}}} edges={edge_ids}")
+                f"via {{{','.join(kinds)}}} edges={edge_ids}{LAYER_TAG}")
         emit_receipt(line, {"ts": int(time.time()), "mode": "seek", "target": target,
                             "lineage": sha, "state": "SEEK-COMPLETE",
+                            "layer": "arm" if ARM_ROOT else "brain",
                             "edges": edge_ids, "hits": [h["surface"] for h in hits]})
         print(f"🔦 GRAPH SEEK — '{target}' → {len(hits)} impacted surface(s) "
               f"[deterministic, no scan]:")
@@ -221,9 +266,11 @@ def main():
           f"(scan), and filing a candidate so the graph grows.")
     g = grep_fallback(target)
     write_candidate(target, g)
-    line = f"GREP-FALLBACK(unlit:{target}) lineage@{sha} grep_hits={len(g)} → candidate filed"
+    line = (f"GREP-FALLBACK(unlit:{target}) lineage@{sha} grep_hits={len(g)} "
+            f"→ candidate filed{LAYER_TAG}")
     emit_receipt(line, {"ts": int(time.time()), "mode": "fallback_grep", "target": target,
-                        "lineage": sha, "state": "GREP-FALLBACK", "grep_hits": g})
+                        "lineage": sha, "state": "GREP-FALLBACK",
+                        "layer": "arm" if ARM_ROOT else "brain", "grep_hits": g})
     for f in g:
         print(f"  {f}")
     print(f"\n📋 RECEIPT:\n  {line}")

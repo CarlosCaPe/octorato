@@ -23,13 +23,16 @@ Sync script (in `~/.local/bin/`) that pulls the latest brain from the `octorato`
 Sync script that commits and pushes all `~/.claude/` changes to GitHub, regenerates the [[#Connectome (neural_map.json)]], and syncs every arm. It runs [[#check-generic]] first as a safety gate. The "broadcast" half of multi-machine sync. Usage: `ai-push "feat(brain): add new skill"`.
 
 ### Arm
-An **isolated client project** — one sealed repo per client, living outside the brain (e.g. `~/Documents/github/<CLIENT>/`). Each arm carries its own `.claude/CLAUDE.md` as its single source of truth and its own sealed **[[#Arm memory]]** repo for client-specific knowledge. Arms are the *PROPERTIES* in the [[#CLASS / OBJECT / ARM]] model and the *WHERE* (FOR WHOM) in the [[#Activation stack]]. Named for the octopus's eight semi-autonomous arms, two-thirds of whose neurons live in the limb, not the central brain — most operational knowledge is arm-local.
+An **isolated client project** — one sealed repo per client, living outside the brain (e.g. `~/projects/<client>/`). Each arm carries its own `.claude/CLAUDE.md` as its single source of truth and its own sealed **[[#Arm memory]]** repo for client-specific knowledge. Arms are the *PROPERTIES* in the [[#CLASS / OBJECT / ARM]] model and the *WHERE* (FOR WHOM) in the [[#Activation stack]]. Named for the octopus's eight semi-autonomous arms, two-thirds of whose neurons live in the limb, not the central brain — most operational knowledge is arm-local.
 
 ### Arm isolation
 The framework's hardest invariant: **an arm never knows another arm exists.** No client data, names, or credentials ever flow arm→arm. The brain sees each arm's cost data but the arms never see each other. This is a *deliberate departure from the biology* — real octopus arms have some peripheral cross-talk; Octorato enforces total sideways isolation for client-data security. Marketed as "air-gapped arms" (software-level isolation between workspaces).
 
 ### Arm memory
 Per-arm, client-specific knowledge — facts, conventions, and context that belong to one arm only. Stored in that arm's own **private** repo (loaded via symlink into the arm; never synced to the central brain or to another arm). A lesson that would help other arms is distilled up to the central brain as a generic skill — see [[#Upward learning]]. See [[#Two-tier memory]] and `docs/architecture/memory-model.md`.
+
+### Arm lineage graph
+Each arm carries its **own sealed** `​.claude/connectome/lineage.yaml` (seeded from `templates/arm/connectome/`) declaring the arm's internal sync surfaces. `impact-radius.py` auto-detects it when run from inside the arm and traverses the arm's graph instead of the brain's (`layer=arm` receipts) — [[#Arm isolation]] applied to the graph: one graph per seek, never merged across arms.
 
 ### Arm onboarding
 The procedure for creating a new client arm: scaffold `.claude/CLAUDE.md` (source of truth), `.github/copilot-instructions.md` + `.cursorrules` (auto-synced via [[#sync-ai-docs]]), `README.md`, and a `.gitignore` that **must** include `.env`, `.env.*`, and `.dev.vars`. Full step-by-step lives in `skills/arm-onboarding/SKILL.md`.
