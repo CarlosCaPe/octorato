@@ -289,3 +289,20 @@ edges:
       Lights the unlit neuron filed by the 2026-06-04 GREP-FALLBACK. A new
       onboarding step (e.g. the arm lineage graph) must land in the skill AND
       its mirrors, or new arms are born without it.
+
+  - id: brain-ci
+    concept: "brain PR checks / required brain checks / CI gate octorato / counts-render check"
+    appears_in:
+      - .github/workflows/brain-pr-checks.yml   # los 4 jobs requeridos
+      - scripts/check-generic.py                # job check-generic
+      - scripts/generate_neural_map.py          # job connectome-rebuild
+      - scripts/lineage-doctor.py               # job lineage-sound
+      - scripts/sync-readme-counts.py           # job counts-render (junto con canon-render.py)
+      - scripts/canon-render.py                 # job counts-render
+    kind: appears_in
+    single_source: ".github/workflows/brain-pr-checks.yml"
+    note: >-
+      Cada check requerido del brain mapea a su script ejecutor. Renombrar un
+      job o mover un script sin reconciliar el otro lado rompe la protección
+      de rama (check requerido que nunca reporta) — la misma clase de deadlock
+      que el twin de Astro resolvió en un arm el 2026-06-04.

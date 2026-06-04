@@ -114,7 +114,10 @@ def load_lineage():
 def _matches(target: str, edge: dict) -> bool:
     """Does this edge fire for the given path/concept target?"""
     t = target.strip().lower()
-    frm = (edge.get("from") or "").strip().lower()
+    # Field aliases: early arm seeds used source/target/members for from/to/
+    # appears_in. The reader tolerates both; the canonical schema is from/to/
+    # appears_in (see templates/arm/connectome/lineage.yaml).
+    frm = (edge.get("from") or edge.get("source") or "").strip().lower()
     if frm:
         if t == frm or t.startswith(frm) or (frm.endswith("/") and t.startswith(frm)):
             return True
@@ -123,7 +126,7 @@ def _matches(target: str, edge: dict) -> bool:
     concept = (edge.get("concept") or "").strip().lower()
     if concept and (t in concept or concept in t) and t:
         return True
-    for m in (edge.get("appears_in") or []):
+    for m in (edge.get("appears_in") or edge.get("members") or []):
         if t == str(m).strip().lower():
             return True
     return False
@@ -134,10 +137,11 @@ def _downstream(target: str, edge: dict):
     kind = edge.get("kind", "?")
     offrepo = bool(edge.get("offrepo"))
     out = []
-    for s in (edge.get("to") or []):
+    tos = edge.get("to") or edge.get("target") or []
+    for s in (tos if isinstance(tos, list) else [tos]):
         out.append((str(s), kind, offrepo))
     # appears_in: the OTHER copies plus the single source.
-    members = [str(m) for m in (edge.get("appears_in") or [])]
+    members = [str(m) for m in (edge.get("appears_in") or edge.get("members") or [])]
     if members:
         tl = target.strip().lower()
         for m in members:
