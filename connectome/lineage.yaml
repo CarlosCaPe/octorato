@@ -289,29 +289,3 @@ edges:
       Lights the unlit neuron filed by the 2026-06-04 GREP-FALLBACK. A new
       onboarding step (e.g. the arm lineage graph) must land in the skill AND
       its mirrors, or new arms are born without it.
-  # ── Lit on 2026-06-03: the memory model — Octorato has 1+N brains, not 9. ──
-  - id: memory-two-tier-n-brains
-    concept: "two-tier memory / nine brains / 1+N brains / central brain vs arm brains / brain memory vs arm memory / octorato-memory standalone repo / memory sync"
-    appears_in:
-      - docs/architecture/memory-model.md                     # the source of truth (two tiers, neurobiology)
-      - skills/octorato-symbolism/SKILL.md                    # 8→∞ EXTENDS to brains: 9 fixed → 1+N unbounded
-      - scripts/memory_sync.py                                # the public mechanism (engine, not data)
-      - templates/memory/MEMORY.template.md                  # empty index adopters copy
-      - skills/arm-onboarding/SKILL.md                        # a new arm = a new arm-brain (its own .claude/memory)
-      - CLAUDE.md                                             # §The Octopus Architecture + Information Flow (memory routing)
-      - README.md                                            # brain/arms labels + counts framing
-      - docs/wiki/Glossary.md                                # define brain memory / arm memory / 1+N brains
-      - docs/wiki/Architecture.md                            # the two-tier memory in the architecture map
-      - "<each arm>/.claude/memory/ (symlinked to the harness; sealed arm-brain)"  # off-repo, per-arm
-    kind: appears_in
-    offrepo: true
-    note: >-
-      A biological octopus is fixed at 9 brains (1 central + 8 arms). Octorato is
-      1+N: one central brain (this repo + the private octorato-memory store) plus
-      one sealed arm-brain per arm (<each arm>/.claude/memory, version-controlled
-      in the arm's own private repo, loaded via symlink). N is unbounded — the
-      8→∞ anchor applied to brains. Routing: a lesson that helps a different
-      client distils UP to the central brain; an arm-specific fact stays in the
-      arm-brain. Change the memory model and EVERY surface above must stay
-      coherent, or the label pixelates. Brain memory data + the private remote URL
-      NEVER appear in any public surface (mechanism is public, data is private).
