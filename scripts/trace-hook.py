@@ -13,7 +13,7 @@ Future tasks (#4, #5) extend this script with `agent_activate` and
 `phase_boundary` handlers.
 
 Schema: ~/.claude/schemas/trace-event.schema.json (v1.0)
-Layout: ~/.claude/docs/trace-storage.md
+Layout: ~/.claude/docs/architecture/trace-storage.md
 """
 from __future__ import annotations
 

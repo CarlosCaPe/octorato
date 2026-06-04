@@ -1,5 +1,7 @@
 # Architecture
 
+> **Organ:** anatomy atlas — the complete map of every layer, how they inherit, and why the organism takes this shape.
+
 The deep architecture reference for Octorato — the open-source AI-agent operating system that lives in `~/.claude/`. This page explains *why* the framework takes the shape it does, the object model that governs inheritance, the activation stack that fires on every task, the layers and their isolation guarantees, and the connectome that wires it all together.
 
 If you want the philosophy in one sentence: **one human consciousness directs a shared brain of specialist agents across many sealed client workspaces, and the data never crosses sideways.** That single constraint — and the biology that solves it — produces everything below.
@@ -43,7 +45,7 @@ Octorato is an object-oriented inheritance model expressed in the filesystem. Th
                        │  manages
 ┌──────────────────────▼───────────────────────────────────────┐
 │   ARMS = PROPERTIES  (client projects, isolated)             │
-│   ~/projects/<client>/                                       │
+│   ~/Documents/github/<CLIENT>/                               │
 │                                                              │
 │   Each arm is a sealed client repo.                          │
 │   Arms never see each other's data.                          │
@@ -131,7 +133,7 @@ Four architectural layers, each with a fixed location on disk and a defined isol
 | **Brain** | `~/.claude/` | Shared across all arms — the generic CLASS. |
 | **Agents** | `~/.claude/agents/` (+ `REGISTRY.md`) | Generic personas, no client data. |
 | **Skills** | `~/.claude/skills/` | Generic techniques, no client data. |
-| **Arm** | `<CLIENT>/` (per-client repo, e.g. `~/projects/<client>/`) | Per-client repo, fully sealed. |
+| **Arm** | `<CLIENT>/` (per-client repo, e.g. `~/Documents/github/<CLIENT>/`) | Per-client repo, fully sealed. |
 | **Arm instructions** | `<CLIENT>/.claude/CLAUDE.md` | Single source of truth for that arm. |
 
 Two properties to internalize:
@@ -308,3 +310,4 @@ The intellectual lineage is math and biology, deliberately: **∞** from John Wa
 - [[Agents-System]] — the *WHO* layer: 13 divisions, personas, activation modes.
 - [[Arms-and-Sync]] — the *FOR WHOM* layer: arm onboarding, isolation, multi-machine sync.
 - [[Self-Growth]] — upward learning, auto-skill creation, the daily discovery loop.
+- [`docs/architecture/hook-orchestration.md`](../architecture/hook-orchestration.md) — the reactive-control spec: ECA atoms, Behavior-Tree priority, Statechart 4D, Spreading-Activation recall, and Bandit tier-routing that wire the hooks into an autonomous reflex layer.

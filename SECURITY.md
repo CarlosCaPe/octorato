@@ -3,7 +3,9 @@
 Octorato is the open-source AI-agent operating system that powers a real
 operator's brain. Because the repository *is* a running brain, its security
 model is unusual — most of the discipline is about **what must never enter the
-repo**, not just about vulnerabilities in code.
+repo**, not just about vulnerabilities in code. This file is the report entry
+point; the full threat model lives in the wiki:
+[Security](https://github.com/CarlosCaPe/octorato/wiki/Security).
 
 ## Reporting a vulnerability
 

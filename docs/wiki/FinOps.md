@@ -1,5 +1,7 @@
 # FinOps — Cost Governance for an Agent OS
 
+> **Organ:** metabolism — every token has a cost, every cost has an arm, and the organism stops burning when the cap is reached.
+
 > Octorato is an open-source agent operating system that is **billed per token**, run by one operator across **multiple isolated client workspaces** ([[Architecture|arms]]). FinOps is the discipline that answers a single, unforgiving question: *when a token is spent, which client incurred it — and have they run out of budget?*
 
 This page is the cost-governance reference. It documents the shipped pipeline end to end: how every action is traced and tagged with the arm that incurred it, how those traces roll up to per-client USD, how a statistical watchdog catches runaway spend, how a budget cap **halts an agent mid-run**, and how the brain's own list-price estimate is reconciled against Anthropic's actual invoice.
@@ -125,7 +127,7 @@ The phases of the [[The-4D-Paradigm|4D Paradigm]] are themselves traced. `trace-
 
 This maps the full Describe → Delegate → Gate → Execute → Diligent → Disclose nervous-system flow plus the two tool-fire signals onto a continuous trace. The `diligent` `phase_boundary` records (`status: ok`) are reused downstream as the ROI denominator: *tokens spent per successful diligence.*
 
-**Storage contract.** One file per UTC day under `~/.claude/traces/`, append-only. POSIX `O_APPEND` makes sub-4096-byte appends atomic — no file locking needed. The directory is **gitignored**; traces carry arm names and absolute paths and must never reach the public brain repo. Full layout in `docs/trace-storage.md`.
+**Storage contract.** One file per UTC day under `~/.claude/traces/`, append-only. POSIX `O_APPEND` makes sub-4096-byte appends atomic — no file locking needed. The directory is **gitignored**; traces carry arm names and absolute paths and must never reach the public brain repo. Full layout in `docs/architecture/trace-storage.md`.
 
 ---
 

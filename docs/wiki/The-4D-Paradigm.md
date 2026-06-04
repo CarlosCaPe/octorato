@@ -1,5 +1,7 @@
 # The 4D Paradigm
 
+> **Organ:** nervous system — the signal protocol every action follows, from intent through execution to validated disclosure.
+
 > The nervous-system protocol of Octorato. Every signal that crosses the brain ↔ arm ↔ agent ↔ human boundary follows four phases — **Describe → Delegate → Diligent → Disclose** — with three enforced gates layered in between. This page is the definitive reference.
 
 The name is deliberate. A cube has three spatial dimensions; its four-dimensional analog is the tesseract. The 4D Paradigm is the tesseract of agent behavior — it adds a governing fourth axis (accountability) to the three you would otherwise expect (intent, execution, validation). See [[Architecture]] for where the paradigm sits in the larger octopus model, and [[Skills-System]] for how the enforcement skills load.
@@ -350,7 +352,8 @@ The paradigm is not aspirational; three scripts enforce it at the boundaries.
 
 | Script | Phase | When to run |
 |---|---|---|
-| `~/.claude/scripts/query_connectome.py query "<task>"` | 2D · Q1 (ventosas) | START of every task |
+| `~/.claude/scripts/connectome-heartbeat.py` | 2D · Q1 (ventosas) — **autonomic** | Fires on every prompt via hook; injects the `♥` block (relevant agents/skills + 1-hop impact) automatically — no manual call needed |
+| `~/.claude/scripts/query_connectome.py query "<task>"` | 2D · Q1 (ventosas) — deeper traversal | Run manually only when you need god-node analysis, full impact radius, or shortest-path beyond what the heartbeat surfaced |
 | `~/.claude/scripts/delegate-check "<task>"` | 2D · Q3 (rule match) | START of every task |
 | `~/.claude/scripts/gate-check` | 4D Gate | BEFORE any file write — flags: `--validate-session`, `--checklist`, `--audit-log` |
 

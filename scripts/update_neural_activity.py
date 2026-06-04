@@ -18,7 +18,7 @@ CLI:
   update_neural_activity.py [--since 7d] [--dry-run] [--verbose]
 
 Schema (input):  ~/.claude/schemas/trace-event.schema.json
-Storage layout:  ~/.claude/docs/trace-storage.md
+Storage layout:  ~/.claude/docs/architecture/trace-storage.md
 Target:          ~/.claude/company/neural_activity.json
 """
 from __future__ import annotations

@@ -35,7 +35,7 @@ Specialist personas the brain activates as subagents. Agent = who (role), skill 
 | Backend Architect | system design, database architecture, API development, cloud infrastructure |
 | CMS Developer | Drupal, WordPress, theme development, plugins, CMS |
 | Code Reviewer | code review, correctness, maintainability, security, performance |
-| Dashboard Builder | AI dashboards, Infinite Monitor, real-time widgets, plain-English config |
+| Dashboard Builder | Infinite Monitor, AI-powered dashboards, widgets, real-time analytics, monitoring |
 | Data Engineer | data pipelines, ETL, lakehouse, Spark, dbt, streaming |
 | Database Optimizer | schema design, query optimization, indexing, PostgreSQL, performance tuning |
 | DevOps Automator | infrastructure automation, CI/CD, cloud operations, deployment |
@@ -101,7 +101,7 @@ Specialist personas the brain activates as subagents. Agent = who (role), skill 
 | Growth Hacker | user acquisition, viral loops, conversion funnels, growth channels |
 | Instagram Curator | Instagram, visual storytelling, community building, aesthetic |
 | Kuaishou Strategist | Kuaishou, 快手, live commerce, grassroots audience |
-| LinkedIn Company Manager | LinkedIn company page, employer brand, page analytics, Playwright admin |
+| LinkedIn Company Manager | LinkedIn company page, employer brand, profile optimization, Playwright automation |
 | LinkedIn Content Creator | LinkedIn, thought leadership, personal brand, professional content |
 | Livestream Commerce Coach | livestream, host training, Taobao Live, conversion closing |
 | Podcast Strategist | podcast, Xiaoyuzhou, Ximalaya, audio platforms, show positioning |
@@ -197,7 +197,7 @@ Specialist personas the brain activates as subagents. Agent = who (role), skill 
 | Identity Graph Operator | identity graph, entity resolution, multi-agent, canonical |
 | Korean Business Navigator | Korean business, 품의, nunchi, KakaoTalk etiquette |
 | LSP/Index Engineer | LSP, code intelligence, semantic indexing, language server |
-| Market Research Analyst | TAM sizing, competitive landscape, segmentation, SWOT/Porter |
+| Market Research Analyst | TAM/SAM/SOM sizing, competitive landscape, Porter's Five Forces, consulting-grade market intelligence |
 | MCP Builder | MCP server, custom tools, AI agent extensions, Model Context Protocol |
 | Model QA Specialist | ML audit, calibration testing, interpretability, model validation |
 | Recruitment Specialist | recruitment, talent acquisition, hiring platforms, labor law |
@@ -216,7 +216,7 @@ Specialist personas the brain activates as subagents. Agent = who (role), skill 
 | Analytics Reporter | dashboards, statistical analysis, KPIs, data visualization |
 | Executive Summary Generator | executive summary, McKinsey SCQA, C-suite, strategy consulting |
 | Finance Tracker | financial planning, budget, cash flow, forecasting |
-| Financial Modeler | unit economics, revenue projections, break-even, sensitivity, investor model |
+| Financial Modeler | unit economics, revenue projections, break-even analysis, investor-ready financial models |
 | Infrastructure Maintainer | system reliability, performance, technical operations |
 | Legal Compliance Checker | legal, compliance, regulations, data handling, jurisdictions |
 | Support Responder | customer support, issue resolution, user experience |
