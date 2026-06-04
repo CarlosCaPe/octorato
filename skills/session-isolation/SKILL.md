@@ -32,6 +32,18 @@ Nothing is "lost" (it's all on disk), but the changeset is shredded and the shar
 
 ## The protocol
 
+### Auto-fork (default since 2026-06-04, fires without you choosing to)
+
+The protocol is no longer discipline. Two reflexes make it structural:
+
+1. **`scripts/session-isolation-hook.py` (SessionStart)** — when a session starts while other live dimensions exist, it auto-runs `octo-dim worktree-init` with the session's stable id and tells the session: all brain work goes through *your* worktree at `~/.octorato/dim/<short>`, the shared `~/.claude` stays read-only for you.
+2. **The dimension gate in `scripts/dimension-awareness-hook.py` (PreToolUse, fail-closed)** — while other dimensions are live, a broad `git add -A|--all|.` or `git commit -a` whose target resolves inside the SHARED `~/.claude` checkout is **denied**, not warned. Explicit pathspec passes; broad staging inside your own dimension worktree passes (it's isolated, that's the point).
+
+Three historical failure modes these close (all lived 2026-06-02/04):
+- isolation was opt-in → nobody forked → everyone wrote on the shared tree;
+- `worktree-init` derived the name from the hostname-pid fallback, so `[:8]` collapsed to the hostname prefix and **every "fork" landed in the same worktree** (de-isolation disguised as isolation) — it now refuses to run without a stable session id;
+- an argparse subparser default silently clobbered `--session-id` passed before the subcommand, re-triggering the fallback (fixed with `default=SUPPRESS`).
+
 ### Starting a parallel session (the Anthropic-native way)
 ```bash
 claude --worktree <name>      # separate checkout on its own branch; run a 2nd with a different <name>

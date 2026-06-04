@@ -254,14 +254,16 @@ edges:
       - CLAUDE.md                                             # Core Principle #7 (Session/Instance Isolation)
       - scripts/ai_sync.py                                    # ai-push co-tenancy guard (aborts on shared tree)
       - scripts/octo-dim.py                                   # dimension registry (sessions.json) + worktree-init
-      - scripts/dimension-awareness-hook.py                   # the "you are NOT isolated" PreToolUse warning
+      - scripts/dimension-awareness-hook.py                   # warning + the fail-closed broad-staging deny gate
+      - scripts/session-isolation-hook.py                     # SessionStart auto-fork (isolation by default)
     kind: appears_in
     note: >-
       Session/Instance Isolation = Arm Isolation across time. Canonical in the
       skill + CLAUDE.md #7; ENFORCED by ai-push's co-tenancy abort, octo-dim's
-      sessions.json registry, and the dimension-awareness hook. Change the rule,
-      reconcile all four enforcement surfaces. Lights the session-isolation seek
-      that fell back to grep repeatedly on 2026-06-02/03.
+      sessions.json registry, the dimension-awareness deny gate, and the
+      SessionStart auto-fork. Change the rule, reconcile all five enforcement
+      surfaces. Lights the session-isolation seek that fell back to grep
+      repeatedly on 2026-06-02/03.
 
   - id: arm-lineage-template
     from: templates/arm/connectome/lineage.yaml
@@ -320,3 +322,20 @@ edges:
       límites de capacidad) son gemelas: el agente propone en una línea, el
       operador decide. Cambiar el formato de una exige reconciliar la otra.
       Enciende la neurona apagada filed el 2026-06-04.
+
+  - id: human-cadence
+    concept: "human cadence / 10 anti-AI-tell no-rules / em-dash filler triads / cadence lint / humanizer"
+    appears_in:
+      - skills/human-cadence/SKILL.md                         # canon: 10 rules + blocklists + verbatim humanizer prompt
+      - CLAUDE.md                                             # §Communication always-on summary
+      - skills/4d-paradigm-protocol/SKILL.md                  # fires at 4D Disclose (delivery boundary)
+      - docs/wiki/Skills.md                                   # wiki listing
+      - scripts/cadence-lint.py                               # mechanical enforcement (hook + CLI)
+    kind: appears_in
+    note: >-
+      The 10 no-rules are canon in the skill; CLAUDE.md carries the summary;
+      cadence-lint.py is the reflex (PostToolUse on prose writes + CLI for
+      arms/CI). Change a rule or a blocklist, reconcile skill + CLAUDE.md +
+      linter regexes together — the linter quoting the blocklist means a
+      one-sided edit silently splits canon from enforcement. Edge added
+      2026-06-04 after the seek fell back to grep (unlit neuron).
