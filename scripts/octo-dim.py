@@ -380,6 +380,38 @@ def cmd_claim(args) -> int:
     return 0
 
 
+def cmd_release(args) -> int:
+    """Remove a path from this session's lanes — or from EVERY session with
+    --from-any (operator coordination tool for un-sticking a lane conflict)."""
+    path = str(Path(args.path).resolve())
+    try:
+        data = _load()
+        touched = []
+        if getattr(args, "from_any", False):
+            targets = list(data["sessions"].items())
+        else:
+            sid = _resolve_session(args)
+            targets = [(sid, data["sessions"].get(sid))] if sid in data["sessions"] else []
+        for sid, entry in targets:
+            if not entry:
+                continue
+            lanes = entry.get("lanes") or []
+            if path in lanes:
+                lanes.remove(path)
+                entry["lanes"] = lanes
+                data["sessions"][sid] = entry
+                touched.append(sid)
+        if touched:
+            _save(data)
+            for sid in touched:
+                print(f"released: {path} ← session {sid}")
+        else:
+            print(f"(no session holds a lane on {path})")
+    except Exception as exc:
+        print(f"release warning (non-fatal): {exc}", file=sys.stderr)
+    return 0
+
+
 def cmd_unregister(args) -> int:
     sid = _resolve_session(args)
     try:
@@ -525,6 +557,11 @@ def build_parser() -> argparse.ArgumentParser:
     clm = sub.add_parser("claim", help="Add a path to this session's lanes")
     clm.add_argument("path", help="Absolute or relative path to claim")
 
+    rel = sub.add_parser("release", help="Remove a path from lanes (yours, or any with --from-any)")
+    rel.add_argument("path", help="Absolute or relative path to release")
+    rel.add_argument("--from-any", action="store_true", dest="from_any",
+                     help="Release the lane from EVERY session (operator coordination)")
+
     sub.add_parser("unregister", help="Remove this session from the registry")
 
     wi = sub.add_parser("worktree-init", help="Create a git worktree for this dimension")
@@ -551,6 +588,7 @@ HANDLERS = {
     "list": cmd_list,
     "prune": cmd_prune,
     "claim": cmd_claim,
+    "release": cmd_release,
     "unregister": cmd_unregister,
     "worktree-init": cmd_worktree_init,
     "approve-merge": cmd_approve_merge,
