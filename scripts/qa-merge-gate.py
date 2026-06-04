@@ -76,6 +76,150 @@ _PR_NUM_RE = re.compile(r"^\s*gh\s+pr\s+merge\s+(\d+)(?=\s|$)")
 # Path to the per-PR approvals file
 _APPROVALS_FILE = Path.home() / ".claude" / "connectome" / "merge-approvals.json"
 
+# ---------------------------------------------------------------------------
+# Repo scoping (root-cause fix, 2026-06-04). The gate guards PROTECTED repos:
+# the brain (~/.claude, including its linked worktrees) plus any repo listed in
+# the operator-owned, gitignored company/config/protected-repos.json
+# ({"protected": ["~/Documents/github/<deploy-arm>", ...]}). A push to main of
+# an ordinary working repo is daily flow, not a guarded merge; gating every
+# repo's main produced constant false blocks. Resolution is DETERMINISTIC
+# (paths and git-config file reads only — the agent classifies nothing) and
+# the direction stays fail-closed: unresolvable target → still gated. Only a
+# positively-identified NON-protected target is ungated.
+# ---------------------------------------------------------------------------
+
+_BRAIN = Path.home() / ".claude"
+_PROTECTED_CFG = _BRAIN / "company" / "config" / "protected-repos.json"
+
+
+def _protected_roots() -> list[Path]:
+    roots = [_BRAIN]
+    try:
+        data = json.loads(_PROTECTED_CFG.read_text(encoding="utf-8"))
+        for item in data.get("protected", []):
+            roots.append(Path(os.path.expanduser(str(item))))
+    except Exception:
+        pass  # config absent → only the brain is protected
+    out: list[Path] = []
+    for r in roots:
+        try:
+            out.append(r.resolve())
+        except Exception:
+            continue
+    return out
+
+
+def _remote_slug(repo_root: Path) -> str | None:
+    """owner/repo (lowercase) parsed from <root>/.git/config; file reads only."""
+    try:
+        cfg = (repo_root / ".git" / "config").read_text(encoding="utf-8")
+        m = re.search(r"url\s*=\s*\S*github\.com[:/]([\w.-]+/[\w.-]+?)(?:\.git)?\s*$",
+                      cfg, re.MULTILINE)
+        return m.group(1).lower() if m else None
+    except Exception:
+        return None
+
+
+def _canon_slug(s: str) -> str | None:
+    """Canonical owner/repo (lowercase) from any -R form: bare slug, https URL,
+    ssh host:owner/repo, with or without trailing .git or slash. The INPUT side
+    must pass through the same canonicalizer as the known side, else '.git' and
+    ssh variants of the brain's own slug classify as ungated (QA finding 1)."""
+    s = s.strip().strip("'\"")
+    m = re.search(r"(?:github\.com[:/])?([\w.-]+/[\w.-]+?)(?:\.git)?/?$", s)
+    return m.group(1).lower() if m else None
+
+
+def _repo_root_and_gitdir(start: str):
+    """Walk up from *start* to the first .git entry. Returns (worktree_root,
+    resolved_gitdir_or_None). A linked worktree's .git FILE points into the
+    main repo's .git dir — that is how a brain worktree is recognized."""
+    try:
+        p = Path(start).resolve()
+    except Exception:
+        return None, None
+    while True:
+        g = p / ".git"
+        if g.is_dir():
+            return p, g
+        if g.is_file():
+            try:
+                m = re.search(r"gitdir:\s*(.+)", g.read_text(encoding="utf-8"))
+                if m:
+                    gd = Path(m.group(1).strip())
+                    gd = gd if gd.is_absolute() else (p / gd)
+                    return p, gd.resolve()
+            except OSError:
+                pass
+            return p, None
+        if p.parent == p:
+            return None, None
+        p = p.parent
+
+
+def _effective_cwd(cmd: str, matched_sub: str, session_cwd: str) -> str:
+    """Session cwd adjusted by any `cd` sub-commands BEFORE the matched one.
+    Only plain `cd <path>` is parsed; `cd -`, `pushd`, subshells are ignored,
+    which leaves cwd unadjusted and can only OVER-gate, never under-gate."""
+    cwd = session_cwd or os.getcwd()
+    for raw in _split_subcmds(_join_continuations(cmd)):
+        if raw == matched_sub:
+            break
+        s = _strip_leading(raw).strip()
+        m = re.match(r"^cd\s+(\S+)", s)
+        if m:
+            p = os.path.expanduser(m.group(1).strip("'\""))
+            cwd = p if os.path.isabs(p) else os.path.join(cwd, p)
+    return cwd
+
+
+def _is_protected_target(cmd: str, matched_sub: str, session_cwd: str):
+    """True = protected, False = positively NOT protected, None = unresolvable
+    (treated as protected: the gate stays fail-closed when unsure)."""
+    sub = _strip_leading(matched_sub)
+
+    # gh pr merge with an explicit -R/--repo slug: compare against the slugs
+    # of the protected roots. No parsable slugs → None (gate).
+    if _PAT_GH_MERGE.match(sub):
+        m = re.search(r"(?:^|\s)(?:-R|--repo)[=\s]+(\S+)", sub)
+        if m:
+            slug = _canon_slug(m.group(1))
+            known = [s for s in (_remote_slug(r) for r in _protected_roots()) if s]
+            if not known or slug is None:
+                return None  # unparseable either side → gate
+            return slug in known  # exact canonical match, no suffix tricks
+
+    # Resolve the repo the command operates on: git -C wins, else effective cwd.
+    # A relative -C is joined against the effective SESSION cwd, never the
+    # hook's own cwd (QA finding 3: right answer, deterministic reason).
+    target = None
+    m = re.match(r"^\s*git\s+((?:(?:-C|-c)\s+\S+\s+)*)", sub)
+    if m and m.group(1):
+        c = re.search(r"-C\s+(\S+)", m.group(1))
+        if c:
+            raw = os.path.expanduser(c.group(1).strip("'\""))
+            base = _effective_cwd(cmd, matched_sub, session_cwd)
+            target = raw if os.path.isabs(raw) else os.path.join(base, raw)
+    if target is None:
+        target = _effective_cwd(cmd, matched_sub, session_cwd)
+
+    root, gitdir = _repo_root_and_gitdir(target)
+    if root is None:
+        return None
+    candidates = [root] + ([gitdir] if gitdir is not None else [])
+    for cand in candidates:
+        for prot in _protected_roots():
+            if cand == prot or prot in cand.parents:
+                return True
+    # A CLONE of a protected repo living anywhere is still protected: compare
+    # the target's own remote slug against the protected slugs (QA finding 2).
+    tgt_slug = _remote_slug(root)
+    if tgt_slug:
+        known = {s for s in (_remote_slug(r) for r in _protected_roots()) if s}
+        if tgt_slug in known:
+            return True
+    return False
+
 
 # FIX 5: join backslash-newline continuations before any splitting so that
 # `gh pr \<newline>merge 96` is treated as a single token.
@@ -241,6 +385,18 @@ def main() -> int:
 
     # Positively identified as a merge action — extract target id from the matched sub-command.
     pr_id = _extract_pr_id(matched_sub)
+
+    # ── Repo scope: only PROTECTED repos are gated ────────────────────────────
+    try:
+        protected = _is_protected_target(cmd, matched_sub, data.get("cwd") or "")
+    except Exception:
+        protected = None  # unresolvable → keep gating (fail-closed)
+    if protected is False:
+        _nudge(
+            "✓ QA gate: publish targets a non-protected repo (repo-scope) — ungated. "
+            "Protected set: the brain + company/config/protected-repos.json."
+        )
+        return 0
 
     # ── Channel 1: env, PR-scoped, agent-proof (preferred) ───────────────────
     env_approve = os.environ.get("OCTO_MERGE_APPROVE", "").strip()
