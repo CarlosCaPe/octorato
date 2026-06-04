@@ -23,6 +23,7 @@ import argparse
 import contextlib
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -498,9 +499,26 @@ def cmd_revoke_merge(args) -> int:
 
 
 def cmd_worktree_init(args) -> int:
-    """Idempotently create a git worktree for this dimension."""
-    sid = _resolve_session(args)
-    short = sid[:8]
+    """Idempotently create a git worktree for this dimension.
+
+    Requires a STABLE session id (--session-id or CLAUDE_SESSION_ID). The
+    hostname-pid fallback is refused here: it changes per invocation AND
+    [:8] of "<host>-<pid>" collapses to the hostname prefix, so every
+    session on one machine would "fork" into the SAME worktree — a shared
+    tree with extra steps (observed: dim/dataqbs- on 2026-06-04).
+    """
+    sid_explicit = (getattr(args, "session_id", "") or
+                    os.environ.get("CLAUDE_SESSION_ID", ""))
+    if not sid_explicit:
+        print("worktree-init: no stable session id; pass --session-id <id> or set "
+              "CLAUDE_SESSION_ID. Refusing to fork into a hostname-derived path "
+              "that all sessions would share.")
+        return 1
+    sid = sid_explicit
+    # [:12] not [:8]: session ids are UUID hex; 8 chars is weaker than it looks
+    # across many short-lived sessions, and a prefix collision silently re-shares
+    # a worktree — the exact de-isolation this command exists to prevent.
+    short = re.sub(r"[^a-z0-9]", "", sid.lower())[:12] or "dim0"
     target = DIM_ROOT / short
     branch = f"dim/{short}"
 
@@ -565,7 +583,10 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("unregister", help="Remove this session from the registry")
 
     wi = sub.add_parser("worktree-init", help="Create a git worktree for this dimension")
-    wi.add_argument("--session-id", dest="session_id", default="",
+    # default=SUPPRESS: a subparser default would CLOBBER the value the parent
+    # parser already captured from `--session-id X worktree-init` (argparse
+    # subparser-default gotcha; this silently de-isolated every fork until 2026-06-04).
+    wi.add_argument("--session-id", dest="session_id", default=argparse.SUPPRESS,
                     help="Use this session id instead of auto-resolved")
 
     am = sub.add_parser("approve-merge", help="Grant operator approval for a PR/branch merge")
