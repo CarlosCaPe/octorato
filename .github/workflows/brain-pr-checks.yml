@@ -115,3 +115,31 @@ jobs:
             echo "::error::lineage graph is unsound — a seek over it would lie. Fix connectome/lineage.yaml."
             exit 1
           }
+
+  counts-render:
+    name: README/FAQ counts are rendered (no stale floors)
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: pip install pyyaml
+
+      # Re-render the stat floors + canon facts, then fail if the tree moved.
+      # Why: the renderers only ran inside ai-push; a day of worktree-PR merges
+      # (2026-06-03) left README/FAQ floors stale until an operator noticed.
+      # This makes the render a merge requirement instead of a ritual.
+      - name: Render counts + canon, fail on drift
+        run: |
+          python3 scripts/sync-readme-counts.py --floor
+          python3 scripts/canon-render.py
+          if ! git diff --exit-code; then
+            echo '::error::Stale rendered counts/canon. Run: python3 scripts/sync-readme-counts.py --floor && python3 scripts/canon-render.py — then commit the result.'
+            exit 1
+          fi
