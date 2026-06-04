@@ -1,9 +1,9 @@
 ---
 name: arm-onboarding
-description: "Step-by-step protocol for creating a new client arm (per-client repo) in the Octopus framework. Covers required files, the sync-ai-docs workflow, QueryMaster connection registration, the one-file rule, and the gitignore hygiene baseline. Load whenever the operator says 'create a new arm', 'onboard a client', 'mkdir new project', or starts working in an empty directory under ~/Documents/github/."
+description: "Step-by-step protocol for creating a new client arm (per-client repo) in the Octopus framework. Covers required files, the sync-ai-docs workflow, the arm's sealed lineage graph (.claude/connectome/lineage.yaml), QueryMaster connection registration, the one-file rule, and the gitignore hygiene baseline. Load whenever the operator says 'create a new arm', 'onboard a client', 'mkdir new project', or starts working in an empty directory under ~/Documents/github/."
 metadata:
   type: workflow
-  short-description: "How to onboard a new client arm: required files, sync-ai-docs, QueryMaster connections, one-file rule"
+  short-description: "How to onboard a new client arm: required files, sync-ai-docs, sealed lineage graph, QueryMaster connections, one-file rule"
 ---
 
 # Arm Onboarding — Creating a New Client Repo
@@ -49,11 +49,19 @@ ln -sfn "$(pwd)/.claude/memory" ~/.claude/projects/<arm-slug>/memory
 # central brain (generic, anonymized) — see docs/architecture/memory-model.md
 # and the feedback_brain_is_independent lesson in the brain memory.
 
-# 6. (Optional) Register database connections in QueryMaster
+# 6. Seed the arm's lineage graph (sealed, arm-scoped seek > scan)
+mkdir -p .claude/connectome
+cp ~/.claude/templates/arm/connectome/lineage.yaml .claude/connectome/lineage.yaml
+# impact-radius.py auto-detects this file when run from inside the arm and
+# traverses the ARM's graph (receipts say layer=arm). Declare the arm's own
+# sync surfaces here (deploy planes, generated artifacts, duplicated facts).
+# Never reference another arm; never sync this upward.
+
+# 7. (Optional) Register database connections in QueryMaster
 # Edit ~/.config/querymaster/connections.json — add the arm's DB connections
 # Connections live OUTSIDE the arm repo (operator-side, not committed)
 
-# 7. First commit
+# 8. First commit
 git add . && git commit -m "chore: bootstrap arm with brain-aligned structure"
 ```
 

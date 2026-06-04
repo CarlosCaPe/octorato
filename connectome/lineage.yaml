@@ -262,3 +262,30 @@ edges:
       sessions.json registry, and the dimension-awareness hook. Change the rule,
       reconcile all four enforcement surfaces. Lights the session-isolation seek
       that fell back to grep repeatedly on 2026-06-02/03.
+
+  - id: arm-lineage-template
+    from: templates/arm/connectome/lineage.yaml
+    to:
+      - "<each arm>/.claude/connectome/lineage.yaml"
+    kind: projects_to
+    offrepo: true
+    publish: "arm-onboarding step 6 seeds it; existing arms copy + tailor (arms resolved from company/config/arms-paths.json — never named here)"
+    note: >-
+      Every arm carries its OWN sealed lineage graph; impact-radius.py
+      auto-detects it when run from inside the arm (layer=arm receipts).
+      A contract change in the template must reach the arm seeds — and a
+      schema change in impact-radius.py must stay compatible with both layers.
+
+  - id: arm-onboarding
+    concept: "arm onboarding / create a new client arm / new arm checklist"
+    appears_in:
+      - skills/arm-onboarding/SKILL.md      # canonical step-by-step
+      - CLAUDE.md                           # Arm Onboarding quick reference
+      - templates/arm/                      # the files every new arm is born with
+      - docs/wiki/Glossary.md               # Arm onboarding entry
+    kind: appears_in
+    single_source: "skills/arm-onboarding/SKILL.md"
+    note: >-
+      Lights the unlit neuron filed by the 2026-06-04 GREP-FALLBACK. A new
+      onboarding step (e.g. the arm lineage graph) must land in the skill AND
+      its mirrors, or new arms are born without it.
