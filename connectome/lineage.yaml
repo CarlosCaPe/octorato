@@ -306,3 +306,17 @@ edges:
       job o mover un script sin reconciliar el otro lado rompe la protección
       de rama (check requerido que nunca reporta) — la misma clase de deadlock
       que el twin de Astro resolvió en un arm el 2026-06-04.
+
+  - id: disclose-suggestions
+    concept: "prune-suggestion / unlock-suggestion / disclose-time suggestions / dead cells / capability gap"
+    appears_in:
+      - CLAUDE.md                                   # ambas ULTRA RULES (☠ Prune + 💡 Unlock)
+      - skills/4d-paradigm-protocol/SKILL.md        # protocolo Disclose completo
+      - scripts/query_connectome.py                 # `dead` alimenta la sugerencia de poda
+    kind: appears_in
+    single_source: "CLAUDE.md"
+    note: >-
+      Las dos sugerencias de cierre (poda de células muertas y destrabe de
+      límites de capacidad) son gemelas: el agente propone en una línea, el
+      operador decide. Cambiar el formato de una exige reconciliar la otra.
+      Enciende la neurona apagada filed el 2026-06-04.
