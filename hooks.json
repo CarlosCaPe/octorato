@@ -124,7 +124,7 @@
         {
           "command": "python3 ~/.claude/scripts/session-isolation-hook.py",
           "statusMessage": "♦ 4D: dimension isolation (auto-fork)...",
-          "timeout": 15,
+          "timeout": 5,
           "type": "command"
         }
       ]
@@ -136,7 +136,7 @@
         {
           "command": "python3 ~/.claude/scripts/cadence-stop-hook.py",
           "statusMessage": "✍ cadence check on the reply...",
-          "timeout": 10,
+          "timeout": 5,
           "type": "command"
         },
         {
