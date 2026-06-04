@@ -331,6 +331,7 @@ edges:
       - skills/4d-paradigm-protocol/SKILL.md                  # fires at 4D Disclose (delivery boundary)
       - docs/wiki/Skills.md                                   # wiki listing
       - scripts/cadence-lint.py                               # mechanical enforcement (hook + CLI)
+      - scripts/cadence-stop-hook.py                          # chat-reply enforcement (Stop hook, blocks once)
     kind: appears_in
     note: >-
       The 10 no-rules are canon in the skill; CLAUDE.md carries the summary;
