@@ -96,7 +96,7 @@ def cmd_pull(cfg):
     repo = resolve_repo(cfg)
     branch = cfg.get("branch", "main")
     print(f"memory_sync: pull --rebase origin/{branch} ...")
-    print("  " + (git(repo, "pull", "--rebase", "origin", branch, check=False) or "(up to date)"))
+    print("  " + (git(repo, "pull", "--rebase", "origin", branch) or "(up to date)"))
     return 0
 
 
@@ -105,14 +105,18 @@ def cmd_push(cfg):
         return cmd_status(cfg)
     repo = resolve_repo(cfg)
     branch = cfg.get("branch", "main")
-    # Pull first so a second machine doesn't fork history.
-    git(repo, "pull", "--rebase", "origin", branch, check=False)
     if git(repo, "status", "--short", check=False):
         git(repo, "add", "-A")  # nested repo's own index — never the parent's
         git(repo, "-c", "user.name=octorato-brain",
             "-c", "user.email=octorato@local", "commit", "-m", "sync: brain memory")
         print("  committed local memory changes")
-    out = git(repo, "push", "-u", "origin", branch, check=False)
+    # Commit first, THEN rebase onto the remote so a second machine doesn't
+    # fork history (pull --rebase refuses on a dirty tree). Strict: a failed
+    # rebase must abort the push, not push a forked tree. Skip when the
+    # remote branch doesn't exist yet (first-ever push).
+    if git(repo, "ls-remote", "--heads", "origin", branch, check=False):
+        git(repo, "pull", "--rebase", "origin", branch)
+    git(repo, "push", "-u", "origin", branch)
     print(f"  pushed → {cfg['remote']}")
     return 0
 
