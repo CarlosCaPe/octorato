@@ -9,7 +9,15 @@ Two jobs, in order of force:
      session — the first writer owns the lane, involuntarily. This is what turns
      the lane system from etiquette into a reflex (the cerebellum principle:
      enforcement must fire without anyone choosing to run it).
-  3. WARN (all matched tools): when other live dimensions share the tree, inject
+  3. DENY broad git staging (Bash only): `git add -A|--all|.` / `git commit -a`
+     whose target resolves inside the SHARED ~/.claude checkout while other
+     dimensions are live — the exact command that swallows a neighbor's
+     uncommitted files. Explicit pathspec passes; staging inside your own
+     dimension worktree passes; a nested repo under the brain passes.
+     THREAT MODEL: an HONEST agent making a careless mistake, not an adversary —
+     wrapped invocations (`sh -c "git add -A"`, `eval`, `$(...)`) bypass the
+     detector by design; the fail-closed boundary for merges stays qa-merge-gate.
+  4. WARN (all matched tools): when other live dimensions share the tree, inject
      the shared-tree warning as before.
 
 Lanes die with their session: a session that stops heartbeating past the TTL is
@@ -187,6 +195,153 @@ def _is_live(entry: dict, ttl: int = DEFAULT_TTL) -> bool:
         return False
 
 
+# ── broad-staging detection (quote-aware; see skills/command-boundary-hook-matching) ──
+
+BRAIN_TREE = Path.home() / ".claude"
+
+
+def _split_subcmds(cmd: str) -> list:
+    """Split a shell command on UNQUOTED separators only (; && || | newline)."""
+    parts, buf, depth, in_sq, in_dq = [], [], 0, False, False
+    cmd = cmd.replace("\\\n", " ")
+    i = 0
+    while i < len(cmd):
+        c = cmd[i]
+        if in_sq:
+            buf.append(c)
+            if c == "'":
+                in_sq = False
+        elif in_dq:
+            buf.append(c)
+            if c == '"' and (i == 0 or cmd[i - 1] != "\\"):
+                in_dq = False
+        elif c == "'":
+            in_sq = True
+            buf.append(c)
+        elif c == '"':
+            in_dq = True
+            buf.append(c)
+        elif c in "({":
+            depth += 1
+            buf.append(c)
+        elif c in ")}":
+            depth -= 1
+            buf.append(c)
+        elif depth == 0 and cmd[i:i + 2] in ("&&", "||"):
+            parts.append("".join(buf).strip())
+            buf = []
+            i += 1
+        elif depth == 0 and c in ";\n|":
+            parts.append("".join(buf).strip())
+            buf = []
+        else:
+            buf.append(c)
+        i += 1
+    if buf:
+        parts.append("".join(buf).strip())
+    return [p for p in parts if p]
+
+
+_ENV_ASSIGN = None  # compiled lazily to keep import cost zero on the hot path
+
+
+def _broad_git_verb(tokens: list):
+    """Return ('add'|'commit', repo_or_None) when tokens are a broad-stage git
+    invocation; (None, None) otherwise. Mentions inside quoted args never reach
+    here because shlex already consumed the quotes per sub-command."""
+    global _ENV_ASSIGN
+    import re as _re
+    if _ENV_ASSIGN is None:
+        _ENV_ASSIGN = _re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+    i = 0
+    while i < len(tokens) and _ENV_ASSIGN.match(tokens[i]):
+        i += 1
+    if i >= len(tokens) or os.path.basename(tokens[i]) != "git":
+        return None, None
+    i += 1
+    repo = None
+    while i < len(tokens):
+        t = tokens[i]
+        if t == "-C" and i + 1 < len(tokens):
+            repo = tokens[i + 1]
+            i += 2
+        elif t.startswith(("--git-dir=", "--work-tree=")):
+            # --git-dir=~/.claude/.git points at the shared index regardless
+            # of cwd; treat its parent/value as the target repo.
+            val = t.split("=", 1)[1]
+            repo = val[:-5] if val.endswith("/.git") else val
+            i += 1
+        elif t in ("--git-dir", "--work-tree") and i + 1 < len(tokens):
+            val = tokens[i + 1]
+            repo = val[:-5] if val.endswith("/.git") else val
+            i += 2
+        elif t.startswith("-"):
+            i += 1
+        else:
+            break
+    if i >= len(tokens):
+        return None, None
+    sub, rest = tokens[i], tokens[i + 1:]
+    if sub == "add":
+        for t in rest:
+            if t in ("-A", "--all", ".", ":/", ":(top)"):
+                return "add", repo
+    elif sub == "commit":
+        for t in rest:
+            if t == "--all":
+                return "commit", repo
+            # short-flag cluster containing 'a' (-a, -am, -aF…); long flags excluded
+            if _re.match(r"^-[A-Za-z]*a[A-Za-z]*$", t):
+                return "commit", repo
+    return None, None
+
+
+def _broad_stage_on_brain(cmd: str, session_cwd: str):
+    """Return the offending verb when any sub-command broad-stages the SHARED
+    brain tree (~/.claude main checkout). Dimension worktrees and nested repos
+    under the brain pass."""
+    import shlex
+    try:
+        brain = BRAIN_TREE.resolve()
+    except Exception:
+        return None
+    cwd = Path(session_cwd or os.getcwd())
+    for seg in _split_subcmds(cmd):
+        try:
+            tokens = shlex.split(seg)
+        except ValueError:
+            tokens = seg.split()
+        if not tokens:
+            continue
+        if tokens[0] == "cd" and len(tokens) > 1:
+            p = Path(os.path.expanduser(tokens[1]))
+            cwd = p if p.is_absolute() else cwd / p
+            continue
+        verb, repo = _broad_git_verb(tokens)
+        if not verb:
+            continue
+        target = Path(os.path.expanduser(repo)) if repo else cwd
+        if not target.is_absolute():
+            target = cwd / target
+        try:
+            target = target.resolve()
+        except Exception:
+            continue
+        if target == brain or brain in target.parents:
+            # Exception: a NESTED repo physically under ~/.claude (vendored
+            # repo, test fixture, linked worktree dir) has its own .git between
+            # target and brain — staging there never touches the shared index.
+            p, nested = target, False
+            while p != brain:
+                if (p / ".git").exists():
+                    nested = True
+                    break
+                p = p.parent
+            if not nested:
+                return verb
+    return None
+
+
 # ── output helpers ───────────────────────────────────────────────────────────
 
 def _emit(payload: dict) -> None:
@@ -258,6 +413,27 @@ def main() -> int:
                 # Still record our heartbeat; the denied write claims nothing.
                 _upsert_session(my_sid, lambda e: None)
                 return 0
+
+    # ── 1b. ENFORCE: broad git staging on the SHARED brain tree → deny ───────
+    # The exact collision mode: one session's `git add -A` swallows another's
+    # uncommitted files. Explicit pathspec passes; own-worktree staging passes.
+    if tool_name == "Bash" and other_live:
+        try:
+            verb = _broad_stage_on_brain(
+                tool_input.get("command") or "", data.get("cwd") or ""
+            )
+        except Exception:
+            verb = None  # detector failure → fall through to the warning (fail-open)
+        if verb:
+            _deny(
+                f"⛔ 4D DIMENSION GATE: broad `git {verb}` on the SHARED brain tree "
+                f"while {len(other_live)} other live dimension(s) exist. This swallows "
+                f"their uncommitted files into your commit. Stage by EXPLICIT pathspec "
+                f"(`git add <file>…`), or fork your own worktree first: "
+                f"`python3 ~/.claude/scripts/octo-dim.py --session-id <sid> worktree-init`."
+            )
+            _upsert_session(my_sid, lambda e: None)  # heartbeat; denied call claims nothing
+            return 0
 
     # ── 2. AUTO-CLAIM: free path + concurrent dimensions → first writer owns ──
     if target_path and other_live:

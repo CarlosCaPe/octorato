@@ -28,7 +28,10 @@ Usage:
 from __future__ import annotations
 import argparse, json, pathlib, sys, datetime
 
-BRAIN = pathlib.Path.home() / ".claude"
+# Resolve the brain from THIS script's location, not ~/.claude: in a CI
+# checkout (or a dimension worktree) home has no brain and the count was 0,
+# failing the counts-render check on every PR since it was born (#113).
+BRAIN = pathlib.Path(__file__).resolve().parent.parent
 SKILLS_DIR = BRAIN / "skills"
 AGENTS_DIR = BRAIN / "agents"
 EXCLUDED_AGENT_DIRS = {"examples", "strategy"}
