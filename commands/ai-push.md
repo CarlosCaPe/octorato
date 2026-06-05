@@ -35,6 +35,45 @@ If push fails because remote doesn't exist:
 cd ~/.claude && git remote add origin https://github.com/YOUR_USERNAME/octorato.git && git push -u origin master
 ```
 
+### 3b. If push rejected by branch protection (GH006), auto-open PR
+The brain's `master` is protected — direct push exits with
+`remote rejected ... protected branch hook declined / GH006`. When that fires,
+create a feature branch, push it, and open a PR using the GitHub token that
+Git Credential Manager (Windows) or the system keyring already cached from the
+successful push attempt. No `gh auth login` round-trip needed.
+
+PowerShell (Windows):
+```powershell
+$branch = "auto/$(Get-Date -Format 'yyyyMMdd-HHmm')-$(git log -1 --pretty=format:%h)"
+git checkout -b $branch
+git push -u origin $branch
+
+$cred = ("protocol=https`nhost=github.com`n`n" | git credential fill 2>$null)
+$env:GH_TOKEN = ($cred | Select-String '^password=' | ForEach-Object { $_.Line.Substring(9) })
+gh pr create --base master --head $branch `
+  --title (git log -1 --pretty=format:%s) `
+  --body (git log -1 --pretty=format:%b)
+Remove-Item Env:\GH_TOKEN
+```
+
+Bash / Git Bash / WSL:
+```bash
+branch="auto/$(date +%Y%m%d-%H%M)-$(git log -1 --pretty=format:%h)"
+git checkout -b "$branch"
+git push -u origin "$branch"
+
+token=$(printf 'protocol=https\nhost=github.com\n\n' | git credential fill | sed -n 's/^password=//p')
+GH_TOKEN="$token" gh pr create --base master --head "$branch" \
+  --title "$(git log -1 --pretty=format:%s)" \
+  --body  "$(git log -1 --pretty=format:%b)"
+unset GH_TOKEN token
+```
+
+Notes:
+- NEVER echo the token. Use the env-var pass-through pattern; don't `Write-Host $token` or `echo $token` anywhere.
+- After PR merges: `git checkout master && git pull --ff-only && git branch -D "$branch"`.
+- If multiple commits are queued, prefer one PR per logical concern; this fast path stacks them all on a single branch which is fine when they are a single coherent change.
+
 ### 4. Regenerate neural connectome
 ```bash
 python3 ~/.claude/scripts/generate_neural_map.py 2>/dev/null | tail -5

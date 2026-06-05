@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 from glob import glob
@@ -41,6 +42,34 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 REGISTRY = ROOT / "content" / "canon.facts.yaml"
+
+
+def _resolve_python() -> str:
+    """Pick a Python interpreter that actually runs derive commands.
+
+    `canon.facts.yaml` writes `derive.cmd` as `python3 scripts/...` because that
+    is canonical on Linux/CI. On Windows, default PATH puts the Microsoft Store
+    `python3.exe` stub ahead of any real interpreter — it exits non-zero on
+    every invocation and `_run_derive` then records the fact as UNVERIFIABLE
+    and skips it, so `canon-render` prints "already in unison" while silently
+    leaving every wiki / README canon marker stale. Detect a working candidate
+    once at import time and substitute it into any `python3 ...` derive cmd.
+    Falls back to `sys.executable` since this script IS running.
+    """
+    for cand in ("python3", "python"):
+        path = shutil.which(cand)
+        if not path:
+            continue
+        try:
+            r = subprocess.run([path, "-c", "import sys"], capture_output=True, timeout=5)
+            if r.returncode == 0:
+                return path
+        except Exception:
+            continue
+    return sys.executable
+
+
+_PYTHON = _resolve_python()
 
 # <!--canon:ID-->inner<!--/canon-->  (ID = dotted/kebab word, inner may be empty)
 MARKER = re.compile(
@@ -77,8 +106,13 @@ def _run_derive(cmd: str) -> dict:
     if cmd in _DERIVE_CACHE:
         return _DERIVE_CACHE[cmd]
     import json
+    parts = shlex.split(cmd)
+    # If the derive command leads with `python3`/`python`, swap to the
+    # resolved interpreter so Windows operators with a python3 stub still work.
+    if parts and parts[0] in ("python3", "python"):
+        parts[0] = _PYTHON
     out = subprocess.run(
-        shlex.split(cmd), cwd=ROOT, capture_output=True, text=True, timeout=60
+        parts, cwd=ROOT, capture_output=True, text=True, timeout=60
     )
     if out.returncode != 0:
         raise RuntimeError(f"derive failed: {cmd}\n{out.stderr.strip()}")
