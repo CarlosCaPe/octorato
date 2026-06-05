@@ -32,6 +32,16 @@ from pathlib import Path
 from typing import Iterable, Iterator
 
 from _brain_obs import TRACES_DIR, iter_trace_records, parse_record_ts, parse_window
+# Force UTF-8 on stdout/stderr so the ✓ / ✗ / em-dash glyphs in reports
+# survive on Windows shells defaulting to cp1252. Without this, a script
+# can do its work correctly and still crash with UnicodeEncodeError when
+# printing success. Applied repo-wide by _apply-utf8-reconfigure.py.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 
 # Local idiom — names used below; resolved via the shared lib.
 _parse_since = parse_window

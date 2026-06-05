@@ -30,6 +30,16 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator
+# Force UTF-8 on stdout/stderr so the ✓ / ✗ / em-dash glyphs in reports
+# survive on Windows shells defaulting to cp1252. Without this, a script
+# can do its work correctly and still crash with UnicodeEncodeError when
+# printing success. Applied repo-wide by _apply-utf8-reconfigure.py.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 
 # Shared USD pricing — single source of truth across the FinOps pipeline.
 sys.path.insert(0, str(Path(__file__).parent))
