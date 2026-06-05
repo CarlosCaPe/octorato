@@ -72,6 +72,22 @@ Scan your draft response for these phrases — they're red flags:
 - "I'll mark this as a follow-up"
 - "Quick fix, lo aplico mañana"
 
+**Plan-then-ask trap** (added 2026-06-05 after the operator named the
+pattern: *"el máquina siempre pregunta y resuelve, el humano se la pasa
+debatiendo sin acción y postponiendo"*). These close-out phrases turn a
+clean plan into stalled debate when the plan is already obviously right:
+
+- "¿Lo aplico ahora?" / "¿Lo aplico?" / "¿Aplico esto?"
+- "¿Lo hago?" / "¿Continúo?" / "¿Sigo?"
+- "¿Te parece bien que…?" / "Do you want me to proceed?"
+- "Let me know if you want me to…"
+- "I can do X if you want" (offering instead of doing)
+
+If you've already laid out a coherent N-step plan AND each step is
+within scope AND auto-mode is on → executing IS the answer, and the
+"¿lo aplico?" close is debate theater. Skip the ask; the next message
+should be the work + the report, not the question.
+
 If your draft contains any of these AND the work is actionable now AND
 auto-mode is on → rewrite the draft to be the work itself, not the offer.
 
@@ -88,6 +104,35 @@ the gap. Example:
 The correct sequence is: 1 → 2 → ship fix without prompt → 3 (report).
 Especially when the gap is one you introduced yourself, deferring is
 worse, not better.
+
+### Loop variant: the "options-with-recommendation that didn't need an ask"
+
+Sister skill `ask-with-recommendation` mandates: if you DO ask, ask with
+an opinion. This skill mandates the prior gate: **first decide whether
+an ask is needed at all**.
+
+Failure sequence:
+
+1. You finish an analysis (e.g. why a token failed, why a script broke).
+2. You write 3 options + recommendation + reasoning + flip-trigger.
+3. You close with "¿Aplico A?" — even though A is obviously right, no
+   real trade-off exists, and auto-mode is on.
+4. Operator restates: *"el máquina siempre pregunta y resuelve"*.
+
+The bare diagnosis: `ask-with-recommendation` fired when it shouldn't have.
+Its own anti-skill section says recommendations don't apply to "yes/no
+operator approvals where consent is the point — the recommendation is
+implicit in the action you're about to take." Internalize that line.
+
+Decision rule:
+
+| Situation | What to do |
+|---|---|
+| Genuine trade-off, operator has info you don't | Ask with reco (full `ask-with-recommendation` structure) |
+| One option clearly dominates + auto-mode on | Skip the ask. Execute. Report. |
+| You're already 80% sure what they want | Skip the ask. Execute. Report. |
+| Stakes high + irreversible | Ask, even if reco is obvious — confirmation is the point |
+| Stakes low + reversible (branch + PR) | Skip the ask. Execute. Report. |
 
 ## Apply this skill when
 

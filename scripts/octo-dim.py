@@ -30,6 +30,16 @@ import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
+# Force UTF-8 on stdout/stderr so the ✓ / ✗ / em-dash glyphs in reports
+# survive on Windows shells defaulting to cp1252. Without this, a script
+# can do its work correctly and still crash with UnicodeEncodeError when
+# printing success. Applied repo-wide by _apply-utf8-reconfigure.py.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 
 # fcntl is POSIX-only; degrade to no-lock on Windows
 try:

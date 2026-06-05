@@ -50,6 +50,16 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+# Force UTF-8 on stdout/stderr so the ✓ / ✗ / em-dash glyphs in reports
+# survive on Windows shells defaulting to cp1252. Without this, a script
+# can do its work correctly and still crash with UnicodeEncodeError when
+# printing success. Applied repo-wide by _apply-utf8-reconfigure.py.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 
 BUDGETS_YAML = Path.home() / ".claude" / "budgets.yaml"
 BUDGETS_JSON = Path.home() / ".claude" / "budgets.json"
