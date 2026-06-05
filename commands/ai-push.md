@@ -21,6 +21,27 @@ Block if the live `settings.json` hooks diverged from the tracked `hooks.json` (
 ```bash
 python3 ~/.claude/scripts/check-hooks-drift.py || { echo "Hook drift — run merge-hooks.py or check-hooks-drift.py --adopt, then retry"; exit 1; }
 ```
+
+### 2c. README count drift-guard (run before commit, fix if drifted)
+The CI status check `README/FAQ counts are rendered (no stale floors)` blocks merges
+when the brain's README/FAQ skill + agent counts drift from the live filesystem.
+Pre-emptively re-render before committing — the `--floor` flag rounds the real count
+DOWN to the nearest ten so the rendered figure stays TRUE across small changes
+(operator stat convention; also enforced by `check-stats-drift.py`):
+
+```bash
+python3 ~/.claude/scripts/sync-readme-counts.py --floor
+git add README.md docs/FAQ.md 2>/dev/null   # only the rendered files, if changed
+```
+
+Modes:
+- `--floor`  → renders `190+ skills · 180+ specialist agents` (stable, default for shipping README/FAQ)
+- (no flag)  → renders exact integers (useful for debugging the counter; never commit this form)
+- `--check`  → dry-run: exit 1 if drift exists, write nothing (used by CI)
+
+If the rendered files changed, fold them into the commit you're about to make; do not
+create a separate "chore: bump count" commit unless that's the only change.
+
 Then commit:
 ```bash
 cd ~/.claude && git commit -m "<message>"
