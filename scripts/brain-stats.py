@@ -27,6 +27,18 @@ Usage:
 """
 from __future__ import annotations
 import argparse, json, pathlib, sys, datetime
+import sys
+
+# Force UTF-8 on stdout/stderr so the ✓ / ✗ / em-dash glyphs in reports
+# survive on Windows shells defaulting to cp1252. Without this, a script
+# can do its work correctly and still crash with UnicodeEncodeError when
+# printing success. Applied repo-wide by _apply-utf8-reconfigure.py.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 
 # Resolve the brain from THIS script's location, not ~/.claude: in a CI
 # checkout (or a dimension worktree) home has no brain and the count was 0,
