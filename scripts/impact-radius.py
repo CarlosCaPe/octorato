@@ -25,6 +25,12 @@ Usage:
 """
 import os
 import sys
+# Windows console defaults to cp1252 and crashes on ✓/✗/⚠ glyphs; force UTF-8.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 import json
 import time
 import hashlib
