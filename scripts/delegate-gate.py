@@ -12,6 +12,16 @@ Design mirrors grafo-gate.py: same I/O protocol, same fail-open guarantee.
 import sys
 import json
 import re
+# Force UTF-8 on stdout/stderr so the ✓ / ✗ / em-dash glyphs in reports
+# survive on Windows shells defaulting to cp1252. Without this, a script
+# can do its work correctly and still crash with UnicodeEncodeError when
+# printing success. Applied repo-wide by _apply-utf8-reconfigure.py.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 
 # Heuristics for "non-trivial / batchable" Bash
 _TRIVIAL_MAX_LEN = 180

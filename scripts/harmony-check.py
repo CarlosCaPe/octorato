@@ -20,6 +20,18 @@ Zero dependencies (stdlib only).
 """
 from __future__ import annotations
 import argparse, json, os, re, sys
+import sys
+
+# Force UTF-8 on stdout/stderr so the ✓ / ✗ / em-dash glyphs in reports
+# survive on Windows shells defaulting to cp1252. Without this, a script
+# can do its work correctly and still crash with UnicodeEncodeError when
+# printing success. Applied repo-wide by _apply-utf8-reconfigure.py.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 
 NUM = re.compile(r"(?<![\w.#-])(\d+(?:\.\d+)?)(px|rem|ms|s)\b")
 HEX = re.compile(r"#[0-9a-fA-F]{3,8}\b")

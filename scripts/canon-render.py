@@ -23,6 +23,9 @@ Reconciliation is typed by `kind`, never averaged:
 
 Modes:
   (default)        heal every marker in every target file; report writes.
+                   Also surfaces any UNMANAGED / UNVERIFIABLE markers on
+                   stderr as a non-fatal warning (the operator sees the
+                   signal without the run failing). Exit 0 either way.
   --file <path>    heal only one file (for a PostToolUse Write|Edit hook).
   --check          no writes; exit 1 if ANY marker is out of sync (pre-push).
   --audit          no writes; print a drift table; always exit 0.
@@ -39,6 +42,16 @@ import subprocess
 import sys
 from glob import glob
 from pathlib import Path
+# Force UTF-8 on stdout/stderr so the ✓ / ✗ / em-dash glyphs in reports
+# survive on Windows shells defaulting to cp1252. Without this, a script
+# can do its work correctly and still crash with UnicodeEncodeError when
+# printing success. Applied repo-wide by _apply-utf8-reconfigure.py.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 
 ROOT = Path(__file__).resolve().parent.parent
 REGISTRY = ROOT / "content" / "canon.facts.yaml"
@@ -212,8 +225,25 @@ def main() -> int:
                 print(f"  [{state}] {fname} :: canon:{fid}  {detail}")
         else:
             print(f"canon-render: all markers in unison across {len(files)} file(s)")
-    elif write and wrote == 0:
-        print(f"canon-render: already in unison across {len(files)} file(s)")
+    elif write:
+        # Default mode: surface UNMANAGED / UNVERIFIABLE drifts even when no
+        # DRIFT markers needed writing. Previously the script printed "already
+        # in unison" while silently leaving every unverifiable marker stale —
+        # operator saw green, brain was beige. Treat unverifiable as a warning
+        # (stderr, exit 0) so the run completes but the operator gets a signal.
+        non_drift_issues = [d for d in drifts if d[2] in ("UNMANAGED", "UNVERIFIABLE")]
+        if non_drift_issues:
+            print(
+                f"canon-render: WARN {len(non_drift_issues)} unresolved marker(s) "
+                f"(non-fatal; rerun with --audit for the full table):",
+                file=sys.stderr,
+            )
+            for fname, fid, state, detail in non_drift_issues:
+                print(f"  [{state}] {fname} :: canon:{fid}  {detail}", file=sys.stderr)
+        if wrote == 0 and not non_drift_issues:
+            print(f"canon-render: already in unison across {len(files)} file(s)")
+        elif wrote == 0:
+            print(f"canon-render: no writes ({len(files)} file(s) scanned; see warnings above)")
 
     if check and real_drift:
         return 1
