@@ -1,0 +1,35 @@
+# AI news & blog feeds the BRAIN reads to learn (inbound half of the loop).
+# Seeded from the dataqbs blog source list, but owned by the brain: the brain
+# fetches these itself and never depends on the arm. Add/remove freely.
+# Each item: id (short slug), name (human), url (RSS or Atom), enabled (default true).
+feeds:
+  - id: simonwillison
+    name: Simon Willison
+    url: https://simonwillison.net/atom/everything/
+  - id: openai
+    name: OpenAI Blog
+    url: https://openai.com/blog/rss.xml
+  - id: deepmind
+    name: Google DeepMind
+    url: https://deepmind.google/blog/rss.xml
+  - id: googleai
+    name: Google AI Blog
+    url: https://blog.google/innovation-and-ai/technology/ai/rss/
+  - id: latentspace
+    name: Latent Space
+    url: https://www.latent.space/feed
+  - id: mittr
+    name: MIT Technology Review
+    url: https://www.technologyreview.com/feed/
+  - id: techcrunch
+    name: TechCrunch AI
+    url: https://techcrunch.com/category/artificial-intelligence/feed/
+  - id: arstechnica
+    name: Ars Technica AI
+    url: https://arstechnica.com/ai/feed/
+  - id: theverge
+    name: The Verge AI
+    url: https://www.theverge.com/rss/ai-artificial-intelligence/index.xml
+  - id: arxiv
+    name: arXiv cs.AI
+    url: http://arxiv.org/rss/cs.AI

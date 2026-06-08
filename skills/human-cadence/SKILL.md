@@ -52,6 +52,13 @@ When unsure which mode you're in: is the user asking for data/structure, or talk
 
 The Provenance footer is a system requirement and is exempt (it's a machine receipt, not prose).
 
+## Delivery format (operator-canonical, 2026-06-08)
+
+Two hard rules layered on top of the 10, both operator-flagged after repeated misses:
+
+1. **Paste-bound text ships as PLAIN TEXT.** Any chunk meant to be pasted somewhere else (LinkedIn post, email, caption, prompt, message) goes with zero markdown: no blockquote (`>`), no code fence, no bullets, no leading indent. The operator copies straight from the terminal, where a blockquote renders as `▎` plus indentation and arrives broken at the paste target. Commentary addressed TO the operator can stay normal prose; the instant a chunk is for pasting, strip its formatting. When unsure, treat it as paste-bound and keep it plain.
+2. **Never open a paragraph or sentence in lowercase.** Capitalize the first letter, every time. The operator writes with normal capitalization, and a lowercase-start reads as an AI tell, worst of all when drafting in his voice.
+
 ## The source prompt (verbatim, for reuse as a humanizer)
 
 The canonical "rewrite to sound human" prompt these rules were inverted from:
