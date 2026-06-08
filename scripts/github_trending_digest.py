@@ -502,9 +502,18 @@ def query_connectome(text: str) -> tuple[str, float]:
     if result.returncode != 0:
         return ("none", 0.0)
     # Parse first SKILLS row: "    skill-name — score: X.Y, connections: N"
+    # query_connectome prints the AGENTS block FIRST, then SKILLS. We dedup
+    # against existing SKILLS (capabilities), not agent personas, so gate on
+    # the SKILLS header before parsing the first "— score:" row.
+    in_skills = False
     for line in result.stdout.splitlines():
+        if "SKILLS (" in line:
+            in_skills = True
+            continue
+        if not in_skills:
+            continue
         m = re.match(r"\s+(\S[^—]*)— score: ([\d.]+)", line)
-        if m and "SKILLS" not in line:
+        if m:
             return (m.group(1).strip(), float(m.group(2)))
     return ("none", 0.0)
 
