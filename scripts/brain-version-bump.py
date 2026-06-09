@@ -20,14 +20,22 @@ Modes:
     (default)   print current -> next + reason. Writes nothing.
     --check     exit 1 if a bump is pending (CI / visibility). Writes nothing.
     --apply     create the annotated tag locally.
-    --push      with --apply, also push the tag to origin.
+    --push      with --apply, also push the tag to origin. After the push, emit a
+                GitHub Release (the changelog) for every bump, and for a
+                minor/major bump queue a community news DRAFT under
+                ~/.claude/knowledge/release-news/<version>.md (machine-local,
+                gitignored, never auto-published). Patches get the Release only,
+                so they never spam the news queue.
 
 All git calls are pinned to the repo root via `-C`, so the result does not
 depend on the caller's working directory (ai-push runs it as a post-push step).
+The release/news emission is best-effort and never breaks the caller.
 """
 import re
 import subprocess
 import sys
+from pathlib import Path
+from shutil import which
 
 TAG_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 # Conventional-commit header: type(scope)!: subject
@@ -122,6 +130,71 @@ def next_version(tag, bump):
     return tag  # none
 
 
+def _release_notes(commits):
+    """Group commit subjects since the last tag into a changelog body."""
+    feats, fixes, other = [], [], []
+    for subj, _ in commits:
+        m = CC_RE.match(subj)
+        t = (m.group("type").lower() if m else "")
+        (feats if t == "feat" else fixes if t == "fix" else other).append(subj)
+    out = []
+    for title, group in (("Features", feats), ("Fixes", fixes), ("Other", other)):
+        if group:
+            out.append(f"### {title}")
+            out += [f"- {s}" for s in group]
+    return "\n".join(out) or "- (no commit summaries since last tag)"
+
+
+def _news_draft(version, prev_tag, bump, notes):
+    """A generic, community-facing DRAFT. The operator adds the angle and publishes;
+    nothing here is auto-published, and nothing is brand-specific."""
+    return (
+        f"# Octorato {version}\n\n"
+        f"_Status: DRAFT, queued by brain-version-bump on a {bump} release. "
+        f"Review, add the why-it-matters angle, then publish via your news flow. "
+        f"Not auto-published._\n\n"
+        f"**Release:** {version} (previous: {prev_tag or 'none'})\n\n"
+        f"## What changed\n{notes}\n\n"
+        f"## Why it matters\n"
+        f"<!-- One short paragraph for the community: what this unlocks, what it "
+        f"removes, why a reader should care. Never echo the commit list as-is. -->\n\n"
+        f"Source: GitHub Release {version}.\n"
+    )
+
+
+def emit_release(root, version, prev_tag, bump, commits):
+    """Best-effort, AFTER the tag is pushed: a GitHub Release for every bump (that is
+    the changelog), plus a queued news DRAFT for substantive bumps (minor/major).
+    Never raises. A failure here must never break the caller (ai-push)."""
+    notes = _release_notes(commits)
+    # 1. GitHub Release = the changelog entry. Idempotent, needs gh, skips quietly.
+    if which("gh"):
+        seen = subprocess.run(["gh", "release", "view", version],
+                              cwd=root, capture_output=True, text=True).returncode == 0
+        if not seen:
+            r = subprocess.run(
+                ["gh", "release", "create", version, "--title", version,
+                 "--notes", notes, "--verify-tag"],
+                cwd=root, capture_output=True, text=True)
+            if r.returncode == 0:
+                print(f"  released {version} (GitHub)")
+            else:
+                sys.stderr.write(
+                    f"brain-version: gh release skipped ({r.stderr.strip()})\n")
+    # 2. Queued news draft — ONLY for substantive bumps, so patches never spam news.
+    if bump in ("minor", "major"):
+        try:
+            qdir = Path.home() / ".claude" / "knowledge" / "release-news"
+            qdir.mkdir(parents=True, exist_ok=True)
+            draft = qdir / f"{version}.md"
+            if not draft.exists():
+                draft.write_text(_news_draft(version, prev_tag, bump, notes),
+                                 encoding="utf-8")
+                print(f"  news draft queued: {draft} (review, then publish)")
+        except OSError as e:
+            sys.stderr.write(f"brain-version: news draft skipped ({e})\n")
+
+
 def main():
     apply = "--apply" in sys.argv
     push = "--push" in sys.argv
@@ -168,6 +241,9 @@ def main():
                 sys.stderr.write(f"brain-version: tag push failed ({e})\n")
                 return 0
             print(f"  pushed {nxt}")
+            # Tag is on the remote now: emit the GitHub Release (changelog) and,
+            # for minor/major, queue a news draft. Best-effort, never fatal.
+            emit_release(root, nxt, tag, bump, commits)
     return 0
 
 
