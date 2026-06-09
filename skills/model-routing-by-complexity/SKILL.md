@@ -37,14 +37,17 @@ Both layers already expose a per-call `model` override — **default to omitting
 - **Workflow** — `agent(prompt, { model: 'haiku' })` per call, or `model` on a `phase` entry. Inside `pipeline()`/`parallel()`, set the cheap tier on the mechanical stage and the strong tier on the synthesis/verify stage.
 - **Agent tool** — the `model` parameter (`haiku` | `sonnet` | `opus`).
 
-## Decision rubric
+## Decision rubric (harmonized with Anthropic's "Claude model family")
 
-| Task shape | Tier |
-|---|---|
-| grep/list/find, file inventory, mechanical transform, rename, format/lint check | **haiku** |
-| extract structured data, summarize one source, single-file edit, schema-validate | **haiku / sonnet** |
-| cross-file synthesis, design trade-offs, ambiguous requirements, code review | **sonnet / opus** |
-| adversarial verification, architecture decision, "a wrong answer is expensive here" | **opus** |
+One table, not two. The brain's task-shape routing IS Anthropic's tier guidance applied. Cheap to expensive, so they can never drift apart:
+
+| Tier | Anthropic positioning | Reasoning | Route here (brain task shapes) |
+|---|---|---|---|
+| **Haiku** | Lowest cost, lowest latency. | **No** | grep/list/find, file inventory, mechanical transform, rename, format/lint check, data extraction and categorization, translation, content moderation, high-volume straightforward text. |
+| **Sonnet** | Balances quality, speed, cost. | Yes | extract and summarize a source, single-file edit, schema-validate, common coding, document creation and editing, copywriting, data and image analysis, code review, process automation. |
+| **Opus** | Highest intelligence. | Yes | cross-file synthesis, design trade-offs, ambiguous requirements, adversarial verification, architecture decisions, "a wrong answer is expensive here", strategic multi-step problem solving. |
+
+**Hard line: Haiku does not support reasoning.** Route to Haiku only when the work is mechanical and needs no multi-step inference. A task that has to weigh, infer, or catch a subtle trap goes to Sonnet or Opus, never Haiku, no matter how small it looks. The corollary holds the other way too: image and data analysis are Sonnet-grade, not Haiku. (Source: Anthropic "Claude model family" table.)
 
 ## Honest caveats (do not skip)
 
