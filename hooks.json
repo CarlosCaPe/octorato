@@ -53,6 +53,17 @@
         }
       ],
       "matcher": "Write|Edit"
+    },
+    {
+      "hooks": [
+        {
+          "command": "python3 ~/.claude/scripts/client-doc-lint-hook.py",
+          "statusMessage": "✍ client-doc-lint (entregable cliente)...",
+          "timeout": 20,
+          "type": "command"
+        }
+      ],
+      "matcher": "Bash"
     }
   ],
   "PreToolUse": [
