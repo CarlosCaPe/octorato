@@ -26,7 +26,7 @@ Manual trigger for the [[session-learn-extractor]] skill. Run after solving a no
       Promote: mv ~/.claude/skills/learned/<slug> ~/.claude/skills/<slug>
    ```
 
-DO NOT auto-promote. DO NOT `ai-push` the draft (the `learned/` subtree stays local until the operator approves; future improvement: gitignore `skills/learned/` so drafts don't pollute the public brain until promoted).
+DO NOT auto-promote. The `learned/` subtree is gitignored (`.gitignore`), so drafts stay machine-local and never pollute the public brain until the operator promotes one out of `learned/`.
 
 ## When NOT to use
 
