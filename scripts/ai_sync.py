@@ -378,9 +378,18 @@ def _push_via_pr(branch: str, target: str, msg: str) -> int:
         return 1
     info("✓ Merged + branch deleted")
 
-    git("checkout", target)
-    git("pull", "--ff-only")
+    rc_co, _, _ = git("checkout", target)
+    rc_pl, _, e = git("pull", "--ff-only")
+    if rc_co != 0 or rc_pl != 0:
+        warn(f"⚠ {target} sync failed post-merge; skipping semver tag: {e}")
+        return 1
     info(f"✓ Local {target} synced")
+    # Now on {target} at the squash-merged commit — the correct point to move
+    # the semver label for the PR flow (mirror of the direct-push call site).
+    # The gh-missing early return above never reaches here, so we never tag an
+    # un-merged commit.
+    script_step("scripts/brain-version-bump.py", "--apply", "--push",
+                label="🏷  Moving semver label...")
     return 0
 
 
@@ -531,6 +540,13 @@ def push(args) -> int:
             warn(f"⚠ Push failed: {e}")
             return 1
         info("✓ Pushed to remote")
+        # Move the semver label by change-class (advisory, never fatal).
+        # Direct-push path only: in the PR flow HEAD is the feature branch, so
+        # tagging here would label an un-merged commit. The bump size (patch/
+        # minor/major) is derived from the conventional-commit types since the
+        # last tag — see scripts/brain-version-bump.py.
+        script_step("scripts/brain-version-bump.py", "--apply", "--push",
+                    label="🏷  Moving semver label...")
 
     # Refresh the local connectome. neural_map.json is gitignored (per-machine,
     # regenerated on demand) — so we rebuild it locally for this machine's query/
