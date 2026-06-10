@@ -10,6 +10,6 @@ Octorato is <!--canon:octorato.tagline-->an organic, file-native AI agent operat
 
 The source lives at <!--canon:repo.url-->https://github.com/CarlosCaPe/octorato<!--/canon-->.
 
-It ships <!--canon:skills.count-->210+<!--/canon--> skills and
+It ships <!--canon:skills.count-->220+<!--/canon--> skills and
 <!--canon:agents.count-->160+<!--/canon--> specialist agents — these two RECOMPUTE
 from `brain-stats.py`, so they can never be hand-edited into a lie.
