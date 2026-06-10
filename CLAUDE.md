@@ -112,6 +112,7 @@ Any blocklist hit → commit/push blocked. No exceptions, no `--force`. **If a l
 ## Universal Code Discipline
 
 - **Minimum viable change** — modify only what's needed. 1-line problem = 1-line diff. Manifest must match scope.
+- **ULTRA RULE — Do it right, not fast (root cause over palliative).** Fix the ROOT CAUSE with the correct change; never ship the quick patch in its place. Two smells mean STOP and do it right: (1) you are about to say or think *"the quick fix is…"* / *"la solución rápida es…"* — that phrase is the tell; the quick path is almost never the right one. (2) you are accreting **palliative files** (a workaround script, a shim, a second copy, a band-aid) instead of repairing the one thing that is actually broken. Dozens of band-aid files is the failure mode, not progress (it is the file-level symptom of the same disease as `harmonization-over-accretion`). This does NOT contradict `execution-bias`/do-it-today: start TODAY, do not defer; but **execute it right, do not rush**. Speed-to-start is a virtue; speed-by-shortcut is debt the operator pays later. If the correct fix is bigger, say so and do the correct fix (or scope it honestly and get a decision) — never silently swap in the palliative and move on. Full HOW in `skills/do-it-right-not-fast/SKILL.md`.
 - **Never invent data** — if you don't know, say so. No guessing, no hallucinating.
 - **Cite sources** — every fact references a file/line/doc.
 - **Idempotent by default** — scripts and changes safe to re-run.
