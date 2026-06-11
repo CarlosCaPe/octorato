@@ -20,7 +20,7 @@
               "properties": {
                 "type": { "const": "command" },
                 "command": { "type": "string", "minLength": 1 },
-                "timeout": { "type": "integer", "minimum": 1, "maximum": 5 },
+                "timeout": { "type": "integer", "minimum": 1, "maximum": 60 },
                 "statusMessage": { "type": "string" }
               },
               "required": ["type", "command"],
