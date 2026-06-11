@@ -39,7 +39,13 @@ The octopus says *where* memory lives. It doesn't say *how* an arm's lesson beco
 - **Memory cells** = the lesson becomes durable and body-wide. A generic skill or lesson is promoted to the central brain, available to every future arm, the way memory B and T cells make the whole body faster next time.
 - **Store the pattern, not the antigen.** Immune memory keeps the generalized receptor, never a copy of the pathogen. That is the distil-upward rule exactly: the *generic* lesson rises; the arm's *specific* data stays sealed and never travels. The seal and the upward path are the same invariant seen from two angles.
 
-Octopus = the spatial layer (1 + N sealed brains). Immune system = the learning layer (local to durable generic, pattern up, specifics sealed).
+## How machines stay in sync: ant stigmergy
+
+The octopus is one body, so it says nothing about many machines running one brain. That coordination has its own right model: **stigmergy**, how ants coordinate without talking. Each ant deposits a trace in a shared medium and senses what others left; the field coordinates, not direct contact.
+
+The machines never talk to each other. They read and write one shared medium, the git remote, which is the pheromone field. `ai-sync` is the stigmergic act: deposit (push) and sense (pull --rebase), then act. No central controller, no machine-to-machine messaging, so it scales to any number of machines. Convergence comes from repeated deposit-and-sense, the way pheromone accumulates onto one path. Honest limit: the field coordinates, it doesn't resolve. A same-line conflict is two crossing trails the medium won't adjudicate, so it stops for a human.
+
+Octopus = the spatial layer (1 + N sealed brains). Immune system = the learning layer (local to durable generic, pattern up, specifics sealed). Stigmergy = the coordination layer (many machines, one shared field, no central controller).
 
 ## The two tiers
 

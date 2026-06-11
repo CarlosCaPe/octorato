@@ -50,7 +50,17 @@ The octopus explains *where* memory lives and *that* arms are autonomous. It doe
 - **Memory cells.** After the encounter the body keeps long-lived memory B and T cells, so the next encounter anywhere is handled fast. The lesson becomes a brain-level skill every arm can reach.
 - **It stores the pattern, not the pathogen.** Immune memory keeps the generalized receptor that recognizes a class of threat, never a copy of the antigen. That is the upward-distillation rule, biologically exact: the *generic* lesson rises to the central brain, while the arm's *specific* data stays sealed and never travels.
 
-Two anchors, one model: the **octopus** is the spatial layer (one brain, N sealed arms, autonomy, isolation); the **immune system** is the learning layer (local encounter to durable generic memory, pattern up, specifics sealed).
+### Ant stigmergy → cross-machine coordination
+
+One half is still missing: how many machines running one brain stay in sync, with no central controller and without talking to each other. The octopus is one body; it has nothing to say about many bodies. The right model here is **stigmergy**, the way ants coordinate.
+
+Ants don't message each other. Each one deposits a pheromone trace in a shared medium and senses the traces others left; coordination emerges from the field, not from direct contact. Octorato syncs the same way. The machines never talk to each other. They read and write one shared medium, the git remote, which is the pheromone field. `ai-sync` is the stigmergic act: deposit your work (push) and sense the field (pull --rebase), then act on what you find.
+
+- **No central controller, no direct messaging.** A machine never knows another exists; it only reads and writes the shared field. That's why it scales: 3 machines or 30, there's no machine-to-machine chatter, just the field.
+- **Convergence by reinforcement.** Ants converge on a path as pheromone accumulates; the brain converges to one consistent state as machines keep depositing and sensing (`ai-sync`'s rebase-and-retry).
+- **Honest limit.** A pheromone field coordinates, it doesn't *resolve*. Two ants can lay crossing trails and the ground won't pick a winner. Same here: git detects a same-line conflict but can't resolve it, so that one case stops for a human. The medium coordinates; it never adjudicates.
+
+Three anchors, one model: the **octopus** is the spatial layer (one brain, N sealed arms, autonomy, isolation), the **immune system** is the learning layer (local encounter to durable generic memory, pattern up, specifics sealed), and **stigmergy** is the coordination layer (many machines, one shared field, no central controller).
 
 ## The Tesseract → 4D
 
