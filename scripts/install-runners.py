@@ -35,7 +35,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 HOME = Path.home()
 AI_SYNC = HOME / ".claude" / "scripts" / "ai_sync.py"
-VERBS = {"ai-pull": "pull", "ai-push": "push", "sync-ai-docs": "sync"}
+VERBS = {"ai-pull": "pull", "ai-push": "push", "ai-sync": "cycle", "sync-ai-docs": "sync"}
 MARKER = "# octorato-thunk"  # lets us recognize our own thunks (idempotent re-runs)
 
 
