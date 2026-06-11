@@ -21,6 +21,10 @@ Verbs:
                            squash-merges, and returns to the protected branch.
   sync   [arm…]            project CLAUDE.md -> copilot-instructions.md + .cursorrules
   status                   alias for `pull --status`
+  cycle  ["msg"]           ai-sync: integrate (pull --rebase --autostash) THEN publish
+                           (push), retrying the loop when a sibling machine pushes
+                           mid-flight. The canonical one-command reconcile for running
+                           one brain across many machines — no more pull/push dance.
 """
 from __future__ import annotations
 
@@ -561,6 +565,129 @@ def push(args) -> int:
     return 0
 
 
+# ── cycle (ai-sync): canonical reconcile = integrate-then-publish, race-safe ────
+
+def _unpushed() -> bool:
+    """True if local HEAD has commits its upstream doesn't yet have."""
+    code, out, _ = git("rev-list", "--count", "@{u}..HEAD")
+    return code == 0 and out.strip().isdigit() and int(out.strip()) > 0
+
+
+def cycle(args) -> int:
+    """ai-sync: one canonical reconcile of ~/.claude — integrate, then publish.
+
+    The pull/push dance exists because `push` does a bare `git push` that a sibling
+    machine's earlier push rejects (non-fast-forward). `cycle` removes the dance: it
+    pulls --rebase FIRST (replaying local work on the remote tip, so the push is
+    always a fast-forward), then publishes, and RETRIES the loop if another machine
+    pushed mid-flight. Built for running one brain across many machines, where every
+    machine both learns and shares, so divergence is the norm, not the exception.
+
+    Per attempt:
+      pull --rebase --autostash   integrate remote, keep local (committed + uncommitted)
+      push(args)                  commit dirty + publish (direct or PR flow), all guards
+      still-unpushed?             a race or the pre-committed-skip case → re-integrate, retry
+    """
+    if not (CLAUDE / ".git").is_dir():
+        err("✗ ~/.claude is not a git repo — cannot sync")
+        return 1
+
+    self_heal_origin()
+    ensure_hooks_path()
+
+    # Co-tenancy guard (mirrors push): never reconcile a tree a sibling SESSION on
+    # THIS machine shares. Different machines have different trees, so this never
+    # fires across separate machines — only across two live sessions on one of them.
+    window = _cotenant_window()
+    seen = _dimensions_seen(window)
+    if len(seen) > 1 and os.environ.get("OCTO_ALLOW_SHARED") != "1":
+        err(f"⚠ ai-sync aborted: {len(seen)} sessions recently active on this brain tree "
+            f"(co-tenancy window {window}s):")
+        for sid, branch, age in seen:
+            err(f"     {sid[:20]}… ({branch}, last seen {age}s ago)")
+        err("   Two writers on one tree corrupt each other's commits.")
+        err("   Isolate first: python3 scripts/octo-dim.py worktree-init")
+        err("   Override (only if you own the whole tree): OCTO_ALLOW_SHARED=1 ai-sync")
+        return 1
+
+    attempts = 3
+    for attempt in range(1, attempts + 1):
+        print(f"━━ ai-sync: reconcile ~/.claude (attempt {attempt}/{attempts}) ━━")
+
+        # 1. INTEGRATE — bring the remote in and replay local work on top.
+        #    --autostash protects uncommitted edits across the rebase; --rebase keeps
+        #    history linear so the publish below is a clean fast-forward.
+        code, out, e = git("pull", "--rebase", "--autostash")
+        # --autostash has TWO failure modes with DIFFERENT exit codes:
+        #   (a) the rebase itself conflicts (a local commit vs the remote on the same
+        #       lines): exit != 0, a rebase is in progress, `rebase --abort` recovers.
+        #   (b) the rebase lands but RE-APPLYING the autostash conflicts (an UNCOMMITTED
+        #       edit collides with what we pulled): git exits 0, yet leaves conflict
+        #       markers in the file and the work parked in a stash.
+        # Mode (b) is the headline case (local edits + a sibling touched the same lines)
+        # and is invisible in the exit code, so check for unmerged paths explicitly. If
+        # we missed it, push() would stage and PUBLISH the conflict markers to the public
+        # brain and the operator's edits would be silently abandoned in a stash.
+        _, unmerged, _ = git("ls-files", "--unmerged")
+        if code != 0 or unmerged.strip():
+            if code != 0:
+                git("rebase", "--abort")        # mode (a): undo the half-rebase
+                err("✗ ai-sync stopped: two machines changed the same lines.")
+                err("   Resolve by hand, then re-run ai-sync.")
+            else:
+                git("reset", "--hard", "HEAD")  # mode (b): clear the markers; the
+                                                # operator's edits stay safe in the stash
+                err("✗ ai-sync stopped: your local edits touch the same lines the remote changed.")
+                err("   Your uncommitted work is SAFE in the stash. Recover it with:")
+                err("      git stash pop      # then resolve the markers and re-run ai-sync")
+            tail = (e or out).strip().splitlines()
+            if tail:
+                err(f"   {tail[-1]}")
+            return 1
+
+        # 2. PUBLISH — commit any local changes and push (direct, or via the PR flow
+        #    for a protected master). push() carries every guard: generic, secrets,
+        #    hooks-drift, semver, co-tenancy, connectome refresh, arm sync.
+        rc = push(args)
+
+        if rc != 0:
+            # push failed. If commits are still unpushed (a non-fast-forward because a
+            # sibling pushed during step 1→2, or the known "push skips when work was
+            # pre-committed" case), loop to re-integrate and retry.
+            if _unpushed() and attempt < attempts:
+                warn("↻ remote moved during sync — re-integrating and retrying...")
+                continue
+            return rc
+
+        # push returned 0. Belt-and-suspenders: push() can report "no changes" when
+        # work was committed earlier but never pushed (lesson: ai-push pre-committed
+        # skip). If a commit is still unpushed, push it; on non-fast-forward, loop.
+        if _unpushed():
+            # The default branch is PR-routed; a leftover unpushed commit there means
+            # the PR flow didn't finish, not a race. Surface it instead of bouncing a
+            # direct push off branch protection (which would just be rejected 3x).
+            _, head, _ = git("rev-parse", "--abbrev-ref", "HEAD")
+            if head in ("master", "main"):
+                err("✗ ai-sync: commits remain unpushed on the protected default branch.")
+                err("   The PR flow didn't complete. Check `gh pr list` and re-run ai-sync.")
+                return 1
+            pc, _, pe = git("push", "origin", "HEAD")
+            if pc != 0:
+                if attempt < attempts:
+                    warn("↻ remote moved during sync — re-integrating and retrying...")
+                    continue
+                err(f"✗ ai-sync: could not push after {attempts} attempts: {pe}")
+                return 1
+            info("✓ Pushed pre-committed work")
+        break
+    else:
+        err(f"✗ ai-sync: still racing after {attempts} attempts — try again in a moment.")
+        return 1
+
+    info("\n✓ ai-sync complete — brain reconciled (pull --rebase + push).")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="octorato brain sync (cross-platform)")
     sub = ap.add_subparsers(dest="verb", required=True)
@@ -575,6 +702,9 @@ def main() -> int:
     p_sync = sub.add_parser("sync")
     p_sync.add_argument("arms", nargs="*")
 
+    p_cycle = sub.add_parser("cycle")
+    p_cycle.add_argument("message", nargs="*")
+
     sub.add_parser("status")
 
     args = ap.parse_args()
@@ -584,6 +714,8 @@ def main() -> int:
         return push(args)
     if args.verb == "sync":
         return sync(args.arms or None)
+    if args.verb == "cycle":
+        return cycle(args)
     if args.verb == "status":
         ns = argparse.Namespace(arms=[], status=True)
         return pull(ns)
