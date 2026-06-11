@@ -6,11 +6,11 @@
 
 # Octorato
 
-> *an Octorato (n.) — an organic, file-native AI agent: one brain, many sealed arms. The same wall that seals a client is the wall that bills them.*
+> *an octorato (n.): your AI's second brain. One brain, many sealed worlds (a client, a project, a topic, a course), with a receipt on every action. The same wall that seals a world is the one that can bill it.*
 >
 > <sub>the Octopus Brain Framework</sub>
 
-> **Octorato is an open-source AI agent operating system: one file-native "brain" — <!--canon:skills.count-->220+<!--/canon--> skills and <!--canon:agents.count-->160+<!--/canon--> specialist agents in plain markdown under git — that one operator runs across many isolated client "arms."**
+> **Your AI agent forgets who you are and mixes your worlds. Octorato is the open-source brain layer that fixes that: one file-native "brain" (<!--canon:skills.count-->220+<!--/canon--> skills and <!--canon:agents.count-->160+<!--/canon--> specialist agents in plain markdown under git) that one operator runs across many isolated "arms": a client, a project, a topic, a course, anything you keep separate.**
 
 [![License: MIT](https://img.shields.io/github/license/CarlosCaPe/octorato)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/CarlosCaPe/octorato?style=social)](https://github.com/CarlosCaPe/octorato/stargazers)
@@ -24,7 +24,7 @@
 
 <!-- TODO(demo): add a terminal demo here — asciinema cast or GIF of "natural language → shipped product". Tracked as a maintainer follow-up. -->
 
-> **An Octorato is an organic, file-native AI agent OS — and because its arms are sealed cells, it has built-in FinOps.**
+> **The sharpest instance: because an octorato's arms are sealed cells, billing comes for free. When a world is a client, the wall that isolates it is the same wall that meters and bills it, so you get built-in FinOps.**
 > The brain consultants and small agencies need to bill clients fairly — and land on the right side of the
 > [Gartner prediction that 40% of agentic AI projects will be canceled by 2027](https://www.gartner.com/en/newsroom/press-releases/2025-06-25-gartner-predicts-over-40-percent-of-agentic-ai-projects-will-be-canceled-by-end-of-2027)
 > over unmanaged cost.
