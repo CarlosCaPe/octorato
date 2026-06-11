@@ -31,6 +31,16 @@ trying to cram the central brain into one tentacle. Anatomically impossible — 
 arm already has its own brain, the center has its own. A standalone brain-owned
 memory repo is the only morphologically correct shape.
 
+## How memory rises: the immune system
+
+The octopus says *where* memory lives. It doesn't say *how* an arm's lesson becomes a generic brain memory, and biologically it can't (octopus arms don't consolidate learning upward). That mechanism has a different right model: the **immune system**.
+
+- **Clonal selection** = a local encounter triggers learning. An arm hits a specific problem; solving it is the antigen encounter.
+- **Memory cells** = the lesson becomes durable and body-wide. A generic skill or lesson is promoted to the central brain, available to every future arm, the way memory B and T cells make the whole body faster next time.
+- **Store the pattern, not the antigen.** Immune memory keeps the generalized receptor, never a copy of the pathogen. That is the distil-upward rule exactly: the *generic* lesson rises; the arm's *specific* data stays sealed and never travels. The seal and the upward path are the same invariant seen from two angles.
+
+Octopus = the spatial layer (1 + N sealed brains). Immune system = the learning layer (local to durable generic, pattern up, specifics sealed).
+
 ## The two tiers
 
 | Tier | What it holds | Where it lives | Syncs to |

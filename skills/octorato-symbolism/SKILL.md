@@ -42,6 +42,16 @@ arm-brain, sealed, and only distil *upward* once made generic. Most knowledge is
 arm-local (the 2/3), so the central brain — and the public framework that ships it —
 stays lean. Full model: `docs/architecture/memory-model.md`.
 
+### The immune system → upward learning
+
+The octopus explains *where* memory lives and *that* arms are autonomous. It does not explain *how* a lesson learned in one arm becomes a durable, generic memory for the whole brain, and biologically it can't: an octopus's arms don't share what they learn upward. So for the upward half of the model the right animal isn't the octopus, it's the **immune system**, which learns exactly the way Octorato is meant to.
+
+- **Clonal selection.** A cell meets a specific threat locally; the one that recognizes it is selected and proliferates. An arm hits a specific problem and solves it.
+- **Memory cells.** After the encounter the body keeps long-lived memory B and T cells, so the next encounter anywhere is handled fast. The lesson becomes a brain-level skill every arm can reach.
+- **It stores the pattern, not the pathogen.** Immune memory keeps the generalized receptor that recognizes a class of threat, never a copy of the antigen. That is the upward-distillation rule, biologically exact: the *generic* lesson rises to the central brain, while the arm's *specific* data stays sealed and never travels.
+
+Two anchors, one model: the **octopus** is the spatial layer (one brain, N sealed arms, autonomy, isolation); the **immune system** is the learning layer (local encounter to durable generic memory, pattern up, specifics sealed).
+
 ## The Tesseract → 4D
 
 The 4D Paradigm — **D**escribe → **D**elegate → **D**iligent → **D**isclose — is named *4D* deliberately. A tesseract is the 4-dimensional analog of a cube: a hypercube.
