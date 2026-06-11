@@ -63,7 +63,8 @@ Octorato isn't a demo — it ships real software. A few of the products this bra
 - [Daily Self-Growth](#daily-self-growth)
 - [Why an Octopus?](#why-an-octopus)
 - [Migrating from dotclaude (May 2026)](#migrating-from-dotclaude-may-2026)
-- [Quick Start](#quick-start)
+- [Try it in 5 minutes](#try-it-in-5-minutes)
+- [Going further: run it as a multi-world brain](#going-further-run-it-as-a-multi-world-brain)
 - [Architecture — CLASS / OBJECT / ARM](#architecture--class--object--arm)
 - [The 4D Paradigm — The Nervous System](#the-4d-paradigm--the-nervous-system)
 - [4D+S — Spec-Driven Development Integration](#4ds--spec-driven-development-integration)
@@ -231,23 +232,43 @@ After either, `ai-pull` / `ai-push` work normally. The Windows `ai-pull.ps1` / `
 
 ---
 
-## Quick Start
+## Try it in 5 minutes
+
+> **Your AI agent forgets who you are and mixes your worlds. An *octorato* is its second brain: memory that lasts, every world sealed from the others, and a receipt on every action. One brain for clients, projects, courses, anything you keep separate.**
+
+No company brain, no sealed worlds, no config to write. Clone, run one command, open Claude Code:
 
 ```bash
 # 1. Clone the brain
 git clone https://github.com/CarlosCaPe/octorato.git ~/.claude
 
-# 2. Create your private company brain
+# 2. Bring it to life (wires the runners, builds the connectome, health-checks)
+python3 ~/.claude/scripts/quickstart.py
+
+# 3. Open Claude Code anywhere and ask it something real
+claude
+```
+
+What you'll see that a plain agent doesn't: a Provenance footer on every answer, the 2D delegate gate picking the right skill or agent for the task, and skills loading themselves from the library. That's the brain, alive.
+
+---
+
+## Going further: run it as a multi-world brain
+
+Once the 5-minute taste lands, set up your own brain with sealed **arms**. An arm is any world you keep separate: a client, a side project, a research topic, a course you're taking. The same wall that seals a world is the wall that bills it, so when an arm happens to be a client you get FinOps for free.
+
+```bash
+# 1. Create your private company brain
 cp -r ~/.claude/templates/company/ ~/.claude/company/
 mv ~/.claude/company/COMPANY.md.template ~/.claude/company/COMPANY.md
 nano ~/.claude/company/COMPANY.md
 
-# 3. Create your first arm (client project)
-mkdir -p ~/projects/my-client/.claude
-cp ~/.claude/templates/arm/CLAUDE.md.template ~/projects/my-client/.claude/CLAUDE.md
+# 2. Create your first sealed arm (a client, project, topic, or course)
+mkdir -p ~/projects/my-world/.claude
+cp ~/.claude/templates/arm/CLAUDE.md.template ~/projects/my-world/.claude/CLAUDE.md
 
-# 4. Sync across machines
-ai-pull    # on every workstation
+# 3. Keep every machine in sync with one command
+ai-sync
 ```
 
 See `templates/` for annotated setup guides with `{{PLACEHOLDERS}}`.
@@ -393,7 +414,7 @@ python3 ~/.claude/scripts/generate_neural_map.py   # auto-runs on every ai-push
 
 ## Client Arms — Total Isolation
 
-Each arm is an isolated client project. Arms never see each other's data. Only the human operator can explicitly bridge knowledge between arms.
+Each arm is an isolated world: a client, a side project, a research topic, a course you're taking, any context you keep separate. Arms never see each other's data. Only the human operator can explicitly bridge knowledge between arms.
 
 Information flows strictly one-way: generic lessons rise from arm to brain (anonymized), brain rules and skills descend to all arms, and arms never communicate sideways — only the human operator bridges knowledge between them. Full flow rules: [wiki Architecture §5](https://github.com/CarlosCaPe/octorato/wiki/Architecture#information-flow-rules).
 
