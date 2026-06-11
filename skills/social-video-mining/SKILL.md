@@ -90,6 +90,15 @@ Always `rm -rf /tmp/<prefix>_*` at the end of a mining run. Each video is ~5MB; 
 - **Branded text obscured by stylized fonts / shaders** — vision misreads; use 2 frames to cross-check
 - **Project name is generic ("API client")** — vision identifies the screenshot but not the brand; WebFetch search step is essential
 
+## TikTok gotcha: do NOT add curl_cffi, and don't blindly upgrade yt-dlp
+
+Verified 2026-06-11 against a live TikTok pull. Two traps, both counter-intuitive:
+
+1. **curl_cffi impersonation BREAKS the TikTok extractor.** yt-dlp warns "no impersonation target available" on TikTok, which looks like the thing to fix. It is not. Inject `curl_cffi` and TikTok serves a challenge page with no rehydration JSON, so extraction dies with `ERROR: Unable to extract universal data for rehydration`. Plain urllib (no curl_cffi) gets the normal page and works. Leave that warning alone for TikTok.
+2. **yt-dlp versions after 2026.03.17 regressed TikTok** with the same rehydration error (2026.6.9 and master both fail, even without curl_cffi). Pin to a known-working build (`pipx runpip yt-dlp install "yt-dlp==2026.3.17"`) and only upgrade once an upstream TikTok fix lands. Test the actual target video after any yt-dlp change, never assume newer is safer.
+
+Recognition signal: `Unable to extract universal data for rehydration` on a TikTok URL = one of these two, not a network blip.
+
 ## Anti-fabrication discipline (CRITICAL per CLAUDE.md)
 
 Vision can hallucinate text it didn't actually see. **Every project name extracted by vision MUST be verified** via WebFetch or `gh search` before writing it into a brain skill or a client recommendation. The verification step is not optional. Workflow step 6 exists specifically to enforce this.

@@ -51,3 +51,10 @@ watchlist:
     threshold_files: 2
     threshold_signal_paths: [.]
     why: official plugin marketplace — new entries = new ecosystem capabilities
+
+  - owner: davila7
+    repo: claude-code-templates
+    cadence: weekly
+    threshold_files: 3
+    threshold_signal_paths: [cli-tool/, api/, dashboard/, .claude/]
+    why: aitmpl.com, the 27.9k-star "App Store for Claude Code" (browse+npx install+jobs+stripe); thesis = is a public marketplace layer a moat Octorato should answer or ignore?
