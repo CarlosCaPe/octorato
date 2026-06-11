@@ -357,3 +357,17 @@ edges:
       linter regexes together — the linter quoting the blocklist means a
       one-sided edit silently splits canon from enforcement. Edge added
       2026-06-04 after the seek fell back to grep (unlit neuron).
+
+  - id: client-doc-lint
+    concept: "client deliverable pre-send lint (accents / em-dash / stale dates)"
+    appears_in:
+      - scripts/client-doc-lint.py
+      - scripts/client-doc-lint-hook.py
+      - skills/client-doc-lint/SKILL.md
+      - hooks.json
+    kind: appears_in
+    single_source: "scripts/client-doc-lint.py is the engine; the hook wraps it, the skill documents it, hooks.json registers it"
+    note: >-
+      Change the lint's CLI (flags, checks, exit codes) and reconcile all four:
+      the engine, the PostToolUse(Bash) wrapper, the skill doc, and the
+      hooks.json registration. Edge added 2026-06-09 so the node is not unlit.

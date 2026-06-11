@@ -1,0 +1,44 @@
+name: Brain Version Bump
+
+# Moves the semver autolabel (vX.Y.Z) on every merge to master, sized by the
+# conventional-commit type of the commits since the last tag (feat -> minor,
+# fix/chore/... -> patch, `!`/BREAKING -> major), then emits the GitHub Release.
+#
+# Why this exists: brain-version-bump.py used to run only as a post-push step of
+# `ai-push`. The repo is PR-first with auto-deploy on main, so almost everything
+# lands via PR-merge, which bypasses ai-push entirely. The autolabel got stuck
+# (e.g. three feat merges left the tag frozen at v3.3.0 while content moved on).
+# Running the bump server-side on every push to master decouples the label from the
+# manual push path, so it can never silently lag again.
+#
+# Loop-safe: this job pushes a TAG, and a tag push does not trigger an
+# `on: push: branches` workflow, so it never re-triggers itself.
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: write   # push the annotated tag + create the Release
+
+concurrency:
+  group: brain-version-bump
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history + all tags, needed by classify()
+
+      - name: Configure git identity for the annotated tag
+        run: |
+          git config user.name "octorato-bot"
+          git config user.email "octorato-bot@users.noreply.github.com"
+
+      - name: Bump the semver tag and emit the Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/brain-version-bump.py --apply --push

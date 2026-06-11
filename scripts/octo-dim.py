@@ -529,7 +529,18 @@ def cmd_worktree_init(args) -> int:
     # across many short-lived sessions, and a prefix collision silently re-shares
     # a worktree — the exact de-isolation this command exists to prevent.
     short = re.sub(r"[^a-z0-9]", "", sid.lower())[:12] or "dim0"
-    target = DIM_ROOT / short
+    # --repo isolates an ARM (or any repo); default is the brain. Arm worktrees
+    # live OUT of the repo tree (~/.octorato/arm/<name>/) so they never depend on
+    # the arm gitignoring a worktree dir. Same dim/<id> branch = isolation AND
+    # per-session attribution (which session made which change) in arms too.
+    repo_arg = (getattr(args, "repo", "") or "").strip()
+    if repo_arg:
+        repo = Path(os.path.expanduser(repo_arg)).resolve()
+        dim_root = Path.home() / ".octorato" / "arm" / repo.name
+    else:
+        repo = BRAIN
+        dim_root = DIM_ROOT
+    target = dim_root / short
     branch = f"dim/{short}"
 
     # Only short-circuit if target is actually a git worktree (has a .git entry)
@@ -537,17 +548,17 @@ def cmd_worktree_init(args) -> int:
         print(str(target))
         return 0
 
-    DIM_ROOT.mkdir(parents=True, exist_ok=True)
+    dim_root.mkdir(parents=True, exist_ok=True)
 
     # Try with -b (new branch)
     result = subprocess.run(
-        ["git", "-C", str(BRAIN), "worktree", "add", str(target), "-b", branch],
+        ["git", "-C", str(repo), "worktree", "add", str(target), "-b", branch],
         capture_output=True, text=True,
     )
     if result.returncode != 0:
         # Branch may already exist; try attaching without -b
         result2 = subprocess.run(
-            ["git", "-C", str(BRAIN), "worktree", "add", str(target), branch],
+            ["git", "-C", str(repo), "worktree", "add", str(target), branch],
             capture_output=True, text=True,
         )
         if result2.returncode != 0:
@@ -598,6 +609,9 @@ def build_parser() -> argparse.ArgumentParser:
     # subparser-default gotcha; this silently de-isolated every fork until 2026-06-04).
     wi.add_argument("--session-id", dest="session_id", default=argparse.SUPPRESS,
                     help="Use this session id instead of auto-resolved")
+    wi.add_argument("--repo", default="",
+                    help="Repo to isolate (default: the brain ~/.claude). Pass an "
+                         "arm path to fork a dim/<id> worktree for arm work.")
 
     am = sub.add_parser("approve-merge", help="Grant operator approval for a PR/branch merge")
     am.add_argument("pr_or_branch", help="PR number or branch name (e.g. 96 or main)")
