@@ -208,6 +208,7 @@ def _is_live(entry: dict, ttl: int = DEFAULT_TTL) -> bool:
 # ── broad-staging detection (quote-aware; see skills/command-boundary-hook-matching) ──
 
 BRAIN_TREE = Path.home() / ".claude"
+OCTO_ROOT = Path.home() / ".octorato"  # per-session dim worktrees live here (brain + arms)
 
 
 def _split_subcmds(cmd: str) -> list:
@@ -306,15 +307,36 @@ def _broad_git_verb(tokens: list):
     return None, None
 
 
-def _broad_stage_on_brain(cmd: str, session_cwd: str):
-    """Return the offending verb when any sub-command broad-stages the SHARED
-    brain tree (~/.claude main checkout). Dimension worktrees and nested repos
-    under the brain pass."""
+def _enclosing_worktree_root(path: Path):
+    """Nearest ancestor (incl. path) that holds a `.git` entry — the git working
+    tree root. None when the path is not inside any repo."""
+    p = path
+    while True:
+        if (p / ".git").exists():
+            return p
+        if p.parent == p:
+            return None
+        p = p.parent
+
+
+def _broad_stage_on_shared_tree(cmd: str, session_cwd: str):
+    """Return (verb, repo_root) when a sub-command broad-stages a SHARED working
+    tree — a repo's MAIN checkout (the brain OR any arm), where another live
+    session's uncommitted files could be swallowed by `git add -A` / `commit -a`.
+
+    PASS (never deny):
+      - per-session dim worktrees (under ~/.octorato/, OR any linked worktree
+        whose `.git` is a FILE pointer, not a directory) — those are isolated;
+      - a target outside any git repo.
+    Over-strict by design: it also fires in a repo whose only other live session
+    is elsewhere, and in vendored nested repos. The fix (explicit pathspec, or
+    fork a worktree) is good practice regardless, so the cost is near zero. This
+    generalizes the former brain-only gate so ARM trees get the same protection."""
     import shlex
     try:
-        brain = BRAIN_TREE.resolve()
+        octo = OCTO_ROOT.resolve()
     except Exception:
-        return None
+        octo = OCTO_ROOT
     cwd = Path(session_cwd or os.getcwd())
     for seg in _split_subcmds(cmd):
         try:
@@ -337,18 +359,15 @@ def _broad_stage_on_brain(cmd: str, session_cwd: str):
             target = target.resolve()
         except Exception:
             continue
-        if target == brain or brain in target.parents:
-            # Exception: a NESTED repo physically under ~/.claude (vendored
-            # repo, test fixture, linked worktree dir) has its own .git between
-            # target and brain — staging there never touches the shared index.
-            p, nested = target, False
-            while p != brain:
-                if (p / ".git").exists():
-                    nested = True
-                    break
-                p = p.parent
-            if not nested:
-                return verb
+        root = _enclosing_worktree_root(target)
+        if root is None:
+            continue  # not in a repo → nothing shared to protect
+        if root == octo or octo in root.parents:
+            continue  # isolated per-session dim worktree
+        gitentry = root / ".git"
+        if gitentry.is_file():
+            continue  # linked worktree (.git is a pointer file) → isolated
+        return verb, root
     return None
 
 
@@ -429,18 +448,22 @@ def main() -> int:
     # uncommitted files. Explicit pathspec passes; own-worktree staging passes.
     if tool_name == "Bash" and other_live:
         try:
-            verb = _broad_stage_on_brain(
+            hit = _broad_stage_on_shared_tree(
                 tool_input.get("command") or "", data.get("cwd") or ""
             )
         except Exception:
-            verb = None  # detector failure → fall through to the warning (fail-open)
-        if verb:
+            hit = None  # detector failure → fall through to the warning (fail-open)
+        if hit:
+            verb, root = hit
+            is_brain = str(root) == str(BRAIN_TREE)
+            repo_flag = "" if is_brain else f" --repo {root}"
+            where = "the SHARED brain tree" if is_brain else f"a SHARED working tree ({root})"
             _deny(
-                f"⛔ 4D DIMENSION GATE: broad `git {verb}` on the SHARED brain tree "
-                f"while {len(other_live)} other live dimension(s) exist. This swallows "
-                f"their uncommitted files into your commit. Stage by EXPLICIT pathspec "
-                f"(`git add <file>…`), or fork your own worktree first: "
-                f"`python3 ~/.claude/scripts/octo-dim.py --session-id <sid> worktree-init`."
+                f"⛔ 4D DIMENSION GATE: broad `git {verb}` on {where} "
+                f"while {len(other_live)} other live dimension(s) exist. This can swallow "
+                f"another session's uncommitted files into your commit. Stage by EXPLICIT "
+                f"pathspec (`git add <file>…`), or fork your own worktree first: "
+                f"`python3 ~/.claude/scripts/octo-dim.py --session-id <sid> worktree-init{repo_flag}`."
             )
             _upsert_session(my_sid, lambda e: None)  # heartbeat; denied call claims nothing
             return 0
