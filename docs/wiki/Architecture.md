@@ -133,7 +133,7 @@ Four architectural layers, each with a fixed location on disk and a defined isol
 | **Brain** | `~/.claude/` | Shared across all arms — the generic CLASS. |
 | **Agents** | `~/.claude/agents/` (+ `REGISTRY.md`) | Generic personas, no client data. |
 | **Skills** | `~/.claude/skills/` | Generic techniques, no client data. |
-| **Arm** | `<CLIENT>/` (per-client repo, e.g. `~/Documents/github/<CLIENT>/`) | Per-client repo, fully sealed. |
+| **Arm** | `<WORLD>/` (one sealed repo per world, e.g. `~/Documents/github/<WORLD>/`) | Per-world repo, fully sealed: a client, a project, a topic, a course. |
 | **Arm instructions** | `<CLIENT>/.claude/CLAUDE.md` | Single source of truth for that arm. |
 
 Two properties to internalize:
