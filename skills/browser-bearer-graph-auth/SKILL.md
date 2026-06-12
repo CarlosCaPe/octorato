@@ -146,6 +146,59 @@ const TEAMS_SHELL_PATTERNS = [
 | Using this for scopes that are admin-blocked (`OnlineMeetingTranscript.Read.All`, `ChannelMessage.Read.All`) | No browser dance helps — those need admin-consented App Registration |
 | Hiding this auth path in client-facing docs | Disclose. The hidden risk is the unmanaged risk. |
 | Continuing this past POC into "production" | The risk profile changes. App Registration is mandatory by then. |
+| Launching the interactive Edge window with `viewport: { width, height }` + no `--start-maximized` on Windows | Playwright spawns the Edge window without claiming foreground focus; on Windows it lands BEHIND the operator's other windows (especially Cursor/VSCode in full-screen). The operator thinks the script froze, kills it, and the flow fails forever. See "Windows window-focus gotcha" below. |
+
+## Windows window-focus gotcha (hard-learned 2026-06-05)
+
+**Symptom**: operator runs the interactive auth flow, the Node process clearly spawned Edge child processes (visible in Task Manager), the persistent-session dir was just written to — but the operator says "no veo ese edge" / "I don't see the window" and kills the process. Token never refreshes. Reproduces 100% of the time when the operator's primary window is a maximized IDE.
+
+**Root cause**: `chromium.launchPersistentContext(SESSION_DIR, { headless: false, channel: 'msedge', viewport: { width: 1280, height: 900 }, args: ['--disable-blink-features=AutomationControlled'] })` on Windows does TWO things wrong simultaneously:
+
+1. **Fixed `viewport` overrides OS window sizing** — Edge ends up as a small window (~1280×900) that's easy to lose behind a maximized IDE.
+2. **No `--start-maximized` / `--new-window` / `--window-position`** — Playwright doesn't reclaim foreground focus, so the OS opens Edge in z-order behind the active window.
+
+The combination is silent: no error, no log, the script just waits at `await page.goto(...)` while the user stares at their IDE.
+
+**Fix in the calling Playwright code**:
+
+```js
+// In the function that launches the persistent context:
+const visibleArgs = headless
+  ? ['--disable-blink-features=AutomationControlled']
+  : [
+      '--disable-blink-features=AutomationControlled',
+      '--start-maximized',          // make the window obvious
+      '--window-position=120,80',   // offset from corner so it isn't hidden by taskbar
+      '--new-window',                // refuse to merge into an existing Edge process
+    ];
+
+const context = await chromium.launchPersistentContext(SESSION_DIR, {
+  headless,
+  channel: 'msedge',
+  // CRITICAL: null viewport in interactive mode — fixed viewport defeats --start-maximized
+  viewport: headless ? { width: 1280, height: 900 } : null,
+  args: visibleArgs,
+});
+
+const page = context.pages()[0] || await context.newPage();
+// Pull the window forward BEFORE navigation so user sees it emerge.
+if (!headless) {
+  try { await page.bringToFront(); } catch {}
+}
+await page.goto(URL, ...);
+if (!headless) {
+  try { await page.bringToFront(); } catch {}  // again after redirects
+}
+```
+
+**Fix in the operator UX layer** (the launcher script that calls this):
+- Print a **loud, framed warning BEFORE** launching Edge: "Playwright-spawned Edge can open BEHIND your other windows. ALT+TAB or check taskbar."
+- Emit a **heartbeat every 10s** in the wait loop while no URL movement is detected — operator needs to know the script is alive while they hunt for the window.
+- If 30s pass with zero URL change in interactive mode, print an escalation message: "No URL activity yet — is the Edge window still hidden? ALT+TAB now."
+
+**Operator instruction in any RUNBOOK**: explicitly tell the human "the Edge window may open behind Cursor/VSCode — ALT+TAB before you assume the script froze."
+
+This gotcha cost ~45 minutes of session time before being diagnosed; the brain MUST surface it preemptively whenever a new arm wires up `auth-via-browser.js`-style flows.
 
 ## Composability
 

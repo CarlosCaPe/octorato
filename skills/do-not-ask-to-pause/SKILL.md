@@ -3,9 +3,9 @@ name: do-not-ask-to-pause
 description: Canonical mandate — never ask the operator "should we pause?" or "do we close the session?" when there is queued work, an open PR waiting on the agent, or a clear next step. Continue working until either (a) genuine decision input is required, (b) all known work is done, or (c) the operator explicitly says to stop. Triggers — any time the agent is about to ask if it should pause / close / wrap up the session.
 ---
 
-# Do Not Ask To Pause (Mandamiento Canónico)
+# Do Not Ask To Pause (canonical mandate)
 
-> "insistes en pausar? por que ?" — operator, 2026-05-21
+> Operator (paraphrased), 2026-05-21: "you keep insisting on pausing — why?"
 > Promoted to canonical brain rule, sibling to `investigate-before-asking`.
 
 ## The mandate
@@ -19,7 +19,7 @@ require external input.
 
 ## Why this matters
 
-Asking "should we pause?" or "do we cerrar?" between batches of work:
+Asking "should we pause?" or "do we close?" between batches of work:
 - Is noise — operator already said start, didn't say stop.
 - Implies the agent doesn't see what the next step is, when it usually does.
 - Wastes a round-trip for a decision the operator already made implicitly.
@@ -45,7 +45,7 @@ Asking "should we pause?" or "do we cerrar?" between batches of work:
 
 **Bad:**
 > [finishes batch 5 of 8]
-> "Listo, batch 5 done. ¿Cierro o seguimos?"
+> "Batch 5 done. Should I close, or keep going?"
 
 **Good:**
 > [finishes batch 5 of 8]
@@ -65,25 +65,27 @@ Asking "should we pause?" or "do we cerrar?" between batches of work:
 Final message of a turn should be:
 - One or two sentences MAX.
 - State what changed and what's next.
-- No "¿algo más?" or "¿cerramos?" tail question unless genuinely needed.
+- No "anything else?" or "should we close?" tail question unless genuinely needed.
 - If the operator wants to stop, they will say so.
 
 ## When the operator does want to stop
 
-You will know because they say:
-- "cerramos" / "cierra"
-- "pausa" / "pause"
-- "lo retomamos mañana"
-- "ya por hoy"
+You will know because they say something explicit like:
+- "close" / "stop" / "done"
+- "pause" / "we'll resume tomorrow"
+- "that's it for today"
 - "stop here"
 - "done for the day"
+
+(Operators may say these in any language they normally use; treat
+explicit stop-words as stop-words regardless of locale.)
 
 Until then, keep going on clearly-defined work.
 
 ## Edge case: silent permission
 
-If the operator's reply is a single word like "sí", "ok", "go",
-"continue" — that is a positive signal to proceed, not a request for you
+If the operator's reply is a single word like "ok", "go", "continue",
+"yes" — that is a positive signal to proceed, not a request for you
 to ask the next pause question. Take the work to the next sensible
 boundary, not back to the operator.
 
@@ -99,18 +101,18 @@ operator can make.**
 
 ## Anti-patterns observed in the wild
 
-- ❌ "Listo, fase 3 done. ¿Cierro la sesión o seguimos con fase 4?"
-- ❌ "Push exitoso. ¿Algo más para hoy?"
-- ❌ "Comment posted. ¿Cerramos por hoy?"
-- ❌ "PR abierto. ¿Sigo o pauso?"
-- ❌ "Skill creada. ¿Lo dejamos aquí?"
+- "Phase 3 done. Should I close the session or continue with phase 4?"
+- "Push successful. Anything else for today?"
+- "Comment posted. Are we wrapping up?"
+- "PR opened. Continue or pause?"
+- "Skill created. Are we leaving it here?"
 
 All of these should be:
-- ✅ "Listo, fase 3 done. Empezando fase 4."
-- ✅ "Push exitoso. Build queued; verificando mientras armo el siguiente commit."
-- ✅ "Comment posted (thread 408704). Mientras espera respuesta, sigo con el rename batch."
-- ✅ "PR abierto. Esperando ~90s al CI antes de votar."
-- ✅ "Skill creada. Aplicando ahora."
+- "Phase 3 done. Starting phase 4."
+- "Push successful. Build queued; verifying while I prep the next commit."
+- "Comment posted (thread 408704). While the reply is pending, continuing the rename batch."
+- "PR opened. Waiting ~90s for CI before voting."
+- "Skill created. Applying it now."
 
 ## Practical 5-second protocol
 
