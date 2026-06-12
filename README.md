@@ -20,7 +20,7 @@
 
 📄 **White paper:** [Octorato — An Organic, File-Native Model of Artificial Agency](WHITEPAPER.md) · 🌐 [Live: dataqbs.com/octorato](https://www.dataqbs.com/octorato) · 📣 [Launch article](https://www.linkedin.com/pulse/introducing-octorato-open-source-finops-brain-ai-agents-dataqbs-trbjc) · 🛠️ [Built with Octorato](SHOWCASE.md) · 📘 [dataqbs on Facebook](https://www.facebook.com/dataQBS/)
 
-> 🧑‍💻 **New here? [Start Here → contributing guide](https://github.com/CarlosCaPe/octorato/issues/34).** Grab a [good first issue](https://github.com/CarlosCaPe/octorato/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22), see where we're headed in the [ROADMAP](ROADMAP.md), or shape the architecture in the [RFCs](https://github.com/CarlosCaPe/octorato/discussions). Newcomers welcome — we credit every contributor. 🐙
+> 🧑‍💻 **New here? [Try it in 5 minutes](#try-it-in-5-minutes), then [help build it](https://github.com/CarlosCaPe/octorato/issues/34).** Grab a [good first issue](https://github.com/CarlosCaPe/octorato/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22), see where we're headed in the [ROADMAP](ROADMAP.md), or shape the architecture in the [RFCs](https://github.com/CarlosCaPe/octorato/discussions). Newcomers welcome, we credit every contributor. 🐙
 
 <!-- TODO(demo): add a terminal demo here — asciinema cast or GIF of "natural language → shipped product". Tracked as a maintainer follow-up. -->
 
@@ -287,7 +287,7 @@ Fork → branch off `test` → PR against `test`. Full guide: [CONTRIBUTING.md](
 
 ## Architecture — CLASS / OBJECT / ARM
 
-The framework uses an object-oriented inheritance model: **BRAIN = CLASS** (this public repo, the DNA) → **COMPANY BRAIN = OBJECT** (your private `~/.claude/company/`, gitignored) → **ARMS = PROPERTIES** (isolated per-client repos that never see each other).
+The framework uses an object-oriented inheritance model: **BRAIN = CLASS** (this public repo, the DNA) → **COMPANY BRAIN = OBJECT** (your private `~/.claude/company/`, gitignored) → **ARMS = PROPERTIES** (isolated, sealed worlds that never see each other: a client, a project, a topic, a course).
 
 The brain ships the engine — 4D Paradigm, connectome, agents, skills, enforcement scripts, templates. The company brain holds your identity and arm definitions. Each arm holds one client's context, sealed.
 
@@ -756,7 +756,7 @@ ai-pull --status
 ├── commands/                ← Slash command definitions
 ├── templates/
 │   ├── company/             ← Template for your private company brain
-│   ├── arm/                 ← Template for new client projects
+│   ├── arm/                 ← Template for new arms (any sealed world)
 │   └── skill/               ← Template for new skills
 └── company/                 ← YOUR private brain (gitignored, never committed)
     ├── COMPANY.md           ← Your identity, arms, connections
