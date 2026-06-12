@@ -1,19 +1,19 @@
 ---
 name: do-it-right-not-fast
-description: "Operator-canonical: fix the ROOT CAUSE, never ship the quick patch or a pile of palliative files in its place. Two smells mean STOP and do it right: the phrase 'the quick fix is...' / 'la solución rápida es...', and accreting band-aid files instead of repairing the one broken thing. Harmonizes with execution-bias (start today, do not defer) on the other axis: speed-to-start is a virtue, speed-by-shortcut is debt. Load before proposing a fix, when tempted by a workaround, or when a change is growing extra files instead of mending the source."
+description: "Operator-canonical: fix the ROOT CAUSE, never ship the quick patch or a pile of palliative files in its place. Two smells mean STOP and do it right: the phrase 'the quick fix is...' (in any language), and accreting band-aid files instead of repairing the one broken thing. Harmonizes with execution-bias (start today, do not defer) on the other axis: speed-to-start is a virtue, speed-by-shortcut is debt. Load before proposing a fix, when tempted by a workaround, or when a change is growing extra files instead of mending the source."
 metadata:
   type: feedback
 ---
 
 # Do it right, not fast
 
-**Operator feedback (recurrent, canonical):** "muchas veces me dices 'la solución rápida es...' y terminas con decenas de archivos paliativos. Ese es mi tema. Hazlo bien, no rápido."
+**Operator feedback (recurrent, canonical, paraphrased):** "you often say 'the quick fix is...' and end up with dozens of palliative files. That is my recurring complaint. Do it right, not fast."
 
 ## The rule
 Fix the **root cause** with the correct change. Never substitute the quick patch for it. If the correct fix is bigger, say so and do the correct fix, or scope it honestly and get a decision. Never silently swap in the palliative and move on.
 
 ## The two smells (STOP signals)
-1. **The phrase.** You are about to say or think *"the quick fix is..."* / *"la solución rápida es..."*. That phrase is the tell. The quick path is almost never the right one; it is the shortcut you will pay for later. When you hear yourself say it, stop and find the root cause.
+1. **The phrase.** You are about to say or think *"the quick fix is..."* (in any language). That phrase is the tell. The quick path is almost never the right one; it is the shortcut you will pay for later. When you hear yourself say it, stop and find the root cause.
 2. **The pile.** You are adding **palliative files** (a workaround script, a shim, a second copy, a wrapper that hides the break) instead of repairing the one thing that is actually broken. Dozens of band-aid files is not progress, it is the failure mode.
 
 ## Octopus morphology (why this is biology, not preference)
