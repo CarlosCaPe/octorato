@@ -13,11 +13,11 @@ description: Every long-form technical document combining a framework explanatio
 
 ## The lesson that provoked this skill
 
-ADH POC, 2026-06-05. Operator (Carlos) published a 111-line intro page to ADH's Confluence. Single page, conceptual framing, well-written, zero prompts. Sponsor read it. Reaction: *"estoy en shock... está súper pequeño eso y llevamos semanas trabajando"* (I'm in shock... this is super small and we've been working weeks).
+An arm-level POC, 2026-06-05. Operator published a 111-line intro page to the client's Confluence. Single page, conceptual framing, well-written, zero prompts. Sponsor read it. Reaction (paraphrased): the page felt small relative to the weeks of work behind it.
 
-Underdelivery wasn't word count. It was **the absence of executable substance**. The page explained Octorato; it didn't show Octorato operating on ADH.
+Underdelivery wasn't word count. It was **the absence of executable substance**. The page explained the framework; it didn't show the framework operating on the client's surface.
 
-Operator pivoted: *"sería super bueno citar ejemplos de prompts (incluso similares a los usados en la vida real) para que ellos se enseñen a usarlos, prácticamente que quede como guía, no solo teoría"* (would be great to cite prompt examples — even similar to ones used in real life — so they learn to use them, practically becomes a guide, not just theory).
+Operator pivoted (paraphrased): cite prompt examples — even similar to ones used in real life — so the reader learns to use them. The page should read as a guide, not just theory.
 
 The burst that followed published 10 child pages totaling 2,501 lines / 142 KB — every page combining framework narrative WITH copy-paste-ready prompts hitting `@pmdgithub`, `APR-*`, `ResolveMSSQLDatabases`, real ADH terminology. Plus a dedicated `Prompt Cookbook` page consolidating 30+ prompts across 6 scenarios.
 
@@ -142,6 +142,6 @@ Before publishing, check:
 
 ## Historical note
 
-This skill was authored on 2026-06-05 directly from the ADH POC Confluence burst. Specifically: the operator's correction `"sería super bueno citar ejemplos de prompts (incluso similares a los usados en la vida real) para que ellos se enseñen a usarlos, prácticamente que quede como guía, no solo teoría"` is the exact phrasing this skill canonizes. The first published deliverable to apply this skill end-to-end is the ADH POC Confluence tree at parent page 3089432578 + 10 children (2026-06-05 23:00-23:50 CT), with the cookbook child page (3089596434) as the practical reference.
+This skill was authored on 2026-06-05 from a publication-burst lesson during an arm-level POC. Operator's correction (paraphrased): cite prompt examples similar to ones used in real life so the reader learns to use them — the page should read as a guide, not just theory. That correction is the exact pattern this skill canonizes. The first published deliverable to apply this skill end-to-end was a Confluence tree of 1 parent + 10 children (with a dedicated cookbook child page) authored over a single late-evening session.
 
 Future evolution: if the cookbook page grows beyond ~50 prompts, consider splitting by scenario into separate cookbook pages (Onboarding cookbook / Archaeology cookbook / etc.) rather than letting one page grow unboundedly. The 50-prompt threshold is provisional — revise when first hit.
