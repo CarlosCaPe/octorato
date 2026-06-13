@@ -8,7 +8,7 @@
 > agents across clients, projects, and machines — without ever mixing their data
 > or their bills.
 
-**Live:** <!--canon:skills.count-->220+<!--/canon--> skills · <!--canon:agents.count-->160+<!--/canon--> agent personas across
+**Live:** <!--canon:skills.count-->230+<!--/canon--> skills · <!--canon:agents.count-->160+<!--/canon--> agent personas across
 13 divisions · hook-enforced gates · multi-machine sync · a neural
 connectome that learns over time · a FinOps pipeline that tags every trace event
 with the client who incurred it.
@@ -42,7 +42,7 @@ Each page is an organ. This brain routes you to whichever one you need.
 
 1. **[[Architecture]]** — the anatomy atlas: CLASS / OBJECT / ARM, the activation stack, and why an octopus.
 2. **[[The-4D-Paradigm]]** — the nervous signal: every action follows Describe → Delegate → Diligent → Disclose.
-3. **[[Skills]]** — the synapse catalog: <!--canon:skills.count-->220+<!--/canon--> learned techniques (the *HOW*).
+3. **[[Skills]]** — the synapse catalog: <!--canon:skills.count-->230+<!--/canon--> learned techniques (the *HOW*).
 4. **[[Agents]]** — the neuron roster: <!--canon:agents.count-->160+<!--/canon--> specialist personas (the *WHO*).
 5. **[[Self-Growth]]** — neurogenesis and pruning: the daily auto-curation loop.
 6. **[[Security]]** — the immune system: why the brain stays generic, and how that's enforced.
