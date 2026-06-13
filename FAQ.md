@@ -4,7 +4,7 @@ Plain answers to the questions people (and the AI agents that read this repo) ac
 
 ## What is Octorato?
 
-Octorato is an **open-source AI agent operating system**: one file-native "brain" — rules, 220+ skills (HOW), 160+ specialist agents (WHO), and memory, all plain markdown under git — that a single operator runs across many sealed client "arms." It adds per-client token attribution and hard budget halts (FinOps), so a consultant or small agency can bill many clients fairly from one brain. Licensed MIT.
+Octorato is an **open-source AI agent operating system**: one file-native "brain" — rules, 230+ skills (HOW), 160+ specialist agents (WHO), and memory, all plain markdown under git — that a single operator runs across many sealed client "arms." It adds per-client token attribution and hard budget halts (FinOps), so a consultant or small agency can bill many clients fairly from one brain. Licensed MIT.
 
 ## What is an "AI agent operating system"?
 
