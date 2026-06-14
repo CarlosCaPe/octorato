@@ -39,13 +39,12 @@ BUDGET_S = 5  # hard self-timeout; a hung Stop hook blocks the shell
 
 # ── condition A: completion assertion about a visual/runtime artifact ─────────
 
-_RE_COMPLETION = re.compile(
-    r"\b(verified|done|listo|funciona|works|confirmed|deployed|live|complete|completed)\b",
-    re.IGNORECASE,
-)
-
-_RE_VISUAL_NOUN = re.compile(
-    r"\b(render|screenshot|page|UI|button|deploy|site|dashboard|preview|browser|visual)\b",
+_RE_VERIFY_CLAIM = re.compile(
+    r"(?:"
+    r"(verified|confirmed|tested|validated)\b[^.!?\n]{0,60}\b(render|screenshot|page|ui|button|site|dashboard|preview|deploy|live|visual|runtime)"
+    r"|"
+    r"(render|screenshot|page|ui|button|site|dashboard|preview|deploy|live|visual|runtime)\b[^.!?\n]{0,60}\b(verified|confirmed|tested|validated)"
+    r")",
     re.IGNORECASE,
 )
 
@@ -150,10 +149,7 @@ def main() -> int:
         if not last_text.strip():
             return 0
 
-        has_completion = bool(_RE_COMPLETION.search(last_text))
-        has_visual_noun = bool(_RE_VISUAL_NOUN.search(last_text))
-
-        if not (has_completion and has_visual_noun):
+        if not _RE_VERIFY_CLAIM.search(last_text):
             return 0  # condition A not met — pass
 
         # Condition B: scan last 8KB for evidence; if any found — pass

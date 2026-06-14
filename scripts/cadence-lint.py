@@ -104,7 +104,7 @@ _RE_TAIL = re.compile(
 _RE_GREETING = re.compile(
     r"(?:^|[.!?]\s+)(buen[ao]s?\s+(d[ií]as?|tardes?|noches?)|"
     r"hope\s+this\s+finds\s+you|i\s+hope\s+you('re|\s+are)|"
-    r"espero\s+que\s+est[eé]s?|hola\b|buenas\b)\b",
+    r"espero\s+que\s+est[eé]s?|hola\b)\b",
     re.IGNORECASE | re.MULTILINE,
 )
 

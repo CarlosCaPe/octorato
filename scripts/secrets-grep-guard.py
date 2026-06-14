@@ -39,22 +39,20 @@ _READER_RE = re.compile(
 # ── secret-bearing path patterns ─────────────────────────────────────────────
 
 _SECRET_PATH_PATTERNS = [
-    # explicit file names / extensions
-    # Allow ~ as a leading separator (e.g. ~/.env, ~user/.env) in addition to
-    # whitespace/quotes. The trailing boundary allows end-of-string, whitespace,
-    # quotes, or a dot (e.g. .env.local handled by the next pattern).
+    # .env / .env.* / .dev.vars
     re.compile(r'(?:^|[\s\'"~/])(\.env)(?:$|[\s\'"\.])', re.IGNORECASE),
     re.compile(r'(?:^|[\s\'"~/])(\.env\.\S+)', re.IGNORECASE),
     re.compile(r'(?:^|[\s\'"~/])(\.dev\.vars)(?:$|[\s\'"\.])', re.IGNORECASE),
-    # filenames containing credential/secret/token keywords
-    re.compile(r'[\w/.\-]*(credential|secret|token)[\w/.\-]*', re.IGNORECASE),
-    # sensitive dirs
+    # credential-FILE shapes only: final path segment must be a known secret file
+    re.compile(r'(?:^|[\s\'"/])(credentials|secrets)\.(json|yaml|yml|env)(?:$|[\s\'"])', re.IGNORECASE),
+    re.compile(r'(?:^|[\s\'"/])[\w.\-]+\.(pem|key|p12|pfx)(?:$|[\s\'"])', re.IGNORECASE),
+    re.compile(r'(?:^|[\s\'"/])id_rsa(?:$|[\s\'"])', re.IGNORECASE),
+    # ~/.aws/ and ~/.ssh/ dirs
     re.compile(r'~/\.aws/', re.IGNORECASE),
     re.compile(r'~/\.ssh/', re.IGNORECASE),
-    re.compile(r'~/\.config/', re.IGNORECASE),
-    re.compile(r'~/\.wrangler/', re.IGNORECASE),
-    # wrangler secret subcommand
-    re.compile(r'\bwrangler\s+secret\b', re.IGNORECASE),
+    # narrow ~/.config/ to gh credentials and per-app credentials files
+    re.compile(r'~/\.config/gh/', re.IGNORECASE),
+    re.compile(r'~/\.config/[^/]+/credentials', re.IGNORECASE),
 ]
 
 # ── redactor pipe patterns (allow if any present after the reader) ────────────

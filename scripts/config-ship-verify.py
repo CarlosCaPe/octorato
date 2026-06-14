@@ -32,9 +32,11 @@ for _stream in (sys.stdout, sys.stderr):
 
 # ── trigger patterns ──────────────────────────────────────────────────────────
 
-# Pattern A: curl/api call to a Datadog dashboard import endpoint (v1 or v2)
+# Pattern A: curl WRITE to a Datadog dashboard endpoint (v1 or v2); GETs pass through
 _DD_DASHBOARD_RE = re.compile(
-    r"(curl|api)\b.*api/v[12]/dashboard",
+    r"curl\b"
+    r"(?=.*?(?:-X\s*(?:POST|PUT|PATCH)\b|--request\s+(?:POST|PUT|PATCH)\b|-[dD]\s+['\"{@]))"
+    r".*?api/v[12]/dashboard",
     re.IGNORECASE | re.DOTALL,
 )
 
