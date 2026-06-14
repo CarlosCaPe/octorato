@@ -21,6 +21,7 @@ Fail-open: a skipped beat is survivable, a hung prompt is not. Hard self-timeout
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -70,7 +71,7 @@ def collect_arms(prompt_lc: str) -> tuple[list[str], list[str]]:
         arms = list(data.keys()) if isinstance(data, dict) else []
     except Exception:
         arms = []
-    mentioned = [a for a in arms if a.lower() in prompt_lc]
+    mentioned = [a for a in arms if re.search(rf"\b{re.escape(a.lower())}\b", prompt_lc)]
     return arms, mentioned
 
 
@@ -109,7 +110,6 @@ def emit(text: str) -> None:
 
 
 def main() -> int:
-    prompt = read_prompt()
     try:
         import signal
 
@@ -122,6 +122,10 @@ def main() -> int:
         signal = None  # type: ignore
 
     try:
+        prompt = read_prompt()  # inside the armed budget: stdin is the one hang surface
+        stripped = prompt.strip()
+        if len(stripped) < 5 or stripped.startswith("/"):
+            return 0  # trivial / slash-command prompts: nothing to census
         emit(build_block(prompt))
     except TimeoutError:
         emit("⚙ capability-census skipped (over budget). Run `claude mcp list` + check the arm manually if non-trivial.")
