@@ -12,6 +12,11 @@ turns the regex-provable subset into a REFLEX:
   rule 5  rigid transitions (sentence-initial)
   rule 6  filler openers
   rule 9  conclusion tails (sentence-initial)
+  rule 11 machine-register greetings (sentence/doc-initial)
+  rule 12 machine-register closings
+  rule 13 post-hoc recap openers
+  rule 14 mood/health references
+  rule 15 unsolicited tip openers
 
 Rules 4/7/8/10 (triads, rhythm, bullets-in-prose, voice) are judgment calls
 and stay with the model; this script covers everything a regex can prove.
@@ -92,6 +97,47 @@ _RE_TAIL = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 
+# rule 11 — machine-register greetings (sentence-initial or document-initial)
+# Note: use días?/tardes?/noches? so the group ends at a real word boundary;
+# 'día' alone matches only 3 chars of 'días', leaving 's' as next char and
+# causing the outer \b to fail between two word chars.
+_RE_GREETING = re.compile(
+    r"(?:^|[.!?]\s+)(buen[ao]s?\s+(d[ií]as?|tardes?|noches?)|"
+    r"hope\s+this\s+finds\s+you|i\s+hope\s+you('re|\s+are)|"
+    r"espero\s+que\s+est[eé]s?|hola\b|buenas\b)\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# rule 12 — machine-register closings
+_RE_CLOSING = re.compile(
+    r"(?:^|[.!?]\s+)(good\s+luck\b|buena\s+suerte\b|saludos\b|cheers\b|"
+    r"best\s+regards\b|hasta\s+luego\b|cu[ií]date\b|take\s+care\b)\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# rule 13 — post-hoc recap openers
+_RE_RECAP = re.compile(
+    r"(?:^|[.!?]\s+)(en\s+resumen\b|to\s+summarize\b|in\s+summary\b|"
+    r"overall\b|to\s+recap\b|as\s+a\s+summary\b|en\s+conclusi[oó]n\b)\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# rule 14 — mood/health references
+_RE_MOOD = re.compile(
+    r"(espero\s+que\s+te\s+recuperes?|feel\s+better\b|get\s+well\s+soon\b|"
+    r"hope\s+you('re|\s+are)\s+(feeling|doing|well|ok|okay)|"
+    r"cu[ií]date\s+mucho\b)",
+    re.IGNORECASE,
+)
+
+# rule 15 — unsolicited tips opener
+_RE_UNSOLICITED_TIP = re.compile(
+    r"(?:^|[.!?]\s+)(pro\s+tip\b|tip\b:\s|by\s+the\s+way\b|"
+    r"just\s+a\s+(heads[- ]up|reminder|note|tip)\b|"
+    r"also\s+note\s+that\b|worth\s+mentioning\b)",
+    re.IGNORECASE | re.MULTILINE,
+)
+
 _RULES = [
     (1, "em-dash", _RE_EMDASH),
     (2, "AI filler word", _RE_FILLER),
@@ -99,6 +145,11 @@ _RULES = [
     (5, "rigid transition", _RE_TRANSITION),
     (6, "filler opener", _RE_OPENER),
     (9, "conclusion tail", _RE_TAIL),
+    (11, "machine-register greeting", _RE_GREETING),
+    (12, "machine-register closing", _RE_CLOSING),
+    (13, "post-hoc recap opener", _RE_RECAP),
+    (14, "mood/health reference", _RE_MOOD),
+    (15, "unsolicited tip opener", _RE_UNSOLICITED_TIP),
 ]
 
 _PROSE_SUFFIXES = {".md", ".txt", ".markdown"}
