@@ -196,6 +196,12 @@
           "type": "command"
         },
         {
+          "command": "python3 ~/.claude/scripts/inbox-sweep-reflex.py",
+          "statusMessage": "✉ inbox sweep reflex...",
+          "timeout": 5,
+          "type": "command"
+        },
+        {
           "command": "python3 ~/.claude/scripts/eye-check.py",
           "statusMessage": "Checking if octopus needs eyes...",
           "timeout": 5,
