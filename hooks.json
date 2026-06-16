@@ -114,6 +114,14 @@
           "statusMessage": "♦ 4D: checking parallel dimensions...",
           "timeout": 5,
           "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/secrets-grep-guard.py",
+          "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/config-ship-verify.py",
+          "type": "command"
         }
       ],
       "matcher": "Bash"
@@ -169,6 +177,10 @@
           "command": "python3 ~/.claude/scripts/grafo-ledger-check.py",
           "statusMessage": "♦ checking graph ledger...",
           "timeout": 5,
+          "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/claim-verify-stop.py",
           "type": "command"
         }
       ]
