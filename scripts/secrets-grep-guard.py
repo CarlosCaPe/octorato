@@ -93,20 +93,18 @@ def main() -> int:
         if not command:
             return 0
 
-        if not (_has_reader(command) and _has_secret_path(command)):
-            return 0  # at least one condition missing — pass
-
-        if _has_redactor(command):
-            return 0  # redactor present — pass
-
-        # All three conditions met: deny
-        print(json.dumps({
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": _DENY_REASON,
-            }
-        }))
+        # Evaluate per shell segment (split on ; && || newline), NOT on the whole
+        # string: `cat .env; cat ok | jq .` must not pass on the unrelated jq.
+        for seg in re.split(r"(?:&&|\|\||;|\n)", command):
+            if _has_reader(seg) and _has_secret_path(seg) and not _has_redactor(seg):
+                print(json.dumps({
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "deny",
+                        "permissionDecisionReason": _DENY_REASON,
+                    }
+                }))
+                return 0
     except Exception:
         pass  # fail-open: never break the user's command
 

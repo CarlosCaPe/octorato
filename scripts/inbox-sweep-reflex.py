@@ -40,7 +40,7 @@ DIRECTIVE = (
     "1) Carga el skill inbox-triage-classifier. "
     "2) Barrido COMPLETO del inbox, no por termino ni fecha corta: "
     "`in:inbox newer_than:14d` sin filtros restrictivos (sube la ventana si hace falta). "
-    "3) Agrupa por hilo/tema; separa ruido (Amazon, escuela school, CFDI automaticos, "
+    "3) Agrupa por hilo/tema; separa ruido (compras, escuela, CFDI automaticos, "
     "estados de cuenta, marketing) de lo accionable. "
     "4) Lista TODO lo accionable aunque no lo haya pedido por nombre, con el siguiente paso de cada uno. "
     "El MCP de correo solo ve la cuenta conectada; tramites gubernamentales pueden vivir en otra cuenta "

@@ -503,7 +503,6 @@ def push(args) -> int:
         if (CLAUDE / p).exists():
             git("add", p)
     # stage tracked deletions
-    _, dels, _ = git("diff", "--cached", "--name-only", "--diff-filter=D")
     # (already staged by add of the dir; explicit re-add not needed)
 
     msg = raw_msg

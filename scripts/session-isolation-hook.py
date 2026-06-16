@@ -209,16 +209,18 @@ def main() -> int:
         return 0
 
     branch = f"dim/{Path(path).name}"
-    # Persist the fork on our registry entry (re-read to narrow the race window).
-    registry = _load_registry()
-    sessions = registry.get("sessions", {})
-    entry = sessions.get(sid, entry)
-    entry["worktree"] = path
-    entry["branch"] = branch
-    entry["heartbeat"] = _now_iso()
-    sessions[sid] = entry
-    registry["sessions"] = sessions
-    _save_registry(registry)
+    # Persist the fork under the lock (avoid lost-update vs a concurrent
+    # dimension-awareness heartbeat that also writes the registry).
+    with _registry_lock():
+        registry = _load_registry()
+        sessions = registry.get("sessions", {})
+        entry = sessions.get(sid, entry)
+        entry["worktree"] = path
+        entry["branch"] = branch
+        entry["heartbeat"] = _now_iso()
+        sessions[sid] = entry
+        registry["sessions"] = sessions
+        _save_registry(registry)
 
     _emit(
         f"♦ DIMENSION AUTO-FORK: {len(other_live)} other live session(s) share this machine, "
