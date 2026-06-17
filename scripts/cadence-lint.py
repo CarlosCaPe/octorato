@@ -90,6 +90,16 @@ _RE_OPENER = re.compile(
     re.IGNORECASE,
 )
 
+# rule 6 — flattery openers (message- or sentence-initial only, to avoid
+# mid-sentence false positives like "the good news is ...").
+_RE_FLATTERY = re.compile(
+    r"(?:^|[.!?]\s+)("
+    r"(good|great|excellent|nice|fair)\s+question|"
+    r"thanks\s+all|good\s+news|happy\s+to\s+report|"
+    r"buena\s+pregunta|excelente\s+pregunta|buenas\s+noticias)\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+
 # rule 9 — sentence-initial conclusion tails
 _RE_TAIL = re.compile(
     r"(?:^|[.!?]\s+)(overall,|in summary|to wrap up|"
@@ -111,7 +121,9 @@ _RE_GREETING = re.compile(
 # rule 12 — machine-register closings
 _RE_CLOSING = re.compile(
     r"(?:^|[.!?]\s+)(good\s+luck\b|buena\s+suerte\b|saludos\b|cheers\b|"
-    r"best\s+regards\b|hasta\s+luego\b|cu[ií]date\b|take\s+care\b)\b",
+    r"best\s+regards\b|hasta\s+luego\b|cu[ií]date\b|take\s+care\b|"
+    r"happy\s+to\s+(pair|help|walk|assist|jump|chat|sync|discuss)|"
+    r"con\s+gusto\b|encantado\s+de\s+ayudar)\b",
     re.IGNORECASE | re.MULTILINE,
 )
 
@@ -144,6 +156,7 @@ _RULES = [
     (3, "not-only/no-solo contrast frame", _RE_CONTRAST),
     (5, "rigid transition", _RE_TRANSITION),
     (6, "filler opener", _RE_OPENER),
+    (6, "flattery opener", _RE_FLATTERY),
     (9, "conclusion tail", _RE_TAIL),
     (11, "machine-register greeting", _RE_GREETING),
     (12, "machine-register closing", _RE_CLOSING),
