@@ -371,3 +371,18 @@ edges:
       Change the lint's CLI (flags, checks, exit codes) and reconcile all four:
       the engine, the PostToolUse(Bash) wrapper, the skill doc, and the
       hooks.json registration. Edge added 2026-06-09 so the node is not unlit.
+
+  - id: inbox-sweep
+    concept: "inbox full-sweep / in:all scope / barrido completo de correo"
+    appears_in:
+      - scripts/inbox-sweep-reflex.py
+      - skills/inbox-triage-classifier/SKILL.md
+      - hooks.json
+    kind: appears_in
+    single_source: "scripts/inbox-sweep-reflex.py is the ganglion (UserPromptSubmit reflex); the skill documents the triage method, hooks.json registers it"
+    note: >-
+      The sweep scope rule is `in:all` (includes Spam + Trash), NOT `in:inbox`
+      (which excludes them — the recurrent failure, since cobranza/legal/security
+      land there). Change the canonical query or the triage method and reconcile
+      the reflex script + the skill doc + the hooks.json registration together.
+      Edge added 2026-06-18 after the seek fell back to grep (unlit neuron).
