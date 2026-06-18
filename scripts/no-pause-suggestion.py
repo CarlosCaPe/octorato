@@ -64,6 +64,26 @@ FORBIDDEN = [
 
 COMPILED = [re.compile(p, re.IGNORECASE) for p in FORBIDDEN]
 
+# Asking PERMISSION to perform the obvious next executable step, while a standing
+# "cierra todo / no pares hasta terminar" directive is in force. Distinct from a
+# genuine fork that needs the operator's decision (that stays allowed, with a
+# recommendation). This is the closed set of permission-to-proceed phrasings the
+# operator has repeatedly flagged ("¿reescribo? ¿continúo? ¿le doy?").
+PERMISSION_ASK = [
+    r"¿\s*(?:lo\s+|los\s+|las\s+|la\s+)?reescribo\b",
+    r"¿\s*contin[úu]o\b",
+    r"¿\s*sigo\b",
+    r"¿\s*procedo\b",
+    r"¿\s*le\s+doy\b",
+    r"¿\s*lo\s+hago(?:\s+ya)?\b",
+    r"¿\s*(?:lo|los|las|la)\s+ejecuto\b",
+    r"¿\s*(?:lo|los|las|la)\s+escribo\s+ya\b",
+    r"\bshall\s+i\s+(?:proceed|continue|rewrite|go\s+ahead)\b",
+    r"\b(?:do\s+you\s+)?want\s+me\s+to\s+(?:continue|proceed|rewrite|go\s+ahead)\b",
+    r"\bshould\s+i\s+(?:continue|proceed|rewrite|go\s+ahead)\b",
+]
+COMPILED_PERM = [re.compile(p, re.IGNORECASE) for p in PERMISSION_ASK]
+
 
 def last_assistant_text(transcript_path: str) -> str:
     """Read the JSONL transcript and return the most recent assistant
@@ -113,6 +133,24 @@ def main() -> int:
     text = last_assistant_text(transcript_path)
     if not text:
         return 0
+
+    perm_hits: list[str] = []
+    for pattern in COMPILED_PERM:
+        m = pattern.search(text)
+        if m:
+            perm_hits.append(m.group(0))
+    if perm_hits:
+        msg = (
+            "no-pause-suggestion hook: your reply ENDS BY ASKING PERMISSION to do "
+            "the obvious next step (" + ", ".join(repr(h) for h in perm_hits[:4]) +
+            "). Under a standing 'cierra todo / no pares hasta terminar' directive "
+            "this is the forbidden ask-to-continue. Execute everything that is yours "
+            "to execute now; stop ONLY for a genuine missing fact or an irreducible "
+            "operator-only act (a payment, a signature, a phone call, a consent click). "
+            "Do not ask permission to proceed with work you can already do."
+        )
+        print(msg, file=sys.stderr)
+        return 2
 
     hits: list[str] = []
     for pattern in COMPILED:
