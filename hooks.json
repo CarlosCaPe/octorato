@@ -208,6 +208,18 @@
           "type": "command"
         },
         {
+          "command": "python3 ~/.claude/scripts/arm-recall-hook.py",
+          "statusMessage": "♦ arm recall (knowledge.json + memoria)...",
+          "timeout": 5,
+          "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/brain-memory-recall.py",
+          "statusMessage": "🧠 brain memory recall (life-memories)...",
+          "timeout": 5,
+          "type": "command"
+        },
+        {
           "command": "python3 ~/.claude/scripts/inbox-sweep-reflex.py",
           "statusMessage": "✉ inbox sweep reflex...",
           "timeout": 5,
