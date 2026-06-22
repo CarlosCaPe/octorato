@@ -1,0 +1,204 @@
+# Octorato Rule Registry — single source of truth for RULE #1 (Wired or Corrupt).
+# Every CLAUDE.md rule maps here to its backing mechanism(s) + proof.
+# Validated by brain_doctor (D1 schema, D2 anchors, D3 per-rule wiring).
+# Phase 0 seed: the already-wired mechanisms, existing script names (renaming is Phase 3).
+# Schema: registry/rules.schema.json   Design: docs/architecture/wired-or-corrupt.md
+version: 1
+rules:
+  # ---- META: Rule #1 is self-wired; its mechanism IS brain_doctor + the pre-push gate ----
+  - id: META.rule-1-wired-or-corrupt
+    title: "RULE #1 — every rule must be wired; unwired = corrupt brain"
+    category: META
+    source: { file: CLAUDE.md, anchor: "RULE #1" }
+    strength: GATE
+    firing_mode: [runner, git-hook]
+    mechanism:
+      - { kind: Gate, canonical_name: brain_doctor.py, firing_event: PrePush, firing_matcher: null }
+    proof:
+      - { method: FILE_EXISTS, locator: "scripts/brain_doctor.py", expect: present }
+      - { method: ANCHOR_PRESENT, locator: "RULE #1", expect: present }
+    liveness_required: PRESENT
+
+  - id: META.pre-push-gate
+    title: "brain_doctor is invoked from the tracked pre-push hook"
+    category: META
+    source: { file: CLAUDE.md, anchor: "RULE #1" }
+    strength: GATE
+    firing_mode: [git-hook]
+    mechanism:
+      - { kind: Gate, canonical_name: .githooks/pre-push, firing_event: PrePush, firing_matcher: null }
+    proof:
+      - { method: FILE_EXISTS, locator: ".githooks/pre-push", expect: present }
+      - { method: EXIT_CODE, locator: "grep -q OCTORATO-WIRE-GATE .githooks/pre-push", expect: 0 }
+    liveness_required: PRESENT
+
+  # ---- COMMS ----
+  - id: COMMS.human-cadence
+    title: "Human Cadence — 10 anti-AI-tell rules"
+    category: COMMS
+    source: { file: CLAUDE.md, anchor: "Human Cadence" }
+    strength: GATE
+    firing_mode: [hook, cli]
+    mechanism:
+      - { kind: Gate, canonical_name: cadence-stop-hook.py, firing_event: Stop, firing_matcher: "*" }
+      - { kind: Detector, canonical_name: cadence-lint.py, firing_event: PostToolUse, firing_matcher: "Write|Edit" }
+    proof:
+      - { method: IN_HOOKS_JSON, locator: "Stop|*|cadence-stop-hook.py", expect: present }
+      - { method: IN_HOOKS_JSON, locator: "PostToolUse|Write|Edit|cadence-lint.py", expect: present }
+    liveness_required: FIRES
+
+  # ---- CODE ----
+  - id: CODE.adversarial-verify-operator
+    title: "Adversarially verify the operator; claims need proof"
+    category: CODE
+    source: { file: CLAUDE.md, anchor: "Adversarially verify the operator" }
+    strength: GATE
+    firing_mode: [hook]
+    mechanism:
+      - { kind: Gate, canonical_name: claim-verify-stop.py, firing_event: Stop, firing_matcher: "*" }
+    proof:
+      - { method: IN_HOOKS_JSON, locator: "Stop|*|claim-verify-stop.py", expect: present }
+    liveness_required: FIRES
+
+  - id: CODE.cite-sources
+    title: "Cite sources; every answer ends with its provenance"
+    category: CODE
+    source: { file: CLAUDE.md, anchor: "Cite sources" }
+    strength: DETECTOR
+    firing_mode: [hook]
+    mechanism:
+      - { kind: Detector, canonical_name: source-attribution-check.py, firing_event: Stop, firing_matcher: "*" }
+    proof:
+      - { method: IN_HOOKS_JSON, locator: "Stop|*|source-attribution-check.py", expect: present }
+    liveness_required: FIRES
+
+  - id: CODE.qa-merge-gate
+    title: "Merges are fail-closed; agent cannot self-approve"
+    category: CODE
+    source: { file: CLAUDE.md, anchor: "qa-merge-gate" }
+    strength: GATE
+    firing_mode: [hook]
+    mechanism:
+      - { kind: Gate, canonical_name: qa-merge-gate.py, firing_event: PreToolUse, firing_matcher: "Bash" }
+    proof:
+      - { method: IN_HOOKS_JSON, locator: "PreToolUse|Bash|qa-merge-gate.py", expect: present }
+    liveness_required: FIRES
+
+  - id: CODE.dry-run-first
+    title: "Dry-run first; ask before shipping generated configs"
+    category: CODE
+    source: { file: CLAUDE.md, anchor: "Dry-run first" }
+    strength: DETECTOR
+    firing_mode: [hook]
+    mechanism:
+      - { kind: Detector, canonical_name: config-ship-verify.py, firing_event: PreToolUse, firing_matcher: "Bash" }
+    proof:
+      - { method: IN_HOOKS_JSON, locator: "PreToolUse|Bash|config-ship-verify.py", expect: present }
+    liveness_required: FIRES
+
+  # ---- SECURITY ----
+  - id: SECURITY.never-read-secrets-raw
+    title: "Never echo/read secret-bearing files raw"
+    category: SECURITY
+    source: { file: CLAUDE.md, anchor: "Never commit secrets" }
+    strength: GATE
+    firing_mode: [hook]
+    mechanism:
+      - { kind: Gate, canonical_name: secrets-grep-guard.py, firing_event: PreToolUse, firing_matcher: "Bash" }
+    proof:
+      - { method: IN_HOOKS_JSON, locator: "PreToolUse|Bash|secrets-grep-guard.py", expect: present }
+    liveness_required: FIRES
+
+  # ---- GENERIC ----
+  - id: GENERIC.brain-stays-generic
+    title: "Brain stays generic; no arm/client identifiers leak"
+    category: GENERIC
+    source: { file: CLAUDE.md, anchor: "The Brain Stays Generic" }
+    strength: GATE
+    firing_mode: [git-hook, runner]
+    mechanism:
+      - { kind: Gate, canonical_name: check-generic.py, firing_event: PrePush, firing_matcher: null }
+    proof:
+      - { method: FILE_EXISTS, locator: "scripts/check-generic.py", expect: present }
+    liveness_required: PRESENT
+
+  # ---- ARCHITECTURE ----
+  - id: ARCHITECTURE.session-isolation
+    title: "Session/instance isolation; own worktree per dimension"
+    category: ARCHITECTURE
+    source: { file: CLAUDE.md, anchor: "Session/Instance Isolation" }
+    strength: GATE
+    firing_mode: [hook]
+    mechanism:
+      - { kind: Gate, canonical_name: session-isolation-hook.py, firing_event: SessionStart, firing_matcher: null }
+      - { kind: Gate, canonical_name: dimension-awareness-hook.py, firing_event: PreToolUse, firing_matcher: "Bash" }
+    proof:
+      - { method: IN_HOOKS_JSON, locator: "SessionStart|*|session-isolation-hook.py", expect: present }
+      - { method: IN_HOOKS_JSON, locator: "PreToolUse|Bash|dimension-awareness-hook.py", expect: present }
+    liveness_required: PRESENT
+
+  # ---- FLOW ----
+  - id: FLOW.4d-paradigm
+    title: "4D paradigm fires each turn (Describe/Delegate/Diligent/Disclose)"
+    category: FLOW
+    source: { file: CLAUDE.md, anchor: "The 4D Paradigm" }
+    strength: REFLEX
+    firing_mode: [hook]
+    mechanism:
+      - { kind: Reflex, canonical_name: 4d-reminder.py, firing_event: UserPromptSubmit, firing_matcher: null }
+    proof:
+      - { method: IN_HOOKS_JSON, locator: "UserPromptSubmit|*|4d-reminder.py", expect: present }
+    liveness_required: FIRES
+
+  - id: FLOW.delegate-gate
+    title: "2D Delegate: connect, don't SELF (heartbeat + delegate reflex)"
+    category: FLOW
+    source: { file: CLAUDE.md, anchor: "2D Delegate Gate" }
+    strength: REFLEX
+    firing_mode: [hook]
+    mechanism:
+      - { kind: Reflex, canonical_name: connectome-heartbeat.py, firing_event: UserPromptSubmit, firing_matcher: null }
+      - { kind: Reflex, canonical_name: delegate-gate.py, firing_event: PreToolUse, firing_matcher: "Bash" }
+    proof:
+      - { method: IN_HOOKS_JSON, locator: "UserPromptSubmit|*|connectome-heartbeat.py", expect: present }
+      - { method: IN_HOOKS_JSON, locator: "PreToolUse|Bash|delegate-gate.py", expect: present }
+    liveness_required: FIRES
+
+  - id: FLOW.graph-before-grep
+    title: "Graph before grep; seek the lineage, do not scan"
+    category: FLOW
+    source: { file: CLAUDE.md, anchor: "Graph before grep" }
+    strength: REFLEX
+    firing_mode: [hook]
+    mechanism:
+      - { kind: Reflex, canonical_name: grafo-gate.py, firing_event: PreToolUse, firing_matcher: "Bash" }
+      - { kind: Reflex, canonical_name: grafo-turn-reset.py, firing_event: UserPromptSubmit, firing_matcher: null }
+      - { kind: Detector, canonical_name: grafo-ledger-check.py, firing_event: Stop, firing_matcher: "*" }
+    proof:
+      - { method: IN_HOOKS_JSON, locator: "PreToolUse|Bash|grafo-gate.py", expect: present }
+      - { method: IN_HOOKS_JSON, locator: "Stop|*|grafo-ledger-check.py", expect: present }
+    liveness_required: FIRES
+
+  - id: FLOW.impact-radius
+    title: "Impact Radius on every concept change"
+    category: FLOW
+    source: { file: CLAUDE.md, anchor: "Impact Radius on every concept change" }
+    strength: REFLEX
+    firing_mode: [hook]
+    mechanism:
+      - { kind: Reflex, canonical_name: impact-radius-hook.py, firing_event: PostToolUse, firing_matcher: "Write|Edit" }
+    proof:
+      - { method: IN_HOOKS_JSON, locator: "PostToolUse|Write|Edit|impact-radius-hook.py", expect: present }
+    liveness_required: FIRES
+
+  - id: FLOW.web-agent-browser
+    title: "Web inspection uses agent-browser (eyes), not curl"
+    category: FLOW
+    source: { file: CLAUDE.md, anchor: "agent-browser" }
+    strength: REFLEX
+    firing_mode: [hook]
+    mechanism:
+      - { kind: Reflex, canonical_name: eye-check.py, firing_event: UserPromptSubmit, firing_matcher: null }
+    proof:
+      - { method: IN_HOOKS_JSON, locator: "UserPromptSubmit|*|eye-check.py", expect: present }
+    liveness_required: FIRES
