@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/CarlosCaPe/octorato/registry/rules.schema.json",
+  "title": "Octorato Rule Registry",
+  "description": "Single source of truth for Rule #1 (Wired or Corrupt). Every CLAUDE.md rule is one entry mapping it to its backing mechanism(s) and proof. Validated by brain_doctor (D1). See docs/architecture/wired-or-corrupt.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "rules"],
+  "properties": {
+    "version": { "type": "integer", "const": 1 },
+    "rules": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/rule" }
+    }
+  },
+  "$defs": {
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "category", "source", "strength", "firing_mode", "mechanism", "proof", "liveness_required"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Z]+\\.[a-z0-9-]+$",
+          "description": "CATEGORY.slug, stable + MECE"
+        },
+        "title": { "type": "string", "minLength": 3 },
+        "category": {
+          "type": "string",
+          "enum": ["IDENTITY", "ARCHITECTURE", "GENERIC", "CODE", "SECURITY", "COMMS", "GIT", "FLOW", "MEMORY", "META"]
+        },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["file", "anchor"],
+          "properties": {
+            "file": { "type": "string" },
+            "anchor": { "type": "string", "minLength": 3, "description": "exact substring of the CLAUDE.md heading/rule line; D2 asserts it is present" }
+          }
+        },
+        "strength": {
+          "type": "string",
+          "enum": ["GATE", "REFLEX", "DETECTOR", "PRESENCE"],
+          "description": "GATE>REFLEX>DETECTOR>PRESENCE; == Mechanism subclass"
+        },
+        "firing_mode": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "enum": ["hook", "git-hook", "runner", "cli", "cron", "library", "observability"] }
+        },
+        "mechanism": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/mechanism" },
+          "description": "REQUIRED non-empty. An empty list = un-backed prose = CORRUPT."
+        },
+        "proof": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/proof" } },
+        "liveness_required": { "type": "string", "enum": ["PRESENT", "FIRES", "EFFECTIVE"] },
+        "waiver": {
+          "type": ["object", "null"],
+          "description": "operator-signed, expiry-dated downgrade; null normally",
+          "additionalProperties": false,
+          "properties": {
+            "reason": { "type": "string" },
+            "expires": { "type": "string" },
+            "approved_by": { "type": "string" }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "category": { "enum": ["SECURITY", "GENERIC", "ARCHITECTURE"] } } },
+          "then": { "properties": { "strength": { "enum": ["GATE", "REFLEX", "DETECTOR"] } } },
+          "description": "A SECURITY/GENERIC/ARCHITECTURE rule at PRESENCE is itself CORRUPT (understated strength)."
+        }
+      ]
+    },
+    "mechanism": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["Gate", "Reflex", "Detector", "Presence"] },
+        "canonical_name": {
+          "type": ["string", "null"],
+          "description": "script filename; null ONLY when kind==Presence"
+        },
+        "firing_event": {
+          "type": ["string", "null"],
+          "enum": ["UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionStart", "PrePush", null]
+        },
+        "firing_matcher": { "type": ["string", "null"] }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "enum": ["Gate", "Reflex", "Detector"] } } },
+          "then": { "required": ["canonical_name"], "properties": { "canonical_name": { "type": "string", "minLength": 3 } } },
+          "description": "Only Presence may have a null canonical_name."
+        }
+      ]
+    },
+    "proof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "locator", "expect"],
+      "properties": {
+        "method": { "type": "string", "enum": ["FILE_EXISTS", "IN_HOOKS_JSON", "EXIT_CODE", "ANCHOR_PRESENT", "FIRED_IN_TRACE", "PROBE"] },
+        "locator": { "type": "string" },
+        "expect": {}
+      }
+    }
+  }
+}

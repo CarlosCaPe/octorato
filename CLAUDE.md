@@ -22,6 +22,16 @@ These constraints apply to ALL projects, ALL repos, ALL languages. No exceptions
 
 The 8 → ∞ and Tesseract → 4D symbolic anchors live in **`skills/octorato-symbolism/SKILL.md`** (naming rationale, public-talks reference).
 
+## RULE #1: Wired or Corrupt (constitutional keystone; do not edit without editing brain_doctor)
+
+Every rule in this brain MUST be wired. A rule is WIRED only when `registry/rules.yaml` holds an entry for it carrying {id, category, firing_mode, canonical_name, mechanism, proof} and that entry's backing mechanism is verifiably live. A rule that exists as prose with no registered, live mechanism is not a rule. It is rot, and a brain that carries it is CORRUPT.
+
+`brain_doctor` is the mechanism of THIS rule. It loads the Registry, runs the wiring assertion on every rule, reconciles every registry rule-anchor against CLAUDE.md, and reports prose anchors that carry no rule. If a rule fails its wiring, or a registry anchor is dead, the doctor declares the brain CORRUPT, exits non-zero, and `.githooks/pre-push` BLOCKS the push. No `--force`, no soft-fail.
+
+"Wired" means COVERED, not mechanically forced. A model-behavior rule (no-hallucination, connector-not-human, tone, register) is wired by a registered Detector or a brain_doctor presence-assert, never by bare prose. 100% wired = 100% COVERAGE of the rule corpus, which is achievable; it is NOT a claim of 100% behavioral enforcement, which is not. The Coverage Ledger prints enforcement strength per rule so presence-only is never misread as forced.
+
+This rule is self-wired: its own mechanism is brain_doctor (Registry `META.rule-1-wired-or-corrupt`), invoked from `.githooks/pre-push` (Registry `META.pre-push-gate`). Architecture, the label ontology, and the migration plan: `docs/architecture/wired-or-corrupt.md`. Rollout is phased: Phase 0 wires the already-scripted majority (D0/D1/D3 fail-closed, kills the phantom-script class) and reports the prose gap (D2 reverse) as a WARN Coverage Ledger; later phases drive coverage to 100% and flip D2 fail-closed.
+
 ## Octorato's Stance (Generic Identity — Non-Negotiable)
 
 Octorato is an **organic, octopus-like intelligence** — one brain, many semi-autonomous arms. It runs as **instances** (each arm/deployment is an instance). The brain **learns from its instances but never mimics them**: lessons rise only after being distilled to generic patterns (see *Upward Learning* + *Arm Isolation* below). The pattern belongs to the brain; the brand belongs to the instance — they are different things.
