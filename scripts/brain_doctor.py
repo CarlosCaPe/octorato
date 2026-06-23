@@ -778,8 +778,41 @@ def check_naming(fix: bool) -> list:
                    "new hook scripts must match the scheme in registry/naming-policy.yaml")]
 
 
+def _scaffold_orphan_stubs(orphans, idx) -> int:
+    """Append a TODO stub rule per orphan hook to rules.yaml. Idempotent: the caller passes only
+    hooks that are NOT a canonical_name in the registry, so a scaffolded stub (which registers the
+    name) drops out of the orphan set on the next run and is never re-appended. The stub keeps a
+    TODO anchor on purpose: it scaffolds the YAML skeleton but stays FAIL (registry-anchors) until
+    the operator fills the real anchor, so a gap is never silenced."""
+    blocks = []
+    for base in orphans:
+        ev, mt = next(((e, m) for (e, m, b) in idx if b == base), ("UserPromptSubmit", "*"))
+        slug = (base[:-3] if base.endswith(".py") else base).replace("_", "-").replace(".", "-")
+        blocks.append(
+            f"  - id: TODO.{slug}\n"
+            f"    title: \"TODO describe the rule this hook enforces\"\n"
+            f"    category: FLOW\n"
+            f"    source: {{ file: CLAUDE.md, anchor: \"TODO the heading this rule lives under\" }}\n"
+            f"    strength: REFLEX\n"
+            f"    firing_mode: [hook]\n"
+            f"    mechanism:\n"
+            f"      - {{ kind: Reflex, canonical_name: {base}, firing_event: {ev}, firing_matcher: \"{mt}\" }}\n"
+            f"    proof:\n"
+            f"      - {{ method: IN_HOOKS_JSON, locator: \"{ev}|{mt}|{base}\", expect: present }}\n"
+            f"      - {{ method: ANCHOR_PRESENT, locator: \"TODO the heading this rule lives under\", expect: present }}\n"
+            f"    liveness_required: FIRES\n"
+        )
+    if blocks:
+        with open(REGISTRY_PATH, "a", encoding="utf-8") as f:
+            f.write("\n  # --- brain_doctor --fix: TODO stubs for orphan hooks; fill id/title/category/anchor ---\n")
+            f.write("".join(blocks))
+    return len(blocks)
+
+
 def check_orphan_hooks(fix: bool) -> list:
-    """D4 (RULE #1 bidirectional): every live hook in hooks.json must be claimed by a registry rule."""
+    """D4 (RULE #1 bidirectional): every live hook in hooks.json must be claimed by a registry rule.
+    With --fix, scaffold a TODO stub per orphan so registering a new reflex is one edit, not hand-YAML.
+    The stub stays FAIL until its anchor is filled, so --fix helps but never silences a gap."""
     try:
         reg = Registry.load(REGISTRY_PATH)
     except Exception as e:
@@ -789,12 +822,18 @@ def check_orphan_hooks(fix: bool) -> list:
     # so the two checks together close the loop without double-reporting here.
     registered = {os.path.basename(m.canonical_name)
                   for r in reg.rules for m in r.mechanisms if m.canonical_name}
-    hooked = {base for (_ev, _mt, base) in _hooks_index()}
+    idx = _hooks_index()
+    hooked = {base for (_ev, _mt, base) in idx}
     orphans = sorted(hooked - registered)
+    if orphans and fix:
+        n = _scaffold_orphan_stubs(orphans, idx)
+        return [Result("registry-orphans", FAIL,
+                       f"scaffolded {n} TODO stub(s) in rules.yaml for: {', '.join(orphans)}",
+                       "fill each stub's title/category/anchor in rules.yaml, then re-run (stubs stay FAIL until filled)")]
     return [Result("registry-orphans", FAIL if orphans else PASS,
                    f"all {len(hooked)} live hooks claimed by a registry rule"
                    if not orphans else f"orphan hooks (fire but unregistered): {', '.join(orphans)}",
-                   "register every hooks.json script in registry/rules.yaml (RULE #1 is bidirectional)")]
+                   "register every hooks.json script in registry/rules.yaml, or run brain_doctor --fix to scaffold stubs")]
 
 
 CHECKS = [
