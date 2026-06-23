@@ -535,6 +535,7 @@ def check_release_drift(fix: bool) -> Result:
 
 REGISTRY_PATH = CLAUDE_DIR / "registry" / "rules.yaml"
 REGISTRY_SCHEMA = CLAUDE_DIR / "registry" / "rules.schema.json"
+NAMING_POLICY = CLAUDE_DIR / "registry" / "naming-policy.yaml"
 HOOKS_JSON = CLAUDE_DIR / "hooks.json"
 CLAUDE_MD = CLAUDE_DIR / "CLAUDE.md"
 CC_EVENTS = {"UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionStart"}
@@ -734,9 +735,44 @@ def check_registry(fix: bool) -> list:
     return out
 
 
+def check_naming(fix: bool) -> list:
+    """RULE #1 nomenclature: a NEW hook script must follow the canonical scheme; existing grandfathered."""
+    if not NAMING_POLICY.exists():
+        return [Result("registry-naming", FAIL, "naming-policy.yaml missing (registry incomplete)",
+                       "restore registry/naming-policy.yaml")]
+    try:
+        import re
+        import yaml
+        pol = yaml.safe_load(NAMING_POLICY.read_text(encoding="utf-8")) or {}
+        reg = Registry.load(REGISTRY_PATH)
+    except Exception as e:
+        return [Result("registry-naming", FAIL, f"naming check crashed: {e}",
+                       "fix naming-policy.yaml / rules.yaml")]
+    scheme = re.compile(pol.get("scheme", r"^$"))
+    grandfathered = set(pol.get("grandfathered", []))
+    want_prefix = {"Gate": "g", "Reflex": "r", "Detector": "d", "Presence": "m"}
+    fails = []
+    for rule in reg.rules:
+        for m in rule.mechanisms:
+            cn = m.canonical_name
+            if not cn or not cn.endswith(".py") or m.firing_event not in CC_EVENTS:
+                continue  # only Claude Code hook scripts are subject to the naming scheme
+            if scheme.match(cn):
+                wp = want_prefix.get(m.kind)
+                if wp and cn[0] != wp:
+                    fails.append(f"{rule.id}: {cn} prefix '{cn[0]}' != kind {m.kind} ('{wp}')")
+            elif cn not in grandfathered:
+                fails.append(f"{rule.id}: new hook script '{cn}' must be <prefix>__<event>__<slug>.py")
+    return [Result("registry-naming", FAIL if fails else PASS,
+                   f"{len(grandfathered)} grandfathered; new hook scripts follow the canonical scheme"
+                   if not fails else "; ".join(fails[:4]),
+                   "new hook scripts must match the scheme in registry/naming-policy.yaml")]
+
+
 CHECKS = [
     ("repo-identity", check_repo_identity),
     ("rule-1-registry", check_registry),
+    ("rule-1-naming", check_naming),
     ("sync-clean", check_sync_clean),
     ("interpreter", check_interpreter),
     ("python-deps", check_python_deps),
@@ -804,7 +840,7 @@ def main() -> int:
 
     if args.registry:
         try:
-            results = check_registry(args.fix)
+            results = check_registry(args.fix) + check_naming(args.fix)
         except Exception as e:
             results = [Result("rule-1-registry", FAIL, f"registry check crashed: {e}",
                               "fix registry/rules.yaml so it loads and validates")]
