@@ -640,12 +640,19 @@ class Rule:
         self.id = d.get("id", "?")
         self.category = d.get("category", "?")
         self.strength = d.get("strength", "?")
-        self.anchor = (d.get("source") or {}).get("anchor", "")
+        src = d.get("source") or {}
+        self.anchor = src.get("anchor", "")
+        self.source_file = src.get("file", "CLAUDE.md")  # a rule may anchor in a skill, not only CLAUDE.md
         self.mechanisms = [make_mechanism(m) for m in d.get("mechanism", [])]
 
-    def anchor_failure(self, claude_text: str):
-        if self.anchor and self.anchor not in claude_text:
-            return f"{self.id}: anchor '{self.anchor}' absent"
+    def anchor_failure(self, texts: dict):
+        """texts is a filename->text cache; the anchor must be present in this rule's source.file."""
+        if not self.anchor:
+            return None
+        if self.source_file not in texts:
+            texts[self.source_file] = _rt(CLAUDE_DIR / self.source_file)
+        if self.anchor not in texts[self.source_file]:
+            return f"{self.id}: anchor '{self.anchor}' absent in {self.source_file}"
         return None
 
     def wiring_failures(self, hooks: set) -> list:
@@ -706,10 +713,10 @@ def check_registry(fix: bool) -> list:
     # D2 forward anchors + D3 per-rule wiring (polymorphic via the Mechanism hierarchy)
     registry = Registry(reg)
     hooks = _hooks_index()
-    ctext = _rt(CLAUDE_MD)
+    texts = {"CLAUDE.md": _rt(CLAUDE_MD)}  # filename->text cache; rules may anchor in a skill
     wiring_fail, anchor_fail = [], []
     for rule in registry.rules:
-        af = rule.anchor_failure(ctext)
+        af = rule.anchor_failure(texts)
         if af:
             anchor_fail.append(af)
         wiring_fail.extend(rule.wiring_failures(hooks))
@@ -718,9 +725,9 @@ def check_registry(fix: bool) -> list:
                       if not wiring_fail else "; ".join(wiring_fail[:5]),
                       "every mechanism must exist on disk and be in hooks.json"))
     out.append(Result("registry-anchors", FAIL if anchor_fail else PASS,
-                      "all rule anchors present in CLAUDE.md"
+                      "all rule anchors present in their source file"
                       if not anchor_fail else "; ".join(anchor_fail[:4]),
-                      "fix source.anchor or restore the CLAUDE.md heading"))
+                      "fix source.anchor/source.file or restore the heading"))
 
     # D2 reverse: prose anchors with no rule -> WARN (Phase 0 coverage gap, not fail-closed yet)
     covered = {(r.get("source") or {}).get("anchor", "") for r in rules}
@@ -769,10 +776,27 @@ def check_naming(fix: bool) -> list:
                    "new hook scripts must match the scheme in registry/naming-policy.yaml")]
 
 
+def check_orphan_hooks(fix: bool) -> list:
+    """D4 (RULE #1 bidirectional): every live hook in hooks.json must be claimed by a registry rule."""
+    try:
+        reg = Registry.load(REGISTRY_PATH)
+    except Exception as e:
+        return [Result("registry-orphans", FAIL, f"cannot load registry: {e}", "fix registry/rules.yaml")]
+    registered = {os.path.basename(m.canonical_name)
+                  for r in reg.rules for m in r.mechanisms if m.canonical_name}
+    hooked = {base for (_ev, _mt, base) in _hooks_index()}
+    orphans = sorted(hooked - registered)
+    return [Result("registry-orphans", FAIL if orphans else PASS,
+                   f"all {len(hooked)} live hooks claimed by a registry rule"
+                   if not orphans else f"orphan hooks (fire but unregistered): {', '.join(orphans)}",
+                   "register every hooks.json script in registry/rules.yaml (RULE #1 is bidirectional)")]
+
+
 CHECKS = [
     ("repo-identity", check_repo_identity),
     ("rule-1-registry", check_registry),
     ("rule-1-naming", check_naming),
+    ("rule-1-orphans", check_orphan_hooks),
     ("sync-clean", check_sync_clean),
     ("interpreter", check_interpreter),
     ("python-deps", check_python_deps),
@@ -840,7 +864,7 @@ def main() -> int:
 
     if args.registry:
         try:
-            results = check_registry(args.fix) + check_naming(args.fix)
+            results = check_registry(args.fix) + check_naming(args.fix) + check_orphan_hooks(args.fix)
         except Exception as e:
             results = [Result("rule-1-registry", FAIL, f"registry check crashed: {e}",
                               "fix registry/rules.yaml so it loads and validates")]

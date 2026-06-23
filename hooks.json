@@ -141,6 +141,12 @@
     {
       "hooks": [
         {
+          "command": "python3 ~/.claude/scripts/merge-hooks.py",
+          "statusMessage": "♦ reconciling settings.json from hooks.json (drift self-heal)...",
+          "timeout": 5,
+          "type": "command"
+        },
+        {
           "command": "python3 ~/.claude/scripts/session-isolation-hook.py",
           "statusMessage": "♦ 4D: dimension isolation (auto-fork)...",
           "timeout": 5,

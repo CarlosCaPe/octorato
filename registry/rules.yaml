@@ -818,3 +818,89 @@ rules:
         locator: "ULTRA RULE: `ai-sync"
         expect: present
     liveness_required: PRESENT
+
+  # --- D4 (Phase 4b): the 6 previously-orphan hooks, now registered (RULE #1 bidirectional) ---
+  - id: MEMORY.arm-recall
+    title: "Recall an arm's own stored knowledge before researching or asking"
+    category: MEMORY
+    source: { file: CLAUDE.md, anchor: "Skill-First Behavior" }
+    strength: REFLEX
+    firing_mode: [hook]
+    mechanism:
+      - { kind: Reflex, canonical_name: arm-recall-hook.py, firing_event: UserPromptSubmit, firing_matcher: "*" }
+    proof:
+      - { method: IN_HOOKS_JSON, locator: "UserPromptSubmit|*|arm-recall-hook.py", expect: present }
+      - { method: ANCHOR_PRESENT, locator: "Skill-First Behavior", expect: present }
+    liveness_required: FIRES
+  - id: MEMORY.brain-memory-recall
+    title: "Surface the brain's own life-memories relevant to the prompt before asking"
+    category: MEMORY
+    source: { file: CLAUDE.md, anchor: "When Unsure" }
+    strength: REFLEX
+    firing_mode: [hook]
+    mechanism:
+      - { kind: Reflex, canonical_name: brain-memory-recall.py, firing_event: UserPromptSubmit, firing_matcher: "*" }
+    proof:
+      - { method: IN_HOOKS_JSON, locator: "UserPromptSubmit|*|brain-memory-recall.py", expect: present }
+      - { method: ANCHOR_PRESENT, locator: "When Unsure", expect: present }
+    liveness_required: FIRES
+  - id: COMMS.no-pause
+    title: "Do not ask to pause; execute, never propose stopping"
+    category: COMMS
+    source: { file: CLAUDE.md, anchor: "Machine register" }
+    strength: DETECTOR
+    firing_mode: [hook]
+    mechanism:
+      - { kind: Detector, canonical_name: no-pause-suggestion.py, firing_event: Stop, firing_matcher: "*" }
+    proof:
+      - { method: IN_HOOKS_JSON, locator: "Stop|*|no-pause-suggestion.py", expect: present }
+      - { method: ANCHOR_PRESENT, locator: "Machine register", expect: present }
+    liveness_required: FIRES
+  - id: COMMS.client-doc-lint
+    title: "Client deliverables pass the doc lint before they are sent"
+    category: COMMS
+    source: { file: skills/client-doc-lint/SKILL.md, anchor: "el doc no se manda sin pasar el lint" }
+    strength: DETECTOR
+    firing_mode: [hook]
+    mechanism:
+      - { kind: Detector, canonical_name: client-doc-lint-hook.py, firing_event: PostToolUse, firing_matcher: "Bash" }
+    proof:
+      - { method: IN_HOOKS_JSON, locator: "PostToolUse|Bash|client-doc-lint-hook.py", expect: present }
+      - { method: ANCHOR_PRESENT, locator: "el doc no se manda sin pasar el lint", expect: present }
+    liveness_required: FIRES
+  - id: MEMORY.inbox-sweep
+    title: "Full inbox sweep when email or pendientes are requested"
+    category: MEMORY
+    source: { file: skills/inbox-triage-classifier/SKILL.md, anchor: "Inbox-Triage Classifier" }
+    strength: REFLEX
+    firing_mode: [hook]
+    mechanism:
+      - { kind: Reflex, canonical_name: inbox-sweep-reflex.py, firing_event: UserPromptSubmit, firing_matcher: "*" }
+    proof:
+      - { method: IN_HOOKS_JSON, locator: "UserPromptSubmit|*|inbox-sweep-reflex.py", expect: present }
+      - { method: ANCHOR_PRESENT, locator: "Inbox-Triage Classifier", expect: present }
+    liveness_required: FIRES
+  - id: FLOW.canon-heal
+    title: "Heal the content canon to unison on every edit"
+    category: FLOW
+    source: { file: skills/octorato-harmony/SKILL.md, anchor: "Octorato Harmony" }
+    strength: REFLEX
+    firing_mode: [hook]
+    mechanism:
+      - { kind: Reflex, canonical_name: canon-heal-hook.py, firing_event: PostToolUse, firing_matcher: "Write|Edit" }
+    proof:
+      - { method: IN_HOOKS_JSON, locator: "PostToolUse|Write|Edit|canon-heal-hook.py", expect: present }
+      - { method: ANCHOR_PRESENT, locator: "Octorato Harmony", expect: present }
+    liveness_required: FIRES
+  - id: ARCHITECTURE.drift-self-heal
+    title: "Reconcile settings.json from the tracked hooks.json at session start (drift self-heal)"
+    category: ARCHITECTURE
+    source: { file: CLAUDE.md, anchor: "Multi-Machine Sync" }
+    strength: REFLEX
+    firing_mode: [hook]
+    mechanism:
+      - { kind: Reflex, canonical_name: merge-hooks.py, firing_event: SessionStart, firing_matcher: "*" }
+    proof:
+      - { method: IN_HOOKS_JSON, locator: "SessionStart|*|merge-hooks.py", expect: present }
+      - { method: ANCHOR_PRESENT, locator: "Multi-Machine Sync", expect: present }
+    liveness_required: FIRES

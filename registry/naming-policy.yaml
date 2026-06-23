@@ -34,3 +34,10 @@ grandfathered:
   - session-isolation-hook.py
   - source-attribution-check.py
   - trace-hook.py
+  - arm-recall-hook.py
+  - brain-memory-recall.py
+  - canon-heal-hook.py
+  - client-doc-lint-hook.py
+  - inbox-sweep-reflex.py
+  - no-pause-suggestion.py
+  - merge-hooks.py
