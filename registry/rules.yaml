@@ -202,3 +202,619 @@ rules:
     proof:
       - { method: IN_HOOKS_JSON, locator: "UserPromptSubmit|*|eye-check.py", expect: present }
     liveness_required: FIRES
+  - id: IDENTITY.self-awareness
+    title: Self-awareness — Octorato identity anchor
+    category: IDENTITY
+    strength: PRESENCE
+    firing_mode:
+      - model
+    source:
+      file: CLAUDE.md
+      anchor: "Self-Awareness — You Are Running on Octorato"
+    mechanism:
+      - kind: Presence
+        canonical_name: null
+        firing_event: null
+        firing_matcher: null
+    proof:
+      - method: ANCHOR_PRESENT
+        locator: "Self-Awareness — You Are Running on Octorato"
+        expect: present
+    liveness_required: PRESENT
+
+  - id: IDENTITY.generic-stance
+    title: Generic stance — Octorato identity non-negotiable
+    category: IDENTITY
+    strength: PRESENCE
+    firing_mode:
+      - model
+    source:
+      file: CLAUDE.md
+      anchor: "Octorato's Stance (Generic Identity"
+    mechanism:
+      - kind: Presence
+        canonical_name: null
+        firing_event: null
+        firing_matcher: null
+    proof:
+      - method: ANCHOR_PRESENT
+        locator: "Octorato's Stance (Generic Identity"
+        expect: present
+    liveness_required: PRESENT
+
+  - id: ARCHITECTURE.octopus-architecture
+    title: Octopus architecture — structural model anchor
+    category: ARCHITECTURE
+    strength: DETECTOR
+    firing_mode:
+      - git-hook
+    source:
+      file: CLAUDE.md
+      anchor: "## The Octopus Architecture"
+    mechanism:
+      - kind: Detector
+        canonical_name: check-generic.py
+        firing_event: PrePush
+        firing_matcher: null
+    proof:
+      - method: FILE_EXISTS
+        locator: scripts/check-generic.py
+        expect: present
+      - method: ANCHOR_PRESENT
+        locator: "## The Octopus Architecture"
+        expect: present
+    liveness_required: PRESENT
+
+  - id: ARCHITECTURE.core-principles
+    title: Core principles — arm isolation gates
+    category: ARCHITECTURE
+    strength: GATE
+    firing_mode:
+      - hook
+    source:
+      file: CLAUDE.md
+      anchor: "### Core Principles"
+    mechanism:
+      - kind: Gate
+        canonical_name: session-isolation-hook.py
+        firing_event: SessionStart
+        firing_matcher: null
+      - kind: Gate
+        canonical_name: dimension-awareness-hook.py
+        firing_event: PreToolUse
+        firing_matcher: Bash
+    proof:
+      - method: IN_HOOKS_JSON
+        locator: "SessionStart|*|session-isolation-hook.py"
+        expect: present
+      - method: IN_HOOKS_JSON
+        locator: "PreToolUse|Bash|dimension-awareness-hook.py"
+        expect: present
+      - method: ANCHOR_PRESENT
+        locator: "### Core Principles"
+        expect: present
+    liveness_required: FIRES
+
+  - id: ARCHITECTURE.information-flow
+    title: Information flow rules — cross-arm leak detector
+    category: ARCHITECTURE
+    strength: DETECTOR
+    firing_mode:
+      - git-hook
+    source:
+      file: CLAUDE.md
+      anchor: "### Information Flow Rules"
+    mechanism:
+      - kind: Detector
+        canonical_name: check-generic.py
+        firing_event: PrePush
+        firing_matcher: null
+    proof:
+      - method: FILE_EXISTS
+        locator: scripts/check-generic.py
+        expect: present
+      - method: ANCHOR_PRESENT
+        locator: "### Information Flow Rules"
+        expect: present
+    liveness_required: PRESENT
+
+  - id: ARCHITECTURE.layers
+    title: Layer separation — memory tier enforcement
+    category: ARCHITECTURE
+    strength: DETECTOR
+    firing_mode:
+      - runner
+    source:
+      file: CLAUDE.md
+      anchor: "### Layers"
+    mechanism:
+      - kind: Detector
+        canonical_name: memory_sync.py
+        firing_event: null
+        firing_matcher: null
+    proof:
+      - method: FILE_EXISTS
+        locator: scripts/memory_sync.py
+        expect: present
+      - method: ANCHOR_PRESENT
+        locator: "### Layers"
+        expect: present
+    liveness_required: PRESENT
+
+  - id: CODE.universal-discipline
+    title: Universal code discipline — baseline rules
+    category: CODE
+    strength: PRESENCE
+    firing_mode:
+      - model
+    source:
+      file: CLAUDE.md
+      anchor: "## Universal Code Discipline"
+    mechanism:
+      - kind: Presence
+        canonical_name: null
+        firing_event: null
+        firing_matcher: null
+    proof:
+      - method: ANCHOR_PRESENT
+        locator: "## Universal Code Discipline"
+        expect: present
+    liveness_required: PRESENT
+
+  - id: CODE.do-it-right
+    title: Do it right not fast — root cause over palliative
+    category: CODE
+    strength: PRESENCE
+    firing_mode:
+      - model
+    source:
+      file: CLAUDE.md
+      anchor: "ULTRA RULE — Do it right, not fast"
+    mechanism:
+      - kind: Presence
+        canonical_name: null
+        firing_event: null
+        firing_matcher: null
+    proof:
+      - method: ANCHOR_PRESENT
+        locator: "ULTRA RULE — Do it right, not fast"
+        expect: present
+    liveness_required: PRESENT
+
+  - id: SECURITY.baseline
+    title: Security baseline — secrets gate at Bash and push
+    category: SECURITY
+    strength: GATE
+    firing_mode:
+      - hook
+      - git-hook
+    source:
+      file: CLAUDE.md
+      anchor: "## Security (Non-Negotiable)"
+    mechanism:
+      - kind: Gate
+        canonical_name: secrets-grep-guard.py
+        firing_event: PreToolUse
+        firing_matcher: Bash
+      - kind: Gate
+        canonical_name: check-generic.py
+        firing_event: PrePush
+        firing_matcher: null
+    proof:
+      - method: IN_HOOKS_JSON
+        locator: "PreToolUse|Bash|secrets-grep-guard.py"
+        expect: present
+      - method: FILE_EXISTS
+        locator: scripts/check-generic.py
+        expect: present
+      - method: ANCHOR_PRESENT
+        locator: "## Security (Non-Negotiable)"
+        expect: present
+    liveness_required: FIRES
+
+  - id: CODE.prompt-defense
+    title: PromptDefense baseline — anti-injection rules
+    category: CODE
+    strength: PRESENCE
+    firing_mode:
+      - model
+    source:
+      file: CLAUDE.md
+      anchor: "## PromptDefense Baseline"
+    mechanism:
+      - kind: Presence
+        canonical_name: null
+        firing_event: null
+        firing_matcher: null
+    proof:
+      - method: ANCHOR_PRESENT
+        locator: "## PromptDefense Baseline"
+        expect: present
+    liveness_required: PRESENT
+
+  - id: COMMS.communication-baseline
+    title: Communication baseline — cadence stop detector
+    category: COMMS
+    strength: DETECTOR
+    firing_mode:
+      - hook
+    source:
+      file: CLAUDE.md
+      anchor: "## Communication"
+    mechanism:
+      - kind: Detector
+        canonical_name: cadence-stop-hook.py
+        firing_event: Stop
+        firing_matcher: "*"
+    proof:
+      - method: IN_HOOKS_JSON
+        locator: "Stop|*|cadence-stop-hook.py"
+        expect: present
+      - method: ANCHOR_PRESENT
+        locator: "## Communication"
+        expect: present
+    liveness_required: FIRES
+
+  - id: COMMS.machine-register
+    title: Machine register — no human-social filler
+    category: COMMS
+    strength: PRESENCE
+    firing_mode:
+      - model
+    source:
+      file: CLAUDE.md
+      anchor: "ULTRA RULE — Machine register"
+    mechanism:
+      - kind: Presence
+        canonical_name: null
+        firing_event: null
+        firing_matcher: null
+    proof:
+      - method: ANCHOR_PRESENT
+        locator: "ULTRA RULE — Machine register"
+        expect: present
+    liveness_required: PRESENT
+
+  - id: GIT.version-control
+    title: Git and version control — atomic commit discipline
+    category: GIT
+    strength: PRESENCE
+    firing_mode:
+      - model
+    source:
+      file: CLAUDE.md
+      anchor: "## Git & Version Control"
+    mechanism:
+      - kind: Presence
+        canonical_name: null
+        firing_event: null
+        firing_matcher: null
+    proof:
+      - method: ANCHOR_PRESENT
+        locator: "## Git & Version Control"
+        expect: present
+    liveness_required: PRESENT
+
+  - id: CODE.file-organization
+    title: File organization — config-first no summary markdown
+    category: CODE
+    strength: PRESENCE
+    firing_mode:
+      - model
+    source:
+      file: CLAUDE.md
+      anchor: "## File Organization"
+    mechanism:
+      - kind: Presence
+        canonical_name: null
+        firing_event: null
+        firing_matcher: null
+    proof:
+      - method: ANCHOR_PRESENT
+        locator: "## File Organization"
+        expect: present
+    liveness_required: PRESENT
+
+  - id: CODE.when-unsure
+    title: When unsure — search before assuming
+    category: CODE
+    strength: PRESENCE
+    firing_mode:
+      - model
+    source:
+      file: CLAUDE.md
+      anchor: "## When Unsure"
+    mechanism:
+      - kind: Presence
+        canonical_name: null
+        firing_event: null
+        firing_matcher: null
+    proof:
+      - method: ANCHOR_PRESENT
+        locator: "## When Unsure"
+        expect: present
+    liveness_required: PRESENT
+
+  - id: FLOW.prune-dead-cells
+    title: Prune dead cells — lineage-doctor detects orphans at push
+    category: FLOW
+    strength: DETECTOR
+    firing_mode:
+      - git-hook
+    source:
+      file: CLAUDE.md
+      anchor: "ULTRA RULE — Prune dead cells"
+    mechanism:
+      - kind: Detector
+        canonical_name: lineage-doctor.py
+        firing_event: PrePush
+        firing_matcher: null
+    proof:
+      - method: FILE_EXISTS
+        locator: scripts/lineage-doctor.py
+        expect: present
+      - method: ANCHOR_PRESENT
+        locator: "ULTRA RULE — Prune dead cells"
+        expect: present
+    liveness_required: PRESENT
+
+  - id: FLOW.suggest-unlock
+    title: Suggest the unlock — disclose capability gaps
+    category: FLOW
+    strength: PRESENCE
+    firing_mode:
+      - model
+    source:
+      file: CLAUDE.md
+      anchor: "ULTRA RULE — Suggest the unlock"
+    mechanism:
+      - kind: Presence
+        canonical_name: null
+        firing_event: null
+        firing_matcher: null
+    proof:
+      - method: ANCHOR_PRESENT
+        locator: "ULTRA RULE — Suggest the unlock"
+        expect: present
+    liveness_required: PRESENT
+
+  - id: FLOW.4d-gate-prewrite
+    title: 4D pre-write manifest gate
+    category: FLOW
+    strength: REFLEX
+    firing_mode:
+      - hook
+      - cli
+    source:
+      file: CLAUDE.md
+      anchor: "### 4D Gate (Pre-Write Manifest)"
+    mechanism:
+      - kind: Reflex
+        canonical_name: 4d-reminder.py
+        firing_event: UserPromptSubmit
+        firing_matcher: null
+      - kind: Reflex
+        canonical_name: gate-check
+        firing_event: null
+        firing_matcher: null
+    proof:
+      - method: IN_HOOKS_JSON
+        locator: "UserPromptSubmit|*|4d-reminder.py"
+        expect: present
+      - method: FILE_EXISTS
+        locator: scripts/gate-check
+        expect: present
+      - method: ANCHOR_PRESENT
+        locator: "### 4D Gate (Pre-Write Manifest)"
+        expect: present
+    liveness_required: FIRES
+
+  - id: FLOW.3d-diligent-gate
+    title: 3D diligent gate — post-write validation
+    category: FLOW
+    strength: REFLEX
+    firing_mode:
+      - hook
+    source:
+      file: CLAUDE.md
+      anchor: "### 3D Diligent Gate"
+    mechanism:
+      - kind: Reflex
+        canonical_name: trace-hook.py
+        firing_event: PostToolUse
+        firing_matcher: "Write|Edit"
+      - kind: Detector
+        canonical_name: source-attribution-check.py
+        firing_event: Stop
+        firing_matcher: "*"
+    proof:
+      - method: IN_HOOKS_JSON
+        locator: "PostToolUse|Write|Edit|trace-hook.py"
+        expect: present
+      - method: IN_HOOKS_JSON
+        locator: "Stop|*|source-attribution-check.py"
+        expect: present
+      - method: ANCHOR_PRESENT
+        locator: "### 3D Diligent Gate"
+        expect: present
+    liveness_required: FIRES
+
+  - id: FLOW.4d-spec-enhancement
+    title: 4D+S spec-driven enhancement — complexity classifier
+    category: FLOW
+    strength: PRESENCE
+    firing_mode:
+      - model
+    source:
+      file: CLAUDE.md
+      anchor: "### 4D+S — Spec-Driven Enhancement"
+    mechanism:
+      - kind: Presence
+        canonical_name: null
+        firing_event: null
+        firing_matcher: null
+    proof:
+      - method: ANCHOR_PRESENT
+        locator: "### 4D+S — Spec-Driven Enhancement"
+        expect: present
+    liveness_required: PRESENT
+
+  - id: FLOW.enforcement-scripts
+    title: Enforcement scripts — mandatory Q1/Q3 reflexes
+    category: FLOW
+    strength: REFLEX
+    firing_mode:
+      - hook
+      - cli
+    source:
+      file: CLAUDE.md
+      anchor: "### Enforcement Scripts (Mandatory)"
+    mechanism:
+      - kind: Reflex
+        canonical_name: connectome-heartbeat.py
+        firing_event: UserPromptSubmit
+        firing_matcher: null
+      - kind: Reflex
+        canonical_name: delegate-gate.py
+        firing_event: PreToolUse
+        firing_matcher: Bash
+    proof:
+      - method: IN_HOOKS_JSON
+        locator: "UserPromptSubmit|*|connectome-heartbeat.py"
+        expect: present
+      - method: IN_HOOKS_JSON
+        locator: "PreToolUse|Bash|delegate-gate.py"
+        expect: present
+      - method: ANCHOR_PRESENT
+        locator: "### Enforcement Scripts (Mandatory)"
+        expect: present
+    liveness_required: FIRES
+
+  - id: CODE.best-tool-first
+    title: Best tool first — never settle for workarounds
+    category: CODE
+    strength: PRESENCE
+    firing_mode:
+      - model
+    source:
+      file: CLAUDE.md
+      anchor: "## Best Tool First"
+    mechanism:
+      - kind: Presence
+        canonical_name: null
+        firing_event: null
+        firing_matcher: null
+    proof:
+      - method: ANCHOR_PRESENT
+        locator: "## Best Tool First"
+        expect: present
+    liveness_required: PRESENT
+
+  - id: FLOW.skill-first
+    title: Skill-first behavior — domain reflexes via eye-check
+    category: FLOW
+    strength: REFLEX
+    firing_mode:
+      - hook
+    source:
+      file: CLAUDE.md
+      anchor: "## Skill-First Behavior"
+    mechanism:
+      - kind: Reflex
+        canonical_name: eye-check.py
+        firing_event: UserPromptSubmit
+        firing_matcher: null
+    proof:
+      - method: IN_HOOKS_JSON
+        locator: "UserPromptSubmit|*|eye-check.py"
+        expect: present
+      - method: ANCHOR_PRESENT
+        locator: "## Skill-First Behavior"
+        expect: present
+    liveness_required: FIRES
+
+  - id: META.querymaster
+    title: QueryMaster — global database agent anchor
+    category: META
+    strength: PRESENCE
+    firing_mode:
+      - model
+    source:
+      file: CLAUDE.md
+      anchor: "## QueryMaster — Global Database Agent"
+    mechanism:
+      - kind: Presence
+        canonical_name: null
+        firing_event: null
+        firing_matcher: null
+    proof:
+      - method: ANCHOR_PRESENT
+        locator: "## QueryMaster — Global Database Agent"
+        expect: present
+    liveness_required: PRESENT
+
+  - id: ARCHITECTURE.arm-onboarding
+    title: Arm onboarding — install-runners bootstrap detector
+    category: ARCHITECTURE
+    strength: DETECTOR
+    firing_mode:
+      - runner
+    source:
+      file: CLAUDE.md
+      anchor: "## Arm Onboarding"
+    mechanism:
+      - kind: Detector
+        canonical_name: install-runners.py
+        firing_event: null
+        firing_matcher: null
+    proof:
+      - method: FILE_EXISTS
+        locator: scripts/install-runners.py
+        expect: present
+      - method: ANCHOR_PRESENT
+        locator: "## Arm Onboarding"
+        expect: present
+    liveness_required: PRESENT
+
+  - id: META.multi-machine-sync
+    title: Multi-machine sync — brain consistency anchor
+    category: META
+    strength: PRESENCE
+    firing_mode:
+      - model
+    source:
+      file: CLAUDE.md
+      anchor: "## Multi-Machine Sync"
+    mechanism:
+      - kind: Presence
+        canonical_name: null
+        firing_event: null
+        firing_matcher: null
+    proof:
+      - method: ANCHOR_PRESENT
+        locator: "## Multi-Machine Sync"
+        expect: present
+    liveness_required: PRESENT
+
+  - id: META.ai-sync-canonical
+    title: ai-sync canonical runner — race-safe brain sync
+    category: META
+    strength: REFLEX
+    firing_mode:
+      - runner
+    source:
+      file: CLAUDE.md
+      anchor: "ULTRA RULE: `ai-sync"
+    mechanism:
+      - kind: Reflex
+        canonical_name: ai_sync.py
+        firing_event: null
+        firing_matcher: null
+    proof:
+      - method: FILE_EXISTS
+        locator: scripts/ai_sync.py
+        expect: present
+      - method: ANCHOR_PRESENT
+        locator: "ULTRA RULE: `ai-sync"
+        expect: present
+    liveness_required: PRESENT

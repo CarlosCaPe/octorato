@@ -47,7 +47,7 @@
         "firing_mode": {
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string", "enum": ["hook", "git-hook", "runner", "cli", "cron", "library", "observability"] }
+          "items": { "type": "string", "enum": ["hook", "git-hook", "runner", "cli", "cron", "library", "observability", "model"] }
         },
         "mechanism": {
           "type": "array",
