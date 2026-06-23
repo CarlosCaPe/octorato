@@ -608,6 +608,8 @@ class Mechanism:
         return None
 
 
+# Gate/Reflex/Detector share the base verify() today; the subclasses are intentional
+# extension points for per-strength liveness later (e.g. EXIT_CODE --selftest for Gates).
 class Gate(Mechanism):
     pass
 
@@ -800,7 +802,14 @@ def main() -> int:
                     help="run ONLY the RULE #1 registry checks (for .githooks/pre-push)")
     args = ap.parse_args()
 
-    results = check_registry(args.fix) if args.registry else run_all(args.fix)
+    if args.registry:
+        try:
+            results = check_registry(args.fix)
+        except Exception as e:
+            results = [Result("rule-1-registry", FAIL, f"registry check crashed: {e}",
+                              "fix registry/rules.yaml so it loads and validates")]
+    else:
+        results = run_all(args.fix)
     fails = sum(1 for r in results if r.status == FAIL)
 
     if args.json:
