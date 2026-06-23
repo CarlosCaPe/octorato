@@ -73,6 +73,11 @@
           "if": { "properties": { "category": { "enum": ["SECURITY", "GENERIC", "ARCHITECTURE"] } } },
           "then": { "properties": { "strength": { "enum": ["GATE", "REFLEX", "DETECTOR"] } } },
           "description": "A SECURITY/GENERIC/ARCHITECTURE rule at PRESENCE is itself CORRUPT (understated strength)."
+        },
+        {
+          "if": { "properties": { "mechanism": { "contains": { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "Presence" } } } } } },
+          "then": { "properties": { "category": { "not": { "enum": ["SECURITY", "GENERIC", "ARCHITECTURE"] } } } },
+          "description": "Closes the Presence-escape-hatch: a Presence (null-mechanism) entry on a SECURITY/GENERIC/ARCHITECTURE rule would falsely satisfy coverage with zero enforcement. Forbidden."
         }
       ]
     },
