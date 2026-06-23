@@ -309,6 +309,18 @@ Full protocol, gate formats, validation matrix, enforcement scripts, and the WHI
 
 ---
 
+## Wired or Corrupt: the brain enforces itself
+
+Most agent instructions are prose the model can skip under load. Octorato refuses that. **RULE #1 is the constitution's first rule: every rule must be wired.** A rule is wired only when `registry/rules.yaml` maps it to a live mechanism (a hook, a gate, a detector). A rule that exists as prose with no registered, live mechanism is not a rule. It is rot, and a brain that carries it is **CORRUPT**.
+
+`brain_doctor` is the mechanism of that rule. It loads the registry, asserts every rule is wired, and reconciles **both directions**: every CLAUDE.md rule has a mechanism, and every live hook has a rule. One miss and the doctor declares the brain corrupt, exits non-zero, and `.githooks/pre-push` **blocks the push**. No `--force`, no soft-fail. A documented-but-absent hook can no longer ship.
+
+"Wired" means covered, not mechanically forced. A model-behavior rule (tone, no-hallucination, identity) is backed by a registered detector or a presence-assert, never by bare prose. The Coverage Ledger prints the enforcement strength per rule, so 100% coverage is never misread as 100% force.
+
+Full architecture, the label ontology, and the migration history: [`docs/architecture/wired-or-corrupt.md`](docs/architecture/wired-or-corrupt.md).
+
+---
+
 ## 4D+S — Spec-Driven Development Integration
 
 For tasks above trivial complexity, the 4D integrates with a spec-driven workflow:

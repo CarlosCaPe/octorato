@@ -303,6 +303,16 @@ The intellectual lineage is math and biology, deliberately: **∞** from John Wa
 
 ---
 
+## 10. Wired or Corrupt: the self-enforcing constitution
+
+Rules used to be prose the model could skip under load. RULE #1 ends that: every rule in `CLAUDE.md` must be wired to a live mechanism, registered in `registry/rules.yaml`. A rule with no registered, live mechanism is not a rule. It is rot, and a brain carrying it is CORRUPT.
+
+`brain_doctor` is RULE #1's own mechanism. It reconciles the registry in **both directions**: every constitution rule has a mechanism, and every live hook has a rule (no orphans). One miss and the doctor exits non-zero, and `.githooks/pre-push` blocks the push. A documented-but-absent hook can no longer ship, which is how the original "phantom script" bug died.
+
+"Wired" means covered, not mechanically forced. Model-behavior rules (tone, no-hallucination, identity) are backed by a registered detector or a presence-assert, and the Coverage Ledger prints the enforcement strength per rule, so coverage is never confused with force. Full design: [`wired-or-corrupt.md`](../architecture/wired-or-corrupt.md).
+
+---
+
 ## See also
 
 - [[The-4D-Paradigm]] — the nervous-system protocol; the Change Gate, the three delegate questions, and the Impact Radius scan.

@@ -160,6 +160,18 @@ The brain's **multi-engine database CLI** — `qm -e <engine> -c <conn> "<query>
 
 ---
 
+## R
+
+### RULE #1 (Wired or Corrupt)
+
+The constitution's first rule: every rule must be wired to a live mechanism, or the brain is CORRUPT. A rule with no registered, live mechanism in the [[#Rule registry]] is not a rule, it is rot. `brain_doctor` enforces it, reconciling both directions (every rule has a mechanism, every live hook has a rule); a miss exits non-zero and `.githooks/pre-push` blocks the push. "Wired" means covered (a gate, reflex, detector, or presence-assert), not 100% mechanically forced. See [`wired-or-corrupt.md`](../architecture/wired-or-corrupt.md).
+
+### Rule registry
+
+The single source of truth for [[#RULE #1 (Wired or Corrupt)]]: `registry/rules.yaml` maps every constitution rule to its backing mechanism(s), validated by `registry/rules.schema.json`. `brain_doctor` loads it to assert coverage in both directions and prints a Coverage Ledger.
+
+---
+
 ## S
 
 ### Self-growth loop
