@@ -581,6 +581,90 @@ def _claude_anchors() -> list:
     return anchors
 
 
+# --- OO mechanism hierarchy (Phase 2): strength == subclass, verify() is polymorphic ---
+
+class Mechanism:
+    """A backing mechanism for a rule. Subclass per enforcement strength."""
+    def __init__(self, d: dict):
+        self.kind = d.get("kind")
+        self.canonical_name = d.get("canonical_name")
+        self.firing_event = d.get("firing_event")
+        self.firing_matcher = d.get("firing_matcher") or "*"
+
+    def verify(self, hooks: set):
+        """Return a one-line failure string, or None if this mechanism is live."""
+        cn = self.canonical_name
+        if not cn:
+            return None  # a null-script mechanism is verified at the rule's anchor level
+        if not _resolve_script(cn).exists():
+            return f"{cn} MISSING on disk"
+        if self.firing_event in CC_EVENTS:
+            base = os.path.basename(cn)
+            fm = self.firing_matcher
+            hit = any(e == self.firing_event and b == base and (mm == fm or fm == "*" or mm == "*")
+                      for (e, mm, b) in hooks)
+            if not hit:
+                return f"{base} not in hooks.json at {self.firing_event}|{fm}"
+        return None
+
+
+class Gate(Mechanism):
+    pass
+
+
+class Reflex(Mechanism):
+    pass
+
+
+class Detector(Mechanism):
+    pass
+
+
+class Presence(Mechanism):
+    def verify(self, hooks: set):
+        return None  # presence rules are covered by the rule's ANCHOR_PRESENT check, not a script
+
+
+_MECH_BY_KIND = {"Gate": Gate, "Reflex": Reflex, "Detector": Detector, "Presence": Presence}
+
+
+def make_mechanism(d: dict) -> Mechanism:
+    return _MECH_BY_KIND.get(d.get("kind"), Mechanism)(d)
+
+
+class Rule:
+    def __init__(self, d: dict):
+        self.id = d.get("id", "?")
+        self.category = d.get("category", "?")
+        self.strength = d.get("strength", "?")
+        self.anchor = (d.get("source") or {}).get("anchor", "")
+        self.mechanisms = [make_mechanism(m) for m in d.get("mechanism", [])]
+
+    def anchor_failure(self, claude_text: str):
+        if self.anchor and self.anchor not in claude_text:
+            return f"{self.id}: anchor '{self.anchor}' absent"
+        return None
+
+    def wiring_failures(self, hooks: set) -> list:
+        out = []
+        for m in self.mechanisms:
+            f = m.verify(hooks)
+            if f:
+                out.append(f"{self.id}: {f}")
+        return out
+
+
+class Registry:
+    def __init__(self, raw):
+        rules = raw.get("rules", []) if isinstance(raw, dict) else []
+        self.rules = [Rule(r) for r in rules]
+
+    @classmethod
+    def load(cls, path: Path):
+        import yaml
+        return cls(yaml.safe_load(path.read_text(encoding="utf-8")))
+
+
 def check_registry(fix: bool) -> list:
     """RULE #1: every registry rule must be wired; unwired = CORRUPT (FAIL)."""
     if not REGISTRY_PATH.exists():
@@ -616,30 +700,16 @@ def check_registry(fix: bool) -> list:
     except Exception as e:
         out.append(Result("registry-schema", FAIL, f"schema check crashed: {e}", "pip install jsonschema"))
 
-    # D2 forward anchors + D3 per-rule wiring
+    # D2 forward anchors + D3 per-rule wiring (polymorphic via the Mechanism hierarchy)
+    registry = Registry(reg)
     hooks = _hooks_index()
     ctext = _rt(CLAUDE_MD)
     wiring_fail, anchor_fail = [], []
-    for r in rules:
-        rid = r.get("id", "?")
-        anchor = (r.get("source") or {}).get("anchor", "")
-        if anchor and anchor not in ctext:
-            anchor_fail.append(f"{rid}: anchor '{anchor}' absent")
-        for m in r.get("mechanism", []):
-            cn = m.get("canonical_name")
-            if not cn:
-                continue
-            if not _resolve_script(cn).exists():
-                wiring_fail.append(f"{rid}: {cn} MISSING on disk")
-                continue
-            fe = m.get("firing_event")
-            if fe in CC_EVENTS:
-                fm = m.get("firing_matcher") or "*"
-                base = os.path.basename(cn)
-                hit = any(e == fe and b == base and (mm == fm or fm == "*" or mm == "*")
-                          for (e, mm, b) in hooks)
-                if not hit:
-                    wiring_fail.append(f"{rid}: {base} not in hooks.json at {fe}|{fm}")
+    for rule in registry.rules:
+        af = rule.anchor_failure(ctext)
+        if af:
+            anchor_fail.append(af)
+        wiring_fail.extend(rule.wiring_failures(hooks))
     out.append(Result("registry-wiring", FAIL if wiring_fail else PASS,
                       f"all {len(rules)} rules wired (disk + hooks.json)"
                       if not wiring_fail else "; ".join(wiring_fail[:5]),
