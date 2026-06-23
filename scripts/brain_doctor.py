@@ -654,11 +654,11 @@ def check_registry(fix: bool) -> list:
     anchors = _claude_anchors()
     uncovered = [a for a in anchors if not any(c and c in a for c in covered)]
     pct = round(100 * (len(anchors) - len(uncovered)) / max(1, len(anchors)))
-    out.append(Result("registry-coverage", WARN if uncovered else PASS,
+    out.append(Result("registry-coverage", FAIL if uncovered else PASS,
                       f"Coverage {pct}% of CLAUDE.md anchors "
                       f"({len(anchors) - len(uncovered)}/{len(anchors)}); "
-                      f"{len(uncovered)} prose anchors unwired (Phase 0)",
-                      "Phase 1: backfill uncovered anchors, then flip D2-reverse fail-closed"))
+                      f"{len(uncovered)} prose anchors unwired",
+                      "every CLAUDE.md rule-anchor needs a registry row (RULE #1, fail-closed)"))
     return out
 
 
