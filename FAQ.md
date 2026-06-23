@@ -34,6 +34,10 @@ Yes — MIT licensed, public on GitHub. You can read, fork, and self-host the en
 
 Every action follows four phases: **Describe** (state what and why), **Delegate** (search/verify before generating), **Diligent** (validate output with evidence), **Disclose** (state side effects and impact). It is the nervous system that makes each action describable, delegated, verified, and disclosed.
 
+## What stops a rule from being just ignored prose?
+
+**RULE #1: every rule must be wired, or the brain is corrupt.** A rule counts as real only when `registry/rules.yaml` maps it to a live mechanism (a hook, a gate, a detector). `brain_doctor` checks this in both directions: every rule in the constitution has a mechanism, and every live hook has a rule. If one is missing, the doctor declares the brain corrupt and the pre-push hook blocks the push. No force, no exception, no soft-fail. So a rule cannot quietly decay into advisory prose the model skips under load. Model-behavior rules (tone, no-hallucination, identity) are still registered, backed by a detector or a presence-assert. Full design: [`docs/architecture/wired-or-corrupt.md`](docs/architecture/wired-or-corrupt.md).
+
 ## Who maintains Octorato?
 
 Carlos Carrillo (Guadalajara, Mexico), through dataqbs. The productized "AI Agent OS" runs at [dataqbs.com](https://dataqbs.com), built and operated on this brain.

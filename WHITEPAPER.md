@@ -93,6 +93,13 @@ is edited — so a change is neither under-applied (a stale reference) nor over-
 (an unintended edit). Feedback alone is tremor; feedforward plus involuntary feedback is
 a steady reach.
 
+The nervous system is itself held to account by RULE #1: every rule in the constitution
+must be wired to a live mechanism registered in `registry/rules.yaml`, or the brain is
+declared CORRUPT and the pre-push hook blocks the push. A `brain_doctor` check reconciles
+both directions (every rule has a mechanism, every live hook has a rule), so a principle
+cannot decay into advisory prose the model skips. Coverage is enforced; the irreducible
+model-behavior rules are still registered, backed by a detector or a presence-assert.
+
 ## 7. The Connectome
 
 The brain's skills and agents form a graph — a TF-IDF and co-activation map that routes
