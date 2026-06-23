@@ -40,10 +40,11 @@ from shutil import which
 TAG_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 # Conventional-commit header: type(scope)!: subject
 CC_RE = re.compile(r"^(?P<type>[a-z]+)(?P<scope>\([^)]*\))?(?P<bang>!)?:", re.I)
-# Breaking-change trailer (spec form): a line starting with BREAKING CHANGE: or
-# BREAKING-CHANGE:. Anchored + multiline so prose like "NONBREAKING CHANGE foo"
-# in a subject does NOT trip a major bump, and the hyphen variant is caught.
-BREAKING_RE = re.compile(r"^BREAKING[ -]CHANGE:", re.M)
+# Breaking-change trailer: a line starting with BREAKING CHANGE: / BREAKING-CHANGE:
+# (conventional-commit spec form) OR Octorato-Major: (the form the CHANGELOG documents).
+# Anchored + multiline so prose like "NONBREAKING CHANGE foo" in a subject does NOT
+# trip a major bump, and the hyphen variant is caught. Both forms bump MAJOR.
+BREAKING_RE = re.compile(r"^(BREAKING[ -]CHANGE|Octorato-Major):", re.M)
 
 # Change-class policy (config-as-code). type -> bump when no `!`/BREAKING.
 MINOR_TYPES = {"feat"}
