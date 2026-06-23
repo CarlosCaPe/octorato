@@ -528,8 +528,143 @@ def check_release_drift(fix: bool) -> Result:
                   f"gh release create v{top_version} (notes from CHANGELOG); then run /dataqbs-news in the arm")
 
 
+# ---------------------------------------------------------------------------
+# RULE #1 — Registry checks (Wired or Corrupt). docs/architecture/wired-or-corrupt.md
+# D0 bootstrap, D1 schema, D2 anchors, D3 per-rule wiring + Coverage Ledger.
+# ---------------------------------------------------------------------------
+
+REGISTRY_PATH = CLAUDE_DIR / "registry" / "rules.yaml"
+REGISTRY_SCHEMA = CLAUDE_DIR / "registry" / "rules.schema.json"
+HOOKS_JSON = CLAUDE_DIR / "hooks.json"
+CLAUDE_MD = CLAUDE_DIR / "CLAUDE.md"
+CC_EVENTS = {"UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionStart"}
+
+
+def _rt(p: Path) -> str:
+    try:
+        return p.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _hooks_index() -> set:
+    """(event, matcher, script_basename) tuples from tracked hooks.json."""
+    idx = set()
+    try:
+        data = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return idx
+    for ev, arr in data.items():
+        if ev.startswith("$") or not isinstance(arr, list):
+            continue
+        for block in arr:
+            matcher = block.get("matcher", "*")
+            for hk in block.get("hooks", []):
+                for tok in hk.get("command", "").replace("\\", " ").split():
+                    if tok.endswith(".py"):
+                        idx.add((ev, matcher, os.path.basename(tok)))
+    return idx
+
+
+def _resolve_script(name: str) -> Path:
+    """canonical_name -> Path. bare .py lives under scripts/; a path is repo-root-relative."""
+    return (CLAUDE_DIR / name) if "/" in name else (CLAUDE_DIR / "scripts" / name)
+
+
+def _claude_anchors() -> list:
+    """Anchorable rule lines in CLAUDE.md: ## / ### headings + 'ULTRA RULE' lines."""
+    anchors = []
+    for ln in _rt(CLAUDE_MD).splitlines():
+        s = ln.strip()
+        if s.startswith("## ") or s.startswith("### ") or "ULTRA RULE" in s:
+            anchors.append(s)
+    return anchors
+
+
+def check_registry(fix: bool) -> list:
+    """RULE #1: every registry rule must be wired; unwired = CORRUPT (FAIL)."""
+    if not REGISTRY_PATH.exists():
+        return [Result("registry-bootstrap", FAIL, "registry/rules.yaml missing",
+                       "Phase 0: author registry/rules.yaml")]
+    try:
+        import yaml
+        reg = yaml.safe_load(REGISTRY_PATH.read_text(encoding="utf-8"))
+    except Exception as e:
+        return [Result("registry-bootstrap", FAIL, f"rules.yaml does not load: {e}", "fix YAML syntax")]
+    rules = reg.get("rules", []) if isinstance(reg, dict) else []
+    out = []
+
+    # D0 bootstrap: pre-push gate present (WARN in Phase 0 until commit lands)
+    pp = CLAUDE_DIR / ".githooks" / "pre-push"
+    sentinel = pp.exists() and "OCTORATO-WIRE-GATE" in _rt(pp)
+    out.append(Result("registry-bootstrap", PASS if sentinel else WARN,
+                      f"rules.yaml loads ({len(rules)} rules); pre-push gate "
+                      f"{'present' if sentinel else 'NOT wired yet'}",
+                      "" if sentinel else "add OCTORATO-WIRE-GATE block to .githooks/pre-push"))
+
+    # D1 schema
+    try:
+        from jsonschema import Draft202012Validator
+        schema = json.loads(REGISTRY_SCHEMA.read_text(encoding="utf-8"))
+        errs = sorted(Draft202012Validator(schema).iter_errors(reg), key=lambda e: list(e.path))
+        if errs:
+            msg = "; ".join(f"{'/'.join(map(str, e.path)) or '<root>'}: {e.message}" for e in errs[:3])
+            out.append(Result("registry-schema", FAIL, f"rules.yaml invalid: {msg}",
+                              "fix rules.yaml vs rules.schema.json"))
+        else:
+            out.append(Result("registry-schema", PASS, "rules.yaml valid vs schema"))
+    except Exception as e:
+        out.append(Result("registry-schema", FAIL, f"schema check crashed: {e}", "pip install jsonschema"))
+
+    # D2 forward anchors + D3 per-rule wiring
+    hooks = _hooks_index()
+    ctext = _rt(CLAUDE_MD)
+    wiring_fail, anchor_fail = [], []
+    for r in rules:
+        rid = r.get("id", "?")
+        anchor = (r.get("source") or {}).get("anchor", "")
+        if anchor and anchor not in ctext:
+            anchor_fail.append(f"{rid}: anchor '{anchor}' absent")
+        for m in r.get("mechanism", []):
+            cn = m.get("canonical_name")
+            if not cn:
+                continue
+            if not _resolve_script(cn).exists():
+                wiring_fail.append(f"{rid}: {cn} MISSING on disk")
+                continue
+            fe = m.get("firing_event")
+            if fe in CC_EVENTS:
+                fm = m.get("firing_matcher") or "*"
+                base = os.path.basename(cn)
+                hit = any(e == fe and b == base and (mm == fm or fm == "*" or mm == "*")
+                          for (e, mm, b) in hooks)
+                if not hit:
+                    wiring_fail.append(f"{rid}: {base} not in hooks.json at {fe}|{fm}")
+    out.append(Result("registry-wiring", FAIL if wiring_fail else PASS,
+                      f"all {len(rules)} rules wired (disk + hooks.json)"
+                      if not wiring_fail else "; ".join(wiring_fail[:5]),
+                      "every mechanism must exist on disk and be in hooks.json"))
+    out.append(Result("registry-anchors", FAIL if anchor_fail else PASS,
+                      "all rule anchors present in CLAUDE.md"
+                      if not anchor_fail else "; ".join(anchor_fail[:4]),
+                      "fix source.anchor or restore the CLAUDE.md heading"))
+
+    # D2 reverse: prose anchors with no rule -> WARN (Phase 0 coverage gap, not fail-closed yet)
+    covered = {(r.get("source") or {}).get("anchor", "") for r in rules}
+    anchors = _claude_anchors()
+    uncovered = [a for a in anchors if not any(c and c in a for c in covered)]
+    pct = round(100 * (len(anchors) - len(uncovered)) / max(1, len(anchors)))
+    out.append(Result("registry-coverage", WARN if uncovered else PASS,
+                      f"Coverage {pct}% of CLAUDE.md anchors "
+                      f"({len(anchors) - len(uncovered)}/{len(anchors)}); "
+                      f"{len(uncovered)} prose anchors unwired (Phase 0)",
+                      "Phase 1: backfill uncovered anchors, then flip D2-reverse fail-closed"))
+    return out
+
+
 CHECKS = [
     ("repo-identity", check_repo_identity),
+    ("rule-1-registry", check_registry),
     ("sync-clean", check_sync_clean),
     ("interpreter", check_interpreter),
     ("python-deps", check_python_deps),
@@ -591,9 +726,11 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Brain Doctor — health check for ~/.claude/ (octorato)")
     ap.add_argument("--fix", action="store_true", help="perform idempotent repairs (opt-in)")
     ap.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+    ap.add_argument("--registry", action="store_true",
+                    help="run ONLY the RULE #1 registry checks (for .githooks/pre-push)")
     args = ap.parse_args()
 
-    results = run_all(args.fix)
+    results = check_registry(args.fix) if args.registry else run_all(args.fix)
     fails = sum(1 for r in results if r.status == FAIL)
 
     if args.json:

@@ -199,4 +199,30 @@ if [ -f "$REPO_ROOT/scripts/lineage-doctor.py" ] && [ -f "$REPO_ROOT/connectome/
   fi
 fi
 
+# OCTORATO-WIRE-GATE — RULE #1 (Wired or Corrupt). docs/architecture/wired-or-corrupt.md
+# brain_doctor --registry asserts every registry rule is wired (script on disk + in
+# hooks.json + anchor live). A registry that references a phantom script, fails its
+# schema, or points at a dead anchor = CORRUPT brain. Block the push. Coverage WARN
+# (prose not yet wired) never blocks; only CORRUPT (a FAIL) does. This stanza + the
+# doctor's D0 sentinel grep are the self-wired fixed point of Rule #1.
+if [ -f "$REPO_ROOT/scripts/brain_doctor.py" ] && [ -f "$REPO_ROOT/registry/rules.yaml" ]; then
+  if [ -z "$PYTHON" ]; then
+    {
+      echo ""
+      echo "✗ pre-push: no working Python found; RULE #1 registry gate requires Python."
+    } >&2
+    exit 1
+  fi
+  if ! "$PYTHON" "$REPO_ROOT/scripts/brain_doctor.py" --registry >/dev/null 2>&1; then
+    {
+      echo ""
+      echo "✗ pre-push: brain is CORRUPT — a registry rule is not wired (RULE #1)."
+      "$PYTHON" "$REPO_ROOT/scripts/brain_doctor.py" --registry 2>&1 | sed 's/^/  /'
+      echo ""
+      echo "  Fix registry/rules.yaml so every rule's mechanism is live, then re-push."
+    } >&2
+    exit 1
+  fi
+fi
+
 exit 0
