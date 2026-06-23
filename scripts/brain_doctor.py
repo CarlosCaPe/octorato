@@ -651,6 +651,8 @@ class Rule:
             return None
         if self.source_file not in texts:
             texts[self.source_file] = _rt(CLAUDE_DIR / self.source_file)
+        if not texts[self.source_file]:
+            return f"{self.id}: source file '{self.source_file}' missing or unreadable"
         if self.anchor not in texts[self.source_file]:
             return f"{self.id}: anchor '{self.anchor}' absent in {self.source_file}"
         return None
@@ -782,6 +784,9 @@ def check_orphan_hooks(fix: bool) -> list:
         reg = Registry.load(REGISTRY_PATH)
     except Exception as e:
         return [Result("registry-orphans", FAIL, f"cannot load registry: {e}", "fix registry/rules.yaml")]
+    # Name-claim only (by basename). The event/matcher dimension is intentionally
+    # delegated to registry-wiring: a hook fired at the wrong event is caught there,
+    # so the two checks together close the loop without double-reporting here.
     registered = {os.path.basename(m.canonical_name)
                   for r in reg.rules for m in r.mechanisms if m.canonical_name}
     hooked = {base for (_ev, _mt, base) in _hooks_index()}
