@@ -499,6 +499,11 @@ def push(args) -> int:
             err(f"⚠ checkout -b {feat_branch} failed: {e}")
             return 1
 
+    # Regenerate capability manifest so docs/CAPABILITIES.md is current before staging.
+    # Must run BEFORE the git add loop so the updated file is captured in this commit.
+    # docs/ is in BRAIN_PATHS (line ~68), so the regen output is always staged.
+    script_step("scripts/capability_manifest.py", label="📖 Regenerating capability manifest")
+
     for p in BRAIN_PATHS:
         if (CLAUDE / p).exists():
             git("add", p)

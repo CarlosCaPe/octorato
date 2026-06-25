@@ -836,6 +836,39 @@ def check_orphan_hooks(fix: bool) -> list:
                    "register every hooks.json script in registry/rules.yaml, or run brain_doctor --fix to scaffold stubs")]
 
 
+def check_capability_manifest(fix: bool) -> Result:
+    """Assert docs/CAPABILITIES.md reflects the current brain state.
+
+    Runs capability_manifest.py --check (exits non-zero when the committed file
+    is stale vs the live skill/agent/script/rule set). With --fix, regenerates
+    then re-checks; only returns PASS once --check exits 0.
+    """
+    key = "capability-manifest-fresh"
+    manifest_script = CLAUDE_DIR / "scripts" / "capability_manifest.py"
+    if not manifest_script.exists():
+        return Result(key, WARN, "scripts/capability_manifest.py not found",
+                      "restore the capability manifest generator")
+
+    py = PYTHON or "python3"
+    check_cp = run([py, str(manifest_script), "--check"], cwd=CLAUDE_DIR)
+    if check_cp.returncode == 0:
+        return Result(key, PASS, "capability manifest fresh", "")
+
+    if not fix:
+        return Result(key, FAIL,
+                      "docs/CAPABILITIES.md stale: a skill/agent/script/rule changed without regen",
+                      "run: python3 scripts/capability_manifest.py")
+
+    # --fix: regenerate then re-check
+    run([py, str(manifest_script)], cwd=CLAUDE_DIR)
+    recheck = run([py, str(manifest_script), "--check"], cwd=CLAUDE_DIR)
+    if recheck.returncode == 0:
+        return Result(key, PASS, "capability manifest regenerated and now fresh", "")
+    return Result(key, FAIL,
+                  "docs/CAPABILITIES.md still stale after regen attempt",
+                  "run python3 scripts/capability_manifest.py and inspect its output")
+
+
 CHECKS = [
     ("repo-identity", check_repo_identity),
     ("rule-1-registry", check_registry),
@@ -855,6 +888,7 @@ CHECKS = [
     ("finops-enforcement", check_finops_enforcement),
     ("lineage-sound", check_lineage_sound),
     ("release-drift", check_release_drift),
+    ("capability-manifest-fresh", check_capability_manifest),
 ]
 
 STATUS_ICON = {PASS: "✓", WARN: "!", FAIL: "✗"}

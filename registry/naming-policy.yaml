@@ -41,3 +41,5 @@ grandfathered:
   - inbox-sweep-reflex.py
   - no-pause-suggestion.py
   - merge-hooks.py
+  # FinOps budget gate: pre-existing script (FinOps layer), wired to PreToolUse[Agent] in v5.0.
+  - budget-check.py

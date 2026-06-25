@@ -11,8 +11,8 @@
 | Divisions | 15 |
 | Scripts: wired | 76 |
 | Scripts: orphan | 6 |
-| Rules | 49 |
-| Hook entries | 28 |
+| Rules | 50 |
+| Hook entries | 29 |
 
 ## Skills (231)
 
@@ -575,7 +575,7 @@
 | validate-skill-manifest.py | validate-skill-manifest.py , validate a skill.json against the M5 manifest schema (issue #31). | wired |
 | watchdog.py | watchdog.py , observability surface 4 anomaly detector. Reads the JSONL trace files written by trace... | wired |
 
-## Rules (49)
+## Rules (50)
 
 ### ARCHITECTURE
 
@@ -614,6 +614,7 @@
 - FLOW.4d-gate-prewrite
 - FLOW.4d-paradigm
 - FLOW.4d-spec-enhancement
+- FLOW.budget-halt
 - FLOW.canon-heal
 - FLOW.delegate-gate
 - FLOW.enforcement-scripts
@@ -661,7 +662,7 @@
 | Event | Wired Scripts |
 |---|---|
 | PostToolUse | cadence-lint.py, canon-heal-hook.py, client-doc-lint-hook.py, impact-radius-hook.py, trace-hook.py |
-| PreToolUse | config-ship-verify.py, delegate-gate.py, dimension-awareness-hook.py, grafo-gate.py, qa-merge-gate.py, secrets-grep-guard.py, trace-hook.py |
+| PreToolUse | budget-check.py, config-ship-verify.py, delegate-gate.py, dimension-awareness-hook.py, grafo-gate.py, qa-merge-gate.py, secrets-grep-guard.py, trace-hook.py |
 | SessionStart | merge-hooks.py, session-isolation-hook.py |
 | Stop | cadence-stop-hook.py, claim-verify-stop.py, grafo-ledger-check.py, no-pause-suggestion.py, source-attribution-check.py, trace-hook.py |
 | UserPromptSubmit | 4d-reminder.py, arm-recall-hook.py, brain-memory-recall.py, connectome-heartbeat.py, eye-check.py, grafo-turn-reset.py, inbox-sweep-reflex.py, trace-hook.py |

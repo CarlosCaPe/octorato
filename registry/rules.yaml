@@ -904,3 +904,16 @@ rules:
       - { method: IN_HOOKS_JSON, locator: "SessionStart|*|merge-hooks.py", expect: present }
       - { method: ANCHOR_PRESENT, locator: "Multi-Machine Sync", expect: present }
     liveness_required: FIRES
+
+  - id: FLOW.budget-halt
+    title: "FinOps budget caps halt expensive dispatch (fail-open)"
+    category: FLOW
+    source: { file: README.md, anchor: "FinOps roadmap" }
+    strength: GATE
+    firing_mode: [hook]
+    mechanism:
+      - { kind: Gate, canonical_name: budget-check.py, firing_event: PreToolUse, firing_matcher: "Agent" }
+    proof:
+      - { method: IN_HOOKS_JSON, locator: "PreToolUse|Agent|budget-check.py", expect: present }
+      - { method: ANCHOR_PRESENT, locator: "FinOps roadmap", expect: present }
+    liveness_required: FIRES
