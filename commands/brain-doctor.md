@@ -32,6 +32,7 @@ Ends with a summary line: `N passed, M warn, K fail`.
 ## Checks
 
 `repo-identity`, `sync-clean`, `interpreter`, `runners-tracked`, `hooks-runtime-sync`,
-`hooks-merge-fresh`, `leak-guard`, `connectome-fresh`, `arms-config`, `sync-targets`, `blocklist`.
+`hooks-merge-fresh`, `cursor-hooks-sync`, `leak-guard`, `connectome-fresh`, `arms-config`,
+`sync-targets`, `blocklist`.
 
 Each check is sandboxed — one failing check never crashes the run.
