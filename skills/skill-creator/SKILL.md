@@ -366,3 +366,17 @@ After testing the skill, users may request improvements. Often this happens righ
 2. Notice struggles or inefficiencies
 3. Identify how SKILL.md or bundled resources should be updated
 4. Implement changes and test again
+
+### Step 7: Wire any reflex (RULE #1)
+
+Most skills are technique docs and ship no automation. But if your skill adds a **reflex** (a hook that fires on its own at a Claude Code event), that reflex MUST be registered, or the brain is corrupt and the push is blocked.
+
+The loop is mandatory and enforced:
+
+1. Add the hook to `hooks.json` (the event-to-script mapping).
+2. Register it in `registry/rules.yaml`: one rule mapping the reflex to the rule it enforces, with a `source.file` + `anchor` (a CLAUDE.md heading, or this skill's own heading).
+3. `brain_doctor --registry` (which the pre-push runs) checks both directions: every rule has a mechanism, and every live hook has a rule. An unregistered reflex is an orphan, the doctor declares the brain CORRUPT, and the push is blocked.
+
+Shortcut: run `python3 ~/.claude/scripts/brain_doctor.py --fix` to scaffold a TODO stub rule for your new hook, then fill its `title`, `category`, and `anchor`. The stub stays FAIL until you fill the anchor, so a gap is never silenced, only made one edit away.
+
+This is why a new reflex, the daily reflection that produces it, and `brain_doctor` form one loop: the brain grows by adding reflexes, and RULE #1 makes "a new reflex must be wired" a hard invariant, so creation and enforcement close into a cycle instead of drifting apart. See [`docs/architecture/wired-or-corrupt.md`](../../docs/architecture/wired-or-corrupt.md).
