@@ -28,36 +28,37 @@ try:
 except Exception:
     pass
 
+# Ordering is deliberate (panel of 10 + 3 reviews, 2026-06-25): the two
+# most-skipped pieces are the 2D verdict and the Provenance footer. Recency
+# wins under a multi-injector context wall, so the ritual ask the model must
+# RENDER (1D / 2D verdict / 3D) sits LAST in this string, closest to
+# generation; the verbose footer spec sits earlier and compressed (full spec
+# lives in skills/4d-paradigm-protocol). No em-dashes (brain cadence rule 1).
 REMINDER = (
-    "4d: Apply the 4D paradigm to this turn — do not skip it.\n"
+    "4d: Apply the 4D paradigm to this turn. Do not skip it.\n"
+    "4D Disclose: state side effects + Impact Radius. 4D Gate: present a Change "
+    "Manifest before the first file write and wait for confirmation.\n"
+    "PROVENANCE FOOTER (always close with it, one line, label per the user's "
+    "language: EN 'Provenance' / ES 'Procedencia' / DE 'Herkunft', default EN; "
+    "fields separated by ' · ', include each only when it applies): "
+    "Basis (whose authority: own reasoning / vendor·doc / operator / <file>:<line>) · "
+    "Engine (main-loop model + any sub-agent on a different engine) · "
+    "Touched (files WRITTEN, + created ~ modified - deleted; omit on read-only) · "
+    "Verified (one-line build/lint/grep/run evidence; omit if nothing written) · "
+    "Graph (SEEK before grep: `impact-radius.py --file <path>`; quote the receipt "
+    "SEEK-COMPLETE / SEEK-PARTIAL:n / GREP-FALLBACK). Full spec: "
+    "skills/4d-paradigm-protocol.\n"
+    "--- RENDER THESE IN YOUR REPLY, they are the most-skipped, do them LAST so "
+    "they stay closest to your output ---\n"
     "1D Describe: state what and why before acting.\n"
-    "2D Delegate Gate (run at task start for any non-trivial task):\n"
-    "  Q1 ¿quién sabe?  -> python3 ~/.claude/scripts/query_connectome.py query \"<task>\"\n"
-    "  Q2 ¿tiene API?   -> REST > MCP > SDK > scraping\n"
-    "  Q3 ¿quién lo hace? -> python3 ~/.claude/scripts/delegate-check \"<task>\"\n"
-    "  Report the 3-line verdict (ACTIVATE / LOAD / SELF).\n"
+    "2D Delegate Gate (any non-trivial task): "
+    "Q1 ¿quién sabe? `query_connectome.py query \"<task>\"`; "
+    "Q2 ¿API? REST > MCP > SDK > scraping; "
+    "Q3 ¿quién lo hace? `delegate-check \"<task>\"`. "
+    "PRINT the verdict line: ACTIVATE / LOAD / SELF.\n"
     "3D Diligent: validate every write with evidence (build/lint/grep/render).\n"
-    "4D Disclose: state side effects + Impact Radius.\n"
-    "4D Gate: present a Change Manifest before the first file write and wait for confirmation.\n"
-    "ALWAYS close every answer with a final one-line PROVENANCE footer (label per "
-    "language, matching the user's input: EN 'Provenance' / ES 'Procedencia' / "
-    "DE 'Herkunft'; default EN). Named fields separated by ' · '; include a field "
-    "ONLY when it applies:\n"
-    "  Basis: on whose authority the answer rests (own reasoning / vendor·doc / "
-    "operator / <file>:<line>).\n"
-    "  Engine: the main-loop model, plus any sub-agent/sub-tool that ran on a "
-    "different engine (e.g. a Haiku arm) — makes model-routing visible.\n"
-    "  Touched: files WRITTEN this turn with markers (+ created, ~ modified, "
-    "- deleted); OMIT entirely on read-only turns.\n"
-    "  Verified: one-line 3D evidence (build/lint/grep/run); OMIT when nothing "
-    "was written.\n"
-    "  Graph: ¿y el grafo? Before grep'ing the brain for where a concept lives, SEEK "
-    "it — `python3 ~/.claude/scripts/impact-radius.py --file <path>` (or \"<concept>\"). "
-    "A seek is deterministic and ~100x cheaper than a scan. Quote the tool's RECEIPT "
-    "verbatim here (SEEK-COMPLETE / SEEK-PARTIAL:n / GREP-FALLBACK). A turn that grep'd "
-    "brain surfaces and then WROTE files without a seek receipt is a FAILURE, not a style "
-    "choice — the graph is the octopus's blood. OMIT only when no surface lookup was needed.\n"
-    "Keep paths relative and the whole footer to one line. Never mismatch the language."
+    "REQUIRED in any non-trivial reply: the 2D verdict line (ACTIVATE/LOAD/SELF) "
+    "near the top, and the Provenance footer at the very end."
 )
 
 print(json.dumps({

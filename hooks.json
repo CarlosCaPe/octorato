@@ -202,12 +202,6 @@
           "type": "command"
         },
         {
-          "command": "python3 ~/.claude/scripts/4d-reminder.py",
-          "statusMessage": "Injecting 4D reasoning...",
-          "timeout": 5,
-          "type": "command"
-        },
-        {
           "command": "python3 ~/.claude/scripts/connectome-heartbeat.py",
           "statusMessage": "♥ Circulating the connectome...",
           "timeout": 5,
@@ -248,7 +242,8 @@
           "type": "command"
         },
         {
-          "command": "python3 ~/.claude/scripts/grafo-turn-reset.py",
+          "command": "python3 ~/.claude/scripts/4d-reminder.py",
+          "statusMessage": "Injecting 4D reasoning...",
           "timeout": 5,
           "type": "command"
         }
