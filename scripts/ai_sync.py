@@ -265,6 +265,7 @@ def pull(args) -> int:
             info("✓ Already up to date")
 
     script_step("scripts/merge-hooks.py", label="=== Merging shared hooks ===")
+    script_step("scripts/merge-hooks-cursor.py", label="=== Projecting hooks → Cursor ===")
     ensure_hooks_path()
 
     if connectome_stale():  # F9: a pull-only machine otherwise never refreshes the graph
