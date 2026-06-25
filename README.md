@@ -396,7 +396,7 @@ Inspired by octopus neurobiology: 500M neurons, 2/3 distributed in arms, extensi
 ```
   D1 (WHO)     D2 (HOW)     D3 (WHERE)           D4 (WHEN)
   ────────     ────────     ─────────             ─────────
-  160+         200+         N                     4
+  160+         210+         N                     4
   Neurons      Synapses     Regions               Phases
   (Agents)     (Skills)     (Arms + parallel      (4D Paradigm)
                              git-worktree
