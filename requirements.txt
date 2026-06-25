@@ -9,3 +9,4 @@
 
 networkx>=3.0   # scripts/query_connectome.py — graph traversal for the connectome
 pyvis>=0.3      # scripts/query_connectome.py — HTML visualization of the connectome
+jsonschema>=4.0 # scripts/brain_doctor.py (registry-schema) + check-hooks-drift.py — JSON Schema validation
