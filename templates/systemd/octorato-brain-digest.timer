@@ -1,0 +1,14 @@
+[Unit]
+Description=Octorato brain daily observability digest
+Documentation=https://github.com/CarlosCaPe/octorato
+PartOf=octorato-brain-digest.service
+
+[Timer]
+# Daily, early. Persistent catches a run missed while the laptop was asleep
+# (the multi-machine reality), and the randomized delay avoids a thundering herd.
+OnCalendar=*-*-* 07:00:00
+Persistent=true
+RandomizedDelaySec=900
+
+[Install]
+WantedBy=timers.target
