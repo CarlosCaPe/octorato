@@ -271,6 +271,10 @@ default:                           # applies to any arm not listed
 
 `HARD_STOP` fires only when an arm's spend reaches `cap × grace_pct/100` **and** that arm's `action_on_breach == hard_stop`. The `halt_reason` string spells out the arithmetic, e.g. *"arm 'client-x' burned $221.40 (grace $220.00 = cap $200.00 × 110%) — refusing tool."*
 
+### Registration in the rule registry
+
+`budget-check.py` is wired as a `PreToolUse[Agent]` hook and registered as rule `FLOW.budget-halt` in `registry/rules.yaml`. This means `brain_doctor` asserts its presence on every `ai-push`; a push whose hook is missing or whose rule entry is absent is blocked by `.githooks/pre-push`. The budget halt is not advisory prose. It is a first-class registered mechanism, the same way RULE #1 itself is wired.
+
 ### Wiring the PreToolUse hook
 
 In `~/.claude/settings.json`, gate the expensive tools (`Agent`, subagent dispatch, browser automation) on the checker:
@@ -328,7 +332,7 @@ A delta over 20% is flagged — it almost always means a **stale `_pricing.py`**
 
 ## 8. The daily digest — where it all surfaces
 
-`scripts/brain-digest.py` is the cron'd morning report that assembles every FinOps surface into one place:
+`scripts/brain-digest.py` is the morning report that assembles every FinOps surface into one place. It runs on the operator's machine, not in CI: it reads local session data, so it must run where that data lives. Scheduling is handled by a `systemd --user` timer installed by `scripts/install-observability-timer.py`; the timer carries `Persistent=true`, which recovers a run missed while the machine was asleep.
 
 - **Cost by arm** (from the profiler) — the billable rollup.
 - **Budget burn this month** (from `budget-check.py`) — each configured arm's MTD spend vs cap with ✓ / ⚠ / 🛑 markers; a 🛑 means a hard-stop is active on at least one arm.

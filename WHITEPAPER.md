@@ -150,7 +150,8 @@ Unlike most white papers (a promise before code), every claim here maps to a fil
 | §6 Parallel dimensions (v3.1) | `scripts/octo-dim.py` · `connectome/sessions.json` (blackboard registry) · `skills/session-isolation/` |
 | §7 Connectome | `scripts/generate_neural_map.py` · `neural_map.json` |
 | §7 Reactive control architecture (v3.1) | `docs/architecture/hook-orchestration.md` — ECA atoms · Behavior-Tree priority · Statechart 4D · Spreading-Activation recall · Bandit tier-routing |
-| §4 Attribution corollary | `scripts/skill-cost-profiler.py` (`_arm_from_session_path`) · `scripts/budget-check.py` (exit 2 → PreToolUse halt) · `scripts/_pricing.py` |
+| §4 Attribution corollary | `scripts/skill-cost-profiler.py` (`_arm_from_session_path`) · `scripts/budget-check.py` (exit 2 → PreToolUse halt, registered as `FLOW.budget-halt`) · `scripts/_pricing.py` |
+| §6 Capability manifest (wired-or-corrupt extended) | `scripts/capability_manifest.py` → `docs/CAPABILITIES.md` (regenerated on every push; pre-push gate blocks a stale manifest); architecture: `docs/architecture/v5-capability-manifest.md` |
 
 *This document is the canonical source. The dataqbs.com manifesto page, the LinkedIn
 article, and the serialized blog posts all derive from it — one source, many views.*

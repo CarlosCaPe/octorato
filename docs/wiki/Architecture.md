@@ -311,6 +311,8 @@ Rules used to be prose the model could skip under load. RULE #1 ends that: every
 
 "Wired" means covered, not mechanically forced. Model-behavior rules (tone, no-hallucination, identity) are backed by a registered detector or a presence-assert, and the Coverage Ledger prints the enforcement strength per rule, so coverage is never confused with force. Full design: [`wired-or-corrupt.md`](../architecture/wired-or-corrupt.md).
 
+The same principle now covers the whole capability set. A generated manifest, [`docs/CAPABILITIES.md`](../CAPABILITIES.md), is the single source of the offering: every skill, agent, script, rule, and hook the brain holds, produced by `scripts/capability_manifest.py` and regenerated on every push. The pre-push gate that blocks an unwired rule also blocks a push whose manifest is stale, making regression-by-replacement impossible at the push boundary. Architecture: [`docs/architecture/v5-capability-manifest.md`](../architecture/v5-capability-manifest.md).
+
 ---
 
 ## See also
