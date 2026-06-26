@@ -38,6 +38,8 @@ Every action follows four phases: **Describe** (state what and why), **Delegate*
 
 **RULE #1: every rule must be wired, or the brain is corrupt.** A rule counts as real only when `registry/rules.yaml` maps it to a live mechanism (a hook, a gate, a detector). `brain_doctor` checks this in both directions: every rule in the constitution has a mechanism, and every live hook has a rule. If one is missing, the doctor declares the brain corrupt and the pre-push hook blocks the push. No force, no exception, no soft-fail. So a rule cannot quietly decay into advisory prose the model skips under load. Model-behavior rules (tone, no-hallucination, identity) are still registered, backed by a detector or a presence-assert. Full design: [`docs/architecture/wired-or-corrupt.md`](docs/architecture/wired-or-corrupt.md).
 
+The same principle extends to the whole capability set. A generated manifest, [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md), lists every skill, agent, script, rule, and hook the brain holds. It is produced by `scripts/capability_manifest.py` and regenerated on every push. The pre-push gate blocks a push whose manifest is stale, so a capability cannot be silently dropped from the offering by a later change. Architecture: [`docs/architecture/v5-capability-manifest.md`](docs/architecture/v5-capability-manifest.md).
+
 ## Who maintains Octorato?
 
 Carlos Carrillo (Guadalajara, Mexico), through dataqbs. The productized "AI Agent OS" runs at [dataqbs.com](https://dataqbs.com), built and operated on this brain.

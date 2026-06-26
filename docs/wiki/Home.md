@@ -11,7 +11,9 @@
 **Live:** <!--canon:skills.count-->230+<!--/canon--> skills · <!--canon:agents.count-->160+<!--/canon--> agent personas across
 13 divisions · hook-enforced gates · multi-machine sync · a neural
 connectome that learns over time · a FinOps pipeline that tags every trace event
-with the client who incurred it.
+with the client who incurred it · a generated capability manifest
+([`docs/CAPABILITIES.md`](../CAPABILITIES.md)) that the pre-push gate keeps
+fresh so no capability can be silently dropped.
 
 Repo: https://github.com/CarlosCaPe/octorato
 
