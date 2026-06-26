@@ -225,4 +225,23 @@ if [ -f "$REPO_ROOT/scripts/brain_doctor.py" ] && [ -f "$REPO_ROOT/registry/rule
   fi
 fi
 
+# OCTORATO-MANIFEST-GATE: RULE #1 extended from rules to capabilities (v5.0).
+# capability_manifest.py --check asserts docs/CAPABILITIES.md reflects the live
+# capability set (skills/agents/scripts/rules/hooks). A skill/agent/script/rule
+# added without regenerating the manifest means the offering silently drifts, the
+# exact regression-by-replacement v5.0 exists to stop. ai-push regenerates the
+# manifest before staging, so this never fires on the canonical path; it catches a
+# direct `git push` with a stale manifest. Determinism verified before flipping to
+# fail-closed: byte-identical output, no env-specifics, gitignored cruft excluded.
+if [ -f "$REPO_ROOT/scripts/capability_manifest.py" ] && [ -n "$PYTHON" ]; then
+  if ! "$PYTHON" "$REPO_ROOT/scripts/capability_manifest.py" --check >/dev/null 2>&1; then
+    {
+      echo ""
+      echo "✗ pre-push: docs/CAPABILITIES.md is STALE (a capability changed without regen)."
+      echo "  Run: python3 scripts/capability_manifest.py  then commit it, and re-push."
+    } >&2
+    exit 1
+  fi
+fi
+
 exit 0
