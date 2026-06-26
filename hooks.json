@@ -70,6 +70,17 @@
     {
       "hooks": [
         {
+          "command": "python3 ~/.claude/scripts/budget-check.py --json",
+          "statusMessage": "♦ FinOps: budget cap check (fail-open)...",
+          "timeout": 10,
+          "type": "command"
+        }
+      ],
+      "matcher": "Agent"
+    },
+    {
+      "hooks": [
+        {
           "command": "python3 ~/.claude/scripts/trace-hook.py --phase gate",
           "timeout": 5,
           "type": "command"
