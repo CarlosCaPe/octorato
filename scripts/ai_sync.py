@@ -62,7 +62,7 @@ POLICY = CLAUDE / ".githooks" / "push-policy.txt"
 BRAIN_PATHS = ["CLAUDE.md", "README.md", "FAQ.md", "CONTRIBUTING.md", "HEBBIAN_LEARNING.md",
                "CODE_OF_CONDUCT.md", "SECURITY.md", "SUPPORT.md", "CHANGELOG.md",
                "ROADMAP.md", "SHOWCASE.md", "WHITEPAPER.md", "LICENSE",
-               "budgets.yaml.example",
+               "budgets.yaml.example", "requirements.txt",
                "hooks.json", "hooks.schema.json", "skills/", "agents/",
                "scripts/", "hooks/", ".githooks/", "commands/", ".gitignore",
                "assets/", "templates/", ".github/", "connectome/", "docs/"]
@@ -265,6 +265,7 @@ def pull(args) -> int:
             info("✓ Already up to date")
 
     script_step("scripts/merge-hooks.py", label="=== Merging shared hooks ===")
+    script_step("scripts/merge-hooks-cursor.py", label="=== Projecting hooks → Cursor ===")
     ensure_hooks_path()
 
     if connectome_stale():  # F9: a pull-only machine otherwise never refreshes the graph

@@ -311,6 +311,33 @@ def check_hooks_merge_fresh(fix: bool) -> Result:
     return Result(key, PASS, f"all {len(seen)} hooks.json command(s) reference existing files")
 
 
+def check_cursor_hooks_sync(fix: bool) -> Result:
+    """Octorato also supports Cursor: hooks.json is projected into ~/.cursor/hooks.json
+    by merge-hooks-cursor.py. WARN (never FAIL) — Cursor support is additive and the
+    target is a per-machine runtime artifact absent on CI runners / Claude-only machines."""
+    key = "cursor-hooks-sync"
+    projector = CLAUDE_DIR / "scripts" / "merge-hooks-cursor.py"
+    if not projector.exists():
+        return Result(key, WARN, "scripts/merge-hooks-cursor.py not found",
+                      "restore the Cursor hooks projector")
+    cursor_file = HOME / ".cursor" / "hooks.json"
+    if not cursor_file.exists():
+        if fix:
+            run([PYTHON or "python3", str(projector)], cwd=CLAUDE_DIR)
+            if cursor_file.exists():
+                return Result(key, PASS, "~/.cursor/hooks.json materialized from hooks.json")
+        return Result(key, WARN, "~/.cursor/hooks.json not materialized (Cursor reflexes off)",
+                      "run `python3 scripts/merge-hooks-cursor.py` (or ai-pull) inside Cursor's machine")
+    cp = run([PYTHON or "python3", str(projector), "--check"], cwd=CLAUDE_DIR)
+    if cp.returncode == 0:
+        return Result(key, PASS, "~/.cursor/hooks.json == hooks.json projection")
+    if fix:
+        run([PYTHON or "python3", str(projector)], cwd=CLAUDE_DIR)
+        return Result(key, PASS, "~/.cursor/hooks.json re-projected from hooks.json")
+    return Result(key, WARN, "~/.cursor/hooks.json drifted from hooks.json",
+                  "run `python3 scripts/merge-hooks-cursor.py` (or --fix)")
+
+
 def check_leak_guard(fix: bool) -> Result:
     key = "leak-guard"
     cp = git("config", "core.hooksPath")
@@ -880,6 +907,7 @@ CHECKS = [
     ("runners-tracked", check_runners_tracked),
     ("hooks-runtime-sync", check_hooks_runtime_sync),
     ("hooks-merge-fresh", check_hooks_merge_fresh),
+    ("cursor-hooks-sync", check_cursor_hooks_sync),
     ("leak-guard", check_leak_guard),
     ("connectome-fresh", check_connectome_fresh),
     ("arms-config", check_arms_config),
