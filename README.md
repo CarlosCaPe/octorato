@@ -149,7 +149,7 @@ https://github.com/CarlosCaPe/octorato
 ## FinOps roadmap
 
 - [x] Trace capture per skill / agent / phase (`scripts/trace-hook.py` + 8 hook points)
-- [x] Daily brain digest with cost section (`scripts/brain-digest.py` via cron)
+- [x] Daily brain digest with cost section (`scripts/brain-digest.py`), scheduled per machine via a `systemd --user` timer (`scripts/install-observability-timer.py`)
 - [x] Skill-level cost profiler 30-day window (`scripts/skill-cost-profiler.py`)
 - [x] SLO + watchdog infrastructure (`success_rate` SLI)
 - [x] Per-event `arm` tagging (`trace-hook.py` reads cwd → client id)
@@ -316,6 +316,8 @@ Most agent instructions are prose the model can skip under load. Octorato refuse
 `brain_doctor` is the mechanism of that rule. It loads the registry, asserts every rule is wired, and reconciles **both directions**: every CLAUDE.md rule has a mechanism, and every live hook has a rule. One miss and the doctor declares the brain corrupt, exits non-zero, and `.githooks/pre-push` **blocks the push**. No `--force`, no soft-fail. A documented-but-absent hook can no longer ship.
 
 "Wired" means covered, not mechanically forced. A model-behavior rule (tone, no-hallucination, identity) is backed by a registered detector or a presence-assert, never by bare prose. The Coverage Ledger prints the enforcement strength per rule, so 100% coverage is never misread as 100% force.
+
+The same principle now covers the whole capability set, not only the rules. A generated manifest, [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md), is the single source of the offering: every skill, agent, script, rule, and hook the brain holds, produced by `scripts/capability_manifest.py` and regenerated on every push. The pre-push gate that blocks an unwired rule also blocks a push whose manifest is stale, meaning a skill or agent or script was added without being represented. Regression-by-replacement, where a new change quietly drops a prior capability from the offering, becomes impossible at the push boundary. Architecture: [`docs/architecture/v5-capability-manifest.md`](docs/architecture/v5-capability-manifest.md).
 
 Full architecture, the label ontology, and the migration history: [`docs/architecture/wired-or-corrupt.md`](docs/architecture/wired-or-corrupt.md).
 
@@ -572,7 +574,9 @@ brain-trace.py top  --by name --window 7d               # top skills/agents
 brain-trace.py tail -n 20 -f                            # live tail
 ```
 
-Full schema, storage layout, and cron setup: [`docs/architecture/trace-storage.md`](docs/architecture/trace-storage.md).
+The daily digest is scheduled per machine by a `systemd --user` timer (`scripts/install-observability-timer.py`), not by CI: it reads local session data, and `Persistent=true` recovers a run missed while the laptop slept.
+
+Full schema, storage layout, and scheduling: [`docs/architecture/trace-storage.md`](docs/architecture/trace-storage.md).
 
 ---
 
