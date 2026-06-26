@@ -9,7 +9,7 @@
 | Skills | 231 |
 | Agents | 161 |
 | Divisions | 15 |
-| Scripts: wired | 77 |
+| Scripts: wired | 78 |
 | Scripts: orphan | 6 |
 | Rules | 50 |
 | Hook entries | 29 |
@@ -488,7 +488,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (83)
+## Scripts (84)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -548,6 +548,7 @@
 | inbox-sweep-reflex.py | inbox-sweep-reflex.py - UserPromptSubmit hook. | wired |
 | incident-capture.py | incident-capture.py , Port 6 (Phase D) helper. Generates a structured incident markdown file from pa... | wired |
 | install-git-hooks.sh | install-git-hooks.sh , Install the brain-stays-generic git hooks into ~/.claude/.git/hooks/. | wired |
+| install-observability-timer.py | install-observability-timer.py - schedule the brain's daily observability digest. | wired |
 | install-runners.py | install-runners.py , make ~/.local/bin runners thin thunks into the tracked ai_sync.py. | wired |
 | lineage-doctor.py | lineage-doctor.py , fail-closed integrity check for the surface/derivation graph. | wired |
 | memory_sync.py | memory_sync , sync the brain's private memory store to a standalone remote. | wired |

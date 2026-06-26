@@ -1,0 +1,11 @@
+[Unit]
+Description=Octorato brain daily observability digest
+Documentation=https://github.com/CarlosCaPe/octorato
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/.claude
+ExecStart=/usr/bin/env python3 %h/.claude/scripts/brain-digest.py
+StandardOutput=journal
+StandardError=journal
