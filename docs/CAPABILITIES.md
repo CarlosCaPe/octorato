@@ -530,7 +530,7 @@
 | connectome-heartbeat.py | connectome-heartbeat.py , the Delegate-phase heartbeat (UserPromptSubmit hook). | wired |
 | cost-vs-change.py | cost-vs-change.py , "is the new thing making me cheaper or more expensive?" Correlates the daily Cla... | wired |
 | delegate-check | delegate-check , Mandatory 2D Delegate pre-flight for the Octopus brain. Scans REGISTRY.md (agents) ... | wired |
-| delegate-gate.py | PreToolUse hook , involuntary delegation reflex (FAIL-OPEN). | wired |
+| delegate-gate.py | PreToolUse hook , involuntary delegation reflex (FAIL-OPEN, by design). | wired |
 | dimension-awareness-hook.py | dimension-awareness-hook.py , PreToolUse hook for 4D session dimension awareness | wired |
 | eye-check.py | Eye Check Hook , Forces agent-browser usage for web tasks. Runs on every UserPromptSubmit. Pure loca... | wired |
 | finops-digest.py | finops-digest.py , the FinOps lens over Claude Code session logs. "Lo que no se mide, no crece." Exi... | wired |

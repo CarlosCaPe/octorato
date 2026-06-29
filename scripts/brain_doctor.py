@@ -774,7 +774,8 @@ def check_registry(fix: bool) -> list:
     # demands enforcement==fail-closed (deny/block) OR an operator-signed waiver. Phase 0 reports
     # this as WARN (mirrors the D2-reverse rollout); flip PHASE_FAILCLOSED once the inventory is
     # clean and brain_doctor will block the push instead.
-    PHASE_FAILCLOSED = False
+    PHASE_FAILCLOSED = True  # teeth armed 2026-06-29: all 7 known gateable-fail-open rules are waived;
+                             # any NEW gateable rule left fail-open AND unwaived now FAILS (blocks push).
     failopen = []
     for r in rules:
         if r.get("gateable") is True and r.get("enforcement") != "fail-closed":
