@@ -75,6 +75,10 @@ rules:
     strength: DETECTOR
     gateable: true
     enforcement: fail-open
+    waiver:
+      reason: "Detector (source-attribution) is warn-only; promoting to a hard Stop block is deferred pending false-positive tuning so legit turns are not blocked. Close candidate."
+      expires: "2026-09-30"
+      approved_by: "operator directive 2026-06-29 (cierra o waiva las 7)"
     firing_mode: [hook]
     mechanism:
       - { kind: Detector, canonical_name: source-attribution-check.py, firing_event: Stop, firing_matcher: "*" }
@@ -103,6 +107,10 @@ rules:
     strength: DETECTOR
     gateable: true
     enforcement: fail-open   # config-ship-verify.py is PreToolUse:Bash but warn-only; a real deny is the close path
+    waiver:
+      reason: "config-ship-verify is warn-only; a deterministic deny of 'ship generated config' is not yet specifiable without false positives. Deferred. Close candidate."
+      expires: "2026-09-30"
+      approved_by: "operator directive 2026-06-29 (cierra o waiva las 7)"
     firing_mode: [hook]
     mechanism:
       - { kind: Detector, canonical_name: config-ship-verify.py, firing_event: PreToolUse, firing_matcher: "Bash" }
@@ -177,6 +185,10 @@ rules:
     strength: REFLEX
     gateable: true
     enforcement: fail-open   # NOT closeable today: PreToolUse:Bash fires inside sub-agents too and carries no main-loop-vs-sub-agent discriminator, so a deny self-defeats (denies the sub-agent it delegates to) AND breaks 3D Diligent. Stays a nudge; listed here permanently as model-discretion until the platform exposes a caller discriminator. (QA-proven 2026-06-29.)
+    waiver:
+      reason: "Not closeable: PreToolUse carries no main-loop vs sub-agent discriminator, so a deny self-defeats and breaks 3D Diligent (QA-proven 2026-06-29). Revisit if the platform exposes a caller field."
+      expires: "2026-09-30"
+      approved_by: "operator directive 2026-06-29 (cierra o waiva las 7)"
     firing_mode: [hook]
     mechanism:
       - { kind: Reflex, canonical_name: connectome-heartbeat.py, firing_event: UserPromptSubmit, firing_matcher: null }
@@ -193,6 +205,10 @@ rules:
     strength: REFLEX
     gateable: true
     enforcement: fail-open
+    waiver:
+      reason: "grafo-gate injects and grafo-ledger-check is warn-only; a hard Stop block on missing-seek is deferred pending false-positive tuning (legit external greps). Close candidate."
+      expires: "2026-09-30"
+      approved_by: "operator directive 2026-06-29 (cierra o waiva las 7)"
     firing_mode: [hook]
     mechanism:
       - { kind: Reflex, canonical_name: grafo-gate.py, firing_event: PreToolUse, firing_matcher: "Bash" }
@@ -651,6 +667,10 @@ rules:
     strength: REFLEX
     gateable: true
     enforcement: fail-open   # shares source-attribution-check.py (Stop, warn-only); same class as CODE.cite-sources
+    waiver:
+      reason: "Shares the warn-only source-attribution Stop detector; the 'did you validate' part is judgment. Hard block deferred. Close candidate."
+      expires: "2026-09-30"
+      approved_by: "operator directive 2026-06-29 (cierra o waiva las 7)"
     firing_mode:
       - hook
     source:
@@ -703,6 +723,10 @@ rules:
     strength: REFLEX
     gateable: true
     enforcement: fail-open   # shares delegate-gate.py nudge mechanism (see FLOW.delegate-gate)
+    waiver:
+      reason: "Shares delegate-gate.py, which is not closeable (no caller discriminator). Tied to FLOW.delegate-gate."
+      expires: "2026-09-30"
+      approved_by: "operator directive 2026-06-29 (cierra o waiva las 7)"
     firing_mode:
       - hook
       - cli
@@ -891,6 +915,10 @@ rules:
     strength: DETECTOR
     gateable: true
     enforcement: fail-open
+    waiver:
+      reason: "no-pause-suggestion Stop is warn-only; a hard block on pause-phrase detection is deferred pending false-positive tuning (legit clarifying questions). Close candidate."
+      expires: "2026-09-30"
+      approved_by: "operator directive 2026-06-29 (cierra o waiva las 7)"
     firing_mode: [hook]
     mechanism:
       - { kind: Detector, canonical_name: no-pause-suggestion.py, firing_event: Stop, firing_matcher: "*" }
