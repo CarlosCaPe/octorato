@@ -1,12 +1,20 @@
 #!/usr/bin/env python3
-"""PreToolUse hook — involuntary delegation reflex (FAIL-OPEN).
+"""PreToolUse hook — involuntary delegation reflex (FAIL-OPEN, by design).
 
 When a non-trivial / batchable Bash command runs, or when Write/Edit fires
 on substantive implementation, this injects a 2D Delegate nudge reminding the
 model to prefer routing that work to a sub-agent on the cheapest sufficient
 model rather than burning the main-loop context.
 
-It NEVER blocks. A broken hook must not break the user's command.
+It NEVER blocks. WHY it stays a nudge and is NOT promoted to a fail-closed deny:
+PreToolUse:Bash fires for sub-agent Bash calls too, and the payload carries no
+stable main-loop-vs-sub-agent discriminator. So a deny on "heavy execution" would
+either (a) also deny the very sub-agent it tells you to delegate to, or (b) if
+bypassed session-wide, break the brain's own 3D Diligent step (build/lint/test
+before "done"). "Delegate execution" is therefore judgment, not a cleanly gateable
+observable. The deterministic teeth live one level up, in brain_doctor's
+registry-failclosed meta-gate, NOT here. (Verified empirically 2026-06-29: the
+QA Code Reviewer sub-agent saw this nudge fire on its own Bash calls.)
 Design mirrors grafo-gate.py: same I/O protocol, same fail-open guarantee.
 """
 import sys
