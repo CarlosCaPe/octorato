@@ -11,6 +11,8 @@ rules:
     category: META
     source: { file: CLAUDE.md, anchor: "RULE #1" }
     strength: GATE
+    gateable: true
+    enforcement: fail-closed
     firing_mode: [runner, git-hook]
     mechanism:
       - { kind: Gate, canonical_name: brain_doctor.py, firing_event: PrePush, firing_matcher: null }
@@ -24,6 +26,8 @@ rules:
     category: META
     source: { file: CLAUDE.md, anchor: "RULE #1" }
     strength: GATE
+    gateable: true
+    enforcement: fail-closed
     firing_mode: [git-hook]
     mechanism:
       - { kind: Gate, canonical_name: .githooks/pre-push, firing_event: PrePush, firing_matcher: null }
@@ -38,6 +42,8 @@ rules:
     category: COMMS
     source: { file: CLAUDE.md, anchor: "Human Cadence" }
     strength: GATE
+    gateable: true
+    enforcement: fail-closed
     firing_mode: [hook, cli]
     mechanism:
       - { kind: Gate, canonical_name: cadence-stop-hook.py, firing_event: Stop, firing_matcher: "*" }
@@ -53,6 +59,8 @@ rules:
     category: CODE
     source: { file: CLAUDE.md, anchor: "Adversarially verify the operator" }
     strength: GATE
+    gateable: true
+    enforcement: fail-closed
     firing_mode: [hook]
     mechanism:
       - { kind: Gate, canonical_name: claim-verify-stop.py, firing_event: Stop, firing_matcher: "*" }
@@ -65,6 +73,8 @@ rules:
     category: CODE
     source: { file: CLAUDE.md, anchor: "Cite sources" }
     strength: DETECTOR
+    gateable: true
+    enforcement: fail-open
     firing_mode: [hook]
     mechanism:
       - { kind: Detector, canonical_name: source-attribution-check.py, firing_event: Stop, firing_matcher: "*" }
@@ -77,6 +87,8 @@ rules:
     category: CODE
     source: { file: CLAUDE.md, anchor: "qa-merge-gate" }
     strength: GATE
+    gateable: true
+    enforcement: fail-closed
     firing_mode: [hook]
     mechanism:
       - { kind: Gate, canonical_name: qa-merge-gate.py, firing_event: PreToolUse, firing_matcher: "Bash" }
@@ -89,6 +101,8 @@ rules:
     category: CODE
     source: { file: CLAUDE.md, anchor: "Dry-run first" }
     strength: DETECTOR
+    gateable: true
+    enforcement: fail-open   # config-ship-verify.py is PreToolUse:Bash but warn-only; a real deny is the close path
     firing_mode: [hook]
     mechanism:
       - { kind: Detector, canonical_name: config-ship-verify.py, firing_event: PreToolUse, firing_matcher: "Bash" }
@@ -102,6 +116,8 @@ rules:
     category: SECURITY
     source: { file: CLAUDE.md, anchor: "Never commit secrets" }
     strength: GATE
+    gateable: true
+    enforcement: fail-closed
     firing_mode: [hook]
     mechanism:
       - { kind: Gate, canonical_name: secrets-grep-guard.py, firing_event: PreToolUse, firing_matcher: "Bash" }
@@ -115,6 +131,8 @@ rules:
     category: GENERIC
     source: { file: CLAUDE.md, anchor: "The Brain Stays Generic" }
     strength: GATE
+    gateable: true
+    enforcement: fail-closed
     firing_mode: [git-hook, runner]
     mechanism:
       - { kind: Gate, canonical_name: check-generic.py, firing_event: PrePush, firing_matcher: null }
@@ -128,6 +146,8 @@ rules:
     category: ARCHITECTURE
     source: { file: CLAUDE.md, anchor: "Session/Instance Isolation" }
     strength: GATE
+    gateable: true
+    enforcement: fail-closed
     firing_mode: [hook]
     mechanism:
       - { kind: Gate, canonical_name: session-isolation-hook.py, firing_event: SessionStart, firing_matcher: null }
@@ -155,6 +175,8 @@ rules:
     category: FLOW
     source: { file: CLAUDE.md, anchor: "2D Delegate Gate" }
     strength: REFLEX
+    gateable: true
+    enforcement: fail-open   # NOT closeable today: PreToolUse:Bash fires inside sub-agents too and carries no main-loop-vs-sub-agent discriminator, so a deny self-defeats (denies the sub-agent it delegates to) AND breaks 3D Diligent. Stays a nudge; listed here permanently as model-discretion until the platform exposes a caller discriminator. (QA-proven 2026-06-29.)
     firing_mode: [hook]
     mechanism:
       - { kind: Reflex, canonical_name: connectome-heartbeat.py, firing_event: UserPromptSubmit, firing_matcher: null }
@@ -169,6 +191,8 @@ rules:
     category: FLOW
     source: { file: CLAUDE.md, anchor: "Graph before grep" }
     strength: REFLEX
+    gateable: true
+    enforcement: fail-open
     firing_mode: [hook]
     mechanism:
       - { kind: Reflex, canonical_name: grafo-gate.py, firing_event: PreToolUse, firing_matcher: "Bash" }
@@ -246,6 +270,8 @@ rules:
     title: Octopus architecture — structural model anchor
     category: ARCHITECTURE
     strength: DETECTOR
+    gateable: false   # repo-state/anchor-presence (enforced at push by anchor + check-generic), not a model-action discretion gate
+    enforcement: n/a
     firing_mode:
       - git-hook
     source:
@@ -269,6 +295,8 @@ rules:
     title: Core principles — arm isolation gates
     category: ARCHITECTURE
     strength: GATE
+    gateable: true
+    enforcement: fail-closed
     firing_mode:
       - hook
     source:
@@ -299,6 +327,8 @@ rules:
     title: Information flow rules — cross-arm leak detector
     category: ARCHITECTURE
     strength: DETECTOR
+    gateable: false   # the cross-arm leak block lives in GENERIC.brain-stays-generic (already gateable+fail-closed); this row is the policy/anchor
+    enforcement: n/a
     firing_mode:
       - git-hook
     source:
@@ -385,6 +415,8 @@ rules:
     title: Security baseline — secrets gate at Bash and push
     category: SECURITY
     strength: GATE
+    gateable: true
+    enforcement: fail-closed
     firing_mode:
       - hook
       - git-hook
@@ -436,6 +468,8 @@ rules:
     title: Communication baseline — cadence stop detector
     category: COMMS
     strength: DETECTOR
+    gateable: true
+    enforcement: fail-closed
     firing_mode:
       - hook
     source:
@@ -539,6 +573,8 @@ rules:
     title: Prune dead cells — lineage-doctor detects orphans at push
     category: FLOW
     strength: DETECTOR
+    gateable: false   # advisory push detector (lineage-doctor warn-only); rule is "suggest, never auto-delete" by design
+    enforcement: n/a
     firing_mode:
       - git-hook
     source:
@@ -613,6 +649,8 @@ rules:
     title: 3D diligent gate — post-write validation
     category: FLOW
     strength: REFLEX
+    gateable: true
+    enforcement: fail-open   # shares source-attribution-check.py (Stop, warn-only); same class as CODE.cite-sources
     firing_mode:
       - hook
     source:
@@ -663,6 +701,8 @@ rules:
     title: Enforcement scripts — mandatory Q1/Q3 reflexes
     category: FLOW
     strength: REFLEX
+    gateable: true
+    enforcement: fail-open   # shares delegate-gate.py nudge mechanism (see FLOW.delegate-gate)
     firing_mode:
       - hook
       - cli
@@ -849,6 +889,8 @@ rules:
     category: COMMS
     source: { file: CLAUDE.md, anchor: "Machine register" }
     strength: DETECTOR
+    gateable: true
+    enforcement: fail-open
     firing_mode: [hook]
     mechanism:
       - { kind: Detector, canonical_name: no-pause-suggestion.py, firing_event: Stop, firing_matcher: "*" }
@@ -910,6 +952,12 @@ rules:
     category: FLOW
     source: { file: README.md, anchor: "FinOps roadmap" }
     strength: GATE
+    gateable: true
+    enforcement: fail-open   # FinOps off until budgets.yaml exists; uncapped agent dispatch accepted as a known gap. Waived below.
+    waiver:
+      reason: "FinOps disabled until budgets.yaml exists; uncapped agent dispatch accepted as a known gap. Enabling per-arm budgets supersedes this waiver."
+      expires: "2026-09-30"
+      approved_by: "operator directive 2026-06-29 (resuelve budget-halt)"
     firing_mode: [hook]
     mechanism:
       - { kind: Gate, canonical_name: budget-check.py, firing_event: PreToolUse, firing_matcher: "Agent" }

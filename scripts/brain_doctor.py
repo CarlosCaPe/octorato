@@ -768,6 +768,52 @@ def check_registry(fix: bool) -> list:
                       f"({len(anchors) - len(uncovered)}/{len(anchors)}); "
                       f"{len(uncovered)} prose anchors unwired",
                       "every CLAUDE.md rule-anchor needs a registry row (RULE #1, fail-closed)"))
+
+    # Meta-gate (RULE #1 teeth): a GATEABLE rule that only nudges/warns is at the model's
+    # discretion, not Octorato's — exactly the hole RULE #1 forbids. gateable:true therefore
+    # demands enforcement==fail-closed (deny/block) OR an operator-signed waiver. Phase 0 reports
+    # this as WARN (mirrors the D2-reverse rollout); flip PHASE_FAILCLOSED once the inventory is
+    # clean and brain_doctor will block the push instead.
+    PHASE_FAILCLOSED = False
+    failopen = []
+    for r in rules:
+        if r.get("gateable") is True and r.get("enforcement") != "fail-closed":
+            if r.get("waiver"):
+                continue  # operator-signed, expiry-dated downgrade
+            failopen.append(f"{r.get('id', '?')}({r.get('enforcement', 'n/a')})")
+    if not failopen:
+        out.append(Result("registry-failclosed", PASS,
+                           "every gateable rule is fail-closed (zero left at model discretion)"))
+    else:
+        out.append(Result("registry-failclosed",
+                           FAIL if PHASE_FAILCLOSED else WARN,
+                           f"{len(failopen)} gateable rule(s) at MODEL discretion (fail-open, unwaived): "
+                           + "; ".join(failopen),
+                           "flip the mechanism to deny/block (fail-closed) or add a signed waiver; "
+                           "then set PHASE_FAILCLOSED=True for teeth"))
+
+    # Anti-evasion (RULE #1 derive-don't-trust): the meta-gate above keys off a HAND-WRITTEN
+    # gateable flag, so a gate-shaped rule that simply omits the flag would slip past it — the
+    # same prose-with-no-mechanism rot one level up. Close it by DERIVING gate-shape from the
+    # mechanism: strength GATE, or any mechanism firing at PreToolUse/Stop/PrePush (the events
+    # that can deny/block). Such a rule must carry an explicit gateable flag (true OR false=reviewed).
+    # Missing it => WARN candidate. An explicit gateable:false means "reviewed, not gateable" and
+    # is honored. liveness here is informational (Phase 0).
+    GATE_EVENTS = {"PreToolUse", "Stop", "PrePush"}
+    unannotated = []
+    for r in rules:
+        if "gateable" in r:
+            continue  # explicitly reviewed (true or false)
+        looks_gateable = r.get("strength") == "GATE" or any(
+            (m or {}).get("firing_event") in GATE_EVENTS for m in (r.get("mechanism") or []))
+        if looks_gateable:
+            unannotated.append(r.get("id", "?"))
+    out.append(Result("registry-gateable-coverage", PASS if not unannotated else WARN,
+                      "every gate-shaped rule carries an explicit gateable flag"
+                      if not unannotated
+                      else f"{len(unannotated)} gate-shaped rule(s) missing a gateable flag "
+                           f"(derive, don't trust omission): " + "; ".join(unannotated),
+                      "add gateable:true/false + enforcement to each so the meta-gate cannot be evaded by omission"))
     return out
 
 
