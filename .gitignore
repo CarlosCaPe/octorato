@@ -229,6 +229,9 @@ knowledge/github-trending/20*.json
 /.cache/graph-ledger/
 /connectome/lineage.unverified.yaml
 
+# GitHub wiki mirror checkout used by scripts/publish-wiki.py (disposable clone)
+/.cache/octorato-wiki/
+
 # 4D session-dimension registry + merge approvals (per-machine runtime state)
 connectome/sessions.json
 connectome/merge-approvals.json

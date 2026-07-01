@@ -557,6 +557,15 @@ def push(args) -> int:
         script_step("scripts/brain-version-bump.py", "--apply", "--push",
                     label="🏷  Moving semver label...")
 
+    # Publish docs/wiki to the GitHub wiki mirror (best-effort). The wiki is a
+    # separate repo no gate protects; a wiki failure must NEVER fail ai-push,
+    # so this warns in one line and moves on.
+    if (CLAUDE / "scripts" / "publish-wiki.py").exists():
+        info("📖 Publishing docs/wiki to the GitHub wiki...")
+        if subprocess.run([py(), str(CLAUDE / "scripts" / "publish-wiki.py"),
+                           "--push"]).returncode != 0:
+            warn("⚠ wiki publish failed (brain push unaffected); retry with: python3 scripts/publish-wiki.py --push")
+
     # Refresh the local connectome. neural_map.json is gitignored (per-machine,
     # regenerated on demand) — so we rebuild it locally for this machine's query/
     # heartbeat, but never add/commit/push it. No force-push of the branch, ever.
