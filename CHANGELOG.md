@@ -32,7 +32,7 @@ machine-generated growth ledger lives at
 - COMMS.no-pause got its own distinct anchor; duplicate grafo-gate hook removed from hooks.json.
 
 ### Docs
-- CHANGELOG backfilled v4.2.0 through v5.4.0; README badge and narration updated to the v4 registry + v5 manifest state; wired-or-corrupt.md phases marked shipped.
+- CHANGELOG backfilled v4.1.0 through v5.4.0; README badge and narration updated to the v4 registry + v5 manifest state; wired-or-corrupt.md phases marked shipped.
 
 ## [2026-06-29]: v5.4.0
 - Waived the 7 known fail-open gateable rules with operator-signed, expiry-dated waivers so the meta-gate could arm.
