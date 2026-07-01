@@ -30,7 +30,7 @@ Every rule in this brain MUST be wired. A rule is WIRED only when `registry/rule
 
 "Wired" means COVERED, not mechanically forced. A model-behavior rule (no-hallucination, connector-not-human, tone, register) is wired by a registered Detector or a brain_doctor presence-assert, never by bare prose. 100% wired = 100% COVERAGE of the rule corpus, which is achievable; it is NOT a claim of 100% behavioral enforcement, which is not. The Coverage Ledger prints enforcement strength per rule so presence-only is never misread as forced.
 
-This rule is self-wired: its own mechanism is brain_doctor (Registry `META.rule-1-wired-or-corrupt`), invoked from `.githooks/pre-push` (Registry `META.pre-push-gate`). Architecture, the label ontology, and the migration plan: `docs/architecture/wired-or-corrupt.md`. Rollout is phased: Phase 0 wires the already-scripted majority (D0/D1/D3 fail-closed, kills the phantom-script class) and reports the prose gap (D2 reverse) as a WARN Coverage Ledger; later phases drive coverage to 100% and flip D2 fail-closed.
+This rule is self-wired: its own mechanism is brain_doctor (Registry `META.rule-1-wired-or-corrupt`), invoked from `.githooks/pre-push` (Registry `META.pre-push-gate`). Architecture, the label ontology, and the migration plan: `docs/architecture/wired-or-corrupt.md`. The rollout shipped in full: D0/D1/D2/D3 run fail-closed (the phantom-script class is dead), CLAUDE.md anchor coverage sits at 100%, the meta-gate blocks any new gateable rule left fail-open and unwaived, and the corpus-coverage ledger reports the remaining skills+memory canon gap as WARN.
 
 ## Octorato's Stance (Generic Identity — Non-Negotiable)
 
@@ -298,6 +298,6 @@ Creating a new client arm (per-client repo): full step-by-step in **`skills/arm-
 
 **Self-verifying:** `pull` aborts on a failed `git pull`, merges shared hooks, auto-enables the `core.hooksPath` leak-guard, regenerates a stale connectome, syncs copilot+cursor, and ends with `scripts/brain_doctor.py`. `push` is gated by `check-generic.py` + the hooks drift-guard + an in-script fail-closed secret scan before it commits.
 
-**Health check:** `python3 ~/.claude/scripts/brain_doctor.py` (or `/brain-doctor`) — 15 read-only assertions; `--fix` for idempotent repairs.
+**Health check:** `python3 ~/.claude/scripts/brain_doctor.py` (or `/brain-doctor`) — read-only assertions; `--fix` for idempotent repairs.
 
 **First-time setup:** clone `octorato` to `~/.claude`, run `python3 ~/.claude/scripts/install-runners.py` (creates the bin thunks), then `ai-pull`.

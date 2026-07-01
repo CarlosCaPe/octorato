@@ -533,6 +533,19 @@ def check_release_drift(fix: bool) -> Result:
                       "use `## [date] — vX.Y.Z` headings when cutting a release")
     tags_cp = git("tag", "--list")
     local_tags = set(tags_cp.stdout.split()) if tags_cp.returncode == 0 else set()
+    # Bidirectional drift: a CHANGELOG behind the tags is drift too (releases were
+    # cut but their entries never written). Sort by semver, not creatordate string.
+    def _sv(tag: str) -> tuple:
+        return tuple(int(x) for x in tag[1:].split("."))
+    semver_tags = [t for t in local_tags if re.fullmatch(r"v\d+\.\d+\.\d+", t)]
+    if semver_tags:
+        newest = max(semver_tags, key=_sv)
+        if _sv(newest) > _sv(f"v{top_version}"):
+            return Result(key, WARN,
+                          f"newest tag {newest} ahead of CHANGELOG top v{top_version} — "
+                          f"releases were cut without CHANGELOG entries",
+                          f"backfill CHANGELOG.md from `gh release view` for each tag "
+                          f"between v{top_version} and {newest}")
     if f"v{top_version}" in local_tags:
         return Result(key, PASS, f"CHANGELOG top v{top_version} has a matching git tag — released")
     # A fresh clone may not have fetched tags. "Released" = the remote tag / GH release
@@ -769,6 +782,28 @@ def check_registry(fix: bool) -> list:
                       f"{len(uncovered)} prose anchors unwired",
                       "every CLAUDE.md rule-anchor needs a registry row (RULE #1, fail-closed)"))
 
+    # D2 reverse ambiguity: a rule's anchor must cover ITS OWN line, not another rule's.
+    # Two rules may deliberately share the IDENTICAL anchor string (co-anchoring one
+    # heading); what is ambiguous is (a) DIFFERENT anchor strings landing on the same
+    # anchor line (one rule substring-covering another rule's heading), or (b) one
+    # anchor string matching 2+ anchor lines — either way coverage is claimed by accident.
+    cl_anchors = sorted({(r.get("source") or {}).get("anchor", "") for r in rules
+                         if (r.get("source") or {}).get("file", "CLAUDE.md") == "CLAUDE.md"
+                         and (r.get("source") or {}).get("anchor")})
+    ambiguous = []
+    for a_line in anchors:
+        hitters = [anc for anc in cl_anchors if anc in a_line]
+        if len(hitters) > 1:
+            ambiguous.append(f"line '{a_line[:60]}' matched by {hitters}")
+    for anc in cl_anchors:
+        n = sum(1 for a_line in anchors if anc in a_line)
+        if n > 1:
+            ambiguous.append(f"anchor '{anc}' covers {n} anchor lines")
+    out.append(Result("registry-anchor-ambiguity", WARN if ambiguous else PASS,
+                      "every registered anchor maps to exactly one anchor line, unshadowed"
+                      if not ambiguous else "; ".join(ambiguous[:4]),
+                      "give each rule a distinct anchor drawn verbatim from its OWN source line"))
+
     # Meta-gate (RULE #1 teeth): a GATEABLE rule that only nudges/warns is at the model's
     # discretion, not Octorato's — exactly the hole RULE #1 forbids. gateable:true therefore
     # demands enforcement==fail-closed (deny/block) OR an operator-signed waiver. Phase 0 reports
@@ -776,11 +811,23 @@ def check_registry(fix: bool) -> list:
     # clean and brain_doctor will block the push instead.
     PHASE_FAILCLOSED = True  # teeth armed 2026-06-29: all 7 known gateable-fail-open rules are waived;
                              # any NEW gateable rule left fail-open AND unwaived now FAILS (blocks push).
+    from datetime import date as _date
     failopen = []
     for r in rules:
         if r.get("gateable") is True and r.get("enforcement") != "fail-closed":
-            if r.get("waiver"):
-                continue  # operator-signed, expiry-dated downgrade
+            w = r.get("waiver")
+            if isinstance(w, dict):
+                # A waiver is live ONLY with a parseable, non-past expiry. Missing,
+                # unparseable, or past-dated expires => the waiver is VOID and the
+                # rule is treated as UNWAIVED (falls through to the fail-closed check).
+                try:
+                    exp = _date.fromisoformat(str(w.get("expires") or "").strip())
+                except ValueError:
+                    exp = None
+                if exp is not None and exp >= _date.today():
+                    continue  # operator-signed, expiry-dated downgrade (live)
+                failopen.append(f"{r.get('id', '?')}({r.get('enforcement', 'n/a')}, waiver expired/invalid)")
+                continue
             failopen.append(f"{r.get('id', '?')}({r.get('enforcement', 'n/a')})")
     if not failopen:
         out.append(Result("registry-failclosed", PASS,
@@ -816,6 +863,97 @@ def check_registry(fix: bool) -> list:
                            f"(derive, don't trust omission): " + "; ".join(unannotated),
                       "add gateable:true/false + enforcement to each so the meta-gate cannot be evaded by omission"))
     return out
+
+
+def check_corpus_coverage(fix: bool) -> Result:
+    """WARN-only Coverage Ledger over the WHOLE normative corpus. registry-coverage's
+    denominator is CLAUDE.md headings only, so normative rules living in skills and in
+    memory directives are invisible to it and it always reads 100%. This check widens
+    the denominator: skills' ULTRA RULE / MANDATORY / NON-NEGOTIABLE canon lines plus
+    memory feedback directives, reconciled against registry/rules.yaml. It never FAILs;
+    promotion of uncovered canon to registry rows is operator-curated."""
+    key = "corpus-coverage"
+    try:
+        import yaml
+        reg = yaml.safe_load(REGISTRY_PATH.read_text(encoding="utf-8")) or {}
+    except Exception as e:
+        return Result(key, WARN, f"cannot compute corpus coverage: {e}",
+                      "fix registry/rules.yaml first")
+    rules = reg.get("rules", []) if isinstance(reg, dict) else []
+    rule_files = {(r.get("source") or {}).get("file", "") for r in rules}
+    rule_anchors = [(r.get("source") or {}).get("anchor", "") for r in rules
+                    if (r.get("source") or {}).get("anchor")]
+
+    # CLAUDE.md section anchors (same denominator registry-coverage uses)
+    cl_anchors = _claude_anchors()
+    cl_covered = sum(1 for a in cl_anchors if any(anc in a for anc in rule_anchors))
+
+    # Skills canon: normative anchors = heading or bold-marked lines carrying a
+    # normative token. skills/learned/ drafts are unpromoted by design (the glob
+    # is depth-1 so they are excluded structurally).
+    norm_re = re.compile(r"ULTRA RULE|MANDATORY|NON-NEGOTIABLE")
+    bold_norm_re = re.compile(r"\*\*[^*]*(?:ULTRA RULE|MANDATORY|NON-NEGOTIABLE)[^*]*\*\*")
+    skill_items = []  # (relpath, anchor-line)
+    skill_texts = {}
+    for sk in sorted((CLAUDE_DIR / "skills").glob("*/SKILL.md")):
+        rel = sk.relative_to(CLAUDE_DIR).as_posix()
+        text = _rt(sk)
+        skill_texts[rel] = text
+        for ln in text.splitlines():
+            s = ln.strip()
+            if not norm_re.search(s):
+                continue
+            if s.startswith("#") or bold_norm_re.search(s):
+                skill_items.append((rel, s))
+    skill_uncov = []
+    for rel, anchor_line in skill_items:
+        # Covered only when a registry row anchors in THIS file (source.file);
+        # a short anchor string quoted in passing must not mark canon covered.
+        covered = rel in rule_files
+        if not covered:
+            skill_uncov.append(f"{rel}:{anchor_line[:50]}")
+    skill_cov = len(skill_items) - len(skill_uncov)
+
+    # Memory directives: one per feedback_*.md file; the memory layer is private
+    # and gitignored, so absence on this machine is a soft skip (same pattern as
+    # company/brain-blocklist.txt).
+    mem_files = sorted(CLAUDE_DIR.glob("projects/*/memory/feedback_*.md"))
+    if not mem_files:
+        mem_note = "memory layer absent on this machine — memory directives skipped"
+        mem_cov, mem_uncov_names = 0, []
+    else:
+        mem_note = ""
+        mem_uncov_names = []
+        mem_cov = 0
+        for mf in mem_files:
+            rel = mf.relative_to(CLAUDE_DIR).as_posix()
+            if rel in rule_files or mf.name in rule_files:
+                mem_cov += 1
+                continue
+            label = mf.stem
+            for ln in _rt(mf).splitlines()[:15]:
+                if ln.strip().lower().startswith("description:"):
+                    label = ln.split(":", 1)[1].strip()[:60]
+                    break
+            mem_uncov_names.append(label)
+    uncovered_total = len(skill_uncov) + len(mem_uncov_names)
+
+    ledger = (
+        f"Ledger: {len(rules)} registered rules | "
+        f"CLAUDE.md anchors {cl_covered}/{len(cl_anchors)} | "
+        f"skills canon {skill_cov}/{len(skill_items)}"
+        + (f" (uncovered: {'; '.join(skill_uncov[:15])}"
+           + (" …" if len(skill_uncov) > 15 else "") + ")" if skill_uncov else "")
+        + " | "
+        + (mem_note if mem_note else
+           f"memory directives {mem_cov}/{len(mem_files)}"
+           + (f" (top uncovered: {', '.join(mem_uncov_names[:10])})" if mem_uncov_names else ""))
+    )
+    if uncovered_total:
+        return Result(key, WARN, ledger,
+                      "uncovered canon is a coverage gap, not corruption — promoting an "
+                      "item to a registry row is operator-curated, one at a time")
+    return Result(key, PASS, ledger)
 
 
 def check_naming(fix: bool) -> list:
@@ -946,6 +1084,7 @@ def check_capability_manifest(fix: bool) -> Result:
 CHECKS = [
     ("repo-identity", check_repo_identity),
     ("rule-1-registry", check_registry),
+    ("corpus-coverage", check_corpus_coverage),
     ("rule-1-naming", check_naming),
     ("rule-1-orphans", check_orphan_hooks),
     ("sync-clean", check_sync_clean),

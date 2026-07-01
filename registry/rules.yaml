@@ -143,8 +143,11 @@ rules:
     enforcement: fail-closed
     firing_mode: [git-hook, runner]
     mechanism:
-      - { kind: Gate, canonical_name: check-generic.py, firing_event: PrePush, firing_matcher: null }
+      # PrePush firing path is the hook itself (inlined scan); check-generic.py fires via the ai-push runner.
+      - { kind: Gate, canonical_name: .githooks/pre-push, firing_event: PrePush, firing_matcher: null }
+      - { kind: Gate, canonical_name: check-generic.py, firing_event: null, firing_matcher: null }
     proof:
+      - { method: FILE_EXISTS, locator: ".githooks/pre-push", expect: present }
       - { method: FILE_EXISTS, locator: "scripts/check-generic.py", expect: present }
     liveness_required: PRESENT
 
@@ -290,15 +293,24 @@ rules:
     enforcement: n/a
     firing_mode:
       - git-hook
+      - runner
     source:
       file: CLAUDE.md
       anchor: "## The Octopus Architecture"
     mechanism:
+      # PrePush firing path is the hook itself (inlined scan); check-generic.py fires via the ai-push runner.
       - kind: Detector
-        canonical_name: check-generic.py
+        canonical_name: .githooks/pre-push
         firing_event: PrePush
         firing_matcher: null
+      - kind: Detector
+        canonical_name: check-generic.py
+        firing_event: null
+        firing_matcher: null
     proof:
+      - method: FILE_EXISTS
+        locator: .githooks/pre-push
+        expect: present
       - method: FILE_EXISTS
         locator: scripts/check-generic.py
         expect: present
@@ -347,15 +359,24 @@ rules:
     enforcement: n/a
     firing_mode:
       - git-hook
+      - runner
     source:
       file: CLAUDE.md
       anchor: "### Information Flow Rules"
     mechanism:
+      # PrePush firing path is the hook itself (inlined scan); check-generic.py fires via the ai-push runner.
       - kind: Detector
-        canonical_name: check-generic.py
+        canonical_name: .githooks/pre-push
         firing_event: PrePush
         firing_matcher: null
+      - kind: Detector
+        canonical_name: check-generic.py
+        firing_event: null
+        firing_matcher: null
     proof:
+      - method: FILE_EXISTS
+        locator: .githooks/pre-push
+        expect: present
       - method: FILE_EXISTS
         locator: scripts/check-generic.py
         expect: present
@@ -436,6 +457,7 @@ rules:
     firing_mode:
       - hook
       - git-hook
+      - runner
     source:
       file: CLAUDE.md
       anchor: "## Security (Non-Negotiable)"
@@ -444,13 +466,21 @@ rules:
         canonical_name: secrets-grep-guard.py
         firing_event: PreToolUse
         firing_matcher: Bash
+      # PrePush firing path is the hook itself (inlined scan); check-generic.py fires via the ai-push runner.
+      - kind: Gate
+        canonical_name: .githooks/pre-push
+        firing_event: PrePush
+        firing_matcher: null
       - kind: Gate
         canonical_name: check-generic.py
-        firing_event: PrePush
+        firing_event: null
         firing_matcher: null
     proof:
       - method: IN_HOOKS_JSON
         locator: "PreToolUse|Bash|secrets-grep-guard.py"
+        expect: present
+      - method: FILE_EXISTS
+        locator: .githooks/pre-push
         expect: present
       - method: FILE_EXISTS
         locator: scripts/check-generic.py
@@ -887,31 +917,31 @@ rules:
   - id: MEMORY.arm-recall
     title: "Recall an arm's own stored knowledge before researching or asking"
     category: MEMORY
-    source: { file: CLAUDE.md, anchor: "Skill-First Behavior" }
+    source: { file: CLAUDE.md, anchor: "## Skill-First Behavior" }
     strength: REFLEX
     firing_mode: [hook]
     mechanism:
       - { kind: Reflex, canonical_name: arm-recall-hook.py, firing_event: UserPromptSubmit, firing_matcher: "*" }
     proof:
       - { method: IN_HOOKS_JSON, locator: "UserPromptSubmit|*|arm-recall-hook.py", expect: present }
-      - { method: ANCHOR_PRESENT, locator: "Skill-First Behavior", expect: present }
+      - { method: ANCHOR_PRESENT, locator: "## Skill-First Behavior", expect: present }
     liveness_required: FIRES
   - id: MEMORY.brain-memory-recall
     title: "Surface the brain's own life-memories relevant to the prompt before asking"
     category: MEMORY
-    source: { file: CLAUDE.md, anchor: "When Unsure" }
+    source: { file: CLAUDE.md, anchor: "## When Unsure" }
     strength: REFLEX
     firing_mode: [hook]
     mechanism:
       - { kind: Reflex, canonical_name: brain-memory-recall.py, firing_event: UserPromptSubmit, firing_matcher: "*" }
     proof:
       - { method: IN_HOOKS_JSON, locator: "UserPromptSubmit|*|brain-memory-recall.py", expect: present }
-      - { method: ANCHOR_PRESENT, locator: "When Unsure", expect: present }
+      - { method: ANCHOR_PRESENT, locator: "## When Unsure", expect: present }
     liveness_required: FIRES
   - id: COMMS.no-pause
     title: "Do not ask to pause; execute, never propose stopping"
     category: COMMS
-    source: { file: CLAUDE.md, anchor: "Machine register" }
+    source: { file: CLAUDE.md, anchor: "Answer, do the work, stop" }
     strength: DETECTOR
     gateable: true
     enforcement: fail-open
@@ -924,7 +954,7 @@ rules:
       - { kind: Detector, canonical_name: no-pause-suggestion.py, firing_event: Stop, firing_matcher: "*" }
     proof:
       - { method: IN_HOOKS_JSON, locator: "Stop|*|no-pause-suggestion.py", expect: present }
-      - { method: ANCHOR_PRESENT, locator: "Machine register", expect: present }
+      - { method: ANCHOR_PRESENT, locator: "Answer, do the work, stop", expect: present }
     liveness_required: FIRES
   - id: COMMS.client-doc-lint
     title: "Client deliverables pass the doc lint before they are sent"
@@ -965,14 +995,14 @@ rules:
   - id: ARCHITECTURE.drift-self-heal
     title: "Reconcile settings.json from the tracked hooks.json at session start (drift self-heal)"
     category: ARCHITECTURE
-    source: { file: CLAUDE.md, anchor: "Multi-Machine Sync" }
+    source: { file: CLAUDE.md, anchor: "## Multi-Machine Sync" }
     strength: REFLEX
     firing_mode: [hook]
     mechanism:
       - { kind: Reflex, canonical_name: merge-hooks.py, firing_event: SessionStart, firing_matcher: "*" }
     proof:
       - { method: IN_HOOKS_JSON, locator: "SessionStart|*|merge-hooks.py", expect: present }
-      - { method: ANCHOR_PRESENT, locator: "Multi-Machine Sync", expect: present }
+      - { method: ANCHOR_PRESENT, locator: "## Multi-Machine Sync", expect: present }
     liveness_required: FIRES
 
   - id: FLOW.budget-halt
@@ -981,9 +1011,9 @@ rules:
     source: { file: README.md, anchor: "FinOps roadmap" }
     strength: GATE
     gateable: true
-    enforcement: fail-open   # FinOps off until budgets.yaml exists; uncapped agent dispatch accepted as a known gap. Waived below.
+    enforcement: fail-open   # budgets.yaml is live, but every action_on_breach is `alert` by operator choice, so the gate never denies. Waived below.
     waiver:
-      reason: "FinOps disabled until budgets.yaml exists; uncapped agent dispatch accepted as a known gap. Enabling per-arm budgets supersedes this waiver."
+      reason: "budgets.yaml is active (since 2026-06-01), but every arm and the default set action_on_breach: alert by operator choice, so the HARD_STOP branch (scripts/budget-check.py:166) is unreachable by config. The gate stays fail-open until an arm opts into hard_stop."
       expires: "2026-09-30"
       approved_by: "operator directive 2026-06-29 (resuelve budget-halt)"
     firing_mode: [hook]
