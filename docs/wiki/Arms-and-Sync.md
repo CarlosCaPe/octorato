@@ -201,23 +201,25 @@ Any blocklist hit blocks the commit or push outright — no `--force`, no except
 
 `~/.claude/` *is* the `octorato` git repo — the brain and the repo are the same thing. To run the same brain on a laptop and a desktop, you replicate that repo and re-sync the arms on each machine.
 
-### The two daily commands
+### The canonical daily command (plus two primitives)
 
 | Command | What it does |
 |---|---|
-| `ai-push "msg"` | Commit + push all of `~/.claude/` to GitHub, **regenerate the connectome** (`neural_map.json`), and run `sync-ai-docs` across all registered arms. One command takes a brain change from "edited" to "live everywhere on this machine + pushed to remote." |
-| `ai-pull [arm-code\|--status]` | Pull the latest brain from remote into `~/.claude/`, then re-sync — one arm if you pass an arm code, or all arms by default. `--status` reports state without pulling. |
+| `ai-sync ["msg"]` | **The canonical sync.** Integrates first (`git pull --rebase --autostash`), then publishes (`push`), and retries the loop when a sibling machine pushed mid-flight, so a non-fast-forward never bounces you back to a manual "pull, then push." Built for running one brain across many machines at once, where divergence is the norm: reconcile is one command, race-safe and idempotent. |
+| `ai-push "msg"` | Primitive (publish half). Commit + push all of `~/.claude/` to GitHub, **regenerate the connectome** (`neural_map.json`), and run `sync-ai-docs` across all registered arms. |
+| `ai-pull [arm-code\|--status]` | Primitive (integrate half). Pull the latest brain from remote into `~/.claude/`, then re-sync: one arm if you pass an arm code, or all arms by default. `--status` reports state without pulling. |
 
-`ai-push` is the write path: it runs the generic-content check, commits, regenerates the TF-IDF connectome graph so agent/skill selection stays accurate ([[Skills-System]]), pushes, and cascades the change down to every arm. `ai-pull` is the read path on a second machine: get the newest brain, then make every local arm consistent with it.
+`ai-push` is the write path: it runs the generic-content check, commits, regenerates the TF-IDF connectome graph so agent/skill selection stays accurate ([[Skills-System]]), pushes, and cascades the change down to every arm. `ai-pull` is the read path on a second machine: get the newest brain, then make every local arm consistent with it. `ai-sync` composes both, and is what you should reach for daily; keep the primitives for when you deliberately want only one half of the cycle.
 
-> **Always pull before you push.** Sync with remote first to avoid divergent brain histories across machines.
+> **Always pull before you push.** Sync with remote first to avoid divergent brain histories across machines. `ai-sync` bakes this order in, which is exactly why it is the canonical command.
 
 ### The scripts
 
-Three scripts live in `~/.local/bin/`:
+Four scripts live in `~/.local/bin/`:
 
 | Script | Role |
 |---|---|
+| `ai-sync` | The canonical daily sync: integrate (rebase + autostash), then publish, retrying on mid-flight sibling pushes. |
 | `sync-ai-docs` | Regenerate per-arm editor-instruction files from the brain + each arm's `.claude/CLAUDE.md`. Called by both `ai-push` and `ai-pull`. |
 | `ai-push` | Commit + push the brain, regenerate the connectome, sync all arms. |
 | `ai-pull` | Pull the brain from remote, sync. |

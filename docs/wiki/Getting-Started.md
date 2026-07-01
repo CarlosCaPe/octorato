@@ -138,19 +138,20 @@ Only you, the human operator, ever bridge knowledge between arms. The agent neve
 python3 ~/.claude/scripts/install-runners.py
 ```
 
-This creates `ai-push`, `ai-pull`, and `sync-ai-docs` in `~/.local/bin/` for both POSIX and Windows.
+This creates `ai-sync`, `ai-push`, `ai-pull`, and `sync-ai-docs` in `~/.local/bin/` for both POSIX and Windows.
 
 **Daily workflow:**
 
 | Command | What it does |
 |---|---|
-| `ai-push "msg"` | Runs the generic-content check, commits + pushes `~/.claude/`, regenerates the neural connectome, syncs all arms |
-| `ai-pull` | Pulls the brain from the remote and syncs every arm down |
+| `ai-sync ["msg"]` | **The canonical daily command.** Integrates first (`git pull --rebase --autostash`), then publishes (`push`), and retries the loop when a sibling machine pushed mid-flight. One command, race-safe and idempotent, built for running one brain across many machines at once |
+| `ai-push "msg"` | Primitive: the publish half only. Runs the generic-content check, commits + pushes `~/.claude/`, regenerates the neural connectome, syncs all arms |
+| `ai-pull` | Primitive: the integrate half only. Pulls the brain from the remote and syncs every arm down |
 | `ai-pull <arm-code>` | Pulls + syncs a single arm only |
 | `ai-pull --status` | Shows sync status without changing anything |
 | `sync-ai-docs` | Cascades brain rules into each arm's `.github/copilot-instructions.md` + `.cursorrules` |
 
-On a brand-new workstation the bootstrap is: clone the brain (Step 1), enable the hook (Step 2), run the installer (above), then run `ai-pull`. From then on, `ai-pull` at the start of a work block and `ai-push "..."` when you've improved the brain.
+On a brand-new workstation the bootstrap is: clone the brain (Step 1), enable the hook (Step 2), run the installer (above), then run `ai-pull`. From then on, `ai-sync "..."` whenever you've improved the brain; reach for `ai-push` or `ai-pull` only when you want just one half of the cycle.
 
 > **Note:** episodic memory (`~/.claude/projects/`) is gitignored and stays per-machine by design — it contains absolute paths and arm context that must not go public. Brain stays generic; memory stays sovereign.
 

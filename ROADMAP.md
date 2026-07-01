@@ -8,7 +8,7 @@ Most "agent frameworks" are libraries you import. Octorato wants to be the **ker
 
 Octorato is an **early-stage, research-driven** attempt at an OS-grade runtime for AI agents. What's **real and shipping** right now:
 
-- A persistent **brain** (`~/.claude/`): versioned rules + 150+ agent personas + a growing skill library.
+- A persistent **brain** (`~/.claude/`): versioned rules + 160+ agent personas + a growing skill library.
 - A **connectome** (TF-IDF + cosine graph over every skill/agent) used for agent selection and gap detection.
 - The **4D paradigm** (Describe → Delegate → Diligent → Disclose) with pre-write gates.
 - **FinOps with teeth**: per-arm cost rollup *and* a budget cap that fires a **hard `PreToolUse` halt** — most "agent OS" projects have *zero* runtime enforcement; this one stops work when the budget is blown.

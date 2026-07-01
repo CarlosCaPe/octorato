@@ -150,18 +150,21 @@ python3 ~/.claude/scripts/query_connectome.py query "<task description>"
 
 Builds a TF-IDF query vector and computes cosine similarity against the stored vectors for every agent and skill in `neural_map.json`. Returns ranked agents, their connected skills, and graph-community context. Falls back to keyword matching if the index is missing. This is the *semantic* half of routing — it surfaces skills you didn't know to ask for.
 
-### Q2 — ¿Tiene API? (API-first token efficiency)
+### Q2 — ¿Tiene MCP/API? (token-efficient access)
 
-A mental check, not a script. Before any browser automation or scraping, walk the access hierarchy from cheapest to most expensive:
+Not a mental check: **run `claude mcp list`** before any browser automation or scraping, then walk the access hierarchy from cheapest to most expensive:
 
 | Priority | Access method | ~Token cost | When to use |
 |---|---|---|---|
-| 1 | **REST API** | ~200 / call | Always prefer — structured JSON, cheapest |
-| 2 | **MCP server** | ~300 / call | If integrated (GitHub, Gmail, Notion, …) |
-| 3 | **SDK / CLI** | ~500 / call | Programmatic, typed responses |
-| 4 | **Scraping** | ~5,000+ / call | Last resort — snapshots are token-expensive |
+| 1 | **Registered MCP server** | ~300 / call | Already connected (GitHub, Gmail, Notion, …) |
+| 2 | **Register a NEW official MCP** | ~300 / call | `claude mcp add --transport http <name> <url>` when an official server exists for the service |
+| 3 | **REST API** | ~200 / call | Structured JSON when no MCP exists |
+| 4 | **SDK / CLI** | ~500 / call | Programmatic, typed responses |
+| 5 | **Scraping** | ~5,000+ / call | Last resort, snapshots are token-expensive |
 
-If the task touches no external data (pure code edit, file manipulation, git ops), the answer is simply: `Q2 API-first: N/A (no external data access)`.
+**"No MCP connected" is not "no MCP available".** Before dropping to scraping or a hand-rolled REST client, verify whether an official MCP server exists for the service (web-search "<service> MCP server") and register it. Skipping that check is a hard failure, not a shortcut.
+
+If the task touches no external data (pure code edit, file manipulation, git ops), the answer is simply: `Q2 MCP/API-first: N/A (no external data access)`.
 
 ### Q3 — ¿Quién lo hace? (delegate-check / rule match)
 
@@ -184,7 +187,7 @@ Parses every agent from `REGISTRY.md` (triggers + cross-referenced skills), scan
 ```
 2D Delegate: [domain classification]
   Q1 Ventosas:  [top agent] (score X) + [N skills via connectome]
-  Q2 API-first: [YES api.example.com / NO → scraping / N/A]
+  Q2 MCP/API:   [MCP <name> / register MCP / REST api.example.com / NO → scraping / N/A]
   Q3 Delegate:  ACTIVATE / LOAD / SELF — [reason]
 ```
 
@@ -357,7 +360,7 @@ The paradigm is not aspirational; three scripts enforce it at the boundaries.
 | `~/.claude/scripts/delegate-check "<task>"` | 2D · Q3 (rule match) | START of every task |
 | `~/.claude/scripts/gate-check` | 4D Gate | BEFORE any file write — flags: `--validate-session`, `--checklist`, `--audit-log` |
 
-Q2 (API-first) has no script — it is a mental check you make before scraping. The 3D Diligent validation is method-specific (build, lint, render, query), so it is driven by the matrix in §5 rather than a single binary.
+Q2 (MCP/API-first) has no dedicated brain script, but it is not a mental check either: you run `claude mcp list` before scraping, and register an official MCP server if one exists. The 3D Diligent validation is method-specific (build, lint, render, query), so it is driven by the matrix in §5 rather than a single binary.
 
 ---
 
@@ -366,7 +369,7 @@ Q2 (API-first) has no script — it is a mental check you make before scraping. 
 | You are about to… | Phase / gate | Do this |
 |---|---|---|
 | Start any task | 1D + 2D | Describe in 1–3 sentences, then run the 3-question Delegate gate |
-| Reach for a browser/scraper | 2D · Q2 | Check REST → MCP → SDK first |
+| Reach for a browser/scraper | 2D · Q2 | Run `claude mcp list`; registered MCP → register official MCP → REST → SDK first |
 | Write, create, or delete a file | 4D Gate | Present the Change Manifest, wait for confirmation |
 | Change a shared object | Impact Radius | `grep` the radius before editing; update all consumers |
 | Say "done" | 3D Diligent | Validate by task type, report PASS/FAIL + evidence |

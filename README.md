@@ -16,7 +16,7 @@
 [![Stars](https://img.shields.io/github/stars/CarlosCaPe/octorato?style=social)](https://github.com/CarlosCaPe/octorato/stargazers)
 [![Issues](https://img.shields.io/github/issues/CarlosCaPe/octorato)](https://github.com/CarlosCaPe/octorato/issues)
 [![Good first issues](https://img.shields.io/github/issues/CarlosCaPe/octorato/good%20first%20issue?label=good%20first%20issues&color=7057ff)](https://github.com/CarlosCaPe/octorato/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
-[![Version](https://img.shields.io/badge/version-v5.4.0-blueviolet)](CHANGELOG.md)
+[![Version](https://img.shields.io/github/v/release/CarlosCaPe/octorato?label=version&color=blueviolet)](https://github.com/CarlosCaPe/octorato/releases)
 
 📄 **White paper:** [Octorato — An Organic, File-Native Model of Artificial Agency](WHITEPAPER.md) · 🌐 [Live: dataqbs.com/octorato](https://www.dataqbs.com/octorato) · 📣 [Launch article](https://www.linkedin.com/pulse/introducing-octorato-open-source-finops-brain-ai-agents-dataqbs-trbjc) · 🛠️ [Built with Octorato](SHOWCASE.md) · 📘 [dataqbs on Facebook](https://www.facebook.com/dataQBS/)
 
@@ -765,9 +765,9 @@ ai-pull --status
 │   ├── trace-event.schema.json ← Trace event contract (v1.0, strict)
 │   └── tests/trace-samples/    ← 4 validating sample records
 ├── docs/                     ← Architecture + design docs
-│   ├── architecture/
-│   │   └── hook-orchestration.md ← v3.1 Reactive Control Architecture spec (ECA · BT · Statechart · Bandit)
-│   └── trace-storage.md        ← Trace storage layout + retention + backup
+│   └── architecture/
+│       ├── hook-orchestration.md ← v3.1 Reactive Control Architecture spec (ECA · BT · Statechart · Bandit)
+│       └── trace-storage.md      ← Trace storage layout + retention + backup
 ├── traces/                   ← (gitignored) Per-UTC-day JSONL trace files
 ├── commands/                ← Slash command definitions
 ├── templates/

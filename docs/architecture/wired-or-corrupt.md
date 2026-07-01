@@ -1,6 +1,6 @@
 # Wired-or-Corrupt Architecture (SHIPPED)
 
-Status: SHIPPED. All phases landed: Phase 0 (registry + doctor + pre-push gate, v4.0.0), the create-to-register loop (v4.2.0), the fail-closed meta-gate with the gateable classification (#180, v5.3.0), and the operator-signed waivers that armed its teeth (v5.4.0).
+Status: SHIPPED. All phases landed: Phase 0 (registry + doctor + pre-push gate, v4.0.0), the create-to-register loop (v4.2.0), the fail-closed meta-gate with the gateable classification (#180, v5.3.0), the operator-signed waivers that armed its teeth (v5.4.0), and the v5.5.0 hardening wave: waiver `expires` enforcement (an expired waiver counts as unwaived, so the rule FAILS again), bidirectional release-drift detection, anchor-ambiguity detection, a corpus-coverage denominator that counts skills canon plus memory directives, and fail-closed pre-push gate inputs (a missing rules.yaml, doctor, or Python blocks the push instead of silently skipping).
 Produced 2026-06-22 by workflow wf_c77aedc2-7d6 (11 agents: 5 architect lenses + judge panel + synthesis), seeded from a primary-source audit of ~/.claude this session.
 
 ---
@@ -315,7 +315,7 @@ Rule #1's mechanism IS brain_doctor (Registry `R-META-001`). brain_doctor is inv
 
 ---
 
-**Decision record:** approved and shipped. Phase 0 landed in v4.0.0 (registry, doctor D0-D3, pre-push gate, phantom-script kill); the create-to-register loop landed in v4.2.0; the fail-closed meta-gate + gateable classification landed in v5.3.0 (#180); the waivers that armed it landed in v5.4.0.
+**Decision record:** approved and shipped. Phase 0 landed in v4.0.0 (registry, doctor D0-D3, pre-push gate, phantom-script kill); the create-to-register loop landed in v4.2.0; the fail-closed meta-gate + gateable classification landed in v5.3.0 (#180); the waivers that armed it landed in v5.4.0; the v5.5.0 wave hardened the teeth: waiver `expires` is enforced (expired = unwaived = FAIL), release-drift is checked in both directions, anchor ambiguity is detected instead of first-match-wins, the corpus-coverage denominator counts skills canon plus memory directives, and the pre-push gate's own inputs are fail-closed (missing registry, doctor, or Python blocks the push, never a silent skip).
 
 💡 Unlock-suggestion: none - every artifact above is buildable on the operator's machine with existing tools (validate-skill-manifest engine, impact-radius, merge-hooks, .githooks/pre-push all verified present).
 
