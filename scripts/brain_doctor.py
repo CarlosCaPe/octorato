@@ -865,6 +865,95 @@ def check_registry(fix: bool) -> list:
     return out
 
 
+def check_corpus_coverage(fix: bool) -> Result:
+    """WARN-only Coverage Ledger over the WHOLE normative corpus. registry-coverage's
+    denominator is CLAUDE.md headings only, so normative rules living in skills and in
+    memory directives are invisible to it and it always reads 100%. This check widens
+    the denominator: skills' ULTRA RULE / MANDATORY / NON-NEGOTIABLE canon lines plus
+    memory feedback directives, reconciled against registry/rules.yaml. It never FAILs;
+    promotion of uncovered canon to registry rows is operator-curated."""
+    key = "corpus-coverage"
+    try:
+        import yaml
+        reg = yaml.safe_load(REGISTRY_PATH.read_text(encoding="utf-8")) or {}
+    except Exception as e:
+        return Result(key, WARN, f"cannot compute corpus coverage: {e}",
+                      "fix registry/rules.yaml first")
+    rules = reg.get("rules", []) if isinstance(reg, dict) else []
+    rule_files = {(r.get("source") or {}).get("file", "") for r in rules}
+    rule_anchors = [(r.get("source") or {}).get("anchor", "") for r in rules
+                    if (r.get("source") or {}).get("anchor")]
+
+    # CLAUDE.md section anchors (same denominator registry-coverage uses)
+    cl_anchors = _claude_anchors()
+    cl_covered = sum(1 for a in cl_anchors if any(anc in a for anc in rule_anchors))
+
+    # Skills canon: normative anchors = heading or bold-marked lines carrying a
+    # normative token. skills/learned/ drafts are unpromoted by design (the glob
+    # is depth-1 so they are excluded structurally).
+    norm_re = re.compile(r"ULTRA RULE|MANDATORY|NON-NEGOTIABLE")
+    bold_norm_re = re.compile(r"\*\*[^*]*(?:ULTRA RULE|MANDATORY|NON-NEGOTIABLE)[^*]*\*\*")
+    skill_items = []  # (relpath, anchor-line)
+    skill_texts = {}
+    for sk in sorted((CLAUDE_DIR / "skills").glob("*/SKILL.md")):
+        rel = sk.relative_to(CLAUDE_DIR).as_posix()
+        text = _rt(sk)
+        skill_texts[rel] = text
+        for ln in text.splitlines():
+            s = ln.strip()
+            if not norm_re.search(s):
+                continue
+            if s.startswith("#") or bold_norm_re.search(s):
+                skill_items.append((rel, s))
+    skill_uncov = []
+    for rel, anchor_line in skill_items:
+        covered = rel in rule_files or any(anc in skill_texts[rel] for anc in rule_anchors)
+        if not covered:
+            skill_uncov.append(f"{rel}:{anchor_line[:50]}")
+    skill_cov = len(skill_items) - len(skill_uncov)
+
+    # Memory directives: one per feedback_*.md file; the memory layer is private
+    # and gitignored, so absence on this machine is a soft skip (same pattern as
+    # company/brain-blocklist.txt).
+    mem_files = sorted(CLAUDE_DIR.glob("projects/*/memory/feedback_*.md"))
+    if not mem_files:
+        mem_note = "memory layer absent on this machine — memory directives skipped"
+        mem_cov, mem_uncov_names = 0, []
+    else:
+        mem_note = ""
+        mem_uncov_names = []
+        mem_cov = 0
+        for mf in mem_files:
+            rel = mf.relative_to(CLAUDE_DIR).as_posix()
+            if rel in rule_files or mf.name in rule_files:
+                mem_cov += 1
+                continue
+            label = mf.stem
+            for ln in _rt(mf).splitlines()[:15]:
+                if ln.strip().lower().startswith("description:"):
+                    label = ln.split(":", 1)[1].strip()[:60]
+                    break
+            mem_uncov_names.append(label)
+    uncovered_total = len(skill_uncov) + len(mem_uncov_names)
+
+    ledger = (
+        f"Ledger: {len(rules)} registered rules | "
+        f"CLAUDE.md anchors {cl_covered}/{len(cl_anchors)} | "
+        f"skills canon {skill_cov}/{len(skill_items)}"
+        + (f" (uncovered: {'; '.join(skill_uncov[:15])}"
+           + (" …" if len(skill_uncov) > 15 else "") + ")" if skill_uncov else "")
+        + " | "
+        + (mem_note if mem_note else
+           f"memory directives {mem_cov}/{len(mem_files)}"
+           + (f" (top uncovered: {', '.join(mem_uncov_names[:10])})" if mem_uncov_names else ""))
+    )
+    if uncovered_total:
+        return Result(key, WARN, ledger,
+                      "uncovered canon is a coverage gap, not corruption — promoting an "
+                      "item to a registry row is operator-curated, one at a time")
+    return Result(key, PASS, ledger)
+
+
 def check_naming(fix: bool) -> list:
     """RULE #1 nomenclature: a NEW hook script must follow the canonical scheme; existing grandfathered."""
     if not NAMING_POLICY.exists():
@@ -993,6 +1082,7 @@ def check_capability_manifest(fix: bool) -> Result:
 CHECKS = [
     ("repo-identity", check_repo_identity),
     ("rule-1-registry", check_registry),
+    ("corpus-coverage", check_corpus_coverage),
     ("rule-1-naming", check_naming),
     ("rule-1-orphans", check_orphan_hooks),
     ("sync-clean", check_sync_clean),
