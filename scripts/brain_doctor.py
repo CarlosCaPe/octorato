@@ -907,7 +907,9 @@ def check_corpus_coverage(fix: bool) -> Result:
                 skill_items.append((rel, s))
     skill_uncov = []
     for rel, anchor_line in skill_items:
-        covered = rel in rule_files or any(anc in skill_texts[rel] for anc in rule_anchors)
+        # Covered only when a registry row anchors in THIS file (source.file);
+        # a short anchor string quoted in passing must not mark canon covered.
+        covered = rel in rule_files
         if not covered:
             skill_uncov.append(f"{rel}:{anchor_line[:50]}")
     skill_cov = len(skill_items) - len(skill_uncov)
