@@ -559,8 +559,11 @@ def push(args) -> int:
 
     # Publish docs/wiki to the GitHub wiki mirror (best-effort). The wiki is a
     # separate repo no gate protects; a wiki failure must NEVER fail ai-push,
-    # so this warns in one line and moves on.
-    if (CLAUDE / "scripts" / "publish-wiki.py").exists():
+    # so this warns in one line and moves on. Master/main only: publishing from
+    # a feature branch (or with a PR still open) would mirror unreviewed content
+    # to the public wiki, skirting the review gate.
+    _, wiki_branch, _ = git("rev-parse", "--abbrev-ref", "HEAD")
+    if wiki_branch in ("master", "main") and (CLAUDE / "scripts" / "publish-wiki.py").exists():
         info("📖 Publishing docs/wiki to the GitHub wiki...")
         if subprocess.run([py(), str(CLAUDE / "scripts" / "publish-wiki.py"),
                            "--push"]).returncode != 0:
