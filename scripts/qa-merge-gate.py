@@ -86,6 +86,10 @@ _PR_NUM_RE = re.compile(r"^\s*gh\s+pr\s+merge\s+(\d+)(?=\s|$)")
 # Path to the per-PR approvals file
 _APPROVALS_FILE = Path.home() / ".claude" / "connectome" / "merge-approvals.json"
 
+# Set True by main() the moment a publish/merge sub-command is positively
+# identified. The __main__ crash handler keys fail-open vs fail-closed off it.
+_PUBLISH_IDENTIFIED = False
+
 # ---------------------------------------------------------------------------
 # Repo scoping (root-cause fix, 2026-06-04). The gate guards PROTECTED repos:
 # the brain (~/.claude, including its linked worktrees) plus any repo listed in
@@ -393,7 +397,10 @@ def main() -> int:
     if matched_sub is None:
         return 0
 
-    # Positively identified as a merge action — extract target id from the matched sub-command.
+    # Positively identified as a merge action — from here on, a crash must fail
+    # CLOSED (the __main__ handler reads this flag and exits 2, not 0).
+    global _PUBLISH_IDENTIFIED
+    _PUBLISH_IDENTIFIED = True
     pr_id = _extract_pr_id(matched_sub)
 
     # ── Repo scope: only PROTECTED repos are gated ────────────────────────────
@@ -452,8 +459,19 @@ def main() -> int:
 if __name__ == "__main__":
     # Outer try only guards catastrophic interpreter errors.
     # We must NOT silently swallow a deliberate exit(2) block.
+    # Fail-open ONLY while we cannot know this is a merge; once a publish/merge
+    # sub-command was positively identified, a crash exits 2 (fail-closed) —
+    # otherwise any exception after identification would silently open the gate.
     try:
         result = main()
     except Exception:
-        result = 0  # fail-open for unexpected crashes on non-merge paths
+        if _PUBLISH_IDENTIFIED:
+            print(
+                "✗ QA GATE (fail-closed): gate crashed AFTER a merge/publish path "
+                "was identified — blocking instead of failing open.",
+                file=sys.stderr,
+            )
+            result = 2
+        else:
+            result = 0  # fail-open for unexpected crashes on non-merge paths
     sys.exit(result)

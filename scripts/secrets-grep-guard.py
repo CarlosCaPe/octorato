@@ -56,9 +56,23 @@ _SECRET_PATH_PATTERNS = [
 ]
 
 # ── redactor pipe patterns (allow if any present after the reader) ────────────
+# A redactor must VISIBLY mask or narrow the output. A bare pipe to jq/python/awk
+# passes the secret through whole (`cat .env | jq .` dumps everything), so it does
+# NOT count. What counts:
+#   • sed with a substitution command (s/.../.../) — replaces values
+#   • awk with sub()/gsub()/gensub() — replaces values
+#   • cut with a delimiter/field/char selection — keys-only extraction
+#   • grep -o — extracts only the matched pattern, not the whole line
+#   • an explicit redact script anywhere in the pipe
 
 _REDACTOR_RE = re.compile(
-    r"\|\s*(sed\b|cut\b|grep\s+-o\b|awk\s+|python|jq\b)",
+    r"\|\s*(?:"
+    r"sed\s+(?:-\w+\s+)*(?:-e\s*)?['\"]?s[/#|,]"       # sed 's/…/…/' substitution
+    r"|awk\s+[^|]*\b(?:sub|gsub|gensub)\s*\("           # awk with a substitution call
+    r"|cut\s+-[dcbf]"                                    # cut -d/-f/-c/-b field selection
+    r"|grep\s+(?:-\w+\s+)*-o\b"                          # grep -o extraction
+    r"|\S*redact\S*"                                     # explicit redact script
+    r")",
     re.IGNORECASE,
 )
 

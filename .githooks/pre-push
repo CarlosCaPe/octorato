@@ -177,26 +177,34 @@ for cand in python3 python; do
 done
 
 # Lineage graph integrity (fail-closed): a rotted surface/derivation index makes
-# every `SEEK-COMPLETE` a lie. Block the push until the graph is sound.
-if [ -f "$REPO_ROOT/scripts/lineage-doctor.py" ] && [ -f "$REPO_ROOT/connectome/lineage.yaml" ]; then
-  if [ -z "$PYTHON" ]; then
-    {
-      echo ""
-      echo "✗ pre-push: no working Python found on PATH (tried python3, python)."
-      echo "  Lineage soundness check requires Python. Install one and re-push."
-    } >&2
-    exit 1
-  fi
-  if ! "$PYTHON" "$REPO_ROOT/scripts/lineage-doctor.py" --quiet >/dev/null 2>&1; then
-    {
-      echo ""
-      echo "✗ pre-push: lineage graph is UNSOUND (dangling edge or cycle)."
-      "$PYTHON" "$REPO_ROOT/scripts/lineage-doctor.py" 2>&1 | sed 's/^/  /'
-      echo ""
-      echo "  Fix connectome/lineage.yaml so the seek can be trusted, then re-push."
-    } >&2
-    exit 1
-  fi
+# every `SEEK-COMPLETE` a lie. Block the push until the graph is sound. The gate's
+# own inputs are fail-closed too: a missing doctor or graph must block, never
+# silently skip — a constitutional gate must never vanish silently.
+if [ ! -f "$REPO_ROOT/scripts/lineage-doctor.py" ] || [ ! -f "$REPO_ROOT/connectome/lineage.yaml" ]; then
+  {
+    echo ""
+    echo "✗ pre-push: lineage gate inputs MISSING (scripts/lineage-doctor.py or connectome/lineage.yaml)."
+    echo "  The graph-integrity gate cannot be skipped silently. Restore the files and re-push."
+  } >&2
+  exit 1
+fi
+if [ -z "$PYTHON" ]; then
+  {
+    echo ""
+    echo "✗ pre-push: no working Python found on PATH (tried python3, python)."
+    echo "  Lineage soundness check requires Python. Install one and re-push."
+  } >&2
+  exit 1
+fi
+if ! "$PYTHON" "$REPO_ROOT/scripts/lineage-doctor.py" --quiet >/dev/null 2>&1; then
+  {
+    echo ""
+    echo "✗ pre-push: lineage graph is UNSOUND (dangling edge or cycle)."
+    "$PYTHON" "$REPO_ROOT/scripts/lineage-doctor.py" 2>&1 | sed 's/^/  /'
+    echo ""
+    echo "  Fix connectome/lineage.yaml so the seek can be trusted, then re-push."
+  } >&2
+  exit 1
 fi
 
 # OCTORATO-WIRE-GATE — RULE #1 (Wired or Corrupt). docs/architecture/wired-or-corrupt.md
@@ -205,24 +213,30 @@ fi
 # schema, or points at a dead anchor = CORRUPT brain. Block the push. Coverage WARN
 # (prose not yet wired) never blocks; only CORRUPT (a FAIL) does. This stanza + the
 # doctor's D0 sentinel grep are the self-wired fixed point of Rule #1.
-if [ -f "$REPO_ROOT/scripts/brain_doctor.py" ] && [ -f "$REPO_ROOT/registry/rules.yaml" ]; then
-  if [ -z "$PYTHON" ]; then
-    {
-      echo ""
-      echo "✗ pre-push: no working Python found; RULE #1 registry gate requires Python."
-    } >&2
-    exit 1
-  fi
-  if ! "$PYTHON" "$REPO_ROOT/scripts/brain_doctor.py" --registry >/dev/null 2>&1; then
-    {
-      echo ""
-      echo "✗ pre-push: brain is CORRUPT — a registry rule is not wired (RULE #1)."
-      "$PYTHON" "$REPO_ROOT/scripts/brain_doctor.py" --registry 2>&1 | sed 's/^/  /'
-      echo ""
-      echo "  Fix registry/rules.yaml so every rule's mechanism is live, then re-push."
-    } >&2
-    exit 1
-  fi
+if [ ! -f "$REPO_ROOT/scripts/brain_doctor.py" ] || [ ! -f "$REPO_ROOT/registry/rules.yaml" ]; then
+  {
+    echo ""
+    echo "✗ pre-push: RULE #1 gate inputs MISSING (scripts/brain_doctor.py or registry/rules.yaml)."
+    echo "  The constitutional gate cannot be skipped silently. Restore the files and re-push."
+  } >&2
+  exit 1
+fi
+if [ -z "$PYTHON" ]; then
+  {
+    echo ""
+    echo "✗ pre-push: no working Python found; RULE #1 registry gate requires Python."
+  } >&2
+  exit 1
+fi
+if ! "$PYTHON" "$REPO_ROOT/scripts/brain_doctor.py" --registry >/dev/null 2>&1; then
+  {
+    echo ""
+    echo "✗ pre-push: brain is CORRUPT — a registry rule is not wired (RULE #1)."
+    "$PYTHON" "$REPO_ROOT/scripts/brain_doctor.py" --registry 2>&1 | sed 's/^/  /'
+    echo ""
+    echo "  Fix registry/rules.yaml so every rule's mechanism is live, then re-push."
+  } >&2
+  exit 1
 fi
 
 # OCTORATO-MANIFEST-GATE: RULE #1 extended from rules to capabilities (v5.0).
@@ -233,15 +247,27 @@ fi
 # manifest before staging, so this never fires on the canonical path; it catches a
 # direct `git push` with a stale manifest. Determinism verified before flipping to
 # fail-closed: byte-identical output, no env-specifics, gitignored cruft excluded.
-if [ -f "$REPO_ROOT/scripts/capability_manifest.py" ] && [ -n "$PYTHON" ]; then
-  if ! "$PYTHON" "$REPO_ROOT/scripts/capability_manifest.py" --check >/dev/null 2>&1; then
-    {
-      echo ""
-      echo "✗ pre-push: docs/CAPABILITIES.md is STALE (a capability changed without regen)."
-      echo "  Run: python3 scripts/capability_manifest.py  then commit it, and re-push."
-    } >&2
-    exit 1
-  fi
+if [ ! -f "$REPO_ROOT/scripts/capability_manifest.py" ]; then
+  {
+    echo ""
+    echo "✗ pre-push: scripts/capability_manifest.py MISSING — the manifest gate cannot be skipped silently."
+  } >&2
+  exit 1
+fi
+if [ -z "$PYTHON" ]; then
+  {
+    echo ""
+    echo "✗ pre-push: no working Python found; the capability-manifest gate requires Python."
+  } >&2
+  exit 1
+fi
+if ! "$PYTHON" "$REPO_ROOT/scripts/capability_manifest.py" --check >/dev/null 2>&1; then
+  {
+    echo ""
+    echo "✗ pre-push: docs/CAPABILITIES.md is STALE (a capability changed without regen)."
+    echo "  Run: python3 scripts/capability_manifest.py  then commit it, and re-push."
+  } >&2
+  exit 1
 fi
 
 exit 0
