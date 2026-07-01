@@ -1,8 +1,7 @@
-# Wired-or-Corrupt Architecture (DESIGN for review, NOT yet implemented)
+# Wired-or-Corrupt Architecture (SHIPPED)
 
-Status: DESIGN, pending operator approval. No brain behavior is changed by this document.
+Status: SHIPPED. All phases landed: Phase 0 (registry + doctor + pre-push gate, v4.0.0), the create-to-register loop (v4.2.0), the fail-closed meta-gate with the gateable classification (#180, v5.3.0), and the operator-signed waivers that armed its teeth (v5.4.0).
 Produced 2026-06-22 by workflow wf_c77aedc2-7d6 (11 agents: 5 architect lenses + judge panel + synthesis), seeded from a primary-source audit of ~/.claude this session.
-Decision pending: approve Phase 0 (5 additive, reversible commits) to make Rule #1 real for the already-wired majority and kill the phantom-script class.
 
 ---
 
@@ -316,7 +315,7 @@ Rule #1's mechanism IS brain_doctor (Registry `R-META-001`). brain_doctor is inv
 
 ---
 
-**Decision needed:** approve to start PHASE 0 (the 5 commits above). Phase 0 is reversible, additive, touches no existing hook behavior, and delivers Rule #1 for the wired majority plus the phantom-script kill on day one.
+**Decision record:** approved and shipped. Phase 0 landed in v4.0.0 (registry, doctor D0-D3, pre-push gate, phantom-script kill); the create-to-register loop landed in v4.2.0; the fail-closed meta-gate + gateable classification landed in v5.3.0 (#180); the waivers that armed it landed in v5.4.0.
 
 💡 Unlock-suggestion: none - every artifact above is buildable on the operator's machine with existing tools (validate-skill-manifest engine, impact-radius, merge-hooks, .githooks/pre-push all verified present).
 

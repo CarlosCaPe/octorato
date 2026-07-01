@@ -15,6 +15,68 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+### Doctor teeth
+- Waiver expiry enforced: a gateable fail-open rule whose `waiver.expires` is missing, unparseable, or past now counts as UNWAIVED and fails the meta-gate.
+- `release-drift` is bidirectional: the newest semver tag ahead of the CHANGELOG top now WARNs (releases cut without entries), with tags sorted by semver.
+- New `registry-anchor-ambiguity` check: a rule anchor that substring-covers another rule's anchor line, or covers 2+ anchor lines, WARNs with the ambiguous pairs.
+- New `corpus-coverage` WARN-only Coverage Ledger: skills canon (ULTRA RULE / MANDATORY / NON-NEGOTIABLE) and memory feedback directives join the denominator, so coverage can no longer read 100% from CLAUDE.md headings alone.
+
+### Gates fail closed
+- `.githooks/pre-push`: missing gate inputs (lineage doctor, registry, capability manifest, Python interpreter) now block the push instead of silently skipping. A constitutional gate must never vanish silently.
+- `qa-merge-gate.py`: a crash after a merge/publish path is identified exits 2 (fail-closed) instead of silently opening the gate.
+- `secrets-grep-guard.py`: a bare pipe to jq/python/awk no longer counts as a redactor; only visible masking passes (sed/awk substitution, cut field selection, grep -o, an explicit redact script).
+
+### Registry honesty
+- check-generic.py rows remodeled: the PrePush mechanism is `.githooks/pre-push` (it inlines its own scan); check-generic.py fires via the ai-push runner.
+- FLOW.budget-halt waiver reason corrected: budgets.yaml is active, every `action_on_breach` is `alert` by operator choice, so HARD_STOP is unreachable by config.
+- COMMS.no-pause got its own distinct anchor; duplicate grafo-gate hook removed from hooks.json.
+
+### Docs
+- CHANGELOG backfilled v4.2.0 through v5.4.0; README badge and narration updated to the v4 registry + v5 manifest state; wired-or-corrupt.md phases marked shipped.
+
+## [2026-06-29]: v5.4.0
+- Waived the 7 known fail-open gateable rules with operator-signed, expiry-dated waivers so the meta-gate could arm.
+- Armed the meta-gate teeth: any NEW gateable rule left fail-open and unwaived now FAILs and blocks the push.
+- Propagated v5 manifest + gate + real budget-halt/digest across wiki, FAQ, whitepaper, and README.
+
+## [2026-06-29]: v5.3.0
+- Fail-closed meta-gate: `gateable: true` demands `enforcement: fail-closed` or an operator-signed waiver (#180).
+- Classified the full rule corpus with explicit `gateable` flags; gate-shape is derived from the mechanism so omission cannot evade the gate.
+
+## [2026-06-26]: v5.2.1
+- Reflected v5 (capability manifest + gate) across README, wiki, FAQ, and whitepaper (#179).
+
+## [2026-06-26]: v5.2.0
+- Flipped capability-manifest freshness to a pre-push hard block, after cross-machine determinism was verified.
+
+## [2026-06-26]: v5.1.0
+- Scheduled the daily brain digest (slos / watchdog / finops) via a local systemd timer; it reads local session data, so no dataless CI cron.
+
+## [2026-06-26]: v5.0.0 "Capability Manifest"
+- One generated manifest: `docs/CAPABILITIES.md` is produced from the live capability set by `scripts/capability_manifest.py` and regenerated on every push; hand narration retired.
+- Anti-regression gate: `brain_doctor` asserts the manifest is fresh, extending Wired or Corrupt from the rule corpus to every capability.
+- FinOps budget halt wired for real: `budget-check.py` runs as a PreToolUse[Agent] gate, registered as `FLOW.budget-halt`.
+- Counts reconciled to the brain's own rules (231 skills, 167 agents, 13 divisions); inflated counts were caught during review.
+- Honest deferrals recorded: local-data digest needs a local schedule, and the pre-push hard block waited for determinism proof (landed in v5.2.0).
+
+## [2026-06-25]: v4.3.1
+- Declared the jsonschema dependency in requirements.txt and propagated it via ai-push (#175).
+
+## [2026-06-25]: v4.3.0
+- Cursor support: hooks.json is projected into the native `~/.cursor/hooks.json` (#174).
+
+## [2026-06-25]: v4.2.1
+- 4d-reminder fires last with the verdict ask at string end; dropped the duplicate grafo-turn-reset hook (#173).
+
+## [2026-06-23]: v4.2.0
+- `brain_doctor` closes the create-to-register loop (RULE #1 Phase 5): a new hook script lands together with its registry row (#172).
+
+## [2026-06-23]: v4.1.1
+- Documented the Wired or Corrupt (RULE #1) architecture everywhere (#171).
+
+## [2026-06-23]: v4.1.0
+- Phase 4b: bidirectional 100% anchor coverage (D4), drift self-heal, remaining gaps closed (#170).
+
 ## [2026-06-23]: v4.0.0 "Wired or Corrupt"
 
 The brain stopped trusting its own prose. Most of CLAUDE.md was discipline the model could skip; only a small fraction had a real reflex. RULE #1 inverts that. Every rule must be wired, an unwired rule means the brain is CORRUPT, and brain_doctor enforces it. A missing mechanism blocks the push. No exceptions.

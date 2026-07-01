@@ -16,7 +16,7 @@
 [![Stars](https://img.shields.io/github/stars/CarlosCaPe/octorato?style=social)](https://github.com/CarlosCaPe/octorato/stargazers)
 [![Issues](https://img.shields.io/github/issues/CarlosCaPe/octorato)](https://github.com/CarlosCaPe/octorato/issues)
 [![Good first issues](https://img.shields.io/github/issues/CarlosCaPe/octorato/good%20first%20issue?label=good%20first%20issues&color=7057ff)](https://github.com/CarlosCaPe/octorato/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
-[![Version](https://img.shields.io/badge/version-v3.1.0%20%22Reflexes%22-blueviolet)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v5.4.0-blueviolet)](CHANGELOG.md)
 
 📄 **White paper:** [Octorato — An Organic, File-Native Model of Artificial Agency](WHITEPAPER.md) · 🌐 [Live: dataqbs.com/octorato](https://www.dataqbs.com/octorato) · 📣 [Launch article](https://www.linkedin.com/pulse/introducing-octorato-open-source-finops-brain-ai-agents-dataqbs-trbjc) · 🛠️ [Built with Octorato](SHOWCASE.md) · 📘 [dataqbs on Facebook](https://www.facebook.com/dataQBS/)
 
@@ -402,8 +402,8 @@ Inspired by octopus neurobiology: 500M neurons, 2/3 distributed in arms, extensi
   Neurons      Synapses     Regions               Phases
   (Agents)     (Skills)     (Arms + parallel      (4D Paradigm)
                              git-worktree
-                             session dims
-                             v3.1.0)
+                             session dims,
+                             since v3.1.0)
 ```
 
 | Architecture | Neuroscience | Function |
@@ -500,7 +500,7 @@ Memory is two-tier by scope: generic cross-arm lessons and operator preferences 
 
 ## Reflexes — The Spinal Cord Layer
 
-> **v3.1.0 "Reflexes"** — the brain moved from _sensing_ itself (3.0 Proprioception) to _enforcing_ itself. Principles that were advisory prose became involuntary hooks wired at the harness level: they fire whether the model chooses to or not.
+> **v3.1.0 "Reflexes"** made enforcement involuntary: principles that were advisory prose became harness-wired hooks that fire whether the model chooses to or not. The current state builds on that layer with the **v4 rule registry** (Wired or Corrupt: `registry/rules.yaml` + `brain_doctor`) and the **v5 capability manifest + anti-regression gate** (`docs/CAPABILITIES.md`, pre-push hard block).
 
 Not every behavior needs to go through the cortex. Some are too universal, too fast, too necessary to delegate. The spinal cord handles them: hand pulled from a hot surface, knee jerk, breathing rhythm. No conscious decision, no committee.
 
@@ -519,7 +519,7 @@ These fire automatically on every non-trivial task without the agent having to d
 | `post-check-verification` | About to declare "done" | Never on a write — always on a verify (build/lint/test/grep) |
 | `dry-run-gate-pattern` | About to do something destructive | Preview/dry-run first; live execution requires explicit opt-in |
 
-### Enforcement hooks — v3.1.0 additions (3, harness-wired)
+### Enforcement hooks (harness-wired; the first 3 landed in v3.1.0)
 
 These are `hooks.json` entries that the harness evaluates on every matching tool event. The model cannot skip them.
 
@@ -531,7 +531,7 @@ These are `hooks.json` entries that the harness evaluates on every matching tool
 
 **Connector verdict enforcement.** The 2D Delegate verdict is now inverted by default: **SELF is the rare exception, CONNECT is the default**. The delegate-gate hook reinforces this at the harness level — answering "from my own knowledge" on a task that has a skill or agent match is caught before the tool fires.
 
-### 4D Session dimensions — v3.1.0
+### 4D Session dimensions (since v3.1.0)
 
 The brain can run as **one session-id across N parallel isolated git worktrees**, each reconciled into one `.git`. This is the octopus superpower applied to time: many arms acting in parallel under one brain, without collision.
 
@@ -754,10 +754,10 @@ ai-pull --status
 │   ├── _brain_obs.py              ← Shared library for the 10 obs scripts (private)
 │   ├── update_neural_activity.py  ← Hebbian update from trace co-activations
 │   ├── scan-external-refs         ← Scan for external URL references
-│   ├── delegate-gate.py           ← v3.1 hook: model-tier routing nudge (fail-open)
-│   ├── qa-merge-gate.py           ← v3.1 hook: operator-approval gate for merges (fail-closed)
-│   ├── dimension-awareness-hook.py← v3.1 hook: shared-worktree collision warning (fail-open)
-│   ├── octo-dim.py                ← v3.1: session-dimension registry (worktree-init / list / approve-merge)
+│   ├── delegate-gate.py           ← hook (since v3.1): model-tier routing nudge (fail-open)
+│   ├── qa-merge-gate.py           ← hook (since v3.1): operator-approval gate for merges (fail-closed)
+│   ├── dimension-awareness-hook.py← hook (since v3.1): shared-worktree collision warning (fail-open)
+│   ├── octo-dim.py                ← since v3.1: session-dimension registry (worktree-init / list / approve-merge)
 │   ├── ai-push.ps1                ← PowerShell variant for Windows
 │   ├── ai-pull.ps1                ← PowerShell variant for Windows
 │   └── sync-ai-docs.ps1           ← PowerShell variant for Windows
