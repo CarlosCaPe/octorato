@@ -136,16 +136,6 @@
         }
       ],
       "matcher": "Bash"
-    },
-    {
-      "hooks": [
-        {
-          "command": "python3 ~/.claude/scripts/grafo-gate.py",
-          "timeout": 5,
-          "type": "command"
-        }
-      ],
-      "matcher": "Bash"
     }
   ],
   "SessionStart": [
