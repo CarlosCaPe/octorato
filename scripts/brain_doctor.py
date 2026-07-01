@@ -541,6 +541,24 @@ def check_release_drift(fix: bool) -> Result:
     if semver_tags:
         newest = max(semver_tags, key=_sv)
         if _sv(newest) > _sv(f"v{top_version}"):
+            if fix:
+                # Repair is local by design: branch protection means no bot can
+                # commit to master, so the sync writes CHANGELOG.md here and the
+                # entry rides the operator's normal PR flow.
+                sync = CLAUDE_DIR / "scripts" / "changelog-sync.py"
+                cp = run([PYTHON or "python3", str(sync), "--apply"], cwd=CLAUDE_DIR)
+                added = [ln for ln in cp.stdout.splitlines()
+                         if ln.strip().startswith("added ")]
+                if cp.returncode == 0 and added:
+                    return Result(key, PASS,
+                                  f"drift repaired locally: {len(added)} entr"
+                                  f"{'y' if len(added) == 1 else 'ies'} added by "
+                                  f"changelog-sync; commit via normal PR flow")
+                detail = (cp.stderr or cp.stdout or "").strip().splitlines()
+                return Result(key, WARN,
+                              f"changelog-sync --apply did not repair the drift "
+                              f"({detail[-1] if detail else 'no output'})",
+                              "run `python3 scripts/changelog-sync.py --apply` and inspect")
             return Result(key, WARN,
                           f"newest tag {newest} ahead of CHANGELOG top v{top_version} — "
                           f"releases were cut without CHANGELOG entries",
