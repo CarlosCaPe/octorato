@@ -163,11 +163,38 @@ def _news_draft(version, prev_tag, bump, notes):
     )
 
 
+def _unreleased_body(root):
+    """The `## [Unreleased]` body from CHANGELOG.md, or "" when absent/empty.
+    Tiny duplicate of the changelog-sync.py parser, kept inline so a missing
+    sibling script can never break the release path. Best-effort by contract."""
+    try:
+        text = (Path(root) / "CHANGELOG.md").read_text(encoding="utf-8")
+        body, inside = [], False
+        for line in text.split("\n"):
+            if re.match(r"^## \[Unreleased\]\s*$", line, re.I):
+                inside = True
+                continue
+            if inside and line.startswith("## "):
+                break
+            if inside:
+                body.append(line)
+        return "\n".join(body).strip("\n").strip()
+    except Exception:
+        return ""
+
+
 def emit_release(root, version, prev_tag, bump, commits):
     """Best-effort, AFTER the tag is pushed: a GitHub Release for every bump (that is
     the changelog), plus a queued news DRAFT for substantive bumps (minor/major).
     Never raises. A failure here must never break the caller (ai-push)."""
     notes = _release_notes(commits)
+    # Curated prose beats grouped commit subjects: when CHANGELOG.md carries a
+    # non-empty [Unreleased] section, promote it to the top of the Release body
+    # so the human-written summary reaches the Release even though branch
+    # protection keeps any bot from committing the CHANGELOG entry itself.
+    # The news draft below keeps the plain grouped list (the operator rewrites it).
+    unreleased = _unreleased_body(root)
+    release_body = f"{unreleased}\n\n---\n\n{notes}" if unreleased else notes
     # 1. GitHub Release = the changelog entry. Idempotent, needs gh, skips quietly.
     if which("gh"):
         seen = subprocess.run(["gh", "release", "view", version],
@@ -175,7 +202,7 @@ def emit_release(root, version, prev_tag, bump, commits):
         if not seen:
             r = subprocess.run(
                 ["gh", "release", "create", version, "--title", version,
-                 "--notes", notes, "--verify-tag"],
+                 "--notes", release_body, "--verify-tag"],
                 cwd=root, capture_output=True, text=True)
             if r.returncode == 0:
                 print(f"  released {version} (GitHub)")
