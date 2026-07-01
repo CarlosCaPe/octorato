@@ -9,11 +9,34 @@ at **push time**, complementing `scripts/check-generic.py` which runs at
 | Layer | Trigger | What it catches |
 |---|---|---|
 | `scripts/check-generic.py` | `ai-push` (commit-time) | Operator-specific blocklist tokens in staged files + commit message. Soft-fails when the blocklist is missing. |
-| `.githooks/pre-push` (this) | every `git push` (push-time) | Universal path denylist + secret-pattern scan + optional blocklist re-check. Always runs, no soft-fail. |
+| `.githooks/pre-push` (this) | every `git push` (push-time) | Universal path denylist + secret-pattern scan + optional blocklist re-check, plus three fail-closed integrity gates (below). Always runs, no soft-fail. |
 
 A plain `git commit && git push` (bypassing `ai-push`) reaches the network if
 only `check-generic.py` exists. The pre-push hook is the safety net that fires
 regardless of which commit workflow was used.
+
+## The four reasons a push blocks
+
+If your push was rejected, it hit one of these:
+
+1. **Content leak** (path denylist, secret patterns, blocklist tokens): the
+   original "Brain Stays Generic" scan described above.
+2. **Lineage graph unsound**: `scripts/lineage-doctor.py` found a dangling edge
+   or cycle in `connectome/lineage.yaml`. Fix the graph so every seek can be
+   trusted, then re-push.
+3. **RULE #1 registry gate**: `scripts/brain_doctor.py --registry` declared the
+   brain CORRUPT because a rule in `registry/rules.yaml` is not wired (phantom
+   script, dead anchor, schema failure). Since v5.5.0 this gate is fail-closed
+   on its own inputs too: if `registry/rules.yaml`, `brain_doctor.py`, or a
+   working Python is MISSING, the hook exits 1 instead of silently skipping. A
+   constitutional gate must never vanish silently.
+4. **Capability manifest stale**: `scripts/capability_manifest.py --check`
+   found that `docs/CAPABILITIES.md` no longer reflects the live capability set
+   (a skill/agent/script/rule/hook changed without regen). Run
+   `python3 scripts/capability_manifest.py`, commit the manifest, re-push.
+
+Gates 2 to 4 share the fail-closed stance: a missing gate input (script, graph,
+registry, or Python itself) blocks the push, never skips the check.
 
 ## How to enable
 
