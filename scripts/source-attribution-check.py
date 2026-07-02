@@ -1,19 +1,26 @@
 #!/usr/bin/env python3
-"""Stop hook — every answer MUST end stating its source/authority ("según quién").
+"""source-attribution-check.py — Stop hook: every answer MUST end with its provenance.
 
-The operator's rule: always, always, always close the response telling him on
-whose authority the answer rests — Opus's own reasoning, a vendor/doc, the
-operator himself, a specific file, etc. (This is the "cite sources" rule from
-CLAUDE.md, enforced at exit.)
+The operator's rule (CLAUDE.md "Cite sources"): always close the response stating on
+whose authority it rests. v6 promotes this from advisory to a fail-closed GATE:
+block ONCE when the final reply carries no provenance marker, so the footer is
+appended before the operator ever sees the answer.
 
-Mechanism: on Stop, read the last assistant message from the transcript. If it
-lacks an attribution marker, block and feed back a reason so the model appends
-one. Self-limiting:
-  - `stop_hook_active` true  -> already continuing from a stop hook; allow (no loop)
-  - marker present           -> allow
-  - transcript unreadable    -> allow (fail-open; never trap the operator)
+The two false-positive classes that kept this advisory are killed by porting the
+proven tail-read from cadence-stop-hook.py:63-97:
+  - read ONLY the LAST assistant entry (never a stale earlier tool-turn message);
+  - one forced rewrite per turn via the stop_hook_active loop guard.
+
+Fail-open on every error: a broken hook must never hold a conversation hostage.
+
+Stdin:  {"transcript_path": str, "stop_hook_active": bool, ...}
+Stdout: {"decision": "block", "reason": "..."} when the marker is absent, else nothing.
+Exit:   always 0.
 """
+from __future__ import annotations
+
 import json
+import os
 import re
 import sys
 # Force UTF-8 on stdout/stderr so the ✓ / ✗ / em-dash glyphs in reports
@@ -27,8 +34,8 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 
-# Markers that count as a valid provenance/source footer (case-insensitive, near end).
-# Current: Provenance (EN) / Procedencia (ES) / Herkunft (DE) — the one-line footer.
+# Markers that count as a valid provenance/source footer (case-insensitive).
+# Current: Provenance (EN) / Procedencia (ES) / Herkunft (DE) one-line footer.
 # Back-compat: Source / Fuente / Quelle and legacy "según" / "according to".
 MARKERS = re.compile(
     r"(provenance|procedencia|herkunft|source:|fuente:|quelle:|seg[uú]n:|according to)",
@@ -36,80 +43,92 @@ MARKERS = re.compile(
 )
 
 
-def allow():
-    sys.exit(0)
+def _tail_lines(path: str, max_bytes: int = 262144) -> list:
+    """Read only the transcript tail: the last assistant entry lives in the
+    final KBs, and late-session transcripts run tens of MB."""
+    with open(path, "rb") as fh:
+        fh.seek(0, os.SEEK_END)
+        size = fh.tell()
+        fh.seek(max(0, size - max_bytes))
+        return fh.read().decode("utf-8", errors="replace").splitlines()
 
 
-def nudge(msg: str):
-    # Advisory ONLY — never block. A Stop hook cannot reliably see the current
-    # turn's final message (transcript flush race), and tool-heavy turns emit
-    # many marker-less assistant messages, so blocking here false-positives.
-    # Hard per-turn enforcement lives in the UserPromptSubmit 4d-reminder.
-    print(json.dumps({"systemMessage": msg}))
-    sys.exit(0)
-
-
-def main():
+def _last_assistant_text(transcript_path: str) -> str:
+    """Text blocks of the LAST assistant entry in the JSONL. Stops at that entry
+    whether or not it has text, so a tool-only final turn never lints a stale
+    earlier reply (the flush-race false positive that kept this advisory)."""
+    text_parts: list = []
     try:
-        payload = json.loads(sys.stdin.read() or "{}")
-    except Exception:
-        allow()
+        lines = _tail_lines(transcript_path)
+    except OSError:
+        return ""
+    for line in reversed(lines):
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if entry.get("type") != "assistant":
+            continue
+        content = (entry.get("message") or {}).get("content") or []
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    text_parts.append(block.get("text", ""))
+        elif isinstance(content, str):
+            text_parts.append(content)
+        break  # ALWAYS stop at the last assistant entry, text or not
+    return "\n".join(text_parts)
 
-    # Loop guard: if we are already in a stop-hook-triggered continuation, let it stop.
-    if payload.get("stop_hook_active"):
-        allow()
 
-    transcript_path = payload.get("transcript_path")
-    if not transcript_path:
-        allow()
+_BLOCK_REASON = (
+    "Your reply has no provenance footer. Close it, in the user's language, with a "
+    "final source line: 'Provenance: <basis>' (EN) / 'Procedencia: <base>' (ES) / "
+    "'Herkunft: <basis>' (DE). Then deliver the answer. See CLAUDE.md 'Cite sources'."
+)
 
-    # Collect assistant text messages from the JSONL transcript.
-    # NOTE: the current turn's final message is often not flushed yet when this
-    # Stop hook runs (a race), so we tolerate it by checking the last few
-    # assistant messages, not just the single latest one. Per-turn enforcement
-    # is handled up front by the UserPromptSubmit 4d-reminder injection.
-    texts = []
+
+def main() -> int:
     try:
-        with open(transcript_path, "r", encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    entry = json.loads(line)
-                except Exception:
-                    continue
-                msg = entry.get("message", {})
-                if msg.get("role") != "assistant":
-                    continue
-                content = msg.get("content", "")
-                if isinstance(content, list):
-                    text = " ".join(
-                        b.get("text", "") for b in content
-                        if isinstance(b, dict) and b.get("type") == "text"
-                    )
-                else:
-                    text = str(content)
-                if text.strip():
-                    texts.append(text)
+        data = json.loads(sys.stdin.read() or "{}")
     except Exception:
-        allow()
+        return 0
 
-    # Wide window so a prior completed turn's source line keeps the check quiet
-    # during tool-heavy turns whose final message isn't flushed yet.
-    recent = texts[-12:]
-    if not recent:
-        allow()
+    # Loop guard: already blocked this turn once — never loop.
+    if data.get("stop_hook_active"):
+        return 0
 
-    if any(MARKERS.search(t) for t in recent):
-        allow()
+    transcript = data.get("transcript_path") or ""
+    if not transcript:
+        return 0
 
-    nudge(
-        "Reminder: close your answer with a final source line, in the SAME "
-        "language as the user's input — 'Source: <who>' (EN) / "
-        "'Fuente: <quién>' (ES) / 'Quelle: <wer>' (DE)."
-    )
+    try:
+        text = _last_assistant_text(transcript)
+        if not text.strip():
+            return 0  # tool-only final turn: nothing to attribute
+        if MARKERS.search(text):
+            return 0  # footer present — allow
+    except Exception:
+        return 0  # fail-open: a broken hook never holds the conversation
+
+    try:
+        print(json.dumps({"decision": "block", "reason": _BLOCK_REASON}))
+    except Exception:
+        pass
+    return 0
+
+
+def _selftest() -> int:
+    import gate_selftest
+    argv = sys.argv
+    fixture = argv[argv.index("--selftest") + 1] if len(argv) > argv.index("--selftest") + 1 \
+        else "registry/fixtures/CODE.cite-sources"
+    return gate_selftest.run_gate_selftest(__file__, fixture)
 
 
 if __name__ == "__main__":
-    main()
+    if "--selftest" in sys.argv:
+        sys.exit(_selftest())
+    try:
+        sys.exit(main())
+    except Exception:
+        sys.exit(0)
