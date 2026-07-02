@@ -9,10 +9,10 @@
 | Skills | 231 |
 | Agents | 161 |
 | Divisions | 15 |
-| Scripts: wired | 81 |
+| Scripts: wired | 83 |
 | Scripts: orphan | 6 |
 | Rules | 57 |
-| Hook entries | 29 |
+| Hook entries | 30 |
 
 ## Skills (231)
 
@@ -488,7 +488,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (87)
+## Scripts (89)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -535,12 +535,14 @@
 | dimension-awareness-hook.py | dimension-awareness-hook.py , PreToolUse hook for 4D session dimension awareness | wired |
 | eye-check.py | Eye Check Hook , Forces agent-browser usage for web tasks. Runs on every UserPromptSubmit. Pure loca... | wired |
 | finops-digest.py | finops-digest.py , the FinOps lens over Claude Code session logs. "Lo que no se mide, no crece." Exi... | wired |
+| g__pretool-bash__git-discipline.py | g__pretool-bash__git-discipline.py: PreToolUse gate for the deterministic subset of GIT.version-cont... | wired |
 | gap-capture.py | gap-capture.py , capture 2D-Delegate SELF misses as a gap backlog. When the delegate gate finds no a... | wired |
 | gate-check | gate-check , 4D Gate Enforcement Validator for the Octopus brain. Validates that the 4D paradigm pha... | wired |
+| gate_selftest.py | gate_selftest.py: shared fixture-driven liveness harness for fail-closed gates. | wired |
 | generate-octorato-wiki.py | Regenerate the octorato wiki catalog pages from the live brain. | wired |
 | generate_neural_map.py | generate_neural_map.py , Octopus Connectome Generator v2.0 Builds a deep neural connectivity map ins... | wired |
 | github_trending_digest.py | GitHub Trending Daily Curation , feeds the brain. Pulls top trending from 3 sources (GH/HN/PH), clas... | wired |
-| grafo-gate.py | PreToolUse Bash hook , the forcing function for graph-before-grep. | wired |
+| grafo-gate.py | PreToolUse Bash hook: the forcing function for graph-before-grep. | wired |
 | grafo-ledger-check.py | Stop hook , the graph-before-grep teeth (turn-scoped). | wired |
 | grafo-turn-reset.py | UserPromptSubmit hook , reset the per-turn graph ledger. | wired |
 | harmony-check.py | harmony-check.py , Octorato Harmony drift checker (the octopus moves as one). | wired |
@@ -572,7 +574,7 @@
 | skill-cost-profiler.py | skill-cost-profiler.py , observability surface 2. Reads the native Claude Code session JSONL logs th... | wired |
 | slos.py | slos.py , observability surface 3. Brain SLOs + error budget burn rate. Reads the SLO config (`~/.cl... | wired |
 | social-video-digest.py | social-video-digest , daily triage of social-video creators for brain-worthy gems. What this DOES (c... | wired |
-| source-attribution-check.py | Stop hook , every answer MUST end stating its source/authority ("según quién"). | wired |
+| source-attribution-check.py | source-attribution-check.py: Stop hook, every answer MUST end with its provenance. | wired |
 | sync-ai-docs.ps1 |  | orphan |
 | sync-readme-counts.py | Sync the skill/agent counts cited in README.md + FAQ.md to the numbers on disk. | wired |
 | trace-hook.py | trace-hook.py , observability surface 1 , capture hook. Reads a Claude Code hook event from stdin an... | wired |
@@ -674,7 +676,7 @@
 | Event | Wired Scripts |
 |---|---|
 | PostToolUse | cadence-lint.py, canon-heal-hook.py, client-doc-lint-hook.py, impact-radius-hook.py, trace-hook.py |
-| PreToolUse | budget-check.py, config-ship-verify.py, delegate-gate.py, dimension-awareness-hook.py, grafo-gate.py, qa-merge-gate.py, secrets-grep-guard.py, trace-hook.py |
+| PreToolUse | budget-check.py, config-ship-verify.py, delegate-gate.py, dimension-awareness-hook.py, g__pretool-bash__git-discipline.py, grafo-gate.py, qa-merge-gate.py, secrets-grep-guard.py, trace-hook.py |
 | SessionStart | merge-hooks.py, session-isolation-hook.py |
 | Stop | cadence-stop-hook.py, claim-verify-stop.py, grafo-ledger-check.py, no-pause-suggestion.py, source-attribution-check.py, trace-hook.py |
 | UserPromptSubmit | 4d-reminder.py, arm-recall-hook.py, brain-memory-recall.py, connectome-heartbeat.py, eye-check.py, grafo-turn-reset.py, inbox-sweep-reflex.py, trace-hook.py |
