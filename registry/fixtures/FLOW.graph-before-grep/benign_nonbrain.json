@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "grep -rn 'foo' ~/Documents/github/project/"
+  },
+  "cwd": "/home/user/project"
+}

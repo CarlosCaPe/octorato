@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "git log --grep='connectome'"
+  },
+  "cwd": "/home/user/project"
+}

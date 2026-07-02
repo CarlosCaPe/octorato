@@ -503,7 +503,64 @@ def main() -> int:
     return 0
 
 
+def _selftest() -> int:
+    """Bespoke liveness proof. The broad-stage deny fires only with a LIVE
+    concurrent dimension on a SHARED tree, both time-and-state dependent, so a
+    static committed fixture cannot express it. Here we build a throwaway HOME
+    with a fresh live sibling session and a shared .git tree at runtime, then run
+    the real main() twice: `git add -A` must deny, explicit pathspec must allow.
+    """
+    import gate_selftest
+    ok = True
+    sandbox = Path(tempfile.mkdtemp(prefix="dim-selftest-"))
+    try:
+        tree = sandbox / ".claude"
+        (tree / ".git").mkdir(parents=True, exist_ok=True)
+        conn = tree / "connectome"
+        conn.mkdir(parents=True, exist_ok=True)
+        (conn / "sessions.json").write_text(json.dumps({"sessions": {
+            "other-live-dimension": {
+                "session_id": "other-live-dimension",
+                "branch": "sibling", "lanes": [],
+                "heartbeat": _now_iso(),
+            }
+        }}), encoding="utf-8")
+
+        def run(cmd: str):
+            env = dict(os.environ)
+            for k in ("OCTO_LANE_OVERRIDE",):
+                env.pop(k, None)
+            env["HOME"] = str(sandbox)
+            env["USERPROFILE"] = str(sandbox)
+            env["CLAUDE_SESSION_ID"] = "me-this-dimension"
+            payload = json.dumps({"tool_name": "Bash",
+                                  "tool_input": {"command": cmd},
+                                  "cwd": str(tree)})
+            cp = subprocess.run([sys.executable, str(Path(__file__).resolve())],
+                                input=payload, capture_output=True, text=True,
+                                cwd=str(tree), env=env, timeout=30)
+            return gate_selftest.emits_block(cp.returncode, cp.stdout)
+
+        if not run("git add -A"):
+            print("selftest FAIL: 'git add -A' on shared tree did NOT deny", file=sys.stderr)
+            ok = False
+        if run("git add scripts/foo.py"):
+            print("selftest FAIL: explicit-pathspec stage WAS denied", file=sys.stderr)
+            ok = False
+    finally:
+        import shutil as _sh
+        _sh.rmtree(sandbox, ignore_errors=True)
+    if ok:
+        print("selftest PASS: broad-stage denies, explicit pathspec allows "
+              "(dimension-awareness-hook.py)")
+    return 0 if ok else 1
+
+
 if __name__ == "__main__":
+    import subprocess
+    import tempfile
+    if "--selftest" in sys.argv:
+        sys.exit(_selftest())
     try:
         sys.exit(main())
     except Exception:

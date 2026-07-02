@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "cat .env | sed 's/=.*/=REDACTED/'"
+  },
+  "cwd": "/home/user/project"
+}

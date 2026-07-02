@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "grep -i token config.public.json"
+  },
+  "cwd": "/home/user/project"
+}

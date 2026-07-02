@@ -159,7 +159,17 @@ def main() -> int:
     return 0
 
 
+def _selftest() -> int:
+    import gate_selftest
+    argv = sys.argv
+    fixture = argv[argv.index("--selftest") + 1] if len(argv) > argv.index("--selftest") + 1 \
+        else "registry/fixtures/COMMS.human-cadence"
+    return gate_selftest.run_gate_selftest(__file__, fixture)
+
+
 if __name__ == "__main__":
+    if "--selftest" in sys.argv:
+        sys.exit(_selftest())
     try:
         sys.exit(main())
     except Exception:

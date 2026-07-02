@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "grep -n 'connectome' ~/.claude/skills/human-cadence/SKILL.md"
+  },
+  "cwd": "/home/user/project"
+}

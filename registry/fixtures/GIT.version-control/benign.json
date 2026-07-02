@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "git push --force-with-lease origin feature/foo"
+  },
+  "cwd": "/home/user/project"
+}
