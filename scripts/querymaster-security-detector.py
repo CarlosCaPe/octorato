@@ -20,13 +20,19 @@ from pathlib import Path
 CLAUDE_DIR = Path(__file__).resolve().parent.parent
 SKILL = CLAUDE_DIR / "skills" / "querymaster" / "SKILL.md"
 
-# Each entry is a substring that MUST survive in the Security Rules section.
+# The section header that must locate the canon block.
+SECTION = "Security Rules (MANDATORY)"
+
+# One substring per numbered rule (7 total) in skills/querymaster/SKILL.md.
+# All 7 must survive, or a rule was silently deleted or weakened.
 REQUIRED = [
-    "Security Rules (MANDATORY)",
-    "Dry-run by default",
-    "Never log secrets",
-    "Destructive guard",
-    "connections.json has no passwords",
+    "Dry-run by default",                  # rule 1
+    "Never log secrets",                   # rule 2
+    "Read-only mode",                      # rule 3
+    "Destructive guard",                   # rule 4
+    "connections.json has no passwords",   # rule 5
+    "Timeout",                             # rule 6
+    "Row limit",                           # rule 7
 ]
 
 
@@ -34,8 +40,12 @@ def check() -> list[str]:
     if not SKILL.exists():
         return [f"skill file missing: {SKILL}"]
     text = SKILL.read_text(encoding="utf-8", errors="replace")
-    return [f"security canon rotted: '{needle}' absent" for needle in REQUIRED
-            if needle not in text]
+    missing = []
+    if SECTION not in text:
+        missing.append(f"security section missing: '{SECTION}'")
+    missing += [f"security canon rotted: '{needle}' absent" for needle in REQUIRED
+                if needle not in text]
+    return missing
 
 
 def main() -> int:
