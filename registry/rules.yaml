@@ -577,10 +577,10 @@ rules:
       anchor: "## Git & Version Control"
     mechanism:
       - { kind: Gate, canonical_name: g__pretool-bash__git-discipline.py, firing_event: PreToolUse, firing_matcher: "Bash" }
-      - { kind: Gate, canonical_name: g__pretool-bash__git-discipline.py, firing_event: PreToolUse, firing_matcher: "Write|Edit" }
+      - { kind: Gate, canonical_name: g__pretool-bash__git-discipline.py, firing_event: PreToolUse, firing_matcher: "Write|Edit|NotebookEdit|MultiEdit" }
     proof:
       - { method: IN_HOOKS_JSON, locator: "PreToolUse|Bash|g__pretool-bash__git-discipline.py", expect: present }
-      - { method: IN_HOOKS_JSON, locator: "PreToolUse|Write|Edit|g__pretool-bash__git-discipline.py", expect: present }
+      - { method: IN_HOOKS_JSON, locator: "PreToolUse|Write|Edit|NotebookEdit|MultiEdit|g__pretool-bash__git-discipline.py", expect: present }
       - { method: EXIT_CODE, locator: "scripts/g__pretool-bash__git-discipline.py --selftest registry/fixtures/GIT.version-control", expect: 0 }
       - { method: ANCHOR_PRESENT, locator: "## Git & Version Control", expect: present }
     liveness_required: FIRES

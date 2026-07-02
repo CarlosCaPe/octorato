@@ -242,20 +242,44 @@ def _join_continuations(cmd: str) -> str:
     return re.sub(r"\\\n", " ", cmd)
 
 
-# FIX 3+4: strip leading env-assignments, redirections, and grouping chars
-# from an already-split sub-command before pattern matching.
-# Applied PER sub-command so it never crosses a real separator boundary.
-# Order: grouping brackets first, then env-assignments, then redirections.
-_STRIP_PREFIX_RE = re.compile(
-    r"^(?:[({]\s*)*"               # FIX 4: unquoted ( or { grouping openers
-    r"(?:[A-Za-z_]\w*=\S*\s+)*"   # FIX 3: env assignments  VAR=val
-    r"(?:\d*[<>]+\S*\s+)*"        # FIX 3: redirections      >/dev/null  2>&1
-)
+# Strip leading wrapper tokens from an already-split sub-command before pattern
+# matching. Applied PER sub-command so it never crosses a real separator boundary.
+# Covers: grouping openers, env-assignments (VAR=val), redirections, the `env`
+# wrapper (with its own -flags and VAR=val args), and the `command` builtin.
+# SECURITY: without the env/command peel, `env A=1 gh pr merge` or `command gh pr
+# merge` evade the ^gh/^git anchor and bypass the approval gate. Iterative so the
+# wrappers may interleave (`env A=1 command git push origin main`). The real
+# approval channels stay the agent-proof env/file, never an inline token.
+_W_GROUP = re.compile(r"^[({]\s*")
+_W_ASSIGN = re.compile(r"^[A-Za-z_]\w*=\S*\s+")
+_W_REDIR = re.compile(r"^\d*[<>]+\S*\s+")
+_W_ENV = re.compile(r"^env\b\s*")
+_W_ENVARG = re.compile(r"^(?:-\S+|[A-Za-z_]\w*=\S*)\s+")
+_W_COMMAND = re.compile(r"^command\s+")
 
 
 def _strip_leading(s: str) -> str:
-    """Return *s* with leading env-vars, redirections, and grouping chars removed."""
-    return _STRIP_PREFIX_RE.sub("", s, count=1)
+    """Return *s* with leading grouping / env-assignments / redirections / the
+    `env` wrapper (and its flags+assigns) / the `command` builtin removed."""
+    s = s.lstrip()
+    prev = None
+    while s != prev:
+        prev = s
+        for pat in (_W_GROUP, _W_ASSIGN, _W_REDIR, _W_COMMAND):
+            m = pat.match(s)
+            if m:
+                s = s[m.end():]
+                break
+        else:
+            m = _W_ENV.match(s)
+            if m:
+                s = s[m.end():]
+                while True:
+                    m2 = _W_ENVARG.match(s)
+                    if not m2:
+                        break
+                    s = s[m2.end():]
+    return s
 
 
 def _split_subcmds(cmd: str) -> list[str]:
