@@ -456,7 +456,17 @@ def main() -> int:
     return 2
 
 
+def _selftest() -> int:
+    import gate_selftest
+    argv = sys.argv
+    fixture = argv[argv.index("--selftest") + 1] if len(argv) > argv.index("--selftest") + 1 \
+        else "registry/fixtures/CODE.qa-merge-gate"
+    return gate_selftest.run_gate_selftest(__file__, fixture)
+
+
 if __name__ == "__main__":
+    if "--selftest" in sys.argv:
+        sys.exit(_selftest())
     # Outer try only guards catastrophic interpreter errors.
     # We must NOT silently swallow a deliberate exit(2) block.
     # Fail-open ONLY while we cannot know this is a merge; once a publish/merge
