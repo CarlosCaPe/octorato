@@ -1,0 +1,172 @@
+# Brand-neutral EXAMPLE config for the cotizacion engine.
+#
+# Everything here is made up. There is no real company, no real person, no real
+# rate. Copy this file, drop it in a PRIVATE location (company/ dir or a client
+# arm), and replace the values with your real brand and content. Never put real
+# brand assets, real clausulado, or a real signature image in this public template.
+
+brand:
+  company: "Acme Consulting"
+  founder: "Jordan Rivera"
+  founder_title: "Founder, Acme Consulting"
+  email: "hello@acme.example"
+  portfolio: "acme.example"
+  font: "Calibri"
+  # Optional base .docx whose themed footer you want reused. null = blank document.
+  template_docx: null
+  # Placeholder signature. Swap for your real one in a private config, never here.
+  signature_image: "assets/signature.example.png"
+  colors:
+    brand: "3B82F6"        # accent blue
+    dark: "1E3A8A"         # heading blue
+    black: "000000"
+    gray: "595659"
+    white: "FFFFFF"
+    pending: "C00000"
+    table_header: "1E3A8A"
+    table_row_alt: "F2F2F2"
+    about_label: "E8EDF3"
+  sizes:
+    body: 11
+    h2: 15
+    h3: 13
+    small: 9
+    cover_title: 18
+    cover_subtitle: 14
+    cover_client: 22
+
+document:
+  proposal_date: "July 6, 2026"
+  proposal_date_long: "Sample City, July 6, 2026"
+  footer_date: "Monday, July 6, 2026"
+
+output:
+  docx_name: "Quote_Sample_Engagement_Acme.docx"
+
+cover:
+  title_lines:
+    - "Service Quote"
+    - "Sample Cloud Migration"
+  subtitle: "Example Scope"
+  client_name: "Sample Client Ltd."
+  prepared_for_label: "Prepared for"
+  prepared_for:
+    - "Jane Doe, Sample Client Ltd."
+    - "Sample City"
+  created_by_label: "Created by"
+  created_by:
+    - "Jordan Rivera, Acme Consulting"
+
+intro_letter:
+  addressee_bold: "Jane Doe"
+  addressee_lines:
+    - "Sample Client Ltd."
+    - "Sample City"
+  salutation: "Dear Jane,"
+  paragraphs:
+    - "Thank you for the chance to send you this quote for a sample engagement,
+       sized to the real shape of your work with the support and security you need."
+    - "At {{company}} we focus on data architecture, cloud infrastructure, and
+       security. Our approach is honest and practical: we size to your real usage,
+       we do not sell extra hardware, and we make clear who responds when something
+       breaks."
+    - "We appreciate your time and consideration. We remain at your service for
+       any question."
+  closing: "Sincerely,"
+
+about:
+  heading: "About Acme Consulting"
+  intro: "{{company}} is a sample consultancy focused on data engineering, cloud
+    architecture, and security. This block is placeholder copy so the template
+    renders standalone."
+  col_widths_cm: [4, 13]
+  rows:
+    - ["Architect", "Sample architect, 20 plus years across data platforms and infrastructure"]
+    - ["Key certification", "Sample cloud data engineer certification"]
+    - ["Direct stack", "Windows Server and IaaS in the cloud, edge security, SQL, backups and automation"]
+    - ["Portfolio", "acme.example"]
+
+sections:
+  - heading: "1. Executive Summary"
+    blocks:
+      - type: paragraph
+        text: "This is a sample executive summary. The client runs a small
+          workload today and wants it migrated to a right-sized cloud server with
+          reliable support and off-site backups. This paragraph is placeholder copy."
+      - type: paragraph
+        text: "The proposal is to migrate to a right-sized server, sized to the
+          real workload rather than an oversized vendor spec, with a clear owner
+          when something fails."
+
+  - heading: "2. Right-sizing"
+    page_break_before: true
+    blocks:
+      - type: paragraph
+        text: "Here is the honest value of the proposal. We size the server to the
+          measured workload, not to an inflated quote."
+      - type: lead
+        label: "Sample rationale: "
+        body: "the database engine has design caps, so oversizing RAM and disk is
+          capacity you would pay for every month without using it."
+      - type: bullet
+        body: "It uses at most a fixed amount of RAM per instance for the buffer pool."
+      - type: bullet
+        body: "Each database has a fixed size limit that a bigger disk does not change."
+      - type: subheading
+        text: "Sizing recommendation"
+      - type: table
+        headers: ["Resource", "Recommendation", "Comment"]
+        col_widths_cm: [3.8, 4.2, 9]
+        rows:
+          - ["Operating system", "Sample Server 2022", "Current supported version"]
+          - ["RAM", "16 to 32 GB", "Comfortable for the sample workload"]
+          - ["Storage", "250 to 350 GB SSD", "Room for OS, apps and data"]
+          - ["vCPU", "4 to 6", "Enough for the real concurrency"]
+      - type: note
+        text: "We close the final range after a short inspection. We prefer to
+          measure before we guess."
+
+  - heading: "3. Investment"
+    page_break_before: true
+    blocks:
+      - type: lead
+        label: "Commercial model: "
+        body: "managed infrastructure rental (monthly) plus a bucket of support
+          hours. Labor is billed at a sample rate of USD 50.00 per hour."
+      - type: subheading
+        text: "Monthly recurring charges"
+      - type: table
+        headers: ["Item", "Detail", "Monthly amount"]
+        col_widths_cm: [3.6, 9.4, 4]
+        rows:
+          - ["Managed infrastructure", "Right-sized server plus edge security and off-site backups, administration included", "USD 400.00"]
+          - ["Support bucket", "**8 h/month** at USD 50.00/h: monitoring, patching, backup checks and incident handling", "**USD 400.00**"]
+          - ["**Monthly subtotal**", "Infrastructure plus support", "**USD 800.00**"]
+      - type: subheading
+        text: "One-time charge: migration and setup"
+      - type: table
+        headers: ["Item", "Hours", "Amount"]
+        col_widths_cm: [11, 2, 4]
+        rows:
+          - ["Migration and setup at USD 50.00/h: inspection, provisioning, data and software migration, testing and cutover", "30 h", "**USD 1,500.00**"]
+      - type: note
+        text: "Sample amounts in USD. Taxes and currency handling are defined in
+          the final private version of this document, not in this public template."
+
+validity:
+  heading: "Validity"
+  text: "This sample quote is valid for 30 calendar days from the issue date
+    (July 6, 2026, until August 5, 2026). After that date the amounts,
+    availability, and any reference exchange rate are subject to review."
+
+signature:
+  name: "Jordan Rivera"
+  org_line: "Acme Consulting · Founder"
+  footer_line: " · Jordan Rivera · hello@acme.example · acme.example"
+
+footer:
+  text: "© 2026 Acme Consulting. Sample placeholder notice. This document and its
+    content are confidential and delivered only to evaluate the described proposal.
+    Third-party marks belong to their respective owners and are named only for
+    identification. Engagement is subject to the terms the parties sign. Replace
+    this notice with your real clausulado in a private config."
