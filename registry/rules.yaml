@@ -1023,3 +1023,93 @@ rules:
       - { method: IN_HOOKS_JSON, locator: "PreToolUse|Agent|budget-check.py", expect: present }
       - { method: ANCHOR_PRESENT, locator: "FinOps roadmap", expect: present }
     liveness_required: FIRES
+
+  # --- Skills canon rows (corpus-coverage): each anchors a MANDATORY canon line inside a
+  #     skill file so the Coverage Ledger counts skill-scoped rules honestly, per the
+  #     source.file precedent at COMMS.client-doc-lint / MEMORY.inbox-sweep / FLOW.canon-heal. ---
+  - id: CODE.bug-hunter-read-prompts
+    title: "bug-hunter: read prompt files before passing them to subagents"
+    category: CODE
+    source: { file: skills/bug-hunter/SKILL.md, anchor: "MANDATORY**: You MUST read prompt files" }
+    strength: PRESENCE
+    gateable: false
+    firing_mode: [library]
+    mechanism:
+      - { kind: Presence, canonical_name: null, firing_event: null, firing_matcher: null }
+    proof:
+      - { method: ANCHOR_PRESENT, locator: "MANDATORY**: You MUST read prompt files", expect: present }
+    liveness_required: PRESENT
+  - id: CODE.canary-live-test
+    title: "canary-symbiont: a never-fired canary protects nothing, run the live test"
+    category: CODE
+    source: { file: skills/canary-symbiont/SKILL.md, anchor: "The MANDATORY live test" }
+    strength: PRESENCE
+    firing_mode: [library]
+    mechanism:
+      - { kind: Presence, canonical_name: null, firing_event: null, firing_matcher: null }
+    proof:
+      - { method: ANCHOR_PRESENT, locator: "The MANDATORY live test", expect: present }
+    liveness_required: PRESENT
+  - id: FLOW.figma-use-prerequisite
+    title: "figma-use: load the skill before every use_figma call (mandatory prerequisite)"
+    category: FLOW
+    source: { file: skills/figma-use/SKILL.md, anchor: "MANDATORY prerequisite" }
+    strength: PRESENCE
+    firing_mode: [library]
+    mechanism:
+      - { kind: Presence, canonical_name: null, firing_event: null, firing_matcher: null }
+    proof:
+      - { method: ANCHOR_PRESENT, locator: "MANDATORY prerequisite", expect: present }
+    liveness_required: PRESENT
+  - id: FLOW.image-analyzer-trigger
+    title: "image-analyzer: mandatory trigger when the user references an image"
+    category: FLOW
+    source: { file: skills/image-analyzer/SKILL.md, anchor: "MANDATORY: When User References an Image" }
+    strength: PRESENCE
+    firing_mode: [library]
+    mechanism:
+      - { kind: Presence, canonical_name: null, firing_event: null, firing_matcher: null }
+    proof:
+      - { method: ANCHOR_PRESENT, locator: "MANDATORY: When User References an Image", expect: present }
+    liveness_required: PRESENT
+  - id: FLOW.orchestrated-planning-reporting-contract
+    title: "orchestrated-planning: subagent reporting contract is mandatory"
+    category: FLOW
+    source: { file: skills/orchestrated-planning/SKILL.md, anchor: "Subagent Reporting Contract (MANDATORY)" }
+    strength: PRESENCE
+    firing_mode: [library]
+    mechanism:
+      - { kind: Presence, canonical_name: null, firing_event: null, firing_matcher: null }
+    proof:
+      - { method: ANCHOR_PRESENT, locator: "Subagent Reporting Contract (MANDATORY)", expect: present }
+    liveness_required: PRESENT
+  - id: SECURITY.querymaster-rules
+    title: "QueryMaster security rules: dry-run by default, no secret logging, destructive guard"
+    category: SECURITY
+    source: { file: skills/querymaster/SKILL.md, anchor: "Security Rules (MANDATORY)" }
+    strength: DETECTOR
+    firing_mode: [cli]
+    mechanism:
+      - { kind: Detector, canonical_name: querymaster-security-detector.py, firing_event: null, firing_matcher: null }
+    proof:
+      - { method: ANCHOR_PRESENT, locator: "Security Rules (MANDATORY)", expect: present }
+      - { method: EXIT_CODE, locator: "python3 scripts/querymaster-security-detector.py --selftest", expect: 0 }
+    liveness_required: PRESENT
+
+  # --- Memory directive class row (corpus-coverage): ONE mechanism for the whole
+  #     feedback_* corpus (per-item rows would leak private filenames into the public
+  #     repo and fail on machines without the memory layer). A feedback file counts
+  #     covered only when indexed in its sibling MEMORY.md, verified in check_corpus_coverage. ---
+  - id: MEMORY.feedback-directive-corpus
+    title: "Every indexed feedback_* memory directive fires via harness auto-memory plus the brain-memory-recall pointer"
+    category: MEMORY
+    source: { file: CLAUDE.md, anchor: "Memory = the octopus" }
+    strength: REFLEX
+    gateable: false
+    firing_mode: [hook, library]
+    mechanism:
+      - { kind: Reflex, canonical_name: brain-memory-recall.py, firing_event: UserPromptSubmit, firing_matcher: "*" }
+      - { kind: Presence, canonical_name: null, firing_event: null, firing_matcher: null }
+    proof:
+      - { method: IN_HOOKS_JSON, locator: "UserPromptSubmit|*|brain-memory-recall.py", expect: present }
+    liveness_required: FIRES

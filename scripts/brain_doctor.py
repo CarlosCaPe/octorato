@@ -911,13 +911,19 @@ def check_corpus_coverage(fix: bool) -> Result:
     # is depth-1 so they are excluded structurally).
     norm_re = re.compile(r"ULTRA RULE|MANDATORY|NON-NEGOTIABLE")
     bold_norm_re = re.compile(r"\*\*[^*]*(?:ULTRA RULE|MANDATORY|NON-NEGOTIABLE)[^*]*\*\*")
+    # source.file -> anchors declared for it. Coverage matches the SPECIFIC canon
+    # line (anchor substring of that line), not bare file membership, so a second
+    # canon line added to an already-rowed skill still surfaces as uncovered.
+    anchors_by_file = {}
+    for r in rules:
+        src = r.get("source") or {}
+        f, a = src.get("file", ""), src.get("anchor", "")
+        if f and a:
+            anchors_by_file.setdefault(f, []).append(a)
     skill_items = []  # (relpath, anchor-line)
-    skill_texts = {}
     for sk in sorted((CLAUDE_DIR / "skills").glob("*/SKILL.md")):
         rel = sk.relative_to(CLAUDE_DIR).as_posix()
-        text = _rt(sk)
-        skill_texts[rel] = text
-        for ln in text.splitlines():
+        for ln in _rt(sk).splitlines():
             s = ln.strip()
             if not norm_re.search(s):
                 continue
@@ -925,51 +931,101 @@ def check_corpus_coverage(fix: bool) -> Result:
                 skill_items.append((rel, s))
     skill_uncov = []
     for rel, anchor_line in skill_items:
-        # Covered only when a registry row anchors in THIS file (source.file);
-        # a short anchor string quoted in passing must not mark canon covered.
-        covered = rel in rule_files
+        covered = any(a in anchor_line for a in anchors_by_file.get(rel, []))
         if not covered:
             skill_uncov.append(f"{rel}:{anchor_line[:50]}")
     skill_cov = len(skill_items) - len(skill_uncov)
 
-    # Memory directives: one per feedback_*.md file; the memory layer is private
-    # and gitignored, so absence on this machine is a soft skip (same pattern as
-    # company/brain-blocklist.txt).
+    # Memory directives: one per feedback_*.md file. Covered iff (a) the class row
+    # MEMORY.feedback-directive-corpus exists AND its IN_HOOKS_JSON proof resolves
+    # (the recall reflex is live), AND (b) the file is indexed by an INDEX_RE line
+    # in its sibling MEMORY.md. The index line is what the harness injects into
+    # context each session and what the recall hook scores, so an unindexed file
+    # never fires and stays uncovered. The memory layer is private and gitignored,
+    # so absence on this machine is a soft skip.
+    index_re = re.compile(r"^- \[(?P<title>[^\]]+)\]\((?P<file>[^)]+)\)\s*[:\-]\s*(?P<hook>.*)$")
+    home_slug = "-" + str(Path.home()).strip("/").replace("/", "-")
+    brain_mem_dir = CLAUDE_DIR / "projects" / home_slug / "memory"
+    class_row = next((r for r in rules if r.get("id") == "MEMORY.feedback-directive-corpus"), None)
+    hooks = _hooks_index()
+
+    def _in_hooks(locator: str) -> bool:
+        parts = locator.split("|")
+        if len(parts) != 3:
+            return False
+        ev, mt, base = parts
+        return any(e == ev and b == base and (mm == mt or mt == "*" or mm == "*")
+                   for (e, mm, b) in hooks)
+
+    class_proofs = [p for p in (class_row or {}).get("proof", [])
+                    if p.get("method") == "IN_HOOKS_JSON"]
+    class_live = bool(class_row) and bool(class_proofs) and all(
+        _in_hooks(p.get("locator", "")) for p in class_proofs)
+
     mem_files = sorted(CLAUDE_DIR.glob("projects/*/memory/feedback_*.md"))
     if not mem_files:
-        mem_note = "memory layer absent on this machine — memory directives skipped"
-        mem_cov, mem_uncov_names = 0, []
+        mem_note = "memory layer absent on this machine, memory directives skipped"
+        brain_cov = brain_total = arm_total = 0
+        brain_uncov, arm_uncov = [], []
     else:
         mem_note = ""
-        mem_uncov_names = []
-        mem_cov = 0
+        brain_uncov, arm_uncov = [], []
+        brain_cov = brain_total = arm_cov = arm_total = 0
+        indexed_by_dir = {}
+        for d in {mf.parent for mf in mem_files}:
+            idx = set()
+            mm = d / "MEMORY.md"
+            if mm.exists():
+                for ln in _rt(mm).splitlines():
+                    m = index_re.match(ln.strip())
+                    if m:
+                        idx.add(os.path.basename(m.group("file")))
+            indexed_by_dir[d] = idx
         for mf in mem_files:
             rel = mf.relative_to(CLAUDE_DIR).as_posix()
-            if rel in rule_files or mf.name in rule_files:
-                mem_cov += 1
+            arm_scoped = mf.parent != brain_mem_dir
+            direct = rel in rule_files or mf.name in rule_files
+            via_class = class_live and mf.name in indexed_by_dir.get(mf.parent, set())
+            covered = direct or via_class
+            if arm_scoped:
+                arm_total += 1
+            else:
+                brain_total += 1
+            if covered:
+                if arm_scoped:
+                    arm_cov += 1
+                else:
+                    brain_cov += 1
                 continue
             label = mf.stem
             for ln in _rt(mf).splitlines()[:15]:
                 if ln.strip().lower().startswith("description:"):
                     label = ln.split(":", 1)[1].strip()[:60]
                     break
-            mem_uncov_names.append(label)
-    uncovered_total = len(skill_uncov) + len(mem_uncov_names)
+            (arm_uncov if arm_scoped else brain_uncov).append(label)
+    # The brain's corpus gate governs the BRAIN corpus only. Arm-scoped memory lives
+    # in a separate sealed arm repo with its own MEMORY.md and recall; coupling the
+    # brain's push to a sibling arm's index hygiene would break arm isolation, so
+    # arm-scoped files are shown in the ledger but never gate the brain.
+    uncovered_total = len(skill_uncov) + len(brain_uncov)
 
     ledger = (
         f"Ledger: {len(rules)} registered rules | "
         f"CLAUDE.md anchors {cl_covered}/{len(cl_anchors)} | "
-        f"skills canon {skill_cov}/{len(skill_items)}"
+        f"skills canon {skill_cov}/{len(skill_items)} (declared strength per row)"
         + (f" (uncovered: {'; '.join(skill_uncov[:15])}"
-           + (" …" if len(skill_uncov) > 15 else "") + ")" if skill_uncov else "")
+           + (" ..." if len(skill_uncov) > 15 else "") + ")" if skill_uncov else "")
         + " | "
         + (mem_note if mem_note else
-           f"memory directives {mem_cov}/{len(mem_files)}"
-           + (f" (top uncovered: {', '.join(mem_uncov_names[:10])})" if mem_uncov_names else ""))
+           f"memory directives (brain) {brain_cov}/{brain_total} "
+           f"REFLEX (injected, obedience unproven)"
+           + (f" (uncovered: {', '.join(brain_uncov[:10])})" if brain_uncov else "")
+           + f"; {arm_total} arm-scoped (separate repo, not brain-gated)"
+           + (f" [{len(arm_uncov)} not recall-indexed]" if arm_uncov else ""))
     )
     if uncovered_total:
         return Result(key, WARN, ledger,
-                      "uncovered canon is a coverage gap, not corruption — promoting an "
+                      "uncovered canon is a coverage gap, not corruption; promoting an "
                       "item to a registry row is operator-curated, one at a time")
     return Result(key, PASS, ledger)
 
