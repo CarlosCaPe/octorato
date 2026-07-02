@@ -106,11 +106,11 @@ rules:
     source: { file: CLAUDE.md, anchor: "Dry-run first" }
     strength: DETECTOR
     gateable: true
-    enforcement: fail-open   # config-ship-verify.py is PreToolUse:Bash but warn-only; a real deny is the close path
+    enforcement: fail-open   # v6 D4 audit: config-ship-verify.py emits permissionDecision:ask (a real fail-closed-via-ask interrupt), but only on 3 narrow triggers; the rule is broader, so residual stays fail-open
     waiver:
-      reason: "config-ship-verify is warn-only; a deterministic deny of 'ship generated config' is not yet specifiable without false positives. Deferred. Close candidate."
+      reason: "v6 D4 audit (2026-07-01): config-ship-verify.py:97 emits permissionDecision 'ask' (a genuine fail-closed-via-ask pause), NOT warn-only as previously stated. But it fires on only 3 hardcoded patterns (Datadog dashboard write, wrangler deploy --config/generated, curl POST @file.json). The rule 'dry-run first; ask before shipping generated configs' plus CLAUDE.md 'destructive ops preview by default' is broader than those 3, so the ask path is narrower than the rule. Residual documented, waiver kept. A broader deterministic deny of 'ship generated config' is still not specifiable without false positives. Close candidate."
       expires: "2026-09-30"
-      approved_by: "operator directive 2026-06-29 (cierra o waiva las 7)"
+      approved_by: "operator directive 2026-06-29 (cierra o waiva las 7); v6 D4 audit"
     firing_mode: [hook]
     mechanism:
       - { kind: Detector, canonical_name: config-ship-verify.py, firing_event: PreToolUse, firing_matcher: "Bash" }
