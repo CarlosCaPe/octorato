@@ -72,18 +72,15 @@ rules:
     title: "Cite sources; every answer ends with its provenance"
     category: CODE
     source: { file: CLAUDE.md, anchor: "Cite sources" }
-    strength: DETECTOR
+    strength: GATE
     gateable: true
-    enforcement: fail-open
-    waiver:
-      reason: "Detector (source-attribution) is warn-only; promoting to a hard Stop block is deferred pending false-positive tuning so legit turns are not blocked. Close candidate."
-      expires: "2026-09-30"
-      approved_by: "operator directive 2026-06-29 (cierra o waiva las 7)"
+    enforcement: fail-closed  # v6 G1: promoted to block-once via the cadence tail-read; waiver closed
     firing_mode: [hook]
     mechanism:
-      - { kind: Detector, canonical_name: source-attribution-check.py, firing_event: Stop, firing_matcher: "*" }
+      - { kind: Gate, canonical_name: source-attribution-check.py, firing_event: Stop, firing_matcher: "*" }
     proof:
       - { method: IN_HOOKS_JSON, locator: "Stop|*|source-attribution-check.py", expect: present }
+      - { method: EXIT_CODE, locator: "scripts/source-attribution-check.py --selftest registry/fixtures/CODE.cite-sources", expect: 0 }
     liveness_required: FIRES
 
   - id: CODE.qa-merge-gate
