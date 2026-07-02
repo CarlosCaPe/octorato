@@ -884,12 +884,15 @@ def check_registry(fix: bool) -> list:
 
 
 def check_corpus_coverage(fix: bool) -> Result:
-    """WARN-only Coverage Ledger over the WHOLE normative corpus. registry-coverage's
+    """Coverage Ledger over the WHOLE normative corpus. registry-coverage's
     denominator is CLAUDE.md headings only, so normative rules living in skills and in
     memory directives are invisible to it and it always reads 100%. This check widens
     the denominator: skills' ULTRA RULE / MANDATORY / NON-NEGOTIABLE canon lines plus
-    memory feedback directives, reconciled against registry/rules.yaml. It never FAILs;
-    promotion of uncovered canon to registry rows is operator-curated."""
+    memory feedback directives, reconciled against registry/rules.yaml. Now that the
+    brain corpus is fully wired, it has TEETH: any uncovered brain-scoped canon FAILs
+    (a new un-wired skill canon line or an unindexed brain memory directive blocks the
+    push, exactly like anchor rot). Arm-scoped memory lives in a separate sealed repo
+    and is shown but never gates the brain (arm isolation)."""
     key = "corpus-coverage"
     try:
         import yaml
@@ -1024,9 +1027,10 @@ def check_corpus_coverage(fix: bool) -> Result:
            + (f" [{len(arm_uncov)} not recall-indexed]" if arm_uncov else ""))
     )
     if uncovered_total:
-        return Result(key, WARN, ledger,
-                      "uncovered canon is a coverage gap, not corruption; promoting an "
-                      "item to a registry row is operator-curated, one at a time")
+        return Result(key, FAIL, ledger,
+                      "uncovered brain-scoped canon is un-wired prose (RULE #1 rot); "
+                      "add a registry row for the skill canon line, or index the memory "
+                      "directive in its sibling MEMORY.md, before pushing")
     return Result(key, PASS, ledger)
 
 
