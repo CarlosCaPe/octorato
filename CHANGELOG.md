@@ -15,6 +15,21 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-07-02]: v5.9.0
+### Features
+- feat(doctor): arm corpus-coverage teeth, FAIL on any uncovered rule
+- feat(registry+doctor): wire skills canon + memory-directive class, honest corpus coverage
+### Fixes
+- fix(review): detector asserts full security canon + runs in doctor; preserve never-gives-up stance
+
+## [2026-07-02]: v5.8.0
+### Features
+- feat(routing): model ladder v2, Opus build default, Fable pinned for all judgment
+### Fixes
+- fix(review): ladder coherence pass from QA findings
+### Other
+- docs(changelog): self-heal v5.7.0 entry via changelog-sync
+
 ## [2026-07-01]: v5.7.0
 ### Features
 - feat(sync): publish-wiki mechanism, docs/wiki to the GitHub wiki on push
