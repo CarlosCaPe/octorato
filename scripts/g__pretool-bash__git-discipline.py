@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""g__pretool-bash__git-discipline.py — PreToolUse gate: the deterministic subset of GIT.version-control.
+"""g__pretool-bash__git-discipline.py: PreToolUse gate for the deterministic subset of GIT.version-control.
 
 Two string-deterministic prohibitions from CLAUDE.md become fail-closed here; the
 intent-bound halves (atomic commits, pull-before-push) stay model-side.

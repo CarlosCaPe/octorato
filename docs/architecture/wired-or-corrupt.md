@@ -1,6 +1,6 @@
 # Wired-or-Corrupt Architecture (SHIPPED)
 
-Status: SHIPPED. All phases landed: Phase 0 (registry + doctor + pre-push gate, v4.0.0), the create-to-register loop (v4.2.0), the fail-closed meta-gate with the gateable classification (#180, v5.3.0), the operator-signed waivers that armed its teeth (v5.4.0), and the v5.5.0 hardening wave: waiver `expires` enforcement (an expired waiver counts as unwaived, so the rule FAILS again), bidirectional release-drift detection, anchor-ambiguity detection, a corpus-coverage denominator that counts skills canon plus memory directives, and fail-closed pre-push gate inputs (a missing rules.yaml, doctor, or Python blocks the push instead of silently skipping). The later wave closed corpus-coverage to an honest 100% and armed its teeth: the ledger now FLIPS from WARN to FAIL on any uncovered rule, so a new un-wired rule blocks the push, and it prints enforcement strength per row (REFLEX/PRESENCE) so coverage is never misread as force.
+Status: SHIPPED. All phases landed: Phase 0 (registry + doctor + pre-push gate, v4.0.0), the create-to-register loop (v4.2.0), the fail-closed meta-gate with the gateable classification (#180, v5.3.0), the operator-signed waivers that armed its teeth (v5.4.0), and the v5.5.0 hardening wave: waiver `expires` enforcement (an expired waiver counts as unwaived, so the rule FAILS again), bidirectional release-drift detection, anchor-ambiguity detection, a corpus-coverage denominator that counts skills canon plus memory directives, and fail-closed pre-push gate inputs (a missing rules.yaml, doctor, or Python blocks the push instead of silently skipping). The later wave closed corpus-coverage to an honest 100% and armed its teeth: the ledger now FLIPS from WARN to FAIL on any uncovered rule, so a new un-wired rule blocks the push, and it prints enforcement strength per row (REFLEX/PRESENCE) so coverage is never misread as force. v6 ("from coverage to enforcement", §9) then turned the top tier from labeled to demonstrated: a fixture-driven gate-liveness harness proves every fail-closed gate actually BLOCKS, schema teeth reject a GATE label without a blocking selftest, and a computed enforcement-floor ledger prints FORCED-vs-gateable alongside coverage.
 Produced 2026-06-22 by workflow wf_c77aedc2-7d6 (11 agents: 5 architect lenses + judge panel + synthesis), seeded from a primary-source audit of ~/.claude this session.
 
 ---
@@ -312,6 +312,30 @@ Rule #1's mechanism IS brain_doctor (Registry `R-META-001`). brain_doctor is inv
 5. **Rename blast radius** (Phase 3, 71 scripts, the sed-depth bug). → codemod generated from the manifest (graph before grep via impact-radius), one-release aliases for documented CLI names, gated on D4==0; the doctor IS the acceptance test.
 6. **Anchor brittleness** (heading reword breaks ANCHOR_PRESENT). → explicit anchor-id comments per rule in CLAUDE.md, exact-match not heuristic; a PreToolUse reflex flags a CLAUDE.md edit that adds an anchor without a matching rules.yaml row (completeness by reflex, not discipline).
 7. **Unguarded fresh-clone push** (core.hooksPath unset before ai-pull). → install-runners sets it idempotently; server-side master PR-protection is the backstop.
+
+---
+
+## 9. v6 - FROM COVERAGE TO ENFORCEMENT (SHIPPED)
+
+Through v5.x the top tier was LABELED, not DEMONSTRATED. `brain_doctor.py:671` admitted it: the `Gate` subclass was an empty extension point and the general `verify()` path was disk-presence only. A rule marked GATE whose hook logic had rotted still printed GATE. v6 kills that gap and turns risk 1 above from a prescription into a shipped mechanism.
+
+**The gate-liveness harness (the load-bearing piece).** Every fail-closed gate now carries a fixture pair under `registry/fixtures/<rule-id>/`: a `violation.json` the gate MUST block and a `benign.json` it MUST allow, each a realistic hook-stdin payload fed to the gate's REAL main path. `scripts/gate_selftest.py` is the shared runner; each gate exposes `--selftest <dir>` (a few stateful gates, dimension-awareness and the relabeled detectors, run a bespoke self-contained selftest). The **benign leg is mandatory**: a gate that blocks everything FAILs its benign leg, so gaming the harness by denying all is impossible. `brain_doctor`'s new `gate-liveness` check runs every `EXIT_CODE --selftest` proof; `scripts/tests/test_gate_liveness.py` proves the prover (a deliberately broken gate must FAIL the doctor).
+
+**Risk 1 closed (schema teeth).** `rules.schema.json` now requires an `EXIT_CODE ...--selftest` proof for any fail-closed rule whose gate blocks a runtime tool-call (a mechanism firing at PreToolUse or Stop). FILE_EXISTS / IN_HOOKS_JSON alone (disk/config presence) can no longer satisfy such a row, so a GATE label without a blocking selftest is schema-rejected. PrePush/git-hook gates (rule-1, pre-push, brain-stays-generic) are out of scope: they scan commits, not tool-calls, and keep their own EXIT_CODE proofs.
+
+**The enforcement-floor ledger (the v6 metric).** A new doctor line, computed from the registry + live selftest results and never hand-edited:
+
+```
+Floor: FORCED 14/20 gateable (70%, selftest-proven) | detect-tier 13 | waived 6 (expiry-tracked) | coverage 57/57 (100%)
+```
+
+FORCED = fail-closed AND, when it carries a `--selftest` proof, that selftest passes. The line FAILs when a rule claims fail-closed but its violation fixture does not deny/block (a false enforcement label). Coverage stays 100% and the floor stays separate: coverage is never conflated with force.
+
+**The upgrades in this wave.** G1 `CODE.cite-sources` promoted to a Stop block-once gate via the cadence tail-read (waiver closed). G2 `GIT.version-control` gained a partial fail-closed gate (`g__pretool-bash__git-discipline.py`: deny force-push to main/master and deny `_old/_backup/_final/_copy` filenames; the atomic-commit and pull-before-push halves stay model-side). G3 `FLOW.graph-before-grep` narrowed to a DENY on a recursive brain-content grep with no seek this turn (the three legit grep classes pass by construction; waiver closed). Three self-executing detectors misfiled as REFLEX (`canon-heal`, `drift-self-heal`, `impact-radius`) were relabeled DETECTOR with a firing selftest each. The floor moved 11/19 (58%) to 14/20 (70%).
+
+**What v6 does NOT claim (the honesty proof).** The STAYS-REFLEX / STAYS-PRESENCE list from the triage stays un-forced and the ledger says so. No gate was built on 4D-protocol obedience, delegate verdicts (platform-blocked: a PreToolUse deny denies the delegate itself), tool choice (curl is legitimate for APIs), identity, or mood-inference: gating those would be the false-positive machine §6 forbids. 100% COVERAGE with a 70% enforcement FLOOR, both printed, is the correct healthy state.
+
+**Deferred to a follow-up (telemetry week first).** D1 injection-scan (fetched content that DISCUSSES injection would false-positive), D2 the machine-register greeting/closing detector, and D5 the no-pause proposal detector all carry real false-positive risk and are held behind one week of warn-mode telemetry before any promotion.
 
 ---
 

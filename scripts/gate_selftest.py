@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""gate_selftest.py — shared fixture-driven liveness harness for fail-closed gates.
+"""gate_selftest.py: shared fixture-driven liveness harness for fail-closed gates.
 
 A gate that merely EXISTS on disk is not proven to BLOCK. This module runs a gate's
 real main path against a pair of realistic hook-stdin fixtures and asserts the two

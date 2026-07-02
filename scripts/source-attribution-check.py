@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""source-attribution-check.py — Stop hook: every answer MUST end with its provenance.
+"""source-attribution-check.py: Stop hook, every answer MUST end with its provenance.
 
 The operator's rule (CLAUDE.md "Cite sources"): always close the response stating on
 whose authority it rests. v6 promotes this from advisory to a fail-closed GATE:
@@ -93,7 +93,7 @@ def main() -> int:
     except Exception:
         return 0
 
-    # Loop guard: already blocked this turn once — never loop.
+    # Loop guard: already blocked this turn once, never loop.
     if data.get("stop_hook_active"):
         return 0
 
@@ -106,7 +106,7 @@ def main() -> int:
         if not text.strip():
             return 0  # tool-only final turn: nothing to attribute
         if MARKERS.search(text):
-            return 0  # footer present — allow
+            return 0  # footer present, allow
     except Exception:
         return 0  # fail-open: a broken hook never holds the conversation
 
