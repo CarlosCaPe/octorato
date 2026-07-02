@@ -202,21 +202,18 @@ rules:
     title: "Graph before grep; seek the lineage, do not scan"
     category: FLOW
     source: { file: CLAUDE.md, anchor: "Graph before grep" }
-    strength: REFLEX
+    strength: GATE
     gateable: true
-    enforcement: fail-open
-    waiver:
-      reason: "grafo-gate injects and grafo-ledger-check is warn-only; a hard Stop block on missing-seek is deferred pending false-positive tuning (legit external greps). Close candidate."
-      expires: "2026-09-30"
-      approved_by: "operator directive 2026-06-29 (cierra o waiva las 7)"
+    enforcement: fail-closed  # v6 G3: grafo-gate now DENIES a recursive brain-content grep with no seek this turn; the 3 legit grep classes pass by construction. Waiver closed.
     firing_mode: [hook]
     mechanism:
-      - { kind: Reflex, canonical_name: grafo-gate.py, firing_event: PreToolUse, firing_matcher: "Bash" }
+      - { kind: Gate, canonical_name: grafo-gate.py, firing_event: PreToolUse, firing_matcher: "Bash" }
       - { kind: Reflex, canonical_name: grafo-turn-reset.py, firing_event: UserPromptSubmit, firing_matcher: null }
       - { kind: Detector, canonical_name: grafo-ledger-check.py, firing_event: Stop, firing_matcher: "*" }
     proof:
       - { method: IN_HOOKS_JSON, locator: "PreToolUse|Bash|grafo-gate.py", expect: present }
       - { method: IN_HOOKS_JSON, locator: "Stop|*|grafo-ledger-check.py", expect: present }
+      - { method: EXIT_CODE, locator: "scripts/grafo-gate.py --selftest registry/fixtures/FLOW.graph-before-grep", expect: 0 }
     liveness_required: FIRES
 
   - id: FLOW.impact-radius
