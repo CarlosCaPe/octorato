@@ -112,6 +112,8 @@ edges:
       - CLAUDE.md
       - scripts/delegate-gate.py
       - skills/4d-paradigm-protocol/SKILL.md
+      - skills/finops-observability/SKILL.md
+      - docs/architecture/hook-orchestration.md
     kind: appears_in
     single_source: "skills/model-routing-by-complexity/SKILL.md (the canon rubric table)"
     note: "One ladder, several copies (canon skill, 2D summary, the delegate nudge hook). Change the tiers once at the canon and propagate; a hook nudging an outdated ladder re-teaches the old rule every turn."

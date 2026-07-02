@@ -24,7 +24,7 @@ The brain already measures cost across several surfaces. This skill is the map s
 ## The two levers (measure → act)
 
 - **Caps** ([[finops-budget-policy]]) = the ceiling: a `PreToolUse` hook refuses the expensive tool when an arm burns through its cap.
-- **Routing** ([[model-routing-by-complexity]]) = the floor: Opus brain, Haiku arms — delegate mechanical work to cheap engines. The `finops-digest` routing KPI ($ saved vs all-Opus) is what proves routing is actually happening; if spend is ~100% Opus, routing is unused.
+- **Routing** ([[model-routing-by-complexity]]) = the floor: frontier brain, tiered arms (Haiku mechanical, Sonnet well-specified bulk, Opus build default, Fable all judgment); delegate each task to the cheapest sufficient tier. The `finops-digest` routing KPI ($ saved vs all-frontier) is what proves routing is actually happening; if spend is ~100% frontier-tier, routing is unused.
 
 ## Honest reading
 

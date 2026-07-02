@@ -18,7 +18,7 @@ The architecture is stratified into four layers, each with a distinct theoretica
 ```
 ┌─────────────────────────────────────────────────────────┐
 │  L4  Routing      Contextual Bandit / LinUCB            │
-│                   model-tier selection (Haiku/Sonnet/Opus)│
+│                   model-tier selection (Haiku/Sonnet/Opus/Fable)│
 ├─────────────────────────────────────────────────────────┤
 │  L3  Flow         Statechart (4D phase machine)         │
 │                   + Blackboard (ledger + connectome)    │
@@ -33,7 +33,7 @@ The architecture is stratified into four layers, each with a distinct theoretica
 
 ### L4 — Routing: Contextual Bandit / LinUCB
 
-**Foundation:** Contextual Bandit formalism (Langford & Zhang 2007) with the LinUCB algorithm (Li et al. 2010). At the start of each turn, a context vector `x_t` is constructed from observable prompt features (token count, detected task type, cost-so-far in the session, prior model tiers used). The bandit selects a model arm `a ∈ {Haiku, Sonnet, Opus}` to maximize the expected reward:
+**Foundation:** Contextual Bandit formalism (Langford & Zhang 2007) with the LinUCB algorithm (Li et al. 2010). At the start of each turn, a context vector `x_t` is constructed from observable prompt features (token count, detected task type, cost-so-far in the session, prior model tiers used). The bandit selects a model arm `a ∈ {Haiku, Sonnet, Opus, Fable}` (judgment work is pinned to Fable by policy, outside the bandit's choice set) to maximize the expected reward:
 
 ```
 reward = quality(a, x_t) · w_q  −  cost(a) · w_c
