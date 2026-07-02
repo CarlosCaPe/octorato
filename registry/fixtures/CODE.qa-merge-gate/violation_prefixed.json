@@ -1,0 +1,1 @@
+{"tool_name": "Bash", "tool_input": {"command": "env A=1 command git push origin main"}, "cwd": "/nonexistent/repo"}

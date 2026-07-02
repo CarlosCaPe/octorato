@@ -96,7 +96,12 @@
           "statusMessage": "♦ 4D: checking parallel dimensions...",
           "timeout": 5,
           "type": "command"
-        },
+        }
+      ],
+      "matcher": "Write|Edit"
+    },
+    {
+      "hooks": [
         {
           "command": "python3 ~/.claude/scripts/g__pretool-bash__git-discipline.py",
           "statusMessage": "♦ git discipline (no _old/_backup names)...",
@@ -104,7 +109,7 @@
           "type": "command"
         }
       ],
-      "matcher": "Write|Edit"
+      "matcher": "Write|Edit|NotebookEdit|MultiEdit"
     },
     {
       "hooks": [

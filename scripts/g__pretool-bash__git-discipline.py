@@ -47,6 +47,44 @@ _PAT_GIT_PUSH_MAIN = re.compile(
 )
 
 
+# leading wrapper tokens that must be stripped BEFORE the git anchor, else a
+# one-token prefix (VAR=val, env, command) evades detection and force-pushes main.
+# The real override is os.environ['OCTO_ALLOW_FORCE'] set by the operator's shell,
+# NOT an inline token: an inline `OCTO_ALLOW_FORCE=1 git ...` does not reach the
+# hook's os.environ, so it must still DENY (agent-proof preserved).
+_W_ASSIGN = re.compile(r"^[A-Za-z_]\w*=\S*\s+")
+_W_REDIR = re.compile(r"^\d*[<>]+\S*\s+")
+_W_GROUP = re.compile(r"^[({]\s*")
+_W_ENV = re.compile(r"^env\b\s*")
+_W_ENVARG = re.compile(r"^(?:-\S+|[A-Za-z_]\w*=\S*)\s+")
+_W_COMMAND = re.compile(r"^command\s+")
+
+
+def _strip_wrappers(sub: str) -> str:
+    """Peel leading shell-assignment / env / command / grouping / redirection
+    wrappers so `env A=1 command git push --force origin main` normalizes to
+    `git push --force origin main`. Iterative so wrappers may interleave."""
+    s = sub.lstrip()
+    prev = None
+    while s != prev:
+        prev = s
+        for pat in (_W_GROUP, _W_ASSIGN, _W_REDIR, _W_COMMAND):
+            m = pat.match(s)
+            if m:
+                s = s[m.end():]
+                break
+        else:
+            m = _W_ENV.match(s)
+            if m:
+                s = s[m.end():]
+                while True:
+                    m2 = _W_ENVARG.match(s)
+                    if not m2:
+                        break
+                    s = s[m2.end():]
+    return s
+
+
 def _split_subcmds(cmd: str) -> list:
     """Split on UNQUOTED shell separators only (; && || | newline)."""
     parts, buf, in_sq, in_dq = [], [], False, False
@@ -128,7 +166,8 @@ def main() -> int:
                 return 0  # operator override (agent-proof env)
             cmd = tool_input.get("command") or ""
             for sub in _split_subcmds(cmd):
-                if _PAT_GIT_PUSH_MAIN.match(sub) and _has_bare_force(sub):
+                norm = _strip_wrappers(sub)
+                if _PAT_GIT_PUSH_MAIN.match(norm) and _has_bare_force(norm):
                     _deny(
                         "⛔ GIT discipline: `git push --force` to main/master is denied. "
                         "Use --force-with-lease on a feature branch, or the operator can "
