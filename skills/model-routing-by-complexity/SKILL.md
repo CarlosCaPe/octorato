@@ -7,7 +7,7 @@ description: "Frontier brain, tiered arms: keep the orchestrator on a frontier m
 
 **Principle:** the expensive model is the default reflex, not the default *requirement*. Most of any multi-agent run is mechanical (grep, list, transform, extract, format-check, summarize-one-file). That 80% does not need frontier reasoning. Route it to a cheap model; build defaults to Opus; and ALL judgment (QA, code review, second opinion, adversarial verification) runs on Fable, no exceptions. The judgment pin is an invariant, not a preference: **the verifier must run on a model at least as strong as the builder**. A weaker reviewer approves what it cannot see, and the QA verdict is the merge gate.
 
-## The shape: Opus brain, Haiku arms
+## The shape: frontier brain, tiered arms
 
 There are two ways to use a cheaper model. Only one is correct:
 
@@ -16,7 +16,7 @@ There are two ways to use a cheaper model. Only one is correct:
 | Downgrade the **main loop / orchestrator** for "simple" turns | ❌ You degrade the thing that *decides everything downstream*. Pennies saved, decision quality risked. |
 | Keep the orchestrator on a frontier model and **delegate mechanical work to sub-agents on cheap engines** | ✅ Reasoning stays sharp; the grep/extract/format goes to a cheap arm. |
 
-This is the octopus made literal: a frontier **brain** (Fable) that reasons and orchestrates, plus tiered **arms** (Haiku for mechanical, Opus for build, Fable for judgment) that execute. It wins twice:
+This is the octopus made literal: a frontier **brain** (Fable) that reasons and orchestrates, plus tiered **arms** (Haiku for mechanical, Sonnet for well-specified bulk, Opus for build, Fable for judgment) that execute. It wins twice:
 
 1. **Decision quality intact** — the agent that delegates the work stays frontier-grade.
 2. **Context stays cheap too** — a sub-agent reads the 20 files in *its own* ephemeral context and returns only the conclusion; the expensive main context never pays to read those 20 files. You save on **tier** *and* on **context tokens** at once.
@@ -32,7 +32,7 @@ Caps stop catastrophe; routing improves margin on every single run.
 
 ## How to apply in Octorato tooling
 
-Both layers already expose a per-call `model` override — **default to omitting it** (inherit the session model), and set it explicitly only when the task's complexity clearly justifies a tier change:
+Both layers already expose a per-call `model` override. Set `model` by the ladder, not by the session: judgment work ALWAYS pins `model: 'fable'` explicitly (the no-exceptions rule admits no inherit), build spawned from a Fable session pins `'opus'`, and omitting the param is correct only when the session model already sits on the task's ladder tier:
 
 - **Workflow** — `agent(prompt, { model: 'haiku' })` per call, or `model` on a `phase` entry. Inside `pipeline()`/`parallel()`, set the cheap tier on the mechanical stage and the strong tier on the synthesis/verify stage.
 - **Agent tool**: the `model` parameter (`haiku` | `sonnet` | `opus` | `fable`).
@@ -48,7 +48,7 @@ One table, not two. The brain's task-shape routing IS Anthropic's tier guidance 
 | **Opus** | Highest intelligence in the 4.x family. | Yes | the build DEFAULT: common coding, cross-file synthesis, design trade-offs, ambiguous requirements, architecture decisions, strategic multi-step problem solving. |
 | **Fable** | Mythos-class, above Opus. | Yes | ALL judgment, no exceptions (operator directive 2026-07-01): QA, code review, second opinion of another agent, adversarial verification, "a wrong answer is expensive here". The verifier runs at least as strong as the builder. |
 
-**Hard line: Haiku does not support reasoning.** Route to Haiku only when the work is mechanical and needs no multi-step inference. A task that has to weigh, infer, or catch a subtle trap goes to Sonnet or Opus, never Haiku, no matter how small it looks. The corollary holds the other way too: image and data analysis are Sonnet-grade, not Haiku. (Source: Anthropic "Claude model family" table.)
+**Hard line: Haiku does not support reasoning.** Route to Haiku only when the work is mechanical and needs no multi-step inference. A task that has to weigh, infer, or catch a subtle trap goes up a tier (Opus by default), never Haiku, no matter how small it looks. The corollary holds the other way too: image and data analysis are Sonnet-grade, not Haiku. (Source: Anthropic "Claude model family" table.)
 
 ## Honest caveats (do not skip)
 
