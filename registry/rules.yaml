@@ -225,12 +225,13 @@ rules:
     title: "Impact Radius on every concept change"
     category: FLOW
     source: { file: CLAUDE.md, anchor: "Impact Radius on every concept change" }
-    strength: REFLEX
+    strength: DETECTOR  # v6 relabel: self-executing (runs the real impact-radius scan), not an inject-only reflex
     firing_mode: [hook]
     mechanism:
-      - { kind: Reflex, canonical_name: impact-radius-hook.py, firing_event: PostToolUse, firing_matcher: "Write|Edit" }
+      - { kind: Detector, canonical_name: impact-radius-hook.py, firing_event: PostToolUse, firing_matcher: "Write|Edit" }
     proof:
       - { method: IN_HOOKS_JSON, locator: "PostToolUse|Write|Edit|impact-radius-hook.py", expect: present }
+      - { method: EXIT_CODE, locator: "scripts/impact-radius-hook.py --selftest", expect: 0 }
     liveness_required: FIRES
 
   - id: FLOW.web-agent-browser
@@ -993,24 +994,26 @@ rules:
     title: "Heal the content canon to unison on every edit"
     category: FLOW
     source: { file: skills/octorato-harmony/SKILL.md, anchor: "Octorato Harmony" }
-    strength: REFLEX
+    strength: DETECTOR  # v6 relabel: self-executing (heals canon itself), not an inject-only reflex
     firing_mode: [hook]
     mechanism:
-      - { kind: Reflex, canonical_name: canon-heal-hook.py, firing_event: PostToolUse, firing_matcher: "Write|Edit" }
+      - { kind: Detector, canonical_name: canon-heal-hook.py, firing_event: PostToolUse, firing_matcher: "Write|Edit" }
     proof:
       - { method: IN_HOOKS_JSON, locator: "PostToolUse|Write|Edit|canon-heal-hook.py", expect: present }
+      - { method: EXIT_CODE, locator: "scripts/canon-heal-hook.py --selftest", expect: 0 }
       - { method: ANCHOR_PRESENT, locator: "Octorato Harmony", expect: present }
     liveness_required: FIRES
   - id: ARCHITECTURE.drift-self-heal
     title: "Reconcile settings.json from the tracked hooks.json at session start (drift self-heal)"
     category: ARCHITECTURE
     source: { file: CLAUDE.md, anchor: "## Multi-Machine Sync" }
-    strength: REFLEX
+    strength: DETECTOR  # v6 relabel: self-executing (regenerates settings.json itself), not an inject-only reflex
     firing_mode: [hook]
     mechanism:
-      - { kind: Reflex, canonical_name: merge-hooks.py, firing_event: SessionStart, firing_matcher: "*" }
+      - { kind: Detector, canonical_name: merge-hooks.py, firing_event: SessionStart, firing_matcher: "*" }
     proof:
       - { method: IN_HOOKS_JSON, locator: "SessionStart|*|merge-hooks.py", expect: present }
+      - { method: EXIT_CODE, locator: "scripts/merge-hooks.py --selftest", expect: 0 }
       - { method: ANCHOR_PRESENT, locator: "## Multi-Machine Sync", expect: present }
     liveness_required: FIRES
 
