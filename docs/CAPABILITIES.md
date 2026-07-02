@@ -125,7 +125,7 @@
 | long-lived-negative-dns-cache | A long-running process (a cron supervisor, a daemon, a worker pool parent) caches a NEGATIVE DNS result after a transien... |
 | market-research-framework | Market Research Framework , Consulting-Grade Analysis |
 | mcp-stack-setup | Skill: MCP Stack Setup for Octopus Arms |
-| model-routing-by-complexity | Opus brain, Haiku arms: keep the orchestrator on a frontier model and DELEGATE mechanical work to sub-agents running che... |
+| model-routing-by-complexity | Frontier brain, tiered arms: keep the orchestrator on a frontier model and DELEGATE by complexity; never downgrade the m... |
 | multi-object-rename-convergence | Multi-Object Rename Convergence |
 | multi-specialist-doc-audit | Audit a long technical document for hallucinations and uncited claims by dispatching N specialist agents in parallel, ea... |
 | netlify-deploy | Deploy web projects to Netlify using the Netlify CLI (`npx netlify`). Use when the user asks to deploy, host, publish, o... |

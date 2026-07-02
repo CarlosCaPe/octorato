@@ -105,6 +105,17 @@ edges:
     kind: appears_in
     note: "A major version (e.g. v3.0) is announced in several places — bump them together."
 
+  - id: model-routing-ladder
+    concept: "model routing ladder (Haiku mechanical / Sonnet specified bulk / Opus build default / Fable all judgment)"
+    appears_in:
+      - skills/model-routing-by-complexity/SKILL.md
+      - CLAUDE.md
+      - scripts/delegate-gate.py
+      - skills/4d-paradigm-protocol/SKILL.md
+    kind: appears_in
+    single_source: "skills/model-routing-by-complexity/SKILL.md (the canon rubric table)"
+    note: "One ladder, several copies (canon skill, 2D summary, the delegate nudge hook). Change the tiers once at the canon and propagate; a hook nudging an outdated ladder re-teaches the old rule every turn."
+
   # The self-referential edge: the principle "graph before grep (seek > scan)"
   # is itself a concept that must live coherently across the whole brain. This
   # edge is the deterministic 100% target-set for codifying it — and proof that
