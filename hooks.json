@@ -96,6 +96,12 @@
           "statusMessage": "♦ 4D: checking parallel dimensions...",
           "timeout": 5,
           "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/git-discipline-gate.py",
+          "statusMessage": "♦ git discipline (no _old/_backup names)...",
+          "timeout": 5,
+          "type": "command"
         }
       ],
       "matcher": "Write|Edit"
@@ -128,6 +134,12 @@
         },
         {
           "command": "python3 ~/.claude/scripts/secrets-grep-guard.py",
+          "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/git-discipline-gate.py",
+          "statusMessage": "♦ git discipline (no --force to main)...",
+          "timeout": 5,
           "type": "command"
         },
         {

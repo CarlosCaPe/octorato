@@ -555,22 +555,23 @@ rules:
   - id: GIT.version-control
     title: Git and version control — atomic commit discipline
     category: GIT
-    strength: PRESENCE
+    strength: GATE
+    gateable: true
+    enforcement: fail-closed  # v6 G2: the deterministic subset (force-push to main, _old/_backup names) is fail-closed; atomic-commit and pull-before-push halves stay model-side
     firing_mode:
-      - model
+      - hook
     source:
       file: CLAUDE.md
       anchor: "## Git & Version Control"
     mechanism:
-      - kind: Presence
-        canonical_name: null
-        firing_event: null
-        firing_matcher: null
+      - { kind: Gate, canonical_name: git-discipline-gate.py, firing_event: PreToolUse, firing_matcher: "Bash" }
+      - { kind: Gate, canonical_name: git-discipline-gate.py, firing_event: PreToolUse, firing_matcher: "Write|Edit" }
     proof:
-      - method: ANCHOR_PRESENT
-        locator: "## Git & Version Control"
-        expect: present
-    liveness_required: PRESENT
+      - { method: IN_HOOKS_JSON, locator: "PreToolUse|Bash|git-discipline-gate.py", expect: present }
+      - { method: IN_HOOKS_JSON, locator: "PreToolUse|Write|Edit|git-discipline-gate.py", expect: present }
+      - { method: EXIT_CODE, locator: "scripts/git-discipline-gate.py --selftest registry/fixtures/GIT.version-control", expect: 0 }
+      - { method: ANCHOR_PRESENT, locator: "## Git & Version Control", expect: present }
+    liveness_required: FIRES
 
   - id: CODE.file-organization
     title: File organization — config-first no summary markdown
