@@ -9,9 +9,9 @@
 | Skills | 231 |
 | Agents | 161 |
 | Divisions | 15 |
-| Scripts: wired | 80 |
+| Scripts: wired | 81 |
 | Scripts: orphan | 6 |
-| Rules | 50 |
+| Rules | 57 |
 | Hook entries | 29 |
 
 ## Skills (231)
@@ -488,7 +488,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (86)
+## Scripts (87)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -563,6 +563,7 @@
 | publish-wiki.py | publish-wiki.py - publish docs/wiki/ to the public GitHub wiki. | wired |
 | qa-merge-gate.py | PreToolUse Bash hook , QA gate (FAIL-CLOSED for merge actions). | wired |
 | query_connectome.py | query_connectome.py , Octopus Ventosas (Sucker Neural Interface) v1.0 Each sucker is an independent ... | wired |
+| querymaster-security-detector.py | QueryMaster security-canon detector (RULE #1 backing for SECURITY.querymaster-rules). | wired |
 | quickstart.py | quickstart.py , zero-to-alive for a brand-new Octorato user, in one command. | wired |
 | repo_watch.py | repo_watch.py , daily monitor for high-value GitHub repos. | wired |
 | scan-external-refs | scan-external-refs , Scan reference repos for new skills, agents, and patterns | orphan |
@@ -579,7 +580,7 @@
 | validate-skill-manifest.py | validate-skill-manifest.py , validate a skill.json against the M5 manifest schema (issue #31). | wired |
 | watchdog.py | watchdog.py , observability surface 4 anomaly detector. Reads the JSONL trace files written by trace... | wired |
 
-## Rules (50)
+## Rules (57)
 
 ### ARCHITECTURE
 
@@ -595,6 +596,8 @@
 
 - CODE.adversarial-verify-operator
 - CODE.best-tool-first
+- CODE.bug-hunter-read-prompts
+- CODE.canary-live-test
 - CODE.cite-sources
 - CODE.do-it-right
 - CODE.dry-run-first
@@ -622,8 +625,11 @@
 - FLOW.canon-heal
 - FLOW.delegate-gate
 - FLOW.enforcement-scripts
+- FLOW.figma-use-prerequisite
 - FLOW.graph-before-grep
+- FLOW.image-analyzer-trigger
 - FLOW.impact-radius
+- FLOW.orchestrated-planning-reporting-contract
 - FLOW.prune-dead-cells
 - FLOW.skill-first
 - FLOW.suggest-unlock
@@ -646,6 +652,7 @@
 
 - MEMORY.arm-recall
 - MEMORY.brain-memory-recall
+- MEMORY.feedback-directive-corpus
 - MEMORY.inbox-sweep
 
 ### META
@@ -660,6 +667,7 @@
 
 - SECURITY.baseline
 - SECURITY.never-read-secrets-raw
+- SECURITY.querymaster-rules
 
 ## Hooks
 
