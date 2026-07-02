@@ -152,5 +152,38 @@ def main():
     print(f"  ✓ Hooks merged into settings.json ({'; '.join(parts) or 'synced'})")
 
 
+def _selftest() -> int:
+    """Prove the drift self-heal FIRES: project a temp hooks.json into a temp
+    settings.json and assert the hooks section lands. Isolated in a temp dir, so
+    the real per-machine settings.json is never touched."""
+    global HOOKS_FILE, SETTINGS_FILE
+    import tempfile
+    sandbox = tempfile.mkdtemp(prefix="merge-hooks-selftest-")
+    saved = (HOOKS_FILE, SETTINGS_FILE)
+    try:
+        HOOKS_FILE = os.path.join(sandbox, "hooks.json")
+        SETTINGS_FILE = os.path.join(sandbox, "settings.json")
+        # reference an existing script (this file) so _validate_hooks keeps it
+        with open(HOOKS_FILE, "w", encoding="utf-8") as f:
+            json.dump({"SessionStart": [{"hooks": [
+                {"command": f"python3 {os.path.abspath(__file__)}", "type": "command"}]}]}, f)
+        main()
+        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+            settings = json.load(f)
+        ok = "SessionStart" in (settings.get("hooks") or {})
+    except Exception as e:
+        print(f"selftest FAIL: {e}", file=sys.stderr)
+        ok = False
+    finally:
+        HOOKS_FILE, SETTINGS_FILE = saved
+        import shutil
+        shutil.rmtree(sandbox, ignore_errors=True)
+    if ok:
+        print("selftest PASS: hooks.json projects into settings.json")
+    return 0 if ok else 1
+
+
 if __name__ == "__main__":
+    if "--selftest" in sys.argv:
+        sys.exit(_selftest())
     main()

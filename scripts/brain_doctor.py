@@ -1215,7 +1215,8 @@ def check_gate_liveness(fix: bool) -> Result:
                       + "; ".join(failed[:6]),
                       "a labeled gate that fails its violation/benign fixtures is dead; fix the gate or the fixture")
     return Result(key, PASS,
-                  f"all {len(proofs)} fail-closed gate(s) proven live (violation blocks, benign allows)")
+                  f"all {len(proofs)} gate/detector selftest(s) proven live "
+                  f"(gate: violation blocks + benign allows; detector: fires on fixture)")
 
 
 def check_enforcement_floor(fix: bool) -> Result:

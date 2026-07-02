@@ -32,21 +32,27 @@ PREFIXES = ("skills/", "agents/", "commands/", "docs/", "CLAUDE.md",
             "README", "WHITEPAPER", "ROADMAP", "SHOWCASE", "CONTRIBUTING")
 
 
+def _concept_rel(fp: str):
+    """The repo-relative path IFF *fp* is a concept file we react to (a skill's
+    SKILL.md), else None. Factored so the trigger is selftest-provable."""
+    if not fp:
+        return None
+    try:
+        rel = Path(fp).resolve().relative_to(CLAUDE_DIR).as_posix()
+    except Exception:
+        return None
+    # CLAUDE.md is too broad to auto-derive a single term; the ULTRA rule covers it manually.
+    return rel if rel.endswith("/SKILL.md") else None
+
+
 def main():
     try:
         ev = json.loads(sys.stdin.read() or "{}")
     except Exception:
         sys.exit(0)
     fp = (ev.get("tool_input", {}) or {}).get("file_path") or ""
-    if not fp:
-        sys.exit(0)
-    try:
-        rel = Path(fp).resolve().relative_to(CLAUDE_DIR).as_posix()
-    except Exception:
-        sys.exit(0)
-    # Only react to concept files: a skill's SKILL.md. CLAUDE.md is too broad to
-    # auto-derive a single term; the ULTRA rule covers it manually.
-    if not rel.endswith("/SKILL.md"):
+    rel = _concept_rel(fp)
+    if rel is None:
         sys.exit(0)
     term = Path(rel).parent.name
     try:
@@ -67,5 +73,19 @@ def main():
     sys.exit(0)
 
 
+def _selftest() -> int:
+    """Prove the detector fires on the right surface and stays silent on the wrong
+    one: a SKILL.md is a concept file (reacts), a plain script is not (silent)."""
+    pos = _concept_rel(str(CLAUDE_DIR / "skills" / "human-cadence" / "SKILL.md"))
+    neg = _concept_rel(str(CLAUDE_DIR / "scripts" / "impact-radius-hook.py"))
+    ok = bool(pos) and neg is None
+    print("selftest PASS: reacts to SKILL.md, silent on scripts" if ok
+          else f"selftest FAIL: pos={pos!r} neg={neg!r}",
+          file=sys.stdout if ok else sys.stderr)
+    return 0 if ok else 1
+
+
 if __name__ == "__main__":
+    if "--selftest" in sys.argv:
+        sys.exit(_selftest())
     main()

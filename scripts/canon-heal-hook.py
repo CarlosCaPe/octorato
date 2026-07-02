@@ -34,6 +34,11 @@ for _stream in (sys.stdout, sys.stderr):
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def _is_canon_surface(text: str) -> bool:
+    """A subscribed surface carries a canon marker; factored to be selftest-provable."""
+    return "<!--canon:" in text
+
+
 def main() -> int:
     try:
         data = json.load(sys.stdin)
@@ -49,7 +54,7 @@ def main() -> int:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return 0
-    if "<!--canon:" not in text:
+    if not _is_canon_surface(text):
         return 0  # not a subscribed surface — stay silent
     try:
         subprocess.run(
@@ -62,5 +67,16 @@ def main() -> int:
     return 0
 
 
+def _selftest() -> int:
+    """Prove the detector reacts to a canon surface and stays silent otherwise."""
+    ok = _is_canon_surface("intro <!--canon:foo--> body") and not _is_canon_surface("plain prose")
+    print("selftest PASS: reacts to canon marker, silent otherwise" if ok
+          else "selftest FAIL: canon-surface predicate misfired",
+          file=sys.stdout if ok else sys.stderr)
+    return 0 if ok else 1
+
+
 if __name__ == "__main__":
+    if "--selftest" in sys.argv:
+        sys.exit(_selftest())
     sys.exit(main())
