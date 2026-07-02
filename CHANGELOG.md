@@ -14,6 +14,8 @@ machine-generated growth ledger lives at
 `knowledge/repo-watch/<date>.md` (daily watchlist digests).
 
 ## [Unreleased]
+
+## [2026-07-02]: v6.0.0
 ### Features
 - feat(v6): "from coverage to enforcement": the gate-liveness harness. Every fail-closed
   gate now ships a `--selftest` that feeds it a `registry/fixtures/<rule-id>/violation.json`
@@ -40,6 +42,56 @@ machine-generated growth ledger lives at
   D2 machine-register greeting detector, D5 no-pause proposal detector. The STAYS-REFLEX list
   (4D obedience, delegate verdicts, tool choice, identity, mood-inference) stays un-forced by
   design; coverage remains 100% and is never conflated with the 70% enforcement floor.
+
+## [2026-07-02]: v5.10.0
+### Features
+- feat(v6): "from coverage to enforcement": the gate-liveness harness. Every fail-closed
+  gate now ships a `--selftest` that feeds it a `registry/fixtures/<rule-id>/violation.json`
+  (must block) and `benign.json` (must allow) through its real main path; a shared
+  `scripts/gate_selftest.py` runs both legs and the mandatory benign leg makes a
+  block-everything gate FAIL, so gaming the harness is impossible.
+- feat(doctor): new `gate-liveness` check runs every gate's selftest and a computed
+  `enforcement-floor` ledger line (`FORCED N/M gateable (P%, selftest-proven) | detect-tier |
+  waived | coverage`), never hand-edited, FAILing on a false fail-closed label. Floor moved
+  from 11/19 (58%) to 14/20 (70%).
+- feat(schema): `rules.schema.json` requires an `EXIT_CODE --selftest` proof for any
+  fail-closed rule whose gate blocks a PreToolUse/Stop tool-call (wired-or-corrupt §8 risk 1).
+- feat(G1): `CODE.cite-sources` promoted to a Stop block-once gate (provenance footer);
+  waiver closed.
+- feat(G2): `GIT.version-control` partial fail-closed gate (`g__pretool-bash__git-discipline.py`):
+  deny force-push to main/master and `_old/_backup/_final/_copy` filenames.
+- feat(G3): `FLOW.graph-before-grep` narrow fail-closed gate (deny recursive brain-content
+  grep with no seek this turn; the 3 legit grep classes pass); waiver closed.
+### Refactors
+- refactor(relabel): `canon-heal`, `drift-self-heal`, `impact-radius` are DETECTORs not
+  REFLEXes (they self-execute), each with a firing `--selftest`.
+### Notes
+- Deferred to a follow-up behind a telemetry week (false-positive risk): D1 injection-scan,
+  D2 machine-register greeting detector, D5 no-pause proposal detector. The STAYS-REFLEX list
+  (4D obedience, delegate verdicts, tool choice, identity, mood-inference) stays un-forced by
+  design; coverage remains 100% and is never conflated with the 70% enforcement floor.
+
+---
+
+### Features
+- feat(doctor+schema): gate-liveness check, enforcement-floor ledger, schema teeth
+- feat(G3): FLOW.graph-before-grep narrow fail-closed gate
+- feat(G2): GIT.version-control partial fail-closed gate
+- feat(G1): CODE.cite-sources is now a fail-closed block-once gate
+- feat(harness): gate-liveness fixtures + --selftest on the existing fail-closed gates
+### Fixes
+- fix(gates): strip env/command wrapper tokens before the git/gh anchor (QA HIGH)
+### Other
+- chore(manifest): regenerate docs/CAPABILITIES.md for v6 rules and scripts
+- docs(v6): record the coverage-to-enforcement shift; close wired-or-corrupt risk 1
+- test(harness): prove the prover — broken gate must FAIL the doctor
+- refactor(relabel): canon-heal, drift-self-heal, impact-radius are DETECTORs not REFLEXes
+- audit(registry): D4 dry-run-first is ask-on-narrow-trigger, residual documented
+
+## [2026-07-02]: v5.9.1
+### Other
+- docs(changelog): backfill v5.8.0 and v5.9.0 from tags and releases
+- docs(coverage): reconcile corpus-coverage prose to honest FAIL-armed 100%
 
 ## [2026-07-02]: v5.9.0
 ### Features
