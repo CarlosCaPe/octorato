@@ -1159,10 +1159,37 @@ def check_capability_manifest(fix: bool) -> Result:
                   "run python3 scripts/capability_manifest.py and inspect its output")
 
 
+def check_querymaster_security_detector(fix: bool) -> Result:
+    """Actually RUN the querymaster security-canon detector so SECURITY.querymaster-rules
+    is genuinely lived, not presence-with-extra-steps.
+
+    The general verify()/EXIT_CODE path is disk-presence only (it never executes the
+    proof), so a Detector declared in the registry could rot unnoticed. This dedicated
+    check subprocess-runs the detector's --selftest: exit 0 = the full security canon is
+    intact (PASS), non-zero = a Security Rules line was deleted or weakened (FAIL), which
+    trips the doctor and the pre-push gate. Kept narrow on purpose; the broad EXIT_CODE
+    path is left untouched.
+    """
+    key = "querymaster-security-detector"
+    detector = CLAUDE_DIR / "scripts" / "querymaster-security-detector.py"
+    if not detector.exists():
+        return Result(key, WARN, "scripts/querymaster-security-detector.py not found",
+                      "restore the querymaster security detector")
+    py = PYTHON or "python3"
+    cp = run([py, str(detector), "--selftest"], cwd=CLAUDE_DIR)
+    if cp.returncode == 0:
+        return Result(key, PASS, (cp.stdout or "").strip() or "querymaster security canon intact", "")
+    return Result(key, FAIL,
+                  "querymaster security canon rotted: "
+                  + ((cp.stderr or cp.stdout or "").strip() or "detector --selftest failed"),
+                  "restore the missing Security Rules line in skills/querymaster/SKILL.md")
+
+
 CHECKS = [
     ("repo-identity", check_repo_identity),
     ("rule-1-registry", check_registry),
     ("corpus-coverage", check_corpus_coverage),
+    ("querymaster-security-detector", check_querymaster_security_detector),
     ("rule-1-naming", check_naming),
     ("rule-1-orphans", check_orphan_hooks),
     ("sync-clean", check_sync_clean),

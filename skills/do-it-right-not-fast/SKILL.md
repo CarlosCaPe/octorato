@@ -31,5 +31,6 @@ You can and should do both: begin the right fix today.
 - Before proposing a fix, name the **root cause** in one line. If you cannot, investigate first ([[investigate-before-asking]], [[research-checklist-discipline]]) rather than patch blind.
 - If you catch the phrase or the pile, rewrite the plan around the root cause. Tell the operator the real fix and its size; let them decide, do not decide-by-shortcut for them.
 - A workaround is allowed only as an **explicitly labeled, temporary** stopgap with the root fix named and scheduled, never as the silent substitute.
+- A blocked capability is the **entrance to the root-cause fix**, not a wall. Never answer with "can't"; patch the layer below and keep going.
 
 Related: [[execution-bias]], [[harmonization-over-accretion]], [[reflexes-over-discipline]], [[4d-paradigm-protocol]] (the cerebellum: precision without tremor).
