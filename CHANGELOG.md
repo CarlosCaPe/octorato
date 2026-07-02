@@ -15,6 +15,15 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-07-01]: v5.7.0
+### Features
+- feat(sync): publish-wiki mechanism, docs/wiki to the GitHub wiki on push
+### Fixes
+- fix(review): wiki publish fires only from master/main
+- fix(docs): reconcile stale claims across README, wiki, hooks doc, roadmap
+### Other
+- docs(changelog): self-heal v5.6.0 entry via changelog-sync
+
 ## [2026-07-01]: v5.6.0
 ### Release self-heal
 - New `scripts/changelog-sync.py`: reconciles missing CHANGELOG entries from semver tags, promoting the curated `[Unreleased]` body into the newest missing version and pulling GitHub Release notes (commit-subject fallback) for the rest. Dry-run by default, `--check` for CI, `--apply` idempotent.
