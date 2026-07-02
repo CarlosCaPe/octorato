@@ -98,7 +98,7 @@
           "type": "command"
         },
         {
-          "command": "python3 ~/.claude/scripts/git-discipline-gate.py",
+          "command": "python3 ~/.claude/scripts/g__pretool-bash__git-discipline.py",
           "statusMessage": "♦ git discipline (no _old/_backup names)...",
           "timeout": 5,
           "type": "command"
@@ -137,7 +137,7 @@
           "type": "command"
         },
         {
-          "command": "python3 ~/.claude/scripts/git-discipline-gate.py",
+          "command": "python3 ~/.claude/scripts/g__pretool-bash__git-discipline.py",
           "statusMessage": "♦ git discipline (no --force to main)...",
           "timeout": 5,
           "type": "command"

@@ -1159,6 +1159,124 @@ def check_capability_manifest(fix: bool) -> Result:
                   "run python3 scripts/capability_manifest.py and inspect its output")
 
 
+def _selftest_proofs(rules: list) -> list:
+    """(rule, locator) for every EXIT_CODE proof whose locator runs a --selftest.
+    These are the fixture-driven liveness proofs a fail-closed GATE must carry."""
+    out = []
+    for r in rules:
+        for p in (r.get("proof") or []):
+            loc = str(p.get("locator") or "")
+            if p.get("method") == "EXIT_CODE" and "--selftest" in loc:
+                out.append((r, loc))
+    return out
+
+
+def _run_selftest_locator(locator: str) -> subprocess.CompletedProcess:
+    """Run a `<script> --selftest [dir]` locator. Strips a leading python/python3
+    token (some locators carry it), resolves a repo-relative script, and runs it
+    under our interpreter with cwd=CLAUDE_DIR so fixture paths resolve."""
+    toks = locator.split()
+    if toks and os.path.basename(toks[0]) in ("python", "python3", "py"):
+        toks = toks[1:]
+    if toks and toks[0].endswith((".py",)) and not os.path.isabs(toks[0]):
+        toks[0] = str(CLAUDE_DIR / toks[0])
+    return run([PYTHON or "python3", *toks], cwd=CLAUDE_DIR)
+
+
+def check_gate_liveness(fix: bool) -> Result:
+    """Prove every fail-closed gate BLOCKS, not just that it exists on disk.
+
+    Closes the disk-presence-only gap the base Mechanism.verify() left open
+    (brain_doctor.py Gate subclass was an empty extension point). For each rule
+    carrying a `--selftest` EXIT_CODE proof, run it: the harness feeds the gate its
+    own violation.json (must block) AND benign.json (must allow), so a gate that
+    blocks everything fails just as hard as one that blocks nothing. PASS only when
+    every selftest exits 0; any failure is a labeled-but-dead gate and FAILs."""
+    key = "gate-liveness"
+    try:
+        import yaml
+        reg = yaml.safe_load(REGISTRY_PATH.read_text(encoding="utf-8")) or {}
+    except Exception as e:
+        return Result(key, WARN, f"cannot load registry: {e}", "fix registry/rules.yaml")
+    rules = reg.get("rules", []) if isinstance(reg, dict) else []
+    proofs = _selftest_proofs(rules)
+    if not proofs:
+        return Result(key, WARN, "no --selftest proofs registered",
+                      "add EXIT_CODE --selftest proofs to fail-closed gates")
+    failed = []
+    for r, loc in proofs:
+        cp = _run_selftest_locator(loc)
+        if cp.returncode != 0:
+            detail = (cp.stderr or cp.stdout or "").strip().splitlines()
+            failed.append(f"{r.get('id', '?')}: {detail[-1] if detail else 'selftest exit '+str(cp.returncode)}")
+    if failed:
+        return Result(key, FAIL,
+                      f"{len(failed)}/{len(proofs)} gate selftest(s) do NOT block+allow correctly: "
+                      + "; ".join(failed[:6]),
+                      "a labeled gate that fails its violation/benign fixtures is dead; fix the gate or the fixture")
+    return Result(key, PASS,
+                  f"all {len(proofs)} fail-closed gate(s) proven live (violation blocks, benign allows)")
+
+
+def check_enforcement_floor(fix: bool) -> Result:
+    """The v6 success metric, computed from the registry + live selftest results
+    (never hand-edited). FORCED = fail-closed AND, if it carries a --selftest proof,
+    that selftest passes. FAILs when a rule claims fail-closed but its fixture does
+    not produce a deny/block (a false enforcement label)."""
+    key = "enforcement-floor"
+    try:
+        import yaml
+        from datetime import date as _date
+        reg = yaml.safe_load(REGISTRY_PATH.read_text(encoding="utf-8")) or {}
+    except Exception as e:
+        return Result(key, WARN, f"cannot load registry: {e}", "fix registry/rules.yaml")
+    rules = reg.get("rules", []) if isinstance(reg, dict) else []
+
+    # live selftest results, keyed by rule id
+    st_pass = {}
+    for r, loc in _selftest_proofs(rules):
+        rid = r.get("id", "?")
+        ok = _run_selftest_locator(loc).returncode == 0
+        st_pass[rid] = st_pass.get(rid, True) and ok
+
+    gateable = [r for r in rules if r.get("gateable") is True]
+    forced, false_label = [], []
+    for r in gateable:
+        rid = r.get("id", "?")
+        if r.get("enforcement") != "fail-closed":
+            continue
+        if rid in st_pass and not st_pass[rid]:
+            false_label.append(rid)  # claims fail-closed, selftest does not block/allow
+            continue
+        forced.append(rid)
+
+    def _waived(r) -> bool:
+        w = r.get("waiver")
+        if not isinstance(w, dict):
+            return False
+        try:
+            return _date.fromisoformat(str(w.get("expires") or "").strip()) >= _date.today()
+        except ValueError:
+            return False
+
+    m = len(gateable)
+    n = len(forced)
+    pct = round(100 * n / m) if m else 0
+    detect = sum(1 for r in rules if r.get("strength") == "DETECTOR")
+    waived = sum(1 for r in gateable if _waived(r))
+    total = len(rules)
+    ledger = (
+        f"Floor: FORCED {n}/{m} gateable ({pct}%, selftest-proven) | "
+        f"detect-tier {detect} | waived {waived} (expiry-tracked) | "
+        f"coverage {total}/{total} (100%)"
+    )
+    if false_label:
+        return Result(key, FAIL,
+                      ledger + f" | FALSE-LABEL: {', '.join(false_label)} claim fail-closed but fixture does not block",
+                      "a rule claiming fail-closed whose violation fixture does not deny/block is dishonest; fix it")
+    return Result(key, PASS, ledger)
+
+
 def check_querymaster_security_detector(fix: bool) -> Result:
     """Actually RUN the querymaster security-canon detector so SECURITY.querymaster-rules
     is genuinely lived, not presence-with-extra-steps.
@@ -1189,6 +1307,8 @@ CHECKS = [
     ("repo-identity", check_repo_identity),
     ("rule-1-registry", check_registry),
     ("corpus-coverage", check_corpus_coverage),
+    ("gate-liveness", check_gate_liveness),
+    ("enforcement-floor", check_enforcement_floor),
     ("querymaster-security-detector", check_querymaster_security_detector),
     ("rule-1-naming", check_naming),
     ("rule-1-orphans", check_orphan_hooks),

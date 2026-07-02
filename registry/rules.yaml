@@ -51,6 +51,7 @@ rules:
     proof:
       - { method: IN_HOOKS_JSON, locator: "Stop|*|cadence-stop-hook.py", expect: present }
       - { method: IN_HOOKS_JSON, locator: "PostToolUse|Write|Edit|cadence-lint.py", expect: present }
+      - { method: EXIT_CODE, locator: "scripts/cadence-stop-hook.py --selftest registry/fixtures/COMMS.human-cadence", expect: 0 }
     liveness_required: FIRES
 
   # ---- CODE ----
@@ -66,6 +67,7 @@ rules:
       - { kind: Gate, canonical_name: claim-verify-stop.py, firing_event: Stop, firing_matcher: "*" }
     proof:
       - { method: IN_HOOKS_JSON, locator: "Stop|*|claim-verify-stop.py", expect: present }
+      - { method: EXIT_CODE, locator: "scripts/claim-verify-stop.py --selftest registry/fixtures/CODE.adversarial-verify-operator", expect: 0 }
     liveness_required: FIRES
 
   - id: CODE.cite-sources
@@ -95,6 +97,7 @@ rules:
       - { kind: Gate, canonical_name: qa-merge-gate.py, firing_event: PreToolUse, firing_matcher: "Bash" }
     proof:
       - { method: IN_HOOKS_JSON, locator: "PreToolUse|Bash|qa-merge-gate.py", expect: present }
+      - { method: EXIT_CODE, locator: "scripts/qa-merge-gate.py --selftest registry/fixtures/CODE.qa-merge-gate", expect: 0 }
     liveness_required: FIRES
 
   - id: CODE.dry-run-first
@@ -128,6 +131,7 @@ rules:
       - { kind: Gate, canonical_name: secrets-grep-guard.py, firing_event: PreToolUse, firing_matcher: "Bash" }
     proof:
       - { method: IN_HOOKS_JSON, locator: "PreToolUse|Bash|secrets-grep-guard.py", expect: present }
+      - { method: EXIT_CODE, locator: "scripts/secrets-grep-guard.py --selftest registry/fixtures/SECURITY.never-read-secrets-raw", expect: 0 }
     liveness_required: FIRES
 
   # ---- GENERIC ----
@@ -163,7 +167,8 @@ rules:
     proof:
       - { method: IN_HOOKS_JSON, locator: "SessionStart|*|session-isolation-hook.py", expect: present }
       - { method: IN_HOOKS_JSON, locator: "PreToolUse|Bash|dimension-awareness-hook.py", expect: present }
-    liveness_required: PRESENT
+      - { method: EXIT_CODE, locator: "scripts/dimension-awareness-hook.py --selftest", expect: 0 }
+    liveness_required: FIRES
 
   # ---- FLOW ----
   - id: FLOW.4d-paradigm
@@ -340,6 +345,9 @@ rules:
       - method: IN_HOOKS_JSON
         locator: "PreToolUse|Bash|dimension-awareness-hook.py"
         expect: present
+      - method: EXIT_CODE
+        locator: "scripts/dimension-awareness-hook.py --selftest"
+        expect: 0
       - method: ANCHOR_PRESENT
         locator: "### Core Principles"
         expect: present
@@ -473,6 +481,9 @@ rules:
       - method: IN_HOOKS_JSON
         locator: "PreToolUse|Bash|secrets-grep-guard.py"
         expect: present
+      - method: EXIT_CODE
+        locator: "scripts/secrets-grep-guard.py --selftest registry/fixtures/SECURITY.baseline"
+        expect: 0
       - method: FILE_EXISTS
         locator: .githooks/pre-push
         expect: present
@@ -524,6 +535,9 @@ rules:
       - method: IN_HOOKS_JSON
         locator: "Stop|*|cadence-stop-hook.py"
         expect: present
+      - method: EXIT_CODE
+        locator: "scripts/cadence-stop-hook.py --selftest registry/fixtures/COMMS.communication-baseline"
+        expect: 0
       - method: ANCHOR_PRESENT
         locator: "## Communication"
         expect: present
@@ -561,12 +575,12 @@ rules:
       file: CLAUDE.md
       anchor: "## Git & Version Control"
     mechanism:
-      - { kind: Gate, canonical_name: git-discipline-gate.py, firing_event: PreToolUse, firing_matcher: "Bash" }
-      - { kind: Gate, canonical_name: git-discipline-gate.py, firing_event: PreToolUse, firing_matcher: "Write|Edit" }
+      - { kind: Gate, canonical_name: g__pretool-bash__git-discipline.py, firing_event: PreToolUse, firing_matcher: "Bash" }
+      - { kind: Gate, canonical_name: g__pretool-bash__git-discipline.py, firing_event: PreToolUse, firing_matcher: "Write|Edit" }
     proof:
-      - { method: IN_HOOKS_JSON, locator: "PreToolUse|Bash|git-discipline-gate.py", expect: present }
-      - { method: IN_HOOKS_JSON, locator: "PreToolUse|Write|Edit|git-discipline-gate.py", expect: present }
-      - { method: EXIT_CODE, locator: "scripts/git-discipline-gate.py --selftest registry/fixtures/GIT.version-control", expect: 0 }
+      - { method: IN_HOOKS_JSON, locator: "PreToolUse|Bash|g__pretool-bash__git-discipline.py", expect: present }
+      - { method: IN_HOOKS_JSON, locator: "PreToolUse|Write|Edit|g__pretool-bash__git-discipline.py", expect: present }
+      - { method: EXIT_CODE, locator: "scripts/g__pretool-bash__git-discipline.py --selftest registry/fixtures/GIT.version-control", expect: 0 }
       - { method: ANCHOR_PRESENT, locator: "## Git & Version Control", expect: present }
     liveness_required: FIRES
 

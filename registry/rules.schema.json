@@ -87,6 +87,21 @@
           "if": { "properties": { "mechanism": { "contains": { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "Presence" } } } } } },
           "then": { "properties": { "category": { "not": { "enum": ["SECURITY", "GENERIC", "ARCHITECTURE"] } } } },
           "description": "Closes the Presence-escape-hatch: a Presence (null-mechanism) entry on a SECURITY/GENERIC/ARCHITECTURE rule would falsely satisfy coverage with zero enforcement. Forbidden."
+        },
+        {
+          "if": {
+            "required": ["enforcement"],
+            "properties": { "enforcement": { "const": "fail-closed" } },
+            "allOf": [
+              { "properties": { "mechanism": { "contains": { "type": "object", "properties": { "firing_event": { "enum": ["PreToolUse", "Stop"] } }, "required": ["firing_event"] } } } }
+            ]
+          },
+          "then": {
+            "properties": {
+              "proof": { "contains": { "type": "object", "required": ["method", "locator"], "properties": { "method": { "const": "EXIT_CODE" }, "locator": { "pattern": "--selftest" } } } }
+            }
+          },
+          "description": "Schema teeth (wired-or-corrupt.md §8 risk 1): a fail-closed rule whose gate blocks a runtime tool-call (PreToolUse deny or Stop block) MUST carry an EXIT_CODE --selftest liveness proof. FILE_EXISTS/IN_HOOKS_JSON alone (disk/config presence) cannot prove a runtime gate BLOCKS, so a GATE label without a fixture-driven selftest is schema-rejected. PrePush/git-hook gates are out of scope (they scan commits, not tool-calls, and carry their own EXIT_CODE proofs)."
         }
       ]
     },
