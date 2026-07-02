@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PreToolUse Bash hook — the forcing function for graph-before-grep.
+"""PreToolUse Bash hook: the forcing function for graph-before-grep.
 
 v6 G3 gives this two verdicts:
 
@@ -60,7 +60,7 @@ def extract_term(cmd: str):
 
 # ── G3 narrow deny predicate ──────────────────────────────────────────────────
 
-# a brain CONTENT dir (not scripts/ — code greps are legitimate daily flow)
+# a brain CONTENT dir (not scripts/, code greps are legitimate daily flow)
 _BRAIN_CONTENT_DIR = re.compile(r"~/\.claude/(?:skills|agents|docs|memory)(?:/\S*)?")
 _SINGLE_FILE_TAIL = re.compile(r"\.(md|py|json|ya?ml|txt|toml|sh|cfg|ini)$", re.IGNORECASE)
 
@@ -150,7 +150,7 @@ def main() -> int:
             "additionalContext": (
                 f"♦ ¿y el grafo? You are SCANNING the brain (grep '{term}'). If the graph "
                 f"knows this, SEEK instead: impact-radius.py \"{term}\" (surfaces) or "
-                f"query_connectome.py query \"{term}\" (skills/agents) — deterministic, ~100x cheaper."
+                f"query_connectome.py query \"{term}\" (skills/agents), deterministic, ~100x cheaper."
             ),
         }}))
     except Exception:

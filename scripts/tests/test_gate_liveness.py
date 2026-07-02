@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for the v6 gate-liveness harness — proves the prover.
+"""Tests for the v6 gate-liveness harness. Proves the prover.
 
 Two anti-fake guarantees are asserted here:
 
