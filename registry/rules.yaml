@@ -54,6 +54,21 @@ rules:
       - { method: EXIT_CODE, locator: "scripts/cadence-stop-hook.py --selftest registry/fixtures/COMMS.human-cadence", expect: 0 }
     liveness_required: FIRES
 
+  - id: COMMS.deliverable-complete-before-send
+    title: "Deliverable-complete-before-send — no future-tense promises in paste-ready drafts"
+    category: COMMS
+    source: { file: CLAUDE.md, anchor: "Deliverable-complete-before-send" }
+    strength: GATE
+    gateable: true
+    enforcement: fail-closed
+    firing_mode: [hook]
+    mechanism:
+      - { kind: Gate, canonical_name: g__stop__draft-promise.py, firing_event: Stop, firing_matcher: "*" }
+    proof:
+      - { method: IN_HOOKS_JSON, locator: "Stop|*|g__stop__draft-promise.py", expect: present }
+      - { method: EXIT_CODE, locator: "scripts/g__stop__draft-promise.py --selftest registry/fixtures/COMMS.deliverable-complete-before-send", expect: 0 }
+    liveness_required: FIRES
+
   # ---- CODE ----
   - id: CODE.adversarial-verify-operator
     title: "Adversarially verify the operator; claims need proof"

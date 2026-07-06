@@ -183,6 +183,12 @@
           "type": "command"
         },
         {
+          "command": "python3 ~/.claude/scripts/g__stop__draft-promise.py",
+          "statusMessage": "✍ draft-promise check (no future-tense in drafts)...",
+          "timeout": 5,
+          "type": "command"
+        },
+        {
           "command": "python3 ~/.claude/scripts/source-attribution-check.py",
           "timeout": 5,
           "type": "command"
