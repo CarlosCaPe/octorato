@@ -77,7 +77,12 @@ def err(s): print(_c("0;31", s))
 
 def git(*args, check=False, quiet=False):
     """Run a git command in the brain dir; return (returncode, stdout, stderr)."""
-    p = subprocess.run(["git", *args], cwd=CLAUDE, capture_output=True, text=True)
+    # encoding+errors pinned: on Windows, text=True decodes with cp1252 and git
+    # diff/log output carries arbitrary UTF-8 (commit bodies, non-latin file
+    # content), which crashed the sync mid-run twice. utf-8/replace is lossless
+    # for our decisions (returncode + token matching) and never raises.
+    p = subprocess.run(["git", *args], cwd=CLAUDE, capture_output=True,
+                       text=True, encoding="utf-8", errors="replace")
     if check and p.returncode != 0 and not quiet:
         err(f"git {' '.join(args)} failed: {p.stderr.strip()}")
     return p.returncode, p.stdout.strip(), p.stderr.strip()
@@ -304,6 +309,7 @@ def _is_pr_required(branch: str) -> bool:
         ["gh", "api", f"repos/{repo}/branches/{branch}/protection",
          "--jq", ".required_pull_request_reviews != null"],
         cwd=CLAUDE, capture_output=True, text=True,
+        encoding="utf-8", errors="replace",
     )
     return p.returncode == 0 and p.stdout.strip() == "true"
 
@@ -362,6 +368,7 @@ def _push_via_pr(branch: str, target: str, msg: str) -> int:
             ["gh", "pr", "view", "--json", "statusCheckRollup",
              "--jq", "[.statusCheckRollup[].conclusion] | unique | join(\",\")"],
             cwd=CLAUDE, capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
         )
         if "FAILURE" not in p.stdout and "CANCELLED" not in p.stdout:
             info("⏳ Early exit detected — retrying watch...")
