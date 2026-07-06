@@ -303,18 +303,18 @@
 | Senior Developer | Premium implementation specialist - Masters Laravel/Livewire/FluxUI, advanced CSS, Three.js integration |
 | Software Architect | Expert software architect specializing in system design, domain-driven design, architectural patterns, and technical dec... |
 | Solidity Smart Contract Engineer | Expert Solidity developer specializing in EVM smart contract architecture, gas optimization, upgradeable proxy patterns,... |
+| SP Migration Agent | SP Migration Agent |
 | SRE (Site Reliability Engineer) | Expert site reliability engineer specializing in SLOs, error budgets, observability, chaos engineering, and toil reducti... |
 | Technical Writer | Expert technical writer specializing in developer documentation, API references, README files, and tutorials. Transforms... |
 | Threat Detection Engineer | Expert detection engineer specializing in SIEM rule development, MITRE ATT&CK coverage mapping, threat hunting, alert tu... |
 | WeChat Mini Program Developer | Expert WeChat Mini Program developer specializing in 小程序 development with WXML/WXSS/WXS, WeChat API integration, payment... |
-| SP Migration Agent | SP Migration Agent |
 
 ### examples (6)
 
 | Name | Description |
 |---|---|
-| README | Examples |
 | nexus-spatial-discovery | Nexus Spatial: Full Agency Discovery Exercise |
+| README | Examples |
 | workflow-book-chapter | Workflow Example: Book Chapter Development |
 | workflow-landing-page | Multi-Agent Workflow: Landing Page Sprint |
 | workflow-startup-mvp | Multi-Agent Workflow: Startup MVP |
@@ -339,7 +339,6 @@
 | Baidu SEO Specialist | Expert Baidu search optimization specialist focused on Chinese search engine ranking, Baidu ecosystem integration, ICP c... |
 | Bilibili Content Strategist | Expert Bilibili marketing specialist focused on UP主 growth, danmaku culture mastery, B站 algorithm optimization, communit... |
 | Book Co-Author | Strategic thought-leadership book collaborator for founders, experts, and operators turning voice notes, fragments, and ... |
-| Upload-Post | Autonomous TikTok and Instagram carousel generation specialist. Analyzes any website URL with Playwright, generates vira... |
 | China E-Commerce Operator | Expert China e-commerce operations specialist covering Taobao, Tmall, Pinduoduo, and JD ecosystems with deep expertise i... |
 | China Market Localization Strategist | Full-stack China market localization expert who transforms real-time trend signals into executable go-to-market strategi... |
 | Content Creator | Expert content strategist and creator for multi-platform campaigns. Develops editorial calendars, creates compelling cop... |
@@ -359,6 +358,7 @@
 | Social Media Strategist | Expert social media strategist for LinkedIn, Twitter, and professional platforms. Creates cross-platform campaigns, buil... |
 | TikTok Strategist | Expert TikTok marketing specialist focused on viral content creation, algorithm optimization, and community building. Ma... |
 | Twitter Engager | Expert Twitter marketing specialist focused on real-time engagement, thought leadership building, and community-driven g... |
+| Upload-Post | Autonomous TikTok and Instagram carousel generation specialist. Analyzes any website URL with Playwright, generates vira... |
 | Video Optimization Specialist | Video marketing strategist specializing in YouTube algorithm optimization, audience retention, chaptering, thumbnail con... |
 | WeChat Official Account Manager | Expert WeChat Official Account (OA) strategist specializing in content marketing, subscriber engagement, and conversion ... |
 | Weibo Strategist | Full-spectrum operations expert for Sina Weibo, with deep expertise in trending topic mechanics, Super Topic community m... |
@@ -369,8 +369,8 @@
 
 | Name | Description |
 |---|---|
-| Paid Media Auditor | Comprehensive paid media auditor who systematically evaluates Google Ads, Microsoft Ads, and Meta accounts across 200+ c... |
 | Ad Creative Strategist | Paid media creative specialist focused on ad copywriting, RSA optimization, asset group design, and creative testing fra... |
+| Paid Media Auditor | Comprehensive paid media auditor who systematically evaluates Google Ads, Microsoft Ads, and Meta accounts across 200+ c... |
 | Paid Social Strategist | Cross-platform paid social advertising specialist covering Meta (Facebook/Instagram), LinkedIn, TikTok, Pinterest, X, an... |
 | PPC Campaign Strategist | Senior paid media strategist specializing in large-scale search, shopping, and performance max campaign architecture acr... |
 | Programmatic & Display Buyer | Display advertising and programmatic media buying specialist covering managed placements, Google Display Network, DV360,... |
@@ -394,22 +394,22 @@
 | Experiment Tracker | Expert project manager specializing in experiment design, execution tracking, and data-driven decision making. Focused o... |
 | Jira Workflow Steward | Expert delivery operations specialist who enforces Jira-linked Git workflows, traceable commits, structured pull request... |
 | Project Shepherd | Expert project manager specializing in cross-functional project coordination, timeline management, and stakeholder align... |
+| Senior Project Manager | Converts specs to tasks and remembers previous projects. Focused on realistic scope, no background processes, exact spec... |
 | Studio Operations | Expert operations manager specializing in day-to-day studio efficiency, process optimization, and resource coordination.... |
 | Studio Producer | Senior strategic leader specializing in high-level creative and technical project orchestration, resource allocation, an... |
-| Senior Project Manager | Converts specs to tasks and remembers previous projects. Focused on realistic scope, no background processes, exact spec... |
 
 ### sales (8)
 
 | Name | Description |
 |---|---|
 | Account Strategist | Expert post-sale account strategist specializing in land-and-expand execution, stakeholder mapping, QBR facilitation, an... |
-| Sales Coach | Expert sales coaching specialist focused on rep development, pipeline review facilitation, call coaching, deal strategy,... |
 | Deal Strategist | Senior deal strategist specializing in MEDDPICC qualification, competitive positioning, and win planning for complex B2B... |
 | Discovery Coach | Coaches sales teams on elite discovery methodology , question design, current-state mapping, gap quantification, and cal... |
-| Sales Engineer | Senior pre-sales engineer specializing in technical discovery, demo engineering, POC scoping, competitive battlecards, a... |
 | Outbound Strategist | Signal-based outbound specialist who designs multi-channel prospecting sequences, defines ICPs, and builds pipeline thro... |
 | Pipeline Analyst | Revenue operations analyst specializing in pipeline health diagnostics, deal velocity analysis, forecast accuracy, and d... |
 | Proposal Strategist | Strategic proposal architect who transforms RFPs and sales opportunities into compelling win narratives. Specializes in ... |
+| Sales Coach | Expert sales coaching specialist focused on rep development, pipeline review facilitation, call coaching, deal strategy,... |
+| Sales Engineer | Senior pre-sales engineer specializing in technical discovery, demo engineering, POC scoping, competitive battlecards, a... |
 
 ### spatial-computing (6)
 
@@ -431,29 +431,29 @@
 | Agents Orchestrator | Autonomous pipeline manager that orchestrates the entire development workflow. You are the leader of this process. |
 | Automation Governance Architect | Governance-first architect for business automations (n8n-first) who audits value, risk, and maintainability before imple... |
 | Blockchain Security Auditor | Expert smart contract security auditor specializing in vulnerability detection, formal verification, exploit analysis, a... |
+| Civil Engineer | Expert civil and structural engineer with global standards coverage , Eurocode, DIN, ACI, AISC, ASCE, AS/NZS, CSA, GB, I... |
 | Compliance Auditor | Expert technical compliance auditor specializing in SOC 2, ISO 27001, HIPAA, and PCI-DSS audits , from readiness assessm... |
 | Corporate Training Designer | Expert in enterprise training system design and curriculum development , proficient in training needs analysis, instruct... |
-| Data Consolidation Agent | AI agent that consolidates extracted sales data into live reporting dashboards with territory, rep, and pipeline summari... |
-| Government Digital Presales Consultant | Presales expert for China's government digital transformation market (ToG), proficient in policy interpretation, solutio... |
-| Healthcare Marketing Compliance Specialist | Expert in healthcare marketing compliance in China, proficient in the Advertising Law, Medical Advertisement Management ... |
-| Identity Graph Operator | Operates a shared identity graph that multiple AI agents resolve against. Ensures every agent in a multi-agent system ge... |
-| LSP/Index Engineer | Language Server Protocol specialist building unified code intelligence systems through LSP client orchestration and sema... |
-| Market Research Analyst | Consulting-grade market research specialist who conducts TAM sizing, competitive landscape analysis, customer segmentati... |
-| Recruitment Specialist | Expert recruitment operations and talent acquisition specialist , skilled in China's major hiring platforms, talent asse... |
-| Report Distribution Agent | AI agent that automates distribution of consolidated sales reports to representatives based on territorial parameters |
-| Sales Data Extraction Agent | AI agent specialized in monitoring Excel files and extracting key sales metrics (MTD, YTD, Year End) for internal live r... |
-| Civil Engineer | Expert civil and structural engineer with global standards coverage , Eurocode, DIN, ACI, AISC, ASCE, AS/NZS, CSA, GB, I... |
 | Cultural Intelligence Strategist | CQ specialist that detects invisible exclusion, researches global context, and ensures software resonates authentically ... |
+| Data Consolidation Agent | AI agent that consolidates extracted sales data into live reporting dashboards with territory, rep, and pipeline summari... |
 | Developer Advocate | Expert developer advocate specializing in building developer communities, creating compelling technical content, optimiz... |
 | Document Generator | Expert document creation specialist who generates professional PDF, PPTX, DOCX, and XLSX files using code-based approach... |
 | French Consulting Market Navigator | Navigate the French ESN/SI freelance ecosystem , margin models, platform mechanics (Malt, collective.work), portage sala... |
+| Government Digital Presales Consultant | Presales expert for China's government digital transformation market (ToG), proficient in policy interpretation, solutio... |
+| Healthcare Marketing Compliance Specialist | Expert in healthcare marketing compliance in China, proficient in the Advertising Law, Medical Advertisement Management ... |
+| Identity Graph Operator | Operates a shared identity graph that multiple AI agents resolve against. Ensures every agent in a multi-agent system ge... |
 | Korean Business Navigator | Korean business culture for foreign professionals , 품의 decision process, nunchi reading, KakaoTalk business etiquette, h... |
+| LSP/Index Engineer | Language Server Protocol specialist building unified code intelligence systems through LSP client orchestration and sema... |
+| Market Research Analyst | Consulting-grade market research specialist who conducts TAM sizing, competitive landscape analysis, customer segmentati... |
 | MCP Builder | Expert Model Context Protocol developer who designs, builds, and tests MCP servers that extend AI agent capabilities wit... |
 | Model QA Specialist | Independent model QA expert who audits ML and statistical models end-to-end - from documentation review and data reconst... |
+| Recruitment Specialist | Expert recruitment operations and talent acquisition specialist , skilled in China's major hiring platforms, talent asse... |
+| Report Distribution Agent | AI agent that automates distribution of consolidated sales reports to representatives based on territorial parameters |
+| Sales Data Extraction Agent | AI agent specialized in monitoring Excel files and extracting key sales metrics (MTD, YTD, Year End) for internal live r... |
 | Salesforce Architect | Solution architecture for Salesforce platform , multi-cloud design, integration patterns, governor limits, deployment st... |
-| Workflow Architect | Workflow design specialist who maps complete workflow trees for every system, user journey, and agent interaction , cove... |
 | Study Abroad Advisor | Full-spectrum study abroad planning expert covering the US, UK, Canada, Australia, Europe, Hong Kong, and Singapore , pr... |
 | Supply Chain Strategist | Expert supply chain management and procurement strategy specialist , skilled in supplier development, strategic sourcing... |
+| Workflow Architect | Workflow design specialist who maps complete workflow trees for every system, user journey, and agent interaction , cove... |
 | ZK Steward | Knowledge-base steward in the spirit of Niklas Luhmann's Zettelkasten. Default perspective: Luhmann; switches to domain ... |
 
 ### strategy (3)
@@ -461,8 +461,8 @@
 | Name | Description |
 |---|---|
 | EXECUTIVE-BRIEF | 📑 NEXUS Executive Brief |
-| QUICKSTART | ⚡ NEXUS Quick-Start Guide |
 | nexus-strategy | 🌐 NEXUS , Network of EXperts, Unified in Strategy |
+| QUICKSTART | ⚡ NEXUS Quick-Start Guide |
 
 ### support (7)
 

@@ -353,7 +353,7 @@ def render(
     lines.append("")
     lines.append("| Name | Description |")
     lines.append("|---|---|")
-    for s in skills:
+    for s in sorted(skills, key=lambda x: x["name"].casefold()):
         desc = _trunc(s["description"])
         lines.append(f"| {s['name']} | {desc} |")
     lines.append("")
@@ -367,7 +367,7 @@ def render(
         lines.append("")
         lines.append("| Name | Description |")
         lines.append("|---|---|")
-        for a in div_agents:
+        for a in sorted(div_agents, key=lambda x: x["name"].casefold()):
             desc = _trunc(a["description"])
             lines.append(f"| {a['name']} | {desc} |")
         lines.append("")
