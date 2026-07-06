@@ -27,6 +27,7 @@ What gets stripped before matching (not prose):
   - inline code spans (`...`)
   - the Provenance/Procedencia/Herkunft footer line (machine receipt, exempt)
   - lines containing 'draft-promise-ok' (deliberate quotation / exemption)
+  - quoted spans (double/curly/guillemet) — someone else's words, not my promise
 
 Stdin:  {"transcript_path": str, "stop_hook_active": bool, ...}
 Stdout: {"decision": "block", "reason": "..."} on a hit, else nothing.
@@ -60,18 +61,40 @@ _DRAFT_MARKER = re.compile(
 )
 
 # Condition 2: a sentence carries a first-person future commitment.
-_PROMISE = re.compile(
+# STRONG patterns are inherently first-person; the Spanish "voy a" is gated to a
+# deferred-work verb whitelist so cataphoric "voy a detallar abajo" (delivering
+# now) passes while "voy a revisar y te digo" (deferred) blocks.
+_PROMISE_STRONG = re.compile(
     r"\bI['’]?ll\s+\w+"
     r"|\bI\s+will\s+\w+"
     r"|\bI['’]?m\s+going\s+to\b"
     r"|\bgoing to (check|pull|verify|review|look)\b"
-    r"|\b(get|come|circle)\s+back\s+to\s+you\b"
-    r"|\bfollow\s+up\s+(with|on)\b"
-    r"|\bvoy\s+a\s+\w+"
+    r"|\bvoy\s+a\s+(revisar|checar|verificar|investigar|confirmar|jalar|correr"
+    r"|probar|buscar|preguntar|validar|revisarlo|checarlo|mandar|enviar|avisar)\b"
     r"|\bluego\s+te\s+\w+"
     r"|\bte\s+(confirmo|aviso|digo)\s+(luego|despu[ée]s|m[áa]s tarde)\b",
     re.IGNORECASE,
 )
+
+# WEAK patterns lack a first-person anchor of their own ("follow up with Sandra"
+# is an instruction to the reader, not my promise); they count only when the
+# same sentence also names a first-person subject.
+_PROMISE_WEAK = re.compile(
+    r"\b(get|come|circle)\s+back\s+to\s+you\b"
+    r"|\bfollow\s+up\s+(with|on)\b",
+    re.IGNORECASE,
+)
+
+_FIRST_PERSON = re.compile(
+    r"\bI\b|\bI['’]?ll\b|\bI['’]?m\b|\bwe\b|\bwe['’]?ll\b",
+    re.IGNORECASE,
+)
+
+# Quoted spans carry someone ELSE's words, not my commitment: a draft that
+# quotes the counterpart's "I'll check the logs" must not block. Strip double,
+# curly, and guillemet quotes before promise matching. NOT single quotes /
+# apostrophes (they wrap contractions like "I'll").
+_QUOTED = re.compile(r'"[^"]*"|[“”][^“”]*[“”]|«[^»]*»', re.DOTALL)
 
 # Offers/conditionals are fine; only unconditional promises block.
 _EXEMPT = re.compile(
@@ -137,14 +160,21 @@ def _strip_non_prose(text: str) -> str:
 
 
 def find_promises(text: str) -> list:
-    """Promise fragments in sentences that carry no offer/conditional marker."""
+    """Promise fragments in sentences that carry no offer/conditional marker.
+    Quoted spans are stripped first (someone else's words). WEAK patterns count
+    only when their sentence also names a first-person subject."""
     hits = []
+    text = _QUOTED.sub(" ", text)
     for sentence in _SENTENCE_SPLIT.split(text):
-        if not sentence.strip():
+        if not sentence.strip() or _EXEMPT.search(sentence):
             continue
-        m = _PROMISE.search(sentence)
-        if m and not _EXEMPT.search(sentence):
+        m = _PROMISE_STRONG.search(sentence)
+        if m:
             hits.append(m.group(0))
+            continue
+        w = _PROMISE_WEAK.search(sentence)
+        if w and _FIRST_PERSON.search(sentence):
+            hits.append(w.group(0))
     return hits
 
 
@@ -187,7 +217,7 @@ def main() -> int:
                 f"rewrite the draft around the RESULT (data found, or a verified "
                 f"blocker). Messages ship with everything possible already done. "
                 f"Offers stay ('happy to pair if you want'); promises go. See "
-                f"feedback_dont_stop_on_readonly_next_step (drafted-message corollary)."
+                f"CLAUDE.md 'Deliverable-complete-before-send'."
             ),
         }))
     except Exception:
