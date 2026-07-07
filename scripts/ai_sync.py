@@ -323,17 +323,26 @@ def _branch_slug(msg: str) -> str:
 
 
 def _push_via_pr(branch: str, target: str, msg: str) -> int:
-    """Push current branch → open PR → watch checks → squash-merge → return to target."""
+    """Push current branch → open PR → watch checks → squash-merge → return to target.
+
+    Invariant: the working tree ALWAYS ends on `target`, success or failure.
+    Leaving it parked on the feature branch broke a co-tenant session once
+    (dogfooded 2026-07-07); every exit path below checks out target first.
+    """
+    def _bail(rc_: int) -> int:
+        git("checkout", target)
+        return rc_
+
     code, _, e = git("push", "-u", "origin", branch)
     if code != 0:
         warn(f"⚠ Push of {branch} failed: {e}")
-        return 1
+        return _bail(1)
     info(f"✓ Pushed branch {branch}")
 
     if not shutil.which("gh"):
         warn(f"⚠ gh CLI not found — open the PR manually:")
         warn(f"   https://github.com/{_owner_repo()}/pull/new/{branch}")
-        return 0
+        return _bail(0)
 
     title = msg.splitlines()[0][:72]
     body = (f"Auto-opened by `ai-push` ({target} is PR-protected).\n\n"
@@ -346,7 +355,7 @@ def _push_via_pr(branch: str, target: str, msg: str) -> int:
     ).returncode
     if rc != 0:
         err("⚠ gh pr create failed — branch is pushed; open PR manually.")
-        return 1
+        return _bail(1)
     info("✓ PR opened")
 
     # GH Actions takes ~5-15s to register check runs after pr create.
@@ -379,7 +388,7 @@ def _push_via_pr(branch: str, target: str, msg: str) -> int:
             ).returncode
     if rc != 0:
         warn("⚠ Required checks failed — PR left open for manual review.")
-        return 1
+        return _bail(1)
     info("✓ Required checks passed")
 
     rc = subprocess.run(
@@ -388,7 +397,7 @@ def _push_via_pr(branch: str, target: str, msg: str) -> int:
     ).returncode
     if rc != 0:
         warn("⚠ Squash-merge failed — PR left open.")
-        return 1
+        return _bail(1)
     info("✓ Merged + branch deleted")
 
     rc_co, _, _ = git("checkout", target)
@@ -519,6 +528,19 @@ def push(args) -> int:
     # stage tracked deletions
     # (already staged by add of the dir; explicit re-add not needed)
 
+    # Empty-cycle guard: `dirty` above also trips on untracked noise OUTSIDE
+    # BRAIN_PATHS (e.g. a runtime daemon.status.json), in which case nothing got
+    # staged. Without this guard the flow used to create+push an EMPTY auto
+    # branch, fail `gh pr create` ("No commits between..."), and leave the
+    # shared working tree parked off-master (dogfooded 2026-07-07).
+    if git("diff", "--cached", "--quiet")[0] == 0:
+        info("✓ Nothing staged from BRAIN_PATHS — nothing to publish")
+        if use_pr_flow:
+            git("checkout", target_branch)
+            git("branch", "-D", feat_branch)
+        sync(None)
+        return 0
+
     msg = raw_msg
     if not msg:
         _, names, _ = git("diff", "--cached", "--name-only")
@@ -544,7 +566,15 @@ def push(args) -> int:
     # Stats-drift (advisory)
     script_step("scripts/check-stats-drift.py")
 
-    git("commit", "-m", msg, check=True)
+    rc_commit, _, _ = git("commit", "-m", msg, check=True)
+    if rc_commit != 0:
+        # git() with check=True only REPORTS the failure; enforce it here or the
+        # flow pushes a branch with no commit on it.
+        if use_pr_flow:
+            git("checkout", target_branch)
+            git("branch", "-D", feat_branch)
+        err("⚠ ai-push aborted: commit failed.")
+        return 1
     info(f"✓ Committed: {msg}")
 
     if use_pr_flow:
