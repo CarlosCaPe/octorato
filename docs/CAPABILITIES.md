@@ -242,7 +242,7 @@
 | video-commercial-production | Video Commercial Production |
 | voice-and-cadence-consistency | Document Voice and Cadence Consistency |
 | web-perf | Analyzes web performance using Chrome DevTools MCP. Measures Core Web Vitals (LCP, INP, CLS) and supplementary metrics (... |
-| whatsapp-mcp-bridge-gotchas | Hard-won fixes for standing up the lharries/whatsapp-mcp bridge (whatsmeow + WhatsApp Web multidevice) read-only and enc... |
+| whatsapp-mcp-bridge-gotchas | Hard-won fixes for standing up the lharries/whatsapp-mcp bridge (whatsmeow + WhatsApp Web multidevice), encrypted, with ... |
 | windows-brain-script-portability | Two hard-won rules for any Python script in ~/.claude/scripts/ that must run on a Windows brain: (1) `python3` resolves ... |
 | winui-app | Bootstrap, develop, and design modern WinUI 3 desktop applications with C# and the Windows App SDK using official Micros... |
 | workers-best-practices | Reviews and authors Cloudflare Workers code against production best practices. Load when writing new Workers, reviewing ... |
@@ -312,8 +312,8 @@
 
 | Name | Description |
 |---|---|
-| nexus-spatial-discovery | Nexus Spatial: Full Agency Discovery Exercise |
 | README | Examples |
+| nexus-spatial-discovery | Nexus Spatial: Full Agency Discovery Exercise |
 | workflow-book-chapter | Workflow Example: Book Chapter Development |
 | workflow-landing-page | Multi-Agent Workflow: Landing Page Sprint |
 | workflow-startup-mvp | Multi-Agent Workflow: Startup MVP |
@@ -460,8 +460,8 @@
 | Name | Description |
 |---|---|
 | EXECUTIVE-BRIEF | 📑 NEXUS Executive Brief |
-| nexus-strategy | 🌐 NEXUS , Network of EXperts, Unified in Strategy |
 | QUICKSTART | ⚡ NEXUS Quick-Start Guide |
+| nexus-strategy | 🌐 NEXUS , Network of EXperts, Unified in Strategy |
 
 ### support (7)
 
