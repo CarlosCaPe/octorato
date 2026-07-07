@@ -42,4 +42,12 @@ The Go bridge must stay alive (whatsmeow keeps the multidevice session); run it 
 2. **Contacts migrate to `@lid` JIDs.** A person's chat under `<phone>@s.whatsapp.net` can freeze in time while their new messages land under `<numeric>@lid`. Searching only the phone JID yields a false "no new messages". Sweep by content/media across all chats, or match the @lid chat by conversation context, before claiming silence.
 3. **Outgoing sends via `/api/send` are NOT persisted to `messages.db`** (only event-handler traffic is stored). A DB read-back after sending returns empty; that is a storage gap, not a delivery failure. The delivery evidence is the bridge log line `Message sent true ...` (whatsmeow ack). Verify sends against the log, and final-verify visually on a phone/WhatsApp Web.
 
-Related: [[mcp-stack-setup]], [[phi-aware-rag-ingestion]] (sensitive-data ingestion), [[sops-age-git-encryption]].
+## 8. Sending documents: octet-stream without FileName arrives "damaged"
+The stock `sendWhatsAppMessage` routes any non-image/audio/video extension to `application/octet-stream` and builds the `DocumentMessage` with `Title` only. Receiving clients use `FileName` for the saved file's name and extension; without it they save an extension-less blob and report the document as damaged or undownloadable. Fix: map real mime types per extension (pdf, xml, doc/docx, xls/xlsx, zip, txt) and set BOTH `Title` and `FileName` on the `DocumentMessage`.
+
+Discipline that would have caught it before a third party did: the FIRST outward use of any newly enabled send path is a self-canary. Send the artifact to your own self-chat, download it back through the same stack, and verify it opens (bytes match), BEFORE pointing the path at a real recipient. A server ack ("Message sent true") proves acceptance, not artifact integrity at the receiver.
+
+## 9. Capture the undo handle: persist send IDs and expose revoke
+The stock `/api/send` handler discards `resp.ID` from `client.SendMessage`, outgoing REST sends are not stored (gotcha 7.3), and whatsmeow's revoke (`client.BuildRevoke(chatJID, types.EmptyJID, messageID)` = delete-for-everyone of your own message) REQUIRES that id. Net effect: anything sent wrong is unrecoverable from the bridge; the only cleanup is manual on a phone. Fix in three moves: return `message_id` + `chat_jid` in the send response, `StoreMessage(...)` the outgoing message so it is listable later, and add an `/api/revoke` endpoint. General rule: an outward action should record the handle needed to undo it at the moment it executes, not when you first need it.
+
+Related: [[mcp-stack-setup]], [[phi-aware-rag-ingestion]] (sensitive-data ingestion), [[sops-age-git-encryption]], [[canary-symbiont]] (live-test the path once).
