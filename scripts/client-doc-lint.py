@@ -45,6 +45,11 @@ for _s in (sys.stdout, sys.stderr):
         pass
 
 ACCENTED = "áéíóúüñÁÉÍÓÚÜÑ"
+# One source of truth for $-amounts: optional space after $ covers the common
+# Mexican "$ 85,000.00" typography and pdftotext extraction artifacts.
+AMOUNT_RE = re.compile(r"\$\s?[\d][\d,]*(?:\.\d{2})?")
+# Solid IVA word or fully dotted I.V.A. — never "IV.A" (roman-numeral sections).
+IVA_RE = re.compile(r"\bIVA\b|(?<![A-Za-z])I\.V\.A\.?(?![A-Za-z])", re.IGNORECASE)
 MONTHS = {
     "enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6,
     "julio": 7, "agosto": 8, "septiembre": 9, "setiembre": 9, "octubre": 10,
@@ -120,10 +125,10 @@ def check_stale(text: str, today: _dt.date) -> tuple[bool, str]:
 def check_iva(text: str, lang: str) -> tuple[bool, str]:
     if lang != "es":
         return True, "iva: omitido (lang != es)"
-    amounts = re.findall(r"\$[\d][\d,]*(?:\.\d{2})?", text)
+    amounts = AMOUNT_RE.findall(text)
     if not amounts:
         return True, "iva: OK — sin montos $, no aplica"
-    if re.search(r"\bI\.?V\.?A\.?\b", text):
+    if IVA_RE.search(text):
         return True, f"iva: OK — nota fiscal presente ({len(amounts)} monto(s) $)"
     return False, (f"iva: FAIL — {len(amounts)} monto(s) $ y cero menciones de 'IVA'. "
                    "Un doc con precios debe declarar 'más IVA' o 'IVA incluido'; "
@@ -131,7 +136,7 @@ def check_iva(text: str, lang: str) -> tuple[bool, str]:
 
 
 def figures(text: str) -> str:
-    found = sorted(set(re.findall(r"\$[\d][\d,]*(?:\.\d{2})?", text)))
+    found = sorted(set(AMOUNT_RE.findall(text)))
     return f"figures: {len(found)} montos distintos → " + ", ".join(found[:20]) + (
         " ..." if len(found) > 20 else "")
 
