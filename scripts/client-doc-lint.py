@@ -15,7 +15,10 @@ Checks (Spanish client docs):
   2 em-dash   — any '—' in the rendered text (human-cadence rule 1). FAIL.
   3 stale     — a forward-looking line (kickoff/agendar/semana del ...) whose
                 date is already in the past relative to --today. FAIL.
-  4 figures   — informational inventory of every $ amount found, so a human
+  4 iva       — a Spanish doc that quotes $ amounts with ZERO mention of the
+                word IVA = fiscal ambiguity: the client can read the price as
+                tax-included and cut the PO for the gross. FAIL.
+  5 figures   — informational inventory of every $ amount found, so a human
                 can eyeball consistency across sections (no auto-verdict).
 
 Usage:
@@ -114,6 +117,19 @@ def check_stale(text: str, today: _dt.date) -> tuple[bool, str]:
     return True, f"stale-dates: OK (hoy {today.isoformat()})"
 
 
+def check_iva(text: str, lang: str) -> tuple[bool, str]:
+    if lang != "es":
+        return True, "iva: omitido (lang != es)"
+    amounts = re.findall(r"\$[\d][\d,]*(?:\.\d{2})?", text)
+    if not amounts:
+        return True, "iva: OK — sin montos $, no aplica"
+    if re.search(r"\bI\.?V\.?A\.?\b", text):
+        return True, f"iva: OK — nota fiscal presente ({len(amounts)} monto(s) $)"
+    return False, (f"iva: FAIL — {len(amounts)} monto(s) $ y cero menciones de 'IVA'. "
+                   "Un doc con precios debe declarar 'más IVA' o 'IVA incluido'; "
+                   "sin la nota, la orden de compra puede llegar por el monto como IVA incluido.")
+
+
 def figures(text: str) -> str:
     found = sorted(set(re.findall(r"\$[\d][\d,]*(?:\.\d{2})?", text)))
     return f"figures: {len(found)} montos distintos → " + ", ".join(found[:20]) + (
@@ -129,7 +145,8 @@ def main() -> int:
     today = (_dt.date.fromisoformat(a.today) if a.today else _dt.date.today())
 
     text = read_text(a.file)
-    results = [check_accents(text, a.lang), check_emdash(text), check_stale(text, today)]
+    results = [check_accents(text, a.lang), check_emdash(text), check_stale(text, today),
+               check_iva(text, a.lang)]
     print(f"── client-doc-lint: {a.file} ──")
     ok_all = True
     for ok, msg in results:
