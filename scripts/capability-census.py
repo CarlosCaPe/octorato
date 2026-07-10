@@ -44,11 +44,41 @@ def read_prompt() -> str:
         return ""
 
 
+def _mcp_candidates() -> list[Path]:
+    """Claude Code + Cursor registry paths (runtime-aware, no subprocess)."""
+    cwd = Path.cwd()
+    out: list[Path] = [
+        HOME / ".claude.json",
+        BRAIN / "settings.json",
+        HOME / ".cursor" / "mcp.json",  # Cursor user-scope
+        cwd / ".mcp.json",
+        cwd / ".cursor" / "mcp.json",  # Cursor workspace-scope (e.g. NFG)
+    ]
+    # Walk parents for workspace .cursor/mcp.json when CWD is an arm subfolder.
+    for parent in cwd.parents:
+        out.append(parent / ".cursor" / "mcp.json")
+        out.append(parent / ".mcp.json")
+        if parent == HOME or parent.name == "":
+            break
+        # Stop at common repo roots to keep the 2s budget.
+        if (parent / ".git").exists():
+            break
+    # Dedupe while preserving order.
+    seen: set[Path] = set()
+    uniq: list[Path] = []
+    for p in out:
+        rp = p.resolve() if p.exists() else p
+        if rp in seen:
+            continue
+        seen.add(rp)
+        uniq.append(p)
+    return uniq
+
+
 def collect_mcps() -> list[str]:
-    """Live MCP server names from the registry files (fast, no subprocess)."""
+    """Live MCP server names from Claude + Cursor registry files (fast)."""
     names: set[str] = set()
-    candidates = [HOME / ".claude.json", BRAIN / "settings.json", Path.cwd() / ".mcp.json"]
-    for p in candidates:
+    for p in _mcp_candidates():
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
         except Exception:

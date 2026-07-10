@@ -312,8 +312,8 @@
 
 | Name | Description |
 |---|---|
-| README | Examples |
 | nexus-spatial-discovery | Nexus Spatial: Full Agency Discovery Exercise |
+| README | Examples |
 | workflow-book-chapter | Workflow Example: Book Chapter Development |
 | workflow-landing-page | Multi-Agent Workflow: Landing Page Sprint |
 | workflow-startup-mvp | Multi-Agent Workflow: Startup MVP |
@@ -460,8 +460,8 @@
 | Name | Description |
 |---|---|
 | EXECUTIVE-BRIEF | 📑 NEXUS Executive Brief |
-| QUICKSTART | ⚡ NEXUS Quick-Start Guide |
 | nexus-strategy | 🌐 NEXUS , Network of EXperts, Unified in Strategy |
+| QUICKSTART | ⚡ NEXUS Quick-Start Guide |
 
 ### support (7)
 

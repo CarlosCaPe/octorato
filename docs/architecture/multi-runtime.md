@@ -1,7 +1,7 @@
 # Multi-runtime — all editors, all engines
 
 > **Status:** live as of 2026-07-10.
-> **Thesis:** Octorato is a **file-native agent OS**. It is not "a Claude Code config" and not "an Anthropic product." The brain grows as new **runtimes** (editors/harnesses) and **engines** (models) become known. Claude was first; Cursor + Grok are first-class peers; the next editor or model gets a binding row, not a fork of the OS.
+> **Thesis:** Octorato is a **file-native agent OS**. It is not "a Claude Code config" and not "an Anthropic product." The brain grows as new **runtimes** (editors/harnesses) and **engines** (models) become known. Claude was first; Cursor + Grok are **supported peers with live bindings** (see Honest gaps — not every Claude-shaped hook maps 1:1 yet). The next editor or model gets a binding row, not a fork of the OS.
 
 ## The invariant
 
@@ -56,6 +56,15 @@ Same priority everywhere: **registered MCP → register official MCP if one exis
 | Cursor | Inspect MCP servers via `GetMcpTools` / Cursor Settings → MCP (no `claude` CLI required) |
 
 `"No MCP connected" ≠ "no MCP available"` holds on every runtime.
+
+## Honest gaps (Cursor peer — do not overclaim)
+
+These are known, intentional, or pending — not silent failures:
+
+1. **`merge-hooks-cursor.py` drops `Skill` / `Agent` matchers** — Cursor has no equivalent tool names; those Claude-only PreToolUse gates do not project. Shell/Write/Edit-class gates still fire.
+2. **Composer / bundled GPT list prices** — `_pricing.py` reports `$0` list (UNKNOWN) rather than inventing Anthropic Sonnet rates. Add rows when a public list exists or when reconciling invoices.
+3. **Cursor Task allow-list ≠ xAI API names** — prefer harness slugs (`composer-2.5-fast`, `grok-4.5-fast-xhigh`, `gpt-5.5-medium`, …). Treat `grok-4.3` / `grok-build-0.1` as API/FinOps unless the harness lists them.
+4. **MCP census** — `capability-census.py` reads Claude registries **and** `.cursor/mcp.json` (user + workspace). In-session truth is still `GetMcpTools`.
 
 ## What stays Claude-shaped on purpose
 

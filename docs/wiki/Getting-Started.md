@@ -14,7 +14,7 @@ If you only read one thing: **the brain (`~/.claude/`) is a public git repo.** E
 
 | Tool | Required? | Why | Check |
 |---|---|---|---|
-| A **runtime** — [Claude Code](https://docs.anthropic.com/en/docs/claude-code) **or** [Cursor](https://cursor.com) | **Yes (one)** | The harness that loads `~/.claude/` and *runs* Octorato. Claude Code was first; Cursor is first-class (hooks projected by `merge-hooks-cursor.py`). More editors get a binding as they are used — see [[Architecture]] / `docs/architecture/multi-runtime.md` | `claude --version` **or** Cursor Agent with `CURSOR_AGENT=1` |
+| A **runtime** — [Claude Code](https://docs.anthropic.com/en/docs/claude-code) **or** [Cursor](https://cursor.com) | **Yes (one)** | The harness that loads `~/.claude/` and *runs* Octorato. Claude Code was first; Cursor is a **supported peer** (hooks projected by `merge-hooks-cursor.py`; see Honest gaps in `docs/architecture/multi-runtime.md`). More editors get a binding as they are used — see [[Architecture]] / `docs/architecture/multi-runtime.md` | `claude --version` **or** Cursor Agent with `CURSOR_AGENT=1` |
 | An **engine** the runtime can select (Claude family, Grok, GPT, Composer, …) | **Yes** | The model that reasons. Octorato is engine-agnostic; the ladder binds tiers to whatever the runtime exposes | Session model picker |
 | `git` | **Yes** | The brain is a git repo; sync is git push/pull | `git --version` |
 | GitHub account | **Yes** | To clone the public brain and (optionally) push your fork | `gh auth status` |

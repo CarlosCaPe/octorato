@@ -15,10 +15,21 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+### Fixed
+- fix(finops): Grok `cache_r` for 4.3 / 4.20-* / build is **$0.20**/1M (docs.x.ai), not = input;
+  Composer/GPT unknown engines report `$0` list instead of silent Sonnet fallback.
+- fix(census): `capability-census.collect_mcps()` reads Cursor `.cursor/mcp.json` (user +
+  workspace + parent walk) so Q2 is not Claude-file-only prose.
+- fix(4d-protocol): Q2 skill matches CLAUDE.md — MCP-first, runtime-aware census.
+- fix(routing): Cursor Task bindings prefer harness allow-list slugs; mark xAI API-only names.
+- docs(multi-runtime): Honest gaps (Skill/Agent matcher drop, pricing TBD, allow-list ≠ API);
+  Architecture wiki points at multi-runtime; tone "supported peer" not overclaim.
+- chore(quickstart): project Cursor hooks + accept Cursor as a valid runtime prerequisite.
+
 ### Features
 - feat(multi-runtime): Octorato is for **all models and all editors**. New canon
   `docs/architecture/multi-runtime.md` — brain vs runtime vs engine; growth rule
-  (new editor/model = binding row, not a fork); Claude Code + Cursor first-class;
+  (new editor/model = binding row, not a fork); Claude Code + Cursor supported peers;
   Q2 MCP census is runtime-aware; identity = engine, OS = Octorato.
 - feat(routing): model ladder is **tier-first, vendor-second** (mechanical · bulk ·
   build · judgment). Claude Code bindings unchanged (Haiku/Sonnet/Opus/Fable);

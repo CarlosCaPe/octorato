@@ -107,18 +107,26 @@ python3 ~/.claude/scripts/query_connectome.py query "<task description>"
 - Uses the IDF dictionary and top-200 TF-IDF vectors stored in `neural_map.json` (falls back to keyword matching if index is missing)
 - Complements Q3 — together they cover both deep semantic similarity AND rule-based triggers
 
-### Q2: ¿TIENE API? (API-First — Token Efficiency)
+### Q2: ¿TIENE MCP/API? (Token-efficient access — runtime-aware)
 
-Before any browser automation or scraping, check:
+Before any browser automation or scraping, run a **concrete MCP census** (not a mental check), then fall down the ladder:
 
 | Priority | Access method | Token cost | When to use |
 |---|---|---|---|
-| 1 | **REST API** | ~200 tokens/call | Always prefer. Structured JSON, cheapest |
-| 2 | **MCP server** | ~300 tokens/call | If integrated (GitHub, Gmail, Notion, etc.) |
-| 3 | **SDK / CLI** | ~500 tokens/call | Programmatic access, typed responses |
-| 4 | **Scraping** | ~5,000+ tokens/call | Last resort — snapshots are token-expensive |
+| 1 | **Registered MCP** | ~300 tokens/call | Already wired on this runtime — use it |
+| 2 | **Register official MCP** | one-time setup | Official server exists but not connected yet ("no MCP connected" ≠ "no MCP available") |
+| 3 | **REST API** | ~200 tokens/call | Structured JSON when no MCP path |
+| 4 | **SDK / CLI** | ~500 tokens/call | Programmatic access, typed responses |
+| 5 | **Scraping** | ~5,000+ tokens/call | Last resort — snapshots are token-expensive |
 
-**Check sequence:** search for `<target> API documentation`, check if an MCP server exists, check if a CLI/SDK is installed. Fall back to scraping only when all 3 are exhausted.
+**Runtime-aware census (pick the active harness):**
+
+| Runtime | Concrete check |
+|---|---|
+| Claude Code | `claude mcp list` (+ `claude mcp add …` to register) |
+| Cursor (`CURSOR_AGENT=1`) | `GetMcpTools` / Settings → MCP (no `claude` CLI). Heartbeat also reads `.cursor/mcp.json` via `capability-census.py` |
+
+**Check sequence:** census live MCPs → web-search `<service> MCP server` if none → REST docs → SDK/CLI → scrape only when exhausted. See `docs/architecture/multi-runtime.md`.
 
 **If the task does not involve external data access** (pure code edit, file manipulation, git operations), answer: `Q2 API-first: N/A (no external data access)`
 
@@ -146,7 +154,7 @@ After all 3, follow the COMBINED recommendation:
 ```
 2D Delegate: [domain classification]
   Q1 Ventosas:  [top agent] (score X) + [N skills via connectome]
-  Q2 API-first: [YES api.example.com / NO → scraping / N/A]
+  Q2 MCP/API:   [YES mcp-X / YES api.example.com / NO → scraping / N/A]
   Q3 Delegate:  ACTIVATE / LOAD / SELF — [reason]
 ```
 
@@ -352,7 +360,7 @@ grep -rn "$OBJECT" . --include="*.py" --include="*.md" --include="*.sh" \
 | `~/.claude/scripts/delegate-check "<task>"` | START of every task (2D Q3 — rule match) |
 | `~/.claude/scripts/gate-check` | BEFORE any file write (4D Gate). Flags: `--validate-session`, `--checklist`, `--audit-log` |
 
-Q2 (API-first) is a mental check, no script — evaluate before scraping.
+Q2 is a runtime-aware MCP census (Claude Code CLI or Cursor GetMcpTools / `.cursor/mcp.json`), not a mental check — evaluate before scraping.
 
 ## Lessons Learned
 

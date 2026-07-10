@@ -3,13 +3,14 @@
 
 A stranger clones the brain and runs this. No company brain, no sealed worlds, no
 config: it checks prerequisites, wires the bin runners, builds the connectome,
-runs the health check, and prints the first thing to TRY so the brain proves
-itself alive. The 5-minute "it works" moment.
+projects Cursor hooks when present, runs the health check, and prints the first
+thing to TRY so the brain proves itself alive. The 5-minute "it works" moment.
 
 Going further (your own brain + sealed worlds + multi-machine sync) is a separate,
 later step, documented in the README.
 
-Idempotent. Safe to re-run. No network, no writes outside ~/.claude.
+Idempotent. Safe to re-run. No network, no writes outside ~/.claude (and
+~/.cursor/hooks.json when Cursor is installed).
 """
 from __future__ import annotations
 
@@ -51,7 +52,7 @@ def run_script(rel: str, *args) -> bool:
 
 def main() -> int:
     print(_c("1;35", "\n🐙  Octorato quickstart. Let's bring your brain to life.\n"))
-    total = 4
+    total = 5
 
     # 1. Prerequisites
     step(1, total, "Checking prerequisites")
@@ -66,11 +67,21 @@ def main() -> int:
     else:
         err("  ✗ git not found. Install it first.")
         ok = False
-    if shutil.which("claude"):
+    has_claude = bool(shutil.which("claude"))
+    cursor_home = Path.home() / ".cursor"
+    has_cursor = cursor_home.is_dir()
+    if has_claude:
         info("  ✓ Claude Code CLI (`claude`)")
     else:
-        warn("  ! Claude Code CLI not on PATH. Octorato is its brain, so install it:")
-        warn("    https://docs.claude.com/claude-code")
+        warn("  ! Claude Code CLI not on PATH.")
+    if has_cursor:
+        info(f"  ✓ Cursor runtime detected ({cursor_home})")
+    else:
+        warn("  ! ~/.cursor not found (Cursor IDE not installed on this machine).")
+    if not has_claude and not has_cursor:
+        warn("  ! No runtime detected yet. Install Claude Code and/or Cursor:")
+        warn("    https://docs.claude.com/claude-code  |  https://cursor.com")
+        warn("    Continuing — brain files still wire; you need one runtime to run agents.")
     if not (CLAUDE / "CLAUDE.md").exists():
         err(f"  ✗ This doesn't look like a brain checkout ({CLAUDE}/CLAUDE.md missing).")
         err("    Clone first:  git clone https://github.com/CarlosCaPe/octorato.git ~/.claude")
@@ -88,8 +99,15 @@ def main() -> int:
     step(3, total, "Building the connectome (the skill/agent graph)")
     run_script("scripts/generate_neural_map.py")
 
-    # 4. Health check
-    step(4, total, "Running the brain health check")
+    # 4. Project hooks into Cursor when present
+    step(4, total, "Projecting fail-closed hooks → Cursor (no-op if Cursor absent)")
+    if has_cursor:
+        run_script("scripts/merge-hooks-cursor.py")
+    else:
+        warn("  (skipped: no ~/.cursor — run merge-hooks-cursor.py after installing Cursor)")
+
+    # 5. Health check
+    step(5, total, "Running the brain health check")
     healthy = run_script("scripts/brain_doctor.py")
 
     # First-value moment
@@ -102,7 +120,9 @@ def main() -> int:
     print("─" * 64)
     print("""
 TRY IT NOW (the 5-minute proof):
-  1. Open Claude Code in any folder:   claude
+  1. Open a runtime in any folder:
+       Claude Code:   claude
+       Cursor:        Agent chat (CURSOR_AGENT=1) with this brain loaded
   2. Ask it something real, e.g.:
        "summarize what this repo does and propose one improvement"
   3. Watch what a brain adds on top of a plain agent:
@@ -110,7 +130,7 @@ TRY IT NOW (the 5-minute proof):
        • the 2D delegate gate picking the right skill/agent for the task
        • skills loading themselves from this library
 
-WHY THIS, NOT PLAIN CLAUDE CODE:
+WHY THIS, NOT A STOCK EDITOR AGENT:
   Your AI agent forgets who you are and mixes your worlds. An octorato is its
   second brain: memory that lasts, every world sealed from the others, and a
   receipt on every action. One brain for clients, projects, courses, anything

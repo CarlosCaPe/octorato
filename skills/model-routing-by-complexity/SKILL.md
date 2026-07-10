@@ -58,16 +58,16 @@ Pass these via the Agent/Workflow `model` parameter (`haiku` \| `sonnet` \| `opu
 
 ### Cursor + xAI Grok (and other Cursor engines)
 
-Detect with `CURSOR_AGENT=1`. Use the **Cursor Task `model` slugs** the harness exposes (do not invent Anthropic aliases here — Cursor will reject or ignore them).
+Detect with `CURSOR_AGENT=1`. Use **only** Cursor Task `model` slugs the harness allow-lists (passing an unlisted slug fails or is ignored). API-only xAI names below are for FinOps / direct API — **not** for `Task` unless the harness lists them.
 
-| Tier | Preferred Cursor / xAI slug | Fallback if unavailable |
+| Tier | Preferred Cursor Task slug (allow-listed) | API-only / if unavailable |
 |---|---|---|
-| mechanical | `composer-2.5-fast` | `grok-build-0.1` (API) / smallest fast model the harness lists |
-| bulk | mid Grok (`grok-4.3` / `grok-4.20-*`) or `gpt-5.5-medium` | next mid-tier the harness lists |
+| mechanical | `composer-2.5-fast` | `grok-build-0.1` (xAI API) / smallest fast slug the harness lists |
+| bulk | `gpt-5.5-medium` (or mid GPT the harness lists) | mid Grok API (`grok-4.3` / `grok-4.20-*`) — only if Task allow-lists them |
 | build | `grok-4.5-fast-xhigh` (or session Grok 4.5) | inherit session model when already on build-tier Grok |
-| judgment | strongest **independent** engine ≥ builder | Prefer a *different vendor* when Cursor offers one (e.g. Claude Opus / GPT high for a Grok builder). If only Grok is available, spawn a **fresh** Task on the same Grok tier (independent context). Never drop below the builder. |
+| judgment | strongest **independent** engine ≥ builder (e.g. `claude-opus-4-8-thinking-high` for a Grok builder) | Prefer a *different vendor* when Cursor offers one. If only Grok is available, spawn a **fresh** Task on the same Grok tier (independent context). Never drop below the builder. |
 
-List prices for FinOps live in `scripts/_pricing.py` (Anthropic + xAI). Cursor subscription billing may differ from list — treat USD as value-extracted unless reconciling a real invoice.
+List prices for FinOps live in `scripts/_pricing.py` (Anthropic + xAI). Composer / bundled GPT have **no list row yet** — FinOps reports `$0` list rather than inventing Sonnet rates. Cursor subscription billing may differ from list — treat USD as value-extracted unless reconciling a real invoice.
 
 ## How to apply in Octorato tooling
 

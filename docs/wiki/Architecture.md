@@ -6,7 +6,7 @@ The deep architecture reference for Octorato — the open-source AI-agent operat
 
 If you want the philosophy in one sentence: **one human consciousness directs a shared brain of specialist agents across many sealed client workspaces, and the data never crosses sideways.** That single constraint — and the biology that solves it — produces everything below.
 
-> **Companion pages:** [[The-4D-Paradigm]] (the nervous-system protocol every signal obeys) · [[Skills-System]] (the *HOW* layer) · [[Agents-System]] (the *WHO* layer) · [[Arms-and-Sync]] (the *FOR WHOM* layer + multi-machine sync) · [[Self-Growth]] (how the brain extends itself).
+> **Companion pages:** [[The-4D-Paradigm]] (the nervous-system protocol every signal obeys) · [[Skills-System]] (the *HOW* layer) · [[Agents-System]] (the *WHO* layer) · [[Arms-and-Sync]] (the *FOR WHOM* layer + multi-machine sync) · [[Self-Growth]] (how the brain extends itself) · multi-runtime (`docs/architecture/multi-runtime.md` — Claude Code + Cursor + engine bindings).
 
 ---
 
