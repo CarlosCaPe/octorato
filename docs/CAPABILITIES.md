@@ -312,8 +312,8 @@
 
 | Name | Description |
 |---|---|
-| README | Examples |
 | nexus-spatial-discovery | Nexus Spatial: Full Agency Discovery Exercise |
+| README | Examples |
 | workflow-book-chapter | Workflow Example: Book Chapter Development |
 | workflow-landing-page | Multi-Agent Workflow: Landing Page Sprint |
 | workflow-startup-mvp | Multi-Agent Workflow: Startup MVP |
@@ -460,8 +460,8 @@
 | Name | Description |
 |---|---|
 | EXECUTIVE-BRIEF | 📑 NEXUS Executive Brief |
-| QUICKSTART | ⚡ NEXUS Quick-Start Guide |
 | nexus-strategy | 🌐 NEXUS , Network of EXperts, Unified in Strategy |
+| QUICKSTART | ⚡ NEXUS Quick-Start Guide |
 
 ### support (7)
 
@@ -494,7 +494,7 @@
 |---|---|---|
 | 4d-reminder.py | UserPromptSubmit hook , injects the 4D paradigm reminder into every prompt. | wired |
 | _brain_obs.py | _brain_obs.py , Shared helpers for the brain observability layer. NOT a CLI. Imported by: - trace-ho... | wired |
-| _pricing.py | _pricing.py , shared Anthropic Claude API pricing helpers. Single source of truth for USD conversion... | wired |
+| _pricing.py | _pricing.py , shared multi-vendor API pricing helpers. Single source of truth for USD conversion acr... | wired |
 | ai-pull.ps1 |  | orphan |
 | ai-push.ps1 |  | orphan |
 | ai_sync.py | ai_sync.py , single cross-platform runner for the octorato brain. | wired |

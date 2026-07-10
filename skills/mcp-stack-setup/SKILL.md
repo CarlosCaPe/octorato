@@ -142,7 +142,10 @@ GITHUB_PAT=ghp_token
 Run from within the arm directory:
 
 ```bash
+# Claude Code:
 claude mcp list
+# Cursor: Settings → MCP, or GetMcpTools in-session (no claude CLI required)
+
 # Should show ONLY database MCPs scoped to this arm.
 # Cloud MCPs (Teams, Slack, Jira) appear via user-scope — that is CORRECT.
 ```
@@ -174,7 +177,7 @@ Verify `.gitignore` includes:
 2. Replace `[CLIENT_NAME]` with the client code (e.g., `CLIENT_A`, `CLIENT_B`, `CLIENT_C`, `CLIENT_D`)
 3. Delete `.mcp.json` blocks for DBs this client does NOT use
 4. Populate `.env` with actual credentials for this client
-5. Run `claude mcp list` from the arm directory to verify
+5. Verify MCP on the active runtime (Claude Code: `claude mcp list`; Cursor: Settings → MCP / GetMcpTools)
 
 ## Arms Reference (example shape)
 

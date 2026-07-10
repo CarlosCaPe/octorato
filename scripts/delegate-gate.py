@@ -73,8 +73,9 @@ def main() -> int:
             _nudge(
                 "♦ 2D Delegate — this looks like substantive/batchable work. "
                 "Per the connector stance, prefer routing execution to a sub-agent "
-                "on the cheapest sufficient model (Haiku mechanical / Sonnet "
-                "well-specified bulk / Opus build default / Fable ALL judgment+QA), "
+                "on the cheapest sufficient ladder tier (mechanical / bulk / "
+                "build default / judgment for ALL QA) bound to this runtime's "
+                "engines — see model-routing-by-complexity + multi-runtime.md), "
                 "not the main loop. "
                 "SELF is only for opinion requests."
             )

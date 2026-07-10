@@ -152,7 +152,12 @@ Builds a TF-IDF query vector and computes cosine similarity against the stored v
 
 ### Q2 — ¿Tiene MCP/API? (token-efficient access)
 
-Not a mental check: **run `claude mcp list`** before any browser automation or scraping, then walk the access hierarchy from cheapest to most expensive:
+Not a mental check: **run the runtime-aware MCP census** before any browser automation or scraping, then walk the access hierarchy from cheapest to most expensive:
+
+- **Claude Code:** `claude mcp list` (register with `claude mcp add …` when needed)
+- **Cursor:** `GetMcpTools` / Cursor Settings → MCP (no `claude` CLI required)
+
+See `docs/architecture/multi-runtime.md`. Then:
 
 | Priority | Access method | ~Token cost | When to use |
 |---|---|---|---|
@@ -360,7 +365,7 @@ The paradigm is not aspirational; three scripts enforce it at the boundaries.
 | `~/.claude/scripts/delegate-check "<task>"` | 2D · Q3 (rule match) | START of every task |
 | `~/.claude/scripts/gate-check` | 4D Gate | BEFORE any file write — flags: `--validate-session`, `--checklist`, `--audit-log` |
 
-Q2 (MCP/API-first) has no dedicated brain script, but it is not a mental check either: you run `claude mcp list` before scraping, and register an official MCP server if one exists. The 3D Diligent validation is method-specific (build, lint, render, query), so it is driven by the matrix in §5 rather than a single binary.
+Q2 (MCP/API-first) has no dedicated brain script, but it is not a mental check either: you run the **runtime-aware MCP census** (Claude Code → `claude mcp list`; Cursor → `GetMcpTools` / Settings → MCP) before scraping, and register an official MCP server if one exists. The 3D Diligent validation is method-specific (build, lint, render, query), so it is driven by the matrix in §5 rather than a single binary.
 
 ---
 
@@ -369,7 +374,7 @@ Q2 (MCP/API-first) has no dedicated brain script, but it is not a mental check e
 | You are about to… | Phase / gate | Do this |
 |---|---|---|
 | Start any task | 1D + 2D | Describe in 1–3 sentences, then run the 3-question Delegate gate |
-| Reach for a browser/scraper | 2D · Q2 | Run `claude mcp list`; registered MCP → register official MCP → REST → SDK first |
+| Reach for a browser/scraper | 2D · Q2 | Runtime-aware MCP census (`claude mcp list` or Cursor `GetMcpTools`); registered MCP → register official MCP → REST → SDK first |
 | Write, create, or delete a file | 4D Gate | Present the Change Manifest, wait for confirmation |
 | Change a shared object | Impact Radius | `grep` the radius before editing; update all consumers |
 | Say "done" | 3D Diligent | Validate by task type, report PASS/FAIL + evidence |

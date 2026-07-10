@@ -14,19 +14,20 @@ If you only read one thing: **the brain (`~/.claude/`) is a public git repo.** E
 
 | Tool | Required? | Why | Check |
 |---|---|---|---|
-| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | **Yes** | The runtime that reads `~/.claude/` and *is* Octorato | `claude --version` |
+| A **runtime** — [Claude Code](https://docs.anthropic.com/en/docs/claude-code) **or** [Cursor](https://cursor.com) | **Yes (one)** | The harness that loads `~/.claude/` and *runs* Octorato. Claude Code was first; Cursor is first-class (hooks projected by `merge-hooks-cursor.py`). More editors get a binding as they are used — see [[Architecture]] / `docs/architecture/multi-runtime.md` | `claude --version` **or** Cursor Agent with `CURSOR_AGENT=1` |
+| An **engine** the runtime can select (Claude family, Grok, GPT, Composer, …) | **Yes** | The model that reasons. Octorato is engine-agnostic; the ladder binds tiers to whatever the runtime exposes | Session model picker |
 | `git` | **Yes** | The brain is a git repo; sync is git push/pull | `git --version` |
 | GitHub account | **Yes** | To clone the public brain and (optionally) push your fork | `gh auth status` |
 | `python3` (3.10+) | **Yes** | The enforcement scripts — connectome query, delegate-check, gate-check | `python3 --version` |
 | `node` + `npm` | Optional | Only if an arm's stack needs it (Astro, Svelte, Workers, etc.) | `node --version` |
 
-A blank slate is fine. You do not need to know the architecture before starting — the first session teaches it.
+A blank slate is fine. You do not need to know the architecture before starting — the first session teaches it. **Octorato is for all models and all editors**; it grows as new ones are known.
 
 ---
 
 ## Step 1 — Clone the brain to `~/.claude` (the central brain)
 
-The brain installs *as* your Claude Code config directory. Claude Code reads `~/.claude/CLAUDE.md` on every session; cloning Octorato there is what turns a stock Claude Code into Octorato.
+The brain installs at `~/.claude/` — the historical path Claude Code reads natively. **Cursor and other runtimes load the same files** (project rules, arm `CLAUDE.md`, projected hooks). Cloning Octorato there is what turns a stock editor into an Octorato-powered agent OS, regardless of which engine (Claude, Grok, GPT, …) the operator picks.
 
 ```bash
 git clone https://github.com/CarlosCaPe/octorato.git ~/.claude
@@ -34,13 +35,19 @@ git clone https://github.com/CarlosCaPe/octorato.git ~/.claude
 
 > **Already have a `~/.claude/`?** Back it up first — `mv ~/.claude ~/.claude.bak` — then clone. Copy any personal `settings.json` back in afterward.
 
+**Cursor operators (after clone):** project hooks into Cursor so fail-closed gates fire in the IDE too:
+
+```bash
+python3 ~/.claude/scripts/merge-hooks-cursor.py
+```
+
 Verify the clone landed and the scripts are present:
 
 ```bash
 ls ~/.claude/CLAUDE.md ~/.claude/scripts/gate-check ~/.claude/.githooks/pre-push
 ```
 
-All three paths should exist. `CLAUDE.md` is the constitution Claude reads every session; `scripts/` holds the enforcement scripts; `.githooks/` is the secret guard you enable next.
+All three paths should exist. `CLAUDE.md` is the constitution every runtime reads; `scripts/` holds the enforcement scripts; `.githooks/` is the secret guard you enable next.
 
 ---
 
@@ -229,7 +236,7 @@ The agent loads its persona (WHO), the connectome attaches the right skills (HOW
 
 ### Where to get help
 
-- **Security vulnerabilities** (secret-leak vectors, arm-isolation escapes, injection paths): **do not open a public issue.** Email `carlos.carrillo@dataqbs.com` with subject `SECURITY: octorato`. See `SECURITY.md` and [[Security]].
+- **Security vulnerabilities** (secret-leak vectors, arm-isolation escapes, injection paths): **do not open a public issue.** Disclose privately per `SECURITY.md` (subject `SECURITY: octorato`). See also [[Security]].
 - **Bugs, questions, feature requests:** open a [GitHub issue](https://github.com/CarlosCaPe/octorato/issues).
 - **Understanding the model:** [[Architecture]] (CLASS/OBJECT/ARM), [[The-4D-Paradigm]] (the nervous-system protocol), [[Arms-and-Sync]] (full arm onboarding + sync internals).
 

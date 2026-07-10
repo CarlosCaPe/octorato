@@ -128,7 +128,9 @@ def main() -> int:
             return 0  # trivial / slash-command prompts: nothing to census
         emit(build_block(prompt))
     except TimeoutError:
-        emit("⚙ capability-census skipped (over budget). Run `claude mcp list` + check the arm manually if non-trivial.")
+        emit("⚙ capability-census skipped (over budget). Run runtime MCP census "
+             "(Claude Code: `claude mcp list`; Cursor: GetMcpTools / Settings→MCP) "
+             "+ check the arm manually if non-trivial.")
     except Exception as exc:
         emit(f"⚙ capability-census unavailable ({type(exc).__name__}). Recall live MCPs + the relevant arm manually.")
     finally:

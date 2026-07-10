@@ -236,7 +236,7 @@ After either, `ai-pull` / `ai-push` work normally. The Windows `ai-pull.ps1` / `
 
 > **Your AI agent forgets who you are and mixes your worlds. An *octorato* is its second brain: memory that lasts, every world sealed from the others, and a receipt on every action. One brain for clients, projects, courses, anything you keep separate.**
 
-No company brain, no sealed worlds, no config to write. Clone, run one command, open Claude Code:
+No company brain, no sealed worlds, no config to write. Clone, run one command, open **any** supported runtime (Claude Code or Cursor — more editors as bindings land):
 
 ```bash
 # 1. Clone the brain
@@ -245,9 +245,15 @@ git clone https://github.com/CarlosCaPe/octorato.git ~/.claude
 # 2. Bring it to life (wires the runners, builds the connectome, health-checks)
 python3 ~/.claude/scripts/quickstart.py
 
-# 3. Open Claude Code anywhere and ask it something real
+# 3a. Claude Code — open anywhere and ask it something real
 claude
+
+# 3b. Cursor — project fail-closed hooks, then open Agent (Claude, Grok, GPT, …)
+python3 ~/.claude/scripts/merge-hooks-cursor.py
+# …then start a Cursor Agent session on the engine you want
 ```
+
+Octorato is for **all models and all editors** — the brain is the same; the runtime and engine are bindings. See `docs/architecture/multi-runtime.md`.
 
 What you'll see that a plain agent doesn't: a Provenance footer on every answer, the 2D delegate gate picking the right skill or agent for the task, and skills loading themselves from the library. That's the brain, alive.
 

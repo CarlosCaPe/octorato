@@ -15,6 +15,25 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+### Features
+- feat(multi-runtime): Octorato is for **all models and all editors**. New canon
+  `docs/architecture/multi-runtime.md` — brain vs runtime vs engine; growth rule
+  (new editor/model = binding row, not a fork); Claude Code + Cursor first-class;
+  Q2 MCP census is runtime-aware; identity = engine, OS = Octorato.
+- feat(routing): model ladder is **tier-first, vendor-second** (mechanical · bulk ·
+  build · judgment). Claude Code bindings unchanged (Haiku/Sonnet/Opus/Fable);
+  Cursor+xAI bindings added (`composer-2.5-fast` / mid-Grok / `grok-4.5*` /
+  strongest independent ≥ builder). Skill `model-routing-by-complexity` rewritten.
+- feat(finops): `_pricing.py` meters xAI Grok list prices (grok-4.5, grok-4.3,
+  grok-4.20-*, grok-build-0.1) alongside Anthropic; family heuristics for unknown
+  Grok slugs.
+
+### Changed
+- docs(Getting-Started): prerequisites accept Claude Code **or** Cursor; Step 1
+  documents `merge-hooks-cursor.py` for Cursor operators.
+- docs(4D): Q2 no longer hard-requires `claude mcp list` inside Cursor sessions.
+- chore(delegate-gate): nudge text uses vendor-agnostic tier names.
+
 ## [2026-07-02]: v6.0.0
 ### Features
 - feat(v6): "from coverage to enforcement": the gate-liveness harness. Every fail-closed
