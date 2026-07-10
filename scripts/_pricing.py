@@ -51,17 +51,22 @@ PRICING: dict[str, dict[str, float]] = {
     "claude-haiku-4":      {"in":  0.80, "out":  4.00, "cache_w":  1.00, "cache_r": 0.08},
     "claude-3-5-sonnet":   {"in":  3.00, "out": 15.00, "cache_w":  3.75, "cache_r": 0.30},
     "claude-3-5-haiku":    {"in":  0.80, "out":  4.00, "cache_w":  1.00, "cache_r": 0.08},
-    # --- xAI Grok (docs.x.ai/developers/pricing, 2026-07-10) ---
-    # cache_w unused by xAI list table; set = input. cache_r = cached input.
+    # --- xAI Grok (docs.x.ai/developers/models/*, verified 2026-07-10) ---
+    # cache_w unused by xAI list table; set = input. cache_r = cached input
+    # (NOT equal to input — see each model page's "Cached input" row).
     "grok-4.5":            {"in":  2.00, "out":  6.00, "cache_w":  2.00, "cache_r": 0.50},
     "grok-4.5-fast-xhigh": {"in":  2.00, "out":  6.00, "cache_w":  2.00, "cache_r": 0.50},
     "grok-4.5-latest":     {"in":  2.00, "out":  6.00, "cache_w":  2.00, "cache_r": 0.50},
-    "grok-4.3":            {"in":  1.25, "out":  2.50, "cache_w":  1.25, "cache_r": 1.25},
-    "grok-4.20-0309-reasoning":     {"in": 1.25, "out": 2.50, "cache_w": 1.25, "cache_r": 1.25},
-    "grok-4.20-0309-non-reasoning": {"in": 1.25, "out": 2.50, "cache_w": 1.25, "cache_r": 1.25},
-    "grok-4.20-multi-agent-0309":   {"in": 1.25, "out": 2.50, "cache_w": 1.25, "cache_r": 1.25},
-    "grok-build-0.1":      {"in":  1.00, "out":  2.00, "cache_w":  1.00, "cache_r": 1.00},
+    "grok-4.3":            {"in":  1.25, "out":  2.50, "cache_w":  1.25, "cache_r": 0.20},
+    "grok-4.20-0309-reasoning":     {"in": 1.25, "out": 2.50, "cache_w": 1.25, "cache_r": 0.20},
+    "grok-4.20-0309-non-reasoning": {"in": 1.25, "out": 2.50, "cache_w": 1.25, "cache_r": 0.20},
+    "grok-4.20-multi-agent-0309":   {"in": 1.25, "out": 2.50, "cache_w": 1.25, "cache_r": 0.20},
+    "grok-build-0.1":      {"in":  1.00, "out":  2.00, "cache_w":  1.00, "cache_r": 0.20},
 }
+
+# Honest zero row for engines without a published list price (Cursor Composer,
+# bundled GPT slugs, etc.). Prefer under-report over inventing Anthropic rates.
+UNKNOWN_LIST = {"in": 0.0, "out": 0.0, "cache_w": 0.0, "cache_r": 0.0}
 
 
 def _normalize_model_name(model: str) -> str:
@@ -98,8 +103,9 @@ def _price_per_model(model: str) -> dict[str, float]:
         return PRICING["claude-haiku-4-5"]
     if "sonnet" in base or "claude" in base:
         return PRICING["claude-sonnet-4-6"]
-    # Unknown vendor/engine — Sonnet-class placeholder so FinOps never NaNs.
-    return PRICING["claude-sonnet-4-6"]
+    # Composer / GPT / unknown — do NOT silently bill as Sonnet (invented USD).
+    # Cursor subscription engines have no public list price in this table yet.
+    return UNKNOWN_LIST
 
 
 def usage_to_usd(usage: dict, model: str = "claude-sonnet-4-6") -> float:
