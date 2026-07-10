@@ -1,6 +1,6 @@
 ---
 name: cotizacion-legal-baseline
-description: Clausulado legal base (México B2B) que TODA cotización o propuesta de servicios debe incluir desde el borrador 1, no después de que un review lo cache. Cubre propiedad intelectual (obra por encargo), tratamiento de datos personales (LFPDPPP, encargado), confidencialidad/NDA, límite de responsabilidad, garantía y soporte post-entrega, y responsabilidad de licenciamiento. Texto genérico reutilizable, sin datos de cliente.
+description: Clausulado legal base (México B2B) que TODA cotización o propuesta de servicios debe incluir desde el borrador 1, no después de que un review lo cache. Cubre propiedad intelectual (obra por encargo), tratamiento de datos personales (LFPDPPP, encargado), confidencialidad/NDA, límite de responsabilidad, garantía y soporte post-entrega, responsabilidad de licenciamiento e impuestos (montos más IVA, desglose en CFDI). Texto genérico reutilizable, sin datos de cliente.
 metadata:
   type: reference
 ---
@@ -53,6 +53,15 @@ El licenciamiento de terceros (ej. Power Apps Premium, Dataverse) es
 responsabilidad y costo del cliente. El trabajo que dependa de esa licencia no
 inicia sin confirmación de su adquisición; el proveedor no asume retrasos por su
 no contratación oportuna.
+
+### Impuestos (IVA)
+Todos los montos de la propuesta se expresan **más IVA** (16%, tasa general de la
+Ley del IVA); el impuesto se desglosa en la factura CFDI. La nota va junto al monto
+principal Y en las condiciones de pago, nunca solo en una. Sin ella, el cliente
+puede leer el precio como IVA incluido y emitir la orden de compra por el bruto: el
+proveedor absorbe ~13.79% del monto (x/1.16). Si la aclaración llega después del
+envío, se corrige por escrito en el mismo hilo ANTES de que se emita la OC.
+`client-doc-lint` marca FAIL cualquier doc con montos $ y cero menciones de IVA.
 
 ### Pago y tipo de cambio (si aplica USD→MXN)
 Plazo claro: "N días naturales desde la factura del anticipo y, para el saldo,

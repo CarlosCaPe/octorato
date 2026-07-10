@@ -1,6 +1,6 @@
 ---
 name: client-doc-lint
-description: Pre-send QA reflex for GENERATED client deliverables (cotización, propuesta, contrato PDF/DOCX). Lints the rendered artifact for stripped accents, em-dash, already-past forward dates (kickoff/vigencia), and inventories every $ amount for human eyeballing. Run it before declaring any client doc "listo para enviar". Complements cadence-lint.py (which lints prose SOURCE, not the rendered output).
+description: Pre-send QA reflex for GENERATED client deliverables (cotización, propuesta, contrato PDF/DOCX). Lints the rendered artifact for stripped accents, em-dash, already-past forward dates (kickoff/vigencia), missing fiscal note ($ amounts with zero IVA mention = FAIL), and inventories every $ amount for human eyeballing. Run it before declaring any client doc "listo para enviar". Complements cadence-lint.py (which lints prose SOURCE, not the rendered output).
 metadata:
   type: reference
 ---
@@ -28,7 +28,8 @@ Requiere `pdftotext` (poppler-utils) para PDF.
 1. **accents**: doc largo en español con ratio de acentos casi cero = acentos perdidos, FAIL. (Español sano ronda 3-6%; bandera por debajo de 0.5% en docs > 800 letras.)
 2. **em-dash**: cualquier guion largo (em-dash) en el texto renderizado (human-cadence regla 1), FAIL.
 3. **stale-dates**: una línea con intención futura (kickoff / agendar / semana del / antes del) cuya fecha ya pasó respecto a `--today`, FAIL. Ignora líneas de referencia (FIX/DOF/emisión) que legítimamente citan fechas pasadas.
-4. **figures**: inventario informativo de todos los montos `$` para que un humano verifique consistencia entre secciones (sin veredicto automático).
+4. **iva**: doc en español con montos `$` y cero menciones de "IVA", FAIL. Sin la nota fiscal el cliente puede leer el precio como IVA incluido y emitir la orden de compra por el bruto; el proveedor absorbe ~13.79% del monto. La cláusula canónica vive en [[cotizacion-legal-baseline]].
+5. **figures**: inventario informativo de todos los montos `$` para que un humano verifique consistencia entre secciones (sin veredicto automático).
 
 ## Cuándo (reflejo)
 Antes de decir "listo para enviar" sobre CUALQUIER entregable de cliente generado

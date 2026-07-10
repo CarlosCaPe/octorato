@@ -15,7 +15,10 @@ Checks (Spanish client docs):
   2 em-dash   — any '—' in the rendered text (human-cadence rule 1). FAIL.
   3 stale     — a forward-looking line (kickoff/agendar/semana del ...) whose
                 date is already in the past relative to --today. FAIL.
-  4 figures   — informational inventory of every $ amount found, so a human
+  4 iva       — a Spanish doc that quotes $ amounts with ZERO mention of the
+                word IVA = fiscal ambiguity: the client can read the price as
+                tax-included and cut the PO for the gross. FAIL.
+  5 figures   — informational inventory of every $ amount found, so a human
                 can eyeball consistency across sections (no auto-verdict).
 
 Usage:
@@ -42,6 +45,11 @@ for _s in (sys.stdout, sys.stderr):
         pass
 
 ACCENTED = "áéíóúüñÁÉÍÓÚÜÑ"
+# One source of truth for $-amounts: optional space after $ covers the common
+# Mexican "$ 85,000.00" typography and pdftotext extraction artifacts.
+AMOUNT_RE = re.compile(r"\$\s?[\d][\d,]*(?:\.\d{2})?")
+# Solid IVA word or fully dotted I.V.A. — never "IV.A" (roman-numeral sections).
+IVA_RE = re.compile(r"\bIVA\b|(?<![A-Za-z])I\.V\.A\.?(?![A-Za-z])", re.IGNORECASE)
 MONTHS = {
     "enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6,
     "julio": 7, "agosto": 8, "septiembre": 9, "setiembre": 9, "octubre": 10,
@@ -114,8 +122,21 @@ def check_stale(text: str, today: _dt.date) -> tuple[bool, str]:
     return True, f"stale-dates: OK (hoy {today.isoformat()})"
 
 
+def check_iva(text: str, lang: str) -> tuple[bool, str]:
+    if lang != "es":
+        return True, "iva: omitido (lang != es)"
+    amounts = AMOUNT_RE.findall(text)
+    if not amounts:
+        return True, "iva: OK — sin montos $, no aplica"
+    if IVA_RE.search(text):
+        return True, f"iva: OK — nota fiscal presente ({len(amounts)} monto(s) $)"
+    return False, (f"iva: FAIL — {len(amounts)} monto(s) $ y cero menciones de 'IVA'. "
+                   "Un doc con precios debe declarar 'más IVA' o 'IVA incluido'; "
+                   "sin la nota, la orden de compra puede llegar por el monto como IVA incluido.")
+
+
 def figures(text: str) -> str:
-    found = sorted(set(re.findall(r"\$[\d][\d,]*(?:\.\d{2})?", text)))
+    found = sorted(set(AMOUNT_RE.findall(text)))
     return f"figures: {len(found)} montos distintos → " + ", ".join(found[:20]) + (
         " ..." if len(found) > 20 else "")
 
@@ -129,7 +150,8 @@ def main() -> int:
     today = (_dt.date.fromisoformat(a.today) if a.today else _dt.date.today())
 
     text = read_text(a.file)
-    results = [check_accents(text, a.lang), check_emdash(text), check_stale(text, today)]
+    results = [check_accents(text, a.lang), check_emdash(text), check_stale(text, today),
+               check_iva(text, a.lang)]
     print(f"── client-doc-lint: {a.file} ──")
     ok_all = True
     for ok, msg in results:
