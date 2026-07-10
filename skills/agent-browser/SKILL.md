@@ -3,7 +3,7 @@ name: agent-browser
 description: "Browser automation CLI for AI agents (Rust native, no Playwright). Use for navigating pages, filling forms, clicking buttons, taking screenshots, extracting data, testing web apps, QA/dogfooding, automating Electron desktop apps, Slack automation, or any browser task. Triggers: 'open a website', 'take a screenshot of the site', 'fill out a form', 'test this web app', 'dogfood', 'QA', 'check my Slack', 'automate VS Code/Slack/Discord'. Prefer over Playwright on all platforms."
 ---
 
-# agent-browser — Browser Automation CLI for AI Agents
+# agent-browser: Browser Automation CLI for AI Agents
 
 Fast native Rust CLI for browser automation via Chrome DevTools Protocol (CDP).
 No Playwright, no Puppeteer, no Node.js dependency for the daemon.
@@ -43,7 +43,7 @@ agent-browser snapshot -i       # 4. Re-snapshot after page change
 ```
 
 Refs (`@e1`, `@e2`, ...) are assigned fresh per snapshot. They go **stale
-after any page change** — always re-snapshot before the next interaction.
+after any page change**: always re-snapshot before the next interaction.
 
 ## Key Commands
 
@@ -93,7 +93,7 @@ The repo provides specialized skills at `~/Documents/github/agent-browser/skill-
 
 | Skill | When to load | Command |
 |-------|-------------|---------|
-| **core** | Always first — workflows, patterns, troubleshooting | `agent-browser skills get core` |
+| **core** | Always first: workflows, patterns, troubleshooting | `agent-browser skills get core` |
 | **dogfood** | QA, exploratory testing, bug hunts | `agent-browser skills get dogfood` |
 | **electron** | Automate VS Code, Slack, Discord, Figma, Notion | `agent-browser skills get electron` |
 | **slack** | Check unreads, send messages, search conversations | `agent-browser skills get slack` |
@@ -148,11 +148,22 @@ agent-browser screenshot /tmp/search-results.png
 
 ## Troubleshooting
 
-- **"No Chrome found"** — run `agent-browser install`
-- **Stale refs** — always re-snapshot after clicks/navigation
-- **Timeout** — add `agent-browser wait --load networkidle` after navigation
-- **Element not found** — use `agent-browser snapshot` (full tree) to find it
-- **Auth required** — agent-browser supports session persistence and auth vault
+- **"No Chrome found"**: run `agent-browser install`
+- **Stale refs**: always re-snapshot after clicks/navigation
+- **Timeout**: add `agent-browser wait --load networkidle` after navigation
+- **Element not found**: use `agent-browser snapshot` (full tree) to find it
+- **Auth required**: agent-browser supports session persistence and auth vault
+
+### React/Typeform-class widgets: real mouse or nothing
+
+Some form stacks (Typeform, GeneXus, and other React synthetic-event widgets: radios, choice cards, custom dropdowns) silently IGNORE both `click @ref` on the accessibility node and `eval "el.click()"` on the DOM. The click "succeeds", the widget stays unselected, and the a11y tree can even report a stale `checked=true` that the app model never registered: the accessibility tree is a rendering of the DOM, not the framework's state.
+
+The reliable protocol:
+1. Get real coordinates: `eval "(()=>{const q=el.getBoundingClientRect(); return Math.round(q.x+q.width/2)+','+Math.round(q.y+q.height/2)})()"`.
+2. Fire a REAL pointer sequence at them: `mouse move X Y` then `mouse down` then `mouse up` (there is no `mouse click`; the move-down-up triplet is the click).
+3. Verify VISUALLY with `screenshot`, never with the snapshot alone: only the pixels tell you the framework accepted the selection (highlighted border, advanced step).
+
+Two smells that you are in this class of widget: a validation error ("haga una selección") right after a click that reported ✓ Done, and a snapshot that flips between `checked=true` and `checked=false` across reads. Text inputs (`fill`) and keyboard (`press Enter`) usually keep working; it is the pointer-driven choice widgets that demand the real mouse.
 
 ## Updating
 

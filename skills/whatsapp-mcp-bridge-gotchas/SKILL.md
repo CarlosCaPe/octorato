@@ -1,6 +1,6 @@
 ---
 name: whatsapp-mcp-bridge-gotchas
-description: "Hard-won fixes for standing up the lharries/whatsapp-mcp bridge (whatsmeow + WhatsApp Web multidevice), encrypted, with send as a reversible dial. Covers the 403 media-download root cause (direct path stripped of its CDN auth query), the 405 client-outdated fix (bump whatsmeow + add context.Context to changed APIs), QR-vs-phone-code pairing, encrypt-at-rest without sudo (gocryptfs static binary), read-only vs send-enabled enforcement, and liveness/identity/verification gotchas (bridge freshness probe, @lid JID migration, outgoing REST sends absent from messages.db). Load before installing or debugging a personal WhatsApp MCP."
+description: "Hard-won fixes for standing up the lharries/whatsapp-mcp bridge (whatsmeow + WhatsApp Web multidevice), encrypted, with send as a reversible dial. Covers the 403 media-download root cause (direct path stripped of its CDN auth query), the 405 client-outdated fix (bump whatsmeow + add context.Context to changed APIs), QR-vs-phone-code pairing, encrypt-at-rest without sudo (gocryptfs static binary), read-only vs send-enabled enforcement, and liveness/identity/verification gotchas (bridge freshness probe, @lid JID migration, outgoing REST sends absent from messages.db) and the outbound anti-spam discipline (no bursts to new contacts; device-removed recovery). Load before installing or debugging a personal WhatsApp MCP."
 metadata:
   type: reference
 ---
@@ -49,5 +49,13 @@ Discipline that would have caught it before a third party did: the FIRST outward
 
 ## 9. Capture the undo handle: persist send IDs and expose revoke
 The stock `/api/send` handler discards `resp.ID` from `client.SendMessage`, outgoing REST sends are not stored (gotcha 7.3), and whatsmeow's revoke (`client.BuildRevoke(chatJID, types.EmptyJID, messageID)` = delete-for-everyone of your own message) REQUIRES that id. Net effect: anything sent wrong is unrecoverable from the bridge; the only cleanup is manual on a phone. Fix in three moves: return `message_id` + `chat_jid` in the send response, `StoreMessage(...)` the outgoing message so it is listable later, and add an `/api/revoke` endpoint. General rule: an outward action should record the handle needed to undo it at the moment it executes, not when you first need it.
+
+## 10. WhatsApp anti-spam kills automated bursts to NEW contacts (device removed, then account restriction)
+
+Enforcement observed in production, two stages: (1) ~60 seconds after back-to-back sends to numbers with NO prior chat (tell: `failed to persist outgoing message: FOREIGN KEY constraint failed` = no chat row existed), the server emits `device removed stream error` and the bridge session self-deletes; (2) immediate re-pair attempts (a QR + 2 codes inside an hour) read as a bot re-linking and escalate to an ACCOUNT-level restriction (hours). The next rung is a permanent number ban.
+
+The scoring signals stack: first-contact number + near-duplicate message bodies + burst timing (parallel tool calls land seconds apart) + unofficial-client fingerprint (whatsmeow). Messaging an EXISTING chat has never triggered it.
+
+Rules that keep the number safe: first commercial contact with a new number goes by email, web form, or voice call, never the bridge. If the operator explicitly orders a bridge send to a new number: max ONE per session, unique body, never two outward sends in the same parallel block (space them minutes apart). After a `device removed`: do NOT retry pairing immediately; wait until the operator confirms the phone app shows no restriction, then a SINGLE `WA_PAIR_PHONE` code attempt (pairing section above). The bridge's lane is reading and low-volume conversation with existing chats.
 
 Related: [[mcp-stack-setup]], [[phi-aware-rag-ingestion]] (sensitive-data ingestion), [[sops-age-git-encryption]], [[canary-symbiont]] (live-test the path once).
