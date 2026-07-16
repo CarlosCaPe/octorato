@@ -399,3 +399,19 @@ edges:
       land there). Change the canonical query or the triage method and reconcile
       the reflex script + the skill doc + the hooks.json registration together.
       Edge added 2026-06-18 after the seek fell back to grep (unlit neuron).
+
+  - id: connectome-shrink-guard
+    concept: "shrink-guard: refuse to regenerate a smaller graph / graphify code-graph skill"
+    appears_in:
+      - scripts/generate_neural_map.py
+      - skills/graphify-code-graph/SKILL.md
+    kind: appears_in
+    single_source: "scripts/generate_neural_map.py (SHRINK_TOLERANCE + shrink_guard(), --allow-shrink override)"
+    note: >-
+      A partial skills/agents checkout must not silently shrink neural_map.json
+      and propagate via ai-push as if regeneration succeeded; the guard exits
+      non-zero past a 10% node drop. The invariant was adopted from the graphify
+      deep-learn (their export safety check); the skill documents both the tool
+      and the cross-reference. Change the tolerance or the flag and reconcile
+      the script + the skill Gotchas together. Edge added 2026-07-16 at skill
+      creation so the neuron is born lit.
