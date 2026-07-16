@@ -6,7 +6,7 @@
 
 | Metric | Count |
 |---|---|
-| Skills | 231 |
+| Skills | 232 |
 | Agents | 161 |
 | Divisions | 15 |
 | Scripts: wired | 84 |
@@ -14,7 +14,7 @@
 | Rules | 58 |
 | Hook entries | 31 |
 
-## Skills (231)
+## Skills (232)
 
 | Name | Description |
 |---|---|
@@ -96,6 +96,7 @@
 | gh-address-comments | Help address review/issue comments on the open GitHub PR for the current branch using gh CLI; verify gh auth first and p... |
 | gh-fix-ci | Use when a user asks to debug or fix failing GitHub PR checks that run in GitHub Actions; use `gh` to inspect checks and... |
 | github-trending-curation | Daily brain discovery loop. Pulls top trending from GitHub + HN + Product Hunt, runs heuristic + LLM filter against exis... |
+| graphify-code-graph | Build a deterministic, queryable knowledge graph over any codebase with graphify (tree-sitter AST over 25+ languages, Le... |
 | gsap-core | Official GSAP skill for the core API , gsap.to(), from(), fromTo(), easing, duration, stagger, defaults, gsap.matchMedia... |
 | gsap-frameworks | Official GSAP skill for Vue, Svelte, and other non-React frameworks , lifecycle, scoping selectors, cleanup on unmount. ... |
 | gsap-performance | Official GSAP skill for performance , prefer transforms, avoid layout thrashing, will-change, batching. Use when optimiz... |
@@ -312,8 +313,8 @@
 
 | Name | Description |
 |---|---|
-| nexus-spatial-discovery | Nexus Spatial: Full Agency Discovery Exercise |
 | README | Examples |
+| nexus-spatial-discovery | Nexus Spatial: Full Agency Discovery Exercise |
 | workflow-book-chapter | Workflow Example: Book Chapter Development |
 | workflow-landing-page | Multi-Agent Workflow: Landing Page Sprint |
 | workflow-startup-mvp | Multi-Agent Workflow: Startup MVP |
@@ -460,8 +461,8 @@
 | Name | Description |
 |---|---|
 | EXECUTIVE-BRIEF | 📑 NEXUS Executive Brief |
-| nexus-strategy | 🌐 NEXUS , Network of EXperts, Unified in Strategy |
 | QUICKSTART | ⚡ NEXUS Quick-Start Guide |
+| nexus-strategy | 🌐 NEXUS , Network of EXperts, Unified in Strategy |
 
 ### support (7)
 

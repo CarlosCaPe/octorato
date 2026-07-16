@@ -990,10 +990,45 @@ def print_summary(connectome):
     print(f"\nGeneration time: {meta['generation_time_sec']}s")
 
 
+# Refuse to silently replace the connectome with a much smaller one: a partial
+# skills/agents checkout (broken glob, interrupted sync) would otherwise shrink
+# the graph that THIS machine's heartbeat and query_connectome.py read, looking
+# like a successful regeneration. neural_map.json is gitignored, so the damage
+# is local-only, but silent. Only D1/D2 are guarded: D3 arm counts come from
+# the gitignored company config and legitimately differ per machine. Deliberate
+# prunes stay under the tolerance; bigger cuts need --allow-shrink.
+SHRINK_TOLERANCE = 0.10
+
+
+def shrink_guard(connectome, allow_shrink=False):
+    """Exit non-zero if the new graph lost >SHRINK_TOLERANCE of nodes."""
+    if allow_shrink or not OUTPUT_FILE.exists():
+        return
+    try:
+        prev = json.loads(OUTPUT_FILE.read_text(encoding="utf-8"))
+        prev_counts = {
+            dim: prev["dimensions"][dim]["count"] for dim in ("D1_WHO", "D2_HOW")
+        }
+    except (OSError, ValueError, KeyError, TypeError):
+        return  # previous map unreadable: nothing trustworthy to compare against
+    for dim, prev_count in prev_counts.items():
+        new_count = connectome["dimensions"][dim]["count"]
+        floor = int(prev_count * (1 - SHRINK_TOLERANCE))
+        if new_count < floor:
+            label = connectome["dimensions"][dim]["label"]
+            sys.exit(
+                f"SHRINK-GUARD: {label} would drop {prev_count} -> {new_count} "
+                f"(floor {floor}, tolerance {SHRINK_TOLERANCE:.0%}). Refusing to "
+                f"overwrite {OUTPUT_FILE.name}. If the shrink is deliberate, "
+                f"re-run with --allow-shrink."
+            )
+
+
 def main():
     connectome = generate_connectome()
     print_summary(connectome)
 
+    shrink_guard(connectome, allow_shrink="--allow-shrink" in sys.argv[1:])
     OUTPUT_FILE.write_text(
         json.dumps(connectome, indent=2, ensure_ascii=False),
         encoding="utf-8",

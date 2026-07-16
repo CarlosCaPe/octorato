@@ -404,8 +404,9 @@ def check_connectome_fresh(fix: bool) -> Result:
             cp = run([PYTHON or "python3", str(gen)], cwd=CLAUDE_DIR)
             if cp.returncode == 0:
                 return Result(key, PASS, "neural_map.json regenerated")
-            return Result(key, FAIL, f"regeneration failed: {cp.stderr.strip()[:80]}",
-                          "run generate_neural_map.py manually")
+            return Result(key, FAIL, f"regeneration failed: {cp.stderr.strip()[:240]}",
+                          "run generate_neural_map.py manually; if it reports "
+                          "SHRINK-GUARD, re-run with --allow-shrink once verified")
     return Result(key, WARN, f"neural_map.json stale — {rel} is newer",
                   "run `python3 scripts/generate_neural_map.py` (or --fix)")
 
