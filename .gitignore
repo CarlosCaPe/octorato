@@ -235,3 +235,6 @@ knowledge/github-trending/20*.json
 # 4D session-dimension registry + merge approvals (per-machine runtime state)
 connectome/sessions.json
 connectome/merge-approvals.json
+
+# Per-session upload scratch dirs (session-id named, runtime state)
+uploads/
