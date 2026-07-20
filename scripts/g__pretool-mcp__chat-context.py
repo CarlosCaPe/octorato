@@ -73,11 +73,11 @@ def _lid_pair(digits: str, is_lid: bool) -> tuple[str, str | None]:
                 row = con.execute(
                     "SELECT pn FROM whatsmeow_lid_map WHERE lid = ?", (digits,)
                 ).fetchone()
-                return (row[0], digits) if row else (digits, None)
+                return (str(row[0]), digits) if row else (digits, None)
             row = con.execute(
                 "SELECT lid FROM whatsmeow_lid_map WHERE pn = ?", (digits,)
             ).fetchone()
-            return digits, (row[0] if row else None)
+            return digits, (str(row[0]) if row else None)
         finally:
             con.close()
     except sqlite3.Error:
@@ -98,11 +98,12 @@ def _query_tail(db_path: str, jids: list[str]) -> list[tuple]:
         con.close()
 
 
-def _chat_tail(jids: list[str]) -> str:
-    """Merged recent history across the chat's JIDs, oldest first. '' if unreadable."""
+def _chat_tail(jids: list[str]) -> str | None:
+    """Merged recent history across the chat's JIDs, oldest first.
+    '' = readable but empty thread; None = DB unavailable/unreadable."""
     src = _store_dir() / "messages.db"
     if not src.exists():
-        return ""
+        return None
     rows = None
     try:
         # WAL readers don't block the bridge's writer: read the live file first
@@ -121,12 +122,12 @@ def _chat_tail(jids: list[str]) -> str:
                     shutil.copyfile(side, str(dst) + ext)
             rows = _query_tail(str(dst), jids)
         except (sqlite3.Error, OSError):
-            return ""
+            return None
         finally:
             if tmpdir:
                 shutil.rmtree(tmpdir, ignore_errors=True)
     except OSError:
-        return ""
+        return None
     lines = []
     for ts, mine, content in reversed(rows or []):
         who = "YO" if mine else "CHAT"
@@ -180,7 +181,10 @@ def main() -> None:
         return
     if data.get("tool_name") != TOOL:
         return
-    recipient = str((data.get("tool_input") or {}).get("recipient") or "")
+    tool_input = data.get("tool_input")
+    if not isinstance(tool_input, dict):
+        return  # malformed call; the MCP layer rejects it anyway
+    recipient = str(tool_input.get("recipient") or "")
     if not recipient:
         return
     digits = recipient.split("@", 1)[0]
@@ -213,9 +217,11 @@ def main() -> None:
     )
     if tail:
         body += "Tail reciente del chat (ambos JIDs, viejo->nuevo):\n" + tail + "\n"
+    elif tail == "":
+        body += "El hilo no tiene mensajes previos legibles en el bridge.\n"
     else:
-        body += ("Historial NO disponible (bridge DB ilegible): lee el chat por otra via "
-                 "antes de reenviar.\n")
+        body += ("Historial NO disponible (bridge DB ausente o ilegible): lee el chat "
+                 "por otra via antes de reenviar.\n")
     body += ("Si tras leer el contexto tu mensaje sigue siendo correcto, reenvialo tal "
              "cual (este segundo intento pasa); si el contexto lo cambia, corrigelo primero.")
     if _deny(body):
@@ -224,13 +230,48 @@ def main() -> None:
         _write_sentinel(sentinel, recipient)
 
 
+def _selftest_tail_content(fdir: Path) -> int:
+    """Content assertion on top of the block/allow harness: the lid_tail violation
+    leg must deny WITH the seeded message in its reason and WITHOUT the crash
+    marker; otherwise a crash-deny would mask a tail-logic regression."""
+    import subprocess
+    payload = (fdir / "violation_lid_tail.json").read_text(encoding="utf-8")
+    sandbox = Path(tempfile.mkdtemp(prefix="chat-context-tail-"))
+    try:
+        seed = fdir / "home"
+        if seed.is_dir():
+            shutil.copytree(seed, sandbox, dirs_exist_ok=True)
+        import os
+        env = dict(os.environ, HOME=str(sandbox), USERPROFILE=str(sandbox))
+        cp = subprocess.run([sys.executable, __file__], input=payload,
+                            capture_output=True, text=True, env=env, timeout=30)
+        reason = json.loads(cp.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+        if "error interno del gate" in reason:
+            print("selftest FAIL: lid_tail leg denied via CRASH path", file=sys.stderr)
+            return 1
+        if "mensaje entrante en el chat lid" not in reason:
+            print("selftest FAIL: lid_tail leg reason lacks the seeded tail", file=sys.stderr)
+            return 1
+        print("selftest PASS: lid_tail content assertion (seeded tail present, no crash marker)")
+        return 0
+    except Exception as e:
+        print(f"selftest FAIL: tail-content assertion crashed: {e}", file=sys.stderr)
+        return 1
+    finally:
+        shutil.rmtree(sandbox, ignore_errors=True)
+
+
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--selftest":
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         from gate_selftest import run_gate_selftest
         fixtures = sys.argv[2] if len(sys.argv) > 2 else \
             "registry/fixtures/COMMS.chat-context-before-send"
-        raise SystemExit(run_gate_selftest(__file__, fixtures))
+        fdir = Path(fixtures)
+        if not fdir.is_absolute():
+            fdir = (Path(__file__).resolve().parent.parent / fdir).resolve()
+        rc = run_gate_selftest(__file__, fixtures)
+        raise SystemExit(rc or _selftest_tail_content(fdir))
     try:
         main()
     except Exception:
