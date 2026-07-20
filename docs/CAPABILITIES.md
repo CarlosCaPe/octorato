@@ -9,10 +9,10 @@
 | Skills | 232 |
 | Agents | 161 |
 | Divisions | 15 |
-| Scripts: wired | 84 |
+| Scripts: wired | 85 |
 | Scripts: orphan | 6 |
-| Rules | 58 |
-| Hook entries | 31 |
+| Rules | 59 |
+| Hook entries | 32 |
 
 ## Skills (232)
 
@@ -489,7 +489,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (90)
+## Scripts (91)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -537,6 +537,7 @@
 | eye-check.py | Eye Check Hook , Forces agent-browser usage for web tasks. Runs on every UserPromptSubmit. Pure loca... | wired |
 | finops-digest.py | finops-digest.py , the FinOps lens over Claude Code session logs. "Lo que no se mide, no crece." Exi... | wired |
 | g__pretool-bash__git-discipline.py | g__pretool-bash__git-discipline.py: PreToolUse gate for the deterministic subset of GIT.version-cont... | wired |
+| g__pretool-mcp__chat-context.py | g__pretool-mcp__chat-context.py: PreToolUse gate for COMMS.chat-context-before-send. | wired |
 | g__stop__draft-promise.py | g__stop__draft-promise.py , Stop gate: no future-tense promises in paste-ready drafts. | wired |
 | gap-capture.py | gap-capture.py , capture 2D-Delegate SELF misses as a gap backlog. When the delegate gate finds no a... | wired |
 | gate-check | gate-check , 4D Gate Enforcement Validator for the Octopus brain. Validates that the 4D paradigm pha... | wired |
@@ -584,7 +585,7 @@
 | validate-skill-manifest.py | validate-skill-manifest.py , validate a skill.json against the M5 manifest schema (issue #31). | wired |
 | watchdog.py | watchdog.py , observability surface 4 anomaly detector. Reads the JSONL trace files written by trace... | wired |
 
-## Rules (58)
+## Rules (59)
 
 ### ARCHITECTURE
 
@@ -613,6 +614,7 @@
 
 ### COMMS
 
+- COMMS.chat-context-before-send
 - COMMS.client-doc-lint
 - COMMS.communication-baseline
 - COMMS.deliverable-complete-before-send
@@ -679,7 +681,7 @@
 | Event | Wired Scripts |
 |---|---|
 | PostToolUse | cadence-lint.py, canon-heal-hook.py, client-doc-lint-hook.py, impact-radius-hook.py, trace-hook.py |
-| PreToolUse | budget-check.py, config-ship-verify.py, delegate-gate.py, dimension-awareness-hook.py, g__pretool-bash__git-discipline.py, grafo-gate.py, qa-merge-gate.py, secrets-grep-guard.py, trace-hook.py |
+| PreToolUse | budget-check.py, config-ship-verify.py, delegate-gate.py, dimension-awareness-hook.py, g__pretool-bash__git-discipline.py, g__pretool-mcp__chat-context.py, grafo-gate.py, qa-merge-gate.py, secrets-grep-guard.py, trace-hook.py |
 | SessionStart | merge-hooks.py, session-isolation-hook.py |
 | Stop | cadence-stop-hook.py, claim-verify-stop.py, g__stop__draft-promise.py, grafo-ledger-check.py, no-pause-suggestion.py, source-attribution-check.py, trace-hook.py |
 | UserPromptSubmit | 4d-reminder.py, arm-recall-hook.py, brain-memory-recall.py, connectome-heartbeat.py, eye-check.py, grafo-turn-reset.py, inbox-sweep-reflex.py, trace-hook.py |

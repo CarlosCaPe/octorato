@@ -153,6 +153,17 @@
         }
       ],
       "matcher": "Bash"
+    },
+    {
+      "matcher": "mcp__whatsapp__send_message",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "python3 ~/.claude/scripts/g__pretool-mcp__chat-context.py",
+          "statusMessage": "♦ chat-context: tail del hilo antes de enviar (block-once)...",
+          "timeout": 10
+        }
+      ]
     }
   ],
   "SessionStart": [
