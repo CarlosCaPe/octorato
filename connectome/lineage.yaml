@@ -415,3 +415,16 @@ edges:
       and the cross-reference. Change the tolerance or the flag and reconcile
       the script + the skill Gotchas together. Edge added 2026-07-16 at skill
       creation so the neuron is born lit.
+
+  - id: sync-reflection-ritual
+    concept: "linked ritual: /ai-sync runs daily-reflection first; the reflection closes with /ai-sync"
+    appears_in:
+      - commands/ai-sync.md
+      - skills/daily-reflection/SKILL.md
+    kind: appears_in
+    note: >-
+      The sync and the reflection are two halves of one ritual: publish the
+      day's work and distil its lesson in the same beat. The linkage text lives
+      on both sides; change the trigger condition, the skip rule, or the
+      co-tenancy stance on one side and reconcile the other in the same commit.
+      Edge added 2026-07-20 at linkage creation so the neuron is born lit.

@@ -59,6 +59,12 @@ This is what separates this skill from "a nice answer":
 3. `python3 ~/.claude/scripts/memory_sync.py push` so it persists cross-machine.
 4. Before writing, check for an existing memory that already covers it. Update
    that file rather than duplicating.
+5. Close the ritual with the canonical sync: run `/ai-sync` (the
+   `~/.local/bin/ai-sync` runner) so any public brain changes from the session
+   reconcile with the remote in the same beat. The link is two-way: `/ai-sync`
+   runs this reflection before syncing, and this reflection ends by syncing.
+   If the co-tenancy guard aborts (another live session on the brain tree),
+   report that and leave the sync to the surviving session; never override it.
 
 A reflection without this step is half-done. The operator will catch it.
 
@@ -77,5 +83,8 @@ A reflection without this step is half-done. The operator will catch it.
 - **`daily-reflection`** (this): session → BEHAVIOR/discipline retro → memory.
   Use for the "how should I act better" question. They compose: a session can
   produce both a draft skill and a discipline memory.
+- **`/ai-sync`**: the other half of this ritual. The sync command runs this
+  reflection first when the session did substantive work; this skill closes by
+  running the sync. Publish and learn travel together.
 - See also `feedback_verify_visually_before_claiming`, `reflexes-over-discipline`,
   `transcend-the-marionette` for the reflex-over-willpower stance.
