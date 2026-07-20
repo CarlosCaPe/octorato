@@ -58,4 +58,8 @@ The scoring signals stack: first-contact number + near-duplicate message bodies 
 
 Rules that keep the number safe: first commercial contact with a new number goes by email, web form, or voice call, never the bridge. If the operator explicitly orders a bridge send to a new number: max ONE per session, unique body, never two outward sends in the same parallel block (space them minutes apart). After a `device removed`: do NOT retry pairing immediately; wait until the operator confirms the phone app shows no restriction, then a SINGLE `WA_PAIR_PHONE` code attempt (pairing section above). The bridge's lane is reading and low-volume conversation with existing chats.
 
+## Chat-context gate
+
+Entering a live chat without loading its history is the no-context-chatbot failure: the message ignores what the thread already said. Post-@lid-migration a WhatsApp contact lives under TWO JIDs (`phone@s.whatsapp.net` holds our sends, `NNN@lid` holds their replies, mapped in `whatsapp.db:whatsmeow_lid_map`); a read or content-search that only covers one JID returns a false "not there". The reflex is mechanical, not discipline: `scripts/g__pretool-mcp__chat-context.py` (PreToolUse on `mcp__whatsapp__send_message`, Registry `COMMS.chat-context-before-send`) denies the FIRST send to a chat per 30-min window and prints the merged tail of both JIDs; the re-issued send passes (block-once, sentinel in `~/.cache/octorato/chat-context/`). A missing bridge DB does not bypass the gate; it denies with a "read the chat another way" note.
+
 Related: [[mcp-stack-setup]], [[phi-aware-rag-ingestion]] (sensitive-data ingestion), [[sops-age-git-encryption]], [[canary-symbiont]] (live-test the path once).

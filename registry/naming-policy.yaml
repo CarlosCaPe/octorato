@@ -3,7 +3,7 @@
 #
 #   <prefix>__<event>__<slug>.py
 #   prefix: g=GATE  r=REFLEX  d=DETECTOR  m=PRESENCE
-#   event:  prompt | pretool-write | pretool-bash | posttool | stop | session | prepush
+#   event:  prompt | pretool-write | pretool-bash | pretool-mcp | posttool | stop | session | prepush
 #   slug:   kebab role, no redundant -hook/-gate/-check/-stop/-reminder suffix
 #
 # Enforcement (brain_doctor check_naming):
@@ -14,7 +14,7 @@
 #   - Infra / runner / git-hook scripts (brain_doctor, ai_sync, check-generic, lineage-doctor,
 #     install-runners, memory_sync, gate-check) keep stable command names and are NOT hook-scoped,
 #     so this policy never applies to them.
-scheme: '^[grmd]__(prompt|pretool-write|pretool-bash|posttool|stop|session|prepush)__[a-z0-9-]+\.py\Z'
+scheme: '^[grmd]__(prompt|pretool-write|pretool-bash|pretool-mcp|posttool|stop|session|prepush)__[a-z0-9-]+\.py\Z'
 grandfathered:
   - 4d-reminder.py
   - cadence-lint.py

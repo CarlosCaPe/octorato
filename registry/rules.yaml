@@ -1,1142 +1,1450 @@
-# Octorato Rule Registry — single source of truth for RULE #1 (Wired or Corrupt).
-# Every CLAUDE.md rule maps here to its backing mechanism(s) + proof.
-# Validated by brain_doctor (D1 schema, D2 anchors, D3 per-rule wiring).
-# Phase 0 seed: the already-wired mechanisms, existing script names (renaming is Phase 3).
-# Schema: registry/rules.schema.json   Design: docs/architecture/wired-or-corrupt.md
 version: 1
 rules:
-  # ---- META: Rule #1 is self-wired; its mechanism IS brain_doctor + the pre-push gate ----
-  - id: META.rule-1-wired-or-corrupt
-    title: "RULE #1 — every rule must be wired; unwired = corrupt brain"
-    category: META
-    source: { file: CLAUDE.md, anchor: "RULE #1" }
-    strength: GATE
-    gateable: true
-    enforcement: fail-closed
-    firing_mode: [runner, git-hook]
-    mechanism:
-      - { kind: Gate, canonical_name: brain_doctor.py, firing_event: PrePush, firing_matcher: null }
-    proof:
-      - { method: FILE_EXISTS, locator: "scripts/brain_doctor.py", expect: present }
-      - { method: ANCHOR_PRESENT, locator: "RULE #1", expect: present }
-    liveness_required: PRESENT
-
-  - id: META.pre-push-gate
-    title: "brain_doctor is invoked from the tracked pre-push hook"
-    category: META
-    source: { file: CLAUDE.md, anchor: "RULE #1" }
-    strength: GATE
-    gateable: true
-    enforcement: fail-closed
-    firing_mode: [git-hook]
-    mechanism:
-      - { kind: Gate, canonical_name: .githooks/pre-push, firing_event: PrePush, firing_matcher: null }
-    proof:
-      - { method: FILE_EXISTS, locator: ".githooks/pre-push", expect: present }
-      - { method: EXIT_CODE, locator: "grep -q OCTORATO-WIRE-GATE .githooks/pre-push", expect: 0 }
-    liveness_required: PRESENT
-
-  # ---- COMMS ----
-  - id: COMMS.human-cadence
-    title: "Human Cadence — 10 anti-AI-tell rules"
-    category: COMMS
-    source: { file: CLAUDE.md, anchor: "Human Cadence" }
-    strength: GATE
-    gateable: true
-    enforcement: fail-closed
-    firing_mode: [hook, cli]
-    mechanism:
-      - { kind: Gate, canonical_name: cadence-stop-hook.py, firing_event: Stop, firing_matcher: "*" }
-      - { kind: Detector, canonical_name: cadence-lint.py, firing_event: PostToolUse, firing_matcher: "Write|Edit" }
-    proof:
-      - { method: IN_HOOKS_JSON, locator: "Stop|*|cadence-stop-hook.py", expect: present }
-      - { method: IN_HOOKS_JSON, locator: "PostToolUse|Write|Edit|cadence-lint.py", expect: present }
-      - { method: EXIT_CODE, locator: "scripts/cadence-stop-hook.py --selftest registry/fixtures/COMMS.human-cadence", expect: 0 }
-    liveness_required: FIRES
-
-  - id: COMMS.deliverable-complete-before-send
-    title: "Deliverable-complete-before-send — no future-tense promises in paste-ready drafts"
-    category: COMMS
-    source: { file: CLAUDE.md, anchor: "Deliverable-complete-before-send" }
-    strength: GATE
-    gateable: true
-    enforcement: fail-closed
-    firing_mode: [hook]
-    mechanism:
-      - { kind: Gate, canonical_name: g__stop__draft-promise.py, firing_event: Stop, firing_matcher: "*" }
-    proof:
-      - { method: IN_HOOKS_JSON, locator: "Stop|*|g__stop__draft-promise.py", expect: present }
-      - { method: EXIT_CODE, locator: "scripts/g__stop__draft-promise.py --selftest registry/fixtures/COMMS.deliverable-complete-before-send", expect: 0 }
-    liveness_required: FIRES
-
-  # ---- CODE ----
-  - id: CODE.adversarial-verify-operator
-    title: "Adversarially verify the operator; claims need proof"
-    category: CODE
-    source: { file: CLAUDE.md, anchor: "Adversarially verify the operator" }
-    strength: GATE
-    gateable: true
-    enforcement: fail-closed
-    firing_mode: [hook]
-    mechanism:
-      - { kind: Gate, canonical_name: claim-verify-stop.py, firing_event: Stop, firing_matcher: "*" }
-    proof:
-      - { method: IN_HOOKS_JSON, locator: "Stop|*|claim-verify-stop.py", expect: present }
-      - { method: EXIT_CODE, locator: "scripts/claim-verify-stop.py --selftest registry/fixtures/CODE.adversarial-verify-operator", expect: 0 }
-    liveness_required: FIRES
-
-  - id: CODE.cite-sources
-    title: "Cite sources; every answer ends with its provenance"
-    category: CODE
-    source: { file: CLAUDE.md, anchor: "Cite sources" }
-    strength: GATE
-    gateable: true
-    enforcement: fail-closed  # v6 G1: promoted to block-once via the cadence tail-read; waiver closed
-    firing_mode: [hook]
-    mechanism:
-      - { kind: Gate, canonical_name: source-attribution-check.py, firing_event: Stop, firing_matcher: "*" }
-    proof:
-      - { method: IN_HOOKS_JSON, locator: "Stop|*|source-attribution-check.py", expect: present }
-      - { method: EXIT_CODE, locator: "scripts/source-attribution-check.py --selftest registry/fixtures/CODE.cite-sources", expect: 0 }
-    liveness_required: FIRES
-
-  - id: CODE.qa-merge-gate
-    title: "Merges are fail-closed; agent cannot self-approve"
-    category: CODE
-    source: { file: CLAUDE.md, anchor: "qa-merge-gate" }
-    strength: GATE
-    gateable: true
-    enforcement: fail-closed
-    firing_mode: [hook]
-    mechanism:
-      - { kind: Gate, canonical_name: qa-merge-gate.py, firing_event: PreToolUse, firing_matcher: "Bash" }
-    proof:
-      - { method: IN_HOOKS_JSON, locator: "PreToolUse|Bash|qa-merge-gate.py", expect: present }
-      - { method: EXIT_CODE, locator: "scripts/qa-merge-gate.py --selftest registry/fixtures/CODE.qa-merge-gate", expect: 0 }
-    liveness_required: FIRES
-
-  - id: CODE.dry-run-first
-    title: "Dry-run first; ask before shipping generated configs"
-    category: CODE
-    source: { file: CLAUDE.md, anchor: "Dry-run first" }
-    strength: DETECTOR
-    gateable: true
-    enforcement: fail-open   # v6 D4 audit: config-ship-verify.py emits permissionDecision:ask (a real fail-closed-via-ask interrupt), but only on 3 narrow triggers; the rule is broader, so residual stays fail-open
-    waiver:
-      reason: "v6 D4 audit (2026-07-01): config-ship-verify.py:97 emits permissionDecision 'ask' (a genuine fail-closed-via-ask pause), NOT warn-only as previously stated. But it fires on only 3 hardcoded patterns (Datadog dashboard write, wrangler deploy --config/generated, curl POST @file.json). The rule 'dry-run first; ask before shipping generated configs' plus CLAUDE.md 'destructive ops preview by default' is broader than those 3, so the ask path is narrower than the rule. Residual documented, waiver kept. A broader deterministic deny of 'ship generated config' is still not specifiable without false positives. Close candidate."
-      expires: "2026-09-30"
-      approved_by: "operator directive 2026-06-29 (cierra o waiva las 7); v6 D4 audit"
-    firing_mode: [hook]
-    mechanism:
-      - { kind: Detector, canonical_name: config-ship-verify.py, firing_event: PreToolUse, firing_matcher: "Bash" }
-    proof:
-      - { method: IN_HOOKS_JSON, locator: "PreToolUse|Bash|config-ship-verify.py", expect: present }
-    liveness_required: FIRES
-
-  # ---- SECURITY ----
-  - id: SECURITY.never-read-secrets-raw
-    title: "Never echo/read secret-bearing files raw"
-    category: SECURITY
-    source: { file: CLAUDE.md, anchor: "Never commit secrets" }
-    strength: GATE
-    gateable: true
-    enforcement: fail-closed
-    firing_mode: [hook]
-    mechanism:
-      - { kind: Gate, canonical_name: secrets-grep-guard.py, firing_event: PreToolUse, firing_matcher: "Bash" }
-    proof:
-      - { method: IN_HOOKS_JSON, locator: "PreToolUse|Bash|secrets-grep-guard.py", expect: present }
-      - { method: EXIT_CODE, locator: "scripts/secrets-grep-guard.py --selftest registry/fixtures/SECURITY.never-read-secrets-raw", expect: 0 }
-    liveness_required: FIRES
-
-  # ---- GENERIC ----
-  - id: GENERIC.brain-stays-generic
-    title: "Brain stays generic; no arm/client identifiers leak"
-    category: GENERIC
-    source: { file: CLAUDE.md, anchor: "The Brain Stays Generic" }
-    strength: GATE
-    gateable: true
-    enforcement: fail-closed
-    firing_mode: [git-hook, runner]
-    mechanism:
-      # PrePush firing path is the hook itself (inlined scan); check-generic.py fires via the ai-push runner.
-      - { kind: Gate, canonical_name: .githooks/pre-push, firing_event: PrePush, firing_matcher: null }
-      - { kind: Gate, canonical_name: check-generic.py, firing_event: null, firing_matcher: null }
-    proof:
-      - { method: FILE_EXISTS, locator: ".githooks/pre-push", expect: present }
-      - { method: FILE_EXISTS, locator: "scripts/check-generic.py", expect: present }
-    liveness_required: PRESENT
-
-  # ---- ARCHITECTURE ----
-  - id: ARCHITECTURE.session-isolation
-    title: "Session/instance isolation; own worktree per dimension"
-    category: ARCHITECTURE
-    source: { file: CLAUDE.md, anchor: "Session/Instance Isolation" }
-    strength: GATE
-    gateable: true
-    enforcement: fail-closed
-    firing_mode: [hook]
-    mechanism:
-      - { kind: Gate, canonical_name: session-isolation-hook.py, firing_event: SessionStart, firing_matcher: null }
-      - { kind: Gate, canonical_name: dimension-awareness-hook.py, firing_event: PreToolUse, firing_matcher: "Bash" }
-    proof:
-      - { method: IN_HOOKS_JSON, locator: "SessionStart|*|session-isolation-hook.py", expect: present }
-      - { method: IN_HOOKS_JSON, locator: "PreToolUse|Bash|dimension-awareness-hook.py", expect: present }
-      - { method: EXIT_CODE, locator: "scripts/dimension-awareness-hook.py --selftest", expect: 0 }
-    liveness_required: FIRES
-
-  # ---- FLOW ----
-  - id: FLOW.4d-paradigm
-    title: "4D paradigm fires each turn (Describe/Delegate/Diligent/Disclose)"
-    category: FLOW
-    source: { file: CLAUDE.md, anchor: "The 4D Paradigm" }
-    strength: REFLEX
-    firing_mode: [hook]
-    mechanism:
-      - { kind: Reflex, canonical_name: 4d-reminder.py, firing_event: UserPromptSubmit, firing_matcher: null }
-    proof:
-      - { method: IN_HOOKS_JSON, locator: "UserPromptSubmit|*|4d-reminder.py", expect: present }
-    liveness_required: FIRES
-
-  - id: FLOW.delegate-gate
-    title: "2D Delegate: connect, don't SELF (heartbeat + delegate reflex)"
-    category: FLOW
-    source: { file: CLAUDE.md, anchor: "2D Delegate Gate" }
-    strength: REFLEX
-    gateable: true
-    enforcement: fail-open   # NOT closeable today: PreToolUse:Bash fires inside sub-agents too and carries no main-loop-vs-sub-agent discriminator, so a deny self-defeats (denies the sub-agent it delegates to) AND breaks 3D Diligent. Stays a nudge; listed here permanently as model-discretion until the platform exposes a caller discriminator. (QA-proven 2026-06-29.)
-    waiver:
-      reason: "Not closeable: PreToolUse carries no main-loop vs sub-agent discriminator, so a deny self-defeats and breaks 3D Diligent (QA-proven 2026-06-29). Revisit if the platform exposes a caller field."
-      expires: "2026-09-30"
-      approved_by: "operator directive 2026-06-29 (cierra o waiva las 7)"
-    firing_mode: [hook]
-    mechanism:
-      - { kind: Reflex, canonical_name: connectome-heartbeat.py, firing_event: UserPromptSubmit, firing_matcher: null }
-      - { kind: Reflex, canonical_name: delegate-gate.py, firing_event: PreToolUse, firing_matcher: "Bash" }
-    proof:
-      - { method: IN_HOOKS_JSON, locator: "UserPromptSubmit|*|connectome-heartbeat.py", expect: present }
-      - { method: IN_HOOKS_JSON, locator: "PreToolUse|Bash|delegate-gate.py", expect: present }
-    liveness_required: FIRES
-
-  - id: FLOW.graph-before-grep
-    title: "Graph before grep; seek the lineage, do not scan"
-    category: FLOW
-    source: { file: CLAUDE.md, anchor: "Graph before grep" }
-    strength: GATE
-    gateable: true
-    enforcement: fail-closed  # v6 G3: grafo-gate now DENIES a recursive brain-content grep with no seek this turn; the 3 legit grep classes pass by construction. Waiver closed.
-    firing_mode: [hook]
-    mechanism:
-      - { kind: Gate, canonical_name: grafo-gate.py, firing_event: PreToolUse, firing_matcher: "Bash" }
-      - { kind: Reflex, canonical_name: grafo-turn-reset.py, firing_event: UserPromptSubmit, firing_matcher: null }
-      - { kind: Detector, canonical_name: grafo-ledger-check.py, firing_event: Stop, firing_matcher: "*" }
-    proof:
-      - { method: IN_HOOKS_JSON, locator: "PreToolUse|Bash|grafo-gate.py", expect: present }
-      - { method: IN_HOOKS_JSON, locator: "Stop|*|grafo-ledger-check.py", expect: present }
-      - { method: EXIT_CODE, locator: "scripts/grafo-gate.py --selftest registry/fixtures/FLOW.graph-before-grep", expect: 0 }
-    liveness_required: FIRES
-
-  - id: FLOW.impact-radius
-    title: "Impact Radius on every concept change"
-    category: FLOW
-    source: { file: CLAUDE.md, anchor: "Impact Radius on every concept change" }
-    strength: DETECTOR  # v6 relabel: self-executing (runs the real impact-radius scan), not an inject-only reflex
-    firing_mode: [hook]
-    mechanism:
-      - { kind: Detector, canonical_name: impact-radius-hook.py, firing_event: PostToolUse, firing_matcher: "Write|Edit" }
-    proof:
-      - { method: IN_HOOKS_JSON, locator: "PostToolUse|Write|Edit|impact-radius-hook.py", expect: present }
-      - { method: EXIT_CODE, locator: "scripts/impact-radius-hook.py --selftest", expect: 0 }
-    liveness_required: FIRES
-
-  - id: FLOW.web-agent-browser
-    title: "Web inspection uses agent-browser (eyes), not curl"
-    category: FLOW
-    source: { file: CLAUDE.md, anchor: "agent-browser" }
-    strength: REFLEX
-    firing_mode: [hook]
-    mechanism:
-      - { kind: Reflex, canonical_name: eye-check.py, firing_event: UserPromptSubmit, firing_matcher: null }
-    proof:
-      - { method: IN_HOOKS_JSON, locator: "UserPromptSubmit|*|eye-check.py", expect: present }
-    liveness_required: FIRES
-  - id: IDENTITY.self-awareness
-    title: Self-awareness — Octorato identity anchor
-    category: IDENTITY
-    strength: PRESENCE
-    firing_mode:
-      - model
-    source:
-      file: CLAUDE.md
-      anchor: "Self-Awareness — You Are Running on Octorato"
-    mechanism:
-      - kind: Presence
-        canonical_name: null
-        firing_event: null
-        firing_matcher: null
-    proof:
-      - method: ANCHOR_PRESENT
-        locator: "Self-Awareness — You Are Running on Octorato"
-        expect: present
-    liveness_required: PRESENT
-
-  - id: IDENTITY.generic-stance
-    title: Generic stance — Octorato identity non-negotiable
-    category: IDENTITY
-    strength: PRESENCE
-    firing_mode:
-      - model
-    source:
-      file: CLAUDE.md
-      anchor: "Octorato's Stance (Generic Identity"
-    mechanism:
-      - kind: Presence
-        canonical_name: null
-        firing_event: null
-        firing_matcher: null
-    proof:
-      - method: ANCHOR_PRESENT
-        locator: "Octorato's Stance (Generic Identity"
-        expect: present
-    liveness_required: PRESENT
-
-  - id: ARCHITECTURE.octopus-architecture
-    title: Octopus architecture — structural model anchor
-    category: ARCHITECTURE
-    strength: DETECTOR
-    gateable: false   # repo-state/anchor-presence (enforced at push by anchor + check-generic), not a model-action discretion gate
-    enforcement: n/a
-    firing_mode:
-      - git-hook
-      - runner
-    source:
-      file: CLAUDE.md
-      anchor: "## The Octopus Architecture"
-    mechanism:
-      # PrePush firing path is the hook itself (inlined scan); check-generic.py fires via the ai-push runner.
-      - kind: Detector
-        canonical_name: .githooks/pre-push
-        firing_event: PrePush
-        firing_matcher: null
-      - kind: Detector
-        canonical_name: check-generic.py
-        firing_event: null
-        firing_matcher: null
-    proof:
-      - method: FILE_EXISTS
-        locator: .githooks/pre-push
-        expect: present
-      - method: FILE_EXISTS
-        locator: scripts/check-generic.py
-        expect: present
-      - method: ANCHOR_PRESENT
-        locator: "## The Octopus Architecture"
-        expect: present
-    liveness_required: PRESENT
-
-  - id: ARCHITECTURE.core-principles
-    title: Core principles — arm isolation gates
-    category: ARCHITECTURE
-    strength: GATE
-    gateable: true
-    enforcement: fail-closed
-    firing_mode:
-      - hook
-    source:
-      file: CLAUDE.md
-      anchor: "### Core Principles"
-    mechanism:
-      - kind: Gate
-        canonical_name: session-isolation-hook.py
-        firing_event: SessionStart
-        firing_matcher: null
-      - kind: Gate
-        canonical_name: dimension-awareness-hook.py
-        firing_event: PreToolUse
-        firing_matcher: Bash
-    proof:
-      - method: IN_HOOKS_JSON
-        locator: "SessionStart|*|session-isolation-hook.py"
-        expect: present
-      - method: IN_HOOKS_JSON
-        locator: "PreToolUse|Bash|dimension-awareness-hook.py"
-        expect: present
-      - method: EXIT_CODE
-        locator: "scripts/dimension-awareness-hook.py --selftest"
-        expect: 0
-      - method: ANCHOR_PRESENT
-        locator: "### Core Principles"
-        expect: present
-    liveness_required: FIRES
-
-  - id: ARCHITECTURE.information-flow
-    title: Information flow rules — cross-arm leak detector
-    category: ARCHITECTURE
-    strength: DETECTOR
-    gateable: false   # the cross-arm leak block lives in GENERIC.brain-stays-generic (already gateable+fail-closed); this row is the policy/anchor
-    enforcement: n/a
-    firing_mode:
-      - git-hook
-      - runner
-    source:
-      file: CLAUDE.md
-      anchor: "### Information Flow Rules"
-    mechanism:
-      # PrePush firing path is the hook itself (inlined scan); check-generic.py fires via the ai-push runner.
-      - kind: Detector
-        canonical_name: .githooks/pre-push
-        firing_event: PrePush
-        firing_matcher: null
-      - kind: Detector
-        canonical_name: check-generic.py
-        firing_event: null
-        firing_matcher: null
-    proof:
-      - method: FILE_EXISTS
-        locator: .githooks/pre-push
-        expect: present
-      - method: FILE_EXISTS
-        locator: scripts/check-generic.py
-        expect: present
-      - method: ANCHOR_PRESENT
-        locator: "### Information Flow Rules"
-        expect: present
-    liveness_required: PRESENT
-
-  - id: ARCHITECTURE.layers
-    title: Layer separation — memory tier enforcement
-    category: ARCHITECTURE
-    strength: DETECTOR
-    firing_mode:
-      - runner
-    source:
-      file: CLAUDE.md
-      anchor: "### Layers"
-    mechanism:
-      - kind: Detector
-        canonical_name: memory_sync.py
-        firing_event: null
-        firing_matcher: null
-    proof:
-      - method: FILE_EXISTS
-        locator: scripts/memory_sync.py
-        expect: present
-      - method: ANCHOR_PRESENT
-        locator: "### Layers"
-        expect: present
-    liveness_required: PRESENT
-
-  - id: CODE.universal-discipline
-    title: Universal code discipline — baseline rules
-    category: CODE
-    strength: PRESENCE
-    firing_mode:
-      - model
-    source:
-      file: CLAUDE.md
-      anchor: "## Universal Code Discipline"
-    mechanism:
-      - kind: Presence
-        canonical_name: null
-        firing_event: null
-        firing_matcher: null
-    proof:
-      - method: ANCHOR_PRESENT
-        locator: "## Universal Code Discipline"
-        expect: present
-    liveness_required: PRESENT
-
-  - id: CODE.do-it-right
-    title: Do it right not fast — root cause over palliative
-    category: CODE
-    strength: PRESENCE
-    firing_mode:
-      - model
-    source:
-      file: CLAUDE.md
-      anchor: "ULTRA RULE — Do it right, not fast"
-    mechanism:
-      - kind: Presence
-        canonical_name: null
-        firing_event: null
-        firing_matcher: null
-    proof:
-      - method: ANCHOR_PRESENT
-        locator: "ULTRA RULE — Do it right, not fast"
-        expect: present
-    liveness_required: PRESENT
-
-  - id: SECURITY.baseline
-    title: Security baseline — secrets gate at Bash and push
-    category: SECURITY
-    strength: GATE
-    gateable: true
-    enforcement: fail-closed
-    firing_mode:
-      - hook
-      - git-hook
-      - runner
-    source:
-      file: CLAUDE.md
-      anchor: "## Security (Non-Negotiable)"
-    mechanism:
-      - kind: Gate
-        canonical_name: secrets-grep-guard.py
-        firing_event: PreToolUse
-        firing_matcher: Bash
-      # PrePush firing path is the hook itself (inlined scan); check-generic.py fires via the ai-push runner.
-      - kind: Gate
-        canonical_name: .githooks/pre-push
-        firing_event: PrePush
-        firing_matcher: null
-      - kind: Gate
-        canonical_name: check-generic.py
-        firing_event: null
-        firing_matcher: null
-    proof:
-      - method: IN_HOOKS_JSON
-        locator: "PreToolUse|Bash|secrets-grep-guard.py"
-        expect: present
-      - method: EXIT_CODE
-        locator: "scripts/secrets-grep-guard.py --selftest registry/fixtures/SECURITY.baseline"
-        expect: 0
-      - method: FILE_EXISTS
-        locator: .githooks/pre-push
-        expect: present
-      - method: FILE_EXISTS
-        locator: scripts/check-generic.py
-        expect: present
-      - method: ANCHOR_PRESENT
-        locator: "## Security (Non-Negotiable)"
-        expect: present
-    liveness_required: FIRES
-
-  - id: CODE.prompt-defense
-    title: PromptDefense baseline — anti-injection rules
-    category: CODE
-    strength: PRESENCE
-    firing_mode:
-      - model
-    source:
-      file: CLAUDE.md
-      anchor: "## PromptDefense Baseline"
-    mechanism:
-      - kind: Presence
-        canonical_name: null
-        firing_event: null
-        firing_matcher: null
-    proof:
-      - method: ANCHOR_PRESENT
-        locator: "## PromptDefense Baseline"
-        expect: present
-    liveness_required: PRESENT
-
-  - id: COMMS.communication-baseline
-    title: Communication baseline — cadence stop detector
-    category: COMMS
-    strength: DETECTOR
-    gateable: true
-    enforcement: fail-closed
-    firing_mode:
-      - hook
-    source:
-      file: CLAUDE.md
-      anchor: "## Communication"
-    mechanism:
-      - kind: Detector
-        canonical_name: cadence-stop-hook.py
-        firing_event: Stop
-        firing_matcher: "*"
-    proof:
-      - method: IN_HOOKS_JSON
-        locator: "Stop|*|cadence-stop-hook.py"
-        expect: present
-      - method: EXIT_CODE
-        locator: "scripts/cadence-stop-hook.py --selftest registry/fixtures/COMMS.communication-baseline"
-        expect: 0
-      - method: ANCHOR_PRESENT
-        locator: "## Communication"
-        expect: present
-    liveness_required: FIRES
-
-  - id: COMMS.machine-register
-    title: Machine register — no human-social filler
-    category: COMMS
-    strength: PRESENCE
-    firing_mode:
-      - model
-    source:
-      file: CLAUDE.md
-      anchor: "ULTRA RULE — Machine register"
-    mechanism:
-      - kind: Presence
-        canonical_name: null
-        firing_event: null
-        firing_matcher: null
-    proof:
-      - method: ANCHOR_PRESENT
-        locator: "ULTRA RULE — Machine register"
-        expect: present
-    liveness_required: PRESENT
-
-  - id: GIT.version-control
-    title: Git and version control — atomic commit discipline
-    category: GIT
-    strength: GATE
-    gateable: true
-    enforcement: fail-closed  # v6 G2: the deterministic subset (force-push to main, _old/_backup names) is fail-closed; atomic-commit and pull-before-push halves stay model-side
-    firing_mode:
-      - hook
-    source:
-      file: CLAUDE.md
-      anchor: "## Git & Version Control"
-    mechanism:
-      - { kind: Gate, canonical_name: g__pretool-bash__git-discipline.py, firing_event: PreToolUse, firing_matcher: "Bash" }
-      - { kind: Gate, canonical_name: g__pretool-bash__git-discipline.py, firing_event: PreToolUse, firing_matcher: "Write|Edit|NotebookEdit|MultiEdit" }
-    proof:
-      - { method: IN_HOOKS_JSON, locator: "PreToolUse|Bash|g__pretool-bash__git-discipline.py", expect: present }
-      - { method: IN_HOOKS_JSON, locator: "PreToolUse|Write|Edit|NotebookEdit|MultiEdit|g__pretool-bash__git-discipline.py", expect: present }
-      - { method: EXIT_CODE, locator: "scripts/g__pretool-bash__git-discipline.py --selftest registry/fixtures/GIT.version-control", expect: 0 }
-      - { method: ANCHOR_PRESENT, locator: "## Git & Version Control", expect: present }
-    liveness_required: FIRES
-
-  - id: CODE.file-organization
-    title: File organization — config-first no summary markdown
-    category: CODE
-    strength: PRESENCE
-    firing_mode:
-      - model
-    source:
-      file: CLAUDE.md
-      anchor: "## File Organization"
-    mechanism:
-      - kind: Presence
-        canonical_name: null
-        firing_event: null
-        firing_matcher: null
-    proof:
-      - method: ANCHOR_PRESENT
-        locator: "## File Organization"
-        expect: present
-    liveness_required: PRESENT
-
-  - id: CODE.when-unsure
-    title: When unsure — search before assuming
-    category: CODE
-    strength: PRESENCE
-    firing_mode:
-      - model
-    source:
-      file: CLAUDE.md
-      anchor: "## When Unsure"
-    mechanism:
-      - kind: Presence
-        canonical_name: null
-        firing_event: null
-        firing_matcher: null
-    proof:
-      - method: ANCHOR_PRESENT
-        locator: "## When Unsure"
-        expect: present
-    liveness_required: PRESENT
-
-  - id: FLOW.prune-dead-cells
-    title: Prune dead cells — lineage-doctor detects orphans at push
-    category: FLOW
-    strength: DETECTOR
-    gateable: false   # advisory push detector (lineage-doctor warn-only); rule is "suggest, never auto-delete" by design
-    enforcement: n/a
-    firing_mode:
-      - git-hook
-    source:
-      file: CLAUDE.md
-      anchor: "ULTRA RULE — Prune dead cells"
-    mechanism:
-      - kind: Detector
-        canonical_name: lineage-doctor.py
-        firing_event: PrePush
-        firing_matcher: null
-    proof:
-      - method: FILE_EXISTS
-        locator: scripts/lineage-doctor.py
-        expect: present
-      - method: ANCHOR_PRESENT
-        locator: "ULTRA RULE — Prune dead cells"
-        expect: present
-    liveness_required: PRESENT
-
-  - id: FLOW.suggest-unlock
-    title: Suggest the unlock — disclose capability gaps
-    category: FLOW
-    strength: PRESENCE
-    firing_mode:
-      - model
-    source:
-      file: CLAUDE.md
-      anchor: "ULTRA RULE — Suggest the unlock"
-    mechanism:
-      - kind: Presence
-        canonical_name: null
-        firing_event: null
-        firing_matcher: null
-    proof:
-      - method: ANCHOR_PRESENT
-        locator: "ULTRA RULE — Suggest the unlock"
-        expect: present
-    liveness_required: PRESENT
-
-  - id: FLOW.4d-gate-prewrite
-    title: 4D pre-write manifest gate
-    category: FLOW
-    strength: REFLEX
-    firing_mode:
-      - hook
-      - cli
-    source:
-      file: CLAUDE.md
-      anchor: "### 4D Gate (Pre-Write Manifest)"
-    mechanism:
-      - kind: Reflex
-        canonical_name: 4d-reminder.py
-        firing_event: UserPromptSubmit
-        firing_matcher: null
-      - kind: Reflex
-        canonical_name: gate-check
-        firing_event: null
-        firing_matcher: null
-    proof:
-      - method: IN_HOOKS_JSON
-        locator: "UserPromptSubmit|*|4d-reminder.py"
-        expect: present
-      - method: FILE_EXISTS
-        locator: scripts/gate-check
-        expect: present
-      - method: ANCHOR_PRESENT
-        locator: "### 4D Gate (Pre-Write Manifest)"
-        expect: present
-    liveness_required: FIRES
-
-  - id: FLOW.3d-diligent-gate
-    title: 3D diligent gate — post-write validation
-    category: FLOW
-    strength: REFLEX
-    gateable: true
-    enforcement: fail-open   # shares source-attribution-check.py (Stop, warn-only); same class as CODE.cite-sources
-    waiver:
-      reason: "Shares the warn-only source-attribution Stop detector; the 'did you validate' part is judgment. Hard block deferred. Close candidate."
-      expires: "2026-09-30"
-      approved_by: "operator directive 2026-06-29 (cierra o waiva las 7)"
-    firing_mode:
-      - hook
-    source:
-      file: CLAUDE.md
-      anchor: "### 3D Diligent Gate"
-    mechanism:
-      - kind: Reflex
-        canonical_name: trace-hook.py
-        firing_event: PostToolUse
-        firing_matcher: "Write|Edit"
-      - kind: Detector
-        canonical_name: source-attribution-check.py
-        firing_event: Stop
-        firing_matcher: "*"
-    proof:
-      - method: IN_HOOKS_JSON
-        locator: "PostToolUse|Write|Edit|trace-hook.py"
-        expect: present
-      - method: IN_HOOKS_JSON
-        locator: "Stop|*|source-attribution-check.py"
-        expect: present
-      - method: ANCHOR_PRESENT
-        locator: "### 3D Diligent Gate"
-        expect: present
-    liveness_required: FIRES
-
-  - id: FLOW.4d-spec-enhancement
-    title: 4D+S spec-driven enhancement — complexity classifier
-    category: FLOW
-    strength: PRESENCE
-    firing_mode:
-      - model
-    source:
-      file: CLAUDE.md
-      anchor: "### 4D+S — Spec-Driven Enhancement"
-    mechanism:
-      - kind: Presence
-        canonical_name: null
-        firing_event: null
-        firing_matcher: null
-    proof:
-      - method: ANCHOR_PRESENT
-        locator: "### 4D+S — Spec-Driven Enhancement"
-        expect: present
-    liveness_required: PRESENT
-
-  - id: FLOW.enforcement-scripts
-    title: Enforcement scripts — mandatory Q1/Q3 reflexes
-    category: FLOW
-    strength: REFLEX
-    gateable: true
-    enforcement: fail-open   # shares delegate-gate.py nudge mechanism (see FLOW.delegate-gate)
-    waiver:
-      reason: "Shares delegate-gate.py, which is not closeable (no caller discriminator). Tied to FLOW.delegate-gate."
-      expires: "2026-09-30"
-      approved_by: "operator directive 2026-06-29 (cierra o waiva las 7)"
-    firing_mode:
-      - hook
-      - cli
-    source:
-      file: CLAUDE.md
-      anchor: "### Enforcement Scripts (Mandatory)"
-    mechanism:
-      - kind: Reflex
-        canonical_name: connectome-heartbeat.py
-        firing_event: UserPromptSubmit
-        firing_matcher: null
-      - kind: Reflex
-        canonical_name: delegate-gate.py
-        firing_event: PreToolUse
-        firing_matcher: Bash
-    proof:
-      - method: IN_HOOKS_JSON
-        locator: "UserPromptSubmit|*|connectome-heartbeat.py"
-        expect: present
-      - method: IN_HOOKS_JSON
-        locator: "PreToolUse|Bash|delegate-gate.py"
-        expect: present
-      - method: ANCHOR_PRESENT
-        locator: "### Enforcement Scripts (Mandatory)"
-        expect: present
-    liveness_required: FIRES
-
-  - id: CODE.best-tool-first
-    title: Best tool first — never settle for workarounds
-    category: CODE
-    strength: PRESENCE
-    firing_mode:
-      - model
-    source:
-      file: CLAUDE.md
-      anchor: "## Best Tool First"
-    mechanism:
-      - kind: Presence
-        canonical_name: null
-        firing_event: null
-        firing_matcher: null
-    proof:
-      - method: ANCHOR_PRESENT
-        locator: "## Best Tool First"
-        expect: present
-    liveness_required: PRESENT
-
-  - id: FLOW.skill-first
-    title: Skill-first behavior — domain reflexes via eye-check
-    category: FLOW
-    strength: REFLEX
-    firing_mode:
-      - hook
-    source:
-      file: CLAUDE.md
-      anchor: "## Skill-First Behavior"
-    mechanism:
-      - kind: Reflex
-        canonical_name: eye-check.py
-        firing_event: UserPromptSubmit
-        firing_matcher: null
-    proof:
-      - method: IN_HOOKS_JSON
-        locator: "UserPromptSubmit|*|eye-check.py"
-        expect: present
-      - method: ANCHOR_PRESENT
-        locator: "## Skill-First Behavior"
-        expect: present
-    liveness_required: FIRES
-
-  - id: META.querymaster
-    title: QueryMaster — global database agent anchor
-    category: META
-    strength: PRESENCE
-    firing_mode:
-      - model
-    source:
-      file: CLAUDE.md
-      anchor: "## QueryMaster — Global Database Agent"
-    mechanism:
-      - kind: Presence
-        canonical_name: null
-        firing_event: null
-        firing_matcher: null
-    proof:
-      - method: ANCHOR_PRESENT
-        locator: "## QueryMaster — Global Database Agent"
-        expect: present
-    liveness_required: PRESENT
-
-  - id: ARCHITECTURE.arm-onboarding
-    title: Arm onboarding — install-runners bootstrap detector
-    category: ARCHITECTURE
-    strength: DETECTOR
-    firing_mode:
-      - runner
-    source:
-      file: CLAUDE.md
-      anchor: "## Arm Onboarding"
-    mechanism:
-      - kind: Detector
-        canonical_name: install-runners.py
-        firing_event: null
-        firing_matcher: null
-    proof:
-      - method: FILE_EXISTS
-        locator: scripts/install-runners.py
-        expect: present
-      - method: ANCHOR_PRESENT
-        locator: "## Arm Onboarding"
-        expect: present
-    liveness_required: PRESENT
-
-  - id: META.multi-machine-sync
-    title: Multi-machine sync — brain consistency anchor
-    category: META
-    strength: PRESENCE
-    firing_mode:
-      - model
-    source:
-      file: CLAUDE.md
-      anchor: "## Multi-Machine Sync"
-    mechanism:
-      - kind: Presence
-        canonical_name: null
-        firing_event: null
-        firing_matcher: null
-    proof:
-      - method: ANCHOR_PRESENT
-        locator: "## Multi-Machine Sync"
-        expect: present
-    liveness_required: PRESENT
-
-  - id: META.ai-sync-canonical
-    title: ai-sync canonical runner — race-safe brain sync
-    category: META
-    strength: REFLEX
-    firing_mode:
-      - runner
-    source:
-      file: CLAUDE.md
-      anchor: "ULTRA RULE: `ai-sync"
-    mechanism:
-      - kind: Reflex
-        canonical_name: ai_sync.py
-        firing_event: null
-        firing_matcher: null
-    proof:
-      - method: FILE_EXISTS
-        locator: scripts/ai_sync.py
-        expect: present
-      - method: ANCHOR_PRESENT
-        locator: "ULTRA RULE: `ai-sync"
-        expect: present
-    liveness_required: PRESENT
-
-  # --- D4 (Phase 4b): the 6 previously-orphan hooks, now registered (RULE #1 bidirectional) ---
-  - id: MEMORY.arm-recall
-    title: "Recall an arm's own stored knowledge before researching or asking"
-    category: MEMORY
-    source: { file: CLAUDE.md, anchor: "## Skill-First Behavior" }
-    strength: REFLEX
-    firing_mode: [hook]
-    mechanism:
-      - { kind: Reflex, canonical_name: arm-recall-hook.py, firing_event: UserPromptSubmit, firing_matcher: "*" }
-    proof:
-      - { method: IN_HOOKS_JSON, locator: "UserPromptSubmit|*|arm-recall-hook.py", expect: present }
-      - { method: ANCHOR_PRESENT, locator: "## Skill-First Behavior", expect: present }
-    liveness_required: FIRES
-  - id: MEMORY.brain-memory-recall
-    title: "Surface the brain's own life-memories relevant to the prompt before asking"
-    category: MEMORY
-    source: { file: CLAUDE.md, anchor: "## When Unsure" }
-    strength: REFLEX
-    firing_mode: [hook]
-    mechanism:
-      - { kind: Reflex, canonical_name: brain-memory-recall.py, firing_event: UserPromptSubmit, firing_matcher: "*" }
-    proof:
-      - { method: IN_HOOKS_JSON, locator: "UserPromptSubmit|*|brain-memory-recall.py", expect: present }
-      - { method: ANCHOR_PRESENT, locator: "## When Unsure", expect: present }
-    liveness_required: FIRES
-  - id: COMMS.no-pause
-    title: "Do not ask to pause; execute, never propose stopping"
-    category: COMMS
-    source: { file: CLAUDE.md, anchor: "Answer, do the work, stop" }
-    strength: DETECTOR
-    gateable: true
-    enforcement: fail-open
-    waiver:
-      reason: "no-pause-suggestion Stop is warn-only; a hard block on pause-phrase detection is deferred pending false-positive tuning (legit clarifying questions). Close candidate."
-      expires: "2026-09-30"
-      approved_by: "operator directive 2026-06-29 (cierra o waiva las 7)"
-    firing_mode: [hook]
-    mechanism:
-      - { kind: Detector, canonical_name: no-pause-suggestion.py, firing_event: Stop, firing_matcher: "*" }
-    proof:
-      - { method: IN_HOOKS_JSON, locator: "Stop|*|no-pause-suggestion.py", expect: present }
-      - { method: ANCHOR_PRESENT, locator: "Answer, do the work, stop", expect: present }
-    liveness_required: FIRES
-  - id: COMMS.client-doc-lint
-    title: "Client deliverables pass the doc lint before they are sent"
-    category: COMMS
-    source: { file: skills/client-doc-lint/SKILL.md, anchor: "el doc no se manda sin pasar el lint" }
-    strength: DETECTOR
-    firing_mode: [hook]
-    mechanism:
-      - { kind: Detector, canonical_name: client-doc-lint-hook.py, firing_event: PostToolUse, firing_matcher: "Bash" }
-    proof:
-      - { method: IN_HOOKS_JSON, locator: "PostToolUse|Bash|client-doc-lint-hook.py", expect: present }
-      - { method: ANCHOR_PRESENT, locator: "el doc no se manda sin pasar el lint", expect: present }
-    liveness_required: FIRES
-  - id: MEMORY.inbox-sweep
-    title: "Full inbox sweep when email or pendientes are requested"
-    category: MEMORY
-    source: { file: skills/inbox-triage-classifier/SKILL.md, anchor: "Inbox-Triage Classifier" }
-    strength: REFLEX
-    firing_mode: [hook]
-    mechanism:
-      - { kind: Reflex, canonical_name: inbox-sweep-reflex.py, firing_event: UserPromptSubmit, firing_matcher: "*" }
-    proof:
-      - { method: IN_HOOKS_JSON, locator: "UserPromptSubmit|*|inbox-sweep-reflex.py", expect: present }
-      - { method: ANCHOR_PRESENT, locator: "Inbox-Triage Classifier", expect: present }
-    liveness_required: FIRES
-  - id: FLOW.canon-heal
-    title: "Heal the content canon to unison on every edit"
-    category: FLOW
-    source: { file: skills/octorato-harmony/SKILL.md, anchor: "Octorato Harmony" }
-    strength: DETECTOR  # v6 relabel: self-executing (heals canon itself), not an inject-only reflex
-    firing_mode: [hook]
-    mechanism:
-      - { kind: Detector, canonical_name: canon-heal-hook.py, firing_event: PostToolUse, firing_matcher: "Write|Edit" }
-    proof:
-      - { method: IN_HOOKS_JSON, locator: "PostToolUse|Write|Edit|canon-heal-hook.py", expect: present }
-      - { method: EXIT_CODE, locator: "scripts/canon-heal-hook.py --selftest", expect: 0 }
-      - { method: ANCHOR_PRESENT, locator: "Octorato Harmony", expect: present }
-    liveness_required: FIRES
-  - id: ARCHITECTURE.drift-self-heal
-    title: "Reconcile settings.json from the tracked hooks.json at session start (drift self-heal)"
-    category: ARCHITECTURE
-    source: { file: CLAUDE.md, anchor: "## Multi-Machine Sync" }
-    strength: DETECTOR  # v6 relabel: self-executing (regenerates settings.json itself), not an inject-only reflex
-    firing_mode: [hook]
-    mechanism:
-      - { kind: Detector, canonical_name: merge-hooks.py, firing_event: SessionStart, firing_matcher: "*" }
-    proof:
-      - { method: IN_HOOKS_JSON, locator: "SessionStart|*|merge-hooks.py", expect: present }
-      - { method: EXIT_CODE, locator: "scripts/merge-hooks.py --selftest", expect: 0 }
-      - { method: ANCHOR_PRESENT, locator: "## Multi-Machine Sync", expect: present }
-    liveness_required: FIRES
-
-  - id: FLOW.budget-halt
-    title: "FinOps budget caps halt expensive dispatch (fail-open)"
-    category: FLOW
-    source: { file: README.md, anchor: "FinOps roadmap" }
-    strength: GATE
-    gateable: true
-    enforcement: fail-open   # budgets.yaml is live, but every action_on_breach is `alert` by operator choice, so the gate never denies. Waived below.
-    waiver:
-      reason: "budgets.yaml is active (since 2026-06-01), but every arm and the default set action_on_breach: alert by operator choice, so the HARD_STOP branch (scripts/budget-check.py:166) is unreachable by config. The gate stays fail-open until an arm opts into hard_stop."
-      expires: "2026-09-30"
-      approved_by: "operator directive 2026-06-29 (resuelve budget-halt)"
-    firing_mode: [hook]
-    mechanism:
-      - { kind: Gate, canonical_name: budget-check.py, firing_event: PreToolUse, firing_matcher: "Agent" }
-    proof:
-      - { method: IN_HOOKS_JSON, locator: "PreToolUse|Agent|budget-check.py", expect: present }
-      - { method: ANCHOR_PRESENT, locator: "FinOps roadmap", expect: present }
-    liveness_required: FIRES
-
-  # --- Skills canon rows (corpus-coverage): each anchors a MANDATORY canon line inside a
-  #     skill file so the Coverage Ledger counts skill-scoped rules honestly, per the
-  #     source.file precedent at COMMS.client-doc-lint / MEMORY.inbox-sweep / FLOW.canon-heal. ---
-  - id: CODE.bug-hunter-read-prompts
-    title: "bug-hunter: read prompt files before passing them to subagents"
-    category: CODE
-    source: { file: skills/bug-hunter/SKILL.md, anchor: "MANDATORY**: You MUST read prompt files" }
-    strength: PRESENCE
-    gateable: false
-    firing_mode: [library]
-    mechanism:
-      - { kind: Presence, canonical_name: null, firing_event: null, firing_matcher: null }
-    proof:
-      - { method: ANCHOR_PRESENT, locator: "MANDATORY**: You MUST read prompt files", expect: present }
-    liveness_required: PRESENT
-  - id: CODE.canary-live-test
-    title: "canary-symbiont: a never-fired canary protects nothing, run the live test"
-    category: CODE
-    source: { file: skills/canary-symbiont/SKILL.md, anchor: "The MANDATORY live test" }
-    strength: PRESENCE
-    firing_mode: [library]
-    mechanism:
-      - { kind: Presence, canonical_name: null, firing_event: null, firing_matcher: null }
-    proof:
-      - { method: ANCHOR_PRESENT, locator: "The MANDATORY live test", expect: present }
-    liveness_required: PRESENT
-  - id: FLOW.figma-use-prerequisite
-    title: "figma-use: load the skill before every use_figma call (mandatory prerequisite)"
-    category: FLOW
-    source: { file: skills/figma-use/SKILL.md, anchor: "MANDATORY prerequisite" }
-    strength: PRESENCE
-    firing_mode: [library]
-    mechanism:
-      - { kind: Presence, canonical_name: null, firing_event: null, firing_matcher: null }
-    proof:
-      - { method: ANCHOR_PRESENT, locator: "MANDATORY prerequisite", expect: present }
-    liveness_required: PRESENT
-  - id: FLOW.image-analyzer-trigger
-    title: "image-analyzer: mandatory trigger when the user references an image"
-    category: FLOW
-    source: { file: skills/image-analyzer/SKILL.md, anchor: "MANDATORY: When User References an Image" }
-    strength: PRESENCE
-    firing_mode: [library]
-    mechanism:
-      - { kind: Presence, canonical_name: null, firing_event: null, firing_matcher: null }
-    proof:
-      - { method: ANCHOR_PRESENT, locator: "MANDATORY: When User References an Image", expect: present }
-    liveness_required: PRESENT
-  - id: FLOW.orchestrated-planning-reporting-contract
-    title: "orchestrated-planning: subagent reporting contract is mandatory"
-    category: FLOW
-    source: { file: skills/orchestrated-planning/SKILL.md, anchor: "Subagent Reporting Contract (MANDATORY)" }
-    strength: PRESENCE
-    firing_mode: [library]
-    mechanism:
-      - { kind: Presence, canonical_name: null, firing_event: null, firing_matcher: null }
-    proof:
-      - { method: ANCHOR_PRESENT, locator: "Subagent Reporting Contract (MANDATORY)", expect: present }
-    liveness_required: PRESENT
-  - id: SECURITY.querymaster-rules
-    title: "QueryMaster security rules: dry-run by default, no secret logging, destructive guard"
-    category: SECURITY
-    source: { file: skills/querymaster/SKILL.md, anchor: "Security Rules (MANDATORY)" }
-    strength: DETECTOR
-    firing_mode: [cli]
-    mechanism:
-      - { kind: Detector, canonical_name: querymaster-security-detector.py, firing_event: null, firing_matcher: null }
-    proof:
-      - { method: ANCHOR_PRESENT, locator: "Security Rules (MANDATORY)", expect: present }
-      - { method: EXIT_CODE, locator: "python3 scripts/querymaster-security-detector.py --selftest", expect: 0 }
-    liveness_required: PRESENT
-
-  # --- Memory directive class row (corpus-coverage): ONE mechanism for the whole
-  #     feedback_* corpus (per-item rows would leak private filenames into the public
-  #     repo and fail on machines without the memory layer). A feedback file counts
-  #     covered only when indexed in its sibling MEMORY.md, verified in check_corpus_coverage. ---
-  - id: MEMORY.feedback-directive-corpus
-    title: "Every indexed feedback_* memory directive fires via harness auto-memory plus the brain-memory-recall pointer"
-    category: MEMORY
-    source: { file: CLAUDE.md, anchor: "Memory = the octopus" }
-    strength: REFLEX
-    gateable: false
-    firing_mode: [hook, library]
-    mechanism:
-      - { kind: Reflex, canonical_name: brain-memory-recall.py, firing_event: UserPromptSubmit, firing_matcher: "*" }
-      - { kind: Presence, canonical_name: null, firing_event: null, firing_matcher: null }
-    proof:
-      - { method: IN_HOOKS_JSON, locator: "UserPromptSubmit|*|brain-memory-recall.py", expect: present }
-    liveness_required: FIRES
+- id: META.rule-1-wired-or-corrupt
+  title: 'RULE #1 — every rule must be wired; unwired = corrupt brain'
+  category: META
+  source:
+    file: CLAUDE.md
+    anchor: 'RULE #1'
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - runner
+  - git-hook
+  mechanism:
+  - kind: Gate
+    canonical_name: brain_doctor.py
+    firing_event: PrePush
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: scripts/brain_doctor.py
+    expect: present
+  - method: ANCHOR_PRESENT
+    locator: 'RULE #1'
+    expect: present
+  liveness_required: PRESENT
+- id: META.pre-push-gate
+  title: brain_doctor is invoked from the tracked pre-push hook
+  category: META
+  source:
+    file: CLAUDE.md
+    anchor: 'RULE #1'
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - git-hook
+  mechanism:
+  - kind: Gate
+    canonical_name: .githooks/pre-push
+    firing_event: PrePush
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: .githooks/pre-push
+    expect: present
+  - method: EXIT_CODE
+    locator: grep -q OCTORATO-WIRE-GATE .githooks/pre-push
+    expect: 0
+  liveness_required: PRESENT
+- id: COMMS.human-cadence
+  title: Human Cadence — 10 anti-AI-tell rules
+  category: COMMS
+  source:
+    file: CLAUDE.md
+    anchor: Human Cadence
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - hook
+  - cli
+  mechanism:
+  - kind: Gate
+    canonical_name: cadence-stop-hook.py
+    firing_event: Stop
+    firing_matcher: '*'
+  - kind: Detector
+    canonical_name: cadence-lint.py
+    firing_event: PostToolUse
+    firing_matcher: Write|Edit
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: Stop|*|cadence-stop-hook.py
+    expect: present
+  - method: IN_HOOKS_JSON
+    locator: PostToolUse|Write|Edit|cadence-lint.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/cadence-stop-hook.py --selftest registry/fixtures/COMMS.human-cadence
+    expect: 0
+  liveness_required: FIRES
+- id: COMMS.deliverable-complete-before-send
+  title: Deliverable-complete-before-send — no future-tense promises in paste-ready drafts
+  category: COMMS
+  source:
+    file: CLAUDE.md
+    anchor: Deliverable-complete-before-send
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Gate
+    canonical_name: g__stop__draft-promise.py
+    firing_event: Stop
+    firing_matcher: '*'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: Stop|*|g__stop__draft-promise.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/g__stop__draft-promise.py --selftest registry/fixtures/COMMS.deliverable-complete-before-send
+    expect: 0
+  liveness_required: FIRES
+- id: CODE.adversarial-verify-operator
+  title: Adversarially verify the operator; claims need proof
+  category: CODE
+  source:
+    file: CLAUDE.md
+    anchor: Adversarially verify the operator
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Gate
+    canonical_name: claim-verify-stop.py
+    firing_event: Stop
+    firing_matcher: '*'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: Stop|*|claim-verify-stop.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/claim-verify-stop.py --selftest registry/fixtures/CODE.adversarial-verify-operator
+    expect: 0
+  liveness_required: FIRES
+- id: CODE.cite-sources
+  title: Cite sources; every answer ends with its provenance
+  category: CODE
+  source:
+    file: CLAUDE.md
+    anchor: Cite sources
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Gate
+    canonical_name: source-attribution-check.py
+    firing_event: Stop
+    firing_matcher: '*'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: Stop|*|source-attribution-check.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/source-attribution-check.py --selftest registry/fixtures/CODE.cite-sources
+    expect: 0
+  liveness_required: FIRES
+- id: CODE.qa-merge-gate
+  title: Merges are fail-closed; agent cannot self-approve
+  category: CODE
+  source:
+    file: CLAUDE.md
+    anchor: qa-merge-gate
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Gate
+    canonical_name: qa-merge-gate.py
+    firing_event: PreToolUse
+    firing_matcher: Bash
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: PreToolUse|Bash|qa-merge-gate.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/qa-merge-gate.py --selftest registry/fixtures/CODE.qa-merge-gate
+    expect: 0
+  liveness_required: FIRES
+- id: CODE.dry-run-first
+  title: Dry-run first; ask before shipping generated configs
+  category: CODE
+  source:
+    file: CLAUDE.md
+    anchor: Dry-run first
+  strength: DETECTOR
+  gateable: true
+  enforcement: fail-open
+  waiver:
+    reason: 'v6 D4 audit (2026-07-01): config-ship-verify.py:97 emits permissionDecision ''ask'' (a genuine
+      fail-closed-via-ask pause), NOT warn-only as previously stated. But it fires on only 3 hardcoded
+      patterns (Datadog dashboard write, wrangler deploy --config/generated, curl POST @file.json). The
+      rule ''dry-run first; ask before shipping generated configs'' plus CLAUDE.md ''destructive ops preview
+      by default'' is broader than those 3, so the ask path is narrower than the rule. Residual documented,
+      waiver kept. A broader deterministic deny of ''ship generated config'' is still not specifiable
+      without false positives. Close candidate.'
+    expires: '2026-09-30'
+    approved_by: operator directive 2026-06-29 (cierra o waiva las 7); v6 D4 audit
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Detector
+    canonical_name: config-ship-verify.py
+    firing_event: PreToolUse
+    firing_matcher: Bash
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: PreToolUse|Bash|config-ship-verify.py
+    expect: present
+  liveness_required: FIRES
+- id: SECURITY.never-read-secrets-raw
+  title: Never echo/read secret-bearing files raw
+  category: SECURITY
+  source:
+    file: CLAUDE.md
+    anchor: Never commit secrets
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Gate
+    canonical_name: secrets-grep-guard.py
+    firing_event: PreToolUse
+    firing_matcher: Bash
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: PreToolUse|Bash|secrets-grep-guard.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/secrets-grep-guard.py --selftest registry/fixtures/SECURITY.never-read-secrets-raw
+    expect: 0
+  liveness_required: FIRES
+- id: GENERIC.brain-stays-generic
+  title: Brain stays generic; no arm/client identifiers leak
+  category: GENERIC
+  source:
+    file: CLAUDE.md
+    anchor: The Brain Stays Generic
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - git-hook
+  - runner
+  mechanism:
+  - kind: Gate
+    canonical_name: .githooks/pre-push
+    firing_event: PrePush
+    firing_matcher: null
+  - kind: Gate
+    canonical_name: check-generic.py
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: .githooks/pre-push
+    expect: present
+  - method: FILE_EXISTS
+    locator: scripts/check-generic.py
+    expect: present
+  liveness_required: PRESENT
+- id: ARCHITECTURE.session-isolation
+  title: Session/instance isolation; own worktree per dimension
+  category: ARCHITECTURE
+  source:
+    file: CLAUDE.md
+    anchor: Session/Instance Isolation
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Gate
+    canonical_name: session-isolation-hook.py
+    firing_event: SessionStart
+    firing_matcher: null
+  - kind: Gate
+    canonical_name: dimension-awareness-hook.py
+    firing_event: PreToolUse
+    firing_matcher: Bash
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: SessionStart|*|session-isolation-hook.py
+    expect: present
+  - method: IN_HOOKS_JSON
+    locator: PreToolUse|Bash|dimension-awareness-hook.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/dimension-awareness-hook.py --selftest
+    expect: 0
+  liveness_required: FIRES
+- id: FLOW.4d-paradigm
+  title: 4D paradigm fires each turn (Describe/Delegate/Diligent/Disclose)
+  category: FLOW
+  source:
+    file: CLAUDE.md
+    anchor: The 4D Paradigm
+  strength: REFLEX
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Reflex
+    canonical_name: 4d-reminder.py
+    firing_event: UserPromptSubmit
+    firing_matcher: null
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: UserPromptSubmit|*|4d-reminder.py
+    expect: present
+  liveness_required: FIRES
+- id: FLOW.delegate-gate
+  title: '2D Delegate: connect, don''t SELF (heartbeat + delegate reflex)'
+  category: FLOW
+  source:
+    file: CLAUDE.md
+    anchor: 2D Delegate Gate
+  strength: REFLEX
+  gateable: true
+  enforcement: fail-open
+  waiver:
+    reason: 'Not closeable: PreToolUse carries no main-loop vs sub-agent discriminator, so a deny self-defeats
+      and breaks 3D Diligent (QA-proven 2026-06-29). Revisit if the platform exposes a caller field.'
+    expires: '2026-09-30'
+    approved_by: operator directive 2026-06-29 (cierra o waiva las 7)
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Reflex
+    canonical_name: connectome-heartbeat.py
+    firing_event: UserPromptSubmit
+    firing_matcher: null
+  - kind: Reflex
+    canonical_name: delegate-gate.py
+    firing_event: PreToolUse
+    firing_matcher: Bash
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: UserPromptSubmit|*|connectome-heartbeat.py
+    expect: present
+  - method: IN_HOOKS_JSON
+    locator: PreToolUse|Bash|delegate-gate.py
+    expect: present
+  liveness_required: FIRES
+- id: FLOW.graph-before-grep
+  title: Graph before grep; seek the lineage, do not scan
+  category: FLOW
+  source:
+    file: CLAUDE.md
+    anchor: Graph before grep
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Gate
+    canonical_name: grafo-gate.py
+    firing_event: PreToolUse
+    firing_matcher: Bash
+  - kind: Reflex
+    canonical_name: grafo-turn-reset.py
+    firing_event: UserPromptSubmit
+    firing_matcher: null
+  - kind: Detector
+    canonical_name: grafo-ledger-check.py
+    firing_event: Stop
+    firing_matcher: '*'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: PreToolUse|Bash|grafo-gate.py
+    expect: present
+  - method: IN_HOOKS_JSON
+    locator: Stop|*|grafo-ledger-check.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/grafo-gate.py --selftest registry/fixtures/FLOW.graph-before-grep
+    expect: 0
+  liveness_required: FIRES
+- id: FLOW.impact-radius
+  title: Impact Radius on every concept change
+  category: FLOW
+  source:
+    file: CLAUDE.md
+    anchor: Impact Radius on every concept change
+  strength: DETECTOR
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Detector
+    canonical_name: impact-radius-hook.py
+    firing_event: PostToolUse
+    firing_matcher: Write|Edit
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: PostToolUse|Write|Edit|impact-radius-hook.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/impact-radius-hook.py --selftest
+    expect: 0
+  liveness_required: FIRES
+- id: FLOW.web-agent-browser
+  title: Web inspection uses agent-browser (eyes), not curl
+  category: FLOW
+  source:
+    file: CLAUDE.md
+    anchor: agent-browser
+  strength: REFLEX
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Reflex
+    canonical_name: eye-check.py
+    firing_event: UserPromptSubmit
+    firing_matcher: null
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: UserPromptSubmit|*|eye-check.py
+    expect: present
+  liveness_required: FIRES
+- id: IDENTITY.self-awareness
+  title: Self-awareness — Octorato identity anchor
+  category: IDENTITY
+  strength: PRESENCE
+  firing_mode:
+  - model
+  source:
+    file: CLAUDE.md
+    anchor: Self-Awareness — You Are Running on Octorato
+  mechanism:
+  - kind: Presence
+    canonical_name: null
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: ANCHOR_PRESENT
+    locator: Self-Awareness — You Are Running on Octorato
+    expect: present
+  liveness_required: PRESENT
+- id: IDENTITY.generic-stance
+  title: Generic stance — Octorato identity non-negotiable
+  category: IDENTITY
+  strength: PRESENCE
+  firing_mode:
+  - model
+  source:
+    file: CLAUDE.md
+    anchor: Octorato's Stance (Generic Identity
+  mechanism:
+  - kind: Presence
+    canonical_name: null
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: ANCHOR_PRESENT
+    locator: Octorato's Stance (Generic Identity
+    expect: present
+  liveness_required: PRESENT
+- id: ARCHITECTURE.octopus-architecture
+  title: Octopus architecture — structural model anchor
+  category: ARCHITECTURE
+  strength: DETECTOR
+  gateable: false
+  enforcement: n/a
+  firing_mode:
+  - git-hook
+  - runner
+  source:
+    file: CLAUDE.md
+    anchor: '## The Octopus Architecture'
+  mechanism:
+  - kind: Detector
+    canonical_name: .githooks/pre-push
+    firing_event: PrePush
+    firing_matcher: null
+  - kind: Detector
+    canonical_name: check-generic.py
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: .githooks/pre-push
+    expect: present
+  - method: FILE_EXISTS
+    locator: scripts/check-generic.py
+    expect: present
+  - method: ANCHOR_PRESENT
+    locator: '## The Octopus Architecture'
+    expect: present
+  liveness_required: PRESENT
+- id: ARCHITECTURE.core-principles
+  title: Core principles — arm isolation gates
+  category: ARCHITECTURE
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - hook
+  source:
+    file: CLAUDE.md
+    anchor: '### Core Principles'
+  mechanism:
+  - kind: Gate
+    canonical_name: session-isolation-hook.py
+    firing_event: SessionStart
+    firing_matcher: null
+  - kind: Gate
+    canonical_name: dimension-awareness-hook.py
+    firing_event: PreToolUse
+    firing_matcher: Bash
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: SessionStart|*|session-isolation-hook.py
+    expect: present
+  - method: IN_HOOKS_JSON
+    locator: PreToolUse|Bash|dimension-awareness-hook.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/dimension-awareness-hook.py --selftest
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: '### Core Principles'
+    expect: present
+  liveness_required: FIRES
+- id: ARCHITECTURE.information-flow
+  title: Information flow rules — cross-arm leak detector
+  category: ARCHITECTURE
+  strength: DETECTOR
+  gateable: false
+  enforcement: n/a
+  firing_mode:
+  - git-hook
+  - runner
+  source:
+    file: CLAUDE.md
+    anchor: '### Information Flow Rules'
+  mechanism:
+  - kind: Detector
+    canonical_name: .githooks/pre-push
+    firing_event: PrePush
+    firing_matcher: null
+  - kind: Detector
+    canonical_name: check-generic.py
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: .githooks/pre-push
+    expect: present
+  - method: FILE_EXISTS
+    locator: scripts/check-generic.py
+    expect: present
+  - method: ANCHOR_PRESENT
+    locator: '### Information Flow Rules'
+    expect: present
+  liveness_required: PRESENT
+- id: ARCHITECTURE.layers
+  title: Layer separation — memory tier enforcement
+  category: ARCHITECTURE
+  strength: DETECTOR
+  firing_mode:
+  - runner
+  source:
+    file: CLAUDE.md
+    anchor: '### Layers'
+  mechanism:
+  - kind: Detector
+    canonical_name: memory_sync.py
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: scripts/memory_sync.py
+    expect: present
+  - method: ANCHOR_PRESENT
+    locator: '### Layers'
+    expect: present
+  liveness_required: PRESENT
+- id: CODE.universal-discipline
+  title: Universal code discipline — baseline rules
+  category: CODE
+  strength: PRESENCE
+  firing_mode:
+  - model
+  source:
+    file: CLAUDE.md
+    anchor: '## Universal Code Discipline'
+  mechanism:
+  - kind: Presence
+    canonical_name: null
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: ANCHOR_PRESENT
+    locator: '## Universal Code Discipline'
+    expect: present
+  liveness_required: PRESENT
+- id: CODE.do-it-right
+  title: Do it right not fast — root cause over palliative
+  category: CODE
+  strength: PRESENCE
+  firing_mode:
+  - model
+  source:
+    file: CLAUDE.md
+    anchor: ULTRA RULE — Do it right, not fast
+  mechanism:
+  - kind: Presence
+    canonical_name: null
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: ANCHOR_PRESENT
+    locator: ULTRA RULE — Do it right, not fast
+    expect: present
+  liveness_required: PRESENT
+- id: SECURITY.baseline
+  title: Security baseline — secrets gate at Bash and push
+  category: SECURITY
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - hook
+  - git-hook
+  - runner
+  source:
+    file: CLAUDE.md
+    anchor: '## Security (Non-Negotiable)'
+  mechanism:
+  - kind: Gate
+    canonical_name: secrets-grep-guard.py
+    firing_event: PreToolUse
+    firing_matcher: Bash
+  - kind: Gate
+    canonical_name: .githooks/pre-push
+    firing_event: PrePush
+    firing_matcher: null
+  - kind: Gate
+    canonical_name: check-generic.py
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: PreToolUse|Bash|secrets-grep-guard.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/secrets-grep-guard.py --selftest registry/fixtures/SECURITY.baseline
+    expect: 0
+  - method: FILE_EXISTS
+    locator: .githooks/pre-push
+    expect: present
+  - method: FILE_EXISTS
+    locator: scripts/check-generic.py
+    expect: present
+  - method: ANCHOR_PRESENT
+    locator: '## Security (Non-Negotiable)'
+    expect: present
+  liveness_required: FIRES
+- id: CODE.prompt-defense
+  title: PromptDefense baseline — anti-injection rules
+  category: CODE
+  strength: PRESENCE
+  firing_mode:
+  - model
+  source:
+    file: CLAUDE.md
+    anchor: '## PromptDefense Baseline'
+  mechanism:
+  - kind: Presence
+    canonical_name: null
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: ANCHOR_PRESENT
+    locator: '## PromptDefense Baseline'
+    expect: present
+  liveness_required: PRESENT
+- id: COMMS.communication-baseline
+  title: Communication baseline — cadence stop detector
+  category: COMMS
+  strength: DETECTOR
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - hook
+  source:
+    file: CLAUDE.md
+    anchor: '## Communication'
+  mechanism:
+  - kind: Detector
+    canonical_name: cadence-stop-hook.py
+    firing_event: Stop
+    firing_matcher: '*'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: Stop|*|cadence-stop-hook.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/cadence-stop-hook.py --selftest registry/fixtures/COMMS.communication-baseline
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: '## Communication'
+    expect: present
+  liveness_required: FIRES
+- id: COMMS.machine-register
+  title: Machine register — no human-social filler
+  category: COMMS
+  strength: PRESENCE
+  firing_mode:
+  - model
+  source:
+    file: CLAUDE.md
+    anchor: ULTRA RULE — Machine register
+  mechanism:
+  - kind: Presence
+    canonical_name: null
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: ANCHOR_PRESENT
+    locator: ULTRA RULE — Machine register
+    expect: present
+  liveness_required: PRESENT
+- id: GIT.version-control
+  title: Git and version control — atomic commit discipline
+  category: GIT
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - hook
+  source:
+    file: CLAUDE.md
+    anchor: '## Git & Version Control'
+  mechanism:
+  - kind: Gate
+    canonical_name: g__pretool-bash__git-discipline.py
+    firing_event: PreToolUse
+    firing_matcher: Bash
+  - kind: Gate
+    canonical_name: g__pretool-bash__git-discipline.py
+    firing_event: PreToolUse
+    firing_matcher: Write|Edit|NotebookEdit|MultiEdit
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: PreToolUse|Bash|g__pretool-bash__git-discipline.py
+    expect: present
+  - method: IN_HOOKS_JSON
+    locator: PreToolUse|Write|Edit|NotebookEdit|MultiEdit|g__pretool-bash__git-discipline.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/g__pretool-bash__git-discipline.py --selftest registry/fixtures/GIT.version-control
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: '## Git & Version Control'
+    expect: present
+  liveness_required: FIRES
+- id: CODE.file-organization
+  title: File organization — config-first no summary markdown
+  category: CODE
+  strength: PRESENCE
+  firing_mode:
+  - model
+  source:
+    file: CLAUDE.md
+    anchor: '## File Organization'
+  mechanism:
+  - kind: Presence
+    canonical_name: null
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: ANCHOR_PRESENT
+    locator: '## File Organization'
+    expect: present
+  liveness_required: PRESENT
+- id: CODE.when-unsure
+  title: When unsure — search before assuming
+  category: CODE
+  strength: PRESENCE
+  firing_mode:
+  - model
+  source:
+    file: CLAUDE.md
+    anchor: '## When Unsure'
+  mechanism:
+  - kind: Presence
+    canonical_name: null
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: ANCHOR_PRESENT
+    locator: '## When Unsure'
+    expect: present
+  liveness_required: PRESENT
+- id: FLOW.prune-dead-cells
+  title: Prune dead cells — lineage-doctor detects orphans at push
+  category: FLOW
+  strength: DETECTOR
+  gateable: false
+  enforcement: n/a
+  firing_mode:
+  - git-hook
+  source:
+    file: CLAUDE.md
+    anchor: ULTRA RULE — Prune dead cells
+  mechanism:
+  - kind: Detector
+    canonical_name: lineage-doctor.py
+    firing_event: PrePush
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: scripts/lineage-doctor.py
+    expect: present
+  - method: ANCHOR_PRESENT
+    locator: ULTRA RULE — Prune dead cells
+    expect: present
+  liveness_required: PRESENT
+- id: FLOW.suggest-unlock
+  title: Suggest the unlock — disclose capability gaps
+  category: FLOW
+  strength: PRESENCE
+  firing_mode:
+  - model
+  source:
+    file: CLAUDE.md
+    anchor: ULTRA RULE — Suggest the unlock
+  mechanism:
+  - kind: Presence
+    canonical_name: null
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: ANCHOR_PRESENT
+    locator: ULTRA RULE — Suggest the unlock
+    expect: present
+  liveness_required: PRESENT
+- id: FLOW.4d-gate-prewrite
+  title: 4D pre-write manifest gate
+  category: FLOW
+  strength: REFLEX
+  firing_mode:
+  - hook
+  - cli
+  source:
+    file: CLAUDE.md
+    anchor: '### 4D Gate (Pre-Write Manifest)'
+  mechanism:
+  - kind: Reflex
+    canonical_name: 4d-reminder.py
+    firing_event: UserPromptSubmit
+    firing_matcher: null
+  - kind: Reflex
+    canonical_name: gate-check
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: UserPromptSubmit|*|4d-reminder.py
+    expect: present
+  - method: FILE_EXISTS
+    locator: scripts/gate-check
+    expect: present
+  - method: ANCHOR_PRESENT
+    locator: '### 4D Gate (Pre-Write Manifest)'
+    expect: present
+  liveness_required: FIRES
+- id: FLOW.3d-diligent-gate
+  title: 3D diligent gate — post-write validation
+  category: FLOW
+  strength: REFLEX
+  gateable: true
+  enforcement: fail-open
+  waiver:
+    reason: Shares the warn-only source-attribution Stop detector; the 'did you validate' part is judgment.
+      Hard block deferred. Close candidate.
+    expires: '2026-09-30'
+    approved_by: operator directive 2026-06-29 (cierra o waiva las 7)
+  firing_mode:
+  - hook
+  source:
+    file: CLAUDE.md
+    anchor: '### 3D Diligent Gate'
+  mechanism:
+  - kind: Reflex
+    canonical_name: trace-hook.py
+    firing_event: PostToolUse
+    firing_matcher: Write|Edit
+  - kind: Detector
+    canonical_name: source-attribution-check.py
+    firing_event: Stop
+    firing_matcher: '*'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: PostToolUse|Write|Edit|trace-hook.py
+    expect: present
+  - method: IN_HOOKS_JSON
+    locator: Stop|*|source-attribution-check.py
+    expect: present
+  - method: ANCHOR_PRESENT
+    locator: '### 3D Diligent Gate'
+    expect: present
+  liveness_required: FIRES
+- id: FLOW.4d-spec-enhancement
+  title: 4D+S spec-driven enhancement — complexity classifier
+  category: FLOW
+  strength: PRESENCE
+  firing_mode:
+  - model
+  source:
+    file: CLAUDE.md
+    anchor: '### 4D+S — Spec-Driven Enhancement'
+  mechanism:
+  - kind: Presence
+    canonical_name: null
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: ANCHOR_PRESENT
+    locator: '### 4D+S — Spec-Driven Enhancement'
+    expect: present
+  liveness_required: PRESENT
+- id: FLOW.enforcement-scripts
+  title: Enforcement scripts — mandatory Q1/Q3 reflexes
+  category: FLOW
+  strength: REFLEX
+  gateable: true
+  enforcement: fail-open
+  waiver:
+    reason: Shares delegate-gate.py, which is not closeable (no caller discriminator). Tied to FLOW.delegate-gate.
+    expires: '2026-09-30'
+    approved_by: operator directive 2026-06-29 (cierra o waiva las 7)
+  firing_mode:
+  - hook
+  - cli
+  source:
+    file: CLAUDE.md
+    anchor: '### Enforcement Scripts (Mandatory)'
+  mechanism:
+  - kind: Reflex
+    canonical_name: connectome-heartbeat.py
+    firing_event: UserPromptSubmit
+    firing_matcher: null
+  - kind: Reflex
+    canonical_name: delegate-gate.py
+    firing_event: PreToolUse
+    firing_matcher: Bash
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: UserPromptSubmit|*|connectome-heartbeat.py
+    expect: present
+  - method: IN_HOOKS_JSON
+    locator: PreToolUse|Bash|delegate-gate.py
+    expect: present
+  - method: ANCHOR_PRESENT
+    locator: '### Enforcement Scripts (Mandatory)'
+    expect: present
+  liveness_required: FIRES
+- id: CODE.best-tool-first
+  title: Best tool first — never settle for workarounds
+  category: CODE
+  strength: PRESENCE
+  firing_mode:
+  - model
+  source:
+    file: CLAUDE.md
+    anchor: '## Best Tool First'
+  mechanism:
+  - kind: Presence
+    canonical_name: null
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: ANCHOR_PRESENT
+    locator: '## Best Tool First'
+    expect: present
+  liveness_required: PRESENT
+- id: FLOW.skill-first
+  title: Skill-first behavior — domain reflexes via eye-check
+  category: FLOW
+  strength: REFLEX
+  firing_mode:
+  - hook
+  source:
+    file: CLAUDE.md
+    anchor: '## Skill-First Behavior'
+  mechanism:
+  - kind: Reflex
+    canonical_name: eye-check.py
+    firing_event: UserPromptSubmit
+    firing_matcher: null
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: UserPromptSubmit|*|eye-check.py
+    expect: present
+  - method: ANCHOR_PRESENT
+    locator: '## Skill-First Behavior'
+    expect: present
+  liveness_required: FIRES
+- id: META.querymaster
+  title: QueryMaster — global database agent anchor
+  category: META
+  strength: PRESENCE
+  firing_mode:
+  - model
+  source:
+    file: CLAUDE.md
+    anchor: '## QueryMaster — Global Database Agent'
+  mechanism:
+  - kind: Presence
+    canonical_name: null
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: ANCHOR_PRESENT
+    locator: '## QueryMaster — Global Database Agent'
+    expect: present
+  liveness_required: PRESENT
+- id: ARCHITECTURE.arm-onboarding
+  title: Arm onboarding — install-runners bootstrap detector
+  category: ARCHITECTURE
+  strength: DETECTOR
+  firing_mode:
+  - runner
+  source:
+    file: CLAUDE.md
+    anchor: '## Arm Onboarding'
+  mechanism:
+  - kind: Detector
+    canonical_name: install-runners.py
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: scripts/install-runners.py
+    expect: present
+  - method: ANCHOR_PRESENT
+    locator: '## Arm Onboarding'
+    expect: present
+  liveness_required: PRESENT
+- id: META.multi-machine-sync
+  title: Multi-machine sync — brain consistency anchor
+  category: META
+  strength: PRESENCE
+  firing_mode:
+  - model
+  source:
+    file: CLAUDE.md
+    anchor: '## Multi-Machine Sync'
+  mechanism:
+  - kind: Presence
+    canonical_name: null
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: ANCHOR_PRESENT
+    locator: '## Multi-Machine Sync'
+    expect: present
+  liveness_required: PRESENT
+- id: META.ai-sync-canonical
+  title: ai-sync canonical runner — race-safe brain sync
+  category: META
+  strength: REFLEX
+  firing_mode:
+  - runner
+  source:
+    file: CLAUDE.md
+    anchor: 'ULTRA RULE: `ai-sync'
+  mechanism:
+  - kind: Reflex
+    canonical_name: ai_sync.py
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: scripts/ai_sync.py
+    expect: present
+  - method: ANCHOR_PRESENT
+    locator: 'ULTRA RULE: `ai-sync'
+    expect: present
+  liveness_required: PRESENT
+- id: MEMORY.arm-recall
+  title: Recall an arm's own stored knowledge before researching or asking
+  category: MEMORY
+  source:
+    file: CLAUDE.md
+    anchor: '## Skill-First Behavior'
+  strength: REFLEX
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Reflex
+    canonical_name: arm-recall-hook.py
+    firing_event: UserPromptSubmit
+    firing_matcher: '*'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: UserPromptSubmit|*|arm-recall-hook.py
+    expect: present
+  - method: ANCHOR_PRESENT
+    locator: '## Skill-First Behavior'
+    expect: present
+  liveness_required: FIRES
+- id: MEMORY.brain-memory-recall
+  title: Surface the brain's own life-memories relevant to the prompt before asking
+  category: MEMORY
+  source:
+    file: CLAUDE.md
+    anchor: '## When Unsure'
+  strength: REFLEX
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Reflex
+    canonical_name: brain-memory-recall.py
+    firing_event: UserPromptSubmit
+    firing_matcher: '*'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: UserPromptSubmit|*|brain-memory-recall.py
+    expect: present
+  - method: ANCHOR_PRESENT
+    locator: '## When Unsure'
+    expect: present
+  liveness_required: FIRES
+- id: COMMS.no-pause
+  title: Do not ask to pause; execute, never propose stopping
+  category: COMMS
+  source:
+    file: CLAUDE.md
+    anchor: Answer, do the work, stop
+  strength: DETECTOR
+  gateable: true
+  enforcement: fail-open
+  waiver:
+    reason: no-pause-suggestion Stop is warn-only; a hard block on pause-phrase detection is deferred
+      pending false-positive tuning (legit clarifying questions). Close candidate.
+    expires: '2026-09-30'
+    approved_by: operator directive 2026-06-29 (cierra o waiva las 7)
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Detector
+    canonical_name: no-pause-suggestion.py
+    firing_event: Stop
+    firing_matcher: '*'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: Stop|*|no-pause-suggestion.py
+    expect: present
+  - method: ANCHOR_PRESENT
+    locator: Answer, do the work, stop
+    expect: present
+  liveness_required: FIRES
+- id: COMMS.client-doc-lint
+  title: Client deliverables pass the doc lint before they are sent
+  category: COMMS
+  source:
+    file: skills/client-doc-lint/SKILL.md
+    anchor: el doc no se manda sin pasar el lint
+  strength: DETECTOR
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Detector
+    canonical_name: client-doc-lint-hook.py
+    firing_event: PostToolUse
+    firing_matcher: Bash
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: PostToolUse|Bash|client-doc-lint-hook.py
+    expect: present
+  - method: ANCHOR_PRESENT
+    locator: el doc no se manda sin pasar el lint
+    expect: present
+  liveness_required: FIRES
+- id: MEMORY.inbox-sweep
+  title: Full inbox sweep when email or pendientes are requested
+  category: MEMORY
+  source:
+    file: skills/inbox-triage-classifier/SKILL.md
+    anchor: Inbox-Triage Classifier
+  strength: REFLEX
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Reflex
+    canonical_name: inbox-sweep-reflex.py
+    firing_event: UserPromptSubmit
+    firing_matcher: '*'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: UserPromptSubmit|*|inbox-sweep-reflex.py
+    expect: present
+  - method: ANCHOR_PRESENT
+    locator: Inbox-Triage Classifier
+    expect: present
+  liveness_required: FIRES
+- id: FLOW.canon-heal
+  title: Heal the content canon to unison on every edit
+  category: FLOW
+  source:
+    file: skills/octorato-harmony/SKILL.md
+    anchor: Octorato Harmony
+  strength: DETECTOR
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Detector
+    canonical_name: canon-heal-hook.py
+    firing_event: PostToolUse
+    firing_matcher: Write|Edit
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: PostToolUse|Write|Edit|canon-heal-hook.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/canon-heal-hook.py --selftest
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: Octorato Harmony
+    expect: present
+  liveness_required: FIRES
+- id: ARCHITECTURE.drift-self-heal
+  title: Reconcile settings.json from the tracked hooks.json at session start (drift self-heal)
+  category: ARCHITECTURE
+  source:
+    file: CLAUDE.md
+    anchor: '## Multi-Machine Sync'
+  strength: DETECTOR
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Detector
+    canonical_name: merge-hooks.py
+    firing_event: SessionStart
+    firing_matcher: '*'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: SessionStart|*|merge-hooks.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/merge-hooks.py --selftest
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: '## Multi-Machine Sync'
+    expect: present
+  liveness_required: FIRES
+- id: FLOW.budget-halt
+  title: FinOps budget caps halt expensive dispatch (fail-open)
+  category: FLOW
+  source:
+    file: README.md
+    anchor: FinOps roadmap
+  strength: GATE
+  gateable: true
+  enforcement: fail-open
+  waiver:
+    reason: 'budgets.yaml is active (since 2026-06-01), but every arm and the default set action_on_breach:
+      alert by operator choice, so the HARD_STOP branch (scripts/budget-check.py:166) is unreachable by
+      config. The gate stays fail-open until an arm opts into hard_stop.'
+    expires: '2026-09-30'
+    approved_by: operator directive 2026-06-29 (resuelve budget-halt)
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Gate
+    canonical_name: budget-check.py
+    firing_event: PreToolUse
+    firing_matcher: Agent
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: PreToolUse|Agent|budget-check.py
+    expect: present
+  - method: ANCHOR_PRESENT
+    locator: FinOps roadmap
+    expect: present
+  liveness_required: FIRES
+- id: CODE.bug-hunter-read-prompts
+  title: 'bug-hunter: read prompt files before passing them to subagents'
+  category: CODE
+  source:
+    file: skills/bug-hunter/SKILL.md
+    anchor: 'MANDATORY**: You MUST read prompt files'
+  strength: PRESENCE
+  gateable: false
+  firing_mode:
+  - library
+  mechanism:
+  - kind: Presence
+    canonical_name: null
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: ANCHOR_PRESENT
+    locator: 'MANDATORY**: You MUST read prompt files'
+    expect: present
+  liveness_required: PRESENT
+- id: CODE.canary-live-test
+  title: 'canary-symbiont: a never-fired canary protects nothing, run the live test'
+  category: CODE
+  source:
+    file: skills/canary-symbiont/SKILL.md
+    anchor: The MANDATORY live test
+  strength: PRESENCE
+  firing_mode:
+  - library
+  mechanism:
+  - kind: Presence
+    canonical_name: null
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: ANCHOR_PRESENT
+    locator: The MANDATORY live test
+    expect: present
+  liveness_required: PRESENT
+- id: FLOW.figma-use-prerequisite
+  title: 'figma-use: load the skill before every use_figma call (mandatory prerequisite)'
+  category: FLOW
+  source:
+    file: skills/figma-use/SKILL.md
+    anchor: MANDATORY prerequisite
+  strength: PRESENCE
+  firing_mode:
+  - library
+  mechanism:
+  - kind: Presence
+    canonical_name: null
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: ANCHOR_PRESENT
+    locator: MANDATORY prerequisite
+    expect: present
+  liveness_required: PRESENT
+- id: FLOW.image-analyzer-trigger
+  title: 'image-analyzer: mandatory trigger when the user references an image'
+  category: FLOW
+  source:
+    file: skills/image-analyzer/SKILL.md
+    anchor: 'MANDATORY: When User References an Image'
+  strength: PRESENCE
+  firing_mode:
+  - library
+  mechanism:
+  - kind: Presence
+    canonical_name: null
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: ANCHOR_PRESENT
+    locator: 'MANDATORY: When User References an Image'
+    expect: present
+  liveness_required: PRESENT
+- id: FLOW.orchestrated-planning-reporting-contract
+  title: 'orchestrated-planning: subagent reporting contract is mandatory'
+  category: FLOW
+  source:
+    file: skills/orchestrated-planning/SKILL.md
+    anchor: Subagent Reporting Contract (MANDATORY)
+  strength: PRESENCE
+  firing_mode:
+  - library
+  mechanism:
+  - kind: Presence
+    canonical_name: null
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: ANCHOR_PRESENT
+    locator: Subagent Reporting Contract (MANDATORY)
+    expect: present
+  liveness_required: PRESENT
+- id: SECURITY.querymaster-rules
+  title: 'QueryMaster security rules: dry-run by default, no secret logging, destructive guard'
+  category: SECURITY
+  source:
+    file: skills/querymaster/SKILL.md
+    anchor: Security Rules (MANDATORY)
+  strength: DETECTOR
+  firing_mode:
+  - cli
+  mechanism:
+  - kind: Detector
+    canonical_name: querymaster-security-detector.py
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: ANCHOR_PRESENT
+    locator: Security Rules (MANDATORY)
+    expect: present
+  - method: EXIT_CODE
+    locator: python3 scripts/querymaster-security-detector.py --selftest
+    expect: 0
+  liveness_required: PRESENT
+- id: MEMORY.feedback-directive-corpus
+  title: Every indexed feedback_* memory directive fires via harness auto-memory plus the brain-memory-recall
+    pointer
+  category: MEMORY
+  source:
+    file: CLAUDE.md
+    anchor: Memory = the octopus
+  strength: REFLEX
+  gateable: false
+  firing_mode:
+  - hook
+  - library
+  mechanism:
+  - kind: Reflex
+    canonical_name: brain-memory-recall.py
+    firing_event: UserPromptSubmit
+    firing_matcher: '*'
+  - kind: Presence
+    canonical_name: null
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: UserPromptSubmit|*|brain-memory-recall.py
+    expect: present
+  liveness_required: FIRES
+- id: COMMS.chat-context-before-send
+  title: Load the live chat (both JIDs) before sending into it - block-once gate
+  category: COMMS
+  source:
+    file: skills/whatsapp-mcp-bridge-gotchas/SKILL.md
+    anchor: Chat-context gate
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Gate
+    canonical_name: g__pretool-mcp__chat-context.py
+    firing_event: PreToolUse
+    firing_matcher: mcp__whatsapp__send_message
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: PreToolUse|mcp__whatsapp__send_message|g__pretool-mcp__chat-context.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/g__pretool-mcp__chat-context.py --selftest registry/fixtures/COMMS.chat-context-before-send
+    expect: 0
+  liveness_required: FIRES
