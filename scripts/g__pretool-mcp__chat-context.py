@@ -28,7 +28,9 @@ Exit:   always 0 (the deny travels in the JSON, not the exit code).
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import shutil
 import sqlite3
 import sys
@@ -82,49 +84,93 @@ def _lid_pair(digits: str, is_lid: bool) -> tuple[str, str | None]:
         return digits, None
 
 
+def _query_tail(db_path: str, jids: list[str]) -> list[tuple]:
+    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        marks = ",".join("?" for _ in jids)
+        return con.execute(
+            "SELECT timestamp, is_from_me, content FROM messages "
+            f"WHERE chat_jid IN ({marks}) AND content != '' "
+            "ORDER BY timestamp DESC LIMIT ?",
+            (*jids, TAIL_LIMIT),
+        ).fetchall()
+    finally:
+        con.close()
+
+
 def _chat_tail(jids: list[str]) -> str:
     """Merged recent history across the chat's JIDs, oldest first. '' if unreadable."""
     src = _store_dir() / "messages.db"
     if not src.exists():
         return ""
-    tmp = None
+    rows = None
     try:
-        # copy first: the Go bridge holds the write lock on the live DB
-        fd, tmp = tempfile.mkstemp(suffix=".db")
-        Path(tmp).unlink()
-        shutil.copyfile(src, tmp)
-        con = sqlite3.connect(f"file:{tmp}?mode=ro", uri=True)
+        # WAL readers don't block the bridge's writer: read the live file first
+        # (a copy of only the main file would MISS committed rows still in -wal).
+        rows = _query_tail(str(src), jids)
+    except sqlite3.Error:
+        # locked / rollback-journal mode: fall back to copying db + sidecars
+        tmpdir = None
         try:
-            marks = ",".join("?" for _ in jids)
-            rows = con.execute(
-                "SELECT timestamp, is_from_me, content FROM messages "
-                f"WHERE chat_jid IN ({marks}) AND content != '' "
-                "ORDER BY timestamp DESC LIMIT ?",
-                (*jids, TAIL_LIMIT),
-            ).fetchall()
+            tmpdir = tempfile.mkdtemp(prefix="chat-context-")
+            dst = Path(tmpdir) / "messages.db"
+            shutil.copyfile(src, dst)
+            for ext in ("-wal", "-shm"):
+                side = Path(str(src) + ext)
+                if side.exists():
+                    shutil.copyfile(side, str(dst) + ext)
+            rows = _query_tail(str(dst), jids)
+        except (sqlite3.Error, OSError):
+            return ""
         finally:
-            con.close()
-        lines = []
-        for ts, mine, content in reversed(rows):
-            who = "YO" if mine else "CHAT"
-            text = " ".join(str(content).split())[:160]
-            lines.append(f"[{str(ts)[:16]}] {who}: {text}")
-        return "\n".join(lines)
-    except (sqlite3.Error, OSError):
+            if tmpdir:
+                shutil.rmtree(tmpdir, ignore_errors=True)
+    except OSError:
         return ""
-    finally:
-        if tmp:
-            Path(tmp).unlink(missing_ok=True)
+    lines = []
+    for ts, mine, content in reversed(rows or []):
+        who = "YO" if mine else "CHAT"
+        text = " ".join(str(content).split())[:160]
+        lines.append(f"[{str(ts)[:16]}] {who}: {text}")
+    return "\n".join(lines)
 
 
-def _deny(reason: str) -> None:
-    print(json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "deny",
-            "permissionDecisionReason": reason,
-        }
-    }))
+def _deny(reason: str) -> bool:
+    try:
+        print(json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": reason,
+            }
+        }))
+        return True
+    except OSError:
+        return False
+
+
+_SAFE_KEY_RE = re.compile(r"^[0-9-]+\Z")
+
+
+def _sentinel_key(raw: str, recipient: str) -> str:
+    """Filename-safe sentinel key. recipient is MODEL-CONTROLLED: anything outside
+    plain digits/hyphens (group jids) is hashed so it can never become a path."""
+    if _SAFE_KEY_RE.match(raw):
+        return raw
+    return hashlib.sha256(recipient.encode("utf-8")).hexdigest()[:20]
+
+
+def _write_sentinel(sentinel: Path, recipient: str) -> None:
+    try:
+        sentinel.parent.mkdir(parents=True, exist_ok=True)
+        sentinel.write_text(json.dumps({"ts": time.time(), "recipient": recipient}))
+    except OSError:
+        pass  # gate fires again next attempt; a repeat deny is the safe failure
+
+
+# crash-handler breadcrumb: lets the fail-closed wrapper arm the block-once
+# sentinel for the REAL chat, so a gate bug denies once instead of livelocking
+_CRASH_STATE: dict = {"sentinel": None, "recipient": ""}
 
 
 def main() -> None:
@@ -140,13 +186,18 @@ def main() -> None:
     digits = recipient.split("@", 1)[0]
 
     if recipient.endswith("@g.us"):
-        key, jids = digits, [recipient]
+        key, jids = _sentinel_key(digits, recipient), [recipient]
     else:
         pn, lid = _lid_pair(digits, recipient.endswith("@lid"))
-        key = pn
-        jids = [f"{pn}@s.whatsapp.net"] + ([f"{lid}@lid"] if lid else [])
+        key = _sentinel_key(pn, recipient)
+        # always include the literal recipient JID: an unresolved @lid must still
+        # query its own chat, never only a fabricated @s.whatsapp.net twin
+        jids = sorted({recipient if "@" in recipient else f"{pn}@s.whatsapp.net",
+                       f"{pn}@s.whatsapp.net"}
+                      | ({f"{lid}@lid"} if lid else set()))
 
     sentinel = _sentinel_dir() / f"{key}.json"
+    _CRASH_STATE["sentinel"], _CRASH_STATE["recipient"] = sentinel, recipient
     try:
         age = time.time() - json.loads(sentinel.read_text())["ts"]
         if age < TTL_SECONDS:
@@ -155,12 +206,6 @@ def main() -> None:
         pass
 
     tail = _chat_tail(jids)
-    try:
-        sentinel.parent.mkdir(parents=True, exist_ok=True)
-        sentinel.write_text(json.dumps({"ts": time.time(), "recipient": recipient}))
-    except OSError:
-        pass  # deny still fires; worst case it fires again next attempt
-
     body = (
         f"CHAT-CONTEXT GATE (bloquea 1 vez por chat cada {TTL_SECONDS // 60} min): "
         f"primer envio a {recipient} sin haber cargado su historial. "
@@ -173,7 +218,10 @@ def main() -> None:
                  "antes de reenviar.\n")
     body += ("Si tras leer el contexto tu mensaje sigue siendo correcto, reenvialo tal "
              "cual (este segundo intento pasa); si el contexto lo cambia, corrigelo primero.")
-    _deny(body)
+    if _deny(body):
+        # sentinel only after the deny reached stdout: a swallowed deny must NOT
+        # arm the pass-through for the next attempt
+        _write_sentinel(sentinel, recipient)
 
 
 if __name__ == "__main__":
@@ -185,6 +233,18 @@ if __name__ == "__main__":
         raise SystemExit(run_gate_selftest(__file__, fixtures))
     try:
         main()
-    except Exception:  # fail-open only on truly unexpected crashes
-        pass
+    except Exception:
+        # fail-CLOSED on unexpected crashes: a gate bug degrades to block-once,
+        # never to a silent bypass. Arm the real chat's sentinel when known so
+        # the retry passes; unknown sentinel -> the deny warns it may repeat.
+        try:
+            known = _CRASH_STATE["sentinel"] is not None
+            _deny("CHAT-CONTEXT GATE: error interno del gate. Lee el chat destino "
+                  "manualmente (ambos JIDs) y reenvia; "
+                  + ("el reintento pasa." if known else
+                     "si el bloqueo se repite, avisa al operador (bug del gate)."))
+            if known:
+                _write_sentinel(_CRASH_STATE["sentinel"], _CRASH_STATE["recipient"])
+        except Exception:
+            pass
     raise SystemExit(0)
