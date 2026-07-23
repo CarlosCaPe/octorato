@@ -64,6 +64,16 @@
         }
       ],
       "matcher": "Bash"
+    },
+    {
+      "hooks": [
+        {
+          "command": "python3 ~/.claude/scripts/d__posttool__delegation-ledger.py",
+          "timeout": 5,
+          "type": "command"
+        }
+      ],
+      "matcher": "*"
     }
   ],
   "PreToolUse": [
@@ -222,6 +232,12 @@
         },
         {
           "command": "python3 ~/.claude/scripts/claim-verify-stop.py",
+          "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/g__stop__delegation-audit.py",
+          "statusMessage": "♦ delegation audit (bulk fetch → cheap tier)...",
+          "timeout": 5,
           "type": "command"
         }
       ]

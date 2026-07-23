@@ -9,10 +9,10 @@
 | Skills | 232 |
 | Agents | 161 |
 | Divisions | 15 |
-| Scripts: wired | 85 |
+| Scripts: wired | 87 |
 | Scripts: orphan | 6 |
-| Rules | 60 |
-| Hook entries | 32 |
+| Rules | 61 |
+| Hook entries | 34 |
 
 ## Skills (232)
 
@@ -489,7 +489,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (91)
+## Scripts (93)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -531,6 +531,7 @@
 | config-ship-verify.py | config-ship-verify.py , PreToolUse:Bash hook: ask before shipping generated configs. | wired |
 | connectome-heartbeat.py | connectome-heartbeat.py , the Delegate-phase heartbeat (UserPromptSubmit hook). | wired |
 | cost-vs-change.py | cost-vs-change.py , "is the new thing making me cheaper or more expensive?" Correlates the daily Cla... | wired |
+| d__posttool__delegation-ledger.py | d__posttool__delegation-ledger.py: PostToolUse detector (matcher *) for FLOW.bulk-fetch-delegation. | wired |
 | delegate-check | delegate-check , Mandatory 2D Delegate pre-flight for the Octopus brain. Scans REGISTRY.md (agents) ... | wired |
 | delegate-gate.py | PreToolUse hook , involuntary delegation reflex (FAIL-OPEN, by design). | wired |
 | dimension-awareness-hook.py | dimension-awareness-hook.py , PreToolUse hook for 4D session dimension awareness | wired |
@@ -538,6 +539,7 @@
 | finops-digest.py | finops-digest.py , the FinOps lens over Claude Code session logs. "Lo que no se mide, no crece." Exi... | wired |
 | g__pretool-bash__git-discipline.py | g__pretool-bash__git-discipline.py: PreToolUse gate for the deterministic subset of GIT.version-cont... | wired |
 | g__pretool-mcp__chat-context.py | g__pretool-mcp__chat-context.py: PreToolUse gate for COMMS.chat-context-before-send. | wired |
+| g__stop__delegation-audit.py | g__stop__delegation-audit.py: Stop gate for FLOW.bulk-fetch-delegation. | wired |
 | g__stop__draft-promise.py | g__stop__draft-promise.py , Stop gate: no future-tense promises in paste-ready drafts. | wired |
 | gap-capture.py | gap-capture.py , capture 2D-Delegate SELF misses as a gap backlog. When the delegate gate finds no a... | wired |
 | gate-check | gate-check , 4D Gate Enforcement Validator for the Octopus brain. Validates that the 4D paradigm pha... | wired |
@@ -585,7 +587,7 @@
 | validate-skill-manifest.py | validate-skill-manifest.py , validate a skill.json against the M5 manifest schema (issue #31). | wired |
 | watchdog.py | watchdog.py , observability surface 4 anomaly detector. Reads the JSONL trace files written by trace... | wired |
 
-## Rules (60)
+## Rules (61)
 
 ### ARCHITECTURE
 
@@ -629,6 +631,7 @@
 - FLOW.4d-paradigm
 - FLOW.4d-spec-enhancement
 - FLOW.budget-halt
+- FLOW.bulk-fetch-delegation
 - FLOW.calendar-facts-as-data
 - FLOW.canon-heal
 - FLOW.delegate-gate
@@ -681,8 +684,8 @@
 
 | Event | Wired Scripts |
 |---|---|
-| PostToolUse | cadence-lint.py, canon-heal-hook.py, client-doc-lint-hook.py, impact-radius-hook.py, trace-hook.py |
+| PostToolUse | cadence-lint.py, canon-heal-hook.py, client-doc-lint-hook.py, d__posttool__delegation-ledger.py, impact-radius-hook.py, trace-hook.py |
 | PreToolUse | budget-check.py, config-ship-verify.py, delegate-gate.py, dimension-awareness-hook.py, g__pretool-bash__git-discipline.py, g__pretool-mcp__chat-context.py, grafo-gate.py, qa-merge-gate.py, secrets-grep-guard.py, trace-hook.py |
 | SessionStart | merge-hooks.py, session-isolation-hook.py |
-| Stop | cadence-stop-hook.py, claim-verify-stop.py, g__stop__draft-promise.py, grafo-ledger-check.py, no-pause-suggestion.py, source-attribution-check.py, trace-hook.py |
+| Stop | cadence-stop-hook.py, claim-verify-stop.py, g__stop__delegation-audit.py, g__stop__draft-promise.py, grafo-ledger-check.py, no-pause-suggestion.py, source-attribution-check.py, trace-hook.py |
 | UserPromptSubmit | 4d-reminder.py, arm-recall-hook.py, brain-memory-recall.py, connectome-heartbeat.py, eye-check.py, grafo-turn-reset.py, inbox-sweep-reflex.py, trace-hook.py |
