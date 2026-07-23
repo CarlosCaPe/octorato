@@ -1470,3 +1470,34 @@ rules:
     locator: Never invent data
     expect: present
   liveness_required: FIRES
+- id: FLOW.bulk-fetch-delegation
+  title: Bulk external fetch in the main loop must delegate to a cheap tier (or waive consciously)
+  category: FLOW
+  source:
+    file: CLAUDE.md
+    anchor: Route work by complexity across the model ladder
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Detector
+    canonical_name: d__posttool__delegation-ledger.py
+    firing_event: PostToolUse
+    firing_matcher: '*'
+  - kind: Gate
+    canonical_name: g__stop__delegation-audit.py
+    firing_event: Stop
+    firing_matcher: '*'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: PostToolUse|*|d__posttool__delegation-ledger.py
+    expect: present
+  - method: IN_HOOKS_JSON
+    locator: Stop|*|g__stop__delegation-audit.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/g__stop__delegation-audit.py --selftest registry/fixtures/FLOW.bulk-fetch-delegation
+    expect: 0
+  liveness_required: FIRES
