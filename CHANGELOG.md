@@ -45,6 +45,23 @@ machine-generated growth ledger lives at
 - docs(4D): Q2 no longer hard-requires `claude mcp list` inside Cursor sessions.
 - chore(delegate-gate): nudge text uses vendor-agnostic tier names.
 
+## [2026-07-06]: v6.3.0
+### Features
+- feat(brain): wire the deliverable-complete-before-send stop gate (no future-tense
+  self-promises in paste-ready drafts) via `scripts/g__stop__draft-promise.py` (#191).
+
+## [2026-07-06]: v6.2.0
+### Features
+- feat(brain): deliverable-complete-before-send stop gate for draft promises (initial wiring).
+
+## [2026-07-02]: v6.1.0
+### Features
+- feat(templates): brand-neutral cotización DOCX/PDF generator.
+
+## [2026-07-02]: v6.0.1
+### Other
+- docs(changelog): backfill v5.9.1, v5.10.0, v6.0.0 via changelog-sync.
+
 ## [2026-07-02]: v6.0.0
 ### Features
 - feat(v6): "from coverage to enforcement": the gate-liveness harness. Every fail-closed
