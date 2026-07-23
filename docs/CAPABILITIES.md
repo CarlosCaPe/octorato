@@ -11,7 +11,7 @@
 | Divisions | 15 |
 | Scripts: wired | 85 |
 | Scripts: orphan | 6 |
-| Rules | 59 |
+| Rules | 60 |
 | Hook entries | 32 |
 
 ## Skills (232)
@@ -585,7 +585,7 @@
 | validate-skill-manifest.py | validate-skill-manifest.py , validate a skill.json against the M5 manifest schema (issue #31). | wired |
 | watchdog.py | watchdog.py , observability surface 4 anomaly detector. Reads the JSONL trace files written by trace... | wired |
 
-## Rules (59)
+## Rules (60)
 
 ### ARCHITECTURE
 
@@ -629,6 +629,7 @@
 - FLOW.4d-paradigm
 - FLOW.4d-spec-enhancement
 - FLOW.budget-halt
+- FLOW.calendar-facts-as-data
 - FLOW.canon-heal
 - FLOW.delegate-gate
 - FLOW.enforcement-scripts

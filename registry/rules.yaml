@@ -1448,3 +1448,25 @@ rules:
     locator: scripts/g__pretool-mcp__chat-context.py --selftest registry/fixtures/COMMS.chat-context-before-send
     expect: 0
   liveness_required: FIRES
+- id: FLOW.calendar-facts-as-data
+  title: Calendar facts are injected data, never mental derivation (weekday class)
+  category: FLOW
+  source:
+    file: CLAUDE.md
+    anchor: Never invent data
+  strength: REFLEX
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Reflex
+    canonical_name: 4d-reminder.py
+    firing_event: UserPromptSubmit
+    firing_matcher: null
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: UserPromptSubmit|*|4d-reminder.py
+    expect: present
+  - method: ANCHOR_PRESENT
+    locator: Never invent data
+    expect: present
+  liveness_required: FIRES

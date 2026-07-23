@@ -9,6 +9,7 @@ Emits JSON on stdout per the UserPromptSubmit hook contract:
   { "hookSpecificOutput": { "hookEventName": "UserPromptSubmit",
                             "additionalContext": "<reminder>" } }
 """
+import datetime
 import json
 import sys
 # Force UTF-8 on stdout/stderr so the ✓ / ✗ / em-dash glyphs in reports
@@ -34,7 +35,16 @@ except Exception:
 # RENDER (1D / 2D verdict / 3D) sits LAST in this string, closest to
 # generation; the verbose footer spec sits earlier and compressed (full spec
 # lives in skills/4d-paradigm-protocol). No em-dashes (brain cadence rule 1).
+# Calendar facts are DATA, never derivation. A model computing a weekday in
+# its head is modular arithmetic in one forward pass: it fails silently and
+# fluently (the weekday-hallucination class). Injecting today's weekday kills
+# the whole class; anything beyond it (days-between, deadlines) must come from
+# a tool receipt (`date`, python), never mental math.
+_TODAY = datetime.date.today()
 REMINDER = (
+    f"TODAY IS: {_TODAY.strftime('%A')} {_TODAY.isoformat()} (injected as data; "
+    "for any other date arithmetic run `date`/python and cite the receipt, "
+    "never derive it mentally).\n"
     "4d: Apply the 4D paradigm to this turn. Do not skip it.\n"
     "4D Disclose: state side effects + Impact Radius. 4D Gate: present a Change "
     "Manifest before the first file write and wait for confirmation.\n"
