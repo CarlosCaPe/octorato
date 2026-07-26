@@ -21,7 +21,7 @@ Biological principles implemented:
   2. Multi-layer synapses  — agent↔skill, agent↔agent, skill↔skill
   3. Hebbian learning      — "neurons that fire together wire together"
   4. Zero broken synapses  — every connection validated at build time
-  5. Gap detection         — isolated neurons, orphan synapses, blind spots
+  5. Gap detection         — agents with no skill link, skills with no agent link
   6. Team Assembly Engine  — given a task, find the optimal squad
   7. Arm-distributed intel — each region has its own neural profile
 
@@ -697,8 +697,12 @@ def generate_connectome():
         agent_neighbors[b][a] = w
 
     # Diagnostics
-    isolated_neurons = [n["id"] for n in neurons if not n.get("_skill_connections")]
-    orphan_synapses = [s_id for s_id, conns in skill_to_agents.items() if not conns]
+    # NOTE: these two are CROSS-LAYER coverage gaps, not dead cells. An entry here
+    # still has skill<->skill (or agent<->agent) edges and is reachable by recall;
+    # it merely has no link across the agent/skill boundary above the threshold.
+    # Prune candidates are degree-0/degree-1 nodes: see `query_connectome.py dead`.
+    agents_without_skills = [n["id"] for n in neurons if not n.get("_skill_connections")]
+    skills_without_agents = [s_id for s_id, conns in skill_to_agents.items() if not conns]
 
     busiest_neurons = sorted(neurons, key=lambda n: len(n.get("_skill_connections", {})), reverse=True)[:15]
     most_connected_agents = sorted(neurons, key=lambda n: len(agent_neighbors.get(n["id"], {})), reverse=True)[:15]
@@ -892,8 +896,8 @@ def generate_connectome():
             ),
         },
         "diagnostics": {
-            "isolated_neurons": isolated_neurons,
-            "orphan_synapses": orphan_synapses,
+            "agents_without_skills": agents_without_skills,
+            "skills_without_agents": skills_without_agents,
             "busiest_neurons": [
                 {"id": n["id"], "skill_connections": len(n.get("_skill_connections", {})),
                  "agent_connections": len(agent_neighbors.get(n["id"], {})),
@@ -950,8 +954,8 @@ def print_summary(connectome):
     print(f"   Formula: {cap['formula']}")
 
     print(f"\nDiagnostics:")
-    print(f"   Isolated neurons (no skills):   {len(diag['isolated_neurons'])}")
-    print(f"   Orphan synapses (no agents):    {len(diag['orphan_synapses'])}")
+    print(f"   Agents with no skill link:      {len(diag['agents_without_skills'])}")
+    print(f"   Skills with no agent link:      {len(diag['skills_without_agents'])}")
 
     print(f"\nBusiest Neurons (total connections):")
     for item in diag["busiest_neurons"][:8]:
@@ -973,19 +977,24 @@ def print_summary(connectome):
         avg_r = stats["total_arm_conns"] / max(c, 1)
         print(f"   {div:.<28} {c:>3} neurons | avg skills:{avg_s:>5.1f} agents:{avg_a:>5.1f} arms:{avg_r:>4.1f}")
 
-    if diag["isolated_neurons"]:
-        print(f"\nIsolated Neurons ({len(diag['isolated_neurons'])} total):")
-        for n in diag["isolated_neurons"][:5]:
-            print(f"   - {n}")
-        if len(diag["isolated_neurons"]) > 5:
-            print(f"   ... and {len(diag['isolated_neurons']) - 5} more")
+    if diag["agents_without_skills"] or diag["skills_without_agents"]:
+        print("\nCross-layer coverage gaps (NOT prune candidates):")
+        print("   These nodes keep their same-layer edges and stay reachable by recall.")
+        print("   For real dead cells (degree 0 or 1) run: query_connectome.py dead")
 
-    if diag["orphan_synapses"]:
-        print(f"\nOrphan Synapses ({len(diag['orphan_synapses'])} total):")
-        for s in diag["orphan_synapses"][:5]:
+    if diag["agents_without_skills"]:
+        print(f"\nAgents With No Skill Link ({len(diag['agents_without_skills'])} total):")
+        for n in diag["agents_without_skills"][:5]:
+            print(f"   - {n}")
+        if len(diag["agents_without_skills"]) > 5:
+            print(f"   ... and {len(diag['agents_without_skills']) - 5} more")
+
+    if diag["skills_without_agents"]:
+        print(f"\nSkills With No Agent Link ({len(diag['skills_without_agents'])} total):")
+        for s in diag["skills_without_agents"][:5]:
             print(f"   - {s}")
-        if len(diag["orphan_synapses"]) > 5:
-            print(f"   ... and {len(diag['orphan_synapses']) - 5} more")
+        if len(diag["skills_without_agents"]) > 5:
+            print(f"   ... and {len(diag['skills_without_agents']) - 5} more")
 
     print(f"\nGeneration time: {meta['generation_time_sec']}s")
 
