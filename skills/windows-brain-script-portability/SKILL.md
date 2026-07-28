@@ -1,6 +1,6 @@
 ---
 name: windows-brain-script-portability
-description: "Two hard-won rules for any Python script in ~/.claude/scripts/ that must run on a Windows brain: (1) `python3` resolves to the Microsoft Store stub by default — depend on the `python3.cmd` shim installed by install-runners.py, never on bare `python3`. (2) ANY script that prints Unicode (✓ ✗ — • → bullet/check/arrow) MUST reconfigure stdout/stderr to UTF-8 at module top — Windows cp1252 consoles crash mid-print otherwise, leaving the script's work half-reported. Use proactively when writing a new brain script, when touching an existing one, or when triaging a Windows-only crash."
+description: "Scripts de ~/.claude/scripts/ que corren en un cerebro Windows: usa el shim python3.cmd y no python3 pelado, y reconfigura stdout a UTF-8 si imprimes simbolos. Usalo al escribir un script del cerebro o al triagear un crash solo-Windows."
 metadata:
   type: pattern-reference
   origin: session-learn-extractor — 2026-06-05 after iterating on the same UnicodeEncodeError + python3-stub pair across e5aa67b → install-runners.py → canon-render.py

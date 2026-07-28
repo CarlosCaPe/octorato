@@ -1,6 +1,6 @@
 ---
 name: arm-onboarding
-description: "Step-by-step protocol for creating a new client arm (per-client repo) in the Octopus framework. Covers required files, the sync-ai-docs workflow, the arm's sealed lineage graph (.claude/connectome/lineage.yaml), QueryMaster connection registration, the one-file rule, and the gitignore hygiene baseline. Load whenever the operator says 'create a new arm', 'onboard a client', 'mkdir new project', or starts working in an empty directory under ~/Documents/github/."
+description: "Protocolo paso a paso para crear un arm nuevo de cliente: archivos requeridos, sync-ai-docs, el grafo de linaje sellado del arm, alta en QueryMaster y la higiene de gitignore. Dispara con 'crear un arm' u 'onboard a un cliente'."
 metadata:
   type: workflow
   short-description: "How to onboard a new client arm: required files, sync-ai-docs, sealed lineage graph, QueryMaster connections, one-file rule"

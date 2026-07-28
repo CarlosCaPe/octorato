@@ -1,6 +1,6 @@
 ---
 name: summarize-100
-description: Compress any topic, document, answer, profile, or message into approximately 100 words — the 100 most semantically-dense tokens that preserve the core signal. Use when the user asks for "100 palabras", "100 words version", "versión 100", "tldr 100", "elevator pitch", "comprime a 100", "resumen 100", or any equivalent request for a token-budgeted summary. The goal is maximum information density per word — every token must earn its place.
+description: "Comprime cualquier tema, documento o respuesta a ~100 palabras, las mas densas semanticamente. Dispara con '100 palabras', 'version 100', 'tldr 100', 'elevator pitch', 'comprime a 100'."
 ---
 
 # summarize-100 — 100-Word Compression Skill

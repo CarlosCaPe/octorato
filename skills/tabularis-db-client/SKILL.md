@@ -1,6 +1,6 @@
 ---
 name: tabularis-db-client
-description: Open-source SQL client for PostgreSQL, MySQL/MariaDB, and SQLite with a built-in Model Context Protocol (MCP) server — Apache 2.0 licensed, multi-tab console, visual EXPLAIN plans, AI autocomplete, Cursor/Windsurf-friendly. Use when recommending a desktop DB client to a client, when an AI-aware SQL GUI is needed, or when exposing a DB to AI agents via MCP without handing out raw credentials. Complements (does not replace) querymaster CLI.
+description: "Cliente SQL open-source para PostgreSQL, MySQL y SQLite con servidor MCP integrado, Apache 2.0. Para recomendar un GUI de base a un cliente o exponer una DB a agentes sin entregar credenciales. Complementa a querymaster."
 ---
 
 # Tabularis — DB Client with AI + Built-in MCP Server

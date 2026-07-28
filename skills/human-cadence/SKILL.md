@@ -1,6 +1,6 @@
 ---
 name: human-cadence
-description: "The 10 no-rules that strip AI-tells from any written output so text reads like a person, not a model, and costs fewer tokens. Inverted from the soyfelixgo TikTok 'humanizer' prompt into hard DON'Ts. ALWAYS-ON delivery discipline: every output (chat, email, doc, commit body, PR description) passes these before it ships. CLAUDE.md §Communication carries the summary; the verbatim source + per-language blocklists + reconciliation live here. Load when drafting prose, humanizing AI text, or auditing why a draft 'sounds like AI'."
+description: "Las 10 no-reglas que quitan los tics de IA a cualquier texto para que lea como persona: sin em-dash, sin muletillas, sin triadas forzadas. SIEMPRE ACTIVO en todo output: chat, correo, doc, commit, PR. CLAUDE.md trae el resumen, aqui esta el detalle."
 metadata:
   short-description: "10 anti-AI-tell no-rules for human-sounding, token-lean output"
   type: reference

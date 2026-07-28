@@ -1,6 +1,6 @@
 ---
 name: stripe-payments
-description: Decide and implement the right Stripe integration tier for a use case — Payment Link (zero-code donate / one-off sale), Checkout (hosted multi-product), Elements (custom UI), Connect (marketplace), or Billing (subscriptions). Covers Stripe MCP server registration, Stripe CLI for local dev + webhook forwarding, key hygiene (sk_live_* never in chat), and CF Pages secret deployment. Use when adding any Stripe surface to an arm, when a donate / checkout / subscription button is needed, when choosing between PayPal and Stripe, or when wiring Stripe webhooks against Cloudflare Workers.
+description: "Elige e implementa el tier correcto de Stripe (Payment Link, Checkout, Elements, Connect, Billing), con registro del MCP, CLI local e higiene de llaves. Usalo al anadir donate, checkout o suscripcion, o al comparar contra PayPal."
 ---
 
 # Stripe Payments — Pick the Right Tier First

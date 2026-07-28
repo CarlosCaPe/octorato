@@ -1,6 +1,6 @@
 ---
 name: vibevoice-elevenlabs-alternative
-description: Microsoft's open-source voice synthesis model — local, real-time-capable text-to-speech that can replace ElevenLabs for non-streaming, on-device, or cost-sensitive use cases. MIT licensed. Use when a client needs voice generation without sending audio prompts to a third-party API, when ElevenLabs per-minute costs are eating margin, or when the brain's `speech` skill needs a fully-local alternative for regulated / air-gapped engagements.
+description: "Modelo open-source de sintesis de voz de Microsoft, local y en tiempo real, sustituto de ElevenLabs. MIT. Para clientes que no pueden mandar audio a un tercero o cuando el costo por minuto se come el margen."
 ---
 
 # VibeVoice — Microsoft's Open-Source Voice Synthesis

@@ -225,7 +225,6 @@
 | table-normalization-1nf | Table Normalization (1NF Violations) |
 | tabularis-db-client | Open-source SQL client for PostgreSQL, MySQL/MariaDB, and SQLite with a built-in Model Context Protocol (MCP) server , A... |
 | teams-1on1-send-no-chat-read | Send 1:1 Teams chat without Chat.Read scope (deterministic chat-id derivation) |
-| teams-ready-message | When the operator asks for a message to paste into a chat client (Teams, Slack, WhatsApp, any plain-text box), DO NOT pu... |
 | technical-document-craftsmanship | Skill #37 , Technical Document Craftsmanship |
 | theory-plus-practice-prompts | Every long-form technical document combining a framework explanation with a use-case demonstration MUST carry executable... |
 | timestamptz-standardization | Timestamp Standardization (timestamptz) |

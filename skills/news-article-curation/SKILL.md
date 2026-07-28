@@ -1,6 +1,6 @@
 ---
 name: news-article-curation
-description: Daily brain learning loop for AI news and blogs. Reads a watchlist of RSS/Atom feeds (Simon Willison, OpenAI, DeepMind, Latent Space, arXiv cs.AI and more), classifies each recent article into brain-fit buckets via heuristics + an optional Groq LLM gate, and surfaces only the ones that teach something the brain doesn't already know. Output lands in `~/.claude/knowledge/news-articles/<date>.{md,json}`. Promote a keeper to a real skill with `/news-promote <date> "<title-substring>"`. Sibling of github-trending-curation; this is the INBOUND half (blog feeds we can learn from), the news section on the site is the OUTBOUND half (skills we already learned).
+description: "Loop diario sobre feeds RSS de IA (Willison, OpenAI, DeepMind, arXiv cs.AI): filtra los articulos que ensenan algo que el cerebro aun no sabe. Promueve un keeper a skill real con /news-promote."
 metadata:
   type: brain-routine
   schedule: daily 06:45 UTC

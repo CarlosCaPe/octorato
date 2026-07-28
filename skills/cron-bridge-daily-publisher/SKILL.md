@@ -1,6 +1,6 @@
 ---
 name: cron-bridge-daily-publisher
-description: End-to-end architectural pattern for "daily auto-publish N curated items from D1 → social platform (FB Page, IG Business, LinkedIn Page, etc.) via the existing Multi-Reach scheduler worker". Includes fair-rotation selector, content-hash idempotency, sentinel-keyed daily dedup, R2 image mirror via serve endpoint, D1 audit trail, and a companion retract sweep for platform ToS SLA (e.g. EasyBroker 24h). Reusable across white-label / franchise / multi-tenant scenarios.
+description: "Patron para autopublicar a diario N elementos curados desde D1 a una plataforma social via el worker programador. Incluye rotacion justa, idempotencia por hash, dedup por sentinel y barrido de retraccion."
 when_to_use: When a client wants "post N things per day to one or more social platforms, picked from a catalog, without duplicates within a cycle". Especially when there's an upstream feed (REST API, scraping target, manual catalog) → D1 → social. Examples — real-estate listings, e-commerce products, restaurant menus, event calendars.
 triggers: ["daily social publisher", "fair rotation", "auto-post N per day", "multireach bridge", "EB-to-FB", "catalog to social"]
 ---

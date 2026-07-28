@@ -1,6 +1,6 @@
 ---
 name: social-video-mining
-description: Extract structured insights from short-form social video (TikTok, YouTube Shorts, Instagram Reels, Bilibili, Douyin) WITHOUT paid speech-to-text — uses yt-dlp for video acquisition, ffmpeg for frame extraction, native multimodal vision (Read on JPGs) for on-screen text/logo identification, and WebFetch for source verification. Use when curating OSS tools from a creator channel, when mining tech-curator content for skill candidates, when transcripts are unavailable / blocked / too expensive, or when on-screen overlays carry the actual signal (project names, URLs, stats, logos).
+description: "Extrae insights de video corto (TikTok, Shorts, Reels, Douyin) sin speech-to-text de paga: yt-dlp, ffmpeg y vision sobre los frames. Usalo cuando el texto en pantalla carga la senal o cuando no hay transcript."
 ---
 
 # Social Video Mining — Frames Over Audio

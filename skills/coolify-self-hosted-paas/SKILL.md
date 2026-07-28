@@ -1,6 +1,6 @@
 ---
 name: coolify-self-hosted-paas
-description: Self-hosted alternative to Vercel, Heroku, Netlify, and Render — deploy applications, databases, and services on your own server (or any VPS) with git-push workflows, automatic SSL, preview deployments, and zero per-seat fees. Apache 2.0 licensed. Use when recommending deployment infrastructure to clients who want cost control, data sovereignty, or freedom from PaaS lock-in, or when an arm needs a single self-hosted plane to manage many small services.
+description: "Alternativa autoalojada a Vercel, Heroku y Render: despliega apps, bases y servicios en tu propio servidor con git-push, SSL automatico y sin costo por asiento. Apache 2.0."
 ---
 
 # Coolify — Self-Hosted PaaS

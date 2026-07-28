@@ -1,6 +1,6 @@
 ---
 name: repo-deep-learn
-description: Manual deep-analysis of a single GitHub repository (URL or local path). Clones if needed, inventories the codebase, extracts the concepts/patterns that could land as a new brain skill or improve an existing one, writes a structured report to ~/.claude/knowledge/repo-deep-learn/<repo>/<YYYY-MM-DD>.md, scans open octorato issues for resolution candidates, stars the source repo as thanks, and surfaces concrete brain-improvement proposals (new skill / update existing / new agent / pattern-reference / SKIP). Manual counterpart to the autonomous github-trending-curation routine — use when the operator hands you a specific repo and asks "what can we learn from this?".
+description: "Analisis profundo de UN repo de GitHub: inventaria el codigo, extrae patrones que podrian volverse skill y escribe reporte en ~/.claude/knowledge/repo-deep-learn/. Usalo cuando el operador te entrega un repo y pregunta que se puede aprender de el."
 metadata:
   type: brain-routine
   trigger: manual (operator-initiated)

@@ -1,6 +1,6 @@
 ---
 name: tramite-mx-assistant
-description: Asistente de trámites gubernamentales/burocráticos guiado por agente. Reúne la identidad del operador desde los conectores (Gmail/WhatsApp/Drive/archivos locales), maneja un portal oficial con agent-browser (o Skyvern para formularios WRITE pesados), se DETIENE en los muros que por diseño son humanos (reCAPTCHA/Turnstile, OTP, pago con tarjeta, biométricos de primera vez), entrega al humano solo eso, y recoge el resultado (PDF) del correo. Úsalo para constancias de antecedentes penales, actas, apostillas, citas consulares, visados, SAT/IMSS y trámites análogos. NO intenta vencer captchas ni automatizar pagos.
+description: "Asistente de tramites gubernamentales MX: maneja el portal con agent-browser, se DETIENE en captcha, OTP y pago con tarjeta, y recoge el PDF del correo. Para antecedentes penales, actas, apostillas, citas consulares, SAT e IMSS."
 ---
 
 # Trámite MX Assistant (asistente de trámites guiado)
