@@ -66,6 +66,61 @@ _BLOCK_REASON = (
 )
 
 
+# ── claim class 2: TOTAL COVERAGE asserted while the turn truncated ───────────
+# A sweep that reports "all of it" after a head/limit is the same failure the
+# brain already paid for three times in different domains (filtered email sweep,
+# single-JID chat read producing a false "not there", head -N feeding edits).
+# Both conditions are required and an explicit declaration exempts, so a partial
+# report that SAYS it is partial always passes. In doubt: allow.
+
+_COVERAGE_SCOPE = (
+    r"archivos?|correos?|mensajes?|resultados?|registros?|filas?|hilos?|chats?|"
+    r"carpetas?|superficies?|referencias?|coincidencias?|entradas?|"
+    r"files?|emails?|messages?|results?|rows?|records?|threads?|folders?|"
+    r"matches|entries|occurrences|surfaces"
+)
+
+_RE_COVERAGE_CLAIM = re.compile(
+    r"(?:"
+    r"\b(todos|todas|cada|every|all)\b[^.!?\n]{0,60}\b(?:" + _COVERAGE_SCOPE + r")"
+    r"|"
+    r"\b(?:" + _COVERAGE_SCOPE + r")\b[^.!?\n]{0,60}\b(completos?|completas?|"
+    r"sin excepci[oó]n|in full|complete|exhaustiv\w+)"
+    r"|"
+    r"\b(revis[eé]|barr[ií]|le[ií]|recorr[ií]|scanned|swept|reviewed|checked)\b"
+    r"[^.!?\n]{0,30}\b(todo|todos|todas|everything)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+# Artifacts in the turn that prove the sweep was capped.
+_RE_TRUNCATION = re.compile(
+    r"(\|\s*head\b|\|\s*tail\b|"
+    r"\bhead\s+-n?\s*\d+|\btail\s+-n?\s*\d+|"
+    r"--limit[=\s]\d+|--max-count[=\s]\d+|--max-results[=\s]\d+|"
+    r'"maxResults"\s*:\s*\d+|"limit"\s*:\s*\d+|'
+    r"\bLIMIT\s+\d+|\[:\s*\d+\]|\[0:\s*\d+\])",
+    re.IGNORECASE,
+)
+
+# The reply itself owning the cut, or the deliberate override token.
+_RE_COVERAGE_DECLARED = re.compile(
+    r"(coverage-partial-ok|"
+    r"\bprimer[oa]s?\s+\d+|\b[uú]ltim[oa]s?\s+\d+|\bmuestra\b|\bparcial(?:es|mente)?\b|"
+    r"\btrunc\w+|\brecort\w+|\bacot\w+|\bno exhaustiv\w+|"
+    r"\bfirst\s+\d+\b|\blast\s+\d+\b|\btop\s+\d+\b|\bsample\b|\bpartial\b|"
+    r"\bcapped\b|\blimited to\b|\bnot exhaustive\b)",
+    re.IGNORECASE,
+)
+
+_BLOCK_REASON_COVERAGE = (
+    "You asserted TOTAL coverage but this turn shows a truncation artifact "
+    "(head/limit/top-N) and the reply never declares the cut. Either sweep "
+    "untruncated, or state what was left out. Silent truncation reads as "
+    "'covered everything' when it did not. Say the cut, or add coverage-partial-ok."
+)
+
+
 # ── transcript helpers (copied verbatim from cadence-stop-hook.py) ────────────
 
 def _tail_lines(path: str, max_bytes: int = 262144) -> list:
@@ -149,16 +204,23 @@ def main() -> int:
         if not last_text.strip():
             return 0
 
-        if not _RE_VERIFY_CLAIM.search(last_text):
-            return 0  # condition A not met — pass
+        if _RE_VERIFY_CLAIM.search(last_text):
+            # Condition B: scan last 8KB for evidence; if any found — pass
+            recent = _recent_transcript_text(transcript, max_bytes=8192)
+            if not _RE_EVIDENCE.search(recent):
+                # Both conditions met, no evidence: block once
+                print(json.dumps({"decision": "block", "reason": _BLOCK_REASON}))
+                return 0
 
-        # Condition B: scan last 8KB for evidence; if any found — pass
-        recent = _recent_transcript_text(transcript, max_bytes=8192)
-        if _RE_EVIDENCE.search(recent):
-            return 0  # evidence found — pass
-
-        # Both conditions met, no evidence: block once
-        print(json.dumps({"decision": "block", "reason": _BLOCK_REASON}))
+        # ── claim class 2: total coverage asserted while the turn truncated ──
+        # Fires only when ALL hold: the reply asserts totality, it does NOT own
+        # the cut, and the turn carries a truncation artifact. Conservative by
+        # construction — a declared partial always passes.
+        if _RE_COVERAGE_CLAIM.search(last_text) and not _RE_COVERAGE_DECLARED.search(last_text):
+            recent_wide = _recent_transcript_text(transcript, max_bytes=16384)
+            if _RE_TRUNCATION.search(recent_wide):
+                print(json.dumps({"decision": "block", "reason": _BLOCK_REASON_COVERAGE}))
+                return 0
 
     except Exception:
         pass  # fail-open: a broken hook must never hold a conversation hostage
