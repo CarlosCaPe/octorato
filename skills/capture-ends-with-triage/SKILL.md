@@ -1,6 +1,6 @@
 ---
 name: capture-ends-with-triage
-description: A scheduled capture/scrape/monitor pipeline that only dumps raw data to files forces the operator to do the synthesis by hand, so the synthesis gets skipped and directed asks (review requests, red builds, @mentions) are missed for days. The fix is a mandatory last step that TRIAGES: it diagnoses each surfaced issue to a cause and a next action, not just lists it. Trigger when building or reviewing any daily/periodic capture job (Teams/Slack/email scrape, CI status pull, repo watch, metrics dump).
+description: "Un pipeline programado que solo vuelca datos crudos obliga al humano a sintetizar, y por eso se omite. Todo capture debe cerrar con un paso de TRIAGE que diagnostique causa y siguiente accion. Aplica al construir o revisar cualquier job periodico."
 metadata:
   type: reference
 ---

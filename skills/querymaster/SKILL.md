@@ -1,3 +1,8 @@
+---
+name: querymaster
+description: "Router maestro multi-motor: recibe un prompt en lenguaje natural, identifica el motor (PostgreSQL, Snowflake, SQL Server, ADX, SQLite, Databricks), genera la consulta y la ejecuta con dry-run por defecto. Dispara al pedir consultar una base, correr SQL o inspeccionar un esquema."
+---
+
 # QueryMaster — Multi-Engine Database Agent (Master Skill)
 
 > Trigger: user asks to query a database, run SQL, inspect schema, execute KQL,
