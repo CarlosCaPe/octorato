@@ -1,3 +1,8 @@
+---
+name: querymaster-adx
+description: "Skill hijo de querymaster para Azure Data Explorer. ADX usa KQL, NUNCA SQL. Conexion azure-kusto-data con SSO y buenas practicas para telemetria en tiempo real. Se activa cuando el motor resuelto es ADX."
+---
+
 # QueryMaster — Azure Data Explorer (ADX) / KQL Engine Skill
 
 > Child skill of `querymaster`. Activated when engine is Azure Data Explorer.

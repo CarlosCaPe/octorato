@@ -1,6 +1,6 @@
 ---
 name: octorato-harmony
-description: The cell coordinates without being told. When a shared value/fact is 10 in one place and 12 in another, converge both to one canonical value (→ 11) referenced everywhere, never forked. Every git file is a cell reading the same genome (the canon); coherence is morphogenesis — emergent, peer-to-peer, no central choreographer, no arm/brain hierarchy. Fires on multi-file UI/design-token/style/convention/content edits, on "two values / make both / converge / harmonize", and whenever the same primitive is restated at different literals in two places.
+description: "Cuando un mismo valor vale 10 en un lado y 12 en otro, converge ambos a un canonico referenciado en todas partes, nunca bifurcado. Dispara al editar tokens de diseno, estilos o convenciones en varios archivos, y ante 'converge' o 'armoniza'."
 metadata:
   type: pattern-reference
   origin: octorato-harmony-canon + innate-harmony-research panels — 2026-05-30

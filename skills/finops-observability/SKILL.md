@@ -1,6 +1,6 @@
 ---
 name: finops-observability
-description: "Measure brain/agent cost so it can be managed — 'lo que no se mide no crece'. Routes a cost/FinOps question to the right existing tool: per-arm spend, routing KPI ($ saved vs all-Opus), marginal cost of each new capability, est-vs-billed reconciliation, per-skill ROI. Load when the operator asks how much we spent, whether something is cheap or expensive, 'cuánto gastamos/cuesta', which arm/model/skill is eating tokens, whether model-routing is working, or whether a new capability made us pricier."
+description: "Mide el costo del cerebro y sus agentes y rutea la pregunta a la herramienta correcta: gasto por arm, KPI de ruteo, costo marginal de cada capacidad. Dispara con 'cuanto gastamos', 'cuanto cuesta', 'que se esta comiendo los tokens'."
 ---
 
 # FinOps Observability

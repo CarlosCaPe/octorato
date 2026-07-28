@@ -1,14 +1,6 @@
 ---
 name: daily-reflection
-description: >
-  End-of-day / end-of-session honest retrospective. Trigger when the operator asks
-  "¿qué aprendiste hoy?", "¿qué harías mañana para ser mejor?", "what did you learn today",
-  "how would you be better tomorrow", "reflexiona", or "/reflect". Runs a sourced,
-  no-flattery retro on the ACTUAL session (mistakes first, they are the value), answers
-  the three questions, and DISTILLS the sharpest lesson into brain memory so the
-  reflection becomes a reflex, not just words. Different from session-learn-extractor
-  (which extracts a reusable TECHNIQUE into a draft skill); this captures BEHAVIOR and
-  discipline and writes a feedback/lesson MEMORY.
+description: "Retro honesta de fin de sesion, errores primero, que destila la leccion a memoria del cerebro. Dispara con 'que aprendiste hoy?', 'reflexiona', '/reflect', 'what did you learn today', 'how would you be better tomorrow'."
 metadata:
   type: reflex
   short-description: "Honest session retro → 3 questions → distil the lesson to memory (reflection becomes reflex)"

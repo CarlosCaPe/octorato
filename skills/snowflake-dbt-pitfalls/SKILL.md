@@ -1,6 +1,6 @@
 ---
 name: snowflake-dbt-pitfalls
-description: Non-obvious Snowflake and dbt footguns that fail silently or destroy data. Load when writing or reviewing Snowflake DDL (CREATE OR REPLACE, Dynamic Tables, PIVOT) or dbt config (sources.yml freshness, versioned models). Each pitfall has a concrete prevention. Triggers - "CREATE OR REPLACE TABLE", Snowflake Time Travel / UNDROP, Dynamic Table refresh errors, PIVOT returning literals/nulls, dbt source freshness passing when it should not, dbt versioned-model YAML parse error that survives typo fixes.
+description: "Trampas de Snowflake y dbt que fallan en silencio o destruyen datos: CREATE OR REPLACE, Dynamic Tables, PIVOT, freshness de sources.yml, modelos versionados. Cada una con su prevencion."
 ---
 
 # Snowflake and dbt pitfalls (silent / destructive)

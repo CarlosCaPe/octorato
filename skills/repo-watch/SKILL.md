@@ -1,6 +1,6 @@
 ---
 name: repo-watch
-description: Daily monitor for a small watchlist of high-value GitHub repos (competitors, peers, upstream Claude Code ecosystem). Reads `skills/repo-watch/watchlist.yaml`, fetches HEAD SHA per repo, diffs against the previous snapshot, classifies the delta as HIGH/LOW/EMPTY/BASELINE signal, appends to a daily digest at `~/.claude/knowledge/repo-watch/<date>.md`, and writes file-based trigger markers for `/repo-deep-learn` to pick up out-of-band. Use when the operator wants to keep a finger on a competitor's pulse (first target — affaan-m/ECC, the 197K-star octorato parallel) without staring at GitHub all day. Sibling of [[github-trending-curation]] (autonomous breadth) and [[repo-deep-learn]] (manual depth).
+description: "Monitor diario de una watchlist de repos de GitHub: compara el HEAD SHA contra el snapshot previo y escribe un digest en ~/.claude/knowledge/repo-watch/. Usalo para seguir el pulso de competidores sin mirar GitHub todo el dia."
 metadata:
   type: brain-routine
   trigger: cron (daily) — register in ~/dataqbs-local-cron/runner.py

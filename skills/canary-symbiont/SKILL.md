@@ -1,6 +1,6 @@
 ---
 name: canary-symbiont
-description: "Cross-plane sentinel pattern: a tiny watcher on cloud plane B detects the SILENT death of scheduler plane A (billing block, cron load-shedding; zero error signal from inside) and alerts the operator by email. Fail-open: the canary's own failure never harms the host work. Includes the fine-grained-PAT 403 gotcha, the no-echo secret intake protocol, and the MANDATORY live test (a canary never test-fired protects nothing). Load when schedulers die silently, when 'nothing ran and nothing alerted', when building any watchdog/canary, or when activating one that has never fired."
+description: "Centinela cross-plane: un watcher en el plano B detecta la muerte SILENCIOSA del scheduler del plano A (bloqueo de billing, cron load-shedding) y avisa por correo. Fail-open. Incluye el test en vivo obligatorio."
 metadata:
   short-description: "A sentinel on a different plane senses what the host can't, alerts once, dies harmlessly"
   type: pattern

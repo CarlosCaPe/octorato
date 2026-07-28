@@ -1,6 +1,6 @@
 ---
 name: verify-root-cause-before-claiming
-description: Before you state the CAUSE of a failure to a stakeholder (client, teammate, ticket), verify the cause against the data, not just the symptom. A plausible but unchecked causal claim that turns out false damages trust more than saying "the exact cause I'll confirm in a moment". Trigger whenever you are about to write "the reason X happened is Y" / "it failed because" / "that's due to" in any outward-facing message, PR description, incident note, or status update.
+description: "Antes de decirle a alguien la CAUSA de una falla, verificala contra el dato, no contra el sintoma. Una causa plausible sin comprobar dana mas la confianza que decir 'la confirmo en un momento'. Dispara al escribir 'fallo porque' o 'se debe a'."
 metadata:
   type: feedback
 ---

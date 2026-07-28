@@ -1,3 +1,8 @@
+---
+name: querymaster-snowflake
+description: "Skill hijo de querymaster para Snowflake: conexion por Browser SSO, OAuth y usuario/contrasena de servicio, REST SQL API y buenas practicas de warehouse. Se activa cuando el motor resuelto es Snowflake."
+---
+
 # QueryMaster — Snowflake Engine Skill
 
 > Child skill of `querymaster`. Activated when engine is Snowflake.

@@ -1,3 +1,8 @@
+---
+name: token-efficient-prompting
+description: "Reduce 50-75% los tokens de salida sin perder senal, eliminando adulacion, relleno, preambulo y sugerencias no pedidas. Dispara al armar el CLAUDE.md de un proyecto nuevo o al configurar pipelines de agentes que necesitan salida terse y parseable."
+---
+
 # Token-Efficient Prompting
 
 > Reduce LLM output token usage by 50-75% without signal loss through structured CLAUDE.md rules and domain-specific profiles.

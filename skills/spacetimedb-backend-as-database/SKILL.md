@@ -1,6 +1,6 @@
 ---
 name: spacetimedb-backend-as-database
-description: Database that REPLACES the traditional backend — application logic runs as modules inside the database, clients subscribe to live state without a separate API tier, transactional + multiplayer-ready out of the box. Rust-based, by Clockwork Labs. Use when evaluating architecture for real-time multiplayer apps, low-latency state-sync use cases, agent-driven systems where many clients share live state, or when the cost/complexity of a 3-tier backend (API + DB + websockets) is the bottleneck. Novel paradigm — surface for awareness, not as a default.
+description: "Base de datos que REEMPLAZA al backend: la logica corre como modulos dentro de la DB y los clientes se suscriben al estado vivo, sin capa API. Para multijugador en tiempo real. Paradigma nuevo, no default."
 ---
 
 # SpacetimeDB — Database-as-Backend

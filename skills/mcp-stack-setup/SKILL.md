@@ -1,3 +1,8 @@
+---
+name: mcp-stack-setup
+description: "Instala y configura el stack MCP de un arm respetando Arm Isolation: los MCP de nube van a scope user, los de base de datos a .mcp.json dentro del repo del cliente. Dispara con 'setup MCP para X', 'agregar MCP al arm', o al dar de alta un arm nuevo."
+---
+
 # Skill: MCP Stack Setup for Octopus Arms
 
 ## Purpose

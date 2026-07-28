@@ -1,14 +1,6 @@
 ---
 name: teams-1on1-send-no-chat-read
-description: >
-  Send a 1:1 Microsoft Teams chat message via Graph API even when the
-  bearer token does NOT carry `Chat.Read*` scopes. Bypasses the
-  list-chats-then-find-id pattern by deriving the 1:1 chat ID
-  deterministically from sorted user OIDs in the canonical Teams form
-  `19:{sortedOidLower1}_{sortedOidLower2}@unq.gbl.spaces`. Pairs naturally
-  with browser-bearer auth where Conditional Access blocks Device Code
-  Flow and the resulting tenant-scoped bearer carries `ChatMessage.Send`
-  + `User.ReadBasic.All` but not `Chat.Read*`.
+description: "Manda un mensaje 1:1 de Teams por Graph API aunque el token NO traiga scopes Chat.Read: deriva el chat ID de los OIDs ordenados en la forma canonica 19:{oid1}_{oid2}@unq.gbl.spaces."
 metadata:
   short-description: Send 1:1 Teams chat without Chat.Read scope (deterministic chat-id derivation)
   status: stable

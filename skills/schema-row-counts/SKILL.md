@@ -1,6 +1,6 @@
 ---
 name: schema-row-counts
-description: Get exact row counts per table in a given schema — PostgreSQL primary, with notes for other engines. Two-column result: table_name, row_count.
+description: "Get exact row counts per table in a given schema — PostgreSQL primary, with notes for other engines. Two-column result: table_name, row_count."
 metadata:
   type: skill
 ---

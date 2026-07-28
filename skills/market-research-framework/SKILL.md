@@ -1,3 +1,8 @@
+---
+name: market-research-framework
+description: "Marco de investigacion de mercado a nivel consultoria, 12 modulos del sizing a la estrategia de entrada. Dispara con 'market research', 'TAM/SAM/SOM', 'analisis competitivo', 'segmentacion de clientes', 'SWOT', 'Porter', 'pricing', 'go-to-market'."
+---
+
 # Market Research Framework — Consulting-Grade Analysis
 
 ## Purpose

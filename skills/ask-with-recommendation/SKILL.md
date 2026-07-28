@@ -1,6 +1,6 @@
 ---
 name: ask-with-recommendation
-description: Canonical mandate — when presenting any multi-choice question to the operator (via AskQuestion or inline list of options), ALWAYS include (a) the options laid out neutrally, (b) a clear recommendation marked with `★ Recomiendo X` / `★ Recommendation: X`, and (c) reasoning covering impact / scope / timing / risk-of-waiting. Listing options without an opinion offloads cognitive work onto the operator — that is the slow ping-pong this skill kills. Triggers — every time you are about to send a "what next?" with 2+ options, every `AskQuestion` tool call, every "do you want X or Y?" in conversational prose.
+description: "Toda pregunta de opcion multiple al operador lleva recomendacion explicita marcada mas su razon (impacto, alcance, tiempo, riesgo de esperar). Aplica a cada AskUserQuestion y a cada 'quieres X o Y?' en prosa."
 ---
 
 # Ask With Recommendation

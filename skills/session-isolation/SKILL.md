@@ -1,6 +1,6 @@
 ---
 name: session-isolation
-description: "MANDATORY isolation for concurrent Claude Code sessions on one repo (especially ~/.claude itself). The same arm can run in two dimensions at once, but each live session MUST have its own git worktree + session id. Never two on one shared working tree. Documents the real collision (a broad git add in one lane swallows the other lane's uncommitted files), the octopus-morphology framing (instance isolation = Arm Isolation across time), the worktree protocol, and Anthropic's official `claude --worktree` guidance. Load before starting a second session on a repo, when two agents share ~/.claude, or when investigating 'my changes got committed by another session / ended up on the wrong branch'."
+description: "OBLIGATORIO: cada sesion concurrente sobre un repo necesita su propio git worktree y session id. NUNCA dos sesiones vivas sobre el mismo working tree. Carga antes de abrir una segunda sesion, o al investigar 'mis cambios se fueron en el commit de otra sesion'."
 metadata:
   short-description: "Each concurrent session gets its own git worktree. Period."
   type: reference

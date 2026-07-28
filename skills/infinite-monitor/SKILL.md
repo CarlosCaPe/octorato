@@ -1,6 +1,6 @@
 ---
 name: infinite-monitor
-description: Set up, configure, and build AI-powered dashboards using Infinite Monitor — an open-source Next.js app where users describe widgets in plain English and an AI agent writes, builds, and deploys React widgets in real-time on an infinite canvas. Use when the user says 'crea un dashboard para', 'dashboard builder', 'infinite monitor', 'AI dashboard', 'widget dashboard', 'monitor dashboard', 'real-time dashboard', or asks to build a monitoring/analytics dashboard with AI-generated widgets.
+description: "Arma dashboards con IA sobre Infinite Monitor, app Next.js open-source donde describes el widget en lenguaje natural y un agente lo escribe y despliega en un canvas infinito. Dispara con 'crea un dashboard para'."
 ---
 
 # Infinite Monitor — AI-Powered Dashboard Builder

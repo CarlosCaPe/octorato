@@ -1,6 +1,6 @@
 ---
 name: ado-pr-merge-via-api
-description: Diagnose and complete Azure DevOps Pull Request merges via REST API when the UI is unavailable or when scripting bulk merges. Handles the three most common failure modes — unresolved comment threads, reviewer vote at "waiting for author", and stale branch-policy CI gate — with explicit recovery for each. Includes the full sequence (vote → close threads → complete) and the conditions under which `bypassPolicy:true` will or won't work. Triggers: ADO PR completion via API, 403 "must succeed" or "must be addressed" on PR PATCH, automating PR merges.
+description: "Completa merges de Pull Request en Azure DevOps por REST API cuando la UI no sirve o hay que scriptear en lote. Cubre los 403 por threads sin resolver, voto en 'waiting for author' y CI gate rancio."
 ---
 
 # ADO Pull Request Merge via REST API

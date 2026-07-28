@@ -1,3 +1,8 @@
+---
+name: querymaster-sqlserver
+description: "Skill hijo de querymaster para SQL Server y Azure SQL (Database, Managed Instance, on-prem): conexion pyodbc con token de Azure AD y buenas practicas T-SQL. Se activa cuando el motor resuelto es SQL Server."
+---
+
 # QueryMaster — SQL Server / Azure SQL Engine Skill
 
 > Child skill of `querymaster`. Activated when engine is SQL Server or Azure SQL.

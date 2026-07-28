@@ -1,6 +1,6 @@
 ---
 name: graphify-code-graph
-description: Build a deterministic, queryable knowledge graph over any codebase with graphify (tree-sitter AST over 25+ languages, Leiden clustering, flat graph.json, zero LLM cost for code-only corpora) and query it via CLI or MCP. Use inside a client repo for code-level impact analysis (graphify affected), symbol path tracing, and architecture questions that grep answers poorly. Complements the brain's connectome/lineage graphs: graphify maps CODE SYMBOLS, the connectome maps CONCEPTS and governance. auto-promoted 2026-07-16 from repo-deep-learn (https://github.com/Graphify-Labs/graphify).
+description: "Grafo de conocimiento determinista y consultable sobre un codebase con graphify (tree-sitter, 25+ lenguajes, sin costo de LLM). Usalo para impact analysis a nivel de codigo dentro de un repo cliente, donde grep responde mal."
 metadata:
   type: tool-skill
   source: https://github.com/Graphify-Labs/graphify (MIT)

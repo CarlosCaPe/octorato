@@ -1,6 +1,6 @@
 ---
 name: inbox-triage-classifier
-description: "PHI-aware triage classifier for any inbox-like stream of items demanding human attention — email, Slack DMs, Teams chats, JIRA assignments, GitHub PR reviews, Notion mentions. Fetches recent items, normalizes text, screens for regulated content, routes to dual LLMs (cloud for clean, local for PHI-tainted), and returns a JSON-structured per-item verdict { needs_followup, reason, suggested_action, urgency }. Read-only against the source; never marks items read, never auto-replies. Use when the operator asks 'what do I need to follow up on?', 'qué tengo pendiente en X?', 'review my inbox/Slack/JIRA queue', 'do I owe anyone a reply?'. Use as the discovery layer BEFORE drafting replies."
+description: "Triage de bandejas (correo, Slack, Teams, JIRA, PRs): clasifica que requiere accion y devuelve veredicto por item con urgencia. Solo lectura, nunca marca leido ni responde. Usalo ante 'que tengo pendiente?', 'do I owe anyone a reply?'."
 metadata:
   short-description: "PHI-aware triage classifier for inbox-like streams"
 ---

@@ -1,6 +1,6 @@
 ---
 name: theory-plus-practice-prompts
-description: Every long-form technical document combining a framework explanation with a use-case demonstration MUST carry executable real-data prompts alongside the conceptual claims. No theory without prompts. No prompts without theory. The medium imitates the substrate. Triggers — authoring a Confluence POC page, an arm-level whitepaper, a client deliverable, a developer-facing onboarding doc, ANY artifact that asks the reader to act on what they read.
+description: "Todo documento tecnico largo que explica un marco y demuestra un caso DEBE llevar prompts ejecutables con datos reales junto a las afirmaciones. Ni teoria sin prompts ni prompts sin teoria. Aplica a POCs, whitepapers y entregables."
 ---
 
 # theory-plus-practice-prompts

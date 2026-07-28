@@ -1,6 +1,6 @@
 ---
 name: whatsapp-mcp-bridge-gotchas
-description: "Hard-won fixes for standing up the lharries/whatsapp-mcp bridge (whatsmeow + WhatsApp Web multidevice), encrypted, with send as a reversible dial. Covers the 403 media-download root cause (direct path stripped of its CDN auth query), the 405 client-outdated fix (bump whatsmeow + add context.Context to changed APIs), QR-vs-phone-code pairing, encrypt-at-rest without sudo (gocryptfs static binary), read-only vs send-enabled enforcement, and liveness/identity/verification gotchas (bridge freshness probe, @lid JID migration, outgoing REST sends absent from messages.db) and the outbound anti-spam discipline (no bursts to new contacts; device-removed recovery). Load before installing or debugging a personal WhatsApp MCP."
+description: "Fixes for the lharries/whatsapp-mcp bridge: 403 media download, 405 client-outdated, QR vs phone-code pairing, encrypt-at-rest, @lid JID migration, outbound anti-spam. Load before installing or debugging a personal WhatsApp MCP."
 metadata:
   type: reference
 ---

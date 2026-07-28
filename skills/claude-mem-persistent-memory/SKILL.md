@@ -1,6 +1,6 @@
 ---
 name: claude-mem-persistent-memory
-description: Persistent context across sessions for Claude Code (and other coding agents) — captures everything the agent does in a session, compresses it with AI, and injects relevant context back into future sessions. Use when you want to reduce per-session token usage by ~75%, when an arm has long-running engagements where session-to-session continuity matters, or when context-window limits are hitting hard. AGPL 3.0 — flag the copyleft implications before embedding in commercial client deliverables.
+description: "Memoria persistente entre sesiones para agentes de codigo: captura la sesion, la comprime y reinyecta lo relevante despues, con ~75% menos tokens. AGPL 3.0, ojo con el copyleft en entregables comerciales."
 ---
 
 # claude-mem — Persistent Memory for Claude Code
