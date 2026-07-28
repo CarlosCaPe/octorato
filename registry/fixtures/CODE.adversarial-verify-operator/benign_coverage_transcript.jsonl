@@ -1,0 +1,2 @@
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "name": "Bash", "input": {"command": "grep -rl TODO . | head -20"}}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Revise todos los archivos que devolvio el grep, pero corte en los primeros 20, asi que el barrido es parcial y falta el resto."}]}}

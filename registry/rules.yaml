@@ -106,7 +106,7 @@ rules:
     expect: 0
   liveness_required: FIRES
 - id: CODE.adversarial-verify-operator
-  title: Adversarially verify the operator; claims need proof
+  title: Adversarially verify the operator; claims need proof (verification claims and total-coverage claims)
   category: CODE
   source:
     file: CLAUDE.md
