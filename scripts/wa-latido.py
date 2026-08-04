@@ -219,8 +219,13 @@ def late(nombre, cfg, curar=True):
 
     if not cfg.get("propio"):
         vivo = pids(cfg)
+        # El detalle NO se etiqueta como "enlace OK" cuando es None: ahi el enlace
+        # no se comprobo, y decir OK convierte el journal en un testigo falso.
+        estado = f"enlace OK ({detalle})" if enlazado else "enlace NO COMPROBADO"
+        alcance = ("Sonda parcial: no ejercita el envio" if enlazado
+                   else "Sonda MINIMA: ni enlace ni envio comprobados")
         log(f"{nombre}: sin numero propio -> proceso {'vivo' if vivo else 'MUERTO'}, "
-            f"enlace OK ({detalle}). Sonda parcial: no ejercita el envio")
+            f"{estado}. {alcance}")
         return bool(vivo)
 
     for intento in (1, 2):
@@ -332,14 +337,38 @@ def selftest():
         con.commit(); con.close()
         chk("cuenta desvinculada (0 dispositivos) se detecta",
             vinculado(cfg)[0] is False)
-        chk("puente desvinculado NO se reporta como PASS",
-            not late("fixture-suelto", dict(cfg, puerto=puerto_libre()),
-                     curar=False))
         con = sqlite3.connect(wdb)
         con.execute("INSERT INTO whatsmeow_device VALUES ('1@s.whatsapp.net')")
         con.commit(); con.close()
         chk("con 1 dispositivo enlazado la sonda de enlace deja pasar",
             vinculado(cfg)[0] is True)
+
+        # PAR DISTINGUIDOR. Aqui hubo un fixture que decia "puente desvinculado NO
+        # se reporta como PASS" y no probaba eso: usaba un puerto cerrado, asi que
+        # late() fallaba por no poder enviar, no por el enlace. Un revisor
+        # independiente lo mostro mutando el codigo, borro la comprobacion entera y
+        # el selftest siguio en 11/11. Este par la aisla: el proceso esta VIVO y no
+        # hay "propio", asi que no existe envio que pueda fallar y lo UNICO que
+        # mueve el resultado es la tabla de dispositivos. Sin la comprobacion en
+        # late(), el segundo caso se pone rojo.
+        sleepbin = shutil.which("sleep")
+        binreal = os.path.join(d, "puente-fixture")
+        shutil.copy(sleepbin, binreal)
+        proc = subprocess.Popen([binreal, "30"])
+        time.sleep(0.5)
+        suelto = {"db": db, "dir": d, "bin": "puente-fixture", "puerto": 1}
+        try:
+            chk("control positivo: pids() ve vivo el proceso del fixture",
+                len(pids(suelto)) > 0)
+            chk("mismo caso, ENLAZADO -> PASS",
+                late("fx-on", suelto, curar=False))
+            con = sqlite3.connect(wdb)
+            con.execute("DELETE FROM whatsmeow_device")
+            con.commit(); con.close()
+            chk("mismo caso, DESVINCULADO -> FAIL (aisla la comprobacion)",
+                not late("fx-off", suelto, curar=False))
+        finally:
+            proc.kill(); proc.wait()
 
         # el bug que encontro la revision: un lector del binario contandose
         # nombre de 24 chars a proposito: con -x este caso pasaba porque no
@@ -387,7 +416,14 @@ def main():
     for n, cfg in cfgs.items():
         try:
             ok = late(n, cfg, curar=not a.sin_curar)
-            res[n] = "ok" if ok else "FALLO"
+            # Un fallo por cuenta desvinculada NO es del mismo tipo que uno de
+            # tuberia: el segundo se cura solo, el primero pide un humano con el
+            # telefono. Si el archivo de estado los llama igual, quien escale no
+            # puede distinguir "reinicia" de "escanea el QR", y el latido va a
+            # fallar cada 10 minutos sin que nadie sepa que la cura es de mano.
+            res[n] = "ok" if ok else (
+                "FALLO: requiere reenlace por QR" if vinculado(cfg)[0] is False
+                else "FALLO")
             if not ok:
                 malos.append(n)
         except SondaRota as e:
