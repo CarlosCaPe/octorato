@@ -9,7 +9,7 @@
 | Skills | 231 |
 | Agents | 161 |
 | Divisions | 15 |
-| Scripts: wired | 87 |
+| Scripts: wired | 88 |
 | Scripts: orphan | 7 |
 | Rules | 61 |
 | Hook entries | 34 |
@@ -488,7 +488,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (94)
+## Scripts (95)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -584,6 +584,7 @@
 | trace-hook.py | trace-hook.py , observability surface 1 , capture hook. Reads a Claude Code hook event from stdin an... | wired |
 | update_neural_activity.py | update_neural_activity.py , observability surface 1 , connectome integration. Reads the JSONL trace ... | wired |
 | validate-skill-manifest.py | validate-skill-manifest.py , validate a skill.json against the M5 manifest schema (issue #31). | wired |
+| wa-latido.py | Latido activo de puentes de WhatsApp: mide la TUBERIA, no el proceso. | wired |
 | wa-soporte.sh | Envia un WhatsApp por el canal de SOPORTE, no por el numero personal del operador. | orphan |
 | watchdog.py | watchdog.py , observability surface 4 anomaly detector. Reads the JSONL trace files written by trace... | wired |
 
