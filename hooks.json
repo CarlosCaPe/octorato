@@ -165,15 +165,15 @@
       "matcher": "Bash"
     },
     {
-      "matcher": "mcp__whatsapp__send_message",
       "hooks": [
         {
-          "type": "command",
           "command": "python3 ~/.claude/scripts/g__pretool-mcp__chat-context.py",
           "statusMessage": "♦ chat-context: tail del hilo antes de enviar (block-once)...",
-          "timeout": 10
+          "timeout": 10,
+          "type": "command"
         }
-      ]
+      ],
+      "matcher": "mcp__whatsapp__send_message"
     }
   ],
   "SessionStart": [
@@ -238,6 +238,10 @@
           "command": "python3 ~/.claude/scripts/g__stop__delegation-audit.py",
           "statusMessage": "♦ delegation audit (bulk fetch → cheap tier)...",
           "timeout": 5,
+          "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/d__stop__wa-guardia.py",
           "type": "command"
         }
       ]

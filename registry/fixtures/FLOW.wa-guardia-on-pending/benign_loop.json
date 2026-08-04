@@ -1,0 +1,7 @@
+{
+  "stop_hook_active": true,
+  "session_id": "selftest-benign_loop",
+  "wa_guardia_dbs": {
+    "prueba": "~/.wa-fixture/con-espera.db"
+  }
+}
