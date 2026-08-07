@@ -238,3 +238,7 @@ connectome/merge-approvals.json
 
 # Per-session upload scratch dirs (session-id named, runtime state)
 uploads/
+
+# Estado de ejecucion de los hooks (ledgers, avisos). Trae JIDs de chats de
+# cliente: nunca debe salir al repo publico.
+.cache/

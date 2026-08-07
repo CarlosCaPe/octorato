@@ -8,6 +8,12 @@
 #
 # Uso:  wa-soporte.sh <destinatario> <mensaje>
 #       destinatario: telefono con lada sin + ni signos, o JID completo
+#
+# Menciones (grupos): exporta WA_MENCIONES con los telefonos separados por coma.
+# El texto TIENE que traer "@<telefono>" para que WhatsApp lo pinte como etiqueta;
+# el celular de quien lee lo cambia por el nombre que tenga guardado. Sin esto la
+# mencion no notifica a nadie, se ve como texto gris.
+#   WA_MENCIONES=5215550001111 wa-soporte.sh 1203...@g.us "@5215550001111 buenos dias"
 set -euo pipefail
 
 PUERTO_SOPORTE=8081
@@ -32,10 +38,14 @@ if ! curl -sf -m 3 -o /dev/null "http://localhost:${PUERTO_SOPORTE}/api/send" -X
   fi
 fi
 
-respuesta=$(python3 - "$destinatario" "$mensaje" "$PUERTO_SOPORTE" <<'PY'
-import json, sys, urllib.request
+respuesta=$(WA_MENCIONES="${WA_MENCIONES:-}" python3 - "$destinatario" "$mensaje" "$PUERTO_SOPORTE" <<'PY'
+import json, os, sys, urllib.request
 destinatario, mensaje, puerto = sys.argv[1], sys.argv[2], sys.argv[3]
-datos = json.dumps({"recipient": destinatario, "message": mensaje}).encode()
+cuerpo = {"recipient": destinatario, "message": mensaje}
+menciones = [m.strip() for m in os.environ.get("WA_MENCIONES", "").split(",") if m.strip()]
+if menciones:
+    cuerpo["mentions"] = menciones
+datos = json.dumps(cuerpo).encode()
 req = urllib.request.Request(f"http://localhost:{puerto}/api/send", data=datos,
                              headers={"Content-Type": "application/json"})
 with urllib.request.urlopen(req, timeout=30) as r:

@@ -6,15 +6,15 @@
 
 | Metric | Count |
 |---|---|
-| Skills | 231 |
+| Skills | 232 |
 | Agents | 161 |
 | Divisions | 15 |
-| Scripts: wired | 89 |
+| Scripts: wired | 92 |
 | Scripts: orphan | 7 |
-| Rules | 61 |
-| Hook entries | 34 |
+| Rules | 62 |
+| Hook entries | 35 |
 
-## Skills (231)
+## Skills (232)
 
 | Name | Description |
 |---|---|
@@ -241,6 +241,7 @@
 | vibevoice-elevenlabs-alternative | Modelo open-source de sintesis de voz de Microsoft, local y en tiempo real, sustituto de ElevenLabs. MIT. Para clientes ... |
 | video-commercial-production | Produce comerciales en video HD 9:16 desde paginas HTML animadas con GSAP, capturando con Playwright y codificando con f... |
 | voice-and-cadence-consistency | Document Voice and Cadence Consistency |
+| wa-guardia | Modo guardia sobre un chat de mensajeria. Arma un watcher cuando un turno cierra esperando respuesta de un tercero, y le... |
 | web-perf | Audita rendimiento web con Chrome DevTools MCP: Core Web Vitals (LCP, INP, CLS), recursos que bloquean el render, cadena... |
 | whatsapp-mcp-bridge-gotchas | Fixes for the lharries/whatsapp-mcp bridge: 403 media download, 405 client-outdated, QR vs phone-code pairing, encrypt-a... |
 | windows-brain-script-portability | Scripts de ~/.claude/scripts/ que corren en un cerebro Windows: usa el shim python3.cmd y no python3 pelado, y reconfigu... |
@@ -488,7 +489,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (96)
+## Scripts (99)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -531,6 +532,7 @@
 | connectome-heartbeat.py | connectome-heartbeat.py , the Delegate-phase heartbeat (UserPromptSubmit hook). | wired |
 | cost-vs-change.py | cost-vs-change.py , "is the new thing making me cheaper or more expensive?" Correlates the daily Cla... | wired |
 | d__posttool__delegation-ledger.py | d__posttool__delegation-ledger.py: PostToolUse detector (matcher *) for FLOW.bulk-fetch-delegation. | wired |
+| d__stop__wa-guardia.py | d__stop__wa-guardia.py , Stop detector: si mande un mensaje y espero respuesta, arma la guardia. | wired |
 | delegate-check | delegate-check , Mandatory 2D Delegate pre-flight for the Octopus brain. Scans REGISTRY.md (agents) ... | wired |
 | delegate-gate.py | PreToolUse hook , involuntary delegation reflex (FAIL-OPEN, by design). | wired |
 | dimension-awareness-hook.py | dimension-awareness-hook.py , PreToolUse hook for 4D session dimension awareness | wired |
@@ -558,6 +560,7 @@
 | install-observability-timer.py | install-observability-timer.py - schedule the brain's daily observability digest. | wired |
 | install-runners.py | install-runners.py , make ~/.local/bin runners thin thunks into the tracked ai_sync.py. | wired |
 | lineage-doctor.py | lineage-doctor.py , fail-closed integrity check for the surface/derivation graph. | wired |
+| mail-guardia.py | Guardia de correo: que llego y no hemos contestado. Hermana de wa-guardia.py. | wired |
 | memory_sync.py | memory_sync , sync the brain's private memory store to a standalone remote. | wired |
 | merge-hooks-cursor.py | merge-hooks-cursor.py , project hooks.json into Cursor's native ~/.cursor/hooks.json. | wired |
 | merge-hooks.py | merge-hooks.py , Merge shared hooks.json into local settings.json Called by ai-pull after pulling th... | wired |
@@ -584,12 +587,13 @@
 | trace-hook.py | trace-hook.py , observability surface 1 , capture hook. Reads a Claude Code hook event from stdin an... | wired |
 | update_neural_activity.py | update_neural_activity.py , observability surface 1 , connectome integration. Reads the JSONL trace ... | wired |
 | validate-skill-manifest.py | validate-skill-manifest.py , validate a skill.json against the M5 manifest schema (issue #31). | wired |
+| wa-guardia.py | Guardia de chat: que llego y no hemos contestado, aqui y ahora. | wired |
 | wa-latido.py | Latido activo de puentes de WhatsApp: mide la TUBERIA, no el proceso. | wired |
 | wa-sin-respuesta.py | Vigia de silencio: avisa cuando un cliente escribio y nadie contesto. | wired |
 | wa-soporte.sh | Envia un WhatsApp por el canal de SOPORTE, no por el numero personal del operador. | orphan |
 | watchdog.py | watchdog.py , observability surface 4 anomaly detector. Reads the JSONL trace files written by trace... | wired |
 
-## Rules (61)
+## Rules (62)
 
 ### ARCHITECTURE
 
@@ -646,6 +650,7 @@
 - FLOW.prune-dead-cells
 - FLOW.skill-first
 - FLOW.suggest-unlock
+- FLOW.wa-guardia-on-pending
 - FLOW.web-agent-browser
 
 ### GENERIC
@@ -689,5 +694,5 @@
 | PostToolUse | cadence-lint.py, canon-heal-hook.py, client-doc-lint-hook.py, d__posttool__delegation-ledger.py, impact-radius-hook.py, trace-hook.py |
 | PreToolUse | budget-check.py, config-ship-verify.py, delegate-gate.py, dimension-awareness-hook.py, g__pretool-bash__git-discipline.py, g__pretool-mcp__chat-context.py, grafo-gate.py, qa-merge-gate.py, secrets-grep-guard.py, trace-hook.py |
 | SessionStart | merge-hooks.py, session-isolation-hook.py |
-| Stop | cadence-stop-hook.py, claim-verify-stop.py, g__stop__delegation-audit.py, g__stop__draft-promise.py, grafo-ledger-check.py, no-pause-suggestion.py, source-attribution-check.py, trace-hook.py |
+| Stop | cadence-stop-hook.py, claim-verify-stop.py, d__stop__wa-guardia.py, g__stop__delegation-audit.py, g__stop__draft-promise.py, grafo-ledger-check.py, no-pause-suggestion.py, source-attribution-check.py, trace-hook.py |
 | UserPromptSubmit | 4d-reminder.py, arm-recall-hook.py, brain-memory-recall.py, connectome-heartbeat.py, eye-check.py, grafo-turn-reset.py, inbox-sweep-reflex.py, trace-hook.py |
