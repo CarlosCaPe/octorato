@@ -214,6 +214,7 @@ incidents/
 
 # Runtime operational state — never commit
 /daemon.log
+/daemon.status.json
 /daemon/
 /jobs/
 /gh-pr-status-cache.json

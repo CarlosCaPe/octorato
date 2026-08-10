@@ -117,6 +117,10 @@
           "statusMessage": "♦ git discipline (no _old/_backup names)...",
           "timeout": 5,
           "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/r__pretool-write__base-freshness.py",
+          "type": "command"
         }
       ],
       "matcher": "Write|Edit|NotebookEdit|MultiEdit"

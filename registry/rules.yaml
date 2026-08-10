@@ -187,13 +187,7 @@ rules:
   gateable: true
   enforcement: fail-open
   waiver:
-    reason: 'v6 D4 audit (2026-07-01): config-ship-verify.py:97 emits permissionDecision ''ask'' (a genuine
-      fail-closed-via-ask pause), NOT warn-only as previously stated. But it fires on only 3 hardcoded
-      patterns (Datadog dashboard write, wrangler deploy --config/generated, curl POST @file.json). The
-      rule ''dry-run first; ask before shipping generated configs'' plus CLAUDE.md ''destructive ops preview
-      by default'' is broader than those 3, so the ask path is narrower than the rule. Residual documented,
-      waiver kept. A broader deterministic deny of ''ship generated config'' is still not specifiable
-      without false positives. Close candidate.'
+    reason: 'v6 D4 audit (2026-07-01): config-ship-verify.py:97 emits permissionDecision ''ask'' (a genuine fail-closed-via-ask pause), NOT warn-only as previously stated. But it fires on only 3 hardcoded patterns (Datadog dashboard write, wrangler deploy --config/generated, curl POST @file.json). The rule ''dry-run first; ask before shipping generated configs'' plus CLAUDE.md ''destructive ops preview by default'' is broader than those 3, so the ask path is narrower than the rule. Residual documented, waiver kept. A broader deterministic deny of ''ship generated config'' is still not specifiable without false positives. Close candidate.'
     expires: '2026-09-30'
     approved_by: operator directive 2026-06-29 (cierra o waiva las 7); v6 D4 audit
   firing_mode:
@@ -321,8 +315,7 @@ rules:
   gateable: true
   enforcement: fail-open
   waiver:
-    reason: 'Not closeable: PreToolUse carries no main-loop vs sub-agent discriminator, so a deny self-defeats
-      and breaks 3D Diligent (QA-proven 2026-06-29). Revisit if the platform exposes a caller field.'
+    reason: 'Not closeable: PreToolUse carries no main-loop vs sub-agent discriminator, so a deny self-defeats and breaks 3D Diligent (QA-proven 2026-06-29). Revisit if the platform exposes a caller field.'
     expires: '2026-09-30'
     approved_by: operator directive 2026-06-29 (cierra o waiva las 7)
   firing_mode:
@@ -744,6 +737,10 @@ rules:
     canonical_name: g__pretool-bash__git-discipline.py
     firing_event: PreToolUse
     firing_matcher: Write|Edit|NotebookEdit|MultiEdit
+  - kind: Reflex
+    canonical_name: r__pretool-write__base-freshness.py
+    firing_event: PreToolUse
+    firing_matcher: Write|Edit|NotebookEdit|MultiEdit
   proof:
   - method: IN_HOOKS_JSON
     locator: PreToolUse|Bash|g__pretool-bash__git-discipline.py
@@ -757,6 +754,12 @@ rules:
   - method: ANCHOR_PRESENT
     locator: '## Git & Version Control'
     expect: present
+  - method: IN_HOOKS_JSON
+    locator: PreToolUse|Write|Edit|NotebookEdit|MultiEdit|r__pretool-write__base-freshness.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/r__pretool-write__base-freshness.py --selftest
+    expect: 0
   liveness_required: FIRES
 - id: CODE.file-organization
   title: File organization — config-first no summary markdown
@@ -876,8 +879,7 @@ rules:
   gateable: true
   enforcement: fail-open
   waiver:
-    reason: Shares the warn-only source-attribution Stop detector; the 'did you validate' part is judgment.
-      Hard block deferred. Close candidate.
+    reason: Shares the warn-only source-attribution Stop detector; the 'did you validate' part is judgment. Hard block deferred. Close candidate.
     expires: '2026-09-30'
     approved_by: operator directive 2026-06-29 (cierra o waiva las 7)
   firing_mode:
@@ -1137,8 +1139,7 @@ rules:
   gateable: true
   enforcement: fail-open
   waiver:
-    reason: no-pause-suggestion Stop is warn-only; a hard block on pause-phrase detection is deferred
-      pending false-positive tuning (legit clarifying questions). Close candidate.
+    reason: no-pause-suggestion Stop is warn-only; a hard block on pause-phrase detection is deferred pending false-positive tuning (legit clarifying questions). Close candidate.
     expires: '2026-09-30'
     approved_by: operator directive 2026-06-29 (cierra o waiva las 7)
   firing_mode:
@@ -1260,9 +1261,7 @@ rules:
   gateable: true
   enforcement: fail-open
   waiver:
-    reason: 'budgets.yaml is active (since 2026-06-01), but every arm and the default set action_on_breach:
-      alert by operator choice, so the HARD_STOP branch (scripts/budget-check.py:166) is unreachable by
-      config. The gate stays fail-open until an arm opts into hard_stop.'
+    reason: 'budgets.yaml is active (since 2026-06-01), but every arm and the default set action_on_breach: alert by operator choice, so the HARD_STOP branch (scripts/budget-check.py:166) is unreachable by config. The gate stays fail-open until an arm opts into hard_stop.'
     expires: '2026-09-30'
     approved_by: operator directive 2026-06-29 (resuelve budget-halt)
   firing_mode:
@@ -1399,8 +1398,7 @@ rules:
     expect: 0
   liveness_required: PRESENT
 - id: MEMORY.feedback-directive-corpus
-  title: Every indexed feedback_* memory directive fires via harness auto-memory plus the brain-memory-recall
-    pointer
+  title: Every indexed feedback_* memory directive fires via harness auto-memory plus the brain-memory-recall pointer
   category: MEMORY
   source:
     file: CLAUDE.md
