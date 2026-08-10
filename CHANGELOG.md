@@ -15,6 +15,7 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-08-04]: v6.13.0
 ### Fixed
 - fix(finops): Grok `cache_r` for 4.3 / 4.20-* / build is **$0.20**/1M (docs.x.ai), not = input;
   Composer/GPT unknown engines report `$0` list instead of silent Sonnet fallback.
@@ -44,6 +45,612 @@ machine-generated growth ledger lives at
   documents `merge-hooks-cursor.py` for Cursor operators.
 - docs(4D): Q2 no longer hard-requires `claude mcp list` inside Cursor sessions.
 - chore(delegate-gate): nudge text uses vendor-agnostic tier names.
+
+## [2026-08-04]: v6.12.6
+### Fixed
+- fix(finops): Grok `cache_r` for 4.3 / 4.20-* / build is **$0.20**/1M (docs.x.ai), not = input;
+  Composer/GPT unknown engines report `$0` list instead of silent Sonnet fallback.
+- fix(census): `capability-census.collect_mcps()` reads Cursor `.cursor/mcp.json` (user +
+  workspace + parent walk) so Q2 is not Claude-file-only prose.
+- fix(4d-protocol): Q2 skill matches CLAUDE.md — MCP-first, runtime-aware census.
+- fix(routing): Cursor Task bindings prefer harness allow-list slugs; mark xAI API-only names.
+- docs(multi-runtime): Honest gaps (Skill/Agent matcher drop, pricing TBD, allow-list ≠ API);
+  Architecture wiki points at multi-runtime; tone "supported peer" not overclaim.
+- chore(quickstart): project Cursor hooks + accept Cursor as a valid runtime prerequisite.
+
+### Features
+- feat(multi-runtime): Octorato is for **all models and all editors**. New canon
+  `docs/architecture/multi-runtime.md` — brain vs runtime vs engine; growth rule
+  (new editor/model = binding row, not a fork); Claude Code + Cursor supported peers;
+  Q2 MCP census is runtime-aware; identity = engine, OS = Octorato.
+- feat(routing): model ladder is **tier-first, vendor-second** (mechanical · bulk ·
+  build · judgment). Claude Code bindings unchanged (Haiku/Sonnet/Opus/Fable);
+  Cursor+xAI bindings added (`composer-2.5-fast` / mid-Grok / `grok-4.5*` /
+  strongest independent ≥ builder). Skill `model-routing-by-complexity` rewritten.
+- feat(finops): `_pricing.py` meters xAI Grok list prices (grok-4.5, grok-4.3,
+  grok-4.20-*, grok-build-0.1) alongside Anthropic; family heuristics for unknown
+  Grok slugs.
+
+### Changed
+- docs(Getting-Started): prerequisites accept Claude Code **or** Cursor; Step 1
+  documents `merge-hooks-cursor.py` for Cursor operators.
+- docs(4D): Q2 no longer hard-requires `claude mcp list` inside Cursor sessions.
+- chore(delegate-gate): nudge text uses vendor-agnostic tier names.
+
+---
+
+### Other
+- Track the bridge heartbeat and catch an unlinked account (#213)
+
+## [2026-07-28]: v6.12.5
+### Fixed
+- fix(finops): Grok `cache_r` for 4.3 / 4.20-* / build is **$0.20**/1M (docs.x.ai), not = input;
+  Composer/GPT unknown engines report `$0` list instead of silent Sonnet fallback.
+- fix(census): `capability-census.collect_mcps()` reads Cursor `.cursor/mcp.json` (user +
+  workspace + parent walk) so Q2 is not Claude-file-only prose.
+- fix(4d-protocol): Q2 skill matches CLAUDE.md — MCP-first, runtime-aware census.
+- fix(routing): Cursor Task bindings prefer harness allow-list slugs; mark xAI API-only names.
+- docs(multi-runtime): Honest gaps (Skill/Agent matcher drop, pricing TBD, allow-list ≠ API);
+  Architecture wiki points at multi-runtime; tone "supported peer" not overclaim.
+- chore(quickstart): project Cursor hooks + accept Cursor as a valid runtime prerequisite.
+
+### Features
+- feat(multi-runtime): Octorato is for **all models and all editors**. New canon
+  `docs/architecture/multi-runtime.md` — brain vs runtime vs engine; growth rule
+  (new editor/model = binding row, not a fork); Claude Code + Cursor supported peers;
+  Q2 MCP census is runtime-aware; identity = engine, OS = Octorato.
+- feat(routing): model ladder is **tier-first, vendor-second** (mechanical · bulk ·
+  build · judgment). Claude Code bindings unchanged (Haiku/Sonnet/Opus/Fable);
+  Cursor+xAI bindings added (`composer-2.5-fast` / mid-Grok / `grok-4.5*` /
+  strongest independent ≥ builder). Skill `model-routing-by-complexity` rewritten.
+- feat(finops): `_pricing.py` meters xAI Grok list prices (grok-4.5, grok-4.3,
+  grok-4.20-*, grok-build-0.1) alongside Anthropic; family heuristics for unknown
+  Grok slugs.
+
+### Changed
+- docs(Getting-Started): prerequisites accept Claude Code **or** Cursor; Step 1
+  documents `merge-hooks-cursor.py` for Cursor operators.
+- docs(4D): Q2 no longer hard-requires `claude mcp list` inside Cursor sessions.
+- chore(delegate-gate): nudge text uses vendor-agnostic tier names.
+
+---
+
+### Other
+- brain: skill index diet + connectome walks the cold subtrees (#212)
+
+## [2026-07-28]: v6.12.4
+### Fixed
+- fix(finops): Grok `cache_r` for 4.3 / 4.20-* / build is **$0.20**/1M (docs.x.ai), not = input;
+  Composer/GPT unknown engines report `$0` list instead of silent Sonnet fallback.
+- fix(census): `capability-census.collect_mcps()` reads Cursor `.cursor/mcp.json` (user +
+  workspace + parent walk) so Q2 is not Claude-file-only prose.
+- fix(4d-protocol): Q2 skill matches CLAUDE.md — MCP-first, runtime-aware census.
+- fix(routing): Cursor Task bindings prefer harness allow-list slugs; mark xAI API-only names.
+- docs(multi-runtime): Honest gaps (Skill/Agent matcher drop, pricing TBD, allow-list ≠ API);
+  Architecture wiki points at multi-runtime; tone "supported peer" not overclaim.
+- chore(quickstart): project Cursor hooks + accept Cursor as a valid runtime prerequisite.
+
+### Features
+- feat(multi-runtime): Octorato is for **all models and all editors**. New canon
+  `docs/architecture/multi-runtime.md` — brain vs runtime vs engine; growth rule
+  (new editor/model = binding row, not a fork); Claude Code + Cursor supported peers;
+  Q2 MCP census is runtime-aware; identity = engine, OS = Octorato.
+- feat(routing): model ladder is **tier-first, vendor-second** (mechanical · bulk ·
+  build · judgment). Claude Code bindings unchanged (Haiku/Sonnet/Opus/Fable);
+  Cursor+xAI bindings added (`composer-2.5-fast` / mid-Grok / `grok-4.5*` /
+  strongest independent ≥ builder). Skill `model-routing-by-complexity` rewritten.
+- feat(finops): `_pricing.py` meters xAI Grok list prices (grok-4.5, grok-4.3,
+  grok-4.20-*, grok-build-0.1) alongside Anthropic; family heuristics for unknown
+  Grok slugs.
+
+### Changed
+- docs(Getting-Started): prerequisites accept Claude Code **or** Cursor; Step 1
+  documents `merge-hooks-cursor.py` for Cursor operators.
+- docs(4D): Q2 no longer hard-requires `claude mcp list` inside Cursor sessions.
+- chore(delegate-gate): nudge text uses vendor-agnostic tier names.
+
+---
+
+### Other
+- reflection 2026-07-28: declarar el alcance ciego de una verificacion (#211)
+
+## [2026-07-26]: v6.12.3
+### Fixed
+- fix(finops): Grok `cache_r` for 4.3 / 4.20-* / build is **$0.20**/1M (docs.x.ai), not = input;
+  Composer/GPT unknown engines report `$0` list instead of silent Sonnet fallback.
+- fix(census): `capability-census.collect_mcps()` reads Cursor `.cursor/mcp.json` (user +
+  workspace + parent walk) so Q2 is not Claude-file-only prose.
+- fix(4d-protocol): Q2 skill matches CLAUDE.md — MCP-first, runtime-aware census.
+- fix(routing): Cursor Task bindings prefer harness allow-list slugs; mark xAI API-only names.
+- docs(multi-runtime): Honest gaps (Skill/Agent matcher drop, pricing TBD, allow-list ≠ API);
+  Architecture wiki points at multi-runtime; tone "supported peer" not overclaim.
+- chore(quickstart): project Cursor hooks + accept Cursor as a valid runtime prerequisite.
+
+### Features
+- feat(multi-runtime): Octorato is for **all models and all editors**. New canon
+  `docs/architecture/multi-runtime.md` — brain vs runtime vs engine; growth rule
+  (new editor/model = binding row, not a fork); Claude Code + Cursor supported peers;
+  Q2 MCP census is runtime-aware; identity = engine, OS = Octorato.
+- feat(routing): model ladder is **tier-first, vendor-second** (mechanical · bulk ·
+  build · judgment). Claude Code bindings unchanged (Haiku/Sonnet/Opus/Fable);
+  Cursor+xAI bindings added (`composer-2.5-fast` / mid-Grok / `grok-4.5*` /
+  strongest independent ≥ builder). Skill `model-routing-by-complexity` rewritten.
+- feat(finops): `_pricing.py` meters xAI Grok list prices (grok-4.5, grok-4.3,
+  grok-4.20-*, grok-build-0.1) alongside Anthropic; family heuristics for unknown
+  Grok slugs.
+
+### Changed
+- docs(Getting-Started): prerequisites accept Claude Code **or** Cursor; Step 1
+  documents `merge-hooks-cursor.py` for Cursor operators.
+- docs(4D): Q2 no longer hard-requires `claude mcp list` inside Cursor sessions.
+- chore(delegate-gate): nudge text uses vendor-agnostic tier names.
+
+---
+
+### Fixes
+- fix(connectome): name cross-layer gaps for what they measure (#209)
+
+## [2026-07-24]: v6.12.2
+### Fixed
+- fix(finops): Grok `cache_r` for 4.3 / 4.20-* / build is **$0.20**/1M (docs.x.ai), not = input;
+  Composer/GPT unknown engines report `$0` list instead of silent Sonnet fallback.
+- fix(census): `capability-census.collect_mcps()` reads Cursor `.cursor/mcp.json` (user +
+  workspace + parent walk) so Q2 is not Claude-file-only prose.
+- fix(4d-protocol): Q2 skill matches CLAUDE.md — MCP-first, runtime-aware census.
+- fix(routing): Cursor Task bindings prefer harness allow-list slugs; mark xAI API-only names.
+- docs(multi-runtime): Honest gaps (Skill/Agent matcher drop, pricing TBD, allow-list ≠ API);
+  Architecture wiki points at multi-runtime; tone "supported peer" not overclaim.
+- chore(quickstart): project Cursor hooks + accept Cursor as a valid runtime prerequisite.
+
+### Features
+- feat(multi-runtime): Octorato is for **all models and all editors**. New canon
+  `docs/architecture/multi-runtime.md` — brain vs runtime vs engine; growth rule
+  (new editor/model = binding row, not a fork); Claude Code + Cursor supported peers;
+  Q2 MCP census is runtime-aware; identity = engine, OS = Octorato.
+- feat(routing): model ladder is **tier-first, vendor-second** (mechanical · bulk ·
+  build · judgment). Claude Code bindings unchanged (Haiku/Sonnet/Opus/Fable);
+  Cursor+xAI bindings added (`composer-2.5-fast` / mid-Grok / `grok-4.5*` /
+  strongest independent ≥ builder). Skill `model-routing-by-complexity` rewritten.
+- feat(finops): `_pricing.py` meters xAI Grok list prices (grok-4.5, grok-4.3,
+  grok-4.20-*, grok-build-0.1) alongside Anthropic; family heuristics for unknown
+  Grok slugs.
+
+### Changed
+- docs(Getting-Started): prerequisites accept Claude Code **or** Cursor; Step 1
+  documents `merge-hooks-cursor.py` for Cursor operators.
+- docs(4D): Q2 no longer hard-requires `claude mcp list` inside Cursor sessions.
+- chore(delegate-gate): nudge text uses vendor-agnostic tier names.
+
+---
+
+### Other
+- reflect: send-ack-is-not-delivery lesson (#208)
+
+## [2026-07-23]: v6.12.1
+### Fixed
+- fix(finops): Grok `cache_r` for 4.3 / 4.20-* / build is **$0.20**/1M (docs.x.ai), not = input;
+  Composer/GPT unknown engines report `$0` list instead of silent Sonnet fallback.
+- fix(census): `capability-census.collect_mcps()` reads Cursor `.cursor/mcp.json` (user +
+  workspace + parent walk) so Q2 is not Claude-file-only prose.
+- fix(4d-protocol): Q2 skill matches CLAUDE.md — MCP-first, runtime-aware census.
+- fix(routing): Cursor Task bindings prefer harness allow-list slugs; mark xAI API-only names.
+- docs(multi-runtime): Honest gaps (Skill/Agent matcher drop, pricing TBD, allow-list ≠ API);
+  Architecture wiki points at multi-runtime; tone "supported peer" not overclaim.
+- chore(quickstart): project Cursor hooks + accept Cursor as a valid runtime prerequisite.
+
+### Features
+- feat(multi-runtime): Octorato is for **all models and all editors**. New canon
+  `docs/architecture/multi-runtime.md` — brain vs runtime vs engine; growth rule
+  (new editor/model = binding row, not a fork); Claude Code + Cursor supported peers;
+  Q2 MCP census is runtime-aware; identity = engine, OS = Octorato.
+- feat(routing): model ladder is **tier-first, vendor-second** (mechanical · bulk ·
+  build · judgment). Claude Code bindings unchanged (Haiku/Sonnet/Opus/Fable);
+  Cursor+xAI bindings added (`composer-2.5-fast` / mid-Grok / `grok-4.5*` /
+  strongest independent ≥ builder). Skill `model-routing-by-complexity` rewritten.
+- feat(finops): `_pricing.py` meters xAI Grok list prices (grok-4.5, grok-4.3,
+  grok-4.20-*, grok-build-0.1) alongside Anthropic; family heuristics for unknown
+  Grok slugs.
+
+### Changed
+- docs(Getting-Started): prerequisites accept Claude Code **or** Cursor; Step 1
+  documents `merge-hooks-cursor.py` for Cursor operators.
+- docs(4D): Q2 no longer hard-requires `claude mcp list` inside Cursor sessions.
+- chore(delegate-gate): nudge text uses vendor-agnostic tier names.
+
+---
+
+### Fixes
+- fix(brain): stable manifest sort + backfill CHANGELOG v6.0.1..v6.3.0 (#192)
+
+## [2026-07-23]: v6.12.0
+### Fixed
+- fix(finops): Grok `cache_r` for 4.3 / 4.20-* / build is **$0.20**/1M (docs.x.ai), not = input;
+  Composer/GPT unknown engines report `$0` list instead of silent Sonnet fallback.
+- fix(census): `capability-census.collect_mcps()` reads Cursor `.cursor/mcp.json` (user +
+  workspace + parent walk) so Q2 is not Claude-file-only prose.
+- fix(4d-protocol): Q2 skill matches CLAUDE.md — MCP-first, runtime-aware census.
+- fix(routing): Cursor Task bindings prefer harness allow-list slugs; mark xAI API-only names.
+- docs(multi-runtime): Honest gaps (Skill/Agent matcher drop, pricing TBD, allow-list ≠ API);
+  Architecture wiki points at multi-runtime; tone "supported peer" not overclaim.
+- chore(quickstart): project Cursor hooks + accept Cursor as a valid runtime prerequisite.
+
+### Features
+- feat(multi-runtime): Octorato is for **all models and all editors**. New canon
+  `docs/architecture/multi-runtime.md` — brain vs runtime vs engine; growth rule
+  (new editor/model = binding row, not a fork); Claude Code + Cursor supported peers;
+  Q2 MCP census is runtime-aware; identity = engine, OS = Octorato.
+- feat(routing): model ladder is **tier-first, vendor-second** (mechanical · bulk ·
+  build · judgment). Claude Code bindings unchanged (Haiku/Sonnet/Opus/Fable);
+  Cursor+xAI bindings added (`composer-2.5-fast` / mid-Grok / `grok-4.5*` /
+  strongest independent ≥ builder). Skill `model-routing-by-complexity` rewritten.
+- feat(finops): `_pricing.py` meters xAI Grok list prices (grok-4.5, grok-4.3,
+  grok-4.20-*, grok-build-0.1) alongside Anthropic; family heuristics for unknown
+  Grok slugs.
+
+### Changed
+- docs(Getting-Started): prerequisites accept Claude Code **or** Cursor; Step 1
+  documents `merge-hooks-cursor.py` for Cursor operators.
+- docs(4D): Q2 no longer hard-requires `claude mcp list` inside Cursor sessions.
+- chore(delegate-gate): nudge text uses vendor-agnostic tier names.
+
+---
+
+### Features
+- feat(brain): bulk-fetch delegation gate (turn ledger + Stop audit) (#207)
+
+## [2026-07-23]: v6.11.0
+### Fixed
+- fix(finops): Grok `cache_r` for 4.3 / 4.20-* / build is **$0.20**/1M (docs.x.ai), not = input;
+  Composer/GPT unknown engines report `$0` list instead of silent Sonnet fallback.
+- fix(census): `capability-census.collect_mcps()` reads Cursor `.cursor/mcp.json` (user +
+  workspace + parent walk) so Q2 is not Claude-file-only prose.
+- fix(4d-protocol): Q2 skill matches CLAUDE.md — MCP-first, runtime-aware census.
+- fix(routing): Cursor Task bindings prefer harness allow-list slugs; mark xAI API-only names.
+- docs(multi-runtime): Honest gaps (Skill/Agent matcher drop, pricing TBD, allow-list ≠ API);
+  Architecture wiki points at multi-runtime; tone "supported peer" not overclaim.
+- chore(quickstart): project Cursor hooks + accept Cursor as a valid runtime prerequisite.
+
+### Features
+- feat(multi-runtime): Octorato is for **all models and all editors**. New canon
+  `docs/architecture/multi-runtime.md` — brain vs runtime vs engine; growth rule
+  (new editor/model = binding row, not a fork); Claude Code + Cursor supported peers;
+  Q2 MCP census is runtime-aware; identity = engine, OS = Octorato.
+- feat(routing): model ladder is **tier-first, vendor-second** (mechanical · bulk ·
+  build · judgment). Claude Code bindings unchanged (Haiku/Sonnet/Opus/Fable);
+  Cursor+xAI bindings added (`composer-2.5-fast` / mid-Grok / `grok-4.5*` /
+  strongest independent ≥ builder). Skill `model-routing-by-complexity` rewritten.
+- feat(finops): `_pricing.py` meters xAI Grok list prices (grok-4.5, grok-4.3,
+  grok-4.20-*, grok-build-0.1) alongside Anthropic; family heuristics for unknown
+  Grok slugs.
+
+### Changed
+- docs(Getting-Started): prerequisites accept Claude Code **or** Cursor; Step 1
+  documents `merge-hooks-cursor.py` for Cursor operators.
+- docs(4D): Q2 no longer hard-requires `claude mcp list` inside Cursor sessions.
+- chore(delegate-gate): nudge text uses vendor-agnostic tier names.
+
+---
+
+### Features
+- feat(brain): inject today's weekday as data in the 4D reminder (#206)
+
+## [2026-07-20]: v6.10.0
+### Fixed
+- fix(finops): Grok `cache_r` for 4.3 / 4.20-* / build is **$0.20**/1M (docs.x.ai), not = input;
+  Composer/GPT unknown engines report `$0` list instead of silent Sonnet fallback.
+- fix(census): `capability-census.collect_mcps()` reads Cursor `.cursor/mcp.json` (user +
+  workspace + parent walk) so Q2 is not Claude-file-only prose.
+- fix(4d-protocol): Q2 skill matches CLAUDE.md — MCP-first, runtime-aware census.
+- fix(routing): Cursor Task bindings prefer harness allow-list slugs; mark xAI API-only names.
+- docs(multi-runtime): Honest gaps (Skill/Agent matcher drop, pricing TBD, allow-list ≠ API);
+  Architecture wiki points at multi-runtime; tone "supported peer" not overclaim.
+- chore(quickstart): project Cursor hooks + accept Cursor as a valid runtime prerequisite.
+
+### Features
+- feat(multi-runtime): Octorato is for **all models and all editors**. New canon
+  `docs/architecture/multi-runtime.md` — brain vs runtime vs engine; growth rule
+  (new editor/model = binding row, not a fork); Claude Code + Cursor supported peers;
+  Q2 MCP census is runtime-aware; identity = engine, OS = Octorato.
+- feat(routing): model ladder is **tier-first, vendor-second** (mechanical · bulk ·
+  build · judgment). Claude Code bindings unchanged (Haiku/Sonnet/Opus/Fable);
+  Cursor+xAI bindings added (`composer-2.5-fast` / mid-Grok / `grok-4.5*` /
+  strongest independent ≥ builder). Skill `model-routing-by-complexity` rewritten.
+- feat(finops): `_pricing.py` meters xAI Grok list prices (grok-4.5, grok-4.3,
+  grok-4.20-*, grok-build-0.1) alongside Anthropic; family heuristics for unknown
+  Grok slugs.
+
+### Changed
+- docs(Getting-Started): prerequisites accept Claude Code **or** Cursor; Step 1
+  documents `merge-hooks-cursor.py` for Cursor operators.
+- docs(4D): Q2 no longer hard-requires `claude mcp list` inside Cursor sessions.
+- chore(delegate-gate): nudge text uses vendor-agnostic tier names.
+
+---
+
+### Features
+- feat(brain): chat-context block-once gate on outbound chat sends (#205)
+
+## [2026-07-20]: v6.9.0
+### Fixed
+- fix(finops): Grok `cache_r` for 4.3 / 4.20-* / build is **$0.20**/1M (docs.x.ai), not = input;
+  Composer/GPT unknown engines report `$0` list instead of silent Sonnet fallback.
+- fix(census): `capability-census.collect_mcps()` reads Cursor `.cursor/mcp.json` (user +
+  workspace + parent walk) so Q2 is not Claude-file-only prose.
+- fix(4d-protocol): Q2 skill matches CLAUDE.md — MCP-first, runtime-aware census.
+- fix(routing): Cursor Task bindings prefer harness allow-list slugs; mark xAI API-only names.
+- docs(multi-runtime): Honest gaps (Skill/Agent matcher drop, pricing TBD, allow-list ≠ API);
+  Architecture wiki points at multi-runtime; tone "supported peer" not overclaim.
+- chore(quickstart): project Cursor hooks + accept Cursor as a valid runtime prerequisite.
+
+### Features
+- feat(multi-runtime): Octorato is for **all models and all editors**. New canon
+  `docs/architecture/multi-runtime.md` — brain vs runtime vs engine; growth rule
+  (new editor/model = binding row, not a fork); Claude Code + Cursor supported peers;
+  Q2 MCP census is runtime-aware; identity = engine, OS = Octorato.
+- feat(routing): model ladder is **tier-first, vendor-second** (mechanical · bulk ·
+  build · judgment). Claude Code bindings unchanged (Haiku/Sonnet/Opus/Fable);
+  Cursor+xAI bindings added (`composer-2.5-fast` / mid-Grok / `grok-4.5*` /
+  strongest independent ≥ builder). Skill `model-routing-by-complexity` rewritten.
+- feat(finops): `_pricing.py` meters xAI Grok list prices (grok-4.5, grok-4.3,
+  grok-4.20-*, grok-build-0.1) alongside Anthropic; family heuristics for unknown
+  Grok slugs.
+
+### Changed
+- docs(Getting-Started): prerequisites accept Claude Code **or** Cursor; Step 1
+  documents `merge-hooks-cursor.py` for Cursor operators.
+- docs(4D): Q2 no longer hard-requires `claude mcp list` inside Cursor sessions.
+- chore(delegate-gate): nudge text uses vendor-agnostic tier names.
+
+---
+
+### Features
+- feat(brain): link /ai-sync and daily-reflection as one ritual (#204)
+
+## [2026-07-17]: v6.8.1
+### Fixed
+- fix(finops): Grok `cache_r` for 4.3 / 4.20-* / build is **$0.20**/1M (docs.x.ai), not = input;
+  Composer/GPT unknown engines report `$0` list instead of silent Sonnet fallback.
+- fix(census): `capability-census.collect_mcps()` reads Cursor `.cursor/mcp.json` (user +
+  workspace + parent walk) so Q2 is not Claude-file-only prose.
+- fix(4d-protocol): Q2 skill matches CLAUDE.md — MCP-first, runtime-aware census.
+- fix(routing): Cursor Task bindings prefer harness allow-list slugs; mark xAI API-only names.
+- docs(multi-runtime): Honest gaps (Skill/Agent matcher drop, pricing TBD, allow-list ≠ API);
+  Architecture wiki points at multi-runtime; tone "supported peer" not overclaim.
+- chore(quickstart): project Cursor hooks + accept Cursor as a valid runtime prerequisite.
+
+### Features
+- feat(multi-runtime): Octorato is for **all models and all editors**. New canon
+  `docs/architecture/multi-runtime.md` — brain vs runtime vs engine; growth rule
+  (new editor/model = binding row, not a fork); Claude Code + Cursor supported peers;
+  Q2 MCP census is runtime-aware; identity = engine, OS = Octorato.
+- feat(routing): model ladder is **tier-first, vendor-second** (mechanical · bulk ·
+  build · judgment). Claude Code bindings unchanged (Haiku/Sonnet/Opus/Fable);
+  Cursor+xAI bindings added (`composer-2.5-fast` / mid-Grok / `grok-4.5*` /
+  strongest independent ≥ builder). Skill `model-routing-by-complexity` rewritten.
+- feat(finops): `_pricing.py` meters xAI Grok list prices (grok-4.5, grok-4.3,
+  grok-4.20-*, grok-build-0.1) alongside Anthropic; family heuristics for unknown
+  Grok slugs.
+
+### Changed
+- docs(Getting-Started): prerequisites accept Claude Code **or** Cursor; Step 1
+  documents `merge-hooks-cursor.py` for Cursor operators.
+- docs(4D): Q2 no longer hard-requires `claude mcp list` inside Cursor sessions.
+- chore(delegate-gate): nudge text uses vendor-agnostic tier names.
+
+---
+
+### Other
+- chore: session sync (hannon, mudanza, mascotas, responsivas) (#203)
+
+## [2026-07-16]: v6.8.0
+### Fixed
+- fix(finops): Grok `cache_r` for 4.3 / 4.20-* / build is **$0.20**/1M (docs.x.ai), not = input;
+  Composer/GPT unknown engines report `$0` list instead of silent Sonnet fallback.
+- fix(census): `capability-census.collect_mcps()` reads Cursor `.cursor/mcp.json` (user +
+  workspace + parent walk) so Q2 is not Claude-file-only prose.
+- fix(4d-protocol): Q2 skill matches CLAUDE.md — MCP-first, runtime-aware census.
+- fix(routing): Cursor Task bindings prefer harness allow-list slugs; mark xAI API-only names.
+- docs(multi-runtime): Honest gaps (Skill/Agent matcher drop, pricing TBD, allow-list ≠ API);
+  Architecture wiki points at multi-runtime; tone "supported peer" not overclaim.
+- chore(quickstart): project Cursor hooks + accept Cursor as a valid runtime prerequisite.
+
+### Features
+- feat(multi-runtime): Octorato is for **all models and all editors**. New canon
+  `docs/architecture/multi-runtime.md` — brain vs runtime vs engine; growth rule
+  (new editor/model = binding row, not a fork); Claude Code + Cursor supported peers;
+  Q2 MCP census is runtime-aware; identity = engine, OS = Octorato.
+- feat(routing): model ladder is **tier-first, vendor-second** (mechanical · bulk ·
+  build · judgment). Claude Code bindings unchanged (Haiku/Sonnet/Opus/Fable);
+  Cursor+xAI bindings added (`composer-2.5-fast` / mid-Grok / `grok-4.5*` /
+  strongest independent ≥ builder). Skill `model-routing-by-complexity` rewritten.
+- feat(finops): `_pricing.py` meters xAI Grok list prices (grok-4.5, grok-4.3,
+  grok-4.20-*, grok-build-0.1) alongside Anthropic; family heuristics for unknown
+  Grok slugs.
+
+### Changed
+- docs(Getting-Started): prerequisites accept Claude Code **or** Cursor; Step 1
+  documents `merge-hooks-cursor.py` for Cursor operators.
+- docs(4D): Q2 no longer hard-requires `claude mcp list` inside Cursor sessions.
+- chore(delegate-gate): nudge text uses vendor-agnostic tier names.
+
+---
+
+### Features
+- feat: graphify deep-learn — code-graph skill + connectome shrink-guard (#202)
+
+## [2026-07-13]: v6.7.3
+### Fixed
+- fix(finops): Grok `cache_r` for 4.3 / 4.20-* / build is **$0.20**/1M (docs.x.ai), not = input;
+  Composer/GPT unknown engines report `$0` list instead of silent Sonnet fallback.
+- fix(census): `capability-census.collect_mcps()` reads Cursor `.cursor/mcp.json` (user +
+  workspace + parent walk) so Q2 is not Claude-file-only prose.
+- fix(4d-protocol): Q2 skill matches CLAUDE.md — MCP-first, runtime-aware census.
+- fix(routing): Cursor Task bindings prefer harness allow-list slugs; mark xAI API-only names.
+- docs(multi-runtime): Honest gaps (Skill/Agent matcher drop, pricing TBD, allow-list ≠ API);
+  Architecture wiki points at multi-runtime; tone "supported peer" not overclaim.
+- chore(quickstart): project Cursor hooks + accept Cursor as a valid runtime prerequisite.
+
+### Features
+- feat(multi-runtime): Octorato is for **all models and all editors**. New canon
+  `docs/architecture/multi-runtime.md` — brain vs runtime vs engine; growth rule
+  (new editor/model = binding row, not a fork); Claude Code + Cursor supported peers;
+  Q2 MCP census is runtime-aware; identity = engine, OS = Octorato.
+- feat(routing): model ladder is **tier-first, vendor-second** (mechanical · bulk ·
+  build · judgment). Claude Code bindings unchanged (Haiku/Sonnet/Opus/Fable);
+  Cursor+xAI bindings added (`composer-2.5-fast` / mid-Grok / `grok-4.5*` /
+  strongest independent ≥ builder). Skill `model-routing-by-complexity` rewritten.
+- feat(finops): `_pricing.py` meters xAI Grok list prices (grok-4.5, grok-4.3,
+  grok-4.20-*, grok-build-0.1) alongside Anthropic; family heuristics for unknown
+  Grok slugs.
+
+### Changed
+- docs(Getting-Started): prerequisites accept Claude Code **or** Cursor; Step 1
+  documents `merge-hooks-cursor.py` for Cursor operators.
+- docs(4D): Q2 no longer hard-requires `claude mcp list` inside Cursor sessions.
+- chore(delegate-gate): nudge text uses vendor-agnostic tier names.
+
+---
+
+### Other
+- chore(brain): refresh connectome + CAPABILITIES after multi-runtime (#201)
+
+## [2026-07-10]: v6.7.2
+### Fixed
+- fix(finops): Grok `cache_r` for 4.3 / 4.20-* / build is **$0.20**/1M (docs.x.ai), not = input;
+  Composer/GPT unknown engines report `$0` list instead of silent Sonnet fallback.
+- fix(census): `capability-census.collect_mcps()` reads Cursor `.cursor/mcp.json` (user +
+  workspace + parent walk) so Q2 is not Claude-file-only prose.
+- fix(4d-protocol): Q2 skill matches CLAUDE.md — MCP-first, runtime-aware census.
+- fix(routing): Cursor Task bindings prefer harness allow-list slugs; mark xAI API-only names.
+- docs(multi-runtime): Honest gaps (Skill/Agent matcher drop, pricing TBD, allow-list ≠ API);
+  Architecture wiki points at multi-runtime; tone "supported peer" not overclaim.
+- chore(quickstart): project Cursor hooks + accept Cursor as a valid runtime prerequisite.
+
+### Features
+- feat(multi-runtime): Octorato is for **all models and all editors**. New canon
+  `docs/architecture/multi-runtime.md` — brain vs runtime vs engine; growth rule
+  (new editor/model = binding row, not a fork); Claude Code + Cursor supported peers;
+  Q2 MCP census is runtime-aware; identity = engine, OS = Octorato.
+- feat(routing): model ladder is **tier-first, vendor-second** (mechanical · bulk ·
+  build · judgment). Claude Code bindings unchanged (Haiku/Sonnet/Opus/Fable);
+  Cursor+xAI bindings added (`composer-2.5-fast` / mid-Grok / `grok-4.5*` /
+  strongest independent ≥ builder). Skill `model-routing-by-complexity` rewritten.
+- feat(finops): `_pricing.py` meters xAI Grok list prices (grok-4.5, grok-4.3,
+  grok-4.20-*, grok-build-0.1) alongside Anthropic; family heuristics for unknown
+  Grok slugs.
+
+### Changed
+- docs(Getting-Started): prerequisites accept Claude Code **or** Cursor; Step 1
+  documents `merge-hooks-cursor.py` for Cursor operators.
+- docs(4D): Q2 no longer hard-requires `claude mcp list` inside Cursor sessions.
+- chore(delegate-gate): nudge text uses vendor-agnostic tier names.
+
+---
+
+### Other
+- sync (#200)
+
+## [2026-07-10]: v6.7.1
+### Fixed
+- fix(finops): Grok `cache_r` for 4.3 / 4.20-* / build is **$0.20**/1M (docs.x.ai), not = input;
+  Composer/GPT unknown engines report `$0` list instead of silent Sonnet fallback.
+- fix(census): `capability-census.collect_mcps()` reads Cursor `.cursor/mcp.json` (user +
+  workspace + parent walk) so Q2 is not Claude-file-only prose.
+- fix(4d-protocol): Q2 skill matches CLAUDE.md — MCP-first, runtime-aware census.
+- fix(routing): Cursor Task bindings prefer harness allow-list slugs; mark xAI API-only names.
+- docs(multi-runtime): Honest gaps (Skill/Agent matcher drop, pricing TBD, allow-list ≠ API);
+  Architecture wiki points at multi-runtime; tone "supported peer" not overclaim.
+- chore(quickstart): project Cursor hooks + accept Cursor as a valid runtime prerequisite.
+
+### Features
+- feat(multi-runtime): Octorato is for **all models and all editors**. New canon
+  `docs/architecture/multi-runtime.md` — brain vs runtime vs engine; growth rule
+  (new editor/model = binding row, not a fork); Claude Code + Cursor supported peers;
+  Q2 MCP census is runtime-aware; identity = engine, OS = Octorato.
+- feat(routing): model ladder is **tier-first, vendor-second** (mechanical · bulk ·
+  build · judgment). Claude Code bindings unchanged (Haiku/Sonnet/Opus/Fable);
+  Cursor+xAI bindings added (`composer-2.5-fast` / mid-Grok / `grok-4.5*` /
+  strongest independent ≥ builder). Skill `model-routing-by-complexity` rewritten.
+- feat(finops): `_pricing.py` meters xAI Grok list prices (grok-4.5, grok-4.3,
+  grok-4.20-*, grok-build-0.1) alongside Anthropic; family heuristics for unknown
+  Grok slugs.
+
+### Changed
+- docs(Getting-Started): prerequisites accept Claude Code **or** Cursor; Step 1
+  documents `merge-hooks-cursor.py` for Cursor operators.
+- docs(4D): Q2 no longer hard-requires `claude mcp list` inside Cursor sessions.
+- chore(delegate-gate): nudge text uses vendor-agnostic tier names.
+
+---
+
+### Fixes
+- fix(multi-runtime): Grok cache_r + Cursor MCP census + Q2 parity (#198)
+
+## [2026-07-10]: v6.7.0
+### Features
+- feat(multi-runtime): Octorato is for **all models and all editors**. New canon
+  `docs/architecture/multi-runtime.md` — brain vs runtime vs engine; growth rule
+  (new editor/model = binding row, not a fork); Claude Code + Cursor first-class;
+  Q2 MCP census is runtime-aware; identity = engine, OS = Octorato.
+- feat(routing): model ladder is **tier-first, vendor-second** (mechanical · bulk ·
+  build · judgment). Claude Code bindings unchanged (Haiku/Sonnet/Opus/Fable);
+  Cursor+xAI bindings added (`composer-2.5-fast` / mid-Grok / `grok-4.5*` /
+  strongest independent ≥ builder). Skill `model-routing-by-complexity` rewritten.
+- feat(finops): `_pricing.py` meters xAI Grok list prices (grok-4.5, grok-4.3,
+  grok-4.20-*, grok-build-0.1) alongside Anthropic; family heuristics for unknown
+  Grok slugs.
+
+### Changed
+- docs(Getting-Started): prerequisites accept Claude Code **or** Cursor; Step 1
+  documents `merge-hooks-cursor.py` for Cursor operators.
+- docs(4D): Q2 no longer hard-requires `claude mcp list` inside Cursor sessions.
+- chore(delegate-gate): nudge text uses vendor-agnostic tier names.
+
+---
+
+### Features
+- feat(skills): agent-browser real-mouse protocol for React-class widgets; whatsapp-bridge outbound anti-spam discipline (#199)
+
+## [2026-07-10]: v6.6.0
+### Features
+- feat(multi-runtime): Octorato is for **all models and all editors**. New canon
+  `docs/architecture/multi-runtime.md` — brain vs runtime vs engine; growth rule
+  (new editor/model = binding row, not a fork); Claude Code + Cursor first-class;
+  Q2 MCP census is runtime-aware; identity = engine, OS = Octorato.
+- feat(routing): model ladder is **tier-first, vendor-second** (mechanical · bulk ·
+  build · judgment). Claude Code bindings unchanged (Haiku/Sonnet/Opus/Fable);
+  Cursor+xAI bindings added (`composer-2.5-fast` / mid-Grok / `grok-4.5*` /
+  strongest independent ≥ builder). Skill `model-routing-by-complexity` rewritten.
+- feat(finops): `_pricing.py` meters xAI Grok list prices (grok-4.5, grok-4.3,
+  grok-4.20-*, grok-build-0.1) alongside Anthropic; family heuristics for unknown
+  Grok slugs.
+
+### Changed
+- docs(Getting-Started): prerequisites accept Claude Code **or** Cursor; Step 1
+  documents `merge-hooks-cursor.py` for Cursor operators.
+- docs(4D): Q2 no longer hard-requires `claude mcp list` inside Cursor sessions.
+- chore(delegate-gate): nudge text uses vendor-agnostic tier names.
+
+---
+
+### Features
+- feat(multi-runtime): wire Cursor+Grok as first-class peers (tier-first ladder, xAI pricing, runtime-aware Q2)
+
+## [2026-07-10]: v6.5.0
+### Features
+- feat(client-doc-lint): fiscal-note (IVA) check + tax clause in cotizacion-legal-baseline (#196)
+
+## [2026-07-07]: v6.4.1
+### Fixes
+- fix(ai-sync): empty-cycle guard + tree-always-returns-to-target invariant (#195)
+
+## [2026-07-07]: v6.4.0
+### Features
+- feat(commands): add missing /ai-sync command (canonical sync had no invocable skill) (#194)
+
+## [2026-07-07]: v6.3.1
+### Other
+- docs(skill): whatsapp bridge send-dial + liveness/verification gotchas (#193)
 
 ## [2026-07-06]: v6.3.0
 ### Features
