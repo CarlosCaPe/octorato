@@ -1523,3 +1523,30 @@ rules:
     locator: scripts/d__stop__wa-guardia.py --selftest registry/fixtures/FLOW.wa-guardia-on-pending
     expect: 0
   liveness_required: FIRES
+- id: FLOW.root-goal-anchor
+  title: Root-goal anchor — a tactical win never closes a turn while the root goal sits unmentioned
+  category: FLOW
+  source:
+    file: CLAUDE.md
+    anchor: The 4D runs in a WHILE
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Gate
+    canonical_name: g__stop__goal-anchor.py
+    firing_event: Stop
+    firing_matcher: '*'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: Stop|*|g__stop__goal-anchor.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/g__stop__goal-anchor.py --selftest registry/fixtures/FLOW.root-goal-anchor
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: The 4D runs in a WHILE
+    expect: present
+  liveness_required: FIRES

@@ -9,10 +9,10 @@
 | Skills | 232 |
 | Agents | 161 |
 | Divisions | 15 |
-| Scripts: wired | 93 |
+| Scripts: wired | 95 |
 | Scripts: orphan | 7 |
-| Rules | 62 |
-| Hook entries | 36 |
+| Rules | 63 |
+| Hook entries | 37 |
 
 ## Skills (232)
 
@@ -489,7 +489,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (100)
+## Scripts (102)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -526,6 +526,7 @@
 | check-stats-drift.py | check-stats-drift , guard that the brain's headline floors stay TRUTHFUL. Design rule (set 2026-05-2... | wired |
 | check_traffic.py | Octorato traffic watcher , runs daily in GitHub Actions. Pulls clone/view/star/fork stats from the G... | orphan |
 | claim-verify-stop.py | claim-verify-stop.py , Stop hook: block-once when visual/runtime claims lack proof. | wired |
+| claim_vocab.py | claim_vocab.py: vocabulario compartido de CLAIMS DE CIERRE. | wired |
 | client-doc-lint-hook.py | client-doc-lint-hook.py , PostToolUse(Bash) reflex wrapper for client-doc-lint. | wired |
 | client-doc-lint.py | client-doc-lint.py , pre-send QA reflex for generated CLIENT deliverables. | wired |
 | config-ship-verify.py | config-ship-verify.py , PreToolUse:Bash hook: ask before shipping generated configs. | wired |
@@ -542,6 +543,7 @@
 | g__pretool-mcp__chat-context.py | g__pretool-mcp__chat-context.py: PreToolUse gate for COMMS.chat-context-before-send. | wired |
 | g__stop__delegation-audit.py | g__stop__delegation-audit.py: Stop gate for FLOW.bulk-fetch-delegation. | wired |
 | g__stop__draft-promise.py | g__stop__draft-promise.py , Stop gate: no future-tense promises in paste-ready drafts. | wired |
+| g__stop__goal-anchor.py | g__stop__goal-anchor.py , Stop gate: la pila de objetivos no se erosiona. | wired |
 | gap-capture.py | gap-capture.py , capture 2D-Delegate SELF misses as a gap backlog. When the delegate gate finds no a... | wired |
 | gate-check | gate-check , 4D Gate Enforcement Validator for the Octopus brain. Validates that the 4D paradigm pha... | wired |
 | gate_selftest.py | gate_selftest.py: shared fixture-driven liveness harness for fail-closed gates. | wired |
@@ -594,7 +596,7 @@
 | wa-soporte.sh | Envia un WhatsApp por el canal de SOPORTE, no por el numero personal del operador. | orphan |
 | watchdog.py | watchdog.py , observability surface 4 anomaly detector. Reads the JSONL trace files written by trace... | wired |
 
-## Rules (62)
+## Rules (63)
 
 ### ARCHITECTURE
 
@@ -649,6 +651,7 @@
 - FLOW.impact-radius
 - FLOW.orchestrated-planning-reporting-contract
 - FLOW.prune-dead-cells
+- FLOW.root-goal-anchor
 - FLOW.skill-first
 - FLOW.suggest-unlock
 - FLOW.wa-guardia-on-pending
@@ -695,5 +698,5 @@
 | PostToolUse | cadence-lint.py, canon-heal-hook.py, client-doc-lint-hook.py, d__posttool__delegation-ledger.py, impact-radius-hook.py, trace-hook.py |
 | PreToolUse | budget-check.py, config-ship-verify.py, delegate-gate.py, dimension-awareness-hook.py, g__pretool-bash__git-discipline.py, g__pretool-mcp__chat-context.py, grafo-gate.py, qa-merge-gate.py, r__pretool-write__base-freshness.py, secrets-grep-guard.py, trace-hook.py |
 | SessionStart | merge-hooks.py, session-isolation-hook.py |
-| Stop | cadence-stop-hook.py, claim-verify-stop.py, d__stop__wa-guardia.py, g__stop__delegation-audit.py, g__stop__draft-promise.py, grafo-ledger-check.py, no-pause-suggestion.py, source-attribution-check.py, trace-hook.py |
+| Stop | cadence-stop-hook.py, claim-verify-stop.py, d__stop__wa-guardia.py, g__stop__delegation-audit.py, g__stop__draft-promise.py, g__stop__goal-anchor.py, grafo-ledger-check.py, no-pause-suggestion.py, source-attribution-check.py, trace-hook.py |
 | UserPromptSubmit | 4d-reminder.py, arm-recall-hook.py, brain-memory-recall.py, connectome-heartbeat.py, eye-check.py, grafo-turn-reset.py, inbox-sweep-reflex.py, trace-hook.py |

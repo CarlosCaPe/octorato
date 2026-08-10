@@ -247,6 +247,10 @@
         {
           "command": "python3 ~/.claude/scripts/d__stop__wa-guardia.py",
           "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/g__stop__goal-anchor.py",
+          "type": "command"
         }
       ]
     }

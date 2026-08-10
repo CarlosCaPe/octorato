@@ -1,0 +1,6 @@
+{
+  "session_id": "sess-exh",
+  "transcript_path": "benign_exhausted_transcript.jsonl",
+  "stop_hook_active": false,
+  "cwd": "/tmp"
+}

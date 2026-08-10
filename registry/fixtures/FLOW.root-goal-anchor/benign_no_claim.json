@@ -1,0 +1,6 @@
+{
+  "session_id": "sess-noclaim",
+  "transcript_path": "benign_no_claim_transcript.jsonl",
+  "stop_hook_active": false,
+  "cwd": "/tmp"
+}
