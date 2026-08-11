@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "aws ssm list-command-invocations --command-id abc-123 --details"
+  },
+  "cwd": "/home/user/project"
+}

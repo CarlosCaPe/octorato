@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "scp ubuntu@prod-web:/etc/nginx/nginx.conf /tmp/nginx.conf"
+  },
+  "cwd": "/home/user/project"
+}

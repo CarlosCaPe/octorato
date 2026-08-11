@@ -9,9 +9,9 @@
 | Skills | 232 |
 | Agents | 161 |
 | Divisions | 15 |
-| Scripts: wired | 95 |
+| Scripts: wired | 96 |
 | Scripts: orphan | 7 |
-| Rules | 63 |
+| Rules | 64 |
 | Hook entries | 37 |
 
 ## Skills (232)
@@ -489,7 +489,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (102)
+## Scripts (103)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -540,6 +540,7 @@
 | eye-check.py | Eye Check Hook , Forces agent-browser usage for web tasks. Runs on every UserPromptSubmit. Pure loca... | wired |
 | finops-digest.py | finops-digest.py , the FinOps lens over Claude Code session logs. "Lo que no se mide, no crece." Exi... | wired |
 | g__pretool-bash__git-discipline.py | g__pretool-bash__git-discipline.py: PreToolUse gate for the deterministic subset of GIT.version-cont... | wired |
+| g__pretool-bash__prod-write.py | PreToolUse Bash hook , compuerta de ESCRITURA EN PRODUCCION (FAIL-CLOSED). | wired |
 | g__pretool-mcp__chat-context.py | g__pretool-mcp__chat-context.py: PreToolUse gate for COMMS.chat-context-before-send. | wired |
 | g__stop__delegation-audit.py | g__stop__delegation-audit.py: Stop gate for FLOW.bulk-fetch-delegation. | wired |
 | g__stop__draft-promise.py | g__stop__draft-promise.py , Stop gate: no future-tense promises in paste-ready drafts. | wired |
@@ -596,7 +597,7 @@
 | wa-soporte.sh | Envia un WhatsApp por el canal de SOPORTE, no por el numero personal del operador. | orphan |
 | watchdog.py | watchdog.py , observability surface 4 anomaly detector. Reads the JSONL trace files written by trace... | wired |
 
-## Rules (63)
+## Rules (64)
 
 ### ARCHITECTURE
 
@@ -687,6 +688,7 @@
 
 ### SECURITY
 
+- SEC.prod-write-gate
 - SECURITY.baseline
 - SECURITY.never-read-secrets-raw
 - SECURITY.querymaster-rules

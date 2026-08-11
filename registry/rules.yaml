@@ -226,6 +226,41 @@ rules:
     locator: scripts/secrets-grep-guard.py --selftest registry/fixtures/SECURITY.never-read-secrets-raw
     expect: 0
   liveness_required: FIRES
+- id: SEC.prod-write-gate
+  title: No production write without a per-destination operator approval
+  category: SECURITY
+  source:
+    file: skills/agent-proof-approval-gate/SKILL.md
+    anchor: 'Production writes (MANDATORY): no prod write without a per-destination
+      operator approval'
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - cli
+  mechanism:
+  # firing_event queda en null A PROPOSITO hasta que el operador registre el hook.
+  # Un gate nuevo se revisa antes de armarlo: registrarlo en caliente lo pondria a
+  # bloquear a TODAS las sesiones vivas de golpe. El selftest ya prueba que bloquea
+  # y que deja pasar la lectura, asi que la regla esta cableada, no es prosa.
+  # Al registrarlo: firing_event: PreToolUse / firing_matcher: Bash, mas el proof
+  # IN_HOOKS_JSON PreToolUse|Bash|g__pretool-bash__prod-write.py.
+  - kind: Gate
+    canonical_name: g__pretool-bash__prod-write.py
+    firing_event: null
+    firing_matcher: Bash
+  - kind: Gate
+    canonical_name: octo-dim.py
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: scripts/g__pretool-bash__prod-write.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/g__pretool-bash__prod-write.py --selftest registry/fixtures/SEC.prod-write-gate
+    expect: 0
+  liveness_required: FIRES
 - id: GENERIC.brain-stays-generic
   title: Brain stays generic; no arm/client identifiers leak
   category: GENERIC

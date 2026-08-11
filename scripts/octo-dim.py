@@ -53,6 +53,12 @@ BRAIN = Path.home() / ".claude"
 REGISTRY_DIR = BRAIN / "connectome"
 REGISTRY = REGISTRY_DIR / "sessions.json"
 APPROVALS_FILE = REGISTRY_DIR / "merge-approvals.json"
+# Aprobaciones de ESCRITURA EN PRODUCCION. Archivo aparte a proposito: aprobar un
+# merge jamas debe autorizar tocar una instancia o un Worker, y al reves tampoco.
+PROD_APPROVALS_FILE = REGISTRY_DIR / "prod-approvals.json"
+# Ventana corta para produccion. Ver g__pretool-bash__prod-write.py para el porque:
+# la aprobacion cubre UNA operacion, no una jornada.
+PROD_TTL_DEFAULT = 600
 DIM_ROOT = Path.home() / ".octorato" / "dim"
 
 # ── registry helpers ──────────────────────────────────────────────────────────
@@ -198,9 +204,9 @@ def _age_str(entry: dict) -> str:
 # ── merge-approvals helpers ───────────────────────────────────────────────────
 
 @contextlib.contextmanager
-def _approvals_lock():
-    """Exclusive advisory lock on merge-approvals.json.lock (POSIX only)."""
-    lock_path = REGISTRY_DIR / "merge-approvals.json.lock"
+def _approvals_lock(store: Path = APPROVALS_FILE):
+    """Exclusive advisory lock on <store>.lock (POSIX only)."""
+    lock_path = REGISTRY_DIR / (store.name + ".lock")
     if not _HAS_FCNTL:
         yield
         return
@@ -217,10 +223,10 @@ def _approvals_lock():
         yield  # fail-open
 
 
-def _load_approvals() -> dict:
+def _load_approvals(store: Path = APPROVALS_FILE) -> dict:
     """Return the approvals dict; empty on any error."""
     try:
-        raw = APPROVALS_FILE.read_text(encoding="utf-8")
+        raw = store.read_text(encoding="utf-8")
         data = json.loads(raw)
         if not isinstance(data, dict):
             return {}
@@ -230,14 +236,14 @@ def _load_approvals() -> dict:
         return {}
 
 
-def _save_approvals(approvals: dict) -> None:
-    """Atomic write of merge-approvals.json under advisory lock."""
+def _save_approvals(approvals: dict, store: Path = APPROVALS_FILE) -> None:
+    """Atomic write of the approvals store under advisory lock."""
     REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
     try:
-        with _approvals_lock():
+        with _approvals_lock(store):
             # Re-read + merge under lock to survive concurrent writes
             try:
-                raw = APPROVALS_FILE.read_text(encoding="utf-8")
+                raw = store.read_text(encoding="utf-8")
                 on_disk = json.loads(raw)
                 if not isinstance(on_disk, dict) or not isinstance(on_disk.get("approvals"), dict):
                     on_disk = {"approvals": {}}
@@ -249,7 +255,7 @@ def _save_approvals(approvals: dict) -> None:
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as fh:
                     json.dump(merged, fh, indent=2)
-                os.replace(tmp, APPROVALS_FILE)
+                os.replace(tmp, store)
             except Exception:
                 try:
                     os.unlink(tmp)
@@ -452,6 +458,102 @@ def cmd_approve_merge(args) -> int:
     return 0
 
 
+# ── aprobaciones de escritura en produccion ──────────────────────────────────
+# Marcadores que el arnes de Claude Code exporta en el ambiente de su herramienta
+# Bash. Si estan presentes, quien invoca no es el operador en su terminal: es un
+# agente. `approve-prod` se NIEGA en ese caso, y esa negativa es lo que le da
+# dientes al canal de archivo. El canal env (OCTO_PROD_APPROVE) sigue siendo la
+# frontera real, porque un env en linea nunca llega al hook.
+_AGENT_ENV_MARKERS = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID")
+
+
+def _looks_like_agent_shell() -> str:
+    for marker in _AGENT_ENV_MARKERS:
+        if os.environ.get(marker):
+            return marker
+    return ""
+
+
+def cmd_approve_prod(args) -> int:
+    """Registra la aprobacion del operador para escribir en un destino de produccion."""
+    marker = _looks_like_agent_shell()
+    if marker and not getattr(args, "i_am_the_operator", False):
+        print(
+            f"✗ approve-prod RECHAZADO: se detecto ambiente de agente ({marker}).\n"
+            "  Una aprobacion de produccion la da el OPERADOR en su propia terminal,\n"
+            "  nunca el agente que quiere escribir. Corre esto en tu shell:\n"
+            f"    export OCTO_PROD_APPROVE={','.join(args.destinations)}\n"
+            "  (canal env, a prueba de agente) o vuelve a correr este comando fuera\n"
+            "  de Claude Code.",
+            file=sys.stderr,
+        )
+        return 2
+    by = args.by or os.environ.get("USER", "operator")
+    ttl = int(args.ttl)
+    ts = _now_iso()
+    records = {str(d): {"by": by, "ts": ts, "ttl": ttl} for d in args.destinations}
+    _save_approvals(records, store=PROD_APPROVALS_FILE)
+    print(
+        f"aprobado(s): {', '.join(records)} por '{by}' "
+        f"(ttl={ttl}s, caduca en {ttl // 60}m{ttl % 60}s)"
+    )
+    return 0
+
+
+def cmd_prod_approvals(args) -> int:
+    """Lista las aprobaciones de produccion vivas."""
+    approvals = _load_approvals(PROD_APPROVALS_FILE)
+    if not approvals:
+        print("(sin aprobaciones de produccion registradas)")
+        return 0
+    show_all = getattr(args, "all", False)
+    print(f"{'ESTADO':<6}  {'DESTINO':<40}  {'POR':<16}  {'TS':<25}  {'TTL'}")
+    print("-" * 100)
+    for dest, record in approvals.items():
+        fresh = _is_fresh(record)
+        if not fresh and not show_all:
+            continue
+        status = "VIVA  " if fresh else "VENC  "
+        by = (record.get("by") or "?")[:16]
+        ts = (record.get("ts") or "?")[:25]
+        print(f"{status}  {dest[:40]:<40}  {by:<16}  {ts:<25}  {record.get('ttl', '?')}s")
+    return 0
+
+
+def cmd_revoke_prod(args) -> int:
+    """Quita una aprobacion de produccion antes de que caduque sola."""
+    dest = str(args.destination)
+    REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        with _approvals_lock(PROD_APPROVALS_FILE):
+            try:
+                data = json.loads(PROD_APPROVALS_FILE.read_text(encoding="utf-8"))
+                if not isinstance(data, dict) or not isinstance(data.get("approvals"), dict):
+                    data = {"approvals": {}}
+            except Exception:
+                data = {"approvals": {}}
+            if dest not in data["approvals"]:
+                print(f"(no hay aprobacion para '{dest}')")
+                return 0
+            del data["approvals"][dest]
+            fd, tmp = tempfile.mkstemp(dir=REGISTRY_DIR, prefix=".prod-approvals.tmp.")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                    json.dump(data, fh, indent=2)
+                os.replace(tmp, PROD_APPROVALS_FILE)
+            except Exception:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+                raise
+    except Exception as exc:
+        print(f"revoke-prod warning (non-fatal): {exc}", file=sys.stderr)
+        return 0
+    print(f"revocada: aprobacion de '{dest}'")
+    return 0
+
+
 def cmd_approvals(args) -> int:
     """List current approvals with freshness status."""
     approvals = _load_approvals()
@@ -624,6 +726,23 @@ def build_parser() -> argparse.ArgumentParser:
     rv = sub.add_parser("revoke-merge", help="Revoke a merge approval")
     rv.add_argument("pr_or_branch", help="PR number or branch name to revoke")
 
+    ap = sub.add_parser("approve-prod",
+                        help="Aprobar una escritura a produccion por destino (solo operador)")
+    ap.add_argument("destinations", nargs="+",
+                    help="Destino(s): id de instancia, nombre del Worker o token acordado")
+    ap.add_argument("--by", default="", help="Quien aprueba (default: $USER)")
+    ap.add_argument("--ttl", type=int, default=PROD_TTL_DEFAULT,
+                    help=f"Ventana en segundos (default {PROD_TTL_DEFAULT})")
+    ap.add_argument("--i-am-the-operator", action="store_true", dest="i_am_the_operator",
+                    help="Escape explicito cuando el operador corre esto DENTRO de una "
+                         "terminal marcada como de agente. Deja rastro en el historial.")
+
+    pav = sub.add_parser("prod-approvals", help="Listar aprobaciones de produccion")
+    pav.add_argument("--all", action="store_true", help="Incluir las ya vencidas")
+
+    rvp = sub.add_parser("revoke-prod", help="Revocar una aprobacion de produccion")
+    rvp.add_argument("destination", help="Destino a revocar")
+
     return p
 
 
@@ -639,6 +758,9 @@ HANDLERS = {
     "approve-merge": cmd_approve_merge,
     "approvals": cmd_approvals,
     "revoke-merge": cmd_revoke_merge,
+    "approve-prod": cmd_approve_prod,
+    "prod-approvals": cmd_prod_approvals,
+    "revoke-prod": cmd_revoke_prod,
 }
 
 

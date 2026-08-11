@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "npx wrangler pages deploy ./dist --project-name octorato-web"
+  },
+  "cwd": "/home/user/project"
+}

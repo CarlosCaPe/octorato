@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "curl -sS https://api.example.com/health"
+  },
+  "cwd": "/home/user/project"
+}

@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "aws s3 rm s3://octorato-artifacts/tmp/ --recursive --dryrun"
+  },
+  "cwd": "/home/user/project"
+}

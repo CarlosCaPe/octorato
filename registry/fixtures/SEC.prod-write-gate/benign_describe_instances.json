@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "aws ec2 describe-instances --instance-ids i-0abc123def456789 --query \"Reservations[].Instances[].State.Name\" --output text"
+  },
+  "cwd": "/home/user/project"
+}

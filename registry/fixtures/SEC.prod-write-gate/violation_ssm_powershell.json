@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "aws ssm send-command --instance-ids i-0abc123def456789 --document-name AWS-RunPowerShellScript --parameters 'commands=[\"Copy-Item C:\\\\tmp\\\\x C:\\\\app\\\\x\"]'"
+  },
+  "cwd": "/home/user/project"
+}

@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "npx wrangler kv key delete --namespace-id abc123 mykey --name octorato-api"
+  },
+  "cwd": "/home/user/project"
+}

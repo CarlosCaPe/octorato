@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "aws ssm send-command --instance-ids i-0abc123def456789 --document-name AWS-RunShellScript --parameters 'commands=[\"tar xzf /tmp/rel.tgz -C /opt/app\"]'"
+  },
+  "cwd": "/home/user/project"
+}

@@ -78,12 +78,25 @@ ESCAPE_TOKEN = "goal-anchor-ok"
 
 _RE_GOAL_PREFIX = re.compile(r"^\s*(?:objetivo|goal)\s*:\s*", re.IGNORECASE)
 
+# Las formas de RETORNO ("volvamos a", "regresemos a") se agregaron tras el
+# primer disparo real en produccion, 2026-08-11: el operador escribio "volvamos
+# al tema de mudanza" y el gate, que solo conocia formas de ABANDONO, siguio
+# anclado al objetivo anterior y bloqueo 14 turnos despues. Un pivote es un
+# pivote lo diga el operador yendose de un tema o volviendo a otro.
 _RE_PIVOT = re.compile(
     r"\bolvida eso\b"
     r"|\bcambio de tema\b"
-    r"|\bahora vamos a\b"
+    # al? y no a\b: "volvamos AL tema" es la forma que de verdad se escribe, y
+    # \b tras la "a" no casa porque la palabra sigue con letra. Salio de probar
+    # la frase literal del operador en vez de una inventada.
+    r"|\bahora vamos\s+al?\b"
+    r"|\bvolvamos\s+al?\b"
+    r"|\bregresemos\s+al?\b"
+    r"|\bcambiemos\s+al?\b"
     r"|\bforget that\b"
-    r"|\bnew task\b",
+    r"|\bnew task\b"
+    r"|\blet'?s go back to\b"
+    r"|\bswitching to\b",
     re.IGNORECASE,
 )
 

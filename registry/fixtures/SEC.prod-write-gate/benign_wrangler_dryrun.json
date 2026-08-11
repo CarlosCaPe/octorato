@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "npx wrangler deploy --dry-run --outdir=dist"
+  },
+  "cwd": "/home/user/project"
+}

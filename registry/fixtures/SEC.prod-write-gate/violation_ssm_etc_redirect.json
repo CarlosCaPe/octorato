@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "aws ssm send-command --targets \"Key=instanceids,Values=i-0abc123def456789\" --document-name AWS-RunShellScript --parameters 'commands=[\"cat /tmp/unit > /etc/systemd/system/octorato.service\"]'"
+  },
+  "cwd": "/home/user/project"
+}
