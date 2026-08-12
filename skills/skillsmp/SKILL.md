@@ -1,3 +1,8 @@
+---
+name: skillsmp
+description: "Busca, descubre e instala agent skills desde skillsmp.com, la coleccion abierta mas grande de archivos SKILL.md. Dispara al pedir 'busca skills para X', instalar uno de skillsmp, o pedir recomendaciones de skills de la comunidad."
+---
+
 # SkillsMP - Agent Skills Marketplace Integration
 
 Search, discover, and install agent skills from [skillsmp.com](https://skillsmp.com) — the largest collection of open-source SKILL.md files.

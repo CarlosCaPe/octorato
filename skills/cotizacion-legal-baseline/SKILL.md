@@ -1,6 +1,6 @@
 ---
 name: cotizacion-legal-baseline
-description: Clausulado legal base (México B2B) que TODA cotización o propuesta de servicios debe incluir desde el borrador 1, no después de que un review lo cache. Cubre propiedad intelectual (obra por encargo), tratamiento de datos personales (LFPDPPP, encargado), confidencialidad/NDA, límite de responsabilidad, garantía y soporte post-entrega, responsabilidad de licenciamiento e impuestos (montos más IVA, desglose en CFDI). Texto genérico reutilizable, sin datos de cliente.
+description: "Clausulado legal base Mexico B2B que TODA cotizacion o propuesta lleva desde el borrador 1: propiedad intelectual, LFPDPPP, confidencialidad, limite de responsabilidad, garantia, licenciamiento e IVA."
 metadata:
   type: reference
 ---

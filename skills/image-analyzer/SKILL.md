@@ -1,6 +1,6 @@
 ---
 name: image-analyzer
-description: "Analyze, describe, and classify images using GPT-4o vision via GitHub Models API or OpenAI API. MANDATORY TRIGGER: Use this skill whenever the user says 'imagen', 'mira la imagen', 'revisa la imagen', 'screenshot', 'foto', 'captura', 'mira esto', 'que ves', 'what do you see', 'look at this', or drags/pastes an image into the chat. Also use when you need to 'see' image contents (rooms, objects, style) to make decisions. Trigger on: image classification, photo identification, visual comparison, property photo analysis, 'what is in this image', bulk image labeling, duplicate detection."
+description: "DISPARADOR OBLIGATORIO: 'imagen', 'mira la imagen', 'screenshot', 'foto', 'captura', 'que ves', 'look at this', o cuando pegan una imagen en el chat. Analiza, describe y clasifica imagenes con vision GPT-4o."
 metadata:
   short-description: Analyze images with GPT-4o vision
 ---

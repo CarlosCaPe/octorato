@@ -1,6 +1,6 @@
 ---
 name: verify-generated-config-identifiers
-description: When shipping generated config, IaC, dashboards, or alert rules (Datadog, Terraform, CI YAML, SQL/KQL/PromQL), schema-valid is NOT semantically correct. External identifiers (metric names, API fields, table columns, env keys) can parse and import cleanly yet render No Data or wrong values because the name does not exist. Verify every external identifier against authoritative vendor docs before shipping, and run an adversarial multi-lens expert panel over non-trivial artifacts. Trigger when generating dashboards, monitors, IaC, pipelines, or any config that references another system's identifiers.
+description: "Config generada schema-valida no es semanticamente correcta: verifica cada identificador externo (metrica, campo, columna, env key) contra la doc del vendor antes de enviar. Dispara al generar dashboards, monitores, IaC o pipelines."
 metadata:
   type: reference
 ---

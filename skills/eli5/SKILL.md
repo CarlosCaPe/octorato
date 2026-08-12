@@ -1,13 +1,6 @@
 ---
 name: eli5
-description: >-
-  Bridge technical knowledge gaps using adult language — not childish, not jargon-heavy.
-  Produce clear, accessible explanations of any document, concept, policy, architecture,
-  or codebase. Uses analogies and plain adult vocabulary to make unfamiliar domains
-  immediately understandable. Universal-internet-name alias for the `lii5` skill (same
-  workflow, same output style). Trigger when user says "eli5", "ELI5", "/eli5",
-  "explain like I'm 5", "explícame como si tuviera 5", "hazlo simple", "dumb it down",
-  "en cristiano", or invokes the slash command form.
+description: "Explica cualquier documento, concepto o arquitectura en lenguaje adulto y claro, con analogias y sin jerga. Dispara con 'eli5', 'explicame como si tuviera 5', 'hazlo simple', 'en cristiano'. Alias de lii5."
 metadata:
   short-description: ELI5 alias (universal naming for lii5)
   triggers: "eli5, ELI5, /eli5, explain like i'm 5, explícame, hazlo simple, dumb it down, en cristiano"

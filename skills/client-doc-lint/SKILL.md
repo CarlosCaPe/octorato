@@ -1,6 +1,6 @@
 ---
 name: client-doc-lint
-description: Pre-send QA reflex for GENERATED client deliverables (cotización, propuesta, contrato PDF/DOCX). Lints the rendered artifact for stripped accents, em-dash, already-past forward dates (kickoff/vigencia), missing fiscal note ($ amounts with zero IVA mention = FAIL), and inventories every $ amount for human eyeballing. Run it before declaring any client doc "listo para enviar". Complements cadence-lint.py (which lints prose SOURCE, not the rendered output).
+description: "Reflejo de QA antes de mandar un entregable generado a cliente: revisa acentos rotos, em-dash, fechas ya pasadas, falta de nota fiscal cuando hay montos, e inventaria cada monto. Correlo antes de decir 'listo para enviar'."
 metadata:
   type: reference
 ---

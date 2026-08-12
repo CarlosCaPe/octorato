@@ -1,0 +1,7 @@
+{
+  "stop_hook_active": false,
+  "session_id": "selftest-benign_humano",
+  "wa_guardia_dbs": {
+    "prueba": "~/.wa-fixture/humano-desde-el-telefono.db"
+  }
+}

@@ -9,58 +9,58 @@
 | Skills | 232 |
 | Agents | 161 |
 | Divisions | 15 |
-| Scripts: wired | 87 |
-| Scripts: orphan | 6 |
-| Rules | 61 |
-| Hook entries | 34 |
+| Scripts: wired | 91 |
+| Scripts: orphan | 7 |
+| Rules | 62 |
+| Hook entries | 35 |
 
 ## Skills (232)
 
 | Name | Description |
 |---|---|
-| 4d-paradigm-protocol | Full operational protocol for the Octopus 4D Paradigm , Describe / Delegate / Diligent / Disclose. Contains the 2D Deleg... |
+| 4d-paradigm-protocol | Protocolo completo del paradigma 4D (Describe, Delegate, Diligent, Disclose): el gate de 3 preguntas del 2D, el formato ... |
 | 4d-spec | 4D+S: Spec-Driven 4D Orchestrator |
-| ado-pr-merge-via-api | Diagnose and complete Azure DevOps Pull Request merges via REST API when the UI is unavailable or when scripting bulk me... |
+| ado-pr-merge-via-api | Completa merges de Pull Request en Azure DevOps por REST API cuando la UI no sirve o hay que scriptear en lote. Cubre lo... |
 | ado-refactor-performance-gate | Mandatory performance gate for Azure DevOps SQL refactor tickets. Use when a ticket includes stored procedure refactor/r... |
-| agent-browser | Browser automation CLI for AI agents (Rust native, no Playwright). Use for navigating pages, filling forms, clicking but... |
+| agent-browser | CLI de automatizacion de navegador para agentes, nativo en Rust, sin Playwright. Navega, llena formularios, da clic, tom... |
 | agent-proof-approval-gate | Build a fail-closed PreToolUse gate for merge/deploy/destructive actions that the AI agent provably cannot self-bypass. ... |
 | agents-sdk | Build AI agents on Cloudflare Workers using the Agents SDK. Load when creating stateful agents, durable workflows, real-... |
 | anthropic-enterprise-analytics | Pull Anthropic's Admin API usage_report into ~/.claude/analytics/ so brain-digest can reconcile estimated cost (from ses... |
-| arm-onboarding | Step-by-step protocol for creating a new client arm (per-client repo) in the Octopus framework. Covers required files, t... |
+| arm-onboarding | Protocolo paso a paso para crear un arm nuevo de cliente: archivos requeridos, sync-ai-docs, el grafo de linaje sellado ... |
 | arm-synthetics | Per-arm health check templates. Each arm defines a synthetics.yaml with endpoints to probe + expected responses + cron s... |
-| ask-with-recommendation | Canonical mandate , when presenting any multi-choice question to the operator (via AskQuestion or inline list of options... |
+| ask-with-recommendation | Toda pregunta de opcion multiple al operador lleva recomendacion explicita marcada mas su razon (impacto, alcance, tiemp... |
 | aspnet-core | Build, review, refactor, or architect ASP.NET Core web applications using current official guidance for .NET web develop... |
 | atomic-3phase-ddl-scripts | Atomic 3-Phase DDL Scripts |
 | autovacuum-bloat-management | Autovacuum & Table Bloat Management |
 | backward-compatible-schema-changes | Backward-Compatible Schema Changes |
 | batch-import-relative-paths | When you batch-add an `import` line to N source files via sed/awk, the relative path must be computed PER-FILE (depth va... |
 | browser-bearer-graph-auth | Conditional-Access-resilient OAuth alternative for Microsoft Graph: drive a Playwright + Edge persistent context to capt... |
-| bruno-postman-alternative | Open-source API client (Postman alternative) where collections are stored as plain text files in a git repo , collaborat... |
+| bruno-postman-alternative | Cliente de API open-source donde las colecciones son archivos de texto en el repo, revisables por PR, sin nube ni licenc... |
 | bug-hunter | Adversarial bug hunting with a sequential-first pipeline (Recon, Hunter, Skeptic, Referee) that can optionally use safe ... |
 | cache-bust-deploy-validation | After a production deploy of a CDN-fronted site, force cache-bust on every validation request and inspect Age/cache-stat... |
-| canary-symbiont | Cross-plane sentinel pattern: a tiny watcher on cloud plane B detects the SILENT death of scheduler plane A (billing blo... |
-| capture-ends-with-triage | A scheduled capture/scrape/monitor pipeline that only dumps raw data to files forces the operator to do the synthesis by... |
+| canary-symbiont | Centinela cross-plane: un watcher en el plano B detecta la muerte SILENCIOSA del scheduler del plano A (bloqueo de billi... |
+| capture-ends-with-triage | Un pipeline programado que solo vuelca datos crudos obliga al humano a sintetizar, y por eso se omite. Todo capture debe... |
 | case-insensitive-uniqueness | Case-Insensitive Uniqueness (Functional Indexes) |
-| ccxt-python | CCXT cryptocurrency exchange library for Python developers. Covers both REST API (standard) and WebSocket API (real-time... |
-| chatgpt-apps | Build, scaffold, refactor, and troubleshoot ChatGPT Apps SDK applications that combine an MCP server and widget UI. Use ... |
-| claude-mem-persistent-memory | Persistent context across sessions for Claude Code (and other coding agents) , captures everything the agent does in a s... |
+| ccxt-python | Libreria CCXT para exchanges de cripto en Python, REST y WebSocket: conectar, bajar datos de mercado, colocar ordenes y ... |
+| chatgpt-apps | Construye y depura apps del ChatGPT Apps SDK que combinan servidor MCP y UI de widget: definir tools, registrar recursos... |
+| claude-mem-persistent-memory | Memoria persistente entre sesiones para agentes de codigo: captura la sesion, la comprime y reinyecta lo relevante despu... |
 | claude-plugins-official | Official, Anthropic-managed directory of high quality Claude Code Plugins. |
 | claude-usage-report | Aggregate Claude Code usage (tokens, sessions, API-equivalent cost) by day, week, month, model, and project from local J... |
-| client-doc-lint | Pre-send QA reflex for GENERATED client deliverables (cotización, propuesta, contrato PDF/DOCX). Lints the rendered arti... |
+| client-doc-lint | Reflejo de QA antes de mandar un entregable generado a cliente: revisa acentos rotos, em-dash, fechas ya pasadas, falta ... |
 | cloudflare | Comprehensive Cloudflare platform skill covering Workers, Pages, storage (KV, D1, R2), AI (Workers AI, Vectorize, Agents... |
 | cloudflare-deploy | Deploy applications and infrastructure to Cloudflare using Workers, Pages, and related platform services. Use when the u... |
-| cloudflare-email-service | Send and receive transactional emails with Cloudflare Email Service (Email Sending + Email Routing). Use when building e... |
+| cloudflare-email-service | Envia y recibe correo transaccional con Cloudflare Email Service (Sending mas Routing), por binding de Workers o REST. C... |
 | column-renames-metadata-only | Column Renames (Metadata-Only) |
 | command-boundary-hook-matching | Pattern-match what a Bash command actually does in a PreToolUse hook without false-firing on mentions inside quoted args... |
 | config-driven-diagrams | Build config-driven architecture diagrams as dark-themed SVG/PNG with swimlanes, embedded logos, auto-layout, and overla... |
 | connection-pooling-timeout-safety | Connection Pooling & Timeout Safety |
 | content-deduplication-discipline | Content Deduplication Discipline |
-| coolify-self-hosted-paas | Self-hosted alternative to Vercel, Heroku, Netlify, and Render , deploy applications, databases, and services on your ow... |
-| cotizacion-legal-baseline | Clausulado legal base (México B2B) que TODA cotización o propuesta de servicios debe incluir desde el borrador 1, no des... |
+| coolify-self-hosted-paas | Alternativa autoalojada a Vercel, Heroku y Render: despliega apps, bases y servicios en tu propio servidor con git-push,... |
+| cotizacion-legal-baseline | Clausulado legal base Mexico B2B que TODA cotizacion o propuesta lleva desde el borrador 1: propiedad intelectual, LFPDP... |
 | coworking-concept-collision | Protocol for when two live sessions are codifying the SAME concept concurrently (not just sharing a working tree). Detec... |
-| cron-bridge-daily-publisher | End-to-end architectural pattern for "daily auto-publish N curated items from D1 → social platform (FB Page, IG Business... |
+| cron-bridge-daily-publisher | Patron para autopublicar a diario N elementos curados desde D1 a una plataforma social via el worker programador. Incluy... |
 | cross-reference-integrity | Cross-Reference Integrity |
-| daily-reflection | Honest session retro → 3 questions → distil the lesson to memory (reflection becomes reflex) |
+| daily-reflection | Retro honesta de fin de sesion, errores primero, que destila la leccion a memoria del cerebro. Dispara con 'que aprendis... |
 | data-retention-policy-lifecycle | Data Retention Policy Lifecycle |
 | database-guard-pattern | Database Guard Pattern |
 | database-naming-conventions | Database Naming Conventions |
@@ -68,7 +68,7 @@
 | deep-grep-code-review | Deep Grep Code Review |
 | deterministic-shutdown-backstop | A long-lived service that hangs INTERMITTENTLY on SIGTERM (non-reproducible, the init system kills it at the timeout, a ... |
 | develop-web-game | Use when Codex is building or iterating on a web game (HTML/JS) and needs a reliable development + testing loop: impleme... |
-| do-it-right-not-fast | Operator-canonical: fix the ROOT CAUSE, never ship the quick patch or a pile of palliative files in its place. Two smell... |
+| do-it-right-not-fast | Canonico del operador: arregla la CAUSA RAIZ, nunca el parche rapido ni una pila de archivos paliativos. Dos olores obli... |
 | do-not-ask-to-pause | Canonical mandate , never ask the operator "should we pause?" or "do we close the session?" when there is queued work, a... |
 | doc | Use when the task involves reading, creating, or editing `.docx` documents, especially when formatting or layout fidelit... |
 | doc-tree-consolidation | Collapse N fragmented markdown docs into a small canonical set without losing content or breaking cross-references. Dist... |
@@ -76,28 +76,28 @@
 | document-semantic-coherence | Document Semantic Coherence |
 | dry-run-gate-pattern | Dry-Run Gate Pattern |
 | durable-objects | Create and review Cloudflare Durable Objects. Use when building stateful coordination (chat rooms, multiplayer games, bo... |
-| eli5 | ELI5 alias (universal naming for lii5) |
+| eli5 | Explica cualquier documento, concepto o arquitectura en lenguaje adulto y claro, con analogias y sin jerga. Dispara con ... |
 | execution-bias | Don't defer to 'later / follow-up / next session' what can be done now. If no real blocker and auto-mode is on, execute ... |
 | explain-analyze-validation | EXPLAIN ANALYZE Query Validation |
 | fb-carousel-cap-4 | Meta Graph /feed?attached_media= silently 500s with N>=5 photos + a long caption , cap defensively at 4 inside any FB Pa... |
 | fb-page-dual-id | A Facebook Page has TWO different identifiers: the URL ID seen in `profile.php?id=N` (and in the page's vanity URL) and ... |
 | figma | Use the Figma MCP server to fetch design context, screenshots, variables, and assets from Figma, and to translate Figma ... |
 | figma-implement-design | Translates Figma designs into production-ready application code with 1:1 visual fidelity. Use when implementing UI code ... |
-| figma-use | **MANDATORY prerequisite** , you MUST invoke this skill BEFORE every `use_figma` tool call. NEVER call `use_figma` direc... |
+| figma-use | MANDATORY prerequisite: invocalo ANTES de cada llamada a use_figma, nunca llames esa herramienta sin cargar esto. Aplica... |
 | fillfactor-storage-tuning | Fillfactor & Storage Parameter Tuning |
 | financial-formula-verification | Financial Formula Verification for Cloud Cost Documents |
 | finops-budget-policy | Per-arm monthly USD budget caps with three escalation levels (alert / warn / hard_stop). Config lives in ~/.claude/budge... |
-| finops-observability | Measure brain/agent cost so it can be managed , 'lo que no se mide no crece'. Routes a cost/FinOps question to the right... |
+| finops-observability | Mide el costo del cerebro y sus agentes y rutea la pregunta a la herramienta correcta: gasto por arm, KPI de ruteo, cost... |
 | floci-local-aws | Run AWS services locally , S3, DynamoDB, SQS, Lambda, ECS, ECR, OpenSearch, MSK/Kafka, Athena and ~45 more , using Floci... |
 | foreign-key-constraints | Foreign Key Constraints |
 | frontend-skill | Use when the task asks for a visually strong landing page, website, app, prototype, demo, or game UI. This skill enforce... |
 | gap-analysis-pattern | Gap Analysis Pattern |
-| gemini-vision | Analyze images using Google Gemini Flash vision model ('Nano Banana'). MANDATORY TRIGGER: Use this skill whenever the us... |
+| gemini-vision | DISPARADOR OBLIGATORIO: 'analiza imagen', 'nano banana', 'gemini vision', 'que ves en la imagen', o al pegar una imagen ... |
 | gh-address-comments | Help address review/issue comments on the open GitHub PR for the current branch using gh CLI; verify gh auth first and p... |
 | gh-fix-ci | Use when a user asks to debug or fix failing GitHub PR checks that run in GitHub Actions; use `gh` to inspect checks and... |
 | github-trending-curation | Daily brain discovery loop. Pulls top trending from GitHub + HN + Product Hunt, runs heuristic + LLM filter against exis... |
-| graphify-code-graph | Build a deterministic, queryable knowledge graph over any codebase with graphify (tree-sitter AST over 25+ languages, Le... |
-| gsap-core | Official GSAP skill for the core API , gsap.to(), from(), fromTo(), easing, duration, stagger, defaults, gsap.matchMedia... |
+| graphify-code-graph | Grafo de conocimiento determinista y consultable sobre un codebase con graphify (tree-sitter, 25+ lenguajes, sin costo d... |
+| gsap-core | API core de GSAP: to(), from(), fromTo(), easing, duration, stagger, defaults y matchMedia (responsive, prefers-reduced-... |
 | gsap-frameworks | Official GSAP skill for Vue, Svelte, and other non-React frameworks , lifecycle, scoping selectors, cleanup on unmount. ... |
 | gsap-performance | Official GSAP skill for performance , prefer transforms, avoid layout thrashing, will-change, batching. Use when optimiz... |
 | gsap-plugins | Official GSAP skill for GSAP plugins , registration, ScrollToPlugin, ScrollSmoother, Flip, Draggable, Inertia, Observer,... |
@@ -107,37 +107,37 @@
 | harmonization-over-accretion | Reusable rebuttal pattern for "let's import all N items from competitor X" temptations. Explains why connectome-graph br... |
 | hook-profile-gating | Runtime gate hooks via OCTO_HOOK_PROFILE (minimal|standard|strict) and OCTO_DISABLED_HOOKS (comma-separated ids) , disab... |
 | horizontal-scroll-html-vs-body | Android Chrome ignores overflow-x:hidden on <body> if <html> still allows it , clip the root, not just the body, to kill... |
-| human-cadence | The 10 no-rules that strip AI-tells from any written output so text reads like a person, not a model, and costs fewer to... |
+| human-cadence | Las 10 no-reglas que quitan los tics de IA a cualquier texto para que lea como persona: sin em-dash, sin muletillas, sin... |
 | idempotent-sql-design | Idempotent SQL Design |
-| image-analyzer | Analyze, describe, and classify images using GPT-4o vision via GitHub Models API or OpenAI API. MANDATORY TRIGGER: Use t... |
+| image-analyzer | DISPARADOR OBLIGATORIO: 'imagen', 'mira la imagen', 'screenshot', 'foto', 'captura', 'que ves', 'look at this', o cuando... |
 | image-transparency | Use when the user asks to remove a white/grey background from an image, logo, or signature to make it transparent, using... |
-| imagegen | Generate or edit raster images when the task benefits from AI-created bitmap visuals such as photos, illustrations, text... |
-| inbox-triage-classifier | PHI-aware triage classifier for any inbox-like stream of items demanding human attention , email, Slack DMs, Teams chats... |
+| imagegen | Genera o edita imagenes raster con IA: fotos, ilustraciones, texturas, sprites, mockups, recortes con fondo transparente... |
+| inbox-triage-classifier | Triage de bandejas (correo, Slack, Teams, JIRA, PRs): clasifica que requiere accion y devuelve veredicto por item con ur... |
 | incident-capture | Capture a structured incident when the brain produces a bad outcome , bad skill output, redone task, critical 3D Diligen... |
 | index-creation-concurrently | Index Creation (CONCURRENTLY) |
-| infinite-monitor | Set up, configure, and build AI-powered dashboards using Infinite Monitor , an open-source Next.js app where users descr... |
+| infinite-monitor | Arma dashboards con IA sobre Infinite Monitor, app Next.js open-source donde describes el widget en lenguaje natural y u... |
 | investigate-before-asking | Canonical mandate , before asking the operator any clarifying question, spend 30-60 seconds doing read-only investigatio... |
 | jupyter-notebook | Use when the user asks to create, scaffold, or edit Jupyter notebooks (`.ipynb`) for experiments, explorations, or tutor... |
 | knowledge-corpus | Build and query focused knowledge corpora from brain skills, git history, and workspace files. Use when users want to co... |
-| lii5 | LII5 , Bridge the Technical Gap |
+| lii5 | Explica cualquier documento, concepto o arquitectura en lenguaje adulto y claro, con analogias y sin jerga. Dispara con ... |
 | linear | Manage issues, projects & team workflows in Linear. Use when the user wants to read, create or updates tickets in Linear... |
 | llm-system-prompt-engineering | Design, debug, and optimize LLM system prompts for production chatbots , especially smaller/medium models (7B-70B) that ... |
 | long-document-revision-protocol | Long Document Revision Protocol |
 | long-lived-negative-dns-cache | A long-running process (a cron supervisor, a daemon, a worker pool parent) caches a NEGATIVE DNS result after a transien... |
-| market-research-framework | Market Research Framework , Consulting-Grade Analysis |
-| mcp-stack-setup | Skill: MCP Stack Setup for Octopus Arms |
-| model-routing-by-complexity | Frontier brain, tiered arms: keep the orchestrator on a frontier model and DELEGATE by complexity; never downgrade the m... |
+| market-research-framework | Marco de investigacion de mercado a nivel consultoria, 12 modulos del sizing a la estrategia de entrada. Dispara con 'ma... |
+| mcp-stack-setup | Instala y configura el stack MCP de un arm respetando Arm Isolation: los MCP de nube van a scope user, los de base de da... |
+| model-routing-by-complexity | Enruta el trabajo por complejidad a traves del ladder de modelos (mechanical, bulk, build, judgment), vendor-agnostico. ... |
 | multi-object-rename-convergence | Multi-Object Rename Convergence |
 | multi-specialist-doc-audit | Audit a long technical document for hallucinations and uncited claims by dispatching N specialist agents in parallel, ea... |
 | netlify-deploy | Deploy web projects to Netlify using the Netlify CLI (`npx netlify`). Use when the user asks to deploy, host, publish, o... |
-| news-article-curation | Daily brain learning loop for AI news and blogs. Reads a watchlist of RSS/Atom feeds (Simon Willison, OpenAI, DeepMind, ... |
-| no-history-in-docs | No History in Documents |
+| news-article-curation | Loop diario sobre feeds RSS de IA (Willison, OpenAI, DeepMind, arXiv cs.AI): filtra los articulos que ensenan algo que e... |
+| no-history-in-docs | Los documentos llevan solo contenido vigente; git es el control de versiones. Nunca tachado para marcar lo hecho, nunca ... |
 | notion-knowledge-capture | Capture conversations and decisions into structured Notion pages; use when turning chats/notes into wiki entries, how-to... |
 | notion-meeting-intelligence | Prepare meeting materials with Notion context and Codex research; use when gathering context, drafting agendas/pre-reads... |
 | notion-research-documentation | Research across Notion and synthesize into structured documentation; use when gathering info from multiple Notion source... |
 | notion-spec-to-implementation | Turn Notion specs into implementation plans, tasks, and progress tracking; use when implementing PRDs/feature specs and ... |
-| octorato-harmony | The cell coordinates without being told. When a shared value/fact is 10 in one place and 12 in another, converge both to... |
-| octorato-isomorphism | The three Octorato anchors (octopus = architecture, Linux = OS, tesseract = 4D paradigm) are not three brands stuck toge... |
+| octorato-harmony | Cuando un mismo valor vale 10 en un lado y 12 en otro, converge ambos a un canonico referenciado en todas partes, nunca ... |
+| octorato-isomorphism | Los tres anclajes de Octorato (pulpo, Linux, teseracto) son una misma estructura mostrada tres veces, no tres marcas peg... |
 | octorato-symbolism | The two symbolic anchors of the Octorato framework , the 8 → ∞ (lay the octopus's eight arms sideways and you get the le... |
 | openai-docs | Use when the user asks how to build with OpenAI products or APIs and needs up-to-date official documentation with citati... |
 | openstock | OpenStock is an open-source alternative to expensive market platforms. Track real-time prices, set personalized alerts, ... |
@@ -163,23 +163,23 @@
 | project-timeline-report | Generate a "Journey Into [Project]" narrative report analyzing a project's entire development history from git log, CHAN... |
 | prompt-master | Generates optimized prompts for AI tools. Activates only when the user explicitly asks to write, fix, improve, or adapt ... |
 | qa-deployment-prompts | QA Deployment Prompts |
-| querymaster | QueryMaster , Multi-Engine Database Agent (Master Skill) |
-| querymaster-adx | QueryMaster , Azure Data Explorer (ADX) / KQL Engine Skill |
-| querymaster-databricks | QueryMaster , Databricks Engine Skill (Placeholder) |
-| querymaster-postgresql | QueryMaster , PostgreSQL Engine Skill |
-| querymaster-snowflake | QueryMaster , Snowflake Engine Skill |
-| querymaster-sqlite | QueryMaster , SQLite Engine Skill |
-| querymaster-sqlserver | QueryMaster , SQL Server / Azure SQL Engine Skill |
+| querymaster | Router maestro multi-motor: recibe un prompt en lenguaje natural, identifica el motor (PostgreSQL, Snowflake, SQL Server... |
+| querymaster-adx | Skill hijo de querymaster para Azure Data Explorer. ADX usa KQL, NUNCA SQL. Conexion azure-kusto-data con SSO y buenas p... |
+| querymaster-databricks | Skill hijo de querymaster para Databricks. PLACEHOLDER: aun no hay workspace ni cluster provisionado, solo la plantilla ... |
+| querymaster-postgresql | Skill hijo de querymaster para PostgreSQL (estandar, Azure Database, Aurora): patrones de conexion psycopg2 y Node, sesi... |
+| querymaster-snowflake | Skill hijo de querymaster para Snowflake: conexion por Browser SSO, OAuth y usuario/contrasena de servicio, REST SQL API... |
+| querymaster-sqlite | Skill hijo de querymaster para SQLite: bases locales en archivo, storage de Optuna, barridos analiticos y uso embebido, ... |
+| querymaster-sqlserver | Skill hijo de querymaster para SQL Server y Azure SQL (Database, Managed Instance, on-prem): conexion pyodbc con token d... |
 | range-partitioning-growth-tables | Range Partitioning for Growth Tables |
 | reflexes-over-discipline | When a rule or gate is chronically ignored, when designing enforcement for a new policy, or when the operator says a rul... |
 | render-deploy | Deploy applications to Render by analyzing codebases, generating render.yaml Blueprints, and providing Dashboard deeplin... |
-| repo-deep-learn | Manual deep-analysis of a single GitHub repository (URL or local path). Clones if needed, inventories the codebase, extr... |
-| repo-watch | Daily monitor for a small watchlist of high-value GitHub repos (competitors, peers, upstream Claude Code ecosystem). Rea... |
-| repomix-codebase-packer | Pack an entire repository (local or remote) into a single AI-friendly file optimized for LLM ingestion. MIT-licensed, np... |
+| repo-deep-learn | Analisis profundo de UN repo de GitHub: inventaria el codigo, extrae patrones que podrian volverse skill y escribe repor... |
+| repo-watch | Monitor diario de una watchlist de repos de GitHub: compara el HEAD SHA contra el snapshot previo y escribe un digest en... |
+| repomix-codebase-packer | Empaqueta un repo completo, local o remoto, en un solo archivo optimizado para LLM, con compresion Tree-sitter (~70% men... |
 | research-checklist-discipline | Research Checklist Discipline |
 | runtime-adaptation-over-source-edit | Decision rule for WHERE a new behavior or lesson belongs , the runtime layer (skill / memory / config / hook) vs the cor... |
 | sandbox-sdk | Build sandboxed applications for secure code execution. Load when building AI code execution, code interpreters, CI/CD s... |
-| schema-as-code-three-layer-sync | Discipline for keeping the three layers of a schema-as-code project , Entity-Relationship diagram (ER), Data Dictionary ... |
+| schema-as-code-three-layer-sync | Mantiene sincronizadas las tres capas de un proyecto schema-as-code: diagrama ER, diccionario de datos y el SQL declarat... |
 | schema-row-counts | Get exact row counts per table in a given schema , PostgreSQL primary, with notes for other engines. Two-column result: ... |
 | schema-separation-orm-control | Schema Separation for ORM/Scaffolding Control |
 | screenshot | Use when the user explicitly asks for a desktop or system screenshot (full screen, specific app or window, or a pixel re... |
@@ -192,60 +192,60 @@
 | sdd-review | SDD: Code Review |
 | sdd-yolo | SDD: YOLO Full Pipeline |
 | security-best-practices | Perform language and framework specific security best-practice reviews and suggest improvements. Trigger only when the u... |
-| security-ownership-map | Analyze git repositories to build a security ownership topology (people-to-file), compute bus factor and sensitive-code ... |
+| security-ownership-map | Topologia de propiedad de codigo orientada a seguridad desde el historial de git: bus factor, duenos de codigo sensible,... |
 | security-roles-least-privilege | Security Roles & Least-Privilege Grants |
 | security-threat-model | Repository-grounded threat modeling that enumerates trust boundaries, assets, attacker capabilities, abuse paths, and mi... |
 | sentinel-blocks-rerun | Diagnose daily-idempotent endpoints that silently no-op because an earlier same-day run set a 'already-done' sentinel |
 | sentry | Use when the user asks to inspect Sentry issues or events, summarize recent production errors, or pull basic Sentry heal... |
 | serial-to-identity-conversion | Serial to Identity Column Conversion |
-| session-isolation | MANDATORY isolation for concurrent Claude Code sessions on one repo (especially ~/.claude itself). The same arm can run ... |
-| session-learn-extractor | When the operator just finished solving a non-trivial problem (multi-step debug, novel workaround, surprising gotcha, ha... |
+| session-isolation | OBLIGATORIO: cada sesion concurrente sobre un repo necesita su propio git worktree y session id. NUNCA dos sesiones viva... |
+| session-learn-extractor | Extrae el patron reusable de la sesion y lo escribe como skill BORRADOR en skills/learned/. Dispara tras 'ya quedo', 'fi... |
 | session-memory-search | Search past work across sessions using native tools (git log, grep, Lessons Learned). Use when user asks "did we already... |
 | skill-creator | Guide for creating effective skills. This skill should be used when users want to create a new skill (or update an exist... |
 | skill-installer | Install Codex skills into $CODEX_HOME/skills from a curated list or a GitHub repo path. Use when a user asks to list ins... |
-| skillsmp | SkillsMP - Agent Skills Marketplace Integration |
+| skillsmp | Busca, descubre e instala agent skills desde skillsmp.com, la coleccion abierta mas grande de archivos SKILL.md. Dispara... |
 | slides | Create and edit presentation slide decks (`.pptx`) with PptxGenJS, bundled layout helpers, and render/validation utiliti... |
-| snowflake-dbt-pitfalls | Non-obvious Snowflake and dbt footguns that fail silently or destroy data. Load when writing or reviewing Snowflake DDL ... |
-| social-video-mining | Extract structured insights from short-form social video (TikTok, YouTube Shorts, Instagram Reels, Bilibili, Douyin) WIT... |
+| snowflake-dbt-pitfalls | Trampas de Snowflake y dbt que fallan en silencio o destruyen datos: CREATE OR REPLACE, Dynamic Tables, PIVOT, freshness... |
+| social-video-mining | Extrae insights de video corto (TikTok, Shorts, Reels, Douyin) sin speech-to-text de paga: yt-dlp, ffmpeg y vision sobre... |
 | sops-age-git-encryption | SOPS + age (per-user keys) as the default encryption stack for HIPAA / GDPR / SOC-2 / regulated-data git repos. Two-laye... |
-| sora | Use when the user asks to generate, edit, extend, poll, list, download, or delete Sora videos, create reusable non-human... |
+| sora | Genera, edita, extiende, lista o descarga videos de Sora, crea referencias de personaje y corre colas locales con script... |
 | source-citation-tagging | Tag taxonomy for mixed-source technical documents , every factual claim must carry a source marker. Defends against hall... |
-| spacetimedb-backend-as-database | Database that REPLACES the traditional backend , application logic runs as modules inside the database, clients subscrib... |
+| spacetimedb-backend-as-database | Base de datos que REEMPLAZA al backend: la logica corre como modulos dentro de la DB y los clientes se suscriben al esta... |
 | speech | Use when the user asks for text-to-speech narration or voiceover, accessibility reads, audio prompts, or batch speech ge... |
 | spreadsheet | Use when tasks involve creating, editing, analyzing, or formatting spreadsheets (`.xlsx`, `.csv`, `.tsv`) with formula-a... |
 | stacked-pr-squash-delete-gotcha | Recover from and prevent stacked-PR breakage caused by squash-merge + auto-delete-branch on the base PR. Use when workin... |
 | status-marker-hygiene | Status Marker Hygiene |
 | stored-procedure-logic-hardening | Stored Procedure Logic Hardening |
-| stream-transcript-dom-scrape | When a Microsoft Stream meeting recording is shared with you as VIEW-only and the transcript file-download UI says 'no p... |
-| stripe-payments | Decide and implement the right Stripe integration tier for a use case , Payment Link (zero-code donate / one-off sale), ... |
+| stream-transcript-dom-scrape | Cuando una grabacion de Microsoft Stream es de solo lectura y la descarga del transcript dice 'sin permiso', el reproduc... |
+| stripe-payments | Elige e implementa el tier correcto de Stripe (Payment Link, Checkout, Elements, Connect, Billing), con registro del MCP... |
 | structural-completeness-verification | Structural Completeness Verification |
 | submission-checklist-gate | Before sending a reply to a formal requirement (bank, government agency, any institution), build an explicit checklist o... |
-| summarize-100 | Compress any topic, document, answer, profile, or message into approximately 100 words , the 100 most semantically-dense... |
+| summarize-100 | Comprime cualquier tema, documento o respuesta a ~100 palabras, las mas densas semanticamente. Dispara con '100 palabras... |
 | svelte-tailwind-gotchas | Known gotchas and workarounds when combining Svelte (4/5) with Tailwind CSS. Use when Svelte template compilation fails ... |
 | table-normalization-1nf | Table Normalization (1NF Violations) |
-| tabularis-db-client | Open-source SQL client for PostgreSQL, MySQL/MariaDB, and SQLite with a built-in Model Context Protocol (MCP) server , A... |
-| teams-1on1-send-no-chat-read | Send 1:1 Teams chat without Chat.Read scope (deterministic chat-id derivation) |
-| teams-ready-message | When the operator asks for a message to paste into a chat client (Teams, Slack, WhatsApp, any plain-text box), DO NOT pu... |
+| tabularis-db-client | Cliente SQL open-source para PostgreSQL, MySQL y SQLite con servidor MCP integrado, Apache 2.0. Para recomendar un GUI d... |
+| teams-1on1-send-no-chat-read | Manda un mensaje 1:1 de Teams por Graph API aunque el token NO traiga scopes Chat.Read: deriva el chat ID de los OIDs or... |
 | technical-document-craftsmanship | Skill #37 , Technical Document Craftsmanship |
-| theory-plus-practice-prompts | Every long-form technical document combining a framework explanation with a use-case demonstration MUST carry executable... |
+| theory-plus-practice-prompts | Todo documento tecnico largo que explica un marco y demuestra un caso DEBE llevar prompts ejecutables con datos reales j... |
 | timestamptz-standardization | Timestamp Standardization (timestamptz) |
 | toc-audit-commit-push | TOC Audit, Commit & Push Workflow |
-| token-efficient-prompting | Token-Efficient Prompting |
+| token-efficient-prompting | Reduce 50-75% los tokens de salida sin perder senal, eliminando adulacion, relleno, preambulo y sugerencias no pedidas. ... |
 | tos-safe-social-share-helper | Architectural pattern for cases where a client wants to "auto-publish to social platform X" but the platform's ToS forbi... |
-| tramite-mx-assistant | Asistente de trámites gubernamentales/burocráticos guiado por agente. Reúne la identidad del operador desde los conector... |
+| tramite-mx-assistant | Asistente de tramites gubernamentales MX: maneja el portal con agent-browser, se DETIENE en captcha, OTP y pago con tarj... |
 | transcribe | Transcribe audio files to text with optional diarization and known-speaker hints. Use when a user asks to transcribe spe... |
 | tsql-to-plpgsql-conversion | AI-Assisted T-SQL to PL/pgSQL Stored Procedure Conversion |
 | unicode-symbol-compatibility | Unicode Symbol Compatibility in Markdown Documents |
 | vercel-deploy | Deploy applications and websites to Vercel. Use when the user requests deployment actions like "deploy my app", "deploy ... |
-| verify-generated-config-identifiers | When shipping generated config, IaC, dashboards, or alert rules (Datadog, Terraform, CI YAML, SQL/KQL/PromQL), schema-va... |
-| verify-root-cause-before-claiming | Before you state the CAUSE of a failure to a stakeholder (client, teammate, ticket), verify the cause against the data, ... |
-| vibevoice-elevenlabs-alternative | Microsoft's open-source voice synthesis model , local, real-time-capable text-to-speech that can replace ElevenLabs for ... |
-| video-commercial-production | Video Commercial Production |
+| verify-generated-config-identifiers | Config generada schema-valida no es semanticamente correcta: verifica cada identificador externo (metrica, campo, column... |
+| verify-root-cause-before-claiming | Antes de decirle a alguien la CAUSA de una falla, verificala contra el dato, no contra el sintoma. Una causa plausible s... |
+| vibevoice-elevenlabs-alternative | Modelo open-source de sintesis de voz de Microsoft, local y en tiempo real, sustituto de ElevenLabs. MIT. Para clientes ... |
+| video-commercial-production | Produce comerciales en video HD 9:16 desde paginas HTML animadas con GSAP, capturando con Playwright y codificando con f... |
 | voice-and-cadence-consistency | Document Voice and Cadence Consistency |
-| web-perf | Analyzes web performance using Chrome DevTools MCP. Measures Core Web Vitals (LCP, INP, CLS) and supplementary metrics (... |
-| whatsapp-mcp-bridge-gotchas | Hard-won fixes for standing up the lharries/whatsapp-mcp bridge (whatsmeow + WhatsApp Web multidevice), encrypted, with ... |
-| windows-brain-script-portability | Two hard-won rules for any Python script in ~/.claude/scripts/ that must run on a Windows brain: (1) `python3` resolves ... |
-| winui-app | Bootstrap, develop, and design modern WinUI 3 desktop applications with C# and the Windows App SDK using official Micros... |
+| wa-guardia | Modo guardia sobre un chat de mensajeria. Arma un watcher cuando un turno cierra esperando respuesta de un tercero, y le... |
+| web-perf | Audita rendimiento web con Chrome DevTools MCP: Core Web Vitals (LCP, INP, CLS), recursos que bloquean el render, cadena... |
+| whatsapp-mcp-bridge-gotchas | Fixes for the lharries/whatsapp-mcp bridge: 403 media download, 405 client-outdated, QR vs phone-code pairing, encrypt-a... |
+| windows-brain-script-portability | Scripts de ~/.claude/scripts/ que corren en un cerebro Windows: usa el shim python3.cmd y no python3 pelado, y reconfigu... |
+| winui-app | Crea, desarrolla y disena apps de escritorio WinUI 3 con C# y Windows App SDK segun guia oficial de Microsoft y Communit... |
 | workers-best-practices | Reviews and authors Cloudflare Workers code against production best practices. Load when writing new Workers, reviewing ... |
 | workspace-skill-discovery | Discover and include ALL skills across the workspace , not just global ones. Use at the start of every session or when t... |
 | wrangler | Cloudflare Workers CLI for deploying, developing, and managing Workers, KV, R2, D1, Vectorize, Hyperdrive, Workers AI, C... |
@@ -489,7 +489,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (93)
+## Scripts (98)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -532,6 +532,7 @@
 | connectome-heartbeat.py | connectome-heartbeat.py , the Delegate-phase heartbeat (UserPromptSubmit hook). | wired |
 | cost-vs-change.py | cost-vs-change.py , "is the new thing making me cheaper or more expensive?" Correlates the daily Cla... | wired |
 | d__posttool__delegation-ledger.py | d__posttool__delegation-ledger.py: PostToolUse detector (matcher *) for FLOW.bulk-fetch-delegation. | wired |
+| d__stop__wa-guardia.py | d__stop__wa-guardia.py , Stop detector: si mande un mensaje y espero respuesta, arma la guardia. | wired |
 | delegate-check | delegate-check , Mandatory 2D Delegate pre-flight for the Octopus brain. Scans REGISTRY.md (agents) ... | wired |
 | delegate-gate.py | PreToolUse hook , involuntary delegation reflex (FAIL-OPEN, by design). | wired |
 | dimension-awareness-hook.py | dimension-awareness-hook.py , PreToolUse hook for 4D session dimension awareness | wired |
@@ -585,9 +586,13 @@
 | trace-hook.py | trace-hook.py , observability surface 1 , capture hook. Reads a Claude Code hook event from stdin an... | wired |
 | update_neural_activity.py | update_neural_activity.py , observability surface 1 , connectome integration. Reads the JSONL trace ... | wired |
 | validate-skill-manifest.py | validate-skill-manifest.py , validate a skill.json against the M5 manifest schema (issue #31). | wired |
+| wa-guardia.py | Guardia de chat: que llego y no hemos contestado, aqui y ahora. | wired |
+| wa-latido.py | Latido activo de puentes de WhatsApp: mide la TUBERIA, no el proceso. | wired |
+| wa-sin-respuesta.py | Vigia de silencio: avisa cuando un cliente escribio y nadie contesto. | wired |
+| wa-soporte.sh | Envia un WhatsApp por el canal de SOPORTE, no por el numero personal del operador. | orphan |
 | watchdog.py | watchdog.py , observability surface 4 anomaly detector. Reads the JSONL trace files written by trace... | wired |
 
-## Rules (61)
+## Rules (62)
 
 ### ARCHITECTURE
 
@@ -644,6 +649,7 @@
 - FLOW.prune-dead-cells
 - FLOW.skill-first
 - FLOW.suggest-unlock
+- FLOW.wa-guardia-on-pending
 - FLOW.web-agent-browser
 
 ### GENERIC
@@ -687,5 +693,5 @@
 | PostToolUse | cadence-lint.py, canon-heal-hook.py, client-doc-lint-hook.py, d__posttool__delegation-ledger.py, impact-radius-hook.py, trace-hook.py |
 | PreToolUse | budget-check.py, config-ship-verify.py, delegate-gate.py, dimension-awareness-hook.py, g__pretool-bash__git-discipline.py, g__pretool-mcp__chat-context.py, grafo-gate.py, qa-merge-gate.py, secrets-grep-guard.py, trace-hook.py |
 | SessionStart | merge-hooks.py, session-isolation-hook.py |
-| Stop | cadence-stop-hook.py, claim-verify-stop.py, g__stop__delegation-audit.py, g__stop__draft-promise.py, grafo-ledger-check.py, no-pause-suggestion.py, source-attribution-check.py, trace-hook.py |
+| Stop | cadence-stop-hook.py, claim-verify-stop.py, d__stop__wa-guardia.py, g__stop__delegation-audit.py, g__stop__draft-promise.py, grafo-ledger-check.py, no-pause-suggestion.py, source-attribution-check.py, trace-hook.py |
 | UserPromptSubmit | 4d-reminder.py, arm-recall-hook.py, brain-memory-recall.py, connectome-heartbeat.py, eye-check.py, grafo-turn-reset.py, inbox-sweep-reflex.py, trace-hook.py |

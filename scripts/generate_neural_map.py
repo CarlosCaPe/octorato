@@ -449,19 +449,45 @@ def generate_connectome():
     synapses = []
     skill_docs = {}
 
-    for skill_dir in sorted(SKILLS_DIR.iterdir()):
-        if skill_dir.is_dir() and not skill_dir.name.startswith("."):
-            # A dir with no direct SKILL.md is a container, not a skill — e.g. the
-            # learned/ draft pen (holds learned/<slug>/SKILL.md). Indexing it would
-            # mint a contentless degree-0 orphan that `query_connectome.py dead`
-            # then flags forever. Skip it at the source.
-            if not (skill_dir / "SKILL.md").exists():
-                continue
-            meta = read_skill(skill_dir)
-            synapses.append(meta)
-            skill_docs[meta["id"]] = meta["text"]
+    # Walk the WHOLE skills tree, not just depth 1.
+    #
+    # The harness's resident skill listing only sees skills/<slug>/SKILL.md, so
+    # anything nested deeper is invisible to the model. That is exactly what makes
+    # a cold tier possible: move a skill down a level and it leaves the always-on
+    # index. But it only stays REACHABLE if the graph still indexes it — otherwise
+    # a cooled skill is not dormant, it is dead: unreachable by listing AND by seek.
+    # So the graph deliberately walks deeper than the listing does.
+    #
+    # A dir with no direct SKILL.md is a container, not a skill (e.g. the learned/
+    # draft pen). Containers are never indexed themselves — that would mint a
+    # contentless degree-0 orphan that `query_connectome.py dead` flags forever —
+    # but their children are.
+    #
+    # Ids stay the directory slug, so the SAME slug can appear at two depths (a
+    # promoted skill at depth 1 plus its leftover draft in learned/). Shallowest
+    # wins: the promoted copy is canonical, the draft is skipped.
+    seen_ids = {}
+    for skill_file in sorted(SKILLS_DIR.rglob("SKILL.md")):
+        skill_dir = skill_file.parent
+        rel = skill_dir.relative_to(SKILLS_DIR)
+        if any(part.startswith(".") for part in rel.parts):
+            continue
+        depth = len(rel.parts)
+        meta = read_skill(skill_dir)
+        prev = seen_ids.get(meta["id"])
+        if prev is not None:
+            if depth >= prev["depth"]:
+                continue  # deeper duplicate — the shallower copy is canonical
+            synapses.remove(prev)
+        meta["depth"] = depth
+        seen_ids[meta["id"]] = meta
+        synapses.append(meta)
+        skill_docs[meta["id"]] = meta["text"]
 
+    nested = sum(1 for s in synapses if s.get("depth", 1) > 1)
     print(f"   {len(synapses)} synapses, {sum(len(t) for t in skill_docs.values()):,} chars of content")
+    if nested:
+        print(f"   ({nested} from nested/cold subtrees — indexed here, absent from the resident listing)")
 
     # ── Step 3: Build unified TF-IDF corpus ──
     print("Step 3: Building TF-IDF vectors from full corpus...")
@@ -824,6 +850,9 @@ def generate_connectome():
                 "id": s["id"],
                 "name": s["name"],
                 "description": s.get("description", "")[:200],
+                # Tree depth under skills/. 1 = visible in the harness's resident
+                # listing; >1 = cold subtree, reachable by seek only.
+                "depth": s.get("depth", 1),
                 "connected_neurons": skill_to_agents.get(s["id"], {}),
                 "cluster_neighbors": {
                     nb: round(next(

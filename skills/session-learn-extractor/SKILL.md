@@ -1,6 +1,6 @@
 ---
 name: session-learn-extractor
-description: When the operator just finished solving a non-trivial problem (multi-step debug, novel workaround, surprising gotcha, hard-won technique) — scan the current session, extract the reusable pattern, and write a draft skill at ~/.claude/skills/learned/<kebab-slug>/SKILL.md for review. Trigger automatically after the operator says "done", "ya quedó", "fixed", "shipped", "merged" on something that took multiple investigation steps OR involved a non-obvious fix. Also invokable via /learn slash command. The output is a DRAFT — operator promotes (move from learned/ to top-level skills/) or discards. Pattern absorbed from affaan-m/ECC.
+description: "Extrae el patron reusable de la sesion y lo escribe como skill BORRADOR en skills/learned/. Dispara tras 'ya quedo', 'fixed', 'shipped', 'merged' sobre algo que costo varios pasos de investigacion, o via /learn."
 metadata:
   type: brain-routine
   trigger: post-resolution (auto) or /learn (manual)

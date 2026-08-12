@@ -106,7 +106,7 @@ rules:
     expect: 0
   liveness_required: FIRES
 - id: CODE.adversarial-verify-operator
-  title: Adversarially verify the operator; claims need proof
+  title: Adversarially verify the operator; claims need proof (verification claims and total-coverage claims)
   category: CODE
   source:
     file: CLAUDE.md
@@ -1499,5 +1499,29 @@ rules:
     expect: present
   - method: EXIT_CODE
     locator: scripts/g__stop__delegation-audit.py --selftest registry/fixtures/FLOW.bulk-fetch-delegation
+    expect: 0
+  liveness_required: FIRES
+- id: FLOW.wa-guardia-on-pending
+  title: Guardia armada cuando un turno cierra esperando respuesta de un tercero
+  category: FLOW
+  source:
+    file: skills/wa-guardia/SKILL.md
+    anchor: Cuando se arma
+  strength: DETECTOR
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Detector
+    canonical_name: d__stop__wa-guardia.py
+    firing_event: Stop
+    firing_matcher: '*'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: Stop|*|d__stop__wa-guardia.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/d__stop__wa-guardia.py --selftest registry/fixtures/FLOW.wa-guardia-on-pending
     expect: 0
   liveness_required: FIRES

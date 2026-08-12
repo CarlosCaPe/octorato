@@ -1,6 +1,6 @@
 ---
 name: 4d-paradigm-protocol
-description: "Full operational protocol for the Octopus 4D Paradigm — Describe / Delegate / Diligent / Disclose. Contains the 2D Delegate 3-question gate detail, the 4D Gate Change Manifest format, the 3D Diligent validation matrix, the Impact Radius scan command, the 4D-applied-to flow tables, known anti-patterns, and the enforcement scripts. CLAUDE.md carries only the summary; full templates and formats live here. Load when about to write files, run a complex change, build a Change Manifest, or need an exact gate/diligent/impact-radius format."
+description: "Protocolo completo del paradigma 4D (Describe, Delegate, Diligent, Disclose): el gate de 3 preguntas del 2D, el formato del Change Manifest, la matriz de validacion 3D y el Impact Radius. CLAUDE.md solo trae el resumen. Carga antes de escribir archivos o armar un manifiesto."
 metadata:
   type: paradigm-protocol
   short-description: "Operational templates: 4D gate format, 3Q delegate protocol, diligent matrix, impact radius scan, anti-patterns"

@@ -1,6 +1,6 @@
 ---
 name: do-it-right-not-fast
-description: "Operator-canonical: fix the ROOT CAUSE, never ship the quick patch or a pile of palliative files in its place. Two smells mean STOP and do it right: the phrase 'the quick fix is...' (in any language), and accreting band-aid files instead of repairing the one broken thing. Harmonizes with execution-bias (start today, do not defer) on the other axis: speed-to-start is a virtue, speed-by-shortcut is debt. Load before proposing a fix, when tempted by a workaround, or when a change is growing extra files instead of mending the source."
+description: "Canonico del operador: arregla la CAUSA RAIZ, nunca el parche rapido ni una pila de archivos paliativos. Dos olores obligan a parar: la frase 'la solucion rapida es' y acumular curitas en vez de reparar lo roto. Carga antes de proponer un fix."
 metadata:
   type: feedback
 ---

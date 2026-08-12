@@ -1,6 +1,6 @@
 ---
 name: octorato-isomorphism
-description: "The three Octorato anchors (octopus = architecture, Linux = OS, tesseract = 4D paradigm) are not three brands stuck together — they are one abstract structure shown three times (an isomorphism). This skill names the method for finding what they share: set intersection over a quotient-by-synonymy = abstraction, the same operation as Upward Learning. Invoke when explaining why the anchors cohere, when adding a new anchor/metaphor, or when deriving which primitives the brain must have. Companions: octorato-symbolism (the WHY of two anchors), harmonization-over-accretion (converge, don't fork)."
+description: "Los tres anclajes de Octorato (pulpo, Linux, teseracto) son una misma estructura mostrada tres veces, no tres marcas pegadas. Nombra el metodo de abstraccion. Invoca al explicar por que cohesionan o al anadir un anclaje nuevo."
 metadata:
   type: identity
   short-description: "octopus ∧ linux ∧ tesseract share one structure; the shared words ARE the brain's required primitives. The fractal/self-similar primitive is owned by octorato-symbolism; this skill is the method that measures the invariant."

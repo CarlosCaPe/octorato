@@ -1,6 +1,6 @@
 ---
 name: model-routing-by-complexity
-description: "Frontier brain, tiered arms: keep the orchestrator on a frontier model and DELEGATE by complexity; never downgrade the main loop itself. Tiers are vendor-agnostic (mechanical · bulk · build · judgment). Map them to the runtime's engines: Claude Code → Haiku/Sonnet/Opus/Fable; Cursor+xAI → composer/grok-build · mid-Grok · grok-4.5 · strongest independent ≥ builder. Cuts per-client token spend at the baseline, not just at the cap. Load when fanning out many sub-agents (Workflow/Agent/Task), when an arm's FinOps cost needs lowering without changing the deliverable, or when deciding the `model` override for a Workflow stage or Agent/Task call. Pairs with budget caps: caps stop runaway spend; routing lowers the floor. See docs/architecture/multi-runtime.md."
+description: "Enruta el trabajo por complejidad a traves del ladder de modelos (mechanical, bulk, build, judgment), vendor-agnostico. Carga al abanicar sub-agentes o al elegir el override de model en un Workflow/Agent."
 ---
 
 # Model Routing by Complexity

@@ -1,12 +1,6 @@
 ---
 name: lii5
-description: >
-  Bridge technical knowledge gaps using adult language — not childish, not jargon-heavy.
-  Produce clear, accessible explanations of any document, concept, policy, architecture,
-  or codebase. Uses analogies and plain adult vocabulary to make unfamiliar domains
-  immediately understandable. Trigger when user says "lii5", "li5", "LI5",
-  "explain like i'm 5", "explícame como si tuviera 5 años", "ELI5", "hazlo simple",
-  "dumb it down", or "en cristiano".
+description: "Explica cualquier documento, concepto o arquitectura en lenguaje adulto y claro, con analogias y sin jerga. Dispara con 'lii5', 'li5', 'explicame como si tuviera 5 anos', 'hazlo simple', 'en cristiano'."
 ---
 
 # LII5 — Bridge the Technical Gap

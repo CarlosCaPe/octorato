@@ -1,6 +1,6 @@
 ---
 name: gemini-vision
-description: "Analyze images using Google Gemini Flash vision model ('Nano Banana'). MANDATORY TRIGGER: Use this skill whenever the user says 'analiza imagen', 'nano banana', 'gemini vision', 'qué ves en la imagen', 'describe la imagen', or pastes/drags an image into chat AND requests visual analysis. Preferred over image-analyzer when Gemini is available (GEMINI_API_KEY set). Supports single images, batch directories, VS Code chat images, and custom prompts."
+description: "DISPARADOR OBLIGATORIO: 'analiza imagen', 'nano banana', 'gemini vision', 'que ves en la imagen', o al pegar una imagen pidiendo analisis. Vision con Gemini Flash. Preferido sobre image-analyzer si hay GEMINI_API_KEY."
 metadata:
   short-description: Gemini Flash vision analysis (Nano Banana)
 ---

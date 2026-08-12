@@ -1,6 +1,6 @@
 ---
 name: repomix-codebase-packer
-description: Pack an entire repository (local or remote) into a single AI-friendly file optimized for LLM ingestion. MIT-licensed, npx-runnable, with Tree-sitter compression (~70% token reduction), Secretlint scanning, and native MCP server mode. Use when feeding a whole codebase to Claude/ChatGPT for review, when preparing arm context for a subagent, when a client hands you a repo you need to audit end-to-end, or when a refactor needs whole-codebase context. Prefer over manual file-by-file concatenation; prefer over Read-loops when token budget matters.
+description: "Empaqueta un repo completo, local o remoto, en un solo archivo optimizado para LLM, con compresion Tree-sitter (~70% menos tokens) y escaneo de secretos. Para auditar un repo entero o preparar contexto de un subagente."
 ---
 
 # Repomix — Codebase to Single AI-Friendly File

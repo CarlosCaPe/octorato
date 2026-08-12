@@ -1,0 +1,7 @@
+{
+  "stop_hook_active": false,
+  "session_id": "selftest-violation",
+  "wa_guardia_dbs": {
+    "prueba": "~/.wa-fixture/con-espera.db"
+  }
+}

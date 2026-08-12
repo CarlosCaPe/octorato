@@ -1,3 +1,8 @@
+---
+name: querymaster-postgresql
+description: "Skill hijo de querymaster para PostgreSQL (estandar, Azure Database, Aurora): patrones de conexion psycopg2 y Node, sesion readonly y buenas practicas de consulta. Se activa cuando el motor resuelto es PostgreSQL."
+---
+
 # QueryMaster — PostgreSQL Engine Skill
 
 > Child skill of `querymaster`. Activated when engine is PostgreSQL.
