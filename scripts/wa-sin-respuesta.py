@@ -150,6 +150,12 @@ FUENTES_GMAIL = ("archivos", "secretsmanager")
 # de fallo silencioso que este bloque vino a matar.
 MARCA_BLOQUE = "--- canario:v1 ---"
 PULSO_MIN = 30
+# Cuantas horas puede llevar la base del puente sin escribirse antes de darla
+# por congelada. Ver `revisa`: el 7-ago el puente se murio y el vigia paso
+# cuatro dias midiendo una foto. Seis horas, no veinte minutos, porque de
+# madrugada una cuenta tranquila no escribe y un falso positivo entrena al
+# operador a ignorar el aviso.
+FRESCURA_H = 6
 
 # Credencial de correo. En ~/.gmail-mcp hay DOS archivos con refresh_token y
 # solo uno LEE: token.json trae scope gmail.compose (redacta, da 403 al listar)
@@ -318,6 +324,18 @@ def revisa(cfg, ahora=None, estados=None, cobertura=None):
     SystemExit, o sea que una base inalcanzable mataba tambien la revision del
     correo y no salia ningun aviso. Ahora el sensor se declara ciego, el otro
     sigue, y el bloque sale con `cobertura.whatsapp:false`.
+
+    Son CUATRO las formas de estar ciego, y la cuarta se nos escapo cuatro
+    dias: la config no describe el puente, la base no existe, la base no se
+    puede leer, y la base se lee perfecto pero lleva dias sin escribirse porque
+    el proceso que la alimenta esta muerto. Esta ultima es la peor de las
+    cuatro porque no se parece a una averia: se parece a la calma.
+
+    El umbral de frescura sale de `vigilancia.frescura_horas` (def. seis) y se
+    puede pisar con WA_VIGIA_FRESCURA_H. Seis horas atrapan "muerto desde hace
+    dias" y no atrapan "muerto desde hace veinte minutos": es un piso, no una
+    garantia, y esta puesto ahi para que una madrugada tranquila no dispare un
+    falso positivo.
     """
     ahora = ahora or datetime.now(timezone.utc)
     vig = cfg.get("vigilancia")
@@ -346,6 +364,48 @@ def revisa(cfg, ahora=None, estados=None, cobertura=None):
         con.execute("SELECT 1 FROM messages LIMIT 1")
     except sqlite3.Error as e:
         anota(f"sensor de WhatsApp: no pude leer la base del puente ({e})")
+        return []
+
+    # LEER LA BASE NO PRUEBA QUE EL PUENTE ESTE VIVO. El 7-ago el proceso que
+    # la escribe se murio y la base siguio abriendo y respondiendo perfecto,
+    # asi que el vigia paso CUATRO DIAS midiendo una foto congelada y diciendo
+    # "sin mensajes nuevos", que es exactamente lo que dice cuando de verdad no
+    # hay nada. Un canal de cliente sin respuesta cuatro dias con el tablero en
+    # verde, y se descubrio porque el operador pregunto a mano.
+    #
+    # El pulso se mide sobre TODOS los chats, no solo los vigilados: el puente
+    # escribe por cualquier mensaje de la cuenta (grupos, difusion, todo), asi
+    # que ese maximo es la senal de si el proceso sigue escribiendo. Mirar solo
+    # los vigilados confundiria "el puente murio" con "estos clientes no
+    # escriben hoy".
+    #
+    # ALCANCE, dicho sin adornos: seis horas detecta "muerto desde hace dias",
+    # que es el fallo que ocurrio. NO detecta "muerto desde hace veinte
+    # minutos", y una cuenta genuinamente tranquila de madrugada puede
+    # acercarse al umbral. El compromiso es deliberado: un umbral corto
+    # convierte la noche en falsos positivos y los falsos positivos entrenan al
+    # operador a ignorar el aviso, que es peor que no tenerlo.
+    frescura = timedelta(hours=float(os.environ.get(
+        "WA_VIGIA_FRESCURA_H", vig.get("frescura_horas", FRESCURA_H))))
+    # Se ordena por texto igual que `ultimo`, y se compara con `parse_ts`: la
+    # comparacion de cadenas sirve para escoger candidato, no para medir.
+    fila = con.execute("SELECT timestamp FROM messages "
+                       "ORDER BY timestamp DESC LIMIT 1").fetchone()
+    # Sin ninguna fila NO se declara nada. Una base recien creada no es una
+    # base congelada: no tiene pulso todavia, no esconde ningun silencio (no
+    # hay a quien dejar esperando ahi dentro) y darla por muerta sacaria un
+    # falso positivo en cada instalacion nueva. Lo que este chequeo persigue es
+    # una base que SI tuvo pulso y dejo de tenerlo.
+    ultimo_escrito = parse_ts(fila[0]) if fila and fila[0] else None
+    if ultimo_escrito is not None and (ahora - ultimo_escrito) > frescura:
+        horas = int((ahora - ultimo_escrito).total_seconds() // 3600)
+        # Se devuelve [] como en los otros tres casos: medir silencios sobre
+        # una base congelada produce verdes falsos, y un verde falso es peor
+        # que un hueco declarado.
+        anota(f"sensor de WhatsApp: el puente {nombre_puente!r} parece muerto, "
+              f"su base lleva {horas} h sin escribirse (ultimo mensaje de "
+              f"cualquier chat: {ultimo_escrito.isoformat(timespec='seconds')})")
+        con.close()
         return []
     silencios = []
 
@@ -1115,6 +1175,98 @@ def selftest():
         if est_sin:
             fallos.append("lo que no se pudo mirar no puede salir como sano "
                           f"en el bloque: {est_sin}")
+
+        # ---- la base CONGELADA: abre, lee, y lleva dias sin escribirse ------
+        # El fallo del 7-ago. La base respondia perfecto, asi que las tres
+        # cegueras que ya existian la daban por sana y el vigia reporto cuatro
+        # dias de "sin mensajes nuevos" sobre un puente muerto.
+        db_vieja = Path(tmp) / "vieja.db"
+        con_v = sqlite3.connect(db_vieja)
+        con_v.execute("CREATE TABLE messages (id TEXT, chat_jid TEXT, "
+                      "is_from_me INT, timestamp TEXT, media_type TEXT, "
+                      "content TEXT)")
+        # Cuatro dias, los mismos que duro el punto ciego. El entrante esta sin
+        # contestar a proposito: sin el chequeo de frescura esto saldria como
+        # un silencio normal y la base congelada pasaria inadvertida.
+        t_viejo = (ahora - timedelta(days=4)).astimezone()
+        con_v.execute("INSERT INTO messages VALUES (?,?,?,?,?,?)",
+                      ("v1", "A", 0, t_viejo.isoformat(sep=" "), None, "hola?"))
+        con_v.commit(); con_v.close()
+        cfg_vieja = {"puentes": {"p": {"db": str(db_vieja)}},
+                     "vigilancia": {"puente": "p", "umbral_minutos": 20,
+                                    "chats": [{"jid": "A", "quien": "A",
+                                               "cliente": "A"}]}}
+        casos += 1
+        cob_v, est_v = [], []
+        r_v = revisa(cfg_vieja, ahora, est_v, cob_v)
+        if r_v != []:
+            fallos.append(f"sobre una base congelada no se puede medir "
+                          f"silencios: {r_v}")
+        casos += 1
+        if not any(c["sensor"] == "whatsapp" and c["falla"]
+                   and "parece muerto" in c["texto"] for c in cob_v):
+            fallos.append(f"una base congelada deberia declarar el sensor "
+                          f"ciego: {cob_v}")
+        casos += 1
+        if est_v:
+            fallos.append("una base congelada no puede sacar chats sanos al "
+                          f"bloque: {est_v}")
+        casos += 1
+        # y el aviso tiene que decir CUANTO lleva muerta, no solo que lo esta:
+        # "lleva dias" y "lleva 20 minutos" no se atienden igual
+        if not any("96 h" in c["texto"] for c in cob_v):
+            fallos.append(f"el aviso no dice cuanto lleva sin escribirse: {cob_v}")
+
+        # el umbral manda, no la edad sola: con la frescura en 200 h esos
+        # mismos 4 dias son normales y el sensor NO puede declararse ciego
+        casos += 1
+        cfg_holgada = json.loads(json.dumps(cfg_vieja))
+        cfg_holgada["vigilancia"]["frescura_horas"] = 200
+        cob_h, est_h = [], []
+        r_h = revisa(cfg_holgada, ahora, est_h, cob_h)
+        if cob_h or not r_h:
+            fallos.append(f"con el umbral holgado no deberia haber hueco y si "
+                          f"silencio: {cob_h}, {r_h}")
+
+        # ---- la base FRESCA: nada cambia. El detector no puede cobrar peaje --
+        # La base de arriba (A..H) tiene mensajes de hace 3 minutos, o sea que
+        # el puente escribe. Ni un hueco, y los silencios de siempre.
+        casos += 1
+        cob_f, est_f = [], []
+        r_f = revisa(cfg, ahora, est_f, cob_f)
+        if cob_f:
+            fallos.append(f"una base fresca no puede declarar nada: {cob_f}")
+        casos += 1
+        if {s["quien"] for s in r_f} != {"A", "E", "F", "G"} or len(est_f) != 8:
+            fallos.append(f"el chequeo de frescura movio el resultado normal: "
+                          f"{[s['quien'] for s in r_f]}, {len(est_f)} en bloque")
+
+        # ---- la base VACIA: recien instalada, no congelada -----------------
+        # Sin ninguna fila NO se declara ciego a proposito. Una base sin pulso
+        # todavia no es una base que perdio el pulso: no esconde ningun
+        # silencio, y tratarla igual que a una congelada sacaria un falso
+        # positivo en cada instalacion nueva. El falso positivo es lo que mata
+        # al mecanismo, porque ensena a ignorar el aviso.
+        db_vacia = Path(tmp) / "vacia.db"
+        con_e = sqlite3.connect(db_vacia)
+        con_e.execute("CREATE TABLE messages (id TEXT, chat_jid TEXT, "
+                      "is_from_me INT, timestamp TEXT, media_type TEXT, "
+                      "content TEXT)")
+        con_e.commit(); con_e.close()
+        cfg_vacia = {"puentes": {"p": {"db": str(db_vacia)}},
+                     "vigilancia": {"puente": "p", "umbral_minutos": 20,
+                                    "chats": [{"jid": "A", "quien": "A",
+                                               "cliente": "A"}]}}
+        casos += 1
+        cob_e, est_e = [], []
+        r_e = revisa(cfg_vacia, ahora, est_e, cob_e)
+        if cob_e:
+            fallos.append(f"una base recien creada no es una base congelada: "
+                          f"{cob_e}")
+        casos += 1
+        if r_e != [] or len(est_e) != 1 or est_e[0]["silencio_min"] is not None:
+            fallos.append(f"una base vacia deberia dejar el chat sano y sin "
+                          f"silencios: {r_e}, {est_e}")
 
         # la fraccion de 9 digitos del puente real no debe romper el parseo
         casos += 1
