@@ -65,10 +65,12 @@ Writing three identical whiles "because three hearts" is cargo-culting the metap
 
 Every response ends with a one-line footer (label **Provenance / Procedencia / Herkunft**, matching the user's language). Named fields, ` · `-separated, each included ONLY when it applies:
 
-- **Basis** — on whose authority (own reasoning / vendor·doc / operator / `file:line`).
+- **Basis** — on whose authority (own reasoning / vendor·doc / operator / `file:line`). The files that came IN.
 - **Engine** — main-loop model + any sub-agent/sub-tool on a different engine (e.g. a Haiku arm). Makes [[model-routing-by-complexity]] visible.
-- **Touched** — files written this turn (`+` created, `~` modified, `-` deleted). OMIT on read-only turns.
+- **Touched** — files written this turn (`+` created, `~` modified, `-` deleted). The files that went OUT. OMIT on read-only turns.
 - **Verified** — one-line 3D evidence. OMIT when nothing was written.
+
+**Paths must be OPENABLE, not merely identifying.** Both `Basis` and `Touched` name real artifacts the operator will want to open, so every path is written **absolute and in the host OS's native form**: `C:\Users\...\file.docx` on Windows, `/home/.../file.md` on POSIX. A repo-relative path (`projects/x/y.md`) identifies a file but cannot be clicked, so it forces the operator to ask "where is that?" — which is the friction this field exists to remove. When several files share a directory, give the directory once and the basenames after it. When a file sits outside the working directory, add a `file://` URL (percent-encode spaces: `file:///C%3A/Users/NAME%20SURNAME/...`) so it opens from any client on any platform. Never hand back a bare filename.
 
 This IS 4D Disclose made concrete — the Impact Radius, post-write, every turn. Injector: `scripts/4d-reminder.py`; Stop-hook check: `scripts/source-attribution-check.py`.
 
