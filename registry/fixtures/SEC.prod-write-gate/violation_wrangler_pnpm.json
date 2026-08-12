@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "pnpm wrangler deploy --name octorato-api"
+  },
+  "cwd": "/home/user/project"
+}

@@ -1,0 +1,2 @@
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"sigue saliendo AccessDenied"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"¿Quieres que la región se habilite a nivel cuenta o nada más para este rol?"}]}}

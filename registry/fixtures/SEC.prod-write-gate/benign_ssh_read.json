@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "ssh deploy@host.example.com \"journalctl -u octorato -n 50 --no-pager\""
+  },
+  "cwd": "/home/user/project"
+}

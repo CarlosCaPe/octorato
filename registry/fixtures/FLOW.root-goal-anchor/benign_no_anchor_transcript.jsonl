@@ -1,0 +1,2 @@
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"arregla el DNS del sitio"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Listo, quedó."}]}}

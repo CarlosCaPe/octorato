@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "npx wrangler kv key get --namespace-id abc123 mykey"
+  },
+  "cwd": "/home/user/project"
+}

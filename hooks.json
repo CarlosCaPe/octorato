@@ -117,6 +117,10 @@
           "statusMessage": "♦ git discipline (no _old/_backup names)...",
           "timeout": 5,
           "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/r__pretool-write__base-freshness.py",
+          "type": "command"
         }
       ],
       "matcher": "Write|Edit|NotebookEdit|MultiEdit"
@@ -242,6 +246,10 @@
         },
         {
           "command": "python3 ~/.claude/scripts/d__stop__wa-guardia.py",
+          "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/g__stop__goal-anchor.py",
           "type": "command"
         }
       ]

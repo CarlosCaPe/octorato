@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "aws ssm send-command --instance-ids i-0abc123def456789 --document-name AWS-RunShellScript --parameters 'commands=[\"grep -rn listen /etc/nginx/nginx.conf\",\"stat /opt/octorato/bin/octorato\",\"du -sh /var/lib/octorato\"]'"
+  },
+  "cwd": "/home/user/project"
+}

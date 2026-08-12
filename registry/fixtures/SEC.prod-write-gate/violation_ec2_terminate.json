@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "aws ec2 terminate-instances --instance-ids i-0abc123def456789"
+  },
+  "cwd": "/home/user/project"
+}

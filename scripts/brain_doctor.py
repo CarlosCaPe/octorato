@@ -335,7 +335,7 @@ def check_cursor_hooks_sync(fix: bool) -> Result:
         run([PYTHON or "python3", str(projector)], cwd=CLAUDE_DIR)
         return Result(key, PASS, "~/.cursor/hooks.json re-projected from hooks.json")
     return Result(key, WARN, "~/.cursor/hooks.json drifted from hooks.json",
-                  "run `python3 scripts/merge-hooks-cursor.py` (or --fix)")
+                  "run `python3 scripts/merge-hooks-cursor.py` (or re-run brain_doctor --fix)")
 
 
 def check_leak_guard(fix: bool) -> Result:

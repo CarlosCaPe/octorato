@@ -1,0 +1,6 @@
+{
+  "session_id": "sess-compact",
+  "transcript_path": "benign_compact_summary_transcript.jsonl",
+  "stop_hook_active": false,
+  "cwd": "/tmp"
+}

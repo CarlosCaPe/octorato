@@ -1,0 +1,2 @@
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"no me deja entrar, sale AccessDenied otra vez"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Región habilitada. Con eso ya se puede levantar la instancia de operaciones; sigue crearla y montar el puente de WhatsApp."}]}}

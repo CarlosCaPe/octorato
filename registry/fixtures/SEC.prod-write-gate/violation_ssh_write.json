@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "ssh deploy@host.example.com \"cp /tmp/octorato /opt/octorato/bin/octorato\""
+  },
+  "cwd": "/home/user/project"
+}

@@ -1,0 +1,6 @@
+{
+  "session_id": "sess-viol",
+  "transcript_path": "violation_transcript.jsonl",
+  "stop_hook_active": false,
+  "cwd": "/tmp"
+}

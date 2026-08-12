@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "aws ssm send-command --instance-ids i-0abc123def456789 --document-name AWS-RunShellScript --parameters 'commands=[\"python3 -c \\\"open('/opt/octorato/conf.json','w').write('{}')\\\"\"]'"
+  },
+  "cwd": "/home/user/project"
+}

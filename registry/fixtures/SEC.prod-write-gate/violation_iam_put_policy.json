@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "aws iam put-role-policy --role-name octorato-ec2 --policy-name inline --policy-document file://p.json"
+  },
+  "cwd": "/home/user/project"
+}

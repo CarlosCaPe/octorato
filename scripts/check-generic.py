@@ -163,11 +163,20 @@ def main():
     parser.add_argument("--quiet", action="store_true", help="Print less on success")
     args = parser.parse_args()
 
+    # A check that prints "clean" without having looked at anything is a false
+    # green, and a false green is worse than no check: it buys confidence with
+    # zero coverage. Running this bare used to scan NOTHING (no message, no
+    # --staged) and still exit 0 saying clean; a blocklisted token then reached
+    # a commit and only the pre-push hook caught it. Bare now means "check what
+    # I am about to commit", and the success line always states the scope it
+    # actually covered.
+    scan_staged = args.staged or args.staged_only or not (args.message or args.message_file)
+
     # Hard rule: no SDD artifacts at brain root. Runs BEFORE blocklist (doesn't
     # need company/brain-blocklist.txt to fire) — this is a structural rule, not
     # a token rule. A past internal spec slipped past blocklist enforcement
     # because it had zero client tokens; this stops the class of leak.
-    if args.staged or args.staged_only:
+    if scan_staged:
         forbidden = check_forbidden_paths(staged_files())
         if forbidden:
             print("✗ check-generic: BLOCKED — SDD artifacts at brain root")
@@ -208,14 +217,22 @@ def main():
         hits.extend(scan_text(pattern, message, "<commit message>"))
 
     # Scan staged file contents
-    if args.staged or args.staged_only:
+    scanned = 0
+    if scan_staged:
         for f in staged_files():
+            scanned += 1
             content = staged_content(f)
             hits.extend(scan_text(pattern, content, f))
 
     if not hits:
         if not args.quiet:
-            print(f"✓ check-generic: clean ({source_msg})")
+            scope = []
+            if message is not None:
+                scope.append("commit message")
+            if scan_staged:
+                scope.append(f"{scanned} staged file(s)")
+            # Never say "clean" unqualified: the scope is the proof.
+            print(f"✓ check-generic: clean — scanned {', '.join(scope) or 'NOTHING'} ({source_msg})")
         sys.exit(0)
 
     print("✗ check-generic: BLOCKED — sensitive tokens detected")

@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "git commit -m \"fix(deploy): document wrangler deploy and aws ssm send-command steps\""
+  },
+  "cwd": "/home/user/project"
+}

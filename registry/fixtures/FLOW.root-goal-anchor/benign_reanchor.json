@@ -1,0 +1,6 @@
+{
+  "session_id": "sess-reanchor",
+  "transcript_path": "benign_reanchor_transcript.jsonl",
+  "stop_hook_active": false,
+  "cwd": "/tmp"
+}

@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "aws s3 sync ./dist s3://octorato-artifacts/build/"
+  },
+  "cwd": "/home/user/project"
+}

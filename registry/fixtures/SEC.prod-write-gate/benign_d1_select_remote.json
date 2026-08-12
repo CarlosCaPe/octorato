@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "npx wrangler d1 execute octorato --remote --command \"SELECT count(*) FROM users\""
+  },
+  "cwd": "/home/user/project"
+}

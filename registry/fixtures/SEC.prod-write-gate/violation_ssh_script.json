@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "ssh ubuntu@prod-web \"sudo /opt/app/deploy.sh\""
+  },
+  "cwd": "/home/user/project"
+}

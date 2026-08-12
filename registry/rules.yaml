@@ -187,13 +187,7 @@ rules:
   gateable: true
   enforcement: fail-open
   waiver:
-    reason: 'v6 D4 audit (2026-07-01): config-ship-verify.py:97 emits permissionDecision ''ask'' (a genuine
-      fail-closed-via-ask pause), NOT warn-only as previously stated. But it fires on only 3 hardcoded
-      patterns (Datadog dashboard write, wrangler deploy --config/generated, curl POST @file.json). The
-      rule ''dry-run first; ask before shipping generated configs'' plus CLAUDE.md ''destructive ops preview
-      by default'' is broader than those 3, so the ask path is narrower than the rule. Residual documented,
-      waiver kept. A broader deterministic deny of ''ship generated config'' is still not specifiable
-      without false positives. Close candidate.'
+    reason: 'v6 D4 audit (2026-07-01): config-ship-verify.py:97 emits permissionDecision ''ask'' (a genuine fail-closed-via-ask pause), NOT warn-only as previously stated. But it fires on only 3 hardcoded patterns (Datadog dashboard write, wrangler deploy --config/generated, curl POST @file.json). The rule ''dry-run first; ask before shipping generated configs'' plus CLAUDE.md ''destructive ops preview by default'' is broader than those 3, so the ask path is narrower than the rule. Residual documented, waiver kept. A broader deterministic deny of ''ship generated config'' is still not specifiable without false positives. Close candidate.'
     expires: '2026-09-30'
     approved_by: operator directive 2026-06-29 (cierra o waiva las 7); v6 D4 audit
   firing_mode:
@@ -230,6 +224,41 @@ rules:
     expect: present
   - method: EXIT_CODE
     locator: scripts/secrets-grep-guard.py --selftest registry/fixtures/SECURITY.never-read-secrets-raw
+    expect: 0
+  liveness_required: FIRES
+- id: SEC.prod-write-gate
+  title: No production write without a per-destination operator approval
+  category: SECURITY
+  source:
+    file: skills/agent-proof-approval-gate/SKILL.md
+    anchor: 'Production writes (MANDATORY): no prod write without a per-destination
+      operator approval'
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - cli
+  mechanism:
+  # firing_event queda en null A PROPOSITO hasta que el operador registre el hook.
+  # Un gate nuevo se revisa antes de armarlo: registrarlo en caliente lo pondria a
+  # bloquear a TODAS las sesiones vivas de golpe. El selftest ya prueba que bloquea
+  # y que deja pasar la lectura, asi que la regla esta cableada, no es prosa.
+  # Al registrarlo: firing_event: PreToolUse / firing_matcher: Bash, mas el proof
+  # IN_HOOKS_JSON PreToolUse|Bash|g__pretool-bash__prod-write.py.
+  - kind: Gate
+    canonical_name: g__pretool-bash__prod-write.py
+    firing_event: null
+    firing_matcher: Bash
+  - kind: Gate
+    canonical_name: octo-dim.py
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: scripts/g__pretool-bash__prod-write.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/g__pretool-bash__prod-write.py --selftest registry/fixtures/SEC.prod-write-gate
     expect: 0
   liveness_required: FIRES
 - id: GENERIC.brain-stays-generic
@@ -321,8 +350,7 @@ rules:
   gateable: true
   enforcement: fail-open
   waiver:
-    reason: 'Not closeable: PreToolUse carries no main-loop vs sub-agent discriminator, so a deny self-defeats
-      and breaks 3D Diligent (QA-proven 2026-06-29). Revisit if the platform exposes a caller field.'
+    reason: 'Not closeable: PreToolUse carries no main-loop vs sub-agent discriminator, so a deny self-defeats and breaks 3D Diligent (QA-proven 2026-06-29). Revisit if the platform exposes a caller field.'
     expires: '2026-09-30'
     approved_by: operator directive 2026-06-29 (cierra o waiva las 7)
   firing_mode:
@@ -744,6 +772,10 @@ rules:
     canonical_name: g__pretool-bash__git-discipline.py
     firing_event: PreToolUse
     firing_matcher: Write|Edit|NotebookEdit|MultiEdit
+  - kind: Reflex
+    canonical_name: r__pretool-write__base-freshness.py
+    firing_event: PreToolUse
+    firing_matcher: Write|Edit|NotebookEdit|MultiEdit
   proof:
   - method: IN_HOOKS_JSON
     locator: PreToolUse|Bash|g__pretool-bash__git-discipline.py
@@ -757,6 +789,12 @@ rules:
   - method: ANCHOR_PRESENT
     locator: '## Git & Version Control'
     expect: present
+  - method: IN_HOOKS_JSON
+    locator: PreToolUse|Write|Edit|NotebookEdit|MultiEdit|r__pretool-write__base-freshness.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/r__pretool-write__base-freshness.py --selftest
+    expect: 0
   liveness_required: FIRES
 - id: CODE.file-organization
   title: File organization — config-first no summary markdown
@@ -876,8 +914,7 @@ rules:
   gateable: true
   enforcement: fail-open
   waiver:
-    reason: Shares the warn-only source-attribution Stop detector; the 'did you validate' part is judgment.
-      Hard block deferred. Close candidate.
+    reason: Shares the warn-only source-attribution Stop detector; the 'did you validate' part is judgment. Hard block deferred. Close candidate.
     expires: '2026-09-30'
     approved_by: operator directive 2026-06-29 (cierra o waiva las 7)
   firing_mode:
@@ -1137,8 +1174,7 @@ rules:
   gateable: true
   enforcement: fail-open
   waiver:
-    reason: no-pause-suggestion Stop is warn-only; a hard block on pause-phrase detection is deferred
-      pending false-positive tuning (legit clarifying questions). Close candidate.
+    reason: no-pause-suggestion Stop is warn-only; a hard block on pause-phrase detection is deferred pending false-positive tuning (legit clarifying questions). Close candidate.
     expires: '2026-09-30'
     approved_by: operator directive 2026-06-29 (cierra o waiva las 7)
   firing_mode:
@@ -1260,9 +1296,7 @@ rules:
   gateable: true
   enforcement: fail-open
   waiver:
-    reason: 'budgets.yaml is active (since 2026-06-01), but every arm and the default set action_on_breach:
-      alert by operator choice, so the HARD_STOP branch (scripts/budget-check.py:166) is unreachable by
-      config. The gate stays fail-open until an arm opts into hard_stop.'
+    reason: 'budgets.yaml is active (since 2026-06-01), but every arm and the default set action_on_breach: alert by operator choice, so the HARD_STOP branch (scripts/budget-check.py:166) is unreachable by config. The gate stays fail-open until an arm opts into hard_stop.'
     expires: '2026-09-30'
     approved_by: operator directive 2026-06-29 (resuelve budget-halt)
   firing_mode:
@@ -1399,8 +1433,7 @@ rules:
     expect: 0
   liveness_required: PRESENT
 - id: MEMORY.feedback-directive-corpus
-  title: Every indexed feedback_* memory directive fires via harness auto-memory plus the brain-memory-recall
-    pointer
+  title: Every indexed feedback_* memory directive fires via harness auto-memory plus the brain-memory-recall pointer
   category: MEMORY
   source:
     file: CLAUDE.md
@@ -1524,4 +1557,31 @@ rules:
   - method: EXIT_CODE
     locator: scripts/d__stop__wa-guardia.py --selftest registry/fixtures/FLOW.wa-guardia-on-pending
     expect: 0
+  liveness_required: FIRES
+- id: FLOW.root-goal-anchor
+  title: Root-goal anchor — a tactical win never closes a turn while the root goal sits unmentioned
+  category: FLOW
+  source:
+    file: CLAUDE.md
+    anchor: The 4D runs in a WHILE
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Gate
+    canonical_name: g__stop__goal-anchor.py
+    firing_event: Stop
+    firing_matcher: '*'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: Stop|*|g__stop__goal-anchor.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/g__stop__goal-anchor.py --selftest registry/fixtures/FLOW.root-goal-anchor
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: The 4D runs in a WHILE
+    expect: present
   liveness_required: FIRES

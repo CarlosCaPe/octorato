@@ -91,9 +91,21 @@ See [[command-boundary-hook-matching]] for the parsing half.
 - Running destructive DB migrations.
 - Any action where "the agent is doing the work but only the human should pull the trigger."
 
+## Production writes (MANDATORY): no prod write without a per-destination operator approval
+
+A remote production write is the same shape as a merge and gets the same treatment. `aws ssm send-command` carrying a host write, `wrangler deploy` / `secret put` / `kv key put|delete` / `pages deploy`, and the destructive AWS control-plane calls (`ec2 terminate-instances|stop-instances`, `iam put-role-policy|attach-role-policy|delete-*`, `secretsmanager put-secret-value|delete-secret`) are denied fail-closed unless the operator has approved **that specific destination** inside a short window. Orchestrator instructions passed to a builder sub-agent are not an authorization: they live in the agent's own context, so nothing outside the agent can check or record them, and three agents deploying on that basis in one session is exactly what produced the security alerts this rule exists for.
+
+The destination is the instance id, the Worker name, or an agreed token. Approving the Worker never approves the instance, and a morning approval is dead by the afternoon (600 s window: an approval covers one operation, not a day).
+
+Read-only stays untouched by design, and that is a hard requirement rather than a nicety: `describe-*`, `get-*`, `list-*`, an SSM payload that only runs `cat` / `journalctl` / `systemctl is-active|show`, and status `curl`s all pass silently. A gate that cries on a `describe-instances` gets switched off, and then it protects nothing.
+
+Mechanism: `scripts/g__pretool-bash__prod-write.py` (Registry `SEC.prod-write-gate`), approvals via `OCTO_PROD_APPROVE=<destination>` (env, agent-proof) or `octo-dim.py approve-prod <destination>`, which refuses to run when it detects an agent shell.
+
 ## Reference Implementation
 
 `~/.claude/scripts/qa-merge-gate.py` — full gate with env channel, file channel, PR-number extraction, and TTL logic.
+
+`~/.claude/scripts/g__pretool-bash__prod-write.py` is the production-write sibling: per-destination scoping, payload inspection for SSM and ssh, a read-first allowlist that keeps false positives at zero, and a crash path that denies once a prod channel is identified.
 
 ## See also
 

@@ -428,3 +428,24 @@ edges:
       on both sides; change the trigger condition, the skip rule, or the
       co-tenancy stance on one side and reconcile the other in the same commit.
       Edge added 2026-07-20 at linkage creation so the neuron is born lit.
+
+  # El vigia de silencio vigila DOS canales desde el 6-ago, y su radio real
+  # incluye superficies fuera del repo: las unidades de systemd que lo invocan.
+  # Un seek sobre este archivo devolvia 0 aciertos cuando en realidad hay ocho
+  # referencias en el cerebro mas dos unidades; esta arista existe para que la
+  # proxima consulta no vuelva a mentir.
+  - id: vigia_dos_sensores
+    kind: appears_in
+    from: scripts/wa-sin-respuesta.py
+    to:
+      - scripts/wa-guardia.py
+      - scripts/mail-guardia.py
+      - scripts/d__stop__wa-guardia.py
+      - skills/wa-guardia/SKILL.md
+      - docs/CAPABILITIES.md
+    note: >-
+      wa-guardia importa es_acuse de aqui por ruta (el nombre lleva guion y no
+      es identificador valido). Fuera del repo lo invocan
+      ~/.config/systemd/user/wa-sin-respuesta.{service,timer}, que un seek no
+      alcanza: si se renombra el script, esas dos unidades se rompen en
+      silencio y el vigia deja de correr sin avisar.

@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "rsync -avz prod-web:/etc/nginx/ /tmp/backup-nginx/"
+  },
+  "cwd": "/home/user/project"
+}

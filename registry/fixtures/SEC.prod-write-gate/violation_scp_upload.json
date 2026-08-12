@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "scp ./octorato.service ubuntu@prod-web:/etc/systemd/system/octorato.service"
+  },
+  "cwd": "/home/user/project"
+}

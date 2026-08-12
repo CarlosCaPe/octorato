@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "npx wrangler tail --name octorato-api --format json"
+  },
+  "cwd": "/home/user/project"
+}

@@ -9,10 +9,10 @@
 | Skills | 232 |
 | Agents | 161 |
 | Divisions | 15 |
-| Scripts: wired | 91 |
+| Scripts: wired | 96 |
 | Scripts: orphan | 7 |
-| Rules | 62 |
-| Hook entries | 35 |
+| Rules | 64 |
+| Hook entries | 37 |
 
 ## Skills (232)
 
@@ -489,7 +489,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (98)
+## Scripts (103)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -526,6 +526,7 @@
 | check-stats-drift.py | check-stats-drift , guard that the brain's headline floors stay TRUTHFUL. Design rule (set 2026-05-2... | wired |
 | check_traffic.py | Octorato traffic watcher , runs daily in GitHub Actions. Pulls clone/view/star/fork stats from the G... | orphan |
 | claim-verify-stop.py | claim-verify-stop.py , Stop hook: block-once when visual/runtime claims lack proof. | wired |
+| claim_vocab.py | claim_vocab.py: vocabulario compartido de CLAIMS DE CIERRE. | wired |
 | client-doc-lint-hook.py | client-doc-lint-hook.py , PostToolUse(Bash) reflex wrapper for client-doc-lint. | wired |
 | client-doc-lint.py | client-doc-lint.py , pre-send QA reflex for generated CLIENT deliverables. | wired |
 | config-ship-verify.py | config-ship-verify.py , PreToolUse:Bash hook: ask before shipping generated configs. | wired |
@@ -539,9 +540,11 @@
 | eye-check.py | Eye Check Hook , Forces agent-browser usage for web tasks. Runs on every UserPromptSubmit. Pure loca... | wired |
 | finops-digest.py | finops-digest.py , the FinOps lens over Claude Code session logs. "Lo que no se mide, no crece." Exi... | wired |
 | g__pretool-bash__git-discipline.py | g__pretool-bash__git-discipline.py: PreToolUse gate for the deterministic subset of GIT.version-cont... | wired |
+| g__pretool-bash__prod-write.py | PreToolUse Bash hook , compuerta de ESCRITURA EN PRODUCCION (FAIL-CLOSED). | wired |
 | g__pretool-mcp__chat-context.py | g__pretool-mcp__chat-context.py: PreToolUse gate for COMMS.chat-context-before-send. | wired |
 | g__stop__delegation-audit.py | g__stop__delegation-audit.py: Stop gate for FLOW.bulk-fetch-delegation. | wired |
 | g__stop__draft-promise.py | g__stop__draft-promise.py , Stop gate: no future-tense promises in paste-ready drafts. | wired |
+| g__stop__goal-anchor.py | g__stop__goal-anchor.py , Stop gate: la pila de objetivos no se erosiona. | wired |
 | gap-capture.py | gap-capture.py , capture 2D-Delegate SELF misses as a gap backlog. When the delegate gate finds no a... | wired |
 | gate-check | gate-check , 4D Gate Enforcement Validator for the Octopus brain. Validates that the 4D paradigm pha... | wired |
 | gate_selftest.py | gate_selftest.py: shared fixture-driven liveness harness for fail-closed gates. | wired |
@@ -560,6 +563,7 @@
 | install-observability-timer.py | install-observability-timer.py - schedule the brain's daily observability digest. | wired |
 | install-runners.py | install-runners.py , make ~/.local/bin runners thin thunks into the tracked ai_sync.py. | wired |
 | lineage-doctor.py | lineage-doctor.py , fail-closed integrity check for the surface/derivation graph. | wired |
+| mail-guardia.py | Guardia de correo: que llego y no hemos contestado. Hermana de wa-guardia.py. | wired |
 | memory_sync.py | memory_sync , sync the brain's private memory store to a standalone remote. | wired |
 | merge-hooks-cursor.py | merge-hooks-cursor.py , project hooks.json into Cursor's native ~/.cursor/hooks.json. | wired |
 | merge-hooks.py | merge-hooks.py , Merge shared hooks.json into local settings.json Called by ai-pull after pulling th... | wired |
@@ -573,6 +577,7 @@
 | query_connectome.py | query_connectome.py , Octopus Ventosas (Sucker Neural Interface) v1.0 Each sucker is an independent ... | wired |
 | querymaster-security-detector.py | QueryMaster security-canon detector (RULE #1 backing for SECURITY.querymaster-rules). | wired |
 | quickstart.py | quickstart.py , zero-to-alive for a brand-new Octorato user, in one command. | wired |
+| r__pretool-write__base-freshness.py | r__pretool-write__base-freshness.py: PreToolUse warner for a STALE EDIT BASE. | wired |
 | repo_watch.py | repo_watch.py , daily monitor for high-value GitHub repos. | wired |
 | scan-external-refs | scan-external-refs , Scan reference repos for new skills, agents, and patterns | orphan |
 | secrets-grep-guard.py | secrets-grep-guard.py , PreToolUse:Bash hook: deny raw reads of secret-bearing files. | wired |
@@ -592,7 +597,7 @@
 | wa-soporte.sh | Envia un WhatsApp por el canal de SOPORTE, no por el numero personal del operador. | orphan |
 | watchdog.py | watchdog.py , observability surface 4 anomaly detector. Reads the JSONL trace files written by trace... | wired |
 
-## Rules (62)
+## Rules (64)
 
 ### ARCHITECTURE
 
@@ -647,6 +652,7 @@
 - FLOW.impact-radius
 - FLOW.orchestrated-planning-reporting-contract
 - FLOW.prune-dead-cells
+- FLOW.root-goal-anchor
 - FLOW.skill-first
 - FLOW.suggest-unlock
 - FLOW.wa-guardia-on-pending
@@ -682,6 +688,7 @@
 
 ### SECURITY
 
+- SEC.prod-write-gate
 - SECURITY.baseline
 - SECURITY.never-read-secrets-raw
 - SECURITY.querymaster-rules
@@ -691,7 +698,7 @@
 | Event | Wired Scripts |
 |---|---|
 | PostToolUse | cadence-lint.py, canon-heal-hook.py, client-doc-lint-hook.py, d__posttool__delegation-ledger.py, impact-radius-hook.py, trace-hook.py |
-| PreToolUse | budget-check.py, config-ship-verify.py, delegate-gate.py, dimension-awareness-hook.py, g__pretool-bash__git-discipline.py, g__pretool-mcp__chat-context.py, grafo-gate.py, qa-merge-gate.py, secrets-grep-guard.py, trace-hook.py |
+| PreToolUse | budget-check.py, config-ship-verify.py, delegate-gate.py, dimension-awareness-hook.py, g__pretool-bash__git-discipline.py, g__pretool-mcp__chat-context.py, grafo-gate.py, qa-merge-gate.py, r__pretool-write__base-freshness.py, secrets-grep-guard.py, trace-hook.py |
 | SessionStart | merge-hooks.py, session-isolation-hook.py |
-| Stop | cadence-stop-hook.py, claim-verify-stop.py, d__stop__wa-guardia.py, g__stop__delegation-audit.py, g__stop__draft-promise.py, grafo-ledger-check.py, no-pause-suggestion.py, source-attribution-check.py, trace-hook.py |
+| Stop | cadence-stop-hook.py, claim-verify-stop.py, d__stop__wa-guardia.py, g__stop__delegation-audit.py, g__stop__draft-promise.py, g__stop__goal-anchor.py, grafo-ledger-check.py, no-pause-suggestion.py, source-attribution-check.py, trace-hook.py |
 | UserPromptSubmit | 4d-reminder.py, arm-recall-hook.py, brain-memory-recall.py, connectome-heartbeat.py, eye-check.py, grafo-turn-reset.py, inbox-sweep-reflex.py, trace-hook.py |

@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "/usr/local/bin/wrangler deploy --name octorato-api"
+  },
+  "cwd": "/home/user/project"
+}
