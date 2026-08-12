@@ -180,7 +180,9 @@ def _last_user_text(lines: list) -> str:
             entry = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if entry.get("type") != "user" or entry.get("isMeta"):
+        if (entry.get("type") != "user" or entry.get("isMeta")
+                or entry.get("isCompactSummary")
+                or entry.get("isVisibleInTranscriptOnly")):
             continue
         text = _blocks_text(entry)
         text = _RE_SYSTEM_REMINDER.sub(" ", text)
@@ -325,7 +327,13 @@ def _turn_pairs(lines: list) -> list:
             entry = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if entry.get("type") == "user" and not entry.get("isMeta"):
+        if (entry.get("type") == "user" and not entry.get("isMeta")
+                and not entry.get("isCompactSummary")
+                and not entry.get("isVisibleInTranscriptOnly")):
+            # Las banderas van ANTES de mirar el texto: el resumen de
+            # compactacion llega como type:user y CITA marcadores viejos del
+            # operador, asi que filtrar solo por contenido ancla basura. Tres
+            # disparos en falso en produccion (2026-08-12) por esto.
             text = _blocks_text(entry)
             text = _RE_SYSTEM_REMINDER.sub(" ", text)
             text = _RE_COMMAND_TAG.sub(" ", text)
