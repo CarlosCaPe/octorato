@@ -9,7 +9,7 @@
 | Skills | 232 |
 | Agents | 161 |
 | Divisions | 15 |
-| Scripts: wired | 96 |
+| Scripts: wired | 97 |
 | Scripts: orphan | 7 |
 | Rules | 64 |
 | Hook entries | 37 |
@@ -489,7 +489,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (103)
+## Scripts (104)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -538,6 +538,7 @@
 | delegate-gate.py | PreToolUse hook , involuntary delegation reflex (FAIL-OPEN, by design). | wired |
 | dimension-awareness-hook.py | dimension-awareness-hook.py , PreToolUse hook for 4D session dimension awareness | wired |
 | eye-check.py | Eye Check Hook , Forces agent-browser usage for web tasks. Runs on every UserPromptSubmit. Pure loca... | wired |
+| fetch-doc.py | fetch-doc: baja una URL publica y devuelve TEXTO UTILIZABLE, escalando por coste. | wired |
 | finops-digest.py | finops-digest.py , the FinOps lens over Claude Code session logs. "Lo que no se mide, no crece." Exi... | wired |
 | g__pretool-bash__git-discipline.py | g__pretool-bash__git-discipline.py: PreToolUse gate for the deterministic subset of GIT.version-cont... | wired |
 | g__pretool-bash__prod-write.py | PreToolUse Bash hook , compuerta de ESCRITURA EN PRODUCCION (FAIL-CLOSED). | wired |
