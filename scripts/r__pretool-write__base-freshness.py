@@ -84,7 +84,7 @@ def _default_branch(repo: Path) -> str | None:
 
 
 def _marker(repo: Path, session: str) -> Path:
-    key = hashlib.sha1(f"{repo}|{session}".encode()).hexdigest()[:16]
+    key = hashlib.sha256(f"{repo}|{session}".encode()).hexdigest()[:16]
     return CACHE_DIR / f"{key}.stamp"
 
 

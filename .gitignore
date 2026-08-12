@@ -243,3 +243,7 @@ uploads/
 # Estado de ejecucion de los hooks (ledgers, avisos). Trae JIDs de chats de
 # cliente: nunca debe salir al repo publico.
 .cache/
+
+# Bases del fixture del selftest: se generan en cada corrida con instantes
+# relativos, para que el gate no pueda aprobar con una ventana invertida.
+registry/fixtures/**/home/.wa-fixture/*.db
