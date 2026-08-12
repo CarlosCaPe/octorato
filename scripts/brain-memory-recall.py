@@ -42,6 +42,10 @@ TAIL_BYTES = 20_000
 MAX_HITS = 5
 MIN_SCORE = 2           # need at least this much token overlap to surface a line
 INDEX_RE = re.compile(r"^- \[(?P<title>[^\]]+)\]\((?P<file>[^)]+)\)\s*[:\-]\s*(?P<hook>.*)$")
+# Una linea del indice puede compactar VARIAS entradas separadas por " · ".
+# Leer solo la primera (INDEX_RE.match) dejaba muda a toda entrada en segunda
+# posicion: mitad del canon sin recall y el doctor contandola como no-indexada.
+ENTRY_RE = re.compile(r"\[(?P<title>[^\]]+)\]\((?P<file>[^)]+)\)\s*[:\-]\s*(?P<hook>[^·]*)")
 TOKEN_RE = re.compile(r"[a-z0-9áéíóúñü]{3,}")
 
 STOP = {
@@ -105,17 +109,22 @@ def score_lines(md: Path, ptoks: set[str]):
     except Exception:
         return out
     for ln in lines:
-        m = INDEX_RE.match(ln.strip())
-        if not m:
+        ln = ln.strip()
+        if not ln.startswith("- ") or not INDEX_RE.match(ln):
             continue
-        title, fname, hook = m.group("title"), m.group("file"), m.group("hook")
-        ltoks = tokenize(title + " " + fname + " " + hook)
-        overlap = ptoks & ltoks
-        score = len(overlap)
-        if score >= MIN_SCORE:
-            out.append((score, title, fname))
+        for m in ENTRY_RE.finditer(ln):
+            _score_entry(out, m, ptoks)
     out.sort(key=lambda x: (-x[0], x[1]))
     return out[:MAX_HITS]
+
+
+def _score_entry(out, m, ptoks):
+    title, fname, hook = m.group("title"), m.group("file"), m.group("hook")
+    ltoks = tokenize(title + " " + fname + " " + hook)
+    overlap = ptoks & ltoks
+    score = len(overlap)
+    if score >= MIN_SCORE:
+        out.append((score, title, fname))
 
 
 def main() -> int:

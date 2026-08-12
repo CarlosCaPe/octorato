@@ -948,6 +948,10 @@ def check_corpus_coverage(fix: bool) -> Result:
     # never fires and stays uncovered. The memory layer is private and gitignored,
     # so absence on this machine is a soft skip.
     index_re = re.compile(r"^- \[(?P<title>[^\]]+)\]\((?P<file>[^)]+)\)\s*[:\-]\s*(?P<hook>.*)$")
+    # Una linea del indice compacta VARIAS entradas separadas por " · "; hay que
+    # leerlas todas o toda entrada en segunda posicion cuenta como no-indexada
+    # (mismo parser que brain-memory-recall.py, que es quien inyecta el recall).
+    entry_re = re.compile(r"\[(?P<title>[^\]]+)\]\((?P<file>[^)]+)\)\s*[:\-]")
     home_slug = "-" + str(Path.home()).strip("/").replace("/", "-")
     brain_mem_dir = CLAUDE_DIR / "projects" / home_slug / "memory"
     class_row = next((r for r in rules if r.get("id") == "MEMORY.feedback-directive-corpus"), None)
@@ -981,8 +985,10 @@ def check_corpus_coverage(fix: bool) -> Result:
             mm = d / "MEMORY.md"
             if mm.exists():
                 for ln in _rt(mm).splitlines():
-                    m = index_re.match(ln.strip())
-                    if m:
+                    ln = ln.strip()
+                    if not index_re.match(ln):
+                        continue
+                    for m in entry_re.finditer(ln):
                         idx.add(os.path.basename(m.group("file")))
             indexed_by_dir[d] = idx
         for mf in mem_files:
