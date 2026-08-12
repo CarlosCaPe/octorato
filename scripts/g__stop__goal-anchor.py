@@ -312,28 +312,39 @@ def build_reason(state: dict) -> str:
     )
 
 
-def run_turn(data: dict) -> str:
-    """Procesa un turno. Devuelve la razon a bloquear, o cadena vacia."""
-    transcript = data.get("transcript_path") or ""
-    if not transcript:
-        return ""
-    session_id = data.get("session_id") or os.environ.get("CLAUDE_SESSION_ID") or ""
-    if not session_id:
-        session_id = Path(transcript).stem
+def _turn_pairs(lines: list) -> list:
+    """Pares (prompt, reply) en orden. Un turno abre con un prompt real del
+    operador y cierra con la ULTIMA entrada de asistente antes del siguiente
+    prompt real (misma regla que _last_assistant_text: la ultima aunque venga
+    vacia). Entradas meta y tool_result no abren turno."""
+    pairs = []
+    prompt = None
+    reply = None
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if entry.get("type") == "user" and not entry.get("isMeta"):
+            text = _blocks_text(entry)
+            text = _RE_SYSTEM_REMINDER.sub(" ", text)
+            text = _RE_COMMAND_TAG.sub(" ", text)
+            if text.strip():
+                if prompt is not None:
+                    pairs.append((prompt, reply or ""))
+                prompt = text.strip()
+                reply = None
+        elif entry.get("type") == "assistant" and prompt is not None:
+            reply = _blocks_text(entry)
+    if prompt is not None:
+        pairs.append((prompt, reply or ""))
+    return pairs
 
-    try:
-        lines = _tail_lines(transcript)
-    except OSError:
-        return ""
 
-    reply = _last_assistant_text(lines)
-    prompt = _last_user_text(lines)
-
-    state = load_state(session_id)
-    state["session_id"] = session_id
-    state["cwd"] = data.get("cwd") or state.get("cwd") or os.getcwd()
+def _absorb(state: dict, prompt: str, reply: str) -> bool:
+    """Pasos 2 (anclaje) y 3 (mencion) de UN turno. No dispara ni persiste.
+    Devuelve si este turno re-anclo."""
     state["turn"] = int(state.get("turn", 0)) + 1
-    state.setdefault("history", [])
 
     # 2. anclaje
     reanchored = False
@@ -359,8 +370,7 @@ def run_turn(data: dict) -> str:
 
     anchor = state.get("anchor") or ""
     if not anchor:
-        save_state(session_id, state)
-        return ""
+        return reanchored
 
     # 3. mencion
     if anchor_mentioned(anchor, reply):
@@ -370,6 +380,47 @@ def run_turn(data: dict) -> str:
             _retire(state, "done")
     else:
         state["turns_since_mention"] = int(state.get("turns_since_mention", 0)) + 1
+    return reanchored
+
+
+def run_turn(data: dict) -> str:
+    """Procesa un turno. Devuelve la razon a bloquear, o cadena vacia."""
+    transcript = data.get("transcript_path") or ""
+    if not transcript:
+        return ""
+    session_id = data.get("session_id") or os.environ.get("CLAUDE_SESSION_ID") or ""
+    if not session_id:
+        session_id = Path(transcript).stem
+
+    try:
+        lines = _tail_lines(transcript)
+    except OSError:
+        return ""
+
+    pairs = _turn_pairs(lines)
+    if not pairs:
+        return ""
+
+    state = load_state(session_id)
+    state["session_id"] = session_id
+    state["cwd"] = data.get("cwd") or state.get("cwd") or os.getcwd()
+    state.setdefault("history", [])
+
+    # Estado virgen con transcript viejo (archivo de estado perdido, o primera
+    # corrida sobre una sesion ya andada, como el selftest): reconstruir
+    # reproduciendo los turnos previos. Sin esto el gate evalua solo el ultimo
+    # turno y el contador de silencio nace en cero, asi que jamas dispararia.
+    if not state.get("anchor") and not state.get("history") and len(pairs) > 1:
+        for past_prompt, past_reply in pairs[:-1]:
+            _absorb(state, past_prompt, past_reply)
+
+    prompt, reply = pairs[-1]
+    reanchored = _absorb(state, prompt, reply)
+
+    anchor = state.get("anchor") or ""
+    if not anchor:
+        save_state(session_id, state)
+        return ""
 
     # 4. disparo + 6. gobernador
     reason = ""

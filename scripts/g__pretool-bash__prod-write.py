@@ -227,6 +227,85 @@ _UNIT_SPLIT_RE = re.compile(
     r"&&|\|\||[;|\n\r]|\\{1,2}[nr]|\\?\",\s*\\?\"|',\s*'"
 )
 
+
+def _split_shell_top(s: str) -> list:
+    """Corta una linea de shell en unidades SOLO por separadores de nivel
+    superior (;, |, &&, ||, saltos y \\n literales). Dentro de comillas nada
+    corta: un `;` en un one-liner de python -c es contenido, no separador.
+    El regex plano partia ahi y fabricaba unidades fantasma que ni existen."""
+    units, buf = [], []
+    q = ""
+    i, n = 0, len(s)
+
+    def flush():
+        u = "".join(buf).strip()
+        if u:
+            units.append(u)
+        buf.clear()
+
+    while i < n:
+        ch = s[i]
+        if q:
+            if q == '"' and ch == "\\" and i + 1 < n:
+                buf.append(ch)
+                buf.append(s[i + 1])
+                i += 2
+                continue
+            if ch == q:
+                q = ""
+            buf.append(ch)
+            i += 1
+            continue
+        if ch in "'\"":
+            q = ch
+            buf.append(ch)
+            i += 1
+            continue
+        if s.startswith("&&", i) or s.startswith("||", i):
+            flush()
+            i += 2
+            continue
+        if ch in ";|\n\r":
+            flush()
+            i += 1
+            continue
+        if ch == "\\" and i + 1 < n and s[i + 1] in "nr":
+            flush()
+            i += 2
+            continue
+        buf.append(ch)
+        i += 1
+    flush()
+    return units
+
+
+def _split_units(payload: str):
+    """Unidades de comando de un payload. Devuelve la lista, o None si el
+    payload declara una lista de comandos que no se puede parsear (y entonces
+    el llamador deniega en vez de adivinar). Dos niveles: los elementos del
+    `commands=[...]` son JSON y se parsean como JSON; cada elemento se corta
+    despues como shell de nivel superior."""
+    s = payload.strip()
+    if len(s) >= 2 and s[0] in "'\"" and s.endswith(s[0]):
+        inner = s[1:-1]
+        if s[0] == '"':
+            inner = inner.replace('\\"', '"')
+        s = inner
+    m = re.match(r"^\s*(?:\{\s*\"?commands\"?\s*[:=]|commands\s*=)\s*(\[.*\])\s*\}?\s*$",
+                 s, re.S)
+    if m:
+        try:
+            elems = json.loads(m.group(1))
+        except ValueError:
+            return None
+        if not isinstance(elems, list):
+            return None
+        units = []
+        for e in elems:
+            units.extend(_split_shell_top(str(e)))
+        return units
+    return _split_shell_top(s)
+
 # Prefijos que hay que pelar de cada unidad del payload antes de mirar su primer token.
 _UNIT_LEAD_PATS = (
     re.compile(r"^[\s\[\]{}()'\"\\]+"),
@@ -308,7 +387,10 @@ def _unit_write_reason(unit: str) -> str:
 
 def _payload_write_reason(payload: str) -> str:
     """Primer motivo de escritura hallado en el payload, o cadena vacia si todo es lectura."""
-    for unit in _UNIT_SPLIT_RE.split(payload):
+    units = _split_units(payload)
+    if units is None:
+        return "lista de comandos ilegible: no se puede clasificar y no se adivina"
+    for unit in units:
         r = _unit_write_reason(unit)
         if r:
             return r
@@ -585,6 +667,31 @@ def _wrangler_config_name(cwd: str) -> str:
     return ""
 
 
+_WRANGLER_READ_VERBS = {"list", "info", "status", "view", "get", "tail",
+                        "download", "preview", "help"}
+
+
+def _wrangler_cmd_path(rest: str) -> list:
+    """Tokens de comando de una invocacion wrangler: pela cada flag y su valor
+    (`--flag valor` y `--flag=valor`). Lo que queda son sub-comandos y
+    posicionales; un posicional nunca convierte lectura en escritura porque la
+    rama de escritura se evalua aparte y gana."""
+    toks = rest.split()
+    path = []
+    i = 0
+    while i < len(toks):
+        t = toks[i]
+        if t.startswith("-"):
+            if "=" not in t and i + 1 < len(toks) and not toks[i + 1].startswith("-"):
+                i += 2
+                continue
+            i += 1
+            continue
+        path.append(t)
+        i += 1
+    return path
+
+
 def _classify_wrangler(sub: str, cmd: str, raw_sub: str, session_cwd: str):
     s = sub
     m = _RUNNER_RE.match(s)
@@ -604,12 +711,16 @@ def _classify_wrangler(sub: str, cmd: str, raw_sub: str, session_cwd: str):
     # bloquearlo es ruido puro.
     if re.search(r"(?:^|\s)--dry-run\b", rest):
         return None
-    # Cualquier sub-comando cuyo ULTIMO verbo sea de consulta es lectura. Cubre
+    # Cualquier sub-comando cuyo CAMINO de comando trae un verbo de consulta es
+    # lectura, siempre que ninguna rama de escritura conocida aplique. Cubre
     # `r2 bucket info`, `d1 time-travel info`, `pages deployment tail`,
-    # `telemetry status` sin tener que enumerar cada rama del CLI.
-    verbs = [t for t in rest.split() if not t.startswith("-")]
-    if verbs and verbs[-1] in ("list", "info", "status", "view", "get", "tail",
-                               "download", "preview", "help"):
+    # `telemetry status` sin tener que enumerar cada rama del CLI. El camino se
+    # calcula pelando flags Y sus valores: mirar el "ultimo token pelado"
+    # tropezaba con el posicional final (`r2 bucket info MI-BUCKET`) y con el
+    # valor de un flag (`pages deployment tail --project-name X`).
+    if (any(t in _WRANGLER_READ_VERBS for t in _wrangler_cmd_path(rest))
+            and not re.match(_WRANGLER_WRITE, rest)
+            and not re.match(r"^d1\s+(?:execute|migrations)\b", rest)):
         return None
 
     # d1 execute solo escribe produccion con --remote; en local es flujo diario.
