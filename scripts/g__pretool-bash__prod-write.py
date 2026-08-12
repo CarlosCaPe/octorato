@@ -228,11 +228,47 @@ _UNIT_SPLIT_RE = re.compile(
 )
 
 
-def _split_shell_top(s: str) -> list:
+def _wrapping_quote(s: str):
+    """Si s es EXACTAMENTE una cadena entre comillas (la que abre en 0 cierra
+    en el ultimo caracter y nunca antes), devuelve el interior; si no, None.
+    Pelar sin verificar que envuelven era un bypass: en
+    `'cat /a' && cp x /etc/y && echo 'z'` el primer y ultimo caracter son la
+    misma comilla sin ser par, y recortarlos corrompia la cadena hasta fundir
+    el `cp` dentro de una comilla fantasma."""
+    if len(s) < 2 or s[0] not in "'\"":
+        return None
+    q = s[0]
+    i, n = 1, len(s)
+    while i < n:
+        ch = s[i]
+        if q == '"' and ch == "\\" and i + 1 < n:
+            i += 2
+            continue
+        if ch == q:
+            return s[1:-1] if i == n - 1 else None
+        i += 1
+    return None  # nunca cerro: desbalanceada, que decida el llamador
+
+
+def _unquote_wrap(s: str) -> str:
+    """Pela capas de comillas que envuelven de verdad, con unescape de \\" al
+    pelar dobles. Idempotente sobre cadenas sin envoltura."""
+    while True:
+        inner = _wrapping_quote(s)
+        if inner is None:
+            return s
+        if s[0] == '"':
+            inner = inner.replace('\\"', '"')
+        s = inner.strip()
+
+
+def _split_top(s: str, commas: bool = False):
     """Corta una linea de shell en unidades SOLO por separadores de nivel
-    superior (;, |, &&, ||, saltos y \\n literales). Dentro de comillas nada
-    corta: un `;` en un one-liner de python -c es contenido, no separador.
-    El regex plano partia ahi y fabricaba unidades fantasma que ni existen."""
+    superior (;, |, &&, ||, saltos, \\n literales y, opcionalmente, comas).
+    Dentro de comillas nada corta: un `;` en un one-liner de python -c es
+    contenido, no separador. Devuelve None si las comillas quedan
+    DESBALANCEADAS: una comilla sin cerrar puede estar ocultando un separador
+    y con ella no se clasifica, se deniega."""
     units, buf = [], []
     q = ""
     i, n = 0, len(s)
@@ -265,7 +301,7 @@ def _split_shell_top(s: str) -> list:
             flush()
             i += 2
             continue
-        if ch in ";|\n\r":
+        if ch in ";|\n\r" or (commas and ch == ","):
             flush()
             i += 1
             continue
@@ -275,36 +311,49 @@ def _split_shell_top(s: str) -> list:
             continue
         buf.append(ch)
         i += 1
+    if q:
+        return None
     flush()
     return units
 
 
 def _split_units(payload: str):
     """Unidades de comando de un payload. Devuelve la lista, o None si el
-    payload declara una lista de comandos que no se puede parsear (y entonces
-    el llamador deniega en vez de adivinar). Dos niveles: los elementos del
-    `commands=[...]` son JSON y se parsean como JSON; cada elemento se corta
-    despues como shell de nivel superior."""
-    s = payload.strip()
-    if len(s) >= 2 and s[0] in "'\"" and s.endswith(s[0]):
-        inner = s[1:-1]
-        if s[0] == '"':
-            inner = inner.replace('\\"', '"')
-        s = inner
-    m = re.match(r"^\s*(?:\{\s*\"?commands\"?\s*[:=]|commands\s*=)\s*(\[.*\])\s*\}?\s*$",
-                 s, re.S)
+    payload no se puede cortar con certeza (JSON ilegible o comillas
+    desbalanceadas) y entonces el llamador deniega en vez de adivinar.
+    Niveles: `commands=[...]` se parsea como JSON; la forma corta del CLI
+    (`commands="c1","c2"` o `commands="c1; c2"`) se parte por comas de nivel
+    superior y cada elemento se desenvuelve; todo elemento se corta al final
+    como shell de nivel superior."""
+    s = _unquote_wrap(payload.strip())
+    m = re.match(r"^\s*(?:\{\s*\"?commands\"?\s*[:=]|commands\s*=)\s*(.*)$", s, re.S)
     if m:
-        try:
-            elems = json.loads(m.group(1))
-        except ValueError:
-            return None
-        if not isinstance(elems, list):
+        val = m.group(1).strip()
+        if val.startswith("["):
+            try:
+                elems = json.loads(val.rstrip("}").strip())
+            except ValueError:
+                return None
+            if not isinstance(elems, list):
+                return None
+            units = []
+            for e in elems:
+                sub_units = _split_top(str(e))
+                if sub_units is None:
+                    return None
+                units.extend(sub_units)
+            return units
+        parts = _split_top(val, commas=True)
+        if parts is None:
             return None
         units = []
-        for e in elems:
-            units.extend(_split_shell_top(str(e)))
+        for p in parts:
+            sub_units = _split_top(_unquote_wrap(p))
+            if sub_units is None:
+                return None
+            units.extend(sub_units)
         return units
-    return _split_shell_top(s)
+    return _split_top(s)
 
 # Prefijos que hay que pelar de cada unidad del payload antes de mirar su primer token.
 _UNIT_LEAD_PATS = (
