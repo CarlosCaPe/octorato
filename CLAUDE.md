@@ -109,6 +109,7 @@ The brain is published as **open-source**; git history is publicly visible on Gi
 - Commit messages must be **purely about the framework change** — never about who triggered it or where the lesson came from.
   - ✅ `"feat(brain): add ado-refactor-performance-gate skill"`
   - ❌ `"feat(brain): add ado-refactor-performance-gate skill from <ARM_CODE> arm"`
+- **English-only in the public repo.** Commit messages, code, comments, and docs in `octorato` ship in English; the repo is world-visible and English is its lingua franca. Spanish (the operator's language) belongs in arm repos and in chat, never in octorato's permanent history. Translatable content lives as EN/ES/DE i18n assets, not as Spanish commit prose. Wired by a `commit-msg` gate (`scripts/commit_msg_language_gate.py` via `.githooks/commit-msg`) that blocks non-English commit subjects; deliberate exception with `lang-ok` on a line or `git commit --no-verify`.
 
 **Enforcement (two layers):**
 

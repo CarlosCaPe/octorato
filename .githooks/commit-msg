@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# commit-msg — OCTORATO-COMMIT-MSG-LANG-GATE
+#
+# The public octorato repo is English-only (see CLAUDE.md, "The Brain Stays
+# Generic"). This blocks non-English (Spanish) commit messages before they enter
+# the world-visible history. Only guards THIS repo: it lives in octorato's
+# .githooks, so per-client arm repos are untouched.
+#
+# Override (intentional): put `lang-ok` on a line of the message, or
+# `git commit --no-verify`.
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+[ -z "$REPO_ROOT" ] && exit 0
+GATE="$REPO_ROOT/scripts/commit_msg_language_gate.py"
+[ -f "$GATE" ] || exit 0
+exec python3 "$GATE" "$1"

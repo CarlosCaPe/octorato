@@ -9,9 +9,9 @@
 | Skills | 233 |
 | Agents | 161 |
 | Divisions | 15 |
-| Scripts: wired | 98 |
+| Scripts: wired | 99 |
 | Scripts: orphan | 7 |
-| Rules | 66 |
+| Rules | 67 |
 | Hook entries | 39 |
 
 ## Skills (233)
@@ -490,7 +490,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (105)
+## Scripts (106)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -530,6 +530,7 @@
 | claim_vocab.py | claim_vocab.py: vocabulario compartido de CLAIMS DE CIERRE. | wired |
 | client-doc-lint-hook.py | client-doc-lint-hook.py , PostToolUse(Bash) reflex wrapper for client-doc-lint. | wired |
 | client-doc-lint.py | client-doc-lint.py , pre-send QA reflex for generated CLIENT deliverables. | wired |
+| commit_msg_language_gate.py | commit-msg language gate , the public octorato repo is English-only. | wired |
 | config-ship-verify.py | config-ship-verify.py , PreToolUse:Bash hook: ask before shipping generated configs. | wired |
 | connectome-heartbeat.py | connectome-heartbeat.py , the Delegate-phase heartbeat (UserPromptSubmit hook). | wired |
 | cost-vs-change.py | cost-vs-change.py , "is the new thing making me cheaper or more expensive?" Correlates the daily Cla... | wired |
@@ -600,7 +601,7 @@
 | wa-soporte.sh | Envia un WhatsApp por el canal de SOPORTE, no por el numero personal del operador. | orphan |
 | watchdog.py | watchdog.py , observability surface 4 anomaly detector. Reads the JSONL trace files written by trace... | wired |
 
-## Rules (66)
+## Rules (67)
 
 ### ARCHITECTURE
 
@@ -666,6 +667,7 @@
 ### GENERIC
 
 - GENERIC.brain-stays-generic
+- GENERIC.commit-msg-english-only
 
 ### GIT
 
