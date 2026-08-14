@@ -9,10 +9,10 @@
 | Skills | 232 |
 | Agents | 161 |
 | Divisions | 15 |
-| Scripts: wired | 96 |
+| Scripts: wired | 97 |
 | Scripts: orphan | 7 |
-| Rules | 64 |
-| Hook entries | 37 |
+| Rules | 65 |
+| Hook entries | 38 |
 
 ## Skills (232)
 
@@ -489,7 +489,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (103)
+## Scripts (104)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -545,6 +545,7 @@
 | g__stop__delegation-audit.py | g__stop__delegation-audit.py: Stop gate for FLOW.bulk-fetch-delegation. | wired |
 | g__stop__draft-promise.py | g__stop__draft-promise.py , Stop gate: no future-tense promises in paste-ready drafts. | wired |
 | g__stop__goal-anchor.py | g__stop__goal-anchor.py , Stop gate: la pila de objetivos no se erosiona. | wired |
+| g__stop__paste-ready-raw.py | g__stop__paste-ready-raw.py , Stop gate: un mensaje para pegar se entrega CRUDO y AL FINAL. | wired |
 | gap-capture.py | gap-capture.py , capture 2D-Delegate SELF misses as a gap backlog. When the delegate gate finds no a... | wired |
 | gate-check | gate-check , 4D Gate Enforcement Validator for the Octopus brain. Validates that the 4D paradigm pha... | wired |
 | gate_selftest.py | gate_selftest.py: shared fixture-driven liveness harness for fail-closed gates. | wired |
@@ -597,7 +598,7 @@
 | wa-soporte.sh | Envia un WhatsApp por el canal de SOPORTE, no por el numero personal del operador. | orphan |
 | watchdog.py | watchdog.py , observability surface 4 anomaly detector. Reads the JSONL trace files written by trace... | wired |
 
-## Rules (64)
+## Rules (65)
 
 ### ARCHITECTURE
 
@@ -633,6 +634,7 @@
 - COMMS.human-cadence
 - COMMS.machine-register
 - COMMS.no-pause
+- COMMS.paste-ready-raw-message
 
 ### FLOW
 
@@ -700,5 +702,5 @@
 | PostToolUse | cadence-lint.py, canon-heal-hook.py, client-doc-lint-hook.py, d__posttool__delegation-ledger.py, impact-radius-hook.py, trace-hook.py |
 | PreToolUse | budget-check.py, config-ship-verify.py, delegate-gate.py, dimension-awareness-hook.py, g__pretool-bash__git-discipline.py, g__pretool-mcp__chat-context.py, grafo-gate.py, qa-merge-gate.py, r__pretool-write__base-freshness.py, secrets-grep-guard.py, trace-hook.py |
 | SessionStart | merge-hooks.py, session-isolation-hook.py |
-| Stop | cadence-stop-hook.py, claim-verify-stop.py, d__stop__wa-guardia.py, g__stop__delegation-audit.py, g__stop__draft-promise.py, g__stop__goal-anchor.py, grafo-ledger-check.py, no-pause-suggestion.py, source-attribution-check.py, trace-hook.py |
+| Stop | cadence-stop-hook.py, claim-verify-stop.py, d__stop__wa-guardia.py, g__stop__delegation-audit.py, g__stop__draft-promise.py, g__stop__goal-anchor.py, g__stop__paste-ready-raw.py, grafo-ledger-check.py, no-pause-suggestion.py, source-attribution-check.py, trace-hook.py |
 | UserPromptSubmit | 4d-reminder.py, arm-recall-hook.py, brain-memory-recall.py, connectome-heartbeat.py, eye-check.py, grafo-turn-reset.py, inbox-sweep-reflex.py, trace-hook.py |

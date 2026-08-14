@@ -1,0 +1,2 @@
+{"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "pásame el mensaje listo para pegar"}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "```\nHola Ana, el reporte de julio ya está arriba y los totales cuadran con el cierre. Cualquier duda me dices.\n```\n\nProvenance: Basis transcript · Engine Opus · Touched 1 archivo · Verified selftest"}]}}

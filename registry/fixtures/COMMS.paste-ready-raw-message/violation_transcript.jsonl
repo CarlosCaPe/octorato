@@ -1,0 +1,2 @@
+{"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "pásame el mensaje para pegar en el chat de Ana"}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Aquí va:\n\n> Hola Ana, ya quedó el ajuste del reporte de julio. Los totales cuadran con el cierre contable\n> y el archivo está en la carpeta compartida. Cualquier cosa me dices."}]}}

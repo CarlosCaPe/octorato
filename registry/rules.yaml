@@ -105,6 +105,31 @@ rules:
     locator: scripts/g__stop__draft-promise.py --selftest registry/fixtures/COMMS.deliverable-complete-before-send
     expect: 0
   liveness_required: FIRES
+- id: COMMS.paste-ready-raw-message
+  title: Paste-ready message ships raw, no markdown, and its block is the last thing
+    in the reply
+  category: COMMS
+  source:
+    file: CLAUDE.md
+    anchor: Paste-ready message is the deliverable
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Gate
+    canonical_name: g__stop__paste-ready-raw.py
+    firing_event: Stop
+    firing_matcher: '*'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: Stop|*|g__stop__paste-ready-raw.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/g__stop__paste-ready-raw.py --selftest registry/fixtures/COMMS.paste-ready-raw-message
+    expect: 0
+  liveness_required: FIRES
 - id: CODE.adversarial-verify-operator
   title: Adversarially verify the operator; claims need proof (verification claims and total-coverage claims)
   category: CODE
