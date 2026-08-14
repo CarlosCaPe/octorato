@@ -33,13 +33,17 @@ las dos casas es el ENTORNO, no la logica:
 
     WA_VIGIA_CONFIG   ruta de la config          (def. ~/.claude/company/...)
     WA_VIGIA_ESTADO   ruta del anti-repeticion   (def. ~/.cache/...)
-    WA_VIGIA_CANAL    gmail | canario            (def. gmail)
+    WA_VIGIA_CANAL    gmail | canario | whatsapp (def. gmail)
     WA_VIGIA_GMAIL    archivos | secretsmanager  (def. archivos)
+    WA_VIGIA_WA_DEST  numero destino del canal whatsapp (o config)
+    WA_VIGIA_WA_ENDPOINT  REST del puente (def. http://127.0.0.1:8081/api/send)
 
 `gmail` no manda el correo desde aqui: sale con error y systemd dispara
 `OnFailure=wa-alerta@%N.service`, que es quien tiene el OAuth. `canario`
 publica el aviso EL MISMO en el tema de SNS que el canario de Cloudflare tiene
-suscrito.
+suscrito. `whatsapp` manda el aviso por el puente de soporte (REST local
+127.0.0.1:8081) al numero del operador; ese numero sale de la config privada o
+del entorno, NUNCA de este archivo, que es publico.
 
 LA FUENTE DE LA CREDENCIAL TAMBIEN ES ENTORNO (11-ago). El sensor de correo
 buscaba la credencial de Gmail como ARCHIVOS en `~/.gmail-mcp/`, asi que en la
@@ -142,7 +146,7 @@ CONFIG = Path(os.environ.get(
     str(Path.home() / ".claude" / "company" / "config" / "wa-puentes.json")))
 ESTADO = Path(os.environ.get(
     "WA_VIGIA_ESTADO", str(Path.home() / ".cache" / "wa-sin-respuesta.json")))
-CANALES = ("gmail", "canario")
+CANALES = ("gmail", "canario", "whatsapp")
 FUENTES_GMAIL = ("archivos", "secretsmanager")
 
 # Marca del bloque estructurado. Es contrato con el receptor: si cambia aqui y
@@ -1469,6 +1473,7 @@ def selftest():
     try:
         for valor, debia_reventar in ((None, False), ("gmail", False),
                                       ("canario", False), ("CANARIO", False),
+                                      ("whatsapp", False),
                                       ("canaro", True), ("", True)):
             casos += 1
             if valor is None:
@@ -1538,6 +1543,41 @@ def selftest():
         fallos.append("sin tema de SNS deberia reventar y paso")
     except RuntimeError:
         pass
+
+    # ---- whatsapp. Sin red: se inyecta el poster. El numero sale de la config
+    # o del entorno, NUNCA del script. Sin destino, revienta.
+    prev_wa_dest = os.environ.pop("WA_VIGIA_WA_DEST", None)
+    try:
+        visto_wa = {}
+
+        def poster_ok(endpoint, cuerpo):
+            visto_wa["endpoint"] = endpoint
+            visto_wa["cuerpo"] = json.loads(cuerpo.decode())
+            return '{"success":true,"message_id":"WA1"}'
+
+        casos += 1
+        cfg_wa = {"vigilancia": {"whatsapp": {"destino": "5210000000000"}}}
+        avisa_whatsapp(cfg_wa, [{"quien": "chat X", "minutos": 44,
+                                 "desde": "2026-01-01T00:00:00+00:00",
+                                 "texto": "hola"}], [], poster=poster_ok)
+        if visto_wa.get("cuerpo", {}).get("recipient") != "5210000000000":
+            fallos.append(f"el aviso WA no fue al destino de la config: {visto_wa}")
+
+        casos += 1
+        if "chat X" not in (visto_wa.get("cuerpo", {}).get("message") or ""):
+            fallos.append(f"el aviso WA no nombra el silencio: {visto_wa}")
+
+        # sin destino (ni env ni config), el canal whatsapp NO puede fingir que
+        # aviso: revienta, no le pega a un numero cualquiera.
+        casos += 1
+        try:
+            avisa_whatsapp({"vigilancia": {}}, [], [], poster=poster_ok)
+            fallos.append("sin destino WA deberia reventar y paso")
+        except SystemExit:
+            pass
+    finally:
+        if prev_wa_dest is not None:
+            os.environ["WA_VIGIA_WA_DEST"] = prev_wa_dest
 
     # ---- fuente de la credencial. Sin red: se inyectan corredor y lector. ---
     # La laptop lee archivos y la instancia lee Secrets Manager, con el MISMO
@@ -1730,6 +1770,60 @@ def selftest():
     return 1 if fallos else 0
 
 
+# --------------------------------------------------------------- whatsapp ---
+# Tercer canal (14-ago): avisar por WhatsApp al numero del operador via el
+# puente de soporte (REST local del server). El destino NO vive aqui: este
+# script es publico, asi que sale de la config privada (vigilancia.whatsapp.
+# destino) o del entorno (WA_VIGIA_WA_DEST). Sin destino, revienta; no se
+# inventa un numero, que seria el peor modo de fallo (avisar a quien no es).
+def _post_json(endpoint, cuerpo):
+    import urllib.request
+    req = urllib.request.Request(
+        endpoint, data=cuerpo, headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return r.read().decode()
+
+
+def cuerpo_whatsapp(silencios, cobertura, estados=None, ahora=None):
+    """Aviso corto para WhatsApp: el asunto y una linea por silencio nuevo.
+
+    Reusa `asunto_aviso` para no tener dos definiciones del encabezado, y agrega
+    los sensores caidos, porque un sensor muerto ES la noticia."""
+    lineas = [asunto_aviso(silencios, cobertura, estados)]
+    for s in silencios:
+        linea = f"- {s['quien']}: {s['minutos']} min sin respuesta."
+        if s.get("texto"):
+            linea += f" {s['texto']}"
+        lineas.append(linea)
+    for c in (cobertura or []):
+        if c.get("falla"):
+            lineas.append(f"- sensor caido: {c['texto']}")
+    return "\n".join(lineas)
+
+
+def avisa_whatsapp(cfg, silencios, cobertura, estados=None, ahora=None,
+                   poster=None):
+    """Manda el aviso por WhatsApp al numero del operador. Devuelve la respuesta
+    cruda del puente. `poster` se inyecta en las pruebas para no tocar la red.
+
+    El destino NUNCA se codifica aqui: sale de WA_VIGIA_WA_DEST o de
+    vigilancia.whatsapp.destino en la config privada. Sin destino, SystemExit,
+    igual que un canal invalido: fallar fuerte, nunca avisar a un numero de mas."""
+    vig = (cfg.get("vigilancia") or {}).get("whatsapp") or {}
+    destino = os.environ.get("WA_VIGIA_WA_DEST") or vig.get("destino")
+    if not destino:
+        raise SystemExit(
+            "falta el destino del aviso por WhatsApp: pon vigilancia.whatsapp."
+            "destino en la config, o WA_VIGIA_WA_DEST en el entorno")
+    endpoint = os.environ.get("WA_VIGIA_WA_ENDPOINT",
+                              "http://127.0.0.1:8081/api/send")
+    cuerpo = json.dumps(
+        {"recipient": str(destino),
+         "message": cuerpo_whatsapp(silencios, cobertura, estados, ahora)}
+    ).encode()
+    return (poster or _post_json)(endpoint, cuerpo)
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--selftest", action="store_true")
@@ -1789,6 +1883,21 @@ def main():
         sys.exit(1)
 
     frescos = [s for s in silencios if s["id"] in nuevos]
+
+    if canal == "whatsapp":
+        try:
+            avisa_whatsapp(cfg, frescos, cobertura, estados=estados,
+                           ahora=ahora)
+        except Exception as e:
+            # Sin marcar: el silencio se reintenta la proxima vuelta. Sale con
+            # error para que OnFailure levante el respaldo, la misma boca por
+            # otro camino, igual que canario.
+            print(f"FALLO el aviso por WhatsApp: {e}", file=sys.stderr)
+            sys.exit(1)
+        marca_avisados(nuevos)
+        print(f"aviso enviado por WhatsApp, {len(frescos)} silencio(s) nuevo(s)")
+        sys.exit(0)
+
     try:
         mid = avisa_canario(cfg, frescos, cobertura, estados=estados,
                             ahora=ahora)
