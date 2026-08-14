@@ -1,0 +1,2 @@
+{"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "pásame el mensaje sin formato para Teams"}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Listo:\n\n```\nHola equipo, **ya quedó** el deploy de la versión 2.4. El reporte de julio carga en menos de dos segundos.\n```"}]}}

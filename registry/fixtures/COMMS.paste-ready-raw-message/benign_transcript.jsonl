@@ -1,0 +1,2 @@
+{"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "pásame el mensaje para pegar"}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Provenance: Basis transcript · Engine Opus · Touched 0 · Verified lectura\n\n```\nHola Ana, el reporte de julio ya está arriba y los totales cuadran con el cierre contable. Cualquier duda me dices.\n```"}]}}

@@ -1,0 +1,2 @@
+{"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "pásame el mensaje para pegar cuando tengas el dato"}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Ana te escribió esto hace un rato:\n\n> ¿Ya quedaron los números de julio? El cierre contable no me cuadra con el reporte que subiste ayer.\n\nTodavía no tengo el total del cierre, así que no redacto la respuesta con un número inventado."}]}}

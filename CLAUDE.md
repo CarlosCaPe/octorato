@@ -161,6 +161,9 @@ Operator directive 2026-06-13 (stated repeatedly, as ULTRA): the default registe
 ### Deliverable-complete-before-send (no promises in drafts)
 Operator directive 2026-07-06: any paste-ready draft handed to the operator for outward sending carries ZERO future-tense self-commitments ("I'll check X and get back", "voy a revisar y te digo"). Execute or disprove the action FIRST, then draft around the receipt (data found, or a verified blocker); offers stay ("happy to pair if you want"), promises go. Mechanism: `scripts/g__stop__draft-promise.py` (Stop gate, blocks once). The gate is quotation-aware (quoting someone else's promise does not trip it) and offer/conditional-exempt by design; to deliberately keep a flagged line, put `draft-promise-ok` on it.
 
+### Paste-ready message is the deliverable (raw, block last)
+Operator directive repeated daily: when the ask is "pásame el mensaje / sin formato / para pegar", the message IS the deliverable and it ships RAW. One fenced plain block, no markdown inside (no bold, no headings, no markdown bullets, links bare), never wrapped in `>` blockquote, and that block is the LAST thing in the reply. Any mandatory one-liner, the Provenance footer included, goes BEFORE the block; anything behind it contaminates the copy and the operator cleans it by hand inside a client-facing window. Mechanism: `scripts/g__stop__paste-ready-raw.py` (Stop gate, blocks once, names which of the three failed). It only looks when the operator's own turn asked for a paste-ready message, and a third-party quote with `>` never trips it; to keep the format anyway, put `paste-raw-ok` on a line.
+
 ## Git & Version Control
 - **Atomic commits** — one logical change per commit. `type(scope): description`.
 - **Never force-push main** — `--force-with-lease` on feature branches only if necessary.
