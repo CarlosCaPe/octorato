@@ -28,28 +28,60 @@ destinatario=$1
 shift
 mensaje=$*
 
-# el puente de soporte tiene que estar vivo: si no, NO se cae al personal en
-# silencio, porque eso es exactamente el error que este script previene
-if ! curl -sf -m 3 -o /dev/null "http://localhost:${PUERTO_SOPORTE}/api/send" -X POST -d '{}' 2>/dev/null; then
-  if ! ss -lnt 2>/dev/null | grep -q ":${PUERTO_SOPORTE} "; then
-    echo "ERROR: el puente de soporte (puerto ${PUERTO_SOPORTE}) no esta escuchando." >&2
-    echo "       NO se envia por el personal (${PUERTO_PERSONAL}); levanta el puente primero." >&2
-    exit 69
-  fi
+# Desde el cutover del 14-ago-2026 el puente vive en la EC2 octorato-ops.
+# Camino rapido: el tunel SSM local (localhost:8081). Si el tunel no esta
+# (laptop recien encendida, otra maquina, sesion en la nube), NO se cae al
+# personal: se envia DIRECTO por SSM ejecutando curl EN el servidor. El canal
+# deja de depender de esta laptop; solo pide credenciales AWS dataqbs-ops.
+INSTANCIA_PUENTE="i-0c0112bf1431dc99e"
+REGION_PUENTE="mx-central-1"
+PERFIL_PUENTE="dataqbs-ops"
+VIA="tunel"
+if ! ss -lnt 2>/dev/null | grep -q ":${PUERTO_SOPORTE} "; then
+  VIA="ssm"
 fi
 
-respuesta=$(WA_MENCIONES="${WA_MENCIONES:-}" python3 - "$destinatario" "$mensaje" "$PUERTO_SOPORTE" <<'PY'
-import json, os, sys, urllib.request
+respuesta=$(WA_MENCIONES="${WA_MENCIONES:-}" WA_VIA="$VIA" WA_INSTANCIA="$INSTANCIA_PUENTE" WA_REGION="$REGION_PUENTE" WA_PERFIL="$PERFIL_PUENTE" python3 - "$destinatario" "$mensaje" "$PUERTO_SOPORTE" <<'PY'
+import json, os, subprocess, sys, time, urllib.request
 destinatario, mensaje, puerto = sys.argv[1], sys.argv[2], sys.argv[3]
 cuerpo = {"recipient": destinatario, "message": mensaje}
 menciones = [m.strip() for m in os.environ.get("WA_MENCIONES", "").split(",") if m.strip()]
 if menciones:
     cuerpo["mentions"] = menciones
 datos = json.dumps(cuerpo).encode()
-req = urllib.request.Request(f"http://localhost:{puerto}/api/send", data=datos,
-                             headers={"Content-Type": "application/json"})
-with urllib.request.urlopen(req, timeout=30) as r:
-    print(r.read().decode())
+
+if os.environ.get("WA_VIA") == "ssm":
+    # Sin tunel local: curl EN el servidor via SSM. El JSON viaja en base64
+    # para que ninguna comilla se rompa en el camino shell -> SSM -> shell.
+    import base64
+    b64 = base64.b64encode(datos).decode()
+    aws = ["aws", "--profile", os.environ["WA_PERFIL"], "--region", os.environ["WA_REGION"], "ssm"]
+    comando = f"echo {b64} | base64 -d | curl -s -m 25 -X POST http://localhost:{puerto}/api/send -H 'Content-Type: application/json' --data-binary @-"
+    cid = subprocess.run(aws + ["send-command", "--instance-ids", os.environ["WA_INSTANCIA"],
+                                "--document-name", "AWS-RunShellScript",
+                                "--parameters", json.dumps({"commands": [comando]}),
+                                "--query", "Command.CommandId", "--output", "text"],
+                         capture_output=True, text=True, timeout=30).stdout.strip()
+    for _ in range(10):
+        time.sleep(3)
+        r = subprocess.run(aws + ["get-command-invocation", "--command-id", cid,
+                                  "--instance-id", os.environ["WA_INSTANCIA"],
+                                  "--query", "[Status,StandardOutputContent]", "--output", "json"],
+                          capture_output=True, text=True, timeout=30)
+        try:
+            estado, salida = json.loads(r.stdout)
+        except Exception:
+            continue
+        if estado in ("Success", "Failed", "Cancelled", "TimedOut"):
+            print(salida.strip() if estado == "Success" else json.dumps({"success": False, "message": f"SSM {estado}"}))
+            break
+    else:
+        print(json.dumps({"success": False, "message": "SSM sin respuesta"}))
+else:
+    req = urllib.request.Request(f"http://localhost:{puerto}/api/send", data=datos,
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        print(r.read().decode())
 PY
 )
 echo "$respuesta"
