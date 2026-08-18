@@ -140,6 +140,44 @@ Every scraped transcript file gets a header naming where it came from, when it w
 <transcript text follows>
 ```
 
+### 4b. Long recordings: drive the video, not the list
+
+Scroll-and-accumulate stops working past roughly twenty minutes of recording. The transcript panel is a
+FluentUI virtualized list: at some depth it recycles its cells and snaps the scroll position back toward
+the top, so the harvest plateaus and the tail of the meeting is never rendered and never captured.
+Sending more scroll events does not help, because the reset is inside Microsoft's list control.
+
+Measured failure signature, one real 32-minute recording: the scroller reports `scrollHeight` around
+22500 but never advances past about 13700, roughly 61 percent, and the cue count freezes while the
+scroll position bounces between earlier offsets. Two runs, one with a 400-iteration cap, both plateaued
+at the identical offset and captured only up to minute 22 of 32.
+
+The fix is to seek the media element and let the player scroll the panel for you:
+
+```js
+// inside the frame that owns the <video>
+await frame.evaluate((s) => { document.querySelector('video').currentTime = s; }, minute * 60);
+await page.waitForTimeout(2600);          // let the panel auto-scroll and render
+const rendered = await extractRenderedCues(frame);
+```
+
+Walk a ladder of stops (every 2 minutes from just before the plateau to the end), harvest whatever is
+rendered at each stop, and union the results with any earlier passes. Read `video.duration` first so the
+ladder covers the real length instead of a guess, and stop when a seek yields zero new cues.
+
+Merging passes needs one rule: the same cue renders in more than one shape. A multi-line block
+(`Speaker` / `MM minutes SS seconds` / `MM:SS` / repeated header / text), a header-only block with no
+text, and a flattened single-line form with the time inline. Parse all of them, key on
+`(timestamp, speaker)`, and **keep the longest text variant**, because some renderings truncate. Keying
+on the raw string instead produces duplicate near-identical cues and still loses the full text.
+
+Verify completeness by bucketing cues per minute against the video duration and listing empty minutes.
+"It captured a lot" is not evidence; "zero empty minutes across 0 to 32" is.
+
+Reference implementation: `shared/scrape-stream-transcript-seek.js` in the NFG workspace, written as a
+tail-recovery companion rather than a replacement for the scroll harvest. Run the scroll pass first, the
+seek pass second, merge both.
+
 ### 5. Hand off to ingestion
 
 The scraped text is then a normal input to `phi-aware-rag-ingestion`: PHI screen, chunk, embed, route, store, digest.
@@ -154,6 +192,8 @@ The scraped text is then a normal input to `phi-aware-rag-ingestion`: PHI screen
 | Sharing the captured transcript outside the engagement | Original ACL denied download; sharing the scraped text reproduces what the ACL was preventing. |
 | Hardcoding CSS class names | Stream's CSS classes are not stable. Use multiple selectors with broad coverage + a content filter (timestamps, length). |
 | Single URL form retry | Stream sometimes sends to AccessDenied.aspx via the friendly URL but works via `_layouts/15/stream.aspx?id=...`. Multi-URL retry is mandatory. |
+| Trusting a scroll-only harvest on a long recording | The virtualized list plateaus around 61 percent and silently drops the tail, which is where meetings actually converge on decisions. Seek the video instead, and prove coverage by checking for empty minutes against `video.duration`. |
+| Reporting cue count as coverage | 371 cues sounded complete and covered 22 of 32 minutes. Only the per-minute gap check against the real duration is evidence. |
 | Skipping the provenance header | Audit needs to see "this came from a DOM scrape, captured by user X at time Y." Without it, the file looks like it was downloaded normally. |
 
 ## Composability
