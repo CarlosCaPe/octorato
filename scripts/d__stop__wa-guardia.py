@@ -126,7 +126,16 @@ def guardia_viva(chat_jid):
     # el chat_jid lleva '@' y '.', que en pgrep -f son parte del patron; se
     # escapan para que no valgan como comodines de regex
     patron = f"wa-guardia.py.*{re.escape(chat_jid)}.*--vigilar"
-    r = subprocess.run(["pgrep", "-f", patron], capture_output=True, text=True)
+    try:
+        r = subprocess.run(["pgrep", "-f", patron], capture_output=True, text=True)
+    except OSError:
+        # pgrep es POSIX y no existe en Windows. Sin captura, el FileNotFoundError
+        # subia hasta el except general de __main__ y salia con 0: el detector
+        # encontraba el chat pendiente y aun asi el gate callaba, en el selftest y
+        # en produccion. No poder comprobar el vigia NO es haberlo comprobado, asi
+        # que se asume que no hay y el gate avisa. Misma postura que ya_avisado:
+        # sin forma de saber, avisar de mas antes que callarse.
+        return False
     return r.returncode == 0 and r.stdout.strip() != ""
 
 

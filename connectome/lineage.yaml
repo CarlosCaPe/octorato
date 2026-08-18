@@ -449,3 +449,45 @@ edges:
       ~/.config/systemd/user/wa-sin-respuesta.{service,timer}, que un seek no
       alcanza: si se renombra el script, esas dos unidades se rompen en
       silencio y el vigia deja de correr sin avisar.
+
+  - id: draft-promise-gate
+    concept: "deliverable-complete-before-send / no future-tense promise inside a paste-ready draft"
+    appears_in:
+      - CLAUDE.md                                                 # anchor "Deliverable-complete-before-send"
+      - scripts/g__stop__draft-promise.py                         # the Stop gate (the mechanism)
+      - registry/rules.yaml                                       # COMMS.deliverable-complete-before-send
+      - registry/fixtures/COMMS.deliverable-complete-before-send  # the liveness proof
+      - hooks.json                                                # the Stop wiring
+    kind: appears_in
+    note: >-
+      This gate parses the SHAPE of a draft, so it is coupled to the delivery
+      convention: a paste-ready draft ships INSIDE a fenced block, and the
+      version that stripped every fence before matching was structurally blind
+      to the only text it existed to police. Its violation fixture put the draft
+      in bare prose, so the gate self-tested green for months while dead on
+      every real draft. Change the promise patterns, the prose-vs-code fence
+      classification, or the delivery convention, and reconcile the fixtures in
+      the same commit: a fixture that does not mirror the real shape of the
+      artifact proves nothing. Edge added 2026-08-18 when the blind spot was
+      found and closed.
+
+  - id: wa-guardia-gate
+    concept: "guardia armada al cerrar un turno esperando respuesta de un tercero"
+    appears_in:
+      - skills/wa-guardia/SKILL.md                     # anchor "Cuando se arma"
+      - scripts/d__stop__wa-guardia.py                 # the Stop gate (the mechanism)
+      - scripts/wa-guardia.py                          # the watcher the gate looks for
+      - registry/rules.yaml                            # FLOW.wa-guardia-on-pending
+      - registry/fixtures/FLOW.wa-guardia-on-pending   # the liveness proof
+      - hooks.json                                     # the Stop wiring
+    kind: appears_in
+    note: >-
+      Two couplings, both able to kill this gate silently. First, the gate finds
+      a live watcher by matching a process pattern against how wa-guardia.py is
+      actually invoked; change the watcher's flags and the pattern stops
+      matching. Second, that lookup shells out to pgrep, which is POSIX-only: on
+      Windows the FileNotFoundError rose to the blanket except in __main__ and
+      exited 0, so the gate detected the pending chat and stayed silent, in the
+      selftest and in production alike. Not being able to check for a watcher is
+      not the same as having checked, so the OSError path now returns "no
+      watcher" and the gate warns. Edge added 2026-08-18 when that was fixed.
