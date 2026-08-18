@@ -14,6 +14,29 @@ machine-generated growth ledger lives at
 `knowledge/repo-watch/<date>.md` (daily watchlist digests).
 
 ## [Unreleased]
+### Fixed
+- fix(ai-sync): la co-tenencia se cuenta por **árbol de trabajo y host**, no por sesión.
+  Contarla por sesión castigaba justo a quien ya se había aislado, y su mensaje mandaba
+  a forkear un worktree que la sesión ya tenía. Además `_is_repo()` usa
+  `git rev-parse --is-inside-work-tree`: ai-sync se negaba a correr dentro de un worktree
+  porque ahí `.git` es un archivo.
+- fix(ai-sync): la etiqueta semver **solo se mueve sobre el tronco**. Desde una rama de
+  dimensión etiquetaba un commit que el squash dejaba huérfano (así nació el tag v6.15.3,
+  ya retirado). Empujar desde una rama abre el PR en vez de terminar en silencio.
+- fix(check-generic): escanea el **árbol actual**, no siempre `$HOME/.claude`. Desde un
+  worktree leía un índice vacío e imprimía "clean, scanned 0 staged file(s)" con doce
+  archivos sin revisar.
+- fix(wa-latido): mide y cura el puente **donde vive**. Tras el cutover seguía leyendo la
+  réplica local (refrescada cada 5 min, así que el sello nunca aparecía en 40s) y su cura
+  levantaba el binario local, clonando la sesión de WhatsApp.
+
+### Features
+- feat(gate): `FLOW.do-it-today` — Stop gate fail-closed contra aplazar trabajo propio.
+  Un pendiente solo vale si es un paso irreducible del operador o un bloqueo medido, y
+  en ambos casos viaja con su comando exacto.
+- feat(wa-soporte): `--archivo` manda adjuntos por el canal de soporte; el archivo viaja
+  al disco del puente y las dos copias intermedias se borran siempre, también si falla.
+
 
 ## [2026-08-04]: v6.13.0
 ### Fixed
