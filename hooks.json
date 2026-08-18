@@ -220,6 +220,12 @@
           "type": "command"
         },
         {
+          "command": "python3 ~/.claude/scripts/g__stop__defer-today.py",
+          "statusMessage": "⏳ hoy-no-mañana (no aplazar trabajo propio)...",
+          "timeout": 5,
+          "type": "command"
+        },
+        {
           "command": "python3 ~/.claude/scripts/source-attribution-check.py",
           "timeout": 5,
           "type": "command"

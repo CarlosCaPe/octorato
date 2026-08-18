@@ -108,12 +108,33 @@ def build_pattern(tokens):
     return re.compile(r"\b(" + "|".join(escaped) + r")\b", re.IGNORECASE)
 
 
+def repo_dir():
+    """Arbol de trabajo a inspeccionar: el de AQUI si estamos dentro de uno.
+
+    Antes se fijaba en CLAUDE_DIR ($HOME/.claude). Corriendo desde un worktree
+    de dimension, eso leia el indice del checkout PRINCIPAL, que esta vacio, y
+    el guardia imprimia "clean, scanned 0 staged file(s)" mientras el commit
+    real llevaba doce archivos sin revisar. Un verde sin alcance no es evidencia:
+    aqui era, literalmente, el guardia anti-fuga apagado en el flujo de
+    aislamiento que el propio cerebro recomienda.
+    """
+    try:
+        out = subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"],
+            stderr=subprocess.DEVNULL, text=True).strip()
+        if out:
+            return out
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        pass
+    return str(CLAUDE_DIR)
+
+
 def staged_files():
     """List files staged for commit. Empty if not in a git repo with staged changes."""
     try:
         out = subprocess.check_output(
             ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR"],
-            cwd=str(CLAUDE_DIR), stderr=subprocess.DEVNULL, text=True,
+            cwd=repo_dir(), stderr=subprocess.DEVNULL, text=True,
         )
     except (subprocess.CalledProcessError, FileNotFoundError):
         return []
@@ -135,7 +156,7 @@ def staged_content(path):
     try:
         out = subprocess.check_output(
             ["git", "show", f":{path}"],
-            cwd=str(CLAUDE_DIR), stderr=subprocess.DEVNULL,
+            cwd=repo_dir(), stderr=subprocess.DEVNULL,
         )
         return out.decode("utf-8", errors="replace")
     except subprocess.CalledProcessError:
