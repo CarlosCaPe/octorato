@@ -192,6 +192,9 @@ def grep_fallback(term: str):
             ["grep", "-rilF", "--include=*.md", "--include=*.py", "--include=*.json",
              "--exclude-dir=.git", "--exclude-dir=node_modules", "--exclude-dir=dist",
              "--exclude-dir=.venv", "--exclude-dir=__pycache__", "--exclude-dir=.next",
+             # A worktree is a CHECKOUT of this same repo, not another surface.
+             # Counting it inflated one real concept from 288 hits to 1719.
+             "--exclude-dir=.worktrees", "--exclude-dir=worktrees",
              "--", term, *targets],
             capture_output=True, text=True, timeout=30,
         ).stdout
@@ -209,9 +212,45 @@ def grep_fallback(term: str):
     return sorted(files)
 
 
+# A concept is a name someone would look up, not a search pattern. Globs and
+# 3-letter fragments match by substring inside lockfiles and produce candidates
+# nobody can ever promote, which is what silted up the queue.
+# Not just globs: shell fragments and regex alternations were being filed as
+# "concepts" too (a pipeline command, the git conflict-marker regex).
+GLOB_CHARS = set("*?[]^|;$\\")
+MIN_CONCEPT = 4
+# When a term hits many files inside one directory, those files are almost always
+# generated records (per-item JSON, fixtures). List the directory once instead.
+DIR_COLLAPSE = 8
+
+
+def is_promotable(term: str) -> bool:
+    t = term.strip()
+    return len(t) >= MIN_CONCEPT and not (set(t) & GLOB_CHARS)
+
+
+def collapse_by_dir(hits, threshold: int = DIR_COLLAPSE):
+    """Fold runs of same-directory hits into the directory itself."""
+    from collections import Counter
+    per_dir = Counter(str(Path(h).parent) for h in hits)
+    out, seen = [], set()
+    for h in hits:
+        d = str(Path(h).parent)
+        if per_dir[d] >= threshold:
+            if d not in seen:
+                seen.add(d)
+                out.append(f"{d}/  ({per_dir[d]} archivos, colapsado)")
+        else:
+            out.append(h)
+    return out
+
+
 def write_candidate(term: str, hits):
     """Record an unlit-neuron candidate so the graph grows. Generic only —
     a grep can hit an arm path, so we never write absolute/external paths."""
+    if not is_promotable(term):
+        return
+    hits = collapse_by_dir(hits)
     try:
         UNVERIFIED.parent.mkdir(parents=True, exist_ok=True)
         existing = UNVERIFIED.read_text(encoding="utf-8") if UNVERIFIED.exists() else \
