@@ -437,6 +437,31 @@ def _cotenant_window() -> int:
         return 1800
 
 
+TRONCOS = ("master", "main")
+
+
+def tronco_remoto() -> str:
+    """El tronco que publica este repo: el primero de TRONCOS que exista en origin."""
+    for t in TRONCOS:
+        rc, _, _ = git("rev-parse", "--verify", "--quiet", f"origin/{t}", quiet=True)
+        if rc == 0:
+            return t
+    return TRONCOS[0]
+
+
+def es_tronco(rama: str) -> bool:
+    """¿Esta rama es la que se publica?
+
+    Existe porque tres decisiones distintas (etiquetar, publicar el wiki, elegir
+    flujo de PR) preguntaban lo mismo de tres formas, y la de etiquetar no lo
+    preguntaba: asumia que "no es flujo de PR" implicaba "estoy en master". Desde
+    que las sesiones corren en worktrees de dimension eso es falso, y el
+    18-ago-2026 dejo el tag v6.15.3 colgado de un commit de rama que el squash
+    convirtio en huerfano.
+    """
+    return rama in TRONCOS
+
+
 def _is_repo() -> bool:
     """Hay repo aqui, sea checkout principal o worktree enlazado.
 
@@ -638,13 +663,45 @@ def push(args) -> int:
             warn(f"⚠ Push failed: {e}")
             return 1
         info("✓ Pushed to remote")
-        # Move the semver label by change-class (advisory, never fatal).
-        # Direct-push path only: in the PR flow HEAD is the feature branch, so
-        # tagging here would label an un-merged commit. The bump size (patch/
-        # minor/major) is derived from the conventional-commit types since the
-        # last tag — see scripts/brain-version-bump.py.
-        script_step("scripts/brain-version-bump.py", "--apply", "--push",
-                    label="🏷  Moving semver label...")
+
+        # Desde una rama que NO es tronco, empujar y callarse dejaba el cambio
+        # publicado en su rama y NUNCA en master: el 18-ago-2026 eso obligo a
+        # abrir tres PR a mano. Si el tronco exige PR, se abre aqui. El merge no
+        # se automatiza desde un worktree de dimension porque el paso posterior
+        # (`checkout master`) es imposible cuando master esta tomado por otro
+        # checkout, y fingir que se pudo seria el fallo silencioso de siempre.
+        _, rama_push, _ = git("rev-parse", "--abbrev-ref", "HEAD")
+        if not es_tronco(rama_push):
+            destino = tronco_remoto()
+            if _is_pr_required(destino) and shutil.which("gh"):
+                existe = subprocess.run(
+                    ["gh", "pr", "list", "--head", rama_push, "--state", "open",
+                     "--json", "number", "--jq", "length"],
+                    cwd=CLAUDE, capture_output=True, text=True).stdout.strip()
+                if existe in ("", "0"):
+                    rc_pr = subprocess.run(
+                        ["gh", "pr", "create", "--base", destino, "--head", rama_push,
+                         "--title", msg, "--fill"],
+                        cwd=CLAUDE).returncode
+                    if rc_pr == 0:
+                        info(f"✓ PR abierto contra {destino}")
+                    else:
+                        warn(f"⚠ no se pudo abrir el PR; hazlo con: "
+                             f"gh pr create --base {destino} --head {rama_push}")
+                else:
+                    info(f"✓ el PR de {rama_push} ya estaba abierto")
+        # La etiqueta SOLO cuando HEAD es el tronco. Antes bastaba con "no es
+        # flujo de PR", y desde un worktree de dimension eso etiquetaba un
+        # commit de rama: al hacer squash el tag quedaba apuntando a un commit
+        # que ya no esta en la historia de master. El tamaño del salto sale de
+        # los tipos de commit desde el ultimo tag (scripts/brain-version-bump.py).
+        _, rama_actual, _ = git("rev-parse", "--abbrev-ref", "HEAD")
+        if es_tronco(rama_actual):
+            script_step("scripts/brain-version-bump.py", "--apply", "--push",
+                        label="🏷  Moving semver label...")
+        else:
+            info(f"🏷  {rama_actual} no es tronco: la etiqueta se mueve cuando "
+                 f"el cambio aterrice en master, no antes")
 
     # Publish docs/wiki to the GitHub wiki mirror (best-effort). The wiki is a
     # separate repo no gate protects; a wiki failure must NEVER fail ai-push,
@@ -652,7 +709,7 @@ def push(args) -> int:
     # a feature branch (or with a PR still open) would mirror unreviewed content
     # to the public wiki, skirting the review gate.
     _, wiki_branch, _ = git("rev-parse", "--abbrev-ref", "HEAD")
-    if wiki_branch in ("master", "main") and (CLAUDE / "scripts" / "publish-wiki.py").exists():
+    if es_tronco(wiki_branch) and (CLAUDE / "scripts" / "publish-wiki.py").exists():
         info("📖 Publishing docs/wiki to the GitHub wiki...")
         if subprocess.run([py(), str(CLAUDE / "scripts" / "publish-wiki.py"),
                            "--push"]).returncode != 0:
@@ -865,6 +922,16 @@ def selftest() -> int:
         globals()["SESSIONS_REGISTRY"] = Path("/no/existe/registro.json")
         chk("registro ausente es fail-open, devuelve vacio",
             _cotenants_on_tree(1800, A) == [])
+
+        # ---- que rama puede llevar la etiqueta. El 18-ago-2026 un tag salio
+        # sobre un commit de rama porque "no es flujo de PR" se leia como
+        # "estoy en master"; desde un worktree de dimension eso es falso.
+        chk("master es tronco", es_tronco("master"))
+        chk("main es tronco", es_tronco("main"))
+        chk("una rama de dimension NO es tronco", not es_tronco("dim/3fdefe390adb"))
+        chk("una rama auto/ NO es tronco", not es_tronco("auto/fix-algo"))
+        chk("un nombre que CONTIENE master no basta",
+            not es_tronco("feature/master-cleanup"))
     finally:
         globals()["SESSIONS_REGISTRY"] = original
 
