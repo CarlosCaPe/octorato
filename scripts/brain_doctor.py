@@ -43,12 +43,24 @@ PYTHON = detect_python()
 
 
 def run(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess:
-    """Run a subprocess with explicit args; never raises on non-zero."""
+    """Run a subprocess with explicit args; never raises on non-zero.
+
+    encoding/errors are NOT decoration. Bare text=True decodes with the ambient
+    locale codepage, which on Windows is cp1252, and every script in this brain
+    prints ✓/✗/♥ glyphs. The UnicodeDecodeError then fires inside subprocess's
+    own reader THREAD: that thread dies, its buffer is never filled, and
+    .stdout comes back None while returncode still looks normal. Callers doing
+    cp.stdout.strip() crash with a NoneType error that points at the caller and
+    hides the real drift the subprocess was reporting. Decoding as UTF-8 with
+    replacement keeps stdout a str on every platform and every call site.
+    """
     return subprocess.run(
         args,
         cwd=str(cwd) if cwd else None,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
 
 
@@ -253,8 +265,13 @@ def check_hooks_runtime_sync(fix: bool) -> Result:
     cp = run([PYTHON or "python3", str(drift_script)], cwd=CLAUDE_DIR)
     if cp.returncode == 0:
         return Result(key, PASS, "settings.json hooks == validated hooks.json projection")
-    detail = (cp.stdout.strip() or cp.stderr.strip() or "drift detected").splitlines()
-    msg = detail[-1] if detail else "hooks drift detected"
+    # The validator prints a headline, then a unified diff, then the two
+    # resolution commands. detail[-1] therefore reported "--adopt", i.e. the
+    # WRONG resolution (adopt publishes the local edit; the hint below says
+    # re-project). Prefer the headline, which names what actually drifted.
+    detail = [ln.strip() for ln in (cp.stdout or cp.stderr or "").splitlines() if ln.strip()]
+    msg = next((ln for ln in detail if "DRIFT" in ln.upper()),
+               detail[0] if detail else "hooks drift detected")
     return Result(key, FAIL, f"hooks drift: {msg}",
                   "run `python3 scripts/merge-hooks.py` to re-project hooks.json")
 

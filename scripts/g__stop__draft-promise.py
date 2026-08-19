@@ -50,8 +50,41 @@ for _stream in (sys.stdout, sys.stderr):
 
 
 _FOOTER = re.compile(r"^\s*(Provenance|Procedencia|Herkunft)\s*:", re.IGNORECASE)
-_FENCE = re.compile(r"```.*?```", re.DOTALL)
+# A paste-ready draft is DELIVERED inside a fence (the paste-ready-plain-text
+# rule), so stripping every fence blinded this gate to the exact text it exists
+# to police: the promise lives in the draft, not in the prose around it. Keep
+# PROSE fences (untagged, or tagged text/md/email), strip CODE fences.
+_FENCE_BLOCK = re.compile(r"```([^\n`]*)\n(.*?)```", re.DOTALL)
+_FENCE_TAIL = re.compile(r"```([^\n`]*)\n(.*)\Z", re.DOTALL)
 _INLINE = re.compile(r"`[^`\n]*`")
+_PROSE_LANGS = {"", "text", "txt", "md", "markdown", "plaintext", "plain",
+                "email", "message", "msg", "quote"}
+
+# An untagged fence may still hold shell or SQL, and a code line must never be
+# linted as prose. Strong per-line signals plus a 25 percent density floor.
+_CODE_SIGNAL = re.compile(
+    r"^\s*(#!|import\s|from\s+\S+\s+import\b|def\s|class\s|function\s"
+    r"|const\s|let\s|var\s|return\s|SELECT\s|INSERT\s|UPDATE\s|DELETE\s"
+    r"|CREATE\s|ALTER\s|\$\s|git\s|cd\s|npm\s|pip\s|python3?\s|docker\s"
+    r"|</|<[a-z]+[ >]|[{}])"
+    r"|[;{}]\s*$|=>|::|\)\s*\{",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_code(body: str) -> bool:
+    lines = [ln for ln in body.splitlines() if ln.strip()]
+    if not lines:
+        return True
+    hits = sum(1 for ln in lines if _CODE_SIGNAL.search(ln))
+    return hits * 4 >= len(lines)
+
+
+def _keep_fence(lang: str, body: str) -> str:
+    """Fence body when it reads as prose (a draft), empty when it reads as code."""
+    if (lang or "").strip().lower() in _PROSE_LANGS and not _looks_like_code(body):
+        return "\n" + body + "\n"
+    return "\n"
 
 # Condition 1: the reply hands the operator a paste-ready draft.
 _DRAFT_MARKER = re.compile(
@@ -147,10 +180,12 @@ def _last_assistant_text(transcript_path: str) -> str:
 
 
 def _strip_non_prose(text: str) -> str:
-    text = _FENCE.sub("", text)
-    # Unclosed trailing fence: drop it and everything after, else its code
-    # content gets matched as prose and false-blocks.
-    text = re.sub(r"```.*", "", text, flags=re.DOTALL)
+    text = _FENCE_BLOCK.sub(lambda m: _keep_fence(m.group(1), m.group(2)), text)
+    # Unclosed trailing fence: same prose-or-code decision, so a draft that ends
+    # the reply without a closing fence is still linted rather than discarded.
+    tail = _FENCE_TAIL.search(text)
+    if tail:
+        text = text[:tail.start()] + _keep_fence(tail.group(1), tail.group(2))
     text = _INLINE.sub("", text)
     kept = [
         ln for ln in text.splitlines()

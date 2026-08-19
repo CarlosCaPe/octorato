@@ -6,7 +6,7 @@
 
 | Metric | Count |
 |---|---|
-| Skills | 232 |
+| Skills | 233 |
 | Agents | 161 |
 | Divisions | 15 |
 | Scripts: wired | 98 |
@@ -14,7 +14,7 @@
 | Rules | 66 |
 | Hook entries | 39 |
 
-## Skills (232)
+## Skills (233)
 
 | Name | Description |
 |---|---|
@@ -179,6 +179,7 @@
 | research-checklist-discipline | Research Checklist Discipline |
 | runtime-adaptation-over-source-edit | Decision rule for WHERE a new behavior or lesson belongs , the runtime layer (skill / memory / config / hook) vs the cor... |
 | sandbox-sdk | Build sandboxed applications for secure code execution. Load when building AI code execution, code interpreters, CI/CD s... |
+| save-transcript | Rescata el transcript COMPLETO de una grabacion de reunion (Microsoft Stream, SharePoint) a partir de su URL, y entrega ... |
 | schema-as-code-three-layer-sync | Mantiene sincronizadas las tres capas de un proyecto schema-as-code: diagrama ER, diccionario de datos y el SQL declarat... |
 | schema-row-counts | Get exact row counts per table in a given schema , PostgreSQL primary, with notes for other engines. Two-column result: ... |
 | schema-separation-orm-control | Schema Separation for ORM/Scaffolding Control |
