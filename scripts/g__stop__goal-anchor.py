@@ -263,6 +263,73 @@ def _retire(state: dict, reason: str) -> None:
     del history[:-20]  # el historial es contexto, no bitacora
 
 
+# ── que puede ser un objetivo ────────────────────────────────────────────────
+# El anclaje inicial aceptaba cualquier prompt no vacio. El 2026-08-19 eso fijo
+# como raiz un bloque de bash-stderr ("fatal: not a git repository") y, mas
+# tarde, una pregunta de tramite ("que no servian los sticky notes?"), y el gate
+# pidio cerrar objetivos que nunca existieron. Como solo un marcador
+# determinista o un cierre retiran un ancla, la mala se queda y agota sus dos
+# disparos.
+#
+# El filtro rechaza DOS clases y nada mas. De mas seria peor: un gate que no
+# ancla nunca es un gate apagado, y el modo de fallo caro es no avisar.
+
+# a) eco del harness: el turno no es prosa del operador sino salida de una
+#    herramienta o un comando local que el transcript guarda como user.
+_RE_HARNESS_ECHO = re.compile(
+    r"<bash-(?:input|stdout|stderr)>"
+    r"|<function_(?:calls|results)>"
+    r"|<local-command-(?:stdout|stderr)>"
+    r"|<task-notification>"
+    r"|^\s*(?:fatal|error|traceback|usage):",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# b) pregunta pura: interrogacion sin ningun verbo de encargo. "arregla el DNS"
+#    ancla; "que no servian los stickies?" no. El imperativo gana sobre el signo
+#    de interrogacion, porque "puedes arreglar X?" SI es un encargo.
+_RE_TASK_VERB = re.compile(
+    r"\b(?:arregla|arreglar|corrige|corregir|haz|hacer|implementa|implementar"
+    r"|escribe|escribir|crea|crear|agrega|agregar|quita|quitar|borra|borrar"
+    r"|actualiza|actualizar|publica|publicar|manda|mandar|envia|enviar"
+    r"|revisa|revisar|verifica|verificar|corre|correr|ejecuta|ejecutar"
+    r"|investiga|investigar|documenta|documentar|dame|damelo|necesito que"
+    r"|fix|repair|implement|write|create|add|remove|delete|update|publish"
+    r"|send|review|verify|run|execute|investigate|document|build|make|refactor"
+    r"|migrate|deploy|generate)\b",
+    re.IGNORECASE,
+)
+
+
+def is_anchorable(prompt: str) -> bool:
+    """Si este prompt puede ser la raiz de la sesion.
+
+    El prefijo explicito siempre gana: si el operador escribe "objetivo: X",
+    X es la raiz aunque parezca cualquier otra cosa.
+    """
+    text = (prompt or "").strip()
+    if not text:
+        return False
+    if _RE_GOAL_PREFIX.search(text):
+        return True
+    if _RE_HARNESS_ECHO.search(text):
+        return False
+    # Interrogativa sin verbo de encargo en ninguna parte del texto. El signo se
+    # busca EN CUALQUIER POSICION, no solo al final: el caso real que fallo fue
+    # "que no servian los sticky notes? tiene el svg up to date aqui", donde la
+    # pregunta va a media frase y el prompt no termina en interrogacion.
+    if ("?" in text or "¿" in text) and not _RE_TASK_VERB.search(text):
+        return False
+    # Sustancia minima. Sin esto el filtro solo mueve el problema: rechazado el
+    # primer prompt, el ancla CAE al siguiente, y el siguiente suele ser un acuse
+    # de dos letras ("ok", "va", "dale"). El umbral es el mismo MIN_MENTION_HITS
+    # que ya usa anchor_mentioned, y no por simetria estetica: un ancla que el
+    # propio gate nunca podria reconocer como mencionada no puede ser un ancla.
+    if len(content_words(text)) < MIN_MENTION_HITS:
+        return False
+    return True
+
+
 def is_reanchor(prompt: str, state: dict) -> bool:
     """Re-anclaje solo por marcador determinista. Sin estado no hay re-ancla:
     hay anclaje inicial, que es otra cosa."""
@@ -357,7 +424,9 @@ def _absorb(state: dict, prompt: str, reply: str) -> bool:
     # 2. anclaje
     reanchored = False
     if not state.get("anchor"):
-        if prompt:
+        # is_anchorable, no "if prompt": un eco del harness o una pregunta
+        # suelta no son objetivos, y un ancla mala no se cae sola.
+        if is_anchorable(prompt):
             state["anchor"] = extract_anchor(prompt)
             state["anchor_ts"] = time.time()
             state["anchor_turn"] = state["turn"]
@@ -368,7 +437,9 @@ def _absorb(state: dict, prompt: str, reply: str) -> bool:
         # Ya cerrada se retiro con su razon; viva se retira como pivote.
         if not state.get("closed"):
             _retire(state, "pivot")
-        state["anchor"] = extract_anchor(prompt)
+        # Un pivote hacia algo que no es objetivo retira el ancla vieja sin
+        # poner una mala en su lugar: mejor sin raiz que con una falsa.
+        state["anchor"] = extract_anchor(prompt) if is_anchorable(prompt) else ""
         state["anchor_ts"] = time.time()
         state["anchor_turn"] = state["turn"]
         state["turns_since_mention"] = 0

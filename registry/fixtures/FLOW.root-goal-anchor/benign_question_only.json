@@ -1,0 +1,6 @@
+{
+  "session_id": "sess-questiononly",
+  "transcript_path": "benign_question_only_transcript.jsonl",
+  "stop_hook_active": false,
+  "cwd": "/tmp"
+}
