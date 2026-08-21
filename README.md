@@ -22,7 +22,11 @@
 
 > 🧑‍💻 **New here? [Try it in 5 minutes](#try-it-in-5-minutes), then [help build it](https://github.com/CarlosCaPe/octorato/issues/34).** Grab a [good first issue](https://github.com/CarlosCaPe/octorato/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22), see where we're headed in the [ROADMAP](ROADMAP.md), or shape the architecture in the [RFCs](https://github.com/CarlosCaPe/octorato/discussions). Newcomers welcome, we credit every contributor. 🐙
 
-<!-- TODO(demo): add a terminal demo here — asciinema cast or GIF of "natural language → shipped product". Tracked as a maintainer follow-up. -->
+<p align="center">
+  <img src="assets/demo.gif" alt="Terminal demo: brain_doctor verifies that all 66 rules are wired to live mechanisms, then the pre-push gate refuses a commit carrying an AWS key" width="100%">
+</p>
+
+<p align="center"><sub><b>Real footage, no mockup.</b> <code>brain_doctor</code> proves every rule is wired to a live mechanism (35 passed, 0 fail), then the pre-push gate refuses a fake AWS key before it can reach GitHub. The warn on screen is real too: an honest brain shows its own debt.</sub></p>
 
 > **The sharpest instance: because an octorato's arms are sealed cells, billing comes for free. When a world is a client, the wall that isolates it is the same wall that meters and bills it, so you get built-in FinOps.**
 > The brain consultants and small agencies need to bill clients fairly — and land on the right side of the
