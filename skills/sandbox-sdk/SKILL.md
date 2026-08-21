@@ -175,3 +175,7 @@ See `examples/openai-agents` for complete integration pattern.
 
 - **[references/api-quick-ref.md](references/api-quick-ref.md)** - Full API with options and return types
 - **[references/examples.md](references/examples.md)** - Example index with use cases
+
+## See also
+
+- AstrBot agent sandbox (https://github.com/AstrBotDevs/AstrBot, `astrbot/core/skills/`): closest OSS peer of the session-reuse sandbox pattern. aiodocker-isolated code/shell exec with session-level resource reuse, and skill files synced into the container at `/workspace/skills`.

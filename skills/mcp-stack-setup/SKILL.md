@@ -203,3 +203,7 @@ The actual list lives in your private `company/COMPANY.md`. Generic example:
 - **2024-04**: `.mcp.json` should use env var references (`${VAR}`) not hardcoded values — enables arm isolation without `.gitignore` dependency on the file itself
 - **2024-04**: Cloud MCP OAuth tokens are scoped to the Claude account, not to the workspace directory — they safely appear in all arms without leaking client data
 - **2024-04**: Prefix all DB env vars with the client code (`CLIENT_E_MSSQL_SERVER` not `MSSQL_SERVER`) to prevent collisions when two arms share the same shell session
+
+## See also
+
+- AstrBot (https://github.com/AstrBotDevs/AstrBot, `astrbot/core/agent/mcp_client.py`): reference implementation of an MCP client embedded inside an IM-bot runtime, with tools fanning into the agent loop.
