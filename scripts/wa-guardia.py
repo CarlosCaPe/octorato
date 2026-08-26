@@ -34,29 +34,30 @@ import sqlite3
 import sys
 import time
 
-# Una sola casa para "esto es un acuse, no un pendiente". El vigia ya trae esa
-# lista con su doble condicion (frase corta Y en el catalogo), asi que se importa
-# en vez de copiarse: dos copias de esa regla se separan con el primer ajuste.
+# Una sola casa para "esto no deja a nadie esperando". El vigia ya trae esa
+# puerta (`no_espera`: acuse corto del catalogo, o aviso de ausencia escrito por
+# una maquina), asi que se importa en vez de copiarse: dos copias de esa regla se
+# separan con el primer ajuste y entonces el vigia y la guardia se contradicen.
 # El nombre del archivo lleva guion, que no es identificador valido, de ahi el
 # import por ruta.
-def _cargar_es_acuse():
+def _cargar_no_espera():
     import importlib.util
     ruta = pathlib.Path(__file__).resolve().parent / "wa-sin-respuesta.py"
     spec = importlib.util.spec_from_file_location("wa_sin_respuesta", ruta)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    return mod.es_acuse
+    return mod.no_espera
 
 
 try:
-    es_acuse = _cargar_es_acuse()
+    no_espera = _cargar_no_espera()
 except Exception as _e:
     # Sin el vigia a la mano no se inventa una segunda lista: se avisa y no se
     # filtra nada, que es el error seguro (reportar de mas, nunca de menos).
     print(f"AVISO: no se pudo cargar el filtro de acuses del vigia ({_e}); "
           "se reporta todo sin filtrar", file=sys.stderr)
 
-    def es_acuse(texto, media):
+    def no_espera(texto, media):
         return False
 
 CONFIG = pathlib.Path.home() / ".claude" / "company" / "config" / "wa-puentes.json"
@@ -138,7 +139,7 @@ def main():
         # m = (id, cuando, quien, media_type, content)
         if args.con_acuses:
             return True
-        return not es_acuse(m[4], m[3])
+        return not no_espera(m[4], m[3])
 
     if args.vigilar:
         con = abrir(args.puente)   # al ARRANCAR si se exige que exista

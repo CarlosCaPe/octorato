@@ -29,6 +29,23 @@ y no debe convertirse en un segundo hogar del mismo concepto.
 | Vive en | timer de systemd | la sesion viva |
 | Avisa por | correo, al pasar el umbral | linea en el chat, al instante |
 | Sobrevive al cierre | si | no |
+| Insiste | si, por peldaños | no, es una foto |
+
+**El vigia RE-ESCALA, no avisa una sola vez.** El anti-repeticion va por clave,
+y la clave lleva pegado el peldaño de espera (`escalon` en
+`wa-sin-respuesta.py`): sube en 1 h, 4 h y 24 h, y de ahi uno por dia. Al cruzar
+un peldaño la clave cambia y el mismo silencio vuelve a contar como nuevo. Antes
+la clave era el id pelado, asi que un pendiente avisado una vez se callaba para
+siempre mientras el cliente no volviera a escribir: se encontro un chat con 7
+dias de silencio saliendo como `(ya avisado)` en cada vuelta del timer.
+
+**Un mensaje de ausencia no arranca el reloj.** `no_espera` une los dos motivos
+por los que un entrante no deja a nadie esperando: cierra la conversacion
+(`es_acuse`) o lo escribio una maquina (`es_auto_wa`, el gemelo de las
+`FRASES_AUTO` del correo). El ancla se poda con esa puerta, porque un away
+message de WhatsApp Business ronda los cien caracteres y `es_acuse` exige menos
+de 25: quedaba de ancla y la alerta reportaba SU edad en vez de la de la
+pregunta viva.
 
 **La logica compartida se importa, no se copia.** El filtro de acuses (que un
 "gracias" no es un pendiente) y la ruta de los puentes viven en el vigia y en su

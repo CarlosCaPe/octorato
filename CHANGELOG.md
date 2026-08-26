@@ -14,6 +14,59 @@ machine-generated growth ledger lives at
 `knowledge/repo-watch/<date>.md` (daily watchlist digests).
 
 ## [Unreleased]
+
+## [2026-08-21]: v6.20.1
+
+### Fixes
+- fix(changelog): backfill releases v6.14.0 through v6.20.0 (#237)
+
+## [2026-08-21]: v6.20.0
+
+### Features
+- feat(readme): hero terminal demo, real footage of doctor plus leak gate (#236)
+
+## [2026-08-21]: v6.19.0
+
+### Features
+- feat(skill): gate lessons from the OpenBot runtime gateway (#235)
+
+## [2026-08-21]: v6.18.0
+
+### Features
+- feat(skill): cross-link AstrBot sandbox and MCP client patterns (#234)
+
+## [2026-08-21]: v6.17.7
+
+### Other
+- chore(brain): session reflection (#233)
+
+## [2026-08-19]: v6.17.6
+
+### Fixes
+- fix(gate): ancla de objetivo con filtro y fixtures de regresion (#232)
+
+## [2026-08-19]: v6.17.5
+
+### Fixes
+- fix(impact-radius): filtra worktrees, colapsa directorios y rechaza patrones como concepto (#231)
+
+## [2026-08-19]: v6.17.4
+
+### Other
+- chore(brain): cierre de sesion 2026-08-19 (#230)
+
+## [2026-08-19]: v6.17.3
+
+### Fixes
+- fix(gates+doctor): tres mecanismos que se reportaban vivos estando ciegos (#227)
+
+## [2026-08-18]: v6.17.2
+
+### Other
+- update: registry/fixtures/FLOW.wa-guardia-on-pending/home/.wa-fixture/con-espera.db, registry/fixtures/FLOW.wa-guardia-on-pending/home/.wa-fixture/humano-desde-el-telefono.db, registry/fixtures/FLOW.wa-guardia-on-pending/home/.wa-fixture/puente-sin-api-sends.db, registry/fixtures/FLOW.wa-guardia-on-pending/home/.wa-fixture/sin-espera.db (#229)
+
+## [2026-08-18]: v6.17.1
+
 ### Fixed
 - fix(ai-sync): la co-tenencia se cuenta por **árbol de trabajo y host**, no por sesión.
   Contarla por sesión castigaba justo a quien ya se había aislado, y su mensaje mandaba
@@ -29,14 +82,92 @@ machine-generated growth ledger lives at
 - fix(wa-latido): mide y cura el puente **donde vive**. Tras el cutover seguía leyendo la
   réplica local (refrescada cada 5 min, así que el sello nunca aparecía en 40s) y su cura
   levantaba el binario local, clonando la sesión de WhatsApp.
-
 ### Features
-- feat(gate): `FLOW.do-it-today` — Stop gate fail-closed contra aplazar trabajo propio.
+- feat(gate): `FLOW.do-it-today`: Stop gate fail-closed contra aplazar trabajo propio.
   Un pendiente solo vale si es un paso irreducible del operador o un bloqueo medido, y
   en ambos casos viaja con su comando exacto.
 - feat(wa-soporte): `--archivo` manda adjuntos por el canal de soporte; el archivo viaja
   al disco del puente y las dos copias intermedias se borran siempre, también si falla.
+### Other
+- docs(changelog): registrar los arreglos de la sesion (#228)
 
+## [2026-08-18]: v6.17.0
+
+### Features
+- feat(wa-soporte): mandar adjuntos con --archivo (#226)
+
+## [2026-08-18]: v6.16.0
+
+### Features
+- feat(gate): cablear do-it-today como Stop gate fail-closed (#225)
+
+## [2026-08-18]: v6.15.4
+
+### Fixes
+- fix(ai-sync): co-tenencia por arbol y host, y correr dentro de un worktree (#224)
+
+## [2026-08-18]: v6.15.2
+
+### Fixes
+- fix(wa-latido): medir y curar el puente donde vive, no donde vivia (#223)
+
+## [2026-08-14]: v6.15.1
+
+### Other
+- reflection 14-ago: access-is-not-attention, wire the trigger (#221)
+
+## [2026-08-14]: v6.15.0
+
+### Features
+- feat(vigia): add whatsapp alert sink to wa-sin-respuesta (WA_VIGIA_CANAL=whatsapp) (#219)
+
+## [2026-08-14]: v6.14.3
+
+### Other
+- reflection 14-ago: confirmed-input-is-not-closure lesson (#218)
+
+## [2026-08-12]: v6.14.2
+
+### Fixes
+- fix(memoria): leer TODAS las entradas de una linea compacta del indice (#217)
+
+## [2026-08-12]: v6.14.1
+
+### Other
+- brain: índice residente más chico, vigía de silencio, y tres gates nuevos (#215)
+
+## [2026-08-12]: v6.14.0
+
+### Fixed
+- fix(finops): Grok `cache_r` for 4.3 / 4.20-* / build is **$0.20**/1M (docs.x.ai), not = input;
+  Composer/GPT unknown engines report `$0` list instead of silent Sonnet fallback.
+- fix(census): `capability-census.collect_mcps()` reads Cursor `.cursor/mcp.json` (user +
+  workspace + parent walk) so Q2 is not Claude-file-only prose.
+- fix(4d-protocol): Q2 skill matches CLAUDE.md: MCP-first, runtime-aware census.
+- fix(routing): Cursor Task bindings prefer harness allow-list slugs; mark xAI API-only names.
+- docs(multi-runtime): Honest gaps (Skill/Agent matcher drop, pricing TBD, allow-list ≠ API);
+  Architecture wiki points at multi-runtime; tone "supported peer" not overclaim.
+- chore(quickstart): project Cursor hooks + accept Cursor as a valid runtime prerequisite.
+### Features
+- feat(multi-runtime): Octorato is for **all models and all editors**. New canon
+  `docs/architecture/multi-runtime.md`: brain vs runtime vs engine; growth rule
+  (new editor/model = binding row, not a fork); Claude Code + Cursor supported peers;
+  Q2 MCP census is runtime-aware; identity = engine, OS = Octorato.
+- feat(routing): model ladder is **tier-first, vendor-second** (mechanical · bulk ·
+  build · judgment). Claude Code bindings unchanged (Haiku/Sonnet/Opus/Fable);
+  Cursor+xAI bindings added (`composer-2.5-fast` / mid-Grok / `grok-4.5*` /
+  strongest independent ≥ builder). Skill `model-routing-by-complexity` rewritten.
+- feat(finops): `_pricing.py` meters xAI Grok list prices (grok-4.5, grok-4.3,
+  grok-4.20-*, grok-build-0.1) alongside Anthropic; family heuristics for unknown
+  Grok slugs.
+### Changed
+- docs(Getting-Started): prerequisites accept Claude Code **or** Cursor; Step 1
+  documents `merge-hooks-cursor.py` for Cursor operators.
+- docs(4D): Q2 no longer hard-requires `claude mcp list` inside Cursor sessions.
+- chore(delegate-gate): nudge text uses vendor-agnostic tier names.
+---
+### Features
+- feat(4d): Provenance footer paths must be absolute and openable (#210)
 
 ## [2026-08-04]: v6.13.0
 ### Fixed

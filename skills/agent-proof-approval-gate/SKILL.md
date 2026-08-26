@@ -107,8 +107,17 @@ Mechanism: `scripts/g__pretool-bash__prod-write.py` (Registry `SEC.prod-write-ga
 
 `~/.claude/scripts/g__pretool-bash__prod-write.py` is the production-write sibling: per-destination scoping, payload inspection for SSM and ssh, a read-first allowlist that keeps false positives at zero, and a crash path that denies once a prod channel is identified.
 
+## Learned from OpenBot (CopilotKit)
+
+Three transferable rules from the runtime gateway in https://github.com/CopilotKit/OpenBot (`server/src/computer/policy.ts`, `gateway.ts`), the closest public sibling of this gate:
+
+1. **Dry-run before enforce.** Their policy engine ships a `dry-run` mode that decides and records against real traffic while letting everything through, so an operator reads the audit trail before a rule starts refusing anybody's work. Their phrasing: a governance feature nobody dares switch on is not a governance feature. Maps to our fail-open-with-waiver rollout stage; the lesson is to make that stage a first-class mode with its own decision log, not a temporary exception.
+2. **Intent over mechanism.** A deny written against one tool name is bypassed by a sibling tool with the same effect: their canonical case is a refused click on Submit that succeeds anyway because the agent presses Enter in the form. Their policy context therefore carries the effect (`activate`, `type`, `read`, opening a page) alongside the tool name. When writing a gate pattern here, ask what other command produces the same effect and cover both.
+3. **Resolve the target server-side.** Their gateway resolves what the agent is acting on from a snapshot the server itself fetched, never from the caller's own description; a gate that decides on an attacker-supplied label is decoration. Our equivalent: derive the destination from the command string itself (see [[command-boundary-hook-matching]]), never from what the agent claims in surrounding prose.
+
 ## See also
 
-- [[command-boundary-hook-matching]] — parsing the command string safely to extract the action identity
-- [[pre-merge-qa-gate]] — QA approval workflow that feeds into this gate
-- [[dry-run-gate-pattern]] — sibling pattern for destructive ops (preview before execute)
+- [[command-boundary-hook-matching]]: parsing the command string safely to extract the action identity
+- [[pre-merge-qa-gate]]: QA approval workflow that feeds into this gate
+- [[dry-run-gate-pattern]]: sibling pattern for destructive ops (preview before execute)
+- OpenBot gateway (https://github.com/CopilotKit/OpenBot): runtime CEL policy with deny-before-allow, audit-row-before-act, and refusals that name the rule

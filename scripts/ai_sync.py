@@ -598,6 +598,14 @@ def push(args) -> int:
     # docs/ is in BRAIN_PATHS (line ~68), so the regen output is always staged.
     script_step("scripts/capability_manifest.py", label="📖 Regenerating capability manifest")
 
+    # Heal release-drift before staging: releases are cut server-side on every
+    # merge to master, and branch protection keeps any bot from committing the
+    # matching CHANGELOG entry, so the entry rides THIS commit instead.
+    # Idempotent (no missing entries -> no-op). The changelog-only guard in
+    # brain-version-bump.py keeps the healing merge from cutting yet another
+    # tag, which is what makes the loop converge (issue #238).
+    script_step("scripts/changelog-sync.py", "--apply", label="📜 Healing CHANGELOG release-drift")
+
     for p in BRAIN_PATHS:
         if (CLAUDE / p).exists():
             git("add", p)

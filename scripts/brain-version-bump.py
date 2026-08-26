@@ -232,6 +232,19 @@ def main():
     tag = latest_tag(root)
     commits = commits_since(root, tag)
     bump, reason = classify(commits)
+
+    # Changelog-only guard: a merge that only records history (the healing PR
+    # that changelog-sync produces, or any hand edit to CHANGELOG.md) is
+    # record-keeping, not a release. Without this, every healing merge cuts a
+    # fresh tag and the drift the heal just closed reopens by one, so the
+    # chase never converges (measured on #237: merging the backfill minted
+    # v6.20.1 minutes later). See issue #238.
+    if bump != "none" and tag is not None:
+        _, changed, _ = git(root, "diff", "--name-only", f"{tag}..HEAD")
+        files = {f for f in changed.splitlines() if f.strip()}
+        if files and files <= {"CHANGELOG.md"}:
+            bump, reason = "none", "changelog-only commits since last tag"
+
     nxt = next_version(tag, bump)
 
     cur = tag or "(none)"
