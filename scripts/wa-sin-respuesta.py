@@ -376,28 +376,53 @@ def revisa(cfg, ahora=None, estados=None, cobertura=None):
     def anota(texto, falla=True):
         huecos.append({"texto": texto, "falla": falla, "sensor": "whatsapp"})
 
+    # UN VIGIA, VARIOS PUENTES (25-ago). El puente de `vigilancia` sigue siendo
+    # el default, pero un chat puede declarar el suyo: los del despacho viven en
+    # el puente de soporte y los del operador en el personal, y buscar un JID en
+    # la base equivocada devuelve "sin mensajes", que es indistinguible de "ya
+    # contestaron". Ese silencio falso es justo lo que este vigia existe para
+    # evitar, asi que la base se elige por chat, no por archivo.
     nombre_puente = vig.get("puente", "soporte")
-    puente = (cfg.get("puentes") or {}).get(nombre_puente)
-    if not puente or not puente.get("db"):
-        anota(f"sensor de WhatsApp: la config no describe el puente "
-              f"{nombre_puente!r}")
-        return []
-    db = Path(os.path.expanduser(puente["db"]))
-    if not db.exists():
-        anota(f"sensor de WhatsApp: no existe la base del puente {db}")
-        return []
+    conexiones = {}
+
+    def abrir(nombre):
+        """Conexion de solo lectura al puente `nombre`, o None si esta ciego.
+
+        Cachea por nombre, incluido el fallo: un puente roto anota su hueco una
+        sola vez aunque lo compartan cinco chats.
+        """
+        if nombre in conexiones:
+            return conexiones[nombre]
+        conexiones[nombre] = None
+        puente = (cfg.get("puentes") or {}).get(nombre)
+        if not puente or not puente.get("db"):
+            anota(f"sensor de WhatsApp: la config no describe el puente "
+                  f"{nombre!r}")
+            return None
+        db = Path(os.path.expanduser(puente["db"]))
+        if not db.exists():
+            anota(f"sensor de WhatsApp: no existe la base del puente {db}")
+            return None
+        try:
+            c = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+            c.execute("SELECT 1 FROM messages LIMIT 1")
+        except sqlite3.Error as e:
+            anota(f"sensor de WhatsApp: no pude leer la base del puente "
+                  f"{nombre!r} ({e})")
+            return None
+        conexiones[nombre] = c
+        return c
 
     umbral = timedelta(minutes=int(vig.get("umbral_minutos", 20)))
-    try:
-        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
-        con.execute("SELECT 1 FROM messages LIMIT 1")
-    except sqlite3.Error as e:
-        anota(f"sensor de WhatsApp: no pude leer la base del puente ({e})")
-        return []
     silencios = []
 
     for chat in vig["chats"]:
         jid, quien = chat["jid"], chat.get("quien", "chat")
+        # Ciego no es sano: si su puente no abre, el chat NO se anota como
+        # vigilado, para que el tablero lo pinte como hueco de cobertura.
+        con = abrir(chat.get("puente", nombre_puente))
+        if con is None:
+            continue
         cliente = chat.get("cliente") or quien
         canal = chat.get("canal") or "whatsapp"
 
@@ -458,7 +483,9 @@ def revisa(cfg, ahora=None, estados=None, cobertura=None):
         vistos.append(estado_vigilado(cliente, canal, jid, quien, minutos,
                                       desde, chat.get("prueba")))
 
-    con.close()
+    for c in conexiones.values():
+        if c is not None:
+            c.close()
     return silencios
 
 
@@ -1108,6 +1135,52 @@ def selftest():
             if (chat in r) != debia:
                 fallos.append(
                     f"chat {chat}: {'debia avisar y callo' if debia else 'no debia avisar y grito'}")
+
+        # ---- un chat puede vivir en OTRO puente -----------------------------
+        # El fallo que esto vigila es silencioso: con un solo puente global, un
+        # chat del puente personal se buscaba en la base de soporte, no aparecia
+        # ningun mensaje, y el vigia lo daba por contestado. Aqui el chat A vive
+        # en una base APARTE, y su alarma solo suena si el sensor abrio ESA base.
+        db2 = Path(tmp) / "otro-puente.db"
+        con2 = sqlite3.connect(db2)
+        con2.execute("CREATE TABLE messages (id TEXT, chat_jid TEXT, "
+                     "is_from_me INT, timestamp TEXT, content TEXT, "
+                     "media_type TEXT)")
+        con2.execute(
+            "INSERT INTO messages VALUES (?,?,?,?,?,?)",
+            ("z1", "SOLO-EN-OTRO", 0,
+             (ahora - timedelta(minutes=45)).isoformat(),
+             "sigo esperando el desglose", ""))
+        con2.commit(); con2.close()
+
+        # El JID vive UNICAMENTE en la segunda base. Si el sensor cae al puente
+        # global no encuentra nada y calla, que es exactamente el fallo vigilado.
+        cfg_dos = {"puentes": {"p": {"db": str(db)}, "otro": {"db": str(db2)}},
+                   "vigilancia": {"puente": "p", "umbral_minutos": 20,
+                                  "chats": [{"jid": "SOLO-EN-OTRO",
+                                             "quien": "A-lejos",
+                                             "cliente": "A", "canal": "whatsapp",
+                                             "puente": "otro"}]}}
+        casos += 1
+        est_dos, cob_dos = [], []
+        r_dos = revisa(cfg_dos, ahora, est_dos, cob_dos)
+        if not any(s["quien"] == "A-lejos" for s in r_dos):
+            fallos.append("puente por chat: no leyo la base declarada en el "
+                          "chat y el silencio paso por 'ya contestaron'")
+
+        # Y el fallo del puente NO se disfraza de salud: si la base no existe,
+        # el chat sale como hueco de cobertura, nunca como vigilado sano.
+        casos += 1
+        cfg_roto = {"puentes": {"p": {"db": str(db)}},
+                    "vigilancia": {"puente": "p", "umbral_minutos": 20,
+                                   "chats": [{"jid": "A", "quien": "A-ciego",
+                                              "cliente": "A", "canal": "whatsapp",
+                                              "puente": "no-declarado"}]}}
+        est_roto, cob_roto = [], []
+        revisa(cfg_roto, ahora, est_roto, cob_roto)
+        if not cob_roto or any(e.get("jid") == "A" for e in est_roto):
+            fallos.append("puente por chat: un puente inexistente se reporto "
+                          "como chat sano en vez de hueco de cobertura")
 
         # ---- el reloj arranca en el PRIMERO sin contestar -------------------
         # No basta con que G avise: tiene que avisar con la espera REAL. Si
