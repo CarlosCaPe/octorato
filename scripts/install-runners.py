@@ -8,7 +8,9 @@ bash and PowerShell forks drifted into different programs. This installer makes 
 per machine (first-time setup, or after pulling a runner change).
 
 Idempotent. Backs up any existing non-thunk runner to <name>.prebrain.bak before overwriting.
-Cross-platform: writes POSIX shell thunks on Linux/macOS, .cmd thunks on Windows.
+Cross-platform: writes POSIX shell thunks on Linux/macOS, and on Windows writes BOTH
+the .cmd thunk (PowerShell/cmd) and its extensionless bash twin (Git Bash), because
+a Windows box runs both shells and POSIX callers need a real shebang file.
 """
 from __future__ import annotations
 
@@ -97,6 +99,36 @@ def install_python3_shim(d: Path) -> None:
         print(f"  ✓ {target.name} (Windows python3→py -3 shim created)")
 
 
+def install_bash_twin(d: Path, name: str, verb: str) -> None:
+    """Windows-only: write the extensionless POSIX twin next to the .cmd thunk.
+
+    A Windows box runs two shells at once. PowerShell and cmd resolve `ai-sync`
+    to ai-sync.cmd, but Git Bash (and every brain script or skill that shells out
+    POSIX-style, e.g. `~/.local/bin/ai-sync`) needs a real extensionless file with
+    a shebang. Shipping only the .cmd left those callers hitting "No such file or
+    directory" on a machine where the runner WAS installed. Written as bytes so the
+    shebang keeps LF endings; a CRLF thunk dies with "bad interpreter".
+    Idempotent; backs up a standalone file before overwriting.
+    """
+    if os.name != "nt":
+        return
+    target = d / name
+    payload = posix_thunk(verb).encode("utf-8")
+    if target.exists():
+        existing = target.read_text(encoding="utf-8", errors="ignore")
+        if MARKER in existing or "octorato-thunk" in existing:
+            target.write_bytes(payload)
+            print(f"  ✓ {target.name} (bash twin refreshed)")
+            return
+        backup = target.with_suffix(target.suffix + ".prebrain.bak")
+        target.rename(backup)
+        target.write_bytes(payload)
+        print(f"  ✓ {target.name} (bash twin; was standalone, backed up to {backup.name})")
+        return
+    target.write_bytes(payload)
+    print(f"  ✓ {target.name} (bash twin created)")
+
+
 def install() -> int:
     if not AI_SYNC.exists():
         print(f"✗ {AI_SYNC} not found — pull the brain first", file=sys.stderr)
@@ -121,6 +153,8 @@ def install() -> int:
             print(f"  ✓ {target.name} (created)")
         if os.name != "nt":
             target.chmod(target.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        else:
+            install_bash_twin(d, name, verb)
     print(f"\nRunners now thunk into {AI_SYNC}")
     return 0
 
