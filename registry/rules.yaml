@@ -1635,3 +1635,33 @@ rules:
     locator: The 4D runs in a WHILE
     expect: present
   liveness_required: FIRES
+- id: GENERIC.commit-msg-english-only
+  title: commit messages in the public octorato repo must be English
+  category: GENERIC
+  source:
+    file: CLAUDE.md
+    anchor: English-only in the public repo
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - git-hook
+  mechanism:
+  - kind: Gate
+    canonical_name: .githooks/commit-msg
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: .githooks/commit-msg
+    expect: present
+  - method: EXIT_CODE
+    locator: grep -q OCTORATO-COMMIT-MSG-LANG-GATE .githooks/commit-msg
+    expect: 0
+  - method: EXIT_CODE
+    locator: scripts/commit_msg_language_gate.py --selftest registry/fixtures/GENERIC.commit-msg-english-only
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: English-only in the public repo
+    expect: present
+  liveness_required: PRESENT

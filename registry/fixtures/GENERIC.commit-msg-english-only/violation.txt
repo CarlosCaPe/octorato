@@ -1,0 +1,4 @@
+brain: indice residente mas chico, vigia de silencio, y tres gates nuevos
+
+El cambio corrige el aviso cuando un cliente queda sin respuesta: ahora el
+vigia manda con cada entrada, sin perder ninguna por el formato de la linea.

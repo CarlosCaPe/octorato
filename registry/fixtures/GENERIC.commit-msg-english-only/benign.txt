@@ -1,0 +1,7 @@
+feat(vigia): add whatsapp alert sink to the silence watcher
+
+Third alert channel alongside gmail and canario. The destination comes from the
+private config, never hardcoded, because the script is public. Selftest covers
+the payload, the message body, and the missing-destination case.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
