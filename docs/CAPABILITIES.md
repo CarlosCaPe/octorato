@@ -6,15 +6,15 @@
 
 | Metric | Count |
 |---|---|
-| Skills | 232 |
+| Skills | 233 |
 | Agents | 161 |
 | Divisions | 15 |
-| Scripts: wired | 97 |
+| Scripts: wired | 98 |
 | Scripts: orphan | 7 |
-| Rules | 65 |
-| Hook entries | 38 |
+| Rules | 66 |
+| Hook entries | 39 |
 
-## Skills (232)
+## Skills (233)
 
 | Name | Description |
 |---|---|
@@ -179,6 +179,7 @@
 | research-checklist-discipline | Research Checklist Discipline |
 | runtime-adaptation-over-source-edit | Decision rule for WHERE a new behavior or lesson belongs , the runtime layer (skill / memory / config / hook) vs the cor... |
 | sandbox-sdk | Build sandboxed applications for secure code execution. Load when building AI code execution, code interpreters, CI/CD s... |
+| save-transcript | Rescata el transcript COMPLETO de una grabacion de reunion (Microsoft Stream, SharePoint) a partir de su URL, y entrega ... |
 | schema-as-code-three-layer-sync | Mantiene sincronizadas las tres capas de un proyecto schema-as-code: diagrama ER, diccionario de datos y el SQL declarat... |
 | schema-row-counts | Get exact row counts per table in a given schema , PostgreSQL primary, with notes for other engines. Two-column result: ... |
 | schema-separation-orm-control | Schema Separation for ORM/Scaffolding Control |
@@ -489,7 +490,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (104)
+## Scripts (105)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -542,6 +543,7 @@
 | g__pretool-bash__git-discipline.py | g__pretool-bash__git-discipline.py: PreToolUse gate for the deterministic subset of GIT.version-cont... | wired |
 | g__pretool-bash__prod-write.py | PreToolUse Bash hook , compuerta de ESCRITURA EN PRODUCCION (FAIL-CLOSED). | wired |
 | g__pretool-mcp__chat-context.py | g__pretool-mcp__chat-context.py: PreToolUse gate for COMMS.chat-context-before-send. | wired |
+| g__stop__defer-today.py | g__stop__defer-today.py , Stop gate: no dejes para mañana lo que puedas hacer hoy. | wired |
 | g__stop__delegation-audit.py | g__stop__delegation-audit.py: Stop gate for FLOW.bulk-fetch-delegation. | wired |
 | g__stop__draft-promise.py | g__stop__draft-promise.py , Stop gate: no future-tense promises in paste-ready drafts. | wired |
 | g__stop__goal-anchor.py | g__stop__goal-anchor.py , Stop gate: la pila de objetivos no se erosiona. | wired |
@@ -598,7 +600,7 @@
 | wa-soporte.sh | Envia un WhatsApp por el canal de SOPORTE, no por el numero personal del operador. | orphan |
 | watchdog.py | watchdog.py , observability surface 4 anomaly detector. Reads the JSONL trace files written by trace... | wired |
 
-## Rules (65)
+## Rules (66)
 
 ### ARCHITECTURE
 
@@ -647,6 +649,7 @@
 - FLOW.calendar-facts-as-data
 - FLOW.canon-heal
 - FLOW.delegate-gate
+- FLOW.do-it-today
 - FLOW.enforcement-scripts
 - FLOW.figma-use-prerequisite
 - FLOW.graph-before-grep
@@ -702,5 +705,5 @@
 | PostToolUse | cadence-lint.py, canon-heal-hook.py, client-doc-lint-hook.py, d__posttool__delegation-ledger.py, impact-radius-hook.py, trace-hook.py |
 | PreToolUse | budget-check.py, config-ship-verify.py, delegate-gate.py, dimension-awareness-hook.py, g__pretool-bash__git-discipline.py, g__pretool-mcp__chat-context.py, grafo-gate.py, qa-merge-gate.py, r__pretool-write__base-freshness.py, secrets-grep-guard.py, trace-hook.py |
 | SessionStart | merge-hooks.py, session-isolation-hook.py |
-| Stop | cadence-stop-hook.py, claim-verify-stop.py, d__stop__wa-guardia.py, g__stop__delegation-audit.py, g__stop__draft-promise.py, g__stop__goal-anchor.py, g__stop__paste-ready-raw.py, grafo-ledger-check.py, no-pause-suggestion.py, source-attribution-check.py, trace-hook.py |
+| Stop | cadence-stop-hook.py, claim-verify-stop.py, d__stop__wa-guardia.py, g__stop__defer-today.py, g__stop__delegation-audit.py, g__stop__draft-promise.py, g__stop__goal-anchor.py, g__stop__paste-ready-raw.py, grafo-ledger-check.py, no-pause-suggestion.py, source-attribution-check.py, trace-hook.py |
 | UserPromptSubmit | 4d-reminder.py, arm-recall-hook.py, brain-memory-recall.py, connectome-heartbeat.py, eye-check.py, grafo-turn-reset.py, inbox-sweep-reflex.py, trace-hook.py |

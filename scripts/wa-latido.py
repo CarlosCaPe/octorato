@@ -18,6 +18,15 @@ servidor -> escritura a SQLite). NO ejercita el de ENTRADA, que es otro manejado
 del mismo binario. Un puente que envia pero tiene la recepcion atorada pasaria en
 verde. Es mucho mas que pgrep y menos que "la tuberia completa".
 
+DONDE VIVE EL PUENTE. Un puente puede correr en esta maquina o en un servidor.
+Si su config trae la clave `remoto`, TODAS las sondas (proceso, enlace,
+aterrizaje) y la cura van contra ese servidor por SSM, y levantar el binario
+local queda PROHIBIDO. El 18-ago-2026 esta distincion no existia: el puente de
+soporte ya vivia en la EC2, la sonda de aterrizaje leia la replica local (que se
+refresca cada 5 min, o sea que un sello de hace 40 segundos jamas podia
+aparecer), y la cura levantaba el binario de aqui. Resultado: FAIL garantizado
+cada 10 minutos y una segunda sesion de WhatsApp clonada en cada vuelta.
+
 CONFIGURACION. Los datos del canal (numeros, rutas) viven en
 company/config/wa-puentes.json, que esta gitignored. Este script es publico y no
 debe contener ningun identificador de cliente.
@@ -32,6 +41,7 @@ import fcntl
 import json
 import os
 import secrets
+import shlex
 import shutil
 import socket
 import sqlite3
@@ -48,6 +58,12 @@ LOCK = os.path.expanduser("~/.cache/wa-latido.lock")
 ESPERA_MAX_S = 40      # se sondea hasta aqui, no se duerme a ciegas
 SONDEO_S = 2
 HTTP_TIMEOUT = 10
+SSM_ESPERA_S = 60      # un comando de sonda no tarda mas que esto
+SSM_SONDEO_S = 2
+
+# Gancho de inyeccion para el selftest: una funcion (cfg, comando) -> str que
+# sustituye a AWS. En produccion vale None y manda el SSM de verdad.
+EJECUTOR_SSM = None
 
 
 class SondaRota(Exception):
@@ -57,6 +73,114 @@ class SondaRota(Exception):
 
 def log(m):
     print(f"[{datetime.now():%H:%M:%S}] {m}", flush=True)
+
+
+def ssm(cfg, comando):
+    """Corre un comando en la instancia remota y devuelve su salida estandar.
+
+    Cualquier fallo de AWS (credencial expirada, SSM sin responder, instancia
+    inalcanzable) es SondaRota y NO "el puente esta caido". La diferencia no es
+    cosmetica: confundirlas reinicia un puente sano cada 10 minutos porque la
+    laptop perdio la sesion de AWS.
+    """
+    if EJECUTOR_SSM is not None:
+        return EJECUTOR_SSM(cfg, comando)
+    r = cfg["remoto"]
+    base = ["aws", "ssm", "--profile", r["perfil"], "--region", r["region"]]
+    try:
+        env = subprocess.run(
+            base + ["send-command", "--instance-ids", r["instancia"],
+                    "--document-name", "AWS-RunShellScript",
+                    "--parameters", json.dumps({"commands": [comando]}),
+                    "--query", "Command.CommandId", "--output", "text"],
+            capture_output=True, text=True, timeout=SSM_ESPERA_S)
+    except (OSError, subprocess.SubprocessError) as e:
+        raise SondaRota(f"no pude invocar aws: {type(e).__name__}: {e}") from e
+    if env.returncode != 0:
+        raise SondaRota(f"send-command fallo: {env.stderr.strip()[:160]}")
+    cid = env.stdout.strip()
+
+    limite = time.time() + SSM_ESPERA_S
+    consulta = base + ["get-command-invocation", "--command-id", cid,
+                       "--instance-id", r["instancia"]]
+    while time.time() < limite:
+        q = subprocess.run(consulta + ["--query", "Status", "--output", "text"],
+                           capture_output=True, text=True)
+        estado = q.stdout.strip()
+        if estado in ("Success", "Failed", "Cancelled", "TimedOut"):
+            break
+        time.sleep(SSM_SONDEO_S)
+    else:
+        raise SondaRota(f"el comando remoto no termino en {SSM_ESPERA_S}s")
+    if estado != "Success":
+        err = subprocess.run(
+            consulta + ["--query", "StandardErrorContent", "--output", "text"],
+            capture_output=True, text=True).stdout.strip()[:160]
+        raise SondaRota(f"el comando remoto termino en {estado}: {err}")
+    out = subprocess.run(
+        consulta + ["--query", "StandardOutputContent", "--output", "text"],
+        capture_output=True, text=True)
+    return out.stdout
+
+
+def sqlite_remoto(cfg, ruta, consulta):
+    """Un COUNT(*) contra una base del servidor. Devuelve el entero."""
+    salida = ssm(cfg, f"sqlite3 -readonly {shlex.quote(ruta)} "
+                      f"{shlex.quote(consulta)}")
+    for linea in reversed(salida.strip().splitlines()):
+        linea = linea.strip()
+        if linea.isdigit():
+            return int(linea)
+    raise SondaRota(f"salida ilegible de sqlite3: {salida.strip()[:80]!r}")
+
+
+def reloj_del_store(cfg):
+    """El corte temporal tiene que venir del reloj de QUIEN ESCRIBE la base.
+
+    whatsmeow guarda la hora local del host del puente. Con el puente en la
+    laptop eso coincidia con datetime.now() y nadie lo noto en 4 meses. Con el
+    puente en un servidor en UTC ya no: el 18-ago-2026 el corte se calculo en
+    hora de Madrid (15:43:24) y el sello aterrizado un segundo despues quedo
+    guardado como 13:43:25 UTC, asi que la comparacion de texto lo descarto. El
+    latido reportaba FAIL con la tuberia perfecta, y ese falso rojo es lo que
+    dispara curas que nadie necesita.
+    """
+    if cfg.get("remoto"):
+        salida = ssm(cfg, "date +'%Y-%m-%d %H:%M:%S'")
+        for linea in reversed(salida.strip().splitlines()):
+            linea = linea.strip()
+            if len(linea) == 19 and linea[4] == "-" and linea[13] == ":":
+                return linea
+        raise SondaRota(f"no pude leer el reloj del servidor: "
+                        f"{salida.strip()[:80]!r}")
+    return datetime.now().replace(microsecond=0).isoformat(sep=" ")
+
+
+def es_fallo_de_tunel(cfg, detalle):
+    """Un puente remoto se alcanza por un tunel local. Si el 127.0.0.1 no
+    contesta, el roto es el TUNEL, no el puente: reiniciar el puente por esto
+    seria curar la maquina sana y dejar la enferma igual."""
+    if not cfg.get("remoto"):
+        return False
+    pistas = ("Connection refused", "ConnectionRefusedError", "URLError",
+              "timed out", "TimeoutError", "RemoteDisconnected")
+    return any(x in detalle for x in pistas)
+
+
+def cura_tunel(cfg):
+    """Reinicia la unidad local del tunel. Es local a proposito: el tunel SI
+    vive aqui, y esto no puede clonar ninguna sesion de WhatsApp."""
+    unidad = cfg["remoto"].get("tunel")
+    if not unidad:
+        log("el puente remoto no declara tunel en la config, no hay que curar")
+        return False
+    r = subprocess.run(["systemctl", "--user", "restart", unidad],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        log(f"no pude reiniciar {unidad} -> {r.stderr.strip()[:160]}")
+        return False
+    time.sleep(8)      # que el port-forward vuelva a escuchar
+    return True
 
 
 def carga():
@@ -78,6 +202,16 @@ def pids(cfg):
     puede terminar mandando SIGKILL al editor de alguien, y ademas un puente
     muerto se reporta sano. Aqui se exige que /proc/<pid>/exe apunte al binario.
     """
+    if cfg.get("remoto"):
+        # En un puente remoto no hay proceso local que contar, y contarlo seria
+        # justo el error: el unico proceso local posible es un clon.
+        salida = ssm(cfg, f"systemctl show {shlex.quote(cfg['remoto']['unidad'])} "
+                          "-p MainPID -p ActiveState")
+        d = dict(l.split("=", 1) for l in salida.strip().splitlines() if "=" in l)
+        pid = d.get("MainPID", "0").strip()
+        activo = d.get("ActiveState", "").strip() == "active"
+        return [pid] if activo and pid not in ("", "0") else []
+
     esperado = os.path.realpath(os.path.join(cfg["dir"], cfg["bin"]))
     # -f y no -x: Linux trunca /proc/<pid>/comm a 15 caracteres, asi que
     # `pgrep -x whatsapp-support-bridge` (23 chars) NO matchea JAMAS. El binario
@@ -110,6 +244,17 @@ def vinculado(cfg):
     Devuelve (estado, detalle). estado None = no se pudo comprobar, que NO es lo
     mismo que desvinculado; por eso no se colapsan en un bool.
     """
+    if cfg.get("remoto"):
+        # La sesion que importa es la del servidor. El whatsapp.db local es la
+        # sesion decomisionada del cutover: leerlo reporta enlazado un puente
+        # que aqui ya no existe.
+        try:
+            n = sqlite_remoto(cfg, cfg["remoto"]["sesion"],
+                              "SELECT COUNT(*) FROM whatsmeow_device")
+        except SondaRota as e:
+            return None, str(e)
+        return n > 0, f"{n} dispositivo(s) enlazado(s) en el servidor"
+
     ruta = os.path.join(os.path.dirname(cfg["db"]), "whatsapp.db")
     if not os.path.exists(ruta):
         return None, f"no existe {ruta}"
@@ -154,6 +299,16 @@ def aterrizo(cfg, sello, desde):
     corrida. Sin eso, cualquiera que mande un WhatsApp con ese texto marca la
     tuberia como sana.
     """
+    if cfg.get("remoto"):
+        # Contra el store DEL SERVIDOR, nunca contra el de aqui: el local es una
+        # replica de S3 que se refresca cada 5 min, asi que un sello de hace 40
+        # segundos no puede estar. Preguntarle a la replica es preguntarle al
+        # pasado y leer su "no" como un puente roto.
+        return sqlite_remoto(
+            cfg, cfg["remoto"]["db"],
+            "SELECT COUNT(*) FROM messages WHERE content='%s' "
+            "AND is_from_me=1 AND timestamp >= '%s'" % (sello, desde)) > 0
+
     if not os.path.exists(cfg["db"]):
         raise SondaRota(f"no existe {cfg['db']}")
     try:
@@ -171,6 +326,17 @@ def aterrizo(cfg, sello, desde):
 
 
 def reinicia(nombre, cfg):
+    """Cura el puente donde de verdad vive."""
+    if cfg.get("remoto"):
+        unidad = cfg["remoto"]["unidad"]
+        log(f"{nombre}: el puente vive en el servidor, reinicio {unidad} por SSM")
+        ssm(cfg, f"systemctl restart {shlex.quote(unidad)}")
+        time.sleep(20)      # autenticar + conectar
+        return pids(cfg)
+    return reinicia_local(nombre, cfg)
+
+
+def reinicia_local(nombre, cfg):
     """Arranca el puente FUERA del cgroup de este servicio.
 
     Con Popen normal el hijo nace dentro de wa-latido.service, que es
@@ -182,6 +348,16 @@ def reinicia(nombre, cfg):
 
     systemd-run le da su propia unidad transitoria y ahi sobrevive.
     """
+    # GUARDIA FAIL-CLOSED. Un puente declarado remoto no se levanta aqui jamas,
+    # ni aunque un cambio futuro llegue por otro camino. El 18-ago-2026 esta
+    # funcion arranco el binario local de un puente que ya corria en la EC2: se
+    # autentico con la misma sesion de WhatsApp en un segundo y el timer lo
+    # relanzo cada 10 minutos. Dos clientes en la misma cuenta es lo que
+    # desvincula el numero.
+    if cfg.get("remoto"):
+        raise SondaRota(
+            "puente declarado remoto: prohibido levantar el binario local")
+
     for p in pids(cfg):
         subprocess.run(["kill", p], capture_output=True)
     time.sleep(3)
@@ -230,7 +406,7 @@ def late(nombre, cfg, curar=True):
 
     for intento in (1, 2):
         sello = f"latido-{secrets.token_hex(8)}"   # impredecible: no falsificable
-        desde = datetime.now().replace(microsecond=0).isoformat(sep=" ")
+        desde = reloj_del_store(cfg)
         ok, det = manda(cfg, sello)
         if ok:
             # sondeo, no sleep ciego: un puente sano pero lento no debe fallar
@@ -242,14 +418,30 @@ def late(nombre, cfg, curar=True):
                     return True
                 time.sleep(SONDEO_S)
             log(f"{nombre}: el envio dijo OK pero NO aterrizo en {ESPERA_MAX_S}s")
+            tunel_roto = False
         else:
             log(f"{nombre}: no se pudo enviar -> {det}")
+            tunel_roto = es_fallo_de_tunel(cfg, det)
+            if tunel_roto:
+                # Se dice SIEMPRE, tambien en --sin-curar: un diagnostico que
+                # solo grita "caido" manda a revisar el servidor equivocado.
+                log(f"{nombre}: el puente vive en el servidor, asi que el "
+                    f"sospechoso es el tunel local, no el puente")
 
         if intento == 2 or not curar:
             return False
-        log(f"{nombre}: curando, relanzo el puente en su propia unidad")
+        if tunel_roto:
+            # El puente esta en el servidor y el que no contesta es el 127.0.0.1
+            # de esta maquina. Reiniciar el puente por esto es curar al sano.
+            log(f"{nombre}: el puerto local no contesta y el puente es remoto "
+                f"-> curo el TUNEL, no el puente")
+            cura_tunel(cfg)
+            continue
         vivos = reinicia(nombre, cfg)
-        log(f"{nombre}: {'levantado PID '+vivos[0] if vivos else 'NO levanto'}")
+        # Se dice DONDE. Un "levantado PID 509900" a secas es indistinguible de
+        # un puente local recien clonado, que es justo el fallo que se vigila.
+        donde = "en el servidor" if cfg.get("remoto") else "aqui"
+        log(f"{nombre}: {'levantado '+donde+', PID '+vivos[0] if vivos else 'NO levanto'}")
     return False
 
 
@@ -380,6 +572,94 @@ def selftest():
         n = len(pids({"dir": d, "bin": "whatsapp-fixture-bridge"}))
         t.kill(); t.wait()
         chk("un 'tail -f <binario>' NO se cuenta como puente vivo", n == 0)
+
+        # ---- puentes REMOTOS. El fallo del 18-ago-2026: el puente ya vivia en
+        # la EC2 y las sondas seguian midiendo esta maquina. Cada caso de aqui
+        # se pone rojo si alguien vuelve a apuntar una sonda al lado local.
+        global EJECUTOR_SSM
+        remoto = {"instancia": "i-fixture", "region": "r", "perfil": "p",
+                  "unidad": "puente-remoto.service",
+                  "db": "/opt/remoto/store/messages.db",
+                  "sesion": "/opt/remoto/store/whatsapp.db",
+                  "tunel": "tunel-fixture.service"}
+        rcfg = dict(cfg, remoto=remoto)
+        vistos = []
+
+        def falso_ssm(c, comando):
+            vistos.append(comando)
+            if "ActiveState" in comando:
+                return "MainPID=4242\nActiveState=active\n"
+            if "whatsmeow_device" in comando:
+                return "1\n"
+            if "FROM messages" in comando:
+                return "1\n"
+            if comando.startswith("date "):
+                # el servidor va en UTC: 2 horas atras de Madrid. Si alguien
+                # vuelve a calcular el corte con el reloj local, este valor deja
+                # de coincidir y el caso se pone rojo.
+                return "2026-08-18 13:43:24\n"
+            return ""
+
+        EJECUTOR_SSM = falso_ssm
+        try:
+            vistos.clear()
+            paso = aterrizo(rcfg, "latido-zz", "2026-01-01 00:00:00")
+            chk("remoto: el aterrizaje se consulta y da PASS", paso)
+            chk("remoto: consulta el store DEL SERVIDOR, no la replica local",
+                any(remoto["db"] in c for c in vistos)
+                and not any(cfg["db"] in c for c in vistos))
+
+            vistos.clear()
+            chk("remoto: pids() lee la unidad del servidor",
+                pids(rcfg) == ["4242"]
+                and any("puente-remoto.service" in c for c in vistos))
+
+            vistos.clear()
+            chk("remoto: el enlace se comprueba en la sesion del servidor",
+                vinculado(rcfg)[0] is True
+                and any(remoto["sesion"] in c for c in vistos))
+
+            vistos.clear()
+            reinicia("fx", rcfg)
+            chk("remoto: la cura reinicia la unidad REMOTA",
+                any(c.startswith("systemctl restart") for c in vistos))
+            chk("remoto: la cura NO menciona el binario local",
+                not any(cfg["dir"] in c for c in vistos))
+
+            vistos.clear()
+            chk("remoto: el corte temporal sale del reloj DEL SERVIDOR",
+                reloj_del_store(rcfg) == "2026-08-18 13:43:24"
+                and any(c.startswith("date ") for c in vistos))
+            chk("local: el corte temporal sigue saliendo del reloj de aqui",
+                reloj_del_store(cfg)[:2] == "20" and len(reloj_del_store(cfg)) == 19)
+
+            EJECUTOR_SSM = lambda c, x: (_ for _ in ()).throw(
+                SondaRota("AWS caido de prueba"))
+            try:
+                aterrizo(rcfg, "x", "2026-01-01 00:00:00")
+                chk("remoto: SSM caido es SondaRota, no un FAIL que cure", False)
+            except SondaRota:
+                chk("remoto: SSM caido es SondaRota, no un FAIL que cure", True)
+
+            # El guardia que impide reconstruir el clon por otro camino. Va
+            # DENTRO del bloque con SSM falso a proposito: con el ejecutor real
+            # este caso pasaba en verde aunque se borrara el guardia, porque
+            # pids() llamaba a un `aws` que no responde y ese SondaRota se leia
+            # como si fuera el del guardia. Un fixture que pasa por el motivo
+            # equivocado no vigila nada. Por eso ademas se exige el TEXTO.
+            try:
+                reinicia_local("fx", rcfg)
+                chk("remoto: levantar el binario local esta PROHIBIDO", False)
+            except SondaRota as e:
+                chk("remoto: levantar el binario local esta PROHIBIDO",
+                    "prohibido" in str(e))
+        finally:
+            EJECUTOR_SSM = None
+
+        chk("un 8081 que no contesta en puente remoto se lee como TUNEL roto",
+            es_fallo_de_tunel(rcfg, "URLError: Connection refused"))
+        chk("el mismo error en puente LOCAL no culpa a ningun tunel",
+            not es_fallo_de_tunel(cfg, "URLError: Connection refused"))
     finally:
         shutil.rmtree(d, ignore_errors=True)
 

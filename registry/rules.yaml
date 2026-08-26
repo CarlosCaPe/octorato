@@ -105,6 +105,31 @@ rules:
     locator: scripts/g__stop__draft-promise.py --selftest registry/fixtures/COMMS.deliverable-complete-before-send
     expect: 0
   liveness_required: FIRES
+- id: FLOW.do-it-today
+  title: No dejes para mañana lo que puedas hacer hoy — un pendiente reportado que yo
+    podía ejecutar es la forma sutil de aplazar
+  category: FLOW
+  source:
+    file: CLAUDE.md
+    anchor: Do-it-today
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Gate
+    canonical_name: g__stop__defer-today.py
+    firing_event: Stop
+    firing_matcher: '*'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: Stop|*|g__stop__defer-today.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/g__stop__defer-today.py --selftest registry/fixtures/FLOW.do-it-today
+    expect: 0
+  liveness_required: FIRES
 - id: COMMS.paste-ready-raw-message
   title: Paste-ready message ships raw, no markdown, and its block is the last thing
     in the reply

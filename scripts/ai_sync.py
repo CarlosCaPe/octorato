@@ -241,7 +241,7 @@ def sync(names=None) -> int:
 # ── pull ────────────────────────────────────────────────────────────────────
 
 def pull(args) -> int:
-    if not (CLAUDE / ".git").is_dir():
+    if not _is_repo():
         warn("⚠ ~/.claude is not a git repo — skipping pull")
     else:
         self_heal_origin()
@@ -437,25 +437,99 @@ def _cotenant_window() -> int:
         return 1800
 
 
-def _dimensions_seen(ttl: int) -> list:
-    """Sessions whose heartbeat falls within `ttl` seconds (future-skew guarded).
+TRONCOS = ("master", "main")
 
-    Reuses the registry + parse semantics of scripts/dimension-awareness-hook.py.
-    More than one means co-tenancy on this brain tree (one of them is us), so we
-    count rather than identify self, which a subprocess can't do reliably without
-    the session id. Returns [(session_id, branch, age_seconds), ...].
 
-    FAIL-OPEN: any read/parse error returns [] so a broken registry never bricks
-    ai-push (same discipline as the hook it mirrors).
+def tronco_remoto() -> str:
+    """El tronco que publica este repo: el primero de TRONCOS que exista en origin."""
+    for t in TRONCOS:
+        rc, _, _ = git("rev-parse", "--verify", "--quiet", f"origin/{t}", quiet=True)
+        if rc == 0:
+            return t
+    return TRONCOS[0]
+
+
+def es_tronco(rama: str) -> bool:
+    """¿Esta rama es la que se publica?
+
+    Existe porque tres decisiones distintas (etiquetar, publicar el wiki, elegir
+    flujo de PR) preguntaban lo mismo de tres formas, y la de etiquetar no lo
+    preguntaba: asumia que "no es flujo de PR" implicaba "estoy en master". Desde
+    que las sesiones corren en worktrees de dimension eso es falso, y el
+    18-ago-2026 dejo el tag v6.15.3 colgado de un commit de rama que el squash
+    convirtio en huerfano.
+    """
+    return rama in TRONCOS
+
+
+def _is_repo() -> bool:
+    """Hay repo aqui, sea checkout principal o worktree enlazado.
+
+    `(CLAUDE / ".git").is_dir()` decia que NO en un worktree, porque ahi `.git`
+    es un ARCHIVO que apunta al directorio comun. O sea que ai-sync se negaba a
+    correr justo en el aislamiento que el mismo recomienda: su mensaje de
+    co-tenencia manda a forkear un worktree y despues no funciona dentro de uno.
+    """
+    rc, _out, _e = git("rev-parse", "--is-inside-work-tree", quiet=True)
+    return rc == 0
+
+
+def _this_tree() -> str:
+    """El arbol de trabajo en el que ESTE proceso commitearia."""
+    rc, out, _e = git("rev-parse", "--show-toplevel", quiet=True)
+    return out.strip() if rc == 0 and out.strip() else str(CLAUDE)
+
+
+def _same_path(a, b) -> bool:
+    try:
+        return os.path.realpath(str(a)) == os.path.realpath(str(b))
+    except OSError:
+        return str(a) == str(b)
+
+
+def _entry_tree(entry: dict) -> str:
+    """Arbol que declara una entrada del registro.
+
+    Sin `worktree` se asume el checkout principal, que es donde vive una sesion
+    que nunca se forkeo. Conservador a proposito: una entrada vieja cuenta como
+    co-inquilina del arbol por omision en vez de desaparecer del guardia.
+    """
+    return str((entry or {}).get("worktree") or CLAUDE)
+
+
+def _cotenants_on_tree(ttl: int, tree: str) -> list:
+    """Sesiones vivas que trabajan en ESTE MISMO arbol, en ESTA MISMA maquina.
+
+    El peligro nunca fue "hay dos sesiones", fue "hay dos escritores en un
+    arbol": un `git add` amplio de una se traga el trabajo sin commitear de la
+    otra. Contar sesiones castigaba justo a quien ya se habia aislado, y el
+    mensaje le recomendaba forkear un worktree que ya tenia. Aqui se cuenta por
+    arbol, asi que dos dimensiones con su propio checkout pasan y dos sesiones
+    en el mismo checkout abortan.
+
+    Tambien se filtra por host. El registro viaja en el repo del cerebro, o sea
+    que trae sesiones de OTRAS maquinas; sus rutas se parecen a las de aqui y no
+    son el mismo disco. El comentario viejo afirmaba que eso "nunca dispara
+    entre maquinas" y el codigo no lo comprobaba.
+
+    FAIL-OPEN: cualquier error de lectura devuelve [] y el guardia no bloquea,
+    misma disciplina que el hook que refleja.
+    Devuelve [(session_id, branch, age_seconds), ...].
     """
     try:
         with SESSIONS_REGISTRY.open(encoding="utf-8") as fh:
             data = json.load(fh)
         sessions = data.get("sessions", {}) if isinstance(data, dict) else {}
         now = datetime.now(timezone.utc)
+        host = socket.gethostname()
         seen = []
         for sid, entry in sessions.items():
-            hb = (entry or {}).get("heartbeat", "")
+            entry = entry or {}
+            if (entry.get("host") or host) != host:
+                continue                      # otra maquina, otro disco
+            if not _same_path(_entry_tree(entry), tree):
+                continue                      # su propio checkout, no me estorba
+            hb = entry.get("heartbeat", "")
             if not hb:
                 continue
             try:
@@ -466,7 +540,7 @@ def _dimensions_seen(ttl: int) -> list:
                 hb_dt = hb_dt.replace(tzinfo=timezone.utc)
             delta = (now - hb_dt).total_seconds()
             if -_DIM_FUTURE_SKEW <= delta <= ttl:
-                seen.append((sid, (entry or {}).get("branch") or "no-branch", int(max(delta, 0))))
+                seen.append((sid, entry.get("branch") or "no-branch", int(max(delta, 0))))
         return seen
     except Exception:
         return []  # fail-open: unreadable registry → no guard, never brick ai-push
@@ -479,14 +553,16 @@ def push(args) -> int:
     # #7, skills/session-isolation). A conservative grace window keeps a recently idle
     # neighbor counted. Override only when you own the tree.
     window = _cotenant_window()
-    seen = _dimensions_seen(window)
+    tree = _this_tree()
+    seen = _cotenants_on_tree(window, tree)
     if len(seen) > 1 and os.environ.get("OCTO_ALLOW_SHARED") != "1":
-        err(f"⚠ ai-push aborted: {len(seen)} sessions recently active on this brain tree "
+        err(f"⚠ ai-push aborted: {len(seen)} sessions live in the SAME working tree "
             f"(co-tenancy window {window}s):")
+        err(f"     tree: {tree}")
         for sid, branch, age in seen:
             err(f"     {sid[:20]}… ({branch}, last seen {age}s ago)")
         err("   Two writers on one tree corrupt each other's commits.")
-        err("   Isolate first: python3 scripts/octo-dim.py worktree-init")
+        err("   Isolate first: python3 scripts/octo-dim.py worktree-init --session-id <id>")
         err("   Override (only if you own the whole tree): OCTO_ALLOW_SHARED=1 ai-push \"msg\"")
         return 1
 
@@ -587,13 +663,45 @@ def push(args) -> int:
             warn(f"⚠ Push failed: {e}")
             return 1
         info("✓ Pushed to remote")
-        # Move the semver label by change-class (advisory, never fatal).
-        # Direct-push path only: in the PR flow HEAD is the feature branch, so
-        # tagging here would label an un-merged commit. The bump size (patch/
-        # minor/major) is derived from the conventional-commit types since the
-        # last tag — see scripts/brain-version-bump.py.
-        script_step("scripts/brain-version-bump.py", "--apply", "--push",
-                    label="🏷  Moving semver label...")
+
+        # Desde una rama que NO es tronco, empujar y callarse dejaba el cambio
+        # publicado en su rama y NUNCA en master: el 18-ago-2026 eso obligo a
+        # abrir tres PR a mano. Si el tronco exige PR, se abre aqui. El merge no
+        # se automatiza desde un worktree de dimension porque el paso posterior
+        # (`checkout master`) es imposible cuando master esta tomado por otro
+        # checkout, y fingir que se pudo seria el fallo silencioso de siempre.
+        _, rama_push, _ = git("rev-parse", "--abbrev-ref", "HEAD")
+        if not es_tronco(rama_push):
+            destino = tronco_remoto()
+            if _is_pr_required(destino) and shutil.which("gh"):
+                existe = subprocess.run(
+                    ["gh", "pr", "list", "--head", rama_push, "--state", "open",
+                     "--json", "number", "--jq", "length"],
+                    cwd=CLAUDE, capture_output=True, text=True).stdout.strip()
+                if existe in ("", "0"):
+                    rc_pr = subprocess.run(
+                        ["gh", "pr", "create", "--base", destino, "--head", rama_push,
+                         "--title", msg, "--fill"],
+                        cwd=CLAUDE).returncode
+                    if rc_pr == 0:
+                        info(f"✓ PR abierto contra {destino}")
+                    else:
+                        warn(f"⚠ no se pudo abrir el PR; hazlo con: "
+                             f"gh pr create --base {destino} --head {rama_push}")
+                else:
+                    info(f"✓ el PR de {rama_push} ya estaba abierto")
+        # La etiqueta SOLO cuando HEAD es el tronco. Antes bastaba con "no es
+        # flujo de PR", y desde un worktree de dimension eso etiquetaba un
+        # commit de rama: al hacer squash el tag quedaba apuntando a un commit
+        # que ya no esta en la historia de master. El tamaño del salto sale de
+        # los tipos de commit desde el ultimo tag (scripts/brain-version-bump.py).
+        _, rama_actual, _ = git("rev-parse", "--abbrev-ref", "HEAD")
+        if es_tronco(rama_actual):
+            script_step("scripts/brain-version-bump.py", "--apply", "--push",
+                        label="🏷  Moving semver label...")
+        else:
+            info(f"🏷  {rama_actual} no es tronco: la etiqueta se mueve cuando "
+                 f"el cambio aterrice en master, no antes")
 
     # Publish docs/wiki to the GitHub wiki mirror (best-effort). The wiki is a
     # separate repo no gate protects; a wiki failure must NEVER fail ai-push,
@@ -601,7 +709,7 @@ def push(args) -> int:
     # a feature branch (or with a PR still open) would mirror unreviewed content
     # to the public wiki, skirting the review gate.
     _, wiki_branch, _ = git("rev-parse", "--abbrev-ref", "HEAD")
-    if wiki_branch in ("master", "main") and (CLAUDE / "scripts" / "publish-wiki.py").exists():
+    if es_tronco(wiki_branch) and (CLAUDE / "scripts" / "publish-wiki.py").exists():
         info("📖 Publishing docs/wiki to the GitHub wiki...")
         if subprocess.run([py(), str(CLAUDE / "scripts" / "publish-wiki.py"),
                            "--push"]).returncode != 0:
@@ -643,7 +751,7 @@ def cycle(args) -> int:
       push(args)                  commit dirty + publish (direct or PR flow), all guards
       still-unpushed?             a race or the pre-committed-skip case → re-integrate, retry
     """
-    if not (CLAUDE / ".git").is_dir():
+    if not _is_repo():
         err("✗ ~/.claude is not a git repo — cannot sync")
         return 1
 
@@ -654,14 +762,16 @@ def cycle(args) -> int:
     # THIS machine shares. Different machines have different trees, so this never
     # fires across separate machines — only across two live sessions on one of them.
     window = _cotenant_window()
-    seen = _dimensions_seen(window)
+    tree = _this_tree()
+    seen = _cotenants_on_tree(window, tree)
     if len(seen) > 1 and os.environ.get("OCTO_ALLOW_SHARED") != "1":
-        err(f"⚠ ai-sync aborted: {len(seen)} sessions recently active on this brain tree "
+        err(f"⚠ ai-sync aborted: {len(seen)} sessions live in the SAME working tree "
             f"(co-tenancy window {window}s):")
+        err(f"     tree: {tree}")
         for sid, branch, age in seen:
             err(f"     {sid[:20]}… ({branch}, last seen {age}s ago)")
         err("   Two writers on one tree corrupt each other's commits.")
-        err("   Isolate first: python3 scripts/octo-dim.py worktree-init")
+        err("   Isolate first: python3 scripts/octo-dim.py worktree-init --session-id <id>")
         err("   Override (only if you own the whole tree): OCTO_ALLOW_SHARED=1 ai-sync")
         return 1
 
@@ -743,6 +853,92 @@ def cycle(args) -> int:
     return 0
 
 
+def selftest() -> int:
+    """Fixtures del guardia de co-tenencia.
+
+    Vive aqui y no en un archivo suelto porque una prueba que solo existe en el
+    directorio temporal de una sesion muere con la sesion. Cada caso aisla UNA
+    variable, y la mutacion correspondiente lo pone rojo: quitar el filtro de
+    arbol tumba el caso de "dos sesiones aisladas", quitar el de host tumba el
+    de la otra maquina, y evaporar la entrada sin worktree tumba el legado.
+    """
+    import tempfile
+    from datetime import timedelta
+
+    host = socket.gethostname()
+    ahora = datetime.now(timezone.utc)
+    original = SESSIONS_REGISTRY
+    casos = fallas = 0
+
+    def chk(nombre, ok):
+        nonlocal casos, fallas
+        casos += 1
+        fallas += 0 if ok else 1
+        print(f"  {nombre:<62} {'PASS' if ok else 'FAIL'}")
+
+    def registro(entradas):
+        global SESSIONS_REGISTRY
+        fh = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+        json.dump({"sessions": entradas}, fh)
+        fh.close()
+        SESSIONS_REGISTRY = Path(fh.name)
+
+    def hb(seg):
+        return (ahora - timedelta(seconds=seg)).isoformat()
+
+    A, B = "/tmp/octorato-arbol-a", "/tmp/octorato-arbol-b"
+    try:
+        registro({"s1": {"branch": "dim/a", "worktree": A, "host": host, "heartbeat": hb(10)},
+                  "s2": {"branch": "dim/a2", "worktree": A, "host": host, "heartbeat": hb(20)}})
+        chk("dos sesiones en el MISMO arbol -> co-tenencia",
+            len(_cotenants_on_tree(1800, A)) == 2)
+
+        registro({"s1": {"branch": "dim/a", "worktree": A, "host": host, "heartbeat": hb(10)},
+                  "s2": {"branch": "dim/b", "worktree": B, "host": host, "heartbeat": hb(20)}})
+        chk("dos sesiones AISLADAS -> solo yo, no bloquea",
+            len(_cotenants_on_tree(1800, A)) == 1)
+
+        registro({"s1": {"branch": "dim/a", "worktree": A, "host": host, "heartbeat": hb(10)},
+                  "s2": {"branch": "dim/a2", "worktree": A, "host": "otra-maquina",
+                         "heartbeat": hb(20)}})
+        chk("mismo path pero OTRO host -> otro disco, no bloquea",
+            len(_cotenants_on_tree(1800, A)) == 1)
+
+        registro({"s1": {"branch": "dim/a", "worktree": str(CLAUDE), "host": host,
+                         "heartbeat": hb(10)},
+                  "s2": {"branch": "no-branch", "host": host, "heartbeat": hb(20)}})
+        chk("entrada vieja SIN worktree cuenta como el checkout principal",
+            len(_cotenants_on_tree(1800, str(CLAUDE))) == 2)
+
+        registro({"s1": {"branch": "dim/a", "worktree": A, "host": host, "heartbeat": hb(10)},
+                  "s2": {"branch": "dim/a2", "worktree": A, "host": host, "heartbeat": hb(9999)}})
+        chk("vecino fuera de la ventana no cuenta",
+            len(_cotenants_on_tree(1800, A)) == 1)
+
+        registro({"s1": {"branch": "x", "worktree": A, "host": host, "heartbeat": "no-es-fecha"}})
+        chk("heartbeat ilegible no revienta el guardia",
+            _cotenants_on_tree(1800, A) == [])
+
+        globals()["SESSIONS_REGISTRY"] = Path("/no/existe/registro.json")
+        chk("registro ausente es fail-open, devuelve vacio",
+            _cotenants_on_tree(1800, A) == [])
+
+        # ---- que rama puede llevar la etiqueta. El 18-ago-2026 un tag salio
+        # sobre un commit de rama porque "no es flujo de PR" se leia como
+        # "estoy en master"; desde un worktree de dimension eso es falso.
+        chk("master es tronco", es_tronco("master"))
+        chk("main es tronco", es_tronco("main"))
+        chk("una rama de dimension NO es tronco", not es_tronco("dim/3fdefe390adb"))
+        chk("una rama auto/ NO es tronco", not es_tronco("auto/fix-algo"))
+        chk("un nombre que CONTIENE master no basta",
+            not es_tronco("feature/master-cleanup"))
+    finally:
+        globals()["SESSIONS_REGISTRY"] = original
+
+    print(f"\n  {casos - fallas}/{casos}")
+    return 1 if fallas else 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="octorato brain sync (cross-platform)")
     sub = ap.add_subparsers(dest="verb", required=True)
@@ -761,6 +957,7 @@ def main() -> int:
     p_cycle.add_argument("message", nargs="*")
 
     sub.add_parser("status")
+    sub.add_parser("selftest")
 
     args = ap.parse_args()
     if args.verb == "pull":
@@ -771,6 +968,8 @@ def main() -> int:
         return sync(args.arms or None)
     if args.verb == "cycle":
         return cycle(args)
+    if args.verb == "selftest":
+        return selftest()
     if args.verb == "status":
         ns = argparse.Namespace(arms=[], status=True)
         return pull(ns)

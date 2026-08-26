@@ -1,0 +1,6 @@
+{
+  "session_id": "sess-tooloutput",
+  "transcript_path": "benign_tool_output_transcript.jsonl",
+  "stop_hook_active": false,
+  "cwd": "/tmp"
+}
