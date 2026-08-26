@@ -215,6 +215,42 @@ def es_acuse(texto, media):
     return limpio in ACUSES
 
 
+# El gemelo de FRASES_AUTO (correo) para WhatsApp. Un mensaje de ausencia de
+# WhatsApp Business lo escribe una maquina y nadie espera respuesta a el, pero
+# NO lo caza `es_acuse`: ese filtro exige menos de 25 caracteres y un away
+# message ronda los cien. Se encontro en produccion: el ancla de un grupo quedo
+# clavada en un "no podemos responder" de la vispera, asi que la alerta reporto
+# 1114 minutos de espera cuando la pregunta viva tenia 13.
+#
+# La lista es corta y conservadora a proposito. Un falso positivo aqui CALLA a
+# un cliente real, que es el error caro; un falso negativo solo avisa de mas.
+# Por eso solo entran frases que declaran indisponibilidad, nunca cortesias
+# sueltas: "gracias por tu mensaje" puede encabezar una pregunta de verdad.
+FRASES_AUTO_WA = (
+    "no podemos responder", "no puedo responder en este momento",
+    "mensaje automatico", "mensaje automático",
+    "respuesta automatica", "respuesta automática",
+    "fuera de nuestro horario", "fuera de horario de atencion",
+    "fuera de horario de atención", "estamos fuera de la oficina",
+)
+
+
+def es_auto_wa(texto):
+    """True si el mensaje es un aviso de ausencia de WhatsApp Business."""
+    t = (texto or "").lower()
+    return any(f in t for f in FRASES_AUTO_WA)
+
+
+def no_espera(texto, media):
+    """True si ese mensaje no deja a nadie esperando respuesta.
+
+    Une los dos motivos por los que un entrante no arranca reloj: cierra la
+    conversacion (`es_acuse`) o lo escribio una maquina (`es_auto_wa`). Va en
+    una sola puerta para que el ancla y el ultimo entrante no puedan divergir.
+    """
+    return es_acuse(texto, media) or es_auto_wa(texto)
+
+
 def es_prueba():
     """True cuando la corrida NO es operacion real.
 
@@ -306,6 +342,13 @@ def espera_abierta(con, jid):
         if t_sal and parse_ts(f[1]) <= t_sal:
             break                    # aqui ya contestamos: lo de atras no espera
         pendientes.append(f)
+    # Se podan los mas viejos que no dejan a nadie esperando. En esta lista los
+    # mas viejos van al FINAL, porque viene ordenada de nuevo a viejo. Sin esta
+    # poda el reloj arrancaba en un aviso de ausencia o en un "gracias" que
+    # nadie contesto, y la antiguedad reportada era la de ese mensaje muerto en
+    # vez de la de la pregunta viva.
+    while pendientes and no_espera(pendientes[-1][3], pendientes[-1][2]):
+        pendientes.pop()
     if not pendientes:
         return None, 0
     return pendientes[-1], len(pendientes)
@@ -758,6 +801,29 @@ def marca_pulso(ahora=None):
     estado["pulso"] = (ahora or datetime.now(timezone.utc)).isoformat(
         timespec="seconds")
     guarda_estado(estado)
+
+
+# Peldaños de insistencia, en minutos de espera. El anti-repeticion va por
+# clave, y la clave lleva el peldaño pegado: al cruzar uno cambia la clave y el
+# mismo silencio vuelve a ser NUEVO. Sin esto un pendiente avisado una vez se
+# callaba para siempre mientras el cliente no volviera a escribir, y una espera
+# de 7 dias pesaba igual que una de 20 minutos, o sea cero.
+ESCALONES_MIN = (60, 240, 1440)   # 1 h, 4 h, 1 dia
+DIA_MIN = 1440
+
+
+def escalon(minutos):
+    """Peldaño de insistencia de una espera de `minutos`. 0 = recien vencida.
+
+    Sube en 1 h, 4 h y 24 h, y de ahi en adelante uno por dia. Los primeros
+    peldaños van juntos porque es cuando todavia se puede salvar la respuesta;
+    despues del primer dia insistir cada hora solo entrena a ignorar el aviso.
+    """
+    m = max(0, int(minutos or 0))
+    n = sum(1 for e in ESCALONES_MIN if m >= e)
+    if m >= DIA_MIN:
+        n += (m - DIA_MIN) // DIA_MIN
+    return n
 
 
 def sin_avisar(ids):
@@ -1718,6 +1784,42 @@ def selftest():
     finally:
         urllib.request.urlopen = real_urlopen
 
+    # ---- el ancla no arranca en un mensaje que no espera ---------------------
+    # El caso real: un away message de WhatsApp Business quedo de ancla y la
+    # alerta reporto la edad de ESE mensaje en vez de la de la pregunta viva.
+    casos += 1
+    auto = "Gracias por tu mensaje. En este momento no podemos responder, " \
+           "pero lo haremos lo antes posible."
+    if not no_espera(auto, None):
+        fallos.append("un aviso de ausencia no deberia arrancar el reloj")
+    casos += 1
+    # la direccion cara del error: un cliente real NO se puede callar
+    for vivo in ("igual mis compañeras les falla los comandos",
+                 "gracias, pero me sigue fallando",
+                 "segun entendi estamos en Pausa, me confirmas?"):
+        if no_espera(vivo, None):
+            fallos.append(f"se callo un mensaje vivo: {vivo!r}")
+    casos += 1
+    if not no_espera("gracias", None) or no_espera("hola", None):
+        fallos.append("no_espera perdio el comportamiento de es_acuse")
+
+    # ---- peldaños: un silencio viejo tiene que volver a gritar ---------------
+    casos += 1
+    if escalon(21) != 0 or escalon(59) != 0:
+        fallos.append("recien vencido el umbral deberia ser peldaño 0")
+    casos += 1
+    if escalon(60) != 1 or escalon(240) != 2 or escalon(1440) != 3:
+        fallos.append(f"los peldaños de 1h/4h/1d no dan 1/2/3: "
+                      f"{escalon(60)}/{escalon(240)}/{escalon(1440)}")
+    casos += 1
+    if escalon(2880) != 4 or escalon(10076) != 8:
+        fallos.append(f"pasado el primer dia deberia subir uno por dia: "
+                      f"{escalon(2880)}/{escalon(10076)}")
+    casos += 1
+    # el bug que esto mata: misma clave para siempre = un solo grito
+    if escalon(30) == escalon(10076):
+        fallos.append("20 min y 7 dias no pueden compartir peldaño")
+
     # ---- estado: solo se marca lo que YA se aviso ---------------------------
     guardado = ESTADO
     try:
@@ -1855,14 +1957,18 @@ def main():
     # Un sensor caido entra a la misma cola que un silencio, con su propio id.
     # Asi la degradacion sale por el mismo canal, con la misma anti-repeticion,
     # y NO depende de que ademas haya un silencio de WhatsApp para enterarse.
-    ids = [s["id"] for s in silencios]
+    # La clave del anti-repeticion lleva el peldaño pegado al id. Ver `escalon`:
+    # con el id pelado, un silencio ya avisado no volvia a gritar nunca.
+    for s in silencios:
+        s["clave"] = f"{s['id']}#e{escalon(s['minutos'])}"
+    ids = [s["clave"] for s in silencios]
     id_falla = id_degradacion(cobertura)
     if id_falla:
         ids.append(id_falla)
     nuevos = sin_avisar(ids)
 
     for s in silencios:
-        marca = "AVISO" if s["id"] in nuevos else "(ya avisado)"
+        marca = "AVISO" if s["clave"] in nuevos else "(ya avisado)"
         print(f"{marca}  {s['quien']}: lleva {s['minutos']} min sin respuesta "
               f"desde {s['desde']}  ->  {s['texto']}")
 
@@ -1882,7 +1988,7 @@ def main():
         marca_avisados(nuevos)
         sys.exit(1)
 
-    frescos = [s for s in silencios if s["id"] in nuevos]
+    frescos = [s for s in silencios if s["clave"] in nuevos]
 
     if canal == "whatsapp":
         try:
