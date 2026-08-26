@@ -15,7 +15,10 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
-Nothing yet: the next release harvests this section.
+## [2026-08-21]: v6.20.1
+
+### Fixes
+- fix(changelog): backfill releases v6.14.0 through v6.20.0 (#237)
 
 ## [2026-08-21]: v6.20.0
 
