@@ -251,3 +251,10 @@ registry/fixtures/**/home/.wa-fixture/*.db
 # Wrapper del native host de Chrome: lo genera Claude Code con la ruta absoluta
 # de ESTA maquina y la version del binario clavada. Estado local, no framework.
 /chrome/
+
+# Runtime state written by the harness on THIS machine: the daemon auth
+# cooldown stamp, its status file, and the local remote-control settings.
+# Same class as /chrome/ above, local state and not framework.
+/daemon-auth-cooldown
+/daemon-auth-status.json
+/remote-settings.json
