@@ -15,6 +15,54 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-09-01]: v6.21.3
+### Fixes
+- fix(fixtures): stop tracking derived wa-guardia selftest DBs (#245)
+
+## [2026-09-01]: v6.21.2
+### Fixes
+- fix(gate): make the merge gate agent-proof (close self-approval hole) (#244)
+
+## [2026-08-26]: v6.21.1
+### Other
+- brain-sync: per-chat bridge declaration + memory body-scoring recall (#243)
+
+## [2026-08-26]: v6.21.0
+### Features
+- feat(gate): commit-msg English-only gate for the public octorato repo (#220)
+
+## [2026-08-26]: v6.20.6
+### Fixes
+- fix(runners): install the extensionless bash twin on Windows (#240)
+
+## [2026-08-26]: v6.20.5
+### Fixes
+- fix(release): changelog-only merges cut no tag; ai-sync heals drift (#239)
+
+## [2026-08-26]: v6.20.4
+Nothing yet: the next release harvests this section.
+
+---
+
+### Other
+- chore(brain): ignorar el wrapper local del native host de Chrome (#222)
+
+## [2026-08-25]: v6.20.3
+Nothing yet: the next release harvests this section.
+
+---
+
+### Other
+- chore(brain): daily reflection (#242)
+
+## [2026-08-24]: v6.20.2
+Nothing yet: the next release harvests this section.
+
+---
+
+### Other
+- reflexión 24-ago: ausencia probada por label, no por forma (#241)
+
 ## [2026-08-21]: v6.20.1
 
 ### Fixes
