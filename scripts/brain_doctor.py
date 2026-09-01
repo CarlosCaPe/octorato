@@ -964,11 +964,12 @@ def check_corpus_coverage(fix: bool) -> Result:
     # context each session and what the recall hook scores, so an unindexed file
     # never fires and stays uncovered. The memory layer is private and gitignored,
     # so absence on this machine is a soft skip.
-    index_re = re.compile(r"^- \[(?P<title>[^\]]+)\]\((?P<file>[^)]+)\)\s*[:\-]\s*(?P<hook>.*)$")
     # Una linea del indice compacta VARIAS entradas separadas por " · "; hay que
     # leerlas todas o toda entrada en segunda posicion cuenta como no-indexada
     # (mismo parser que brain-memory-recall.py, que es quien inyecta el recall).
-    entry_re = re.compile(r"\[(?P<title>[^\]]+)\]\((?P<file>[^)]+)\)\s*[:\-]")
+    # El gancho ': hook' es OPCIONAL: el indice compactado escribe entradas sin
+    # gancho, y exigirlo dejaba 120/122 ficheros como no-indexados (FAIL falso).
+    entry_re = re.compile(r"\[(?P<title>[^\]]+)\]\((?P<file>[^)]+)\)")
     home_slug = "-" + str(Path.home()).strip("/").replace("/", "-")
     brain_mem_dir = CLAUDE_DIR / "projects" / home_slug / "memory"
     class_row = next((r for r in rules if r.get("id") == "MEMORY.feedback-directive-corpus"), None)
@@ -1003,7 +1004,7 @@ def check_corpus_coverage(fix: bool) -> Result:
             if mm.exists():
                 for ln in _rt(mm).splitlines():
                     ln = ln.strip()
-                    if not index_re.match(ln):
+                    if not ln.startswith("- ["):
                         continue
                     for m in entry_re.finditer(ln):
                         idx.add(os.path.basename(m.group("file")))
