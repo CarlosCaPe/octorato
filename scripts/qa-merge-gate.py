@@ -11,9 +11,11 @@ before pattern matching, so a publish pattern that appears only inside a quoted
 argument (``git commit -m "gh pr merge 96"``) does NOT trigger the gate.
 Shell indirection (``bash -c "..."``, ``$(...)``) remains accepted residual risk.
 
-When a Bash command is detected as a merge action (gh pr merge or git push
-directly to main/master), this hook BLOCKS execution
-unless an operator approval is present via one of two AGENT-PROOF env channels:
+When a Bash command is detected as a merge action (gh pr merge, git push
+directly to main/master, or a gh api / curl PR-merge call: REST
+`/pulls/<N>/merge` or a GraphQL mergePullRequest mutation), this hook BLOCKS
+execution unless an operator approval is present via one of two AGENT-PROOF env
+channels:
 
   1. OCTO_MERGE_APPROVE=<pr_number>  — env var, PR-scoped, AGENT-PROOF (preferred).
      A PreToolUse hook runs in the HARNESS process and does NOT inherit env vars
@@ -85,6 +87,20 @@ _PAT_GIT_PUSH = re.compile(
 # Extracts the PR number from `gh pr merge <N> [flags]`
 # (?=\s|$) anchors the digit capture to a whole token.
 _PR_NUM_RE = re.compile(r"^\s*gh\s+pr\s+merge\s+(\d+)(?=\s|$)")
+
+# API-form merge — the command-shape bypass of `gh pr merge`. Intent over
+# mechanism (agent-proof-approval-gate skill, OpenBot lesson #2): a REST
+# `PUT /repos/<owner>/<repo>/pulls/<N>/merge` or a GraphQL `mergePullRequest`
+# mutation has the same effect as `gh pr merge`, so it gets the same gate.
+# Covers `gh api` and `curl`; the merge intent is the endpoint path or the
+# mutation name, which the agent cannot rename away.
+_PAT_API_TOOL = re.compile(r"^\s*(?:gh\s+api|curl)\b")
+_API_MERGE_INTENT = re.compile(r"/pulls/\d+/merge\b|mergePullRequest\b")
+# owner/repo out of the REST path, to protect-check the TARGET repo (not cwd:
+# the agent can fire an API call from anywhere). No path repo (e.g. GraphQL) →
+# unresolvable → gate, fail-closed.
+_API_REPO_RE = re.compile(r"repos/([\w.-]+/[\w.-]+?)/pulls/\d+/merge\b")
+_API_PR_NUM_RE = re.compile(r"/pulls/(\d+)/merge\b")
 
 # Set True by main() the moment a publish/merge sub-command is positively
 # identified. The __main__ crash handler keys fail-open vs fail-closed off it.
@@ -191,6 +207,21 @@ def _is_protected_target(cmd: str, matched_sub: str, session_cwd: str):
     """True = protected, False = positively NOT protected, None = unresolvable
     (treated as protected: the gate stays fail-closed when unsure)."""
     sub = _strip_leading(matched_sub)
+
+    # gh api / curl PR-merge: the target repo is in the REST path, NOT the cwd
+    # (the agent can fire the API call from anywhere, so cwd-based resolution
+    # would under-gate). Resolve owner/repo from the path and compare against
+    # the protected slugs. GraphQL / any form with no path repo is unresolvable
+    # → None (gate, fail-closed).
+    if _PAT_API_TOOL.match(sub) and _API_MERGE_INTENT.search(sub):
+        m = _API_REPO_RE.search(sub)
+        if not m:
+            return None
+        slug = _canon_slug(m.group(1))
+        known = {s for s in (_remote_slug(r) for r in _protected_roots()) if s}
+        if not known or slug is None:
+            return None
+        return slug in known
 
     # gh pr merge with an explicit -R/--repo slug: compare against the slugs
     # of the protected roots. No parsable slugs → None (gate).
@@ -348,6 +379,8 @@ def _find_publish_subcmd(cmd: str) -> str | None:
             return raw_sub
         if _PAT_GIT_PUSH.match(sub):
             return raw_sub
+        if _PAT_API_TOOL.match(sub) and _API_MERGE_INTENT.search(sub):
+            return raw_sub
     return None
 
 
@@ -365,6 +398,9 @@ def _extract_pr_id(matched_sub: str) -> str:
     push_m = _PAT_GIT_PUSH.match(sub)
     if push_m:
         return push_m.group(1)
+    api_m = _API_PR_NUM_RE.search(sub)
+    if api_m:
+        return api_m.group(1)
     return "unknown"
 
 
