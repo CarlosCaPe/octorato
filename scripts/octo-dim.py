@@ -445,15 +445,40 @@ def cmd_unregister(args) -> int:
 
 
 def cmd_approve_merge(args) -> int:
-    """Upsert a PR/branch approval into merge-approvals.json."""
+    """Upsert a PR/branch approval into merge-approvals.json.
+
+    The file channel gets its teeth here: if an agent shell is detected we
+    REFUSE, exactly like approve-prod. A merge approval is granted by the
+    OPERATOR in their own terminal, never by the agent that wants to merge.
+    The env channel (OCTO_MERGE_APPROVE) stays the real boundary because an
+    inline env never reaches the gate hook; this refusal closes the file
+    channel so the agent cannot self-approve by writing merge-approvals.json.
+    """
+    marker = _looks_like_agent_shell()
+    if marker and not getattr(args, "i_am_the_operator", False):
+        print(
+            f"✗ approve-merge REFUSED: agent shell detected ({marker}).\n"
+            "  A merge approval is granted by the OPERATOR in their own\n"
+            "  terminal, never by the agent that wants to merge. Run in your\n"
+            "  shell:\n"
+            f"    export OCTO_MERGE_APPROVE={args.pr_or_branch}\n"
+            "  (env channel, agent-proof) or re-run this command outside\n"
+            "  Claude Code.",
+            file=sys.stderr,
+        )
+        return 2
     pr_id = str(args.pr_or_branch)
     by = args.by or os.environ.get("USER", "operator")
     ttl = int(args.ttl)
     record = {"by": by, "ts": _now_iso(), "ttl": ttl}
     _save_approvals({pr_id: record})
     print(
-        f"approved: PR/branch '{pr_id}' by '{by}' "
-        f"(ttl={ttl}s, expires in {ttl // 60}m{ttl % 60}s)"
+        f"recorded (audit log): PR/branch '{pr_id}' by '{by}' "
+        f"(ttl={ttl}s, expires in {ttl // 60}m{ttl % 60}s)\n"
+        f"NOTE: qa-merge-gate no longer treats this file as a gate pass (an agent\n"
+        f"can forge it). To authorize the merge, export the agent-proof env in the\n"
+        f"terminal that launched Claude Code:\n"
+        f"    export OCTO_MERGE_APPROVE={pr_id}"
     )
     return 0
 
@@ -715,10 +740,13 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Repo to isolate (default: the brain ~/.claude). Pass an "
                          "arm path to fork a dim/<id> worktree for arm work.")
 
-    am = sub.add_parser("approve-merge", help="Grant operator approval for a PR/branch merge")
+    am = sub.add_parser("approve-merge", help="Write a merge audit-log entry (NOT a gate pass; authorize via OCTO_MERGE_APPROVE env)")
     am.add_argument("pr_or_branch", help="PR number or branch name (e.g. 96 or main)")
     am.add_argument("--by", default="", help="Approver name (default: $USER or 'operator')")
     am.add_argument("--ttl", type=int, default=900, help="Approval TTL in seconds (default 900)")
+    am.add_argument("--i-am-the-operator", action="store_true", dest="i_am_the_operator",
+                    help="Explicit escape when the operator runs this INSIDE a shell "
+                         "marked as an agent's. Leaves a trace in history.")
 
     apv = sub.add_parser("approvals", help="List current merge approvals")
     apv.add_argument("--all", action="store_true", help="Show stale approvals too")

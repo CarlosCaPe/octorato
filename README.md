@@ -536,7 +536,7 @@ These are `hooks.json` entries that the harness evaluates on every matching tool
 | Hook | Event | Coupling | What it enforces |
 |------|-------|----------|-----------------|
 | `delegate-gate` (`scripts/delegate-gate.py`) | PreToolUse | **Fail-open** | Nudges substantive/batchable work toward the cheapest sufficient model tier (Haiku/Sonnet/Opus); never blocks a turn on failure |
-| `qa-merge-gate` (`scripts/qa-merge-gate.py`) | PreToolUse | **Fail-closed** | Blocks publish-to-main unless an operator approval the agent provably cannot self-grant is present (`OCTO_MERGE_APPROVE=<pr>` env or `octo-dim approve-merge <pr>`); detection is command-boundary-anchored so it gates real invocations, not quoted mentions |
+| `qa-merge-gate` (`scripts/qa-merge-gate.py`) | PreToolUse | **Fail-closed** | Blocks publish-to-main unless the operator approval the agent provably cannot self-grant is present (`OCTO_MERGE_APPROVE=<pr>` env, exported in the launching terminal; the file channel `octo-dim approve-merge` is audit-only because the agent can forge it); detection is command-boundary-anchored so it gates real invocations, not quoted mentions |
 | `dimension-awareness-hook` (`scripts/dimension-awareness-hook.py`) | PreToolUse | **Fail-open** | Warns when other live sessions share the working tree; surfaces the collision risk before a write, never after |
 
 **Connector verdict enforcement.** The 2D Delegate verdict is now inverted by default: **SELF is the rare exception, CONNECT is the default**. The delegate-gate hook reinforces this at the harness level — answering "from my own knowledge" on a task that has a skill or agent match is caught before the tool fires.
@@ -551,7 +551,7 @@ The brain can run as **one session-id across N parallel isolated git worktrees**
 octo-dim worktree-init          # fork a new isolated dimension (new worktree + session id)
 octo-dim list                   # show all live dimensions on this machine
 octo-dim heartbeat              # signal this dimension is still alive
-octo-dim approve-merge <pr>     # grant the qa-merge-gate approval (operator-only)
+octo-dim approve-merge <pr>     # write a merge audit-log entry (NOT a gate pass; authorize via OCTO_MERGE_APPROVE env)
 octo-dim prune                  # remove stale dimension entries
 ```
 

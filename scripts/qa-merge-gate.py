@@ -11,9 +11,13 @@ before pattern matching, so a publish pattern that appears only inside a quoted
 argument (``git commit -m "gh pr merge 96"``) does NOT trigger the gate.
 Shell indirection (``bash -c "..."``, ``$(...)``) remains accepted residual risk.
 
-When a Bash command is detected as a merge action (gh pr merge or git push
-directly to main/master), this hook BLOCKS execution
-unless an operator approval is present via one of three channels:
+When a Bash command is detected as a merge action, this hook BLOCKS execution
+unless an operator approval is present via one of two AGENT-PROOF env channels.
+Detected forms: `gh pr merge`; `git push` directly to main/master; and the
+gh api / curl API equivalents (a write call to REST `/pulls/<N>/merge`, a
+GraphQL mergePullRequest mutation, `POST /repos/.../merges` into main/master, or
+a `PATCH`/`DELETE` of `/git/refs/heads/(main|master)`). API reads pass; only a
+write method or body flag qualifies. The two channels:
 
   1. OCTO_MERGE_APPROVE=<pr_number>  — env var, PR-scoped, AGENT-PROOF (preferred).
      A PreToolUse hook runs in the HARNESS process and does NOT inherit env vars
@@ -21,12 +25,16 @@ unless an operator approval is present via one of three channels:
      reach this hook).  Only the operator, who exports the var in their shell
      before invoking Claude Code, can set it — making it a true operator signal.
 
-  2. ~/.claude/connectome/merge-approvals.json  — file-based, convenience, canon-bound.
-     Writable by octo-dim.py approve-merge.  An agent could forge it, but the
-     write is loud/auditable (PostToolUse hooks, git diff, etc.).
-
-  3. OCTO_QA_OK=1  — legacy blanket override; kept for back-compat but DISCOURAGED.
+  2. OCTO_QA_OK=1  — legacy blanket override; kept for back-compat but DISCOURAGED.
      Prefer OCTO_MERGE_APPROVE=<n>.
+
+The file channel (~/.claude/connectome/merge-approvals.json, written by
+octo-dim.py approve-merge) is NO LONGER an authorizer: an agent owns its own
+process env, so it can strip the agent-shell markers (`env -u CLAUDECODE ...`)
+or pass --i-am-the-operator and forge that file, which made it a self-approval
+route. Only the harness env, which the agent's command-scoped env never reaches,
+is a real boundary. octo-dim approve-merge is kept as an operator audit log
+(listed by `approvals`), not a gate pass.
 
 Fail-closed ONLY for positively-identified merge commands.
 Any parsing error on a non-merge command → exit 0 (fail-open).
@@ -40,7 +48,6 @@ import json
 import os
 import re
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 # Force UTF-8 on stdout/stderr so the ✓ / ✗ / em-dash glyphs in reports
 # survive on Windows shells defaulting to cp1252. Without this, a script
@@ -83,8 +90,60 @@ _PAT_GIT_PUSH = re.compile(
 # (?=\s|$) anchors the digit capture to a whole token.
 _PR_NUM_RE = re.compile(r"^\s*gh\s+pr\s+merge\s+(\d+)(?=\s|$)")
 
-# Path to the per-PR approvals file
-_APPROVALS_FILE = Path.home() / ".claude" / "connectome" / "merge-approvals.json"
+# API-form publish — the command-shape bypass of `gh pr merge` / `git push`.
+# Intent over mechanism (agent-proof-approval-gate skill, OpenBot lesson #2):
+# a REST or GraphQL call that merges a PR, merges a branch INTO main/master, or
+# force-updates the main/master ref has the same effect as the CLI forms, so it
+# gets the same gate. Covers `gh api` and `curl`. Only WRITE calls gate: a plain
+# GET to any of these paths is a read and passes (else the gate over-fires and
+# gets switched off). A real write must carry a mutating method or a body flag,
+# and that is exactly the token the agent cannot omit and still write.
+_PAT_API_TOOL = re.compile(r"^\s*(?:gh\s+api|curl)\b")
+_API_WRITE = re.compile(
+    r"(?:--method|--request|-X)\s*=?\s*(?:PUT|POST|PATCH|DELETE)\b"
+    r"|(?:^|\s)(?:-f|-F|--field|--raw-field|--input|-d|--data|--data-raw|--data-binary)(?=[=\s]|$)",
+    re.IGNORECASE,
+)
+_API_PR_NUM_RE = re.compile(r"/pulls/(\d+)/merge\b")
+_API_GRAPHQL_MERGE = re.compile(r"mergePullRequest\b")
+_API_MERGES_RE = re.compile(r"repos/[\w.-]+/[\w.-]+/merges\b")
+_API_REFS_RE = re.compile(r"git/refs\b")
+_API_MASTER_BRANCH_RE = re.compile(r"heads/(main|master)\b")
+# owner/repo out of any of the three REST paths, to protect-check the TARGET
+# repo (not cwd: the agent can fire the call from anywhere). No path repo
+# (e.g. GraphQL) → unresolvable → gate, fail-closed.
+_API_REPO_ANY_RE = re.compile(
+    r"repos/([\w.-]+/[\w.-]+?)/(?:pulls/\d+/merge|merges|git/refs)\b"
+)
+# base branch of a POST /merges, so only a merge INTO main/master gates.
+_API_BASE_RE = re.compile(
+    r'(?:(?:-f|-F|--field|--raw-field)\s*=?\s*base=|"base"\s*:\s*"|(?:^|\s)base=)([\w./-]+)',
+    re.IGNORECASE,
+)
+
+
+def _api_write_action(sub: str) -> str | None:
+    """If *sub* (already leading-stripped) is an API WRITE that merges a PR,
+    merges a branch into main/master, or updates the main/master ref, return a
+    scope token for approval matching (the PR number, or 'main'/'master').
+    Otherwise None. Only write methods qualify, so API reads pass."""
+    if not _PAT_API_TOOL.match(sub) or not _API_WRITE.search(sub):
+        return None
+    m = _API_PR_NUM_RE.search(sub)          # PR merge, REST
+    if m:
+        return m.group(1)
+    if _API_GRAPHQL_MERGE.search(sub):      # PR merge, GraphQL mutation
+        return "unknown"
+    if _API_REFS_RE.search(sub):            # ref write to a head
+        bm = _API_MASTER_BRANCH_RE.search(sub)
+        return bm.group(1) if bm else None
+    if _API_MERGES_RE.search(sub):          # branch merge into base
+        bm = _API_BASE_RE.search(sub)
+        base = bm.group(1).lower() if bm else None
+        if base is None or base in ("main", "master"):
+            return base or "master"         # unparseable base → fail-closed
+        return None                         # merge into a non-default branch
+    return None
 
 # Set True by main() the moment a publish/merge sub-command is positively
 # identified. The __main__ crash handler keys fail-open vs fail-closed off it.
@@ -191,6 +250,22 @@ def _is_protected_target(cmd: str, matched_sub: str, session_cwd: str):
     """True = protected, False = positively NOT protected, None = unresolvable
     (treated as protected: the gate stays fail-closed when unsure)."""
     sub = _strip_leading(matched_sub)
+
+    # gh api / curl write (PR merge, branch merge into main/master, or a
+    # main/master ref update): the target repo is in the REST path, NOT the cwd
+    # (the agent can fire the API call from anywhere, so cwd-based resolution
+    # would under-gate). Resolve owner/repo from the path and compare against
+    # the protected slugs. GraphQL / any form with no path repo is unresolvable
+    # → None (gate, fail-closed).
+    if _api_write_action(sub) is not None:
+        m = _API_REPO_ANY_RE.search(sub)
+        if not m:
+            return None
+        slug = _canon_slug(m.group(1))
+        known = {s for s in (_remote_slug(r) for r in _protected_roots()) if s}
+        if not known or slug is None:
+            return None
+        return slug in known
 
     # gh pr merge with an explicit -R/--repo slug: compare against the slugs
     # of the protected roots. No parsable slugs → None (gate).
@@ -348,6 +423,8 @@ def _find_publish_subcmd(cmd: str) -> str | None:
             return raw_sub
         if _PAT_GIT_PUSH.match(sub):
             return raw_sub
+        if _api_write_action(sub) is not None:
+            return raw_sub
     return None
 
 
@@ -365,33 +442,10 @@ def _extract_pr_id(matched_sub: str) -> str:
     push_m = _PAT_GIT_PUSH.match(sub)
     if push_m:
         return push_m.group(1)
+    api = _api_write_action(sub)
+    if api is not None:
+        return api
     return "unknown"
-
-
-def _load_approvals() -> dict:
-    """Load merge-approvals.json; return empty dict on any error."""
-    try:
-        raw = _APPROVALS_FILE.read_text(encoding="utf-8")
-        data = json.loads(raw)
-        if not isinstance(data, dict):
-            return {}
-        return data.get("approvals", {}) if isinstance(data.get("approvals"), dict) else {}
-    except Exception:
-        return {}
-
-
-def _is_fresh_approval(record: dict) -> bool:
-    """True if (now - ts) <= ttl seconds."""
-    try:
-        ts_str = record.get("ts", "")
-        ttl = int(record.get("ttl", 900))
-        ts_dt = datetime.fromisoformat(ts_str)
-        if ts_dt.tzinfo is None:
-            ts_dt = ts_dt.replace(tzinfo=timezone.utc)
-        delta = (datetime.now(timezone.utc) - ts_dt).total_seconds()
-        return 0 <= delta <= ttl
-    except Exception:
-        return False
 
 
 def _nudge(text: str) -> None:
@@ -448,18 +502,12 @@ def main() -> int:
         )
         return 0
 
-    # ── Channel 2: file-based approval (convenience, canon-bound) ────────────
-    approvals = _load_approvals()
-    record = approvals.get(pr_id)
-    if isinstance(record, dict) and _is_fresh_approval(record):
-        by = record.get("by", "?")
-        ts = record.get("ts", "?")
-        _nudge(
-            f"✓ QA gate: PR #{pr_id} approved by {by} at {ts} (file)."
-        )
-        return 0
+    # ── (removed) file channel: merge-approvals.json is agent-forgeable, so it
+    #    is NOT an authorizer. The agent owns its process env and can strip the
+    #    agent-shell markers or pass --i-am-the-operator to write that file, which
+    #    made it a self-approval route. Only the harness env below is agent-proof.
 
-    # ── Channel 3: legacy blanket override (DISCOURAGED, back-compat) ────────
+    # ── Channel 2: legacy blanket override (DISCOURAGED, back-compat) ─────────
     if os.environ.get("OCTO_QA_OK", "").strip() == "1":
         _nudge(
             f"⚠ QA gate: legacy blanket OCTO_QA_OK override — "
@@ -471,8 +519,9 @@ def main() -> int:
     label = f"PR #{pr_id}" if pr_id not in ("unknown", "main", "master") else f"branch '{pr_id}'"
     print(
         f"✗ QA GATE (fail-closed): merge of {label} needs operator approval.\n"
-        f"  Operator: export OCTO_MERGE_APPROVE={pr_id} in your shell (env, agent-proof).\n"
-        f"  OR run:   python3 ~/.claude/scripts/octo-dim.py approve-merge {pr_id} --by <name>\n"
+        f"  Operator: export OCTO_MERGE_APPROVE={pr_id} in your shell (env, agent-proof),\n"
+        f"  then re-run the merge. The file channel (octo-dim approve-merge) is an audit\n"
+        f"  log, not a gate pass: the agent can forge it, so only the harness env counts.\n"
         f"  QA (independent reviewer) must have passed first before granting approval.\n"
         f"  Operator directive 2026-06-01: the gate is the agent's approval, not just green CI.",
         file=sys.stderr,

@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "gh api /repos/CarlosCaPe/octorato/git/refs/heads/master"
+  },
+  "cwd": "/tmp"
+}

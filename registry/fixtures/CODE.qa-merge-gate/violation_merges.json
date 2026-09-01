@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "gh api --method POST /repos/CarlosCaPe/octorato/merges -f base=master -f head=fix/x"
+  },
+  "cwd": "/tmp"
+}

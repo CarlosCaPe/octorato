@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "gh api --method PUT /repos/CarlosCaPe/octorato/pulls/244/merge"
+  },
+  "cwd": "/tmp"
+}

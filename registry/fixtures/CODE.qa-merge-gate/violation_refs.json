@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "gh api --method PATCH /repos/CarlosCaPe/octorato/git/refs/heads/master -f sha=deadbeef -F force=true"
+  },
+  "cwd": "/tmp"
+}
