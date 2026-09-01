@@ -11,11 +11,13 @@ before pattern matching, so a publish pattern that appears only inside a quoted
 argument (``git commit -m "gh pr merge 96"``) does NOT trigger the gate.
 Shell indirection (``bash -c "..."``, ``$(...)``) remains accepted residual risk.
 
-When a Bash command is detected as a merge action (gh pr merge, git push
-directly to main/master, or a gh api / curl PR-merge call: REST
-`/pulls/<N>/merge` or a GraphQL mergePullRequest mutation), this hook BLOCKS
-execution unless an operator approval is present via one of two AGENT-PROOF env
-channels:
+When a Bash command is detected as a merge action, this hook BLOCKS execution
+unless an operator approval is present via one of two AGENT-PROOF env channels.
+Detected forms: `gh pr merge`; `git push` directly to main/master; and the
+gh api / curl API equivalents (a write call to REST `/pulls/<N>/merge`, a
+GraphQL mergePullRequest mutation, `POST /repos/.../merges` into main/master, or
+a `PATCH`/`DELETE` of `/git/refs/heads/(main|master)`). API reads pass; only a
+write method or body flag qualifies. The two channels:
 
   1. OCTO_MERGE_APPROVE=<pr_number>  — env var, PR-scoped, AGENT-PROOF (preferred).
      A PreToolUse hook runs in the HARNESS process and does NOT inherit env vars
@@ -88,19 +90,60 @@ _PAT_GIT_PUSH = re.compile(
 # (?=\s|$) anchors the digit capture to a whole token.
 _PR_NUM_RE = re.compile(r"^\s*gh\s+pr\s+merge\s+(\d+)(?=\s|$)")
 
-# API-form merge — the command-shape bypass of `gh pr merge`. Intent over
-# mechanism (agent-proof-approval-gate skill, OpenBot lesson #2): a REST
-# `PUT /repos/<owner>/<repo>/pulls/<N>/merge` or a GraphQL `mergePullRequest`
-# mutation has the same effect as `gh pr merge`, so it gets the same gate.
-# Covers `gh api` and `curl`; the merge intent is the endpoint path or the
-# mutation name, which the agent cannot rename away.
+# API-form publish — the command-shape bypass of `gh pr merge` / `git push`.
+# Intent over mechanism (agent-proof-approval-gate skill, OpenBot lesson #2):
+# a REST or GraphQL call that merges a PR, merges a branch INTO main/master, or
+# force-updates the main/master ref has the same effect as the CLI forms, so it
+# gets the same gate. Covers `gh api` and `curl`. Only WRITE calls gate: a plain
+# GET to any of these paths is a read and passes (else the gate over-fires and
+# gets switched off). A real write must carry a mutating method or a body flag,
+# and that is exactly the token the agent cannot omit and still write.
 _PAT_API_TOOL = re.compile(r"^\s*(?:gh\s+api|curl)\b")
-_API_MERGE_INTENT = re.compile(r"/pulls/\d+/merge\b|mergePullRequest\b")
-# owner/repo out of the REST path, to protect-check the TARGET repo (not cwd:
-# the agent can fire an API call from anywhere). No path repo (e.g. GraphQL) →
-# unresolvable → gate, fail-closed.
-_API_REPO_RE = re.compile(r"repos/([\w.-]+/[\w.-]+?)/pulls/\d+/merge\b")
+_API_WRITE = re.compile(
+    r"(?:--method|--request|-X)\s*=?\s*(?:PUT|POST|PATCH|DELETE)\b"
+    r"|(?:^|\s)(?:-f|-F|--field|--raw-field|--input|-d|--data|--data-raw|--data-binary)(?=[=\s]|$)",
+    re.IGNORECASE,
+)
 _API_PR_NUM_RE = re.compile(r"/pulls/(\d+)/merge\b")
+_API_GRAPHQL_MERGE = re.compile(r"mergePullRequest\b")
+_API_MERGES_RE = re.compile(r"repos/[\w.-]+/[\w.-]+/merges\b")
+_API_REFS_RE = re.compile(r"git/refs\b")
+_API_MASTER_BRANCH_RE = re.compile(r"heads/(main|master)\b")
+# owner/repo out of any of the three REST paths, to protect-check the TARGET
+# repo (not cwd: the agent can fire the call from anywhere). No path repo
+# (e.g. GraphQL) → unresolvable → gate, fail-closed.
+_API_REPO_ANY_RE = re.compile(
+    r"repos/([\w.-]+/[\w.-]+?)/(?:pulls/\d+/merge|merges|git/refs)\b"
+)
+# base branch of a POST /merges, so only a merge INTO main/master gates.
+_API_BASE_RE = re.compile(
+    r'(?:(?:-f|-F|--field|--raw-field)\s*=?\s*base=|"base"\s*:\s*"|(?:^|\s)base=)([\w./-]+)',
+    re.IGNORECASE,
+)
+
+
+def _api_write_action(sub: str) -> str | None:
+    """If *sub* (already leading-stripped) is an API WRITE that merges a PR,
+    merges a branch into main/master, or updates the main/master ref, return a
+    scope token for approval matching (the PR number, or 'main'/'master').
+    Otherwise None. Only write methods qualify, so API reads pass."""
+    if not _PAT_API_TOOL.match(sub) or not _API_WRITE.search(sub):
+        return None
+    m = _API_PR_NUM_RE.search(sub)          # PR merge, REST
+    if m:
+        return m.group(1)
+    if _API_GRAPHQL_MERGE.search(sub):      # PR merge, GraphQL mutation
+        return "unknown"
+    if _API_REFS_RE.search(sub):            # ref write to a head
+        bm = _API_MASTER_BRANCH_RE.search(sub)
+        return bm.group(1) if bm else None
+    if _API_MERGES_RE.search(sub):          # branch merge into base
+        bm = _API_BASE_RE.search(sub)
+        base = bm.group(1).lower() if bm else None
+        if base is None or base in ("main", "master"):
+            return base or "master"         # unparseable base → fail-closed
+        return None                         # merge into a non-default branch
+    return None
 
 # Set True by main() the moment a publish/merge sub-command is positively
 # identified. The __main__ crash handler keys fail-open vs fail-closed off it.
@@ -208,13 +251,14 @@ def _is_protected_target(cmd: str, matched_sub: str, session_cwd: str):
     (treated as protected: the gate stays fail-closed when unsure)."""
     sub = _strip_leading(matched_sub)
 
-    # gh api / curl PR-merge: the target repo is in the REST path, NOT the cwd
+    # gh api / curl write (PR merge, branch merge into main/master, or a
+    # main/master ref update): the target repo is in the REST path, NOT the cwd
     # (the agent can fire the API call from anywhere, so cwd-based resolution
     # would under-gate). Resolve owner/repo from the path and compare against
     # the protected slugs. GraphQL / any form with no path repo is unresolvable
     # → None (gate, fail-closed).
-    if _PAT_API_TOOL.match(sub) and _API_MERGE_INTENT.search(sub):
-        m = _API_REPO_RE.search(sub)
+    if _api_write_action(sub) is not None:
+        m = _API_REPO_ANY_RE.search(sub)
         if not m:
             return None
         slug = _canon_slug(m.group(1))
@@ -379,7 +423,7 @@ def _find_publish_subcmd(cmd: str) -> str | None:
             return raw_sub
         if _PAT_GIT_PUSH.match(sub):
             return raw_sub
-        if _PAT_API_TOOL.match(sub) and _API_MERGE_INTENT.search(sub):
+        if _api_write_action(sub) is not None:
             return raw_sub
     return None
 
@@ -398,9 +442,9 @@ def _extract_pr_id(matched_sub: str) -> str:
     push_m = _PAT_GIT_PUSH.match(sub)
     if push_m:
         return push_m.group(1)
-    api_m = _API_PR_NUM_RE.search(sub)
-    if api_m:
-        return api_m.group(1)
+    api = _api_write_action(sub)
+    if api is not None:
+        return api
     return "unknown"
 
 
