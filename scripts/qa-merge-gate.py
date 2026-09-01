@@ -13,7 +13,7 @@ Shell indirection (``bash -c "..."``, ``$(...)``) remains accepted residual risk
 
 When a Bash command is detected as a merge action (gh pr merge or git push
 directly to main/master), this hook BLOCKS execution
-unless an operator approval is present via one of three channels:
+unless an operator approval is present via one of two AGENT-PROOF env channels:
 
   1. OCTO_MERGE_APPROVE=<pr_number>  — env var, PR-scoped, AGENT-PROOF (preferred).
      A PreToolUse hook runs in the HARNESS process and does NOT inherit env vars
@@ -21,12 +21,16 @@ unless an operator approval is present via one of three channels:
      reach this hook).  Only the operator, who exports the var in their shell
      before invoking Claude Code, can set it — making it a true operator signal.
 
-  2. ~/.claude/connectome/merge-approvals.json  — file-based, convenience, canon-bound.
-     Writable by octo-dim.py approve-merge.  An agent could forge it, but the
-     write is loud/auditable (PostToolUse hooks, git diff, etc.).
-
-  3. OCTO_QA_OK=1  — legacy blanket override; kept for back-compat but DISCOURAGED.
+  2. OCTO_QA_OK=1  — legacy blanket override; kept for back-compat but DISCOURAGED.
      Prefer OCTO_MERGE_APPROVE=<n>.
+
+The file channel (~/.claude/connectome/merge-approvals.json, written by
+octo-dim.py approve-merge) is NO LONGER an authorizer: an agent owns its own
+process env, so it can strip the agent-shell markers (`env -u CLAUDECODE ...`)
+or pass --i-am-the-operator and forge that file, which made it a self-approval
+route. Only the harness env, which the agent's command-scoped env never reaches,
+is a real boundary. octo-dim approve-merge is kept as an operator audit log
+(listed by `approvals`), not a gate pass.
 
 Fail-closed ONLY for positively-identified merge commands.
 Any parsing error on a non-merge command → exit 0 (fail-open).
@@ -40,7 +44,6 @@ import json
 import os
 import re
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 # Force UTF-8 on stdout/stderr so the ✓ / ✗ / em-dash glyphs in reports
 # survive on Windows shells defaulting to cp1252. Without this, a script
@@ -82,9 +85,6 @@ _PAT_GIT_PUSH = re.compile(
 # Extracts the PR number from `gh pr merge <N> [flags]`
 # (?=\s|$) anchors the digit capture to a whole token.
 _PR_NUM_RE = re.compile(r"^\s*gh\s+pr\s+merge\s+(\d+)(?=\s|$)")
-
-# Path to the per-PR approvals file
-_APPROVALS_FILE = Path.home() / ".claude" / "connectome" / "merge-approvals.json"
 
 # Set True by main() the moment a publish/merge sub-command is positively
 # identified. The __main__ crash handler keys fail-open vs fail-closed off it.
@@ -368,32 +368,6 @@ def _extract_pr_id(matched_sub: str) -> str:
     return "unknown"
 
 
-def _load_approvals() -> dict:
-    """Load merge-approvals.json; return empty dict on any error."""
-    try:
-        raw = _APPROVALS_FILE.read_text(encoding="utf-8")
-        data = json.loads(raw)
-        if not isinstance(data, dict):
-            return {}
-        return data.get("approvals", {}) if isinstance(data.get("approvals"), dict) else {}
-    except Exception:
-        return {}
-
-
-def _is_fresh_approval(record: dict) -> bool:
-    """True if (now - ts) <= ttl seconds."""
-    try:
-        ts_str = record.get("ts", "")
-        ttl = int(record.get("ttl", 900))
-        ts_dt = datetime.fromisoformat(ts_str)
-        if ts_dt.tzinfo is None:
-            ts_dt = ts_dt.replace(tzinfo=timezone.utc)
-        delta = (datetime.now(timezone.utc) - ts_dt).total_seconds()
-        return 0 <= delta <= ttl
-    except Exception:
-        return False
-
-
 def _nudge(text: str) -> None:
     print(json.dumps({
         "hookSpecificOutput": {
@@ -448,18 +422,12 @@ def main() -> int:
         )
         return 0
 
-    # ── Channel 2: file-based approval (convenience, canon-bound) ────────────
-    approvals = _load_approvals()
-    record = approvals.get(pr_id)
-    if isinstance(record, dict) and _is_fresh_approval(record):
-        by = record.get("by", "?")
-        ts = record.get("ts", "?")
-        _nudge(
-            f"✓ QA gate: PR #{pr_id} approved by {by} at {ts} (file)."
-        )
-        return 0
+    # ── (removed) file channel: merge-approvals.json is agent-forgeable, so it
+    #    is NOT an authorizer. The agent owns its process env and can strip the
+    #    agent-shell markers or pass --i-am-the-operator to write that file, which
+    #    made it a self-approval route. Only the harness env below is agent-proof.
 
-    # ── Channel 3: legacy blanket override (DISCOURAGED, back-compat) ────────
+    # ── Channel 2: legacy blanket override (DISCOURAGED, back-compat) ─────────
     if os.environ.get("OCTO_QA_OK", "").strip() == "1":
         _nudge(
             f"⚠ QA gate: legacy blanket OCTO_QA_OK override — "
@@ -471,8 +439,9 @@ def main() -> int:
     label = f"PR #{pr_id}" if pr_id not in ("unknown", "main", "master") else f"branch '{pr_id}'"
     print(
         f"✗ QA GATE (fail-closed): merge of {label} needs operator approval.\n"
-        f"  Operator: export OCTO_MERGE_APPROVE={pr_id} in your shell (env, agent-proof).\n"
-        f"  OR run:   python3 ~/.claude/scripts/octo-dim.py approve-merge {pr_id} --by <name>\n"
+        f"  Operator: export OCTO_MERGE_APPROVE={pr_id} in your shell (env, agent-proof),\n"
+        f"  then re-run the merge. The file channel (octo-dim approve-merge) is an audit\n"
+        f"  log, not a gate pass: the agent can forge it, so only the harness env counts.\n"
         f"  QA (independent reviewer) must have passed first before granting approval.\n"
         f"  Operator directive 2026-06-01: the gate is the agent's approval, not just green CI.",
         file=sys.stderr,

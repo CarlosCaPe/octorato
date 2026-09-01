@@ -49,15 +49,11 @@ if not check_approval(detected_pr):
     sys.exit(1)   # non-zero exit blocks the tool call
 ```
 
-### Secondary channel — TTL'd approval file (loud, agent-forgeable — acceptable)
+### There is no safe secondary file channel (lesson, 2026-09-01)
 
-A human can also run an explicit command that writes a stamp:
+An earlier design offered a TTL'd approval file (`octo-dim approve-merge 96`) as a convenience channel the gate honored on freshness. It was removed as a gate authorizer: a file the agent can write is a self-approval route. The agent owns its own process env, so it defeats any write-time agent-shell refusal two ways, `env -u CLAUDECODE python3 octo-dim approve-merge 96` (strip the markers) or an explicit `--i-am-the-operator` escape flag. No check inside a command the agent executes can prove the writer was the operator.
 
-```bash
-octo-dim approve-merge 96    # writes ~/.claude/tmp/approved-merge-96.<epoch>
-```
-
-The hook checks for a fresh stamp (e.g. < 5 min old). This channel is technically agent-forgeable (the agent could call `octo-dim approve-merge` too), but the canon rule blocks self-approval: the gate script rejects approvals issued by the agent itself. The env channel is the real boundary; the file channel is convenience.
+Only the harness env is a real boundary, because the agent's command-scoped env never becomes the hook's env. So the env channel is not merely "preferred", it is the ONLY authorizer. `octo-dim approve-merge` still writes a record, but as an operator audit log listed by `approvals`, never as a gate pass. When you are tempted to add a "convenient" file/flag/env-inside-the-agent channel to a gate the agent orchestrates, stop: if the agent can execute it, the agent can forge it.
 
 ## Scoping Rule — Never Blanket, Always Specific
 
@@ -103,7 +99,7 @@ Mechanism: `scripts/g__pretool-bash__prod-write.py` (Registry `SEC.prod-write-ga
 
 ## Reference Implementation
 
-`~/.claude/scripts/qa-merge-gate.py` — full gate with env channel, file channel, PR-number extraction, and TTL logic.
+`~/.claude/scripts/qa-merge-gate.py`: full gate with the agent-proof env channel (`OCTO_MERGE_APPROVE`), the discouraged legacy blanket (`OCTO_QA_OK`), and command-boundary PR-number extraction. The forgeable file channel was removed (see the lesson above).
 
 `~/.claude/scripts/g__pretool-bash__prod-write.py` is the production-write sibling: per-destination scoping, payload inspection for SSM and ssh, a read-first allowlist that keeps false positives at zero, and a crash path that denies once a prod channel is identified.
 
