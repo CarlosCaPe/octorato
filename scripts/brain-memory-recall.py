@@ -41,11 +41,13 @@ TIMEOUT_S = 3
 TAIL_BYTES = 20_000
 MAX_HITS = 5
 MIN_SCORE = 2           # need at least this much token overlap to surface a line
-INDEX_RE = re.compile(r"^- \[(?P<title>[^\]]+)\]\((?P<file>[^)]+)\)\s*[:\-]\s*(?P<hook>.*)$")
 # Una linea del indice puede compactar VARIAS entradas separadas por " · ".
-# Leer solo la primera (INDEX_RE.match) dejaba muda a toda entrada en segunda
-# posicion: mitad del canon sin recall y el doctor contandola como no-indexada.
-ENTRY_RE = re.compile(r"\[(?P<title>[^\]]+)\]\((?P<file>[^)]+)\)\s*[:\-]\s*(?P<hook>[^·]*)")
+# Leerlas todas (finditer) o toda entrada en segunda posicion queda muda: mitad
+# del canon sin recall y el doctor contandola como no-indexada. El gancho
+# ': hook' es OPCIONAL: el indice compactado escribe entradas sin gancho
+# (`[Titulo](archivo.md) · [Otra](otra.md)`); exigirlo dejaba fuera 120 de 122
+# ficheros. La entrada se puntua por titulo+archivo aunque no traiga hook.
+ENTRY_RE = re.compile(r"\[(?P<title>[^\]]+)\]\((?P<file>[^)]+)\)(?:\s*[:\-]\s*(?P<hook>[^·]*))?")
 TOKEN_RE = re.compile(r"[a-z0-9áéíóúñü]{3,}")
 
 STOP = {
@@ -110,7 +112,7 @@ def score_lines(md: Path, ptoks: set[str]):
         return out
     for ln in lines:
         ln = ln.strip()
-        if not ln.startswith("- ") or not INDEX_RE.match(ln):
+        if not ln.startswith("- ["):
             continue
         for m in ENTRY_RE.finditer(ln):
             _score_entry(out, m, ptoks)
@@ -119,7 +121,7 @@ def score_lines(md: Path, ptoks: set[str]):
 
 
 def _score_entry(out, m, ptoks):
-    title, fname, hook = m.group("title"), m.group("file"), m.group("hook")
+    title, fname, hook = m.group("title"), m.group("file"), (m.group("hook") or "")
     ltoks = tokenize(title + " " + fname + " " + hook)
     overlap = ptoks & ltoks
     score = len(overlap)
