@@ -403,7 +403,10 @@ def _tokenizer_mismatch(nm: Path) -> str | None:
                 break
         if not want:
             return None
-        have = json.loads(nm.read_text(encoding="utf-8")).get("meta", {}).get("tokenizer")
+        try:
+            have = json.loads(nm.read_text(encoding="utf-8")).get("meta", {}).get("tokenizer")
+        except json.JSONDecodeError:
+            return "is not valid JSON"  # broken is not fresh
         if have != want:
             return f"built by tokenizer {have!r}, generator is {want!r}"
     except Exception:

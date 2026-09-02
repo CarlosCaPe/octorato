@@ -176,13 +176,16 @@ def tokenize(text):
     where it can collide with an unrelated real word ("digo" is Spanish for
     "I say") and weave a synapse between documents that share nothing.
 
-    Measured on the 418 files this generator actually reads (skills/**/SKILL.md
-    plus the agent divisions): 157 distinct accented words, 240 occurrences.
-    Folding removes 129 mutilated stems and admits 98 real words, moving the raw
-    vocabulary from 16,978 to 16,947 terms. Small here because skills and agents
-    are written mostly in English; the same defect was severe in the
-    life-memories corpus, where the operator's own city indexed as "laga" and
-    "dia" vanished outright.
+    Snapshot on one machine, 2026-09-02: ~157 distinct accented words over the
+    ~415 documents this generator feeds to TF-IDF, folding out ~130 mutilated
+    stems and admitting ~97 real words for a net vocabulary change of about -30
+    terms. Deliberately approximate: skills/learned/ is gitignored and drifts
+    per machine, so an exact count is NOT reproducible by a reader and any
+    precise figure here would rot into a lie. The shape is what matters and it
+    is stable: a small effect in this corpus, because skills and agents are
+    written mostly in English. The same defect was severe in the life-memories
+    corpus, where the operator's own city indexed as "laga" and "dia" vanished
+    outright.
 
     Folding the corpus WITHOUT folding STOP_WORDS is worse than not folding at
     all: see _folded_stops above. That half-fix shipped junk terms ("que" at idf

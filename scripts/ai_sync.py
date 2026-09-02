@@ -161,7 +161,6 @@ def connectome_stale() -> bool:
     # side already speaks the new dialect, and recall silently answers zero.
     # Compare the contract, not the clock.
     try:
-        import json as _json
         gen = CLAUDE / "scripts" / "generate_neural_map.py"
         want = None
         for line in gen.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -169,11 +168,13 @@ def connectome_stale() -> bool:
                 want = line.split("=", 1)[1].strip().strip('"').strip("'")
                 break
         if want:
-            have = _json.loads(m.read_text(encoding="utf-8")).get("meta", {}).get("tokenizer")
+            have = json.loads(m.read_text(encoding="utf-8")).get("meta", {}).get("tokenizer")
             if have != want:
                 return True
+    except json.JSONDecodeError:
+        return True  # an unparseable map is not fresh, it is broken
     except Exception:
-        pass  # unreadable map or generator: fall through to the mtime check
+        pass  # generator unreadable: fall through to the mtime check
 
     newest = m.stat().st_mtime
     for base, pat in (("skills", "SKILL.md"), ("agents", "*.md")):
