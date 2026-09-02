@@ -35,6 +35,7 @@ import json
 import math
 import os
 import re
+import unicodedata
 import sys
 from collections import Counter
 from datetime import datetime, timezone
@@ -132,7 +133,27 @@ STOP_WORDS = frozenset((_STOP_EN + " " + _STOP_ES).split())
 # ─── Text Processing & TF-IDF ────────────────────────────────────────────────
 
 def tokenize(text):
-    """Extract meaningful tokens from text. Lowercased, no stop words."""
+    """Extract meaningful tokens from text. Lowercased, accent-folded, no stop words.
+
+    ACCENT FOLDING IS NOT COSMETIC. The word regex below only starts a token at
+    [a-z], so a combining accent SPLITS the word and eats its head: "codigo"
+    written with its accent yields "digo", "diseno" yields "dise", "espanol"
+    yields "espa". Two failures follow. The real word never enters the
+    vocabulary, so a search for it cannot match; and the mutilated stem does,
+    where it can collide with an unrelated real word ("digo" is Spanish for
+    "I say") and weave a synapse between documents that share nothing.
+
+    Measured on this corpus (441 skill/agent files): 157 distinct accented
+    words, 240 occurrences. Folding removes 129 mutilated stems and admits 97
+    real words, moving the vocabulary from 16,865 to 16,833 terms. Small here
+    because skills and agents are written mostly in English; the same defect was
+    severe in the life-memories corpus, where the operator's own city indexed as
+    "laga" and "dia" vanished outright.
+
+    NFKD + drop-combining is idempotent, so folding again downstream is safe.
+    """
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(c for c in text if not unicodedata.combining(c))
     # Remove code blocks (they add noise)
     text = re.sub(r"```[\s\S]*?```", " ", text)
     # Remove URLs

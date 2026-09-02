@@ -38,6 +38,7 @@ import math
 import os
 import re
 import sys
+import unicodedata
 import tempfile
 from collections import Counter
 from contextlib import contextmanager
@@ -392,7 +393,20 @@ def build_graph(data, use_hebbian=True):
 # ─── Tokenizer (lightweight, matches generator) ──────────────────────────────
 
 def tokenize_query(text):
-    """Tokenize a query string for matching against node content."""
+    """Tokenize a query string for matching against node content.
+
+    MUST fold accents exactly like the generator. Both sides tokenize
+    independently, and a query that produces "sesi" can never match an index
+    that stores "sesion". Measured while fixing the generator: folding the build
+    side ALONE turned a working Spanish query into zero hits, because the two
+    sides stopped agreeing. Consistently wrong beat inconsistently right.
+
+    Three copies of this tokenizer now exist (here, generate_neural_map.py,
+    brain-memory-recall.py). They must agree on folding; the duplication itself
+    is the standing hazard and wants a shared module.
+    """
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(c for c in text if not unicodedata.combining(c))
     text = re.sub(r"[#*\`\[\](){}|>_~=\-]", " ", text.lower())
     words = re.findall(r"[a-z][a-z0-9]{2,}(?:-[a-z0-9]+)*", text)
     return [w for w in words if w not in STOP_WORDS and len(w) >= 3]
