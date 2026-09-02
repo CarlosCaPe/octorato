@@ -450,6 +450,24 @@ edges:
       alcanza: si se renombra el script, esas dos unidades se rompen en
       silencio y el vigia deja de correr sin avisar.
 
+  - id: unsourced-attribute-gate
+    concept: "circumstance does not license the category / no classifying adjective about the counterpart's property that they never said"
+    appears_in:
+      - CLAUDE.md                                        # anchor "Unsourced-attribute"
+      - scripts/g__stop__unsourced-attribute.py          # the Stop gate (the mechanism)
+      - registry/rules.yaml                              # COMMS.unsourced-attribute
+      - registry/fixtures/COMMS.unsourced-attribute      # the liveness proof
+      - hooks.json                                       # the Stop wiring
+    kind: appears_in
+    note: >-
+      Sibling of draft-promise-gate: both police what SHIPS, not what is thought,
+      so both key on an outward-draft marker and both share the prose-vs-code
+      fence split. The trigger here is deliberately the ADJECTIVE, not the act of
+      assuming: the class sat in memory for two months without firing because
+      "do not assume" names no detectable moment. A quote of the counterpart's
+      own words, a blockquote, or a question all exempt a sentence, because each
+      is one of the two prescribed fixes (source it, or ask it).
+
   - id: draft-promise-gate
     concept: "deliverable-complete-before-send / no future-tense promise inside a paste-ready draft"
     appears_in:
