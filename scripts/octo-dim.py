@@ -693,8 +693,34 @@ def cmd_worktree_init(args) -> int:
             print(f"worktree-init: could not create worktree: {msg}")
             return 0  # never hard-fail
 
+    _link_private_data(repo, target)
     print(str(target))
     return 0
+
+
+def _link_private_data(repo: Path, target: Path) -> None:
+    """Point the new worktree at the main checkout's gitignored private data.
+
+    A worktree receives TRACKED files only, so `company/` never appears in one.
+    Everything that reads it therefore ran blind from a worktree: the pre-push
+    leak guard soft-failed open, check-generic found no blocklist, brain_doctor
+    reported it absent. A client's company name reached a public branch through
+    exactly that gap, from a worktree this very function had created.
+
+    A symlink, not a copy: the blocklist must never be duplicated, and an
+    inherited link keeps the two in sync with no staleness window. Best-effort
+    on purpose, since worktree creation must never hard-fail; when it cannot be
+    made (Windows without privileges, for one), pre-push still resolves the
+    blocklist through --git-common-dir, which is the guard that actually blocks.
+    """
+    source = repo / "company"
+    link = target / "company"
+    if not source.is_dir() or link.exists() or link.is_symlink():
+        return
+    try:
+        link.symlink_to(source, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pass  # pre-push's own resolution covers this case
 
 
 # ── main ──────────────────────────────────────────────────────────────────────

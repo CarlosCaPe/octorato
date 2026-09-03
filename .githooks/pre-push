@@ -15,7 +15,19 @@ REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
 [ -z "$REPO_ROOT" ] && { echo "pre-push: not in a git repo" >&2; exit 0; }
 
 POLICY="$REPO_ROOT/.githooks/push-policy.txt"
+
+# The blocklist is gitignored, so it exists ONLY in the main checkout: a git
+# worktree gets tracked files and nothing else. Resolving it from $REPO_ROOT
+# meant every push from a worktree ran with an EMPTY blocklist and silently
+# allowed what it exists to stop. That is not hypothetical: a client's company
+# name reached a public branch that way, from a worktree the session-isolation
+# hook had created automatically. --git-common-dir points at the main .git even
+# from a linked worktree, so its parent is where the private data lives.
+MAIN_ROOT="$(dirname "$(git rev-parse --git-common-dir 2>/dev/null)")"
 BLOCKLIST="$REPO_ROOT/company/brain-blocklist.txt"
+if [ ! -f "$BLOCKLIST" ] && [ -f "$MAIN_ROOT/company/brain-blocklist.txt" ]; then
+  BLOCKLIST="$MAIN_ROOT/company/brain-blocklist.txt"
+fi
 ZERO="0000000000000000000000000000000000000000"
 
 # ── Load policy ────────────────────────────────────────────────────────────
@@ -50,6 +62,14 @@ if [ -f "$BLOCKLIST" ]; then
 fi
 
 BLOCKLIST_RE=""
+if [ ${#BLOCKLIST_TOKENS[@]} -eq 0 ]; then
+  # A guard that disables itself when its data is missing, silently, is how the
+  # leak got out. The universal policy still runs; say out loud that the private
+  # layer is not. Never fatal: an outside contributor legitimately has no
+  # blocklist, and the repo must stay pushable for them.
+  echo "pre-push: NOTE — company/brain-blocklist.txt not found; the private" >&2
+  echo "  client-name layer is NOT active for this push (universal policy still runs)." >&2
+fi
 if [ ${#BLOCKLIST_TOKENS[@]} -gt 0 ]; then
   # join tokens with | for a single alternation; escape regex metachars
   for t in "${BLOCKLIST_TOKENS[@]}"; do
