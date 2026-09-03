@@ -15,6 +15,18 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-09-03]: v6.21.6
+### Fixes
+- fix(connectome): fold accents in the tokenizer, on both sides (#249)
+
+## [2026-09-03]: v6.21.5
+### Fixes
+- fix(security): resolve the leak blocklist from the main checkout, not the worktree (#252)
+
+## [2026-09-02]: v6.21.4
+### Fixes
+- fix(memory): parse hookless compacted index entries (recall + corpus-coverage) (#247)
+
 ## [2026-09-01]: v6.21.3
 ### Fixes
 - fix(fixtures): stop tracking derived wa-guardia selftest DBs (#245)
