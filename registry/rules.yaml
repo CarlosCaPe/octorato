@@ -105,6 +105,38 @@ rules:
     locator: scripts/g__stop__draft-promise.py --selftest registry/fixtures/COMMS.deliverable-complete-before-send
     expect: 0
   liveness_required: FIRES
+- id: COMMS.provenance-footer
+  title: Provenance footer — every substantive reply names its Engine
+  category: COMMS
+  source:
+    file: CLAUDE.md
+    anchor: Provenance footer
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - hook
+  mechanism:
+  # firing_event queda en null A PROPOSITO hasta que el operador registre el hook.
+  # Un gate nuevo se revisa antes de armarlo: registrarlo en caliente lo pondria a
+  # bloquear a TODAS las sesiones vivas de golpe. El selftest ya prueba que bloquea
+  # (sin pie, y pie sin Engine) y que deja pasar (con pie, trivial, exento), asi que
+  # la regla esta cableada, no es prosa.
+  # Al armarlo: firing_event: Stop / firing_matcher: '*', mas el proof
+  # IN_HOOKS_JSON Stop|*|g__stop__provenance-engine.py, y la entrada en hooks.json
+  # junto a g__stop__draft-promise.py.
+  - kind: Gate
+    canonical_name: g__stop__provenance-engine.py
+    firing_event: null
+    firing_matcher: '*'
+  proof:
+  - method: FILE_EXISTS
+    locator: scripts/g__stop__provenance-engine.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/g__stop__provenance-engine.py --selftest registry/fixtures/COMMS.provenance-footer
+    expect: 0
+  liveness_required: FIRES
 - id: FLOW.do-it-today
   title: No dejes para mañana lo que puedas hacer hoy — un pendiente reportado que yo
     podía ejecutar es la forma sutil de aplazar
