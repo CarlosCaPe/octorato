@@ -154,6 +154,28 @@ def connectome_stale() -> bool:
     m = CLAUDE / "neural_map.json"
     if not m.exists():
         return True
+
+    # A map built by a DIFFERENT TOKENIZER is stale even when its mtime is newer
+    # than every source file. A machine that pulls a tokenizer change touches
+    # only scripts/, so an mtime-only check keeps the old index while the query
+    # side already speaks the new dialect, and recall silently answers zero.
+    # Compare the contract, not the clock.
+    try:
+        gen = CLAUDE / "scripts" / "generate_neural_map.py"
+        want = None
+        for line in gen.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.startswith("TOKENIZER_VERSION"):
+                want = line.split("=", 1)[1].strip().strip('"').strip("'")
+                break
+        if want:
+            have = json.loads(m.read_text(encoding="utf-8")).get("meta", {}).get("tokenizer")
+            if have != want:
+                return True
+    except json.JSONDecodeError:
+        return True  # an unparseable map is not fresh, it is broken
+    except Exception:
+        pass  # generator unreadable: fall through to the mtime check
+
     newest = m.stat().st_mtime
     for base, pat in (("skills", "SKILL.md"), ("agents", "*.md")):
         for f in (CLAUDE / base).rglob(pat):

@@ -38,6 +38,7 @@ import math
 import os
 import re
 import sys
+import unicodedata
 import tempfile
 from collections import Counter
 from contextlib import contextmanager
@@ -145,7 +146,36 @@ _STOP_ES = (
     "hace hizo hay hubo habrá había también ante antes después durante luego "
     "porque pues aunque mientras si bien aquí ahí allí allá esto ello"
 )
-STOP_WORDS = frozenset((_STOP_EN + " " + _STOP_ES).split())
+STOP_WORDS = None  # set below, after _folded_stops is defined
+
+def _fold(text):
+    """NFKD-fold: drop combining marks. Idempotent."""
+    return "".join(
+        c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c)
+    )
+
+
+def _folded_stops(words):
+    """Every stop word PLUS its folded form.
+
+    Folding the corpus without folding this list is a trap that bites in the
+    worst direction: an accented stop word ("que" with its accent) can never be
+    matched again, so it stops being filtered, and its folded form walks into
+    the vocabulary as a high-frequency term. Measured before this fix: "que"
+    entered the index with idf 2.502 and drove every one of the 9 synapses the
+    accent fix added. A stop list must be folded in lockstep with the tokenizer,
+    and identically in both files, since their equality is what keeps the index
+    and the query aligned.
+    """
+    out = set()
+    for w in words:
+        out.add(w)
+        out.add(_fold(w))
+    return frozenset(out)
+
+
+STOP_WORDS = _folded_stops((_STOP_EN + " " + _STOP_ES).split())
+
 
 
 # ─── Graph Builder ────────────────────────────────────────────────────────────
@@ -392,7 +422,27 @@ def build_graph(data, use_hebbian=True):
 # ─── Tokenizer (lightweight, matches generator) ──────────────────────────────
 
 def tokenize_query(text):
-    """Tokenize a query string for matching against node content."""
+    """Tokenize a query string for matching against node content.
+
+    MUST fold accents exactly like the generator. Both sides tokenize
+    independently, and a query that produces "sesi" can never match an index
+    that stores "sesion". Measured while fixing the generator: folding the build
+    side ALONE turned a working Spanish query into zero hits, because the two
+    sides stopped agreeing. Consistently wrong beat inconsistently right.
+
+    TWO tokenizers must agree, and only two: this one and
+    generate_neural_map.tokenize. They are the pair that writes and reads
+    neural_map.json, so a divergence between them is a silent zero-hit recall.
+    connectome-heartbeat.py imports this function, so it folds transitively.
+
+    Other tokenizers in the brain (delegate-check, brain-memory-recall.py,
+    gap-capture.py, goal-anchor.py) tokenize their own text on BOTH sides and
+    never read neural_map.json, so they cannot desynchronize from it.
+    brain-memory-recall.py in particular does not mutilate: its regex already
+    admits accented characters. The duplication is still a standing hazard and
+    wants a shared module; that is a separate change.
+    """
+    text = _fold(text)
     text = re.sub(r"[#*\`\[\](){}|>_~=\-]", " ", text.lower())
     words = re.findall(r"[a-z][a-z0-9]{2,}(?:-[a-z0-9]+)*", text)
     return [w for w in words if w not in STOP_WORDS and len(w) >= 3]
@@ -645,7 +695,11 @@ def cmd_query(G, data, query_text, top_n=10):
                 " ".join(attrs.get("triggers", [])),
                 attrs.get("description", ""),
                 node_id.replace("-", " "),
-            ]).lower()
+            ])
+            # Fold the HAYSTACK too. The tokens were folded, so a raw haystack
+            # loses every accented match: folded "canonico" does not appear in
+            # a description that spells it with the accent.
+            node_text = _fold(node_text).lower()
 
             for token in tokens:
                 if token in node_text:
@@ -822,7 +876,8 @@ def cmd_4d(G, data, task_text):
             " ".join(attrs.get("triggers", [])),
             attrs.get("description", ""),
             node_id.replace("-", " "),
-        ]).lower()
+        ])
+        node_text = _fold(node_text).lower()  # folded tokens need a folded haystack
         score = sum(1 for t in tokens if t in node_text)
         if score > 0:
             scores[node_id] = score
