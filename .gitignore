@@ -2,6 +2,11 @@
 # NEVER commit this directory. It contains all company-specific data.
 # Leading slash anchors to repo root — does NOT match templates/company/.
 /company/
+# ...and as a bare entry, because worktree-init creates `company` as a
+# SYMLINK to the main checkout, and `company/` only matches a directory.
+# Without this the link shows up untracked in every worktree and could be
+# committed, publishing the private path layout.
+company
 
 # External reference repos (cloned separately, not part of the brain repo)
 *-ref/
