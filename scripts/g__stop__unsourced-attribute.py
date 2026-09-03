@@ -16,7 +16,7 @@ WHY A GATE AND NOT PROSE
 The class sat in memory for two months without firing, because "do not assume"
 names no detectable moment. The ADJECTIVE is one.
 
-WHY THIS IS A REWRITE (v2)
+WHY THIS IS A REWRITE (v3)
 v1 anchored on a copula: possessive -> "es" -> adjective. Independent review found
 that anchor is simply wrong. The most natural phrasing of the very incident it
 memorializes, "tu computadora personal de casa", is ATTRIBUTIVE and carries no
@@ -25,7 +25,18 @@ assistant entry, which is blind to a draft composed inside a tool call, and that
 is exactly how email ships here. Meanwhile a bare "borrador" anywhere flipped it
 on, so it blocked the analysis prose that DIAGNOSES the error.
 
-v2 changes the anchor to PROXIMITY, not syntax:
+v2 fixed the anchor but shipped a worse bug: it walked back through the
+transcript and stopped at the first `type:"user"` entry, on the assumption that
+those are human prompts. Measured on a real session transcript, 656 of 764 user
+entries are TOOL RESULTS and only 108 are prompts. So the walk halted at the last
+tool result, and both of v2's headline fixes (tool-call scanning, multi-entry
+scanning) never ran in production. The v2 selftest stayed green because its
+fixtures used entry shapes the system never emits: a green proof over a dead
+path, which is precisely what the fixture discipline exists to prevent. Every
+fixture here is now built from real transcript shapes, tool_result entries and
+all.
+
+v3 keeps the PROXIMITY anchor and rebuilds around it:
 
   Condition 1 (delivery). Something in this turn goes outward: a handover marker
     in delivery position (a line that ends in ':' introducing the text, or an
@@ -48,13 +59,23 @@ Sourcing exemptions, each being one of the two prescribed fixes:
   - a first-person possessive between the two anchors means the sentence turned
     to the writer's own things ("Para tu tranquilidad: mi equipo es privado").
 
-KNOWN FALSE POSITIVE, deliberately not chased
-"Quick note before the handoff: your repository is private, so the auditor's link
-will not open." That is an operational fact the writer observed, but it carries no
-quote and no first-person verb, so no regex separates it from a fabricated
-category. It blocks, and that is the accepted trade: a false positive costs one
-rewrite or one 'attribute-ok'; a false negative costs a falsified consent
-document sent to a client. The gate is biased to fire on purpose.
+KNOWN FALSE POSITIVES, deliberately not chased (three, all the same class)
+"your repository is private", "tu carpeta es compartida" written after the writer
+himself shared it, and "su plataforma es privada" about a third party. Each is an
+observed fact, but observation leaves no lexical trace, so nothing separates them
+from a fabricated category.
+
+v2 tried: an exemption for a narrated first-person act ("Ya configuré los
+accesos: tu carpeta es compartida"). Review showed it launders real violations
+the moment an unrelated action shares the sentence ("Ayer instalé el agente y tu
+computadora de casa es personal"), because narrating an action about one object
+never sources a category about another, and telling those apart is semantic, not
+lexical. The exemption was removed and these three now block.
+
+That is the deliberate trade, and it follows from the cost asymmetry: a false
+positive costs one rewrite or one 'attribute-ok'; a false negative costs a
+falsified consent document sent to a client. This gate is biased to fire, and an
+exemption that manufactures false negatives buys comfort with the wrong currency.
 
 Loop safety: stop_hook_active=true means we already blocked this turn. Fail-open
 on every error: a broken linter must never hold a conversation hostage.
@@ -110,7 +131,8 @@ _SEND_TOOL = re.compile(
     re.IGNORECASE,
 )
 # Argument keys that carry human-readable body text in those tools.
-_BODY_KEYS = ("body", "message", "text", "content", "html", "snippet", "caption")
+_BODY_KEYS = ("body", "message", "text", "content", "html", "snippet",
+              "caption", "subject", "description", "title")
 
 # Delivery in POSITION, not a bare mention. Either an explicit paste phrase, or a
 # handover line that ENDS in a colon (the shape that actually introduces a draft).
@@ -118,16 +140,44 @@ _PASTE_PHRASE = re.compile(
     r"(para pegar|p[ée]galo|listo para (pegar|enviar|mandar)|paste[- ]ready"
     r"|ready to (paste|send)|text to send|copy[- ]paste"
     r"|puedes (mandarle|enviarle|pasarle) esto|m[áa]ndale esto"
-    r"|te (dejo|paso|propongo) (el|este) (correo|mensaje|texto|borrador))",
+    # up to two words may sit between the verb and the noun ("te dejo ABAJO el
+    # mensaje"); one adverb used to defeat the whole condition.
+    r"|te (dejo|paso|propongo)(?:\s+\w+){0,2}\s+(el|este|la|esta)?\s*"
+    r"(correo|mensaje|texto|borrador|respuesta|nota))",
     re.IGNORECASE,
 )
 _HANDOVER_LINE = re.compile(
     r"^\s*(?:[^\n]{0,80}\b(borrador|draft|correo|mensaje|texto|carta|addenda"
-    r"|email|message|asunto|subject)\b[^\n]{0,80}):\s*$",
+    r"|email|message|asunto|subject|respuesta|reply)\b[^\n]{0,80}):\s*$",
     re.IGNORECASE | re.MULTILINE,
+)
+# A colon header can equally introduce ANALYSIS about a message, and structured
+# lists are the house style for that. "Puntos que corregí del correo:" is not a
+# hand-over, and treating it as one re-admits the v1 false positive where the
+# reply diagnosing the error got blocked for quoting it.
+_ANALYSIS_HEADER = re.compile(
+    r"\b(puntos?|errores?|hallazgos?|correcciones?|cambios?|notas?|revisi[óo]n"
+    r"|an[áa]lisis|issues?|findings?|corrections?|changes?|review)\b"
+    r"|\b(pasos?|instrucciones|gu[íi]a|checklist|steps?|how\s+to)\b"
+    r"|\b(corrig[íi]|revis[ée]|encontr[ée]|detect[ée]|found|fixed|reviewed)\b",
+    re.IGNORECASE,
 )
 
 _POSSESSIVE = re.compile(r"\b(tu|tus|su|sus|your)\b", re.IGNORECASE)
+# A switch PREDICATES something of the new subject; an appositive only renames
+# the old one. To a regex they look identical, and the verb is what separates
+# them: ", el relay del servicio ES privado" switches, ", un equipo personal,"
+# does not. Without this, killing the appositive miss re-opens the pair-join
+# false positive, and vice versa.
+_PREDICATES = re.compile(
+    r"\b(es|son|est[áa]|est[áa]n|era|eran|fue|fueron|ser[áa]|resulta|parece"
+    r"|is|are|was|were|becomes?|seems?)\b", re.IGNORECASE)
+# When the attribute comes BEFORE the possessive, it may already belong to its
+# own determiner-headed subject ("El repositorio del proyecto es privado, te
+# agrego con tu cuenta"): two unrelated claims that "either order" would fuse.
+_OWN_SUBJECT = re.compile(
+    r"\b(el|la|los|las|un|una|unos|unas|the|an?)\s+"
+    r"(?!de[l]?\b|que\b|cual\b|of\b|that\b|which\b)\w+", re.IGNORECASE)
 # Two ways a sentence stops being about the counterpart's property between the
 # anchors, both found by review as real false positives:
 #   (a) it turns to the writer's own things ("mi equipo es privado");
@@ -140,8 +190,13 @@ _FIRST_PERSON = re.compile(
     r"\b(mi|mis|mío|mia|m[íi]os?|m[íi]as?|nuestr[oa]s?|my|our|ours|yo)\b",
     re.IGNORECASE,
 )
+# The word after the determiner must be a real noun head, not a preposition or
+# relative: "Tu computadora, la de casa, es personal" is an APPOSITIVE naming the
+# same machine (and the incident's own phrasing), so it must still fire, while
+# "Para tu tranquilidad, el relay que monté es privado" genuinely switches.
 _SUBJECT_SWITCH = re.compile(
-    r",\s*(el|la|los|las|un|una|unos|unas|the|an?)\s+\w+",
+    r",\s*(el|la|los|las|un|una|unos|unas|the|an?)\s+"
+    r"(?!de[l]?\b|que\b|cual\b|of\b|that\b|which\b|one\b)\w+",
     re.IGNORECASE,
 )
 
@@ -169,21 +224,20 @@ _INTERROGATIVE = re.compile(
     re.IGNORECASE,
 )
 
-_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+|\n{2,}")
+# "?," and "!," split too: without this a trailing assertion rides along
+# inside an interrogative span and never gets scanned.
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])[,;]?\s+|\n{2,}")
 
-# A first-person act or verification IS a source, the same way a quotation is:
-# "Ya configuré los accesos: tu carpeta es compartida" and "Hablé con el
-# proveedor y su plataforma es privada" both rest on something the writer did or
-# checked, not on an inference from a circumstance. Only unambiguous first-person
-# past forms; infinitives ("instalar") must not exempt, since those are the
-# proposals the gate exists to police.
-_FIRSTPERSON_ACT = re.compile(
-    r"\b(configur[ée]|habl[ée]|revis[ée]|verifiqu[ée]|confirm[ée]|che(?:qu|c)[ée]"
-    r"|instal[ée]|activ[ée]|cambi[ée]|mont[ée]|dej[ée]|abr[íi]|corr[íi]|le[íi])\b"
-    r"|\bI\s+(checked|verified|configured|reviewed|confirmed|installed|enabled"
-    r"|changed|opened|set\s+up|talked|spoke)\b",
-    re.IGNORECASE,
-)
+# REMOVED in v3: a "first-person act" exemption (configuré/hablé/I checked).
+# It was meant to treat the writer's own verified act as a source, and it did
+# clear two false positives. But review showed it launders real violations
+# whenever an unrelated action shares the sentence: "Ayer instalé el agente y tu
+# computadora de casa es personal" passed, and narrating an action about one
+# object never sources a category about another. Separating the two is semantic,
+# not lexical. Given the stated asymmetry (a false positive costs one rewrite; a
+# false negative costs a falsified consent document), an exemption that
+# manufactures false negatives is the wrong trade. Those two cases now block and
+# are handled by the 'attribute-ok' hatch.
 
 
 def _looks_like_code(body: str) -> bool:
@@ -237,6 +291,18 @@ def collect_turn(transcript_path: str) -> tuple:
         except json.JSONDecodeError:
             continue
         if entry.get("type") == "user":
+            # A tool RESULT is also type "user". Measured on a real session
+            # transcript: 656 of 764 user entries are tool_results and only 108
+            # are human prompts. Breaking on any of them stops the walk at the
+            # last tool result, so a send-tool call (always followed by its
+            # result) and any draft preceding a tool call are never seen. The
+            # v2 fixtures passed only because they used entry shapes production
+            # never emits: green selftest over a dead path.
+            content = (entry.get("message") or {}).get("content")
+            if isinstance(content, list) and any(
+                    isinstance(b, dict) and b.get("type") == "tool_result"
+                    for b in content):
+                continue
             break
         if entry.get("type") == "assistant":
             entries.append(entry)
@@ -283,11 +349,23 @@ def _mask_real_quotes(text: str) -> str:
     return _QUOTED.sub(repl, text)
 
 
-def is_outward(prose: str, tool_text: str) -> bool:
+def is_outward(prose: str, tool_text: str, raw: str = "") -> bool:
+    """Delivery is positional, never a bare keyword."""
     if tool_text.strip():
         return True
-    if _PASTE_PHRASE.search(prose) or _HANDOVER_LINE.search(prose):
+    if _PASTE_PHRASE.search(prose):
         return True
+    for m in _HANDOVER_LINE.finditer(prose):
+        if not _ANALYSIS_HEADER.search(m.group(0)):
+            return True
+    # A raw draft ships INSIDE a prose fence with no intro at all (the
+    # paste-ready canonical shape). The docstring always claimed a fence counts;
+    # until v3 the code never looked, so the most stripped-down hand-over of all
+    # was invisible.
+    for fm in _FENCE_BLOCK.finditer(raw):
+        lang, body = fm.group(1), fm.group(2)
+        if (lang or "").strip().lower() in _PROSE_LANGS and not _looks_like_code(body):
+            return True
     return False
 
 
@@ -305,14 +383,13 @@ def find_attributes(text: str) -> list:
     # Each sentence AND each adjacent pair: "Tu computadora esta en tu casa. Es
     # personal." splits the claim across the period, and scanning sentences in
     # isolation is blind to exactly that. The WINDOW still bounds the reach.
-    spans = parts + [f"{a} {b}" for a, b in zip(parts, parts[1:])]
+    # Pairs are joined with a COMMA so the subject-switch guard sees the
+    # boundary: "Gracias por tu nota. El repositorio es privado" becomes a
+    # switch and passes, while "Tu computadora esta en tu casa. Es personal"
+    # does not ("Es" is no determiner) and still fires.
+    spans = parts + [f"{a}, {b}" for a, b in zip(parts, parts[1:])]
     for s in spans:
         if not s.strip():
-            continue
-        # Sourced by the writer's own act or check, not inferred from a
-        # circumstance. Checked across the whole span, so an act in one sentence
-        # sources an attribute in the next.
-        if _FIRSTPERSON_ACT.search(s):
             continue
         for pm in _POSSESSIVE.finditer(s):
             for am in _ATTRIBUTE.finditer(s):
@@ -320,8 +397,16 @@ def find_attributes(text: str) -> list:
                 if hi - lo > WINDOW:
                     continue
                 between = s[lo:hi]
-                # The sentence stopped being about the counterpart's property.
-                if _FIRST_PERSON.search(between) or _SUBJECT_SWITCH.search(between):
+                if _FIRST_PERSON.search(between):
+                    continue
+                sw = _SUBJECT_SWITCH.search(between)
+                # A real switch predicates of the new subject before reaching
+                # the attribute; an appositive just renames and must still fire.
+                if sw and _PREDICATES.search(between[sw.end():]):
+                    continue
+                # Reverse order: the attribute already has its own subject, so
+                # the possessive further along is a different claim entirely.
+                if am.start() < pm.start() and _OWN_SUBJECT.search(s[:am.start()]):
                     continue
                 hits.append(f"{pm.group(0)} … {am.group(0)}")
                 break
@@ -344,7 +429,7 @@ def main() -> int:
     try:
         prose_raw, tool_text = collect_turn(transcript)
         prose = _strip_non_prose(prose_raw)
-        if not is_outward(prose, tool_text):
+        if not is_outward(prose, tool_text, prose_raw):
             return 0
         # A tool-call body is already outward text; it needs no fence stripping.
         attrs = find_attributes(prose + "\n" + tool_text)
