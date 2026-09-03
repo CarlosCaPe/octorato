@@ -38,6 +38,7 @@ import math
 import os
 import re
 import sys
+import unicodedata
 import tempfile
 from collections import Counter
 from contextlib import contextmanager
@@ -145,7 +146,36 @@ _STOP_ES = (
     "hace hizo hay hubo habrá había también ante antes después durante luego "
     "porque pues aunque mientras si bien aquí ahí allí allá esto ello"
 )
-STOP_WORDS = frozenset((_STOP_EN + " " + _STOP_ES).split())
+STOP_WORDS = None  # set below, after _folded_stops is defined
+
+def _fold(text):
+    """NFKD-fold: drop combining marks. Idempotent."""
+    return "".join(
+        c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c)
+    )
+
+
+def _folded_stops(words):
+    """Every stop word PLUS its folded form.
+
+    Folding the corpus without folding this list is a trap that bites in the
+    worst direction: an accented stop word ("que" with its accent) can never be
+    matched again, so it stops being filtered, and its folded form walks into
+    the vocabulary as a high-frequency term. Measured before this fix: "que"
+    entered the index with idf 2.502 and drove every one of the 9 synapses the
+    accent fix added. A stop list must be folded in lockstep with the tokenizer,
+    and identically in both files, since their equality is what keeps the index
+    and the query aligned.
+    """
+    out = set()
+    for w in words:
+        out.add(w)
+        out.add(_fold(w))
+    return frozenset(out)
+
+
+STOP_WORDS = _folded_stops((_STOP_EN + " " + _STOP_ES).split())
+
 
 
 # ─── Graph Builder ────────────────────────────────────────────────────────────
@@ -392,7 +422,27 @@ def build_graph(data, use_hebbian=True):
 # ─── Tokenizer (lightweight, matches generator) ──────────────────────────────
 
 def tokenize_query(text):
-    """Tokenize a query string for matching against node content."""
+    """Tokenize a query string for matching against node content.
+
+    MUST fold accents exactly like the generator. Both sides tokenize
+    independently, and a query that produces "sesi" can never match an index
+    that stores "sesion". Measured while fixing the generator: folding the build
+    side ALONE turned a working Spanish query into zero hits, because the two
+    sides stopped agreeing. Consistently wrong beat inconsistently right.
+
+    TWO tokenizers must agree, and only two: this one and
+    generate_neural_map.tokenize. They are the pair that writes and reads
+    neural_map.json, so a divergence between them is a silent zero-hit recall.
+    connectome-heartbeat.py imports this function, so it folds transitively.
+
+    Other tokenizers in the brain (delegate-check, brain-memory-recall.py,
+    gap-capture.py, goal-anchor.py) tokenize their own text on BOTH sides and
+    never read neural_map.json, so they cannot desynchronize from it.
+    brain-memory-recall.py in particular does not mutilate: its regex already
+    admits accented characters. The duplication is still a standing hazard and
+    wants a shared module; that is a separate change.
+    """
+    text = _fold(text)
     text = re.sub(r"[#*\`\[\](){}|>_~=\-]", " ", text.lower())
     words = re.findall(r"[a-z][a-z0-9]{2,}(?:-[a-z0-9]+)*", text)
     return [w for w in words if w not in STOP_WORDS and len(w) >= 3]
@@ -645,7 +695,11 @@ def cmd_query(G, data, query_text, top_n=10):
                 " ".join(attrs.get("triggers", [])),
                 attrs.get("description", ""),
                 node_id.replace("-", " "),
-            ]).lower()
+            ])
+            # Fold the HAYSTACK too. The tokens were folded, so a raw haystack
+            # loses every accented match: folded "canonico" does not appear in
+            # a description that spells it with the accent.
+            node_text = _fold(node_text).lower()
 
             for token in tokens:
                 if token in node_text:
@@ -822,7 +876,8 @@ def cmd_4d(G, data, task_text):
             " ".join(attrs.get("triggers", [])),
             attrs.get("description", ""),
             node_id.replace("-", " "),
-        ]).lower()
+        ])
+        node_text = _fold(node_text).lower()  # folded tokens need a folded haystack
         score = sum(1 for t in tokens if t in node_text)
         if score > 0:
             scores[node_id] = score
@@ -1124,6 +1179,116 @@ def _fuzzy_match(G, query):
         return None
 
 
+def brain_slug_or_none():
+    try:
+        from generate_memory_map import brain_project_slug
+        return brain_project_slug()
+    except Exception:
+        return None
+
+
+def cmd_memory(query_text, top_n=8, all_projects=False):
+    """SEEK the brain's life-memories (memory_map.json), not skills/agents.
+
+    Two graphs, two questions. `query` answers "which skill or agent knows this?"
+    `memory` answers "have I already lived this / written this lesson down?" —
+    the question that used to need a grep over 200+ files, which is a table scan
+    with a stochastic hit rate and ~100x the tokens of a seek.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        from generate_memory_map import load_index, score_prompt
+    except Exception as e:
+        print(f"  ERROR: memory index module unavailable ({e})")
+        return None
+    index = load_index()
+    if not index:
+        print("  No memory_map.json. Build it: python3 ~/.claude/scripts/generate_memory_map.py")
+        return None
+
+    # ARM ISOLATION applies to this verb too, and that is not obvious: CLAUDE.md
+    # tells the agent to run it for recall, and the agent runs it from inside an
+    # arm checkout. Unscoped, it happily printed another arm's memories into an
+    # arm session — the one flow the octopus architecture forbids outright.
+    #
+    # Scope by CWD, the same way the harness names a project dir, plus the
+    # central brain. `--all` is the operator's explicit override and says so out
+    # loud; an agent must not reach for it to widen its own view.
+    projects = None
+    arm_slug = None
+    if not all_projects:
+        try:
+            from generate_memory_map import brain_project_slug, project_slug
+            central = brain_project_slug()
+            # Walk UP to the nearest ancestor that really is a project dir. A
+            # seek run from ARM/subdir/ would otherwise compute a slug that
+            # matches nothing and silently drop the arm's own memories while the
+            # scope line still claimed to include them.
+            projects_root = Path(index.get("meta", {}).get("projects_root") or
+                                 (Path.home() / ".claude" / "projects"))
+            here = Path.cwd().resolve()
+            for cand in [here, *here.parents]:
+                slug = project_slug(cand)
+                if (projects_root / slug).is_dir():
+                    arm_slug = slug
+                    break
+                if cand == Path.home():
+                    break
+            projects = {central} | ({arm_slug} if arm_slug else set())
+        except Exception:
+            projects = None
+
+    meta = index.get("meta", {})
+    hits = score_prompt(index, query_text, top_n=top_n, min_score=0.04,
+                        projects=projects)
+    print(f"\n🧠 MEMORY SEEK — '{query_text}'")
+    if all_projects:
+        scope = "ALL projects (operator override)"
+    elif arm_slug and arm_slug != brain_slug_or_none():
+        scope = f"{arm_slug} + central brain"
+    else:
+        # Say what is TRUE. Claiming "this arm" when no project dir was found is
+        # a quiet lie that reads as full coverage.
+        scope = "central brain only (no project dir for this working directory)"
+    print(f"   {meta.get('memories', '?')} memories indexed · generated "
+          f"{meta.get('generated', '?')[:19]} · scope: {scope}")
+    if not hits:
+        print("   No memory above the floor. That is a real answer: the lesson")
+        print("   may not exist yet, and writing it is the next step.")
+        return None
+    print()
+    for score, key, node in hits:
+        print(f"  {score:.3f}  [{node.get('type', '?')}] {node.get('title', key)}")
+        desc = (node.get("description") or "").strip()
+        if desc:
+            print(f"          {desc[:150]}")
+        print(f"          {node.get('path', '')}")
+    # Neighbours of the top hit: the duplicate-detector. Before writing a NEW
+    # memory, these are the ones it might be restating.
+    top = hits[0][2]
+    nb = top.get("neighbours") or []
+    if nb:
+        nodes = index.get("nodes", {})
+        # Filter the NEIGHBOURS by the same allowlist. They are stored on the
+        # node without regard to project, so printing them unfiltered reopened
+        # the exact leak the hit list had just closed: an arm session was shown
+        # another arm's memory through the back door. A scoped list with an
+        # unscoped appendix is not scoped.
+        rows = []
+        for v in nb:
+            n2 = nodes.get(v["key"], {})
+            if projects is not None and n2.get("project") not in projects:
+                continue
+            rows.append((v["score"], n2.get("title", v["key"])))
+            if len(rows) == 5:
+                break
+        if rows:
+            print(f"\n  Vecinas de la primera ({top.get('title')}):")
+            for score, title in rows:
+                print(f"    {score:.3f}  {title}")
+    return None
+
+
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
@@ -1132,10 +1297,25 @@ def main():
     # neural_map.json is missing). delegate-check already supports -h/--help.
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help", "help"):
         print(__doc__)
-        print("Commands: stats, gods, dead, path, query, impact, communities, viz, 4d")
+        print("Commands: stats, gods, dead, path, query, memory, impact, communities, viz, 4d")
         return 0
 
     cmd = sys.argv[1].lower()
+
+    # `memory` reads its OWN index, not neural_map.json. Dispatched before the
+    # connectome loads so a missing/stale neural map never blocks a memory seek.
+    if cmd == "memory":
+        args = sys.argv[2:]
+        all_projects = "--all" in args
+        args = [a for a in args if a != "--all"]
+        if not args:
+            print('Usage: query_connectome.py memory "what am I trying to recall" [--all]')
+            print('  Default scope: this working directory\'s arm + the central brain.')
+            print('  --all lifts the arm filter. Operator use only; it crosses arms.')
+            return 1
+        cmd_memory(" ".join(args), all_projects=all_projects)
+        return 0
+
     data = load_connectome()
     G = build_graph(data)
     activated_nodes = None
@@ -1192,7 +1372,7 @@ def main():
 
     else:
         print(f"Unknown command: {cmd}")
-        print("Commands: stats, gods, dead, path, query, impact, communities, viz, 4d")
+        print("Commands: stats, gods, dead, path, query, memory, impact, communities, viz, 4d")
         return 1
 
     # Log session for Hebbian learning (only for graph-traversal commands)

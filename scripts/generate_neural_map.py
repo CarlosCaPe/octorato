@@ -35,6 +35,7 @@ import json
 import math
 import os
 import re
+import unicodedata
 import sys
 from collections import Counter
 from datetime import datetime, timezone
@@ -56,6 +57,10 @@ BRAIN_DIR = Path.home() / ".claude"
 AGENTS_DIR = BRAIN_DIR / "agents"
 SKILLS_DIR = BRAIN_DIR / "skills"
 REGISTRY_FILE = AGENTS_DIR / "REGISTRY.md"
+# Tokenizer contract version. Bump on ANY change to tokenize() that alters the
+# terms it produces (folding, regex, stop list).
+TOKENIZER_VERSION = "2-accent-folded"
+
 OUTPUT_FILE = BRAIN_DIR / "neural_map.json"
 ACTIVITY_LOG = BRAIN_DIR / "neural_activity.json"
 
@@ -126,13 +131,69 @@ _STOP_ES = (
     "hace hizo hay hubo habrá había también ante antes después durante luego "
     "porque pues aunque mientras si bien aquí ahí allí allá esto ello"
 )
-STOP_WORDS = frozenset((_STOP_EN + " " + _STOP_ES).split())
+STOP_WORDS = None  # set below, after _folded_stops is defined
+
+def _fold(text):
+    """NFKD-fold: drop combining marks. Idempotent."""
+    return "".join(
+        c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c)
+    )
+
+
+def _folded_stops(words):
+    """Every stop word PLUS its folded form.
+
+    Folding the corpus without folding this list is a trap that bites in the
+    worst direction: an accented stop word ("que" with its accent) can never be
+    matched again, so it stops being filtered, and its folded form walks into
+    the vocabulary as a high-frequency term. Measured before this fix: "que"
+    entered the index with idf 2.502 and drove every one of the 9 synapses the
+    accent fix added. A stop list must be folded in lockstep with the tokenizer,
+    and identically in both files, since their equality is what keeps the index
+    and the query aligned.
+    """
+    out = set()
+    for w in words:
+        out.add(w)
+        out.add(_fold(w))
+    return frozenset(out)
+
+
+STOP_WORDS = _folded_stops((_STOP_EN + " " + _STOP_ES).split())
+
 
 
 # ─── Text Processing & TF-IDF ────────────────────────────────────────────────
 
 def tokenize(text):
-    """Extract meaningful tokens from text. Lowercased, no stop words."""
+    """Extract meaningful tokens from text. Lowercased, accent-folded, no stop words.
+
+    ACCENT FOLDING IS NOT COSMETIC. The word regex below only starts a token at
+    [a-z], so a combining accent SPLITS the word and eats its head: "codigo"
+    written with its accent yields "digo", "diseno" yields "dise", "espanol"
+    yields "espa". Two failures follow. The real word never enters the
+    vocabulary, so a search for it cannot match; and the mutilated stem does,
+    where it can collide with an unrelated real word ("digo" is Spanish for
+    "I say") and weave a synapse between documents that share nothing.
+
+    Snapshot on one machine, 2026-09-02: ~157 distinct accented words over the
+    ~415 documents this generator feeds to TF-IDF, folding out ~130 mutilated
+    stems and admitting ~97 real words for a net vocabulary change of about -30
+    terms. Deliberately approximate: skills/learned/ is gitignored and drifts
+    per machine, so an exact count is NOT reproducible by a reader and any
+    precise figure here would rot into a lie. The shape is what matters and it
+    is stable: a small effect in this corpus, because skills and agents are
+    written mostly in English. The same defect was severe in the life-memories
+    corpus, where the operator's own city indexed as "laga" and "dia" vanished
+    outright.
+
+    Folding the corpus WITHOUT folding STOP_WORDS is worse than not folding at
+    all: see _folded_stops above. That half-fix shipped junk terms ("que" at idf
+    2.502) that wove 6 false skill-skill edges before it was caught.
+
+    NFKD + drop-combining is idempotent, so folding again downstream is safe.
+    """
+    text = _fold(text)
     # Remove code blocks (they add noise)
     text = re.sub(r"```[\s\S]*?```", " ", text)
     # Remove URLs
@@ -778,6 +839,12 @@ def generate_connectome():
         "meta": {
             "generated": t0.isoformat(),
             "version": "2.0",
+            # Bumped whenever tokenization changes. A map built by a different
+            # tokenizer than the one asking the question is STALE even when its
+            # mtime is newer than every source file: a sibling machine that
+            # pulls new scripts keeps an old-tokenizer index and silently
+            # answers zero. Freshness checks compare this, not just mtimes.
+            "tokenizer": TOKENIZER_VERSION,
             "generator": "generate_neural_map.py",
             "model": "Octopus Deep Connectome",
             "generation_time_sec": round(elapsed, 2),
