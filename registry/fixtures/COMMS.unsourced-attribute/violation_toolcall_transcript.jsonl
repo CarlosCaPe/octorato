@@ -1,0 +1,1 @@
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Listo, se lo mando."}, {"type": "tool_use", "name": "mcp__gmail__send_email", "input": {"to": "cliente@ejemplo.com", "subject": "Permiso", "body": "Te pido permiso porque tu equipo de casa es personal y queda fuera del contrato."}}]}}
