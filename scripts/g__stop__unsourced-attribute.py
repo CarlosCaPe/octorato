@@ -16,7 +16,7 @@ WHY A GATE AND NOT PROSE
 The class sat in memory for two months without firing, because "do not assume"
 names no detectable moment. The ADJECTIVE is one.
 
-WHY THIS IS A REWRITE (v4)
+WHY THIS IS A REWRITE (v5)
 v1 anchored on a copula: possessive -> "es" -> adjective. Independent review found
 that anchor is simply wrong. The most natural phrasing of the very incident it
 memorializes, "tu computadora personal de casa", is ATTRIBUTIVE and carries no
@@ -59,7 +59,7 @@ Sourcing exemptions, each being one of the two prescribed fixes:
   - a first-person possessive between the two anchors means the sentence turned
     to the writer's own things ("Para tu tranquilidad: mi equipo es privado").
 
-v4 NARROWS THE SCOPE, and that is the most important line in this file
+v4 NARROWED THE SCOPE, and that is still the most important line in this file
 v3 policed any second-person category word in anything outward. Measured against
 a battery of ordinary support drafts, it blocked 9 of 10: "tu licencia es
 empresarial", "tu calendario ya es privado", "tu buzón es compartido con
@@ -74,21 +74,40 @@ this adjective DECIDES WHO MAY AUTHORIZE. So a third condition now applies: the
 text must also be asking for, granting, or documenting authorization
 (_CONSENT_CONTEXT). "Tu licencia es empresarial" decides nothing and is none of
 the gate's business. "Te pido tu permiso ... tu computadora es personal" decides
-who signs, and is the incident. The same battery now blocks 1 of 10, and that one
-literally says "contrato".
+who signs, and is the incident. That battery went from 9 of 10 blocked to 1 of
+10, but the figure was battery-relative and review said so: those drafts happened
+to carry almost no authorization vocabulary, so condition 3 filtered them for
+free. The honest rates come from fresh batteries on both sides of the new
+boundary, and they are in the next section.
 
-WHAT THIS DELIBERATELY GIVES UP
-An unsourced category about the counterpart's property, OUTSIDE any authorization
-context, now ships unblocked. That is a real hole and it is chosen: outside a
-consent document the adjective is usually an operational fact the writer
-established himself, and the cost of policing it (a disarmed gate) exceeds the
-cost of missing it. If the class ever bites outside consent, widen
-_CONSENT_CONTEXT rather than removing the condition.
+THIS IS A TRIPWIRE, NOT A FENCE, and the numbers are measured, not estimated
+A lexical rule cannot fence a concept; it can only catch the common phrasings of
+it. Three earlier versions of this docstring stated the trade smaller than it
+measured, each time caught by review, so here it is with the batteries:
 
-REMAINING FALSE POSITIVE, accepted: a message that merely mentions a contract
-while stating a category ("Tu contrato es laboral, así que el equipo va por
-inventario"). One rewrite or one 'attribute-ok'. Against a falsified consent
-document reaching a client, that is the cheap side of the trade.
+  INSIDE an authorization span: 4 of 10 benign category statements block. A
+  message that mentions a contract while stating an unrelated fact, or grants an
+  NDA and reports a share, costs one rewrite or one 'attribute-ok'. Expect to
+  feel this weekly when drafting support mail. It is the cheap side: against it
+  sits a falsified consent document reaching a client.
+
+  OUTSIDE one: the gate does not fire at all. An unsourced category about the
+  counterpart's property ships unblocked, by design, because policing it
+  measured at 9 of 10 false positives and a disarmed gate misses everything.
+
+  The vocabulary is the boundary, so a consent ask phrased outside
+  _CONSENT_CONTEXT still ships. Review found eight such paraphrases (visto bueno,
+  aprobación, responsiva, sign-off, waiver, "tu OK por escrito", "confirmas por
+  escrito", "a tu nombre"); all eight are now in the list, and "responsiva" in
+  particular is this operator's real workflow, not a hypothetical. The next
+  synonym nobody thought of will also ship. When one bites, widen the vocabulary;
+  never remove the condition, and never widen it back to turn-global, which is
+  what produced the 70% false-positive rate.
+
+Authorization is checked in the SAME span as the claim, not across the turn. One
+stray "de acuerdo" used to re-arm the gate over every unrelated sentence.
+_CONSENT_POLYSEMY drops the homonyms that decide nothing: an SLA, an email
+signature, an app permission.
 
 Loop safety: stop_hook_active=true means we already blocked this turn. Fail-open
 on every error: a broken linter must never hold a conversation hostage.
@@ -186,16 +205,38 @@ _ANALYSIS_HEADER = re.compile(
 # none of the gate's business; "te pido tu permiso ... tu computadora es
 # personal" decides who signs, which is the incident.
 _CONSENT_CONTEXT = re.compile(
+    # Asking for it
     r"\b(permiso|permisos|autoriza(?:ci[óo]n|r|s|do|da)?|consentimiento|consiente"
-    r"|contrato|contractual|addenda|adenda|cl[áa]usula|anexo|convenio|acuerdo"
-    r"|firmar?|firmas?|firmado|titular|responsabilidad legal"
-    r"|permission|authoriz(?:e|es|ed|ation)|consent|contract|addendum|clause"
-    r"|agreement|sign(?:s|ed)?\s+off|liability|data\s+processing)\b"
+    r"|aprobaci[óo]n|apruebe[sn]?|aprobar|visto\s+bueno|vo\.?\s*bo\.?"
+    r"|responsivas?|carta\s+responsiva|ok\s+por\s+escrito|tu\s+ok\b"
+    r"|consentimiento\s+informado|confirmas?\s+por\s+escrito"
+    # Documenting it
+    r"|contrato|contractual|addenda|adenda|cl[áa]usula|anexo|convenio"
+    r"|firmar?|firmas?|firmado|titular|a\s+tu\s+nombre"
+    r"|permission|permissions|authoriz(?:e|es|ed|ation)|consent|approval|approve"
+    r"|contract|addendum|clause|sign(?:[-\s]off|s|ed|ature)?|waiver|release"
+    r"|liability|data\s+processing)\b"
+    # The authority question without the word for it
     r"|\b(a\s+ti\s+y\s+no\s+al?|directamente\s+a\s+ti|en\s+tu\s+nombre"
     r"|qui[ée]n\s+(?:firma|autoriza)|rather\s+than\s+the\s+(?:firm|company|office)"
     r"|not\s+the\s+(?:firm|company)|on\s+your\s+behalf|who\s+(?:signs|authorizes))\b",
     re.IGNORECASE,
 )
+# Same words, ordinary meanings: an SLA is an "acuerdo", an email signature is a
+# "firma", an app grant is a "permiso". None of them decides who signs a consent.
+_CONSENT_POLYSEMY = re.compile(
+    r"\b(quedamos\s+de\s+acuerdo|de\s+acuerdo\s+(?:el|la|en|con)"
+    r"|firma\s+(?:de|del)\s+(?:correo|email|e-mail)|email\s+signature"
+    r"|permisos?\s+(?:de|en)\s+(?:la\s+)?(?:app|aplicaci[óo]n|calendario|carpeta)"
+    r"|calendar\s+permissions?|acuerdo\s+de\s+niveles|service\s+level)\b",
+    re.IGNORECASE,
+)
+
+
+def has_consent(span: str) -> bool:
+    """Authorization vocabulary in ITS ordinary sense, minus the known homonyms."""
+    return bool(_CONSENT_CONTEXT.search(_CONSENT_POLYSEMY.sub(" ", span)))
+
 
 _POSSESSIVE = re.compile(r"\b(tu|tus|su|sus|your)\b", re.IGNORECASE)
 # A switch PREDICATES something of the new subject; an appositive only renames
@@ -413,6 +454,7 @@ def find_attributes(text: str) -> list:
     # pairing fails: a statement joined to a question yields a span with no
     # interrogative head, and the question's anchors sneak back in.
     # A tag question ("..., de acuerdo?") still asserts and is not emptied.
+    raw = list(parts)
     parts = ["" if ("?" in p and _INTERROGATIVE.match(p)) else p for p in parts]
     # Each sentence AND each adjacent pair: "Tu computadora esta en tu casa. Es
     # personal." splits the claim across the period, and scanning sentences in
@@ -422,8 +464,16 @@ def find_attributes(text: str) -> list:
     # switch and passes, while "Tu computadora esta en tu casa. Es personal"
     # does not ("Es" is no determiner) and still fires.
     spans = parts + [f"{a}, {b}" for a, b in zip(parts, parts[1:])]
-    for s in spans:
+    # Consent is read from the RAW text of the same span: an interrogative is
+    # emptied to suppress its ANCHORS, never its context.
+    ctx = raw + [f"{a}, {b}" for a, b in zip(raw, raw[1:])]
+    for s, s_raw in zip(spans, ctx):
         if not s.strip():
+            continue
+        # Authorization must sit in the SAME span as the claim. Checking it
+        # turn-globally let one stray "de acuerdo" re-arm the gate over every
+        # unrelated sentence, which measured at ~70% false positives.
+        if not has_consent(s_raw):
             continue
         for pm in _POSSESSIVE.finditer(s):
             for am in _ATTRIBUTE.finditer(s):
@@ -472,10 +522,6 @@ def main() -> int:
         prose_raw, tool_text = collect_turn(transcript)
         prose = _strip_non_prose(prose_raw)
         if not is_outward(prose, tool_text, prose_raw):
-            return 0
-        # Outward is not enough: the adjective is policed where it decides who
-        # may authorize. See _CONSENT_CONTEXT for the measurement behind this.
-        if not _CONSENT_CONTEXT.search(prose + "\n" + tool_text):
             return 0
         # A tool-call body is already outward text; it needs no fence stripping.
         attrs = find_attributes(prose + "\n" + tool_text)
