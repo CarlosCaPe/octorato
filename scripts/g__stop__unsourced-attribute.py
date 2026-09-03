@@ -104,10 +104,18 @@ measured, each time caught by review, so here it is with the batteries:
   never remove the condition, and never widen it back to turn-global, which is
   what produced the 70% false-positive rate.
 
-Authorization is checked in the SAME span as the claim, not across the turn. One
-stray "de acuerdo" used to re-arm the gate over every unrelated sentence.
-_CONSENT_POLYSEMY drops the homonyms that decide nothing: an SLA, an email
-signature, an app permission.
+Authorization is checked near the claim, not across the turn: the claim's span
+plus LOOKBACK raw sentences before it. One stray "de acuerdo" used to re-arm the
+gate over every unrelated sentence. The consequence of the bound is a real miss
+and belongs here: an ask further back than LOOKBACK sentences from the claim is
+not seen, so a long preamble between the request and the premise defeats the
+gate.
+
+_CONSENT_POLYSEMY drops homonyms that decide nothing (an SLA, an email signature,
+an app permission, a software release, "te anexo"). Its tail is OPEN, not a closed
+set: every widening of the consent vocabulary widens what a homonym can be, and
+review measured 6 of 7 fresh benign drafts blocking on the newest additions
+before these exclusions. Expect to keep adding to both lists on incident.
 
 Loop safety: stop_hook_active=true means we already blocked this turn. Fail-open
 on every error: a broken linter must never hold a conversation hostage.
@@ -137,6 +145,8 @@ WINDOW = 120
 # A quotation shorter than this is a scare quote, not a citation, so it does not
 # launder an unsourced attribute. Sized above a quoted word or two.
 MIN_QUOTE = 25
+# Raw sentences of look-back when checking for authorization context.
+LOOKBACK = 3
 
 _FOOTER = re.compile(r"^\s*(Provenance|Procedencia|Herkunft)\s*:", re.IGNORECASE)
 
@@ -228,7 +238,10 @@ _CONSENT_POLYSEMY = re.compile(
     r"\b(quedamos\s+de\s+acuerdo|de\s+acuerdo\s+(?:el|la|en|con)"
     r"|firma\s+(?:de|del)\s+(?:correo|email|e-mail)|email\s+signature"
     r"|permisos?\s+(?:de|en)\s+(?:la\s+)?(?:app|aplicaci[óo]n|calendario|carpeta)"
-    r"|calendar\s+permissions?|acuerdo\s+de\s+niveles|service\s+level)\b",
+    r"|calendar\s+permissions?|acuerdo\s+de\s+niveles|service\s+level"
+    r"|(?:el|un|the)\s+release|release\s+notes|te\s+anexo|le\s+anexo"
+    r"|(?:folder|file|carpeta)\s+permissions?|aprobar\s+(?:los\s+)?gastos"
+    r"|firma\s+electr[óo]nica|electronic\s+signature)\b",
     re.IGNORECASE,
 )
 
@@ -466,7 +479,14 @@ def find_attributes(text: str) -> list:
     spans = parts + [f"{a}, {b}" for a, b in zip(parts, parts[1:])]
     # Consent is read from the RAW text of the same span: an interrogative is
     # emptied to suppress its ANCHORS, never its context.
-    ctx = raw + [f"{a}, {b}" for a, b in zip(raw, raw[1:])]
+    # LOOK-BACK, bounded. A formal consent email puts the ask in its opening
+    # line and the premise a paragraph later, so the adjacent pair never reaches
+    # it. Three raw sentences back covers that shape without returning to the
+    # turn-global check that measured at 70% false positives.
+    def _ctx(i: int) -> str:
+        return " ".join(raw[max(0, i - LOOKBACK):i + 2])
+    ctx = [_ctx(i) for i in range(len(parts))] + \
+          [_ctx(i) for i in range(len(parts) - 1)]
     for s, s_raw in zip(spans, ctx):
         if not s.strip():
             continue
