@@ -110,7 +110,7 @@ rules:
   category: COMMS
   source:
     file: CLAUDE.md
-    anchor: Provenance footer
+    anchor: Wired, not remembered
   strength: GATE
   gateable: true
   enforcement: fail-closed
@@ -120,7 +120,7 @@ rules:
   # firing_event queda en null A PROPOSITO hasta que el operador registre el hook.
   # Un gate nuevo se revisa antes de armarlo: registrarlo en caliente lo pondria a
   # bloquear a TODAS las sesiones vivas de golpe. El selftest ya prueba que bloquea
-  # (sin pie, y pie sin Engine) y que deja pasar (con pie, trivial, exento), asi que
+  # (sin pie, pie sin Engine, y pie dentro de un fence) y que deja pasar (con pie, trivial, exento), asi que
   # la regla esta cableada, no es prosa.
   # Al armarlo: firing_event: Stop / firing_matcher: '*', mas el proof
   # IN_HOOKS_JSON Stop|*|g__stop__provenance-engine.py, y la entrada en hooks.json

@@ -27,6 +27,18 @@ WHAT COUNTS
     Exempt:   a line containing `provenance-ok` (deliberate: a quoted footer, a
               pure paste-ready block, an explicit operator waiver).
 
+DESIGN CHOICES, STATED SO THEY ARE NOT RE-LITIGATED
+    PROSE_FLOOR = 300 is a floor, not a judgment of substance: a 299-char reply
+    passes by construction. Real replies of 250-290 chars exist and are usually
+    a status line plus one fact; the cost of a missed footer there is low, the
+    cost of blocking every short answer is high.
+    The label match is case-insensitive; the `Engine` token is case-sensitive.
+    The label is a fixed vocabulary of three words; the field name is a proper
+    noun in the spec, and matching it exactly keeps "engine" in prose from
+    counting.
+    Footer POSITION is not enforced here. The paste-ready gate owns ordering
+    (footer before the final block); this gate owns existence.
+
     Loop safety: stop_hook_active=true means we already blocked this turn; one
     forced rewrite, never a loop. Fail-open on any parse or IO error: a broken
     gate must never hold the conversation.
@@ -109,7 +121,11 @@ def verdict(text: str) -> str | None:
     prose = _prose_only(text)
     if len(prose.strip()) < PROSE_FLOOR:
         return None  # trivial reply
-    footers = [ln for ln in text.splitlines() if _FOOTER.match(ln)]
+    # Search the PROSE, not the raw text. Independent QA caught the gap: the
+    # length floor was computed on prose while the footer was searched raw, so a
+    # footer typed inside a code fence satisfied the gate. A fenced footer is a
+    # quotation, and the docstring already said quotations need the waiver.
+    footers = [ln for ln in prose.splitlines() if _FOOTER.match(ln)]
     if not footers:
         return "no Provenance footer at all"
     if not any(_ENGINE.search(ln) for ln in footers):
