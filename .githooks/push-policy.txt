@@ -15,6 +15,12 @@
 # (gitignored) and are layered on top by the hook when present.
 
 [paths]
+# Derived brain indexes. Gitignored, but .gitignore is one edit away from being
+# wrong and `git add -f` bypasses it entirely. memory_map.json in particular is
+# built from projects/ and its vectors hold memory terms VERBATIM, identity
+# strings included, so the push-time layer pins it independently.
+^memory_map\.json$
+^neural_map\.json$
 # Never push captured tokens, sessions, or per-user data
 \.graph-token\.json$
 \.playwright-session-[^/]*/
