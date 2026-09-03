@@ -40,6 +40,7 @@ PROJECTS = HOME / ".claude" / "projects"
 TIMEOUT_S = 3
 TAIL_BYTES = 20_000
 MAX_HITS = 5
+SEEK_SLOTS = 2          # slots reserved for the graph seek, never leftovers
 MIN_SCORE = 2           # need at least this much token overlap to surface a line
 # Una linea del indice puede compactar VARIAS entradas separadas por " · ".
 # Leerlas todas (finditer) o toda entrada en segunda posicion queda muda: mitad
@@ -67,23 +68,39 @@ def emit(ctx: str) -> None:
             "hookEventName": "UserPromptSubmit", "additionalContext": ctx}}))
 
 
+def _central_slug() -> str | None:
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from generate_memory_map import brain_project_slug
+        return brain_project_slug()
+    except Exception:
+        return None
+
+
 def find_memory_md(transcript_path: str) -> Path | None:
-    """Prefer the MEMORY.md next to this session's transcript; fall back to the
-    most-recently-touched brain-project MEMORY.md."""
+    """This session's own MEMORY.md, else the CENTRAL brain's. Never another arm's.
+
+    The old fallback picked the most-recently-touched MEMORY.md across ALL
+    project dirs. That is a cross-arm path and the widest one left in this hook:
+    the literal passes then read that dir's index AND every memory body in it,
+    and the header names that dir as the base. It fires whenever the session's
+    own dir has no memory yet (a new arm's first sessions) or the transcript
+    path is absent. It looked benign only because the central dir happened to be
+    the most recently written; `ls -t` puts two arms next in line, and the order
+    flips on every memory save.
+
+    Central is the correct fallback and the only safe one: it holds the generic
+    lessons and operator identity that are meant to reach every session.
+    """
     if transcript_path:
         cand = Path(transcript_path).parent / "memory" / "MEMORY.md"
         if cand.exists():
             return cand
-    try:
-        mds = list(PROJECTS.glob("*/memory/MEMORY.md"))
-    except Exception:
+    slug = _central_slug()
+    if not slug:
         return None
-    if not mds:
-        return None
-    try:
-        return max(mds, key=lambda p: p.stat().st_mtime)
-    except Exception:
-        return mds[0]
+    central = PROJECTS / slug / "memory" / "MEMORY.md"
+    return central if central.exists() else None
 
 
 def tokenize(text: str) -> set[str]:
@@ -190,6 +207,68 @@ def score_bodies(mem_dir: Path, ptoks: set[str], indexed: set[str]):
     return out
 
 
+def session_project(transcript_path: str):
+    """The project dir this session actually belongs to, or None.
+
+    Derived from the TRANSCRIPT path, never from the MEMORY.md that
+    find_memory_md resolved. That fallback picks the most-recently-touched
+    MEMORY.md across ALL project dirs, so in a session whose own dir has no
+    memory yet it can land on ANOTHER ARM's dir. Trusting it to name the
+    session would then hand that arm's memories to this one: the isolation
+    filter would be seeded with the wrong arm. No transcript means no
+    session-scoped dir, and the seek falls back to the central brain only.
+    """
+    if not transcript_path:
+        return None
+    try:
+        parent = Path(transcript_path).parent
+        return parent.name if parent.parent.name == "projects" else None
+    except Exception:
+        return None
+
+
+def seek_index(prompt: str, mem_dir, want: int, session_dir=None):
+    """Cosine seek over memory_map.json. Returns [(label, title, fname)] or [].
+
+    UNION with the existing token overlap, never a replacement. The two are blind
+    in different directions: overlap catches a literal term the index may have
+    down-weighted as common; the index catches a memory that shares NO literal
+    term with the prompt (different phrasing, or English memory vs Spanish
+    prompt, bridged by the ES<->EN lexicon). Replacing one with the other would
+    trade one blindness for another.
+
+    Fail-open in every branch: a missing or stale index costs nothing.
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from generate_memory_map import load_index, score_prompt
+    except Exception:
+        return []
+    idx = load_index()
+    if not idx:
+        return []
+    try:
+        from generate_memory_map import brain_project_slug
+        # ARM ISOLATION. Only this session's own project dir and the CENTRAL
+        # brain dir. A cwd-scoped dir belonging to another arm is that arm's
+        # sealed memory, and routing it here would make this the first hook to
+        # tell one arm that another exists. Filter, never bias.
+        allowed = {brain_project_slug()}
+        if session_dir:
+            allowed.add(session_dir)
+        hits = score_prompt(idx, prompt, top_n=want, min_score=0.06, projects=allowed)
+    except Exception:
+        return []
+    out = []
+    for score, _key, node in hits:
+        # Emit the STORED ABSOLUTE PATH, not id + ".md". The header announces one
+        # base directory, and a hit from the central brain dir does not exist
+        # under an arm's dir: the model was being told to Read a missing file.
+        path = node.get("path") or ""
+        out.append((f"seek {score:.2f}", node.get("title", node.get("id", "")), path))
+    return out
+
+
 def main() -> int:
     try:
         data = json.load(sys.stdin) or {}
@@ -210,9 +289,54 @@ def main() -> int:
     # El indice primero (barato y curado), el cuerpo despues para lo que el
     # indice no sabe nombrar. Sin esta segunda pasada el recall es ciego a toda
     # entidad que viva dentro de una memoria en vez de en su titular.
+    # One file, one slot. MEMORY.md can list the same memory under two titles,
+    # and both scored rows were emitted, burning a slot on a duplicate.
+    seen_files = set()
+    deduped = []
+    for row in hits:
+        if row[2] in seen_files:
+            continue
+        seen_files.add(row[2])
+        deduped.append(row)
+    hits = deduped
+
     indexed = {f for _, _, f in hits}
     body = score_bodies(md.parent, ptoks, indexed)
     hits = (hits + body)[:MAX_HITS] if len(hits) < MAX_HITS else hits[:MAX_HITS]
+
+    # Third pass: the graph. It reaches what neither literal pass can — a memory
+    # that shares NO token with the prompt (different phrasing, or an English
+    # memory under a Spanish prompt, bridged by the ES<->EN lexicon).
+    #
+    # It gets a RESERVED budget, not the leftovers. The literal passes routinely
+    # saturate MAX_HITS with weak overlaps, and a "add it if there is room" union
+    # then never fires: measured on this brain, the seek contributed 0 rows
+    # because 5/5 slots were already taken by token noise. Reserving is what
+    # makes the union real.
+    seek = seek_index(prompt, md.parent, SEEK_SLOTS * 2, session_project(tpath))
+    if seek:
+        # Identity is the RESOLVED PATH, never the bare filename. The index
+        # deliberately keys nodes as project/stem so two memories CAN share a
+        # slug across project dirs; deduping on the filename threw one away.
+        def ident(row):
+            f = row[2]
+            return f if f.startswith("/") else str(md.parent / f)
+
+        seen = {ident(r) for r in hits}
+        fresh = [r for r in seek if ident(r) not in seen]
+        # Reserve only what the seek can actually FILL. Truncating literal hits
+        # before knowing how many seek rows are new sacrificed rows for slots
+        # that then went unused.
+        keep = MAX_HITS - min(SEEK_SLOTS, len(fresh))
+        hits = hits[:keep]
+        seen = {ident(r) for r in hits}
+        for row in fresh:
+            if len(hits) >= MAX_HITS:
+                break
+            if ident(row) not in seen:
+                hits.append(row)
+                seen.add(ident(row))
+
     if not hits:
         return 0
 

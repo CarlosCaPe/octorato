@@ -386,6 +386,34 @@ def check_leak_guard(fix: bool) -> Result:
     return Result(key, status, "; ".join(problems), hint)
 
 
+def _tokenizer_mismatch(nm: Path) -> str | None:
+    """Return a reason when the map was built by a different tokenizer.
+
+    Mtime freshness cannot see this: pulling a tokenizer change touches only
+    scripts/, so the map looks current while it speaks the old dialect and the
+    query side speaks the new one. The result is a silent zero-hit recall, which
+    is the worst failure shape: it looks like "nothing matched".
+    """
+    try:
+        gen = CLAUDE_DIR / "scripts" / "generate_neural_map.py"
+        want = None
+        for line in gen.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.startswith("TOKENIZER_VERSION"):
+                want = line.split("=", 1)[1].strip().strip('"').strip("'")
+                break
+        if not want:
+            return None
+        try:
+            have = json.loads(nm.read_text(encoding="utf-8")).get("meta", {}).get("tokenizer")
+        except json.JSONDecodeError:
+            return "is not valid JSON"  # broken is not fresh
+        if have != want:
+            return f"built by tokenizer {have!r}, generator is {want!r}"
+    except Exception:
+        return None
+    return None
+
+
 def check_connectome_fresh(fix: bool) -> Result:
     key = "connectome-fresh"
     nm = CLAUDE_DIR / "neural_map.json"
@@ -397,6 +425,20 @@ def check_connectome_fresh(fix: bool) -> Result:
         if not nm.exists():
             return Result(key, FAIL, "neural_map.json missing",
                           "run `python3 scripts/generate_neural_map.py`")
+    # Contract before clock: a tokenizer mismatch is staleness that no mtime
+    # comparison can see, and it fails as a silent zero-hit recall.
+    mismatch = _tokenizer_mismatch(nm)
+    if mismatch:
+        if fix:
+            gen = CLAUDE_DIR / "scripts" / "generate_neural_map.py"
+            if gen.exists():
+                cp = run([PYTHON or "python3", str(gen)], cwd=CLAUDE_DIR)
+                if cp.returncode == 0 and not _tokenizer_mismatch(nm):
+                    return Result(key, PASS, "neural_map.json regenerated (tokenizer changed)")
+        return Result(key, FAIL, f"neural_map.json {mismatch}",
+                      "run `python3 scripts/generate_neural_map.py` — queries and "
+                      "index must speak the same tokenizer or recall silently returns nothing")
+
     nm_mtime = nm.stat().st_mtime
     newest = 0.0
     newest_src = None
