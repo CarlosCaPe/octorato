@@ -128,20 +128,21 @@ Nothing yet: the next release harvests this section.
 ## [2026-08-18]: v6.17.1
 
 ### Fixed
-- fix(ai-sync): la co-tenencia se cuenta por **árbol de trabajo y host**, no por sesión.
-  Contarla por sesión castigaba justo a quien ya se había aislado, y su mensaje mandaba
-  a forkear un worktree que la sesión ya tenía. Además `_is_repo()` usa
-  `git rev-parse --is-inside-work-tree`: ai-sync se negaba a correr dentro de un worktree
-  porque ahí `.git` es un archivo.
-- fix(ai-sync): la etiqueta semver **solo se mueve sobre el tronco**. Desde una rama de
-  dimensión etiquetaba un commit que el squash dejaba huérfano (así nació el tag v6.15.3,
-  ya retirado). Empujar desde una rama abre el PR en vez de terminar en silencio.
-- fix(check-generic): escanea el **árbol actual**, no siempre `$HOME/.claude`. Desde un
-  worktree leía un índice vacío e imprimía "clean, scanned 0 staged file(s)" con doce
-  archivos sin revisar.
-- fix(wa-latido): mide y cura el puente **donde vive**. Tras el cutover seguía leyendo la
-  réplica local (refrescada cada 5 min, así que el sello nunca aparecía en 40s) y su cura
-  levantaba el binario local, clonando la sesión de WhatsApp.
+- fix(ai-sync): co-tenancy is counted per **working tree and host**, not per session.
+  Counting it per session punished exactly the sessions that had already isolated
+  themselves, and its message told them to fork a worktree they were already in.
+  `_is_repo()` now uses `git rev-parse --is-inside-work-tree`: ai-sync had refused to
+  run inside a worktree, where `.git` is a file rather than a directory.
+- fix(ai-sync): the semver tag **only moves on the trunk**. From a dimension branch it
+  tagged a commit that the squash left orphaned, which is how tag v6.15.3 was cut and
+  later withdrawn. Pushing from a branch now opens the PR instead of ending in silence.
+- fix(check-generic): scans the **current tree**, not always `$HOME/.claude`. From a
+  worktree it read an empty index and printed "clean, scanned 0 staged file(s)" with
+  twelve files left unexamined.
+- fix(wa-latido): measures and heals the bridge **where it lives**. After the cutover it
+  kept reading the local replica, refreshed every 5 minutes, so the stamp never appeared
+  inside the 40s window, and its healing started the local binary, cloning the WhatsApp
+  session.
 ### Features
 - feat(gate): `FLOW.do-it-today`: Stop gate fail-closed contra aplazar trabajo propio.
   Un pendiente solo vale si es un paso irreducible del operador o un bloqueo medido, y
