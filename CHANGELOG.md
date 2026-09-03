@@ -15,6 +15,10 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-09-03]: v6.22.0
+### Features
+- feat(connectome): index life-memories as a third seekable graph (#248)
+
 ## [2026-09-03]: v6.21.6
 ### Fixes
 - fix(connectome): fold accents in the tokenizer, on both sides (#249)
@@ -147,8 +151,9 @@ Nothing yet: the next release harvests this section.
 - feat(gate): `FLOW.do-it-today`: Stop gate fail-closed contra aplazar trabajo propio.
   Un pendiente solo vale si es un paso irreducible del operador o un bloqueo medido, y
   en ambos casos viaja con su comando exacto.
-- feat(wa-soporte): `--archivo` manda adjuntos por el canal de soporte; el archivo viaja
-  al disco del puente y las dos copias intermedias se borran siempre, también si falla.
+- feat(wa-soporte): `--archivo` sends attachments through the support channel; the file
+  travels to the bridge's own disk and both intermediate copies are always deleted,
+  including when the send fails.
 ### Other
 - docs(changelog): registrar los arreglos de la sesion (#228)
 
@@ -170,7 +175,7 @@ Nothing yet: the next release harvests this section.
 ## [2026-08-18]: v6.15.2
 
 ### Fixes
-- fix(wa-latido): medir y curar el puente donde vive, no donde vivia (#223)
+- fix(wa-latido): measure and heal the bridge where it lives, not where it used to (#223)
 
 ## [2026-08-14]: v6.15.1
 
@@ -190,7 +195,7 @@ Nothing yet: the next release harvests this section.
 ## [2026-08-12]: v6.14.2
 
 ### Fixes
-- fix(memoria): leer TODAS las entradas de una linea compacta del indice (#217)
+- fix(memoria): read ALL entries in a compacted index line (#217)
 
 ## [2026-08-12]: v6.14.1
 
