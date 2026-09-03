@@ -16,7 +16,7 @@ WHY A GATE AND NOT PROSE
 The class sat in memory for two months without firing, because "do not assume"
 names no detectable moment. The ADJECTIVE is one.
 
-WHY THIS IS A REWRITE (v3)
+WHY THIS IS A REWRITE (v4)
 v1 anchored on a copula: possessive -> "es" -> adjective. Independent review found
 that anchor is simply wrong. The most natural phrasing of the very incident it
 memorializes, "tu computadora personal de casa", is ATTRIBUTIVE and carries no
@@ -36,7 +36,7 @@ path, which is precisely what the fixture discipline exists to prevent. Every
 fixture here is now built from real transcript shapes, tool_result entries and
 all.
 
-v3 keeps the PROXIMITY anchor and rebuilds around it:
+v3 kept the PROXIMITY anchor and rebuilt around it; v4 adds condition 3:
 
   Condition 1 (delivery). Something in this turn goes outward: a handover marker
     in delivery position (a line that ends in ':' introducing the text, or an
@@ -59,23 +59,36 @@ Sourcing exemptions, each being one of the two prescribed fixes:
   - a first-person possessive between the two anchors means the sentence turned
     to the writer's own things ("Para tu tranquilidad: mi equipo es privado").
 
-KNOWN FALSE POSITIVES, deliberately not chased (three, all the same class)
-"your repository is private", "tu carpeta es compartida" written after the writer
-himself shared it, and "su plataforma es privada" about a third party. Each is an
-observed fact, but observation leaves no lexical trace, so nothing separates them
-from a fabricated category.
+v4 NARROWS THE SCOPE, and that is the most important line in this file
+v3 policed any second-person category word in anything outward. Measured against
+a battery of ordinary support drafts, it blocked 9 of 10: "tu licencia es
+empresarial", "tu calendario ya es privado", "tu buzón es compartido con
+recepción". At that rate a person disarms the gate, and a disarmed gate misses
+everything. The v3 answer to this was an exemption for a narrated first-person
+act, which review showed launders real violations the moment an unrelated action
+shares the sentence ("Ayer instalé el agente y tu computadora de casa es
+personal"). Exemptions were the wrong lever.
 
-v2 tried: an exemption for a narrated first-person act ("Ya configuré los
-accesos: tu carpeta es compartida"). Review showed it launders real violations
-the moment an unrelated action shares the sentence ("Ayer instalé el agente y tu
-computadora de casa es personal"), because narrating an action about one object
-never sources a category about another, and telling those apart is semantic, not
-lexical. The exemption was removed and these three now block.
+The right one was scope. The rule was never "police every adjective"; it is that
+this adjective DECIDES WHO MAY AUTHORIZE. So a third condition now applies: the
+text must also be asking for, granting, or documenting authorization
+(_CONSENT_CONTEXT). "Tu licencia es empresarial" decides nothing and is none of
+the gate's business. "Te pido tu permiso ... tu computadora es personal" decides
+who signs, and is the incident. The same battery now blocks 1 of 10, and that one
+literally says "contrato".
 
-That is the deliberate trade, and it follows from the cost asymmetry: a false
-positive costs one rewrite or one 'attribute-ok'; a false negative costs a
-falsified consent document sent to a client. This gate is biased to fire, and an
-exemption that manufactures false negatives buys comfort with the wrong currency.
+WHAT THIS DELIBERATELY GIVES UP
+An unsourced category about the counterpart's property, OUTSIDE any authorization
+context, now ships unblocked. That is a real hole and it is chosen: outside a
+consent document the adjective is usually an operational fact the writer
+established himself, and the cost of policing it (a disarmed gate) exceeds the
+cost of missing it. If the class ever bites outside consent, widen
+_CONSENT_CONTEXT rather than removing the condition.
+
+REMAINING FALSE POSITIVE, accepted: a message that merely mentions a contract
+while stating a category ("Tu contrato es laboral, así que el equipo va por
+inventario"). One rewrite or one 'attribute-ok'. Against a falsified consent
+document reaching a client, that is the cheap side of the trade.
 
 Loop safety: stop_hook_active=true means we already blocked this turn. Fail-open
 on every error: a broken linter must never hold a conversation hostage.
@@ -148,7 +161,7 @@ _PASTE_PHRASE = re.compile(
 )
 _HANDOVER_LINE = re.compile(
     r"^\s*(?:[^\n]{0,80}\b(borrador|draft|correo|mensaje|texto|carta|addenda"
-    r"|email|message|asunto|subject|respuesta|reply)\b[^\n]{0,80}):\s*$",
+    r"|email|message|asunto|subject|respuesta|reply|nota|note)\b[^\n]{0,80}):\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
 # A colon header can equally introduce ANALYSIS about a message, and structured
@@ -156,10 +169,31 @@ _HANDOVER_LINE = re.compile(
 # hand-over, and treating it as one re-admits the v1 false positive where the
 # reply diagnosing the error got blocked for quoting it.
 _ANALYSIS_HEADER = re.compile(
-    r"\b(puntos?|errores?|hallazgos?|correcciones?|cambios?|notas?|revisi[óo]n"
-    r"|an[áa]lisis|issues?|findings?|corrections?|changes?|review)\b"
+    r"\b(puntos?|errores?|hallazgos?|correcciones?|revisi[óo]n"
+    r"|an[áa]lisis|issues?|findings?|corrections?|review)\b"
     r"|\b(pasos?|instrucciones|gu[íi]a|checklist|steps?|how\s+to)\b"
     r"|\b(corrig[íi]|revis[ée]|encontr[ée]|detect[ée]|found|fixed|reviewed)\b",
+    re.IGNORECASE,
+)
+
+# SCOPE, added in v4 after measurement. Condition 1 used to be "anything that
+# ships outward", and a battery of ordinary support drafts showed the cost: 9 of
+# 10 benign messages blocked ("tu licencia es empresarial", "tu calendario ya es
+# privado"). A gate at that rate gets disarmed, and a disarmed gate misses 100%.
+# The rule it enforces was never that broad: the adjective matters because it
+# decides WHO MAY AUTHORIZE. So the text must also be asking for, granting, or
+# documenting authorization. "Tu licencia es empresarial" decides nothing and is
+# none of the gate's business; "te pido tu permiso ... tu computadora es
+# personal" decides who signs, which is the incident.
+_CONSENT_CONTEXT = re.compile(
+    r"\b(permiso|permisos|autoriza(?:ci[óo]n|r|s|do|da)?|consentimiento|consiente"
+    r"|contrato|contractual|addenda|adenda|cl[áa]usula|anexo|convenio|acuerdo"
+    r"|firmar?|firmas?|firmado|titular|responsabilidad legal"
+    r"|permission|authoriz(?:e|es|ed|ation)|consent|contract|addendum|clause"
+    r"|agreement|sign(?:s|ed)?\s+off|liability|data\s+processing)\b"
+    r"|\b(a\s+ti\s+y\s+no\s+al?|directamente\s+a\s+ti|en\s+tu\s+nombre"
+    r"|qui[ée]n\s+(?:firma|autoriza)|rather\s+than\s+the\s+(?:firm|company|office)"
+    r"|not\s+the\s+(?:firm|company)|on\s+your\s+behalf|who\s+(?:signs|authorizes))\b",
     re.IGNORECASE,
 )
 
@@ -406,8 +440,16 @@ def find_attributes(text: str) -> list:
                     continue
                 # Reverse order: the attribute already has its own subject, so
                 # the possessive further along is a different claim entirely.
-                if am.start() < pm.start() and _OWN_SUBJECT.search(s[:am.start()]):
-                    continue
+                if am.start() < pm.start():
+                    head = s[:am.start()]
+                    om = None
+                    for cand in _OWN_SUBJECT.finditer(head):
+                        # An adverbial ("Como marca la politica, es personal…")
+                        # is closed by a comma; a real subject is not.
+                        if "," not in head[cand.end():]:
+                            om = cand
+                    if om is not None:
+                        continue
                 hits.append(f"{pm.group(0)} … {am.group(0)}")
                 break
             else:
@@ -430,6 +472,10 @@ def main() -> int:
         prose_raw, tool_text = collect_turn(transcript)
         prose = _strip_non_prose(prose_raw)
         if not is_outward(prose, tool_text, prose_raw):
+            return 0
+        # Outward is not enough: the adjective is policed where it decides who
+        # may authorize. See _CONSENT_CONTEXT for the measurement behind this.
+        if not _CONSENT_CONTEXT.search(prose + "\n" + tool_text):
             return 0
         # A tool-call body is already outward text; it needs no fence stripping.
         attrs = find_attributes(prose + "\n" + tool_text)
