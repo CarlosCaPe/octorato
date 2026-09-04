@@ -15,6 +15,10 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-09-03]: v6.23.0
+### Features
+- feat(gate): block unsourced classifying attributes in outward drafts (#250)
+
 ## [2026-09-03]: v6.22.0
 ### Features
 - feat(connectome): index life-memories as a third seekable graph (#248)
