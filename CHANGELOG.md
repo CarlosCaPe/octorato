@@ -15,6 +15,12 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-09-04]: v6.23.1
+### Fixes
+- fix(registry): single anchor line for Do-it-today; backfill CHANGELOG v6.23.0 (#255)
+### Other
+- docs(changelog): backfill v6.21.4 through v6.21.6 (#254)
+
 ## [2026-09-03]: v6.23.0
 ### Features
 - feat(gate): block unsourced classifying attributes in outward drafts (#250)
