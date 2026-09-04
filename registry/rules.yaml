@@ -136,7 +136,7 @@ rules:
   category: FLOW
   source:
     file: CLAUDE.md
-    anchor: Do-it-today
+    anchor: Do-it-today (no dejes para mañana lo que puedas hacer hoy)
   strength: GATE
   gateable: true
   enforcement: fail-closed
