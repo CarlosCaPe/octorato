@@ -19,7 +19,7 @@ machine-generated growth ledger lives at
 ### Other
 - docs(architecture): v7 plan, nothing ships unverified (#258)
 
-## [2026-09-04]: v6.24.0
+## [2026-09-05]: v6.24.0
 ### Features
 - feat(gate): block unsourced absence claims in outward drafts without a seek receipt (#257)
 ### Other
