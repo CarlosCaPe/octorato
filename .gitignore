@@ -266,3 +266,12 @@ registry/fixtures/**/home/.wa-fixture/*.db
 /daemon-auth-cooldown
 /daemon-auth-status.json
 /remote-settings.json
+
+# Fixture seeds are proof data, never private config: a `home/.claude/...` seed
+# under registry/fixtures must be tracked, or the gate it proves is dead on
+# every other checkout (2026-09-05: two gates shipped without their seeds).
+!registry/fixtures/**/.claude/
+!registry/fixtures/**/.claude/**
+!registry/fixtures/**/.cache/
+!registry/fixtures/**/.cache/**
+!registry/fixtures/**/budgets.yaml

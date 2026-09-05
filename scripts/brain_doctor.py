@@ -1563,10 +1563,31 @@ def check_reflex_triage(fix: bool) -> Result:
     return Result(key, PASS, f"every recurrent lesson has a mechanism or a recorded decision ({len(decided)} decided)")
 
 
+def check_fixture_seeds_tracked(fix: bool) -> Result:
+    """v7: a fixture seed (registry/fixtures/<rule>/home/**) that the working
+    copy has but git does not track is a gate that passes here and is dead on
+    every other checkout. Happened 2026-09-05: `.claude/` in .gitignore ate two
+    gates' seeds (the send gate and budget-halt) and master failed liveness."""
+    key = "fixture-seeds-tracked"
+    root = CLAUDE_DIR / "registry" / "fixtures"
+    if not root.exists():
+        return Result(key, WARN, "registry/fixtures absent", "")
+    on_disk = sorted(str(f.relative_to(CLAUDE_DIR)) for f in root.glob("*/home/**/*") if f.is_file())
+    cp = git("ls-files", "--", "registry/fixtures")
+    tracked = set(cp.stdout.split("\n")) if cp.returncode == 0 else set()
+    missing = [f for f in on_disk if f not in tracked]
+    if missing:
+        return Result(key, FAIL, f"{len(missing)} fixture seed file(s) on disk but untracked (gitignored?): "
+                      + "; ".join(missing[:5]),
+                      "add a !registry/fixtures/** negation to .gitignore (or git add -f) so the proof ships with the gate")
+    return Result(key, PASS, f"{len(on_disk)} fixture seed file(s) all tracked")
+
+
 CHECKS = [
     ("repo-identity", check_repo_identity),
     ("rule-1-registry", check_registry),
     ("corpus-coverage", check_corpus_coverage),
+    ("fixture-seeds-tracked", check_fixture_seeds_tracked),
     ("gate-liveness", check_gate_liveness),
     ("enforcement-floor", check_enforcement_floor),
     ("waiver-age", check_waiver_age),
