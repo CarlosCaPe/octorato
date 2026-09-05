@@ -1429,7 +1429,14 @@ def check_querymaster_security_detector(fix: bool) -> Result:
 # ---------------------------------------------------------------------------
 
 def _memory_files() -> list:
-    return sorted(CLAUDE_DIR.glob("projects/*/memory/*.md"))
+    """Brain memory only (the central brain-brain), never an arm's memory:
+    an arm-brain is sealed client context and its lessons must not surface in
+    a public registry file. Only lessons count (feedback_*, lesson_*); a
+    project_*, reference_* or user_* memory is state, not a directive."""
+    home_slug = "-" + str(Path.home()).strip("/").replace("/", "-")
+    brain_mem_dir = CLAUDE_DIR / "projects" / home_slug / "memory"
+    return sorted(f for f in brain_mem_dir.glob("*.md")
+                  if f.name.startswith(("feedback_", "lesson_")))
 
 
 # A brain mechanism reference: an explicit ~/.claude/scripts path, or a bare
