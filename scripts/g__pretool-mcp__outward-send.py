@@ -71,20 +71,19 @@ _SEND_TOOL = re.compile(
     r"(send_email|send_message|send_file|send_audio_message|__reply$|__forward$)",
     re.IGNORECASE,
 )
-# Matched at the START of a stripped shell sub-command only (the same
-# command-boundary discipline qa-merge-gate uses): `git commit -m "wa-soporte.sh"`
-# carries the name inside a quoted argument and is not a send.
-_SEND_CMD_HEAD = re.compile(
-    r"^(?:\S*/)?wa-soporte\.sh\b|^(?:npx\s+)?wrangler\s+(?:pages\s+)?deploy\b"
-    r"|^gh\s+release\s+create\b",
-    re.IGNORECASE,
-)
+# Bash sends are found by TOKEN in the argv of any sub-command (after the
+# unquoted split and the wrapper peel): `bash -x`, `setsid`, `xargs`, `eval`
+# and every interpreter form carry the script name as its own token, while a
+# quoted commit message is one token that is not the name (QA cycle 3). The
+# residual is indirection that hides the name from argv ($(echo ...),
+# python -c subprocess, find -exec), accepted as in qa-merge-gate.
+_SEND_SCRIPTS = ("wa-soporte.sh",)
 _BODY_KEYS = ("body", "message", "text", "content", "html", "snippet",
               "caption", "subject", "description", "title", "command")
 # A hatch counts only as a standalone word in the operator's prompt, outside
 # quotes and code spans, and exempts only the class it names (send-ok: all).
-_HATCH = re.compile(r"(?:^|(?<=\s))(absence-ok|attribute-ok|draft-promise-ok|send-ok)(?=[\s,.;:!)]|$)", re.MULTILINE)
-_QUOTE_SPAN = re.compile(r"\"[^\"\n]*\"|'[^'\n]*'|`[^`\n]*`|«[^»]*»|[“”][^“”]*[“”]")
+_HATCH = re.compile(r"(?:^|(?<=[\s(\[]))(absence-ok|attribute-ok|draft-promise-ok|send-ok)(?=[\s,.;:!)\]]|$)", re.MULTILINE)
+_QUOTE_SPAN = re.compile(r"\"[^\"\n]*\"|(?<!\w)'[^'\n]*'(?!\w)|`[^`\n]*`|«[^»]*»|[“”][^“”]*[“”]")
 
 
 def hatches(prompt: str) -> set:
@@ -121,11 +120,23 @@ def _deny(reason: str) -> None:
     }, ensure_ascii=False))
 
 
+def _bash_is_send(command: str) -> bool:
+    import receipt_ledger
+    for sc in receipt_ledger.subcommands(command):
+        toks = receipt_ledger.tokens_of(sc)
+        for i, t in enumerate(toks):
+            if any(receipt_ledger._is_script_token(t, n) for n in _SEND_SCRIPTS):
+                return True
+            if t.endswith("wrangler") and ("deploy" in toks[i + 1:i + 3]):
+                return True
+            if t == "gh" and toks[i + 1:i + 3] == ["release", "create"]:
+                return True
+    return False
+
+
 def is_send(tool_name: str, tool_input: dict) -> bool:
     if tool_name == "Bash":
-        import receipt_ledger
-        cmd = str((tool_input or {}).get("command", ""))
-        return any(_SEND_CMD_HEAD.search(sc) for sc in receipt_ledger.subcommands(cmd))
+        return _bash_is_send(str((tool_input or {}).get("command", "")))
     return bool(_SEND_TOOL.search(tool_name))
 
 

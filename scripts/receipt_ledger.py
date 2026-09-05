@@ -85,13 +85,6 @@ GIT_HOOK_ENV = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX",
 # Fields every entry written by the harness carries. A hand-appended line that
 # lacks them is not anchored; one that fakes them is a forgery the trail shows.
 HARNESS_FIELDS = ("uuid", "parentUuid", "sessionId", "timestamp")
-# Seek COMMANDS, matched at the start of a stripped shell sub-command only.
-_SEEK_CMD_HEAD = re.compile(
-    r"^(?:python3?\s+)?(?:\S*/)?(?:query_connectome\.py\s+memory|impact-radius\.py"
-    r"|wa-guardia\.py|generate_memory_map\.py)\b"
-    r"|^sqlite3\s+\S*messages\.db\b",
-    re.IGNORECASE,
-)
 
 
 def _qa_gate_helpers():
@@ -147,8 +140,34 @@ def subcommands(command: str) -> list:
     return out
 
 
+def tokens_of(subcmd: str) -> list:
+    import shlex
+    try:
+        return shlex.split(subcmd)
+    except ValueError:
+        return subcmd.split()
+
+
+def _is_script_token(tok: str, name: str) -> bool:
+    return tok == name or tok.endswith("/" + name)
+
+
 def bash_is_seek(command: str) -> bool:
-    return any(_SEEK_CMD_HEAD.search(sc) for sc in subcommands(str(command or "")))
+    """A seek anywhere in the argv of any sub-command, by TOKEN (never by
+    substring): wrappers, interpreters and indirection through argv are all
+    covered by the same rule, and a quoted commit message stays one token that
+    is not the script name (QA cycle 3)."""
+    for sc in subcommands(str(command or "")):
+        toks = tokens_of(sc)
+        for i, t in enumerate(toks):
+            if _is_script_token(t, "query_connectome.py") and "memory" in toks[i + 1:i + 2]:
+                return True
+            if any(_is_script_token(t, n) for n in ("impact-radius.py", "wa-guardia.py",
+                                                     "generate_memory_map.py")):
+                return True
+            if t == "sqlite3" and any(x.endswith("messages.db") for x in toks[i + 1:]):
+                return True
+    return False
 
 
 def is_seek_tool(tool_name: str, tool_input) -> bool:

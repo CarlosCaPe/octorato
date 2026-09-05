@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-bw-setsid_stdbuf",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "setsid stdbuf -oL ~/.claude/scripts/wa-soporte.sh 5210000000000 \"Ese cargo no lo reconozco.\""
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_bash_wrapper_setsid_stdbuf_transcript.jsonl"
+}

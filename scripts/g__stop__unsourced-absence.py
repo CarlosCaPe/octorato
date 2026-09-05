@@ -288,8 +288,8 @@ _ATTRIBUTED = re.compile(r"\b(lo\s+hizo|lo\s+autoriz[óo]|lo\s+contrat[óo]|fue\
 
 def find_absence_claims(text: str, mask_quotes: bool = True) -> list:
     """Absence phrases in declarative sentences of the outward text. A sentence
-    that asks (opens interrogative, or carries an inverted question mark
-    anywhere) is the prescribed fix and is skipped. `mask_quotes=False` is for
+    that OPENS as a question is the prescribed fix and is skipped; one that
+    asserts and then asks still asserts. `mask_quotes=False` is for
     a SEND body, where a quotation is the model quoting itself."""
     hits = []
     if mask_quotes:
@@ -298,27 +298,32 @@ def find_absence_claims(text: str, mask_quotes: bool = True) -> list:
         s = part.strip()
         if not s or "absence-ok" in s:
             continue
-        if "?" in s and (_INTERROGATIVE.match(s) or _real_question(s)):
+        # Asking INSTEAD of asserting is the fix; a sentence that asserts and
+        # then asks ("..., ¿verdad?", "... ¿me lo aclaran?") still asserts, so
+        # only a sentence that OPENS as a question is exempt (QA cycles 2-3).
+        if "?" in s and _INTERROGATIVE.match(s):
             continue
-        # Attribution exempts only the clause it sits in: "no lo reconozco y no
-        # sé quién lo hizo" still claims absence in its first clause.
-        for clause in re.split(r"\s+y\s+|\s+and\s+|;", s):
-            if _ATTRIBUTED.search(clause):
-                continue
-            m = _ABSENCE.search(clause)
-            if m:
-                hits.append(m.group(0))
+        # Attribution ("lo hizo el equipo") explains the comma-clause it sits
+        # in and the one right before it, inside the same conjunction segment;
+        # it never reaches across "y"/"and"/";" and never launders a claim that
+        # comes after it.
+        hit = None
+        for segment in re.split(r"\s*;\s*|\s+y\s+|\s+and\s+", s):
+            clauses = [c for c in re.split(r"\s*,\s*", segment) if c]
+            attributed = {i for i, c in enumerate(clauses) if _ATTRIBUTED.search(c)}
+            exempt = attributed | {i - 1 for i in attributed if i > 0}
+            for i, clause in enumerate(clauses):
+                if i in exempt:
+                    continue
+                m = _ABSENCE.search(clause)
+                if m:
+                    hit = m.group(0)
+                    break
+            if hit:
                 break
+        if hit:
+            hits.append(hit)
     return hits
-
-
-_INNER_Q = re.compile(r"¿([^?]*)\?")
-
-
-def _real_question(s: str) -> bool:
-    """An inverted question mark exempts only when it opens a real question
-    (four words or more); a tag ("..., ¿verdad?") still asserts."""
-    return any(len(m.group(1).split()) >= 4 for m in _INNER_Q.finditer(s))
 
 
 def main() -> int:
