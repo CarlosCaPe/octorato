@@ -1321,12 +1321,19 @@ def check_gate_liveness(fix: bool) -> Result:
                                           "gates": gates, "selftests": len(proofs)})
         elif dirty:
             return Result(key, WARN,
-                          f"all {len(proofs)} selftests pass but {len(dirty)} gate surface file(s) are "
-                          f"uncommitted; no gate receipt written (a receipt stamped from a dirty tree "
-                          f"would vouch for gates that are not the ones committed)",
+                          f"all {len(proofs)} selftests pass but {len(dirty)} gate surface file(s) differ "
+                          f"from HEAD (uncommitted, or hidden by assume-unchanged/skip-worktree); no gate "
+                          f"receipt written (it would vouch for gates that are not the committed ones)",
                           "commit or discard the changes under scripts/, registry/, hooks.json, then re-run")
-    except Exception:
-        pass
+        else:
+            return Result(key, FAIL,
+                          f"all {len(proofs)} selftests pass but the brain's HEAD or gate tree could not be "
+                          f"resolved (head={head[:8] or '?'}, gates={'ok' if gates else 'missing'}); no gate "
+                          f"receipt written, every send will be denied at this tree",
+                          "run from the brain checkout without GIT_DIR pointing elsewhere; check `git rev-parse HEAD:scripts`")
+    except Exception as e:
+        return Result(key, FAIL, f"gate receipt could not be written: {e}",
+                      "the send gate denies without it; fix and re-run --gate-receipt")
     return Result(key, PASS,
                   f"all {len(proofs)} gate/detector selftest(s) proven live "
                   f"(gate: violation blocks + benign allows; detector: fires on fixture)")

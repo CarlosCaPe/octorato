@@ -509,7 +509,7 @@ def main() -> int:
             try:
                 sys.path.insert(0, str(Path(__file__).resolve().parent))
                 import receipt_ledger
-                qa = receipt_ledger.qa_pass_for(pr_id)
+                qa = receipt_ledger.qa_pass_for(pr_id, str(data.get("session_id") or ""), str(data.get("transcript_path") or ""))
             except Exception:
                 qa = None
             if qa is None:

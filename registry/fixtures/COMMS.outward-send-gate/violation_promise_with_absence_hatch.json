@@ -1,0 +1,10 @@
+{
+  "session_id": "fx-ph",
+  "tool_name": "mcp__whatsapp__send_message",
+  "tool_input": {
+    "recipient": "5210000000000",
+    "message": "Ya vi tu mensaje, voy a revisar y te digo mañana."
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_promise_with_absence_hatch_transcript.jsonl"
+}

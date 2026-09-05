@@ -27,13 +27,17 @@ proof:
                    text must re-parse to PASS with a scope naming the PR as a
                    whole token, and the agent type must be a QA persona.
 
-Residual, stated plainly: the model can write to any file under $HOME through
-Bash, this ledger included. What it cannot do is make the transcript contain a
-tool_use it never made, move the brain's HEAD or its tree hashes, or produce a
-subagent transcript the harness did not write. Every consumer anchors on those.
-Same stance as qa-merge-gate: the env and the harness are the boundary, the
-file is the audit trail. Measured upstream (~5% hook bypass in the platform):
-the promise is "visible and recorded", never "impossible".
+Residual, stated plainly (QA cycle 2, 2026-09-05): the session transcript and
+the agent transcripts are FILES under $HOME, and the model can append to them
+through Bash. So a transcript anchor is not unforgeable; the only boundary the
+model cannot cross is the harness environment (env vars set in the operator's
+shell, the process that runs hooks). What the anchors buy is a higher bar and
+VISIBILITY: a forged entry has to be appended to a harness-owned file, carry
+the harness fields real entries carry (uuid, parentUuid, sessionId, timestamp),
+sit in the right session's subagent directory, and it stays in the audit trail
+for anyone who looks. Measured upstream (~5% hook bypass in the platform): the
+promise is "visible and recorded", never "impossible". Same stance as
+qa-merge-gate: the env is the boundary, the ledger is the trail.
 
 Layout (gitignored, per machine):
   ~/.claude/.cache/receipts/<session_id>.jsonl   seek receipts for one session
@@ -58,12 +62,29 @@ _HERE = Path(__file__).resolve().parent
 
 # Seek tools by name (chat history, mail history). Shared by the writer reflex
 # and every consumer so "what counts as a seek" lives in exactly one place.
+# Only lookups that can REFUTE a claim: they return message bodies. Chat
+# listings and "last interaction" metadata cannot, so they are not seeks.
 SEEK_TOOL = re.compile(
-    r"(list_messages|get_message_context|get_chat|get_direct_chat_by_contact"
-    r"|get_last_interaction|search_emails|search_threads|get_thread|read_email"
-    r"|get_message|list_chats)$",
+    r"(list_messages|get_message_context|search_emails|search_threads|get_thread"
+    r"|read_email|get_message)$",
     re.IGNORECASE,
 )
+# Wrappers an honest invocation may carry in front of the real command;
+# peeled before matching a send or a seek at the sub-command head.
+_WRAPPER = re.compile(
+    r"^(?:bash|sh|zsh|dash|nohup|time|exec|command|nice(?:\s+-n\s*\d+)?"
+    r"|timeout(?:\s+-\S+)*\s+\S+|sudo(?:\s+-\S+)*)\s+",
+    re.IGNORECASE,
+)
+_SHELL_C = re.compile(r"^(?:bash|sh|zsh|dash)\s+-c\s+(.*)$", re.IGNORECASE | re.DOTALL)
+# git exports these to its hooks; a child git inheriting them acts on the LIVE
+# repo, not on the one named by -C (the 2026-09-05 stray-commit incident).
+GIT_HOOK_ENV = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX",
+                "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE",
+                "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_QUARANTINE_PATH")
+# Fields every entry written by the harness carries. A hand-appended line that
+# lacks them is not anchored; one that fakes them is a forgery the trail shows.
+HARNESS_FIELDS = ("uuid", "parentUuid", "sessionId", "timestamp")
 # Seek COMMANDS, matched at the start of a stripped shell sub-command only.
 _SEEK_CMD_HEAD = re.compile(
     r"^(?:python3?\s+)?(?:\S*/)?(?:query_connectome\.py\s+memory|impact-radius\.py"
@@ -81,13 +102,49 @@ def _qa_gate_helpers():
     return mod._split_subcmds, mod._strip_leading
 
 
-def subcommands(command: str) -> list:
-    """Stripped sub-commands of a shell string, split on UNQUOTED separators."""
+def _peel(sc: str) -> list:
+    """Strip interpreter/wrapper prefixes; `bash -c "..."` unquotes and re-splits."""
+    import shlex
+    out, seen = [], set()
+    stack = [sc]
+    while stack:
+        cur = stack.pop().strip()
+        if not cur or cur in seen:
+            continue
+        seen.add(cur)
+        m = _SHELL_C.match(cur)
+        if m:
+            inner = m.group(1).strip()
+            try:
+                parts = shlex.split(inner)
+                inner = parts[0] if parts else inner
+            except ValueError:
+                pass
+            stack.extend(_raw_split(inner))
+            continue
+        prev = None
+        while prev != cur:
+            prev = cur
+            cur = _WRAPPER.sub("", cur, count=1)
+        out.append(cur)
+    return out
+
+
+def _raw_split(command: str) -> list:
     try:
         split, strip = _qa_gate_helpers()
         return [strip(p) for p in split(command.replace("\\\n", " ")) if p.strip()]
     except Exception:
         return [command]
+
+
+def subcommands(command: str) -> list:
+    """Stripped sub-commands of a shell string: split on UNQUOTED separators,
+    leading env/redirect/grouping removed, wrappers peeled, `sh -c` expanded."""
+    out = []
+    for sc in _raw_split(str(command or "")):
+        out.extend(_peel(sc))
+    return out
 
 
 def bash_is_seek(command: str) -> bool:
@@ -181,6 +238,12 @@ def _tail_lines(path: str, max_bytes: int = 262144) -> list:
         return fh.read().decode("utf-8", errors="replace").splitlines()
 
 
+def harness_entry(entry: dict) -> bool:
+    """True when the entry carries every field the harness writes."""
+    return isinstance(entry, dict) and all(k in entry for k in HARNESS_FIELDS) \
+        and bool(entry.get("uuid")) and bool(entry.get("sessionId")) and bool(entry.get("timestamp"))
+
+
 def _turn_entries(transcript_path: str) -> tuple:
     """(assistant_entries_newest_first, last_human_entry) since the last HUMAN
     prompt. A tool RESULT is also a type "user" entry; the walk must not stop
@@ -202,9 +265,11 @@ def _turn_entries(transcript_path: str) -> tuple:
                     isinstance(b, dict) and b.get("type") == "tool_result"
                     for b in content):
                 continue
-            human = entry
+            # The turn boundary is the last human prompt whatever its shape; a
+            # hatch is read from it only when it is a harness-written entry.
+            human = entry if harness_entry(entry) else None
             break
-        if entry.get("type") == "assistant":
+        if entry.get("type") == "assistant" and harness_entry(entry):
             entries.append(entry)
     return entries, human
 
@@ -264,10 +329,17 @@ def seek_receipts_in_turn(session_id: str, transcript_path: str) -> list:
 GATE_SURFACES = ("scripts", "registry", "hooks.json")
 
 
-def _git(brain_dir: Path, *args) -> str:
+def scrubbed_env() -> dict:
+    env = dict(os.environ)
+    for k in GIT_HOOK_ENV:
+        env.pop(k, None)
+    return env
+
+
+def _git(brain_dir: Path, *args, inp: str | None = None) -> str:
     try:
-        cp = subprocess.run(["git", "-C", str(brain_dir), *args],
-                            capture_output=True, text=True, timeout=10)
+        cp = subprocess.run(["git", "-C", str(brain_dir), *args], input=inp,
+                            capture_output=True, text=True, timeout=20, env=scrubbed_env())
         return cp.stdout.strip() if cp.returncode == 0 else ""
     except (OSError, subprocess.SubprocessError):
         return ""
@@ -280,24 +352,51 @@ def brain_head(brain_dir: Path) -> str:
 def gate_tree_hash(brain_dir: Path) -> str:
     """Content identity of the gate surfaces at HEAD: the git object ids of the
     scripts/ and registry/ trees and the hooks.json blob. Changes whenever any
-    gate, fixture, rule or wiring changes, even across commits with equal
-    HEAD-relative paths."""
+    gate, fixture, rule or wiring changes. The receipt is keyed on THIS, not on
+    HEAD: a squash-merge with an identical gate tree keeps the receipt valid."""
     parts = [_git(brain_dir, "rev-parse", f"HEAD:{p}") for p in GATE_SURFACES]
     return ":".join(parts) if all(parts) else ""
 
 
 def gate_surfaces_dirty(brain_dir: Path) -> list:
-    """Uncommitted changes under the gate surfaces (each line of porcelain)."""
-    out = _git(brain_dir, "status", "--porcelain", "--", *GATE_SURFACES)
-    return [ln for ln in out.splitlines() if ln.strip()]
+    """Anything under the gate surfaces that differs from HEAD, by three
+    independent readings, because `git status` alone is silenced by
+    `update-index --assume-unchanged` / `--skip-worktree` (QA cycle 2):
+      1. porcelain status (modified, added, untracked)
+      2. ls-files -v flags h (assume-unchanged) / S (skip-worktree)
+      3. every tracked file's live blob id vs its HEAD blob id
+    Returns one line per finding; empty means clean."""
+    out = []
+    for ln in _git(brain_dir, "status", "--porcelain", "--", *GATE_SURFACES).splitlines():
+        if ln.strip():
+            out.append(ln)
+    for ln in _git(brain_dir, "ls-files", "-v", "--", *GATE_SURFACES).splitlines():
+        if ln[:1] in ("h", "S"):
+            out.append(f"{ln[:1]} {ln[2:]} (index flag hides changes)")
+    head_blobs = {}
+    for ln in _git(brain_dir, "ls-tree", "-r", "HEAD", "--", *GATE_SURFACES).splitlines():
+        try:
+            meta, path = ln.split("\t", 1)
+            head_blobs[path] = meta.split()[2]
+        except (ValueError, IndexError):
+            continue
+    if head_blobs:
+        paths = sorted(head_blobs)
+        live = _git(brain_dir, "hash-object", "--stdin-paths", inp="\n".join(paths) + "\n").splitlines()
+        if len(live) == len(paths):
+            for path, blob in zip(paths, live):
+                if blob != head_blobs[path]:
+                    out.append(f"M {path} (blob differs from HEAD)")
+        else:
+            out.append("? hash-object could not read every tracked gate file")
+    return out
 
 
-def gate_receipt_ok(head: str, gates: str) -> bool:
-    if not head or not gates:
+def gate_receipt_ok(gates: str) -> bool:
+    if not gates:
         return False
     for r in read_global():
-        if (r.get("kind") == "gate-liveness" and r.get("ok")
-                and r.get("head") == head and r.get("gates") == gates):
+        if r.get("kind") == "gate-liveness" and r.get("ok") and r.get("gates") == gates:
             return True
     return False
 
@@ -327,9 +426,9 @@ def parse_verdict(text: str) -> tuple:
 
 
 def scope_names(scope: str, token: str) -> bool:
-    """Whole-token match: '#260' names 260, never 26 or 2600."""
-    t = re.escape(str(token))
-    return bool(re.search(rf"(?<![\w#]){'#?' if not t.startswith('#') else ''}{t}(?![\w])", scope))
+    """Whole-token match: '#260', 'PR#260' and '260' name 260, never 26 or 2600."""
+    t = re.escape(str(token).lstrip("#"))
+    return bool(re.search(rf"(?<![\w]){t}(?![\w])", scope))
 
 
 def last_assistant_text(transcript_path: str) -> str:
@@ -354,30 +453,59 @@ def last_assistant_text(transcript_path: str) -> str:
     return ""
 
 
-def qa_pass_for(token: str) -> dict | None:
+_AGENT_FILE = re.compile(r"^agent-([A-Za-z0-9]+)\.jsonl$")
+
+
+def _harness_agent_transcript(path: Path, session_id: str, agent_id: str) -> bool:
+    """The file must be where the harness writes subagent transcripts
+    (<projects>/<slug>/<session>/subagents/agent-<id>.jsonl), for THIS session
+    and THIS agent id, and its entries must carry the harness fields."""
+    try:
+        rp = path.resolve()
+        rel = rp.relative_to(harness_projects_dir().resolve())
+    except (ValueError, OSError):
+        return False
+    parts = rel.parts
+    if len(parts) != 4 or parts[2] != "subagents":
+        return False
+    m = _AGENT_FILE.match(parts[3])
+    if not m or (agent_id and m.group(1) != agent_id):
+        return False
+    if session_id and parts[1] != session_id:
+        return False
+    try:
+        lines = _tail_lines(str(rp))
+    except OSError:
+        return False
+    seen = 0
+    for line in lines[-50:]:
+        try:
+            e = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if e.get("type") in ("assistant", "user"):
+            seen += 1
+            if not harness_entry(e):
+                return False
+    return seen > 0
+
+
+def qa_pass_for(token: str, session_id: str = "", transcript_path: str = "") -> dict | None:
     """Most recent qa receipt that (1) was written for a QA persona, (2) points
-    at an agent transcript under the harness projects dir, and (3) whose last
-    assistant text re-parses to PASS with a scope naming `token` as a whole
-    token. Every other line is skipped, never trusted."""
+    at a harness-shaped agent transcript of this session and this agent id,
+    and (3) whose last assistant text re-parses to PASS with a scope naming
+    `token` as a whole token. Every other line is skipped, never trusted."""
     if not token:
         return None
-    root = harness_projects_dir().resolve()
     for r in reversed(read_global()):
         if r.get("kind") != "qa" or r.get("verdict") != "PASS":
             continue
         if not QA_AGENT_TYPE.search(str(r.get("agent_type", ""))):
             continue
         tp = str(r.get("agent_transcript_path") or "")
-        if not tp:
+        if not tp or not _harness_agent_transcript(Path(tp), session_id, str(r.get("agent_id") or "")):
             continue
-        try:
-            rp = Path(tp).resolve()
-            rp.relative_to(root)
-        except (ValueError, OSError):
-            continue
-        if not rp.is_file():
-            continue
-        verdict, scope = parse_verdict(last_assistant_text(str(rp)))
+        verdict, scope = parse_verdict(last_assistant_text(tp))
         if verdict == "PASS" and scope_names(scope, token):
             return r
     return None

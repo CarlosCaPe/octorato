@@ -197,9 +197,10 @@ def _selftest() -> int:
             env.pop(k, None)
         # Guard: every mutating git call below must land in the throwaway clone.
         # On 2026-09-05 a `base` commit and a `branch -M main` showed up in a
-        # live worktree while a doctor run was executing selftests; the cause was
-        # not reproduced, so the selftest now refuses to mutate anything whose
-        # git dir is not under its own temp dir.
+        # live worktree: git had exported GIT_DIR/GIT_INDEX_FILE to the hook that
+        # ran this selftest, and `git -C <clone>` still resolved to the live repo
+        # (reproduced). The env is scrubbed above; this refuses to mutate anything
+        # whose git dir is not under the temp dir, in case a new variable appears.
         gd = subprocess.run(["git", "-C", str(clone), "rev-parse", "--absolute-git-dir"],
                             capture_output=True, text=True, env=env).stdout.strip()
         if not gd.startswith(str(t.resolve())):

@@ -1,0 +1,2 @@
+{"type": "user", "message": {"role": "user", "content": "send-ok"}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "mcp__gmail__send_email", "input": {"to": ["x@ejemplo.com"], "subject": "Queja", "body": "No reconozco ese cargo."}}]}, "uuid": "a8f05fdf-fa85-4755-ac9d-0169cf4f1cd5", "parentUuid": "0d609d14-4ab0-4de3-9b58-77c135e5d729", "sessionId": "fx-session", "timestamp": "2026-09-05T10:00:00.000Z"}

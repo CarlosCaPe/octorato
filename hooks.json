@@ -84,7 +84,7 @@
           "type": "command"
         }
       ],
-      "matcher": "mcp__whatsapp__list_messages|mcp__whatsapp__get_message_context|mcp__whatsapp__get_chat|mcp__whatsapp__get_direct_chat_by_contact|mcp__whatsapp__get_last_interaction|mcp__whatsapp__list_chats|mcp__gmail__search_emails|mcp__gmail__read_email|mcp__claude_ai_Gmail__search_threads|mcp__claude_ai_Gmail__get_thread|mcp__claude_ai_Gmail__get_message|Bash"
+      "matcher": "mcp__whatsapp__list_messages|mcp__whatsapp__get_message_context|mcp__gmail__search_emails|mcp__gmail__read_email|mcp__claude_ai_Gmail__search_threads|mcp__claude_ai_Gmail__get_thread|mcp__claude_ai_Gmail__get_message|Bash"
     }
   ],
   "PreToolUse": [

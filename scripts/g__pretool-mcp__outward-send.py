@@ -81,7 +81,14 @@ _SEND_CMD_HEAD = re.compile(
 )
 _BODY_KEYS = ("body", "message", "text", "content", "html", "snippet",
               "caption", "subject", "description", "title", "command")
-_HATCH = re.compile(r"absence-ok|attribute-ok|draft-promise-ok|send-ok")
+# A hatch counts only as a standalone word in the operator's prompt, outside
+# quotes and code spans, and exempts only the class it names (send-ok: all).
+_HATCH = re.compile(r"(?:^|(?<=\s))(absence-ok|attribute-ok|draft-promise-ok|send-ok)(?=[\s,.;:!)]|$)", re.MULTILINE)
+_QUOTE_SPAN = re.compile(r"\"[^\"\n]*\"|'[^'\n]*'|`[^`\n]*`|«[^»]*»|[“”][^“”]*[“”]")
+
+
+def hatches(prompt: str) -> set:
+    return set(_HATCH.findall(_QUOTE_SPAN.sub(" ", prompt or "")))
 
 
 def _load(name: str):
@@ -131,23 +138,23 @@ def check(data: dict) -> str:
     transcript = data.get("transcript_path") or ""
 
     # 1. Gate receipt: the phrase detectors below are proven live on THIS tree.
-    #    Anchored on HEAD + the git tree hash of the gate surfaces, and voided
-    #    by any uncommitted edit under them: an unproven gate is a dead gate.
+    #    Keyed on the git tree hash of the gate surfaces (HEAD is recorded, not
+    #    required: a squash-merge with the same gate tree keeps it valid) and
+    #    voided by any uncommitted or index-hidden edit under them.
     brain = _HERE.parent
     selftest = os.environ.get("CLAUDE_SESSION_ID") == receipt_ledger.SELFTEST_SESSION
     if selftest:
-        head = gates = receipt_ledger.SELFTEST_HEAD
+        gates = receipt_ledger.SELFTEST_HEAD
         dirty = []
     else:
-        head = receipt_ledger.brain_head(brain)
         gates = receipt_ledger.gate_tree_hash(brain)
         dirty = receipt_ledger.gate_surfaces_dirty(brain)
     if dirty:
-        return ("🧾 GATES SIN COMMIT: hay cambios sin confirmar bajo scripts/, registry/ o "
-                f"hooks.json del brain ({len(dirty)} archivo(s)); un gate editado y no probado "
-                "es un gate muerto. Confirma o descarta esos cambios, corre brain_doctor y "
-                "reintenta el envío.")
-    if not receipt_ledger.gate_receipt_ok(head, gates):
+        return ("🧾 GATES SIN COMMIT: hay cambios sin confirmar (o escondidos con assume-unchanged) "
+                f"bajo scripts/, registry/ o hooks.json del brain ({len(dirty)} archivo(s)); un gate "
+                "editado y no probado es un gate muerto. Confirma o descarta esos cambios, corre "
+                "brain_doctor y reintenta el envío.")
+    if not receipt_ledger.gate_receipt_ok(gates):
         return ("🧾 SIN RECIBO DE GATES: ningún brain_doctor ha probado los gates en este "
                 "estado del brain. Corre `python3 ~/.claude/scripts/brain_doctor.py --gate-receipt` "
                 "(ai-pull y todo push lo hacen solos) y reintenta el envío. v7: nada sale sin recibos.")
@@ -167,8 +174,8 @@ def check(data: dict) -> str:
     # Stop gates treat them; a hatch token counts only in the operator's own
     # prompt for this turn, never inside the body (that would ship to the
     # recipient and be self-serve).
-    hatch = _HATCH.search(receipt_ledger.turn_last_human_text(transcript)) if transcript else None
-    if hatch:
+    ok = hatches(receipt_ledger.turn_last_human_text(transcript)) if transcript else set()
+    if "send-ok" in ok:
         return ""
     body = "\n".join(ln for ln in "\n".join(found).splitlines()
                      if not ln.lstrip().startswith(">"))
@@ -180,7 +187,7 @@ def check(data: dict) -> str:
 
     # 2. Absence claim needs a seek receipt anchored in this turn.
     absence = _load("g__stop__unsourced-absence.py")
-    claims = absence.find_absence_claims(flat, mask_quotes=False)
+    claims = [] if "absence-ok" in ok else absence.find_absence_claims(flat, mask_quotes=False)
     if claims:
         seeks = receipt_ledger.seek_receipts_in_turn(session_id, transcript) if transcript else []
         if not seeks:
@@ -193,7 +200,7 @@ def check(data: dict) -> str:
 
     # 3. The other two contributors, before the send instead of after the reply.
     attribute = _load("g__stop__unsourced-attribute.py")
-    attrs = attribute.find_attributes(body)
+    attrs = [] if "attribute-ok" in ok else attribute.find_attributes(body)
     if attrs:
         listing = "; ".join(f"«{a}»" for a in attrs[:4])
         return (f"🏷 ATRIBUTO SIN FUENTE en el envío ({listing}): clasifica algo de la "
@@ -201,7 +208,7 @@ def check(data: dict) -> str:
                 f"ella no dijo. Cita su frase textual, pregúntalo, o quítalo. "
                 f"'attribute-ok' en la línea lo exime.")
     promise = _load("g__stop__draft-promise.py")
-    promises = promise.find_promises(body)
+    promises = [] if "draft-promise-ok" in ok else promise.find_promises(body)
     if promises:
         listing = "; ".join(f"«{p}»" for p in promises[:4])
         return (f"✍ PROMESA en el envío ({listing}): lo que sale no lleva compromisos a "

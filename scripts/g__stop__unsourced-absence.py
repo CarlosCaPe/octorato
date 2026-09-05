@@ -298,14 +298,27 @@ def find_absence_claims(text: str, mask_quotes: bool = True) -> list:
         s = part.strip()
         if not s or "absence-ok" in s:
             continue
-        if "?" in s and (_INTERROGATIVE.match(s) or "¿" in s):
+        if "?" in s and (_INTERROGATIVE.match(s) or _real_question(s)):
             continue
-        if _ATTRIBUTED.search(s):
-            continue
-        m = _ABSENCE.search(s)
-        if m:
-            hits.append(m.group(0))
+        # Attribution exempts only the clause it sits in: "no lo reconozco y no
+        # sé quién lo hizo" still claims absence in its first clause.
+        for clause in re.split(r"\s+y\s+|\s+and\s+|;", s):
+            if _ATTRIBUTED.search(clause):
+                continue
+            m = _ABSENCE.search(clause)
+            if m:
+                hits.append(m.group(0))
+                break
     return hits
+
+
+_INNER_Q = re.compile(r"¿([^?]*)\?")
+
+
+def _real_question(s: str) -> bool:
+    """An inverted question mark exempts only when it opens a real question
+    (four words or more); a tag ("..., ¿verdad?") still asserts."""
+    return any(len(m.group(1).split()) >= 4 for m in _INNER_Q.finditer(s))
 
 
 def main() -> int:
