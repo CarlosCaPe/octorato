@@ -67,6 +67,14 @@ v7.0.0 ships when `brain_doctor.py` prints all of:
 
 Not a claim of zero defects. A claim that zero known defect classes are unwired, and that no send leaves without receipts. The next unknown class will still get through once; v7 guarantees it gets through with a ledger that shows exactly which receipt was missing, and that the gate written for it is proven before the incident closes.
 
+## Status (2026-09-05)
+
+Phases 1 to 5 shipped in one PR: `scripts/receipt_ledger.py`, `r__posttool__receipt-seek.py`, `g__pretool-mcp__outward-send.py` (fixture-proven, 4 block + 6 allow), `r__subagent-stop__qa-receipt.py`, `qa-merge-gate` reading the ledger, the six waivers retired (five recorded as detector or reflex by design via `v7_decision`, `FLOW.budget-halt` promoted with a fixture pair and path-scoped caps), and three new doctor assertions (`waiver-age`, `incident-fixture-coverage`, `reflex-triage`). Doctor on that tree: floor FORCED 27/27 (100%), waived 0, 29 selftests live.
+
+Bootstrap note: the first merge of that PR cannot carry a QA receipt, because the SubagentStop hook that writes receipts is inside it. That merge uses the operator's explicit `OCTO_QA_OK=1` bypass, once, and the PR body carries the QA verdict as text. Every merge after it needs the receipt.
+
+Phase 6 (the major cut) waits for `reflex-triage` to reach zero pending decisions.
+
 ## Decisions recorded
 
 - Target: `octorato` v6.24.0 → v7.0.0. Major, because the contract changes: sends that work today will be denied until they carry receipts.

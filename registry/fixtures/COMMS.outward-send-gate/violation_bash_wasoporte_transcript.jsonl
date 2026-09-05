@@ -1,0 +1,1 @@
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "~/.claude/scripts/wa-soporte.sh 5210000000000 \"Ese cargo no lo reconozco, nunca lo contraté.\""}}]}}

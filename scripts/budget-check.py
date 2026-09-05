@@ -119,7 +119,7 @@ def _month_to_date_usd_by_arm() -> dict[str, float]:
         return {}
 
 
-def evaluate(arm_filter: str | None = None) -> dict:
+def evaluate(arm_filter: str | None = None, cwd: str | None = None) -> dict:
     """Returns a structured verdict consumable by both human + hook.
 
     Shape:
@@ -137,9 +137,31 @@ def evaluate(arm_filter: str | None = None) -> dict:
         return {"status": "OK", "arms": [], "halt_reason": None,
                 "note": "no budgets configured"}
 
-    spend = _month_to_date_usd_by_arm()
+    # Spend source: the profiler by default, or a JSON file {arm: usd} named by
+    # `spend_json` (an external FinOps export, or a fixture). Config-first.
+    spend_json = cfg.get("spend_json")
+    if spend_json:
+        try:
+            spend = {k: float(v) for k, v in json.loads(
+                Path(os.path.expanduser(str(spend_json))).read_text(encoding="utf-8")).items()}
+        except Exception:
+            spend = {}
+    else:
+        spend = _month_to_date_usd_by_arm()
     default = cfg.get("default") or {}
     arms_cfg = cfg.get("budgets", []) or []
+    # Path scoping (v7): an arm entry may carry `path`; then its cap applies only
+    # when the tool call's cwd is under that path. Entries without `path` keep
+    # the historical global behaviour. A breached client arm halts work IN that
+    # arm, not every arm on the machine.
+    if cwd:
+        scoped = []
+        for b in arms_cfg:
+            pth = (b or {}).get("path") if isinstance(b, dict) else None
+            if pth and not str(cwd).startswith(os.path.expanduser(str(pth)).rstrip("/") ):
+                continue
+            scoped.append(b)
+        arms_cfg = scoped
 
     # Index per-arm overrides
     overrides = {b["arm"]: b for b in arms_cfg if isinstance(b, dict) and "arm" in b}
@@ -213,9 +235,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--arm", default=None, help="Restrict the check to one arm.")
     parser.add_argument("--tool", default=None, help="Name of the tool being checked (logged only).")
     parser.add_argument("--json", action="store_true", help="Emit JSON instead of human text.")
+    if "--selftest" in (argv if argv is not None else sys.argv[1:]):
+        return _selftest()
     args = parser.parse_args(argv)
 
-    verdict = evaluate(arm_filter=args.arm)
+    # As a PreToolUse hook the harness passes the payload on stdin; only `cwd`
+    # is read from it (for path-scoped caps). Never blocks on a missing stdin.
+    cwd = None
+    try:
+        if not sys.stdin.isatty():
+            raw = sys.stdin.read()
+            if raw.strip():
+                cwd = (json.loads(raw) or {}).get("cwd")
+    except Exception:
+        cwd = None
+
+    verdict = evaluate(arm_filter=args.arm, cwd=cwd)
     if args.tool:
         verdict["tool"] = args.tool
 
@@ -228,6 +263,15 @@ def main(argv: list[str] | None = None) -> int:
     if verdict["status"] == "HARD_STOP":
         return 2
     return 0
+
+
+def _selftest() -> int:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import gate_selftest
+    argv = sys.argv
+    fixture = argv[argv.index("--selftest") + 1] if len(argv) > argv.index("--selftest") + 1 \
+        else "registry/fixtures/FLOW.budget-halt"
+    return gate_selftest.run_gate_selftest(__file__, fixture)
 
 
 if __name__ == "__main__":

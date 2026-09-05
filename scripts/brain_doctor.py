@@ -656,7 +656,7 @@ REGISTRY_SCHEMA = CLAUDE_DIR / "registry" / "rules.schema.json"
 NAMING_POLICY = CLAUDE_DIR / "registry" / "naming-policy.yaml"
 HOOKS_JSON = CLAUDE_DIR / "hooks.json"
 CLAUDE_MD = CLAUDE_DIR / "CLAUDE.md"
-CC_EVENTS = {"UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionStart"}
+CC_EVENTS = {"UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionStart", "SubagentStop"}
 
 
 def _rt(p: Path) -> str:
@@ -902,9 +902,17 @@ def check_registry(fix: bool) -> list:
                     exp = _date.fromisoformat(str(w.get("expires") or "").strip())
                 except ValueError:
                     exp = None
-                if exp is not None and exp >= _date.today():
-                    continue  # operator-signed, expiry-dated downgrade (live)
-                failopen.append(f"{r.get('id', '?')}({r.get('enforcement', 'n/a')}, waiver expired/invalid)")
+                # v7: a waiver is a migration device, not a steady state. It needs a
+                # `granted` date and is VOID 90 days after it, whatever `expires` says.
+                try:
+                    granted = _date.fromisoformat(str(w.get("granted") or "").strip())
+                except ValueError:
+                    granted = None
+                too_old = granted is None or (_date.today() - granted).days > 90
+                if exp is not None and exp >= _date.today() and not too_old:
+                    continue  # operator-signed, expiry-dated downgrade (live, < 90 days)
+                why = "waiver expired/invalid" if not too_old else "waiver older than 90 days or undated (v7)"
+                failopen.append(f"{r.get('id', '?')}({r.get('enforcement', 'n/a')}, {why})")
                 continue
             failopen.append(f"{r.get('id', '?')}({r.get('enforcement', 'n/a')})")
     if not failopen:
@@ -1281,6 +1289,17 @@ def check_gate_liveness(fix: bool) -> Result:
                       f"{len(failed)}/{len(proofs)} gate selftest(s) do NOT block+allow correctly: "
                       + "; ".join(failed[:6]),
                       "a labeled gate that fails its violation/benign fixtures is dead; fix the gate or the fixture")
+    # v7 gate receipt: the outward-send gate refuses to ship while no doctor has
+    # proven the gates on THIS tree. Written here, in the doctor's process, never
+    # by the model; the consumer compares the recorded HEAD to the live one.
+    try:
+        import receipt_ledger
+        head = receipt_ledger.brain_head(CLAUDE_DIR)
+        if head:
+            receipt_ledger.append_global({"kind": "gate-liveness", "ok": True,
+                                          "head": head, "selftests": len(proofs)})
+    except Exception:
+        pass
     return Result(key, PASS,
                   f"all {len(proofs)} gate/detector selftest(s) proven live "
                   f"(gate: violation blocks + benign allows; detector: fires on fixture)")
@@ -1371,12 +1390,154 @@ def check_querymaster_security_detector(fix: bool) -> Result:
                   "restore the missing Security Rules line in skills/querymaster/SKILL.md")
 
 
+# ---------------------------------------------------------------------------
+# v7 "nothing ships unverified" (docs/architecture/v7-nothing-ships-unverified.md)
+# ---------------------------------------------------------------------------
+
+def _memory_files() -> list:
+    return sorted(CLAUDE_DIR.glob("projects/*/memory/*.md"))
+
+
+# A brain mechanism reference: an explicit ~/.claude/scripts path, or a bare
+# scripts/<hook-scheme name>. A bare scripts/foo.py may be an ARM script named
+# from inside that arm's repo, so it is not counted (measured: 5 false hits).
+_MEM_SCRIPT = re.compile(r"(?:~/\.claude/|\.claude/)scripts/([A-Za-z0-9_.-]+\.py)|scripts/([grdm]__[a-z0-9-]+__[a-z0-9-]+\.py)")
+# Explicit self-marking only: a memory that SAYS it is a repeat. Counting
+# phrases ("dos veces") measured as noise, so they are out.
+_RECURRENT = re.compile(
+    r"REINCIDENTE|reincid|segunda vez|tercera vez|second time|third time"
+    r"|recurrente|recurring|recurrent|repeat offen|clase reincidente",
+    re.IGNORECASE,
+)
+
+
+def check_waiver_age(fix: bool) -> Result:
+    """v7 phase 4: waivers retire. Every remaining waiver must carry a `granted`
+    date and be younger than 90 days; the release criterion is zero waivers."""
+    key = "waiver-age"
+    try:
+        import yaml
+        reg = yaml.safe_load(REGISTRY_PATH.read_text(encoding="utf-8")) or {}
+    except Exception as e:
+        return Result(key, WARN, f"cannot load registry: {e}", "fix registry/rules.yaml")
+    from datetime import date as _date
+    rules = reg.get("rules", []) if isinstance(reg, dict) else []
+    live, void = [], []
+    for r in rules:
+        w = r.get("waiver")
+        if not isinstance(w, dict):
+            continue
+        try:
+            granted = _date.fromisoformat(str(w.get("granted") or "").strip())
+        except ValueError:
+            granted = None
+        if granted is None or (_date.today() - granted).days > 90:
+            void.append(r.get("id", "?"))
+        else:
+            live.append(f"{r.get('id', '?')}({(_date.today() - granted).days}d)")
+    if void:
+        return Result(key, FAIL, f"{len(void)} waiver(s) undated or older than 90 days: " + ", ".join(void),
+                      "promote the rule to fail-closed with a fixture pair, or demote it with a v7_decision; waivers are a migration device")
+    if live:
+        return Result(key, WARN, f"{len(live)} live waiver(s), each under 90 days: " + ", ".join(live),
+                      "v7 release criterion is zero waivers")
+    return Result(key, PASS, "0 waivers: every gate-shaped rule is fail-closed or recorded as detector/reflex by design")
+
+
+def check_incident_fixture_coverage(fix: bool) -> Result:
+    """v7 phase 5: a memory that names a mechanism must point at a script that
+    exists and, when that script is a gate, at a fixture pair. A memory that
+    prescribes a dead or unproven mechanism is the class that leaked before
+    (a gitignored gate datum disabled the gate for 20 days)."""
+    key = "incident-fixture-coverage"
+    files = _memory_files()
+    if not files:
+        return Result(key, WARN, "memory layer absent on this machine, skipped",
+                      "run on a machine with the brain memory checked out")
+    try:
+        import yaml
+        reg = yaml.safe_load(REGISTRY_PATH.read_text(encoding="utf-8")) or {}
+        rules = reg.get("rules", []) if isinstance(reg, dict) else []
+    except Exception:
+        rules = []
+    fixture_of = {}
+    for r in rules:
+        for m in r.get("mechanism", []) or []:
+            cn = m.get("canonical_name")
+            for pr in r.get("proof", []) or []:
+                loc = str(pr.get("locator", ""))
+                if pr.get("method") == "EXIT_CODE" and "--selftest" in loc and cn:
+                    fixture_of[cn] = loc.split("--selftest", 1)[1].strip().split()[0] if loc.split("--selftest", 1)[1].strip() else ""
+    missing, unproven, named = [], [], 0
+    for f in files:
+        try:
+            text = f.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        for a, b in set(_MEM_SCRIPT.findall(text)):
+            script = a or b
+            named += 1
+            if not (CLAUDE_DIR / "scripts" / script).exists():
+                missing.append(f"{f.stem} -> scripts/{script}")
+                continue
+            if script.startswith("g__"):
+                fx = fixture_of.get(script)
+                if not fx or not (CLAUDE_DIR / fx).exists():
+                    unproven.append(f"{f.stem} -> scripts/{script}")
+    if missing or unproven:
+        detail = []
+        if missing:
+            detail.append(f"{len(missing)} memory(ies) name a script that does not exist: " + "; ".join(missing[:5]))
+        if unproven:
+            detail.append(f"{len(unproven)} memory(ies) name a gate with no fixture pair: " + "; ".join(unproven[:5]))
+        return Result(key, FAIL, " | ".join(detail),
+                      "a memory that prescribes a mechanism is not done until the mechanism exists and, for a gate, is fixture-proven")
+    return Result(key, PASS, f"{named} mechanism reference(s) across {len(files)} memories all resolve to live scripts; every named gate has its fixture pair")
+
+
+def check_reflex_triage(fix: bool) -> Result:
+    """v7 phase 5: recurrent lessons are gate candidates. A memory that marks
+    itself as a repeat and names no mechanism prints here until it has a
+    decision in registry/reflex-triage.yaml (gate: build it; demote: say why)."""
+    key = "reflex-triage"
+    files = _memory_files()
+    if not files:
+        return Result(key, WARN, "memory layer absent on this machine, skipped", "")
+    decided = set()
+    triage = CLAUDE_DIR / "registry" / "reflex-triage.yaml"
+    try:
+        import yaml
+        data = yaml.safe_load(triage.read_text(encoding="utf-8")) or {}
+        for d in data.get("decisions", []) or []:
+            if isinstance(d, dict) and d.get("slug") and d.get("decision") in ("gate", "demote"):
+                decided.add(str(d["slug"]))
+    except Exception:
+        pass
+    pending = []
+    for f in files:
+        try:
+            text = f.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        if not _RECURRENT.search(text) or _MEM_SCRIPT.search(text) or f.stem in decided:
+            continue
+        pending.append(f.stem)
+    if pending:
+        return Result(key, WARN, f"{len(pending)} recurrent lesson(s) with no mechanism and no decision: "
+                      + ", ".join(pending[:6]) + (" ..." if len(pending) > 6 else ""),
+                      "for each: build the gate (decision: gate + mechanism) or record why it stays prose (decision: demote) in registry/reflex-triage.yaml")
+    return Result(key, PASS, f"every recurrent lesson has a mechanism or a recorded decision ({len(decided)} decided)")
+
+
 CHECKS = [
     ("repo-identity", check_repo_identity),
     ("rule-1-registry", check_registry),
     ("corpus-coverage", check_corpus_coverage),
     ("gate-liveness", check_gate_liveness),
     ("enforcement-floor", check_enforcement_floor),
+    ("waiver-age", check_waiver_age),
+    ("incident-fixture-coverage", check_incident_fixture_coverage),
+    ("reflex-triage", check_reflex_triage),
     ("querymaster-security-detector", check_querymaster_security_detector),
     ("rule-1-naming", check_naming),
     ("rule-1-orphans", check_orphan_hooks),

@@ -66,6 +66,7 @@
           "enum": ["fail-closed", "fail-open", "n/a"],
           "description": "fail-closed = the backing mechanism denies/blocks the action (Octorato decides). fail-open = it only injects context/nudges (model decides). n/a = not gateable (model-behavior/inject/post-hoc). Default when absent: n/a."
         },
+        "v7_decision": { "type": "string", "description": "recorded reason a gate-shaped rule is NOT counted as gateable (v7 phase 4 demotion); pairs with gateable:false" },
         "waiver": {
           "type": ["object", "null"],
           "description": "operator-signed, expiry-dated downgrade; null normally",
@@ -73,6 +74,7 @@
           "properties": {
             "reason": { "type": "string" },
             "expires": { "type": "string" },
+            "granted": { "type": "string", "description": "YYYY-MM-DD the waiver was signed; brain_doctor voids a waiver older than 90 days (v7: waivers are a migration device, not a steady state)" },
             "approved_by": { "type": "string" }
           }
         }
@@ -117,7 +119,7 @@
         },
         "firing_event": {
           "type": ["string", "null"],
-          "enum": ["UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionStart", "PrePush", null]
+          "enum": ["UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionStart", "SubagentStop", "PrePush", null]
         },
         "firing_matcher": { "type": ["string", "null"] }
       },

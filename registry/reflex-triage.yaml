@@ -1,0 +1,12 @@
+# v7 phase 5: decisions for RECURRENT lessons that name no mechanism.
+# brain_doctor (reflex-triage) lists every brain memory that marks itself as a
+# repeat (REINCIDENTE, segunda vez, second time, recurrente...) and points at no
+# scripts/<mechanism>.py. Each such slug needs one decision here, or it keeps
+# printing. Decisions are the operator's; the agent proposes.
+#
+#   - slug: <memory file name without .md>
+#     decision: gate | demote          # gate = a mechanism is being built (name it); demote = stays prose, say why
+#     mechanism: scripts/<name>.py     # required when decision == gate
+#     reason: <one line>
+#     decided: YYYY-MM-DD
+decisions: []

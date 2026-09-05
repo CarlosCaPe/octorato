@@ -468,6 +468,30 @@ edges:
       own words, a blockquote, or a question all exempt a sentence, because each
       is one of the two prescribed fixes (source it, or ask it).
 
+  - id: receipt-ledger-v7
+    concept: "nothing ships unverified: outward action needs harness-written receipts (seek anchored to transcript, gate receipt at HEAD, QA receipt re-read from the agent transcript)"
+    appears_in:
+      - CLAUDE.md                                        # anchors "Receipt ledger", "Outward-send gate", "QA receipt"
+      - docs/architecture/v7-nothing-ships-unverified.md # the contract
+      - scripts/receipt_ledger.py                        # the shared library (paths, anchoring, verdict parsing)
+      - scripts/r__posttool__receipt-seek.py             # seek receipt writer
+      - scripts/g__pretool-mcp__outward-send.py          # the one send gate (imports the Stop detectors)
+      - scripts/r__subagent-stop__qa-receipt.py          # QA receipt writer
+      - scripts/qa-merge-gate.py                         # consumer: env approval AND QA receipt
+      - scripts/brain_doctor.py                          # gate receipt writer; waiver-age, incident-fixture-coverage, reflex-triage
+      - registry/rules.yaml                              # FLOW.receipt-ledger, COMMS.outward-send-gate, FLOW.qa-receipt
+      - registry/fixtures/COMMS.outward-send-gate        # liveness proof of the send gate
+      - registry/reflex-triage.yaml                      # phase 5 decisions
+      - hooks.json                                       # PostToolUse / PreToolUse / SubagentStop wiring
+    kind: appears_in
+    note: >-
+      The receipt line is a pointer; the anchor is what the model cannot forge
+      (transcript tool_use ids, the brain's HEAD, a harness-written agent
+      transcript). Renaming a receipt kind or a ledger path touches every
+      surface here at once; the send gate imports the three Stop detectors by
+      file name, so renaming g__stop__unsourced-absence.py,
+      g__stop__unsourced-attribute.py or g__stop__draft-promise.py breaks it.
+
   - id: unsourced-absence-gate
     concept: "an absence claim (no origin / not recognized / never contracted) never ships outward without a seek receipt in the same turn"
     appears_in:

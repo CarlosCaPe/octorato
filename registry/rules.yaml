@@ -284,12 +284,9 @@ rules:
     file: CLAUDE.md
     anchor: Dry-run first
   strength: DETECTOR
-  gateable: true
-  enforcement: fail-open
-  waiver:
-    reason: 'v6 D4 audit (2026-07-01): config-ship-verify.py:97 emits permissionDecision ''ask'' (a genuine fail-closed-via-ask pause), NOT warn-only as previously stated. But it fires on only 3 hardcoded patterns (Datadog dashboard write, wrangler deploy --config/generated, curl POST @file.json). The rule ''dry-run first; ask before shipping generated configs'' plus CLAUDE.md ''destructive ops preview by default'' is broader than those 3, so the ask path is narrower than the rule. Residual documented, waiver kept. A broader deterministic deny of ''ship generated config'' is still not specifiable without false positives. Close candidate.'
-    expires: '2026-09-30'
-    approved_by: operator directive 2026-06-29 (cierra o waiva las 7); v6 D4 audit
+  gateable: false
+  enforcement: n/a
+  v7_decision: 'v7 phase 4 (2026-09-05): detector by design. config-ship-verify asks on the 3 shippable-config shapes it can name; a deterministic deny of every destructive op is not specifiable without false positives. Not gate-shaped, so not counted in the enforcement floor.'
   firing_mode:
   - hook
   mechanism:
@@ -447,12 +444,9 @@ rules:
     file: CLAUDE.md
     anchor: 2D Delegate Gate
   strength: REFLEX
-  gateable: true
-  enforcement: fail-open
-  waiver:
-    reason: 'Not closeable: PreToolUse carries no main-loop vs sub-agent discriminator, so a deny self-defeats and breaks 3D Diligent (QA-proven 2026-06-29). Revisit if the platform exposes a caller field.'
-    expires: '2026-09-30'
-    approved_by: operator directive 2026-06-29 (cierra o waiva las 7)
+  gateable: false
+  enforcement: n/a
+  v7_decision: 'v7 phase 4 (2026-09-05): reflex by design. The heartbeat fires involuntarily on every prompt; a PreToolUse deny has no main-loop vs sub-agent discriminator (QA-proven 2026-06-29) and would break 3D Diligent. The outward consequence of a skipped seek is now gated at the send (COMMS.outward-send-gate).'
   firing_mode:
   - hook
   mechanism:
@@ -1011,12 +1005,9 @@ rules:
   title: 3D diligent gate — post-write validation
   category: FLOW
   strength: REFLEX
-  gateable: true
-  enforcement: fail-open
-  waiver:
-    reason: Shares the warn-only source-attribution Stop detector; the 'did you validate' part is judgment. Hard block deferred. Close candidate.
-    expires: '2026-09-30'
-    approved_by: operator directive 2026-06-29 (cierra o waiva las 7)
+  gateable: false
+  enforcement: n/a
+  v7_decision: 'v7 phase 4 (2026-09-05): reflex + detector by design. Whether a write was validated is judgment; what v7 forces instead is the receipt at the boundary that matters (gate receipt + QA receipt before merge/send).'
   firing_mode:
   - hook
   source:
@@ -1065,12 +1056,9 @@ rules:
   title: Enforcement scripts — mandatory Q1/Q3 reflexes
   category: FLOW
   strength: REFLEX
-  gateable: true
-  enforcement: fail-open
-  waiver:
-    reason: Shares delegate-gate.py, which is not closeable (no caller discriminator). Tied to FLOW.delegate-gate.
-    expires: '2026-09-30'
-    approved_by: operator directive 2026-06-29 (cierra o waiva las 7)
+  gateable: false
+  enforcement: n/a
+  v7_decision: 'v7 phase 4 (2026-09-05): reflex by design, shares delegate-gate.py (no caller discriminator). Same decision as FLOW.delegate-gate.'
   firing_mode:
   - hook
   - cli
@@ -1271,12 +1259,9 @@ rules:
     file: CLAUDE.md
     anchor: Answer, do the work, stop
   strength: DETECTOR
-  gateable: true
-  enforcement: fail-open
-  waiver:
-    reason: no-pause-suggestion Stop is warn-only; a hard block on pause-phrase detection is deferred pending false-positive tuning (legit clarifying questions). Close candidate.
-    expires: '2026-09-30'
-    approved_by: operator directive 2026-06-29 (cierra o waiva las 7)
+  gateable: false
+  enforcement: n/a
+  v7_decision: 'v7 phase 4 (2026-09-05): detector by design. A hard block on pause phrases measured false positives on legitimate clarifying questions; the rule stays a warn-once detector.'
   firing_mode:
   - hook
   mechanism:
@@ -1387,18 +1372,14 @@ rules:
     expect: present
   liveness_required: FIRES
 - id: FLOW.budget-halt
-  title: FinOps budget caps halt expensive dispatch (fail-open)
+  title: FinOps budget caps halt expensive dispatch (fail-closed on hard_stop)
   category: FLOW
   source:
     file: README.md
     anchor: FinOps roadmap
   strength: GATE
   gateable: true
-  enforcement: fail-open
-  waiver:
-    reason: 'budgets.yaml is active (since 2026-06-01), but every arm and the default set action_on_breach: alert by operator choice, so the HARD_STOP branch (scripts/budget-check.py:166) is unreachable by config. The gate stays fail-open until an arm opts into hard_stop.'
-    expires: '2026-09-30'
-    approved_by: operator directive 2026-06-29 (resuelve budget-halt)
+  enforcement: fail-closed
   firing_mode:
   - hook
   mechanism:
@@ -1410,6 +1391,9 @@ rules:
   - method: IN_HOOKS_JSON
     locator: PreToolUse|Agent|budget-check.py
     expect: present
+  - method: EXIT_CODE
+    locator: scripts/budget-check.py --selftest registry/fixtures/FLOW.budget-halt
+    expect: 0
   - method: ANCHOR_PRESENT
     locator: FinOps roadmap
     expect: present
@@ -1715,3 +1699,72 @@ rules:
     locator: English-only in the public repo
     expect: present
   liveness_required: PRESENT
+- id: FLOW.receipt-ledger
+  title: Receipt ledger — a seek is recorded by the harness, anchored to the transcript
+  category: FLOW
+  source:
+    file: CLAUDE.md
+    anchor: Nothing ships unverified
+  strength: REFLEX
+  gateable: false
+  enforcement: n/a
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Reflex
+    canonical_name: r__posttool__receipt-seek.py
+    firing_event: PostToolUse
+    firing_matcher: 'mcp__whatsapp__list_messages|mcp__whatsapp__get_message_context|mcp__whatsapp__get_chat|mcp__whatsapp__get_direct_chat_by_contact|mcp__whatsapp__get_last_interaction|mcp__whatsapp__list_chats|mcp__gmail__search_emails|mcp__gmail__read_email|mcp__claude_ai_Gmail__search_threads|mcp__claude_ai_Gmail__get_thread|mcp__claude_ai_Gmail__get_message|Bash'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: PostToolUse|mcp__whatsapp__list_messages|mcp__whatsapp__get_message_context|mcp__whatsapp__get_chat|mcp__whatsapp__get_direct_chat_by_contact|mcp__whatsapp__get_last_interaction|mcp__whatsapp__list_chats|mcp__gmail__search_emails|mcp__gmail__read_email|mcp__claude_ai_Gmail__search_threads|mcp__claude_ai_Gmail__get_thread|mcp__claude_ai_Gmail__get_message|Bash|r__posttool__receipt-seek.py
+    expect: present
+  - method: FILE_EXISTS
+    locator: scripts/receipt_ledger.py
+    expect: present
+  liveness_required: FIRES
+- id: COMMS.outward-send-gate
+  title: Outward-send gate — nothing ships without receipts (gate, seek, no unsourced claim)
+  category: COMMS
+  source:
+    file: CLAUDE.md
+    anchor: Outward-send gate
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Gate
+    canonical_name: g__pretool-mcp__outward-send.py
+    firing_event: PreToolUse
+    firing_matcher: 'mcp__gmail__send_email|mcp__claude_ai_Gmail__send_message|mcp__claude_ai_Gmail__reply|mcp__claude_ai_Gmail__forward|mcp__whatsapp__send_message|mcp__whatsapp__send_file|mcp__whatsapp__send_audio_message|Bash'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: PreToolUse|mcp__gmail__send_email|mcp__claude_ai_Gmail__send_message|mcp__claude_ai_Gmail__reply|mcp__claude_ai_Gmail__forward|mcp__whatsapp__send_message|mcp__whatsapp__send_file|mcp__whatsapp__send_audio_message|Bash|g__pretool-mcp__outward-send.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/g__pretool-mcp__outward-send.py --selftest registry/fixtures/COMMS.outward-send-gate
+    expect: 0
+  liveness_required: FIRES
+- id: FLOW.qa-receipt
+  title: QA receipt — a subagent verdict is recorded by the harness, re-read from its transcript
+  category: FLOW
+  source:
+    file: CLAUDE.md
+    anchor: QA receipt
+  strength: REFLEX
+  gateable: false
+  enforcement: n/a
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Reflex
+    canonical_name: r__subagent-stop__qa-receipt.py
+    firing_event: SubagentStop
+    firing_matcher: '*'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: SubagentStop|*|r__subagent-stop__qa-receipt.py
+    expect: present
+  liveness_required: FIRES
