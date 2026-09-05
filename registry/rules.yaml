@@ -106,6 +106,31 @@ rules:
     locator: scripts/g__stop__unsourced-attribute.py --selftest registry/fixtures/COMMS.unsourced-attribute
     expect: 0
   liveness_required: FIRES
+- id: COMMS.unsourced-absence
+  title: Unsourced-absence — no "this has no origin / not recognized" claim ships
+    outward without a seek receipt in the same turn
+  category: COMMS
+  source:
+    file: CLAUDE.md
+    anchor: Unsourced-absence
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Gate
+    canonical_name: g__stop__unsourced-absence.py
+    firing_event: Stop
+    firing_matcher: '*'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: Stop|*|g__stop__unsourced-absence.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/g__stop__unsourced-absence.py --selftest registry/fixtures/COMMS.unsourced-absence
+    expect: 0
+  liveness_required: FIRES
 - id: COMMS.deliverable-complete-before-send
   title: Deliverable-complete-before-send — no future-tense promises in paste-ready drafts
   category: COMMS

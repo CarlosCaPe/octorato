@@ -220,6 +220,12 @@
           "type": "command"
         },
         {
+          "command": "python3 ~/.claude/scripts/g__stop__unsourced-absence.py",
+          "statusMessage": "🔎 ausencia-sin-busqueda (no reconozco / sin origen, sin seek)...",
+          "timeout": 5,
+          "type": "command"
+        },
+        {
           "command": "python3 ~/.claude/scripts/g__stop__paste-ready-raw.py",
           "statusMessage": "📋 paste-ready check (raw message, block last)...",
           "timeout": 5,
