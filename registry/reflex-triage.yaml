@@ -13,10 +13,10 @@
 #     reason: <one line>
 #     decided: YYYY-MM-DD
 #
-# Draft proposed 2026-09-05 for operator approval. "gate" is claimed only where
-# the mechanism already exists and fires on the moment the lesson names; every
-# other entry is "demote" with the candidate shape recorded, so the doctor's
-# green is honest and the candidates stay findable.
+# Merging a change to this file is the operator's approval of it. "gate" is
+# claimed only where the mechanism already exists and fires on the moment the
+# lesson names; every other entry is "demote" with the candidate shape
+# recorded, so the doctor's green is honest and the candidates stay findable.
 decisions:
   - slug: feedback_absence_claims_need_a_query_that_proves_absence
     decision: gate
@@ -31,7 +31,7 @@ decisions:
   - slug: feedback_check_the_base_before_the_first_edit
     decision: gate
     mechanism: scripts/r__pretool-write__base-freshness.py
-    reason: "fires before the first write when the branch is behind its default and says by how much"
+    reason: "warns (never blocks) before the first write when a feature branch is behind its default and says by how much; candidate hole: a stale local default branch gets no warning"
     decided: 2026-09-05
   - slug: feedback_break_the_thing_your_check_guards
     decision: gate
@@ -41,7 +41,7 @@ decisions:
   - slug: feedback_human_cadence_no_ai_tells
     decision: gate
     mechanism: scripts/cadence-stop-hook.py
-    reason: "every chat reply is linted before delivery (Stop) and prose writes on PostToolUse (cadence-lint.py)"
+    reason: "every chat reply is linted for the mechanical subset (rules 1/2/3/5/6/9) before delivery (Stop) and prose writes on PostToolUse (cadence-lint.py); rhythm and register stay judgment"
     decided: 2026-09-05
   - slug: feedback_paste_ready_raw_message
     decision: gate
@@ -56,7 +56,7 @@ decisions:
   - slug: lesson_whatsapp_chat_context_dual_jid
     decision: gate
     mechanism: scripts/g__pretool-mcp__chat-context.py
-    reason: "a WhatsApp send is denied until the chat's recent history (both JIDs) was loaded in the turn"
+    reason: "a WhatsApp send is denied once per chat per 30 minutes and the deny carries the merged two-JID tail; the second attempt passes (block-once), so the mechanism forces the read into the deny reason, it does not verify the read"
     decided: 2026-09-05
   - slug: lesson_untruncated_sweep_and_fixture_flip
     decision: gate
@@ -96,12 +96,13 @@ decisions:
     reason: "procedure for a read; nothing outward to gate. Candidate: none"
     decided: 2026-09-05
   - slug: feedback_email_reply_in_thread
-    decision: demote
-    reason: "candidate with a clean shape, not built yet: PreToolUse deny on a mail send whose subject starts with Re:/RE: and carries no threadId/inReplyTo"
+    decision: gate
+    mechanism: scripts/g__pretool-mcp__outward-send.py
+    reason: "a mail send whose subject opens with Re:/Fwd: and carries no threadId/inReplyTo is denied before it leaves"
     decided: 2026-09-05
   - slug: feedback_footer_paths_openable
     decision: demote
-    reason: "candidate: extend cadence-stop-hook to flag a relative path or bare filename inside the Provenance footer; not built yet"
+    reason: "candidate inside cadence-stop-hook, which already isolates the Provenance line: flag a relative path or bare filename there; not built yet, next in line"
     decided: 2026-09-05
   - slug: feedback_no_lecture_no_default_gates
     decision: demote
@@ -137,7 +138,7 @@ decisions:
     decided: 2026-09-05
   - slug: lesson_dont_chain_commit_with_deniable_push
     decision: demote
-    reason: "candidate: git-discipline gate could deny `git commit ... && git push` chains that reach a deniable target; not built yet"
+    reason: "candidate inside the existing git-discipline parser: deny a commit chained with a push the gate would deny; not built yet, next in line"
     decided: 2026-09-05
   - slug: lesson_hard_invariant_over_timing_lock
     decision: demote
