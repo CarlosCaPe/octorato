@@ -9,8 +9,9 @@ later accepts the receipt only if that id is a real tool_use in the current
 turn of the transcript, so a hand-typed ledger line never counts.
 
 Matched tools (hooks.json matcher): the WhatsApp/Gmail read tools by name, and
-Bash when the command invokes a memory or chat seek (query_connectome memory,
-list_messages, the support-bridge messages.db, impact-radius).
+Bash when a sub-command, at a command boundary, invokes a memory or chat seek
+(query_connectome.py memory, impact-radius.py, sqlite3 on messages.db). The
+predicate lives in receipt_ledger.is_seek_tool, shared with the consumers.
 
 Never blocks, never prints. Fail-open on every error.
 Stdin: {"session_id", "transcript_path", "tool_name", "tool_input", "tool_use_id", ...}
@@ -19,23 +20,9 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-_SEEK_TOOL = re.compile(
-    r"(list_messages|get_message_context|get_chat|get_direct_chat_by_contact"
-    r"|get_last_interaction|search_emails|search_threads|get_thread|read_email"
-    r"|get_message|list_chats)$",
-    re.IGNORECASE,
-)
-_SEEK_CMD = re.compile(
-    r"(query_connectome\.py\s+memory|impact-radius\.py|list_messages|messages\.db"
-    r"|search_emails|sqlite3\s+\S*messages)",
-    re.IGNORECASE,
-)
-
 
 def main() -> int:
     try:
@@ -44,10 +31,14 @@ def main() -> int:
         return 0
     name = str(data.get("tool_name", ""))
     inp = data.get("tool_input") or {}
-    is_seek = bool(_SEEK_TOOL.search(name))
-    if not is_seek and name == "Bash":
-        is_seek = bool(_SEEK_CMD.search(str(inp.get("command", ""))))
-    if not is_seek:
+    try:
+        import receipt_ledger
+    except Exception:
+        return 0
+    # One predicate, shared with every consumer: a seek tool by name, or a Bash
+    # sub-command that invokes a seek at a command boundary (`echo list_messages`
+    # and `grep list_messages` are not seeks).
+    if not receipt_ledger.is_seek_tool(name, inp):
         return 0
     session_id = data.get("session_id") or os.environ.get("CLAUDE_SESSION_ID") or ""
     if not session_id:

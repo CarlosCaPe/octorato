@@ -280,15 +280,27 @@ def is_outward(prose: str, tool_text: str, raw: str = "") -> bool:
     return False
 
 
-def find_absence_claims(text: str) -> list:
-    """Absence phrases in declarative sentences of the outward text."""
+# "No lo autoricé yo, lo hizo el equipo": names who did, so it attributes, it
+# does not claim absence.
+_ATTRIBUTED = re.compile(r"\b(lo\s+hizo|lo\s+autoriz[óo]|lo\s+contrat[óo]|fue\s+el\s+equipo"
+                         r"|was\s+done\s+by|did\s+it|authori[sz]ed\s+it)\b", re.IGNORECASE)
+
+
+def find_absence_claims(text: str, mask_quotes: bool = True) -> list:
+    """Absence phrases in declarative sentences of the outward text. A sentence
+    that asks (opens interrogative, or carries an inverted question mark
+    anywhere) is the prescribed fix and is skipped. `mask_quotes=False` is for
+    a SEND body, where a quotation is the model quoting itself."""
     hits = []
-    text = _mask_real_quotes(text)
+    if mask_quotes:
+        text = _mask_real_quotes(text)
     for part in _SENTENCE_SPLIT.split(text):
         s = part.strip()
         if not s or "absence-ok" in s:
             continue
-        if "?" in s and _INTERROGATIVE.match(s):
+        if "?" in s and (_INTERROGATIVE.match(s) or "¿" in s):
+            continue
+        if _ATTRIBUTED.search(s):
             continue
         m = _ABSENCE.search(s)
         if m:

@@ -1295,9 +1295,17 @@ def check_gate_liveness(fix: bool) -> Result:
     try:
         import receipt_ledger
         head = receipt_ledger.brain_head(CLAUDE_DIR)
-        if head:
-            receipt_ledger.append_global({"kind": "gate-liveness", "ok": True,
-                                          "head": head, "selftests": len(proofs)})
+        gates = receipt_ledger.gate_tree_hash(CLAUDE_DIR)
+        dirty = receipt_ledger.gate_surfaces_dirty(CLAUDE_DIR)
+        if head and gates and not dirty:
+            receipt_ledger.append_global({"kind": "gate-liveness", "ok": True, "head": head,
+                                          "gates": gates, "selftests": len(proofs)})
+        elif dirty:
+            return Result(key, WARN,
+                          f"all {len(proofs)} selftests pass but {len(dirty)} gate surface file(s) are "
+                          f"uncommitted; no gate receipt written (a receipt stamped from a dirty tree "
+                          f"would vouch for gates that are not the ones committed)",
+                          "commit or discard the changes under scripts/, registry/, hooks.json, then re-run")
     except Exception:
         pass
     return Result(key, PASS,
@@ -1606,9 +1614,16 @@ def main() -> int:
     ap.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     ap.add_argument("--registry", action="store_true",
                     help="run ONLY the RULE #1 registry checks (for .githooks/pre-push)")
+    ap.add_argument("--gate-receipt", action="store_true",
+                    help="run ONLY gate-liveness and write the v7 gate receipt (pre-push, ai-pull)")
     args = ap.parse_args()
 
-    if args.registry:
+    if args.gate_receipt:
+        try:
+            results = [check_gate_liveness(args.fix)]
+        except Exception as e:
+            results = [Result("gate-liveness", FAIL, f"gate-liveness crashed: {e}", "report this bug")]
+    elif args.registry:
         try:
             results = check_registry(args.fix) + check_naming(args.fix) + check_orphan_hooks(args.fix)
         except Exception as e:

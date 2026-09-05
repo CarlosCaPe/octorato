@@ -1,0 +1,1 @@
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "mcp__whatsapp__send_message", "input": {"recipient": "5210000000000", "message": "No tengo registro de tu llamada, ¿a qué hora fue? No lo autoricé yo, lo hizo el equipo de licencias."}}]}}

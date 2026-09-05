@@ -1,0 +1,1 @@
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "mcp__gmail__send_email", "input": {"to": ["x@ejemplo.com"], "subject": "Queja", "body": "Como dije: \"ese cargo no corresponde a ningún servicio que yo haya contratado nunca\"."}}]}}

@@ -35,14 +35,15 @@ is the choke point for what actually leaves, and it imports their detectors so
 "contributor" means literally the same function.
 
 Deny shape: hookSpecificOutput.permissionDecision = "deny" with the missing
-receipt named. Per-line hatches honored: absence-ok, attribute-ok,
-draft-promise-ok. Fail-open on any error EXCEPT after a send was positively
+receipt named. Hatches (absence-ok, attribute-ok, draft-promise-ok, send-ok)
+count only in the operator's own prompt for the turn, never in the body: a
+token in the body would ship to the recipient and be self-serve. Fail-open on any error EXCEPT after a send was positively
 identified and a receipt check itself crashed, which denies (same stance as
 qa-merge-gate).
 
 Selftest: CLAUDE_SESSION_ID=__selftest__ (set by gate_selftest, never reachable
-from the model's inline env) makes the gate accept the HEAD token "SELFTEST" in
-the seeded global ledger, since a fixture cannot know the live HEAD.
+from the model's inline env) makes the gate accept HEAD and gates "SELFTEST" in
+the seeded global ledger, since a fixture cannot know the live tree.
 
 Stdin:  PreToolUse payload {"session_id", "transcript_path", "tool_name",
         "tool_input", "cwd", ...}
@@ -70,13 +71,17 @@ _SEND_TOOL = re.compile(
     r"(send_email|send_message|send_file|send_audio_message|__reply$|__forward$)",
     re.IGNORECASE,
 )
-_SEND_CMD = re.compile(
-    r"(wa-soporte\.sh|wrangler\s+(?:pages\s+)?deploy|gh\s+release\s+create)",
+# Matched at the START of a stripped shell sub-command only (the same
+# command-boundary discipline qa-merge-gate uses): `git commit -m "wa-soporte.sh"`
+# carries the name inside a quoted argument and is not a send.
+_SEND_CMD_HEAD = re.compile(
+    r"^(?:\S*/)?wa-soporte\.sh\b|^(?:npx\s+)?wrangler\s+(?:pages\s+)?deploy\b"
+    r"|^gh\s+release\s+create\b",
     re.IGNORECASE,
 )
 _BODY_KEYS = ("body", "message", "text", "content", "html", "snippet",
               "caption", "subject", "description", "title", "command")
-_HATCH = re.compile(r"absence-ok|attribute-ok|draft-promise-ok")
+_HATCH = re.compile(r"absence-ok|attribute-ok|draft-promise-ok|send-ok")
 
 
 def _load(name: str):
@@ -111,7 +116,9 @@ def _deny(reason: str) -> None:
 
 def is_send(tool_name: str, tool_input: dict) -> bool:
     if tool_name == "Bash":
-        return bool(_SEND_CMD.search(str((tool_input or {}).get("command", ""))))
+        import receipt_ledger
+        cmd = str((tool_input or {}).get("command", ""))
+        return any(_SEND_CMD_HEAD.search(sc) for sc in receipt_ledger.subcommands(cmd))
     return bool(_SEND_TOOL.search(tool_name))
 
 
@@ -124,14 +131,26 @@ def check(data: dict) -> str:
     transcript = data.get("transcript_path") or ""
 
     # 1. Gate receipt: the phrase detectors below are proven live on THIS tree.
+    #    Anchored on HEAD + the git tree hash of the gate surfaces, and voided
+    #    by any uncommitted edit under them: an unproven gate is a dead gate.
     brain = _HERE.parent
-    head = receipt_ledger.brain_head(brain)
-    if os.environ.get("CLAUDE_SESSION_ID") == receipt_ledger.SELFTEST_SESSION:
-        head = receipt_ledger.SELFTEST_HEAD
-    if not receipt_ledger.gate_receipt_ok(head):
-        return ("🧾 SIN RECIBO DE GATES: ningún brain_doctor ha probado los gates en "
-                "este HEAD del brain. Corre `python3 ~/.claude/scripts/brain_doctor.py` "
-                "(o ai-pull) y reintenta el envío. v7: nada sale sin recibos.")
+    selftest = os.environ.get("CLAUDE_SESSION_ID") == receipt_ledger.SELFTEST_SESSION
+    if selftest:
+        head = gates = receipt_ledger.SELFTEST_HEAD
+        dirty = []
+    else:
+        head = receipt_ledger.brain_head(brain)
+        gates = receipt_ledger.gate_tree_hash(brain)
+        dirty = receipt_ledger.gate_surfaces_dirty(brain)
+    if dirty:
+        return ("🧾 GATES SIN COMMIT: hay cambios sin confirmar bajo scripts/, registry/ o "
+                f"hooks.json del brain ({len(dirty)} archivo(s)); un gate editado y no probado "
+                "es un gate muerto. Confirma o descarta esos cambios, corre brain_doctor y "
+                "reintenta el envío.")
+    if not receipt_ledger.gate_receipt_ok(head, gates):
+        return ("🧾 SIN RECIBO DE GATES: ningún brain_doctor ha probado los gates en este "
+                "estado del brain. Corre `python3 ~/.claude/scripts/brain_doctor.py --gate-receipt` "
+                "(ai-pull y todo push lo hacen solos) y reintenta el envío. v7: nada sale sin recibos.")
 
     found: list = []
     if tool_name == "Bash":
@@ -144,13 +163,24 @@ def check(data: dict) -> str:
             found = [str(tool_input.get("command", ""))]
     else:
         _walk_strings(tool_input, found)
-    body = "\n".join(ln for ln in "\n".join(found).splitlines() if not _HATCH.search(ln))
+    # Quoted-reply lines ("> ...") are the counterpart's words, exactly as the
+    # Stop gates treat them; a hatch token counts only in the operator's own
+    # prompt for this turn, never inside the body (that would ship to the
+    # recipient and be self-serve).
+    hatch = _HATCH.search(receipt_ledger.turn_last_human_text(transcript)) if transcript else None
+    if hatch:
+        return ""
+    body = "\n".join(ln for ln in "\n".join(found).splitlines()
+                     if not ln.lstrip().startswith(">"))
     if not body.strip():
         return ""
+    # A send is the model's own text: a quotation inside it is the model
+    # quoting itself, and a claim split across lines is still one claim.
+    flat = re.sub(r"\s+", " ", body)
 
     # 2. Absence claim needs a seek receipt anchored in this turn.
     absence = _load("g__stop__unsourced-absence.py")
-    claims = absence.find_absence_claims(body)
+    claims = absence.find_absence_claims(flat, mask_quotes=False)
     if claims:
         seeks = receipt_ledger.seek_receipts_in_turn(session_id, transcript) if transcript else []
         if not seeks:
@@ -158,7 +188,8 @@ def check(data: dict) -> str:
             return (f"🔎 AUSENCIA SIN BÚSQUEDA en el envío ({listing}): en este turno no hay "
                     f"ningún recibo de búsqueda (chat, correo o memoria) que pudiera refutarlo. "
                     f"Busca primero (list_messages con el monto, query_connectome.py memory, "
-                    f"search_emails) o redáctalo como pregunta. 'absence-ok' en la línea lo exime.")
+                    f"search_emails) o redáctalo como pregunta. 'absence-ok' en TU mensaje "
+                    f"(no en el cuerpo) lo exime.")
 
     # 3. The other two contributors, before the send instead of after the reply.
     attribute = _load("g__stop__unsourced-attribute.py")

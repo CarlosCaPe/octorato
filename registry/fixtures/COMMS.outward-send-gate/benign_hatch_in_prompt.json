@@ -6,8 +6,8 @@
       "x@ejemplo.com"
     ],
     "subject": "Queja",
-    "body": "No reconozco ese cargo. absence-ok"
+    "body": "No reconozco ese cargo."
   },
   "cwd": "/home/user",
-  "transcript_path": "benign_hatch_transcript.jsonl"
+  "transcript_path": "benign_hatch_in_prompt_transcript.jsonl"
 }

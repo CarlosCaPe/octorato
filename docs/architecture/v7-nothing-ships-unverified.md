@@ -73,6 +73,10 @@ Phases 1 to 5 shipped in one PR: `scripts/receipt_ledger.py`, `r__posttool__rece
 
 Bootstrap note: the first merge of that PR cannot carry a QA receipt, because the SubagentStop hook that writes receipts is inside it. That merge uses the operator's explicit `OCTO_QA_OK=1` bypass, once, and the PR body carries the QA verdict as text. Every merge after it needs the receipt.
 
+QA cycle (independent Reality Checker, judgment tier) returned NEEDS-WORK on the first cut with 16 findings; the two blockers were exactly the contract: the seek anchor accepted any tool_use id (a `Read`, an `echo list_messages`) and the QA anchor accepted any file with two substrings from any agent. Fixed in the same branch: a seek receipt counts only when the tool_use it names is itself a seek (shared predicate, command-boundary split borrowed from qa-merge-gate); a QA receipt counts only under the harness projects dir, re-parsing the LAST verdict, whole-token scope, QA persona; the gate receipt binds HEAD plus the gate tree hash and is void on a dirty tree, and `.githooks/pre-push` writes it so a push and a receipt are one event; hatches count only in the operator's prompt; quoted-reply lines and the model's own quotations are handled; command-boundary matching for Bash sends. Every demonstrated bypass is now a violation fixture (18 fixtures, 9 block + 9 allow) or a unit test (`scripts/tests/test_receipt_ledger.py`).
+
+Headline caveat on the floor: `FLOW.budget-halt` counts as FORCED because its mechanism denies when an arm opts into `hard_stop`; on a machine where every arm is set to `alert`, it cannot halt by configuration. The floor measures mechanisms, not configurations.
+
 Phase 6 (the major cut) waits for `reflex-triage` to reach zero pending decisions.
 
 ## Decisions recorded

@@ -1,0 +1,2 @@
+{"type": "user", "message": {"role": "user", "content": "manda el correo tal cual, absence-ok, ya lo verifiqué yo"}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "mcp__gmail__send_email", "input": {"to": ["x@ejemplo.com"], "subject": "Queja", "body": "No reconozco ese cargo."}}]}}

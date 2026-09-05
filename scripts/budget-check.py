@@ -154,14 +154,18 @@ def evaluate(arm_filter: str | None = None, cwd: str | None = None) -> dict:
     # when the tool call's cwd is under that path. Entries without `path` keep
     # the historical global behaviour. A breached client arm halts work IN that
     # arm, not every arm on the machine.
-    if cwd:
-        scoped = []
-        for b in arms_cfg:
-            pth = (b or {}).get("path") if isinstance(b, dict) else None
-            if pth and not str(cwd).startswith(os.path.expanduser(str(pth)).rstrip("/") ):
-                continue
-            scoped.append(b)
-        arms_cfg = scoped
+    scoped = []
+    for b in arms_cfg:
+        pth = (b or {}).get("path") if isinstance(b, dict) else None
+        if pth:
+            if not cwd:
+                continue  # scoped cap, no cwd to scope against: not applicable here
+            root = os.path.expanduser(str(pth)).rstrip("/")
+            c = str(cwd).rstrip("/")
+            if not (c == root or c.startswith(root + "/")):
+                continue  # directory boundary, not a string prefix (hot vs hotter)
+        scoped.append(b)
+    arms_cfg = scoped
 
     # Index per-arm overrides
     overrides = {b["arm"]: b for b in arms_cfg if isinstance(b, dict) and "arm" in b}

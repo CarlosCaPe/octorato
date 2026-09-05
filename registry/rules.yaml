@@ -1700,7 +1700,7 @@ rules:
     expect: present
   liveness_required: PRESENT
 - id: FLOW.receipt-ledger
-  title: Receipt ledger — a seek is recorded by the harness, anchored to the transcript
+  title: 'Receipt ledger: a seek is recorded by the harness, anchored to the transcript'
   category: FLOW
   source:
     file: CLAUDE.md
@@ -1724,7 +1724,7 @@ rules:
     expect: present
   liveness_required: FIRES
 - id: COMMS.outward-send-gate
-  title: Outward-send gate — nothing ships without receipts (gate, seek, no unsourced claim)
+  title: 'Outward-send gate: nothing ships without receipts (gate, seek, no unsourced claim)'
   category: COMMS
   source:
     file: CLAUDE.md
@@ -1748,7 +1748,7 @@ rules:
     expect: 0
   liveness_required: FIRES
 - id: FLOW.qa-receipt
-  title: QA receipt — a subagent verdict is recorded by the harness, re-read from its transcript
+  title: 'QA receipt: a subagent verdict is recorded by the harness, re-read from its transcript'
   category: FLOW
   source:
     file: CLAUDE.md
