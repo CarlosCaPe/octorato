@@ -468,6 +468,23 @@ edges:
       own words, a blockquote, or a question all exempt a sentence, because each
       is one of the two prescribed fixes (source it, or ask it).
 
+  - id: unsourced-absence-gate
+    concept: "an absence claim (no origin / not recognized / never contracted) never ships outward without a seek receipt in the same turn"
+    appears_in:
+      - CLAUDE.md                                        # anchor "Unsourced-absence"
+      - scripts/g__stop__unsourced-absence.py            # the Stop gate (the mechanism)
+      - registry/rules.yaml                              # COMMS.unsourced-absence
+      - registry/fixtures/COMMS.unsourced-absence        # the liveness proof
+      - hooks.json                                       # the Stop wiring
+    kind: appears_in
+    note: >-
+      Sibling of unsourced-attribute-gate: same delivery detector, same fence
+      split, same quote/question exemptions. The trigger is the ABSENCE PHRASE,
+      because "verify the operator" names no detectable moment and "no
+      reconozco / sin origen" does. The receipt is the act of seeking (a chat,
+      mail or memory lookup in the turn), never its result: the gate cannot
+      judge what was found, only that someone looked.
+
   - id: draft-promise-gate
     concept: "deliverable-complete-before-send / no future-tense promise inside a paste-ready draft"
     appears_in:
