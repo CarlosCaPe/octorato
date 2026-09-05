@@ -182,6 +182,16 @@ def _selftest() -> int:
         subprocess.run(["git", "clone", "-q", str(origin), str(clone)], check=True)
         env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
                "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t", **os.environ}
+        # Guard: every mutating git call below must land in the throwaway clone.
+        # On 2026-09-05 a `base` commit and a `branch -M main` showed up in a
+        # live worktree while a doctor run was executing selftests; the cause was
+        # not reproduced, so the selftest now refuses to mutate anything whose
+        # git dir is not under its own temp dir.
+        gd = subprocess.run(["git", "-C", str(clone), "rev-parse", "--absolute-git-dir"],
+                            capture_output=True, text=True).stdout.strip()
+        if not gd.startswith(str(t.resolve())):
+            print(f"  X selftest clone resolves outside its temp dir ({gd}); refusing to mutate")
+            return 1
         f = clone / "a.txt"
         f.write_text("1")
         for a in (["add", "a.txt"], ["commit", "-qm", "base"], ["branch", "-M", "main"],
