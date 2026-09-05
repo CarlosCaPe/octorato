@@ -280,10 +280,17 @@ def is_outward(prose: str, tool_text: str, raw: str = "") -> bool:
     return False
 
 
-# "No lo autoricé yo, lo hizo el equipo": names who did, so it attributes, it
-# does not claim absence.
-_ATTRIBUTED = re.compile(r"\b(lo\s+hizo|lo\s+autoriz[óo]|lo\s+contrat[óo]|fue\s+el\s+equipo"
-                         r"|was\s+done\s+by|did\s+it|authori[sz]ed\s+it)\b", re.IGNORECASE)
+# "No lo autoricé yo, lo hizo el equipo": names WHO did, so it attributes and
+# explains the clause before it. "no sé quién lo hizo" / "lo hizo alguien más"
+# name nobody: they exempt nothing (QA cycle 4).
+_ATTRIBUTED = re.compile(
+    r"\b(?:lo\s+(?:hizo|autoriz[óo]|contrat[óo]|solicit[óo]|pidi[óo])"
+    r"|(?:was\s+(?:done|authori[sz]ed|ordered)\s+by))\s+"
+    r"(?:el|la|los|las|un|una|mi|mis|nuestr[oa]s?|su|sus|the|our|my|[A-ZÁÉÍÓÚ]\w+)\b"
+    r"|\bfue\s+(?:el|la|un|una|mi|nuestr[oa])\s+\w+",
+    re.IGNORECASE,
+)
+_NOBODY = re.compile(r"no\s+s[ée]\s+qui[ée]n|alguien\s+m[áa]s|someone\s+else|no\s+idea\s+who", re.IGNORECASE)
 
 
 def find_absence_claims(text: str, mask_quotes: bool = True) -> list:
@@ -310,7 +317,8 @@ def find_absence_claims(text: str, mask_quotes: bool = True) -> list:
         hit = None
         for segment in re.split(r"\s*;\s*|\s+y\s+|\s+and\s+", s):
             clauses = [c for c in re.split(r"\s*,\s*", segment) if c]
-            attributed = {i for i, c in enumerate(clauses) if _ATTRIBUTED.search(c)}
+            attributed = {i for i, c in enumerate(clauses)
+                          if _ATTRIBUTED.search(c) and not _NOBODY.search(c)}
             exempt = attributed | {i - 1 for i in attributed if i > 0}
             for i, clause in enumerate(clauses):
                 if i in exempt:

@@ -9,8 +9,8 @@
 | Skills | 233 |
 | Agents | 161 |
 | Divisions | 15 |
-| Scripts: wired | 106 |
-| Scripts: orphan | 8 |
+| Scripts: wired | 107 |
+| Scripts: orphan | 7 |
 | Rules | 72 |
 | Hook entries | 43 |
 
@@ -606,7 +606,7 @@
 | wa-guardia.py | Guardia de chat: que llego y no hemos contestado, aqui y ahora. | wired |
 | wa-latido.py | Latido activo de puentes de WhatsApp: mide la TUBERIA, no el proceso. | wired |
 | wa-sin-respuesta.py | Vigia de silencio: avisa cuando un cliente escribio y nadie contesto. | wired |
-| wa-soporte.sh | Envia un WhatsApp por el canal de SOPORTE, no por el numero personal del operador. | orphan |
+| wa-soporte.sh | Envia un WhatsApp por el canal de SOPORTE, no por el numero personal del operador. | wired |
 | watchdog.py | watchdog.py , observability surface 4 anomaly detector. Reads the JSONL trace files written by trace... | wired |
 
 ## Rules (72)

@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-violation_gh_release_flags",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "gh release --repo x/y create v1 -n \"Ese cargo no lo reconozco.\""
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_gh_release_flags_transcript.jsonl"
+}

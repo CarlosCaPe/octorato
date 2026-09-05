@@ -1,0 +1,1 @@
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "gh release --repo x/y create v1 -n \"Ese cargo no lo reconozco.\""}}]}, "uuid": "e9caaf73-dca2-400b-97d9-c8b3ae059b03", "parentUuid": "aca7ebd5-1334-4895-a9f1-4ac8aa8c62a3", "sessionId": "fx-session", "timestamp": "2026-09-05T10:00:00.000Z"}

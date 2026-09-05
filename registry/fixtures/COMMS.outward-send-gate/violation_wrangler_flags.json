@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-violation_wrangler_flags",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "wrangler --config x.toml deploy --var MSG:\"Ese cargo no lo reconozco.\""
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_wrangler_flags_transcript.jsonl"
+}

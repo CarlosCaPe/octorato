@@ -132,11 +132,41 @@ def _raw_split(command: str) -> list:
 
 
 def subcommands(command: str) -> list:
-    """Stripped sub-commands of a shell string: split on UNQUOTED separators,
-    leading env/redirect/grouping removed, wrappers peeled, `sh -c` expanded."""
+    """Sub-commands of a shell string: split on UNQUOTED separators, leading
+    env/redirect/grouping removed, wrappers peeled, `sh -c` expanded. The RAW
+    (unstripped) form of each is returned too, so an assignment such as
+    `S=~/.claude/scripts/wa-soporte.sh && $S ...` keeps its value visible as a
+    token (QA cycle 4: the strip peeled it only after `;`, not after `&&`)."""
     out = []
-    for sc in _raw_split(str(command or "")):
-        out.extend(_peel(sc))
+    try:
+        split, strip = _qa_gate_helpers()
+        raws = [pp for pp in split(str(command or "").replace("\\\n", " ")) if pp.strip()]
+    except Exception:
+        raws = [str(command or "")]
+    for raw in raws:
+        try:
+            _, strip = _qa_gate_helpers()
+            stripped = strip(raw)
+        except Exception:
+            stripped = raw
+        out.extend(_peel(stripped))
+        if raw.strip() != stripped.strip():
+            out.append(raw.strip())
+    return out
+
+
+def words_after(toks: list, i: int, n: int = 2) -> list:
+    """The next `n` NON-flag tokens after position i: a flag (`-x`, `--long`)
+    is skipped together with its value when it carries no `=` (so
+    `gh release --repo x/y create v1` still reads as release create)."""
+    out, j = [], i + 1
+    while j < len(toks) and len(out) < n:
+        t = toks[j]
+        if t.startswith("-"):
+            j += 1 if ("=" in t or len(t) <= 2 and t in ("-y", "-q", "-v", "-f")) else 2
+            continue
+        out.append(t)
+        j += 1
     return out
 
 

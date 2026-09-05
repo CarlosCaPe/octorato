@@ -127,9 +127,9 @@ def _bash_is_send(command: str) -> bool:
         for i, t in enumerate(toks):
             if any(receipt_ledger._is_script_token(t, n) for n in _SEND_SCRIPTS):
                 return True
-            if t.endswith("wrangler") and ("deploy" in toks[i + 1:i + 3]):
+            if t.endswith("wrangler") and "deploy" in receipt_ledger.words_after(toks, i, 2):
                 return True
-            if t == "gh" and toks[i + 1:i + 3] == ["release", "create"]:
+            if t == "gh" and receipt_ledger.words_after(toks, i, 2) == ["release", "create"]:
                 return True
     return False
 
