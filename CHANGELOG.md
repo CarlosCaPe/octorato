@@ -15,6 +15,16 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-09-05]: v6.24.1
+### Other
+- docs(architecture): v7 plan, nothing ships unverified (#258)
+
+## [2026-09-05]: v6.24.0
+### Features
+- feat(gate): block unsourced absence claims in outward drafts without a seek receipt (#257)
+### Other
+- docs(changelog): backfill v6.23.1 (#256)
+
 ## [2026-09-04]: v6.23.1
 ### Fixes
 - fix(registry): single anchor line for Do-it-today; backfill CHANGELOG v6.23.0 (#255)
