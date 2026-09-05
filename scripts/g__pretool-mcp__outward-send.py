@@ -78,6 +78,11 @@ _SEND_TOOL = re.compile(
 # residual is indirection that hides the name from argv ($(echo ...),
 # python -c subprocess, find -exec), accepted as in qa-merge-gate.
 _SEND_SCRIPTS = ("wa-soporte.sh",)
+# A sub-command whose FIRST token is a reader never sends, whatever its argv
+# names: `grep -rn wa-soporte.sh scripts/` reads the name, it does not run
+# it (QA cycle 5 note). `find` is not here: `find -exec` runs things.
+_READERS = {"grep", "rg", "ag", "ls", "cat", "less", "more", "head", "tail", "wc",
+            "stat", "file", "diff", "vim", "nano", "code", "chmod", "chown", "git"}
 _BODY_KEYS = ("body", "message", "text", "content", "html", "snippet",
               "caption", "subject", "description", "title", "command")
 # A hatch counts only as a standalone word in the operator's prompt, outside
@@ -124,6 +129,8 @@ def _bash_is_send(command: str) -> bool:
     import receipt_ledger
     for sc in receipt_ledger.subcommands(command):
         toks = receipt_ledger.tokens_of(sc)
+        if toks and toks[0] in _READERS:
+            continue
         for i, t in enumerate(toks):
             if any(receipt_ledger._is_script_token(t, n) for n in _SEND_SCRIPTS):
                 return True
