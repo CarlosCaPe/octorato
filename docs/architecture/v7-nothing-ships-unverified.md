@@ -79,6 +79,8 @@ QA cycle 2 (3b2e5f7) returned NEEDS-WORK again, on three points: the doc claimed
 
 QA cycle 3 (2998fe0) returned NEEDS-WORK on one point with an honest-path shape: the wrapper peel was a blacklist (`bash -x`, `timeout -k`, `setsid`, `xargs`, `eval`, `source` slipped by). Bash sends and seeks are now found by TOKEN in the argv of every sub-command (the script name as its own token, after the unquoted split), which ends the wrapper arms race for honest invocations; the residual is indirection that hides the name from argv, the same class qa-merge-gate accepts. Rides along: bracketed hatches, apostrophes no longer swallow a hatch, a sentence that asserts and then asks still asserts, an attribution exempts only its comma-clause and the one before it inside the same conjunction segment.
 
+QA cycles 4 and 5 (e17294a, 900e897): PASS. Three precision gaps closed with fixtures (assignment-form sends after `&&`, flags inside `gh release … create` and `wrangler … deploy`, a clause-laundering shape), plus one note (a reader-led sub-command such as `grep -rn wa-soporte.sh` never counts as a send). Final state of the send gate: 34 block + 13 allow.
+
 Headline caveat on the floor: `FLOW.budget-halt` counts as FORCED because its mechanism denies when an arm opts into `hard_stop`; on a machine where every arm is set to `alert`, it cannot halt by configuration. The floor measures mechanisms, not configurations.
 
 Phase 6 (the major cut) waits for `reflex-triage` to reach zero pending decisions.
