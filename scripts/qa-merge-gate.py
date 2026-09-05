@@ -36,6 +36,10 @@ route. Only the harness env, which the agent's command-scoped env never reaches,
 is a real boundary. octo-dim approve-merge is kept as an operator audit log
 (listed by `approvals`), not a gate pass.
 
+v7 (2026-09-05): approval is necessary, not sufficient. A merge also needs a QA
+receipt for the PR in the receipt ledger (~/.claude/.cache/receipts/global.jsonl),
+written by the SubagentStop hook from a QA subagent's QA-VERDICT/QA-SCOPE lines
+and re-read from that agent's transcript. OCTO_QA_OK=1 is the explicit bypass.
 Fail-closed ONLY for positively-identified merge commands.
 Any parsing error on a non-merge command → exit 0 (fail-open).
 Design mirrors grafo-gate.py: same I/O protocol, same stdin JSON shape.
@@ -496,6 +500,29 @@ def main() -> int:
     # ── Channel 1: env, PR-scoped, agent-proof (preferred) ───────────────────
     env_approve = os.environ.get("OCTO_MERGE_APPROVE", "").strip()
     if env_approve and env_approve == pr_id:
+        # v7 phase 3: the operator's approval is necessary, not sufficient. An
+        # independent QA verdict must exist as a HARNESS-written receipt for this
+        # PR (r__subagent-stop__qa-receipt.py), re-read from the agent transcript.
+        # "QA approved" typed by the main loop is not a receipt. OCTO_QA_OK=1 stays
+        # the operator's explicit blanket bypass (bootstrap, or a docs-only PR).
+        if os.environ.get("OCTO_QA_OK", "").strip() != "1":
+            try:
+                sys.path.insert(0, str(Path(__file__).resolve().parent))
+                import receipt_ledger
+                qa = receipt_ledger.qa_pass_for(pr_id, str(data.get("session_id") or ""), str(data.get("transcript_path") or ""))
+            except Exception:
+                qa = None
+            if qa is None:
+                print(
+                    f"✗ QA GATE (fail-closed): PR #{pr_id} is operator-approved but carries NO QA "
+                    f"receipt.\n  v7: run an independent QA subagent (judgment tier) on the PR and "
+                    f"have it end with\n    QA-VERDICT: PASS\n    QA-SCOPE: PR #{pr_id}\n  The "
+                    f"SubagentStop hook records the verdict; the ledger line is re-read from the "
+                    f"agent transcript.\n  Explicit operator bypass: OCTO_QA_OK=1 (blanket, logged).",
+                    file=sys.stderr,
+                )
+                return 2
+            _nudge(f"✓ QA gate: QA receipt for PR #{pr_id} ({qa.get('agent_type') or 'subagent'}, {qa.get('ts', '')}).")
         _nudge(
             f"✓ QA gate: operator-approved PR #{pr_id} via OCTO_MERGE_APPROVE "
             f"(env, agent-proof)."

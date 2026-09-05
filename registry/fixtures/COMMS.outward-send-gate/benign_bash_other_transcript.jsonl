@@ -1,0 +1,1 @@
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "git status"}}]}, "uuid": "61125665-5bd3-4b83-9493-fadf6943f9a3", "parentUuid": "aa67c039-fae2-40ee-b4c2-d231a386ef67", "sessionId": "fx-session", "timestamp": "2026-09-05T10:00:00.000Z"}

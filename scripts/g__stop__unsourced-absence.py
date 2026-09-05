@@ -280,19 +280,57 @@ def is_outward(prose: str, tool_text: str, raw: str = "") -> bool:
     return False
 
 
-def find_absence_claims(text: str) -> list:
-    """Absence phrases in declarative sentences of the outward text."""
+# "No lo autoricé yo, lo hizo el equipo": names WHO did, so it attributes and
+# explains the clause before it. "no sé quién lo hizo" / "lo hizo alguien más"
+# name nobody: they exempt nothing (QA cycle 4).
+_ATTRIBUTED = re.compile(
+    r"\b(?:lo\s+(?:hizo|autoriz[óo]|contrat[óo]|solicit[óo]|pidi[óo])"
+    r"|(?:was\s+(?:done|authori[sz]ed|ordered)\s+by))\s+"
+    r"(?:el|la|los|las|un|una|mi|mis|nuestr[oa]s?|su|sus|the|our|my|[A-ZÁÉÍÓÚ]\w+)\b"
+    r"|\bfue\s+(?:el|la|un|una|mi|nuestr[oa])\s+\w+",
+    re.IGNORECASE,
+)
+_NOBODY = re.compile(r"no\s+s[ée]\s+qui[ée]n|alguien\s+m[áa]s|someone\s+else|no\s+idea\s+who", re.IGNORECASE)
+
+
+def find_absence_claims(text: str, mask_quotes: bool = True) -> list:
+    """Absence phrases in declarative sentences of the outward text. A sentence
+    that OPENS as a question is the prescribed fix and is skipped; one that
+    asserts and then asks still asserts. `mask_quotes=False` is for
+    a SEND body, where a quotation is the model quoting itself."""
     hits = []
-    text = _mask_real_quotes(text)
+    if mask_quotes:
+        text = _mask_real_quotes(text)
     for part in _SENTENCE_SPLIT.split(text):
         s = part.strip()
         if not s or "absence-ok" in s:
             continue
+        # Asking INSTEAD of asserting is the fix; a sentence that asserts and
+        # then asks ("..., ¿verdad?", "... ¿me lo aclaran?") still asserts, so
+        # only a sentence that OPENS as a question is exempt (QA cycles 2-3).
         if "?" in s and _INTERROGATIVE.match(s):
             continue
-        m = _ABSENCE.search(s)
-        if m:
-            hits.append(m.group(0))
+        # Attribution ("lo hizo el equipo") explains the comma-clause it sits
+        # in and the one right before it, inside the same conjunction segment;
+        # it never reaches across "y"/"and"/";" and never launders a claim that
+        # comes after it.
+        hit = None
+        for segment in re.split(r"\s*;\s*|\s+y\s+|\s+and\s+", s):
+            clauses = [c for c in re.split(r"\s*,\s*", segment) if c]
+            attributed = {i for i, c in enumerate(clauses)
+                          if _ATTRIBUTED.search(c) and not _NOBODY.search(c)}
+            exempt = attributed | {i - 1 for i in attributed if i > 0}
+            for i, clause in enumerate(clauses):
+                if i in exempt:
+                    continue
+                m = _ABSENCE.search(clause)
+                if m:
+                    hit = m.group(0)
+                    break
+            if hit:
+                break
+        if hit:
+            hits.append(hit)
     return hits
 
 

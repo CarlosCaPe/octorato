@@ -174,14 +174,38 @@ def _selftest() -> int:
     """
     import tempfile
 
+    # Under a git hook the process itself carries GIT_DIR / GIT_INDEX_FILE, and
+    # the hook logic (check) shells out to git: scrub the process env first so
+    # nothing in this selftest can touch the live repo.
+    for k in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX",
+              "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE"):
+        os.environ.pop(k, None)
+
     ok = True
     with tempfile.TemporaryDirectory() as td:
         t = Path(td)
         origin, clone = t / "origin.git", t / "clone"
-        subprocess.run(["git", "init", "--bare", "-q", str(origin)], check=True)
-        subprocess.run(["git", "clone", "-q", str(origin), str(clone)], check=True)
+        _env0 = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        subprocess.run(["git", "init", "--bare", "-q", str(origin)], check=True, env=_env0)
+        subprocess.run(["git", "clone", "-q", str(origin), str(clone)], check=True, env=_env0)
         env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
                "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t", **os.environ}
+        # Under a git hook, GIT_DIR / GIT_INDEX_FILE point at the LIVE repo and
+        # `git -C clone` would still commit there (the 2026-09-05 incident).
+        for k in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX",
+                  "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE"):
+            env.pop(k, None)
+        # Guard: every mutating git call below must land in the throwaway clone.
+        # On 2026-09-05 a `base` commit and a `branch -M main` showed up in a
+        # live worktree: git had exported GIT_DIR/GIT_INDEX_FILE to the hook that
+        # ran this selftest, and `git -C <clone>` still resolved to the live repo
+        # (reproduced). The env is scrubbed above; this refuses to mutate anything
+        # whose git dir is not under the temp dir, in case a new variable appears.
+        gd = subprocess.run(["git", "-C", str(clone), "rev-parse", "--absolute-git-dir"],
+                            capture_output=True, text=True, env=env).stdout.strip()
+        if not gd.startswith(str(t.resolve())):
+            print(f"  X selftest clone resolves outside its temp dir ({gd}); refusing to mutate")
+            return 1
         f = clone / "a.txt"
         f.write_text("1")
         for a in (["add", "a.txt"], ["commit", "-qm", "base"], ["branch", "-M", "main"],
@@ -190,7 +214,7 @@ def _selftest() -> int:
         # A bare init leaves HEAD on `master`; without this a fresh clone lands on an
         # unborn branch and its commits fork off nothing. Real remotes have HEAD set.
         subprocess.run(["git", "-C", str(origin), "symbolic-ref", "HEAD",
-                        "refs/heads/main"], check=True)
+                        "refs/heads/main"], check=True, env=_env0)
 
         # BENIGN: on the default branch, at its tip -> silent
         if check(str(f), "s1") is not None:
@@ -199,7 +223,7 @@ def _selftest() -> int:
         # VIOLATION: branch off, then main moves ahead -> must warn
         subprocess.run(["git", "-C", str(clone), "checkout", "-qb", "feat"], check=True, env=env)
         work = t / "w2"
-        subprocess.run(["git", "clone", "-q", str(origin), str(work)], check=True)
+        subprocess.run(["git", "clone", "-q", str(origin), str(work)], check=True, env=_env0)
         (work / "b.txt").write_text("2")
         for a in (["add", "b.txt"], ["commit", "-qm", "newer"], ["push", "-q", "origin", "HEAD:main"]):
             subprocess.run(["git", "-C", str(work), *a], check=True, env=env)

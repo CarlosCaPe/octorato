@@ -1,0 +1,13 @@
+{
+  "session_id": "fx-qt",
+  "tool_name": "mcp__gmail__send_email",
+  "tool_input": {
+    "to": [
+      "x@ejemplo.com"
+    ],
+    "subject": "Queja",
+    "body": "Como dije: \"ese cargo no corresponde a ningún servicio que yo haya contratado nunca\"."
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_absence_quoted_transcript.jsonl"
+}

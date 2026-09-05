@@ -1,0 +1,10 @@
+{
+  "session_id": "fx-abc",
+  "tool_name": "mcp__whatsapp__send_message",
+  "tool_input": {
+    "recipient": "5210000000000",
+    "message": "No sé quién lo hizo, no reconozco ese cargo."
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_absence_attribution_before_claim_transcript.jsonl"
+}

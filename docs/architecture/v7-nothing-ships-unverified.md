@@ -26,7 +26,7 @@ An **outward action** is any tool call whose effect leaves the operator's machin
 
 An outward action is allowed only when the turn carries a **receipt bundle**:
 
-1. **Seek receipt.** For every claim of fact about the counterpart or the past (an amount, a date, an absence, a category), a lookup ran in this turn: memory seek, chat search, mail search, or the arm expediente. The receipt is the act of looking, never its result.
+1. **Seek receipt.** For every claim of fact about the counterpart or the past (an amount, a date, an absence, a category), a lookup ran in this turn: memory seek, chat search, mail search, or the arm expediente. The receipt is the act of looking, never its result. A lookup that returns message bodies counts (messages, mail); a chat listing or a last-interaction stamp does not, because it cannot refute anything.
 2. **QA receipt.** For code and for any deliverable above TRIVIAL, an independent verdict on the judgment tier, recorded in the turn, not asserted in prose.
 3. **Gate receipt.** Every fail-closed gate that watches this class of action has a green `--selftest` at HEAD, and no waiver covers it.
 
@@ -66,6 +66,24 @@ v7.0.0 ships when `brain_doctor.py` prints all of:
 - REFLEX triage: 0 recurrent lessons without a decision.
 
 Not a claim of zero defects. A claim that zero known defect classes are unwired, and that no send leaves without receipts. The next unknown class will still get through once; v7 guarantees it gets through with a ledger that shows exactly which receipt was missing, and that the gate written for it is proven before the incident closes.
+
+## Status (2026-09-05)
+
+Phases 1 to 5 shipped in one PR: `scripts/receipt_ledger.py`, `r__posttool__receipt-seek.py`, `g__pretool-mcp__outward-send.py` (fixture-proven, 4 block + 6 allow), `r__subagent-stop__qa-receipt.py`, `qa-merge-gate` reading the ledger, the six waivers retired (five recorded as detector or reflex by design via `v7_decision`, `FLOW.budget-halt` promoted with a fixture pair and path-scoped caps), and three new doctor assertions (`waiver-age`, `incident-fixture-coverage`, `reflex-triage`). Doctor on that tree: floor FORCED 27/27 (100%), waived 0, 29 selftests live.
+
+Bootstrap note: the first merge of that PR cannot carry a QA receipt, because the SubagentStop hook that writes receipts is inside it. That merge uses the operator's explicit `OCTO_QA_OK=1` bypass, once, and the PR body carries the QA verdict as text. Every merge after it needs the receipt.
+
+QA cycle (independent Reality Checker, judgment tier) returned NEEDS-WORK on the first cut with 16 findings; the two blockers were exactly the contract: the seek anchor accepted any tool_use id (a `Read`, an `echo list_messages`) and the QA anchor accepted any file with two substrings from any agent. Fixed in the same branch: a seek receipt counts only when the tool_use it names is itself a seek (shared predicate, command-boundary split borrowed from qa-merge-gate); a QA receipt counts only under the harness projects dir, re-parsing the LAST verdict, whole-token scope, QA persona; the gate receipt binds HEAD plus the gate tree hash and is void on a dirty tree, and `.githooks/pre-push` writes it so a push and a receipt are one event; hatches count only in the operator's prompt; quoted-reply lines and the model's own quotations are handled; command-boundary matching for Bash sends. Every demonstrated bypass is now a violation fixture (18 fixtures, 9 block + 9 allow) or a unit test (`scripts/tests/test_receipt_ledger.py`).
+
+QA cycle 2 (3b2e5f7) returned NEEDS-WORK again, on three points: the doc claimed the transcript could not be forged (it is a file under `$HOME`; the honest statement is now in CLAUDE.md, and anchored entries must carry the harness fields and sit in the session's subagent directory), the dirty-tree check was silenced by `git update-index --assume-unchanged` (now three readings: porcelain, index flags, live blob vs HEAD blob), and `bash script.sh` / `nohup` / `timeout` wrappers hid a Bash send (now peeled, `sh -c` expanded). Rides along: hatches exempt only the class they name and only as a standalone word outside quotes; tag questions ("..., ¿verdad?") and cross-clause attributions no longer exempt; chat listings are not seeks; `--gate-receipt` FAILs when it could not write. The receipt is keyed on the gate tree hash alone, so the receipt a push writes on a branch stays valid on master after a squash-merge with the same gate tree.
+
+QA cycle 3 (2998fe0) returned NEEDS-WORK on one point with an honest-path shape: the wrapper peel was a blacklist (`bash -x`, `timeout -k`, `setsid`, `xargs`, `eval`, `source` slipped by). Bash sends and seeks are now found by TOKEN in the argv of every sub-command (the script name as its own token, after the unquoted split), which ends the wrapper arms race for honest invocations; the residual is indirection that hides the name from argv, the same class qa-merge-gate accepts. Rides along: bracketed hatches, apostrophes no longer swallow a hatch, a sentence that asserts and then asks still asserts, an attribution exempts only its comma-clause and the one before it inside the same conjunction segment.
+
+QA cycles 4 and 5 (e17294a, 900e897): PASS. Three precision gaps closed with fixtures (assignment-form sends after `&&`, flags inside `gh release … create` and `wrangler … deploy`, a clause-laundering shape), plus one note (a reader-led sub-command such as `grep -rn wa-soporte.sh` never counts as a send). Final state of the send gate: 34 block + 13 allow.
+
+Headline caveat on the floor: `FLOW.budget-halt` counts as FORCED because its mechanism denies when an arm opts into `hard_stop`; on a machine where every arm is set to `alert`, it cannot halt by configuration. The floor measures mechanisms, not configurations.
+
+Phase 6 (the major cut) waits for `reflex-triage` to reach zero pending decisions.
 
 ## Decisions recorded
 

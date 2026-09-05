@@ -1,0 +1,10 @@
+{
+  "session_id": "fx-ok",
+  "tool_name": "mcp__whatsapp__send_message",
+  "tool_input": {
+    "recipient": "5210000000000",
+    "message": "Listo, ya quedó instalado y probado. Cualquier cosa por aquí."
+  },
+  "cwd": "/home/user",
+  "transcript_path": "benign_plain_transcript.jsonl"
+}

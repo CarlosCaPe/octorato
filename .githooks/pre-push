@@ -258,6 +258,18 @@ if ! "$PYTHON" "$REPO_ROOT/scripts/brain_doctor.py" --registry >/dev/null 2>&1; 
   } >&2
   exit 1
 fi
+# v7: prove the gates on the exact tree being pushed and write the gate receipt
+# (~/.claude/.cache/receipts/global.jsonl). Without it the outward-send gate
+# refuses every send at this HEAD until a doctor runs; with it, a push and a
+# receipt are the same event. A dead gate (selftest FAIL) blocks the push: RULE #1.
+if ! "$PYTHON" "$REPO_ROOT/scripts/brain_doctor.py" --gate-receipt >/dev/null 2>&1; then
+  {
+    echo ""
+    echo "✗ pre-push: a fail-closed gate does not pass its own selftest (dead gate)."
+    "$PYTHON" "$REPO_ROOT/scripts/brain_doctor.py" --gate-receipt 2>&1 | sed 's/^/  /'
+  } >&2
+  exit 1
+fi
 
 # OCTORATO-MANIFEST-GATE: RULE #1 extended from rules to capabilities (v5.0).
 # capability_manifest.py --check asserts docs/CAPABILITIES.md reflects the live

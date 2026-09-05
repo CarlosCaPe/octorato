@@ -83,6 +83,13 @@ def _run_leg(script: Path, payload: str, sandbox: Path) -> tuple[int, str]:
     env = dict(os.environ)
     for k in _OVERRIDE_ENV:
         env.pop(k, None)
+    # git exports GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE to its hooks; a leg
+    # that runs git would then act on the LIVE repo. Strip them (see
+    # brain_doctor.GIT_HOOK_ENV for the incident).
+    for k in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX",
+              "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE",
+              "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_QUARANTINE_PATH"):
+        env.pop(k, None)
     env["HOME"] = str(sandbox)
     env["USERPROFILE"] = str(sandbox)
     env["CLAUDE_SESSION_ID"] = "__selftest__"
