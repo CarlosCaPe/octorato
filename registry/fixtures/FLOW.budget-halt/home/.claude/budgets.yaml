@@ -1,0 +1,8 @@
+# fixture: one hard_stop arm scoped to a path, spend from a JSON export
+spend_json: ~/.claude/spend.json
+budgets:
+  - arm: fixture-hot
+    path: /nonexistent/fixture-hot
+    monthly_usd_cap: 10.00
+    action_on_breach: hard_stop
+    grace_pct: 100
