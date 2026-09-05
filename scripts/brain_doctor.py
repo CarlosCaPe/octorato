@@ -42,6 +42,24 @@ def detect_python() -> str | None:
 PYTHON = detect_python()
 
 
+# Env vars git exports to its hooks (pre-push, commit-msg, pre-commit): a child
+# `git` inheriting GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE operates on the
+# LIVE repo, not on the throwaway one a selftest built. On 2026-09-05 that put a
+# selftest's `commit -m base` and `branch -M main` onto a live worktree, with
+# the operator's staged files inside. Every subprocess spawned from a doctor or
+# a selftest strips them.
+GIT_HOOK_ENV = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX",
+                "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE",
+                "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_QUARANTINE_PATH")
+
+
+def scrubbed_env(base=None) -> dict:
+    env = dict(os.environ if base is None else base)
+    for k in GIT_HOOK_ENV:
+        env.pop(k, None)
+    return env
+
+
 def run(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess:
     """Run a subprocess with explicit args; never raises on non-zero.
 
@@ -61,6 +79,7 @@ def run(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess
         text=True,
         encoding="utf-8",
         errors="replace",
+        env=scrubbed_env(),
     )
 
 

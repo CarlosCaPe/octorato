@@ -108,7 +108,8 @@ class ReceiptLedgerAnchors(unittest.TestCase):
         (repo / "scripts").mkdir(parents=True); (repo / "registry").mkdir()
         (repo / "scripts" / "g.py").write_text("print(1)\n"); (repo / "registry" / "r.yaml").write_text("a: 1\n")
         (repo / "hooks.json").write_text("{}\n")
-        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        env.update(GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
         subprocess.run(["git", "init", "-q", str(repo)], check=True, env=env)
         subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, env=env)
         subprocess.run(["git", "-C", str(repo), "commit", "-qm", "one"], check=True, env=env)
