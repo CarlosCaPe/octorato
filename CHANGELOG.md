@@ -15,6 +15,16 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-09-05]: v6.25.1
+### Fixes
+- fix(v7): ship the fixture seeds git was ignoring; doctor asserts every seed is tracked (#261)
+
+## [2026-09-05]: v6.25.0
+### Features
+- feat(v7): receipt ledger, outward-send gate, QA receipt, waiver retirement, incident-fixture coverage (#260)
+### Other
+- docs(changelog): backfill v6.24.0 and v6.24.1 (#259)
+
 ## [2026-09-05]: v6.24.1
 ### Other
 - docs(architecture): v7 plan, nothing ships unverified (#258)
