@@ -15,6 +15,9 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-09-06]: v7.2.2
+- docs(changelog): backfill v7.2.1 + triage decision for the session-isolation lesson (#271)
+
 ## [2026-09-06]: v7.2.1
 - docs: long-document revision pass (changelog, README, capability manifest, architecture) (#270)
 
