@@ -781,8 +781,7 @@ Release name: "Contributor-Ready".
 ### Changed
 - All seven `good first issue`s closed (#12, #13, #15, #28, #29, #30, #31) — first full contributor on-ramp clear.
 
-## [2026-05-28]
-### Added
+### Added (shipped 2026-05-28, between v2.0.0 and v2.1.0)
 - `skills/repo-watch/` — daily monitor for a curated 7-repo watchlist
   (competitors / peers / upstream ecosystem). File-based trigger handoff
   to `/repo-deep-learn` for out-of-band analysis. Designed by Workflow
@@ -821,6 +820,119 @@ Release name: "Contributor-Ready".
 - The `--admin` bypass on `gh pr merge` is permitted **only** when
   GitHub Actions billing is paused (≤5s fail signature with missing
   logs). Never otherwise.
+
+## [2026-05-25]: v2.0.0
+### Features
+- feat(brain): product showcase + 4D-reminder & source-attribution hooks
+- feat(workflow): staged-promotion model: test integration branch → weekly master
+- feat(brain): stats-drift guard wired into ai-push
+- feat(brain): auto-promoted claude-plugins-official skill + UA fix + growth ledger
+- feat(brain): github-trending-curation skill + /trending-promote + brain-discovery spec (generic-safe)
+- feat(skills): wrangler-installed CF/Workers skills bundle + runtime gitignore
+- feat(hook): no-pause-suggestion Stop hook: block 'leave for tomorrow/take a break' framing
+- feat(skills): bug-hunter adversarial QA gate (Hunter→Skeptic→Referee) + demote single-shot Reality Checker to specialist
+- feat(skill): add schema-as-code-three-layer-sync: canonical discipline for ER/DD/Code alignment
+- feat(skills): add inbox-triage-classifier + lessons in browser-bearer & phi-aware
+- feat(brain): add .githooks/pre-push enforcement layer
+- feat(skills): add canonical operator-time mandates
+- feat(skills): add execution-bias: don't defer in auto-mode, ship now
+- feat(skill): add pre-merge-qa-gate + cross-ref from 4d-paradigm-protocol
+- feat(skill): add ado-pr-merge-via-api
+- feat(brain): add stripe-payments skill (tiers + key hygiene + MCP + CLI + CF webhooks)
+
+### Fixes
+- fix(hooks): default source line to English for non-EN/ES/DE input
+- fix(hooks): neutral source noun per locale: Source/Fuente/Quelle (EN/ES/DE)
+- fix(hooks): source line must match input language (EN/ES), not hardcoded Spanish
+- fix(hooks): make source-attribution Stop check advisory-only (no false blocks)
+- fix(hooks): tolerate transcript flush race in source-attribution Stop check
+- fix(trending-promote): enforce content quality bar; stop dumping raw GitHub taglines
+
+### Docs
+- docs(brain): add dataqbs Facebook page link to README
+- docs(brain): add README badges, launch-article link, demo placeholder
+- docs: align wiki/registry layer to exact 152/189/13
+- docs(readme): round ALL count references to floors (full alignment)
+- docs(readme): round headline figures to stable floors (180+/150+)
+- docs(wiki): custom footer: product + CV + sponsor/donate on every page
+- docs(wiki): comprehensive Octorato wiki: 14 pages, 10 specialists + 2 reviews
+- docs(community): SECURITY, CODE_OF_CONDUCT, PR + issue templates
+- docs(brain): README self-growth section + connectome regen + traffic-title fix
+
+### Other
+- metrics: traffic snapshot 2026-05-24
+- metrics: traffic snapshot 2026-05-23
+- metrics: traffic snapshot 2026-05-22
+- sync-ai-docs.ps1: PS 5.1 compat: chain 2-arg Join-Path (variadic is PS7+)
+- chore(funding): point GitHub Sponsor button to dataqbs.com/donate
+- metrics: traffic snapshot 2026-05-21
+- chore(funding): point GitHub Sponsor button to Stripe PL directly
+
+## [2026-05-20]: v1.0.0
+Initial public release of the brain.
+
+### Features
+- feat(brain): add repomix-codebase-packer skill + FUNDING.yml (v1.0.0 prep)
+- feat(brain): add octorato symbolic layer (#7)
+- feat(brain): ship Claude Cowork integration shape as quarantined pseudo-arm (#6)
+- feat(finops): Anthropic Enterprise Analytics API ingest (Feature 4/4) (#4)
+- feat(finops): budget caps + PreToolUse halt mechanism (Feature 3/4) (#3)
+- feat(finops): cost-spike watchdog (Feature 2/4) (#2)
+- feat(finops): per-arm cost rollup + USD conversion (1/4) (#1)
+- feat(positioning): pivot README to FinOps for AI agents + brain-pr-checks workflow
+- feat(skills): batch-import-relative-paths: sed batch-imports w/ variable depth hide silently in Vite/esbuild
+- feat(skills): 4 new skills from operational lessons (sentinel-blocks-rerun, horizontal-scroll-html-vs-body, fb-carousel-cap-4, pr-first-on-auto-deploy-main)
+- feat(skill): sentinel-blocks-rerun: diagnose daily-idempotent no-op
+- feat(skills): pages-function-checkpoint-debug + tiered-rotation extension
+- feat(brain): Phase D Ports 6 + 7: Incident Capture & Brain Synthetics (closes Datadog spec 8/8)
+- feat(brain): Phase C Port 8: Brain Charts on Demand (closes Phase C)
+- feat(brain): Phase C Port 5: Brain Digest (daily markdown dashboard)
+- feat(brain): Phase B Port 3: Brain SLOs (closes Phase B)
+- feat(brain): Phase B Port 2: Skill Cost Profiler (turn-level attribution)
+- feat(brain): Phase B Port 4: Watchdog MVP (cliff + quality drops from traces)
+- feat(brain): add cache-bust-deploy-validation skill
+- feat(skills): 2 new skills from real_estate session
+- feat(brain): Phase A task #7: Hebbian update from traces (Phase A done)
+- feat(brain): Phase A task #6: trace.py CLI query helper (read-only)
+- feat(obs): scripts/trace.py: Datadog Port 1 query helper
+- feat(brain): Phase A task #5: phase_boundary heuristic via lifecycle proxy
+- feat(hooks): trace-hook extracts token usage from tool_response when exposed
+- feat(brain): Phase A task #3: skill_fire capture hook (Port 1 first telemetry)
+- feat(brain): add Phase A trace event schema + validating samples
+- feat(hooks): add readme-sync soft-block to pre-commit
+- feat(brain): social-video digest worker + .gitignore for worker outputs
+- feat(brain): add Universal reflexes (Tier A) to Skill-First Behavior
+- feat(skills): add 8 OSS-replacement and technique skills
+- feat(metrics): daily octorato traffic watcher with spike alerts
+- feat(brain): add summarize-100 skill
+- feat(skills): add claude-usage-report: token/cost aggregator over local JSONL logs
+- feat(migration): self-heal origin dotclaude→octorato + migration script + README section
+- feat(skill): schema-row-counts: exact row counts per table for PostgreSQL/MSSQL/Databricks
+
+### Fixes
+- fix(traffic-watch): use OCTORATO_PAT: Traffic API needs Administration scope
+
+### Docs
+- docs(readme): flip FinOps roadmap: all 4 in-flight items shipped (#5)
+- docs(brain): scrub inspiration-source references from README + observability layer
+- docs(brain): add Self-Awareness block: ~/.claude/ IS octorato
+- docs(brain): Datadog spec 8/8 shipped: flip README roadmap to "all shipped"
+- docs(brain): add Observability section + update Repository Structure for Datadog Port 1
+- docs(brain): Phase A task #2: trace storage layout + gitignore traces/
+- docs(readme): add Synapses, Memory, Reflexes sections + glia/afferent framing
+- docs: bump skill count 142 → 153 in README
+
+### Other
+- chore(brain): add FUNDING.yml: custom donate link dataqbs.com/donate
+- metrics: traffic snapshot 2026-05-20
+- refactor(brain): slim CLAUDE.md from 557 to 226 lines (60% reduction) (#8)
+- security(brain): enforce no SDD artifacts at brain root
+- metrics: traffic snapshot 2026-05-19
+- metrics: traffic snapshot 2026-05-19
+- refactor(brain): extract _brain_obs.py + rename trace→brain-trace, chart→brain-chart
+- chore: drop tracked policy-limits.json (machine-local state, not source of truth)
+- chore(brain): ignore paste-cache/ runtime dir
+- Octopus Brain Framework v0.1.1
 
 ---
 
