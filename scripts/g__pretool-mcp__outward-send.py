@@ -25,6 +25,8 @@ WHAT IT REQUIRES (docs/architecture/v7-nothing-ships-unverified.md)
      "sin origen", "no corresponde a ningún servicio", "no record of"...). The
      turn must hold a seek receipt anchored to a real tool_use in the
      transcript. A body with no absence claim needs no seek.
+  1b. A mail send whose subject opens with Re:/Fwd: must carry threadId or
+     inReplyTo (a reply outside its thread cuts the sequence).
   3. No unsourced classifying attribute in a consent context, and no
      first-person promise: those are already blocks at Stop; here they block
      before the send, reusing the exact detectors of the Stop gates so the
@@ -202,6 +204,18 @@ def check(data: dict) -> str:
     # A send is the model's own text: a quotation inside it is the model
     # quoting itself, and a claim split across lines is still one claim.
     flat = re.sub(r"\s+", " ", body)
+
+    # 1b. A reply belongs in its thread: a mail SEND whose subject opens with
+    #     Re:/Fwd: and carries no threadId/inReplyTo cuts the sequence for the
+    #     counterpart (recurrent lesson, promoted from the reflex triage).
+    if re.search(r"(send_email|__send_message)$", tool_name) and isinstance(tool_input, dict):
+        subject = str(tool_input.get("subject") or "")
+        if re.match(r"\s*(re|fwd?|rv)\s*:", subject, re.IGNORECASE) and not (
+                tool_input.get("threadId") or tool_input.get("inReplyTo")
+                or tool_input.get("thread_id") or tool_input.get("in_reply_to")):
+            return ("📎 RESPUESTA FUERA DEL HILO: el asunto empieza con Re:/Fwd: y el envío no "
+                    "lleva threadId ni inReplyTo. Un reply fuera de su hilo corta la secuencia "
+                    "para la contraparte. Usa la herramienta reply o pasa threadId + inReplyTo.")
 
     # 2. Absence claim needs a seek receipt anchored in this turn.
     absence = _load("g__stop__unsourced-absence.py")

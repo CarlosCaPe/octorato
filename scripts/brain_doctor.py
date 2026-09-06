@@ -1039,8 +1039,7 @@ def check_corpus_coverage(fix: bool) -> Result:
     # El gancho ': hook' es OPCIONAL: el indice compactado escribe entradas sin
     # gancho, y exigirlo dejaba 120/122 ficheros como no-indexados (FAIL falso).
     entry_re = re.compile(r"\[(?P<title>[^\]]+)\]\((?P<file>[^)]+)\)")
-    home_slug = "-" + str(Path.home()).strip("/").replace("/", "-")
-    brain_mem_dir = CLAUDE_DIR / "projects" / home_slug / "memory"
+    brain_mem_dir = _brain_memory_dir()
     class_row = next((r for r in rules if r.get("id") == "MEMORY.feedback-directive-corpus"), None)
     hooks = _hooks_index()
 
@@ -1428,13 +1427,25 @@ def check_querymaster_security_detector(fix: bool) -> Result:
 # v7 "nothing ships unverified" (docs/architecture/v7-nothing-ships-unverified.md)
 # ---------------------------------------------------------------------------
 
+def _brain_memory_dir() -> Path:
+    """The central brain memory dir, named the way the harness names project
+    dirs: every non-alphanumeric character of the home path becomes '-'.
+    Recomputing it by hand with strip/replace broke on Windows homes and on
+    dotted POSIX homes (QA on #263), which silently reported the memory layer
+    as absent."""
+    slug = re.sub(r"[^A-Za-z0-9]", "-", str(Path.home()))
+    return CLAUDE_DIR / "projects" / slug / "memory"
+
+
 def _memory_files() -> list:
-    return sorted(CLAUDE_DIR.glob("projects/*/memory/*.md"))
+    """Brain memory only (the central brain-brain), never an arm's memory:
+    an arm-brain is sealed client context and its lessons must not surface in
+    a public registry file. Only lessons count (feedback_*, lesson_*); a
+    project_*, reference_* or user_* memory is state, not a directive."""
+    return sorted(f for f in _brain_memory_dir().glob("*.md")
+                  if f.name.startswith(("feedback_", "lesson_")))
 
 
-# A brain mechanism reference: an explicit ~/.claude/scripts path, or a bare
-# scripts/<hook-scheme name>. A bare scripts/foo.py may be an ARM script named
-# from inside that arm's repo, so it is not counted (measured: 5 false hits).
 _MEM_SCRIPT = re.compile(r"(?:~/\.claude/|\.claude/)scripts/([A-Za-z0-9_.-]+\.py)|scripts/([grdm]__[a-z0-9-]+__[a-z0-9-]+\.py)")
 # Explicit self-marking only: a memory that SAYS it is a repeat. Counting
 # phrases ("dos veces") measured as noise, so they are out.
@@ -1537,16 +1548,29 @@ def check_reflex_triage(fix: bool) -> Result:
     files = _memory_files()
     if not files:
         return Result(key, WARN, "memory layer absent on this machine, skipped", "")
-    decided = set()
+    decided, dead = set(), []
     triage = CLAUDE_DIR / "registry" / "reflex-triage.yaml"
     try:
         import yaml
         data = yaml.safe_load(triage.read_text(encoding="utf-8")) or {}
         for d in data.get("decisions", []) or []:
-            if isinstance(d, dict) and d.get("slug") and d.get("decision") in ("gate", "demote"):
-                decided.add(str(d["slug"]))
+            if not (isinstance(d, dict) and d.get("slug") and d.get("decision") in ("gate", "demote")):
+                continue
+            # The registry's own contract: a gate decision names a mechanism
+            # that exists. A dead pointer here is the gitignored-gate class
+            # again, so it fails rather than staying green.
+            if d["decision"] == "gate":
+                mech = str(d.get("mechanism") or "")
+                if not mech or not (CLAUDE_DIR / mech).exists():
+                    dead.append(f"{d['slug']} -> {mech or '(no mechanism)'}")
+                    continue
+            decided.add(str(d["slug"]))
     except Exception:
         pass
+    if dead:
+        return Result(key, FAIL, f"{len(dead)} gate decision(s) point at a mechanism that does not exist: " + "; ".join(dead[:5]),
+                      "fix the mechanism path in registry/reflex-triage.yaml or demote the entry")
+    stale = sorted(decided - {f.stem for f in files})
     pending = []
     for f in files:
         try:
@@ -1560,6 +1584,9 @@ def check_reflex_triage(fix: bool) -> Result:
         return Result(key, WARN, f"{len(pending)} recurrent lesson(s) with no mechanism and no decision: "
                       + ", ".join(pending[:6]) + (" ..." if len(pending) > 6 else ""),
                       "for each: build the gate (decision: gate + mechanism) or record why it stays prose (decision: demote) in registry/reflex-triage.yaml")
+    if stale:
+        return Result(key, WARN, f"every recurrent lesson decided ({len(decided)}), but {len(stale)} decision(s) name a memory that no longer exists: "
+                      + ", ".join(stale[:5]), "prune those entries from registry/reflex-triage.yaml")
     return Result(key, PASS, f"every recurrent lesson has a mechanism or a recorded decision ({len(decided)} decided)")
 
 

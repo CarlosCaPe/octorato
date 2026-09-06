@@ -1,12 +1,154 @@
 # v7 phase 5: decisions for RECURRENT lessons that name no mechanism.
-# brain_doctor (reflex-triage) lists every brain memory that marks itself as a
-# repeat (REINCIDENTE, segunda vez, second time, recurrente...) and points at no
-# scripts/<mechanism>.py. Each such slug needs one decision here, or it keeps
-# printing. Decisions are the operator's; the agent proposes.
+# brain_doctor (reflex-triage) lists every brain memory (feedback_*, lesson_*)
+# that marks itself as a repeat (REINCIDENTE, segunda vez, second time,
+# recurrente...) and points at no scripts/<mechanism>.py. Each such slug needs
+# one decision here, or it keeps printing. Decisions are the operator's; the
+# agent proposes. A memory that names its mechanism in its own text leaves
+# this list by itself.
 #
 #   - slug: <memory file name without .md>
-#     decision: gate | demote          # gate = a mechanism is being built (name it); demote = stays prose, say why
-#     mechanism: scripts/<name>.py     # required when decision == gate
+#     decision: gate | demote     # gate = a LIVE mechanism covers the detectable moment (name it)
+#                                 # demote = stays prose, say why (and name the candidate shape if any)
+#     mechanism: scripts/<name>.py   # required when decision == gate; must exist
 #     reason: <one line>
 #     decided: YYYY-MM-DD
-decisions: []
+#
+# Merging a change to this file is the operator's approval of it. "gate" is
+# claimed only where the mechanism already exists and fires on the moment the
+# lesson names; every other entry is "demote" with the candidate shape
+# recorded, so the doctor's green is honest and the candidates stay findable.
+decisions:
+  - slug: feedback_absence_claims_need_a_query_that_proves_absence
+    decision: gate
+    mechanism: scripts/g__pretool-mcp__outward-send.py
+    reason: "an outward absence claim is denied without a seek receipt anchored in the turn; the Stop twin (g__stop__unsourced-absence.py) covers drafts"
+    decided: 2026-09-05
+  - slug: feedback_circumstance_does_not_license_the_category
+    decision: gate
+    mechanism: scripts/g__stop__unsourced-attribute.py
+    reason: "the classifying adjective in a consent context is the detectable moment; blocks at Stop and at the send (outward-send imports the same detector)"
+    decided: 2026-09-05
+  - slug: feedback_check_the_base_before_the_first_edit
+    decision: gate
+    mechanism: scripts/r__pretool-write__base-freshness.py
+    reason: "warns (never blocks) before the first write when a feature branch is behind its default and says by how much; candidate hole: a stale local default branch gets no warning"
+    decided: 2026-09-05
+  - slug: feedback_break_the_thing_your_check_guards
+    decision: gate
+    mechanism: scripts/gate_selftest.py
+    reason: "every fail-closed gate must go red on its violation fixture and green on the benign one; a check that cannot go red fails liveness"
+    decided: 2026-09-05
+  - slug: feedback_human_cadence_no_ai_tells
+    decision: gate
+    mechanism: scripts/cadence-stop-hook.py
+    reason: "every chat reply is linted for the mechanical subset (rules 1/2/3/5/6/9) before delivery (Stop) and prose writes on PostToolUse (cadence-lint.py); rhythm and register stay judgment"
+    decided: 2026-09-05
+  - slug: feedback_paste_ready_raw_message
+    decision: gate
+    mechanism: scripts/g__stop__paste-ready-raw.py
+    reason: "raw block, last, nothing after it; blocks once and names which of the three failed"
+    decided: 2026-09-05
+  - slug: lesson_gitignored_gate_data_disables_the_gate
+    decision: gate
+    mechanism: scripts/brain_doctor.py
+    reason: "fixture-seeds-tracked fails when a fixture file on disk is untracked or eaten by a generic ignore rule"
+    decided: 2026-09-05
+  - slug: lesson_whatsapp_chat_context_dual_jid
+    decision: gate
+    mechanism: scripts/g__pretool-mcp__chat-context.py
+    reason: "a WhatsApp send is denied once per chat per 30 minutes and the deny carries the merged two-JID tail; the second attempt passes (block-once), so the mechanism forces the read into the deny reason, it does not verify the read"
+    decided: 2026-09-05
+  - slug: lesson_untruncated_sweep_and_fixture_flip
+    decision: gate
+    mechanism: scripts/gate_selftest.py
+    reason: "the fixture-flip half is the benign leg of every selftest; the truncated-grep half stays prose (candidate: a PostToolUse reflex flagging `| head` on discovery greps that feed edits)"
+    decided: 2026-09-05
+  - slug: feedback_a_green_without_its_scope_is_not_evidence
+    decision: demote
+    reason: "judgment about what a tool's PASS covers; the brain's own tools print scope (enforcement-floor, selftest counts). Candidate: none detectable"
+    decided: 2026-09-05
+  - slug: feedback_ask_never_assume
+    decision: demote
+    reason: "no detectable moment for 'assuming'; its two measurable shapes (the classifying adjective, the absence claim) have their own gates"
+    decided: 2026-09-05
+  - slug: feedback_capability_census_before_build
+    decision: demote
+    reason: "planning judgment before a build; the 2D delegate reflex (heartbeat) is the involuntary half. Candidate: none"
+    decided: 2026-09-05
+  - slug: feedback_confirm_premise_before_expensive_fanout
+    decision: demote
+    reason: "judgment before a fan-out; FLOW.budget-halt caps the cost side. Candidate: a PreToolUse ask on Agent fan-out above N without a premise line"
+    decided: 2026-09-05
+  - slug: feedback_consolidate_fragmented_outward_sends
+    decision: demote
+    reason: "timing judgment while instructions arrive; the send gate checks content, not cadence. Candidate: a PreToolUse rate check on consecutive outward sends to one recipient inside a turn"
+    decided: 2026-09-05
+  - slug: feedback_declare_register_per_output
+    decision: demote
+    reason: "register is a prose choice; cadence gates police the register's tells, not the declaration"
+    decided: 2026-09-05
+  - slug: feedback_denial_is_hypothesis_not_boundary
+    decision: demote
+    reason: "a classifier denial is not observable by a hook of the same runtime; stays a reasoning rule"
+    decided: 2026-09-05
+  - slug: feedback_email_full_sweep_not_filtered
+    decision: demote
+    reason: "procedure for a read; nothing outward to gate. Candidate: none"
+    decided: 2026-09-05
+  - slug: feedback_email_reply_in_thread
+    decision: gate
+    mechanism: scripts/g__pretool-mcp__outward-send.py
+    reason: "a mail send whose subject opens with Re:/Fwd: and carries no threadId/inReplyTo is denied before it leaves"
+    decided: 2026-09-05
+  - slug: feedback_footer_paths_openable
+    decision: demote
+    reason: "candidate inside cadence-stop-hook, which already isolates the Provenance line: flag a relative path or bare filename there; not built yet, next in line"
+    decided: 2026-09-05
+  - slug: feedback_no_lecture_no_default_gates
+    decision: demote
+    reason: "a prohibition on adding gates cannot itself be a gate; the no-pause detector (warn-once by design) covers its nearest phrase class"
+    decided: 2026-09-05
+  - slug: feedback_panel_review_before_client_send
+    decision: demote
+    reason: "candidate: a panel receipt for client-facing documents, the same shape as the QA receipt for merges (r__subagent-stop__qa-receipt.py), consumed by the send gate; not built yet"
+    decided: 2026-09-05
+  - slug: feedback_read_and_own_before_messaging_teammate
+    decision: demote
+    reason: "ownership is judgment; the chat-context gate covers the 'read first' half for WhatsApp only"
+    decided: 2026-09-05
+  - slug: feedback_read_the_error_literally_least_privilege_fix
+    decision: demote
+    reason: "reasoning discipline on error text; no tool-call moment to deny"
+    decided: 2026-09-05
+  - slug: feedback_selftest_new_path_before_outward_send
+    decision: demote
+    reason: "candidate: the send gate could require a round-trip receipt the first time a channel is used in a session; not built yet"
+    decided: 2026-09-05
+  - slug: feedback_when_blocked_research_the_standard_path
+    decision: demote
+    reason: "reasoning discipline; the palliative-file smell has no deterministic detector"
+    decided: 2026-09-05
+  - slug: lesson_cf_dashboard_blocks_automation
+    decision: demote
+    reason: "a fact about a vendor, not a behavior; nothing to enforce"
+    decided: 2026-09-05
+  - slug: lesson_commit_on_wrong_branch_invisible_in_prod
+    decision: demote
+    reason: "recovery procedure (reflog, cherry-pick); the prevention half is the session-isolation worktree hook and the dimension gate, already registered"
+    decided: 2026-09-05
+  - slug: lesson_dont_chain_commit_with_deniable_push
+    decision: demote
+    reason: "candidate inside the existing git-discipline parser: deny a commit chained with a push the gate would deny; not built yet, next in line"
+    decided: 2026-09-05
+  - slug: lesson_hard_invariant_over_timing_lock
+    decision: demote
+    reason: "design lesson (DB invariant over timing lock); enforced by code review, not by a hook"
+    decided: 2026-09-05
+  - slug: lesson_narrowed_refspec_and_required_check_deadlock
+    decision: demote
+    reason: "a fact about git and GitHub configuration; nothing outward to gate"
+    decided: 2026-09-05
+  - slug: lesson_overwhelm_deception_with_law
+    decision: demote
+    reason: "a negotiation tactic; deliberately not automated"
+    decided: 2026-09-05
