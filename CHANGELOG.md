@@ -247,13 +247,13 @@ Nothing yet: the next release harvests this section.
 - brain: smaller resident index, silence watcher, and three new gates (#215)
 
 ## [2026-08-12]: v6.14.0
-### Fixed
-- fix(4d-protocol): Q2 skill matches CLAUDE.md: MCP-first, runtime-aware census.
 ### Features
 - feat(4d): Provenance footer paths must be absolute and openable (#210)
 
 ## [2026-08-04]: v6.13.0
-- No user-facing change beyond the version bump.
+### Features
+- feat(brain): session chat guard, the complement of the silence watcher
+- feat(brain): silence watcher, so a client left without a reply is not overlooked
 
 ## [2026-08-04]: v6.12.6
 ### Other
