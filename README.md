@@ -2,7 +2,7 @@
   <img src="https://www.dataqbs.com/banner-octorato.webp?v=3" alt="Octorato — the open-source AI Agent OS" width="100%">
 </p>
 
-> 🌍 This README is in English (the open-source lingua franca). Running an AI agent? Ask it to read this in your language — eating our own dog food. 🐙
+> 🌍 This README is in English (the open-source lingua franca). Running an AI agent? Ask it to read this in your language, eating our own dog food. 🐙
 
 # Octorato
 
@@ -18,47 +18,47 @@
 [![Good first issues](https://img.shields.io/github/issues/CarlosCaPe/octorato/good%20first%20issue?label=good%20first%20issues&color=7057ff)](https://github.com/CarlosCaPe/octorato/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
 [![Version](https://img.shields.io/github/v/release/CarlosCaPe/octorato?label=version&color=blueviolet)](https://github.com/CarlosCaPe/octorato/releases)
 
-📄 **White paper:** [Octorato — An Organic, File-Native Model of Artificial Agency](WHITEPAPER.md) · 🌐 [Live: dataqbs.com/octorato](https://www.dataqbs.com/octorato) · 📣 [Launch article](https://www.linkedin.com/pulse/introducing-octorato-open-source-finops-brain-ai-agents-dataqbs-trbjc) · 🛠️ [Built with Octorato](SHOWCASE.md) · 📘 [dataqbs on Facebook](https://www.facebook.com/dataQBS/)
+📄 **White paper:** [Octorato: An Organic, File-Native Model of Artificial Agency](WHITEPAPER.md) · 🌐 [Live: dataqbs.com/octorato](https://www.dataqbs.com/octorato) · 📣 [Launch article](https://www.linkedin.com/pulse/introducing-octorato-open-source-finops-brain-ai-agents-dataqbs-trbjc) · 🛠️ [Built with Octorato](SHOWCASE.md) · 📘 [dataqbs on Facebook](https://www.facebook.com/dataQBS/)
 
 > 🧑‍💻 **New here? [Try it in 5 minutes](#try-it-in-5-minutes), then [help build it](https://github.com/CarlosCaPe/octorato/issues/34).** Grab a [good first issue](https://github.com/CarlosCaPe/octorato/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22), see where we're headed in the [ROADMAP](ROADMAP.md), or shape the architecture in the [RFCs](https://github.com/CarlosCaPe/octorato/discussions). Newcomers welcome, we credit every contributor. 🐙
 
 <p align="center">
-  <img src="assets/demo.gif" alt="Terminal demo: brain_doctor verifies that all 66 rules are wired to live mechanisms, then the pre-push gate refuses a commit carrying an AWS key" width="100%">
+  <img src="assets/demo.gif" alt="Terminal demo: brain_doctor verifies that every registered rule is wired to a live mechanism, then the pre-push gate refuses a commit carrying an AWS key" width="100%">
 </p>
 
 <p align="center"><sub><b>Real footage, no mockup.</b> <code>brain_doctor</code> proves every rule is wired to a live mechanism (35 passed, 0 fail), then the pre-push gate refuses a fake AWS key before it can reach GitHub. The warn on screen is real too: an honest brain shows its own debt.</sub></p>
 
 > **The sharpest instance: because an octorato's arms are sealed cells, billing comes for free. When a world is a client, the wall that isolates it is the same wall that meters and bills it, so you get built-in FinOps.**
-> The brain consultants and small agencies need to bill clients fairly — and land on the right side of the
+> The brain consultants and small agencies need to bill clients fairly, and land on the right side of the
 > [Gartner prediction that 40% of agentic AI projects will be canceled by 2027](https://www.gartner.com/en/newsroom/press-releases/2025-06-25-gartner-predicts-over-40-percent-of-agentic-ai-projects-will-be-canceled-by-end-of-2027)
 > over unmanaged cost.
 >
-> *Honest scope: per-client cost is an **estimate** from local session logs at list price, attributed by repo path (a small unattributed remainder is expected). The budget halt is real code — `budget-check.py` exits 2 and a `PreToolUse` hook refuses the tool — but it arms itself only once you configure `budgets.yaml`. The mechanism is real; the precision is opt-in, and we say which is which.*
+> *Honest scope: per-client cost is an **estimate** from local session logs at list price, attributed by repo path (a small unattributed remainder is expected). The budget halt is real code: `budget-check.py` exits 2 and a `PreToolUse` hook refuses the tool, but it arms itself only once you configure `budgets.yaml`. The mechanism is real; the precision is opt-in, and we say which is which.*
 
-> *"One brain. Sealed arms. One ledger per client — because the arm IS the ledger."*
+> *"One brain. Sealed arms. One ledger per client, because the arm IS the ledger."*
 
 ---
 
-## 🚀 Built with Octorato — live, in production
+## 🚀 Built with Octorato: live, in production
 
-Octorato isn't a demo — it ships real software. A few of the products this brain built and maintains (full list in the **[showcase](SHOWCASE.md)**):
+Octorato isn't a demo. It ships real software. A few of the products this brain built and maintains (full list in the **[showcase](SHOWCASE.md)**):
 
 | Product | Live |
 |---|---|
 | Trilingual Astro/Cloudflare site + RAG chatbot | **[dataqbs.com](https://dataqbs.com)** |
-| Multi-Reach — compose once, publish across 6 social channels | **[/multi-reach](https://dataqbs.com/multi-reach)** |
+| Multi-Reach: compose once, publish across 6 social channels | **[/multi-reach](https://dataqbs.com/multi-reach)** |
 | White-label real-estate catalog w/ daily FB auto-publish | **[/realestate](https://dataqbs.com/realestate)** |
-| Open Garage — commission-free marketplace, direct WhatsApp | **[/open-garage](https://dataqbs.com/open-garage)** |
-| AI persona bot — answers *as the operator* (RAG + dynamic PDF) | **[/carloscarrillo](https://dataqbs.com/carloscarrillo)** |
+| Open Garage: commission-free marketplace, direct WhatsApp | **[/open-garage](https://dataqbs.com/open-garage)** |
+| AI persona bot: answers *as the operator* (RAG + dynamic PDF) | **[/carloscarrillo](https://dataqbs.com/carloscarrillo)** |
 | Daily AI-news blog + curated news surface | **[/blog](https://dataqbs.com/blog)** · **[/news](https://www.dataqbs.com/news)** |
 
-→ **Want to build things like these?** [Start Here](https://github.com/CarlosCaPe/octorato/issues/34) — newcomers welcome, every contributor credited. 🐙
+→ **Want to build things like these?** [Start Here](https://github.com/CarlosCaPe/octorato/issues/34). Newcomers welcome, every contributor credited. 🐙
 
 ---
 
 ## Table of Contents
 
-- [🚀 Built with Octorato — live](#-built-with-octorato--live-in-production)
+- [🚀 Built with Octorato: live](#-built-with-octorato-live-in-production)
 
 - [Why now: the token economy is here](#why-now-the-token-economy-is-here)
 - [What makes Octorato different](#what-makes-octorato-different)
@@ -69,21 +69,21 @@ Octorato isn't a demo — it ships real software. A few of the products this bra
 - [Migrating from dotclaude (May 2026)](#migrating-from-dotclaude-may-2026)
 - [Try it in 5 minutes](#try-it-in-5-minutes)
 - [Going further: run it as a multi-world brain](#going-further-run-it-as-a-multi-world-brain)
-- [Architecture — CLASS / OBJECT / ARM](#architecture--class--object--arm)
-- [The 4D Paradigm — The Nervous System](#the-4d-paradigm--the-nervous-system)
-- [4D+S — Spec-Driven Development Integration](#4ds--spec-driven-development-integration)
+- [Architecture: CLASS / OBJECT / ARM](#architecture-class--object--arm)
+- [The 4D Paradigm: The Nervous System](#the-4d-paradigm-the-nervous-system)
+- [4D+S: Spec-Driven Development Integration](#4ds-spec-driven-development-integration)
 - [The Corporation](#the-corporation)
-- [The Connectome — Neural Architecture](#the-connectome--neural-architecture)
-- [Client Arms — Total Isolation](#client-arms--total-isolation)
-- [Org Chart — 13 Divisions, 160+ Agents](#org-chart--13-divisions-160-agents)
-- [Synapses — The Skill Layer](#synapses--the-skill-layer)
-- [Memory — Hippocampus and the Working Set](#memory--hippocampus-and-the-working-set)
-- [Reflexes — The Spinal Cord Layer](#reflexes--the-spinal-cord-layer)
-- [Observability — The Sensory Cortex](#observability--the-sensory-cortex)
+- [The Connectome: Neural Architecture](#the-connectome-neural-architecture)
+- [Client Arms: Total Isolation](#client-arms-total-isolation)
+- [Org Chart: 13 Divisions, 160+ Agents](#org-chart-13-divisions-160-agents)
+- [Synapses: The Skill Layer](#synapses-the-skill-layer)
+- [Memory: Hippocampus and the Working Set](#memory-hippocampus-and-the-working-set)
+- [Reflexes: The Spinal Cord Layer](#reflexes-the-spinal-cord-layer)
+- [Observability: The Sensory Cortex](#observability-the-sensory-cortex)
 - [Enforcement Scripts](#enforcement-scripts)
-- [MCP Servers — The Action Space](#mcp-servers--the-action-space)
+- [MCP Servers: The Action Space](#mcp-servers-the-action-space)
 - [Multi-Tool Support](#multi-tool-support)
-- [Multi-Machine Sync — The Glial Layer](#multi-machine-sync--the-glial-layer)
+- [Multi-Machine Sync: The Glial Layer](#multi-machine-sync-the-glial-layer)
 - [Repository Structure](#repository-structure)
 - [10x Roadmap](#10x-roadmap)
 - [Contributing](#contributing)
@@ -93,7 +93,7 @@ Octorato isn't a demo — it ships real software. A few of the products this bra
 
 ## Why now: the token economy is here
 
-The AI industry is splitting into **three billing primitives** —
+The AI industry is splitting into **three billing primitives**:
 tokens ([Anthropic](https://www.anthropic.com/pricing), [OpenAI](https://openai.com/api/pricing/)),
 steps ([AWS Bedrock AgentCore](https://aws.amazon.com/bedrock/agentcore/pricing/)),
 and outcomes ([Salesforce Agentforce, ~$2/conversation](https://www.salesforce.com/agentforce/pricing/)).
@@ -106,7 +106,7 @@ in tech services and recommends outcome-based pricing for B2B SaaS.
 The [FinOps Foundation's 2026 State of FinOps](https://www.finops.org/wg/finops-for-ai-overview/) lists AI FinOps as the **#1 mandate**.
 
 Enterprises need governance. Solo consultants and small agencies need it
-*more* — they're invoiceable for the burn, not absorbing it on a runway.
+*more*, they're invoiceable for the burn, not absorbing it on a runway.
 
 **Octorato is the open-source FinOps brain for that segment.** Larger teams use the same primitives at higher cardinality.
 
@@ -116,37 +116,37 @@ Enterprises need governance. Solo consultants and small agencies need it
 
 | Layer | Crowded by | Octorato's wedge |
 |---|---|---|
-| Agent frameworks | LangGraph, CrewAI, AutoGen, LlamaIndex | We don't compete here — Octorato is an OS, not a framework. Bring your own. |
+| Agent frameworks | LangGraph, CrewAI, AutoGen, LlamaIndex | We don't compete here. Octorato is an OS, not a framework. Bring your own. |
 | Agent observability | LangSmith, Langfuse, Arize, Datadog LLM Obs | Complementary. Octorato emits OpenInference-style spans; sits *above* your observability stack as the governance layer. |
-| **FinOps for AI Agents** | greenfield (Vantage, Amnic, Finout fighting for category, no Gartner MQ yet) | **The only one of these that ships per-client isolation + cost ledger + budget halt as open-source files** — because the arm is both the security cell and the billing line item. We don't claim to lead a quadrant; we occupy an intersection no one else does. |
+| **FinOps for AI Agents** | greenfield (Vantage, Amnic, Finout fighting for category, no Gartner MQ yet) | **The only one of these that ships per-client isolation + cost ledger + budget halt as open-source files**, because the arm is both the security cell and the billing line item. We don't claim to lead a quadrant; we occupy an intersection no one else does. |
 | Compute sandboxes | e2b.dev | Complementary (arms can run in e2b sandboxes). |
 | **Operator brains / `~/.claude` distributions** | ECC (`affaan-m/ECC`), dotclaude variants, claude-flow, wshobson/agents collections | Most are *one bag of skills*. Octorato is an **OS with multi-tenant isolation**: per-client arms, per-client cost ledger, per-client budget caps. We learn from peer brains daily (`repo-watch` skill) without absorbing their multi-tenancy gap. |
 
 **Three things competing observability tools don't have:**
 
-1. **Per-arm cost attribution** — every trace event tags the client (`arm`), and `skill-cost-profiler.py` produces a billable cost rollup per project, per month, per skill, with USD applied via the shared `_pricing.py` table. Privately. On your filesystem. No SaaS dependency.
-2. **Sealed multi-tenancy** — clients live in sealed repos (software-level isolation — no shared state, no cross-arm reads). The brain sees their cost data read-only; the arms never see each other. Datadog can't enforce this; LangSmith Cloud isn't designed for it.
-3. **Budget caps that actually halt agents** — `budget-check.py` reads `budgets.yaml`, computes month-to-date spend per arm, and exits with code 2 when the cap is burned through. A `PreToolUse` hook wires that into `Agent` / subagent / browser tools so the operator can't accidentally torch a client's budget. CFO buy signal, not telemetry buy signal.
+1. **Per-arm cost attribution**: every trace event tags the client (`arm`), and `skill-cost-profiler.py` produces a billable cost rollup per project, per month, per skill, with USD applied via the shared `_pricing.py` table. Privately. On your filesystem. No SaaS dependency.
+2. **Sealed multi-tenancy**: clients live in sealed repos (software-level isolation, no shared state, no cross-arm reads). The brain sees their cost data read-only; the arms never see each other. Datadog can't enforce this; LangSmith Cloud isn't designed for it.
+3. **Budget caps that actually halt agents**: `budget-check.py` reads `budgets.yaml`, computes month-to-date spend per arm, and exits with code 2 when the cap is burned through. A `PreToolUse` hook wires that into `Agent` / subagent / browser tools so the operator can't accidentally torch a client's budget. CFO buy signal, not telemetry buy signal.
 
-FinOps is the wedge. The architecture under it is biology — because the same problem the operator faces (*one consciousness, many client workspaces, no cross-contamination*) is the problem an octopus solves with eight semi-autonomous arms. The cost ledger and the neural map share the same substrate: per-arm isolation.
+FinOps is the wedge. The architecture under it is biology, because the same problem the operator faces (*one consciousness, many client workspaces, no cross-contamination*) is the problem an octopus solves with eight semi-autonomous arms. The cost ledger and the neural map share the same substrate: per-arm isolation.
 
 ---
 
 ## What it is
 
-An open-source AI agent operating system where a single human operator directs a shared brain of specialist AI agents — across clients, projects, and machines — without ever mixing their data or their bills.
+An open-source AI agent operating system where a single human operator directs a shared brain of specialist AI agents (across clients, projects, and machines) without ever mixing their data or their bills.
 
 With nothing but natural language, you can direct a team of AI specialists to build and ship software, and bill the client honestly when it ships.
 
-**Live framework**: 230+ skills, 160+ agent personas across 13 divisions, enforcement scripts, multi-machine sync, a neural connectome that learns over time, and a FinOps pipeline that tags every trace event with the client who incurred it — with per-arm USD rollup and a `PreToolUse` budget halt **shipped, opt-in** (configure `budgets.yaml` to arm caps; run the `anthropic-enterprise-analytics` pull to reconcile estimate against billed cost). See [roadmap below](#finops-roadmap).
+**Live framework**: 230+ skills, 160+ agent personas across 13 divisions, enforcement scripts, multi-machine sync, a neural connectome that learns over time, and a FinOps pipeline that tags every trace event with the client who incurred it, with per-arm USD rollup and a `PreToolUse` budget halt **shipped, opt-in** (configure `budgets.yaml` to arm caps; run the `anthropic-enterprise-analytics` pull to reconcile estimate against billed cost). See [roadmap below](#finops-roadmap).
 
-**Shipped with it**: live products built and maintained agent-first on this brain — see [Built with Octorato](SHOWCASE.md).
+**Shipped with it**: live products built and maintained agent-first on this brain. See [Built with Octorato](SHOWCASE.md).
 
 ```
 https://github.com/CarlosCaPe/octorato
 ```
 
-> **Octorato** = *octopus* + *tesseract* — eight-armed brain in a 4D activation space (Agent × Skill × Arm × 4D-phase).
+> **Octorato** = *octopus* + *tesseract*: eight-armed brain in a 4D activation space (Agent × Skill × Arm × 4D-phase).
 
 ---
 
@@ -161,7 +161,7 @@ https://github.com/CarlosCaPe/octorato
 - [x] **Cost-spike watchdog** (`watchdog.py` z-score over tokens/day per skill·arm against 30d baseline; floor at 100k tokens to avoid noise)
 - [x] **Budget caps + PreToolUse hard-stop hook** (`scripts/budget-check.py` reads `budgets.yaml`, exit 2 = halt; see [`finops-budget-policy`](skills/finops-budget-policy/SKILL.md))
 - [x] **Anthropic Enterprise Analytics API ingest** (`scripts/anthropic-analytics-pull.py` reconciles estimated vs billed; see [`anthropic-enterprise-analytics`](skills/anthropic-enterprise-analytics/SKILL.md))
-- [x] **Claude Cowork integration shape** — quarantined pseudo-arm `cowork-shared`, never mounts a client arm directory ([design](docs/specs-archive/2026-05-20-claude-cowork-plugin/feature.md)). Enforcement hook deferred until Anthropic publishes the Cowork session-event API surface; Cowork billed cost is already captured today via the Admin Analytics ingest.
+- [x] **Claude Cowork integration shape**: quarantined pseudo-arm `cowork-shared`, never mounts a client arm directory ([design](docs/specs-archive/2026-05-20-claude-cowork-plugin/feature.md)). Enforcement hook deferred until Anthropic publishes the Cowork session-event API surface; Cowork billed cost is already captured today via the Admin Analytics ingest.
 
 See the [biology section](#why-an-octopus) below for *why* the architecture takes this shape.
 
@@ -169,12 +169,12 @@ See the [biology section](#why-an-octopus) below for *why* the architecture take
 
 ## Daily Self-Growth
 
-The brain grows itself. Every day a scheduled loop scans GitHub Trending, Hacker News, and Product Hunt for new tools, runs each candidate through a deterministic brain-fit classifier plus an LLM quality gate, and **auto-promotes** the survivors that clear the bar into real skills — then publishes what it learned.
+The brain grows itself. Every day a scheduled loop scans GitHub Trending, Hacker News, and Product Hunt for new tools, runs each candidate through a deterministic brain-fit classifier plus an LLM quality gate, and **auto-promotes** the survivors that clear the bar into real skills, then publishes what it learned.
 
-- **Discover** → [`github-trending-curation`](skills/github-trending-curation/SKILL.md) pulls multi-source trending, dedupes against the existing connectome (TF-IDF cosine), and tags each candidate with an integration *action*: `ADD` / `MERGE-WITH` / `REPLACE` / `EXTEND` / `SKIP`. The point is **harmonization, not accretion** — the brain is a connected graph, not a pile of skills.
-- **Watch peers** → [`repo-watch`](skills/repo-watch/SKILL.md) is the *targeted* sibling of trending: a curated 7-repo daily monitor (competitors, peer brains, upstream Claude Code projects) that classifies each day's diff as HIGH / LOW / EMPTY / BASELINE signal and drops a **file-based trigger** into `knowledge/repo-watch/triggers/` for [`repo-deep-learn`](skills/repo-deep-learn/SKILL.md) to pick up out-of-band. Detection state ≠ action state — the cron stays fast and the analysis stays deliberate.
+- **Discover** → [`github-trending-curation`](skills/github-trending-curation/SKILL.md) pulls multi-source trending, dedupes against the existing connectome (TF-IDF cosine), and tags each candidate with an integration *action*: `ADD` / `MERGE-WITH` / `REPLACE` / `EXTEND` / `SKIP`. The point is **harmonization, not accretion**: the brain is a connected graph, not a pile of skills.
+- **Watch peers** → [`repo-watch`](skills/repo-watch/SKILL.md) is the *targeted* sibling of trending: a curated 7-repo daily monitor (competitors, peer brains, upstream Claude Code projects) that classifies each day's diff as HIGH / LOW / EMPTY / BASELINE signal and drops a **file-based trigger** into `knowledge/repo-watch/triggers/` for [`repo-deep-learn`](skills/repo-deep-learn/SKILL.md) to pick up out-of-band. Detection state ≠ action state: the cron stays fast and the analysis stays deliberate.
 - **Decide** → an LLM QA gate drops low-value noise; only net-new `ADD` candidates auto-apply (structural `MERGE`/`REPLACE`/`EXTEND` are left for human review).
-- **Grow & publish** → survivors become `skills/<name>/SKILL.md`, a changelog article on the public `/news` feed (crediting the source repo — *it's a community to grow with*), and a social post. Every day's decisions — added, deferred, and **ignored-with-reason** — are appended to a single audit ledger (`knowledge/github-trending/HISTORY.md`) so the operator can scroll the whole history and challenge any call.
+- **Grow & publish** → survivors become `skills/<name>/SKILL.md`, a changelog article on the public `/news` feed (crediting the source repo, *it's a community to grow with*), and a social post. Every day's decisions (added, deferred, and **ignored-with-reason**) are appended to a single audit ledger (`knowledge/github-trending/HISTORY.md`) so the operator can scroll the whole history and challenge any call.
 
 No daily human validation required: the AI tooling landscape moves faster than any one person can review, so the operator audits the ledger on their own cadence instead of gatekeeping every item.
 
@@ -182,25 +182,25 @@ No daily human validation required: the AI tooling landscape moves faster than a
 
 ## Why an Octopus?
 
-This isn't a metaphor we forced onto the software. The software emerged from studying how *Octopus vulgaris* actually works — and discovering that its neural architecture solves the exact problem we face with AI agents.
+This isn't a metaphor we forced onto the software. The software emerged from studying how *Octopus vulgaris* actually works, and discovering that its neural architecture solves the exact problem we face with AI agents.
 
 ### The Biology
 
 An octopus has approximately **500 million neurons**. For context, a dog has roughly 530 million in its cerebral cortex alone (and about 2 billion total in its brain). But here's what makes the octopus extraordinary: **two-thirds of its neurons live in the arms, not the central brain.**
 
 Each arm can:
-- **Taste and smell** independently (each sucker has chemotactile receptors — van Giesen, Kilian, Allard & Bellono, *Cell* 2020 — work performed in *Octopus bimaculoides*)
-- **Execute local reflexes and stereotyped reaching motions** without consulting the brain (Sumbre et al., *Science* 2001 — note: isolated arms perform programmed motor patterns, not contextual decision-making)
+- **Taste and smell** independently (each sucker has chemotactile receptors: van Giesen, Kilian, Allard & Bellono, *Cell* 2020; work performed in *Octopus bimaculoides*)
+- **Execute local reflexes and stereotyped reaching motions** without consulting the brain (Sumbre et al., *Science* 2001; note: isolated arms perform programmed motor patterns, not contextual decision-making)
 - **Coordinate** with the central brain for complex tasks
 - **Operate with high autonomy** from other arms (peripheral nerve cords provide some inter-arm communication, but each arm has its own local control)
 
 Beyond the arms, the octopus has:
-- **Chromatophores** — tens of thousands of individually innervated color cells that allow real-time pattern changes in under a second
-- **A vertical lobe** — the primary learning center, where ~25 million amacrine cells converge onto ~65,000 efferent neurons (a biological dimensionality reduction system)
-- **Autotomy** — the ability to voluntarily detach an arm under threat and fully regenerate it
-- **Extensive mRNA recoding** — A-to-I RNA editing that modifies over 13,000 protein-coding sites, reshaping neural protein function in response to environmental conditions
+- **Chromatophores**: tens of thousands of individually innervated color cells that allow real-time pattern changes in under a second
+- **A vertical lobe**: the primary learning center, where ~25 million amacrine cells converge onto ~65,000 efferent neurons (a biological dimensionality reduction system)
+- **Autotomy**: the ability to voluntarily detach an arm under threat and fully regenerate it
+- **Extensive mRNA recoding**: A-to-I RNA editing that modifies over 13,000 protein-coding sites, reshaping neural protein function in response to environmental conditions
 
-The central brain sets high-level intent. The arms execute with local intelligence. Information flows **up** (arm discoveries reach the brain) and **down** (brain strategies reach the arms). In biology, some peripheral inter-arm communication exists — but in our software, we enforce **total sideways isolation** as a deliberate design choice for client data security.
+The central brain sets high-level intent. The arms execute with local intelligence. Information flows **up** (arm discoveries reach the brain) and **down** (brain strategies reach the arms). In biology, some peripheral inter-arm communication exists, but in our software, we enforce **total sideways isolation** as a deliberate design choice for client data security.
 
 The full biology-to-software mapping table (with ML-accuracy notes on each analogy) lives in [wiki Architecture §9](https://github.com/CarlosCaPe/octorato/wiki/Architecture#the-software-mapping).
 
@@ -208,11 +208,11 @@ The full biology-to-software mapping table (with ML-accuracy notes on each analo
 
 Two symbols sit behind the name. Both are mathematical.
 
-**The 8 → ∞.** An octopus has eight arms. Rotate the 8 ninety degrees and it becomes ∞ — the lemniscate. Octorato is built for an *unbounded* number of sealed arms because the brain distributes only generic knowledge downward and arms never see each other. Multi-tenancy without ceiling. The 8 is symbolic; the ∞ is the engineering claim.
+**The 8 → ∞.** An octopus has eight arms. Rotate the 8 ninety degrees and it becomes ∞, the lemniscate. Octorato is built for an *unbounded* number of sealed arms because the brain distributes only generic knowledge downward and arms never see each other. Multi-tenancy without ceiling. The 8 is symbolic; the ∞ is the engineering claim.
 
-**The Tesseract → 4D.** The 4D Paradigm — Describe → Delegate → Diligent → Disclose — is named *4D* on purpose. A tesseract is the 4-dimensional analog of a cube. The four phases are not sequential steps but **dimensions**, active simultaneously in every action. Working inside the brain is working in 4-space, and from there shaping outcomes in 3-space: the codebase, the deliverable, the invoice. The 4D is not a workflow checklist; it is the control plane.
+**The Tesseract → 4D.** The 4D Paradigm (Describe → Delegate → Diligent → Disclose) is named *4D* on purpose. A tesseract is the 4-dimensional analog of a cube. The four phases are not sequential steps but **dimensions**, active simultaneously in every action. Working inside the brain is working in 4-space, and from there shaping outcomes in 3-space: the codebase, the deliverable, the invoice. The 4D is not a workflow checklist; it is the control plane.
 
-And the 4D doesn't run once — it runs in a **WHILE**. Each response ends with a one-line *Provenance* footer (Basis · Engine · Touched · Verified): the brain sensing its own action — proprioception. Reading it is the loop condition (anything open? did what I *touched* match what I *meant*?) and the trigger of the next beat. A human can't be in ten places at once; Octorato is the vehicle that lets one operator inhabit that dimension — many sealed arms acting in parallel under one brain. The tesseract you can't perceive, Octorato lets you live in.
+And the 4D doesn't run once, it runs in a **WHILE**. Each response ends with a one-line *Provenance* footer (Basis · Engine · Touched · Verified): the brain sensing its own action, proprioception. Reading it is the loop condition (anything open? did what I *touched* match what I *meant*?) and the trigger of the next beat. A human can't be in ten places at once; Octorato is the vehicle that lets one operator inhabit that dimension, many sealed arms acting in parallel under one brain. The tesseract you can't perceive, Octorato lets you live in.
 
 The metaphor and the engineering are the same thing. Full reference: [`skills/octorato-symbolism/SKILL.md`](skills/octorato-symbolism/SKILL.md).
 
@@ -222,17 +222,17 @@ The metaphor and the engineering are the same thing. Full reference: [`skills/oc
 
 The repo was renamed from `dotclaude` → `octorato`. If your laptop's `~/.claude/` still has `origin` pointing to the deleted `dotclaude` repo, **one of these options will fix it**:
 
-**Option A — automatic (run once per laptop):**
+**Option A (automatic, run once per laptop):**
 ```bash
 bash ~/.claude/scripts/migrate-octorato.sh
 ```
 
-**Option B — manual one-liner:**
+**Option B (manual one-liner):**
 ```bash
 git -C ~/.claude remote set-url origin https://github.com/CarlosCaPe/octorato.git
 ```
 
-After either, `ai-pull` / `ai-push` work normally. The Windows `ai-pull.ps1` / `ai-push.ps1` scripts self-heal on next run — no manual step needed there once they're updated.
+After either, `ai-pull` / `ai-push` work normally. The Windows `ai-pull.ps1` / `ai-push.ps1` scripts self-heal on next run, no manual step needed there once they're updated.
 
 ---
 
@@ -240,7 +240,7 @@ After either, `ai-pull` / `ai-push` work normally. The Windows `ai-pull.ps1` / `
 
 > **Your AI agent forgets who you are and mixes your worlds. An *octorato* is its second brain: memory that lasts, every world sealed from the others, and a receipt on every action. One brain for clients, projects, courses, anything you keep separate.**
 
-No company brain, no sealed worlds, no config to write. Clone, run one command, open **any** supported runtime (Claude Code or Cursor — more editors as bindings land):
+No company brain, no sealed worlds, no config to write. Clone, run one command, open **any** supported runtime (Claude Code or Cursor, more editors as bindings land):
 
 ```bash
 # 1. Clone the brain
@@ -257,7 +257,7 @@ python3 ~/.claude/scripts/merge-hooks-cursor.py
 # …then start a Cursor Agent session on the engine you want
 ```
 
-Octorato is for **all models and all editors** — the brain is the same; the runtime and engine are bindings. See `docs/architecture/multi-runtime.md`.
+Octorato is for **all models and all editors**: the brain is the same; the runtime and engine are bindings. See `docs/architecture/multi-runtime.md`.
 
 What you'll see that a plain agent doesn't: a Provenance footer on every answer, the 2D delegate gate picking the right skill or agent for the task, and skills loading themselves from the library. That's the brain, alive.
 
@@ -271,6 +271,7 @@ Once the 5-minute taste lands, set up your own brain with sealed **arms**. An ar
 # 1. Create your private company brain
 cp -r ~/.claude/templates/company/ ~/.claude/company/
 mv ~/.claude/company/COMPANY.md.template ~/.claude/company/COMPANY.md
+mv ~/.claude/company/brain-blocklist.txt.template ~/.claude/company/brain-blocklist.txt
 nano ~/.claude/company/COMPANY.md
 
 # 2. Create your first sealed arm (a client, project, topic, or course)
@@ -285,35 +286,35 @@ See `templates/` for annotated setup guides with `{{PLACEHOLDERS}}`.
 
 ### Branching & contribution model
 
-The brain uses **staged promotion**. All pull requests — contributors, day-to-day work, and bot-authored skills — target **`test`**, the integration branch where ideas are iterated and reviewed. **`master`** is the curated, public canonical and is **promotion-only**: it advances solely through a weekly, operator-reviewed `test → master` promotion (the `/promote-test` ritual).
+The brain uses **staged promotion**. All pull requests (contributors, day-to-day work, and bot-authored skills) target **`test`**, the integration branch where ideas are iterated and reviewed. **`master`** is the curated, public canonical and is **promotion-only**: it advances solely through a weekly, operator-reviewed `test → master` promotion (the `/promote-test` ritual).
 
 ```
 PRs ─▶ test ──weekly /promote-test (reviewed)──▶ master (protected, public canonical)
 ```
 
-Fork → branch off `test` → PR against `test`. Full guide: [CONTRIBUTING.md](CONTRIBUTING.md). *(The daily dataqbs.com content feed is the exception — it ships to its own repo's `master` daily; staging is for the brain.)*
+Fork → branch off `test` → PR against `test`. Full guide: [CONTRIBUTING.md](CONTRIBUTING.md). *(The daily dataqbs.com content feed is the exception, it ships to its own repo's `master` daily; staging is for the brain.)*
 
 ---
 
-## Architecture — CLASS / OBJECT / ARM
+## Architecture: CLASS / OBJECT / ARM
 
 The framework uses an object-oriented inheritance model: **BRAIN = CLASS** (this public repo, the DNA) → **COMPANY BRAIN = OBJECT** (your private `~/.claude/company/`, gitignored) → **ARMS = PROPERTIES** (isolated, sealed worlds that never see each other: a client, a project, a topic, a course).
 
-The brain ships the engine — 4D Paradigm, connectome, agents, skills, enforcement scripts, templates. The company brain holds your identity and arm definitions. Each arm holds one client's context, sealed.
+The brain ships the engine: 4D Paradigm, connectome, agents, skills, enforcement scripts, templates. The company brain holds your identity and arm definitions. Each arm holds one client's context, sealed.
 
 The reactive control architecture (ECA atoms · Behavior-Tree priority · Statechart 4D · Bandit routing) that governs hook composition is in [`docs/architecture/hook-orchestration.md`](docs/architecture/hook-orchestration.md). Full CLASS/OBJECT/ARM anatomy, biology mapping, and information-flow rules: [wiki Architecture](https://github.com/CarlosCaPe/octorato/wiki/Architecture).
 
 ---
 
-## The 4D Paradigm — The Nervous System
+## The 4D Paradigm: The Nervous System
 
-The 4D is not a checklist. It is the **nervous system protocol** — every signal in the octopus follows four phases. No exceptions.
+The 4D is not a checklist. It is the **nervous system protocol**: every signal in the octopus follows four phases. No exceptions.
 
 **1D Describe** → state what and why before acting. **2D Delegate** → search the connectome (Q1: who knows?), check for an API (Q2: MCP first), run delegate-check (Q3: who does it?). **Change Gate** → present a full manifest of every file to create/modify/delete, wait for explicit confirmation. **3D Diligent** → validate with evidence (build/lint/test); FAIL means fix, not ship. **4D Disclose** → scan the Impact Radius; every change radiates.
 
 Think of it like `terraform plan` before `terraform apply`. The agent presents a **Change Manifest** and stops and waits. No fire-and-forget. This is a gate, not a suggestion.
 
-The 4D runs in a **WHILE** — `while (open work / Touched ≠ intent): 4D()`. Each response ends with a *Provenance* footer (Basis · Engine · Touched · Verified): the brain's proprioception, and the loop condition for the next beat.
+The 4D runs in a **WHILE**: `while (open work / Touched ≠ intent): 4D()`. Each response ends with a *Provenance* footer (Basis · Engine · Touched · Verified): the brain's proprioception, and the loop condition for the next beat.
 
 Full protocol, gate formats, validation matrix, enforcement scripts, and the WHILE loop: [wiki The-4D-Paradigm](https://github.com/CarlosCaPe/octorato/wiki/The-4D-Paradigm) · [`skills/4d-paradigm-protocol/SKILL.md`](skills/4d-paradigm-protocol/SKILL.md).
 
@@ -333,7 +334,7 @@ Full architecture, the label ontology, and the migration history: [`docs/archite
 
 ---
 
-## 4D+S — Spec-Driven Development Integration
+## 4D+S: Spec-Driven Development Integration
 
 For tasks above trivial complexity, the 4D integrates with a spec-driven workflow:
 
@@ -345,7 +346,7 @@ For tasks above trivial complexity, the 4D integrates with a spec-driven workflo
 
 **Complexity signals:** +2 touches 4-10 files, +4 touches 10+, +2 new feature, +3 architecture decision, +5 user requests spec, +1 schema change, +1 new API.
 
-The archived specs become institutional memory — future tasks reference past decisions.
+The archived specs become institutional memory. Future tasks reference past decisions.
 
 ---
 
@@ -399,9 +400,9 @@ Every task activates three layers simultaneously:
 
 ---
 
-## The Connectome — Neural Architecture
+## The Connectome: Neural Architecture
 
-The brain maintains a **deep connectome** — a real weighted graph auto-generated by reading the FULL content of every agent and skill file, vectorizing with TF-IDF, and computing cosine similarity across all pairs.
+The brain maintains a **deep connectome**: a real weighted graph auto-generated by reading the FULL content of every agent and skill file, vectorizing with TF-IDF, and computing cosine similarity across all pairs.
 
 Inspired by octopus neurobiology: 500M neurons, 2/3 distributed in arms, extensive mRNA recoding that reshapes neural protein function.
 
@@ -418,12 +419,12 @@ Inspired by octopus neurobiology: 500M neurons, 2/3 distributed in arms, extensi
 
 | Architecture | Neuroscience | Function |
 |---|---|---|
-| **Agents** | **Neurons** | Processing units — WHO does the work |
-| **Skills** | **Synapses** | Functional connections — HOW work gets done |
-| **Agent↔Agent** | **Neural Pathways** | Collaboration channels — WHO works with WHO |
-| **Skill↔Skill** | **Skill Clusters** | Capability families — related skills group |
-| **Arms** | **Brain Regions** | Specialized areas — WHERE work happens |
-| **4D Phases** | **Action Potentials** | Temporal signals — WHEN signals fire |
+| **Agents** | **Neurons** | Processing units: WHO does the work |
+| **Skills** | **Synapses** | Functional connections: HOW work gets done |
+| **Agent↔Agent** | **Neural Pathways** | Collaboration channels: WHO works with WHO |
+| **Skill↔Skill** | **Skill Clusters** | Capability families: related skills group |
+| **Arms** | **Brain Regions** | Specialized areas: WHERE work happens |
+| **4D Phases** | **Action Potentials** | Temporal signals: WHEN signals fire |
 
 ### Querying and generating
 
@@ -432,15 +433,15 @@ python3 ~/.claude/scripts/query_connectome.py query "deploy Svelte app to Cloudf
 python3 ~/.claude/scripts/generate_neural_map.py   # auto-runs on every ai-push
 ```
 
-`query_connectome.py` builds a TF-IDF vector from the task, ranks every agent and skill by cosine similarity, and returns the best matches with scores — not just name/trigger matching, but full-content semantic similarity. `generate_neural_map.py` produces Agent↔Skill, Agent↔Agent, and Skill↔Skill weighted connections with Hebbian learning, hub detection, and gap detection. Rebuilds from scratch on every `ai-push`.
+`query_connectome.py` builds a TF-IDF vector from the task, ranks every agent and skill by cosine similarity, and returns the best matches with scores, not just name/trigger matching, but full-content semantic similarity. `generate_neural_map.py` produces Agent↔Skill, Agent↔Agent, and Skill↔Skill weighted connections with Hebbian learning, hub detection, and gap detection. Rebuilds from scratch on every `ai-push`.
 
 ---
 
-## Client Arms — Total Isolation
+## Client Arms: Total Isolation
 
 Each arm is an isolated world: a client, a side project, a research topic, a course you're taking, any context you keep separate. Arms never see each other's data. Only the human operator can explicitly bridge knowledge between arms.
 
-Information flows strictly one-way: generic lessons rise from arm to brain (anonymized), brain rules and skills descend to all arms, and arms never communicate sideways — only the human operator bridges knowledge between them. Full flow rules: [wiki Architecture §5](https://github.com/CarlosCaPe/octorato/wiki/Architecture#information-flow-rules).
+Information flows strictly one-way: generic lessons rise from arm to brain (anonymized), brain rules and skills descend to all arms, and arms never communicate sideways. Only the human operator bridges knowledge between them. Full flow rules: [wiki Architecture §5](https://github.com/CarlosCaPe/octorato/wiki/Architecture#information-flow-rules).
 
 ### The Learning Cycle
 
@@ -455,7 +456,7 @@ Information flows strictly one-way: generic lessons rise from arm to brain (anon
 
 ---
 
-## Org Chart — 13 Divisions, 160+ Agents
+## Org Chart: 13 Divisions, 160+ Agents
 
 ```mermaid
 graph TB
@@ -482,15 +483,15 @@ graph TB
     BRAIN --> PMA["Paid Media — 7"]:::div
 ```
 
-Full roster with per-agent triggers and specialties: [GitHub wiki — Agents](https://github.com/CarlosCaPe/octorato/wiki/Agents) · [`agents/REGISTRY.md`](agents/REGISTRY.md).
+Full roster with per-agent triggers and specialties: [GitHub wiki: Agents](https://github.com/CarlosCaPe/octorato/wiki/Agents) · [`agents/REGISTRY.md`](agents/REGISTRY.md).
 
 ---
 
-## Synapses — The Skill Layer
+## Synapses: The Skill Layer
 
 If agents are neurons, **skills are synapses**: the connection that makes a neuron useful for a specific task. A neuron in isolation does nothing. A neuron whose synapses know `index-creation-concurrently` and `query_connectome.py` becomes a database optimization specialist.
 
-Skills are loaded on demand via Q1 (TF-IDF cosine similarity) or Q3 (keyword trigger match), injected into the agent's context for the duration of the task, and then either reinforce or decay the agent↔skill edge in the connectome based on 3D Diligent outcome. Lifecycle: **ADD** (pattern appears 3+ times) → **MERGE** (two skills converge) → **REPLACE** (better technique found) → **EXTEND** (new engine/variant). The full cycle — birth, Hebbian reinforcement, decay (~69-day half-life), failure penalty, pruning, rebirth — is in [wiki Skills-System](https://github.com/CarlosCaPe/octorato/wiki/Skills-System). The full catalog: [wiki Skills](https://github.com/CarlosCaPe/octorato/wiki/Skills).
+Skills are loaded on demand via Q1 (TF-IDF cosine similarity) or Q3 (keyword trigger match), injected into the agent's context for the duration of the task, and then either reinforce or decay the agent↔skill edge in the connectome based on 3D Diligent outcome. Lifecycle: **ADD** (pattern appears 3+ times) → **MERGE** (two skills converge) → **REPLACE** (better technique found) → **EXTEND** (new engine/variant). The full cycle (birth, Hebbian reinforcement, decay of ~69-day half-life, failure penalty, pruning, rebirth) is in [wiki Skills-System](https://github.com/CarlosCaPe/octorato/wiki/Skills-System). The full catalog: [wiki Skills](https://github.com/CarlosCaPe/octorato/wiki/Skills).
 
 ```bash
 python3 ~/.claude/scripts/query_connectome.py query "<task>"   # which skills fire
@@ -500,36 +501,36 @@ python3 ~/.claude/scripts/query_connectome.py communities      # skill clusters
 
 ---
 
-## Memory — Hippocampus and the Working Set
+## Memory: Hippocampus and the Working Set
 
-Three layers: **Constitutional** (`CLAUDE.md` — always loaded, 4D rules + reflexes) · **Episodic** (`~/.claude/projects/<cwd>/memory/` — persists across sessions, gitignored, per-machine) · **Working** (the current context window, cleared on `/clear`).
+Three layers: **Constitutional** (`CLAUDE.md`, always loaded, 4D rules + reflexes) · **Episodic** (`~/.claude/projects/<cwd>/memory/`, persists across sessions, gitignored, per-machine) · **Working** (the current context window, cleared on `/clear`).
 
-Memory is two-tier by scope: generic cross-arm lessons and operator preferences go into a private standalone brain-memory repo (`1 + N` octopus brains — one central + one per arm). Arm memory is sealed in that arm's own repo. The public framework ships the engine (`scripts/memory_sync.py`, `templates/memory/`), never anyone's actual data. Full model: [`docs/architecture/memory-model.md`](docs/architecture/memory-model.md).
+Memory is two-tier by scope: generic cross-arm lessons and operator preferences go into a private standalone brain-memory repo (`1 + N` octopus brains, one central + one per arm). Arm memory is sealed in that arm's own repo. The public framework ships the engine (`scripts/memory_sync.py`, `templates/memory/`), never anyone's actual data. Full model: [`docs/architecture/memory-model.md`](docs/architecture/memory-model.md).
 
 ---
 
-## Reflexes — The Spinal Cord Layer
+## Reflexes: The Spinal Cord Layer
 
-> **v3.1.0 "Reflexes"** made enforcement involuntary: principles that were advisory prose became harness-wired hooks that fire whether the model chooses to or not. The current state builds on that layer with the **v4 rule registry** (Wired or Corrupt: `registry/rules.yaml` + `brain_doctor`) and the **v5 capability manifest + anti-regression gate** (`docs/CAPABILITIES.md`, pre-push hard block).
+> **v3.1.0 "Reflexes"** made enforcement involuntary: principles that were advisory prose became harness-wired hooks that fire whether the model chooses to or not. The current state builds on that layer with the **v4 rule registry** (Wired or Corrupt: `registry/rules.yaml` + `brain_doctor`) and the **v5 capability manifest + anti-regression gate** (`docs/CAPABILITIES.md`, pre-push hard block). Since v6 the doctor demonstrates enforcement with fixture selftests, and since v7 nothing ships unverified: see [`docs/architecture/v7-nothing-ships-unverified.md`](docs/architecture/v7-nothing-ships-unverified.md).
 
 Not every behavior needs to go through the cortex. Some are too universal, too fast, too necessary to delegate. The spinal cord handles them: hand pulled from a hot surface, knee jerk, breathing rhythm. No conscious decision, no committee.
 
 The framework has two reflex sub-layers: **Tier A cognitive reflexes** (constitutional, loaded at session start) and **enforcement hooks** (harness-level, fire on specific tool events regardless of the model's intent).
 
-### Tier A — Cognitive reflexes (6, constitutional)
+### Tier A: Cognitive reflexes (6, constitutional)
 
 These fire automatically on every non-trivial task without the agent having to decide:
 
 | Reflex | Stimulus | Response |
 |--------|----------|----------|
 | `workspace-skill-discovery` | Session starts in an arm | Load arm-local `.claude/skills/` alongside global skills |
-| `session-memory-search` | About to re-solve a problem | Check git log + grep + Lessons Learned — did we do this before? |
-| `progressive-code-exploration` | About to read a file >100 lines | Default to index-first, fetch-on-demand — 4–8x token savings |
+| `session-memory-search` | About to re-solve a problem | Check git log + grep + Lessons Learned. Did we do this before? |
+| `progressive-code-exploration` | About to read a file >100 lines | Default to index-first, fetch-on-demand, 4–8x token savings |
 | `token-efficient-prompting` | Drafting any response | Compact tables, no preamble, no filler |
-| `post-check-verification` | About to declare "done" | Never on a write — always on a verify (build/lint/test/grep) |
+| `post-check-verification` | About to declare "done" | Never on a write, always on a verify (build/lint/test/grep) |
 | `dry-run-gate-pattern` | About to do something destructive | Preview/dry-run first; live execution requires explicit opt-in |
 
-### Enforcement hooks (harness-wired; the first 3 landed in v3.1.0)
+### Enforcement hooks (harness-wired)
 
 These are `hooks.json` entries that the harness evaluates on every matching tool event. The model cannot skip them.
 
@@ -537,11 +538,17 @@ These are `hooks.json` entries that the harness evaluates on every matching tool
 |------|-------|----------|-----------------|
 | `delegate-gate` (`scripts/delegate-gate.py`) | PreToolUse | **Fail-open** | Nudges substantive/batchable work toward the cheapest sufficient model tier (Haiku/Sonnet/Opus); never blocks a turn on failure |
 | `qa-merge-gate` (`scripts/qa-merge-gate.py`) | PreToolUse | **Fail-closed** | Blocks publish-to-main unless the operator approval the agent provably cannot self-grant is present (`OCTO_MERGE_APPROVE=<pr>` env, exported in the launching terminal; the file channel `octo-dim approve-merge` is audit-only because the agent can forge it); detection is command-boundary-anchored so it gates real invocations, not quoted mentions |
-| `dimension-awareness-hook` (`scripts/dimension-awareness-hook.py`) | PreToolUse | **Fail-open** | Warns when other live sessions share the working tree; surfaces the collision risk before a write, never after |
+| `dimension-awareness-hook` (`scripts/dimension-awareness-hook.py`) | PreToolUse | **Fail-closed on lane conflict** (fail-open on infra errors) | Denies a Write/Edit whose target file is claimed by another live session, and denies broad git staging (`git add -A|.`, `git commit -a`) on the shared checkout while other dimensions are live; the first writer auto-claims the lane, and a shared-tree warning still fires on every matched tool |
+| `g__pretool-mcp__outward-send` (`scripts/g__pretool-mcp__outward-send.py`) | PreToolUse | **Fail-closed** | Denies an outward send (mail, WhatsApp, support bridge, deploy, release) when the brain has no gate receipt, when an absence claim carries no anchored seek receipt, or when the body carries an unsourced attribute or a first-person promise |
+| `r__posttool__receipt-seek` (`scripts/r__posttool__receipt-seek.py`) | PostToolUse | **Reflex** (fail-open) | Records every chat, mail or memory lookup as a seek receipt anchored to the harness-supplied `tool_use_id`, so a consumer can tell a real lookup from a typed claim |
+| `r__subagent-stop__qa-receipt` (`scripts/r__subagent-stop__qa-receipt.py`) | SubagentStop | **Reflex** (fail-open) | Records a QA subagent's `QA-VERDICT` with its harness-written transcript path; `qa-merge-gate` requires that receipt on top of the operator env approval |
+| `g__stop__goal-anchor` (`scripts/g__stop__goal-anchor.py`) | Stop | **Fail-closed** (blocks once) | Pins the session's root goal to disk and blocks a closure claim that lands while the root goal has gone unmentioned for four turns or more |
 
-**Connector verdict enforcement.** The 2D Delegate verdict is now inverted by default: **SELF is the rare exception, CONNECT is the default**. The delegate-gate hook reinforces this at the harness level — answering "from my own knowledge" on a task that has a skill or agent match is caught before the tool fires.
+Full live roster: [docs/CAPABILITIES.md](docs/CAPABILITIES.md) (Hooks section).
 
-### 4D Session dimensions (since v3.1.0)
+**Connector verdict enforcement.** The 2D Delegate verdict is now inverted by default: **SELF is the rare exception, CONNECT is the default**. The delegate-gate hook reinforces this at the harness level: answering "from my own knowledge" on a task that has a skill or agent match is caught before the tool fires.
+
+### 4D Session dimensions
 
 The brain can run as **one session-id across N parallel isolated git worktrees**, each reconciled into one `.git`. This is the octopus superpower applied to time: many arms acting in parallel under one brain, without collision.
 
@@ -561,7 +568,7 @@ Reflexes live in `CLAUDE.md` (constitutional, loaded before any task), not in `s
 
 ---
 
-## Observability — The Sensory Cortex
+## Observability: The Sensory Cortex
 
 The brain observes itself acting. Every skill activation, subagent spawn, and 4D phase boundary is captured as a structured JSONL event (`schemas/trace-event.schema.json`) in `~/.claude/traces/YYYY-MM-DD.jsonl` (gitignored, 30-day retention). The trace feeds back into the Hebbian connectome via `update_neural_activity.py`.
 
@@ -592,7 +599,7 @@ Full schema, storage layout, and scheduling: [`docs/architecture/trace-storage.m
 
 ## Enforcement Scripts
 
-These are not optional helpers. They are the nervous system's enforcement layer — scripts that the agent runs at specific gates to ensure the 4D protocol is followed.
+These are not optional helpers. They are the nervous system's enforcement layer: scripts that the agent runs at specific gates to ensure the 4D protocol is followed.
 
 | Script | When It Runs | What It Does |
 |--------|-------------|-------------|
@@ -607,9 +614,9 @@ These are not optional helpers. They are the nervous system's enforcement layer 
 
 ---
 
-## MCP Servers — The Action Space
+## MCP Servers: The Action Space
 
-The brain talks to the outside world through **Model Context Protocol** servers. MCP is not a fallback when there's no API — it *is* the action space of the agent. Agents are the policies that decide what to do; skills are the manuals that teach how; **MCP servers are the typed, schema-validated tools the agent actually calls**.
+The brain talks to the outside world through **Model Context Protocol** servers. MCP is not a fallback when there's no API. It *is* the action space of the agent. Agents are the policies that decide what to do; skills are the manuals that teach how; **MCP servers are the typed, schema-validated tools the agent actually calls**.
 
 ```
 Query → Connectome (routing) → Agent persona → Skill (manual) → MCP tool call → Tool response
@@ -624,22 +631,22 @@ Query → Connectome (routing) → Agent persona → Skill (manual) → MCP tool
 | 4D phase | MCP role |
 |---|---|
 | **1D Describe** | If the task names a system (Gmail, Linear, Cloudflare), declare which MCP servers will be used. |
-| **2D Delegate — Q2** | "¿Tiene API?" is **MCP-first**: prefer an MCP tool over scraping. MCP > REST > SDK > scrape (in capability terms; tokens-wise REST is cheaper, so the agent chooses based on whether typed schema/auth/persistence matter for this call). |
+| **2D Delegate: Q2** | "¿Tiene API?" is **MCP-first**: prefer an MCP tool over scraping. MCP > REST > SDK > scrape (in capability terms; tokens-wise REST is cheaper, so the agent chooses based on whether typed schema/auth/persistence matter for this call). |
 | **3D Diligent** | Validate via the same MCP server: the response shape *is* the test. |
-| **4D Disclose** | Impact Radius includes external state — what got written to Linear / sent through Gmail / deployed to Cloudflare. |
+| **4D Disclose** | Impact Radius includes external state: what got written to Linear / sent through Gmail / deployed to Cloudflare. |
 
 ### Server registry & secret management
 
 | Layer | File | Synced? | Contains |
 |---|---|---|---|
-| Global config | `~/.claude/mcp/servers.json` **(P2 roadmap — not yet in repo)** | Planned | Server `{id, transport, command|url, env_refs[], capabilities, scope}` — references, never values |
+| Global config | `~/.claude/mcp/servers.json` **(P2 roadmap, not yet in repo)** | Planned | Server `{id, transport, command|url, env_refs[], capabilities, scope}`: references, never values |
 | Per-arm override | `<arm>/.claude/mcp/servers.local.json` | No (arm-local) | Client-specific MCP endpoints that must not leak across arms |
-| Secrets | `~/.config/octorato/secrets.env` (chmod 600) or system keychain | **No — never synced** | Tokens, API keys, OAuth refresh — resolved at startup by `env_refs[]` |
+| Secrets | `~/.config/octorato/secrets.env` (chmod 600) or system keychain | **No, never synced** | Tokens, API keys, OAuth refresh, resolved at startup by `env_refs[]` |
 | Capability cache | `~/.claude/mcp/capabilities/<server_id>.json` | Planned | Tool manifest fetched at connect time, dated |
 
 **Secret resolution order:** env var → user keychain (`security`/`secret-tool`/`wincred`) → company vault → **fail closed** (never prompt mid-task).
 
-**Per-arm isolation parity:** MCP follows the same arm-isolation rule as everything else. An arm's MCP config never leaks into the global registry. Arm-to-arm MCP sharing requires explicit human action — same as code-level arm isolation.
+**Per-arm isolation parity:** MCP follows the same arm-isolation rule as everything else. An arm's MCP config never leaks into the global registry. Arm-to-arm MCP sharing requires explicit human action, same as code-level arm isolation.
 
 ### Currently common MCP servers in this brain
 
@@ -657,20 +664,20 @@ Query → Connectome (routing) → Agent persona → Skill (manual) → MCP tool
 
 ### MCP as a routing signal (roadmap)
 
-Today MCP servers are not first-class neurons in the connectome — Q2 is a mental check, not a graph query. The roadmap (P2) treats every MCP tool as a `mcp_tool` node alongside agents and skills:
+Today MCP servers are not first-class neurons in the connectome: Q2 is a mental check, not a graph query. The roadmap (P2) treats every MCP tool as a `mcp_tool` node alongside agents and skills:
 
 - `query_connectome.py query "send slack message"` → returns `mcp_tool: slack-send (score 0.94)`
 - Operator's *situated state* (active Linear issue, next Calendar event, recent Drive files) fuses with the query vector, so retrieval becomes context-aware without the operator typing the context
 
-This is the path the framework is on — see "10x Roadmap" below.
+This is the path the framework is on. See "10x Roadmap" below.
 
 ### Adding a new MCP server
 
-> `mcp/servers.json` is **P2 roadmap** — the `mcp/` directory does not yet exist in the repo. Today, MCP servers are configured directly in Claude Code's settings. Steps below describe the planned workflow once P2 lands.
+> `mcp/servers.json` is **P2 roadmap**: the `mcp/` directory does not yet exist in the repo. Today, MCP servers are configured directly in Claude Code's settings. Steps below describe the planned workflow once P2 lands.
 
 1. Add the server to `~/.claude/mcp/servers.json` with `env_refs` pointing to your secret names (no values).
 2. Put the actual secrets in `~/.config/octorato/secrets.env` (chmod 600, gitignored).
-3. Run `ai-push` — the server config syncs; the secrets do not.
+3. Run `ai-push`. The server config syncs; the secrets do not.
 4. On other machines, `ai-pull` brings the config; add the matching secrets locally.
 
 ---
@@ -682,7 +689,7 @@ The brain works simultaneously with three AI coding assistants:
 | Tool | Config File | Synced By |
 |------|------------|-----------|
 | **Claude Code** | `.claude/CLAUDE.md` | Source of truth (edit here) |
-| **GitHub Copilot** | `.github/copilot-instructions.md` | Auto-copied by `sync-ai-docs` |
+| **GitHub Copilot** | `.github/copilot-instructions.md` (in each arm) | Auto-copied by `sync-ai-docs` |
 | **Cursor** | `.cursorrules` | Auto-copied by `sync-ai-docs` |
 
 One file to maintain. Three tools stay in sync.
@@ -694,9 +701,9 @@ sync-ai-docs my-client  # Sync one arm
 
 ---
 
-## Multi-Machine Sync — The Glial Layer
+## Multi-Machine Sync: The Glial Layer
 
-In real brains, glial cells outnumber neurons roughly 1:1 and do the unsexy work: shuttling nutrients, insulating axons, cleaning up waste, keeping the neurons alive. They don't fire signals themselves — they make signal-firing possible.
+In real brains, glial cells outnumber neurons roughly 1:1 and do the unsexy work: shuttling nutrients, insulating axons, cleaning up waste, keeping the neurons alive. They don't fire signals themselves, they make signal-firing possible.
 
 The framework's glial layer is the sync + hooks infrastructure: `ai-push`, `ai-pull`, `sync-ai-docs`, `install-git-hooks.sh`, `merge-hooks.py`, `check-generic.py`, `check-readme-sync.sh`. None of these are agents. None are skills. They don't show up in the connectome. But every agent and skill depends on them being alive: distributing the brain to all workstations, enforcing the generic-leak guard, keeping arm CLAUDE.mds in sync.
 
@@ -764,10 +771,10 @@ ai-pull --status
 │   ├── _brain_obs.py              ← Shared library for the 10 obs scripts (private)
 │   ├── update_neural_activity.py  ← Hebbian update from trace co-activations
 │   ├── scan-external-refs         ← Scan for external URL references
-│   ├── delegate-gate.py           ← hook (since v3.1): model-tier routing nudge (fail-open)
-│   ├── qa-merge-gate.py           ← hook (since v3.1): operator-approval gate for merges (fail-closed)
-│   ├── dimension-awareness-hook.py← hook (since v3.1): shared-worktree collision warning (fail-open)
-│   ├── octo-dim.py                ← since v3.1: session-dimension registry (worktree-init / list / approve-merge)
+│   ├── delegate-gate.py           ← hook: model-tier routing nudge (fail-open)
+│   ├── qa-merge-gate.py           ← hook: operator-approval gate for merges (fail-closed)
+│   ├── dimension-awareness-hook.py← hook: lane + broad-staging deny (fail-closed on conflict)
+│   ├── octo-dim.py                ← session-dimension registry (worktree-init / list / approve-merge)
 │   ├── ai-push.ps1                ← PowerShell variant for Windows
 │   ├── ai-pull.ps1                ← PowerShell variant for Windows
 │   └── sync-ai-docs.ps1           ← PowerShell variant for Windows
@@ -776,7 +783,7 @@ ai-pull --status
 │   └── tests/trace-samples/    ← 4 validating sample records
 ├── docs/                     ← Architecture + design docs
 │   └── architecture/
-│       ├── hook-orchestration.md ← v3.1 Reactive Control Architecture spec (ECA · BT · Statechart · Bandit)
+│       ├── hook-orchestration.md ← Reactive Control Architecture spec (ECA · BT · Statechart · Bandit)
 │       └── trace-storage.md      ← Trace storage layout + retention + backup
 ├── traces/                   ← (gitignored) Per-UTC-day JSONL trace files
 ├── commands/                ← Slash command definitions
@@ -795,37 +802,7 @@ ai-pull --status
 
 ## 10x Roadmap
 
-The framework is structurally sound but its retrieval and learning loop are 2012-era. A 6-discipline independent review (Data Architecture, Python, Cephalopod Neuroscience, Applied Mathematics, Data Science, Neural Networks) converged on three families of upgrades. **Numbers are estimated lifts — they become measurements once the eval framework is in place.**
-
-### Now shipping — P0 (correctness + clarity)
-- **Hebbian noise sink fix** — `query_connectome.py` was logging ~99 nodes / ~4,800 co-activation pairs per query, collapsing the learning signal to "everything connects to everything". Capped at top-5 by score.
-- **Atomic writes + flock** on `neural_activity.json`. No more silent loss under concurrent queries.
-- **Reward loop closed** — `gate-check --phase diligent PASS|FAIL` writes back to `neural_activity.json`, so the negative-weight infrastructure in `generate_neural_map.py` finally receives signal. Until now, 100% of sessions were logged `success=true` — dead branch.
-- **Fail-closed fuzzy match** — ambiguous node lookups no longer silently pick `candidates[0]`. They return `None` after surfacing similarity-ranked options.
-- **Stopword consolidation (EN + ES)** — index-time and query-time tokenization now share the same `STOP_WORDS` (including Spanish), so the same prompt produces the same vector.
-- **Description-extractor regex** — no more "## Quick Reference" being captured as a skill description.
-- **UTF-8 encoding everywhere** — Windows-safe; emojis/Spanish no longer crash `merge-hooks.py`.
-
-### Next — P1 (measurement + retrieval quality)
-| Move | Expected lift | Source |
-|---|---|---|
-| **Build a labeled eval set from `REGISTRY.md` triggers** (silver labels — no manual annotation needed) | Converts every later change from belief to delta | DS review |
-| **TF-IDF → BM25** (k1=1.2, b=0.75, smoothed IDF) | MRR +0.10–0.15 | Math review |
-| **Cross-encoder rerank** (`bge-reranker-base`, CPU, top-20) | **MRR +0.20, P@1 +0.25** | DS review (single biggest win) |
-| **Reciprocal Rank Fusion** between cosine and `delegate-check` | MRR +0.05–0.10, Q1↔Q3 agreement 70% → 90% | Math review |
-| **Bayesian Beta-Bernoulli Hebbian** — replaces the two divergent boost formulas | Stability + principled cold-start | Math review |
-| **`pyproject.toml` + pytest + CI** — `pipx install octopus-brain` becomes one line | Distribution, regression nets | Python review |
-
-### Then — P2 (architecture)
-- **Lakehouse storage** — Bronze (append-only NDJSON sessions) / Silver (TF-IDF postings parquet, co-activation rollup) / Gold (UUID-keyed nodes + edges parquet). Replaces the monolithic 4-MB `neural_map.json`. Enables scaling from 309 docs → 30,000.
-- **MCP as first-class neurons** in the connectome. Q2 stops being prose and becomes a graph query: `query_connectome.py query "send slack message"` → `mcp_tool: slack-send (score 0.94)`.
-- **MCP as situational signal** — fuse operator state (active Linear issue, next calendar event, recent Drive files) into the query vector. Routing becomes context-aware without the operator typing the context. Est. +0.15 MRR.
-- **Learned router head** — small MLP `query_embedding → agent_logits` trained on `(task, agent, success)` tuples. Converts the static gate into a learned policy.
-- **Top-K ensemble routing** — let top-2 agents fire on MEDIUM/LARGE tasks (e.g., Security Engineer + Database Optimizer for "threat-model and refactor this stored proc").
-- **Episodic memory** — index `docs/specs-archive/` as retrievable exemplars; few-shot the next similar task with past successful plans, respecting arm isolation.
-- **Sleep / consolidation cron** — offline pass replays `neural_activity.json`, prunes weak edges, proposes skill merges, synthesizes skill candidates. Today the brain *rebuilds* (recompilation), not *consolidates* (memory consolidation).
-
-The shape of the upgrade is consistent across all six reviewers: keep the octopus as the metaphor for **operator + arm isolation** (which is genuinely novel), and rebuild the retrieval/learning core using standard ML primitives (dense + sparse retrieval, cross-encoder rerank, reward signal, episodic memory).
+Everything that was listed here has shipped. The forward plan lives in [ROADMAP.md](ROADMAP.md), and the record of what already landed lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -835,7 +812,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for how to:
 - Add a new agent (which division, file format, REGISTRY update)
 - Add a new skill (directory structure, SKILL.md format)
 - Report issues and submit PRs
-- All contributions must be anonymized — no client data, no personal information
+- All contributions must be anonymized: no client data, no personal information
 
 ## License
 
@@ -843,7 +820,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for how to:
 
 ---
 
-> **Octorato powers the AI Agent OS at [dataqbs.com](https://dataqbs.com) — built & operated there.**
+> **Octorato powers the AI Agent OS at [dataqbs.com](https://dataqbs.com), built & operated there.**
 
-*Created by [dataqbs](https://dataqbs.com) — Data Quality & Business Solutions*
+*Created by [dataqbs](https://dataqbs.com), Data Quality & Business Solutions*
 

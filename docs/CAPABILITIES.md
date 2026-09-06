@@ -7,8 +7,8 @@
 | Metric | Count |
 |---|---|
 | Skills | 233 |
-| Agents | 161 |
-| Divisions | 15 |
+| Agents | 167 |
+| Divisions | 13 |
 | Scripts: wired | 107 |
 | Scripts: orphan | 7 |
 | Rules | 72 |
@@ -252,7 +252,7 @@
 | wrangler | Cloudflare Workers CLI for deploying, developing, and managing Workers, KV, R2, D1, Vectorize, Hyperdrive, Workers AI, C... |
 | yeet | Use only when the user explicitly asks to stage, commit, push, and open a GitHub pull request in one flow using the GitH... |
 
-## Agents by Division (161 across 15 divisions)
+## Agents by Division (167 across 13 divisions)
 
 ### academic (5)
 
@@ -310,26 +310,30 @@
 | Threat Detection Engineer | Expert detection engineer specializing in SIEM rule development, MITRE ATT&CK coverage mapping, threat hunting, alert tu... |
 | WeChat Mini Program Developer | Expert WeChat Mini Program developer specializing in 小程序 development with WXML/WXSS/WXS, WeChat API integration, payment... |
 
-### examples (6)
+### game-development (20)
 
 | Name | Description |
 |---|---|
-| nexus-spatial-discovery | Nexus Spatial: Full Agency Discovery Exercise |
-| README | Examples |
-| workflow-book-chapter | Workflow Example: Book Chapter Development |
-| workflow-landing-page | Multi-Agent Workflow: Landing Page Sprint |
-| workflow-startup-mvp | Multi-Agent Workflow: Startup MVP |
-| workflow-with-memory | Multi-Agent Workflow: Startup MVP with Persistent Memory |
-
-### game-development (5)
-
-| Name | Description |
-|---|---|
+| Blender Add-on Engineer | Blender tooling specialist - Builds Python add-ons, asset validators, exporters, and pipeline automations that turn repe... |
 | Game Audio Engineer | Interactive audio specialist - Masters FMOD/Wwise integration, adaptive music systems, spatial audio, and audio performa... |
 | Game Designer | Systems and mechanics architect - Masters GDD authorship, player psychology, economy balancing, and gameplay loop design... |
+| Godot Gameplay Scripter | Composition and signal integrity specialist - Masters GDScript 2.0, C# integration, node-based architecture, and type-sa... |
+| Godot Multiplayer Engineer | Godot 4 networking specialist - Masters the MultiplayerAPI, scene replication, ENet/WebRTC transport, RPCs, and authorit... |
+| Godot Shader Developer | Godot 4 visual effects specialist - Masters the Godot Shading Language (GLSL-like), VisualShader editor, CanvasItem and ... |
 | Level Designer | Spatial storytelling and flow specialist - Masters layout theory, pacing architecture, encounter design, and environment... |
 | Narrative Designer | Story systems and dialogue architect - Masters GDD-aligned narrative design, branching dialogue, lore architecture, and ... |
+| Roblox Avatar Creator | Roblox UGC and avatar pipeline specialist - Masters Roblox's avatar system, UGC item creation, accessory rigging, textur... |
+| Roblox Experience Designer | Roblox platform UX and monetization specialist - Masters engagement loop design, DataStore-driven progression, Roblox mo... |
+| Roblox Systems Scripter | Roblox platform engineering specialist - Masters Luau, the client-server security model, RemoteEvents/RemoteFunctions, D... |
 | Technical Artist | Art-to-engine pipeline specialist - Masters shaders, VFX systems, LOD pipelines, performance budgeting, and cross-engine... |
+| Unity Architect | Data-driven modularity specialist - Masters ScriptableObjects, decoupled systems, and single-responsibility component de... |
+| Unity Editor Tool Developer | Unity editor automation specialist - Masters custom EditorWindows, PropertyDrawers, AssetPostprocessors, ScriptedImporte... |
+| Unity Multiplayer Engineer | Networked gameplay specialist - Masters Netcode for GameObjects, Unity Gaming Services (Relay/Lobby), client-server auth... |
+| Unity Shader Graph Artist | Visual effects and material specialist - Masters Unity Shader Graph, HLSL, URP/HDRP rendering pipelines, and custom pass... |
+| Unreal Multiplayer Architect | Unreal Engine networking specialist - Masters Actor replication, GameMode/GameState architecture, server-authoritative g... |
+| Unreal Systems Engineer | Performance and hybrid architecture specialist - Masters C++/Blueprint continuum, Nanite geometry, Lumen GI, and Gamepla... |
+| Unreal Technical Artist | Unreal Engine visual pipeline specialist - Masters the Material Editor, Niagara VFX, Procedural Content Generation, and ... |
+| Unreal World Builder | Open-world and environment specialist - Masters UE5 World Partition, Landscape, procedural foliage, HLOD, and large-scal... |
 
 ### marketing (30)
 
@@ -457,14 +461,6 @@
 | Workflow Architect | Workflow design specialist who maps complete workflow trees for every system, user journey, and agent interaction , cove... |
 | ZK Steward | Knowledge-base steward in the spirit of Niklas Luhmann's Zettelkasten. Default perspective: Luhmann; switches to domain ... |
 
-### strategy (3)
-
-| Name | Description |
-|---|---|
-| EXECUTIVE-BRIEF | 📑 NEXUS Executive Brief |
-| nexus-strategy | 🌐 NEXUS , Network of EXperts, Unified in Strategy |
-| QUICKSTART | ⚡ NEXUS Quick-Start Guide |
-
 ### support (7)
 
 | Name | Description |
@@ -519,7 +515,7 @@
 | canon.py | canon , one pulse across the cellular network. | wired |
 | capability-census.py | capability-census.py - the live-source census heartbeat (UserPromptSubmit hook). | wired |
 | capability_inventory.py | capability_inventory.py , read-only capability census of skills + agents (issue #28). | wired |
-| capability_manifest.py | capability_manifest.py -- v5.0 Capability Manifest Generator for Octorato. Scans skills/, agents/, s... | wired |
+| capability_manifest.py | capability_manifest.py -- Capability Manifest Generator for Octorato. Scans skills/, agents/, script... | wired |
 | changelog-sync.py | changelog-sync.py - heal CHANGELOG.md when releases were cut without entries. | wired |
 | check-generic.py | check-generic.py , Block commits that leak arm/client/person identifiers. The brain (~/.claude/) is ... | wired |
 | check-hooks-drift.py | check-hooks-drift.py , guard: settings.json.hooks must equal the projection of hooks.json. | wired |
@@ -557,7 +553,7 @@
 | gate_selftest.py | gate_selftest.py: shared fixture-driven liveness harness for fail-closed gates. | wired |
 | generate-octorato-wiki.py | Regenerate the octorato wiki catalog pages from the live brain. | wired |
 | generate_memory_map.py | Memory Map Generator , TF-IDF + cosine index over the brain's life-memories. WHY THIS EXISTS The con... | wired |
-| generate_neural_map.py | generate_neural_map.py , Octopus Connectome Generator v2.0 Builds a deep neural connectivity map ins... | wired |
+| generate_neural_map.py | generate_neural_map.py , Octopus Connectome Generator Builds a deep neural connectivity map inspired... | wired |
 | github_trending_digest.py | GitHub Trending Daily Curation , feeds the brain. Pulls top trending from 3 sources (GH/HN/PH), clas... | wired |
 | grafo-gate.py | PreToolUse Bash hook: the forcing function for graph-before-grep. | wired |
 | grafo-ledger-check.py | Stop hook , the graph-before-grep teeth (turn-scoped). | wired |
@@ -583,7 +579,7 @@
 | octorato-isomorphism.py | octorato-isomorphism , compute the invariant shared by the three Octorato anchors. | wired |
 | publish-wiki.py | publish-wiki.py - publish docs/wiki/ to the public GitHub wiki. | wired |
 | qa-merge-gate.py | PreToolUse Bash hook , QA gate (FAIL-CLOSED for merge actions). | wired |
-| query_connectome.py | query_connectome.py , Octopus Ventosas (Sucker Neural Interface) v1.0 Each sucker is an independent ... | wired |
+| query_connectome.py | query_connectome.py , Octopus Ventosas (Sucker Neural Interface) Each sucker is an independent senso... | wired |
 | querymaster-security-detector.py | QueryMaster security-canon detector (RULE #1 backing for SECURITY.querymaster-rules). | wired |
 | quickstart.py | quickstart.py , zero-to-alive for a brand-new Octorato user, in one command. | wired |
 | r__posttool__receipt-seek.py | r__posttool__receipt-seek.py: PostToolUse reflex that writes a SEEK receipt. | wired |

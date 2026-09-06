@@ -27,18 +27,18 @@ An **outward action** is any tool call whose effect leaves the operator's machin
 An outward action is allowed only when the turn carries a **receipt bundle**:
 
 1. **Seek receipt.** For every claim of fact about the counterpart or the past (an amount, a date, an absence, a category), a lookup ran in this turn: memory seek, chat search, mail search, or the arm expediente. The receipt is the act of looking, never its result. A lookup that returns message bodies counts (messages, mail); a chat listing or a last-interaction stamp does not, because it cannot refute anything.
-2. **QA receipt.** For code and for any deliverable above TRIVIAL, an independent verdict on the judgment tier, recorded in the turn, not asserted in prose.
+2. **QA receipt.** For the merge of a PR, an independent verdict on the judgment tier, recorded by the harness, not asserted in prose. This one is enforced by `scripts/qa-merge-gate.py` at Bash PreToolUse on the merge command, not by the send gate.
 3. **Gate receipt.** Every fail-closed gate that watches this class of action has a green `--selftest` at HEAD, and no waiver covers it.
 
-Missing any one of the three: the action is denied at PreToolUse, with the missing receipt named. `absence-ok`-style hatches stay per line, never per turn.
+A send is denied at PreToolUse when the seek receipt or the gate receipt is missing, with the missing receipt named. A merge of a PR is denied when the QA receipt is missing, by its own gate. `absence-ok`-style hatches stay per line, never per turn.
 
 ## The architecture
 
 Four load-bearing pieces, in dependency order.
 
-1. **One send choke point.** A single PreToolUse gate (`g__pre__outward-send.py`) matches every outward tool by name (mail, WhatsApp bridges, `gh pr merge`, deploy CLIs, artifact publish) and reads the turn's receipt ledger. The six Stop-time COMMS gates keep their phrase logic but become *contributors* to the ledger, not independent tripwires: each one writes what it checked, and the choke point refuses when the ledger is empty for a class the send needs. Today the checks fire after the reply is composed and only on the phrase they know; after this they fire before the tool runs and on the absence of evidence.
+1. **One send choke point.** A single PreToolUse gate (`g__pretool-mcp__outward-send.py`) matches every outward tool by name (mail, WhatsApp bridges, `gh pr merge`, deploy CLIs, artifact publish) and reads the turn's receipt ledger. The six Stop-time COMMS gates keep their phrase logic but become *contributors* to the ledger, not independent tripwires: each one writes what it checked, and the choke point refuses when the ledger is empty for a class the send needs. Today the checks fire after the reply is composed and only on the phrase they know; after this they fire before the tool runs and on the absence of evidence.
 
-2. **The receipt ledger.** A per-session file (`.octorato/receipts/<session>.jsonl`, gitignored, same discipline as goal-anchor) appended by hooks, never by prose: PostToolUse on seek tools writes a seek receipt; the QA subagent's verdict is written by the harness, not pasted by the model; `--selftest` runs write gate receipts. The model cannot forge a receipt because the model never writes the file. This is the same agent-proof argument as `OCTO_MERGE_APPROVE`: only the harness path authorizes.
+2. **The receipt ledger.** A per-session file (`~/.claude/.cache/receipts/<session>.jsonl`, gitignored, same discipline as goal-anchor) appended by hooks, never by prose: PostToolUse on seek tools writes a seek receipt; the QA subagent's verdict is written by the harness, not pasted by the model; `--selftest` runs write gate receipts. The model never writes a receipt through a hook, which is what makes the ledger worth reading. It does not make a receipt unforgeable: a forged entry has to carry the harness fields, sit in the session's own directory, and survive the consumer re-verifying it against the transcript, and it stays visible to anyone who audits. The agent-proof boundary is still `OCTO_MERGE_APPROVE`: only the harness environment authorizes.
 
 3. **Floor 100%, no grey zone.** The 6 waivers get a decision each: promote to fail-closed with a fixture pair, or demote to PRESENCE and say so in the anchor. The 14 detect-tier rules get the same binary. `brain_doctor` grows one assertion: `gateable && !fail-closed` with no waiver is already a FAIL; v7 removes the waiver escape for rules older than 90 days.
 
@@ -50,7 +50,7 @@ Four load-bearing pieces, in dependency order.
 |---|---|---|
 | 0 | This spec. | none |
 | 1 | Receipt ledger + PostToolUse writers for seek tools and selftests. | `receipt-ledger-live`: a seek in a fixture transcript produces a ledger line |
-| 2 | `g__pre__outward-send.py`, fail-closed, fixture-proven; the six COMMS Stop gates rewired as ledger contributors. | `outward-send-gate`: a send fixture with an empty ledger is denied |
+| 2 | `g__pretool-mcp__outward-send.py`, fail-closed, fixture-proven; the six COMMS Stop gates rewired as ledger contributors. | `outward-send-gate`: a send fixture with an empty ledger is denied |
 | 3 | QA receipt: the coworking QA subagent verdict lands in the ledger via the harness path; `qa-merge-gate` reads the ledger instead of only the env. | `qa-receipt-agent-proof`: a ledger line written from the model path is rejected |
 | 4 | Waivers and detect tier resolved to a binary; enforcement floor prints 100% FORCED or names each demotion. | `floor-100`: any gateable rule not fail-closed is FAIL, no waiver escape past 90 days |
 | 5 | Incident-to-fixture ledger; REFLEX triage list; first three recurrent lessons promoted to gates. | `incident-fixture-coverage`: incident with mechanism and no fixture is FAIL |
@@ -67,7 +67,7 @@ v7.0.0 ships when `brain_doctor.py` prints all of:
 
 Not a claim of zero defects. A claim that zero known defect classes are unwired, and that no send leaves without receipts. The next unknown class will still get through once; v7 guarantees it gets through with a ledger that shows exactly which receipt was missing, and that the gate written for it is proven before the incident closes.
 
-## Status (2026-09-05)
+## Status (as of v7.2.0, 2026-09-06)
 
 Phases 1 to 5 shipped in one PR: `scripts/receipt_ledger.py`, `r__posttool__receipt-seek.py`, `g__pretool-mcp__outward-send.py` (fixture-proven, 4 block + 6 allow), `r__subagent-stop__qa-receipt.py`, `qa-merge-gate` reading the ledger, the six waivers retired (five recorded as detector or reflex by design via `v7_decision`, `FLOW.budget-halt` promoted with a fixture pair and path-scoped caps), and three new doctor assertions (`waiver-age`, `incident-fixture-coverage`, `reflex-triage`). Doctor on that tree: floor FORCED 27/27 (100%), waived 0, 29 selftests live.
 
@@ -83,7 +83,7 @@ QA cycles 4 and 5 (e17294a, 900e897): PASS. Three precision gaps closed with fix
 
 Headline caveat on the floor: `FLOW.budget-halt` counts as FORCED because its mechanism denies when an arm opts into `hard_stop`; on a machine where every arm is set to `alert`, it cannot halt by configuration. The floor measures mechanisms, not configurations.
 
-Phase 6 (2026-09-06): `reflex-triage` reached zero pending with #263 (10 gate, 21 demote). The doctor prints the release criterion in full (floor 100%, waived 0, 29 selftests live, incident-fixture coverage 100%, triage 0 pending, 41 checks passed), and v7.0.0 is cut with the `Octorato-Major:` trailer.
+Phase 6 (2026-09-06): `reflex-triage` reached zero pending with #263 (10 gate, 21 demote). The doctor prints the release criterion in full (floor 100%, waived 0, 29 selftests live, incident-fixture coverage 100%, triage 0 pending, and the full check tally), and v7.0.0 is cut with the `Octorato-Major:` trailer.
 
 ## Decisions recorded
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-capability_manifest.py -- v5.0 Capability Manifest Generator for Octorato.
+capability_manifest.py -- Capability Manifest Generator for Octorato.
 
 Scans skills/, agents/, scripts/, registry/rules.yaml, and hooks.json then
 writes docs/CAPABILITIES.md -- the canonical, accumulative offering document.
@@ -99,15 +99,25 @@ def scan_skills() -> list[dict]:
 # 2. Scan Agents
 # ---------------------------------------------------------------------------
 
+# Agent counting rule. SOURCE OF TRUTH: scripts/brain-stats.py (EXCLUDED_AGENT_DIRS
+# + NON_PERSONA_FILES + the recursive persona glob). Kept as literal constants here
+# because brain-stats.py has a hyphen in its name and is not importable as a module.
+# If brain-stats.py changes its definitions, change them here too or the manifest
+# and the headline counts drift apart again.
+EXCLUDED_AGENT_DIRS = {"examples", "strategy"}
+NON_PERSONA_FILES = {"README.md", "REGISTRY.md", "index.md", "_index.md"}
+
+
 def scan_agents() -> list[dict]:
     agents_dir = BRAIN / "agents"
     results = []
     for division_dir in sorted(agents_dir.iterdir()):
-        if not division_dir.is_dir():
+        if not division_dir.is_dir() or division_dir.name in EXCLUDED_AGENT_DIRS:
             continue
         division = division_dir.name
-        for agent_file in sorted(division_dir.glob("*.md")):
-            if agent_file.name == "REGISTRY.md":
+        # recursive: personas may live in sub-categories (game-development/godot/)
+        for agent_file in sorted(division_dir.rglob("*.md")):
+            if agent_file.name in NON_PERSONA_FILES:
                 continue
             text = agent_file.read_text(encoding="utf-8", errors="replace")
             fm = _yaml_frontmatter(text)
@@ -422,7 +432,7 @@ def render(
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Octorato v5.0 Capability Manifest Generator")
+    parser = argparse.ArgumentParser(description="Octorato Capability Manifest Generator")
     parser.add_argument(
         "--check",
         action="store_true",

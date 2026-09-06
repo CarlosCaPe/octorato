@@ -1,4 +1,4 @@
-# Windows `python3` Stub — Audit + Fix
+# Windows `python3` Stub: Audit + Fix
 
 **Date:** 2026-06-05 (B3 audit fold-in)
 **Layer:** brain (`~/.claude/`)
@@ -8,7 +8,7 @@
 
 Every Windows brain hook and every `python3 ...` line in `commands/` and
 `docs/` silently fails on a fresh Windows install. The reason is upstream
-of the brain — it's a Windows-Python packaging quirk — but the consequence
+of the brain, it's a Windows-Python packaging quirk, but the consequence
 is that the brain runs degraded without telling you.
 
 What happens, step by step:
@@ -17,7 +17,7 @@ What happens, step by step:
    `python3.exe`. The name `python3` is unclaimed by the real install.
 2. Windows 10/11 ships an **App-Execution-Alias stub** at
    `%LOCALAPPDATA%\Microsoft\WindowsApps\python3.exe` that opens the
-   Microsoft Store to "Install Python 3.x" — it does NOT run Python.
+   Microsoft Store to "Install Python 3.x". It does NOT run Python.
 3. `WindowsApps\` is on every user's PATH by default.
 4. Result: `python3 --version` prints "Python was not found; run without
    arguments to install from the Microsoft Store" and exits non-zero.
@@ -38,8 +38,8 @@ Plus `commands/ai-push.md` step 2b (hooks drift-guard), step 2c (README
 count drift-guard, see B2), step 4 (regenerate neural connectome), and
 similar in `commands/ai-pull.md`.
 
-A failing hook doesn't fail-closed the prompt — Claude Code just logs
-the error and continues — so the operator sees the brain working but
+A failing hook doesn't fail-closed the prompt. Claude Code just logs
+the error and continues, so the operator sees the brain working but
 NOT running its hook discipline. That's the "fantasy approval" failure
 mode the `reality-checker` agent guards against, applied to the brain
 itself.
@@ -48,7 +48,7 @@ itself.
 
 Two parts:
 
-### 1. The runtime fix — `~/.local/bin/python3.cmd`
+### 1. The runtime fix: `~/.local/bin/python3.cmd`
 
 A 1-line `.cmd` shim that forwards every arg to `py -3` (the Python
 Launcher, which IS bundled with every modern Python.org installer):
@@ -60,7 +60,7 @@ rem octorato-thunk
 ```
 
 This file lives in `~/.local/bin/`, which sits at **position 4** on
-Carlos's PATH — before `WindowsApps\` at position 5 — so the shim wins
+the user's PATH, before `WindowsApps\` at position 5, so the shim wins
 the resolution race. No PATH edit, no new install, no Microsoft Store
 popup.
 
@@ -68,23 +68,23 @@ Verification:
 
 ```powershell
 where.exe python3
-# → C:\Users\Carlos.Carrillo\.local\bin\python3.cmd
-# → C:\Users\Carlos.Carrillo\AppData\Local\Microsoft\WindowsApps\python3.exe
+# → %USERPROFILE%\.local\bin\python3.cmd
+# → %USERPROFILE%\AppData\Local\Microsoft\WindowsApps\python3.exe
 python3 --version
 # → Python 3.12.10
 python3 -c "import sys; print(sys.executable)"
-# → C:\Users\Carlos.Carrillo\AppData\Local\Programs\Python\Python312\python.exe
+# → %USERPROFILE%\AppData\Local\Programs\Python\Python312\python.exe
 ```
 
-### 2. The install-time fix — `scripts/install-runners.py`
+### 2. The install-time fix: `scripts/install-runners.py`
 
 Teach the brain's first-time-setup installer to drop the shim
 automatically on Windows. New behavior:
 
-- POSIX: unchanged (no shim needed — `python3` is canonical there).
+- POSIX: unchanged (no shim needed, `python3` is canonical there).
 - Windows: install `python3.cmd` in `~/.local/bin/` before the other
   thunks (`ai-pull.cmd`, `ai-push.cmd`, `sync-ai-docs.cmd`), because
-  those thunks themselves call `python3`. Idempotent — re-runs refresh
+  those thunks themselves call `python3`. Idempotent, re-runs refresh
   the marker-tagged shim in place; backs up any pre-existing standalone
   `python3.cmd` to `python3.cmd.prebrain.bak`.
 
@@ -95,7 +95,7 @@ Result: any new Windows brain install (or any existing one that re-runs
 
 | Alternative | Why rejected |
 |---|---|
-| `winget install Python.Python.3` | Doesn't help — installs another Python at a different prefix; still no `python3.exe`. |
+| `winget install Python.Python.3` | Doesn't help: installs another Python at a different prefix; still no `python3.exe`. |
 | Edit PATH to drop WindowsApps | Breaks other Microsoft Store apps the user may rely on; too invasive. |
 | Change every `python3` invocation to `python` | 29 hook commands + tens of doc references; cross-platform regression risk (some Linux distros only ship `python3`, not `python`). |
 | Change every `python3` invocation to `py -3` | Same scope; `py` doesn't exist on POSIX so this would break the macOS/Linux brain. |
@@ -121,7 +121,7 @@ the Python install dependency; the first-run UX should be:
 5. Run: ai-pull
 ```
 
-After step 4, `python3 anything.py` works everywhere — including
+After step 4, `python3 anything.py` works everywhere, including
 inside the `settings.json` hook commands that the brain now executes
 on every prompt.
 
@@ -138,6 +138,6 @@ python3 ~/.claude/scripts/check-hooks-drift.py
 ```
 
 If either prints the Microsoft Store stub message, the shim is missing
-or shadowed — re-run `python scripts/install-runners.py` and check PATH
+or shadowed, re-run `python scripts/install-runners.py` and check PATH
 order with `where.exe python3` (the `.local/bin` entry should appear
 first).

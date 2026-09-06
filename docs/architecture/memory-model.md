@@ -1,21 +1,21 @@
-# Memory Model — two-tier, ship the engine not the data
+# Memory Model: two-tier, ship the engine not the data
 
 Octorato's memory is split by **scope**, and scope decides **location**. The public
-framework ships the *mechanism*; your memories are *data* and stay private — the
+framework ships the *mechanism*; your memories are *data* and stay private, the
 SQLite rule (the engine is open source, your `.db` is yours).
 
 Decided by a 4-specialist panel (Software Architect · Security Engineer · Backend
-Architect · Product) — unanimous on the design below. But the real authority isn't
+Architect · Product), unanimous on the design below. But the real authority isn't
 the panel; it's the animal.
 
-## Foundation — the octopus has nine brains
+## Foundation: the octopus has nine brains
 
-An octopus has ~500M neurons and **one central brain + eight arm brains** — and
+An octopus has ~500M neurons and **one central brain + eight arm brains**, and
 **~2/3 of those neurons live in the arms**, not the center. Each arm senses,
 processes, and acts semi-autonomously; the central brain sets intent and
 coordinates, it does not micromanage each arm.
 
-So the two-tier memory model is **not a design choice — it's the neuroanatomy**:
+So the two-tier memory model is **not a design choice, it's the neuroanatomy**:
 
 - **1 central brain → brain memory** (`octorato-memory`): identity + generic
   cross-arm lessons. "Who you are."
@@ -27,7 +27,7 @@ So the two-tier memory model is **not a design choice — it's the neuroanatomy*
   an arm's local memory.
 
 Corollary that kills the tempting shortcut: putting brain memory *inside an arm* is
-trying to cram the central brain into one tentacle. Anatomically impossible — the
+trying to cram the central brain into one tentacle. Anatomically impossible: the
 arm already has its own brain, the center has its own. A standalone brain-owned
 memory repo is the only morphologically correct shape.
 
@@ -51,23 +51,23 @@ Octopus = the spatial layer (1 + N sealed brains). Immune system = the learning 
 
 | Tier | What it holds | Where it lives | Syncs to |
 |---|---|---|---|
-| **Brain memory** | "who you are" — operator identity, preferences, **generic cross-arm lessons** | the brain's gitignored `projects/<id>/memory/` as its **own nested `.git`** | a **private, standalone, brain-owned** repo (e.g. `octorato-memory`) |
-| **Arm memory** | "what this project taught you" — one client's schema quirks, deploy gotchas, stakeholders | inside **that arm's own repo** (`<arm>/.claude/memory/`), sealed | the arm's own remote |
+| **Brain memory** | "who you are": operator identity, preferences, **generic cross-arm lessons** | the brain's gitignored `projects/<id>/memory/` as its **own nested `.git`** | a **private, standalone, brain-owned** repo (e.g. `octorato-memory`) |
+| **Arm memory** | "what this project taught you": one client's schema quirks, deploy gotchas, stakeholders | inside **that arm's own repo** (`<arm>/.claude/memory/`), sealed | the arm's own remote |
 
 Routing rule (so the split is enforceable, not aspirational):
 **Would this lesson help a *different* client?** Yes → distill to generic → brain memory. No → arm memory. Unsure → arm memory (default-deny). This is Upward Learning applied to memory.
 
 ## Why not the obvious shortcuts
 
-- **Memory inside an arm** — inverts the morphology: the brain would *depend on a
+- **Memory inside an arm**: inverts the morphology: the brain would *depend on a
   client repo* to remember itself, and generic cross-arm lessons would physically
   sit in one client's tree (isolation breach). A sync channel into one arm also
-  leaks *future* lessons distilled from *other* arms into it — you'd be validating
+  leaks *future* lessons distilled from *other* arms into it, you'd be validating
   a snapshot, not the channel.
-- **Memory as a submodule/branch of the public repo** — a submodule URL is a public
+- **Memory as a submodule/branch of the public repo**: a submodule URL is a public
   string and one wrong-branch push publishes operator PII to forever-history. The
   whole "brain stays generic" rule forbids any private byte sharing the public `.git`.
-- **Local-only, never synced** — not wrong, just the *floor*: zero multi-machine
+- **Local-only, never synced**: not wrong, just the *floor*: zero multi-machine
   continuity. It's the correct zero-config default, not the target.
 
 ## What is public vs private
@@ -78,7 +78,7 @@ Routing rule (so the split is enforceable, not aspirational):
 | this doc + `templates/memory/MEMORY.template.md` | the private remote URL (in gitignored `company/config/memory.json`) |
 | the format + `MEMORY.md` index convention + recall hook | operator identity, preferences, lessons |
 
-The public repo knows the **slot**, never the **occupant** — the remote URL is read
+The public repo knows the **slot**, never the **occupant**: the remote URL is read
 from gitignored `company/config/memory.json`, never hardcoded (same precedent as
 `arms-paths.json` and the derived git remote).
 
@@ -98,5 +98,5 @@ python3 scripts/memory_sync.py pull     # refresh on a new machine
 ```
 
 One-line mental model: **brain memory is who you are; arm memory is what this
-project taught you — and the framework ships the machinery empty, so your data
+project taught you, and the framework ships the machinery empty, so your data
 never rides anyone's public history.**

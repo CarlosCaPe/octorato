@@ -1,6 +1,6 @@
-# Trace Storage Layout — Agent Trace (observability surface 1)
+# Trace Storage Layout: Agent Trace (observability surface 1)
 
-> **Organ:** sensory nerves — every tool call leaves a trace; the organism can replay what its body did.
+> **Organ:** sensory nerves. Every tool call leaves a trace; the organism can replay what its body did.
 
 > Status: **shipped**. This is the on-disk contract for the trace infrastructure.
 > The capture hook (`scripts/trace-hook.py`), the query CLI (`scripts/brain-trace.py`)
@@ -20,13 +20,13 @@
 - One file per **UTC day**, name format `YYYY-MM-DD.jsonl`.
 - Path is **gitignored** at the brain level (entry added to `~/.claude/.gitignore`).
 - Each line conforms to `~/.claude/schemas/trace-event.schema.json`.
-- The directory is created lazily on first write — no init step needed.
+- The directory is created lazily on first write, no init step needed.
 
 ## Privacy stance
 
 **Gitignored by default** (decision §9 Q3, 2026-05-18). Traces never enter the
 public octorato repository, never sync via `ai-push`, never propagate via
-`sync-ai-docs`. They are machine-local — like `state/`, `digests/`, `cache/`,
+`sync-ai-docs`. They are machine-local, like `state/`, `digests/`, `cache/`,
 or the `projects/.../memory/` directory.
 
 Rationale: trace events can contain operator-specific signal (which skills
@@ -34,13 +34,13 @@ fired on which days, error patterns, token costs). Even fully anonymized, the
 operational pattern itself is private. Surfacing it in a public repo would
 leak "how the operator works" without adding any value for outside readers.
 
-## Retention — auto-delete at 30 days
+## Retention: auto-delete at 30 days
 
 Files older than 30 days are **deleted, not archived**.
 
 | Concern | Resolution |
 |---|---|
-| Why 30d, not 7d or 90d? | 30d covers one full Hebbian decay window (~half of the 69d half-life) — enough to spot weekly + monthly patterns without unbounded growth |
+| Why 30d, not 7d or 90d? | 30d covers one full Hebbian decay window (~half of the 69d half-life), enough to spot weekly + monthly patterns without unbounded growth |
 | What if I want longer history? | Enable the backup opt-in (see below) to sync `.jsonl` files to a private repo before they hit the 30d cutoff |
 | Manual override per file? | None. The sweep is unconditional. If a specific day matters, copy it out of `~/.claude/traces/` before day 30 |
 
@@ -53,7 +53,7 @@ find ~/.claude/traces -name "*.jsonl" -mtime +30 -delete
 The `-mtime +30` predicate uses the file's mtime, which matches its UTC day
 since each file is append-only and never re-touched.
 
-## Backup opt-in — `TRACE_BACKUP_REPO` env var
+## Backup opt-in: `TRACE_BACKUP_REPO` env var
 
 By default, traces are local-only. To sync them across machines or keep
 arbitrarily long history, set the environment variable:
@@ -67,14 +67,14 @@ When set, the daily backup hook will:
 2. Copy any `~/.claude/traces/*.jsonl` files newer than the last backup marker
 3. Commit + push with message `chore(backup): traces YYYY-MM-DD`
 
-When **unset**, no backup runs. The default behaviour is local-only — explicit
+When **unset**, no backup runs. The default behaviour is local-only, explicit
 opt-in keeps the system simple and lets the operator pick a private repo per
 threat model (separate account, separate host, separate encryption).
 
 The brain itself never reads from `TRACE_BACKUP_REPO`. Only the backup hook
 process touches it.
 
-## Concurrency — POSIX `O_APPEND` + `fsync`
+## Concurrency: POSIX `O_APPEND` + `fsync`
 
 Multiple processes (main agent + subagents + scheduler workers) may write to
 the same daily file. The on-disk write contract:
@@ -85,11 +85,11 @@ the same daily file. The on-disk write contract:
    `PIPE_BUF` atomicity guarantee for appends).
 4. `fsync()` after each write only if the operator considers the event
    load-bearing (default: skip fsync; the OS page cache is fine for
-   observability data — if the machine crashes we lose the last few events,
+   observability data: if the machine crashes we lose the last few events,
    not history).
 
 No file locking is used. POSIX guarantees that appends < 4096 bytes are
-atomic when `O_APPEND` is set — two processes writing simultaneously will
+atomic when `O_APPEND` is set: two processes writing simultaneously will
 produce two complete adjacent lines, never an interleaved partial line.
 
 If a record ever needs more than 4096 bytes (e.g. a future event class with a
