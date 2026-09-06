@@ -152,3 +152,8 @@ decisions:
     decision: demote
     reason: "a negotiation tactic; deliberately not automated"
     decided: 2026-09-05
+  - slug: lesson_session_isolation_worktree
+    decision: gate
+    mechanism: scripts/dimension-awareness-hook.py
+    reason: "the session half is live (session-isolation-hook forks a newcomer into its own worktree; the dimension gate denies broad staging on a shared tree while other dimensions are live); the subagent half (a builder running git checkout/restore on files another builder owns) has no detector yet: candidate is a PreToolUse deny on git checkout -- / restore / stash / reset --hard against paths dirty in the tree, or one worktree per writing subagent by protocol"
+    decided: 2026-09-06
