@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-query_connectome.py — Octopus Ventosas (Sucker Neural Interface) v1.0
+query_connectome.py — Octopus Ventosas (Sucker Neural Interface)
 
 Each sucker is an independent sensory organ — it can taste, touch, and grip
 without waiting for the brain. This tool gives the octopus its suckers:

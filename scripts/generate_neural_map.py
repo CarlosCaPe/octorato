@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-generate_neural_map.py — Octopus Connectome Generator v2.0
+generate_neural_map.py — Octopus Connectome Generator
 
 Builds a deep neural connectivity map inspired by octopus neurobiology:
 - Octopuses have ~500M neurons, 2/3 distributed in arms (not central brain)
@@ -479,7 +479,7 @@ def load_hebbian_weights(log_path):
 def generate_connectome():
     """Generate the full deep connectome."""
     t0 = datetime.now(timezone.utc)
-    print("  Octopus Connectome Generator v2.0 — Deep Neural Map")
+    print("  Octopus Connectome Generator — Deep Neural Map")
     print("=" * 60)
     print("   Inspired by octopus neurobiology:")
     print("   500M neurons, 2/3 in arms, RNA editing")
