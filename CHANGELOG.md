@@ -14,8 +14,8 @@ machine-generated growth ledger lives at
 `knowledge/repo-watch/<date>.md` (daily watchlist digests).
 
 ## [Unreleased]
+**v7.0.0 "Nothing Ships Unverified"**
 
-## [2026-09-06]: v7.0.0 "Nothing Ships Unverified"
 ### The contract
 An outward action (mail, chat, PR merge, deploy, release) leaves the brain only with machine receipts that a hook wrote in the harness process and a consumer re-verified against something the model does not own. v4 made an unwired rule a corruption; v6 made every gate prove it blocks; v7 makes a send without receipts impossible at the tool boundary, and states the residual plainly: the transcripts are files under HOME, so an anchor is a bar and a trail, never a proof. The only unforgeable boundary is the harness environment.
 ### Receipts (accumulated, v6.25.0 to v6.26.0)
