@@ -37,8 +37,8 @@ achievable; it is NOT a claim of 100% behavioral enforcement, which is not. The 
 prints enforcement strength per rule so presence-only is never misread as forced.
 
 This rule is self-wired and that is why it closes: Rule #1's own backing mechanism is
-brain_doctor (Registry id R-META-001), and brain_doctor's invocation from the tracked
-`.githooks/pre-push` is itself Registry id R-META-002. The doctor's FIRST action proves its
+brain_doctor (Registry id META.rule-1-wired-or-corrupt), and brain_doctor's invocation from the tracked
+`.githooks/pre-push` is itself Registry id META.pre-push-gate. The doctor's FIRST action proves its
 own gate is installed (core.hooksPath, pre-push present, contains the doctor call, rules.yaml
 loads) before judging any other rule. "Documented but not wired" is therefore an impossible,
 doctor-detected state. Period.
@@ -212,7 +212,7 @@ def assert_registry_complete(repo):
 
   # D4 ORPHAN-MECHANISM   -> every hook in hooks.json claimed by exactly one rule.canonical_name else CORRUPT
   # D5 DRIFT              -> settings.json(local) header sha == sha256(hooks.json); hooks.json == gen_from(rules.yaml)
-  # D6 LIVENESS (honest %) -> proof FIRED_IN_TRACE over .brain/trace.jsonl last N=20 sessions
+  # D6 LIVENESS (honest %) -> proof FIRED_IN_TRACE over ~/.claude/traces/YYYY-MM-DD.jsonl last N=20 sessions
   #                          required=FIRES but observed=PRESENT-only -> STALE: WARN (CORRUPT only if rule.strict)
 
   print(ledger.table())                          # id|category|strength|liveness_req|liveness_obs|verdict
@@ -235,6 +235,8 @@ def assert_registry_complete(repo):
 ## 5. THE RENAMING MAP - rule + concrete examples
 
 **RULE:** every backing script → `<strength-prefix>__<event-or-mode>__<slug>.py`, kebab slug, double-underscore separators, the redundant `-hook/-gate/-check/-stop/-reminder` suffix DROPPED (prefix already carries strength, event segment carries when). snake_case abolished for scripts; library internal module names may keep a snake import alias but the FILE is renamed. The rename map IS `registry/rules.yaml` (each row carries `old_name` during transition); a codemod generated FROM the manifest rewrites hooks.json + settings.json + references via `impact-radius.py` (graph before grep), gated on D4 orphan-reconcile == 0, then `old_name` is deleted so the soup cannot resurrect.
+
+**SUPERSEDED (Phase 3 revised): illustrative target names only; the rename was dropped, see `registry/naming-policy.yaml`.**
 
 | before | after | decode |
 |---|---|---|
@@ -264,11 +266,11 @@ Each is a Registry row with `strength: PRESENCE`, an explicit `source.anchor`, a
 
 | rule | strength | how wired + asserted |
 |---|---|---|
-| no-hallucination / never-invent-data | PRESENCE | ANCHOR_PRESENT + companion `d__stop__source-attribution.py` (Provenance footer present). EFFECTIVE unreachable; never claimed. |
+| no-hallucination / never-invent-data | PRESENCE | ANCHOR_PRESENT + companion `source-attribution-check.py` (Provenance footer present). EFFECTIVE unreachable; never claimed. |
 | connector-not-human / Stance / act-as-role | PRESENCE | ANCHOR_PRESENT + Provenance-footer detector. Gating identity = false-positive machine; presence-asserted only. |
-| tone / machine-register (residue) | PRESENCE | mechanical 6 (em-dash, filler, triads…) are GATE `g__stop__cadence.py` + DETECTOR; the "sounds human" judgment is PRESENCE backed by that detector id. |
+| tone / machine-register (residue) | PRESENCE | mechanical 6 (em-dash, filler, triads…) are GATE `cadence-stop-hook.py` + DETECTOR; the "sounds human" judgment is PRESENCE backed by that detector id. |
 | minimum-viable-change / do-it-right-not-fast | PRESENCE | ANCHOR_PRESENT (+ optional diff-size warn detector). No hook can prove "minimal/root-cause"; the row guarantees it appears in the Ledger and cannot silently vanish. |
-| PromptDefense baseline (role-lock, treat-fetched-untrusted, refuse-injection) | PRESENCE | ANCHOR_PRESENT; secret-echo subset additionally GATE `g__pretool-bash__secrets-grep.py`. The refusal itself is inference-time, presence-asserted. |
+| PromptDefense baseline (role-lock, treat-fetched-untrusted, refuse-injection) | PRESENCE | ANCHOR_PRESENT; secret-echo subset additionally GATE `secrets-grep-guard.py`. The refusal itself is inference-time, presence-asserted. |
 | Best-Tool-First / when-unsure | PRESENCE | ANCHOR_PRESENT, backed by the delegate reflex existing; tool choice stays model-side. |
 
 The point of Rule #1 is not to mechanize judgment. It is to forbid the row from having an empty `mechanism` list. A PRESENCE row whose anchor drifts (operator rewords the header) fails ANCHOR_PRESENT and is caught - which is why anchors are explicit ids in CLAUDE.md, not heading-text heuristics (closes the declarative + ontology brittleness note).
@@ -285,22 +287,24 @@ First 5 concrete commits:
 2. `feat(doctor): D0 bootstrap self-check (core.hooksPath, pre-push sentinel, rules.yaml loads) fail-closed first`
 3. `feat(doctor): D1 schema-validate rules.yaml reusing validate-skill-manifest engine; D3 FILE_EXISTS + IN_HOOKS_JSON per rule`
 4. `feat(doctor): D2 bidirectional no-orphan-prose via explicit CLAUDE.md anchor ids; print Coverage Ledger`
-5. `feat(hooks): add OCTORATO-WIRE-GATE sentinel + brain_doctor invocation to .githooks/pre-push; R-META-001/002 rows`
+5. `feat(hooks): add OCTORATO-WIRE-GATE sentinel + brain_doctor invocation to .githooks/pre-push; META.rule-1-wired-or-corrupt / META.pre-push-gate rows`
 
-**PHASE 1 - complete corpus (shipped):** every CLAUDE.md anchor is backfilled (35/35) with PRESENCE rows for model-behavior, and the corpus was pruned of echoes (83 raw entries counted down to 43 real rules). D2 proves zero un-backed prose. Corpus-coverage holds at an honest 100% and is FAIL-armed: 6 skill-canon rows (registry PRESENCE/DETECTOR) plus a memory-directive class row (backed by the brain-memory-recall hook plus the MEMORY.md index) close the last gap, so any uncovered rule flips the ledger from PASS to FAIL and blocks the push.
+**PHASE 1 - complete corpus (shipped):** every CLAUDE.md anchor is backfilled (35/35 at the time; live count at v7.2.0 in brain_doctor) with PRESENCE rows for model-behavior, and the corpus was pruned of echoes (83 raw entries counted down to 43 real rules). D2 proves zero un-backed prose. Corpus-coverage holds at an honest 100% and is FAIL-armed: 6 skill-canon rows (registry PRESENCE/DETECTOR) plus a memory-directive class row (backed by the brain-memory-recall hook plus the MEMORY.md index) close the last gap, so any uncovered rule flips the ledger from PASS to FAIL and blocks the push.
+
+**PHASE 2 (partial):** OO Mechanism hierarchy shipped in brain_doctor; manifest-generated hooks.json not built, D5 still delegates to `check-hooks-drift.py`.
 
 **PHASE 2 - drift + polymorphic OO:** generate hooks.json + settings.json from the manifest (sha-stamped); add the Mechanism hierarchy + RuleLoader/MechanismFactory; D3 runs Gate/Reflex/Detector/Presence liveness; D5 drift gate. Wiring now propagates across machines. Flip PRESENCE warn→fail-closed once each has anchor + companion.
 
 **PHASE 3 - convention + grandfather (revised; shipped):** the mass rename was reassessed against the real blast radius and dropped. The rename map revealed that core infra (brain_doctor, ai_sync, check-generic, lineage-doctor, install-runners, memory_sync, gate-check) is referenced by stable command name everywhere and must NOT be renamed, and that several hooks are multi-event (trace-hook) or double as CLIs (cadence-lint). Renaming 18+ scripts across the brain is high-risk, cosmetic churn against the very gate just built. Instead Phase 3 ships `registry/naming-policy.yaml` (the canonical scheme + a grandfather list of the 18 existing hook scripts) and a `registry-naming` doctor check: a NEW Claude Code hook script MUST follow `<prefix>__<event>__<slug>.py` and its prefix must agree with its declared kind (name-reparse assert); existing scripts are grandfathered and exempt. Future consistency, zero churn, zero risk. The physical rename of grandfathered scripts can still happen later, one codemod at a time, if ever desired.
 
-**PHASE 4 - liveness + honest ceiling (shipped):** standardize `trace-hook` → `.brain/trace.jsonl`; D6 STALE detection (WARN). Add EFFECTIVE probes for the ~3 cheap deterministic gates (cadence, secrets, qa-merge) only. Publish the Ledger to brain-digest. Stop here; do NOT over-wire model-behavior into fake gates.
+**PHASE 4 - liveness + honest ceiling (shipped):** standardize `trace-hook` → `~/.claude/traces/YYYY-MM-DD.jsonl`; D6 STALE detection (WARN). Add EFFECTIVE probes for the ~3 cheap deterministic gates (cadence, secrets, qa-merge) only. Publish the Ledger to brain-digest. Stop here; do NOT over-wire model-behavior into fake gates.
 
 ---
 
 ## 8. SELF-BOOTSTRAP + TOP RISKS
 
 **Who wires Rule #1 and the doctor (the chicken-egg, closed by a fixed point):**
-Rule #1's mechanism IS brain_doctor (Registry `R-META-001`). brain_doctor is invoked by `.githooks/pre-push` (Registry `R-META-002`). The irreducible axiom is a tiny, eyeball-auditable 3-line stanza in pre-push marked `# OCTORATO-WIRE-GATE` that (a) checks brain_doctor exists+executable, (b) runs it, (c) exits non-zero on failure. Mutual mirror: pre-push runs the doctor; the doctor's D0 greps pre-push for the sentinel. Neither alone is trusted; together closed. If either is deleted, the next `ai-pull` (which ends with brain_doctor) on any machine reports CORRUPT. The keystone cannot quietly un-wire itself.
+Rule #1's mechanism IS brain_doctor (Registry `META.rule-1-wired-or-corrupt`). brain_doctor is invoked by `.githooks/pre-push` (Registry `META.pre-push-gate`). The irreducible axiom is a tiny, eyeball-auditable 3-line stanza in pre-push marked `# OCTORATO-WIRE-GATE` that (a) checks brain_doctor exists+executable, (b) runs it, (c) exits non-zero on failure. Mutual mirror: pre-push runs the doctor; the doctor's D0 greps pre-push for the sentinel. Neither alone is trusted; together closed. If either is deleted, the next `ai-pull` (which ends with brain_doctor) on any machine reports CORRUPT. The keystone cannot quietly un-wire itself.
 
 **Real reachable percentage (honest):** 100% COVERAGE is reachable and is the correct healthy target - every rule carries a registered, live-asserted mechanism. Behavioral ENFORCEMENT is NOT 100% and the Ledger says so per rule: GATE+DETECTOR rules are mechanically real; REFLEX rules are capped at FIRES (injected, obedience unproven); PRESENCE rules are covered, not forced; EFFECTIVE-proven is only the ~3 cheap gates. A Ledger reading "Coverage 100% / Effective ~20%" is the CORRECT state, documented in the header so stakeholders never misread it.
 
@@ -316,6 +320,8 @@ Rule #1's mechanism IS brain_doctor (Registry `R-META-001`). brain_doctor is inv
 ---
 
 ## 9. v6 - FROM COVERAGE TO ENFORCEMENT (SHIPPED)
+
+**Superseded by v7: waivers retired, floor 100% forced; see `v7-nothing-ships-unverified.md`.** The numbers below are the v6 record, kept as history.
 
 Through v5.x the top tier was LABELED, not DEMONSTRATED. `brain_doctor.py:671` admitted it: the `Gate` subclass was an empty extension point and the general `verify()` path was disk-presence only. A rule marked GATE whose hook logic had rotted still printed GATE. v6 kills that gap and turns risk 1 above from a prescription into a shipped mechanism.
 
@@ -335,7 +341,7 @@ FORCED = fail-closed AND, when it carries a `--selftest` proof, that selftest pa
 
 **What v6 does NOT claim (the honesty proof).** The STAYS-REFLEX / STAYS-PRESENCE list from the triage stays un-forced and the ledger says so. No gate was built on 4D-protocol obedience, delegate verdicts (platform-blocked: a PreToolUse deny denies the delegate itself), tool choice (curl is legitimate for APIs), identity, or mood-inference: gating those would be the false-positive machine §6 forbids. 100% COVERAGE with a 70% enforcement FLOOR, both printed, is the correct healthy state.
 
-**Deferred to a follow-up (telemetry week first).** D1 injection-scan (fetched content that DISCUSSES injection would false-positive), D2 the machine-register greeting/closing detector, and D5 the no-pause proposal detector all carry real false-positive risk and are held behind one week of warn-mode telemetry before any promotion.
+**Deferred to a follow-up (telemetry week first).** D1 injection-scan (fetched content that DISCUSSES injection would false-positive) and D2 the machine-register greeting/closing detector carry real false-positive risk and stay deferred behind warn-mode telemetry. D5 the no-pause proposal detector SHIPPED as a detector, not a gate: `scripts/no-pause-suggestion.py` runs at Stop in `hooks.json` under rule `COMMS.no-pause`, recorded as detector by design (`v7_decision`) because a hard block measured false positives on legitimate clarifying questions.
 
 ---
 
@@ -343,4 +349,4 @@ FORCED = fail-closed AND, when it carries a `--selftest` proof, that selftest pa
 
 💡 Unlock-suggestion: none - every artifact above is buildable on the operator's machine with existing tools (validate-skill-manifest engine, impact-radius, merge-hooks, .githooks/pre-push all verified present).
 
-☠ Prune-suggestion: on Phase 3 completion, `check-hooks-drift.py` and `check-stats-drift.py` become dead cells (their manual drift role is subsumed by D5); flag for prune then, not now.
+☠ Prune-suggestion: `check-hooks-drift.py` and `check-stats-drift.py` are not prunable while D5 delegates to `check-hooks-drift.py`. Once D5 generates hooks.json from the manifest itself, both become dead cells; flag for prune then, not now.
