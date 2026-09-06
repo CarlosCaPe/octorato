@@ -13,13 +13,30 @@ name: Brain Version Bump
 #
 # Loop-safe: this job pushes a TAG, and a tag push does not trigger an
 # `on: push: branches` workflow, so it never re-triggers itself.
+#
+# CHANGELOG self-heal (2026-09-06): master is protected (required PRs, required
+# checks, enforce_admins), so no job can commit the CHANGELOG entry directly and
+# every feat/fix merge left the tag one step ahead of CHANGELOG.md until a human
+# opened a docs PR. Now the same run that cuts the tag runs changelog-sync
+# --apply and, when it changed something, pushes a bot branch (with the
+# checkout's GITHUB_TOKEN credentials, contents: write) and opens a PR with
+# auto-merge armed through OCTORATO_PAT: the pull_request event is produced by
+# that API call, and a PAT-made PR triggers the required checks, which a
+# GITHUB_TOKEN-made one would not. When that PR merges, this job runs again,
+# sees changelog-only commits (brain-version-bump's guard), cuts no tag, and
+# changelog-sync finds nothing missing: the loop closes in one beat. Before
+# opening a new heal PR the step retires older bot/changelog-* branches (a
+# merged one is not deleted by `gh pr merge --auto`, and an open one from a
+# previous tag would only conflict, since the new heal carries every missing
+# entry). The heal is docs-only and machine-generated, so it merges on the
+# repo's required checks alone (the QA-receipt contract governs authored PRs).
 
 on:
   push:
     branches: [master]
 
 permissions:
-  contents: write   # push the annotated tag + create the Release
+  contents: write   # push the annotated tag + create the Release; push the heal branch
 
 concurrency:
   group: brain-version-bump
@@ -42,3 +59,47 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 scripts/brain-version-bump.py --apply --push
+
+      - name: Heal CHANGELOG.md through a bot PR (auto-merge)
+        env:
+          GH_TOKEN: ${{ secrets.OCTORATO_PAT }}
+        run: |
+          set -euo pipefail
+          git fetch --tags --quiet
+          python3 scripts/changelog-sync.py --apply
+          if git diff --quiet -- CHANGELOG.md; then
+            echo "changelog: reconciled, nothing to heal"
+            exit 0
+          fi
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::warning::OCTORATO_PAT missing: CHANGELOG needs a manual docs PR (python3 scripts/changelog-sync.py --apply)"
+            exit 0
+          fi
+          tag="$(git tag --list 'v[0-9]*' --sort=-v:refname | head -1)"
+          branch="bot/changelog-${tag}"
+          # Retire earlier heal branches: merged ones linger (auto-merge never
+          # deletes the head), open ones from an older tag would only conflict
+          # with this heal, which carries every missing entry.
+          for old in $(git ls-remote --heads origin 'bot/changelog-*' | awk '{print $2}' | sed 's|refs/heads/||'); do
+            [ "$old" = "$branch" ] && continue
+            state="$(gh pr view --repo "$GITHUB_REPOSITORY" "$old" --json state -q .state 2>/dev/null || echo NONE)"
+            if [ "$state" = "OPEN" ]; then
+              gh pr close --repo "$GITHUB_REPOSITORY" "$old" --comment "Superseded by the heal for ${tag}." || true
+            fi
+            git push -q origin --delete "$old" || true
+          done
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            echo "changelog: heal branch $branch already exists, leaving it to its PR"
+            exit 0
+          fi
+          git checkout -q -b "$branch"
+          git add CHANGELOG.md
+          git commit -q -m "docs(changelog): backfill ${tag}" \
+            -m "Written by version-bump.yml right after cutting ${tag}: changelog-sync --apply promoted the Unreleased body or the Release notes into the dated entry. Docs-only; the bump's changelog-only guard cuts no new tag on merge."
+          git push -q -u origin "$branch"
+          gh pr create --repo "$GITHUB_REPOSITORY" --base master --head "$branch" \
+            --title "docs(changelog): backfill ${tag}" \
+            --body "Automated by version-bump.yml after cutting ${tag}. Docs-only: the bump's changelog-only guard cuts no new tag when this merges, so release-drift converges and the loop closes." \
+            || { echo "::warning::gh pr create failed (PAT lacks pull-requests:write?); branch $branch pushed, open the PR by hand"; exit 0; }
+          gh pr merge --repo "$GITHUB_REPOSITORY" "$branch" --squash --auto --delete-branch \
+            || echo "::warning::auto-merge could not be armed on $branch; merge it by hand once checks pass"
