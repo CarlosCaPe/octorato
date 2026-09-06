@@ -1642,23 +1642,35 @@ def check_stale_merged_branches(fix: bool) -> Result:
     FAIL: it needs the network and the gh CLI, and a lag of a few days is
     normal."""
     key = "stale-merged-branches"
-    from datetime import date as _date, datetime as _dt
-    try:
-        cp = run(["gh", "pr", "list", "--state", "all", "--limit", "300",
+    from datetime import date as _date
+    def _prs(state: str, limit: str) -> list:
+        cp = run(["gh", "pr", "list", "--state", state, "--limit", limit,
                   "--json", "headRefName,state,mergedAt"], cwd=CLAUDE_DIR)
         if cp.returncode != 0:
-            return Result(key, WARN, "gh unavailable, remote branch audit skipped", "")
-        prs = json.loads(cp.stdout or "[]")
+            raise RuntimeError("gh unavailable")
+        data = json.loads(cp.stdout or "[]")
+        if not isinstance(data, list):
+            raise RuntimeError("gh returned no list")
+        return [p for p in data if isinstance(p, dict)]
+    try:
+        # OPEN queried on its own: the merged list is capped, and an old open
+        # PR falling off a capped "all" list would be flagged for deletion.
+        open_heads = {p.get("headRefName") for p in _prs("open", "200")}
+        merged = _prs("merged", "1000")
     except Exception as e:
         return Result(key, WARN, f"remote branch audit skipped: {e}", "")
-    merged_on = {}
-    open_heads = set()
-    for p in prs:
+    merged_on, unreadable = {}, []
+    for p in merged:
         h = p.get("headRefName")
-        if p.get("state") == "MERGED" and p.get("mergedAt"):
-            merged_on[h] = p["mergedAt"][:10]
-        elif p.get("state") == "OPEN":
-            open_heads.add(h)
+        d = str(p.get("mergedAt") or "")[:10]
+        try:
+            _date.fromisoformat(d)
+        except ValueError:
+            unreadable.append(h)
+            continue
+        # a head merged more than once keeps its NEWEST merge date
+        if h and d > merged_on.get(h, ""):
+            merged_on[h] = d
     cp = git("ls-remote", "--heads", "origin")
     if cp.returncode != 0:
         return Result(key, WARN, "origin unreachable, remote branch audit skipped", "")
@@ -1671,12 +1683,10 @@ def check_stale_merged_branches(fix: bool) -> Result:
             continue
         m = merged_on.get(h)
         if m:
-            try:
-                age = (_date.today() - _date.fromisoformat(m)).days
-            except ValueError:
-                age = 0
-            if age >= 7:
+            if (_date.today() - _date.fromisoformat(m)).days >= 7:
                 stale.append(f"{h} (merged {m})")
+        elif h in unreadable:
+            stale.append(f"{h} (merged, date unreadable)")
         else:
             stale.append(f"{h} (no PR)")
     if stale:
