@@ -14,6 +14,8 @@ machine-generated growth ledger lives at
 `knowledge/repo-watch/<date>.md` (daily watchlist digests).
 
 ## [Unreleased]
+
+## [2026-09-06]: v7.0.0
 **v7.0.0 "Nothing Ships Unverified"**
 
 ### The contract
