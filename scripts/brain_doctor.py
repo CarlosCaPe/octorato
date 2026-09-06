@@ -1634,6 +1634,59 @@ def check_fixture_seeds_tracked(fix: bool) -> Result:
     derived = len(untracked)
     return Result(key, PASS, f"{len(tracked)} fixture file(s) tracked; {derived} derived artifact(s) ignored by fixture-scoped rules")
 
+def check_stale_merged_branches(fix: bool) -> Result:
+    """Housekeeping: a remote branch whose PR is MERGED (or a branch with no
+    PR at all, older than a week) is dead tissue on the public repo. Found
+    2026-09-06: 24 such branches, one of them a stray `main` pushed by a
+    hook-poisoned selftest. Read-only; prints the delete command. WARN, never
+    FAIL: it needs the network and the gh CLI, and a lag of a few days is
+    normal."""
+    key = "stale-merged-branches"
+    from datetime import date as _date, datetime as _dt
+    try:
+        cp = run(["gh", "pr", "list", "--state", "all", "--limit", "300",
+                  "--json", "headRefName,state,mergedAt"], cwd=CLAUDE_DIR)
+        if cp.returncode != 0:
+            return Result(key, WARN, "gh unavailable, remote branch audit skipped", "")
+        prs = json.loads(cp.stdout or "[]")
+    except Exception as e:
+        return Result(key, WARN, f"remote branch audit skipped: {e}", "")
+    merged_on = {}
+    open_heads = set()
+    for p in prs:
+        h = p.get("headRefName")
+        if p.get("state") == "MERGED" and p.get("mergedAt"):
+            merged_on[h] = p["mergedAt"][:10]
+        elif p.get("state") == "OPEN":
+            open_heads.add(h)
+    cp = git("ls-remote", "--heads", "origin")
+    if cp.returncode != 0:
+        return Result(key, WARN, "origin unreachable, remote branch audit skipped", "")
+    heads = [ln.split("refs/heads/", 1)[1] for ln in cp.stdout.splitlines() if "refs/heads/" in ln]
+    stale = []
+    for h in heads:
+        if h == "master":
+            continue
+        if h in open_heads:
+            continue
+        m = merged_on.get(h)
+        if m:
+            try:
+                age = (_date.today() - _date.fromisoformat(m)).days
+            except ValueError:
+                age = 0
+            if age >= 7:
+                stale.append(f"{h} (merged {m})")
+        else:
+            stale.append(f"{h} (no PR)")
+    if stale:
+        refspecs = " ".join(":refs/heads/" + x.split(" ")[0] for x in stale)
+        return Result(key, WARN, f"{len(stale)} remote branch(es) with a merged PR older than 7 days or no PR: "
+                      + ", ".join(stale[:6]) + (" ..." if len(stale) > 6 else ""),
+                      f"git push origin {refspecs}")
+    return Result(key, PASS, f"{len(heads)} remote branch(es): every one is master or has an open PR (or merged under 7 days)")
+
+
 CHECKS = [
     ("repo-identity", check_repo_identity),
     ("rule-1-registry", check_registry),
@@ -1662,6 +1715,7 @@ CHECKS = [
     ("finops-enforcement", check_finops_enforcement),
     ("lineage-sound", check_lineage_sound),
     ("release-drift", check_release_drift),
+    ("stale-merged-branches", check_stale_merged_branches),
     ("capability-manifest-fresh", check_capability_manifest),
 ]
 
