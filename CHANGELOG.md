@@ -15,6 +15,12 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-09-06]: v7.1.0
+### Features
+- feat(doctor): stale-merged-branches audit (#266)
+### Other
+- docs(changelog): promote the v7.0.0 notes from Unreleased to the dated entry (#265)
+
 ## [2026-09-06]: v7.0.0
 **v7.0.0 "Nothing Ships Unverified"**
 
