@@ -15,6 +15,10 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-09-06]: v7.2.0
+- feat(ci): version-bump heals CHANGELOG.md through an auto-merged bot PR (#268)
+- docs(changelog): backfill v7.1.0 (#267)
+
 ## [2026-09-06]: v7.1.0
 ### Features
 - feat(doctor): stale-merged-branches audit (#266)
