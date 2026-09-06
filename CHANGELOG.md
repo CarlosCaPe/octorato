@@ -14,6 +14,26 @@ machine-generated growth ledger lives at
 `knowledge/repo-watch/<date>.md` (daily watchlist digests).
 
 ## [Unreleased]
+**v7.0.0 "Nothing Ships Unverified"**
+
+### The contract
+An outward action (mail, chat, PR merge, deploy, release) leaves the brain only with machine receipts that a hook wrote in the harness process and a consumer re-verified against something the model does not own. v4 made an unwired rule a corruption; v6 made every gate prove it blocks; v7 makes a send without receipts impossible at the tool boundary, and states the residual plainly: the transcripts are files under HOME, so an anchor is a bar and a trail, never a proof. The only unforgeable boundary is the harness environment.
+### Receipts (accumulated, v6.25.0 to v6.26.0)
+- Receipt ledger (`scripts/receipt_ledger.py`, `~/.claude/.cache/receipts/`): seek receipts written by `r__posttool__receipt-seek.py` with the harness `tool_use_id`, honored only when that id names a real seek tool_use in the current turn; gate receipts written by `brain_doctor` on a clean tree, keyed on the git tree hash of `scripts/`, `registry/` and `hooks.json`; QA receipts written by `r__subagent-stop__qa-receipt.py` from a subagent's `QA-VERDICT` / `QA-SCOPE`, honored only from this session's subagent transcript with harness fields, last verdict, whole-token scope, QA persona.
+- One outward-send gate (`g__pretool-mcp__outward-send.py`, PreToolUse on mail send/reply/forward, WhatsApp send, and Bash sends found by argv token): denies without a gate receipt, on an absence claim without a seek, on an unsourced attribute in a consent context, on a first-person promise, and on a Re:/Fwd: mail send without its thread. 35 violation and 14 benign fixtures, one per bypass five adversarial QA cycles demonstrated.
+- `qa-merge-gate` requires a QA receipt for the PR on top of the operator's `OCTO_MERGE_APPROVE`; `.githooks/pre-push` runs `brain_doctor --gate-receipt`, so a push and a receipt are one event.
+### Floor and triage
+- Enforcement floor FORCED 27/27 gateable (100%), waivers 0: five formerly waived rules recorded as detector or reflex by design (`v7_decision`), `FLOW.budget-halt` promoted to fail-closed with path-scoped caps and a `spend_json` source; `waiver-age` voids any waiver undated or older than 90 days.
+- `incident-fixture-coverage`: a memory naming a brain mechanism must resolve to a live script and, for a gate, a fixture pair. `fixture-seeds-tracked`: a fixture file git would not ship fails the doctor. `reflex-triage`: every recurrent lesson carries a decision in `registry/reflex-triage.yaml` (10 gate, 21 demote), zero pending.
+- Hardening found on the way: git exports `GIT_DIR`/`GIT_INDEX_FILE` to hooks, so every doctor and selftest subprocess now scrubs them; `git update-index --assume-unchanged` no longer hides a gate edit.
+### Release criterion (printed by brain_doctor at this tag)
+Floor 100%, waived 0, 29 gate selftests live, incident-fixture coverage 100%, reflex-triage 0 pending, 41 checks passed.
+
+## [2026-09-06]: v6.26.0
+### Features
+- feat(v7): reflex-triage decisions for every recurrent lesson (phase 5 to zero) (#263)
+### Other
+- docs(changelog): backfill v6.25.0 and v6.25.1 (#262)
 
 ## [2026-09-05]: v6.25.1
 ### Fixes

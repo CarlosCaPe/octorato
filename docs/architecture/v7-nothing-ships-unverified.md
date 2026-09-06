@@ -83,7 +83,7 @@ QA cycles 4 and 5 (e17294a, 900e897): PASS. Three precision gaps closed with fix
 
 Headline caveat on the floor: `FLOW.budget-halt` counts as FORCED because its mechanism denies when an arm opts into `hard_stop`; on a machine where every arm is set to `alert`, it cannot halt by configuration. The floor measures mechanisms, not configurations.
 
-Phase 6 (the major cut) waits for `reflex-triage` to reach zero pending decisions.
+Phase 6 (2026-09-06): `reflex-triage` reached zero pending with #263 (10 gate, 21 demote). The doctor prints the release criterion in full (floor 100%, waived 0, 29 selftests live, incident-fixture coverage 100%, triage 0 pending, 41 checks passed), and v7.0.0 is cut with the `Octorato-Major:` trailer.
 
 ## Decisions recorded
 
