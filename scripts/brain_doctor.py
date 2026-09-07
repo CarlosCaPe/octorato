@@ -989,6 +989,9 @@ def check_corpus_coverage(fix: bool) -> Result:
                       "fix registry/rules.yaml first")
     rules = reg.get("rules", []) if isinstance(reg, dict) else []
     rule_files = {(r.get("source") or {}).get("file", "") for r in rules}
+    # A rule may declare the memory directives its mechanism enforces (covers_memory);
+    # those count as covered by the rule itself, not only by the recall reflex.
+    rule_files |= {m for r in rules for m in (r.get("covers_memory") or [])}
     rule_anchors = [(r.get("source") or {}).get("anchor", "") for r in rules
                     if (r.get("source") or {}).get("anchor")]
 

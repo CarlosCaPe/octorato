@@ -31,6 +31,11 @@ WHAT IT REQUIRES (docs/architecture/v7-nothing-ships-unverified.md)
      first-person promise: those are already blocks at Stop; here they block
      before the send, reusing the exact detectors of the Stop gates so the
      vocabulary lives in one place per class.
+  4. Explicit send ask (operator directive 2026-08-14: deliver by default,
+     transmit only the message that was asked for). A non-negated send verb
+     must stand in the operator's own prompt for the turn, outside quotes and
+     code spans; `send-ok` is the standing hatch. Checked last, so every
+     earlier deny keeps its own name.
 
 The Stop gates are not replaced. They still catch drafts and prose; this gate
 is the choke point for what actually leaves, and it imports their detectors so
@@ -95,6 +100,28 @@ _QUOTE_SPAN = re.compile(r"\"[^\"\n]*\"|(?<!\w)'[^'\n]*'(?!\w)|`[^`\n]*`|«[^»]
 
 def hatches(prompt: str) -> set:
     return set(_HATCH.findall(_QUOTE_SPAN.sub(" ", prompt or "")))
+
+
+# 4. A send ask is an imperative or infinitive send verb (ES with optional clitic,
+# EN bare) in the operator's prompt. Participles and nouns (enviado, publicación)
+# do not match; subjunctives after a negation (no lo mandes) do not match either.
+_SEND_ASK = re.compile(
+    r"(?<![\w-])(?:(?:m[aá]nda|m[aá]nde|mandar|env[ií]a|env[ií]e|enviar|resp[oó]nde|responda|responder"
+    r"|cont[eé]sta|conteste|contestar|reenv[ií]a|reenv[ií]e|reenviar|publ[ií]ca|publique|publicar"
+    r"|despliega|despliegue|desplegar|lanza|lance|lanzar)(?:lo|la|los|las|le|les|me|nos|se|selo|sela|selos|selas)?"
+    r"|send|reply|respond|forward|publish|deploy|release|ship)(?![\w-])", re.IGNORECASE)
+_NEGATED = re.compile(r"\b(?:no|nunca|jam[aá]s|todav[ií]a no|a[uú]n no|sin|don'?t|do not|never|not|without)"
+                      r"\s+(?:\w+\s+){0,2}$", re.IGNORECASE)
+
+
+def explicit_send_ask(prompt: str) -> bool:
+    """True when the operator's prompt for the turn asks to send, non-negated."""
+    text = _QUOTE_SPAN.sub(" ", prompt or "")
+    for m in _SEND_ASK.finditer(text):
+        if _NEGATED.search(text[max(0, m.start() - 40):m.start()]):
+            continue
+        return True
+    return False
 
 
 def _load(name: str):
@@ -194,7 +221,8 @@ def check(data: dict) -> str:
     # Stop gates treat them; a hatch token counts only in the operator's own
     # prompt for this turn, never inside the body (that would ship to the
     # recipient and be self-serve).
-    ok = hatches(receipt_ledger.turn_last_human_text(transcript)) if transcript else set()
+    human = receipt_ledger.turn_last_human_text(transcript) if transcript else ""
+    ok = hatches(human)
     if "send-ok" in ok:
         return ""
     body = "\n".join(ln for ln in "\n".join(found).splitlines()
@@ -246,6 +274,15 @@ def check(data: dict) -> str:
         return (f"✍ PROMESA en el envío ({listing}): lo que sale no lleva compromisos a "
                 f"futuro en primera persona; ejecuta o refuta primero y manda el recibo. "
                 f"'draft-promise-ok' en la línea lo exime.")
+
+    # 4. Explicit send ask: operator directive 2026-08-14, deliver by default and
+    #    transmit only the message that was asked for, per message. send-ok is the
+    #    standing hatch (returned above). Last, so earlier denies keep their name.
+    if not explicit_send_ask(human):
+        return ("📬 ENVÍO SIN PEDIDO: el mensaje del operador en este turno no pide mandar "
+                "nada (directiva 2026-08-14: entregar paste-ready y transmitir solo a pedido "
+                "explícito, por mensaje). Entrega el texto en el chat y espera el 'mándalo'; "
+                "'send-ok' en SU mensaje lo exime.")
     return ""
 
 
