@@ -107,10 +107,10 @@ class TestArmDate(DenyCoverageCase):
     def test_a_refusal_from_before_the_hook_existed_is_not_counted(self):
         """Refusals that predate the reflex are nobody's fault. Counting them would
         make every brain fail its first doctor run after wiring the hook."""
-        armed, seen, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        armed, seen, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         self.assertIsNotNone(armed)
         self.write_refusal("automode-blocked", armed - 3600)
-        _, seen_after, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        _, seen_after, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         self.assertEqual(seen_after, 0)
 
     def test_an_old_record_in_a_live_file_is_still_excluded(self):
@@ -120,14 +120,14 @@ class TestArmDate(DenyCoverageCase):
         long-running session file gets its mtime bumped by every new line, so a
         pre-arm record inside a still-active transcript is excluded only by the
         record's own timestamp (QA cycle 3)."""
-        armed, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        armed, _, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         self.write_refusal("automode-blocked", armed - 3600)
         # the file is LIVE: a later line just landed, so its mtime is now
         path = self.harness / "projects" / "slug" / "sess" / "transcript.jsonl"
         os.utime(path, None)
         self.assertGreater(path.stat().st_mtime, armed,
                            "the mtime prefilter must NOT be what excludes it")
-        _, seen, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        _, seen, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         self.assertEqual(seen, 0, "the record's own timestamp is what excludes it")
 
     def test_the_window_is_clamped_to_the_cutoff(self):
@@ -136,10 +136,10 @@ class TestArmDate(DenyCoverageCase):
         228 tests stayed green. Without it the harness window widens to the hook's
         commit date while the journal window stays seven days, so the two sides count
         over different spans and the failure is manufactured out of the mismatch."""
-        armed_early, _, _ = doctor._harness_refusals_since_hook(0)
+        armed_early, _, _, _ = doctor._harness_refusals_since_hook(0)
         self.assertIsNotNone(armed_early)
         self.assertLess(armed_early, 4_000_000_000.0)
-        armed_clamped, _, _ = doctor._harness_refusals_since_hook(4_000_000_000.0)
+        armed_clamped, _, _, _ = doctor._harness_refusals_since_hook(4_000_000_000.0)
         self.assertEqual(armed_clamped, 4_000_000_000.0,
                          "the cutoff wins whenever it is later than the add commit")
 
@@ -175,15 +175,46 @@ class TestArmDate(DenyCoverageCase):
         self.assertNotEqual(out[0], out[1],
                             "the fixture must make the two dates diverge, or a test "
                             "of `earlier of the two` cannot fail")
-        armed, _, _ = doctor._harness_refusals_since_hook(0)
+        armed, _, _, _ = doctor._harness_refusals_since_hook(0)
         self.assertEqual(armed, min(float(out[0]), float(out[1])),
                          "the EARLIER date wins, which errs wide")
         self.assertNotEqual(armed, max(float(out[0]), float(out[1])))
 
+    def test_the_earlier_date_wins_in_the_other_direction_too(self):
+        """The sibling above only ever produces %at < %ct, so `min` and "take %at"
+        are the same function on its fixture and a mutation to either survives it.
+        A rebase makes the author date the older one; a cherry-pick from a host whose
+        clock runs fast makes the COMMITTER date the older one, and only that second
+        shape can tell the two apart. QA cycle 6 measured the gap: the property the
+        docstring claims was pinned in one direction and asserted in two."""
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        env["GIT_AUTHOR_DATE"] = "2030-01-01T00:00:00Z"
+        env["GIT_COMMITTER_DATE"] = "2020-01-01T00:00:00Z"
+        hook = self.brain / "scripts" / "r__permission-denied__journal.py"
+        hook.write_text("# re-added by a cherry-pick from a fast clock\n", encoding="utf-8")
+        for args in (["rm", "-q", "--cached", "scripts/r__permission-denied__journal.py"],
+                     ["commit", "-q", "-m", "drop it"],
+                     ["add", "scripts/r__permission-denied__journal.py"],
+                     ["commit", "-q", "-m", "re-add it, committer date older"]):
+            subprocess.run(["git", "-C", str(self.brain)] + args, check=True,
+                           capture_output=True, env=env)
+        out = subprocess.run(["git", "log", "--diff-filter=A", "--follow", "-1",
+                              "--format=%at %ct", "--",
+                              "scripts/r__permission-denied__journal.py"],
+                             cwd=str(self.brain), capture_output=True, text=True,
+                             env=env).stdout.split()
+        self.assertEqual(len(out), 2)
+        self.assertGreater(float(out[0]), float(out[1]),
+                           "this fixture is the MIRROR of the sibling: %ct must be "
+                           "the earlier one here, or the pair proves nothing new")
+        armed, _, _, _ = doctor._harness_refusals_since_hook(0)
+        self.assertEqual(armed, float(out[1]), "the committer date is the earlier one")
+        self.assertNotEqual(armed, float(out[0]))
+
     def test_a_refusal_after_the_hook_went_live_is_counted(self):
-        armed, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        armed, _, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         self.write_refusal("automode-blocked", armed + 60)
-        _, seen, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        _, seen, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         self.assertEqual(seen, 1)
 
     def test_a_brain_with_no_such_commit_reports_no_window(self):
@@ -196,7 +227,7 @@ class TestArmDate(DenyCoverageCase):
         (other / "scripts").mkdir(parents=True)
         subprocess.run(["git", "-C", str(other), "init", "-q"], check=True, capture_output=True)
         doctor.CLAUDE_DIR = other
-        armed, seen, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        armed, seen, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         self.assertIsNone(armed)
         self.assertEqual(seen, 0)
 
@@ -210,7 +241,7 @@ class TestArmDate(DenyCoverageCase):
         subprocess.run(["git", "clone", "-q", "--depth", "1", "file://" + str(self.brain),
                         str(shallow)], check=True, capture_output=True)
         doctor.CLAUDE_DIR = shallow
-        armed, seen, other = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        armed, seen, other, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         self.assertIsNone(armed, "a grafted history cannot say when the hook arrived")
         self.assertEqual((seen, other), (0, 0))
 
@@ -219,7 +250,7 @@ class TestArmDate(DenyCoverageCase):
         file, so the day anyone fixes a typo in the hook the window would collapse to
         that moment and the check would go quiet for good. The question is when the
         reflex could FIRST have fired."""
-        armed_before, _, _ = doctor._harness_refusals_since_hook(0)
+        armed_before, _, _, _ = doctor._harness_refusals_since_hook(0)
         hook = self.brain / "scripts" / "r__permission-denied__journal.py"
         hook.write_text("# a typo fix, months later\n", encoding="utf-8")
         env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
@@ -227,7 +258,7 @@ class TestArmDate(DenyCoverageCase):
         for args in (["add", "-A"], ["commit", "-q", "-m", "fix a typo"]):
             subprocess.run(["git", "-C", str(self.brain)] + args, check=True,
                            capture_output=True, env=env)
-        armed_after, _, _ = doctor._harness_refusals_since_hook(0)
+        armed_after, _, _, _ = doctor._harness_refusals_since_hook(0)
         self.assertEqual(armed_before, armed_after,
                          "maintaining the hook must not silence the check")
 
@@ -239,7 +270,7 @@ class TestTheEvidenceIsWhereTheHarnessWritesIt(DenyCoverageCase):
         at a directory that does not exist, the scan read nothing, and the healthy
         sentence printed anyway. This brain's own rule puts every parallel session in
         a worktree, so that was the normal case."""
-        armed, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        armed, _, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         self.write_refusal("automode-blocked", armed + 60)
         # THE control that makes this test discriminate: the checkout has no
         # projects/ at all, which is the worktree shape, so the old resolution finds
@@ -248,14 +279,14 @@ class TestTheEvidenceIsWhereTheHarnessWritesIt(DenyCoverageCase):
         self.assertFalse((self.brain / "projects").exists(),
                          "the checkout must NOT carry transcripts, or the two "
                          "resolutions cannot be told apart")
-        _, seen, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        _, seen, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         self.assertEqual(seen, 1, "the transcripts are found by the harness home")
 
     def test_no_projects_dir_at_all_claims_nothing(self):
         """Absent evidence is not evidence of absence. Reporting zero here would be
         the check's own disease: a reassuring sentence produced by reading nothing."""
         os.environ["CLAUDE_CONFIG_DIR"] = str(self.tmp / "nowhere")
-        armed, seen, other = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        armed, seen, other, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         self.assertIsNone(armed)
         self.assertEqual((seen, other), (0, 0))
 
@@ -264,14 +295,14 @@ class TestTheEvidenceIsWhereTheHarnessWritesIt(DenyCoverageCase):
         level down, so the silent zero came straight back inside a session folder.
         Same blind spot, same remedy, as the tree walk in the packages work the same
         day: a call that fails without raising is its own class (QA cycle 3)."""
-        armed, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        armed, _, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         self.write_refusal("automode-blocked", armed + 60)
         inner = self.harness / "projects" / "slug"
         os.chmod(inner, 0o000)
         self.addCleanup(lambda: os.chmod(inner, 0o755))
         if os.access(inner, os.R_OK):
             self.skipTest("running as root, EACCES is not enforceable")
-        armed2, seen, other = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        armed2, seen, other, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         self.assertIsNone(armed2, "a subtree it cannot walk is not evidence of zero")
         self.assertEqual((seen, other), (0, 0))
 
@@ -287,20 +318,20 @@ class TestTheEvidenceIsWhereTheHarnessWritesIt(DenyCoverageCase):
         self.addCleanup(lambda: os.chmod(projects, 0o755))
         if os.access(projects, os.R_OK):
             self.skipTest("running as root, EACCES is not enforceable")
-        armed, seen, other = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        armed, seen, other, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         self.assertIsNone(armed, "a directory it cannot list is not evidence of zero")
         self.assertEqual((seen, other), (0, 0))
 
     def test_a_corrupt_transcript_is_skipped_not_crashed(self):
         """The doctor must not crash on a transcript nobody in this brain wrote."""
-        armed, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        armed, _, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         path = self.harness / "projects" / "slug" / "sess" / "junk.jsonl"
         deep = "[" * 200000 + "]" * 200000
         path.write_text('"toolDenialKind automode- not an object"\n'
                         + '{"toolDenialKind": "automode-blocked"\n'
                         + deep + ' toolDenialKind automode-\n', encoding="utf-8")
         os.utime(path, (armed + 60, armed + 60))
-        _, seen, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        _, seen, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         self.assertEqual(seen, 0, "no valid record, and no crash")
 
 
@@ -310,14 +341,14 @@ class TestWhichClassesCount(DenyCoverageCase):
         classifier only. A `permission-rule` or `user-rejected` refusal never reaches
         the hook, so counting it would manufacture a failure out of a refusal the
         reflex was never offered."""
-        armed, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        armed, _, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         for kind in ("permission-rule", "user-rejected"):
             self.write_refusal(kind, armed + 60)
-        _, seen, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        _, seen, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         self.assertEqual(seen, 0, "a refusal the hook never sees is not its failure")
         for kind in ("automode-blocked", "automode-unavailable", "automode-parsing-error"):
             self.write_refusal(kind, armed + 60)
-        _, seen, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        _, seen, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         self.assertEqual(seen, 3)
 
     def test_the_key_is_found_wherever_it_sits(self):
@@ -329,6 +360,59 @@ class TestWhichClassesCount(DenyCoverageCase):
         self.assertFalse(doctor._carries_automode_denial({"toolDenialKind": "permission-rule"}))
         self.assertFalse(doctor._carries_automode_denial({"toolDenialKind": 42}))
         self.assertFalse(doctor._carries_automode_denial([]))
+
+
+class TestEachNoWindowRoadNamesItself(DenyCoverageCase):
+    """Four roads end at "no window" and they are not the same news. A shallow clone
+    is permanent for that checkout, a missing projects dir is a config mismatch, an
+    unreadable subtree is transient or hostile, and a checkout with no such commit is
+    a fresh one. Rendering them as one non-event is the collapse this whole check
+    exists to undo, reappearing one level up (QA cycle 6)."""
+
+    def _why(self):
+        armed, _, _, why = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        # Asserted at COLLECTION time, not after: a road that quietly stopped being a
+        # no-window road would otherwise donate a stale cause to the distinctness
+        # check and the set would still look healthy.
+        self.assertIsNone(armed, "this road must actually reach the no-window return")
+        self.assertTrue(why, "and it must name itself on the way")
+        return why
+
+    def test_the_four_roads_give_four_different_causes(self):
+        causes = {}
+        inner = self.harness / "projects" / "slug"
+        os.chmod(inner, 0o000)
+        if os.access(inner, os.R_OK):
+            os.chmod(inner, 0o755)
+            self.skipTest("running as root, EACCES is not enforceable")
+        try:
+            causes["unreadable subtree"] = self._why()
+        finally:
+            os.chmod(inner, 0o755)
+
+        saved_cfg = os.environ["CLAUDE_CONFIG_DIR"]
+        os.environ["CLAUDE_CONFIG_DIR"] = str(self.tmp / "nowhere")
+        try:
+            causes["no projects dir"] = self._why()
+        finally:
+            os.environ["CLAUDE_CONFIG_DIR"] = saved_cfg
+
+        shallow = self.tmp / "shallow"
+        subprocess.run(["git", "clone", "-q", "--depth", "1",
+                        "file://" + str(self.brain), str(shallow)],
+                       check=True, capture_output=True)
+        doctor.CLAUDE_DIR = shallow
+        causes["shallow clone"] = self._why()
+
+        empty = self.tmp / "empty"
+        (empty / "scripts").mkdir(parents=True)
+        subprocess.run(["git", "-C", str(empty), "init", "-q"], check=True,
+                       capture_output=True)
+        doctor.CLAUDE_DIR = empty
+        causes["no such commit"] = self._why()
+
+        self.assertEqual(len(set(causes.values())), 4,
+                         f"each road has to be distinguishable in the sentence: {causes}")
 
 
 class TestTheFourOutcomesReadDifferently(unittest.TestCase):
@@ -389,7 +473,7 @@ class TestTheFourOutcomesReadDifferently(unittest.TestCase):
         version of this file before the caller was fixed.
         """
         real = doctor._harness_refusals_since_hook
-        doctor._harness_refusals_since_hook = lambda cutoff: (1_700_000_000.0, 0, 7)
+        doctor._harness_refusals_since_hook = lambda cutoff: (1_700_000_000.0, 0, 7, "")
         self.addCleanup(lambda: setattr(doctor, "_harness_refusals_since_hook", real))
         # This class does not move CLAUDE_DIR, so the replay half of the check runs
         # against the real checkout, which is what makes the Result a real one.
@@ -399,6 +483,27 @@ class TestTheFourOutcomesReadDifferently(unittest.TestCase):
         self.assertIn("refusal(s) of other classes", result.message)
         self.assertIn("toolDenialKind", result.hint or "",
                       "the hint has to survive the trip through the caller")
+
+    def test_the_cause_reaches_the_reader_through_the_caller(self):
+        """The literal recurrence of the WARN finding, one word over. The cause of a
+        no-window PASS lived in the HINT for one cycle, and a hint on a PASS is dead
+        twice: `check_kernel_replay` forwards one only for FAIL and WARN, and
+        `render_human` prints one only for FAIL and WARN. So the commit message could
+        claim "the reader still learns which road it was" while no reader could.
+
+        This asserts on the Result a reader actually gets, not on the pure function,
+        and it dies on any version that puts the cause anywhere but the sentence
+        (QA cycle 6)."""
+        road = "a shallow clone, whose grafted history cannot say when the hook arrived"
+        real = doctor._harness_refusals_since_hook
+        doctor._harness_refusals_since_hook = lambda cutoff: (None, 0, 0, road)
+        self.addCleanup(lambda: setattr(doctor, "_harness_refusals_since_hook", real))
+        result = doctor.check_kernel_replay(False)
+        self.assertEqual(result.status, doctor.PASS,
+                         "no window is not a failure, it is an uncompared reflex")
+        self.assertIn(road, result.message,
+                      "a cause the reader cannot see is a cause that does not exist")
+        self.assertIn("NOT compared", result.message)
 
     def test_the_warn_needs_an_empty_journal_not_just_other_classes(self):
         """The other one claimed and missing. Dropping the second half of the

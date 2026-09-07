@@ -1841,8 +1841,9 @@ def check_kernel_replay(fix: bool) -> Result:
                       f"{len(orphans)} deny rule id(s) in 7 days are in no registry row: {named}",
                       "a refusal under a name the registry does not carry is an orphan "
                       "mechanism (RULE #1): register the rule, or fix the id the gate journals")
-    armed_at, harness_denies, other_denies = _harness_refusals_since_hook(cutoff)
-    status, coverage, hint = deny_coverage(denies, armed_at, harness_denies, other_denies)
+    armed_at, harness_denies, other_denies, why = _harness_refusals_since_hook(cutoff)
+    status, coverage, hint = deny_coverage(denies, armed_at, harness_denies,
+                                           other_denies, why)
     if status in (FAIL, WARN):
         # WARN was being collapsed into the PASS line below, which threw away both
         # the status and the hint: the one new verdict this check introduced was
@@ -1856,7 +1857,7 @@ def check_kernel_replay(fix: bool) -> Result:
 
 
 def deny_coverage(denies: int, armed_at: float | None, harness_denies: int,
-                  other_denies: int = 0) -> tuple[str, str, str]:
+                  other_denies: int = 0, why: str = "") -> tuple[str, str, str]:
     """Turn the two counts into (status, sentence, hint). Pure, so it is testable.
 
     Three states used to print one sentence. A journal with no denies is healthy when
@@ -1876,13 +1877,17 @@ def deny_coverage(denies: int, armed_at: float | None, harness_denies: int,
         # reader has to be able to tell "compared and clean" from "never compared".
         # "could not be read" was false on the shallow-clone road, where this returns
         # before touching the transcripts at all: the record was fine, the WINDOW
-        # could not be established. And the cause goes in the hint, which is where
-        # FAIL and WARN already put their specifics, so one status keeps one sentence
-        # while the reader still learns which of the three roads it was (QA cycle 5).
-        return PASS, (f"{base}; the comparison window could not be established, so "
-                      f"the reflex was NOT compared against the harness record"), (
-            "one of: a shallow clone, no commit adding the hook, no projects "
-            "directory, or a subtree under it the walk could not read")
+        # could not be established (QA cycle 5).
+        # The cause rides in the SENTENCE, not the hint. Measured: this branch
+        # returns PASS, the caller forwards a hint only for FAIL and WARN, and the
+        # printer prints one only for FAIL and WARN, so the cause was invisible
+        # twice over while the commit message claimed a reader learned it. One
+        # sentence with a short parenthetical beats four branches of prose and,
+        # unlike the hint, it arrives (QA cycle 6).
+        cause = f" ({why})" if why else ""
+        return PASS, (f"{base}; the comparison window could not be established"
+                      f"{cause}, so the reflex was NOT compared against the "
+                      f"harness record"), ""
     if harness_denies == 0:
         if other_denies and denies == 0:
             # The automode family is the only one this harness was measured to fire
@@ -1911,8 +1916,18 @@ def deny_coverage(denies: int, armed_at: float | None, harness_denies: int,
     return PASS, f"{base}, against {harness_denies} harness refusal(s) in the same window", ""
 
 
-def _harness_refusals_since_hook(cutoff: float) -> tuple[float | None, int, int]:
-    """(arm date, refusals the hook fires for, refusals of every other class).
+def _harness_refusals_since_hook(cutoff: float) -> tuple[float | None, int, int, str]:
+    """(arm date, refusals the hook fires for, every other class, why there is no window).
+
+    The fourth element is not decoration. Four roads reach a None arm date and they
+    are not equally alarming: a shallow clone is permanent for that checkout, a
+    missing projects dir is a config mismatch, an unreadable subtree is transient or
+    hostile. Rendering them as one non-event is a smaller copy of the collapse this
+    check exists to undo, so each road names itself and the caller puts the name in
+    the SENTENCE. It was in the hint for one cycle, where measurement showed it never
+    reached a reader: the caller forwards a hint only for FAIL and WARN, and the
+    printer prints one only for FAIL and WARN, so a PASS hint is invisible twice over
+    (QA cycle 6). A cause the reader cannot see is a cause that does not exist.
 
     The journal's deny count means nothing on its own. Zero reads as healthy whether
     nothing was refused or every refusal was lost, and those are opposite states. The
@@ -1953,7 +1968,7 @@ def _harness_refusals_since_hook(cutoff: float) -> tuple[float | None, int, int]
     # broken brain. No history is a reason to claim nothing, not to claim a date.
     shallow = run(["git", "rev-parse", "--is-shallow-repository"], cwd=CLAUDE_DIR)
     if (shallow.stdout or "").strip() != "false":
-        return None, 0, 0
+        return None, 0, 0, "a shallow clone, whose grafted history cannot say when the hook arrived"
     # --diff-filter=A --follow, not a bare log -1: the bare form answers with the
     # LAST commit that touched the file, so the day anyone fixes a typo in the hook
     # the window collapses to that moment and the check goes quiet for good. The
@@ -1969,7 +1984,7 @@ def _harness_refusals_since_hook(cutoff: float) -> tuple[float | None, int, int]
     line = (cp.stdout or "").strip().splitlines()
     stamps = [s for s in (line[0].split() if line else []) if s.isdigit()]
     if cp.returncode != 0 or not stamps:
-        return None, 0, 0
+        return None, 0, 0, "no commit adding the hook to this checkout"
     armed_at = max(min(float(s) for s in stamps), cutoff)
     projects = harness_projects_dir()
     if projects is None:
@@ -1977,7 +1992,7 @@ def _harness_refusals_since_hook(cutoff: float) -> tuple[float | None, int, int]
         # the check's own disease: a reassuring sentence produced by reading nothing.
         # QA found it doing exactly that from a worktree, which is the NORMAL setup
         # under this brain's own session-isolation rule.
-        return None, 0, 0
+        return None, 0, 0, "no projects directory where the harness writes transcripts"
     seen, other = 0, 0
     transcripts, walk_failed = [], []
     for dirpath, _dirnames, filenames in os.walk(projects, onerror=walk_failed.append):
@@ -1989,7 +2004,7 @@ def _harness_refusals_since_hook(cutoff: float) -> tuple[float | None, int, int]
         # abolish. os.walk with onerror is what makes the failure visible. Same
         # blind spot, same remedy, as the tree walk in the packages work the same
         # day: a call that fails without raising is its own class (QA cycle 3).
-        return None, 0, 0
+        return None, 0, 0, "a subtree under projects that the walk could not read"
     for path in transcripts:
         try:
             if path.stat().st_mtime < armed_at:
@@ -2021,7 +2036,7 @@ def _harness_refusals_since_hook(cutoff: float) -> tuple[float | None, int, int]
                 seen += 1
             else:
                 other += 1
-    return armed_at, seen, other
+    return armed_at, seen, other, ""
 
 
 def harness_projects_dir() -> Path | None:
