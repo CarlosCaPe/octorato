@@ -27,6 +27,10 @@ from pathlib import Path
 BRAIN = Path(__file__).resolve().parent.parent.parent
 SCRIPTS = BRAIN / "scripts"
 FIXTURE = BRAIN / "registry" / "fixtures" / "META.kernel-package"
+# Captured at IMPORT, before any test in this run has moved HOME. A sibling test
+# module that leaves HOME pointing at its own deleted sandbox would otherwise be
+# what a child process here inherits, and the child loses its pip --user imports.
+_REAL_HOME = os.environ.get("HOME")
 
 
 def _load(name: str, path: Path):
@@ -50,7 +54,7 @@ class SandboxCase(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="test-octo-pkg-"))
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
-        self._home = os.environ.get("HOME")
+        self._home = _REAL_HOME or os.environ.get("HOME")
         home = self.tmp / "home"
         self.root = home / ".claude"
         (self.root / "schemas").mkdir(parents=True)
