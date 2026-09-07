@@ -15,6 +15,10 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-09-07]: v7.3.0
+- feat(kernel): phase 1a, process table and hash-chained journal (v8) (#280)
+- docs(changelog): backfill v7.2.5 (#279)
+
 ## [2026-09-07]: v7.2.5
 - docs(architecture): v8 kernel plan, panel-reviewed (process, isolation, journal, package) (#278)
 - docs(changelog): backfill v7.2.4 (#276)
