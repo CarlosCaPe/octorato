@@ -1,6 +1,6 @@
 ---
 name: claude-mem-persistent-memory
-description: "Memoria persistente entre sesiones para agentes de codigo: captura la sesion, la comprime y reinyecta lo relevante despues, con ~75% menos tokens. AGPL 3.0, ojo con el copyleft en entregables comerciales."
+description: "Persistent cross-session memory for coding agents: captures the session, compresses it and re-injects what is relevant later, with ~75% fewer tokens. AGPL 3.0, watch the copyleft in commercial deliverables."
 ---
 
 # claude-mem — Persistent Memory for Claude Code

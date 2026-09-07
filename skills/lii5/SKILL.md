@@ -1,6 +1,6 @@
 ---
 name: lii5
-description: "Explica cualquier documento, concepto o arquitectura en lenguaje adulto y claro, con analogias y sin jerga. Dispara con 'lii5', 'li5', 'explicame como si tuviera 5 anos', 'hazlo simple', 'en cristiano'."
+description: "Explains any document, concept or architecture in plain adult language, with analogies and no jargon. Triggers on 'lii5', 'li5', 'explicame como si tuviera 5 anos', 'hazlo simple', 'en cristiano'."
 ---
 
 # LII5 — Bridge the Technical Gap

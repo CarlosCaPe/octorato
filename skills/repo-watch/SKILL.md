@@ -1,6 +1,6 @@
 ---
 name: repo-watch
-description: "Monitor diario de una watchlist de repos de GitHub: compara el HEAD SHA contra el snapshot previo y escribe un digest en ~/.claude/knowledge/repo-watch/. Usalo para seguir el pulso de competidores sin mirar GitHub todo el dia."
+description: "Daily monitor over a watchlist of GitHub repos: compares the HEAD SHA against the previous snapshot and writes a digest to ~/.claude/knowledge/repo-watch/. Use it to track the pulse of competitors without watching GitHub all day."
 metadata:
   type: brain-routine
   trigger: cron (daily) — register in ~/dataqbs-local-cron/runner.py

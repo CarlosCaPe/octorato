@@ -1,6 +1,6 @@
 ---
 name: chatgpt-apps
-description: "Construye y depura apps del ChatGPT Apps SDK que combinan servidor MCP y UI de widget: definir tools, registrar recursos de UI, puente MCP Apps, metadata, CSP y dominios. Consulta la doc antes de generar codigo."
+description: "Build and debug ChatGPT Apps SDK apps that pair an MCP server with a widget UI: defining tools, registering UI resources, the MCP Apps bridge, metadata, CSP and domains. Check the docs before generating code."
 ---
 
 # ChatGPT Apps

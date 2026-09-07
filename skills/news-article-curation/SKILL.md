@@ -1,6 +1,6 @@
 ---
 name: news-article-curation
-description: "Loop diario sobre feeds RSS de IA (Willison, OpenAI, DeepMind, arXiv cs.AI): filtra los articulos que ensenan algo que el cerebro aun no sabe. Promueve un keeper a skill real con /news-promote."
+description: "Daily loop over AI RSS feeds (Willison, OpenAI, DeepMind, arXiv cs.AI): filters the articles that teach something the brain does not know yet. Promotes a keeper to a real skill with /news-promote."
 metadata:
   type: brain-routine
   schedule: daily 06:45 UTC

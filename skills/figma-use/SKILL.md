@@ -1,6 +1,6 @@
 ---
 name: figma-use
-description: "MANDATORY prerequisite: invocalo ANTES de cada llamada a use_figma, nunca llames esa herramienta sin cargar esto. Aplica a crear o editar nodos, variables, componentes, auto-layout y fills."
+description: "MANDATORY prerequisite: invoke it BEFORE every use_figma call, never call that tool without loading this first. Applies to creating or editing nodes, variables, components, auto-layout and fills."
 ---
 
 # use_figma — Figma Plugin API Skill

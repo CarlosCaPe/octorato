@@ -1,6 +1,6 @@
 ---
 name: client-doc-lint
-description: "Reflejo de QA antes de mandar un entregable generado a cliente: revisa acentos rotos, em-dash, fechas ya pasadas, falta de nota fiscal cuando hay montos, e inventaria cada monto. Correlo antes de decir 'listo para enviar'."
+description: "QA reflex before sending a generated deliverable to a client: checks broken accents, em-dashes, dates already past, a missing tax note when amounts appear, and inventories every amount. Run it before saying 'listo para enviar' (ready to send)."
 metadata:
   type: reference
 ---

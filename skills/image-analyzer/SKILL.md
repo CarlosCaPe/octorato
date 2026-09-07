@@ -1,6 +1,6 @@
 ---
 name: image-analyzer
-description: "DISPARADOR OBLIGATORIO: 'imagen', 'mira la imagen', 'screenshot', 'foto', 'captura', 'que ves', 'look at this', o cuando pegan una imagen en el chat. Analiza, describe y clasifica imagenes con vision GPT-4o."
+description: "MANDATORY TRIGGER: 'imagen', 'mira la imagen', 'screenshot', 'foto', 'captura', 'que ves', 'look at this', or when an image is pasted into the chat. Analyzes, describes and classifies images with GPT-4o vision."
 metadata:
   short-description: Analyze images with GPT-4o vision
 ---

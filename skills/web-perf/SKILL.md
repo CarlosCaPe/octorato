@@ -1,6 +1,6 @@
 ---
 name: web-perf
-description: "Audita rendimiento web con Chrome DevTools MCP: Core Web Vitals (LCP, INP, CLS), recursos que bloquean el render, cadenas de red y saltos de layout. Dispara al pedir auditar, perfilar u optimizar la carga."
+description: "Audits web performance with the Chrome DevTools MCP: Core Web Vitals (LCP, INP, CLS), render-blocking resources, network chains and layout shifts. Triggers when asked to audit, profile or optimize load."
 ---
 
 # Web Performance Audit

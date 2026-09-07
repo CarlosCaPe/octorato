@@ -1,6 +1,6 @@
 ---
 name: querymaster-databricks
-description: "Skill hijo de querymaster para Databricks. PLACEHOLDER: aun no hay workspace ni cluster provisionado, solo la plantilla de conexion con databricks-sql-connector. Se completa cuando exista acceso."
+description: "Child skill of querymaster for Databricks. PLACEHOLDER: no workspace or cluster provisioned yet, only the connection template with databricks-sql-connector. Completed once access exists."
 ---
 
 # QueryMaster — Databricks Engine Skill (Placeholder)

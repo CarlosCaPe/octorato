@@ -1,6 +1,6 @@
 ---
 name: human-cadence
-description: "Las 10 no-reglas que quitan los tics de IA a cualquier texto para que lea como persona: sin em-dash, sin muletillas, sin triadas forzadas. SIEMPRE ACTIVO en todo output: chat, correo, doc, commit, PR. CLAUDE.md trae el resumen, aqui esta el detalle."
+description: "The 10 no-rules that strip AI tells from any text so it reads like a person: no em-dash, no filler words, no forced triads. ALWAYS ON in every output: chat, email, doc, commit, PR. CLAUDE.md carries the summary, the detail is here."
 metadata:
   short-description: "10 anti-AI-tell no-rules for human-sounding, token-lean output"
   type: reference

@@ -1,6 +1,6 @@
 ---
 name: save-transcript
-description: "Rescata el transcript COMPLETO de una grabacion de reunion (Microsoft Stream, SharePoint) a partir de su URL, y entrega un .txt limpio, con procedencia y listo para compartir. Dispara con 'save-transcript', 'baja el transcript', 'saca el transcript de esta junta', 'transcript de <URL>'. Para audio crudo sin transcript ya renderizado usa transcribe."
+description: "Recovers the COMPLETE transcript of a meeting recording (Microsoft Stream, SharePoint) from its URL, and delivers a clean .txt with provenance, ready to share. Triggers on 'save-transcript', 'baja el transcript', 'saca el transcript de esta junta', 'transcript de <URL>'. For raw audio with no rendered transcript use transcribe."
 ---
 
 # save-transcript

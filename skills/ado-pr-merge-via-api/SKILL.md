@@ -1,6 +1,6 @@
 ---
 name: ado-pr-merge-via-api
-description: "Completa merges de Pull Request en Azure DevOps por REST API cuando la UI no sirve o hay que scriptear en lote. Cubre los 403 por threads sin resolver, voto en 'waiting for author' y CI gate rancio."
+description: "Completes Pull Request merges in Azure DevOps through the REST API when the UI fails or you need to script them in bulk. Covers 403s from unresolved threads, votes stuck in 'waiting for author' and stale CI gates."
 ---
 
 # ADO Pull Request Merge via REST API

@@ -1,6 +1,6 @@
 ---
 name: octorato-harmony
-description: "Cuando un mismo valor vale 10 en un lado y 12 en otro, converge ambos a un canonico referenciado en todas partes, nunca bifurcado. Dispara al editar tokens de diseno, estilos o convenciones en varios archivos, y ante 'converge' o 'armoniza'."
+description: "When the same value reads 10 in one place and 12 in another, converge both to a canonical one referenced everywhere, never forked. Triggers when editing design tokens, styles or conventions across several files, and on 'converge' or 'armoniza'."
 metadata:
   type: pattern-reference
   origin: octorato-harmony-canon + innate-harmony-research panels — 2026-05-30

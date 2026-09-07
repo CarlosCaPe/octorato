@@ -1,125 +1,127 @@
 #!/usr/bin/env python3
-"""Vigia de silencio: avisa cuando un cliente escribio y nadie contesto.
+"""Silence sentry: alerts when a client wrote and nobody answered.
 
-Por que existe
---------------
-El 2026-08-02 una clienta mando el dato que se le habia pedido, se le contesto
-con silencio, y se fue a dormir creyendo que habia fallado. El arreglo ya estaba
-aplicado y nadie se lo dijo. La causa no fue el puente, que estaba vivo: fue que
-la unica vigilancia del canal corria DENTRO de una sesion de agente, y una
-sesion no es infraestructura.
+Why it exists
+-------------
+On 2026-08-02 a client sent the data she had been asked for, got silence back,
+and went to bed believing she had failed. The fix was already applied and nobody
+told her. The cause was not the bridge, which was alive: it was that the only
+watch over the channel ran INSIDE an agent session, and a session is not
+infrastructure.
 
-Este script no contesta por nadie. Solo rompe el silencio: si un mensaje de
-cliente lleva mas del umbral sin respuesta, avisa por el canal que le toque
-(ver "UN SOLO ARCHIVO, DOS CASAS"). El operador decide que hacer.
+This script answers for nobody. It only breaks the silence: if a client message
+goes past the threshold with no reply, it alerts through whichever channel
+applies (see "ONE FILE, TWO HOMES"). The operator decides what to do.
 
-DOS SENSORES, UN VIGIA (6-ago). Nacio mirando solo WhatsApp y el correo no tenia
-NINGUNA vigilancia durable: la unica forma de enterarse era que alguien
-preguntara. El 5-ago eso costo dos correos del cliente sin leer durante dos
-dias, porque el unico vigilante del buzon vivia dentro de una sesion y murio
-con ella. El correo entra aqui, no en un script aparte, porque la pregunta del
-operador nunca fue "¿contesto por WhatsApp?" sino "¿contesto el cliente?": la
-unidad es el CLIENTE, no el canal.
+TWO SENSORS, ONE SENTRY (Aug 6). It was born watching only WhatsApp and email
+had NO durable watch at all: the only way to find out was for someone to ask. On
+Aug 5 that cost two client emails unread for two days, because the only watcher
+of the mailbox lived inside a session and died with it. Email belongs here, not
+in a separate script, because the operator question was never "did they answer
+on WhatsApp?" but "did the client answer?": the unit is the CLIENT, not the
+channel.
 
-El nombre `wa-` se quedo corto con ese cambio. Renombrarlo toca dos unidades de
-systemd vivas y varios importadores, asi que va como cambio propio y separado.
+The `wa-` name fell short with that change. Renaming it touches two live systemd
+units and several importers, so it goes as its own separate change.
 
-UN SOLO ARCHIVO, DOS CASAS (11-ago). El puente de soporte se mudo a una
-instancia de AWS y el vigia se quedo en la laptop midiendo una base que ya no
-estaba ahi, asi que se apago y nadie vigilo ningun canal. La respuesta NO fue
-copiar el script al servidor: dos copias se separan al primer ajuste y entonces
-los dos mecanismos se contradicen, que es peor que uno solo. Lo que cambia entre
-las dos casas es el ENTORNO, no la logica:
+ONE FILE, TWO HOMES (Aug 11). The support bridge moved to an AWS instance and
+the sentry stayed on the laptop measuring a database that was no longer there,
+so it shut down and nobody watched any channel. The answer was NOT to copy the
+script to the server: two copies drift apart on the first tweak and then the two
+mechanisms contradict each other, which is worse than one. What changes between
+the two homes is the ENVIRONMENT, not the logic:
 
-    WA_VIGIA_CONFIG   ruta de la config          (def. ~/.claude/company/...)
-    WA_VIGIA_ESTADO   ruta del anti-repeticion   (def. ~/.cache/...)
+    WA_VIGIA_CONFIG   config path                (def. ~/.claude/company/...)
+    WA_VIGIA_ESTADO   anti-repeat state path     (def. ~/.cache/...)
     WA_VIGIA_CANAL    gmail | canario | whatsapp (def. gmail)
     WA_VIGIA_GMAIL    archivos | secretsmanager  (def. archivos)
-    WA_VIGIA_WA_DEST  numero destino del canal whatsapp (o config)
-    WA_VIGIA_WA_ENDPOINT  REST del puente (def. http://127.0.0.1:8081/api/send)
+    WA_VIGIA_WA_DEST  destination number of the whatsapp channel (or config)
+    WA_VIGIA_WA_ENDPOINT  bridge REST (def. http://127.0.0.1:8081/api/send)
 
-`gmail` no manda el correo desde aqui: sale con error y systemd dispara
-`OnFailure=wa-alerta@%N.service`, que es quien tiene el OAuth. `canario`
-publica el aviso EL MISMO en el tema de SNS que el canario de Cloudflare tiene
-suscrito. `whatsapp` manda el aviso por el puente de soporte (REST local
-127.0.0.1:8081) al numero del operador; ese numero sale de la config privada o
-del entorno, NUNCA de este archivo, que es publico.
+`gmail` does not send the mail from here: it exits with an error and systemd
+fires `OnFailure=wa-alerta@%N.service`, which is what holds the OAuth. `canario`
+publishes the alert ITSELF to the same SNS topic the Cloudflare canary is
+subscribed to. `whatsapp` sends the alert through the support bridge (local REST
+127.0.0.1:8081) to the operator number; that number comes from the private
+config or from the environment, NEVER from this file, which is public.
 
-LA FUENTE DE LA CREDENCIAL TAMBIEN ES ENTORNO (11-ago). El sensor de correo
-buscaba la credencial de Gmail como ARCHIVOS en `~/.gmail-mcp/`, asi que en la
-instancia se saltaba solo y ningun remitente quedaba vigilado: la laptop tenia
-el timer apagado y el servidor no podia mirar el buzon. Eso es un punto ciego
-con cara de vigia sano. `WA_VIGIA_GMAIL=secretsmanager` lee la MISMA credencial
-desde AWS Secrets Manager con el rol de la instancia, EN MEMORIA: se pide,
-se usa y se tira. Nunca toca el disco del servidor, ni siquiera un rato, porque
-un disco de instancia se lo puede llevar alguien y un secreto en disco es un
-secreto perdido. El default sigue siendo `archivos`: la laptop no cambia.
+THE CREDENTIAL SOURCE IS ENVIRONMENT TOO (Aug 11). The mail sensor looked for
+the Gmail credential as FILES in `~/.gmail-mcp/`, so on the instance it skipped
+itself and no sender stayed watched: the laptop had the timer off and the server
+could not look at the mailbox. That is a blind spot wearing the face of a
+healthy sentry. `WA_VIGIA_GMAIL=secretsmanager` reads the SAME credential from
+AWS Secrets Manager with the instance role, IN MEMORY: requested, used and
+dropped. It never touches the server disk, not even briefly, because an instance
+disk can be carried off and a secret on disk is a lost secret. The default stays
+`archivos`: the laptop does not change.
 
-Diseno
+Design
 ------
-- Lee la config PRIVADA (`company/config/wa-puentes.json`). Los JID y los
-  dominios son dato de cliente y este archivo vive en un repo publico, asi que
-  aqui no hay ninguno. El ARN del tema de SNS tambien vive ahi: lleva el numero
-  de cuenta y ese numero no se publica.
-- Base de datos en modo SOLO LECTURA. El vigia nunca escribe en el puente, y
-  contra Gmail solo hace GET.
-- Avisa UNA vez por mensaje. Si el cliente manda otro y tampoco se contesta,
-  ese si vuelve a avisar, porque es un silencio nuevo.
-- Cada sensor trae su filtro de ruido, y los dos existen por la misma razon: un
-  vigia que grita por algo que no pide respuesta entrena al operador a
-  ignorarlo, y ahi se muere el mecanismo. En WhatsApp son los acuses; en correo
-  son los autorespondedores.
-- Un fallo de red del sensor de correo NO tumba el de WhatsApp. Se avisa como
-  ruido y se sigue, porque "no llego nada" y "no pude mirar" no pueden verse
-  igual.
-- Y ese "no pude mirar" VIAJA EN EL AVISO, no solo en el journal. Un vigia que
-  revisa un sensor de dos y avisa igual que si hubiera revisado los dos es un
-  falso verde: el operador lee "un silencio" y entiende "solo uno", cuando la
-  verdad es "uno de los que si pude mirar". Por eso cada aviso lleva su linea
-  de cobertura, tambien cuando la cobertura esta completa.
-- `--selftest` prueba los dos sensores sin tocar nada real ni salir a la red.
-  Los tiempos de las pruebas son RELATIVOS a `ahora` a proposito: con marcas
-  fijas, un error de signo pasa igual y la prueba aprueba un detector muerto.
+- Reads the PRIVATE config (`company/config/wa-puentes.json`). The JIDs and the
+  domains are client data and this file lives in a public repo, so there are
+  none here. The SNS topic ARN lives there too: it carries the account number
+  and that number is not published.
+- Database in READ-ONLY mode. The sentry never writes to the bridge, and against
+  Gmail it only does GET.
+- Alerts ONCE per message. If the client sends another one and that one also
+  goes unanswered, it does alert again, because it is a new silence.
+- Each sensor brings its own noise filter, and both exist for the same reason: a
+  sentry that shouts about something that needs no reply trains the operator to
+  ignore it, and there the mechanism dies. On WhatsApp it is the
+  acknowledgements; on email it is the autoresponders.
+- A network failure of the mail sensor does NOT take down the WhatsApp one. It
+  is reported as noise and the run continues, because "nothing arrived" and "I
+  could not look" must not look the same.
+- And that "I could not look" TRAVELS IN THE ALERT, not only in the journal. A
+  sentry that checks one sensor out of two and alerts as if it had checked both
+  is a false green: the operator reads "one silence" and understands "only one",
+  when the truth is "one of the ones I could look at". So every alert carries
+  its coverage line, including when coverage is complete.
+- `--selftest` exercises both sensors without touching anything real and without
+  going to the network. The test times are RELATIVE to `ahora` on purpose: with
+  fixed stamps, a sign error passes anyway and the test approves a dead detector.
 
-EL VERDE HAY QUE AFIRMARLO (11-ago). El vigia solo hablaba cuando habia
-silencio NUEVO, asi que del lado del tablero la ausencia de aviso significaba
-dos cosas OPUESTAS: "ya contestaron" o "el vigia se murio". Un tablero que no
-sabe distinguirlas no puede pintar un verde honesto, y un verde que nadie
-afirma es adivinanza. Por eso cada publicacion cierra con un bloque
-estructurado que lleva el estado de TODOS los vigilados, tambien los sanos:
+GREEN HAS TO BE ASSERTED (Aug 11). The sentry only spoke when there was NEW
+silence, so from the dashboard side the absence of an alert meant two OPPOSITE
+things: "they already answered" or "the sentry died". A dashboard that cannot
+tell them apart cannot paint an honest green, and a green nobody asserts is
+guesswork. So every publication closes with a structured block carrying the
+state of ALL the watched entries, the healthy ones included:
 
     --- canario:v1 ---
     {"emisor":..,"ts":..,"cobertura":{..},"chats":[{..}]}
 
-Reglas del bloque, que son contrato con el receptor y no se cambian de un lado
-solo:
-- `chats` trae todos los chats y remitentes que SI se pudieron medir en esa
-  vuelta. Un sano va con `silencio_min: null` y `desde: null`; sin los sanos no
-  hay verdes. Lo que NO se pudo mirar se queda FUERA de la lista a proposito:
-  mandarlo con null seria decir "esta bien" sin haberlo visto, que es el mismo
-  falso verde con otro disfraz. Quien no pudo mirarse sale en `cobertura`.
-- `cliente` es la identidad (un cliente puede tener varios canales) y `canal`
-  es `whatsapp` o `correo`. Los dos salen de la config, no se adivinan aqui.
-- `id` es un slug estable y unico: nombre del cliente, canal y una firma del
-  JID o del dominio. Estable entre corridas y sin publicar el identificador.
-- `prueba` marca lo que viene de un fixture o de una corrida de prueba, para
-  que el receptor lo excluya del tablero. Se prende con WA_VIGIA_PRUEBA=1 o
-  por entrada de config.
-- `cobertura` dice que sensores alcanzaron a mirar, con su motivo.
+Rules of the block, which are a contract with the receiver and are not changed
+from one side alone:
+- `chats` carries every chat and sender that COULD be measured on that pass. A
+  healthy one goes with `silencio_min: null` and `desde: null`; without the
+  healthy ones there are no greens. What could NOT be looked at stays OUT of the
+  list on purpose: sending it with null would be saying "this is fine" without
+  having seen it, the same false green in another disguise. Whoever could not be
+  looked at shows up in `cobertura`.
+- `cliente` is the identity (a client can have several channels) and `canal` is
+  `whatsapp` or `correo`. Both come from the config, they are not guessed here.
+- `id` is a stable, unique slug: client name, channel and a signature of the JID
+  or the domain. Stable across runs and without publishing the identifier.
+- `prueba` marks what comes from a fixture or a test run, so the receiver
+  excludes it from the dashboard. Turned on with WA_VIGIA_PRUEBA=1 or by a
+  config entry.
+- `cobertura` says which sensors managed to look, with their reason.
 
-EL PULSO (11-ago). El bloque no sirve de nada si el vigia solo publica cuando
-algo falla: un tablero sin datos frescos no puede pintar verde, solo gris. Asi
-que en el canal `canario` el estado completo se republica cada
-WA_VIGIA_PULSO_MIN minutos (def. 30) aunque no haya ni un silencio. No cada 5,
-que es cada cuanto corre el timer, porque un aviso cada 5 minutos se vuelve
-ruido y el ruido se ignora. En el canal `gmail` NO hay pulso: ahi "avisar" es
-salir con error y eso mandaria un correo cada media hora.
+THE PULSE (Aug 11). The block is useless if the sentry only publishes when
+something fails: a dashboard without fresh data cannot paint green, only grey.
+So on the `canario` channel the full state is republished every
+WA_VIGIA_PULSO_MIN minutes (def. 30) even with not a single silence. Not every
+5, which is how often the timer runs, because an alert every 5 minutes turns
+into noise and noise gets ignored. On the `gmail` channel there is NO pulse:
+there "alerting" means exiting with an error and that would send an email every
+half hour.
 
-Uso
----
-    wa-sin-respuesta.py              # revisa y avisa por el canal elegido
-    wa-sin-respuesta.py --seco       # calcula e imprime, sin publicar nada
-    wa-sin-respuesta.py --selftest   # prueba la logica sin tocar nada real
+Usage
+-----
+    wa-sin-respuesta.py              # check and alert on the chosen channel
+    wa-sin-respuesta.py --seco       # compute and print, publishing nothing
+    wa-sin-respuesta.py --selftest   # test the logic without touching anything real
 """
 import argparse
 import hashlib

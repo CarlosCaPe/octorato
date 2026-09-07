@@ -1,6 +1,6 @@
 ---
 name: session-isolation
-description: "OBLIGATORIO: cada sesion concurrente sobre un repo necesita su propio git worktree y session id. NUNCA dos sesiones vivas sobre el mismo working tree. Carga antes de abrir una segunda sesion, o al investigar 'mis cambios se fueron en el commit de otra sesion'."
+description: "MANDATORY: every concurrent session on a repo needs its own git worktree and session id. NEVER two live sessions on the same working tree. Load before opening a second session, or when investigating 'mis cambios se fueron en el commit de otra sesion'."
 metadata:
   short-description: "Each concurrent session gets its own git worktree. Period."
   type: reference

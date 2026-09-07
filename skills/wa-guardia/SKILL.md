@@ -1,6 +1,6 @@
 ---
 name: wa-guardia
-description: Modo guardia sobre un chat de mensajeria. Arma un watcher cuando un turno cierra esperando respuesta de un tercero, y lee lo pendiente al retomar el trabajo de un arm. Usar cuando se mande un mensaje que espera contestacion, cuando el operador pida leer un chat, o al empezar a trabajar con un arm que tiene canal de chat vivo.
+description: "Watch mode over a messaging chat. Arms a watcher when a turn closes waiting on a reply from a third party, and reads what is pending when work on an arm resumes. Use it when sending a message that expects an answer, when the operator asks to read a chat, or when starting work on an arm with a live chat channel."
 ---
 
 # Guardia de chat

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""g__stop__unsourced-absence.py — Stop gate: no "this has no origin" claim ships
+"""g__stop__unsourced-absence.py: Stop gate: no "this has no origin" claim ships
 outward without a seek receipt in the same turn.
 
 THE FAILURE THIS EXISTS FOR

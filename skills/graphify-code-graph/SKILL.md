@@ -1,6 +1,6 @@
 ---
 name: graphify-code-graph
-description: "Grafo de conocimiento determinista y consultable sobre un codebase con graphify (tree-sitter, 25+ lenguajes, sin costo de LLM). Usalo para impact analysis a nivel de codigo dentro de un repo cliente, donde grep responde mal."
+description: "Deterministic, queryable knowledge graph over a codebase with graphify (tree-sitter, 25+ languages, no LLM cost). Use it for code-level impact analysis inside a client repo, where grep answers poorly."
 metadata:
   type: tool-skill
   source: https://github.com/Graphify-Labs/graphify (MIT)

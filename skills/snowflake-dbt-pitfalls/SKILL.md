@@ -1,6 +1,6 @@
 ---
 name: snowflake-dbt-pitfalls
-description: "Trampas de Snowflake y dbt que fallan en silencio o destruyen datos: CREATE OR REPLACE, Dynamic Tables, PIVOT, freshness de sources.yml, modelos versionados. Cada una con su prevencion."
+description: "Snowflake and dbt traps that fail silently or destroy data: CREATE OR REPLACE, Dynamic Tables, PIVOT, sources.yml freshness, versioned models. Each one with its prevention."
 ---
 
 # Snowflake and dbt pitfalls (silent / destructive)

@@ -1,6 +1,6 @@
 ---
 name: ccxt-python
-description: "Libreria CCXT para exchanges de cripto en Python, REST y WebSocket: conectar, bajar datos de mercado, colocar ordenes y transmitir tickers. Para bots de trading y analisis, sync o asyncio."
+description: "CCXT library for crypto exchanges in Python, REST and WebSocket: connect, pull market data, place orders and stream tickers. For trading bots and analysis, sync or asyncio."
 ---
 
 # CCXT for Python

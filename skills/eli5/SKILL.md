@@ -1,6 +1,6 @@
 ---
 name: eli5
-description: "Explica cualquier documento, concepto o arquitectura en lenguaje adulto y claro, con analogias y sin jerga. Dispara con 'eli5', 'explicame como si tuviera 5', 'hazlo simple', 'en cristiano'. Alias de lii5."
+description: "Explains any document, concept or architecture in plain adult language, with analogies and no jargon. Triggers on 'eli5', 'explicame como si tuviera 5', 'hazlo simple', 'en cristiano'. Alias of lii5."
 metadata:
   short-description: ELI5 alias (universal naming for lii5)
   triggers: "eli5, ELI5, /eli5, explain like i'm 5, explícame, hazlo simple, dumb it down, en cristiano"

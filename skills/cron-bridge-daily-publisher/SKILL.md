@@ -1,6 +1,6 @@
 ---
 name: cron-bridge-daily-publisher
-description: "Patron para autopublicar a diario N elementos curados desde D1 a una plataforma social via el worker programador. Incluye rotacion justa, idempotencia por hash, dedup por sentinel y barrido de retraccion."
+description: "Pattern to auto-publish N curated items per day from D1 to a social platform through the scheduler worker. Includes fair rotation, idempotency by hash, sentinel dedup and a retraction sweep."
 when_to_use: When a client wants "post N things per day to one or more social platforms, picked from a catalog, without duplicates within a cycle". Especially when there's an upstream feed (REST API, scraping target, manual catalog) → D1 → social. Examples — real-estate listings, e-commerce products, restaurant menus, event calendars.
 triggers: ["daily social publisher", "fair rotation", "auto-post N per day", "multireach bridge", "EB-to-FB", "catalog to social"]
 ---

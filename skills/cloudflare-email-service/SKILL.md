@@ -1,6 +1,6 @@
 ---
 name: cloudflare-email-service
-description: "Envia y recibe correo transaccional con Cloudflare Email Service (Sending mas Routing), por binding de Workers o REST. Cubre entregabilidad, SPF, DKIM, DMARC y setup con wrangler."
+description: "Send and receive transactional email with Cloudflare Email Service (Sending plus Routing), through a Workers binding or REST. Covers deliverability, SPF, DKIM, DMARC and wrangler setup."
 ---
 
 # Cloudflare Email Service

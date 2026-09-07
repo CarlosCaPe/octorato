@@ -1,6 +1,6 @@
 ---
 name: stream-transcript-dom-scrape
-description: "Cuando una grabacion de Microsoft Stream es de solo lectura y la descarga del transcript dice 'sin permiso', el reproductor igual renderiza el texto en el DOM y Playwright lo captura. Ojo: puede constituir elusion bajo el acuerdo de servicios de MS."
+description: "When a Microsoft Stream recording is read-only and the transcript download says 'no permission', the player still renders the text in the DOM and Playwright captures it. Careful: this may amount to circumvention under the MS services agreement."
 metadata:
   short-description: "Microsoft Stream transcript DOM-scrape (with legal caveat)"
 ---
