@@ -46,7 +46,9 @@ receipt named. Hatches (absence-ok, attribute-ok, draft-promise-ok, send-ok)
 count only in the operator's own prompt for the turn, never in the body: a
 token in the body would ship to the recipient and be self-serve. Fail-open on any error EXCEPT after a send was positively
 identified and a receipt check itself crashed, which denies (same stance as
-qa-merge-gate).
+qa-merge-gate). Requirement 4 is fail-closed by construction: no readable
+operator turn (missing transcript, forged or sidechain human entry) means no
+ask, so the send is denied.
 
 Selftest: CLAUDE_SESSION_ID=__selftest__ (set by gate_selftest, never reachable
 from the model's inline env) makes the gate accept HEAD and gates "SELFTEST" in
@@ -102,26 +104,52 @@ def hatches(prompt: str) -> set:
     return set(_HATCH.findall(_QUOTE_SPAN.sub(" ", prompt or "")))
 
 
-# 4. A send ask is an imperative or infinitive send verb (ES with optional clitic,
-# EN bare) in the operator's prompt. Participles and nouns (enviado, publicación)
-# do not match; subjunctives after a negation (no lo mandes) do not match either.
-_SEND_ASK = re.compile(
-    r"(?<![\w-])(?:(?:m[aá]nda|m[aá]nde|mandar|env[ií]a|env[ií]e|enviar|resp[oó]nde|responda|responder"
-    r"|cont[eé]sta|conteste|contestar|reenv[ií]a|reenv[ií]e|reenviar|publ[ií]ca|publique|publicar"
-    r"|despliega|despliegue|desplegar|lanza|lance|lanzar)(?:lo|la|los|las|le|les|me|nos|se|selo|sela|selos|selas)?"
-    r"|send|reply|respond|forward|publish|deploy|release|ship)(?![\w-])", re.IGNORECASE)
-_NEGATED = re.compile(r"\b(?:no|nunca|jam[aá]s|todav[ií]a no|a[uú]n no|sin|don'?t|do not|never|not|without)"
-                      r"\s+(?:\w+\s+){0,2}$", re.IGNORECASE)
+# 4. A send ask is an imperative or infinitive send verb in the operator's prompt.
+# ES: verb with an optional third-person clitic (mándalo, envíaselo); "me"/"nos"
+# are excluded on purpose, "mándame el texto" is the paste-ready ask that must NOT
+# transmit. EN: bare verb inside an imperative frame (clause start or after
+# please/just/ok/go ahead and/can you...) and followed by an object or the end of
+# the clause, so "reply came in" and "the release notes" do not count. Participles
+# and nouns (enviado, publicación, el envío) never match. A negator anywhere
+# earlier in the same clause negates the ask (no quiero que por ahora lo mande,
+# ni se te ocurra enviarlo); a clause after the ask that is a bare retraction
+# ("no", "espera", "wait", "todavía no") withdraws it.
+_ES_ASK = (r"(?:m[aá]nda|m[aá]nde|mandar|env[ií]a|env[ií]e|enviar|resp[oó]nde|responda|responder"
+           r"|cont[eé]sta|conteste|contestar|reenv[ií]a|reenv[ií]e|reenviar|publ[ií]ca|publique|publicar"
+           r"|despliega|despliegue|desplegar|lanza|lance|lanzar)(?:lo|la|los|las|le|les|se|selo|sela|selos|selas)?")
+_EN_FRAME = (r"(?:^|(?<![\w-])(?:please|just|ok|okay|go ahead and|can you|could you|would you|you can"
+             r"|now|and|then|yes|yeah|sure|dale|s[ií]|don'?t|do not|not|never)\s+)")
+_EN_ASK = (r"(?:send|reply|respond|forward|publish|deploy|release|ship)"
+           r"(?=\s+(?:it|that|this|them|him|her|the|this|those|these|now|off|out|again|to|in|a|an|my|our|your|that|el|la|lo|ese|esa|eso)(?![\w-])|\s*$)")
+_SEND_ASK = re.compile(r"(?<![\w-])(?P<es>" + _ES_ASK + r")(?![\w-])|" + _EN_FRAME + r"(?P<en>" + _EN_ASK + r")",
+                       re.IGNORECASE)
+_CLAUSE = re.compile(r"[.;:!?\n,]+")
+_NEG_BEFORE = re.compile(r"(?<![\w-])(?:no|nunca|jam[aá]s|ni|sin|evita\w*|don'?t|do not|never|not|without|nothing)(?![\w-])",
+                         re.IGNORECASE)
+_RETRACT = re.compile(r"^\s*(?:(?:no|nope|nel)\s*$|(?:espera\w*|esp[eé]rate|aguanta|wait|hold on|todav[ií]a no|a[uú]n no"
+                      r"|mejor no|not yet|cancel\w*|cancela\w*|olv[ií]dalo|forget it)(?![\w-]))", re.IGNORECASE)
 
 
 def explicit_send_ask(prompt: str) -> bool:
-    """True when the operator's prompt for the turn asks to send, non-negated."""
+    """True when the operator's prompt for the turn asks to send, non-negated and
+    not retracted. Clause-scoped: split on . ; : ! ? newline and comma, so
+    "no sé, mándalo" asks and "no lo mandes, déjalo listo" does not."""
     text = _QUOTE_SPAN.sub(" ", prompt or "")
-    for m in _SEND_ASK.finditer(text):
-        if _NEGATED.search(text[max(0, m.start() - 40):m.start()]):
-            continue
-        return True
-    return False
+    asked = False
+    for clause in _CLAUSE.split(text):
+        if asked and _RETRACT.match(clause):
+            return False
+        for m in _SEND_ASK.finditer(clause):
+            # The EN frame token (don't, please...) is part of the match: negate on
+            # what precedes the VERB, not the frame.
+            verb_at = m.start("es") if m.start("es") != -1 else m.start("en")
+            if _NEG_BEFORE.search(clause[:verb_at]):
+                if asked:
+                    return False  # "send it. actually don't send it"
+                continue
+            asked = True
+            break
+    return asked
 
 
 def _load(name: str):
@@ -176,6 +204,16 @@ def is_send(tool_name: str, tool_input: dict) -> bool:
     return bool(_SEND_TOOL.search(tool_name))
 
 
+def _ask_deny(human: str) -> str:
+    """Requirement 4 as a deny reason, or "" when the operator asked for this send."""
+    if explicit_send_ask(human):
+        return ""
+    return ("📬 ENVÍO SIN PEDIDO: el mensaje del operador en este turno no pide mandar "
+            "nada (directiva 2026-08-14: entregar paste-ready y transmitir solo a pedido "
+            "explícito, por mensaje). Entrega el texto en el chat y espera el 'mándalo'; "
+            "'send-ok' en SU mensaje lo exime.")
+
+
 def check(data: dict) -> str:
     """Return the deny reason, or "" to allow. Raises only on internal errors."""
     import receipt_ledger
@@ -228,7 +266,9 @@ def check(data: dict) -> str:
     body = "\n".join(ln for ln in "\n".join(found).splitlines()
                      if not ln.lstrip().startswith(">"))
     if not body.strip():
-        return ""
+        # Nothing to read for the phrase checks, but a file or an audio still
+        # leaves: requirement 4 applies to it exactly as to a text body.
+        return _ask_deny(human)
     # A send is the model's own text: a quotation inside it is the model
     # quoting itself, and a claim split across lines is still one claim.
     flat = re.sub(r"\s+", " ", body)
@@ -278,12 +318,7 @@ def check(data: dict) -> str:
     # 4. Explicit send ask: operator directive 2026-08-14, deliver by default and
     #    transmit only the message that was asked for, per message. send-ok is the
     #    standing hatch (returned above). Last, so earlier denies keep their name.
-    if not explicit_send_ask(human):
-        return ("📬 ENVÍO SIN PEDIDO: el mensaje del operador en este turno no pide mandar "
-                "nada (directiva 2026-08-14: entregar paste-ready y transmitir solo a pedido "
-                "explícito, por mensaje). Entrega el texto en el chat y espera el 'mándalo'; "
-                "'send-ok' en SU mensaje lo exime.")
-    return ""
+    return _ask_deny(human)
 
 
 def main() -> int:
