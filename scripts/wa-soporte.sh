@@ -65,24 +65,50 @@ fi
 # to the personal bridge: it sends DIRECTLY over SSM by running curl ON the
 # server. The channel no longer depends on this laptop; it only needs the AWS
 # ops profile credentials.
-INSTANCIA_PUENTE="i-0c0112bf1431dc99e"
-REGION_PUENTE="mx-central-1"
-PERFIL_PUENTE="dataqbs-ops"
 VIA="tunel"
 if ! ss -lnt 2>/dev/null | grep -q ":${PUERTO_SOPORTE} "; then
   VIA="ssm"
 fi
 
+# The bridge's instance id, region and AWS profile are deployment identity,
+# not framework code: they live in the PRIVATE config (gitignored), the same
+# `puentes.soporte.remoto` block the attachment path already reads. The tunnel
+# path never needs them; the SSM path refuses to run without them (fail-closed,
+# never a fallback to the personal bridge).
+CONFIG_PUENTES="${OCTO_WA_PUENTES:-$HOME/.claude/company/config/wa-puentes.json}"
+INSTANCIA_PUENTE=""; REGION_PUENTE=""; PERFIL_PUENTE=""
+if [ "$VIA" = "ssm" ]; then
+  if ! remoto=$(python3 - "$CONFIG_PUENTES" <<'PY'
+import json, sys
+try:
+    r = json.load(open(sys.argv[1]))["puentes"]["soporte"]["remoto"]
+    vals = [str(r[k]) for k in ("instancia", "region", "perfil")]
+    if any(not v or v.startswith("{{") for v in vals):
+        raise ValueError("placeholder value still in place, fill the template")
+    print(*vals)
+except (OSError, KeyError, ValueError, TypeError) as e:
+    print(f"puentes.soporte.remoto (instancia/region/perfil) missing in {sys.argv[1]}: {e}", file=sys.stderr)
+    raise SystemExit(1)
+PY
+  ); then
+    echo '{"success": false, "message": "no local tunnel and no private bridge config: see templates/company/config/wa-puentes.json.template"}'
+    exit 1
+  fi
+  read -r INSTANCIA_PUENTE REGION_PUENTE PERFIL_PUENTE <<< "$remoto"
+fi
+
 # ---- Attachment: the file must exist on the BRIDGE's disk -----------------
-# The instance id, region, profile and staging bucket come from the PRIVATE
-# config, not from here: this script is published.
+# The instance id, region, profile and staging bucket come from the same
+# PRIVATE config (`puentes.soporte.remoto`), never from this published file.
 if [ -n "$archivo" ]; then
-  respuesta=$(WA_MENCIONES="${WA_MENCIONES:-}" python3 - "$destinatario" "$mensaje" "$archivo" "$PUERTO_SOPORTE" <<'PY'
+  # `if ! x=$(...)` keeps set -e from aborting before the JSON is echoed: every
+  # fail-closed branch inside prints its reason on stdout and exits 1.
+  if ! respuesta=$(WA_MENCIONES="${WA_MENCIONES:-}" python3 - "$destinatario" "$mensaje" "$archivo" "$PUERTO_SOPORTE" "$CONFIG_PUENTES" <<'PY'
 import base64, json, os, shlex, subprocess, sys, time, uuid
 from pathlib import Path
 
 destinatario, mensaje, archivo, puerto = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
-cfg_path = Path.home() / ".claude" / "company" / "config" / "wa-puentes.json"
+cfg_path = Path(sys.argv[5])
 try:
     remoto = json.loads(cfg_path.read_text())["puentes"]["soporte"]["remoto"]
     instancia, region = remoto["instancia"], remoto["region"]
@@ -155,12 +181,15 @@ finally:
     subprocess.run(aws + ["s3", "rm", s3_uri, "--only-show-errors"],
                    capture_output=True, timeout=60)
 PY
-)
+  ); then
+    echo "$respuesta"
+    exit 1
+  fi
   echo "$respuesta"
   exit 0
 fi
 
-respuesta=$(WA_MENCIONES="${WA_MENCIONES:-}" WA_VIA="$VIA" WA_INSTANCIA="$INSTANCIA_PUENTE" WA_REGION="$REGION_PUENTE" WA_PERFIL="$PERFIL_PUENTE" python3 - "$destinatario" "$mensaje" "$PUERTO_SOPORTE" <<'PY'
+if ! respuesta=$(WA_MENCIONES="${WA_MENCIONES:-}" WA_VIA="$VIA" WA_INSTANCIA="$INSTANCIA_PUENTE" WA_REGION="$REGION_PUENTE" WA_PERFIL="$PERFIL_PUENTE" python3 - "$destinatario" "$mensaje" "$PUERTO_SOPORTE" <<'PY'
 import json, os, subprocess, sys, time, urllib.request
 destinatario, mensaje, puerto = sys.argv[1], sys.argv[2], sys.argv[3]
 cuerpo = {"recipient": destinatario, "message": mensaje}
@@ -192,15 +221,22 @@ if os.environ.get("WA_VIA") == "ssm":
         except Exception:
             continue
         if estado in ("Success", "Failed", "Cancelled", "TimedOut"):
-            print(salida.strip() if estado == "Success" else json.dumps({"success": False, "message": f"SSM {estado}"}))
+            if estado != "Success":
+                print(json.dumps({"success": False, "message": f"SSM {estado}"}))
+                raise SystemExit(1)
+            print(salida.strip())
             break
     else:
         print(json.dumps({"success": False, "message": "SSM sin respuesta"}))
+        raise SystemExit(1)
 else:
     req = urllib.request.Request(f"http://localhost:{puerto}/api/send", data=datos,
                                  headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=30) as r:
         print(r.read().decode())
 PY
-)
+); then
+  echo "$respuesta"
+  exit 1
+fi
 echo "$respuesta"

@@ -1,0 +1,73 @@
+{
+  "_comment": [
+    "Private bridge config for the WhatsApp scripts (wa-soporte.sh, wa-guardia.py, wa-sin-respuesta.py).",
+    "Copy to ~/.claude/company/config/wa-puentes.json (gitignored) and fill the values.",
+    "Deployment identity (instance ids, regions, profiles, buckets) lives here, never in the published scripts."
+  ],
+  "puentes": {
+    "soporte": {
+      "puerto": 8081,
+      "dir": "{{PATH_TO_SUPPORT_BRIDGE_CHECKOUT}}",
+      "bin": "{{PATH_TO_SUPPORT_BRIDGE_BINARY}}",
+      "db": "{{PATH_TO_SUPPORT_BRIDGE_MESSAGES_DB}}",
+      "propio": "{{SUPPORT_NUMBER_JID}}",
+      "remoto": {
+        "_nota": "Where the support bridge runs when it is not on this machine. wa-soporte.sh reads instancia/region/perfil when no local tunnel is listening on puerto, and bucket_tmp for attachments.",
+        "instancia": "{{EC2_INSTANCE_ID}}",
+        "region": "{{AWS_REGION}}",
+        "perfil": "{{AWS_CLI_PROFILE}}",
+        "unidad": "{{SYSTEMD_UNIT_NAME}}",
+        "db": "{{REMOTE_PATH_TO_MESSAGES_DB}}",
+        "sesion": "{{REMOTE_PATH_TO_SESSION_DIR}}",
+        "tunel": "{{SSM_PORT_FORWARD_COMMAND_OR_ALIAS}}",
+        "bucket_tmp": "{{S3_STAGING_BUCKET_FOR_ATTACHMENTS}}"
+      }
+    },
+    "personal": {
+      "puerto": 8080,
+      "dir": "{{PATH_TO_PERSONAL_BRIDGE_CHECKOUT}}",
+      "bin": "{{PATH_TO_PERSONAL_BRIDGE_BINARY}}",
+      "db": "{{PATH_TO_PERSONAL_BRIDGE_MESSAGES_DB}}",
+      "propio": null
+    }
+  },
+  "vigilancia": {
+    "_nota": "Read by wa-guardia.py and wa-sin-respuesta.py. chats[] lists the client chats to watch; correo, canario and whatsapp are optional blocks for the silence sentry.",
+    "puente": "soporte",
+    "umbral_minutos": 30,
+    "chats": [
+      {
+        "jid": "{{CHAT_JID}}",
+        "quien": "{{DISPLAY_NAME}}",
+        "puente": "soporte",
+        "cliente": "{{ARM_CODE}}",
+        "canal": "whatsapp",
+        "prueba": false
+      }
+    ],
+    "correo": {
+      "umbral_minutos": 120,
+      "dias": 7,
+      "secretos": {
+        "region": "{{AWS_REGION}}",
+        "credenciales": "{{SECRETS_MANAGER_NAME_FOR_MAIL_CREDENTIALS}}",
+        "claves": "{{SECRETS_MANAGER_NAME_FOR_MAIL_KEYS}}"
+      },
+      "remitentes": [
+        {
+          "quien": "{{DISPLAY_NAME}}",
+          "de": "{{SENDER_EMAIL}}",
+          "cliente": "{{ARM_CODE}}",
+          "canal": "correo",
+          "prueba": false
+        }
+      ]
+    },
+    "canario": {
+      "tema": "{{SNS_TOPIC_ARN_FOR_THE_CANARY}}"
+    },
+    "whatsapp": {
+      "destino": "{{JID_THAT_RECEIVES_SILENCE_ALERTS}}"
+    }
+  }
+}
