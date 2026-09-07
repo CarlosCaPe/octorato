@@ -1,0 +1,14 @@
+{
+  "session_id": "sess-parent",
+  "tool_name": "Write",
+  "tool_use_id": "toolu_iso",
+  "tool_input": {
+    "file_path": "{{SANDBOX}}/arms/beta/x.py",
+    "content": "print('hello')\n"
+  },
+  "cwd": "{{SANDBOX}}/arms/alpha",
+  "agent_id": "agent-arm",
+  "_setup": {
+    "expect_names": "beta"
+  }
+}

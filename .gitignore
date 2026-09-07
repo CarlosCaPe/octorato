@@ -276,3 +276,4 @@ registry/fixtures/**/home/.wa-fixture/*.db
 # their seeds). Only the two directory rules are negated, nothing else.
 !registry/fixtures/**/.claude/
 !registry/fixtures/**/.cache/
+!registry/fixtures/**/company/

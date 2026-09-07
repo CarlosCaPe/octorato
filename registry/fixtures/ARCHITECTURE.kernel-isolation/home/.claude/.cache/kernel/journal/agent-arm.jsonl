@@ -1,0 +1,2 @@
+{"seq":0,"ts":1788782922.839749,"start_ts":1788782922.839749,"pid":"agent-arm","kind":"start","prev":null,"ppid":"sess-parent","type":"Data Engineer"}
+{"seq":1,"ts":1788782922.839985,"start_ts":1788782922.839749,"pid":"agent-arm","kind":"tool","prev":"fdd6a47f7c86c132d3d439bd1881b2b8357225e36228cc2e68a7dab858c54f1b","tool_name":"Read","input_sha256":"seed"}

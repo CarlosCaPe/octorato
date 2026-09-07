@@ -1810,6 +1810,47 @@ rules:
     locator: scripts/octo.py --selftest registry/fixtures/ARCHITECTURE.kernel-process
     expect: 0
   liveness_required: FIRES
+- id: ARCHITECTURE.kernel-isolation
+  title: 'Kernel ISOLATION: one writer per tree and per lane, denied not advised'
+  category: ARCHITECTURE
+  source:
+    file: CLAUDE.md
+    anchor: Session/Instance Isolation
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Gate
+    canonical_name: g__pretool-write__tree-owner.py
+    firing_event: PreToolUse
+    firing_matcher: 'Write|Edit|NotebookEdit|MultiEdit'
+  - kind: Gate
+    canonical_name: g__pretool-bash__tree-owner.py
+    firing_event: PreToolUse
+    firing_matcher: Bash
+  - kind: Gate
+    canonical_name: g__pretool-write__tree-owner.py
+    firing_event: PreToolUse
+    firing_matcher: Agent
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: PreToolUse|Write|Edit|NotebookEdit|MultiEdit|g__pretool-write__tree-owner.py
+    expect: present
+  - method: IN_HOOKS_JSON
+    locator: PreToolUse|Bash|g__pretool-bash__tree-owner.py
+    expect: present
+  - method: IN_HOOKS_JSON
+    locator: PreToolUse|Agent|g__pretool-write__tree-owner.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/g__pretool-write__tree-owner.py --selftest registry/fixtures/ARCHITECTURE.kernel-isolation
+    expect: 0
+  - method: EXIT_CODE
+    locator: scripts/g__pretool-bash__tree-owner.py --selftest registry/fixtures/ARCHITECTURE.kernel-isolation
+    expect: 0
+  liveness_required: FIRES
 - id: FLOW.kernel-journal
   title: 'Kernel JOURNAL: no tool call runs unjournaled (append-only, hash-chained, per process)'
   category: FLOW

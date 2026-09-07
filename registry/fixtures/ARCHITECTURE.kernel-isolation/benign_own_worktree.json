@@ -1,0 +1,11 @@
+{
+  "session_id": "sess-parent",
+  "tool_name": "Write",
+  "tool_use_id": "toolu_iso",
+  "tool_input": {
+    "file_path": "{{SANDBOX}}/work/wt-b/b2.py",
+    "content": "print('hello')\n"
+  },
+  "cwd": "{{SANDBOX}}/work/wt-b",
+  "agent_id": "agent-b"
+}
