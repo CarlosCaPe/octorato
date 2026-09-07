@@ -1,6 +1,6 @@
 ---
 name: do-it-right-not-fast
-description: "Canonico del operador: arregla la CAUSA RAIZ, nunca el parche rapido ni una pila de archivos paliativos. Dos olores obligan a parar: la frase 'la solucion rapida es' y acumular curitas en vez de reparar lo roto. Carga antes de proponer un fix."
+description: "Operator canon: fix the ROOT CAUSE, never the quick patch and never a pile of palliative files. Two smells force a stop: the phrase 'la solucion rapida es' (the quick fix is) and stacking band-aids instead of repairing what is broken. Load before proposing a fix."
 metadata:
   type: feedback
 ---

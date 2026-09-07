@@ -1,6 +1,6 @@
 ---
 name: querymaster-sqlite
-description: "Skill hijo de querymaster para SQLite: bases locales en archivo, storage de Optuna, barridos analiticos y uso embebido, con PRAGMA de WAL y foreign_keys. Se activa cuando el motor resuelto es SQLite."
+description: "Child skill of querymaster for SQLite: local file databases, Optuna storage, analytical sweeps and embedded use, with WAL and foreign_keys PRAGMA. Activates when the resolved engine is SQLite."
 ---
 
 # QueryMaster — SQLite Engine Skill

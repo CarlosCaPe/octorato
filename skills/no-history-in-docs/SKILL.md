@@ -1,6 +1,6 @@
 ---
 name: no-history-in-docs
-description: "Los documentos llevan solo contenido vigente; git es el control de versiones. Nunca tachado para marcar lo hecho, nunca texto viejo junto al nuevo 'para historia', nunca secciones comentadas 'de referencia'. Aplica a toda edicion o revision de documento."
+description: "Documents carry only current content; git is the version history. Never strikethrough to mark what is done, never old text next to the new one 'for the record', never sections commented out 'for reference'. Applies to every document edit or revision."
 ---
 
 # No History in Documents

@@ -1,6 +1,6 @@
 ---
 name: session-learn-extractor
-description: "Extrae el patron reusable de la sesion y lo escribe como skill BORRADOR en skills/learned/. Dispara tras 'ya quedo', 'fixed', 'shipped', 'merged' sobre algo que costo varios pasos de investigacion, o via /learn."
+description: "Extracts the reusable pattern from the session and writes it as a DRAFT skill in skills/learned/. Triggers after 'ya quedo', 'fixed', 'shipped', 'merged' on something that took several investigation steps, or via /learn."
 metadata:
   type: brain-routine
   trigger: post-resolution (auto) or /learn (manual)

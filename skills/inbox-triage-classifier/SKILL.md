@@ -1,6 +1,6 @@
 ---
 name: inbox-triage-classifier
-description: "Triage de bandejas (correo, Slack, Teams, JIRA, PRs): clasifica que requiere accion y devuelve veredicto por item con urgencia. Solo lectura, nunca marca leido ni responde. Usalo ante 'que tengo pendiente?', 'do I owe anyone a reply?'."
+description: "Triage for inboxes (email, Slack, Teams, JIRA, PRs): classifies what needs action and returns a per-item verdict with urgency. Read-only, never marks as read and never replies. Use it on 'que tengo pendiente?', 'do I owe anyone a reply?'."
 metadata:
   short-description: "PHI-aware triage classifier for inbox-like streams"
 ---

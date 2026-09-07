@@ -1,46 +1,45 @@
 #!/usr/bin/env python3
-"""g__stop__defer-today.py — Stop gate: no dejes para mañana lo que puedas hacer hoy.
+"""g__stop__defer-today.py: Stop gate: "no dejes para mañana lo que puedas hacer hoy" (do not put off until tomorrow what you can do today).
 
-Directiva del operador, repetida hasta el hartazgo y elevada a canónica el
-18-ago-2026: *"NO DEJES PARA MAÑANA LO QUE PUEDAS HACER HOY, canónico. Todos los
-días te lo tengo que recordar, ya cablealo de una vez en octorato."* Que haya que
-recordarlo a diario es la prueba de que la prosa no basta: un rezago que depende
-de que el modelo se acuerde se salta bajo carga. Esto es la regla
-`reflexes-over-discipline` aplicada al aplazamiento.
+Operator directive, repeated to exhaustion and raised to canonical on
+2026-08-18: *"NO DEJES PARA MAÑANA LO QUE PUEDAS HACER HOY, canónico. Todos los
+días te lo tengo que recordar, ya cablealo de una vez en octorato."* Having to
+be reminded daily is the proof that prose is not enough: a backlog that depends
+on the model remembering gets skipped under load. This is the
+`reflexes-over-discipline` rule applied to deferral.
 
-La forma sutil del aplazamiento no es decir "no lo hago". Es REPORTAR un pendiente
-que yo mismo podía ejecutar, y dejárselo al operador en la bandeja. Por eso el
-gate no busca pereza declarada, busca la frase de cierre que empuja trabajo mío
-hacia adelante.
+The subtle form of deferral is not saying "I will not do it". It is REPORTING a
+pending item I could have executed myself, and leaving it in the operator inbox.
+So the gate does not look for declared laziness, it looks for the closing
+sentence that pushes my own work forward in time.
 
-CUÁNDO DISPARA. En la última respuesta del asistente, cuando aparece un marcador
-de aplazamiento en PRIMERA PERSONA sobre trabajo propio ("lo dejo para mañana",
-"queda pendiente", "lo retomo la próxima sesión") y NO hay ninguna de las dos
-salidas legítimas:
+WHEN IT FIRES. In the last assistant response, when a deferral marker shows up
+in FIRST PERSON about my own work ("lo dejo para mañana", "queda pendiente", "lo
+retomo la próxima sesión") and NEITHER of the two legitimate exits is present:
 
-  1. El pendiente es del operador y viaja con su acción exacta: un bloque de
-     comando o una línea que empieza con "! ". Un paso irreducible suyo (un clic
-     de consentimiento, una contraseña, un permiso) es un pendiente válido, y
-     entregado así no le cuesta trabajo: le cuesta pegar.
-  2. La línea nombra el bloqueo real y verificado (el clasificador lo negó, la
-     regla del repositorio lo rechazó, requiere su decisión). Un bloqueo medido
-     no es un aplazamiento.
+  1. The pending item is the operator own and travels with his exact action: a
+     command block or a line starting with "! ". An irreducible step of his (a
+     consent click, a password, a permission) is a valid pending item, and
+     delivered that way it costs him no work: it costs him a paste.
+  2. The line names the real, verified blocker (the classifier denied it, the
+     repository rule rejected it, it needs his decision). A measured blocker is
+     not a deferral.
 
-Un "mañana" que no habla de trabajo mío no cuenta: citar a la clienta diciendo
-"espero mañana me puedas contestar", o informar que una oficina abre mañana, son
-hechos, no rezagos. Por eso se exige un verbo de aplazamiento en primera persona
-cerca del marcador y se descartan los tramos entrecomillados.
+A "tomorrow" that is not about my work does not count: quoting the client saying
+"espero mañana me puedas contestar", or reporting that an office opens tomorrow,
+are facts, not backlog. That is why a first-person deferral verb is required
+near the marker and quoted spans are discarded.
 
-Bloquea UNA vez (stop_hook_active), como sus hermanos. Obliga a VER, no a
-obedecer: si de verdad no se puede hoy, la segunda pasada sigue.
+Blocks ONCE (stop_hook_active), like its siblings. It forces you to SEE, not to
+obey: if it really cannot be done today, the second pass goes through.
 
-FALLA ABIERTO. Cualquier error sale con 0 y en silencio.
+FAILS OPEN. Any error exits 0 and silently.
 
-Escape deliberado: poner `defer-ok` en la línea.
+Deliberate escape: put `defer-ok` on the line.
 
 Stdin:  {"transcript_path": str, "stop_hook_active": bool, ...}
-Stdout: {"decision": "block", "reason": "..."} si pega, si no nada.
-Exit:   siempre 0.
+Stdout: {"decision": "block", "reason": "..."} on a hit, else nothing.
+Exit:   always 0.
 """
 from __future__ import annotations
 

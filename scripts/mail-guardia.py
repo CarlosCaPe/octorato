@@ -1,26 +1,27 @@
 #!/usr/bin/env python3
-"""Guardia de correo: que llego y no hemos contestado. Hermana de wa-guardia.py.
+"""Mail watch: what arrived and we have not answered. Sibling of wa-guardia.py.
 
-MISMO CONCEPTO, OTRO CANAL. `wa-guardia.py` cubre WhatsApp y `wa-sin-respuesta.py`
-es el vigia durable de ese canal. Esto es lo equivalente para el correo, que no
-tenia ninguna vigilancia: la unica forma de enterarse era que alguien preguntara.
+SAME CONCEPT, DIFFERENT CHANNEL. `wa-guardia.py` covers WhatsApp and
+`wa-sin-respuesta.py` is the durable sentry of that channel. This is the
+equivalent for email, which had no watch at all: the only way to find out was
+for someone to ask.
 
-Por que existe con credencial propia y no via MCP: un MCP solo responde dentro
-del turno del agente. Para vigilar hace falta un proceso que siga corriendo
-cuando el agente no esta, y eso necesita hablarle directo a la API.
+Why it exists with its own credential and not through MCP: an MCP only answers
+inside the agent turn. Watching needs a process that keeps running when the
+agent is gone, and that means talking to the API directly.
 
-OJO CON LA CREDENCIAL. En `~/.gmail-mcp/` hay DOS archivos con refresh_token y
-solo uno sirve para leer:
-  - token.json        -> scope gmail.compose. Redacta, NO lee. Da 403 al listar.
-  - credentials.json  -> scope gmail.modify. Este es el bueno.
-Leer el equivocado cuesta un diagnostico falso de "faltan permisos" y termina
-pidiendole al operador un consentimiento OAuth que no hacia falta.
+MIND THE CREDENTIAL. `~/.gmail-mcp/` holds TWO files with a refresh_token and
+only one can read:
+  - token.json        -> scope gmail.compose. Drafts, does NOT read. 403 on list.
+  - credentials.json  -> scope gmail.modify. This is the good one.
+Reading the wrong one costs a false "missing permissions" diagnosis and ends in
+asking the operator for an OAuth consent that was never needed.
 
-Solo LEE: unicamente hace GET. Nunca marca, archiva ni manda.
+Read only: it only does GET. It never marks, archives or sends.
 
-Uso:
-  mail-guardia.py --de dragon.com.mx                  # sin contestar, ahora
-  mail-guardia.py --de dragon.com.mx --vigilar        # una linea por correo nuevo
+Usage:
+  mail-guardia.py --de dragon.com.mx                  # unanswered, right now
+  mail-guardia.py --de dragon.com.mx --vigilar        # one line per new mail
   mail-guardia.py --consulta "in:all newer_than:3d from:alguien@x.com"
 """
 import argparse

@@ -1,6 +1,6 @@
 ---
 name: model-routing-by-complexity
-description: "Enruta el trabajo por complejidad a traves del ladder de modelos (mechanical, bulk, build, judgment), vendor-agnostico. Carga al abanicar sub-agentes o al elegir el override de model en un Workflow/Agent."
+description: "Routes work by complexity across the model ladder (mechanical, bulk, build, judgment), vendor-agnostic. Load when fanning out sub-agents or when picking the model override in a Workflow/Agent."
 ---
 
 # Model Routing by Complexity

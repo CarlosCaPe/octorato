@@ -1,6 +1,6 @@
 ---
 name: gemini-vision
-description: "DISPARADOR OBLIGATORIO: 'analiza imagen', 'nano banana', 'gemini vision', 'que ves en la imagen', o al pegar una imagen pidiendo analisis. Vision con Gemini Flash. Preferido sobre image-analyzer si hay GEMINI_API_KEY."
+description: "MANDATORY TRIGGER: 'analiza imagen', 'nano banana', 'gemini vision', 'que ves en la imagen', or when an image is pasted asking for analysis. Vision with Gemini Flash. Preferred over image-analyzer when GEMINI_API_KEY is set."
 metadata:
   short-description: Gemini Flash vision analysis (Nano Banana)
 ---

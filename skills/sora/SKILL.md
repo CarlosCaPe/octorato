@@ -1,6 +1,6 @@
 ---
 name: "sora"
-description: "Genera, edita, extiende, lista o descarga videos de Sora, crea referencias de personaje y corre colas locales con scripts/sora.py. Requiere OPENAI_API_KEY y acceso a la API de Sora."
+description: "Generates, edits, extends, lists or downloads Sora videos, creates character references and runs local queues with scripts/sora.py. Requires OPENAI_API_KEY and access to the Sora API."
 ---
 
 

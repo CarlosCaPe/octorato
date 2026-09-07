@@ -1,6 +1,6 @@
 ---
 name: social-video-mining
-description: "Extrae insights de video corto (TikTok, Shorts, Reels, Douyin) sin speech-to-text de paga: yt-dlp, ffmpeg y vision sobre los frames. Usalo cuando el texto en pantalla carga la senal o cuando no hay transcript."
+description: "Extracts insights from short video (TikTok, Shorts, Reels, Douyin) without paid speech-to-text: yt-dlp, ffmpeg and vision over the frames. Use it when on-screen text carries the signal or when there is no transcript."
 ---
 
 # Social Video Mining — Frames Over Audio

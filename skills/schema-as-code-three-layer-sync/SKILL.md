@@ -1,6 +1,6 @@
 ---
 name: schema-as-code-three-layer-sync
-description: "Mantiene sincronizadas las tres capas de un proyecto schema-as-code: diagrama ER, diccionario de datos y el SQL declarativo. Define la cadena de verdad y el flujo de diff cuando divergen."
+description: "Keeps the three layers of a schema-as-code project in sync: ER diagram, data dictionary and the declarative SQL. Defines the chain of truth and the diff flow when they drift."
 ---
 
 # Schema-as-Code Three-Layer Sync
