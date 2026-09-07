@@ -1412,7 +1412,8 @@ class TestQaCycle5(SandboxCase):
                      ["--brain", str(self.root), "hash", str(loop)],
                      ["--brain", str(self.root), "install", "--kind", "arm",
                       "--dest", str(loop), "owner/repo"]):
-            with self.subTest(verb=argv[-2] if len(argv) > 3 else argv[0]):
+            verb = next(a for a in argv if a in ("verify", "hash", "install"))
+            with self.subTest(verb=verb):
                 buf = io.StringIO()
                 with contextlib.redirect_stderr(buf), contextlib.redirect_stdout(io.StringIO()):
                     rc = octo_pkg.main(argv)          # must not raise
@@ -1447,18 +1448,32 @@ class TestQaCycle5(SandboxCase):
         key = self.mint_key()
         pkg = self.stage("signed")
         self.sign(key, pkg)
+        # The failure goes into exclude_add (the PRIMARY path, which is what makes
+        # the install fail) AND into the cleanup's own rmtree, which is the thing
+        # G3 was about. The first version injected only into the primary path, so
+        # it passed with the narrow pre-G3 wrapper still in place: it was testing
+        # the BaseException width, not the cleanup wrapper (QA cycle 9 proved that
+        # by mutation, and it is the third test in this session found passing for
+        # a reason other than its name).
         real_add = octo_pkg.Brain.exclude_add
+        real_rmtree = octo_pkg.shutil.rmtree
         def boom(self_, rel):
             raise PermissionError("ORIGINAL CAUSE")
+        def boom_cleanup(path, *a, **kw):
+            raise PermissionError("CLEANUP FAILED")
         octo_pkg.Brain.exclude_add = boom
+        octo_pkg.shutil.rmtree = boom_cleanup
         self.addCleanup(lambda: setattr(octo_pkg.Brain, "exclude_add", real_add))
+        self.addCleanup(lambda: setattr(octo_pkg.shutil, "rmtree", real_rmtree))
         buf = io.StringIO()
         with contextlib.redirect_stderr(buf), contextlib.redirect_stdout(io.StringIO()):
             rc = octo_pkg.main(["--brain", str(self.root), "install", str(pkg)])
         self.assertEqual(rc, 1)
-        self.assertIn("ORIGINAL CAUSE", buf.getvalue(), "the cause must survive")
+        self.assertIn("ORIGINAL CAUSE", buf.getvalue(),
+                      "the cause must survive a cleanup that fails on its way out")
+        self.assertNotIn("CLEANUP FAILED", buf.getvalue(),
+                         "the cleanup's own failure must not replace the cause")
         self.assertIn("rolled back", buf.getvalue())
-        self.assertFalse(self.brain.vendor_path("sample-package").exists())
 
     @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
     def test_an_entry_with_no_kind_is_restored_not_prescribed_forever(self):
@@ -1479,7 +1494,8 @@ class TestQaCycle5(SandboxCase):
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             octo_pkg.main(["--brain", str(self.root), "sync"])
-        self.assertIn("restored", buf.getvalue())
+        self.assertIn("1 restored", buf.getvalue(),
+                      "`0 restored` also contains the word, so count it")
         self.assertTrue(dest.is_dir(), "the entry verify prescribes sync for must be "
                                        "the entry sync restores")
 

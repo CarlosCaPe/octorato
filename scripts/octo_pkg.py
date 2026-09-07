@@ -550,9 +550,26 @@ def tree_sha256(pkg_dir: Path, kind: str = "skill") -> str:
             # them.
             raise PkgError(f"package contains a non-regular file ({rel.as_posix()}); "
                            "a package tree is directories and regular files only")
-        if rel.as_posix() in excluded:
+        rel_posix = rel.as_posix()
+        try:
+            rel_posix.encode("utf-8")
+        except UnicodeEncodeError:
+            # The FOURTH crossing family, and the one the three seams miss because
+            # all of them face the read direction. A filename that is not valid
+            # UTF-8 is legal on Linux and arrives as a surrogate, so encoding it
+            # into the digest raised UnicodeEncodeError, a ValueError the backstop
+            # did not name. Two measured consequences: `hash` printed a traceback,
+            # and `verify --all` ABORTED, taking every other package's FAIL with
+            # it. That last one is the security shape: anyone able to tamper with a
+            # vendored tree could suppress detection of that tamper by planting a
+            # badly named file next to it. Refused here for the same reason a FIFO
+            # is: nothing here can say what those bytes are, so nothing here should
+            # claim to have checked them (QA cycle 9).
+            raise PkgError(f"package contains a file whose name is not valid UTF-8 "
+                           f"({rel_posix!r}); a package tree must be nameable")
+        if rel_posix in excluded:
             continue
-        files.append((rel.as_posix(), p))
+        files.append((rel_posix, p))
     for rel_posix, p in files:
         h.update(rel_posix.encode("utf-8"))
         h.update(b"\0")
@@ -1070,7 +1087,9 @@ def install_arm(brain: Brain, source: str, dest: str | None) -> int:
         root_file = brain.root / ARMS_ROOT_REL
         if not root_file.exists():
             raise PkgError(f"no --dest and no {ARMS_ROOT_REL}; say where the arm goes")
-        root = Path(os.path.expanduser(read_text(root_file, str(root_file)).strip()))
+        root = resolve_or_fail(
+            Path(os.path.expanduser(read_text(root_file, str(root_file)).strip())),
+            str(root_file))
         target = (root / Path(source.rstrip("/")).name.removesuffix(".git")).resolve()
     if target.exists():
         raise PkgError(f"destination already exists: {target}")
@@ -1232,7 +1251,11 @@ def _skill_ladder(brain: Brain, entry: dict, dest: Path) -> list[str]:
         got = _verify_signature(brain, mpath, dest / SIG_NAME)
         if got != signer:
             problems.append(f"signed by '{got}', lock says '{signer}'")
-    except (PkgError, OSError) as e:
+    except (PkgError, OSError, UnicodeError) as e:
+        # UnicodeError as defence in depth. The refusal above turns the known case
+        # into a PkgError, but verify_entry's docstring promises it never raises and
+        # the whole sweep depends on that: one entry that throws takes every other
+        # package's verdict down with it, which is worth a belt as well as braces.
         problems.append(str(e))
     return problems
 
@@ -2049,7 +2072,7 @@ def main(argv: list[str] | None = None) -> int:
     except PkgError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
-    except (OSError, UnicodeDecodeError, RuntimeError) as e:
+    except (OSError, UnicodeError, RuntimeError) as e:
         # The backstop, and the reason this is the last cycle of its kind. Six QA
         # rounds each found one more crossing of the filesystem boundary that left
         # as a traceback instead of a report, and each fix named the site it had
@@ -2059,7 +2082,10 @@ def main(argv: list[str] | None = None) -> int:
         # It replaces the traceback with a report for the crossing that was missed,
         # so a future miss costs a worse message rather than the caller's output.
         # RuntimeError is here because pathlib raises it for a symlink loop, and
-        # UnicodeDecodeError because it is the class that
+        # UnicodeError rather than UnicodeDecodeError because the decode half was
+        # named while the ENCODE half went straight past it: naming one direction
+        # of a symmetric pair is the same instance-not-family mistake one layer up.
+        # It is the class that
         # actually recurred, twice, and it is a ValueError: the net that caught only
         # OSError would not have held the very thing it was built for. Still NOT
         # Exception: a TypeError here is a bug in this module and must keep its
