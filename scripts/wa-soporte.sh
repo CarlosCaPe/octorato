@@ -221,10 +221,14 @@ if os.environ.get("WA_VIA") == "ssm":
         except Exception:
             continue
         if estado in ("Success", "Failed", "Cancelled", "TimedOut"):
-            print(salida.strip() if estado == "Success" else json.dumps({"success": False, "message": f"SSM {estado}"}))
+            if estado != "Success":
+                print(json.dumps({"success": False, "message": f"SSM {estado}"}))
+                raise SystemExit(1)
+            print(salida.strip())
             break
     else:
         print(json.dumps({"success": False, "message": "SSM sin respuesta"}))
+        raise SystemExit(1)
 else:
     req = urllib.request.Request(f"http://localhost:{puerto}/api/send", data=datos,
                                  headers={"Content-Type": "application/json"})
