@@ -1806,6 +1806,9 @@ rules:
   - method: EXIT_CODE
     locator: scripts/r__subagent-stop__proc-exit.py --selftest registry/fixtures/ARCHITECTURE.kernel-process
     expect: 0
+  - method: EXIT_CODE
+    locator: scripts/octo.py --selftest registry/fixtures/ARCHITECTURE.kernel-process
+    expect: 0
   liveness_required: FIRES
 - id: FLOW.kernel-journal
   title: 'Kernel JOURNAL: no tool call runs unjournaled (append-only, hash-chained, per process)'

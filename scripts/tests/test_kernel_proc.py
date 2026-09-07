@@ -358,6 +358,36 @@ class FileCleanupTest(SandboxHome):
         self.assertTrue(os.path.exists(kernel_proc.journal_path("recent")))
         self.assertTrue(os.path.exists(kernel_proc.journal_path("livepid")))
 
+    def test_pruning_leaves_no_fresh_lock_behind_when_the_lock_is_seen_first(self):
+        """QA nit on Phase 1a. `os.listdir` has no order, so half the time the
+        sweep saw `<pid>.jsonl.lock` before `<pid>.jsonl`: it removed the lock,
+        then re-created it by taking `lock_path(pid)` again to remove the
+        journal, and left a fresh empty `.lock` that no later sweep could
+        remove either (its mtime was now young). Forcing that order is the only
+        way to pin the fix."""
+        from unittest import mock
+
+        kernel_proc.register("dead", {"kind": "main"})
+        old = time.time() - (kernel_proc.PRUNE_AFTER + 3600)
+        for path in (kernel_proc.journal_path("dead"), kernel_proc.lock_path("dead")):
+            os.utime(path, (old, old))
+        table = kernel_proc.read_ptable()
+        table["processes"].pop("dead", None)  # the row is long gone; the files are not
+        forced = ["dead.jsonl.lock", "dead.jsonl"]   # lock FIRST, the bug's order
+        with mock.patch.object(kernel_proc.os, "listdir", return_value=forced):
+            removed = kernel_proc.prune_files(table)
+        self.assertEqual(removed, 2)
+        self.assertEqual(sorted(os.listdir(kernel_proc.journal_dir())), [],
+                         "a fresh empty .lock is exactly what must NOT be left")
+
+    def test_a_lock_with_no_journal_is_swept_too(self):
+        kernel_proc.register("orphan", {"kind": "main"})
+        os.unlink(kernel_proc.journal_path("orphan"))
+        old = time.time() - (kernel_proc.PRUNE_AFTER + 3600)
+        os.utime(kernel_proc.lock_path("orphan"), (old, old))
+        self.assertEqual(kernel_proc.prune_files({"processes": {}}), 1)
+        self.assertFalse(os.path.exists(kernel_proc.lock_path("orphan")))
+
     def test_an_old_file_of_a_LIVE_pid_is_kept(self):
         kernel_proc.register("busy", {"kind": "main"})
         old = time.time() - (kernel_proc.PRUNE_AFTER + 3600)
