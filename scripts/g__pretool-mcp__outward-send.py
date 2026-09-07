@@ -111,7 +111,7 @@ def hatches(prompt: str) -> set:
 # clause (mándalo, envíaselo; "me"/"nos" clitics excluded, "mándame el texto" is
 # the paste-ready ask that must NOT transmit); ES infinitives only at clause
 # start or after an ask frame (puedes enviarlo, favor de mandarlo), never as a
-# noun phrase (falta mandarlo, prohibido enviarlo); ES subjunctives only inside a
+# noun phrase (falta mandarlo, prohibido enviarlo, "TODO: mandarlo"); ES subjunctives only inside a
 # "que ..." frame (quiero que lo mandes). EN verbs at clause start or after a
 # frame token, followed by an object or the clause end ("reply came in" and
 # "the release notes" do not count). Two blocker lists: _PRE_BLOCK tokens only
@@ -136,39 +136,42 @@ _EN_ASK = (r"(?:^|(?<![\w-])(?:please|just|ok|okay|go ahead and|can you|could yo
 _SEND_ASK = re.compile("|".join((_ES_IMP, _ES_INF, _ES_SUBJ, _EN_ASK)), re.IGNORECASE)
 _CLAUSE = re.compile(r"[.;:!?\n,]+|\s+(?:pero|but|y|and|aunque|though)\s+", re.IGNORECASE)
 _PRE_BLOCK = re.compile(
-    r"(?<![\w-])(?:sin|without|ni|evita\w*|abst[eé]nte|desaconsejo|dudo|falta|pendiente|salvo|excepto|except"
+    r"(?<!\w)(?:sin|without|ni|evita\w*|abst[eé]nte|desaconsejo|dudo|falta|pendiente|salvo|excepto|except"
     r"|conviene|convendr[ií]a|vale la pena|tiene sentido|buena idea|good idea|wise|ok to|debes|deber[ií]as?|debe"
-    r"|debo|should|shall|quieres|quiere|quieren|want me|do you want)(?![\w-])", re.IGNORECASE)
+    r"|debo|should|shall|quieres|quiere|quieren|want me|do you want)(?!\w)", re.IGNORECASE)
 _ANY_BLOCK = re.compile(
-    r"(?<![\w-])(?:no|not|nunca|jam[aá]s|never|nel|nope|na|nah|nop|negativo|nothing|don'?t|do not"
+    r"(?<!\w)(?:no+|not|nunca|jam[aá]s|never|nel|nope|na|nah|nop|negativo|nothing|don'?t|do not"
     r"|todav[ií]a|a[uú]n|aun|despu[eé]s|luego|ma[ñn]ana|later|tomorrow|cuando|when|hasta|until"
     r"|s[oó]lo si|only if|espera\w*|esp[eé]rate|aguanta|wait|hold|cancel\w*|cancela\w*|olv[ií]dalo|forget"
-    r"|ser[ií]a|would be|mu[eé]strame\w*|show me|broma|kidding|descartado|prohibido)(?![\w-])", re.IGNORECASE)
+    r"|ser[ií]a|would be|mu[eé]strame\w*|show me|broma|kidding|descartado|prohibido|jaja\w*|jeje\w*|lol"
+    r"|🚫|❌|🙅)(?!\w)", re.IGNORECASE)
+# A later clause withdraws the ask on any blocker of either list plus the
+# sequencing words that are fine INSIDE the ask clause ("mándalo antes de las 5")
+# but read as a deferral after a comma ("mándalo, antes revísalo tú").
+_LATER_BLOCK = re.compile(_ANY_BLOCK.pattern + r"|" + _PRE_BLOCK.pattern
+                          + r"|(?<!\w)(?:antes|before|primero|first|ojo)(?!\w)", re.IGNORECASE)
 
 
 def explicit_send_ask(prompt: str) -> bool:
     """True when the operator's prompt for the turn asks to send and nothing in
     that clause or after it negates, defers or withdraws the ask."""
     text = _QUOTE_SPAN.sub(" ", prompt or "")
-    asked, prev = False, ""
-    for clause in _CLAUSE.split(text):
-        clause = clause.strip()
-        if not clause:
-            continue
+    asked = False
+    for idx, clause in enumerate(c.strip() for c in _CLAUSE.split(text) if c.strip()):
         if asked:
-            if _ANY_BLOCK.search(clause):
+            if _LATER_BLOCK.search(clause):
                 return False
             continue
-        if not _ANY_BLOCK.search(clause):
-            m = _SEND_ASK.search(clause)
-            if m and not _PRE_BLOCK.search(clause[:m.start()]):
-                # A bare infinitive opening a clause after a label or a blocker
-                # ("pendiente: mandarlo", "no sé: enviarlo") is a noun, not an ask.
-                labelled = m.start() == 0 and m.group(0).lower().startswith(
-                    ("mandar", "enviar", "responder", "contestar", "reenviar", "publicar", "desplegar", "lanzar"))                     and bool(_PRE_BLOCK.search(prev) or _ANY_BLOCK.search(prev))
-                if not labelled:
-                    asked = True
-        prev = clause
+        if _ANY_BLOCK.search(clause):
+            continue
+        m = _SEND_ASK.search(clause)
+        if m and not _PRE_BLOCK.search(clause[:m.start()]):
+            # A bare infinitive opening any clause but the first ("pendiente:
+            # mandarlo", "TODO: mandarlo", "1. mandarlo") is a noun, not an ask.
+            labelled = idx > 0 and m.start() == 0 and m.group(0).lower().startswith(
+                ("mandar", "enviar", "responder", "contestar", "reenviar", "publicar", "desplegar", "lanzar"))
+            if not labelled:
+                asked = True
     return asked
 
 
