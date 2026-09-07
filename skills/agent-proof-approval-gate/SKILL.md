@@ -99,7 +99,7 @@ Mechanism: `scripts/g__pretool-bash__prod-write.py` (Registry `SEC.prod-write-ga
 
 ## Reference Implementation
 
-`~/.claude/scripts/qa-merge-gate.py`: full gate with the agent-proof env channel (`OCTO_MERGE_APPROVE`), the discouraged legacy blanket (`OCTO_QA_OK`), and command-boundary PR-number extraction. The forgeable file channel was removed (see the lesson above).
+`~/.claude/scripts/qa-merge-gate.py`: full gate with the agent-proof env channel (`OCTO_MERGE_APPROVE`), the discouraged `OCTO_QA_OK`, which waives the QA receipt only and still requires `OCTO_MERGE_APPROVE` to name the same PR, and command-boundary PR-number extraction. The forgeable file channel was removed (see the lesson above).
 
 `~/.claude/scripts/g__pretool-bash__prod-write.py` is the production-write sibling: per-destination scoping, payload inspection for SSM and ssh, a read-first allowlist that keeps false positives at zero, and a crash path that denies once a prod channel is identified.
 

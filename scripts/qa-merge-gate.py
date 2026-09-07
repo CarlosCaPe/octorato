@@ -25,8 +25,9 @@ write method or body flag qualifies. The two channels:
      reach this hook).  Only the operator, who exports the var in their shell
      before invoking Claude Code, can set it — making it a true operator signal.
 
-  2. OCTO_QA_OK=1  — legacy blanket override; kept for back-compat but DISCOURAGED.
-     Prefer OCTO_MERGE_APPROVE=<n>.
+  2. OCTO_QA_OK=1  — an explicit one-time bypass of the QA RECEIPT for the PR named
+     in OCTO_MERGE_APPROVE. It is not an authorizer on its own: without a matching
+     OCTO_MERGE_APPROVE=<same pr> the merge is still denied. DISCOURAGED.
 
 The file channel (~/.claude/connectome/merge-approvals.json, written by
 octo-dim.py approve-merge) is NO LONGER an authorizer: an agent owns its own
@@ -39,7 +40,8 @@ is a real boundary. octo-dim approve-merge is kept as an operator audit log
 v7 (2026-09-05): approval is necessary, not sufficient. A merge also needs a QA
 receipt for the PR in the receipt ledger (~/.claude/.cache/receipts/global.jsonl),
 written by the SubagentStop hook from a QA subagent's QA-VERDICT/QA-SCOPE lines
-and re-read from that agent's transcript. OCTO_QA_OK=1 is the explicit bypass.
+and re-read from that agent's transcript. OCTO_QA_OK=1 is the explicit bypass of
+that receipt only, and only for the PR named in OCTO_MERGE_APPROVE.
 Fail-closed ONLY for positively-identified merge commands.
 Any parsing error on a non-merge command → exit 0 (fail-open).
 Design mirrors grafo-gate.py: same I/O protocol, same stdin JSON shape.
@@ -526,13 +528,15 @@ def main() -> int:
 
     # ── Channel 1: env, PR-scoped, agent-proof (preferred) ───────────────────
     env_approve = os.environ.get("OCTO_MERGE_APPROVE", "").strip()
+    qa_ok = os.environ.get("OCTO_QA_OK", "").strip() == "1"
     if env_approve and env_approve == pr_id:
         # v7 phase 3: the operator's approval is necessary, not sufficient. An
         # independent QA verdict must exist as a HARNESS-written receipt for this
         # PR (r__subagent-stop__qa-receipt.py), re-read from the agent transcript.
-        # "QA approved" typed by the main loop is not a receipt. OCTO_QA_OK=1 stays
-        # the operator's explicit blanket bypass (bootstrap, or a docs-only PR).
-        if os.environ.get("OCTO_QA_OK", "").strip() != "1":
+        # "QA approved" typed by the main loop is not a receipt. OCTO_QA_OK=1 waives
+        # THIS receipt only (bootstrap, or a docs-only PR), never the PR-scoped
+        # approval above: it is read only inside this matched-PR branch.
+        if not qa_ok:
             try:
                 sys.path.insert(0, str(Path(__file__).resolve().parent))
                 import receipt_ledger
@@ -545,12 +549,19 @@ def main() -> int:
                     f"receipt.\n  v7: run an independent QA subagent (judgment tier) on the PR and "
                     f"have it end with\n    QA-VERDICT: PASS\n    QA-SCOPE: PR #{pr_id}\n  The "
                     f"SubagentStop hook records the verdict; the ledger line is re-read from the "
-                    f"agent transcript.\n  Explicit operator bypass: OCTO_QA_OK=1 (blanket, logged).",
+                    f"agent transcript.\n  Explicit operator bypass of the receipt: "
+                    f"OCTO_QA_OK=1 (logged), which still needs OCTO_MERGE_APPROVE={pr_id}.",
                     file=sys.stderr,
                 )
                 _journal_deny(f"merge of PR #{pr_id} blocked: operator-approved but no QA receipt", data)
                 return 2
             _nudge(f"✓ QA gate: QA receipt for PR #{pr_id} ({qa.get('agent_type') or 'subagent'}, {qa.get('ts', '')}).")
+        else:
+            _nudge(
+                f"⚠ QA gate: OCTO_QA_OK waived the QA receipt for PR #{pr_id} "
+                f"(legacy blanket flag, discouraged, logged). The PR-scoped "
+                f"OCTO_MERGE_APPROVE={pr_id} still authorized this merge."
+            )
         _nudge(
             f"✓ QA gate: operator-approved PR #{pr_id} via OCTO_MERGE_APPROVE "
             f"(env, agent-proof)."
@@ -562,13 +573,19 @@ def main() -> int:
     #    agent-shell markers or pass --i-am-the-operator to write that file, which
     #    made it a self-approval route. Only the harness env below is agent-proof.
 
-    # ── Channel 2: legacy blanket override (DISCOURAGED, back-compat) ─────────
-    if os.environ.get("OCTO_QA_OK", "").strip() == "1":
-        _nudge(
-            f"⚠ QA gate: legacy blanket OCTO_QA_OK override — "
-            f"prefer PR-scoped OCTO_MERGE_APPROVE={pr_id}."
+    # ── OCTO_QA_OK is NOT an authorizer ───────────────────────────────────────
+    # It waives the QA receipt for the PR named in OCTO_MERGE_APPROVE and nothing
+    # else. As a blanket it let `gh pr merge 280` through while the operator had
+    # approved 279, arming auto-merge on the wrong number.
+    if qa_ok:
+        scoped = f"OCTO_MERGE_APPROVE={env_approve}" if env_approve else "OCTO_MERGE_APPROVE unset"
+        print(
+            f"✗ QA GATE (fail-closed): OCTO_QA_OK=1 waives the QA receipt only, not the\n"
+            f"  approval. This command merges {pr_id}, but {scoped}.\n"
+            f"  Operator: export OCTO_MERGE_APPROVE={pr_id} in your shell, then re-run.",
+            file=sys.stderr,
         )
-        return 0
+        return 2
 
     # ── BLOCK — fail-closed ───────────────────────────────────────────────────
     label = f"PR #{pr_id}" if pr_id not in ("unknown", "main", "master") else f"branch '{pr_id}'"

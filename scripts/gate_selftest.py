@@ -20,6 +20,11 @@ Fixture layout under registry/fixtures/<rule-id>/:
   home/                     optional seed copied into a throwaway HOME so a gate
                             that reads session/ledger state can be driven
 
+A payload may carry a top-level "_env" object (stripped before the payload reaches
+the gate) naming env vars to set for THAT leg only, after the override strip. It is
+how a fixture proves override semantics (e.g. an operator flag that must still
+deny when it is scoped to a different PR); it cannot leak into any other leg.
+
 Isolation: every leg runs under a fresh temp HOME and cwd, with the dangerous
 operator-override env vars stripped, so no leg can touch real brain state or leak
 an approval. The harness is used two ways: a gate script's `--selftest <dir>`
@@ -81,8 +86,12 @@ SELFTEST_SESSION = "__selftest__"
 _KERNEL_RULE_RE = re.compile(r'^_KERNEL_RULE = "([^"]+)"', re.M)
 
 
-def _prep_payload(raw_path: Path, fixture_dir: Path, sandbox: Path) -> str:
-    """Load a fixture payload and rewrite a relative transcript_path to absolute."""
+def _prep_payload(raw_path: Path, fixture_dir: Path, sandbox: Path) -> tuple[str, dict]:
+    """Load a fixture payload; rewrite a relative transcript_path to absolute.
+
+    Returns (stdin_json, leg_env). "_env" is a harness key, not hook input, so it
+    is removed from the payload the gate reads.
+    """
     data = json.loads(raw_path.read_text(encoding="utf-8"))
     tp = data.get("transcript_path")
     if isinstance(tp, str) and tp and not os.path.isabs(tp):
@@ -94,7 +103,11 @@ def _prep_payload(raw_path: Path, fixture_dir: Path, sandbox: Path) -> str:
     # id the env already advertises is filled in when the fixture has none.
     if not data.get("session_id"):
         data["session_id"] = SELFTEST_SESSION
-    return json.dumps(data)
+    # "_env" is a harness key, not hook input: it is lifted out here so the gate
+    # never sees it in the payload it reads.
+    raw_env = data.pop("_env", None)
+    leg_env = {str(k): str(v) for k, v in raw_env.items()} if isinstance(raw_env, dict) else {}
+    return json.dumps(data), leg_env
 
 
 def _kernel_rule_of(script: Path) -> str:
@@ -138,7 +151,8 @@ def _journaled_denies(sandbox: Path) -> list:
     return out
 
 
-def _run_leg(script: Path, payload: str, sandbox: Path) -> tuple[int, str]:
+def _run_leg(script: Path, payload: str, sandbox: Path,
+             leg_env: dict | None = None) -> tuple[int, str]:
     env = dict(os.environ)
     for k in _OVERRIDE_ENV:
         env.pop(k, None)
@@ -152,6 +166,9 @@ def _run_leg(script: Path, payload: str, sandbox: Path) -> tuple[int, str]:
     env["HOME"] = str(sandbox)
     env["USERPROFILE"] = str(sandbox)
     env["CLAUDE_SESSION_ID"] = "__selftest__"
+    # fixture-declared env, applied AFTER the strip so a leg can exercise an
+    # operator override deliberately; scoped to this subprocess only.
+    env.update(leg_env or {})
     cp = subprocess.run(
         [sys.executable, str(script)],
         input=payload, capture_output=True, text=True,
@@ -185,7 +202,8 @@ def run_gate_selftest(script_path, fixture_dir) -> int:
         failures = []
         rule = _kernel_rule_of(script)
         for vf in violations:
-            rc, out = _run_leg(script, _prep_payload(vf, fdir, sandbox), sandbox)
+            payload, leg_env = _prep_payload(vf, fdir, sandbox)
+            rc, out = _run_leg(script, payload, sandbox, leg_env)
             if not emits_block(rc, out):
                 failures.append(f"{vf.name} did NOT block (rc={rc})")
         # v8 Phase 4: a gate that refuses must also RECORD the refusal. The
@@ -202,7 +220,8 @@ def run_gate_selftest(script_path, fixture_dir) -> int:
             elif rule not in journaled:
                 failures.append(f"journaled deny rule {journaled[0]!r} != {rule!r}")
         for bf in benigns:
-            rc, out = _run_leg(script, _prep_payload(bf, fdir, sandbox), sandbox)
+            payload, leg_env = _prep_payload(bf, fdir, sandbox)
+            rc, out = _run_leg(script, payload, sandbox, leg_env)
             if emits_block(rc, out):
                 failures.append(f"{bf.name} WAS blocked (must allow, rc={rc})")
     finally:
