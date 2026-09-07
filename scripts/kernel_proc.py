@@ -74,13 +74,15 @@ UNKNOWN_TYPE = "?"
 # see `quarantines()` for why the record lives next to the file and not in a
 # process journal.
 #
-# TWO bounds, not one. A count alone bounds the number of files and nothing
+# THREE bounds, not one. A count alone bounds the number of files and nothing
 # else, and the multiplicand is chosen by whoever wrote the corrupt table: QA
 # measured a 46.1 MB corrupt ptable producing a 47.7 MB copy, 245 MB peak RSS,
 # 1.64 s of it inside the ptable lock, and a 20-file worst case near 954 MB. So
 # the copy is capped per file, the ledger is capped in total, and the table
 # itself is capped BEFORE it is parsed, which is what actually takes the big
-# read out of the lock window (the parse ran under the lock too).
+# read out of the lock window (the parse ran under the lock too). And a copy
+# expires on the journal window, because bounded by count and bytes alone a copy
+# never expired at all: one corruption held the doctor at WARN forever.
 QUARANTINE_PREFIX = "ptable.corrupt-"
 MAX_QUARANTINE = 20                       # files
 MAX_QUARANTINE_BYTES = 1024 * 1024        # of the original preserved per file
@@ -145,25 +147,62 @@ def recovery() -> str:
     """The way out of a faulted table, worded ONCE so the two gates, the two
     listings and the doctor cannot drift on it.
 
-    Deliberately not an `octo` subcommand and not an env hatch. A fault denies
-    every hooked write, so a command that clears it is a command that clears the
-    agent's own gate, and the agent owns its process env: the only hand that can
-    be trusted to lift this is one the hooks do not run under. That is the same
-    reasoning as `octo ps --release` (agent-proof by refusing inside an agent
-    shell) taken one step further, because here the agent would be lifting a
-    denial that names the agent.
+    It describes the state the operator is actually IN, which is the POST-
+    register one, and QA cycle 5 F2 is why that had to be said. This text used
+    to describe the file's PRE-register shape, and the deny it is attached to
+    only persists into the shape AFTER a register: by the time a human reads
+    it a SessionStart has almost certainly fired (startup, resume, clear,
+    compact), `register` republished the table it read, so `processes` is a
+    valid object again and "repair `processes` to an object" is a no-op. What
+    was left of the instruction was "delete the `_faulted` key", which taken
+    literally clears the deny AND discards every row the fault carried. QA
+    followed it verbatim and reproduced the lane transfer this seam exists to
+    prevent. So the rows are named where they actually are, `_faulted.rows`,
+    the quarantine copy is named too (it was on no surface outside the doctor's
+    three-in-24 h branch), and deleting the key alone is labelled with what it
+    costs instead of reading as the cheap option.
 
-    Deleting the file is the honest cost, stated: the next SessionStart rebuilds
-    it, and every lane on the machine is forgotten until each process claims
-    again on its next write. Repairing `processes` by hand keeps the rows that
-    were still in the file, which is why the fault carries them.
+    The `rm` half carries a second step now, which is the honest price of
+    closing the deletion path (`_absent_table`): an absent table with a live
+    journal beside it is itself a fault, so `rm` alone moves the machine from
+    one faulted state to another until the next SessionStart writes a table or
+    those journals age past the TTL. Stated here rather than discovered.
+
+    NOT an `octo` subcommand and not an env hatch, and the reason is now what
+    is TRUE rather than what was claimed. The claim was that a command an agent
+    could run would be a command that clears its own gate. What the Bash gate
+    actually verifies today is the direct file verbs: `rm`, `mv`, `cp`, `sed`,
+    `tee`, `unlink`, `truncate` and a `>` redirect aimed at the kernel
+    directory are denied, and so are `touch`, `chmod`, `chattr` and `dd`. The
+    INTERPRETER PATH IS OPEN, and QA measured it: `python3 -c` is rescanned as
+    shell text, so Python source that unlinks or rewrites this file is never
+    seen, and `ln` is in no verb list at all, so `ln -sf` reaches the same
+    path. Closing that is a real expansion of the gate's verb detection with
+    its own false-positive risk and it is deliberately not this change. Until
+    it lands the honest statement is: an agent that goes through an interpreter
+    can still reach the kernel's state, which is a reason to keep the recovery
+    out of its hands, not evidence that it already is.
     """
-    return ("Recovery, from a terminal where no hook fires (a command an agent "
-            "could run would be a command that clears its own gate): `rm %s` "
-            "and the next SessionStart rebuilds it, forgetting every lane held "
-            "right now; or repair `processes` to an object and delete the `%s` "
-            "key beside it, which keeps the rows the file still has."
-            % (ptable_path(), FAULT_KEY))
+    return ("Recovery, from a terminal where no hook fires. By the time you "
+            "read this a SessionStart has almost certainly run, so %s is valid "
+            "JSON again with a `%s` key beside `processes`, and the rows the "
+            "fault carried are under `%s.rows` (evidence, never owners: "
+            "nothing reads them as lanes). Either (a) edit the file: move the "
+            "rows you still want out of `%s.rows` back into `processes` and "
+            "then delete the `%s` key, which is the only thing that lifts the "
+            "deny; deleting that key WITHOUT restoring the rows lifts it just "
+            "as well and forgets every lane it carried, so it is a choice, not "
+            "a formality. Or (b) `rm %s` and move `%s/*.jsonl` aside (or leave "
+            "them untouched for %ds), because an absent table with a live "
+            "journal beside it is a fault too: the deny lifts once the next "
+            "SessionStart rebuilds the table or those journals go quiet. "
+            "Either way every lane held right now is forgotten until each "
+            "process claims again. The file as it was is preserved beside it "
+            "as %s%s*.json, newest last by name; read that, and then deleting "
+            "those copies is safe."
+            % (ptable_path(), FAULT_KEY, FAULT_KEY, FAULT_KEY, FAULT_KEY,
+               ptable_path(), journal_dir(), TTL,
+               os.path.join(kernel_dir(), ""), QUARANTINE_PREFIX))
 
 
 # ── locking ─────────────────────────────────────────────────────────────────
@@ -603,8 +642,111 @@ def sane_table(data) -> tuple:
     return data, dropped, carried_fault(data)
 
 
-def read_ptable_detail() -> tuple:
+def live_journal_pids(now: float = None, limit: int = 8, ignore=None) -> list:
+    """Pids the JOURNALS say are live, read WITHOUT the process table.
+
+    This is the one question the table cannot answer: whether a table that is
+    not there is telling the truth. It applies the two halves of the liveness
+    definition (v8-kernel.md section 2) that need no table, a journal mtime
+    inside the TTL and no `exit` line, and skips the third, that a subagent's
+    parent must be live too. Skipping it can only read live where `is_live`
+    would read dead, and that direction is the safe one here: this decides
+    whether a missing table is a fresh install or a loss, and calling a loss a
+    fresh install is exactly the failure being closed.
+
+    Off the hot path by construction. It is reached only when `ptable.json` is
+    not there, which on a working machine happens once, before the first
+    register. `limit` stops the walk as soon as there is enough to answer,
+    because the caller needs "is anything alive here", not a census, and the
+    number of files in that directory is chosen by whoever writes them.
+
+    `ignore` is the one pid that proves nothing, and `register` is the only
+    caller that has one. It writes its journal BEFORE it takes the ptable lock
+    (deliberately: published-then-written left a window where a sibling prune
+    deleted a row whose journal did not exist yet), so on a machine that has
+    genuinely never run a hook the first register reads an absent table with
+    its own brand-new journal beside it. Counting that would make every fresh
+    install fault on its first SessionStart and deny every write on it
+    afterwards, which is a worse failure than the one being closed. A journal
+    this very call just created is not evidence that somebody ELSE is running.
+    """
+    now = time.time() if now is None else now
+    skip = {safe_pid(ignore)} if ignore else set()
+    try:
+        names = os.listdir(journal_dir())
+    except OSError:
+        return []
+    out = []
+    for name in sorted(names):
+        if not name.endswith(".jsonl"):
+            continue
+        pid = name[:-len(".jsonl")]
+        if pid in skip:
+            continue
+        # mtime first: it is one stat, and it rejects almost everything. The
+        # exit check reads a 16 KB tail, so it only ever runs on a fresh one.
+        if not _own_fresh(pid, now, TTL):
+            continue
+        if has_exit(pid):
+            continue
+        out.append(pid)
+        if limit and len(out) >= limit:
+            break
+    return out
+
+
+def _absent_table(ignore_pid=None) -> tuple:
+    """What an ABSENT ptable means, which is not always "a machine with nothing
+    on it". QA cycle 5 F3.
+
+    The claim this file used to make, that there is exactly one honest empty
+    table and it is an absent file, is false whenever a live journal sits
+    beside it, and the two readers said so out loud: `octo ps` printed "the
+    kernel has registered nothing on this machine yet" while `octo top` listed
+    two live processes out of the same directory. One of them was wrong.
+
+    It matters because of WHICH move it covers. Corrupting the table is the
+    loud attack and it was already guarded; DELETING it is the cheap one, it
+    reaches the file through the same unguarded door, and it bought a silent
+    allow-everything machine: no fault, no quarantine copy, no doctor FAIL, no
+    deny. Failing closed on the loud path and open on the quiet one pays the
+    outage against the move nobody would make.
+
+    So the rule is the least surprising one that stays coherent: an absent
+    table with any live journal beside it is a FAULT, because a machine with
+    running processes and no record of them has lost the record; an absent
+    table with no live journal is a genuine fresh install and stays the one
+    honest empty table, which is what a first run, a wiped cache and every
+    sandbox in the test suite actually are.
+
+    The cost is real and belongs in the recovery, not in a footnote: after the
+    `rm` half of `recovery()` the machine sits in THIS fault until the next
+    SessionStart writes a table or the journals age past the TTL, so the
+    operator gets one more step rather than a surprise. `recovery()` states it.
+
+    `ignore_pid` is the fresh-install carve-out, and only `register` passes it:
+    see `live_journal_pids`. It is an explicit argument rather than module state
+    because exactly one caller is entitled to it, and a hidden set of "journals
+    this process wrote" would quietly extend that to every caller in the same
+    interpreter.
+    """
+    live = live_journal_pids(ignore=ignore_pid)
+    if not live:
+        return fresh_table(), [], ""     # the one honest empty table
+    fault = ("the ptable is absent while at least %d journal(s) beside it read "
+             "live (%s): a table that is gone is not a machine that never "
+             "registered, it is a machine whose record of who holds what was "
+             "removed under running processes"
+             % (len(live), ", ".join(live[:3]) + (", ..." if len(live) > 3 else "")))
+    return _faulted_table(None, fault), [], fault
+
+
+def read_ptable_detail(ignore_pid=None) -> tuple:
     """(table, dropped pids, fault). `read_ptable` for callers that must decide.
+
+    `ignore_pid` is passed by `register` alone and only reaches the absent-file
+    branch (`_absent_table`): it names the pid whose journal this very call just
+    created, which is the one journal that is not evidence of anybody else.
 
     DROPS a malformed row rather than raising, and the difference is the whole
     point. QA measured what one `"junk": "not-a-row"` value did to the kernel:
@@ -615,8 +757,10 @@ def read_ptable_detail() -> tuple:
     unreadable row must never be able to take the whole kernel down with it.
 
     A FAULT is the other half, and it is not a drop. There is exactly one state
-    in which an empty table is the truth: the file is not there, because no hook
-    has ever run on this machine. Every other way of yielding zero rows - a file
+    in which an empty table is the truth, and it is narrower than "the file is
+    not there": the file is not there AND no journal beside it reads live, so
+    nothing on this machine is running that a table would have to account for
+    (`_absent_table`). Every other way of yielding zero rows - a file
     that is not JSON, a top level that is not an object, a `processes` that is
     an array, a file this process cannot open - is a machine whose process table
     was readable to somebody and is not readable to us. `_write_ptable`
@@ -643,9 +787,21 @@ def read_ptable_detail() -> tuple:
     try:
         size = os.path.getsize(path)
     except FileNotFoundError:
-        return fresh_table(), [], ""     # the one honest empty table
+        return _absent_table(ignore_pid)
     except OSError as exc:
-        return fresh_table(), [], "the ptable could not be read (%s)" % exc
+        # CARRIES, like the `open` leg below, and QA cycle 5 F1 is why the two
+        # are written out separately instead of trusting them to look alike.
+        # They did not: this one returned `fresh_table()`, so the fault died at
+        # the next `register` and the whole loss reproduced verbatim (deny, one
+        # SessionStart, fault empty, ALLOW, the owner's row and lane gone, and
+        # no quarantine file because nothing was ever carried for `_publish` to
+        # preserve). Which leg a fault lands on is chosen by the ATTACKER, not
+        # by the kernel: a directory at this path fails at `open` and hit the
+        # carrying leg, an ELOOP symlink fails HERE at the stat and hit the
+        # forgetting one. A fail-closed rule that depends on which syscall
+        # noticed is not fail-closed.
+        fault = "the ptable could not be read (%s)" % exc
+        return _faulted_table(None, fault), [], fault
     if size > MAX_PTABLE_BYTES:
         fault = ("the ptable is %d bytes, past the %d byte ceiling, so it was "
                  "not parsed" % (size, MAX_PTABLE_BYTES))
@@ -654,7 +810,7 @@ def read_ptable_detail() -> tuple:
         with open(path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
     except FileNotFoundError:
-        return fresh_table(), [], ""     # raced with a delete: still honest
+        return _absent_table(ignore_pid)  # raced with a delete: ask the journals
     except ValueError as exc:
         fault = "the ptable is not valid JSON (%s)" % exc
         return _faulted_table(None, fault), [], fault
@@ -715,24 +871,40 @@ def quarantines() -> list:
     return out
 
 
-def _trim_quarantines() -> None:
-    """Hold the ledger to BOTH bounds, count and bytes, newest first.
+def _trim_quarantines(now: float = None) -> None:
+    """Hold the ledger to THREE bounds, count, bytes and AGE, newest first.
 
     A count alone bounds the number of files and lets whoever wrote the corrupt
     table choose the size of each one: QA measured a 20-file worst case near
     954 MB from a 46.1 MB original. The newest is always kept, whatever it
-    weighs, because deleting the event that just happened would leave the
-    doctor counting repairs it can no longer show.
+    weighs or how old it is, because deleting the event that just happened
+    would leave the doctor counting repairs it can no longer show.
+
+    AGE is QA cycle 5 F5. Bounded by count and bytes, a copy never expired, so
+    one corruption a year ago held `brain_doctor` at WARN forever and nothing
+    printed where the files were or that removing them was safe. Both halves
+    are fixed: `recovery()` names the path and says the copies are safe to
+    delete once read, and a copy older than PRUNE_AFTER goes on its own. The
+    window is the journal window on purpose, not a new number: the copy is
+    evidence about a moment, and it should not outlive the journals that are
+    the only other record of what was running at that moment.
+
+    The bound needs a beat that is not a corruption, or an ageing rule reached
+    only from `_quarantine` would fire only when a NEW copy arrives, which is
+    the one moment nothing has expired that matters. So `prune_files` calls it
+    on the register path, where every other retention window is enforced.
     """
+    now = time.time() if now is None else now
     total = 0
-    for n, (_mt, path) in enumerate(quarantines()):
+    for n, (mt, path) in enumerate(quarantines()):
         try:
             total += os.path.getsize(path)
         except OSError:
             pass
         if n == 0:
             continue
-        if n >= MAX_QUARANTINE or total > MAX_QUARANTINE_TOTAL:
+        if (n >= MAX_QUARANTINE or total > MAX_QUARANTINE_TOTAL
+                or (now - mt) > PRUNE_AFTER):
             try:
                 os.unlink(path)
             except OSError:
@@ -1237,6 +1409,10 @@ def prune_files(table: dict, now: float = None) -> int:
     file.
     """
     now = time.time() if now is None else now
+    # The repair ledger ages on the same beat and the same window: this is the
+    # register-path sweep, and a bound that only ran when a NEW copy arrived
+    # would never expire the old ones (see `_trim_quarantines`).
+    _trim_quarantines(now)
     jdir = journal_dir()
     removed = 0
     try:
@@ -1358,7 +1534,11 @@ def register(pid, entry: dict, start_record: dict = None) -> dict:
     try:
         fh = open(ptable_lock_path(), "a")
         _flock(fh)
-        table, dropped, fault = read_ptable_detail()
+        # `pid` is handed in so the journal this call wrote four lines up does
+        # not read as "somebody else is running" on a machine whose table has
+        # never existed (`_absent_table`). Every other reader of an absent table
+        # is asking about processes that are not itself.
+        table, dropped, fault = read_ptable_detail(pid)
         procs = table.setdefault("processes", {})
         prune(table)
         row = dict(procs.get(pid) or {})

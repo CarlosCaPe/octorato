@@ -236,13 +236,21 @@ def _print_repair(dropped, fault="") -> None:
     everything under it.
     """
     if fault:
+        # The middle line is picked from the fault, because the two causes are
+        # not the same sentence and printing the corruption one over a DELETED
+        # table would be its own small falsehood (QA cycle 5, F3). What they
+        # share is the consequence, which is the line under it.
+        why = ("The file is not there, and the journals beside it say this "
+               "machine is not idle: the record of who holds what was removed "
+               "under running processes."
+               if "absent" in fault else
+               "Every row on this machine is missing from this listing, and "
+               "the count is unknown: nothing in a value that is not an object "
+               "maps back to a pid. The kernel publishes this file with "
+               "os.replace, so it writes neither a half-written nor an oddly "
+               "shaped one; a writer that is not the kernel touched it.")
         print(f"x THE PROCESS TABLE IS UNREADABLE: {fault}.\n"
-              f"  Every row on this machine is missing from this listing, and "
-              f"the count is unknown: nothing in a value that is not an object "
-              f"maps back to a pid.\n"
-              f"  The kernel publishes this file with os.replace, so it writes "
-              f"neither a half-written nor an oddly shaped one; a writer that is "
-              f"not the kernel touched it.\n"
+              f"  {why}\n"
               f"  The isolation gates are DENYING writes while it reads this "
               f"way, which is the fail-closed half of one writer per tree, and "
               f"the fault is CARRIED FORWARD by every writer, so registering "

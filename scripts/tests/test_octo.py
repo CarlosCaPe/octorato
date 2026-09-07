@@ -422,6 +422,53 @@ class UnreadableTableTest(OctoCase):
                          "the good row survives; only the unreadable one goes")
 
 
+class DeletedTableTest(OctoCase):
+    """QA cycle 5, F3, at the readers. The two of them contradicted each other
+    out loud: with the table deleted and the journals untouched, `octo ps`
+    printed "no processes: the kernel has registered nothing on this machine
+    yet" while `octo top`, which walks the journal directory as well as the
+    table, listed the live processes from that same directory.
+
+    One reader stating a falsehood the other refutes is the whole finding. It
+    is not cosmetic: the sentence is the operator-facing half of a state in
+    which every gate had also stopped denying.
+    """
+
+    def deleted(self):
+        self.seed()
+        os.unlink(kernel_proc.ptable_path())
+
+    def test_ps_does_not_announce_an_empty_machine_that_top_refutes(self):
+        self.deleted()
+        rc_ps, ps_out, _ = self.run_octo(["ps"])
+        rc_top, top_out, _ = self.run_octo(["top"])
+        self.assertEqual((rc_ps, rc_top), (0, 0))
+        self.assertNotIn("registered nothing on this machine", ps_out)
+        self.assertIn("THE PROCESS TABLE IS UNREADABLE", ps_out)
+        self.assertIn("absent", ps_out)
+        self.assertIn("agent-1", top_out, "top still sees it from the journals")
+        self.assertIn("THE PROCESS TABLE IS UNREADABLE", top_out,
+                      "and now says the table beside them is gone")
+
+    def test_a_machine_that_really_is_empty_still_says_so(self):
+        """The rule has to keep a fresh install readable, or it is just "deny
+        and complain always". No table and no live journal is the one honest
+        empty machine."""
+        rc, out, _ = self.run_octo(["ps"])
+        self.assertEqual(rc, 0)
+        self.assertIn("registered nothing on this machine", out)
+        self.assertNotIn("UNREADABLE", out)
+
+    def test_ps_prints_the_recovery_for_the_deleted_case_too(self):
+        """Including its second step, which is the honest cost of closing this:
+        after the `rm` the machine sits in this fault until the next
+        SessionStart writes a table or the journals go quiet."""
+        self.deleted()
+        _, out, _ = self.run_octo(["ps"])
+        self.assertIn(kernel_proc.journal_dir(), out)
+        self.assertIn(kernel_proc.QUARANTINE_PREFIX, out)
+
+
 class ReplayTest(OctoCase):
     def seed_refusal(self):
         self.seed(tools=0)

@@ -528,9 +528,16 @@ class QaCycle1(IsolationCase):
         self.assertIn("sess-parent", out)
 
     def test_d10_no_ptable_on_disk_claims_nothing(self):
+        """Still claims nothing, and since QA cycle 5 F3 it also DENIES, because
+        the journals of the three registered processes are sitting right there:
+        a table that is gone beside live journals is a machine whose record was
+        removed, not a machine with nothing on it. The half this test was
+        written for is unchanged and is what is asserted last: a read must never
+        materialise the file.
+        """
         os.unlink(kernel_proc.ptable_path())
         rc, out = self.run_gate(WRITE_GATE, self.write_payload("agent-a", self.a_py))
-        self.assertFalse(self.denied(out))
+        self.assertTrue(self.denied(out))
         self.assertFalse(os.path.exists(kernel_proc.ptable_path()))
 
     def test_residual_the_kernels_own_state_is_a_floor(self):
@@ -827,6 +834,176 @@ class UnreadableTableFailsClosed(IsolationCase):
         self.assertIn(self.a_py, reason)
 
 
+class DeletedTableFailsClosed(IsolationCase):
+    """QA cycle 5, F3. Corrupting the table was the loud attack and it was
+    guarded; DELETING it was the cheap one and it was not, and both reach the
+    file through the same door (`rm` is denied here, `python3 -c` and `ln -sf`
+    are not, which `QaCycle1.test_named_residuals_are_honestly_uncovered`
+    already pins).
+
+    Measured: the healthy table denies the intruder, one `os.unlink` of the
+    ptable and the same call is ALLOWED, with no fault, no quarantine copy and
+    no doctor FAIL. Corruption bought a deny-all the attacker also suffers;
+    deletion bought a silent allow-everything machine. Failing closed on one
+    and open on the other pays the outage against the move nobody would make.
+    """
+
+    def hold(self):
+        rc, out = self.run_gate(WRITE_GATE, self.write_payload("agent-a", self.a_py))
+        self.assertFalse(self.denied(out))
+        self.assertIn("agent-a", kernel_proc.read_ptable()["processes"])
+
+    def reason(self, out: str) -> str:
+        obj = json.loads(out or "{}")
+        return (obj.get("hookSpecificOutput") or {}).get("permissionDecisionReason") or ""
+
+    def test_deleting_the_table_does_not_open_the_gate(self):
+        self.hold()
+        rc, out = self.run_gate(WRITE_GATE, self.write_payload("agent-b", self.a_py))
+        self.assertTrue(self.denied(out), "the healthy table denies the intruder")
+
+        os.unlink(kernel_proc.ptable_path())
+        rc, out = self.run_gate(WRITE_GATE, self.write_payload("agent-b", self.a_py))
+        self.assertTrue(self.denied(out), "and so does a table that was removed")
+        self.assertIn("absent", self.reason(out))
+        self.assertFalse(os.path.exists(kernel_proc.ptable_path()),
+                         "a denied write still materialises nothing")
+
+    def test_the_bash_twin_denies_it_too(self):
+        self.hold()
+        os.unlink(kernel_proc.ptable_path())
+        rc, out = self.run_gate(BASH_GATE,
+                                self.bash_payload("agent-b", f"rm -f {self.a_py}"))
+        self.assertTrue(self.denied(out))
+        self.assertIn("absent", self.reason(out))
+
+    def test_a_machine_with_nothing_running_is_still_a_fresh_install(self):
+        """The half that keeps this from being "deny always". With the journals
+        gone too there is nothing on this machine to protect, and both gates
+        have to allow: a rule that cannot tell a fresh install from a loss is a
+        broken laptop, not a stricter gate."""
+        os.unlink(kernel_proc.ptable_path())
+        for name in os.listdir(kernel_proc.journal_dir()):
+            os.unlink(os.path.join(kernel_proc.journal_dir(), name))
+        rc, out = self.run_gate(WRITE_GATE, self.write_payload("agent-b", self.a_py))
+        self.assertFalse(self.denied(out))
+        rc, out = self.run_gate(BASH_GATE,
+                                self.bash_payload("agent-b", f"rm -f {self.a_py}"))
+        self.assertFalse(self.denied(out))
+
+    def test_an_expired_holder_does_not_hold_the_machine_faulted(self):
+        """Liveness is the existing definition, not a file count: journals past
+        the TTL are dead, and a table deleted beside only dead journals is a
+        machine that really has nothing running."""
+        self.hold()
+        os.unlink(kernel_proc.ptable_path())
+        old = time.time() - (kernel_proc.TTL + 300)
+        for name in os.listdir(kernel_proc.journal_dir()):
+            os.utime(os.path.join(kernel_proc.journal_dir(), name), (old, old))
+        rc, out = self.run_gate(WRITE_GATE, self.write_payload("agent-b", self.a_py))
+        self.assertFalse(self.denied(out))
+
+
+class SymlinkLoopFailsClosed(IsolationCase):
+    """QA cycle 5, F1, from the gate. `read_ptable_detail` had two `except
+    OSError` legs and only one of them carried the fault forward. The tested
+    shape (a directory at the ptable path) failed at `open` and hit the carrying
+    leg; an ELOOP symlink fails one line earlier at the stat and hit the other,
+    so through it the cycle-4 loss reproduced verbatim: denied, one SessionStart,
+    fault gone, the same intruder allowed.
+
+    Which leg an unreadable table lands on is chosen by whoever made it
+    unreadable. A fail-closed rule that holds for one syscall and not the other
+    is not fail-closed.
+    """
+
+    def loop(self):
+        path = kernel_proc.ptable_path()
+        os.unlink(path)
+        os.symlink(path, path)
+
+    def reason(self, out: str) -> str:
+        obj = json.loads(out or "{}")
+        return (obj.get("hookSpecificOutput") or {}).get("permissionDecisionReason") or ""
+
+    def register_hook(self, payload):
+        env = dict(os.environ)
+        env["HOME"] = self.home
+        env["USERPROFILE"] = self.home
+        cp = subprocess.run([sys.executable, str(SCRIPTS / "r__session__proc-register.py")],
+                            input=json.dumps(payload), capture_output=True,
+                            text=True, env=env, cwd=self.home, timeout=60)
+        self.assertEqual(cp.returncode, 0, cp.stderr)
+        return cp
+
+    def test_the_fault_survives_the_session_start_on_this_leg_too(self):
+        rc, out = self.run_gate(WRITE_GATE, self.write_payload("agent-a", self.a_py))
+        self.assertFalse(self.denied(out), "the owner claims its lane first")
+
+        self.loop()
+        rc, out = self.run_gate(WRITE_GATE, self.write_payload("agent-b", self.a_py))
+        self.assertTrue(self.denied(out), "denied while the table cannot be read")
+        self.assertIn("could not be read", self.reason(out))
+
+        self.register_hook({"session_id": "newsess", "source": "startup",
+                            "cwd": self.home})
+        with open(kernel_proc.ptable_path(), encoding="utf-8") as fh:
+            disk = json.load(fh)
+        self.assertIn("newsess", disk["processes"], "the hook wrote its row")
+        self.assertIn(kernel_proc.FAULT_KEY, disk, "and carried the fault with it")
+
+        rc, out = self.run_gate(WRITE_GATE, self.write_payload("agent-b", self.a_py))
+        self.assertTrue(self.denied(out),
+                        "a registration is not a repair, on this leg either")
+        self.assertNotIn("lanes", json.dumps(disk["processes"]),
+                         "and no lane was transferred to the intruder")
+
+
+class FaultDenyMessageIsAboutTheRightThing(IsolationCase):
+    """QA cycle 5, F6. During a fault the Bash gate denies `git stash` in the
+    process's OWN tree, which is right (that verb rewrites every file under the
+    root, including files held by processes the gate can no longer see) and the
+    message was wrong about why: it said "cannot tell whether another process
+    holds <root>" about a path nobody was contesting. The verdict stays, the
+    sentence has to say what is actually unknown.
+    """
+
+    def reason(self, out: str) -> str:
+        obj = json.loads(out or "{}")
+        return (obj.get("hookSpecificOutput") or {}).get("permissionDecisionReason") or ""
+
+    def test_a_whole_tree_verb_in_your_own_tree_is_denied_for_the_stated_reason(self):
+        rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", "git stash"))
+        self.assertFalse(self.denied(out), "healthy: your own tree is yours")
+
+        with open(kernel_proc.ptable_path(), encoding="utf-8") as fh:
+            data = json.load(fh)
+        data["processes"] = list(data["processes"].values())
+        with open(kernel_proc.ptable_path(), "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+
+        rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", "git stash"))
+        self.assertTrue(self.denied(out), "fail closed, as designed")
+        reason = self.reason(out)
+        self.assertIn("any OTHER process is writing in", reason)
+        self.assertIn("git stash", reason, "and it names the verb that takes the tree")
+        self.assertNotIn(f"holds {self.tree}", reason,
+                         "nobody was contesting that path; that was the wrong claim")
+
+    def test_a_path_verb_still_says_holds(self):
+        """The other branch, so the fix is a discrimination and not a blanket
+        rewording: a target that really is one path keeps the sentence it had."""
+        with open(kernel_proc.ptable_path(), encoding="utf-8") as fh:
+            data = json.load(fh)
+        data["processes"] = list(data["processes"].values())
+        with open(kernel_proc.ptable_path(), "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+        rc, out = self.run_gate(BASH_GATE,
+                                self.bash_payload("agent-b", f"rm -f {self.a_py}"))
+        self.assertTrue(self.denied(out))
+        self.assertIn(f"holds {self.a_py}", self.reason(out))
+
+
 class DenyNamesWhatIsKnown(IsolationCase):
     """QA cycle 2, C: `describe()` inferred `main loop` from a missing `ppid`.
 
@@ -877,15 +1054,89 @@ class DenyNamesWhatIsKnown(IsolationCase):
             self.assertIn("builder", mod.describe("x", {"type": "builder"}))
 
 
+class TheAgentProofClaimIsMeasured(IsolationCase):
+    """QA cycle 5. `kernel_proc.recovery` explains why the way out is a file
+    operation and not a subcommand, and it used to explain it with a claim the
+    mechanism does not support: "a command an agent could run would be a
+    command that clears its own gate". QA verified it for `rm`, `mv` and `>`
+    and DEFEATED it with `python3 -c` and `ln -sf`.
+
+    The docstring now lists exactly which verbs are denied at the kernel
+    directory and says the interpreter path is open. A list in prose drifts, so
+    it is measured here: every verb it names as denied must deny, and the two
+    it names as open must still be allowed. When that second half stops being
+    true, the honest move is to update the docstring, not this test.
+    """
+
+    def decide(self, command):
+        rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", command))
+        return "deny" if self.denied(out) else "allow"
+
+    def test_every_verb_the_docstring_names_behaves_as_it_says(self):
+        tbl = kernel_proc.ptable_path()
+        denied = {
+            "rm": f"rm -f {tbl}", "mv": f"mv {tbl} /tmp/x", "cp": f"cp /tmp/x {tbl}",
+            "sed": f"sed -i s/a/b/ {tbl}", "tee": f"echo x | tee {tbl}",
+            "unlink": f"unlink {tbl}", "truncate": f"truncate -s 0 {tbl}",
+            "redirect": f"echo x > {tbl}", "touch": f"touch {tbl}",
+            "chmod": f"chmod 000 {tbl}", "chattr": f"chattr +i {tbl}",
+            "dd": f"dd of={tbl}",
+        }
+        doc = kernel_proc.recovery.__doc__
+        for label, command in denied.items():
+            self.assertEqual(self.decide(command), "deny", command)
+            self.assertIn(f"`{label}`" if label not in ("redirect",) else "`>`", doc,
+                          f"{label} is denied but the docstring does not name it")
+
+    def test_the_two_open_paths_are_still_open_and_still_labelled(self):
+        """Not a wish: this is the residual, and the PR says so instead of
+        closing it here. Expanding the gate's verb detection to cover an
+        interpreter body is a change with its own false-positive risk."""
+        tbl = kernel_proc.ptable_path()
+        self.assertEqual(self.decide(f"ln -sf /dev/null {tbl}"), "allow")
+        self.assertEqual(
+            self.decide(f'python3 -c "import os; os.unlink(\'{tbl}\')"'), "allow")
+        doc = kernel_proc.recovery.__doc__
+        self.assertIn("INTERPRETER PATH IS OPEN", doc)
+        self.assertIn("ln -sf", doc)
+
+
 class Selftests(unittest.TestCase):
 
+    FIXTURES = "registry/fixtures/ARCHITECTURE.kernel-isolation"
+
     def test_both_gates_prove_themselves(self):
-        fixtures = "registry/fixtures/ARCHITECTURE.kernel-isolation"
         for gate in (WRITE_GATE, BASH_GATE):
-            cp = subprocess.run([sys.executable, str(gate), "--selftest", fixtures],
+            cp = subprocess.run([sys.executable, str(gate), "--selftest", self.FIXTURES],
                                 capture_output=True, text=True,
                                 cwd=str(SCRIPTS.parent), timeout=180)
             self.assertEqual(cp.returncode, 0, cp.stderr or cp.stdout)
+
+    def test_the_fault_branch_is_inside_the_mechanism_that_proves_the_gates(self):
+        """QA cycle 5, F4, and it is RULE #1 territory. The whole fail-closed
+        fault branch could be DELETED from both gates and both selftests still
+        passed with identical counts (3+2/29 and 16+13/5), and `brain_doctor`
+        still reported that both isolation gates prove themselves. No fixture
+        covered it, so no count could move, and a count that did not move looks
+        exactly like a count that was checked.
+
+        The mechanism this brain gates its own pushes on has to cover the
+        protection the change exists for, so there is a pair per gate per
+        cause: an unreadable table that must block, a DELETED table that must
+        block, and a genuinely fresh install that must ALLOW. The benign leg is
+        what makes the violations mean something: without a table that is empty
+        for an honest reason, "denies when it cannot read the table" and
+        "denies" are the same measurement.
+        """
+        fdir = SCRIPTS.parent / self.FIXTURES
+        for name in ("violation_ptable_corrupt", "violation_ptable_deleted",
+                     "benign_ptable_fresh_install",
+                     "violation_write_ptable_corrupt", "violation_write_ptable_deleted",
+                     "benign_write_ptable_fresh_install"):
+            path = fdir / f"{name}.json"
+            self.assertTrue(path.is_file(), path)
+            setup = json.loads(path.read_text())["_setup"]
+            self.assertIn("ptable", setup, name)
 
 
 if __name__ == "__main__":

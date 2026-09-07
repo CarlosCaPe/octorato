@@ -1621,11 +1621,12 @@ def check_kernel_process_live(fix: bool) -> Result:
                       f"row on this machine is missing from every reader, and "
                       f"the isolation gates are denying writes while it reads "
                       f"this way",
-                      f"the kernel publishes it with os.replace and never "
-                      f"writes a half-written or oddly shaped one, so a writer "
-                      f"that is not the kernel touched it. The next register "
-                      f"hook preserves a copy beside it and carries the fault "
-                      f"forward, so registering again does not clear this. "
+                      f"the kernel publishes it with os.replace, never writes "
+                      f"a half-written or oddly shaped one and never deletes "
+                      f"it, so a writer that is not the kernel reached it. The "
+                      f"next register hook carries the fault forward (and "
+                      f"preserves a copy when there is a file left to copy), "
+                      f"so registering again does not clear this. "
                       f"{kernel_proc.recovery()}")
     procs = table.get("processes", {})
     now = time.time()
@@ -1743,7 +1744,9 @@ def check_kernel_process_live(fix: bool) -> Result:
     elif kept:
         hint = ("the table has been repaired before; the copies are in "
                 "~/.claude/.cache/kernel/ptable.corrupt-*.json, each with the "
-                "reason and the rows it lost. Three in 24 h turns this FAIL")
+                "reason and the rows it lost. Read them and deleting them is "
+                "safe; otherwise each ages out on the journal window. Three in "
+                "24 h turns this FAIL")
     elif status == WARN:
         hint = ("the hot path is slower than the budget; it is a WARN by design, "
                 "compare `octo bench` on an idle box before acting")

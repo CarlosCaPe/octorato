@@ -734,21 +734,40 @@ def main() -> int:
         # it, and that is the last moment to keep working blind.
         # `state` hits are floor-only and were already tested above, so the
         # targets named here are exactly the ones the ownership loop below would
-        # have looked up. When the command mutates nothing else, the verb is
-        # what the reader needs.
-        checked = [t for kind, t, _ in hits if kind != "state"] or [hits[0][1]]
-        journal_deny(pid, {"target": checked[0], "why": "ptable-unreadable",
+        # have looked up.
+        #
+        # The SENTENCE is picked from the hit's kind, and QA cycle 5 F6 is why.
+        # A `tree` or `stage` hit is not a contested path, it is a whole working
+        # tree, and the first version of this deny said "cannot tell whether
+        # another process holds <root>" about `git stash` in the process's OWN
+        # tree, which is allowed when the table is readable and where nobody was
+        # contesting anything. Denying it is right (that verb rewrites every
+        # file under the root, including files a process this gate can no longer
+        # see may be holding), so the fix is the message, not the verdict: it
+        # has to say what is actually unknown, which is whether anyone ELSE is
+        # writing in that tree.
+        checked = [(k, t, v) for k, t, v in hits if k != "state"] or [hits[0]]
+        kind, target, verb = checked[0]
+        journal_deny(pid, {"target": target, "verb": verb, "why": "ptable-unreadable",
                            "fault": fault, "command": command[:200]})
+        if kind in ("tree", "stage"):
+            what = (f"cannot tell whether any OTHER process is writing in "
+                    f"{target}, which `{verb}` takes whole. In your own tree "
+                    "this is allowed while the table is readable; it is denied "
+                    "now because who else is in that tree is exactly what was "
+                    "lost")
+        else:
+            what = f"cannot tell whether another process holds {target}"
         deny(
             "KERNEL ISOLATION: the process table is unreadable, so this gate "
-            f"cannot tell whether another process holds {checked[0]}. {fault}. "
+            f"{what}. {fault}. "
             "One writer per tree is fail-closed: an unknown owner is denied, "
             "never allowed, because allowing it is how a second writer takes a "
             "lane and the table that recorded the first one gets overwritten. "
-            "The next register hook keeps a copy of the file beside it and "
-            "CARRIES THE FAULT FORWARD, so a routine SessionStart (startup, "
-            "resume, clear, compact) does not clear this: ownership stays "
-            "unknown until a human looks. "
+            "The next register hook CARRIES THE FAULT FORWARD (and keeps a "
+            "copy of the file when there is one left to copy), so a routine "
+            "SessionStart (startup, resume, clear, compact) does not clear "
+            "this: ownership stays unknown until a human looks. "
             f"{kernel_proc.recovery()}"
         )
         return 0

@@ -238,10 +238,10 @@ def main() -> int:
             "One writer per tree is fail-closed: an unknown owner is denied, "
             "never allowed, because allowing it is how a second writer takes a "
             "lane and the table that recorded the first one gets overwritten. "
-            "The next register hook keeps a copy of the file beside it and "
-            "CARRIES THE FAULT FORWARD, so a routine SessionStart (startup, "
-            "resume, clear, compact) does not clear this: ownership stays "
-            "unknown until a human looks. "
+            "The next register hook CARRIES THE FAULT FORWARD (and keeps a "
+            "copy of the file when there is one left to copy), so a routine "
+            "SessionStart (startup, resume, clear, compact) does not clear "
+            "this: ownership stays unknown until a human looks. "
             f"{kernel_proc.recovery()}"
         )
         return 0
@@ -305,18 +305,42 @@ def fixture_dir(fdir: str = None) -> str:
     return fdir if os.path.isabs(fdir) else os.path.join(root, fdir)
 
 
-def build_sandbox(fdir: str, sandbox: str, age_pids=()) -> None:
+def build_sandbox(fdir: str, sandbox: str, setup=None) -> None:
     """Materialize the fixture world in a throwaway HOME.
 
     1. copy `home/` (ptable, journals, arms config) verbatim;
     2. rewrite {{SANDBOX}} in every seeded file;
-    3. create the git roots and files `setup.json` declares (a `.git` entry is
+    3. apply the per-fixture ptable/journal overrides (below);
+    4. create the git roots and files `setup.json` declares (a `.git` entry is
        what makes a directory a worktree root to the pure-path walk);
-    4. stamp every journal mtime to NOW, except the pids the leg wants EXPIRED,
+    5. stamp every journal mtime to NOW, except the pids the leg wants EXPIRED,
        which are stamped past the TTL so their lanes read released.
+
+    The two overrides exist for QA cycle 5 F4, which found the central
+    protection of this change covered by no fixture at all: the fail-closed
+    fault branch could be DELETED from both gates and both selftests still
+    passed with identical counts, because a count that cannot move looks like a
+    count that was checked. A faulted table cannot be committed as the shared
+    seed (every other fixture needs a readable one), so it is per fixture:
+
+      `_setup.ptable`   a JSON value written verbatim over the seeded table
+                        (e.g. `{"processes": []}` for the shape fault), or the
+                        string "absent" to delete the file.
+      `_setup.journals` "none" to remove every seeded journal, which is what
+                        turns a deleted table from a loss into a genuine fresh
+                        install (`kernel_proc._absent_table`). It is the pair
+                        that makes the violation mean something: the benign leg
+                        has to be a table that is empty for an HONEST reason,
+                        or "the gate denies when it cannot read the table"
+                        would be indistinguishable from "the gate denies".
     """
     import shutil
     import time
+
+    setup = setup or {}
+    if not isinstance(setup, dict):      # legacy positional: a tuple of pids
+        setup = {"age_pids": setup}
+    age_pids = setup.get("age_pids") or ()
 
     seed = os.path.join(fdir, "home")
     if os.path.isdir(seed):
@@ -335,15 +359,39 @@ def build_sandbox(fdir: str, sandbox: str, age_pids=()) -> None:
                 with open(path, "w", encoding="utf-8") as fh:
                     fh.write(text.replace(SANDBOX_TOKEN, sandbox))
 
+    # Per-fixture kernel state, applied AFTER the {{SANDBOX}} rewrite so an
+    # override is never itself rewritten, and before the mtime stamping below
+    # so a surviving journal still reads live.
+    if "ptable" in setup:
+        want = setup["ptable"]
+        table_path = os.path.join(kernel, "ptable.json")
+        if want == "absent":
+            try:
+                os.unlink(table_path)
+            except OSError:
+                pass
+        else:
+            with open(table_path, "w", encoding="utf-8") as fh:
+                json.dump(want, fh)
+    if setup.get("journals") == "none":
+        jd = os.path.join(kernel, "journal")
+        for name in (os.listdir(jd) if os.path.isdir(jd) else []):
+            try:
+                os.unlink(os.path.join(jd, name))
+            except OSError:
+                pass
+
+    # setup.json is the world every fixture shares; `setup` above is the one
+    # leg's own overrides. Two names, because they are two scopes.
     setup_path = os.path.join(fdir, "setup.json")
-    setup = {}
+    world = {}
     if os.path.isfile(setup_path):
         with open(setup_path, encoding="utf-8") as fh:
-            setup = json.load(fh)
-    for root in setup.get("roots", []):
+            world = json.load(fh)
+    for root in world.get("roots", []):
         root = root.replace(SANDBOX_TOKEN, sandbox)
         os.makedirs(os.path.join(root, ".git"), exist_ok=True)
-    for path in setup.get("files", []):
+    for path in world.get("files", []):
         path = path.replace(SANDBOX_TOKEN, sandbox)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "a", encoding="utf-8"):
@@ -397,7 +445,7 @@ def run_isolation_selftest(script: str, fdir: str, my_tools, label: str) -> int:
         setup = payload.pop("_setup", {}) or {}
         sandbox = tempfile.mkdtemp(prefix="kernel-iso-selftest-")
         try:
-            build_sandbox(fdir, sandbox, setup.get("age_pids") or ())
+            build_sandbox(fdir, sandbox, setup)
             body = json.dumps(payload).replace(SANDBOX_TOKEN, sandbox)
             env = dict(os.environ)
             for k in ("OCTO_MERGE_APPROVE", "OCTO_QA_OK", "OCTO_ALLOW_FORCE",
