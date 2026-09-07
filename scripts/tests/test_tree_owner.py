@@ -391,6 +391,183 @@ class ForeignPayloads(IsolationCase):
         self.assertEqual(os.stat(kernel_proc.ptable_path()).st_mtime_ns, before)
 
 
+class QaCycle1(IsolationCase):
+    """One test per defect QA cycle 1 raised, named by its number so a
+    regression says which decision moved."""
+
+    def hold(self):
+        self.run_gate(WRITE_GATE, self.write_payload("agent-a", self.a_py))
+
+    def test_d1_every_deny_line_carries_its_rule_id(self):
+        self.hold()
+        self.run_gate(WRITE_GATE, self.write_payload("agent-b", self.a_py))
+        self.run_gate(BASH_GATE, self.bash_payload("agent-b", "git reset --hard"))
+        denies = [l for l in kernel_proc.read_journal("agent-b")
+                  if l and l.get("kind") == "deny"]
+        self.assertTrue(denies)
+        for line in denies:
+            self.assertEqual(line.get("rule"), "ARCHITECTURE.kernel-isolation")
+
+    def test_d2_no_git_root_means_no_tree_to_own(self):
+        """Outside a repo the fallback root was the cwd, which prefix-matched
+        every lane under it: `git stash` from $HOME denied everything."""
+        self.hold()
+        for command in ("git stash", "git add -A", "git reset --hard"):
+            rc, out = self.run_gate(
+                BASH_GATE, self.bash_payload("agent-b", command, cwd=self.home))
+            self.assertFalse(self.denied(out), command)
+
+    def test_d3_a_valued_git_global_does_not_hide_the_verb(self):
+        self.hold()
+        for command in ("git -c commit.gpgsign=false checkout -- pkg/a.py",
+                        "git --namespace ns checkout -- pkg/a.py",
+                        "git -c a.b=c add -A",
+                        "git --exec-path=/usr/lib/git-core checkout -- pkg/a.py"):
+            rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", command))
+            self.assertTrue(self.denied(out), command)
+
+    def test_d4_wrapper_options_are_per_wrapper(self):
+        self.hold()
+        # -i is a FLAG for env and sudo: the command behind it must still be read
+        for command in (f"env -i rm -rf {self.tree}/pkg",
+                        f"sudo -i rm -rf {self.tree}/pkg",
+                        f"env -u HOME -i rm -rf {self.tree}/pkg"):
+            rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", command))
+            self.assertTrue(self.denied(out), command)
+
+    def test_d4_env_chdir_moves_the_base(self):
+        self.hold()
+        for command in (f"env -C {self.tree}/pkg rm a.py",
+                        f"env --chdir={self.tree}/pkg rm a.py"):
+            rc, out = self.run_gate(
+                BASH_GATE, self.bash_payload("agent-b", command, cwd=self.home))
+            self.assertTrue(self.denied(out), command)
+
+    def test_d5_more_wrappers_and_grouping(self):
+        self.hold()
+        for command in (f"exec rm -rf {self.tree}/pkg",
+                        f"timeout 5 rm -rf {self.tree}/pkg",
+                        f"timeout -k 1 5 rm -rf {self.tree}/pkg",
+                        f"nice -n 10 rm -rf {self.tree}/pkg",
+                        f"time rm -rf {self.tree}/pkg",
+                        f"(rm -rf {self.tree}/pkg)",
+                        f"{{ rm -rf {self.tree}/pkg ; }}"):
+            rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", command))
+            self.assertTrue(self.denied(out), command)
+
+    def test_d5_pushd_moves_the_base(self):
+        self.hold()
+        rc, out = self.run_gate(
+            BASH_GATE, self.bash_payload("agent-b", f"pushd {self.tree}/pkg && rm a.py",
+                                         cwd=self.home))
+        self.assertTrue(self.denied(out))
+
+    def test_d6_a_glob_reduces_to_its_literal_directory(self):
+        self.hold()
+        for command in ("git checkout -- pkg/*.py", "rm -rf pkg/*",
+                        "git checkout -- :/", "git checkout -- ':(top)'"):
+            rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", command))
+            self.assertTrue(self.denied(out), command)
+
+    def test_d6_a_glob_in_a_sibling_directory_still_passes(self):
+        self.hold()
+        os.makedirs(os.path.join(self.tree, "docs"))
+        rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", "rm -rf docs/*.md"))
+        self.assertFalse(self.denied(out))
+
+    def test_d7_a_bare_checkout_changes_nothing(self):
+        self.hold()
+        rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", "git checkout"))
+        self.assertFalse(self.denied(out))
+
+    def test_d8_the_deny_names_the_unlock_as_phase_1b(self):
+        self.hold()
+        rc, out = self.run_gate(WRITE_GATE, self.write_payload("agent-b", self.a_py))
+        self.assertIn("octo ps --release", out)
+        self.assertIn("Phase 1b", out)
+
+    def test_d9_delegating_releases_the_delegators_lanes(self):
+        payload = self.write_payload("sess-parent", self.a_py)
+        payload.pop("agent_id")
+        self.run_gate(WRITE_GATE, payload)
+        self.assertTrue(kernel_proc.read_ptable()["processes"]["sess-parent"]["lanes"])
+        rc, out = self.run_gate(WRITE_GATE, {
+            "session_id": "sess-parent", "tool_name": "Agent",
+            "tool_input": {"prompt": "build", "subagent_type": "Backend Architect"},
+            "cwd": self.tree})
+        self.assertFalse(self.denied(out))
+        self.assertEqual(kernel_proc.read_ptable()["processes"]["sess-parent"]["lanes"], [])
+        released = [l for l in kernel_proc.read_journal("sess-parent")
+                    if l and l.get("kind") == "release"]
+        self.assertEqual(released[-1].get("reason"), "delegate")
+        # the child may now write what the parent wrote before spawning it
+        rc, out = self.run_gate(WRITE_GATE, self.write_payload("agent-a", self.a_py))
+        self.assertFalse(self.denied(out))
+
+    def test_d9_the_sibling_rule_survives_the_release(self):
+        self.hold()
+        self.run_gate(WRITE_GATE, {"session_id": "sess-parent", "agent_id": "agent-a",
+                                   "tool_name": "Agent", "tool_input": {"prompt": "x"},
+                                   "cwd": self.tree})
+        # agent-a released ITS lanes; agent-b's are untouched
+        self.run_gate(WRITE_GATE, self.write_payload("agent-b", os.path.join(self.tree, "b.py")))
+        rc, out = self.run_gate(
+            WRITE_GATE, self.write_payload("agent-a", os.path.join(self.tree, "b.py")))
+        self.assertTrue(self.denied(out))
+        self.assertIn("agent-b", out)
+
+    def test_d9_a_parent_lane_claimed_after_the_spawn_still_binds(self):
+        rc, out = self.run_gate(WRITE_GATE, {
+            "session_id": "sess-parent", "tool_name": "Agent",
+            "tool_input": {"prompt": "build"}, "cwd": self.tree})
+        payload = self.write_payload("sess-parent", self.a_py)
+        payload.pop("agent_id")
+        self.run_gate(WRITE_GATE, payload)
+        rc, out = self.run_gate(WRITE_GATE, self.write_payload("agent-a", self.a_py))
+        self.assertTrue(self.denied(out))
+        self.assertIn("sess-parent", out)
+
+    def test_d10_no_ptable_on_disk_claims_nothing(self):
+        os.unlink(kernel_proc.ptable_path())
+        rc, out = self.run_gate(WRITE_GATE, self.write_payload("agent-a", self.a_py))
+        self.assertFalse(self.denied(out))
+        self.assertFalse(os.path.exists(kernel_proc.ptable_path()))
+
+    def test_residual_the_kernels_own_state_is_a_floor(self):
+        kdir = kernel_proc.kernel_dir()
+        rc, out = self.run_gate(
+            WRITE_GATE, self.write_payload("agent-b", os.path.join(kdir, "ptable.json")))
+        self.assertTrue(self.denied(out))
+        for command in (f"rm -rf {kdir}", f"echo x > {kdir}/ptable.json",
+                        f"sed -i s/a/b/ {kdir}/journal/agent-a.jsonl"):
+            rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", command))
+            self.assertTrue(self.denied(out), command)
+
+    def test_the_added_deny_set(self):
+        self.hold()
+        for command in ("git rm -f pkg/a.py", "git mv pkg/a.py pkg/c.py",
+                        "git add -u", "git add ./",
+                        f"unlink {self.a_py}", f"truncate -s 0 {self.a_py}",
+                        f"find {self.tree}/pkg -name '*.py' -delete",
+                        f"find {self.tree}/pkg -exec rm {{}} ;",
+                        f"xargs rm -f {self.a_py}"):
+            rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", command))
+            self.assertTrue(self.denied(out), command)
+
+    def test_named_residuals_are_honestly_uncovered(self):
+        """These evade by design (a distinct verb table or an evaluator), and
+        the report says so. Pinned so the claim stays true instead of drifting
+        into a silent regression either way."""
+        self.hold()
+        for command in (f"rsync -a --delete /tmp/x/ {self.tree}/pkg/",
+                        f"shred -u {self.a_py}",
+                        f"ln -sf /dev/null {self.a_py}",
+                        f"perl -pi -e s/a/b/ {self.a_py}",
+                        f"dd if=/dev/zero of={self.a_py}"):
+            rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", command))
+            self.assertFalse(self.denied(out), command + " is now covered: move it out of the residual list")
+
+
 class Selftests(unittest.TestCase):
 
     def test_both_gates_prove_themselves(self):

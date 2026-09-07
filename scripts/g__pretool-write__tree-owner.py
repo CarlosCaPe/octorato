@@ -32,6 +32,16 @@ at once (its `exit` line). Every deny names the holding pid, its type and its
 age, because "who holds this" is only actionable next to "for how long", and
 journals a `deny` line so the refusal is replayable.
 
+This script also carries the DELEGATE RELEASE: on `PreToolUse[Agent]` the
+spawning process's own lanes are dropped and a `release` line is journaled, so a
+parent does not hold its children hostage to paths it claimed before delegating.
+
+The kernel's own state is a floor, not a lane: a write targeting
+`~/.claude/.cache/kernel` (the process table, the journals, the locks) is denied
+for EVERY hooked process, this one included, because a process that can rewrite
+the table can grant itself any lane and erase the record. The operator's terminal
+is not hooked and stays the only writer.
+
 Hot path: one ptable read per call. The arms config is read ONLY when the target
 leaves the process's own worktree root, which is the only shape that can be
 cross-arm. One flocked write, on a NEW lane claim only.
@@ -53,6 +63,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import kernel_proc  # noqa: E402  (stdlib-only, hot-path budgeted)
 
+RULE_ID = "ARCHITECTURE.kernel-isolation"
 WRITE_TOOLS = ("Write", "Edit", "NotebookEdit", "MultiEdit")
 
 
@@ -70,7 +81,7 @@ def journal_deny(pid, fields: dict) -> None:
     """Record the refusal in the process's own journal. Best effort: a gate that
     cannot write its own record still denies (the journal gate owns that)."""
     try:
-        rec = {"kind": "deny", "gate": "tree-owner"}
+        rec = {"kind": "deny", "rule": RULE_ID, "gate": "tree-owner"}
         rec.update(fields)
         kernel_proc.append(pid, rec)
     except Exception:
@@ -145,13 +156,48 @@ def main() -> int:
         return 0
     if not isinstance(payload, dict):
         return 0
-    if str(payload.get("tool_name") or "") not in WRITE_TOOLS:
+    tool = str(payload.get("tool_name") or "")
+
+    # DELEGATE RELEASE (PreToolUse[Agent]). A process that spawns a child stops
+    # being the writer of what it claimed: otherwise a parent's lanes would bind
+    # its own children for the whole delegation and this gate would deny exactly
+    # the work it was asked to do. It never denies here, it only releases, and
+    # the sibling rule is untouched: child A still cannot take child B's lane,
+    # and a parent lane claimed AFTER the spawn still binds. Registered as a
+    # second hooks.json entry on this same script rather than a third script,
+    # because claiming and releasing a lane are one responsibility.
+    if tool == "Agent":
+        pid = kernel_proc.resolve_pid(payload)
+        if pid:
+            try:
+                n = kernel_proc.release_lanes(pid, "delegate")
+                if n:
+                    kernel_proc.append(pid, {"kind": "release", "rule": RULE_ID,
+                                             "reason": "delegate", "lanes": n})
+            except Exception:
+                pass
+        return 0
+
+    if tool not in WRITE_TOOLS:
         return 0
     target = target_of(payload.get("tool_input") or {})
     if not target:
         return 0
     pid = kernel_proc.resolve_pid(payload)
     if not pid:
+        return 0
+
+    kdir = kernel_proc.norm_path(kernel_proc.kernel_dir())
+    if kernel_proc.paths_conflict(target, kdir):
+        journal_deny(pid, {"target": target, "why": "kernel-state"})
+        deny(
+            f"KERNEL ISOLATION: {target} is inside the kernel's own state ({kdir}). "
+            "The process table and the journals are what every gate reads to decide "
+            "who owns what, so a process that can rewrite them can grant itself any "
+            "lane and erase the record of having done it. No hooked process edits "
+            "them, this one included. The operator's terminal is not hooked and "
+            "stays the only writer."
+        )
         return 0
 
     table = kernel_proc.read_ptable()          # the one ptable read of this call
@@ -165,7 +211,8 @@ def main() -> int:
             "file is how a changeset gets shredded. Wait for that process to "
             "exit (its lane frees on its exit line, or after "
             f"{kernel_proc.TTL}s of silence), work in your own worktree, or have "
-            f"the operator free it from a terminal: octo ps --release {owner}"
+            f"the operator free it from a terminal: `octo ps --release {owner}` "
+            "(Phase 1b; on a brain without it, edit the ptable row from the terminal)."
         )
         return 0
 
@@ -360,7 +407,7 @@ if __name__ == "__main__":
         sys.exit(run_isolation_selftest(
             os.path.abspath(__file__),
             sys.argv[_i + 1] if len(sys.argv) > _i + 1 else None,
-            WRITE_TOOLS, "g__pretool-write__tree-owner.py"))
+            WRITE_TOOLS + ("Agent",), "g__pretool-write__tree-owner.py"))
     try:
         sys.exit(main())
     except Exception:

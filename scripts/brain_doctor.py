@@ -1553,14 +1553,18 @@ def check_kernel_isolation_gate(fix: bool) -> Result:
     claim about the runtime that the runtime does not make."""
     key = "kernel-isolation-gate"
     fixtures = "registry/fixtures/ARCHITECTURE.kernel-isolation"
-    wanted = {
-        "g__pretool-write__tree-owner.py": "Write|Edit|NotebookEdit|MultiEdit",
-        "g__pretool-bash__tree-owner.py": "Bash",
-    }
+    # (script, matcher) pairs, not a script->matcher map: the write gate is wired
+    # twice, at its own tools and at Agent, where it releases the delegator's
+    # lanes instead of claiming one.
+    wanted = [
+        ("g__pretool-write__tree-owner.py", "Write|Edit|NotebookEdit|MultiEdit"),
+        ("g__pretool-write__tree-owner.py", "Agent"),
+        ("g__pretool-bash__tree-owner.py", "Bash"),
+    ]
     if not (CLAUDE_DIR / fixtures).is_dir():
         return Result(key, FAIL, f"{fixtures} is missing",
                       "restore the isolation fixtures; without them neither gate proves itself")
-    for script in wanted:
+    for script in sorted({sc for sc, _m in wanted}):
         if not (CLAUDE_DIR / "scripts" / script).exists():
             return Result(key, FAIL, f"scripts/{script} is missing",
                           "restore the isolation gate")
@@ -1572,7 +1576,7 @@ def check_kernel_isolation_gate(fix: bool) -> Result:
                           + (detail[-1] if detail else f"exit {cp.returncode}"),
                           "one writer per tree and per lane is not enforced; fix the gate or the fixture")
     idx = _hooks_index()
-    unwired = [f"{script} at PreToolUse|{matcher}" for script, matcher in wanted.items()
+    unwired = [f"{script} at PreToolUse|{matcher}" for script, matcher in wanted
                if not any(e == "PreToolUse" and b == script and (mm == matcher or mm == "*")
                           for (e, mm, b) in idx)]
     if unwired:
@@ -1580,8 +1584,8 @@ def check_kernel_isolation_gate(fix: bool) -> Result:
                       "add the gate to hooks.json at its matcher, then run merge-hooks.py")
     return Result(key, PASS,
                   "both isolation gates prove themselves and are wired "
-                  "(Write|Edit|NotebookEdit|MultiEdit and Bash); hook order not asserted, "
-                  "same-event hooks run in parallel")
+                  "(Write|Edit|NotebookEdit|MultiEdit, Bash, and Agent for the delegate "
+                  "release); hook order not asserted, same-event hooks run in parallel")
 
 
 def check_querymaster_security_detector(fix: bool) -> Result:
