@@ -67,7 +67,7 @@ class OctoCase(unittest.TestCase):
     def seed(self, tools=2):
         """A parent, a child, and `tools` journaled calls on the child."""
         kernel_proc.register("sess-1", {"kind": "main", "worktree": "/w",
-                                        "source": "startup"})
+                                        "type": "main", "source": "startup"})
         kernel_proc.register("agent-1", {"kind": "subagent", "ppid": "sess-1",
                                          "type": "Reality Checker", "worktree": "/w"})
         for i in range(tools):
@@ -162,6 +162,44 @@ class TopTest(OctoCase):
         self.assertEqual(rc, 0)
         self.assertIn("TOKENS", out)
         self.assertIn("1200", out)
+
+
+    def test_top_never_prints_main_for_a_pid_with_no_ptable_row(self):
+        """`top` unions the ptable with the journal files on disk, so it reaches
+        pids `ps` never sees. It used to render those as type `main`: two claims
+        the kernel cannot make, that the process is a main loop and that a
+        register hook ever saw it. Measured live, 52 phantom journals buried the
+        real processes under fake main loops. A `?` says only what is known, and
+        the count is printed so the row is explained rather than hidden."""
+        self.seed(tools=1)
+        kernel_proc.append("ghost", {"kind": "tool", "tool_name": "Bash",
+                                     "tool_use_id": "toolu_ghost"})
+        self.assertNotIn("ghost", kernel_proc.read_ptable()["processes"])
+
+        rc, out, _ = self.run_octo(["top"])
+        self.assertEqual(rc, 0)
+        ghost_row = [l for l in out.splitlines() if l.startswith("ghost")]
+        self.assertEqual(len(ghost_row), 1, "the row is shown, never silently dropped")
+        self.assertNotIn("main", ghost_row[0], "the kernel does not know this type")
+        self.assertIn(octo.UNKNOWN_TYPE, ghost_row[0])
+        self.assertIn("1 of them have a journal but no ptable row", out)
+
+        # the real main loop still prints its own type, so `?` is not a blanket
+        sess_row = [l for l in out.splitlines() if l.startswith("sess-1")][0]
+        self.assertIn("main", sess_row)
+
+    def test_ps_and_top_agree_on_the_type_of_every_row_ps_shows(self):
+        """One vocabulary, the way `_row_state` already is. Every pid `ps`
+        lists comes from the ptable and carries a type, so no `?` may appear
+        there."""
+        self.seed(tools=1)
+        _, ps_out, _ = self.run_octo(["ps"])
+        _, top_out, _ = self.run_octo(["top"])
+        self.assertNotIn(octo.UNKNOWN_TYPE, ps_out)
+        for pid, kind in (("sess-1", "main"), ("agent-1", "Reality Checker")):
+            for out in (ps_out, top_out):
+                row = [l for l in out.splitlines() if l.startswith(pid)][0]
+                self.assertIn(kind, row)
 
 
 class ReplayTest(OctoCase):

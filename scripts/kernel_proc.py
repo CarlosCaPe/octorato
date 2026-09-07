@@ -63,6 +63,11 @@ MAX_LANES = 512          # a lane list is a working set, not a history
 _CORE_KEYS = ("seq", "ts", "start_ts", "pid", "kind", "prev")
 _PID_OK = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
 KINDS = ("start", "tool", "exit", "deny", "receipt", "quota", "open", "release")
+# What every reader prints for a process whose type the kernel never learned.
+# `octo top` and `brain-digest` both walk the journal DIRECTORY, so both reach
+# pids the ptable has no row for; defaulting those to "main" claimed twice over
+# what is not known. One constant so the readers cannot drift apart.
+UNKNOWN_TYPE = "?"
 
 UNLOCK = ("export OCTO_KERNEL_OPEN=1 in the shell that launched Claude Code, "
           "then restart")
@@ -426,6 +431,31 @@ def _own_fresh(pid, now: float, ttl: int) -> bool:
         return False
     age = now - mt
     return -FUTURE_SKEW <= age <= ttl
+
+
+def has_trace(pid) -> bool:
+    """True when the kernel already knows this pid: a journal file exists for it,
+    or the ptable carries a row.
+
+    An `exit` is an ENDING, and an ending must never be the thing that brings a
+    process into existence. `append()` creates the journal when it is absent
+    (that is right for the hot-path gate, whose call IS the process's first
+    trace), so a SubagentStop for a pid that never registered and never ran a
+    tool would otherwise materialise a whole process out of one line: a journal
+    whose first and only record is an `exit` at seq 0, no `start`, no parent, no
+    tool. The harness fires SubagentStop for agent ids that never produced a
+    transcript, so this is not hypothetical (52 such files in one afternoon on
+    the machine where it was measured).
+
+    Journal first, ptable second: the stat is cheap and `register()` writes the
+    journal BEFORE it publishes the row, so the journal is the earlier trace.
+    The row is still checked, because a journal deleted underneath a live
+    process must not turn its exit into a no-op.
+    """
+    pid = safe_pid(pid)
+    if os.path.exists(journal_path(pid)):
+        return True
+    return pid in (read_ptable().get("processes") or {})
 
 
 def has_exit(pid) -> bool:
@@ -1210,6 +1240,11 @@ def selftest_exit_flow(fixture_dir: str = None) -> int:
     duration; that the meta.json fields are picked up from the session dir; that
     a second SubagentStop writes no second ending; and that a child whose last
     message opens with an error is recorded as `error`, not `ok`.
+
+    Two legs guard the boundary an exit must not cross. A process whose journal
+    was opened by the HOT-PATH GATE (first line a `tool`, no `start`, because
+    its first call beat its own register hook) still gets its ending. A PHANTOM
+    stop, an agent id with no journal and no row, creates nothing at all.
     """
     import shutil
     import tempfile
@@ -1291,16 +1326,43 @@ def selftest_exit_flow(fixture_dir: str = None) -> int:
         if is_live(child):
             failures.append("an exited child still reads live")
 
-        # a failing child, in its own process so the exit line is the first one
+        # A failing child, in its own process so its exit is read alone. Its
+        # journal is opened by the HOT-PATH GATE and never by a register hook:
+        # that is the legitimate no-`start` process (a first tool call that beat
+        # its own SubagentStart), and its ending must still be recorded.
         bad = dict(stop)
         bad["agent_id"] = child + "-bad"
         bad["agent_transcript_path"] = ""
         bad["last_assistant_message"] = "Error: the build did not compile."
+        _feed("g__pretool__kernel.py", {
+            "session_id": parent, "agent_id": bad["agent_id"], "tool_name": "Bash",
+            "tool_use_id": "toolu_exit_bad", "tool_input": {"command": "true"},
+            "cwd": sandbox}, sandbox, env)
+        first = [l.get("kind") for l in read_journal(bad["agent_id"])
+                 if isinstance(l, dict)]
+        if first[:1] != ["tool"]:
+            failures.append(f"the gate did not open the journal with a tool line: {first}")
         _feed("r__subagent-stop__proc-exit.py", bad, sandbox, env)
         bad_exits = [l for l in read_journal(bad["agent_id"])
                      if isinstance(l, dict) and l.get("kind") == "exit"]
         if not bad_exits or bad_exits[0].get("status") != "error":
             failures.append("a child reporting an error was not recorded as error")
+
+        # A PHANTOM stop: an agent id the kernel never saw. The harness fires
+        # SubagentStop for ids that never registered, never ran a tool and
+        # never produced a transcript; `append()` creates the journal it writes
+        # to, so recording that exit invented a whole process (a journal whose
+        # only line is an exit at seq 0, no row, no parent, no tool). Nothing
+        # must be created here, and the hook must still say nothing and exit 0.
+        ghost = dict(stop)
+        ghost["agent_id"] = child + "-ghost"
+        rc, out = _feed("r__subagent-stop__proc-exit.py", ghost, sandbox, env)
+        if rc != 0 or out.strip():
+            failures.append(f"the phantom stop was not silent (rc={rc})")
+        if os.path.exists(journal_path(ghost["agent_id"])):
+            failures.append("an exit for an unknown pid created a journal")
+        if safe_pid(ghost["agent_id"]) in (read_ptable().get("processes") or {}):
+            failures.append("an exit for an unknown pid created a ptable row")
     finally:
         os.environ["HOME"] = saved[0] or ""
         if saved[1] is None:
