@@ -270,7 +270,11 @@ def _mirror_to_journal(pid: str, record: dict) -> None:
 
 def append_session(session_id: str, record: dict) -> None:
     _append(session_path(session_id), record)
-    _mirror_to_journal(str(session_id or ""), record)
+    # The LEDGER is keyed by session; the JOURNAL is keyed by process. A seek
+    # made inside a subagent belongs to that subagent, so the mirror resolves
+    # agent_id first and falls back to the session, the same order
+    # kernel_proc.resolve_pid uses for every other kernel writer.
+    _mirror_to_journal(str(record.get("agent_id") or session_id or ""), record)
 
 
 def append_global(record: dict) -> None:

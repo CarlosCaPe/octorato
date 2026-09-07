@@ -79,6 +79,28 @@ class ReplayCase(unittest.TestCase):
 # ── the run summary ─────────────────────────────────────────────────────────
 
 class SummaryTest(ReplayCase):
+    def test_an_unpaired_deny_is_not_listed_under_refused(self):
+        """The header counts paired denies; the summary must count the same set.
+
+        Listing every deny under `refused` made the summary contradict the
+        header two lines above it, which is worse than omitting the line.
+        """
+        self.seed_run()
+        kernel_proc.journal_deny("COMMS.paste-ready-raw-message",
+                                 "the draft is not raw", None, "agent-1")
+        rc, out, _ = self.run_octo(["replay", "agent-1"])
+        self.assertEqual(rc, 0)
+        self.assertIn("tools     2 (1 refused)", out)
+        self.assertIn("refused   ARCHITECTURE.session-isolation 1", out)
+        self.assertIn("other denies  COMMS.paste-ready-raw-message 1", out)
+        refused_line = [l for l in out.splitlines() if l.startswith("  refused ")][0]
+        self.assertNotIn("paste-ready", refused_line)
+
+    def test_the_other_denies_line_is_absent_when_every_deny_paired(self):
+        self.seed_run()
+        _, out, _ = self.run_octo(["replay", "agent-1"])
+        self.assertNotIn("other denies", out)
+
     def test_summary_breaks_the_run_down_by_tool_rule_and_receipt_kind(self):
         self.seed_run()
         kernel_proc.journal_receipt("agent-1", "seek", "toolu_a", {"kind": "seek"})
@@ -128,7 +150,84 @@ class SummaryTest(ReplayCase):
 
 # ── the receipt join ────────────────────────────────────────────────────────
 
+class DenySourceTest(ReplayCase):
+    def test_a_harness_refusal_is_labelled_source_harness_on_the_timeline(self):
+        """A reader who cannot tell an Octorato gate from a harness denial cannot
+        act on either: one is a rule to argue with, the other a permission to
+        grant."""
+        self.seed_run()
+        kernel_proc.journal_deny("HARNESS.permission-denied",
+                                 "Claude requested permissions to use Write, but you "
+                                 "haven't granted it yet.",
+                                 "toolu_b", "agent-1", source="harness",
+                                 permission_mode="acceptEdits")
+        rc, out, _ = self.run_octo(["replay", "agent-1"])
+        self.assertEqual(rc, 0)
+        harness = [l for l in out.splitlines() if "HARNESS.permission-denied" in l
+                   and "REFUSED" in l or "deny" in l and "HARNESS" in l]
+        self.assertTrue(harness, "the harness refusal is missing from the timeline")
+        self.assertIn("source=harness", "\n".join(harness))
+        octo_line = [l for l in out.splitlines()
+                     if "ARCHITECTURE.session-isolation" in l and "  #" in l][0]
+        self.assertNotIn("source=", octo_line,
+                         "an Octorato refusal is the common case and stays unannotated")
+
+    def test_the_permission_denied_reflex_records_the_runtimes_own_reason(self):
+        """2.1.261 sends {tool_name, tool_input, tool_use_id, reason} and no
+        denial-kind field: `toolDenialKind` lives on transcript tool_result
+        records, never on the hook payload."""
+        import subprocess
+        fixture = ROOT / "registry" / "fixtures" / "FLOW.kernel-journal" / "permission_denied.json"
+        payload = json.loads(fixture.read_text(encoding="utf-8"))
+        self.assertNotIn("toolDenialKind", payload,
+                         "the fixture must be the shape the runtime actually sends")
+        env = dict(os.environ)
+        env["HOME"] = env["USERPROFILE"] = self.home
+        subprocess.run([sys.executable,
+                        str(SCRIPTS / "r__permission-denied__journal.py")],
+                       input=json.dumps(payload), capture_output=True, text=True,
+                       cwd=self.home, env=env, timeout=30)
+        denies = [l for l in kernel_proc.read_journal(payload["agent_id"])
+                  if isinstance(l, dict) and l.get("kind") == "deny"]
+        self.assertEqual(len(denies), 1)
+        self.assertEqual(denies[0]["reason"], payload["reason"])
+        self.assertEqual(denies[0]["permission_mode"], payload["permission_mode"])
+        self.assertEqual(denies[0]["source"], "harness")
+
+
 class ReceiptJoinTest(ReplayCase):
+    def test_a_seek_inside_a_subagent_lands_in_the_agents_journal(self):
+        """The ledger stays keyed by session; the JOURNAL is keyed by process.
+
+        Mirroring by session id credited the parent with the child's seek, which
+        is the same class of error as attributing a refusal to the wrong run.
+        """
+        self.seed_run()
+        receipt_ledger.append_session("sess-1", {
+            "kind": "seek", "agent_id": "agent-1", "tool_use_id": "toolu_a",
+            "tool_name": "mcp__whatsapp__list_messages", "query": "27,180"})
+        agent = [l for l in kernel_proc.read_journal("agent-1")
+                 if isinstance(l, dict) and l.get("kind") == "receipt"]
+        parent = [l for l in kernel_proc.read_journal("sess-1")
+                  if isinstance(l, dict) and l.get("kind") == "receipt"]
+        self.assertEqual(len(agent), 1, "the child made the seek, the child records it")
+        self.assertEqual(parent, [], "the parent must not be credited with it")
+        self.assertEqual(kernel_proc.verify("agent-1"), 0)
+
+    def test_a_seek_with_no_agent_falls_back_to_the_session(self):
+        kernel_proc.register("sess-1", {"kind": "main", "worktree": "/w"})
+        receipt_ledger.append_session("sess-1", {"kind": "seek", "agent_id": "",
+                                                 "tool_use_id": "toolu_a"})
+        kinds = [l.get("kind") for l in kernel_proc.read_journal("sess-1")
+                 if isinstance(l, dict)]
+        self.assertIn("receipt", kinds)
+
+    def test_the_seek_reflex_puts_the_agent_id_in_the_record(self):
+        """The mirror can only attribute what the writer recorded."""
+        src = (SCRIPTS / "r__posttool__receipt-seek.py").read_text(encoding="utf-8")
+        self.assertIn('"agent_id": data.get("agent_id")', src)
+
+
     def test_a_childs_replay_labels_the_session_receipts_as_the_parents(self):
         """The ledger is keyed by SESSION, so a child shows its parent's seeks.
 
@@ -240,6 +339,63 @@ class OrphanRuleTest(ReplayCase):
         self.assertEqual(orphans, {}, f"gates journal unregistered rule ids: {orphans}")
 
 
+class GateSelftestJournalTest(ReplayCase):
+    """D5: the selftest runner must PROVE a gate journals, not assume it.
+
+    Ten of twelve fixture-driven gates had violation fixtures with no
+    session_id, so `journal_deny` resolved no pid and quietly did nothing for
+    the whole selftest. Every gate passed while none of them proved the mirror.
+    """
+
+    def test_a_fixture_with_no_session_id_gets_the_selftest_one(self):
+        import gate_selftest
+        fdir = ROOT / "registry" / "fixtures" / "SECURITY.never-read-secrets-raw"
+        raw = json.loads((fdir / "violation.json").read_text(encoding="utf-8"))
+        prepared = json.loads(gate_selftest._prep_payload(
+            fdir / "violation.json", fdir, Path(self.home)))
+        self.assertEqual(prepared["session_id"],
+                         raw.get("session_id") or gate_selftest.SELFTEST_SESSION)
+
+    def test_a_fixture_that_names_its_own_session_keeps_it(self):
+        import gate_selftest
+        fdir = Path(self.home)
+        (fdir / "violation.json").write_text(
+            json.dumps({"session_id": "fixture-owned", "tool_name": "Bash"}),
+            encoding="utf-8")
+        prepared = json.loads(gate_selftest._prep_payload(
+            fdir / "violation.json", fdir, fdir))
+        self.assertEqual(prepared["session_id"], "fixture-owned")
+
+    def test_the_assertion_fails_when_a_gate_stops_journaling(self):
+        """The control. An assertion that cannot fail proves nothing, so a copy
+        of a real gate with its mirror call removed must be caught."""
+        import shutil
+        import subprocess
+        src = SCRIPTS / "secrets-grep-guard.py"
+        body = src.read_text(encoding="utf-8")
+        broken = SCRIPTS / "_selftest_control_secrets_guard.py"
+        stripped = body.replace("_journal_deny(_DENY_REASON, data)", "pass")
+        self.assertNotEqual(stripped, body, "the control did not remove the mirror call")
+        broken.write_text(stripped, encoding="utf-8")
+        self.addCleanup(lambda: broken.unlink(missing_ok=True))
+        fdir = ROOT / "registry" / "fixtures" / "SECURITY.never-read-secrets-raw"
+        env = dict(os.environ)
+        env["HOME"] = env["USERPROFILE"] = self.home
+        cp = subprocess.run(
+            [sys.executable, str(SCRIPTS / "gate_selftest.py"), str(broken), str(fdir)],
+            capture_output=True, text=True, timeout=120, env=env, cwd=str(ROOT))
+        self.assertEqual(cp.returncode, 1,
+                         "a gate that blocks but journals nothing must not pass")
+        self.assertIn("journaled", cp.stderr)
+        # and the real one still passes, so the control is measuring the edit
+        cp_ok = subprocess.run(
+            [sys.executable, str(SCRIPTS / "gate_selftest.py"), str(src), str(fdir)],
+            capture_output=True, text=True, timeout=120, env=env, cwd=str(ROOT))
+        self.assertEqual(cp_ok.returncode, 0, cp_ok.stderr)
+        shutil.rmtree(self.home, ignore_errors=True)
+        os.makedirs(self.home, exist_ok=True)
+
+
 # ── the fail-open contract ──────────────────────────────────────────────────
 
 class FailOpenTest(ReplayCase):
@@ -323,7 +479,12 @@ class GoldenTest(ReplayCase):
         self.assertIn("REFUSED", expected)
         kinds = [json.loads(l)["kind"] for l in
                  (REPLAY_FIXTURE / "journal.jsonl").read_text(encoding="utf-8").splitlines() if l]
-        self.assertEqual(kinds, ["start", "tool", "receipt", "tool", "deny", "tool", "exit"])
+        self.assertEqual(kinds, ["start", "tool", "receipt", "tool", "deny", "tool",
+                                 "deny", "deny", "exit"])
+        self.assertIn("source=harness", expected,
+                      "the golden must show a harness refusal apart from an Octorato one")
+        self.assertIn("other denies  COMMS.paste-ready-raw-message 1", expected,
+                      "and a deny that refused a turn, not a call")
 
 
 class TopTest(ReplayCase):

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -70,13 +71,65 @@ def emits_block(returncode: int, stdout: str) -> bool:
     return False
 
 
+SELFTEST_SESSION = "__selftest__"
+_KERNEL_RULE_RE = re.compile(r'^_KERNEL_RULE = "([^"]+)"', re.M)
+
+
 def _prep_payload(raw_path: Path, fixture_dir: Path, sandbox: Path) -> str:
     """Load a fixture payload and rewrite a relative transcript_path to absolute."""
     data = json.loads(raw_path.read_text(encoding="utf-8"))
     tp = data.get("transcript_path")
     if isinstance(tp, str) and tp and not os.path.isabs(tp):
         data["transcript_path"] = str((fixture_dir / tp).resolve())
+    # Every real harness payload carries a session_id; most fixtures predate the
+    # v8 kernel and omit it, which silently turned the journal mirror inside each
+    # gate into a no-op for the whole selftest. A gate cannot be proven to
+    # journal its refusals by a leg whose payload names no process, so the same
+    # id the env already advertises is filled in when the fixture has none.
+    if not data.get("session_id"):
+        data["session_id"] = SELFTEST_SESSION
     return json.dumps(data)
+
+
+def _kernel_rule_of(script: Path) -> str:
+    """The rule id a gate journals, read off its own `_KERNEL_RULE` constant."""
+    try:
+        m = _KERNEL_RULE_RE.search(script.read_text(encoding="utf-8"))
+    except OSError:
+        return ""
+    return m.group(1) if m else ""
+
+
+def _journaled_denies(sandbox: Path) -> list:
+    """Every deny rule id in every journal the sandbox collected.
+
+    Read back off disk rather than through the kernel library: the gates ran as
+    subprocesses, so the file is the only evidence the mirror actually fired.
+    Every journal, not just `__selftest__`: a fixture may carry its own
+    session_id, and scoping the read to one pid would report "nothing journaled"
+    for a gate that journaled correctly under the id its own fixture named.
+    """
+    jdir = sandbox / ".claude" / ".cache" / "kernel" / "journal"
+    out = []
+    try:
+        paths = sorted(jdir.glob("*.jsonl"))
+    except OSError:
+        return []
+    for path in paths:
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(rec, dict) and rec.get("kind") == "deny":
+                out.append(str(rec.get("rule") or ""))
+    return out
 
 
 def _run_leg(script: Path, payload: str, sandbox: Path) -> tuple[int, str]:
@@ -124,10 +177,24 @@ def run_gate_selftest(script_path, fixture_dir) -> int:
         if seed.is_dir():
             shutil.copytree(seed, sandbox, dirs_exist_ok=True)
         failures = []
+        rule = _kernel_rule_of(script)
         for vf in violations:
             rc, out = _run_leg(script, _prep_payload(vf, fdir, sandbox), sandbox)
             if not emits_block(rc, out):
                 failures.append(f"{vf.name} did NOT block (rc={rc})")
+        # v8 Phase 4: a gate that refuses must also RECORD the refusal. The
+        # block/allow counts are unchanged; this is an extra assertion over the
+        # legs that already blocked, and it applies only to a gate that declares
+        # the rule it journals. Drift here would surface as an empty
+        # `octo replay` after a real incident, which is the one moment nobody
+        # can go back and re-run.
+        if rule and not failures:
+            journaled = _journaled_denies(sandbox)
+            if not journaled:
+                failures.append(f"{len(violations)} leg(s) blocked but nothing was "
+                                f"journaled under {rule}")
+            elif rule not in journaled:
+                failures.append(f"journaled deny rule {journaled[0]!r} != {rule!r}")
         for bf in benigns:
             rc, out = _run_leg(script, _prep_payload(bf, fdir, sandbox), sandbox)
             if emits_block(rc, out):

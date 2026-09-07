@@ -1905,6 +1905,14 @@ rules:
   # whose rule id is in no registry row, and this reflex writes deny lines under
   # exactly this id. An unregistered deny is an orphan mechanism (RULE #1).
   #
+  # Scope, measured on runtime 2.1.261, not assumed: the event fires for the
+  # AUTO-MODE classifier only. A permission-rule denial and a user-rejected
+  # denial do NOT fire it, so neither is journaled and neither is claimed (the
+  # user rejection stays the residual v8-kernel.md section 6 names). The payload
+  # carries {tool_name, tool_input, tool_use_id, reason} and no denial-kind
+  # field: `toolDenialKind` lives on the transcript tool_result records, never
+  # on the hook payload, so the reflex records the runtime's own reason string.
+  #
   # The id prefix names the SOURCE of the refusal (the harness, not Octorato),
   # the way SEC.prod-write-gate names its own; the category stays inside the
   # schema's enum, because a new category is a schema PR with zero enforcement

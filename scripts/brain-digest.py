@@ -565,7 +565,7 @@ def render_digest(now: datetime, activity: dict, slos: dict, watchdog: dict,
         if kernel.get("broken_chains"):
             lines.append("- 🛑 **broken journal chain(s)**: "
                          + ", ".join(f"`{p}`" for p in kernel["broken_chains"][:5])
-                         + " — tamper evidence, read before deleting")
+                         + " (tamper evidence, read before deleting)")
         lines.append("")
 
     lines.append("---")

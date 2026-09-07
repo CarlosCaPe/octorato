@@ -6,14 +6,16 @@ journal what THEY refuse. This one journals what the HARNESS refuses, so a
 replay of a run shows both kinds of refusal on one timeline instead of only the
 half Octorato owns.
 
-Scope, stated as narrowly as the runtime documents it: `PermissionDenied` is
-documented for AUTO-MODE denials only (v8-kernel.md section 2). A user rejection
-in default mode has no documented hook event and stays a residual (section 6).
-So this reflex claims exactly what it observes: it records whatever denial-kind
-field the payload carries, VERBATIM and unrenamed, rather than mapping it onto a
-vocabulary the brain invented. When the runtime later fires this event for
-`permission-rule` or `user-rejected` denials too, the journal already carries the
-evidence and nobody has to re-run the experiment to find out.
+Scope, stated as narrowly as the runtime delivers it. On 2.1.261 the event fires
+for the AUTO-MODE classifier only, and its payload is the base hook fields plus
+`{tool_name, tool_input, tool_use_id, reason}`. A `permission-rule` denial and a
+`user-rejected` denial do NOT fire this event at all, so neither is journaled and
+neither is claimed; the user rejection stays the residual v8-kernel.md section 6
+already names. There is no denial-KIND field to read: `toolDenialKind` lives on
+the transcript's tool_result records, not on the hook payload, so this reflex
+records the runtime's own `reason` string VERBATIM rather than inventing a
+classifier the payload never carried. `permission_mode` is recorded when present
+because it is the one field that says which mode was refusing.
 
 rule id: `HARNESS.permission-denied`. It is registered in registry/rules.yaml
 because the `kernel-replay` doctor check FAILS on a deny line whose rule id is
@@ -41,39 +43,24 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 RULE_ID = "HARNESS.permission-denied"
 
-# Field names are the runtime's to choose, not ours. Anything whose name carries
-# "denial", or is the bare `kind`/`decision`/`permission_decision`, is copied
-# under its ORIGINAL key. Recording it verbatim is the point: the PR's QA proof
-# reads back which keys actually arrived, and a renamed field would have thrown
-# that evidence away.
-_KIND_HINTS = ("denial", "denied")
-_KIND_KEYS = ("kind", "decision", "permission_decision", "permissiondecision",
-              "reason", "message", "permission_mode", "mode")
+# What the runtime actually sends, and nothing more. `reason` is the refusal text
+# the harness itself wrote; `permission_mode` names the mode that refused. A
+# future runtime that adds a real denial-kind field to the PAYLOAD gets a row
+# here; until it does, guessing one would be the fabrication this brain forbids.
+_RECORDED_KEYS = ("reason", "permission_mode")
 _MAX_VALUE = 400
 
 
 def denial_fields(payload: dict) -> dict:
-    """Every denial-shaped field the payload carries, under its original key."""
+    """The denial fields the runtime sends, under their original keys."""
     out = {}
-    for key, value in (payload or {}).items():
-        if key in ("session_id", "agent_id", "tool_name", "tool_use_id", "cwd",
-                   "tool_input", "transcript_path", "hook_event_name",
-                   "agent_type", "permission_mode_source"):
+    for key in _RECORDED_KEYS:
+        value = (payload or {}).get(key)
+        if value in (None, ""):
             continue
-        flat = str(key).replace("_", "").lower()
-        if not (any(h in flat for h in _KIND_HINTS) or flat in
-                tuple(k.replace("_", "") for k in _KIND_KEYS)):
-            continue
-        if isinstance(value, (dict, list)):
-            try:
-                value = json.dumps(value, sort_keys=True, ensure_ascii=False)
-            except Exception:
-                value = str(value)
-        elif not isinstance(value, (str, int, float, bool)):
+        if not isinstance(value, str):
             value = str(value)
-        if isinstance(value, str):
-            value = value[:_MAX_VALUE]
-        out[str(key)] = value
+        out[key] = value[:_MAX_VALUE]
     return out
 
 
@@ -94,6 +81,9 @@ def main() -> int:
         tool = str(payload.get("tool_name") or "")
         if tool:
             extra["tool_name"] = tool
+        # The runtime's own words, unedited. A payload with no `reason` still
+        # gets a deny line: WHICH tool the harness refused is the fact worth
+        # recording, and inventing a reason would be worse than naming none.
         reason = extra.pop("reason", "") or f"harness denied {tool or 'a tool call'}"
         kernel_proc.journal_deny(RULE_ID, reason,
                                  payload.get("tool_use_id"), pid, **extra)
@@ -163,9 +153,12 @@ def _selftest(fixture_dir: str = None) -> int:
                 failures.append("the deny line does not name the tool")
             if d.get("tool_use_id") != payload.get("tool_use_id"):
                 failures.append("the deny line does not carry the tool_use_id")
-            recorded = {k: v for k, v in d.items() if k in denial_fields(payload)}
-            if not recorded:
-                failures.append("no denial-kind field was recorded verbatim")
+            if d.get("reason") != payload.get("reason"):
+                failures.append("the runtime's own reason string was not recorded verbatim")
+            if d.get("permission_mode") != payload.get("permission_mode"):
+                failures.append("the permission mode that refused was not recorded")
+            if d.get("source") != "harness":
+                failures.append("the deny line does not say the harness refused")
         if kernel_proc.verify(pid) != 0:
             failures.append("the chain broke after the deny line")
     finally:
@@ -180,7 +173,7 @@ def _selftest(fixture_dir: str = None) -> int:
         print("selftest FAIL: " + "; ".join(failures), file=sys.stderr)
         return 1
     print("selftest PASS: an auto-mode denial is journaled with its rule id, its "
-          "tool and its denial kind verbatim (r__permission-denied__journal)")
+          "tool and the runtime's own reason verbatim (r__permission-denied__journal)")
     return 0
 
 
