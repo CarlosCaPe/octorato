@@ -270,7 +270,7 @@ class Brain:
         committed.
         """
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
-        guard = self.lock_path.with_suffix(self.lock_path.suffix + ".lock")
+        guard = self.lock_path.with_name(self.lock_path.name + ".lock")
         fh = open(guard, "a+")
         try:
             try:
@@ -338,7 +338,10 @@ class Brain:
         for entry in lock["packages"]:
             valid_name(entry.get("name"))
         payload = json.dumps(lock, indent=2, ensure_ascii=False) + "\n"
-        tmp = self.lock_path.with_suffix(self.lock_path.suffix + f".tmp{os.getpid()}")
+        # Named so the tracked .gitignore's `*.tmp` / `*.lock` patterns cover it: a
+        # crash between write and replace must not leave an untracked file that shows
+        # in git status and rides along in someone's `git add`.
+        tmp = self.lock_path.with_name(f"{self.lock_path.name}.{os.getpid()}.tmp")
         tmp.write_text(payload, encoding="utf-8")
         os.replace(tmp, self.lock_path)
 
@@ -572,6 +575,21 @@ def _github_module():
         raise PkgError(f"cannot load installer helpers: {e}")
 
 
+# owner/repo: two path-ish segments, no scheme and no host. Anything else that is not
+# already a URL is treated as a bare host form and gets a scheme so it can be PARSED,
+# never so it can be trusted: the host check still runs on the parsed netloc.
+_OWNER_REPO_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def _as_url(source: str) -> str:
+    """Turn any accepted remote source spelling into a URL, without judging the host."""
+    if urlsplit(source).scheme:
+        return source
+    if _OWNER_REPO_RE.match(source):
+        return f"https://github.com/{source}"
+    return f"https://{source}"
+
+
 def parse_github_url(url: str, subpath: str | None = None, ref: str | None = None):
     """(owner, repo, ref, path) from a GitHub URL.
 
@@ -601,30 +619,43 @@ def parse_github_url(url: str, subpath: str | None = None, ref: str | None = Non
             if not rest:
                 raise PkgError("GitHub URL missing ref after /tree/")
             if subpath:
-                url_ref = "/".join(rest)  # exact: the path came from --path
+                # `--path` given: the path is known exactly, so the ref is whatever is
+                # left. The common shape is a full browser URL that ALREADY ends with
+                # that path (the wiki's own install line), so strip the tail when it
+                # matches; only when it does not is the whole tail the ref, which is
+                # the branch-with-slashes case that has no other delimiter.
+                sub_seg = [s for s in subpath.split("/") if s]
+                if len(rest) > len(sub_seg) and rest[-len(sub_seg):] == sub_seg:
+                    url_ref = "/".join(rest[:-len(sub_seg)])
+                else:
+                    url_ref = "/".join(rest)
             else:
+                # No --path: the ref/path boundary is genuinely ambiguous, so take the
+                # single-segment ref, which is what a browser URL for a plain branch
+                # looks like. A branch with slashes needs --path to be unambiguous.
                 url_ref, url_path = rest[0], "/".join(rest[1:]) or None
         else:
             url_path = "/".join(seg[2:])
     return owner, repo, (ref or url_ref), (subpath or url_path)
 
 
-def _split_source_spec(source: str) -> tuple[str, str | None]:
-    """Split a lock `source` back into (source, subpath).
+def _split_source_spec(source: str) -> tuple[str, str | None, str | None]:
+    """Split a lock `source` back into (source, subpath, ref).
 
-    Only the git forms carry a subpath, and they encode it after '#'. A plain local
-    package directory has none: the directory IS the package.
+    The ref is NOT optional to carry. A package installed from a tag or a maintenance
+    branch records that ref; dropping it made `sync` refetch at main/master, where the
+    tree hash differs, so the package was reported unrestorable forever and the WARN
+    never cleared. A plain local package directory has neither subpath nor ref: the
+    directory IS the package.
     """
-    if "#" in source:
+    if source.startswith("git+file://"):
         head, _, sub_path = source.partition("#")
-        if head.startswith("git+file://"):
-            head = head[len("git+file://"):]
+        head = head[len("git+file://"):]
+        ref = None
         if "@" in head:
-            head = head.rsplit("@", 1)[0]
-        return head, sub_path or None
-    if source.startswith("https://github.com/") and "/tree/" in source:
-        return source, None  # parse_github_url re-splits it
-    return source, None
+            head, ref = head.rsplit("@", 1)
+        return head, (sub_path or None), (ref or None)
+    return source, None, None
 
 
 def _sparse_checkout(gh, repo_url: str, ref: str | None, path: str, tmp: Path) -> tuple[Path, str]:
@@ -677,14 +708,14 @@ def fetch_source(source: str, subpath: str | None, ref: str | None, tmp: Path) -
             raise PkgError(f"path {subpath} not found in {local_repo}@{used}")
         return pkg, f"git+file://{local_repo.resolve()}@{used}#{subpath}"
 
-    if "://" in source or source.startswith("github.com/"):
-        url = source if "://" in source else f"https://{source}"
-        owner, repo, gref, path = parse_github_url(url, subpath, ref)
-    else:
-        parts = [s for s in source.split("/") if s]
-        if len(parts) != 2:
-            raise PkgError("source must be a directory, a git repo, a GitHub URL, or owner/repo")
-        owner, repo, gref, path = parts[0], parts[1], ref, subpath
+    # Normalize to a URL, then let parse_github_url's urlsplit().netloc make the ONLY
+    # host decision. The earlier version answered the same question twice: once by
+    # scanning the raw string for a scheme separator and a host prefix, once by
+    # parsing. The scan was the weaker of the two and it decided the branch, so
+    # https://evil.test/github.com/x and github.com.evil.test/o/r both reached the
+    # GitHub path. That is exactly the incomplete-URL-sanitization shape CodeQL
+    # flags. One decision, made by a parser, is the fix.
+    owner, repo, gref, path = parse_github_url(_as_url(source), subpath, ref)
     if not path:
         raise PkgError("a GitHub source needs --path (or a /tree/<ref>/<path> URL)")
     gh._validate_relative_path(path)
@@ -1025,6 +1056,16 @@ def cmd_hash(brain: Brain, target: str, write: bool) -> int:
     manifest["tree_sha256"] = digest
     mpath.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"embedded in {mpath}")
+    # The manifest just changed, so any signature beside it now covers different bytes.
+    # It cannot be left there: `ssh-keygen -Y sign` over an existing .sig PROMPTS to
+    # overwrite, and on EOF (a script, a CI step, a heredoc) it declines, keeps the OLD
+    # signature and STILL EXITS 0. The publisher then ships a package whose signature
+    # verifies against a manifest nobody has. Deleting it here makes that impossible:
+    # sign writes fresh, or there is no signature at all and install refuses.
+    sig = d / SIG_NAME
+    if sig.exists():
+        sig.unlink()
+        print(f"removed stale {sig.name}: it signed the previous manifest")
     print(f"next: ssh-keygen -Y sign -f <your-key> -n {SIG_NAMESPACE} {mpath}")
     return 0
 
@@ -1094,10 +1135,10 @@ def cmd_sync(brain: Brain) -> int:
             warned.append(f"{name}: skills/{name} exists and is not our symlink; not restored")
             continue
         source = entry.get("source") or ""
-        source_spec, sub_path = _split_source_spec(source)
+        source_spec, sub_path, pinned_ref = _split_source_spec(source)
         try:
             with tempfile.TemporaryDirectory(prefix="octo-pkg-sync-") as td:
-                pkg, _ = fetch_source(source_spec, sub_path, None, Path(td))
+                pkg, _ = fetch_source(source_spec, sub_path, pinned_ref, Path(td))
                 manifest = check_package(brain, pkg, "skill")
                 if manifest.get("tree_sha256") != entry.get("tree_sha256"):
                     warned.append(f"{name}: source tree hash differs from the lock; not installed")
@@ -1323,7 +1364,22 @@ def selftest(fixture: Path, real: Brain) -> int:
         check("neither refusal left a tree behind",
               not brain.vendor_path("vendor").exists() and not (brain.vendor_dir / "a").exists())
 
-        # 14. sync on an empty lock is a no-op
+        # 14. hash --write invalidates a signature that no longer covers the manifest
+        pub = tmp / "publish"
+        shutil.copytree(signed, pub)
+        _sign(key, pub / "skill.json")
+        (pub / "LATER.md").write_text("an edit after signing\n", encoding="utf-8")
+        main(["--brain", str(brain.root), "hash", str(pub), "--write"])
+        check("hash --write removes a signature that no longer covers the manifest",
+              not (pub / SIG_NAME).exists())
+        check("the edited package is refused while unsigned",
+              main(["--brain", str(brain.root), "install", str(pub)]) == 1)
+        _sign(key, pub / "skill.json")
+        check("re-signed after re-hashing, it installs",
+              main(["--brain", str(brain.root), "install", str(pub)]) == 0)
+        main(["--brain", str(brain.root), "uninstall", name])
+
+        # 15. sync on an empty lock is a no-op
         before = sorted(p.name for p in brain.vendor_dir.iterdir()) if brain.vendor_dir.exists() else []
         check("sync on an empty lock exits 0", main(["--brain", str(brain.root), "sync"]) == 0)
         after = sorted(p.name for p in brain.vendor_dir.iterdir()) if brain.vendor_dir.exists() else []

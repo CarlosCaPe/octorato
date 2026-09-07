@@ -426,6 +426,189 @@ class TestUrlParsing(unittest.TestCase):
         self.assertEqual(repo, "r")
 
 
+class TestQaCycle2(SandboxCase):
+    """Regressions found in QA cycle 2, one test per item."""
+
+    def _seed(self, branch="master", extra_ref=None) -> Path:
+        repo = self.tmp / f"r-{branch}-{extra_ref}"
+        (repo / "skills").mkdir(parents=True)
+        shutil.copytree(FIXTURE / "signed", repo / "skills" / "pdf")
+        run = lambda *c: subprocess.run(c, check=True, capture_output=True)
+        run("git", "init", "-q", "-b", branch, str(repo))
+        run("git", "-C", str(repo), "add", "-A")
+        run("git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t",
+            "commit", "-q", "-m", "seed")
+        if extra_ref:
+            run("git", "-C", str(repo), "branch", extra_ref)
+        return repo
+
+    # -- item 1 -----------------------------------------------------------
+    def test_no_substring_host_test_survives_in_the_source(self):
+        src = (SCRIPTS / "octo_pkg.py").read_text(encoding="utf-8")
+        for banned in ('"://" in source', 'startswith("github.com', "'://' in source"):
+            self.assertNotIn(banned, src,
+                             "the host decision must live only in urlsplit().netloc")
+
+    def test_url_shaped_lookalikes_are_refused_through_fetch_source(self):
+        """Each of these previously took the 'is a URL' branch on a substring."""
+        for bad in ("https://evil.test/github.com/o/r",
+                    "https://github.com.evil.test/o/r/tree/main/p",
+                    "github.com.evil.test/o/r",
+                    "https://user@evil.test/o/r"):
+            with tempfile.TemporaryDirectory() as td:
+                with self.assertRaises(octo_pkg.PkgError, msg=bad) as cm:
+                    octo_pkg.fetch_source(bad, "p", "main", Path(td))
+                self.assertIn("not a GitHub URL", str(cm.exception), bad)
+
+    def test_owner_repo_and_bare_host_still_normalize_to_github(self):
+        self.assertEqual(octo_pkg._as_url("openai/skills"), "https://github.com/openai/skills")
+        self.assertEqual(octo_pkg._as_url("github.com/o/r"), "https://github.com/o/r")
+        self.assertEqual(octo_pkg._as_url("https://github.com/o/r"), "https://github.com/o/r")
+        owner, repo, _, _ = octo_pkg.parse_github_url(octo_pkg._as_url("openai/skills"), "p")
+        self.assertEqual((owner, repo), ("openai", "skills"))
+
+    # -- item 2 -----------------------------------------------------------
+    def test_split_source_spec_returns_the_pinned_ref(self):
+        self.assertEqual(octo_pkg._split_source_spec("git+file:///r@v1.2.0#skills/pdf"),
+                         ("/r", "skills/pdf", "v1.2.0"))
+        self.assertEqual(octo_pkg._split_source_spec("/plain/dir"), ("/plain/dir", None, None))
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_sync_restores_a_package_pinned_at_a_non_default_ref(self):
+        """The ref was parsed off the lock source and thrown away, so sync refetched
+        at master, got a different tree, and the WARN never cleared."""
+        key = self.mint_key()
+        repo = self._seed(branch="master", extra_ref="release-1")
+        pkg_in_repo = repo / "skills" / "pdf"
+        self.sign(key, pkg_in_repo)
+        run = lambda *c: subprocess.run(c, check=True, capture_output=True)
+        run("git", "-C", str(repo), "checkout", "-q", "release-1")
+        (pkg_in_repo / "ONLY-ON-RELEASE-1.md").write_text("pinned\n", encoding="utf-8")
+        man = json.loads((pkg_in_repo / "skill.json").read_text(encoding="utf-8"))
+        man["tree_sha256"] = octo_pkg.tree_sha256(pkg_in_repo, "skill")
+        (pkg_in_repo / "skill.json").write_text(json.dumps(man, indent=2) + "\n", encoding="utf-8")
+        (pkg_in_repo / octo_pkg.SIG_NAME).unlink()
+        self.sign(key, pkg_in_repo)
+        run("git", "-C", str(repo), "add", "-A")
+        run("git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t",
+            "commit", "-q", "-m", "release-1")
+        run("git", "-C", str(repo), "checkout", "-q", "master")
+
+        rc = octo_pkg.main(["--brain", str(self.root), "install", str(repo),
+                            "--path", "skills/pdf", "--ref", "release-1"])
+        self.assertEqual(rc, 0)
+        entry = self.brain.load_lock()["packages"][0]
+        self.assertIn("@release-1#", entry["source"])
+        dest = self.brain.vendor_path("sample-package")
+        self.assertTrue((dest / "ONLY-ON-RELEASE-1.md").is_file())
+
+        shutil.rmtree(dest)
+        self.brain.link_path("sample-package").unlink()
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "sync"]), 0)
+        self.assertTrue((dest / "ONLY-ON-RELEASE-1.md").is_file(),
+                        "sync must refetch at the pinned ref, not at the default branch")
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "verify", "--all"]), 0)
+
+    # -- item 3 -----------------------------------------------------------
+    def test_browser_url_ending_in_the_path_plus_explicit_path(self):
+        """The wiki's own install line shape: .../tree/master/skills/pdf --path skills/pdf."""
+        owner, repo, ref, path = octo_pkg.parse_github_url(
+            "https://github.com/CarlosCaPe/octorato/tree/master/skills/pdf", "skills/pdf")
+        self.assertEqual((owner, repo, ref, path), ("CarlosCaPe", "octorato", "master", "skills/pdf"))
+
+    def test_ref_with_slashes_still_exact_when_the_tail_does_not_match(self):
+        _, _, ref, path = octo_pkg.parse_github_url(
+            "https://github.com/o/r/tree/feat/v8/kernel", "skills/x")
+        self.assertEqual((ref, path), ("feat/v8/kernel", "skills/x"))
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_the_wiki_command_shape_installs_against_a_local_repo(self):
+        key = self.mint_key()
+        repo = self._seed()
+        self.sign(key, repo / "skills" / "pdf")
+        subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t",
+                        "commit", "-q", "-m", "sig"], check=True, capture_output=True)
+        # same argument shape as the wiki line: a path-carrying source plus --path
+        rc = octo_pkg.main(["--brain", str(self.root), "install", str(repo),
+                            "--path", "skills/pdf"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "verify", "--all"]), 0)
+
+    # -- item 4 -----------------------------------------------------------
+    def test_clone_retry_does_not_collide_on_a_shared_dest_dir(self):
+        """https then ssh both cloned into <tmp>/repo, so the retry always died with
+        'destination path already exists' and hid the real error."""
+        gh = octo_pkg._github_module()
+        repo = self._seed()
+        with tempfile.TemporaryDirectory() as td:
+            with self.assertRaises(Exception) as cm:
+                gh._git_sparse_checkout(str(self.tmp / "does-not-exist"), "master",
+                                        ["skills/pdf"], td)
+            self.assertNotIn("already exists", str(cm.exception),
+                             "the retry must report the real failure, not a path collision")
+            a = gh._git_sparse_checkout(str(repo), "master", ["skills/pdf"], td)
+            b = gh._git_sparse_checkout(str(repo), "master", ["skills/pdf"], td)
+            self.assertNotEqual(a, b)
+            for d in (a, b):
+                self.assertTrue(Path(d, "skills", "pdf", "SKILL.md").is_file())
+
+    # -- item 5 -----------------------------------------------------------
+    def test_lock_scratch_files_are_gitignored_by_a_tracked_pattern(self):
+        brain_root = BRAIN
+        names = [f"packages.lock.json.{os.getpid()}.tmp", "packages.lock.json.lock"]
+        cp = subprocess.run(["git", "check-ignore", "-v", "--no-index", *names],
+                            cwd=str(brain_root), capture_output=True, text=True)
+        self.assertEqual(cp.returncode, 0, f"not ignored: {cp.stdout or cp.stderr}")
+        self.assertEqual(len(cp.stdout.strip().splitlines()), len(names), cp.stdout)
+        for line in cp.stdout.strip().splitlines():
+            self.assertTrue(line.startswith(".gitignore:"), f"must be the TRACKED file: {line}")
+
+    def test_save_lock_temp_name_matches_the_ignored_pattern(self):
+        self.brain.save_lock({"version": 1, "packages": []})
+        self.assertEqual([p.name for p in self.root.iterdir() if p.name.endswith(".tmp")], [])
+
+    # -- item 6 -----------------------------------------------------------
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_hash_write_removes_a_stale_signature(self):
+        """ssh-keygen -Y sign over an existing .sig prompts, declines on EOF, keeps the
+        OLD signature and exits 0. Measured. So the stale file cannot be left there."""
+        import contextlib, io
+        key = self.mint_key()
+        d = self.tmp / "pub"
+        shutil.copytree(FIXTURE / "signed", d)
+        self.sign(key, d)
+        old_sig = (d / octo_pkg.SIG_NAME).read_bytes()
+        (d / "NEW.md").write_text("a later edit\n", encoding="utf-8")
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            octo_pkg.main(["--brain", str(self.root), "hash", str(d), "--write"])
+        self.assertFalse((d / octo_pkg.SIG_NAME).exists(), "the stale .sig must be gone")
+        self.assertIn("removed stale", buf.getvalue())
+        # and the publisher flow now produces a signature over the NEW manifest
+        self.sign(key, d)
+        self.assertNotEqual(old_sig, (d / octo_pkg.SIG_NAME).read_bytes())
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "install", str(d)]), 0)
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_without_the_fix_the_stale_signature_would_install_a_lie(self):
+        """Control: signing over a kept .sig is a no-op that exits 0, so an install
+        would carry a signature made over a manifest nobody shipped."""
+        key = self.mint_key()
+        d = self.tmp / "control"
+        shutil.copytree(FIXTURE / "signed", d)
+        self.sign(key, d)
+        before = (d / octo_pkg.SIG_NAME).read_bytes()
+        man = json.loads((d / "skill.json").read_text(encoding="utf-8"))
+        man["version"] = "9.9.9"
+        (d / "skill.json").write_text(json.dumps(man, indent=2) + "\n", encoding="utf-8")
+        cp = subprocess.run(["ssh-keygen", "-Y", "sign", "-f", str(key), "-n",
+                             octo_pkg.SIG_NAMESPACE, str(d / "skill.json")],
+                            stdin=subprocess.DEVNULL, capture_output=True)
+        self.assertEqual(cp.returncode, 0, "ssh-keygen reports success")
+        self.assertEqual(before, (d / octo_pkg.SIG_NAME).read_bytes(),
+                         "and silently keeps the old signature: this is why hash --write deletes it")
+
+
 class TestLockIntegrity(SandboxCase):
     def _write_lock(self, packages):
         self.brain.lock_path.write_text(

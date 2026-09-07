@@ -21,7 +21,8 @@ python3 scripts/octo_pkg.py hash registry/fixtures/META.kernel-package/signed
 ```
 
 Install accepts a GitHub URL, `owner/repo` with `--path`, a git repository (remote URL
-or a local path), or a plain package directory:
+or a local path), or a plain package directory. Substitute your own values in the
+angle brackets:
 
 ```bash
 python3 scripts/octo_pkg.py install <owner>/<repo> --path skills/<name>
@@ -32,14 +33,21 @@ python3 scripts/octo_pkg.py uninstall <name>
 `--ref` is optional: unset, it tries `main` then `master`. When a branch name contains
 slashes, pass `--path` so the ref is unambiguous.
 
-Publishing (the two commands a package author runs, in this order):
+Publishing (the two commands a package author runs, in this order; substitute your own
+package directory and key path):
 
 ```bash
 python3 scripts/octo_pkg.py hash <package-dir> --write
 ssh-keygen -Y sign -f <path-to-your-private-key> -n octorato-pkg <package-dir>/skill.json
 ```
 
-`hash --write` embeds `tree_sha256` using the same function the installer recomputes.
+Run them in that order, every time. `hash --write` embeds `tree_sha256` using the same
+function the installer recomputes, and deletes a stale `skill.json.sig`: `ssh-keygen -Y
+sign` PROMPTS before overwriting an existing signature, and on EOF it declines, keeps
+the old one and exits 0, so a re-signed package would carry a signature over the
+previous manifest with nothing reporting a problem. Never run the sign step alone on a
+package you have edited.
+
 `ssh-keygen -Y sign` requires `-f` with the signing key and the `octorato-pkg` namespace;
 it writes the detached `skill.json.sig`, which ships beside the manifest. A worked,
 copy-paste walkthrough with a throwaway key is in the Getting-Started wiki page.
