@@ -12,12 +12,13 @@ argument (``git commit -m "gh pr merge 96"``) does NOT trigger the gate.
 Shell indirection (``bash -c "..."``, ``$(...)``) remains accepted residual risk.
 
 When a Bash command is detected as a merge action, this hook BLOCKS execution
-unless an operator approval is present via one of two AGENT-PROOF env channels.
+unless the operator's AGENT-PROOF env approval is present for EVERY merge
+sub-command in the line.
 Detected forms: `gh pr merge`; `git push` directly to main/master; and the
 gh api / curl API equivalents (a write call to REST `/pulls/<N>/merge`, a
 GraphQL mergePullRequest mutation, `POST /repos/.../merges` into main/master, or
 a `PATCH`/`DELETE` of `/git/refs/heads/(main|master)`). API reads pass; only a
-write method or body flag qualifies. The two channels:
+write method or body flag qualifies. The one channel, plus its receipt waiver:
 
   1. OCTO_MERGE_APPROVE=<pr_number>  — env var, PR-scoped, AGENT-PROOF (preferred).
      A PreToolUse hook runs in the HARNESS process and does NOT inherit env vars
@@ -25,9 +26,10 @@ write method or body flag qualifies. The two channels:
      reach this hook).  Only the operator, who exports the var in their shell
      before invoking Claude Code, can set it — making it a true operator signal.
 
-  2. OCTO_QA_OK=1  — an explicit one-time bypass of the QA RECEIPT for the PR named
-     in OCTO_MERGE_APPROVE. It is not an authorizer on its own: without a matching
-     OCTO_MERGE_APPROVE=<same pr> the merge is still denied. DISCOURAGED.
+  2. OCTO_QA_OK=1: an explicit one-time waiver of the QA RECEIPT for the PR named
+     in OCTO_MERGE_APPROVE. It is not a channel and authorizes nothing on its own:
+     without a matching OCTO_MERGE_APPROVE=<same pr> the merge is still denied.
+     DISCOURAGED.
 
 The file channel (~/.claude/connectome/merge-approvals.json, written by
 octo-dim.py approve-merge) is NO LONGER an authorizer: an agent owns its own
@@ -92,9 +94,25 @@ _PAT_GIT_PUSH = re.compile(
     r'(?:[\s:/\'"+])(?:HEAD:)?\+?(main|master)(?=$|\s|:|[\'"])'
 )
 
-# Extracts the PR number from `gh pr merge <N> [flags]`
-# (?=\s|$) anchors the digit capture to a whole token.
-_PR_NUM_RE = re.compile(r"^\s*gh\s+pr\s+merge\s+(\d+)(?=\s|$)")
+# Extracts the PR number from `gh pr merge [flags] <N> [flags]`. The number is NOT
+# always the first argument: `gh pr merge -R owner/repo 280` and the --repo spelling
+# are documented forms, and reading only the first token yielded "unknown",
+# which denied a correctly approved PR. So: take the first BARE all-digit token.
+# A flag and its value are skipped because neither is all digits.
+_GH_MERGE_HEAD = re.compile(r"^\s*gh\s+pr\s+merge(?=\s|$)")
+_BARE_NUM = re.compile(r"^\d+$")
+
+
+def _gh_merge_pr_num(sub: str) -> str | None:
+    """First bare numeric token of a gh-pr-merge sub-command, else None."""
+    m = _GH_MERGE_HEAD.match(sub)
+    if not m:
+        return None
+    for tok in sub[m.end():].split():
+        tok = tok.strip("\"'")
+        if _BARE_NUM.match(tok):
+            return tok
+    return None
 
 # API-form publish — the command-shape bypass of `gh pr merge` / `git push`.
 # Intent over mechanism (agent-proof-approval-gate skill, OpenBot lesson #2):
@@ -407,8 +425,13 @@ def _split_subcmds(cmd: str) -> list[str]:
     return parts
 
 
-def _find_publish_subcmd(cmd: str) -> str | None:
-    """Return the first sub-command that matches a publish pattern, or None.
+def _find_publish_subcmds(cmd: str) -> list[tuple[str, str]]:
+    """Return EVERY (raw_sub, form) matching a publish pattern, in order.
+
+    Every one, not just the first: a line chaining two merges is two merges, and
+    gating only the head let the second through under the approval granted for
+    the first. *form* is "gh", "push" or "api" and says which pattern matched,
+    which is what makes a branch sentinel refusable on the API form alone.
 
     Processing order (FIX 5 → split → FIX 3+4 → pattern):
       1. Join backslash-newline continuations (FIX 5) so multi-line commands
@@ -423,15 +446,16 @@ def _find_publish_subcmd(cmd: str) -> str | None:
     because the split step keeps quoted content intact.
     """
     cmd = _join_continuations(cmd)
+    found: list[tuple[str, str]] = []
     for raw_sub in _split_subcmds(cmd):
-        sub = _strip_leading(raw_sub)
-        if _PAT_GH_MERGE.match(sub):
-            return raw_sub
-        if _PAT_GIT_PUSH.match(sub):
-            return raw_sub
-        if _api_write_action(sub) is not None:
-            return raw_sub
-    return None
+        s = _strip_leading(raw_sub)
+        if _PAT_GH_MERGE.match(s):
+            found.append((raw_sub, "gh"))
+        elif _PAT_GIT_PUSH.match(s):
+            found.append((raw_sub, "push"))
+        elif _api_write_action(s) is not None:
+            found.append((raw_sub, "api"))
+    return found
 
 
 def _extract_pr_id(matched_sub: str) -> str:
@@ -442,9 +466,9 @@ def _extract_pr_id(matched_sub: str) -> str:
     `FOO=1 git push origin main` still yields 'main'.
     """
     sub = _strip_leading(matched_sub)
-    m = _PR_NUM_RE.match(sub)
-    if m:
-        return m.group(1)
+    num = _gh_merge_pr_num(sub)
+    if num:
+        return num
     push_m = _PAT_GIT_PUSH.match(sub)
     if push_m:
         return push_m.group(1)
@@ -504,15 +528,20 @@ def main() -> int:
         return 0
 
     # Fast path: no sub-command starts with a publish pattern → exit 0 silently.
-    matched_sub = _find_publish_subcmd(cmd)
-    if matched_sub is None:
+    matches = _find_publish_subcmds(cmd)
+    if not matches:
         return 0
+    matched_sub = matches[0][0]
 
     # Positively identified as a merge action — from here on, a crash must fail
     # CLOSED (the __main__ handler reads this flag and exits 2, not 0).
     global _PUBLISH_IDENTIFIED
     _PUBLISH_IDENTIFIED = True
-    pr_id = _extract_pr_id(matched_sub)
+    # One entry per merge in the line. A chained line is gated as a whole: every
+    # target must carry the same operator approval, so an approval for one PR can
+    # never ride a second merge appended after it.
+    targets = [(_extract_pr_id(sub_raw), form) for sub_raw, form in matches]
+    pr_id = targets[0][0]
 
     # ── Repo scope: only PROTECTED repos are gated ────────────────────────────
     try:
@@ -526,10 +555,29 @@ def main() -> int:
         )
         return 0
 
-    # ── Channel 1: env, PR-scoped, agent-proof (preferred) ───────────────────
+    # ── Sentinels are not identifiers, so they are not approvable ────────────
+    # "unknown" means the parse found no PR number, and on the API forms a bare
+    # branch name is whatever the URL happened to carry. Both used to be exportable
+    # as OCTO_MERGE_APPROVE (the deny text even told the operator to), which turned
+    # one approval into a pass for every URL, branch and GraphQL merge form.
+    sentinels = [pid for pid, form in targets
+                 if pid == "unknown" or (form == "api" and pid in ("main", "master"))]
+
+    # ── The one channel: env, PR-scoped, agent-proof ─────────────────────────
     env_approve = os.environ.get("OCTO_MERGE_APPROVE", "").strip()
     qa_ok = os.environ.get("OCTO_QA_OK", "").strip() == "1"
-    if env_approve and env_approve == pr_id:
+    if sentinels:
+        print(
+            f"✗ QA GATE (fail-closed): this line merges {sentinels[0]!r}, which is a "
+            f"sentinel, not\n  an identifier: no OCTO_MERGE_APPROVE value can approve it "
+            f"(setting it to that\n  literal would approve every merge that parses the "
+            f"same way).\n  Operator: re-run with an explicit PR number and export "
+            f"OCTO_MERGE_APPROVE=<that number>.",
+            file=sys.stderr,
+        )
+        return 2
+    mismatched = [pid for pid, _form in targets if pid != env_approve]
+    if env_approve and not mismatched:
         # v7 phase 3: the operator's approval is necessary, not sufficient. An
         # independent QA verdict must exist as a HARNESS-written receipt for this
         # PR (r__subagent-stop__qa-receipt.py), re-read from the agent transcript.
@@ -559,12 +607,12 @@ def main() -> int:
         else:
             _nudge(
                 f"⚠ QA gate: OCTO_QA_OK waived the QA receipt for PR #{pr_id} "
-                f"(legacy blanket flag, discouraged, logged). The PR-scoped "
+                f"(receipt waiver, discouraged, logged). The PR-scoped "
                 f"OCTO_MERGE_APPROVE={pr_id} still authorized this merge."
             )
         _nudge(
             f"✓ QA gate: operator-approved PR #{pr_id} via OCTO_MERGE_APPROVE "
-            f"(env, agent-proof)."
+            f"(env, agent-proof); {len(targets)} merge sub-command(s), all on that PR."
         )
         return 0
 
@@ -575,20 +623,23 @@ def main() -> int:
 
     # ── OCTO_QA_OK is NOT an authorizer ───────────────────────────────────────
     # It waives the QA receipt for the PR named in OCTO_MERGE_APPROVE and nothing
-    # else. As a blanket it let `gh pr merge 280` through while the operator had
+    # else. As a blanket it let a merge of 280 through while the operator had
     # approved 279, arming auto-merge on the wrong number.
     if qa_ok:
         scoped = f"OCTO_MERGE_APPROVE={env_approve}" if env_approve else "OCTO_MERGE_APPROVE unset"
         print(
             f"✗ QA GATE (fail-closed): OCTO_QA_OK=1 waives the QA receipt only, not the\n"
-            f"  approval. This command merges {pr_id}, but {scoped}.\n"
+            f"  approval. This command merges {', '.join(pid for pid, _f in targets)}, "
+            f"but {scoped}.\n"
             f"  Operator: export OCTO_MERGE_APPROVE={pr_id} in your shell, then re-run.",
             file=sys.stderr,
         )
         return 2
 
     # ── BLOCK — fail-closed ───────────────────────────────────────────────────
-    label = f"PR #{pr_id}" if pr_id not in ("unknown", "main", "master") else f"branch '{pr_id}'"
+    label = f"PR #{pr_id}" if pr_id not in ("main", "master") else f"branch '{pr_id}'"
+    if len(targets) > 1:
+        label += f" (+{len(targets) - 1} more merge sub-command(s) in the same line)"
     print(
         f"✗ QA GATE (fail-closed): merge of {label} needs operator approval.\n"
         f"  Operator: export OCTO_MERGE_APPROVE={pr_id} in your shell (env, agent-proof),\n"

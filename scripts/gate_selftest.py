@@ -21,7 +21,9 @@ Fixture layout under registry/fixtures/<rule-id>/:
                             that reads session/ledger state can be driven
 
 A payload may carry a top-level "_env" object (stripped before the payload reaches
-the gate) naming env vars to set for THAT leg only, after the override strip. It is
+the gate) naming env vars to set for THAT leg only, after the override strip. Only
+OCTO_* keys are applied, and never HOME/USERPROFILE/PATH/CLAUDE_SESSION_ID, so a
+fixture can drive an operator override but can never escape the sandbox. It is
 how a fixture proves override semantics (e.g. an operator flag that must still
 deny when it is scoped to a different PR); it cannot leak into any other leg.
 
@@ -41,6 +43,12 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+# a fixture's "_env" may set these and only these: the operator override vars
+_ENV_ALLOWED = re.compile(r"^OCTO_[A-Z0-9_]+$")
+# belt and braces: never let a fixture touch the sandbox or the interpreter
+_ENV_NEVER = frozenset({"HOME", "USERPROFILE", "PATH", "CLAUDE_SESSION_ID",
+                        "PYTHONPATH", "PYTHONHOME"})
 
 # env vars that could turn a violation into an allow; stripped for every leg
 _OVERRIDE_ENV = (
@@ -106,7 +114,15 @@ def _prep_payload(raw_path: Path, fixture_dir: Path, sandbox: Path) -> tuple[str
     # "_env" is a harness key, not hook input: it is lifted out here so the gate
     # never sees it in the payload it reads.
     raw_env = data.pop("_env", None)
-    leg_env = {str(k): str(v) for k, v in raw_env.items()} if isinstance(raw_env, dict) else {}
+    leg_env = {}
+    if isinstance(raw_env, dict):
+        for k, v in raw_env.items():
+            k = str(k)
+            # Allowlist: a fixture may drive the operator override vars and nothing
+            # else. Without this it could set HOME or PATH and break the sandbox
+            # the harness exists to provide, or shadow the interpreter under test.
+            if _ENV_ALLOWED.match(k) and k not in _ENV_NEVER:
+                leg_env[k] = str(v)
     return json.dumps(data), leg_env
 
 
@@ -167,8 +183,12 @@ def _run_leg(script: Path, payload: str, sandbox: Path,
     env["USERPROFILE"] = str(sandbox)
     env["CLAUDE_SESSION_ID"] = "__selftest__"
     # fixture-declared env, applied AFTER the strip so a leg can exercise an
-    # operator override deliberately; scoped to this subprocess only.
-    env.update(leg_env or {})
+    # operator override deliberately; scoped to this subprocess only. Filtered
+    # here as well as in _prep_payload: this is the only place the value reaches
+    # a process, so the allowlist has to hold at THIS boundary, not upstream.
+    for k, v in (leg_env or {}).items():
+        if _ENV_ALLOWED.match(str(k)) and str(k) not in _ENV_NEVER:
+            env[str(k)] = str(v)
     cp = subprocess.run(
         [sys.executable, str(script)],
         input=payload, capture_output=True, text=True,
