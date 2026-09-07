@@ -1355,6 +1355,106 @@ class TestQaCycle5(SandboxCase):
             octo_pkg.tree_sha256(dest, "skill")
         self.assertIn("cannot be read", str(caught.exception))
 
+    def test_a_name_that_is_not_utf8_is_refused_by_the_digest(self):
+        """The fix that closed the fourth crossing family shipped with NO test, in a
+        commit whose message says the family closes. Nothing in this file built a
+        filename from bytes, so the refusal was unreachable from the suite by
+        construction and a mutation disabling it survived (QA cycle 10). That is the
+        third time in this session my intent and my diff diverged."""
+        d = self.tmp / "badname"
+        shutil.copytree(FIXTURE / "signed", d)
+        clean = octo_pkg.tree_sha256(d, "skill")
+        bad = os.path.join(bytes(d), b"evil\xff.md")
+        with open(bad, "wb") as fh:
+            fh.write(b"payload\n")
+        self.assertTrue(any(b"\xff" in n for n in os.listdir(bytes(d))),
+                        "the fixture must really carry a non-UTF-8 name")
+        with self.assertRaises(octo_pkg.PkgError) as caught:
+            octo_pkg.tree_sha256(d, "skill")
+        self.assertIn("not valid UTF-8", str(caught.exception))
+        os.unlink(bad)
+        self.assertEqual(octo_pkg.tree_sha256(d, "skill"), clean,
+                         "removing it restores the original digest")
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_one_unnameable_file_does_not_take_the_whole_sweep_down(self):
+        """The security half. `verify --all` used to abort with empty stdout, so
+        anyone able to tamper with a vendored tree could suppress detection of that
+        tamper by planting a badly named file beside it. Two packages here, and the
+        healthy one must still get its verdict."""
+        import contextlib, io
+        bad_name, bad_dest = self._install_signed("aaa")
+        good_name, _ = self._install_signed("zzz")
+        with open(os.path.join(bytes(bad_dest), b"evil\xff.md"), "wb") as fh:
+            fh.write(b"payload\n")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "verify", "--all"])
+        out = buf.getvalue()
+        self.assertEqual(rc, 1)
+        self.assertIn(bad_name, out, "the offending package is named")
+        self.assertIn("not valid UTF-8", out)
+        self.assertIn(good_name, out, "the OTHER package still gets its verdict")
+        self.assertIn("1 verified", out, "the sweep finished")
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_a_stray_with_an_unnameable_name_is_still_reported(self):
+        """The SECOND encode crossing, which the digest refusal never sees: a vendor
+        directory whose own name is not UTF-8 reaches the stray-scan print directly.
+        What carries it is `errors="replace"` on stdout, a line whose comment talked
+        only about Windows glyphs. Dropping that flag made the FAIL line and the
+        summary vanish (QA cycle 10), so the invariant is pinned here."""
+        self._install_signed("witness")
+        os.mkdir(os.path.join(bytes(self.brain.vendor_dir), b"stray\xff"))
+        # A SUBPROCESS, not redirect_stdout: a StringIO accepts surrogates happily,
+        # so an in-process capture cannot see this at all and the first version of
+        # this test survived the mutation that breaks the guard. The invariant lives
+        # on the real stdout, so the test has to use one.
+        cp = subprocess.run([sys.executable, str(SCRIPTS / "octo_pkg.py"),
+                             "--brain", str(self.root), "verify", "--all"],
+                            capture_output=True, text=True, timeout=90)
+        self.assertEqual(cp.returncode, 1, cp.stderr)
+        self.assertNotIn("Traceback", cp.stderr, "the sweep must not die on a name")
+        self.assertIn("no packages.lock.json entry", cp.stdout,
+                      "the stray is reported rather than taking the sweep down")
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_a_failed_arm_install_leaves_nothing_behind(self):
+        """install_skill learned to unwind across three cycles and install_arm never
+        did, which a cross-function symmetry audit found: take the invariant a fix
+        established and ask which siblings should hold it. Measured before the fix
+        with an ordinary corrupt lockfile, the command reported failure and left the
+        clone on disk AND the arm registered with no lock entry, so every
+        arm-iterating script would write into a repo the brain does not consider
+        installed, and the retry was permanently blocked (QA cycle 10)."""
+        import contextlib, io
+        src = self.tmp / "arm-src"
+        src.mkdir()
+        # `license` is required by the schema, and leaving it out is how the first
+        # version of this test passed for the wrong reason: validation failed BEFORE
+        # the arms-paths write, so the pre-existing handler cleaned up and the new
+        # unwind was never reached. My own revert control caught it, which is the
+        # fourth time today a test of mine proved something other than its name.
+        (src / "arm.json").write_text(json.dumps(
+            {"name": "sample-arm", "version": "1.0.0", "license": "MIT",
+             "kind": "arm"}), encoding="utf-8")
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        for args in (["init", "-q"], ["config", "user.email", "t@example.invalid"],
+                     ["config", "user.name", "t"], ["add", "-A"],
+                     ["commit", "-q", "-m", "arm"]):
+            subprocess.run(["git", "-C", str(src)] + args, check=True,
+                           capture_output=True, env=env)
+        self.brain.lock_path.write_text("{ not json", encoding="utf-8")
+        dest = self.tmp / "armdest"
+        cfg = self.root / octo_pkg.ARMS_PATHS_REL
+        with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
+            rc = octo_pkg.main(["--brain", str(self.root), "install", "--kind", "arm",
+                                "--dest", str(dest), str(src)])
+        self.assertEqual(rc, 1)
+        self.assertFalse(dest.exists(), "a failed arm install leaves no clone")
+        self.assertFalse(cfg.exists(),
+                         "nor an arm registered for a repo that is not installed")
+
     def test_an_unlistable_directory_is_not_a_hole_in_the_digest(self):
         """The most serious finding of any cycle, and the one a call-site
         enumeration structurally cannot reach: `Path.rglob` catches the OSError

@@ -85,6 +85,14 @@ from urllib.parse import urlsplit
 
 # Force UTF-8 on stdout/stderr so the check glyphs survive on Windows shells that
 # start in cp1252. Same preamble as the rest of the brain's scripts.
+#
+# `errors="replace"` is LOAD-BEARING beyond the glyphs, and it was not written down.
+# A vendor directory whose own name is not valid UTF-8 reaches the stray-scan print
+# without passing through tree_sha256, so the refusal there never sees it, and the
+# encode raises at the print instead. Measured with the flag dropped: the FAIL line
+# and the summary vanish from stdout and a UnicodeEncodeError takes the sweep. So
+# this line is the second half of the encode-direction guard, not a cosmetic detail
+# (QA cycle 10). Pinned by a test that asserts a bad-named stray is still reported.
 for _stream in (sys.stdout, sys.stderr):
     try:
         _stream.reconfigure(encoding="utf-8", errors="replace")
@@ -1113,31 +1121,55 @@ def install_arm(brain: Brain, source: str, dest: str | None) -> int:
 
     name = manifest["name"]
     cfg = brain.root / ARMS_PATHS_REL
-    arms = {}
-    if cfg.exists():
-        arms = read_json(cfg, ARMS_PATHS_REL)
-        if not isinstance(arms, dict):
-            raise PkgError(f"{ARMS_PATHS_REL} is not an object; fix it before registering an arm")
+    # Everything below unwinds together, the way install_skill's does. It learned
+    # that lesson across three cycles and this function never did, which is what a
+    # cross-function symmetry audit is for: take the invariant a fix established and
+    # ask which siblings should hold it. Measured before the fix, with nothing more
+    # exotic than a corrupt packages.lock.json: the command reported failure and left
+    # the clone on disk AND the arm registered in arms-paths.json with no lock entry.
+    # Every arm-iterating script then writes into a repo the brain does not consider
+    # installed, verify cannot see it because the stray scan only walks skills/vendor,
+    # and the retry is permanently blocked by "destination already exists" with no
+    # word about what was left behind (QA cycle 10).
+    arms_before = read_json(cfg, ARMS_PATHS_REL) if cfg.exists() else {}
+    if not isinstance(arms_before, dict):
+        shutil.rmtree(target, ignore_errors=True)
+        raise PkgError(f"{ARMS_PATHS_REL} is not an object; fix it before registering an arm")
+    cfg_before = cfg.read_text(encoding="utf-8") if cfg.exists() else None
     try:
-        rel = str(target.relative_to(Path.home()))
-    except ValueError:
-        rel = str(target)
-    arms[name] = rel
-    cfg.parent.mkdir(parents=True, exist_ok=True)
-    cfg.write_text(json.dumps(arms, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        try:
+            rel = str(target.relative_to(Path.home()))
+        except ValueError:
+            rel = str(target)
+        arms = dict(arms_before)
+        arms[name] = rel
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        cfg.write_text(json.dumps(arms, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
-    lock = brain.load_lock()
-    lock["packages"] = [p for p in lock["packages"] if p.get("name") != name]
-    lock["packages"].append({
-        "name": name,
-        "kind": "arm",
-        "version": manifest["version"],
-        "tree_sha256": None,
-        "signer": None,
-        "source": source,
-        "installed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-    })
-    brain.save_lock(lock)
+        lock = brain.load_lock()
+        lock["packages"] = [p for p in lock["packages"] if p.get("name") != name]
+        lock["packages"].append({
+            "name": name,
+            "kind": "arm",
+            "version": manifest["version"],
+            "tree_sha256": None,
+            "signer": None,
+            "source": source,
+            "installed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        })
+        brain.save_lock(lock)
+    except BaseException as e:
+        shutil.rmtree(target, ignore_errors=True)
+        try:
+            if cfg_before is None:
+                cfg.unlink(missing_ok=True)
+            else:
+                cfg.write_text(cfg_before, encoding="utf-8")
+        except OSError:
+            pass          # the registry is what failed; do not mask the cause
+        if not isinstance(e, Exception):
+            raise
+        raise PkgError(f"install of arm {name} rolled back: {type(e).__name__}: {e}")
 
     sync_script = brain.root / "scripts" / "ai_sync.py"
     if sync_script.exists():
@@ -1476,7 +1508,10 @@ def cmd_verify(brain: Brain, names: list[str], all_: bool, as_json: bool) -> int
             "warn": warns,
             "fail": fails,
             "total": total,
-        }, ensure_ascii=False))
+        }))          # NOT ensure_ascii=False: a surrogate in a name would be
+        # replaced on the way out, and this is the payload brain_doctor and the
+        # pre-push gate consume, so a name they cannot look up is worse than an
+        # escaped one. The human-readable line keeps its !r form (QA cycle 10).
     else:
         for status, msg in results:
             print(f"[{status}] {msg}")
@@ -1551,7 +1586,7 @@ def cmd_list(brain: Brain, as_json: bool) -> int:
         status, _ = verify_entry(brain, p)
         rows.append({**{k: v for k, v in p.items()}, "status": status})
     if as_json:
-        print(json.dumps({"packages": rows}, indent=2, ensure_ascii=False))
+        print(json.dumps({"packages": rows}, indent=2))   # see cmd_verify: lossless
         return 0
     if not rows:
         print("no packages installed (empty lock)")
