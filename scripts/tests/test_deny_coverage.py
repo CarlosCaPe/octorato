@@ -37,6 +37,16 @@ def _load():
 doctor = _load()
 
 
+def _restore_env(saved: dict) -> None:
+    """Put CLAUDE_CONFIG_DIR back exactly as it was, unset included. os.environ is
+    process-wide, and a leak here would follow every later test module."""
+    for k in ("CLAUDE_CONFIG_DIR",):
+        if k in saved:
+            os.environ[k] = saved[k]
+        else:
+            os.environ.pop(k, None)
+
+
 class DenyCoverageCase(unittest.TestCase):
     """A throwaway brain with a real git history, so the hook's arm date is read the
     way the check reads it in production: off the commit, not off a mtime a test
@@ -67,6 +77,12 @@ class DenyCoverageCase(unittest.TestCase):
         self._saved_dir = doctor.CLAUDE_DIR
         doctor.CLAUDE_DIR = self.brain
         self.addCleanup(lambda: setattr(doctor, "CLAUDE_DIR", self._saved_dir))
+        # The transcripts resolve from the HARNESS home, not from the checkout,
+        # which is the finding this sandbox now has to model: pointing only
+        # CLAUDE_DIR at a fixture used to leave the scan reading the real brain.
+        saved_env = dict(os.environ)
+        os.environ["CLAUDE_CONFIG_DIR"] = str(self.brain)
+        self.addCleanup(_restore_env, saved_env)
 
     def write_refusal(self, kind: str, when: float) -> None:
         """One transcript record in the harness's own shape."""
@@ -85,16 +101,16 @@ class TestArmDate(DenyCoverageCase):
     def test_a_refusal_from_before_the_hook_existed_is_not_counted(self):
         """Refusals that predate the reflex are nobody's fault. Counting them would
         make every brain fail its first doctor run after wiring the hook."""
-        armed, seen = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        armed, seen, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         self.assertIsNotNone(armed)
         self.write_refusal("automode-blocked", armed - 3600)
-        _, seen_after = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        _, seen_after, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         self.assertEqual(seen_after, 0)
 
     def test_a_refusal_after_the_hook_went_live_is_counted(self):
-        armed, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        armed, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         self.write_refusal("automode-blocked", armed + 60)
-        _, seen = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        _, seen, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         self.assertEqual(seen, 1)
 
     def test_a_brain_with_no_such_commit_reports_no_window(self):
@@ -107,9 +123,78 @@ class TestArmDate(DenyCoverageCase):
         (other / "scripts").mkdir(parents=True)
         subprocess.run(["git", "-C", str(other), "init", "-q"], check=True, capture_output=True)
         doctor.CLAUDE_DIR = other
-        armed, seen = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        armed, seen, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         self.assertIsNone(armed)
         self.assertEqual(seen, 0)
+
+
+    def test_a_shallow_clone_reports_no_window_rather_than_a_wrong_one(self):
+        """The commit message claimed a shallow clone "claims nothing". It did the
+        opposite: git treats the grafted tip as introducing every file, so `log -1`
+        always answers, always with the newest possible date, which is the narrowest
+        possible window. Quiet on broken (QA cycle 1)."""
+        shallow = self.tmp / "shallow"
+        subprocess.run(["git", "clone", "-q", "--depth", "1", "file://" + str(self.brain),
+                        str(shallow)], check=True, capture_output=True)
+        doctor.CLAUDE_DIR = shallow
+        armed, seen, other = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        self.assertIsNone(armed, "a grafted history cannot say when the hook arrived")
+        self.assertEqual((seen, other), (0, 0))
+
+    def test_a_later_edit_to_the_hook_does_not_move_the_window(self):
+        """`git log -1` with a pathspec answers with the LAST commit that touched the
+        file, so the day anyone fixes a typo in the hook the window would collapse to
+        that moment and the check would go quiet for good. The question is when the
+        reflex could FIRST have fired."""
+        armed_before, _, _ = doctor._harness_refusals_since_hook(0)
+        hook = self.brain / "scripts" / "r__permission-denied__journal.py"
+        hook.write_text("# a typo fix, months later\n", encoding="utf-8")
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        env["GIT_COMMITTER_DATE"] = env["GIT_AUTHOR_DATE"] = "2099-01-01T00:00:00Z"
+        for args in (["add", "-A"], ["commit", "-q", "-m", "fix a typo"]):
+            subprocess.run(["git", "-C", str(self.brain)] + args, check=True,
+                           capture_output=True, env=env)
+        armed_after, _, _ = doctor._harness_refusals_since_hook(0)
+        self.assertEqual(armed_before, armed_after,
+                         "maintaining the hook must not silence the check")
+
+
+class TestTheEvidenceIsWhereTheHarnessWritesIt(DenyCoverageCase):
+    def test_the_scan_follows_the_harness_home_not_the_checkout(self):
+        """The finding that made the whole check a no-op: the projects dir was
+        resolved from the checkout this file lives in, so from a worktree it pointed
+        at a directory that does not exist, the scan read nothing, and the healthy
+        sentence printed anyway. This brain's own rule puts every parallel session in
+        a worktree, so that was the normal case."""
+        armed, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        self.write_refusal("automode-blocked", armed + 60)
+        # CLAUDE_DIR moved somewhere with no projects/ at all, the worktree shape
+        elsewhere = self.tmp / "worktree"
+        (elsewhere / "scripts").mkdir(parents=True)
+        doctor.CLAUDE_DIR = self.brain          # the git history still resolves
+        self.assertFalse((elsewhere / "projects").exists())
+        _, seen, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        self.assertEqual(seen, 1, "the transcripts are found by the harness home")
+
+    def test_no_projects_dir_at_all_claims_nothing(self):
+        """Absent evidence is not evidence of absence. Reporting zero here would be
+        the check's own disease: a reassuring sentence produced by reading nothing."""
+        os.environ["CLAUDE_CONFIG_DIR"] = str(self.tmp / "nowhere")
+        armed, seen, other = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        self.assertIsNone(armed)
+        self.assertEqual((seen, other), (0, 0))
+
+    def test_a_corrupt_transcript_is_skipped_not_crashed(self):
+        """The doctor must not crash on a transcript nobody in this brain wrote."""
+        armed, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        path = self.brain / "projects" / "slug" / "sess" / "junk.jsonl"
+        deep = "[" * 200000 + "]" * 200000
+        path.write_text('"toolDenialKind automode- not an object"\n'
+                        + '{"toolDenialKind": "automode-blocked"\n'
+                        + deep + ' toolDenialKind automode-\n', encoding="utf-8")
+        os.utime(path, (armed + 60, armed + 60))
+        _, seen, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        self.assertEqual(seen, 0, "no valid record, and no crash")
 
 
 class TestWhichClassesCount(DenyCoverageCase):
@@ -118,14 +203,14 @@ class TestWhichClassesCount(DenyCoverageCase):
         classifier only. A `permission-rule` or `user-rejected` refusal never reaches
         the hook, so counting it would manufacture a failure out of a refusal the
         reflex was never offered."""
-        armed, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        armed, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         for kind in ("permission-rule", "user-rejected"):
             self.write_refusal(kind, armed + 60)
-        _, seen = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        _, seen, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         self.assertEqual(seen, 0, "a refusal the hook never sees is not its failure")
         for kind in ("automode-blocked", "automode-unavailable", "automode-parsing-error"):
             self.write_refusal(kind, armed + 60)
-        _, seen = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        _, seen, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         self.assertEqual(seen, 3)
 
     def test_the_key_is_found_wherever_it_sits(self):

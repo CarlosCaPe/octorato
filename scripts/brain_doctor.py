@@ -1841,8 +1841,8 @@ def check_kernel_replay(fix: bool) -> Result:
                       f"{len(orphans)} deny rule id(s) in 7 days are in no registry row: {named}",
                       "a refusal under a name the registry does not carry is an orphan "
                       "mechanism (RULE #1): register the rule, or fix the id the gate journals")
-    armed_at, harness_denies = _harness_refusals_since_hook(cutoff)
-    status, coverage, hint = deny_coverage(denies, armed_at, harness_denies)
+    armed_at, harness_denies, other_denies = _harness_refusals_since_hook(cutoff)
+    status, coverage, hint = deny_coverage(denies, armed_at, harness_denies, other_denies)
     if status == FAIL:
         return Result(key, FAIL, coverage, hint)
     return Result(key, PASS,
@@ -1850,8 +1850,8 @@ def check_kernel_replay(fix: bool) -> Result:
                   f"journal(s) replay; {coverage}")
 
 
-def deny_coverage(denies: int, armed_at: float | None,
-                  harness_denies: int) -> tuple[str, str, str]:
+def deny_coverage(denies: int, armed_at: float | None, harness_denies: int,
+                  other_denies: int = 0) -> tuple[str, str, str]:
     """Turn the two counts into (status, sentence, hint). Pure, so it is testable.
 
     Three states used to print one sentence. A journal with no denies is healthy when
@@ -1866,6 +1866,22 @@ def deny_coverage(denies: int, armed_at: float | None,
         # claim nothing, rather than reading "no history" as "no refusals".
         return PASS, base, ""
     if harness_denies == 0:
+        if other_denies and denies == 0:
+            # The automode family is the only one this harness was measured to fire
+            # PermissionDenied for, and that measurement has never been confirmed
+            # against a post-arm refusal, because there has not been one. Counting
+            # only automode is therefore the FAIL-OPEN choice: if the runtime does
+            # fire for another class, or starts to, a wired and dead reflex would
+            # read PASS. So the classes outside the family are counted separately
+            # and reported as a WARN, which asks a human to look without blocking a
+            # push on a claim the data does not support either way (QA cycle 1).
+            return WARN, (f"{base}; {other_denies} refusal(s) of other classes since "
+                          f"the hook went live and none reached the journal; if this "
+                          f"harness fires PermissionDenied for them, the reflex is "
+                          f"dead rather than unexercised"), (
+                "confirm which toolDenialKind classes reach the hook on this runtime, "
+                "then either widen the count in _harness_refusals_since_hook or "
+                "record the measurement in its docstring")
         return PASS, (f"{base}; the harness refused nothing since the hook went live, "
                       f"so the reflex is unexercised rather than proven"), ""
     if denies == 0:
@@ -1877,8 +1893,8 @@ def deny_coverage(denies: int, armed_at: float | None,
     return PASS, f"{base}, against {harness_denies} harness refusal(s) in the same window", ""
 
 
-def _harness_refusals_since_hook(cutoff: float) -> tuple[float | None, int]:
-    """(when the PermissionDenied hook went live, how many refusals it could have seen).
+def _harness_refusals_since_hook(cutoff: float) -> tuple[float | None, int, int]:
+    """(arm date, refusals the hook fires for, refusals of every other class).
 
     The journal's deny count means nothing on its own. Zero reads as healthy whether
     nothing was refused or every refusal was lost, and those are opposite states. The
@@ -1892,21 +1908,53 @@ def _harness_refusals_since_hook(cutoff: float) -> tuple[float | None, int]:
     (a fresh clone, a shallow one) returns None, and the caller reports the count
     without the comparison rather than inventing a verdict.
 
-    Only the `automode-` classes are counted. Measured on this harness, that is the
-    only family the PermissionDenied event fires for; a `permission-rule` or a
-    `user-rejected` refusal never reaches the hook, so counting those would
-    manufacture a failure out of a refusal the reflex was never offered.
+    Only the `automode-` classes count toward the FAILING comparison. That is the
+    only family the PermissionDenied event was observed to fire for, so counting a
+    `permission-rule` or `user-rejected` refusal would manufacture a failure out of
+    a refusal the reflex was never offered. But the observation comes from the
+    runtime's documented behaviour, not from a post-arm refusal in this data, and
+    excluding a class is the FAIL-OPEN direction, so the others are counted too and
+    reported as a WARN rather than dropped on the floor.
+
+    What this is NOT: tamper-anchored. The transcripts are ordinary files under
+    $HOME and the model can reach them with Bash, so deleting the day's
+    `toolDenialKind` lines removes the failing branch from play and leaves no mark
+    in this check. Inflating the count only harms the inflater; deflating it is the
+    direction that matters, and it is possible. What the check buys is that the two
+    sides have different AUTHORS, so a reflex that silently stops firing is caught,
+    which is the failure it was built for. Same residual v7 already states for the
+    QA receipt, said here rather than implied.
+
+    Note on reach: `.githooks/pre-push` runs brain_doctor with `--registry` and
+    `--gate-receipt`, and neither calls run_all, so this check never blocks a push.
+    It is advisory, visible on a full doctor run.
     """
-    cp = run(["git", "log", "-1", "--format=%ct", "--",
+    # A SHALLOW clone answers this query, and answers it wrong. git treats the
+    # grafted tip as introducing every file, so `log -1` returns the tip's date:
+    # the newest possible, hence the narrowest possible window, hence quiet on a
+    # broken brain. No history is a reason to claim nothing, not to claim a date.
+    shallow = run(["git", "rev-parse", "--is-shallow-repository"], cwd=CLAUDE_DIR)
+    if (shallow.stdout or "").strip() != "false":
+        return None, 0, 0
+    # --diff-filter=A --follow, not a bare log -1: the bare form answers with the
+    # LAST commit that touched the file, so the day anyone fixes a typo in the hook
+    # the window collapses to that moment and the check goes quiet for good. The
+    # question is when the reflex could FIRST have fired, which is when it was added.
+    cp = run(["git", "log", "--diff-filter=A", "--follow", "-1", "--format=%ct", "--",
               "scripts/r__permission-denied__journal.py"], cwd=CLAUDE_DIR)
-    stamp = (cp.stdout or "").strip()
+    stamp = (cp.stdout or "").strip().splitlines()
+    stamp = stamp[0] if stamp else ""
     if cp.returncode != 0 or not stamp.isdigit():
-        return None, 0
+        return None, 0, 0
     armed_at = max(float(stamp), cutoff)
-    projects = CLAUDE_DIR / "projects"
-    if not projects.is_dir():
-        return armed_at, 0
-    seen = 0
+    projects = harness_projects_dir()
+    if projects is None:
+        # The evidence is not where this can read it. Reporting zero here would be
+        # the check's own disease: a reassuring sentence produced by reading nothing.
+        # QA found it doing exactly that from a worktree, which is the NORMAL setup
+        # under this brain's own session-isolation rule.
+        return None, 0, 0
+    seen, other = 0, 0
     for path in projects.glob("**/*.jsonl"):
         try:
             if path.stat().st_mtime < armed_at:
@@ -1917,38 +1965,75 @@ def _harness_refusals_since_hook(cutoff: float) -> tuple[float | None, int]:
         if "toolDenialKind" not in text:
             continue
         for line in text.splitlines():
-            if "automode-" not in line or "toolDenialKind" not in line:
+            if "toolDenialKind" not in line:
                 continue
             try:
                 rec = json.loads(line)
-            except ValueError:
+            except Exception:
+                # Exception, not ValueError: deep nesting raises RecursionError,
+                # which is neither. A corrupt transcript is not this check's
+                # business and must never be its crash.
+                continue
+            if not isinstance(rec, dict):
                 continue
             ts = _iso_to_epoch(str(rec.get("timestamp") or ""))
             if ts is None or ts < armed_at:
                 continue
-            if _carries_automode_denial(rec):
+            kind = _denial_kind(rec)
+            if kind is None:
+                continue
+            if kind.startswith("automode-"):
                 seen += 1
-    return armed_at, seen
+            else:
+                other += 1
+    return armed_at, seen, other
 
 
-def _carries_automode_denial(node) -> bool:
-    """True when this transcript record holds an `automode-` toolDenialKind anywhere.
+def harness_projects_dir() -> Path | None:
+    """Where the HARNESS writes transcripts, or None.
+
+    Not `CLAUDE_DIR / "projects"`. CLAUDE_DIR follows the checkout this file lives
+    in, so from a worktree it points at a directory that does not exist, and the
+    scan then read nothing and reported a healthy zero. This brain's own rule puts
+    every parallel session in a worktree, so that was the normal case rather than
+    the exotic one. The transcripts live next to the harness, which is the home
+    config dir, overridable the way the harness overrides it.
+    """
+    env = os.environ.get("CLAUDE_CONFIG_DIR")
+    base = Path(env) if env else Path(os.path.expanduser("~")) / ".claude"
+    projects = base / "projects"
+    try:
+        return projects if projects.is_dir() else None
+    except OSError:
+        return None
+
+
+def _denial_kind(node) -> str | None:
+    """The `toolDenialKind` this transcript record carries, or None.
 
     Walked rather than path-indexed: the key sits at different depths depending on the
     record shape, and a fixed path would silently stop matching when the harness moves
-    it, which is the failure mode this whole check exists to catch.
+    it, which is the failure mode this whole check exists to catch. Returns the class
+    rather than a boolean so the caller can separate the family the hook fires for
+    from the ones it does not, instead of dropping the others on the floor.
     """
     stack = [node]
     while stack:
         x = stack.pop()
         if isinstance(x, dict):
             kind = x.get("toolDenialKind")
-            if isinstance(kind, str) and kind.startswith("automode-"):
-                return True
+            if isinstance(kind, str) and kind:
+                return kind
             stack.extend(x.values())
         elif isinstance(x, list):
             stack.extend(x)
-    return False
+    return None
+
+
+def _carries_automode_denial(node) -> bool:
+    """Kept as the named predicate the tests pin; one reading of _denial_kind."""
+    kind = _denial_kind(node)
+    return bool(kind and kind.startswith("automode-"))
 
 
 def _iso_to_epoch(value: str) -> float | None:
