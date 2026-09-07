@@ -95,6 +95,12 @@
           "statusMessage": "♦ FinOps: budget cap check (fail-open)...",
           "timeout": 10,
           "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/g__pretool-write__tree-owner.py",
+          "statusMessage": "⚙ kernel: releasing this process's lanes to its child...",
+          "timeout": 5,
+          "type": "command"
         }
       ],
       "matcher": "Agent"

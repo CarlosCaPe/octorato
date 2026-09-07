@@ -46,6 +46,26 @@ run through the same scan, up to 3 levels deep. `_SHELL_C` comes from
 receipt_ledger.py, the detector that gate already proves. A verb quoted inside an
 ordinary argument stays text: only a `-c` body is a command.
 
+Also denied on the same lane test, same shape, added after QA measured them
+passing: `git rm`, `git mv`, `git add -u|./`, `unlink`, `truncate`, `xargs <rm>`
+and `find ... -delete` (or `-exec rm`). Globs reduce to their longest literal
+directory before the lane test, so `git checkout -- pkg/*.py` cannot walk past a
+lane by never naming it literally, and `:/` / `:(top)` mean the whole root.
+
+NAMED RESIDUALS (measured as passing, deliberately not covered here): `rsync
+--delete`, `dd`, `shred`, `ln -sf`, `perl -pi`, a `python -c` body (scanned only
+best-effort, as shell text), `git apply|rebase|merge|pull|cherry-pick|revert`,
+variable expansion (`rm -rf $DIR`, unknowable without running the shell), and a
+`-c` body nested deeper than 3. Each is a distinct verb table or an evaluator,
+not a gap in this one; they belong to a later pass, and none of them is the
+weekend shape.
+
+The kernel's own state is not a lane but a floor: any mutation targeting
+`~/.claude/.cache/kernel` (the process table, the journals, the locks) is denied
+for EVERY hooked process, this gate included. A process that can rewrite the
+table can grant itself any lane and erase the record. The operator's terminal is
+not hooked and stays the only writer.
+
 Hot path: the command is parsed first and the process table is read ONLY when
 the parse found something that can collide, so an ordinary `ls` or `pytest`
 costs no I/O at all. Every deny names the holding pid, its type and its age, and
@@ -66,6 +86,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import kernel_proc  # noqa: E402  (stdlib-only, hot-path budgeted)
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
+RULE_ID = "ARCHITECTURE.kernel-isolation"
 _RESET_FLAGS = ("--hard", "--merge", "--keep")
 
 
@@ -107,7 +128,7 @@ def deny(reason: str) -> None:
 
 def journal_deny(pid, fields: dict) -> None:
     try:
-        rec = {"kind": "deny", "gate": "tree-owner"}
+        rec = {"kind": "deny", "rule": RULE_ID, "gate": "tree-owner"}
         rec.update(fields)
         kernel_proc.append(pid, rec)
     except Exception:
@@ -139,29 +160,76 @@ def peel_env(tokens: list) -> list:
     return tokens[i:]
 
 
+def resolve(path: str, here: str) -> str:
+    path = os.path.expanduser(path)
+    return kernel_proc.norm_path(path if os.path.isabs(path) else os.path.join(here, path))
+
+
 # Wrappers that prefix a command without changing what it does to the file
 # system. `env -u CLAUDE_SESSION_ID octo ps --release ...` is the documented
-# bypass attempt (v8-kernel.md section 2), so peeling these is part of the rule,
-# not a nicety.
-WRAPPERS = ("env", "command", "nohup", "sudo", "stdbuf")
-_WRAPPER_OPTS = ("-u", "-C", "-S", "-i", "--unset", "--chdir", "--user")
+# bypass attempt (v8-kernel.md section 2), so peeling these is part of the rule.
+#
+# The option table is PER WRAPPER, because the same letter means different
+# things: `-i` is a flag for env and sudo (clean environment / login shell) and
+# takes a value for stdbuf (input buffer). One shared table swallowed the
+# command after `env -i`. `cd` names the options that MOVE the working
+# directory, and `arg` counts leading positionals to skip (timeout's duration).
+_WRAPPERS = {
+    "env": {"valued": ("-u", "--unset", "-S", "--split-string"),
+            "cd": ("-C", "--chdir"), "arg": 0},
+    "sudo": {"valued": ("-u", "--user", "-g", "--group", "-p", "--prompt",
+                        "-C", "--close-from", "-h", "--host", "-R", "--chroot",
+                        "-U", "--other-user", "-T", "--command-timeout",
+                        "-r", "--role", "-t", "--type"),
+             "cd": ("-D", "--chdir"), "arg": 0},
+    "command": {"valued": (), "cd": (), "arg": 0},
+    "nohup": {"valued": (), "cd": (), "arg": 0},
+    "exec": {"valued": ("-a",), "cd": (), "arg": 0},
+    "time": {"valued": ("-f", "--format", "-o", "--output"), "cd": (), "arg": 0},
+    "nice": {"valued": ("-n", "--adjustment"), "cd": (), "arg": 0},
+    "timeout": {"valued": ("-s", "--signal", "-k", "--kill-after"), "cd": (), "arg": 1},
+    "stdbuf": {"valued": ("-i", "-o", "-e", "--input", "--output", "--error"),
+               "cd": (), "arg": 0},
+    "xargs": {"valued": ("-n", "-I", "-i", "-P", "-d", "-a", "-E", "-e", "-s", "-L",
+                         "--max-args", "--replace", "--max-procs", "--delimiter",
+                         "--arg-file", "--max-lines"),
+              "cd": (), "arg": 0},
+}
 
 
-def peel_wrappers(tokens: list) -> list:
-    while tokens and os.path.basename(tokens[0]) in WRAPPERS:
+def peel_wrappers(tokens: list, here: str) -> tuple:
+    """(tokens with wrapper prefixes removed, the cwd they leave behind).
+
+    `env -C <dir> rm x` and `sudo -D <dir> rm x` move the directory a relative
+    target resolves against, so the peel returns it rather than dropping it."""
+    while tokens and os.path.basename(tokens[0]) in _WRAPPERS:
+        spec = _WRAPPERS[os.path.basename(tokens[0])]
+        skip = spec["arg"]
         i = 1
         while i < len(tokens):
             tok = tokens[i]
-            if tok in _WRAPPER_OPTS and i + 1 < len(tokens):
-                i += 2
-            elif tok.startswith("-") or is_env_assign(tok):
+            name, eq, val = tok.partition("=")
+            if name in spec["cd"]:
+                target = val if eq else (tokens[i + 1] if i + 1 < len(tokens) else "")
+                if target:
+                    here = resolve(target, here)
+                i += 1 if eq else 2
+                continue
+            if name in spec["valued"]:
+                i += 1 if eq else 2
+                continue
+            if tok.startswith("-") or is_env_assign(tok):
                 i += 1
-            else:
-                break
+                continue
+            if skip:
+                skip -= 1
+                i += 1
+                continue
+            break
         if i >= len(tokens):
-            return []
+            return [], here
         tokens = tokens[i:]
-    return tokens
+    return tokens, here
 
 
 def redirect_targets(tokens: list) -> tuple:
@@ -195,11 +263,34 @@ def redirect_targets(tokens: list) -> tuple:
     return targets, rest
 
 
+_VALUED_MUTATOR_OPTS = {
+    "truncate": ("-s", "--size", "-r", "--reference"),
+    "sed": ("-e", "--expression", "-f", "--file", "-l", "--line-length"),
+}
+
+
+def _positional(base: str, args: list) -> list:
+    valued = _VALUED_MUTATOR_OPTS.get(base, ())
+    out, i = [], 0
+    while i < len(args):
+        tok = args[i]
+        name, eq, _val = tok.partition("=")
+        if name in valued:
+            i += 1 if eq else 2
+            continue
+        if tok.startswith("-"):
+            i += 1
+            continue
+        out.append(tok)
+        i += 1
+    return out
+
+
 def mutation_targets(base: str, args: list) -> list:
     """Paths a non-git mutation writes. `cp` writes only its destination; `sed`
     writes nothing unless it is in-place."""
-    positional = [a for a in args if not a.startswith("-")]
-    if base in ("rm", "mv", "tee"):
+    positional = _positional(base, args)
+    if base in ("rm", "mv", "tee", "unlink", "truncate"):
         return positional
     if base == "cp":
         return positional[-1:] if len(positional) >= 2 else []
@@ -211,6 +302,19 @@ def mutation_targets(base: str, args: list) -> list:
         scripted = any(a in ("-e", "-f") or a.startswith(("--expression", "--file"))
                        for a in args)
         return positional if scripted else positional[1:]
+    if base == "find":
+        deletes = "-delete" in args or (
+            any(a in ("-exec", "-execdir") for a in args)
+            and any(os.path.basename(a) in ("rm", "unlink", "shred", "truncate")
+                    for a in args))
+        if not deletes:
+            return []
+        roots = []
+        for a in args:
+            if a.startswith("-") or a in ("(", ")", "!"):
+                break
+            roots.append(a)
+        return roots or ["."]
     return []
 
 
@@ -229,24 +333,41 @@ def is_release(tokens: list) -> bool:
     return any(a == "--release" or a.startswith("--release=") for a in toks[1:])
 
 
+# git's VALUED global options. `-c key=val` is the one that mattered: skipping
+# it as a plain flag left `key=val` looking like the subcommand, so
+# `git -c commit.gpgsign=false checkout -- <lane>` parsed as a verb nobody
+# guards. The borrowed _broad_git_verb has the same blind spot, which is why it
+# is handed a NORMALIZED token list below instead of the raw one.
+_GIT_VALUED = ("-c", "--config-env", "--namespace", "--super-prefix")
+_GIT_EQ_ONLY = ("--exec-path",)
+
+
 def git_parse(tokens: list):
-    """(repo_or_None, subcommand, rest) for a git invocation, honouring -C,
-    --git-dir and --work-tree; None when the tokens are not a git command."""
+    """(repo_or_None, subcommand, rest), honouring -C, --git-dir, --work-tree
+    and every valued global; None when the tokens are not a git command."""
     i, repo = 1, None
     while i < len(tokens):
         tok = tokens[i]
-        if tok == "-C" and i + 1 < len(tokens):
-            repo, i = tokens[i + 1], i + 2
-        elif tok.startswith(("--git-dir=", "--work-tree=")):
-            val = tok.split("=", 1)[1]
-            repo, i = (val[:-5] if val.endswith("/.git") else val), i + 1
-        elif tok in ("--git-dir", "--work-tree") and i + 1 < len(tokens):
-            val = tokens[i + 1]
-            repo, i = (val[:-5] if val.endswith("/.git") else val), i + 2
-        elif tok.startswith("-"):
+        name, eq, val = tok.partition("=")
+        if name == "-C":
+            repo = val if eq else (tokens[i + 1] if i + 1 < len(tokens) else None)
+            i += 1 if eq else 2
+            continue
+        if name in ("--git-dir", "--work-tree"):
+            v = val if eq else (tokens[i + 1] if i + 1 < len(tokens) else "")
+            repo = v[:-5] if v.endswith("/.git") else v
+            i += 1 if eq else 2
+            continue
+        if name in _GIT_VALUED:
+            i += 1 if eq else 2
+            continue
+        if name in _GIT_EQ_ONLY and eq:
             i += 1
-        else:
-            break
+            continue
+        if tok.startswith("-"):
+            i += 1
+            continue
+        break
     if i >= len(tokens):
         return None
     return repo, tokens[i], tokens[i + 1:]
@@ -268,47 +389,84 @@ def whole_tree_verb(sub: str, rest: list):
                 return "git clean -f"
     if sub == "worktree" and rest[:1] == ["remove"]:
         return "git worktree remove"
-    if sub == "checkout" and "--" not in rest:
+    # A bare `git checkout` prints state and changes nothing; only a checkout
+    # that NAMES something switches the tree.
+    if sub == "checkout" and rest and "--" not in rest:
         return "git checkout <branch>"
     return None
+
+
+_PATHSPEC_VERBS = ("checkout", "restore", "rm", "mv")
 
 
 def pathspecs(sub: str, rest: list, base_dir: str) -> list:
     """The paths a pathspec verb rewrites. After `--` every argument is a path;
     without it, only arguments that exist on disk are (so `git checkout main`
     stays a branch switch and is handled as a whole-tree verb instead)."""
-    if sub not in ("checkout", "restore"):
+    if sub not in _PATHSPEC_VERBS:
         return []
     if "--" in rest:
         return [a for a in rest[rest.index("--") + 1:]]
     args = [a for a in rest if not a.startswith("-")]
-    if sub == "restore":
+    if sub in ("restore", "rm", "mv"):
         return args
     out = []
     for a in args:
         probe = a if os.path.isabs(a) else os.path.join(base_dir, a)
-        if os.path.exists(os.path.expanduser(probe)):
+        if os.path.exists(os.path.expanduser(probe)) or _is_glob(a):
             out.append(a)
     return out
 
 
+_MAGIC = "*?["
+_TOP_PATHSPECS = (":/", ":(top)", ":(top,glob)", ":(icase)")
+
+
+def _is_glob(spec: str) -> bool:
+    return any(c in spec for c in _MAGIC)
+
+
+def literal_prefix(spec: str, base_dir: str) -> str:
+    """A pathspec reduced to the longest LITERAL directory it can only act
+    inside. `pkg/*.py` becomes `pkg`, which prefix-matches every lane under it,
+    so a glob cannot walk past the lane test by never matching a lane literally.
+    git's magic top pathspecs (`:/`, `:(top)`) name the whole root."""
+    spec = spec.strip()
+    if spec in _TOP_PATHSPECS:
+        return base_dir
+    if spec.startswith(":"):
+        close = spec.find(")")
+        spec = spec[close + 1:] if spec.startswith(":(") and close != -1 else spec.lstrip(":")
+        if not spec:
+            return base_dir
+    spec = os.path.expanduser(spec)
+    if not _is_glob(spec):
+        return resolve(spec, base_dir)
+    parts = spec.split(os.sep)
+    keep = []
+    for part in parts:
+        if _is_glob(part):
+            break
+        keep.append(part)
+    literal = os.sep.join(keep)
+    return resolve(literal, base_dir) if literal else base_dir
+
+
 # ── scan ────────────────────────────────────────────────────────────────────
 
-# A command that contains none of these as a SUBSTRING can touch nothing this
-# gate protects, so it never pays for the parse or for loading the splitter.
-# Deliberately a superset (`rm` matches "confirm"): a cheap filter is allowed to
-# be wrong in the direction of doing more work, never in the direction of
-# skipping a command it should have read.
-_TRIGGERS = ("git", "rm", "mv", "cp", "sed", "tee", ">", "octo")
+_TRIGGERS = ("git", "rm", "mv", "cp", "sed", "tee", ">", "octo", "find",
+             "unlink", "truncate", "xargs", "delete")
 _C_HOSTS = ("bash", "sh", "zsh", "dash", "python", "python3", "py")
+_MUTATORS = ("rm", "mv", "cp", "sed", "tee", "unlink", "truncate", "find")
+_BROAD_ADD = ("-u", "--update", "./", ":/", ":(top)")
 _MAX_DEPTH = 3
 
 
 def scan(command: str, cwd: str, depth: int = 0) -> list:
     """Every collision candidate in one command, as (kind, path, verb) where
-    kind is 'release', 'tree' or 'path'. Pure parsing: no process table, no
-    liveness, no I/O beyond the existence probe a bare `git checkout <arg>`
-    needs to tell a branch from a file."""
+    kind is 'release', 'tree', 'stage' or 'path'. Pure parsing: no process
+    table, no liveness, no I/O beyond the existence probe a bare
+    `git checkout <arg>` needs to tell a branch from a file."""
     import shlex
 
     if not any(t in command for t in _TRIGGERS):
@@ -318,8 +476,16 @@ def scan(command: str, cwd: str, depth: int = 0) -> list:
     here = kernel_proc.norm_path(cwd or os.getcwd())
     hits = []
     for seg in split_subcmds(command or ""):
+        seg = seg.strip().rstrip(";").strip()
+        # a subshell or group: `(rm -rf pkg)` is a command, not a token soup
+        if depth < _MAX_DEPTH and seg[:1] in ("(", "{"):
+            inner = seg[1:].strip()
+            if inner[-1:] in (")", "}"):
+                inner = inner[:-1]
+            hits.extend(scan(inner, here, depth + 1))
+            continue
         if shell_c is not None:
-            m = shell_c.match(seg.strip())
+            m = shell_c.match(seg)
             if m:
                 try:
                     body = shlex.split(m.group(1))
@@ -334,13 +500,12 @@ def scan(command: str, cwd: str, depth: int = 0) -> list:
             tokens = seg.split()
         redirects, tokens = redirect_targets(tokens)
         for target in redirects:
-            hits.append(("path", kernel_proc.norm_path(os.path.join(here, target)), ">"))
-        tokens = peel_wrappers(peel_env(tokens))
+            hits.append(("path", resolve(target, here), ">"))
+        tokens, here = peel_wrappers(peel_env(tokens), here)
         if not tokens:
             continue
-        if tokens[0] == "cd" and len(tokens) > 1:
-            nxt = os.path.expanduser(tokens[1])
-            here = kernel_proc.norm_path(nxt if os.path.isabs(nxt) else os.path.join(here, nxt))
+        if tokens[0] in ("cd", "pushd") and len(tokens) > 1:
+            here = resolve(tokens[1], here)
             continue
         if is_release(tokens):
             hits.append(("release", None, "octo --release"))
@@ -353,43 +518,31 @@ def scan(command: str, cwd: str, depth: int = 0) -> list:
                 hits.extend(scan(tokens[i + 1], here, depth + 1))
                 continue
         if base == "git":
-            broad, broad_repo = broad_git_verb(tokens)
-            if broad:
-                stage_dir = here
-                if broad_repo:
-                    broad_repo = os.path.expanduser(broad_repo)
-                    stage_dir = kernel_proc.norm_path(
-                        broad_repo if os.path.isabs(broad_repo)
-                        else os.path.join(here, broad_repo))
-                root = kernel_proc.enclosing_worktree_root(stage_dir) or stage_dir
-                hits.append(("stage", kernel_proc.norm_path(root), f"git {broad}"))
-                continue
             parsed = git_parse(tokens)
             if not parsed:
                 continue
             repo, sub, rest = parsed
-            base_dir = here
-            if repo:
-                repo = os.path.expanduser(repo)
-                base_dir = kernel_proc.norm_path(
-                    repo if os.path.isabs(repo) else os.path.join(here, repo))
-            root = kernel_proc.enclosing_worktree_root(base_dir) or base_dir
+            base_dir = resolve(repo, here) if repo else here
+            root = kernel_proc.enclosing_worktree_root(base_dir)
+            # Outside a repo there is no tree to own: a fallback to the cwd
+            # would make `git stash` in /tmp or $HOME prefix-match every lane
+            # under it. Tree and stage hits need a real root; path hits do not.
+            broad, _ = broad_git_verb(["git", sub] + rest)   # normalized: globals stripped
+            if not broad and sub == "add" and any(a in _BROAD_ADD for a in rest):
+                broad = "add"
+            if broad:
+                if root:
+                    hits.append(("stage", root, f"git {broad}"))
+                continue
             verb = whole_tree_verb(sub, rest)
-            if verb:
-                hits.append(("tree", kernel_proc.norm_path(root), verb))
+            if verb and root:
+                hits.append(("tree", root, verb))
             for spec in pathspecs(sub, rest, base_dir):
-                spec = os.path.expanduser(spec)
-                hits.append(("path",
-                             kernel_proc.norm_path(spec if os.path.isabs(spec)
-                                                   else os.path.join(base_dir, spec)),
-                             f"git {sub}"))
+                hits.append(("path", literal_prefix(spec, base_dir), f"git {sub}"))
             continue
-        for target in mutation_targets(base, tokens[1:]):
-            target = os.path.expanduser(target)
-            hits.append(("path",
-                         kernel_proc.norm_path(target if os.path.isabs(target)
-                                               else os.path.join(here, target)),
-                         base))
+        if base in _MUTATORS or base == "unlink":
+            for target in mutation_targets(base, tokens[1:]):
+                hits.append(("path", literal_prefix(target, here), base))
     return hits
 
 
@@ -424,8 +577,24 @@ def main() -> int:
                 "holds, so it is the operator's move, not an agent's, and it is "
                 "denied from Bash. Ask the operator to run `octo ps` and "
                 "`octo ps --release <pid>` in the terminal that launched this "
-                "session, where no hook fires. If the holder is simply finished, "
-                f"its lane frees on its own after {kernel_proc.TTL}s of silence."
+                "session, where no hook fires: `octo ps --release <pid>` (Phase 1b; "
+                "on a brain without it, edit the ptable row from the terminal). If "
+                "the holder is simply finished, its lane frees on its own after "
+                f"{kernel_proc.TTL}s of silence."
+            )
+            return 0
+
+    kdir = kernel_proc.norm_path(kernel_proc.kernel_dir())
+    for kind, target, verb in hits:
+        if kind == "path" and kernel_proc.paths_conflict(target, kdir):
+            journal_deny(pid, {"target": target, "verb": verb, "why": "kernel-state"})
+            deny(
+                f"KERNEL ISOLATION: `{verb}` targets {target}, inside the kernel's "
+                "own state ({0}). The process table and the journals are what every "
+                "gate reads to decide who owns what, so a process that can rewrite "
+                "them can grant itself any lane and erase the record of having done "
+                "it. No hooked process edits them, this one included. The operator's "
+                "terminal is not hooked and stays the only writer.".format(kdir)
             )
             return 0
 
@@ -461,8 +630,9 @@ def main() -> int:
                 f"{describe(owner, row)}. One writer per lane, the parent "
                 "included. Touch your own paths, or wait for that process to "
                 f"exit (lanes free on the exit line, or after {kernel_proc.TTL}s "
-                f"of silence). The operator can free a stuck one: octo ps "
-                f"--release {owner}"
+                f"of silence). The operator can free a stuck one: `octo ps "
+                f"--release {owner}` (Phase 1b; on a brain without it, edit the "
+                "ptable row from the terminal)."
             )
         return 0
     return 0

@@ -1,0 +1,10 @@
+{
+  "session_id": "sess-parent",
+  "tool_name": "Agent",
+  "tool_use_id": "toolu_iso",
+  "tool_input": {
+    "prompt": "build it",
+    "subagent_type": "Backend Architect"
+  },
+  "cwd": "{{SANDBOX}}/work/tree"
+}

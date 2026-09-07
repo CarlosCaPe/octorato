@@ -605,6 +605,12 @@ def claim_lane(pid, path, tree=None) -> bool:
     target = norm_path(path)
     if not target:
         return False
+    if not os.path.exists(ptable_path()):
+        # No table on disk means no register hook has run on this machine yet.
+        # Creating one HERE would publish a row from the hot path with no start
+        # line behind it, which is the phantom `kernel-process-live` fails on.
+        # Same contract as update_row: read-only when there is nothing to update.
+        return False
     os.makedirs(kernel_dir(), exist_ok=True)
     fh = None
     try:
@@ -628,6 +634,42 @@ def claim_lane(pid, path, tree=None) -> bool:
         return True
     except OSError:
         return False       # an unclaimable lane must never break the write
+    finally:
+        if fh is not None:
+            _funlock(fh)
+            try:
+                fh.close()
+            except OSError:
+                pass
+
+
+def release_lanes(pid, reason: str = "release") -> int:
+    """Drop every lane `pid` holds and return how many. Used by the delegate
+    release (v8 Phase 2 D9): a process that spawns a child stops being the
+    writer of the paths it claimed, otherwise a parent's lanes would bind its
+    own children for the whole delegation and the gate would deny the work it
+    was asked to do. The sibling rule is untouched: child A still cannot take
+    child B's lane, and a parent lane claimed AFTER the spawn still binds.
+    """
+    pid = safe_pid(pid)
+    if not os.path.exists(ptable_path()):
+        return 0
+    fh = None
+    try:
+        fh = open(ptable_lock_path(), "a")
+        _flock(fh)
+        table = read_ptable()
+        row = (table.get("processes") or {}).get(pid)
+        if not row:
+            return 0
+        n = len(lanes_of(row))
+        if not n:
+            return 0
+        row["lanes"] = []
+        _write_ptable(table)
+        return n
+    except OSError:
+        return 0
     finally:
         if fh is not None:
             _funlock(fh)
