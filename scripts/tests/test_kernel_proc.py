@@ -338,18 +338,22 @@ class CorruptRowTest(SandboxHome):
     the drop is REPORTED rather than silent.
     """
 
-    def corrupt(self, *bad):
-        """A table with one healthy row and `bad` values that are not objects.
+    def inject(self, *bad):
+        """Put `bad` values that are not objects into the table ON DISK.
 
-        Written the way it happens: a healthy table on disk, then a value
-        replaced under it (a hand edit, a half-migrated file, a foreign writer).
-        The bad rows are NAMED to sort before the healthy one, and the name is
-        the only thing that decides it: `_write_ptable` writes with sort_keys,
-        so insertion order does not survive the first writer. It matters because
-        `lane_owner` returns on its first hit, so a bad row that sorts last is
-        never reached and the test would pass for the wrong reason.
+        Written the way it happens: a healthy table, then a value replaced under
+        it (a hand edit, a half-migrated file, a foreign writer). The bad rows
+        are NAMED to sort before the healthy one, and the name is the only thing
+        that decides it: `_write_ptable` writes with sort_keys, so insertion
+        order does not survive the first writer. It matters because `lane_owner`
+        returns on its first hit, so a bad row that sorts last is never reached
+        and the test would pass for the wrong reason.
+
+        Separate from `corrupt` because a test that wants the corruption to be
+        on disk WHILE a reader runs has to set the world up first and inject
+        last: any kernel writer in between republishes the table without it
+        (QA cycle 3, F2).
         """
-        kernel_proc.register("good", {"kind": "main", "type": "main", "worktree": "/w"})
         with open(kernel_proc.ptable_path(), encoding="utf-8") as fh:
             data = json.load(fh)
         procs = {f"bad{i}": value for i, value in enumerate(bad or ("not-a-row",))}
@@ -357,6 +361,27 @@ class CorruptRowTest(SandboxHome):
         data["processes"] = procs
         with open(kernel_proc.ptable_path(), "w", encoding="utf-8") as fh:
             json.dump(data, fh)
+
+    def corrupt(self, *bad):
+        """One healthy row, then `bad` values that are not objects, on disk."""
+        kernel_proc.register("good", {"kind": "main", "type": "main", "worktree": "/w"})
+        self.inject(*bad)
+
+    def raw(self) -> bytes:
+        """The ptable file's exact bytes. A rewrite that happened to keep the
+        same pids would still be a write, so the comparison is on bytes."""
+        with open(kernel_proc.ptable_path(), "rb") as fh:
+            return fh.read()
+
+    def rows_on_disk(self) -> list:
+        """The pid keys the FILE carries right now, parsed without the seam.
+
+        The assertions about what is still on disk have to bypass
+        `read_ptable_detail`: reading the table through the thing under test is
+        how a test stops being able to see the state it exists to pin.
+        """
+        with open(kernel_proc.ptable_path(), encoding="utf-8") as fh:
+            return sorted(json.load(fh)["processes"])
 
     def register_hook(self, script, payload):
         env = dict(os.environ)
@@ -371,20 +396,83 @@ class CorruptRowTest(SandboxHome):
         whole kernel down. Named, not silent: a repair nobody can see is its own
         failure mode."""
         self.corrupt("not-a-row", 7, None, ["lanes"])
-        table, dropped = kernel_proc.read_ptable_detail()
+        table, dropped, _fault = kernel_proc.read_ptable_detail()
         self.assertEqual(sorted(dropped), ["bad0", "bad1", "bad2", "bad3"])
         self.assertEqual(sorted(table["processes"]), ["good"])
         self.assertEqual(kernel_proc.read_ptable()["processes"], table["processes"])
 
-    def test_a_read_reports_the_drop_but_never_writes_it(self):
-        """The repair reaches the file through a writer, never through a reader:
-        `octo ps` prunes on read and must not be the thing that rewrites a table
-        the operator has not seen yet."""
+    def steady_state(self, pid="ancient"):
+        """A healthy row plus a row whose journal has been gone longer than the
+        grace window: the NORMAL steady state of a machine that has run for a
+        while, and the thing that turns `prune_locked` from a no-op into a
+        writer. The bad row goes in LAST, because everything above it is a
+        writer and a writer republishes the table without it.
+        """
+        kernel_proc.register("good", {"kind": "main", "type": "main", "worktree": "/w"})
+        kernel_proc.register(pid, {"kind": "main"})
+        os.unlink(kernel_proc.journal_path(pid))
+        table = kernel_proc.read_ptable()
+        table["processes"][pid]["registered_ts"] = time.time() - (kernel_proc.TTL + 60)
+        kernel_proc._write_ptable(table)
+        self.inject()
+
+    def test_the_pure_read_reports_the_drop_and_never_writes_it(self):
+        """`read_ptable_detail` repairs in MEMORY only, and this now proves it
+        against a table that a writer would have rewritten.
+
+        The claim used to be checked with `prune_locked` on a fixture that had
+        nothing prunable, so prune returned 0 and never wrote: the assertion
+        held for a reason that had nothing to do with the read (QA cycle 3, F3).
+        Here the table carries a prunable row, so the only thing standing
+        between the file and a rewrite is that the read does not write. The
+        bytes are compared, not the parse: a rewrite that happened to keep the
+        same pids would still be a write.
+        """
+        self.steady_state()
+        before = self.raw()
+        table, dropped, fault = kernel_proc.read_ptable_detail()
+        self.assertEqual(dropped, ["bad0"])
+        self.assertEqual(fault, "")
+        self.assertNotIn("bad0", table["processes"])
+        self.assertEqual(self.raw(), before,
+                         "the read repaired the table in memory and only there")
+        self.assertEqual(kernel_proc.quarantines(), [],
+                         "and it left no copy either: a read writes NOTHING")
+
+    def test_a_writer_that_erases_the_bad_row_keeps_a_copy_of_what_it_erased(self):
+        """QA cycle 3, F3. `octo ps` prunes on read, prune is a writer, and on a
+        table carrying one old dead row (the steady state) it republished the
+        file without the corrupt row. The drop was then invisible: the read
+        afterwards measured `dropped == []`, the footers had nothing to name and
+        the doctor had nothing to report. The corruption event left zero trace.
+
+        The trace is the preserved file, taken at the moment the original is
+        replaced. It carries the reason and the raw bytes, so the rows a repair
+        could not carry forward are readable rather than gone, and
+        `brain_doctor` can escalate on how OFTEN this happens instead of on
+        whether one bad row happens to still be sitting in the file.
+        """
+        self.steady_state()
+        original = self.raw().decode("utf-8")
+        self.assertEqual(kernel_proc.prune_locked(), 1, "prune wrote the table")
+        self.assertNotIn("bad0", self.rows_on_disk())
+
+        kept = kernel_proc.quarantines()
+        self.assertEqual(len(kept), 1, "one repair, one copy")
+        with open(kept[0][1], encoding="utf-8") as fh:
+            rec = json.load(fh)
+        self.assertEqual(rec["ptable"], original, "the copy is what was overwritten")
+        self.assertIn("bad0", rec["reason"], "and it names what could not be read")
+
+    def test_a_read_that_writes_nothing_leaves_no_copy(self):
+        """The other half of the same rule: the copy is taken by `_publish`, at
+        the write, so a caller that reads a corrupt table and decides not to
+        write leaves the evidence exactly where it was and adds no file."""
         self.corrupt()
         kernel_proc.read_ptable_detail()
-        kernel_proc.prune_locked()
-        with open(kernel_proc.ptable_path(), encoding="utf-8") as fh:
-            self.assertIn("bad0", json.load(fh)["processes"])
+        self.assertEqual(kernel_proc.prune_locked(), 0, "nothing was prunable")
+        self.assertIn("bad0", self.rows_on_disk())
+        self.assertEqual(kernel_proc.quarantines(), [])
 
     def test_prune_survives_a_table_a_caller_assembled_by_hand(self):
         """`prune` mutates under the ptable lock, so a raise there leaves the
@@ -398,12 +486,26 @@ class CorruptRowTest(SandboxHome):
 
     def test_both_register_hooks_still_publish_their_row(self):
         """The silent half of the defect. Exit 0 is not the assertion; the row
-        on disk is."""
+        on disk is.
+
+        The table is corrupted AGAIN between the two hooks, and that is the
+        whole difference (QA cycle 3, the second test that passed for the wrong
+        reason). `register` republishes what it read, so the first hook wiped
+        the bad row and the SUBAGENT hook, the one the method name promises,
+        ran against a perfectly clean table: measured `['bad0', 'good']` before
+        the first hook and `['good', 'newsess']` before the second. Only one of
+        the two was ever tested.
+        """
         self.corrupt()
+        self.assertIn("bad0", self.rows_on_disk(), "hook 1 faces the bad row")
         cp = self.register_hook("r__session__proc-register.py",
                                 {"session_id": "newsess", "source": "startup",
                                  "cwd": self.home})
         self.assertEqual(cp.returncode, 0, cp.stderr)
+        self.assertIn("newsess", self.rows_on_disk())
+
+        self.inject()
+        self.assertIn("bad0", self.rows_on_disk(), "and now hook 2 faces one too")
         cp = self.register_hook("r__subagent-start__proc-register.py",
                                 {"agent_id": "newkid", "session_id": "newsess",
                                  "agent_type": "Reality Checker", "cwd": self.home})
@@ -412,6 +514,9 @@ class CorruptRowTest(SandboxHome):
         self.assertIn("newsess", rows)
         self.assertIn("newkid", rows)
         self.assertEqual(rows["newkid"]["ppid"], "newsess")
+        self.assertNotIn("bad0", self.rows_on_disk())
+        self.assertEqual(len(kernel_proc.quarantines()), 2,
+                         "one preserved copy per repair, one per hook")
 
     def test_a_writer_republishes_the_table_without_the_bad_row(self):
         """The drop is not only in memory: every locked writer reads through the
@@ -441,14 +546,135 @@ class CorruptRowTest(SandboxHome):
 
     def test_liveness_and_the_lane_lookup_survive_the_bad_row(self):
         """The two functions on the hot path. Both walk every row in the table,
-        so both used to raise on the first bad one they reached."""
+        so both used to raise on the first bad one they reached.
+
+        ORDER IS THE TEST (QA cycle 3, F2). The first version of this corrupted
+        the table and then called `claim_lane`, which is a WRITER: it
+        republished the table without the bad row, so `is_live` and `lane_owner`
+        both ran against a clean file and neither assertion ever saw the state
+        named in the method. Measured: `bad0` on disk before the claim, gone
+        after it. The world is built first and the corruption injected last, and
+        the file is checked on both sides of the two calls, so the bad row is
+        provably still there while they run and neither of them is a writer.
+        """
         self.corrupt()
         self.touch_journal("good")
         kernel_proc.claim_lane("good", os.path.join(self.home, "pkg"))
+        self.inject()                       # the writer is done; corrupt it now
+        self.assertIn("bad0", self.rows_on_disk(), "the bad row must be on disk HERE")
+
         self.assertTrue(kernel_proc.is_live("good"))
+        self.assertIn("bad0", self.rows_on_disk(), "is_live is a reader")
         owner, row = kernel_proc.lane_owner(os.path.join(self.home, "pkg", "a.py"),
                                             ignore="other")
         self.assertEqual(owner, "good")
+        self.assertEqual(row.get("type"), "main")
+        self.assertIn("bad0", self.rows_on_disk(), "lane_owner is a reader")
+
+
+class TableLevelFaultTest(SandboxHome):
+    """QA cycle 3, F1. A row that is not an object costs one named row. A
+    `processes` that is not an object costs EVERY row, unnamed, and used to be
+    the quietest state the kernel had: `sane_table` returned an empty table with
+    `dropped == []`, so nothing anywhere reported it and `octo ps` announced
+    that the kernel had registered nothing on this machine, which is the
+    opposite of the truth.
+
+    It is not reachable from the kernel's own writers (`_write_ptable` publishes
+    a complete file with `os.replace`), and that is exactly why it has to be
+    loud: a table shaped like this means a writer that is not the kernel touched
+    the file.
+    """
+
+    def list_shaped(self):
+        """The same rows, as an array. Nothing is missing from the FILE; what is
+        missing is the kernel's ability to read it."""
+        kernel_proc.register("owner", {"kind": "main", "type": "main", "worktree": "/w"})
+        kernel_proc.register("other", {"kind": "main", "type": "main", "worktree": "/w"})
+        with open(kernel_proc.ptable_path(), encoding="utf-8") as fh:
+            data = json.load(fh)
+        data["processes"] = list(data["processes"].values())
+        with open(kernel_proc.ptable_path(), "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+
+    def test_a_table_level_discard_is_reported_not_silent(self):
+        """As loud as a row-level one, and louder about what it cannot say: the
+        pids are unrecoverable, so the fault names the SHAPE and the count of
+        values that went with it."""
+        self.list_shaped()
+        table, dropped, fault = kernel_proc.read_ptable_detail()
+        self.assertEqual(table["processes"], {})
+        self.assertEqual(dropped, [], "no pid survives a value that is not an object")
+        self.assertIn("array of 2 value(s)", fault)
+        self.assertIn("processes", fault)
+
+    def test_zero_rows_from_a_file_that_exists_is_never_a_fresh_install(self):
+        """There is exactly ONE honest empty table: the file is not there. Every
+        other way of yielding zero rows is a machine whose table was readable to
+        somebody and is not readable to us, and calling that a fresh install is
+        what let a total loss pass for a new laptop."""
+        self.assertFalse(os.path.exists(kernel_proc.ptable_path()))
+        self.assertEqual(kernel_proc.read_ptable_detail(), ({"version": 1, "processes": {}}, [], ""))
+
+        os.makedirs(kernel_proc.kernel_dir(), exist_ok=True)
+        for content, expected in (("", "not valid JSON"),
+                                  ("[]", "top level is a array"),
+                                  ('{"version": 1}', "no `processes` key"),
+                                  ('{"processes": "gone"}', "`processes` is a string"),
+                                  ('{"processes": null}', "`processes` is a null")):
+            with open(kernel_proc.ptable_path(), "w", encoding="utf-8") as fh:
+                fh.write(content)
+            table, dropped, fault = kernel_proc.read_ptable_detail()
+            self.assertEqual(table["processes"], {}, content)
+            self.assertTrue(fault, f"{content!r} yielded zero rows and no fault")
+            self.assertIn(expected, fault, content)
+
+    def test_a_lane_claim_refuses_a_table_it_could_not_read(self):
+        """The write half of the same loss. `claim_lane` republishes what it
+        read, so on a faulted table it used to publish a ONE-ROW table: every
+        other process's lanes gone, and the claimant holding the path it had
+        just been told nobody owned. A claim is the assertion `nobody else holds
+        this`, and a table we could not read is no basis for it."""
+        self.list_shaped()
+        with open(kernel_proc.ptable_path(), "rb") as fh:
+            before = fh.read()
+        self.assertFalse(kernel_proc.claim_lane("intruder", os.path.join(self.home, "a.py")))
+        with open(kernel_proc.ptable_path(), "rb") as fh:
+            self.assertEqual(fh.read(), before, "a refused claim writes nothing at all")
+
+    def test_register_publishes_anyway_and_keeps_what_it_overwrites(self):
+        """The one writer that MUST write through it. A register hook exiting 0
+        with no row on disk is the silent failure the whole seam exists to stop,
+        so it publishes; the rows it cannot carry forward are preserved beside
+        the file rather than lost."""
+        self.list_shaped()
+        with open(kernel_proc.ptable_path(), encoding="utf-8") as fh:
+            original = fh.read()
+        kernel_proc.register("newsess", {"kind": "main", "type": "main"})
+        self.assertEqual(kernel_proc.read_ptable()["processes"].get("newsess", {}).get("pid"),
+                         "newsess")
+        kept = kernel_proc.quarantines()
+        self.assertEqual(len(kept), 1)
+        with open(kept[0][1], encoding="utf-8") as fh:
+            rec = json.load(fh)
+        self.assertEqual(rec["ptable"], original, "the two lost rows are still readable")
+        self.assertIn("array of 2 value(s)", rec["reason"])
+
+    def test_the_doctor_fails_on_a_fault_where_it_only_warns_on_a_row(self):
+        """The severity gap is the finding. A dropped row leaves a working,
+        self-repairing kernel (WARN). A fault leaves every reader blind and both
+        isolation gates denying every hooked write, which is not a kernel that
+        is working."""
+        import importlib.util
+        self.list_shaped()
+        spec = importlib.util.spec_from_file_location(
+            "brain_doctor_fault", str(SCRIPTS / "brain_doctor.py"))
+        bd = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(bd)
+        result = bd.check_kernel_process_live(False)
+        self.assertEqual(result.status, bd.FAIL, result.message)
+        self.assertIn("process table is unreadable", result.message)
+        self.assertIn("array of 2 value(s)", result.message)
 
 
 class ReRegisterTest(SandboxHome):

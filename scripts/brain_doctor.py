@@ -1607,7 +1607,25 @@ def check_kernel_process_live(fix: bool) -> Result:
             notes.append("runtime fallback: no SubagentStart hook, a child's start line "
                          "waits for its first tool call (PreToolUse[Agent] + SubagentStop only)")
 
-    table, dropped_rows = kernel_proc.read_ptable_detail()
+    table, dropped_rows, ptable_fault = kernel_proc.read_ptable_detail()
+    if ptable_fault:
+        # FAIL, where a dropped ROW is only a WARN, and the gap between the two
+        # is the finding. A row-level drop costs n named rows and leaves a
+        # working, self-repairing kernel. A table-level fault costs every row on
+        # the machine, unnamed and uncounted, and it puts both isolation gates
+        # into their fail-closed branch: nothing can prove it holds a lane, so
+        # every hooked write is denied until this is read. That is not a kernel
+        # that is working.
+        return Result(key, FAIL,
+                      f"the process table is unreadable: {ptable_fault}; every "
+                      f"row on this machine is missing from every reader, and "
+                      f"the isolation gates are denying writes while it reads "
+                      f"this way",
+                      f"read {kernel_proc.ptable_path()} from the terminal. The "
+                      f"kernel publishes it with os.replace and never writes a "
+                      f"half-written or oddly shaped one, so a writer that is "
+                      f"not the kernel touched it; the next register hook "
+                      f"preserves a copy beside it before publishing over it")
     procs = table.get("processes", {})
     now = time.time()
     live, phantom = [], []
@@ -1690,6 +1708,30 @@ def check_kernel_process_live(fix: bool) -> Result:
         status = WARN
         notes.append(f"{len(dropped_rows)} unreadable ptable row(s) dropped on read: "
                      + ", ".join(sorted(dropped_rows)[:5]))
+
+    # FREQUENCY, not presence. A writer preserves the table it had to repair
+    # before publishing over it (`kernel_proc.quarantines`), so the repairs are
+    # countable here instead of vanishing with the file. One is an accident and
+    # already reported above; three in a day is a foreign writer that is still
+    # running, and the difference is what decides whether the operator has to
+    # act now.
+    kept = kernel_proc.quarantines()
+    if kept:
+        recent = [mt for mt, _ in kept if now - mt <= 24 * 3600]
+        notes.append(f"{len(kept)} repaired ptable(s) kept beside the file, "
+                     f"{len(recent)} in the last 24 h "
+                     f"(newest {os.path.basename(kept[0][1])})")
+        if len(recent) >= 3:
+            return Result(key, FAIL,
+                          f"the process table has been repaired {len(recent)} "
+                          f"times in the last 24 h; a table repaired this often "
+                          f"is a writer that is not the kernel and is still "
+                          f"running",
+                          f"read the copies in {kernel_proc.kernel_dir()} "
+                          f"(ptable.corrupt-*.json, each one carries the reason "
+                          f"and the rows it lost) and find what is writing them")
+        if status == PASS:
+            status = WARN
     msg = (f"3 selftests pass; {len(procs)} process row(s), {len(live)} live, all journaled; "
            f"{min(len(journals), 5)} newest chain(s) verify; {opened} call(s) ran unjournaled "
            f"in 7 days; golden replay matches; {bench_note}")
@@ -1697,6 +1739,10 @@ def check_kernel_process_live(fix: bool) -> Result:
         hint = ("a ptable value that is not an object is not a process; read the row in "
                 "~/.claude/.cache/kernel/ptable.json now, the next register hook "
                 "rewrites the table without it")
+    elif kept:
+        hint = ("the table has been repaired before; the copies are in "
+                "~/.claude/.cache/kernel/ptable.corrupt-*.json, each with the "
+                "reason and the rows it lost. Three in 24 h turns this FAIL")
     elif status == WARN:
         hint = ("the hot path is slower than the budget; it is a WARN by design, "
                 "compare `octo bench` on an idle box before acting")
