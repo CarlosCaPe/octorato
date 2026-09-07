@@ -222,6 +222,40 @@ python3 ~/.claude/scripts/query_connectome.py query "deploy a Svelte app to Clou
 
 That ranks every agent and skill by similarity to your task — the same lookup the agent runs internally.
 
+### How to install a skill someone else wrote
+
+Skills you install run on every prompt, so the brain treats one as a package, not as a
+copied folder. Install it with `octo pkg`:
+
+```bash
+python3 ~/.claude/scripts/octo_pkg.py install https://github.com/<owner>/<repo>/tree/<ref>/skills/<name>
+python3 ~/.claude/scripts/octo_pkg.py list
+```
+
+Before a single byte is copied, the installer validates the package's `skill.json`,
+recomputes a hash over every file in the tree and compares it to the one the manifest
+claims, then checks the detached signature with `ssh-keygen -Y verify` against the
+principals in `registry/pkg-signers.pub`. Anything that does not line up is refused and
+nothing is written. What lands is `skills/vendor/<name>` plus a `skills/<name>` symlink,
+both kept out of git, and a row in the tracked `packages.lock.json`.
+
+That row is what makes a second machine reproducible: `ai-pull` runs `octo pkg sync`,
+which reinstalls from the lock and verifies. `brain_doctor` reports the same ladder as
+`packages-verified`, and pre-push refuses to publish while an installed package has
+drifted from what was signed.
+
+```bash
+python3 ~/.claude/scripts/octo_pkg.py verify --all   # tree hash, signature, symlink
+python3 ~/.claude/scripts/octo_pkg.py uninstall <name>
+```
+
+To publish your own skill, add a `skill.json` (see `templates/skill/skill.json.template`),
+fill in `tree_sha256`, sign the manifest with your release key
+(`ssh-keygen -Y sign -n octorato-pkg skill.json`) and ship the `skill.json.sig` beside it.
+Adopters add your principal to their gitignored `company/config/pkg-signers`. An unsigned
+third-party skill is still installable, on the Codex `--dest` path of the
+`skill-installer` skill, outside the lock and without any claim that it was verified.
+
 ### How to activate an agent
 
 Agents are specialist personas (the neurons). Activate one by name:
