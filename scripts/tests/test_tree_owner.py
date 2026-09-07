@@ -695,6 +695,80 @@ class QaCycle2(IsolationCase):
             self.assertIn("Phase 1b", out)
 
 
+class UnreadableTableFailsClosed(IsolationCase):
+    """QA cycle 3, F1. The serious one: a `processes` that is not an object was
+    a silent TOTAL loss, and the gate then let the intruder through.
+
+    Measured on the tip before this change. A healthy table where `owner` holds
+    a lane: the gate denies the second writer and names the holder. The same
+    rows rewritten as an ARRAY: the same call produced empty output, which the
+    harness reads as allowed, and the write that followed republished a one-row
+    table in which the INTRUDER held the lane. `sane_table` returns an empty
+    table for that shape, an empty table says nobody owns anything, and the gate
+    whose whole job is to deny the second writer had nothing left to deny with.
+
+    One writer per tree is fail-closed, so the state where ownership is
+    unknowable is a deny. Not a compromise: the state is unreachable from the
+    kernel's own writers, so reaching it means a writer that is not the kernel
+    touched the file, which is the last moment to keep working blind.
+    """
+
+    def list_shaped(self):
+        """The same rows, as an array. Nothing is missing from the FILE."""
+        with open(kernel_proc.ptable_path(), encoding="utf-8") as fh:
+            data = json.load(fh)
+        data["processes"] = list(data["processes"].values())
+        with open(kernel_proc.ptable_path(), "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+
+    def reason(self, out: str) -> str:
+        obj = json.loads(out or "{}")
+        return (obj.get("hookSpecificOutput") or {}).get("permissionDecisionReason") or ""
+
+    def setUp(self):
+        super().setUp()
+        # the healthy half of the reproduction, first: agent-a owns a.py
+        rc, out = self.run_gate(WRITE_GATE, self.write_payload("agent-a", self.a_py))
+        self.assertFalse(self.denied(out), "the owner claims its own lane")
+        self.assertIn("agent-a", kernel_proc.read_ptable()["processes"])
+
+    def test_the_write_gate_denies_instead_of_going_blind(self):
+        rc, out = self.run_gate(WRITE_GATE, self.write_payload("agent-b", self.a_py))
+        self.assertTrue(self.denied(out), "the healthy table denies the second writer")
+        self.assertIn("agent-a", self.reason(out))
+
+        self.list_shaped()
+        with open(kernel_proc.ptable_path(), "rb") as fh:
+            before = fh.read()
+        rc, out = self.run_gate(WRITE_GATE, self.write_payload("agent-b", self.a_py))
+        self.assertEqual(rc, 0)
+        self.assertTrue(self.denied(out), "an unknowable owner is denied, never allowed")
+        reason = self.reason(out)
+        self.assertIn("process table is unreadable", reason)
+        self.assertIn("array of 3 value(s)", reason, "the fault names what it found")
+        self.assertIn(self.a_py, reason, "and the path it could not decide")
+
+        with open(kernel_proc.ptable_path(), "rb") as fh:
+            self.assertEqual(fh.read(), before,
+                             "and the denied write took no lane: the file is untouched, "
+                             "so agent-a's lane is still in it")
+
+    def test_the_bash_gate_denies_instead_of_going_blind(self):
+        """The twin. Both gates read the same table through the same seam, so a
+        fix in one of them and not the other is half a gate."""
+        cmd = f"rm -f {self.a_py}"
+        rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", cmd))
+        self.assertTrue(self.denied(out), "the healthy table denies the second writer")
+
+        self.list_shaped()
+        rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", cmd))
+        self.assertEqual(rc, 0)
+        self.assertTrue(self.denied(out))
+        reason = self.reason(out)
+        self.assertIn("process table is unreadable", reason)
+        self.assertIn(self.a_py, reason)
+
+
 class DenyNamesWhatIsKnown(IsolationCase):
     """QA cycle 2, C: `describe()` inferred `main loop` from a missing `ppid`.
 

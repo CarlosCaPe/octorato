@@ -716,7 +716,40 @@ def main() -> int:
             )
             return 0
 
-    table = kernel_proc.read_ptable()      # the one ptable read of this call
+    table, _dropped, fault = kernel_proc.read_ptable_detail()   # the one ptable read of this call
+    if fault:
+        # FAIL CLOSED. This gate answers one question, "does another live
+        # process hold this path", and it answers it out of the process table.
+        # A table it cannot read does not answer that question, it removes it:
+        # `sane_table` hands back an EMPTY table for a `processes` that is not
+        # an object, and an empty table reads as "nobody owns anything", so the
+        # gate that exists to deny the second writer waved it through and the
+        # first write after it republished a one-row table with every other
+        # lane gone. One writer per tree is a fail-closed rule, so the state
+        # where ownership is unknowable is a deny, not an allow.
+        #
+        # It is not reachable from the kernel's own writers (`_write_ptable`
+        # publishes a complete file with `os.replace`), which is the point: a
+        # table shaped like this means something that is not the kernel wrote
+        # it, and that is the last moment to keep working blind.
+        # `state` hits are floor-only and were already tested above, so the
+        # targets named here are exactly the ones the ownership loop below would
+        # have looked up. When the command mutates nothing else, the verb is
+        # what the reader needs.
+        checked = [t for kind, t, _ in hits if kind != "state"] or [hits[0][1]]
+        journal_deny(pid, {"target": checked[0], "why": "ptable-unreadable",
+                           "fault": fault, "command": command[:200]})
+        deny(
+            "KERNEL ISOLATION: the process table is unreadable, so this gate "
+            f"cannot tell whether another process holds {checked[0]}. {fault}. "
+            "One writer per tree is fail-closed: an unknown owner is denied, "
+            "never allowed, because allowing it is how a second writer takes a "
+            "lane and the table that recorded the first one gets overwritten. "
+            f"Read {kernel_proc.ptable_path()} from the operator's terminal; "
+            "the next register hook keeps a copy of it beside the file before "
+            "publishing a table it can write."
+        )
+        return 0
     for kind, target, verb in hits:
         if kind == "state":
             continue          # floor-only: already tested above
