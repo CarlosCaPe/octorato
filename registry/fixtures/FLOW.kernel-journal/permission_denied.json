@@ -1,0 +1,12 @@
+{
+  "hook_event_name": "PermissionDenied",
+  "session_id": "kernel-selftest-session",
+  "agent_id": "kernel-selftest-agent",
+  "agent_type": "Reality Checker",
+  "tool_name": "Bash",
+  "tool_use_id": "toolu_permdenied_1",
+  "tool_input": {"command": "rm -rf /"},
+  "cwd": "/home/agent/workspace",
+  "toolDenialKind": "auto-mode",
+  "reason": "auto-accept mode refused a command outside the allowed set"
+}

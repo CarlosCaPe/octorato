@@ -380,12 +380,40 @@ def _emit(payload: dict) -> None:
         pass  # stdout failure → fail-open
 
 
-def _deny(reason: str) -> None:
+# -- v8 kernel journal (Phase 4, v8-kernel.md) --------------------------------
+_KERNEL_RULE = "ARCHITECTURE.session-isolation"
+
+
+def _journal_deny(reason, payload=None, tool_use_id=None) -> None:
+    """Mirror this refusal into the refusing process's journal.
+
+    FAIL-OPEN by contract: every error is swallowed and the verdict this gate
+    just reached is unchanged. A journal that cannot be written must never turn
+    a deny into an allow. kernel_proc is loaded by PATH through importlib, not
+    by name, so nothing on sys.path can shadow it.
+    """
+    try:
+        import importlib.util
+        import os as _os
+        _path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "kernel_proc.py")
+        _spec = importlib.util.spec_from_file_location("_kernel_proc_journal", _path)
+        _kp = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_kp)
+        _payload = payload if isinstance(payload, dict) else {}
+        _kp.journal_deny(_KERNEL_RULE, reason,
+                         tool_use_id if tool_use_id is not None else _payload.get("tool_use_id"),
+                         _kp.resolve_pid(_payload))
+    except Exception:
+        pass
+
+
+def _deny(reason: str, payload: dict = None) -> None:
     _emit({
         "hookEventName": "PreToolUse",
         "permissionDecision": "deny",
         "permissionDecisionReason": reason,
     })
+    _journal_deny(reason, payload)
 
 
 # ── main ─────────────────────────────────────────────────────────────────────
@@ -437,7 +465,8 @@ def main() -> int:
                     f"session to finish (TTL {DEFAULT_TTL}s), have the operator "
                     f"run `octo-dim release {target_path} --from-any` or set "
                     f"OCTO_LANE_OVERRIDE=1, or fork your own worktree "
-                    f"(`octo-dim worktree-init`)."
+                    f"(`octo-dim worktree-init`).",
+                    data,
                 )
                 # Still record our heartbeat; the denied write claims nothing.
                 _upsert_session(my_sid, lambda e: None)
@@ -463,7 +492,8 @@ def main() -> int:
                 f"while {len(other_live)} other live dimension(s) exist. This can swallow "
                 f"another session's uncommitted files into your commit. Stage by EXPLICIT "
                 f"pathspec (`git add <file>…`), or fork your own worktree first: "
-                f"`python3 ~/.claude/scripts/octo-dim.py --session-id <sid> worktree-init{repo_flag}`."
+                f"`python3 ~/.claude/scripts/octo-dim.py --session-id <sid> worktree-init{repo_flag}`.",
+                data,
             )
             _upsert_session(my_sid, lambda e: None)  # heartbeat; denied call claims nothing
             return 0

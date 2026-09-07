@@ -1826,11 +1826,58 @@ rules:
     canonical_name: g__pretool__kernel.py
     firing_event: PreToolUse
     firing_matcher: '*'
+  # Phase 4 closes the journal: the gate records the calls that RAN, this reflex
+  # records the refusals the harness itself made, and the thirteen fail-closed
+  # gates journal the refusals Octorato made. A run is replayable only when all
+  # three land in the same file.
+  - kind: Reflex
+    canonical_name: r__permission-denied__journal.py
+    firing_event: PermissionDenied
+    firing_matcher: '*'
   proof:
   - method: IN_HOOKS_JSON
     locator: PreToolUse|*|g__pretool__kernel.py
     expect: present
+  - method: IN_HOOKS_JSON
+    locator: PermissionDenied|*|r__permission-denied__journal.py
+    expect: present
   - method: EXIT_CODE
     locator: scripts/g__pretool__kernel.py --selftest registry/fixtures/FLOW.kernel-journal
+    expect: 0
+  - method: EXIT_CODE
+    locator: scripts/octo.py replay --fixture registry/fixtures/ARCHITECTURE.kernel-process/replay
+      --verify
+    expect: 0
+  liveness_required: FIRES
+- id: HARNESS.permission-denied
+  title: 'Kernel JOURNAL: a harness auto-mode denial is recorded like any other refusal'
+  category: FLOW
+  source:
+    file: docs/architecture/v8-kernel.md
+    anchor: 'Phase 4: JOURNAL closure'
+  strength: REFLEX
+  firing_mode:
+  - hook
+  # REFLEX, not GATE, and the distinction is the honest one: the harness has
+  # already refused by the time this fires. The reflex observes and records; it
+  # never decides. The row exists because `kernel-replay` FAILS on a deny line
+  # whose rule id is in no registry row, and this reflex writes deny lines under
+  # exactly this id. An unregistered deny is an orphan mechanism (RULE #1).
+  #
+  # The id prefix names the SOURCE of the refusal (the harness, not Octorato),
+  # the way SEC.prod-write-gate names its own; the category stays inside the
+  # schema's enum, because a new category is a schema PR with zero enforcement
+  # gain (v8-kernel.md section 5, decision 1).
+  mechanism:
+  - kind: Reflex
+    canonical_name: r__permission-denied__journal.py
+    firing_event: PermissionDenied
+    firing_matcher: '*'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: PermissionDenied|*|r__permission-denied__journal.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/r__permission-denied__journal.py --selftest registry/fixtures/FLOW.kernel-journal
     expect: 0
   liveness_required: FIRES
