@@ -1831,3 +1831,27 @@ rules:
     locator: scripts/g__pretool__kernel.py --selftest registry/fixtures/FLOW.kernel-journal
     expect: 0
   liveness_required: FIRES
+- id: FLOW.kernel-quota
+  title: 'Kernel QUOTA: a process cannot exceed the cap its policy gives it'
+  category: FLOW
+  source:
+    file: CLAUDE.md
+    anchor: 'Kernel: quotas'
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Gate
+    canonical_name: g__pretool__kernel.py
+    firing_event: PreToolUse
+    firing_matcher: '*'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: PreToolUse|*|g__pretool__kernel.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/g__pretool__kernel.py --selftest registry/fixtures/FLOW.kernel-quota
+    expect: 0
+  liveness_required: FIRES

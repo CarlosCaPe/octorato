@@ -1,0 +1,64 @@
+# registry/kernel.yaml: the v8 kernel PROCESS quota policy (public defaults).
+#
+# Contract: docs/architecture/v8-kernel.md "Phase 3". Enforced by
+# scripts/g__pretool__kernel.py, the one hot-path script, on the same tail line
+# it already holds under the journal lock. Rule FLOW.kernel-quota.
+#
+# SLOT, NOT OCCUPANT (docs/architecture/memory-model.md "What is public vs
+# private"). This tracked file is the SLOT: it names the keys, ships defaults
+# that enforce nothing, and is world-visible. The OCCUPANT is the gitignored
+# `company/config/kernel.json`, which carries the caps an operator actually
+# runs. A public adopter clones the repo and is capped by nothing until they
+# write that file, exactly as `budgets.yaml`, `arms-paths.json` and
+# `memory.json` work. Never put a real cap here.
+#
+# OCCUPANT SHAPE (company/config/kernel.json, same keys, JSON):
+#
+#   {
+#     "subagent": {"max_tool_calls": 400, "max_minutes": 90},
+#     "main":     {"max_tool_calls": 0,   "max_minutes": 0},
+#     "qa_multiplier": 3,
+#     "qa_agent_types_regex": "(qa|review|reality|evidence|checker|verif|audit)"
+#   }
+#
+# Any key the occupant omits keeps the default below, so an occupant that sets
+# only `subagent` is complete. A malformed occupant is a note, never a deny:
+# the gate falls back to these defaults, and `brain_doctor kernel-quota-live`
+# WARNs naming the bad key. A quota file that could stop work by being
+# unreadable would be a worse failure than no quota at all.
+#
+# COUNTING, stated plainly so a cap is read as what it is. `max_tool_calls` is
+# compared against the `seq` of the line the gate just appended, which counts
+# EVERY journal line of that process: the `start` line and any `quota` line
+# included, not tool lines alone. That is the whole reason the hot path stays
+# one lock window and one line: an exact tool count would mean reading the
+# journal on every call. A cap is a ceiling, off by the handful of non-tool
+# lines a process writes, never an exact allowance.
+#
+# 0 MEANS UNLIMITED for both caps, and 0 is the public default: shipping a
+# real cap to every adopter would halt runs on a machine whose operator never
+# asked for a quota.
+
+# Subagent processes (pid = agent_id): a child spawned by the main loop.
+subagent:
+  max_tool_calls: 0     # 0 = unlimited
+  max_minutes: 0        # wall time since the process's start_ts; 0 = unlimited
+
+# The main loop (pid = session_id). Capping this one halts the operator's own
+# session, so it stays unlimited here even harder than the subagent row.
+main:
+  max_tool_calls: 0
+  max_minutes: 0
+
+# A QA-typed process gets its caps MULTIPLIED, not waived: verification reads
+# more than it writes, so it legitimately needs headroom, but a worker the main
+# loop happened to name "Reality Checker" must not thereby become uncapped.
+# A multiplier of 1 disables the headroom; 0 or a negative value is read as 1.
+qa_multiplier: 3
+
+# Which agent types earn that multiplier. Identical to the QA persona regex the
+# receipt ledger already trusts to decide whether a verdict came from a real
+# verifier (scripts/receipt_ledger.py, QA_AGENT_TYPE), matched case-insensitively
+# against the `type` on the process's ptable row. One definition of "this is QA"
+# across the brain, not two that can drift apart.
+qa_agent_types_regex: "(qa|review|reality|evidence|checker|verif|audit)"
