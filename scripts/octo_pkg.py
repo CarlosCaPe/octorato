@@ -242,12 +242,27 @@ class Brain:
             return None
         return common / "info" / "exclude"
 
+    def _exclude_lines(self, f: Path) -> list[str]:
+        """.git/info/exclude, through the seam.
+
+        It is a plain text file that never becomes JSON, so naming the seam after
+        JSON left it outside, the same way it left the allowed-signers file outside
+        (QA cycles 5 and 6, the same finding twice). It is also written by hand and
+        by other tools, and on Windows a cp1252 comment in it is ordinary; that byte
+        used to raise UnicodeDecodeError straight through install's unwind, which
+        caught only OSError and PkgError, leaving a vendored tree and a live symlink
+        in the discovery path with no lock entry.
+        """
+        if not stat_ok(f.exists, False, str(f)):
+            return []
+        return read_text(f, str(f)).splitlines()
+
     def exclude_add(self, rel: str) -> bool:
         f = self._exclude_file()
         if f is None:
             return False
         f.parent.mkdir(parents=True, exist_ok=True)
-        lines = f.read_text(encoding="utf-8").splitlines() if f.exists() else []
+        lines = self._exclude_lines(f)
         if rel in lines:
             return True
         lines.append(rel)
@@ -256,17 +271,17 @@ class Brain:
 
     def exclude_remove(self, rel: str) -> bool:
         f = self._exclude_file()
-        if f is None or not f.exists():
+        if f is None or not stat_ok(f.exists, False, str(f)):
             return False
-        lines = [ln for ln in f.read_text(encoding="utf-8").splitlines() if ln != rel]
+        lines = [ln for ln in self._exclude_lines(f) if ln != rel]
         f.write_text(("\n".join(lines) + "\n") if lines else "", encoding="utf-8")
         return True
 
     def exclude_has(self, rel: str) -> bool:
         f = self._exclude_file()
-        if f is None or not f.exists():
+        if f is None:
             return False
-        return rel in f.read_text(encoding="utf-8").splitlines()
+        return rel in self._exclude_lines(f)
 
     # ---- lock ------------------------------------------------------------
     @contextlib.contextmanager
@@ -376,10 +391,16 @@ class Brain:
     def known_principals(self) -> dict[str, Path]:
         """principal -> the allowed-signers file that declares it.
 
-        A file this cannot read is SKIPPED, not fatal. That is deliberate and it is
-        fail-closed: dropping a signers file can only shrink the set of principals,
-        so the worst case is a package refused for a signer nobody can vouch for,
-        never one accepted. Raising here would be worse than useless, because
+        A file this cannot read is SKIPPED, not fatal. That is deliberate and no
+        caller reads an empty set as permissive: every consumer turns an unknown
+        signer into a refusal. One measured exception to "it can only shrink the
+        set", because the absolute claim is false: principals are first-wins, public
+        before private, so a principal declared in BOTH files with different keys
+        answers with the private key when the public file is unreadable. Deleting
+        the public file does the same thing and always has, since signer_files gates
+        on exists, and only someone who can write the gitignored private file can
+        reach it, who could add a principal instead. The precedence is a preference,
+        not a boundary. Raising here would be worse than useless, because
         `registry/pkg-signers.pub` is tracked: one stray byte in a comment line
         would take down verify for every package at once, which is how QA cycle 5
         found this (the read caught OSError but not the UnicodeDecodeError a
@@ -566,6 +587,30 @@ def read_text(path: Path, label: str) -> str:
         raise PkgError(f"{label} cannot be read: {type(e).__name__}: {e}")
 
 
+def read_bytes(path: Path, label: str) -> bytes:
+    """The same seam for bytes. No decode, so no ValueError to catch."""
+    try:
+        return path.read_bytes()
+    except OSError as e:
+        raise PkgError(f"{label} cannot be read: {type(e).__name__}: {e}")
+
+
+def stat_ok(fn, default, label: str):
+    """Run one stat-family call, or turn its OSError into PkgError.
+
+    `default` is what an ABSENT path answers, and it is passed rather than assumed
+    because the callers disagree: `exists` wants False, `is_dir` wants False, and a
+    caller that must know the difference passes None. What this never does is answer
+    the default for a path it could not stat. pathlib swallows ENOENT and ENOTDIR
+    itself and raises EACCES, and six cycles of QA all landed on the same fact: not
+    knowing what is on disk is a failure to report, never a pass.
+    """
+    try:
+        return fn()
+    except OSError as e:
+        raise PkgError(f"{label} cannot be read: {type(e).__name__}: {e}")
+
+
 def _parse_json(text: str, label: str):
     try:
         return json.loads(text)
@@ -627,7 +672,7 @@ def _verify_signature(brain: Brain, mpath: Path, sig_path: Path) -> str:
     if not principals:
         raise PkgError(f"no allowed-signers file: add {PUBLIC_SIGNERS_REL} "
                        f"or {PRIVATE_SIGNERS_REL}")
-    payload = mpath.read_bytes()
+    payload = read_bytes(mpath, mpath.name)
     last = ""
     for principal, signers_file in principals.items():
         cp = _run(["ssh-keygen", "-Y", "verify", "-f", str(signers_file),
@@ -919,13 +964,28 @@ def install_skill(brain: Brain, source: str, subpath: str | None, ref: str,
                     "installed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 })
                 brain.save_lock(lock)
-        except (OSError, PkgError) as e:
+        except BaseException as e:
+            # BaseException, and the width is the point. The docstring above promises
+            # that everything below the staging line is unwound on ANY failure, and
+            # `(OSError, PkgError)` did not keep that promise: a UnicodeDecodeError
+            # out of .git/info/exclude walked straight past it and left a vendored
+            # tree with a live symlink and no lock entry, which is the exact state
+            # scan_unlocked calls the most dangerous of all (QA cycle 6). A
+            # KeyboardInterrupt mid-install has the same consequence, so it unwinds
+            # too. Nothing is swallowed: PkgError carries the reason out, and
+            # anything that is not an Exception is re-raised after the cleanup, so a
+            # Ctrl-C still stops the program.
             if link.is_symlink():
                 link.unlink()
             if dest.exists():
                 shutil.rmtree(dest, ignore_errors=True)
-            brain.exclude_remove(f"skills/{name}")
-            raise PkgError(f"install of {name} rolled back: {e}")
+            try:
+                brain.exclude_remove(f"skills/{name}")
+            except (OSError, PkgError):
+                pass          # the exclude file is what failed; do not mask the cause
+            if not isinstance(e, Exception):
+                raise
+            raise PkgError(f"install of {name} rolled back: {type(e).__name__}: {e}")
 
     print(f"installed {name} {manifest['version']} (signer {manifest['_signer']})")
     print(f"  tree     {brain.vendor_path(name)}")
@@ -951,7 +1011,7 @@ def install_arm(brain: Brain, source: str, dest: str | None) -> int:
         root_file = brain.root / ARMS_ROOT_REL
         if not root_file.exists():
             raise PkgError(f"no --dest and no {ARMS_ROOT_REL}; say where the arm goes")
-        root = Path(os.path.expanduser(root_file.read_text(encoding="utf-8").strip()))
+        root = Path(os.path.expanduser(read_text(root_file, str(root_file)).strip()))
         target = (root / Path(source.rstrip("/")).name.removesuffix(".git")).resolve()
     if target.exists():
         raise PkgError(f"destination already exists: {target}")
@@ -1238,19 +1298,34 @@ def scan_unlocked(brain: Brain, locked: set[str]) -> list[tuple[str, str]]:
                               f"{LOCK_REL} entry (unlocked package at {p})"))
 
     skills_dir = brain.root / "skills"
-    if skills_dir.is_dir():
-        for p in sorted(skills_dir.iterdir()):
-            if not p.is_symlink() or p.name in locked or p.name in seen_trees:
-                continue
-            target = Path(os.path.normpath(os.path.join(str(p.parent), os.readlink(p))))
-            # Only links that claim to be ours. A symlink the operator made to somewhere
-            # else in his own filesystem is his business, not this primitive's.
-            if target != brain.vendor_path(p.name) or target.exists():
-                continue
-            results.append((WARN, f"{p.name}: skills/{p.name} points at "
-                                  f"{VENDOR_REL}/{p.name}, which does not exist and is in "
-                                  f"no {LOCK_REL} entry (stray link from a half-removed "
-                                  f"install; fix: octo pkg uninstall {p.name})"))
+    try:
+        links = sorted(skills_dir.iterdir()) if skills_dir.is_dir() else []
+    except OSError as e:
+        # The same guard as the vendor loop above. Cycle 5's diagnosis was that the
+        # EACCES check sat one directory too deep; the fix moved it up one level and
+        # stopped there, which is how this survived to cycle 6.
+        links = []
+        results.append((FAIL, f"skills/ cannot be listed ({e}); a stray link there "
+                              f"would be invisible"))
+    for p in links:
+        if not p.is_symlink() or p.name in locked or p.name in seen_trees:
+            continue
+        target = Path(os.path.normpath(os.path.join(str(p.parent), os.readlink(p))))
+        # Only links that claim to be ours. A symlink the operator made to somewhere
+        # else in his own filesystem is his business, not this primitive's.
+        try:
+            target_there = target.exists()
+        except OSError:
+            # The link points into a vendor dir this cannot stat. That is exactly the
+            # half-removed litter this branch exists to report, so report it rather
+            # than assume the tree is there and stay quiet.
+            target_there = False
+        if target != brain.vendor_path(p.name) or target_there:
+            continue
+        results.append((WARN, f"{p.name}: skills/{p.name} points at "
+                              f"{VENDOR_REL}/{p.name}, which does not exist and is in "
+                              f"no {LOCK_REL} entry (stray link from a half-removed "
+                              f"install; fix: octo pkg uninstall {p.name})"))
     return results
 
 
@@ -1346,10 +1421,22 @@ def cmd_uninstall(brain: Brain, name: str) -> int:
     # so a rmtree that could not finish (an unreadable subdirectory, EACCES) left a
     # half-removed install: tree present, symlink gone, lock entry still there. The
     # tree is the part that carries code, so it is the part that must be gone before
-    # anything else is touched; if this raises, nothing was removed and the install
-    # is still whole and still verifiable (QA cycle 5).
+    # anything else is touched. rmtree deletes as it walks, so a failure can leave a
+    # PARTIAL tree rather than nothing (QA cycle 6 corrected the earlier claim that
+    # nothing would be removed); what holds is that the link and the lock entry are
+    # untouched, so the state is over-claiming rather than an invisible stray, and
+    # verify names it as `tree changed since install`.
     if tree_there:
-        shutil.rmtree(dest)
+        try:
+            shutil.rmtree(dest)
+        except OSError as e:
+            # The ordering comment above names exactly this case, and it was still
+            # leaving as a traceback (QA cycle 6). rmtree deletes as it walks, so a
+            # partial tree is possible; verify catches that as `tree changed since
+            # install`, and the lock still says installed, which is the reportable
+            # direction. The link is untouched, so nothing became an unlocked tree.
+            raise PkgError(f"{VENDOR_REL}/{name} could not be removed ({e}); "
+                           f"the install is left as it was, run verify to see it")
     if link.is_symlink():
         link.unlink()
     brain.exclude_remove(f"skills/{name}")
@@ -1390,7 +1477,7 @@ def cmd_hash(brain: Brain, target: str, write: bool) -> int:
     install of that package is refused for a reason nobody can see.
     """
     d = Path(os.path.expanduser(target)).resolve()
-    if not d.is_dir():
+    if not stat_ok(d.is_dir, False, str(d)):
         raise PkgError(f"not a directory: {d}")
     kind = "arm" if (d / MANIFEST_NAME["arm"]).is_file() and not (d / MANIFEST_NAME["skill"]).is_file() else "skill"
     digest = tree_sha256(d, kind)
@@ -1876,6 +1963,22 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_sync(brain)
     except PkgError as e:
         print(f"error: {e}", file=sys.stderr)
+        return 1
+    except OSError as e:
+        # The backstop, and the reason this is the last cycle of its kind. Six QA
+        # rounds each found one more crossing of the filesystem boundary that left
+        # as a traceback instead of a report, and each fix named the site it had
+        # just been shown. Naming sites loses to the next one nobody enumerated.
+        # This does not replace the guards above it: the ones on the way down say
+        # WHICH package failed and let the sweep finish, which is the whole value.
+        # It replaces the traceback with a report for the crossing that was missed,
+        # so a future miss costs a worse message rather than the caller's output.
+        # Deliberately NOT Exception: a TypeError here is a bug in this module and
+        # must keep its traceback, because a bug that reports itself as a refusal is
+        # a bug nobody fixes.
+        print(f"error: {type(e).__name__}: {e}", file=sys.stderr)
+        print("       (an unguarded filesystem crossing; the operation did not "
+              "complete and may have left work half done)", file=sys.stderr)
         return 1
     return 2
 

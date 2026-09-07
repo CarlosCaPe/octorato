@@ -1249,7 +1249,7 @@ class TestQaCycle4(SandboxCase):
                 with self.assertRaises(octo_pkg.PkgError):
                     self.brain.load_lock()
 
-
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
     def test_an_unreadable_file_in_the_tree_does_not_raise(self):
         """tree_sha256 reads every file; a mode-000 one raises PermissionError, which
         is an OSError and was not caught next to PkgError."""
@@ -1354,6 +1354,70 @@ class TestQaCycle5(SandboxCase):
         with self.assertRaises(octo_pkg.PkgError) as caught:
             octo_pkg.tree_sha256(dest, "skill")
         self.assertIn("cannot be read", str(caught.exception))
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_a_cp1252_byte_in_the_git_exclude_unwinds_the_install(self):
+        """The severest of the ten, and the one that broke a stated invariant rather
+        than a report. .git/info/exclude is plain text written by hand and by other
+        tools, so a cp1252 comment in it is ordinary on Windows. It raised
+        UnicodeDecodeError, which is a ValueError, straight past an unwind that
+        caught only (OSError, PkgError), leaving a vendored tree and a live symlink
+        in the always-on discovery path with no lock entry."""
+        import contextlib, io
+        key = self.mint_key()
+        pkg = self.stage("signed")
+        self.sign(key, pkg)
+        exclude = self.root / ".git" / "info" / "exclude"
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        exclude.write_bytes(b"# ruta con acento: caf\xe9/\n")
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf), contextlib.redirect_stdout(io.StringIO()):
+            rc = octo_pkg.main(["--brain", str(self.root), "install", str(pkg)])
+        self.assertEqual(rc, 1)
+        self.assertIn("rolled back", buf.getvalue())
+        self.assertFalse(self.brain.vendor_path("sample-package").exists(),
+                         "an unwound install leaves no tree in the discovery path")
+        self.assertFalse(self.brain.link_path("sample-package").is_symlink())
+        self.assertEqual(self.brain.load_lock()["packages"], [])
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_an_unreadable_skills_dir_is_reported_not_raised(self):
+        """The guard went onto the vendor loop and stopped there, so the second loop
+        over skills/ kept the shape the first one had just lost."""
+        import contextlib, io
+        self._install_signed("skillsdir")
+        skills = self.root / "skills"
+        os.chmod(skills, 0o000)
+        self.addCleanup(lambda: os.chmod(skills, 0o755))
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "verify", "--all"])
+        self.assertEqual(rc, 1)
+        self.assertIn("cannot be listed", buf.getvalue())
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_uninstall_reports_a_tree_it_cannot_remove(self):
+        """The ordering comment names an unreadable subdirectory as its motivating
+        case, and that case still left as a traceback. A test that only asserts the
+        happy-path order is why it survived (QA cycle 6 said so)."""
+        import contextlib, io
+        name, dest = self._install_signed("stuck")
+        sub = dest / "sub"
+        sub.mkdir()
+        (sub / "x.txt").write_text("x", encoding="utf-8")
+        os.chmod(sub, 0o000)
+        self.addCleanup(lambda: os.chmod(sub, 0o755))
+        if os.access(sub, os.R_OK):
+            self.skipTest("running as root, EACCES is not enforceable")
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf), contextlib.redirect_stdout(io.StringIO()):
+            rc = octo_pkg.main(["--brain", str(self.root), "uninstall", name])
+        self.assertEqual(rc, 1)
+        self.assertIn("could not be removed", buf.getvalue())
+        self.assertTrue(self.brain.link_path(name).is_symlink(),
+                        "the link stays, so nothing became an unlocked tree")
+        self.assertEqual([p["name"] for p in self.brain.load_lock()["packages"]], [name],
+                         "the lock still says installed, which is the reportable direction")
 
     @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
     def test_uninstall_removes_the_tree_before_the_link(self):
