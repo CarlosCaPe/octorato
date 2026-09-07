@@ -15,6 +15,10 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-09-07]: v7.2.3
+- docs(i18n): English descriptions for 71 skills and 10 script headers (#273)
+- docs(changelog): backfill v7.2.2 (#272)
+
 ## [2026-09-06]: v7.2.2
 - docs(changelog): backfill v7.2.1 + triage decision for the session-isolation lesson (#271)
 
