@@ -1867,9 +1867,15 @@ def deny_coverage(denies: int, armed_at: float | None, harness_denies: int,
     """
     base = f"{denies} deny(s) in 7 days, all naming a registered rule"
     if armed_at is None:
-        # No commit for the hook: a fresh or shallow clone. Report the count and
-        # claim nothing, rather than reading "no history" as "no refusals".
-        return PASS, base, ""
+        # No window: a fresh or shallow clone, no projects dir, or a subtree the walk
+        # could not read. Claiming nothing is right, and SAYING nothing is not: this
+        # used to print the same PASS line as a comparison that ran and came back
+        # clean, which is cycle 1's own thesis reappearing one level up, inside the
+        # function that fixed it. Three roads reach here now and one of them is a
+        # directory that merely vanishes mid-walk, with no attacker involved, so a
+        # reader has to be able to tell "compared and clean" from "never compared".
+        return PASS, (f"{base}; the harness record could not be read, so the reflex "
+                      f"was NOT compared against it"), ""
     if harness_denies == 0:
         if other_denies and denies == 0:
             # The automode family is the only one this harness was measured to fire
@@ -2021,15 +2027,16 @@ def harness_projects_dir() -> Path | None:
     try:
         if not projects.is_dir():
             return None
-        # is_dir succeeds on a directory this cannot LIST, and glob then swallows the
-        # PermissionError and yields nothing: a real arm date next to a zero produced
-        # by reading nothing, which is the sentence this whole check exists to
-        # abolish. Probe the listing, not the stat (QA cycle 2, same shape as the
-        # rglob blind spot found in the packages work the same day).
-        next(projects.iterdir(), None)
     except OSError:
         return None
     return projects
+    # NO listing probe here any more. Cycle 2 added one because is_dir succeeds on a
+    # directory this cannot list and glob then swallowed the PermissionError. Cycle 3
+    # replaced the glob with an error-aware walk, which catches the unreadable root
+    # as well as every subtree, so the probe stopped being what protects the
+    # behaviour while its comment still claimed it was, and its test stayed green
+    # with the probe deleted. A guard whose rationale no longer describes what guards
+    # the behaviour is worse than no guard: it tells the next reader to stop looking.
 
 
 def _denial_kind(node) -> str | None:

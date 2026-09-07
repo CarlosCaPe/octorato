@@ -304,13 +304,20 @@ class TestTheFourOutcomesReadDifferently(unittest.TestCase):
         self.assertIn("9 deny(s)", text)
         self.assertIn("12 harness refusal(s)", text)
 
-    def test_a_brain_with_no_arm_date_claims_nothing(self):
-        """No commit for the hook means no window, and no window means no verdict.
-        Reading `no history` as `no refusals` would be an invented pass."""
+    def test_a_brain_with_no_arm_date_says_it_did_not_compare(self):
+        """No window means no verdict, and it also has to mean no SILENCE. This
+        assertion was inverted: it REQUIRED the line to say nothing about the
+        harness, so `never compared` and `compared and clean` rendered the same
+        PASS. That is this check's own thesis failing inside the function that
+        fixed it, and three roads now reach it, one of them a directory that
+        vanishes mid-walk with nobody attacking anything (QA cycle 4)."""
         status, text, _ = doctor.deny_coverage(0, None, 0)
-        self.assertEqual(status, doctor.PASS)
-        self.assertNotIn("unexercised", text)
-        self.assertNotIn("harness", text)
+        self.assertEqual(status, doctor.PASS, "it still claims no verdict")
+        self.assertIn("could not be read", text)
+        self.assertNotIn("unexercised", text, "that is the OTHER state's sentence")
+        _, clean_text, _ = doctor.deny_coverage(0, 1_700_000_000.0, 0)
+        self.assertNotEqual(text, clean_text,
+                            "a reader must be able to tell the two apart")
 
     def test_the_warn_survives_the_pure_function(self):
         status, text, hint = doctor.deny_coverage(0, 1_700_000_000.0, 0, 7)
