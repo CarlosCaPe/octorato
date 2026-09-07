@@ -505,13 +505,15 @@ def tree_sha256(pkg_dir: Path, kind: str = "skill") -> str:
       empty directories   a directory carries no bytes and no path of its own in the
                           digest, so adding or removing an EMPTY one is invisible. It
                           also carries nothing: no file, no code, nothing the runtime
-                          can load. A non-empty directory is covered through the paths
-                          of the files inside it, with one exception QA measured: an
-                          unlistable directory (mode 000) is skipped silently by rglob,
-                          so its contents are outside the digest for as long as it
-                          stays unreadable. Nothing loads from it while that is true,
-                          and it flips to a hash change the moment it becomes
-                          readable, so it hides bytes rather than running them.
+                          can load. A non-empty directory IS covered, through the
+                          paths of the files inside it, with no exception: an
+                          unlistable one is refused outright by _walk_or_fail. The
+                          earlier text here said such a directory was skipped and
+                          harmless, and both halves were wrong. `chmod 111` leaves
+                          every file in it readable by exact path, so the contents
+                          were loadable AND outside the digest, and verify printed
+                          PASS over them. That was the guarantee failing, not a
+                          documented limit.
       timestamps, owner   mtime, uid and gid are not hashed. They are properties of the
                           copy, not of the package, and every copytree rewrites them.
       the mode's other    group, other, setuid, setgid and sticky bits. On the vendor
@@ -620,6 +622,23 @@ def read_text(path: Path, label: str) -> str:
         return path.read_text(encoding="utf-8")
     except (OSError, ValueError) as e:
         raise PkgError(f"{label} cannot be read: {type(e).__name__}: {e}")
+
+
+def resolve_or_fail(path: Path, label: str) -> Path:
+    """`Path.resolve()`, or PkgError. The third crossing family, and the last.
+
+    pathlib turns a symlink loop into a RuntimeError, not an OSError, so
+    "filesystem crossing" and "OSError" are not the same set even inside the
+    standard library. QA found that at one call site, the fix named that site, and
+    the next cycle found the identical bug one verb over in `hash`. That is the
+    losing move this file has already made six times, so `.resolve()` joins
+    `read_text` and `stat_ok` as a seam instead: the family is closed rather than
+    the instance.
+    """
+    try:
+        return path.resolve()
+    except (OSError, RuntimeError) as e:
+        raise PkgError(f"{label} cannot be resolved: {type(e).__name__}: {e}")
 
 
 def read_bytes(path: Path, label: str) -> bytes:
@@ -909,7 +928,7 @@ def fetch_source(source: str, subpath: str | None, ref: str | None, tmp: Path) -
     the test is the code that runs against GitHub.
     """
     if _is_local_source(source):
-        root = Path(os.path.expanduser(source)).resolve()
+        root = resolve_or_fail(Path(os.path.expanduser(source)), source)
         pkg = (root / subpath) if subpath else root
         if not pkg.is_dir():
             raise PkgError(f"package path not found: {pkg}")
@@ -1046,7 +1065,7 @@ def install_arm(brain: Brain, source: str, dest: str | None) -> int:
     knows where it is.
     """
     if dest:
-        target = Path(os.path.expanduser(dest)).resolve()
+        target = resolve_or_fail(Path(os.path.expanduser(dest)), dest)
     else:
         root_file = brain.root / ARMS_ROOT_REL
         if not root_file.exists():
@@ -1218,6 +1237,19 @@ def _skill_ladder(brain: Brain, entry: dict, dest: Path) -> list[str]:
     return problems
 
 
+def lock_kind(entry: dict) -> str:
+    """What a lock entry says it is, with the schema's default applied ONCE.
+
+    `schemas/skill-manifest.schema.json` says absent means skill, and three readers
+    disagreed about that: verify applied the default, sync and lock compared to
+    "skill" directly and therefore skipped an entry with no `kind`. The visible
+    effect was a prescription that does nothing: verify printed `absent on disk,
+    fix: sync`, and sync skipped that entry forever (QA cycle 8). One default, one
+    place.
+    """
+    return str(entry.get("kind") or "skill")
+
+
 def verify_entry(brain: Brain, entry: dict) -> tuple[str, str]:
     """Return (status, message) for one lock entry. Never raises.
 
@@ -1237,7 +1269,7 @@ def verify_entry(brain: Brain, entry: dict) -> tuple[str, str]:
     the declared kind, is what selects the ladder.
     """
     name = str(entry.get("name") or "?")
-    lock_kind = entry.get("kind") or "skill"
+    declared_kind = lock_kind(entry)
     dest = brain.vendor_path(name)
 
     try:
@@ -1257,7 +1289,7 @@ def verify_entry(brain: Brain, entry: dict) -> tuple[str, str]:
         return FAIL, f"{name}: {VENDOR_REL}/{name} is a symlink, not the package tree"
 
     if not on_disk_exists:
-        if lock_kind == "arm":
+        if declared_kind == "arm":
             # arms are not vendored into the brain; presence is the arm repo's own
             # business (arm isolation). The lock records them, verify does not reach in.
             return PASS, f"{name}: arm registered (validated, not signed)"
@@ -1273,10 +1305,10 @@ def verify_entry(brain: Brain, entry: dict) -> tuple[str, str]:
     if on_disk is None:
         problems.append(f"{VENDOR_REL}/{name} exists but declares no readable kind; "
                         f"nothing there says what this tree is")
-    elif on_disk != lock_kind:
+    elif on_disk != declared_kind:
         problems.append(f"installed manifest says kind '{on_disk}', "
-                        f"{LOCK_REL} says '{lock_kind}'")
-    if lock_kind == "arm":
+                        f"{LOCK_REL} says '{declared_kind}'")
+    if declared_kind == "arm":
         # Both may even agree that it is an arm, and it is still wrong: an arm is a
         # repo of the operator's own, cloned to its own path and registered in
         # arms-paths.json. A copy of one under skills/vendor is a directory in the
@@ -1516,7 +1548,7 @@ def cmd_hash(brain: Brain, target: str, write: bool) -> int:
     come from the same function the installer will use, or the two disagree and every
     install of that package is refused for a reason nobody can see.
     """
-    d = Path(os.path.expanduser(target)).resolve()
+    d = resolve_or_fail(Path(os.path.expanduser(target)), target)
     if not stat_ok(d.is_dir, False, str(d)):
         raise PkgError(f"not a directory: {d}")
     kind = "arm" if (d / MANIFEST_NAME["arm"]).is_file() and not (d / MANIFEST_NAME["skill"]).is_file() else "skill"
@@ -1557,7 +1589,7 @@ def cmd_lock(brain: Brain) -> int:
     lock = brain.load_lock()
     changed, refused = [], []
     for entry in lock["packages"]:
-        if entry.get("kind") != "skill":
+        if lock_kind(entry) != "skill":
             continue
         name = entry["name"]
         dest = brain.vendor_path(name)
@@ -1601,7 +1633,7 @@ def cmd_sync(brain: Brain) -> int:
     restored, warned = 0, []
     for entry in list(lock["packages"]):
         name = str(entry.get("name") or "?")
-        if entry.get("kind") != "skill":
+        if lock_kind(entry) != "skill":
             continue
         dest = brain.vendor_path(name)
         try:
@@ -2017,7 +2049,7 @@ def main(argv: list[str] | None = None) -> int:
     except PkgError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
-    except (OSError, UnicodeDecodeError) as e:
+    except (OSError, UnicodeDecodeError, RuntimeError) as e:
         # The backstop, and the reason this is the last cycle of its kind. Six QA
         # rounds each found one more crossing of the filesystem boundary that left
         # as a traceback instead of a report, and each fix named the site it had
@@ -2026,7 +2058,8 @@ def main(argv: list[str] | None = None) -> int:
         # WHICH package failed and let the sweep finish, which is the whole value.
         # It replaces the traceback with a report for the crossing that was missed,
         # so a future miss costs a worse message rather than the caller's output.
-        # UnicodeDecodeError is named alongside OSError because it is the class that
+        # RuntimeError is here because pathlib raises it for a symlink loop, and
+        # UnicodeDecodeError because it is the class that
         # actually recurred, twice, and it is a ValueError: the net that caught only
         # OSError would not have held the very thing it was built for. Still NOT
         # Exception: a TypeError here is a bug in this module and must keep its

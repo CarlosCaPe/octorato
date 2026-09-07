@@ -1400,6 +1400,89 @@ class TestQaCycle5(SandboxCase):
         self.assertEqual(rc, 1, "PASS over an unhashed file is the guarantee failing")
         self.assertIn("cannot be listed", buf.getvalue())
 
+    def test_every_resolve_site_refuses_a_symlink_loop(self):
+        """QA cycle 7 found this at one call site, the fix named that site, and cycle
+        8 found the identical bug one verb over in `hash`. That is the losing move
+        this file has made six times, so .resolve() is a seam now and the test walks
+        the family rather than the instance."""
+        import contextlib, io
+        loop = self.tmp / "loopdir"
+        os.symlink(loop, loop)
+        for argv in (["--brain", str(loop), "verify", "--all"],
+                     ["--brain", str(self.root), "hash", str(loop)],
+                     ["--brain", str(self.root), "install", "--kind", "arm",
+                      "--dest", str(loop), "owner/repo"]):
+            with self.subTest(verb=argv[-2] if len(argv) > 3 else argv[0]):
+                buf = io.StringIO()
+                with contextlib.redirect_stderr(buf), contextlib.redirect_stdout(io.StringIO()):
+                    rc = octo_pkg.main(argv)          # must not raise
+                self.assertEqual(rc, 1)
+                self.assertIn("cannot be resolved", buf.getvalue())
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_sync_unwinds_a_restore_it_cannot_finish(self):
+        """G2 shipped without a test. sync's rollback caught only OSError while its
+        comment claimed it matched install's, so when exclude_add started raising
+        PkgError through the seam, sync reported a package skipped that it had in
+        fact restored whole, tree and symlink live."""
+        import contextlib, io
+        name, dest = self._install_signed("syncroll")
+        link = self.brain.link_path(name)
+        shutil.rmtree(dest)
+        link.unlink()
+        exclude = self.root / ".git" / "info" / "exclude"
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        exclude.write_bytes(b"# ruta con acento: caf\xe9/\n")
+        with contextlib.redirect_stdout(io.StringIO()):
+            octo_pkg.main(["--brain", str(self.root), "sync"])
+        self.assertFalse(dest.exists(), "a skipped restore must leave no tree behind")
+        self.assertFalse(link.is_symlink())
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_a_failing_cleanup_does_not_lose_the_original_cause(self):
+        """G3 shipped without a test. The unwind wrapped only the exclude call, so a
+        bare stat inside it could skip the rollback AND drop the reason, leaving the
+        tree-plus-link-no-lock state the whole cycle exists to prevent."""
+        import contextlib, io
+        key = self.mint_key()
+        pkg = self.stage("signed")
+        self.sign(key, pkg)
+        real_add = octo_pkg.Brain.exclude_add
+        def boom(self_, rel):
+            raise PermissionError("ORIGINAL CAUSE")
+        octo_pkg.Brain.exclude_add = boom
+        self.addCleanup(lambda: setattr(octo_pkg.Brain, "exclude_add", real_add))
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf), contextlib.redirect_stdout(io.StringIO()):
+            rc = octo_pkg.main(["--brain", str(self.root), "install", str(pkg)])
+        self.assertEqual(rc, 1)
+        self.assertIn("ORIGINAL CAUSE", buf.getvalue(), "the cause must survive")
+        self.assertIn("rolled back", buf.getvalue())
+        self.assertFalse(self.brain.vendor_path("sample-package").exists())
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_an_entry_with_no_kind_is_restored_not_prescribed_forever(self):
+        """The schema says absent means skill, and three readers disagreed: verify
+        applied the default, sync and lock compared to "skill" directly. So verify
+        printed `absent on disk, fix: sync` and sync skipped that entry forever, a
+        prescription that does nothing (QA cycle 8)."""
+        import contextlib, io
+        name, dest = self._install_signed("nokind")
+        link = self.brain.link_path(name)
+        lock = json.loads(self.brain.lock_path.read_text(encoding="utf-8"))
+        for entry in lock["packages"]:
+            entry.pop("kind", None)
+            entry["source"] = str(self.tmp / "src-nokind")
+        self.brain.lock_path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+        shutil.rmtree(dest)
+        link.unlink()
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            octo_pkg.main(["--brain", str(self.root), "sync"])
+        self.assertIn("restored", buf.getvalue())
+        self.assertTrue(dest.is_dir(), "the entry verify prescribes sync for must be "
+                                       "the entry sync restores")
+
     def test_the_brain_argument_survives_a_symlink_loop(self):
         """pathlib turns ELOOP into RuntimeError, not OSError, so this call sitting
         outside the backstop meant a traceback for a bad argument."""
