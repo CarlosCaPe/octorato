@@ -1147,15 +1147,22 @@ class TestQaCycle4(SandboxCase):
         for i, value in enumerate((["skill"], {}, 42, True)):
             with self.subTest(kind=value):
                 name, dest = self._install_signed("kind%d" % i)
-                man = json.loads((dest / "skill.json").read_text(encoding="utf-8"))
-                man["kind"] = value
-                self._rewrite_manifest(dest, json.dumps(man))
-                out = self._verify_json()
-                self.assertFalse(out["ok"])
-                hit = [f for f in out["fail"] if f.startswith(name)]
-                self.assertEqual(len(hit), 1, out["fail"])
-                self.assertIn("no readable kind", hit[0])
-                octo_pkg.main(["--brain", str(self.root), "uninstall", name])
+                try:
+                    man = json.loads((dest / "skill.json").read_text(encoding="utf-8"))
+                    man["kind"] = value
+                    self._rewrite_manifest(dest, json.dumps(man))
+                    out = self._verify_json()
+                    self.assertFalse(out["ok"])
+                    hit = [f for f in out["fail"] if f.startswith(name)]
+                    self.assertEqual(len(hit), 1, out["fail"])
+                    self.assertIn("no readable kind", hit[0])
+                finally:
+                    # in a finally, so one failing subtest does not leave its package
+                    # installed and make the NEXT subtest fail for a borrowed reason.
+                    # QA cycle 4 caught exactly that: `42` and `True` never crashed on
+                    # the old tip, they only errored there by inheriting subtest 0's
+                    # wreckage. A subtest has to fail for its own input or it is noise.
+                    octo_pkg.main(["--brain", str(self.root), "uninstall", name])
 
     @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
     def test_a_manifest_that_is_not_an_object_does_not_raise(self):
@@ -1164,12 +1171,83 @@ class TestQaCycle4(SandboxCase):
         for i, raw in enumerate(("[]", '"skill"', "42", "null")):
             with self.subTest(manifest=raw):
                 name, dest = self._install_signed("shape%d" % i)
-                self._rewrite_manifest(dest, raw)
-                out = self._verify_json()
-                self.assertFalse(out["ok"])
-                hit = [f for f in out["fail"] if f.startswith(name)]
-                self.assertEqual(len(hit), 1, out["fail"])
-                octo_pkg.main(["--brain", str(self.root), "uninstall", name])
+                try:
+                    self._rewrite_manifest(dest, raw)
+                    out = self._verify_json()
+                    self.assertFalse(out["ok"])
+                    hit = [f for f in out["fail"] if f.startswith(name)]
+                    self.assertEqual(len(hit), 1, out["fail"])
+                finally:
+                    octo_pkg.main(["--brain", str(self.root), "uninstall", name])
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_no_byte_sequence_in_a_manifest_reaches_a_traceback(self):
+        """QA cycle 4, findings 1 and 2. Three cycles in a row found another input
+        class escaping as an exception, so the fix is one seam (`read_json`) rather
+        than another except clause, and this test walks the classes that broke it:
+        bytes that are not UTF-8, and syntax deep enough to exhaust the parser's
+        recursion. Both are ValueError-or-worse on the way from a path to an object.
+        """
+        deep = "[" * 200000 + "]" * 200000
+        for i, raw in enumerate((b"\xff", b"\xfe\xff{}", deep.encode(), b"")):
+            with self.subTest(payload=raw[:12]):
+                name, dest = self._install_signed("bytes%d" % i)
+                try:
+                    (dest / "skill.json").write_bytes(raw)
+                    out = self._verify_json()          # must not raise
+                    self.assertFalse(out["ok"])
+                    hit = [f for f in out["fail"] if f.startswith(name)]
+                    self.assertEqual(len(hit), 1, out["fail"])
+                finally:
+                    octo_pkg.main(["--brain", str(self.root), "uninstall", name])
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_an_unreadable_package_directory_does_not_raise(self):
+        """QA cycle 4, finding 3. `Path.is_file` swallows ENOENT and ENOTDIR, not
+        EACCES, so a mode-000 package DIRECTORY raised from the stat itself, outside
+        every try. This is the unreadable-file finding one level up."""
+        name, dest = self._install_signed("dir000")
+        os.chmod(dest, 0o000)
+        self.addCleanup(lambda: os.chmod(dest, 0o755))
+        out = self._verify_json()                      # must not raise
+        self.assertFalse(out["ok"])
+        self.assertEqual(len(out["fail"]), 1, out["fail"])
+        self.assertIn(name, out["fail"][0])
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_a_lock_field_of_the_wrong_type_is_refused_by_the_reader(self):
+        """QA cycle 4, findings 4 and 6. The lock is tracked and unsigned, so its
+        fields arrive from a remote like any other file. A list-valued `signer`
+        reached a set membership test and raised TypeError; a list-valued `source`
+        reached .startswith inside sync, which `ai-pull` runs. Both are type-checked
+        at the ONE place the file is read, not at each use."""
+        self._install_signed("locktype")
+        for field, value in (("signer", ["octorato-release"]), ("signer", {"a": 1}),
+                             ("source", ["x"]), ("tree_sha256", 7)):
+            with self.subTest(field=field, value=value):
+                lock = json.loads(self.brain.lock_path.read_text(encoding="utf-8"))
+                good = json.dumps(lock, indent=2) + "\n"
+                lock["packages"][0][field] = value
+                self.brain.lock_path.write_text(json.dumps(lock, indent=2) + "\n",
+                                                encoding="utf-8")
+                try:
+                    with self.assertRaises(octo_pkg.PkgError) as caught:
+                        self.brain.load_lock()
+                    self.assertIn(field, str(caught.exception))
+                finally:
+                    self.brain.lock_path.write_text(good, encoding="utf-8")
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_a_lockfile_of_unreadable_bytes_is_refused_not_a_traceback(self):
+        """QA cycle 4, finding 5. Same seam, the other tracked file."""
+        self._install_signed("lockbytes")
+        good = self.brain.lock_path.read_bytes()
+        self.addCleanup(lambda: self.brain.lock_path.write_bytes(good))
+        for raw in (b"\xff", ("[" * 200000 + "]" * 200000).encode()):
+            with self.subTest(payload=raw[:8]):
+                self.brain.lock_path.write_bytes(raw)
+                with self.assertRaises(octo_pkg.PkgError):
+                    self.brain.load_lock()
 
     @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
     def test_an_unreadable_file_in_the_tree_does_not_raise(self):

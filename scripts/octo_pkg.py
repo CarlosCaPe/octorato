@@ -321,10 +321,7 @@ class Brain:
         """
         if not self.lock_path.exists():
             return {"version": 1, "packages": []}
-        try:
-            data = json.loads(self.lock_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as e:
-            raise PkgError(f"{LOCK_REL} does not parse: {e}")
+        data = read_json(self.lock_path, LOCK_REL)
         if not isinstance(data, dict) or not isinstance(data.get("packages"), list):
             raise PkgError(f"{LOCK_REL} is not a lockfile object with a packages list")
         seen = set()
@@ -340,6 +337,15 @@ class Brain:
             seen.add(name)
             if entry.get("kind") not in (None, "skill", "arm"):
                 raise PkgError(f"{LOCK_REL} entry {name}: kind must be skill or arm")
+            # Every field a consumer treats as a string is type-checked HERE, at the
+            # one place the file is read, rather than at each use. `signer` reached a
+            # set membership test and a list value raised TypeError; `source` reached
+            # .startswith in sync. The lock is tracked and unsigned, so these arrive
+            # from a remote like any other file (QA cycle 4).
+            for field in ("signer", "source", "tree_sha256", "version"):
+                value = entry.get(field)
+                if value is not None and not isinstance(value, str):
+                    raise PkgError(f"{LOCK_REL} entry {name}: {field} must be a string")
         return data
 
     def save_lock(self, lock: dict) -> None:
@@ -434,7 +440,12 @@ def tree_sha256(pkg_dir: Path, kind: str = "skill") -> str:
                           digest, so adding or removing an EMPTY one is invisible. It
                           also carries nothing: no file, no code, nothing the runtime
                           can load. A non-empty directory is covered through the paths
-                          of the files inside it.
+                          of the files inside it, with one exception QA measured: an
+                          unlistable directory (mode 000) is skipped silently by rglob,
+                          so its contents are outside the digest for as long as it
+                          stays unreadable. Nothing loads from it while that is true,
+                          and it flips to a hash change the moment it becomes
+                          readable, so it hides bytes rather than running them.
       timestamps, owner   mtime, uid and gid are not hashed. They are properties of the
                           copy, not of the package, and every copytree rewrites them.
       the mode's other    group, other, setuid, setgid and sticky bits. On the vendor
@@ -494,15 +505,43 @@ def tree_sha256(pkg_dir: Path, kind: str = "skill") -> str:
 # manifest + signature
 # --------------------------------------------------------------------------
 
+def read_json(path: Path, label: str):
+    """Read one JSON file, or raise PkgError. The ONLY way this module reads JSON.
+
+    Three QA cycles in a row found the same shape: another input class escaping as a
+    traceback instead of a reported failure. First an unhashable `kind`, then a
+    manifest that parses but is not an object, then invalid UTF-8, 200k nested
+    brackets, an unreadable directory. Catching them one at a time loses to the next
+    one nobody thought of, so the fix is a seam rather than a longer except clause:
+    every read goes through here, and everything that can go wrong on the way from a
+    path to a Python object comes back as PkgError, which every caller already
+    reports as a FAIL naming the package.
+
+    OSError covers the file (missing, unreadable, a directory, EIO). ValueError
+    covers the bytes and the syntax, since both UnicodeDecodeError and
+    JSONDecodeError are ValueError. RecursionError is neither, and deep nesting
+    reaches it before the parser gives up, so it is named. The shape is NOT checked
+    here: `[]` and `42` are valid JSON, and what a given caller needs is the
+    caller's business.
+    """
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError) as e:
+        raise PkgError(f"{label} does not parse: {type(e).__name__}: {e}")
+
+
 def load_manifest(pkg_dir: Path, kind: str) -> tuple[Path, dict]:
     mpath = pkg_dir / MANIFEST_NAME[kind]
-    if not mpath.is_file():
-        raise PkgError(f"{MANIFEST_NAME[kind]} not found in {pkg_dir}")
     try:
-        data = json.loads(mpath.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as e:
-        raise PkgError(f"{MANIFEST_NAME[kind]} does not parse: {e}")
-    return mpath, data
+        is_file = mpath.is_file()
+    except OSError as e:
+        # is_file swallows ENOENT and ENOTDIR, not EACCES: a mode-000 package
+        # DIRECTORY raised PermissionError from the stat itself, outside every
+        # try in the caller (QA cycle 4).
+        raise PkgError(f"{MANIFEST_NAME[kind]} in {pkg_dir} cannot be read: {e}")
+    if not is_file:
+        raise PkgError(f"{MANIFEST_NAME[kind]} not found in {pkg_dir}")
+    return mpath, read_json(mpath, MANIFEST_NAME[kind])
 
 
 def validate_manifest(brain: Brain, mpath: Path) -> None:
@@ -517,9 +556,9 @@ def validate_manifest(brain: Brain, mpath: Path) -> None:
             f"jsonschema is not importable ({e}); a manifest cannot be validated and "
             f"an unvalidated manifest is never installed. Install it: "
             f"python3 -m pip install --user jsonschema (it is in requirements.txt)")
-    schema = json.loads(brain.schema_path.read_text(encoding="utf-8"))
+    schema = read_json(brain.schema_path, "the manifest schema")
     validator = Draft202012Validator(schema)
-    data = json.loads(mpath.read_text(encoding="utf-8"))
+    data = read_json(mpath, mpath.name)
     errors = sorted(validator.iter_errors(data), key=lambda e: list(e.path))
     if errors:
         first = errors[0]
@@ -895,10 +934,9 @@ def install_arm(brain: Brain, source: str, dest: str | None) -> int:
     cfg = brain.root / ARMS_PATHS_REL
     arms = {}
     if cfg.exists():
-        try:
-            arms = json.loads(cfg.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            raise PkgError(f"{ARMS_PATHS_REL} does not parse; fix it before registering an arm")
+        arms = read_json(cfg, ARMS_PATHS_REL)
+        if not isinstance(arms, dict):
+            raise PkgError(f"{ARMS_PATHS_REL} is not an object; fix it before registering an arm")
     try:
         rel = str(target.relative_to(Path.home()))
     except ValueError:
@@ -945,11 +983,16 @@ def installed_kind(dest: Path) -> str | None:
     """
     for kind in ("skill", "arm"):
         mpath = dest / MANIFEST_NAME[kind]
-        if not mpath.is_file():
-            continue
         try:
-            data = json.loads(mpath.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+            if not mpath.is_file():
+                continue
+        except OSError:
+            # a mode-000 package directory: the stat itself raises EACCES, which
+            # is_file does not swallow. Nothing readable says what this tree is.
+            return None
+        try:
+            data = read_json(mpath, MANIFEST_NAME[kind])
+        except PkgError:
             return None
         if not isinstance(data, dict):
             # `[]`, `"skill"`, `42` and `null` all parse as JSON. A manifest that is
@@ -1281,7 +1324,9 @@ def cmd_hash(brain: Brain, target: str, write: bool) -> int:
     mpath = d / MANIFEST_NAME[kind]
     if not mpath.is_file():
         raise PkgError(f"--write needs {MANIFEST_NAME[kind]} in {d}")
-    manifest = json.loads(mpath.read_text(encoding="utf-8"))
+    manifest = read_json(mpath, MANIFEST_NAME[kind])
+    if not isinstance(manifest, dict):
+        raise PkgError(f"{MANIFEST_NAME[kind]} in {d} is not a JSON object")
     manifest["tree_sha256"] = digest
     mpath.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"embedded in {mpath}")
