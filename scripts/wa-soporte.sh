@@ -113,8 +113,8 @@ try:
     if menciones:
         cuerpo["mentions"] = menciones
     b64 = base64.b64encode(json.dumps(cuerpo).encode()).decode()
-    # El borrado del temporal remoto va en trap: si el envio falla, el archivo
-    # de un cliente NO se queda tirado en el servidor.
+    # Remote temp file deletion goes in a trap: if the send fails, a client's
+    # file is NOT left lying on the server.
     q_dir = shlex.quote(destino_remoto)
     q_uri = shlex.quote(s3_uri)
     q_dst = shlex.quote(f"{destino_remoto}/{nombre}")
@@ -170,8 +170,8 @@ if menciones:
 datos = json.dumps(cuerpo).encode()
 
 if os.environ.get("WA_VIA") == "ssm":
-    # Sin tunel local: curl EN el servidor via SSM. El JSON viaja en base64
-    # para que ninguna comilla se rompa en el camino shell -> SSM -> shell.
+    # No local tunnel: curl ON the server via SSM. The JSON travels as base64
+    # so no quote breaks along the shell -> SSM -> shell path.
     import base64
     b64 = base64.b64encode(datos).decode()
     aws = ["aws", "--profile", os.environ["WA_PERFIL"], "--region", os.environ["WA_REGION"], "ssm"]
