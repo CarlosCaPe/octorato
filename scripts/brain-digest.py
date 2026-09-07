@@ -262,13 +262,80 @@ def section_finops_routing(days: int = 7) -> dict:
         return {"available": False, "error": str(e)}
 
 
+# ── Section: kernel (v8) ───────────────────────────────
+
+
+def section_kernel(now: datetime, days: int = 1) -> dict:
+    """Processes in the window and denies by rule, read from the v8 journals.
+
+    Read-only and self-contained: no subprocess, no ptable write, and a missing
+    kernel (a fresh clone, a brain older than v8) returns `available: False`
+    rather than an error. The digest is the only place the operator sees, in one
+    line, how many runs there were and WHAT refused them; a deny total with no
+    rule names says only that something was refused.
+    """
+    out = {"available": False, "days": days}
+    try:
+        # Import the library from THIS script's directory, not from
+        # ~/.claude/scripts: the digest runs from a worktree and from CI too,
+        # and an import that only resolves on the installed brain is an import
+        # that silently reports "no kernel" wherever it is tested.
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import kernel_proc
+    except Exception:
+        return out
+    jdir = kernel_proc.journal_dir()
+    if not Path(jdir).is_dir():
+        return out
+
+    cutoff = now.timestamp() - days * 24 * 3600
+    table = kernel_proc.read_ptable()
+    procs = table.get("processes", {})
+    by_rule: Counter[str] = Counter()
+    by_type: Counter[str] = Counter()
+    seen, denies, tools, opens, exits_error, broken = 0, 0, 0, 0, 0, []
+    for name in sorted(Path(jdir).glob("*.jsonl")):
+        pid = name.name[:-6]
+        try:
+            if name.stat().st_mtime < cutoff:
+                continue
+        except OSError:
+            continue
+        lines = [ln for ln in kernel_proc.read_journal(pid) if isinstance(ln, dict)]
+        if not lines:
+            continue
+        seen += 1
+        by_type[str((procs.get(pid) or {}).get("type") or "main")] += 1
+        for ln in lines:
+            if float(ln.get("ts") or 0) < cutoff:
+                continue
+            kind = ln.get("kind")
+            if kind == "tool":
+                tools += 1
+            elif kind == "deny":
+                denies += 1
+                by_rule[str(ln.get("rule") or "(unnamed)")] += 1
+            elif kind == "open":
+                opens += int(ln.get("count") or 0)
+            elif kind == "exit" and str(ln.get("status") or "") not in ("", "ok"):
+                exits_error += 1
+        if kernel_proc.verify(pid) != 0:
+            broken.append(pid)
+    out.update({"available": True, "processes": seen, "tools": tools,
+                "denies": denies, "opens": opens, "errors": exits_error,
+                "by_rule": by_rule.most_common(10),
+                "by_type": by_type.most_common(5),
+                "broken_chains": broken})
+    return out
+
+
 # ── Rendering ──────────────────────────────────────────
 
 
 def render_digest(now: datetime, activity: dict, slos: dict, watchdog: dict,
                   cost: dict, budget: dict | None = None,
                   reconciliation: dict | None = None,
-                  finops: dict | None = None) -> str:
+                  finops: dict | None = None, kernel: dict | None = None) -> str:
     lines: list[str] = []
     today = now.strftime("%Y-%m-%d")
     lines.append(f"# Brain Daily — {today}")
@@ -472,6 +539,35 @@ def render_digest(now: datetime, activity: dict, slos: dict, watchdog: dict,
             lines.append("- top arms: " + ", ".join(f"`{a}` ${v:,.2f}" for a, v in top))
         lines.append("")
 
+    if kernel and kernel.get("available"):
+        d = kernel.get("days", 1)
+        lines.append(f"## Kernel ({d * 24}h)")
+        lines.append("")
+        lines.append(
+            f"- **{kernel['processes']}** process(es), "
+            f"**{kernel['tools']}** tool call(s), **{kernel['denies']}** refusal(s)"
+        )
+        if kernel.get("by_type"):
+            lines.append("- by type: "
+                         + ", ".join(f"`{t}` {n}" for t, n in kernel["by_type"]))
+        if kernel.get("by_rule"):
+            lines.append("")
+            lines.append("| Rule | Denies |")
+            lines.append("|---|---:|")
+            for rule, n in kernel["by_rule"]:
+                lines.append(f"| `{rule}` | {n} |")
+        else:
+            lines.append("- _no refusals recorded_")
+        if kernel.get("opens"):
+            lines.append(f"- ⚠ **{kernel['opens']}** call(s) ran unjournaled (open mode)")
+        if kernel.get("errors"):
+            lines.append(f"- {kernel['errors']} process(es) exited with an error status")
+        if kernel.get("broken_chains"):
+            lines.append("- 🛑 **broken journal chain(s)**: "
+                         + ", ".join(f"`{p}`" for p in kernel["broken_chains"][:5])
+                         + " (tamper evidence, read before deleting)")
+        lines.append("")
+
     lines.append("---")
     lines.append("")
     lines.append("_Generated by observability surface 5._")
@@ -507,8 +603,10 @@ def main(argv: list[str] | None = None) -> int:
     budget = section_budget_burn()
     reconciliation = section_anthropic_reconciliation()
     finops = section_finops_routing()
+    kernel = section_kernel(now)
 
-    digest = render_digest(now, activity, slos, watchdog, cost, budget, reconciliation, finops)
+    digest = render_digest(now, activity, slos, watchdog, cost, budget, reconciliation,
+                           finops, kernel)
 
     DIGESTS_DIR.mkdir(parents=True, exist_ok=True)
     out_path = DIGESTS_DIR / f"brain-{now.strftime('%Y-%m-%d')}.md"

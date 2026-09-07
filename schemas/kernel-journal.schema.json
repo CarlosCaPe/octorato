@@ -26,7 +26,7 @@
     "kind": {
       "type": "string",
       "enum": ["start", "tool", "exit", "deny", "receipt", "quota", "open", "release"],
-      "description": "start: the process was registered. tool: a tool call passed the hot-path gate. exit: the process ended (Phase 1a-2). deny: a fail-closed gate refused a call (Phase 4). receipt: a v7 receipt mirrored by id (Phase 4). quota: a quota was breached (Phase 3). open: N calls ran unjournaled under OCTO_KERNEL_OPEN, backfilled once the journal was writable. release: an operator freed this process's lanes with `octo ps --release` (Phase 1b)."
+      "description": "start: the process was registered. tool: a tool call passed the hot-path gate. exit: the process ended (Phase 1a-2). deny: a fail-closed gate, or the harness itself, refused a call (Phase 4). receipt: a v7 receipt mirrored by id (Phase 4). quota: a quota was breached (Phase 3). open: N calls ran unjournaled under OCTO_KERNEL_OPEN, backfilled once the journal was writable. release: an operator freed this process's lanes with `octo ps --release` (Phase 1b)."
     },
     "prev": {
       "type": ["string", "null"],
@@ -63,8 +63,16 @@
     "spawn_depth": { "type": "integer", "minimum": 0, "description": "exit lines: spawnDepth from the harness meta.json, how deep in the spawn tree this process sat" },
     "model": { "type": "string", "description": "exit lines: the engine the child actually ran on, from the harness meta.json" },
     "agent_transcript_path": { "type": "string", "description": "exit lines: the harness-written transcript of this subagent, the pointer a consumer re-verifies against" },
-    "rule": { "type": "string", "description": "deny lines: the registry rule id that refused the call" },
-    "reason": { "type": "string", "description": "deny lines: the refusal text shown to the model" }
+    "rule": { "type": "string", "description": "deny lines: the registry rule id that refused the call. `kernel-replay` FAILS on a rule id that is in no registry/rules.yaml row: an unregistered deny is an orphan mechanism (RULE #1)" },
+    "reason": { "type": "string", "description": "deny lines: the refusal text shown to the model" },
+    "source": { "type": "string", "description": "deny lines: who refused. Absent means an Octorato gate; 'harness' means the runtime itself denied (PermissionDenied, documented for auto-mode denials only)" },
+    "receipt_kind": { "type": "string", "description": "receipt lines: the v7 receipt's own kind (seek, qa, gate-liveness)" },
+    "receipt_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "receipt lines: sha256 of the ledger record. The journal mirrors a receipt's IDENTITY only, never its content: the receipt itself stays in ~/.claude/.cache/receipts, so the journal does not become a second copy of the ledger"
+    },
+    "receipt_ts": { "type": "string", "description": "receipt lines: the ledger record's own ISO timestamp, kept apart from `ts` (when the mirror was written)" }
   },
   "additionalProperties": true
 }

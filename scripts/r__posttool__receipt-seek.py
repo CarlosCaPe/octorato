@@ -50,6 +50,12 @@ def main() -> int:
             query = str(inp.get("query") or inp.get("q") or inp.get("command") or "")[:200]
         receipt_ledger.append_session(session_id, {
             "kind": "seek",
+            # The ledger stays keyed by SESSION (that is what the v7 consumers
+            # re-verify against), but the record now names the process that
+            # actually made the seek. Without it the v8 journal mirror had no
+            # way to tell a subagent's seek from its parent's, and credited the
+            # parent with work the child did.
+            "agent_id": data.get("agent_id") or "",
             "tool_use_id": data.get("tool_use_id") or "",
             "tool_name": name,
             "query": query,

@@ -9,10 +9,10 @@
 | Skills | 233 |
 | Agents | 167 |
 | Divisions | 13 |
-| Scripts: wired | 115 |
+| Scripts: wired | 116 |
 | Scripts: orphan | 7 |
-| Rules | 75 |
-| Hook entries | 50 |
+| Rules | 76 |
+| Hook entries | 51 |
 
 ## Skills (233)
 
@@ -486,7 +486,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (122)
+## Scripts (123)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -587,6 +587,7 @@
 | query_connectome.py | query_connectome.py , Octopus Ventosas (Sucker Neural Interface) Each sucker is an independent senso... | wired |
 | querymaster-security-detector.py | QueryMaster security-canon detector (RULE #1 backing for SECURITY.querymaster-rules). | wired |
 | quickstart.py | quickstart.py , zero-to-alive for a brand-new Octorato user, in one command. | wired |
+| r__permission-denied__journal.py | r__permission-denied__journal.py: PermissionDenied reflex, the harness's own refusals. | wired |
 | r__posttool__receipt-seek.py | r__posttool__receipt-seek.py: PostToolUse reflex that writes a SEEK receipt. | wired |
 | r__pretool-write__base-freshness.py | r__pretool-write__base-freshness.py: PreToolUse warner for a STALE EDIT BASE. | wired |
 | r__session__proc-register.py | r__session__proc-register.py: SessionStart reflex that opens a kernel process. | wired |
@@ -613,7 +614,7 @@
 | wa-soporte.sh | Sends a WhatsApp through the SUPPORT channel, never through the operator's personal number. | wired |
 | watchdog.py | watchdog.py , observability surface 4 anomaly detector. Reads the JSONL trace files written by trace... | wired |
 
-## Rules (75)
+## Rules (76)
 
 ### ARCHITECTURE
 
@@ -683,6 +684,7 @@
 - FLOW.suggest-unlock
 - FLOW.wa-guardia-on-pending
 - FLOW.web-agent-browser
+- HARNESS.permission-denied
 
 ### GENERIC
 
@@ -724,6 +726,7 @@
 
 | Event | Wired Scripts |
 |---|---|
+| PermissionDenied | r__permission-denied__journal.py |
 | PostToolUse | cadence-lint.py, canon-heal-hook.py, client-doc-lint-hook.py, d__posttool__delegation-ledger.py, impact-radius-hook.py, r__posttool__receipt-seek.py, trace-hook.py |
 | PreToolUse | budget-check.py, config-ship-verify.py, delegate-gate.py, dimension-awareness-hook.py, g__pretool-bash__git-discipline.py, g__pretool-bash__tree-owner.py, g__pretool-mcp__chat-context.py, g__pretool-mcp__outward-send.py, g__pretool-write__tree-owner.py, g__pretool__kernel.py, grafo-gate.py, qa-merge-gate.py, r__pretool-write__base-freshness.py, secrets-grep-guard.py, trace-hook.py |
 | SessionStart | merge-hooks.py, r__session__proc-register.py, session-isolation-hook.py |

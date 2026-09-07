@@ -1588,6 +1588,114 @@ def check_kernel_isolation_gate(fix: bool) -> Result:
                   "release); hook order not asserted, same-event hooks run in parallel")
 
 
+def check_kernel_replay(fix: bool) -> Result:
+    """v8 Phase 4: prove the JOURNAL is closed and replayable on THIS machine.
+
+    Three assertions, in rising cost:
+
+    1. The golden replay matches byte for byte, WITH `--verify`. It is the same
+       fixture `kernel-process-live` compares, run through the exit code that a
+       registry proof depends on, so a chain check that silently stopped
+       failing is caught here rather than at the next incident.
+    2. The 5 newest REAL journals replay and verify. A fixture proves the
+       reader; only a real journal proves the writers, and the writers are now
+       fifteen different scripts.
+    3. Every `deny` line in the last 7 days names a rule id that exists in
+       registry/rules.yaml. This is RULE #1 pointed at the journal: a refusal
+       attributed to a rule the registry does not carry is an orphan mechanism,
+       and it is a FAIL, not a WARN, because the alternative is a gate that
+       refuses work under a name nobody can look up.
+
+    Never writes. Passes on a fresh install with no journals at all: zero
+    journals is zero orphans, and saying so is honest where inventing a WARN
+    about an absent kernel would not be.
+    """
+    key = "kernel-replay"
+    rdir = CLAUDE_DIR / "registry" / "fixtures" / "ARCHITECTURE.kernel-process" / "replay"
+    expected = rdir / "expected.txt"
+    octo = CLAUDE_DIR / "scripts" / "octo.py"
+    if not octo.exists():
+        return Result(key, FAIL, "scripts/octo.py is missing", "restore the kernel CLI")
+    if not expected.exists():
+        return Result(key, FAIL, "the golden replay fixture is missing",
+                      "restore registry/fixtures/ARCHITECTURE.kernel-process/replay/")
+    py = PYTHON or "python3"
+    cp = run([py, str(octo), "replay", "--fixture", str(rdir), "--verify"], cwd=CLAUDE_DIR)
+    if cp.returncode != 0:
+        return Result(key, FAIL, f"golden replay --verify exited {cp.returncode}",
+                      "the golden chain no longer verifies; run the command by hand")
+    if (cp.stdout or "") != expected.read_text(encoding="utf-8"):
+        return Result(key, FAIL, "the golden replay no longer matches expected.txt",
+                      "octo replay changed its output: read the diff before regenerating "
+                      "the golden, the fixture is the contract")
+
+    cp = run([py, str(CLAUDE_DIR / "scripts" / "r__permission-denied__journal.py"),
+              "--selftest", "registry/fixtures/FLOW.kernel-journal"], cwd=CLAUDE_DIR)
+    if cp.returncode != 0:
+        detail = (cp.stderr or cp.stdout or "").strip().splitlines()
+        return Result(key, FAIL,
+                      "the PermissionDenied reflex selftest failed: "
+                      + (detail[-1] if detail else f"exit {cp.returncode}"),
+                      "a harness denial would go unrecorded; fix the reflex or the fixture")
+
+    sys.path.insert(0, str(CLAUDE_DIR / "scripts"))
+    try:
+        import time
+
+        import kernel_proc
+    except Exception as e:
+        return Result(key, FAIL, f"cannot import kernel_proc: {e}", "restore scripts/kernel_proc.py")
+
+    jdir = kernel_proc.journal_dir()
+    journals = []
+    if os.path.isdir(jdir):
+        for name in os.listdir(jdir):
+            if not name.endswith(".jsonl"):
+                continue
+            path = os.path.join(jdir, name)
+            try:
+                journals.append((os.stat(path).st_mtime, name[:-6]))
+            except OSError:
+                continue
+    journals.sort(reverse=True)
+    for _, pid in journals[:5]:
+        cp = run([py, str(octo), "replay", pid, "--verify"], cwd=CLAUDE_DIR)
+        if cp.returncode != 0:
+            return Result(key, FAIL, f"replay --verify failed for pid {pid}",
+                          "a real journal does not replay or its chain is broken; "
+                          f"run `octo replay {pid} --verify` and read it before deleting")
+
+    try:
+        registered = {r.id for r in Registry.load(REGISTRY_PATH).rules}
+    except Exception as e:
+        return Result(key, FAIL, f"cannot read registry/rules.yaml to check deny rule ids: {e}",
+                      "fix rules.yaml, then re-run")
+    now = time.time()
+    cutoff = now - 7 * 24 * 3600
+    denies, orphans = 0, {}
+    for mtime, pid in journals:
+        if mtime < cutoff:
+            continue
+        for line in kernel_proc.read_journal(pid):
+            if not isinstance(line, dict) or line.get("kind") != "deny":
+                continue
+            if float(line.get("ts") or 0) < cutoff:
+                continue
+            denies += 1
+            rule = str(line.get("rule") or "")
+            if rule not in registered:
+                orphans.setdefault(rule or "(unnamed)", []).append(pid)
+    if orphans:
+        named = ", ".join(f"{r} ({len(p)} journal(s))" for r, p in sorted(orphans.items())[:4])
+        return Result(key, FAIL,
+                      f"{len(orphans)} deny rule id(s) in 7 days are in no registry row: {named}",
+                      "a refusal under a name the registry does not carry is an orphan "
+                      "mechanism (RULE #1): register the rule, or fix the id the gate journals")
+    return Result(key, PASS,
+                  f"golden replay verifies byte for byte; {min(len(journals), 5)} real "
+                  f"journal(s) replay; {denies} deny(s) in 7 days, all naming a registered rule")
+
+
 def check_querymaster_security_detector(fix: bool) -> Result:
     """Actually RUN the querymaster security-canon detector so SECURITY.querymaster-rules
     is genuinely lived, not presence-with-extra-steps.
@@ -1900,6 +2008,7 @@ CHECKS = [
     ("reflex-triage", check_reflex_triage),
     ("kernel-process-live", check_kernel_process_live),
     ("kernel-isolation-gate", check_kernel_isolation_gate),
+    ("kernel-replay", check_kernel_replay),
     ("querymaster-security-detector", check_querymaster_security_detector),
     ("rule-1-naming", check_naming),
     ("rule-1-orphans", check_orphan_hooks),

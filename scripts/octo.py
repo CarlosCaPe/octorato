@@ -127,11 +127,22 @@ def _read_lines(pid=None, path=None) -> list:
 
 
 def _stats(lines: list) -> dict:
-    """One pass over a journal: what `ps`, `top` and `replay` all need."""
-    denied = set()
+    """One pass over a journal: what `ps`, `top` and `replay` all need.
+
+    `refused` counts the calls that were actually REFUSED: a deny id that also
+    appears on a `tool` line. A deny with no matching tool line is a refusal of
+    something the hot-path gate never journaled (a Stop block, a harness denial
+    on a call that was denied before PreToolUse ran), and counting it as a
+    refused TOOL CALL would report more refusals than there were calls. Those
+    still show on the timeline and in `denies`; they just do not inflate the
+    tool count. Both id sets are collected in this same pass.
+    """
+    denied, tool_ids, deny_rows = set(), set(), []
     st = {"tools": 0, "denies": 0, "tokens": 0, "has_tokens": False,
           "exit": None, "status": None, "start_ts": None, "last_ts": None,
-          "type": None, "worktree": None, "source": None, "opens": 0}
+          "type": None, "worktree": None, "source": None, "opens": 0,
+          "by_tool": {}, "by_rule": {}, "by_receipt": {},
+          "by_rule_paired": {}, "by_rule_other": {}}
     for rec in lines:
         if not isinstance(rec, dict):
             continue
@@ -151,17 +162,41 @@ def _stats(lines: list) -> dict:
                 pass
         if kind == "tool":
             st["tools"] += 1
+            name = str(rec.get("tool_name") or "?")
+            st["by_tool"][name] = st["by_tool"].get(name, 0) + 1
+            if rec.get("tool_use_id"):
+                tool_ids.add(str(rec["tool_use_id"]))
         elif kind == "deny":
             st["denies"] += 1
+            rule = str(rec.get("rule") or "(unnamed)")
+            st["by_rule"][rule] = st["by_rule"].get(rule, 0) + 1
+            deny_rows.append((rule, str(rec.get("tool_use_id") or "")))
             if rec.get("tool_use_id"):
                 denied.add(str(rec["tool_use_id"]))
+        elif kind == "receipt":
+            rk = str(rec.get("receipt_kind") or "?")
+            st["by_receipt"][rk] = st["by_receipt"].get(rk, 0) + 1
         elif kind == "exit":
             st["exit"] = rec
             st["status"] = str(rec.get("status") or "")
         elif kind == "open":
             st["opens"] += int(rec.get("count") or 0)
-    st["refused"] = len(denied)
+    st["refused"] = len(denied & tool_ids)
+    # Split the same rows the tool-id set already decided: a deny whose call the
+    # hot path journaled refused a CALL; anything else refused something the
+    # gate never saw (a turn, a call denied before PreToolUse ran).
+    for rule, tuid in deny_rows:
+        bucket = "by_rule_paired" if tuid and tuid in tool_ids else "by_rule_other"
+        st[bucket][rule] = st[bucket].get(rule, 0) + 1
     return st
+
+
+def _counts(mapping: dict, empty: str = "(none)") -> str:
+    """A count map as one deterministic line: biggest first, ties by name."""
+    if not mapping:
+        return empty
+    items = sorted(mapping.items(), key=lambda kv: (-kv[1], kv[0]))
+    return ", ".join(f"{k} {v}" for k, v in items)
 
 
 # ── ps ──────────────────────────────────────────────────────────────────────
@@ -251,7 +286,7 @@ def cmd_top(args) -> int:
     procs = table.get("processes", {})
     now = time.time()
     cutoff = now - DAY
-    seen, rows = set(), []
+    seen, rows, by_rule = set(), [], {}
     jdir = kernel_proc.journal_dir()
     names = []
     if os.path.isdir(jdir):
@@ -269,9 +304,16 @@ def cmd_top(args) -> int:
         st = _stats(kernel_proc.read_journal(pid))
         row = procs.get(pid) or {}
         seen.add(pid)
+        for rule, n in st["by_rule"].items():
+            by_rule[rule] = by_rule.get(rule, 0) + n
+        # One vocabulary for both readers. `top` used to print "exited" for a
+        # process with no exit line whose journal had simply aged past the TTL,
+        # while `ps` called the same process "expired": two words for one state,
+        # and the two commands disagreeing about a process is exactly the kind
+        # of drift a replay surface cannot afford.
         rows.append([pid, row.get("type") or "main", st["tools"], st["denies"],
                      st["tokens"] if st["has_tokens"] else "-",
-                     "live" if live else (st["status"] or "exited")])
+                     _row_state(pid, row, table, now)])
     if not rows:
         print("no activity in the last 24 h and nothing live")
         return 0
@@ -295,6 +337,12 @@ def cmd_top(args) -> int:
     print(f"\n{len(rows)} process(es), {tools} tool call(s), {denies} deny(s)"
           + (f", {tokens} token(s)" if any_tokens else "")
           + " (live plus the last 24 h)")
+    if by_rule:
+        # WHICH rules are refusing is the number that changes behaviour; a bare
+        # deny total says only that something did.
+        print("\ndenies by rule")
+        for rule, n in sorted(by_rule.items(), key=lambda kv: (-kv[1], kv[0])):
+            print(f"  {rule}  {n}")
     return 0
 
 
@@ -305,9 +353,27 @@ def _cell(rec: dict, key: str, default: str = "-") -> str:
     return str(v) if v not in (None, "") else default
 
 
+def _src(rec: dict) -> str:
+    """`source=harness ` on a refusal the RUNTIME made, empty on an Octorato one.
+
+    A reader who cannot tell the two apart cannot act on either: one is a gate
+    to argue with, the other is a permission to grant. Absent means Octorato,
+    so the common case stays unannotated.
+    """
+    source = rec.get("source")
+    return f"source={source}  " if source else ""
+
+
 def replay_text(pid: str, lines: list, table: dict = None,
-                receipts: list = None, chain: tuple = None) -> str:
-    """The run as text. Journal-derived only, so the bytes are reproducible."""
+                receipts: list = None, chain: tuple = None,
+                receipts_label: str = "receipts") -> str:
+    """The run as text. Journal-derived only, so the bytes are reproducible.
+
+    `receipts_label` names where the receipts came from. The ledger is keyed by
+    SESSION, so a child's replay shows its PARENT's receipts; labelling that
+    section `receipts (session)` stops a reader from crediting the child with
+    seeks it never made.
+    """
     st = _stats(lines)
     start_ts = st["start_ts"]
     denies = {}
@@ -331,6 +397,34 @@ def replay_text(pid: str, lines: list, table: dict = None,
         code, why = chain
         out.append(f"  chain     {'ok' if code == 0 else 'BROKEN'}: {why}")
 
+    kids = [(c, r) for c, r in sorted((table or {}).get("processes", {}).items())
+            if r.get("ppid") == pid]
+
+    # The summary answers the three questions a reader opens a replay with:
+    # what did this run DO, what was it refused, and what did it prove. The
+    # timeline below is the evidence; this is the verdict.
+    out.append("")
+    out.append("summary")
+    out.append(f"  tools     {_counts(st['by_tool'])}")
+    # Two lines, because they answer two questions. `refused` is the calls the
+    # hot-path gate journaled and a gate then refused, so it reconciles with the
+    # header's "(N refused)". `other denies` is everything else that refused
+    # something: a Stop block ends a TURN, a harness denial can land on a call
+    # PreToolUse never saw. Listing both under one `refused` label made the
+    # summary contradict the header two lines above it.
+    out.append(f"  refused   {_counts(st['by_rule_paired'])}")
+    if st["by_rule_other"]:
+        out.append(f"  other denies  {_counts(st['by_rule_other'])}")
+    out.append(f"  receipts  {_counts(st['by_receipt'])}")
+    out.append(f"  children  {len(kids)}"
+               + (": " + ", ".join(c for c, _ in kids) if kids else ""))
+    if st["exit"] is not None:
+        out.append(f"  exit      {st['status'] or '-'}")
+    else:
+        out.append("  exit      (none yet)")
+    if st["opens"]:
+        out.append(f"  unjournaled  {st['opens']} call(s) ran in open mode")
+
     out.append("")
     out.append("timeline")
     folded = set()
@@ -348,14 +442,15 @@ def replay_text(pid: str, lines: list, table: dict = None,
         if kind == "tool" and tuid in denies:
             d = denies[tuid]
             folded.add(id(d))
-            rest = (f"{_cell(d, 'rule')}  {_cell(rec, 'tool_name')}  {tuid}"
+            rest = (f"{_cell(d, 'rule')}  {_src(d)}{_cell(rec, 'tool_name')}  {tuid}"
                     f"  {_cell(d, 'reason', '')}").rstrip()
             out.append(f"  #{seq_s:<4} {off:>9}  {'REFUSED':<8} {rest}")
             continue
         if kind == "deny":
             if id(rec) in folded:
                 continue
-            rest = f"{_cell(rec, 'rule')}  {tuid}  {_cell(rec, 'reason', '')}".rstrip()
+            rest = (f"{_cell(rec, 'rule')}  {_src(rec)}{tuid}  "
+                    f"{_cell(rec, 'reason', '')}").rstrip()
         elif kind == "tool":
             rest = f"{_cell(rec, 'tool_name')}  {tuid}"
         elif kind == "start":
@@ -377,15 +472,12 @@ def replay_text(pid: str, lines: list, table: dict = None,
 
     out.append("")
     out.append("children")
-    kids = []
-    for child, row in sorted((table or {}).get("processes", {}).items()):
-        if row.get("ppid") == pid:
-            kids.append(f"  {child}  {row.get('type') or 'main'}  "
-                        f"{row.get('status') or 'no exit recorded'}")
-    out.extend(kids or ["  (none)"])
+    out.extend([f"  {child}  {row.get('type') or 'main'}  "
+                f"{row.get('status') or 'no exit recorded'}"
+                for child, row in kids] or ["  (none)"])
 
     out.append("")
-    out.append("receipts")
+    out.append(receipts_label)
     recs = receipts or []
     shown = [f"  {r.get('kind') or '?'}  {r.get('tool_use_id') or '-'}  {r.get('ts') or '-'}"
              for r in recs[:10]]
@@ -410,6 +502,18 @@ def _fixture_receipts(fdir: str) -> list:
     except FileNotFoundError:
         return []
     return out
+
+
+def _fixture_table(fdir: str) -> dict:
+    """A golden fixture may ship its own ptable, so the children section is part
+    of the byte-for-byte contract instead of depending on whatever the running
+    machine happens to hold."""
+    try:
+        with open(os.path.join(fdir, "ptable.json"), encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {"processes": {}}
+    except (FileNotFoundError, ValueError, OSError):
+        return {"processes": {}}
 
 
 def _session_receipts(pid: str, table: dict) -> list:
@@ -439,7 +543,7 @@ def cmd_replay(args) -> int:
         pid = args.pid or next((str(r.get("pid")) for r in lines
                                 if isinstance(r, dict) and r.get("pid")), "fixture")
         chain = _verify_raw(path)
-        text = replay_text(pid, lines, table={"processes": {}},
+        text = replay_text(pid, lines, table=_fixture_table(fdir),
                            receipts=_fixture_receipts(fdir), chain=chain)
         sys.stdout.write(text)
         return 1 if (args.verify and chain[0] != 0) else 0
@@ -454,8 +558,12 @@ def cmd_replay(args) -> int:
         return 1
     table = kernel_proc.read_ptable()
     chain = kernel_proc.verify_detail(pid)
+    row = (table.get("processes", {}) or {}).get(pid) or {}
+    sid = str(row.get("ppid") or "")
+    label = "receipts (session)" if sid and sid != pid else "receipts"
     text = replay_text(pid, lines, table=table,
-                       receipts=_session_receipts(pid, table), chain=chain)
+                       receipts=_session_receipts(pid, table), chain=chain,
+                       receipts_label=label)
     sys.stdout.write(text)
     return 1 if (args.verify and chain[0] != 0) else 0
 
@@ -684,6 +792,11 @@ def selftest(fixture_dir: str = None) -> int:
                                         "CLAUDE_CODE_SESSION_ID"))
         if rc != 0:
             failures.append(f"--release outside an agent shell exited {rc}: {err.strip()[:120]}")
+        # Save what we are about to overwrite. Popping HOME instead of restoring
+        # it left the rest of THIS process running without a HOME, so anything
+        # after the selftest read the kernel from a different place than the
+        # caller does. A sandbox must be reversible, not one-way.
+        saved = (os.environ.get("HOME"), os.environ.get("USERPROFILE"))
         os.environ["HOME"], os.environ["USERPROFILE"] = sandbox, sandbox
         try:
             kinds = [l.get("kind") for l in kernel_proc.read_journal(child)
@@ -693,8 +806,11 @@ def selftest(fixture_dir: str = None) -> int:
             if kernel_proc.verify(child) != 0:
                 failures.append("the chain broke after a release")
         finally:
-            os.environ.pop("HOME", None)
-            os.environ.pop("USERPROFILE", None)
+            for key, was in zip(("HOME", "USERPROFILE"), saved):
+                if was is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = was
     finally:
         shutil.rmtree(sandbox, ignore_errors=True)
 

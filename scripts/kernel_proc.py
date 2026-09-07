@@ -804,6 +804,13 @@ def prune_locked(now: float = None) -> int:
     that cycle in the CLI would put a second ptable writer outside this module.
     """
     now = time.time() if now is None else now
+    # Nothing to prune and nothing to create. `octo ps` prunes on read, and a
+    # read must never be the thing that materialises `.cache/kernel/` on a HOME
+    # that has never run a hook: the lock file it left behind made a fresh
+    # install look like it had kernel state. Registering is what creates the
+    # directory; reading is not.
+    if not os.path.exists(ptable_path()):
+        return 0
     os.makedirs(kernel_dir(), exist_ok=True)
     fh = None
     try:
@@ -945,6 +952,76 @@ def backfill_open(pid) -> bool:
     except OSError:
         pass
     return True
+
+
+# ── Phase 4: refusals and receipts ──────────────────────────────────────────
+
+def journal_deny(rule_id, reason, tool_use_id=None, pid=None, **extra) -> bool:
+    """Mirror one fail-closed refusal into the refusing process's journal.
+
+    v8 Phase 4 (v8-kernel.md section 3). Every gate that denies calls this from
+    its single deny emission point, so a run's REFUSALS are replayable next to
+    the calls that were allowed. Before it, a deny reached nothing: the harness
+    tells the model, PostToolUse never fires on a denied call, and the trace is
+    "not an audit log" (trace-storage.md:121).
+
+    FAIL-OPEN BY CONTRACT, and this is the whole safety argument for touching 13
+    gates: every exception is swallowed and the function returns a bool the
+    callers ignore. A journal that cannot be written must never turn a deny into
+    an allow, nor an allow into a deny. The one place a journal error IS a
+    verdict is `g__pretool__kernel.py`, which owns that rule and is not this.
+
+    `pid` is resolved by the CALLER the same way the hot-path gate does
+    (`resolve_pid`: payload agent_id else session_id), because only the caller
+    holds the payload. A missing pid is a no-op, not a guess: writing a refusal
+    into the wrong process's journal would be worse than not writing it.
+    """
+    try:
+        pid = str(pid or "")
+        if not pid:
+            return False
+        rec = {"kind": "deny", "rule": str(rule_id or "")}
+        if tool_use_id:
+            rec["tool_use_id"] = str(tool_use_id)
+        if reason:
+            rec["reason"] = str(reason)
+        for k, v in (extra or {}).items():
+            if k not in _CORE_KEYS and v is not None:
+                rec[k] = v
+        append(pid, rec)
+        return True
+    except Exception:
+        return False
+
+
+def journal_receipt(pid, kind, tool_use_id=None, record=None, ts=None) -> bool:
+    """Mirror one v7 receipt into the process journal as {kind, ts, id, sha256}.
+
+    The receipt itself stays in the ledger; this copies its IDENTITY only, so a
+    replay can say "a seek receipt existed at this point in the run" without the
+    journal turning into a second copy of the ledger. Same fail-open contract as
+    `journal_deny`: a receipt is written by a PostToolUse reflex, and a journal
+    error there must not break the reflex.
+    """
+    try:
+        pid = str(pid or "")
+        if not pid:
+            return False
+        try:
+            blob = json.dumps(record, sort_keys=True, separators=(",", ":"),
+                              ensure_ascii=True, default=str)
+        except Exception:
+            blob = str(record)
+        rec = {"kind": "receipt", "receipt_kind": str(kind or ""),
+               "receipt_sha256": hashlib.sha256(blob.encode("utf-8", "replace")).hexdigest()}
+        if tool_use_id:
+            rec["tool_use_id"] = str(tool_use_id)
+        if ts is not None:
+            rec["receipt_ts"] = str(ts)
+        append(pid, rec)
+        return True
+    except Exception:
+        return False
 
 
 # ── helpers shared with the hooks ───────────────────────────────────────────

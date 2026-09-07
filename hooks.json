@@ -412,6 +412,19 @@
       "matcher": "*"
     }
   ],
+  "PermissionDenied": [
+    {
+      "hooks": [
+        {
+          "command": "python3 ~/.claude/scripts/r__permission-denied__journal.py",
+          "statusMessage": "\u2699 kernel: recording the harness refusal...",
+          "timeout": 5,
+          "type": "command"
+        }
+      ],
+      "matcher": "*"
+    }
+  ],
   "SubagentStart": [
     {
       "hooks": [
