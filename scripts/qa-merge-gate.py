@@ -125,7 +125,14 @@ def _gh_merge_pr_num(sub: str) -> str | None:
     m = _GH_MERGE_HEAD.match(sub)
     if not m:
         return None
-    toks = sub[m.end():].split()
+    # shlex, not whitespace: a quoted flag value ("x 280") is ONE token, so a
+    # number inside it can never be read as the PR (QA cycle 3). An unclosed
+    # quote is unparseable and falls through to the sentinel, which denies.
+    try:
+        import shlex
+        toks = shlex.split(sub[m.end():], posix=True)
+    except ValueError:
+        return None
     i, flags_done = 0, False
     while i < len(toks):
         tok = toks[i].strip("\"'")
