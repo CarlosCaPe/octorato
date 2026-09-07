@@ -9,10 +9,10 @@
 | Skills | 233 |
 | Agents | 167 |
 | Divisions | 13 |
-| Scripts: wired | 113 |
+| Scripts: wired | 114 |
 | Scripts: orphan | 7 |
-| Rules | 74 |
-| Hook entries | 48 |
+| Rules | 75 |
+| Hook entries | 50 |
 
 ## Skills (233)
 
@@ -486,7 +486,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (120)
+## Scripts (121)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -539,8 +539,10 @@
 | finops-digest.py | finops-digest.py , the FinOps lens over Claude Code session logs. "Lo que no se mide, no crece." Exi... | wired |
 | g__pretool-bash__git-discipline.py | g__pretool-bash__git-discipline.py: PreToolUse gate for the deterministic subset of GIT.version-cont... | wired |
 | g__pretool-bash__prod-write.py | PreToolUse Bash hook , compuerta de ESCRITURA EN PRODUCCION (FAIL-CLOSED). | wired |
+| g__pretool-bash__tree-owner.py | g__pretool-bash__tree-owner.py: one writer per tree and per lane (Bash side). | wired |
 | g__pretool-mcp__chat-context.py | g__pretool-mcp__chat-context.py: PreToolUse gate for COMMS.chat-context-before-send. | wired |
 | g__pretool-mcp__outward-send.py | g__pretool-mcp__outward-send.py: the ONE outward-send gate (v7 phase 2). | wired |
+| g__pretool-write__tree-owner.py | g__pretool-write__tree-owner.py: one writer per tree and per lane (Write side). | wired |
 | g__pretool__kernel.py | g__pretool__kernel.py: PreToolUse `*` gate. No tool call runs unjournaled. | wired |
 | g__stop__defer-today.py | g__stop__defer-today.py: Stop gate: "no dejes para mañana lo que puedas hacer hoy" (do not put off u... | wired |
 | g__stop__delegation-audit.py | g__stop__delegation-audit.py: Stop gate for FLOW.bulk-fetch-delegation. | wired |
@@ -578,7 +580,6 @@
 | news_article_digest.py | AI News & Blogs Daily Curation , feeds the brain (sibling of github_trending_digest). Pulls recent i... | wired |
 | no-pause-suggestion.py | Stop hook , block "let's pause / leave for tomorrow / take a break" framing. The operator has flagge... | wired |
 | octo-dim.py | octo-dim.py , 4D session dimension manager. | wired |
-| octo.py | octo.py: the terminal view of the v8 kernel (docs/architecture/v8-kernel.md). | wired |
 | octorato-isomorphism.py | octorato-isomorphism , compute the invariant shared by the three Octorato anchors. | wired |
 | publish-wiki.py | publish-wiki.py - publish docs/wiki/ to the public GitHub wiki. | wired |
 | qa-merge-gate.py | PreToolUse Bash hook , QA gate (FAIL-CLOSED for merge actions). | wired |
@@ -611,7 +612,7 @@
 | wa-soporte.sh | Sends a WhatsApp through the SUPPORT channel, never through the operator's personal number. | wired |
 | watchdog.py | watchdog.py , observability surface 4 anomaly detector. Reads the JSONL trace files written by trace... | wired |
 
-## Rules (74)
+## Rules (75)
 
 ### ARCHITECTURE
 
@@ -619,6 +620,7 @@
 - ARCHITECTURE.core-principles
 - ARCHITECTURE.drift-self-heal
 - ARCHITECTURE.information-flow
+- ARCHITECTURE.kernel-isolation
 - ARCHITECTURE.kernel-process
 - ARCHITECTURE.layers
 - ARCHITECTURE.octopus-architecture
@@ -722,7 +724,7 @@
 | Event | Wired Scripts |
 |---|---|
 | PostToolUse | cadence-lint.py, canon-heal-hook.py, client-doc-lint-hook.py, d__posttool__delegation-ledger.py, impact-radius-hook.py, r__posttool__receipt-seek.py, trace-hook.py |
-| PreToolUse | budget-check.py, config-ship-verify.py, delegate-gate.py, dimension-awareness-hook.py, g__pretool-bash__git-discipline.py, g__pretool-mcp__chat-context.py, g__pretool-mcp__outward-send.py, g__pretool__kernel.py, grafo-gate.py, qa-merge-gate.py, r__pretool-write__base-freshness.py, secrets-grep-guard.py, trace-hook.py |
+| PreToolUse | budget-check.py, config-ship-verify.py, delegate-gate.py, dimension-awareness-hook.py, g__pretool-bash__git-discipline.py, g__pretool-bash__tree-owner.py, g__pretool-mcp__chat-context.py, g__pretool-mcp__outward-send.py, g__pretool-write__tree-owner.py, g__pretool__kernel.py, grafo-gate.py, qa-merge-gate.py, r__pretool-write__base-freshness.py, secrets-grep-guard.py, trace-hook.py |
 | SessionStart | merge-hooks.py, r__session__proc-register.py, session-isolation-hook.py |
 | Stop | cadence-stop-hook.py, claim-verify-stop.py, d__stop__wa-guardia.py, g__stop__defer-today.py, g__stop__delegation-audit.py, g__stop__draft-promise.py, g__stop__goal-anchor.py, g__stop__paste-ready-raw.py, g__stop__unsourced-absence.py, g__stop__unsourced-attribute.py, grafo-ledger-check.py, no-pause-suggestion.py, source-attribution-check.py, trace-hook.py |
 | SubagentStart | r__subagent-start__proc-register.py |

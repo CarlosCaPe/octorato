@@ -59,6 +59,7 @@ FUTURE_SKEW = 120       # an mtime this far ahead of now is clock skew, not live
 MAX_LINE = 4096         # POSIX atomic-append bound; the newline is counted below
 PRUNE_AFTER = 7 * 24 * 3600
 PID_MAX = 128
+MAX_LANES = 512          # a lane list is a working set, not a history
 _CORE_KEYS = ("seq", "ts", "start_ts", "pid", "kind", "prev")
 _PID_OK = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
 KINDS = ("start", "tool", "exit", "deny", "receipt", "quota", "open", "release")
@@ -516,6 +517,134 @@ def update_row(pid, fields: dict) -> bool:
                 fh.close()
             except OSError:
                 pass
+
+
+# ── lanes (v8 Phase 2 ISOLATION) ────────────────────────────────────────────
+#
+# A lane is a path one process has claimed by writing it. Lanes live in the
+# ptable ROW (never in connectome/sessions.json: that registry is keyed by
+# session, and two subagents of one session are ONE dimension to it, which is
+# exactly the hole Phase 2 closes). Matching is equality or path prefix in
+# EITHER direction, so `rm -rf <dir>` collides with a lane sitting under <dir>
+# and a write to <dir>/x collides with a lane on <dir>.
+
+
+def norm_path(path) -> str:
+    """Absolute, normalized, `~` expanded. No resolve(): symlink resolution
+    costs a stat per component on the hot path, and both sides of every
+    comparison come through here, so they normalize the same way."""
+    if not path:
+        return ""
+    return os.path.normpath(os.path.abspath(os.path.expanduser(str(path))))
+
+
+def paths_conflict(a: str, b: str) -> bool:
+    """True when two normalized paths name the same thing or one contains the
+    other. The separator check is what keeps `/w/tree-b` out of `/w/tree`."""
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    return a.startswith(b + os.sep) or b.startswith(a + os.sep)
+
+
+def lanes_of(row: dict) -> list:
+    lanes = (row or {}).get("lanes")
+    return lanes if isinstance(lanes, list) else []
+
+
+def lane_owner(path, table: dict = None, now: float = None, ignore=None,
+               ttl: int = TTL) -> tuple:
+    """(pid, row) of a LIVE process other than `ignore` whose lane conflicts
+    with `path`; (None, None) when the path is free.
+
+    Read-only and hot-path safe: one ptable read (or none, when the caller
+    passes the table it already holds), then a liveness probe ONLY for the rows
+    that actually collide. A dead holder owns nothing, which is what makes the
+    TTL a release valve rather than a lock nobody can open.
+
+    Passing the enclosing worktree root as `path` answers the whole-tree
+    question too: a lane inside the root is a prefix match.
+    """
+    target = norm_path(path)
+    if not target:
+        return None, None
+    table = read_ptable() if table is None else table
+    now = time.time() if now is None else now
+    skip = safe_pid(ignore) if ignore else None
+    for pid, row in (table.get("processes") or {}).items():
+        if pid == skip:
+            continue
+        if not any(paths_conflict(target, norm_path(l)) for l in lanes_of(row)):
+            continue
+        if is_live(pid, table, now, ttl):
+            return pid, row
+    return None, None
+
+
+def holds_lane(pid, path, table: dict = None) -> bool:
+    """True when `pid`'s own row already carries a lane covering `path`. The
+    hot path calls this to decide whether a claim is NEW: an already-claimed
+    path costs zero writes."""
+    row = (table or read_ptable()).get("processes", {}).get(safe_pid(pid)) or {}
+    target = norm_path(path)
+    return any(paths_conflict(target, norm_path(l)) for l in lanes_of(row))
+
+
+def claim_lane(pid, path, tree=None) -> bool:
+    """Claim `path` (and, on the first write, the enclosing worktree `tree`) for
+    `pid`. One flocked read-modify-write, taken ONLY when the caller has
+    established the lane is new, so the cost is amortized once per path per
+    process and never per write.
+
+    Creates the row when the register hook lost its race with the first tool
+    call (same-event hooks run in parallel): the row carries `registered_ts`, so
+    prune's grace window keeps it while its journal is being opened.
+    """
+    pid = safe_pid(pid)
+    target = norm_path(path)
+    if not target:
+        return False
+    os.makedirs(kernel_dir(), exist_ok=True)
+    fh = None
+    try:
+        fh = open(ptable_lock_path(), "a")
+        _flock(fh)
+        table = read_ptable()
+        procs = table.setdefault("processes", {})
+        row = procs.get(pid)
+        if row is None:
+            row = {"pid": pid, "registered_ts": round(time.time(), 6)}
+            procs[pid] = row
+        lanes = list(lanes_of(row))
+        if target not in lanes:
+            lanes.append(target)
+        if len(lanes) > MAX_LANES:
+            del lanes[:-MAX_LANES]
+        row["lanes"] = lanes
+        if tree and not row.get("tree"):
+            row["tree"] = norm_path(tree)
+        _write_ptable(table)
+        return True
+    except OSError:
+        return False       # an unclaimable lane must never break the write
+    finally:
+        if fh is not None:
+            _funlock(fh)
+            try:
+                fh.close()
+            except OSError:
+                pass
+
+
+def process_age(pid, now: float = None) -> float:
+    """Seconds since this process last journaled, or -1 when it never has. The
+    deny prints it, because "who holds this" is only actionable next to "for how
+    long"."""
+    mt = _mtime(journal_path(pid))
+    if mt is None:
+        return -1.0
+    return max(0.0, (time.time() if now is None else now) - mt)
 
 
 def prune(table: dict, now: float = None) -> int:
