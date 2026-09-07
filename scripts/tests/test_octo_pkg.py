@@ -1700,6 +1700,270 @@ class TestQaCycle5(SandboxCase):
         self.assertFalse(link.is_symlink())
 
 
+class TestQaCycle11(SandboxCase):
+    """The arm path, which had one test and therefore one covered line of it.
+
+    Cycle 10 fixed install_arm's unwind and shipped three holes: the read the unwind
+    depends on sat above the try, the lock every other writer takes was still not
+    taken here, and uninstall manufactured the very orphan the unwind prevents while
+    printing that it had removed four things. Cycle 11 also found the older guard
+    (`except PkgError` around the clone validation) uncovered, because cycle 10's test
+    was strengthened past it: correcting a weak test un-covered a real guard, so both
+    ends of that flow are pinned here.
+    """
+
+    def _arm_src(self, name: str = "sample-arm", manifest: dict | None = None) -> Path:
+        src = self.tmp / f"arm-src-{name}"
+        src.mkdir()
+        man = manifest if manifest is not None else {
+            "name": name, "version": "1.0.0", "license": "MIT", "kind": "arm"}
+        (src / "arm.json").write_text(json.dumps(man), encoding="utf-8")
+        # GIT_* scrubbed: a test launched from inside a git hook inherits GIT_DIR and
+        # every `git -C <tmp>` below would commit into the LIVE repo instead.
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        for args in (["init", "-q"], ["config", "user.email", "t@example.invalid"],
+                     ["config", "user.name", "t"], ["add", "-A"],
+                     ["commit", "-q", "-m", "arm"]):
+            subprocess.run(["git", "-C", str(src)] + args, check=True,
+                           capture_output=True, env=env, timeout=120)
+        return src
+
+    def _install_arm(self, name: str = "sample-arm") -> tuple[Path, Path]:
+        import contextlib, io
+        src = self._arm_src(name)
+        dest = self.tmp / f"armdest-{name}"
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc = octo_pkg.main(["--brain", str(self.root), "install", "--kind", "arm",
+                                "--dest", str(dest), str(src)])
+        self.assertEqual(rc, 0)
+        return src, dest
+
+    def test_install_arm_waits_for_the_lock_every_other_writer_takes(self):
+        """B1: the one lock writer that never took the lock.
+
+        install_skill, uninstall and lock all wrap their read-modify-write in
+        lock_held; install_arm computed its write from an unprotected snapshot and
+        reported success. Measured with two processes: the skill install waited 2.11s,
+        the arm install went through in 0.19s and its own entry was gone from the
+        lock afterwards. The state is the one lock_held's docstring names, reached on
+        the SUCCESS path, so no unwind ever runs over it.
+
+        Deterministic rather than racy: the lock is HELD here, and the child must
+        block. `dest.exists()` while it is blocked is the discriminator that says it
+        got past the clone and is waiting on the lock rather than still cloning.
+        """
+        src = self._arm_src()
+        dest = self.tmp / "armdest"
+        argv = [sys.executable, str(SCRIPTS / "octo_pkg.py"), "--brain", str(self.root),
+                "install", "--kind", "arm", "--dest", str(dest), str(src)]
+        # See the concurrent-install test: a CHILD re-derives user site-packages from
+        # HOME and would lose jsonschema. The brain is pinned by --brain.
+        env = {**os.environ, "HOME": self._home or os.environ["HOME"]}
+        proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                env=env)
+        try:
+            with self.brain.lock_held():
+                try:
+                    proc.communicate(timeout=6)
+                    blocked = False
+                except subprocess.TimeoutExpired:
+                    blocked = True
+                cloned = dest.exists()
+                mid = [p.get("name") for p in
+                       json.loads(self.brain.lock_path.read_text(encoding="utf-8"))["packages"]]
+            out, err = proc.communicate(timeout=180)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.communicate(timeout=60)
+        self.assertTrue(blocked,
+                        "install_arm finished while another process held the lock: "
+                        "its lock write is computed from an unprotected snapshot")
+        self.assertTrue(cloned, "it must have been waiting on the LOCK, not on the clone")
+        self.assertEqual(mid, [],
+                         "nothing may be written to the lock while it is held elsewhere")
+        self.assertEqual(proc.returncode, 0, err.decode("utf-8", "replace"))
+        self.assertEqual([p["name"] for p in self.brain.load_lock()["packages"]],
+                         ["sample-arm"], "and the entry lands once the lock is free")
+
+    def test_an_unparseable_arms_paths_unwinds_the_way_an_empty_one_does(self):
+        """B2: the read the unwind depends on sat ABOVE the try.
+
+        Measured before the fix: `[]` unwound (rc=1, no clone) and `{ oops` did not
+        (rc=1, clone left). The unparseable case is the commoner corruption and it
+        reproduces the original symptom exactly: a clone on disk with the retry
+        blocked forever by "destination already exists".
+        """
+        import contextlib, io
+        cfg = self.root / octo_pkg.ARMS_PATHS_REL
+        for shape in ('{ oops', '[]', '"a string"'):
+            with self.subTest(arms_paths=shape):
+                src = self._arm_src()
+                dest = self.tmp / f"armdest-{abs(hash(shape))}"
+                cfg.parent.mkdir(parents=True, exist_ok=True)
+                cfg.write_text(shape, encoding="utf-8")
+                with contextlib.redirect_stderr(io.StringIO()), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    rc = octo_pkg.main(["--brain", str(self.root), "install", "--kind",
+                                        "arm", "--dest", str(dest), str(src)])
+                self.assertEqual(rc, 1)
+                self.assertFalse(dest.exists(),
+                                 f"arms-paths.json = {shape!r} left the clone behind, "
+                                 f"which blocks every retry")
+                self.assertEqual(cfg.read_text(encoding="utf-8"), shape,
+                                 "and the operator's file is not rewritten under him")
+                shutil.rmtree(src)
+
+    def test_uninstalling_an_arm_deregisters_it_instead_of_orphaning_it(self):
+        """B3: uninstall manufactured the orphan install's unwind exists to prevent,
+        and printed four removals to cover it.
+
+        Measured before the fix: rc=0, "vendor tree, symlink, exclude entry and lock
+        entry removed", clone still on disk, still in arms-paths.json, lock entry
+        gone, and `verify --all` saw 0/0 because a lock-less arm has no row and the
+        stray scan only walks skills/vendor.
+        """
+        import contextlib, io
+        src, dest = self._install_arm()
+        cfg = self.root / octo_pkg.ARMS_PATHS_REL
+        self.assertIn("sample-arm", json.loads(cfg.read_text(encoding="utf-8")))
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "uninstall", "sample-arm"])
+        self.assertEqual(rc, 0)
+        said = buf.getvalue()
+        self.assertNotIn("sample-arm", json.loads(cfg.read_text(encoding="utf-8")),
+                         "registered with no lock entry is the orphan itself")
+        self.assertEqual(self.brain.load_lock()["packages"], [])
+        self.assertTrue(dest.exists(),
+                        "the clone is the operator's own repo and is never deleted")
+        self.assertIn(octo_pkg.ARMS_PATHS_REL, said)
+        self.assertIn(str(dest), said, "and it says where the repo was left")
+        for lie in ("vendor tree", "symlink", "exclude entry"):
+            self.assertNotIn(lie, said,
+                             f"an arm has no {lie}; claiming it is a false receipt")
+        self.assertIn("lock entry", said)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(octo_pkg.main(["--brain", str(self.root), "verify", "--all"]), 0)
+
+    def test_a_validation_failure_after_the_clone_leaves_nothing_behind(self):
+        """The older guard, `except PkgError: rmtree(target); raise`, which cycle 10
+        left with ZERO coverage without touching it. Its only test was the weak
+        license-less arm, and fixing that test to reach the NEW unwind moved the flow
+        past validation, so the older guard ended up held by nothing. Correcting a
+        weak test silently un-covers whatever it was accidentally exercising.
+        """
+        import contextlib, io
+        cases = {
+            "no-license": {"name": "sample-arm", "version": "1.0.0", "kind": "arm"},
+            "wrong-kind": {"name": "sample-arm", "version": "1.0.0", "license": "MIT",
+                           "kind": "skill"},
+        }
+        for tag, man in cases.items():
+            with self.subTest(manifest=tag):
+                src = self._arm_src(f"bad-{tag}", manifest=man)
+                dest = self.tmp / f"armdest-{tag}"
+                with contextlib.redirect_stderr(io.StringIO()), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    rc = octo_pkg.main(["--brain", str(self.root), "install", "--kind",
+                                        "arm", "--dest", str(dest), str(src)])
+                self.assertEqual(rc, 1)
+                self.assertFalse(dest.exists(),
+                                 "a refused arm.json leaves no clone to block the retry")
+                self.assertFalse((self.root / octo_pkg.ARMS_PATHS_REL).exists())
+
+    def test_an_existing_arms_paths_is_restored_byte_for_byte(self):
+        """The `cfg.write_text(cfg_before)` half of the unwind. Only the
+        `cfg_before is None` path had a test, so a rollback over an arms-paths.json
+        that already had arms in it was never once executed."""
+        import contextlib, io
+        cfg = self.root / octo_pkg.ARMS_PATHS_REL
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        before = '{\n  "other-arm": "Documents/github/other-arm"\n}\n'
+        cfg.write_text(before, encoding="utf-8")
+        src = self._arm_src()
+        dest = self.tmp / "armdest"
+        self.brain.lock_path.write_text("{ not json", encoding="utf-8")
+        with contextlib.redirect_stderr(io.StringIO()), \
+                contextlib.redirect_stdout(io.StringIO()):
+            rc = octo_pkg.main(["--brain", str(self.root), "install", "--kind", "arm",
+                                "--dest", str(dest), str(src)])
+        self.assertEqual(rc, 1)
+        self.assertFalse(dest.exists())
+        self.assertEqual(cfg.read_text(encoding="utf-8"), before,
+                         "the other arm's registration must survive, byte for byte")
+
+    def test_a_non_exception_is_re_raised_after_the_unwind(self):
+        """`if not isinstance(e, Exception): raise`. A Ctrl-C mid-install must still
+        stop the program, and it must not stop it half-installed."""
+        import contextlib, io
+        src = self._arm_src()
+        dest = self.tmp / "armdest"
+        cfg = self.root / octo_pkg.ARMS_PATHS_REL
+        real_save = octo_pkg.Brain.save_lock
+
+        def interrupted(self_, lock):
+            raise KeyboardInterrupt()
+
+        octo_pkg.Brain.save_lock = interrupted
+        self.addCleanup(lambda: setattr(octo_pkg.Brain, "save_lock", real_save))
+        with contextlib.redirect_stderr(io.StringIO()), \
+                contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(KeyboardInterrupt):
+                octo_pkg.main(["--brain", str(self.root), "install", "--kind", "arm",
+                               "--dest", str(dest), str(src)])
+        self.assertFalse(dest.exists(), "the unwind runs first, then the re-raise")
+        self.assertFalse(cfg.exists(), "and the registration it wrote is taken back")
+
+    def test_an_unreadable_arms_paths_is_never_deleted_by_the_unwind(self):
+        """The read moved inside the protected region, so it can now fail there, and
+        `cfg_before is None` no longer means "the file did not exist". Without a
+        separate `cfg_known` flag the unwind reaches its unlink branch and answers
+        "I could not read your arms-paths.json" by deleting it."""
+        import contextlib, io
+        cfg = self.root / octo_pkg.ARMS_PATHS_REL
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        cfg.write_text('{"other-arm": "elsewhere"}\n', encoding="utf-8")
+        os.chmod(cfg, 0o000)
+        self.addCleanup(lambda: os.chmod(cfg, 0o644))
+        if os.access(cfg, os.R_OK):
+            self.skipTest("running as root, EACCES is not enforceable")
+        src = self._arm_src()
+        dest = self.tmp / "armdest"
+        with contextlib.redirect_stderr(io.StringIO()), \
+                contextlib.redirect_stdout(io.StringIO()):
+            rc = octo_pkg.main(["--brain", str(self.root), "install", "--kind", "arm",
+                                "--dest", str(dest), str(src)])
+        self.assertEqual(rc, 1)
+        self.assertFalse(dest.exists())
+        self.assertTrue(cfg.exists(),
+                        "a file this could not READ is a file it must not delete")
+
+    def test_verify_json_carries_a_non_utf8_name_through_a_real_stdout(self):
+        """The test gap, and it is the same sin twice in one diff: the ensure_ascii
+        fix shipped with no test, and none was possible on the surface it was written
+        against. Every --json test went through redirect_stdout(StringIO) plus
+        json.loads, and a StringIO never ENCODES, so the shipped form and the mutant
+        round-trip identically through it. The invariant lives on a real stdout, so
+        the test needs a subprocess, which is the treatment the stray test already
+        got one finding earlier.
+        """
+        vendor = self.brain.vendor_dir
+        vendor.mkdir(parents=True, exist_ok=True)
+        os.mkdir(os.path.join(bytes(vendor), b"stray\xff"))
+        cp = subprocess.run([sys.executable, str(SCRIPTS / "octo_pkg.py"),
+                             "--brain", str(self.root), "verify", "--all", "--json"],
+                            capture_output=True, text=True, timeout=180,
+                            env={**os.environ, "HOME": self._home or os.environ["HOME"]})
+        self.assertNotIn("Traceback", cp.stderr)
+        payload = json.loads(cp.stdout.strip().splitlines()[-1])
+        self.assertIn(os.fsdecode(b"stray\xff"), " ".join(payload["fail"]),
+                      "the consumer must get the name back byte for byte; "
+                      "ensure_ascii=False sends the surrogate into the "
+                      "errors='replace' stream and the name it reads is a "
+                      "different string")
+
+
 class TestGenerator(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="test-gen-"))
