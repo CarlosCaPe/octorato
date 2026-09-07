@@ -339,7 +339,9 @@ fi
 # always-on discovery path, so a package that drifted from its signature is code the
 # brain runs on every prompt without anyone having approved those bytes.
 # Called through the script, never through the `octo` thunk: the thunk is a per-machine
-# file that install-runners.py writes, and a gate may not depend on one.
+# file that install-runners.py writes, and a gate may not depend on one. --brain pins the
+# checkout being pushed: without it a CLAUDE_DIR in the environment repoints the gate at
+# another brain, and it would verify someone else's lock while this one goes out.
 # Only the FAIL tier blocks (exit 1): an entry merely absent on disk is a WARN and
 # exits 0, so a second machine that pulled the lock offline can still push an
 # unrelated change.
@@ -351,11 +353,11 @@ if [ -f "$REPO_ROOT/scripts/octo_pkg.py" ]; then
     } >&2
     exit 1
   fi
-  if ! "$PYTHON" "$REPO_ROOT/scripts/octo_pkg.py" verify --all >/dev/null 2>&1; then
+  if ! "$PYTHON" "$REPO_ROOT/scripts/octo_pkg.py" --brain "$REPO_ROOT" verify --all >/dev/null 2>&1; then
     {
       echo ""
       echo "✗ pre-push: an installed package is NOT what was signed."
-      "$PYTHON" "$REPO_ROOT/scripts/octo_pkg.py" verify --all 2>&1 | sed 's/^/  /'
+      "$PYTHON" "$REPO_ROOT/scripts/octo_pkg.py" --brain "$REPO_ROOT" verify --all 2>&1 | sed 's/^/  /'
       echo ""
       echo "  Inspect it, then reinstall from the lock, and re-push."
     } >&2

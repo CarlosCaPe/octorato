@@ -14,8 +14,12 @@ thunk lands in Phase 1b):
   verify [<name> ...] [--all] [--json]
   uninstall <name>
   list [--json]
+  hash <dir> [--write]
   lock
   sync
+
+`<source>` is a plain directory (the package), a git repository (path or URL), a
+GitHub URL, or owner/repo with --path.
 
 Install, for a skill:
   1. stage the source (a local directory, or a GitHub repo via the zip / sparse
@@ -55,14 +59,18 @@ no private key ever lives in the repo.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 
 # Force UTF-8 on stdout/stderr so the check glyphs survive on Windows shells that
 # start in cp1252. Same preamble as the rest of the brain's scripts.
@@ -84,6 +92,17 @@ VENDOR_REL = "skills/vendor"
 
 PASS, WARN, FAIL = "PASS", "WARN", "FAIL"
 
+# The schema's own name pattern. Every package name is matched against it at BOTH
+# ends: when a manifest is read, and when the lockfile is read. The lock is a tracked
+# file, so a name like "../../../escaped" arrives through a normal `git pull` and
+# would otherwise be joined onto skills/vendor and written outside the brain.
+NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+# `vendor` is the container the packages live in, so a package called vendor would
+# make skills/vendor/vendor and a symlink at skills/vendor over the container itself.
+RESERVED_NAMES = {"vendor", "learned"}
+GITHUB_HOSTS = {"github.com", "www.github.com"}
+REF_FALLBACKS = ("main", "master")
+
 # Env git exports to its hooks. A child `git` that inherits GIT_DIR operates on the
 # LIVE repo, not on the throwaway one a selftest built (brain_doctor.py carries the
 # same scrub for the same reason).
@@ -95,6 +114,18 @@ _GIT_HOOK_ENV = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX",
 # tampered install: that is the machine proof of the tree-before-signature order,
 # which a message-substring assertion could not give.
 SIG_VERIFY_CALLS = 0
+
+
+def valid_name(name: str) -> str:
+    """Return the name, or raise. One place, used by the manifest path, the --name
+    override and the lockfile reader, so the three cannot drift."""
+    if not isinstance(name, str) or not NAME_RE.match(name):
+        raise PkgError(f"invalid package name {name!r}: must match {NAME_RE.pattern}")
+    if len(name) < 2 or len(name) > 64:
+        raise PkgError(f"invalid package name {name!r}: 2 to 64 characters")
+    if name in RESERVED_NAMES:
+        raise PkgError(f"package name {name!r} is reserved")
+    return name
 
 
 class PkgError(Exception):
@@ -180,6 +211,24 @@ class Brain:
         common = Path(raw)
         if not common.is_absolute():
             common = (self.root / common).resolve()
+        common = common.resolve()
+        # The brain root may sit INSIDE an unrelated enclosing repo (a sandbox under a
+        # versioned HOME, a checkout inside another checkout). git would then hand back
+        # that outer repo's common dir and we would write an exclude line into a
+        # stranger's repository.
+        #
+        # The test is NOT "is the git dir under the brain root". A git WORKTREE, which
+        # is how this brain runs parallel sessions, keeps its common dir back in the
+        # main checkout, far outside the worktree; requiring containment silently
+        # disabled the exclude in exactly the setup the brain uses most. The right
+        # question is whether this repo's work tree IS the brain: if the toplevel is an
+        # ancestor rather than the brain itself, the repo belongs to someone else.
+        cp = _run(["git", "rev-parse", "--show-toplevel"], cwd=self.root)
+        if cp.returncode != 0:
+            return None
+        top = (cp.stdout or b"").decode("utf-8", "replace").strip()
+        if not top or Path(top).resolve() != self.root:
+            return None
         return common / "info" / "exclude"
 
     def exclude_add(self, rel: str) -> bool:
@@ -209,7 +258,56 @@ class Brain:
         return rel in f.read_text(encoding="utf-8").splitlines()
 
     # ---- lock ------------------------------------------------------------
+    @contextlib.contextmanager
+    def lock_held(self, timeout: float = 30.0):
+        """Hold an exclusive advisory lock around a whole load-modify-save.
+
+        Two `octo pkg install` runs (two sessions, or a `sync` racing an install) each
+        read the lockfile, add their own entry and write the file back. Without this,
+        the second write is computed from a snapshot taken before the first, and one
+        of the two packages is on disk with no lock entry: it then verifies as an
+        untracked stray forever. The lock lives beside the lockfile and is never
+        committed.
+        """
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        guard = self.lock_path.with_suffix(self.lock_path.suffix + ".lock")
+        fh = open(guard, "a+")
+        try:
+            try:
+                import fcntl
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            except ImportError:
+                # No fcntl (Windows): fall back to an O_EXCL sentinel with a timeout,
+                # so the contract degrades in speed, never in correctness.
+                sentinel = Path(str(guard) + ".excl")
+                deadline = time.time() + timeout
+                while True:
+                    try:
+                        fd = os.open(str(sentinel), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                        os.close(fd)
+                        break
+                    except FileExistsError:
+                        if time.time() > deadline:
+                            raise PkgError(f"could not acquire {sentinel} within {timeout}s")
+                        time.sleep(0.05)
+                try:
+                    yield
+                finally:
+                    sentinel.unlink(missing_ok=True)
+                return
+            yield
+        finally:
+            fh.close()
+
     def load_lock(self) -> dict:
+        """Read and VALIDATE the lockfile. A bad entry refuses the whole file.
+
+        packages.lock.json is tracked, so its contents arrive from a remote like any
+        other file. An entry whose name is `../../../escaped` would be joined onto
+        skills/vendor by install and sync, and would print PASS at verify because the
+        path it resolves to happens to exist. Refusing the file is the only safe
+        reading: a lock nobody can trust is not a lock with one bad row.
+        """
         if not self.lock_path.exists():
             return {"version": 1, "packages": []}
         try:
@@ -218,12 +316,31 @@ class Brain:
             raise PkgError(f"{LOCK_REL} does not parse: {e}")
         if not isinstance(data, dict) or not isinstance(data.get("packages"), list):
             raise PkgError(f"{LOCK_REL} is not a lockfile object with a packages list")
+        seen = set()
+        for i, entry in enumerate(data["packages"]):
+            if not isinstance(entry, dict):
+                raise PkgError(f"{LOCK_REL} entry {i} is not an object")
+            try:
+                name = valid_name(entry.get("name"))
+            except PkgError as e:
+                raise PkgError(f"{LOCK_REL} entry {i}: {e}")
+            if name in seen:
+                raise PkgError(f"{LOCK_REL} names {name!r} twice")
+            seen.add(name)
+            if entry.get("kind") not in (None, "skill", "arm"):
+                raise PkgError(f"{LOCK_REL} entry {name}: kind must be skill or arm")
         return data
 
     def save_lock(self, lock: dict) -> None:
+        """Write atomically: a crash mid-write must not leave a truncated lockfile,
+        and a concurrent reader must see either the old file or the new one."""
         lock["packages"] = sorted(lock.get("packages", []), key=lambda p: str(p.get("name", "")))
-        self.lock_path.write_text(json.dumps(lock, indent=2, ensure_ascii=False) + "\n",
-                                  encoding="utf-8")
+        for entry in lock["packages"]:
+            valid_name(entry.get("name"))
+        payload = json.dumps(lock, indent=2, ensure_ascii=False) + "\n"
+        tmp = self.lock_path.with_suffix(self.lock_path.suffix + f".tmp{os.getpid()}")
+        tmp.write_text(payload, encoding="utf-8")
+        os.replace(tmp, self.lock_path)
 
     # ---- allowed signers -------------------------------------------------
     def signer_files(self) -> list[Path]:
@@ -269,29 +386,39 @@ def resolve_brain(arg: str | None) -> Brain:
 # tree hash
 # --------------------------------------------------------------------------
 
-def tree_sha256(pkg_dir: Path) -> str:
-    """Deterministic hash over the package tree, excluding the manifest and its
-    signature (they carry the hash, so they cannot be inside it).
+def tree_sha256(pkg_dir: Path, kind: str = "skill") -> str:
+    """Deterministic hash over the package tree.
+
+    Exactly two files are excluded, and only the ones this package kind uses to carry
+    the hash: its own manifest (`skill.json` for a skill, `arm.json` for an arm) and
+    the detached `skill.json.sig`. Nothing else. An `arm.json` shipped inside a skill
+    package is content like any other file and IS hashed: excluding it by filename
+    would leave a hole a publisher could hide anything in.
+
+    `.git` is hashed too, deliberately. A `.git` directory inside an installed package
+    is not the package: it is a second repository living in the always-on discovery
+    path, able to carry hooks and to rewrite the tree. Hashing it means a planted one
+    changes the hash and verify goes FAIL, which is the whole point.
 
     Feeds the digest `<posix relpath>\\0<sha256 of the bytes>\\0` per file, in sorted
     path order, so a rename is a different hash and a content change is a different
-    hash. `.git` is skipped: a sparse checkout drags one in and it is not the
-    package. Symlinks inside a package are refused rather than followed; a package
-    that points outside itself is not a self-contained tree.
+    hash. Symlinks inside a package are refused rather than followed; a package that
+    points outside itself is not a self-contained tree.
     """
     import hashlib
+    if kind not in MANIFEST_NAME:
+        raise PkgError(f"unknown package kind {kind!r}")
+    excluded = {MANIFEST_NAME[kind], SIG_NAME}
     h = hashlib.sha256()
     files = []
     for p in sorted(pkg_dir.rglob("*")):
         rel = p.relative_to(pkg_dir)
-        if rel.parts and rel.parts[0] == ".git":
-            continue
         if p.is_symlink():
             raise PkgError(f"package contains a symlink ({rel.as_posix()}); "
                            "a package tree must be self-contained")
         if not p.is_file():
             continue
-        if rel.as_posix() in (MANIFEST_NAME["skill"], MANIFEST_NAME["arm"], SIG_NAME):
+        if rel.as_posix() in excluded:
             continue
         files.append((rel.as_posix(), p))
     for rel_posix, p in files:
@@ -325,7 +452,10 @@ def validate_manifest(brain: Brain, mpath: Path) -> None:
     try:
         from jsonschema import Draft202012Validator
     except ImportError as e:
-        raise PkgError(f"jsonschema not importable: {e}")
+        raise PkgError(
+            f"jsonschema is not importable ({e}); a manifest cannot be validated and "
+            f"an unvalidated manifest is never installed. Install it: "
+            f"python3 -m pip install --user jsonschema (it is in requirements.txt)")
     schema = json.loads(brain.schema_path.read_text(encoding="utf-8"))
     validator = Draft202012Validator(schema)
     data = json.loads(mpath.read_text(encoding="utf-8"))
@@ -383,7 +513,7 @@ def check_package(brain: Brain, pkg_dir: Path, kind: str) -> dict:
     embedded = manifest.get("tree_sha256")
     if not embedded:
         raise PkgError(f"{mpath.name} carries no tree_sha256; an unhashed tree cannot be verified")
-    actual = tree_sha256(pkg_dir)
+    actual = tree_sha256(pkg_dir, "skill")
     if actual != embedded:
         raise PkgError(f"tree_sha256 mismatch: manifest says {embedded[:12]}, "
                        f"tree hashes to {actual[:12]}")
@@ -395,33 +525,137 @@ def check_package(brain: Brain, pkg_dir: Path, kind: str) -> dict:
 # sources
 # --------------------------------------------------------------------------
 
+def _is_git_repo(path: Path) -> bool:
+    """A checkout (has .git) or a bare repo (has HEAD + objects)."""
+    return (path / ".git").exists() or ((path / "HEAD").is_file() and (path / "objects").is_dir())
+
+
 def _is_local_source(source: str) -> bool:
-    return Path(os.path.expanduser(source)).is_dir()
+    """A LOCAL PACKAGE directory: a directory that is not itself a git repository.
+
+    The distinction matters. A plain directory is the package, used in place. A
+    directory that IS a repo is a git source and goes through the clone path, exactly
+    like a remote URL, so the same code runs whether the repo is across the network or
+    on the next disk over."""
+    p = Path(os.path.expanduser(source))
+    return p.is_dir() and not _is_git_repo(p)
 
 
 def _github_module():
     """Import the installer's fetch helpers lazily: they pull in github_utils, and a
-    local-path install must not need the network path to exist at all."""
+    local-path install must not need the network path to exist at all.
+
+    sys.modules registration is NOT optional. install-skill-from-github.py carries
+    `from __future__ import annotations` and dataclasses; the dataclass machinery
+    resolves the module by name through sys.modules while the module body is still
+    executing, so a module that is not registered raises KeyError there and every
+    GitHub install died with a misleading 'cannot load installer helpers'.
+    """
     import importlib.util
     here = Path(__file__).resolve().parent.parent
     mod_path = here / "skills" / "skill-installer" / "scripts" / "install-skill-from-github.py"
     if not mod_path.exists():
         raise PkgError(f"installer helpers not found at {mod_path}")
-    sys.path.insert(0, str(mod_path.parent))
+    name = "_octo_gh_install"
+    if name in sys.modules:
+        return sys.modules[name]
+    if str(mod_path.parent) not in sys.path:
+        sys.path.insert(0, str(mod_path.parent))
     try:
-        spec = importlib.util.spec_from_file_location("_octo_gh_install", mod_path)
+        spec = importlib.util.spec_from_file_location(name, mod_path)
         mod = importlib.util.module_from_spec(spec)
+        sys.modules[name] = mod
         spec.loader.exec_module(mod)
         return mod
     except Exception as e:
+        sys.modules.pop(name, None)
         raise PkgError(f"cannot load installer helpers: {e}")
 
 
-def fetch_source(source: str, subpath: str | None, ref: str, tmp: Path) -> tuple[Path, str]:
+def parse_github_url(url: str, subpath: str | None = None, ref: str | None = None):
+    """(owner, repo, ref, path) from a GitHub URL.
+
+    Host check is on the parsed netloc, never on a substring of the URL: an
+    `https://github.com.evil.test/o/r` or an `https://x/?u=github.com/o/r` both carry
+    the literal 'github.com' and neither is GitHub (CodeQL
+    py/incomplete-url-substring-sanitization).
+
+    A branch name may contain slashes (`feat/v8/kernel`), and `/tree/<ref>/<path>`
+    gives no delimiter between the two. So: when --path is supplied, EVERYTHING after
+    /tree/ is the ref, which is exact. Only without --path do we fall back to the
+    one-segment-ref guess, and say so when it fails.
+    """
+    parts = urlsplit(url)
+    if parts.netloc.lower() not in GITHUB_HOSTS:
+        raise PkgError(f"not a GitHub URL: host {parts.netloc!r} is not github.com")
+    seg = [s for s in parts.path.split("/") if s]
+    if len(seg) < 2:
+        raise PkgError("GitHub URL must be /<owner>/<repo>[/tree/<ref>/<path>]")
+    owner, repo = seg[0], seg[1]
+    if repo.endswith(".git"):
+        repo = repo[:-4]
+    url_ref, url_path = None, None
+    if len(seg) > 2:
+        if seg[2] in ("tree", "blob"):
+            rest = seg[3:]
+            if not rest:
+                raise PkgError("GitHub URL missing ref after /tree/")
+            if subpath:
+                url_ref = "/".join(rest)  # exact: the path came from --path
+            else:
+                url_ref, url_path = rest[0], "/".join(rest[1:]) or None
+        else:
+            url_path = "/".join(seg[2:])
+    return owner, repo, (ref or url_ref), (subpath or url_path)
+
+
+def _split_source_spec(source: str) -> tuple[str, str | None]:
+    """Split a lock `source` back into (source, subpath).
+
+    Only the git forms carry a subpath, and they encode it after '#'. A plain local
+    package directory has none: the directory IS the package.
+    """
+    if "#" in source:
+        head, _, sub_path = source.partition("#")
+        if head.startswith("git+file://"):
+            head = head[len("git+file://"):]
+        if "@" in head:
+            head = head.rsplit("@", 1)[0]
+        return head, sub_path or None
+    if source.startswith("https://github.com/") and "/tree/" in source:
+        return source, None  # parse_github_url re-splits it
+    return source, None
+
+
+def _sparse_checkout(gh, repo_url: str, ref: str | None, path: str, tmp: Path) -> tuple[Path, str]:
+    """Sparse-checkout `path` at `ref`, trying the default branch names when the
+    caller did not pin one. `--ref` unset used to mean literally "main", so a repo
+    whose default branch is master failed with a confusing clone error."""
+    refs = [ref] if ref else list(REF_FALLBACKS)
+    errors = []
+    for candidate in refs:
+        d = tmp / f"co-{candidate.replace('/', '_')}"
+        d.mkdir(parents=True, exist_ok=True)
+        try:
+            root = gh._git_sparse_checkout(repo_url, candidate, [path], str(d))
+            return Path(root), candidate
+        except Exception as e:
+            errors.append(f"{candidate}: {e}")
+    raise PkgError("fetch failed, no usable ref (" + "; ".join(errors) + ")")
+
+
+def fetch_source(source: str, subpath: str | None, ref: str | None, tmp: Path) -> tuple[Path, str]:
     """Stage the package into tmp. Returns (package dir, normalized source string).
 
-    A local directory is used in place (never mutated). A GitHub source reuses the
-    zip and sparse-checkout paths of install-skill-from-github.py.
+    Three source shapes, one code path each:
+      a plain directory        the package itself, used in place, never mutated
+      a git repo (path or URL) cloned with the sparse-checkout helper of
+                               install-skill-from-github.py
+      owner/repo or a GitHub URL   the zip path first, git as fallback (same helper)
+
+    A local git repo goes through the SAME clone code as a remote one on purpose: it
+    is what lets the git path be exercised without a network, so the code that runs in
+    the test is the code that runs against GitHub.
     """
     if _is_local_source(source):
         root = Path(os.path.expanduser(source)).resolve()
@@ -431,27 +665,43 @@ def fetch_source(source: str, subpath: str | None, ref: str, tmp: Path) -> tuple
         return pkg, str(pkg)
 
     gh = _github_module()
+
+    local_repo = Path(os.path.expanduser(source))
+    if local_repo.is_dir() and _is_git_repo(local_repo):
+        if not subpath:
+            raise PkgError("a git repository source needs --path")
+        gh._validate_relative_path(subpath)
+        repo_root, used = _sparse_checkout(gh, str(local_repo.resolve()), ref, subpath, tmp)
+        pkg = repo_root / subpath
+        if not pkg.is_dir():
+            raise PkgError(f"path {subpath} not found in {local_repo}@{used}")
+        return pkg, f"git+file://{local_repo.resolve()}@{used}#{subpath}"
+
     if "://" in source or source.startswith("github.com/"):
         url = source if "://" in source else f"https://{source}"
-        owner, repo, gref, url_path = gh._parse_github_url(url, ref)
-        path = subpath or url_path
+        owner, repo, gref, path = parse_github_url(url, subpath, ref)
     else:
-        parts = [p for p in source.split("/") if p]
+        parts = [s for s in source.split("/") if s]
         if len(parts) != 2:
-            raise PkgError("source must be a local directory, a GitHub URL, or owner/repo")
+            raise PkgError("source must be a directory, a git repo, a GitHub URL, or owner/repo")
         owner, repo, gref, path = parts[0], parts[1], ref, subpath
     if not path:
         raise PkgError("a GitHub source needs --path (or a /tree/<ref>/<path> URL)")
     gh._validate_relative_path(path)
-    src = gh.Source(owner=owner, repo=repo, ref=gref, paths=[path])
-    try:
-        repo_root = gh._prepare_repo(src, "auto", str(tmp))
-    except Exception as e:
-        raise PkgError(f"fetch failed: {e}")
-    pkg = Path(repo_root) / path
-    if not pkg.is_dir():
-        raise PkgError(f"path {path} not found in {owner}/{repo}@{gref}")
-    return pkg, f"https://github.com/{owner}/{repo}/tree/{gref}/{path}"
+
+    last = None
+    for candidate in ([gref] if gref else list(REF_FALLBACKS)):
+        src = gh.Source(owner=owner, repo=repo, ref=candidate, paths=[path])
+        try:
+            repo_root = Path(gh._prepare_repo(src, "auto", str(tmp)))
+        except Exception as e:
+            last = f"{candidate}: {e}"
+            continue
+        pkg = repo_root / path
+        if not pkg.is_dir():
+            raise PkgError(f"path {path} not found in {owner}/{repo}@{candidate}")
+        return pkg, f"https://github.com/{owner}/{repo}/tree/{candidate}/{path}"
+    raise PkgError(f"fetch failed: {last}")
 
 
 # --------------------------------------------------------------------------
@@ -464,38 +714,47 @@ def install_skill(brain: Brain, source: str, subpath: str | None, ref: str,
         tmp = Path(td)
         pkg, norm_source = fetch_source(source, subpath, ref, tmp)
         manifest = check_package(brain, pkg, "skill")
-        name = name_override or manifest["name"]
-        if os.sep in name or (os.altsep and os.altsep in name) or name in (".", ".."):
-            raise PkgError("package name must be a single path segment")
+        name = valid_name(name_override or manifest["name"])
 
         dest = brain.vendor_path(name)
         link = brain.link_path(name)
-        if dest.exists():
+        if dest.exists() or dest.is_symlink():
             raise PkgError(f"already installed: {dest} (uninstall first)")
         if link.exists() or link.is_symlink():
             raise PkgError(f"skills/{name} already exists and is not ours; refusing to replace it")
 
         # Everything above this line is a check in the staging area. Nothing on the
-        # brain has been touched yet, so a refusal leaves no half-install.
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(pkg, dest, symlinks=False,
-                        ignore=shutil.ignore_patterns(".git"))
-        link.parent.mkdir(parents=True, exist_ok=True)
-        os.symlink(os.path.relpath(dest, link.parent), link, target_is_directory=True)
-        excluded = brain.exclude_add(f"skills/{name}")
-
-        lock = brain.load_lock()
-        lock["packages"] = [p for p in lock["packages"] if p.get("name") != name]
-        lock["packages"].append({
-            "name": name,
-            "kind": "skill",
-            "version": manifest["version"],
-            "tree_sha256": manifest["tree_sha256"],
-            "signer": manifest["_signer"],
-            "source": norm_source,
-            "installed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        })
-        brain.save_lock(lock)
+        # brain has been touched yet, so a refusal leaves no half-install. Everything
+        # BELOW is unwound on any failure for the same reason: a tree on disk with no
+        # symlink and no lock entry is an unverifiable stray, and it would sit in the
+        # discovery path unnoticed.
+        excluded = False
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(pkg, dest, symlinks=False)
+            link.parent.mkdir(parents=True, exist_ok=True)
+            os.symlink(os.path.relpath(dest, link.parent), link, target_is_directory=True)
+            excluded = brain.exclude_add(f"skills/{name}")
+            with brain.lock_held():
+                lock = brain.load_lock()
+                lock["packages"] = [p for p in lock["packages"] if p.get("name") != name]
+                lock["packages"].append({
+                    "name": name,
+                    "kind": "skill",
+                    "version": manifest["version"],
+                    "tree_sha256": manifest["tree_sha256"],
+                    "signer": manifest["_signer"],
+                    "source": norm_source,
+                    "installed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                })
+                brain.save_lock(lock)
+        except (OSError, PkgError) as e:
+            if link.is_symlink():
+                link.unlink()
+            if dest.exists():
+                shutil.rmtree(dest, ignore_errors=True)
+            brain.exclude_remove(f"skills/{name}")
+            raise PkgError(f"install of {name} rolled back: {e}")
 
     print(f"installed {name} {manifest['version']} (signer {manifest['_signer']})")
     print(f"  tree     {brain.vendor_path(name)}")
@@ -602,17 +861,29 @@ def verify_entry(brain: Brain, entry: dict) -> tuple[str, str]:
         # business (arm isolation). The lock records them, verify does not reach in.
         return PASS, f"{name}: arm registered (validated, not signed)"
 
+    if dest.is_symlink():
+        # The vendor entry itself must be a real directory. A symlink there means the
+        # hashed bytes live somewhere nobody verified, and resolve() would happily
+        # follow it and report PASS on a tree that is not the package.
+        return FAIL, f"{name}: {VENDOR_REL}/{name} is a symlink, not the package tree"
     if not dest.exists():
         return WARN, f"{name}: absent on disk"
 
     link = brain.link_path(name)
     if not link.is_symlink():
         return FAIL, f"{name}: skills/{name} is not a symlink to {VENDOR_REL}/{name}"
+    expected = os.path.relpath(dest, link.parent)
+    actual_link = os.readlink(link)
+    # readlink, not resolve: resolve() reports where the link ENDS UP, so a link
+    # rewritten to an absolute path outside the brain that happens to hold a copy of
+    # the tree would compare equal. The stored target itself has to be ours.
+    if actual_link != expected:
+        return FAIL, f"{name}: skills/{name} points at {actual_link!r}, expected {expected!r}"
     if link.resolve() != dest.resolve():
-        return FAIL, f"{name}: skills/{name} points at {link.resolve()}, not {dest}"
+        return FAIL, f"{name}: skills/{name} resolves to {link.resolve()}, not {dest}"
 
     try:
-        actual = tree_sha256(dest)
+        actual = tree_sha256(dest, "skill")
     except PkgError as e:
         return FAIL, f"{name}: {e}"
     if actual != entry.get("tree_sha256"):
@@ -655,7 +926,10 @@ def cmd_verify(brain: Brain, names: list[str], all_: bool, as_json: bool) -> int
     for n in missing:
         results.append((FAIL, f"{n}: not in {LOCK_REL}"))
 
-    if not probe and pkgs:
+    # Not conditional on the lock having entries. The doctor reports the probe as FAIL
+    # on an empty lock too, and a verify that silently PASSes here while the doctor
+    # goes red is the two disagreeing about the same machine.
+    if not probe:
         results.append((FAIL, "ssh-keygen -Y unsupported: signatures cannot be checked"))
 
     fails = [m for s, m in results if s == FAIL]
@@ -686,6 +960,7 @@ def cmd_verify(brain: Brain, names: list[str], all_: bool, as_json: bool) -> int
 # --------------------------------------------------------------------------
 
 def cmd_uninstall(brain: Brain, name: str) -> int:
+    valid_name(name)
     lock = brain.load_lock()
     entry = next((p for p in lock["packages"] if p.get("name") == name), None)
     dest, link = brain.vendor_path(name), brain.link_path(name)
@@ -700,8 +975,10 @@ def cmd_uninstall(brain: Brain, name: str) -> int:
         shutil.rmtree(dest)
     brain.exclude_remove(f"skills/{name}")
 
-    lock["packages"] = [p for p in lock["packages"] if p.get("name") != name]
-    brain.save_lock(lock)
+    with brain.lock_held():
+        lock = brain.load_lock()
+        lock["packages"] = [p for p in lock["packages"] if p.get("name") != name]
+        brain.save_lock(lock)
     print(f"uninstalled {name}: vendor tree, symlink, exclude entry and lock entry removed")
     return 0
 
@@ -723,6 +1000,32 @@ def cmd_list(brain: Brain, as_json: bool) -> int:
         print(f"  [{r['status']}] {str(r['name']).ljust(width)}  {r.get('version')}  "
               f"{r.get('kind')}  signer={r.get('signer') or '-'}  {r.get('source')}")
     print(f"{len(rows)} package(s) in {LOCK_REL}")
+    return 0
+
+
+def cmd_hash(brain: Brain, target: str, write: bool) -> int:
+    """Print the tree hash of a package directory, and optionally embed it.
+
+    This is the publisher's first step: the number that goes into `tree_sha256` has to
+    come from the same function the installer will use, or the two disagree and every
+    install of that package is refused for a reason nobody can see.
+    """
+    d = Path(os.path.expanduser(target)).resolve()
+    if not d.is_dir():
+        raise PkgError(f"not a directory: {d}")
+    kind = "arm" if (d / MANIFEST_NAME["arm"]).is_file() and not (d / MANIFEST_NAME["skill"]).is_file() else "skill"
+    digest = tree_sha256(d, kind)
+    print(digest)
+    if not write:
+        return 0
+    mpath = d / MANIFEST_NAME[kind]
+    if not mpath.is_file():
+        raise PkgError(f"--write needs {MANIFEST_NAME[kind]} in {d}")
+    manifest = json.loads(mpath.read_text(encoding="utf-8"))
+    manifest["tree_sha256"] = digest
+    mpath.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(f"embedded in {mpath}")
+    print(f"next: ssh-keygen -Y sign -f <your-key> -n {SIG_NAMESPACE} {mpath}")
     return 0
 
 
@@ -752,7 +1055,8 @@ def cmd_lock(brain: Brain) -> int:
             entry["signer"] = manifest["_signer"]
             entry["version"] = manifest["version"]
             changed.append(name)
-    brain.save_lock(lock)
+    with brain.lock_held():
+        brain.save_lock(lock)
     for r in refused:
         print(f"[FAIL] {r}")
     print(f"re-locked: {len(changed)} entry(ies) updated"
@@ -777,26 +1081,44 @@ def cmd_sync(brain: Brain) -> int:
         name = str(entry.get("name") or "?")
         if entry.get("kind") != "skill":
             continue
-        if brain.vendor_path(name).exists():
+        dest = brain.vendor_path(name)
+        if dest.exists() or dest.is_symlink():
             continue
         link = brain.link_path(name)
         if link.is_symlink():
             link.unlink()  # a dangling link from a half-removed install
+        elif link.exists():
+            # A real directory the operator (or another tool) put there. sync is a
+            # restore, never an overwrite: whatever is at skills/<name> is first-party
+            # until proven otherwise, and clobbering it would delete their work.
+            warned.append(f"{name}: skills/{name} exists and is not our symlink; not restored")
+            continue
         source = entry.get("source") or ""
+        source_spec, sub_path = _split_source_spec(source)
         try:
             with tempfile.TemporaryDirectory(prefix="octo-pkg-sync-") as td:
-                pkg, _ = fetch_source(source, None, "main", Path(td))
+                pkg, _ = fetch_source(source_spec, sub_path, None, Path(td))
                 manifest = check_package(brain, pkg, "skill")
                 if manifest.get("tree_sha256") != entry.get("tree_sha256"):
                     warned.append(f"{name}: source tree hash differs from the lock; not installed")
                     continue
-                dest = brain.vendor_path(name)
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copytree(pkg, dest, symlinks=False,
-                                ignore=shutil.ignore_patterns(".git"))
-                link.parent.mkdir(parents=True, exist_ok=True)
-                os.symlink(os.path.relpath(dest, link.parent), link, target_is_directory=True)
-                brain.exclude_add(f"skills/{name}")
+                if manifest.get("name") != name:
+                    warned.append(f"{name}: source now publishes {manifest.get('name')!r}; not installed")
+                    continue
+                try:
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copytree(pkg, dest, symlinks=False)
+                    link.parent.mkdir(parents=True, exist_ok=True)
+                    os.symlink(os.path.relpath(dest, link.parent), link, target_is_directory=True)
+                    brain.exclude_add(f"skills/{name}")
+                except OSError as e:
+                    # Same rollback stance as install: a half-restore leaves an
+                    # unverifiable tree in the discovery path.
+                    if link.is_symlink():
+                        link.unlink()
+                    if dest.exists():
+                        shutil.rmtree(dest, ignore_errors=True)
+                    raise
                 restored += 1
         except PkgError as e:
             warned.append(f"{name}: {e}")
@@ -941,7 +1263,67 @@ def selftest(fixture: Path, real: Brain) -> int:
         check("uninstall removed the exclude entry", not brain.exclude_has(f"skills/{name}"))
         check("uninstall emptied the lock", brain.load_lock()["packages"] == [])
 
-        # 9. sync on an empty lock is a no-op
+        # 9. a git repository source goes through the sparse-checkout helper. Local
+        # git repo, so this leg proves the GitHub code path with no network: same
+        # _github_module import, same gh._git_sparse_checkout call.
+        gitsrc = tmp / "gitrepo"
+        (gitsrc / "skills").mkdir(parents=True)
+        shutil.copytree(signed, gitsrc / "skills" / "sample-package")
+        for cmd in (["git", "init", "-q", "-b", "master", str(gitsrc)],
+                    ["git", "-C", str(gitsrc), "add", "-A"],
+                    ["git", "-C", str(gitsrc), "-c", "user.email=t@t", "-c", "user.name=t",
+                     "commit", "-q", "-m", "seed"]):
+            _run(cmd)
+        rc = main(["--brain", str(brain.root), "install", str(gitsrc),
+                   "--path", "skills/sample-package"])
+        check("install from a git repository exits 0 (no --ref: master fallback)", rc == 0)
+        check("git-sourced package installed", dest.is_dir() and link.is_symlink())
+        check("git source recorded in the lock",
+              brain.load_lock()["packages"][0]["source"].startswith("git+file://"))
+
+        # 10. a .git planted inside the installed tree changes the hash: FAIL
+        (dest / ".git").mkdir()
+        (dest / ".git" / "config").write_text("[core]\n", encoding="utf-8")
+        check("a .git dir planted in vendor turns verify FAIL",
+              main(["--brain", str(brain.root), "verify", "--all"]) == 1)
+        shutil.rmtree(dest / ".git")
+        check("verify green again once it is removed",
+              main(["--brain", str(brain.root), "verify", "--all"]) == 0)
+
+        # 11. the symlink retargeted to an identical copy elsewhere: FAIL on readlink
+        elsewhere = tmp / "elsewhere"
+        shutil.copytree(dest, elsewhere)
+        link.unlink()
+        os.symlink(str(elsewhere), link, target_is_directory=True)
+        check("a retargeted symlink is FAIL even when the bytes match",
+              main(["--brain", str(brain.root), "verify", "--all"]) == 1)
+        link.unlink()
+        os.symlink(os.path.relpath(dest, link.parent), link, target_is_directory=True)
+
+        # 12. a lock naming an escaped path refuses the whole file
+        good_lock = brain.lock_path.read_text(encoding="utf-8")
+        brain.lock_path.write_text(json.dumps({"version": 1, "packages": [
+            {"name": "../../../escaped", "kind": "skill", "version": "1.0.0",
+             "tree_sha256": "0" * 64, "signer": "octorato-release",
+             "source": str(signed), "installed_at": "2026-01-01T00:00:00Z"}]}, indent=2),
+            encoding="utf-8")
+        check("a lock naming an escaped path is refused, not PASSed",
+              main(["--brain", str(brain.root), "verify", "--all"]) == 1)
+        check("sync refuses that lock too and writes nothing",
+              main(["--brain", str(brain.root), "sync"]) == 1
+              and not (brain.root.parent.parent / "escaped").exists())
+        brain.lock_path.write_text(good_lock, encoding="utf-8")
+        main(["--brain", str(brain.root), "uninstall", name])
+
+        # 13. reserved and malformed --name are refused
+        check("--name vendor is refused",
+              main(["--brain", str(brain.root), "install", str(signed), "--name", "vendor"]) == 1)
+        check("--name with a path separator is refused",
+              main(["--brain", str(brain.root), "install", str(signed), "--name", "a/b"]) == 1)
+        check("neither refusal left a tree behind",
+              not brain.vendor_path("vendor").exists() and not (brain.vendor_dir / "a").exists())
+
+        # 14. sync on an empty lock is a no-op
         before = sorted(p.name for p in brain.vendor_dir.iterdir()) if brain.vendor_dir.exists() else []
         check("sync on an empty lock exits 0", main(["--brain", str(brain.root), "sync"]) == 0)
         after = sorted(p.name for p in brain.vendor_dir.iterdir()) if brain.vendor_dir.exists() else []
@@ -980,7 +1362,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("source", help="local directory, GitHub URL, or owner/repo")
     p.add_argument("--kind", choices=["skill", "arm"], default="skill")
     p.add_argument("--path", help="package path inside the repo")
-    p.add_argument("--ref", default="main")
+    p.add_argument("--ref", default=None,
+                   help="branch or tag; unset tries main then master")
     p.add_argument("--name", help="install under this name instead of the manifest's")
     p.add_argument("--dest", help="arm only: where to clone")
 
@@ -994,6 +1377,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("list", help="list lock entries with their live status")
     p.add_argument("--json", action="store_true")
+
+    p = sub.add_parser("hash", help="print a package directory's tree_sha256")
+    p.add_argument("dir")
+    p.add_argument("--write", action="store_true", help="embed it into the manifest")
 
     sub.add_parser("lock", help="recompute tree hash and signer for installed packages")
     sub.add_parser("sync", help="install from the lock what is missing, then verify")
@@ -1025,6 +1412,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_uninstall(brain, args.name)
         if args.cmd == "list":
             return cmd_list(brain, args.json)
+        if args.cmd == "hash":
+            return cmd_hash(brain, args.dir, args.write)
         if args.cmd == "lock":
             return cmd_lock(brain)
         if args.cmd == "sync":

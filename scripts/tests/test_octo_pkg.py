@@ -140,12 +140,15 @@ class TestTreeHash(unittest.TestCase):
         with self.assertRaises(octo_pkg.PkgError):
             octo_pkg.tree_sha256(d)
 
-    def test_git_dir_ignored(self):
+    def test_git_dir_is_hashed_not_skipped(self):
+        """Reversed deliberately in QA cycle 1. A .git inside an installed package is
+        a second repository in the always-on discovery path, able to carry hooks. It
+        is content, and a planted one must move the hash."""
         d = self._pkg()
         before = octo_pkg.tree_sha256(d)
         (d / ".git").mkdir()
         (d / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
-        self.assertEqual(before, octo_pkg.tree_sha256(d))
+        self.assertNotEqual(before, octo_pkg.tree_sha256(d))
 
     def test_fixture_hashes_match_their_manifests(self):
         """The shipped fixtures are only a proof while their embedded hash is true."""
@@ -334,6 +337,318 @@ class TestSelftest(unittest.TestCase):
                             cwd=str(BRAIN), capture_output=True, text=True)
         self.assertEqual(cp.returncode, 0, cp.stdout + cp.stderr)
         self.assertIn("selftest OK", cp.stdout)
+
+
+class TestGitHubPath(SandboxCase):
+    """Defect 1: the helper module was executed without being registered in
+    sys.modules, so its dataclasses could not resolve their own module and EVERY
+    GitHub install died with 'cannot load installer helpers'."""
+
+    def test_helper_module_loads_and_exposes_the_fetch_helpers(self):
+        gh = octo_pkg._github_module()
+        for fn in ("_git_sparse_checkout", "_download_repo_zip", "_prepare_repo",
+                   "_validate_relative_path", "Source"):
+            self.assertTrue(hasattr(gh, fn), fn)
+        self.assertIs(gh, octo_pkg._github_module(), "second call must reuse the module")
+
+    def _seed_repo(self, branch: str = "main") -> Path:
+        """A real git repo holding the fixture at skills/sample-package.
+
+        Local, so the git path is exercised WITHOUT the network: same
+        _git_sparse_checkout call the GitHub path makes. Chosen over cloning
+        CarlosCaPe/octorato because a unit test that needs github.com is a test that
+        fails on a plane, and the code under test is identical either way."""
+        repo = self.tmp / f"repo-{branch}"
+        (repo / "skills").mkdir(parents=True)
+        shutil.copytree(FIXTURE / "signed", repo / "skills" / "sample-package")
+        for cmd in (["git", "init", "-q", "-b", branch, str(repo)],
+                    ["git", "-C", str(repo), "add", "-A"],
+                    ["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t",
+                     "commit", "-q", "-m", "seed"]):
+            subprocess.run(cmd, check=True, capture_output=True)
+        return repo
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_install_from_a_git_repo_source(self):
+        key = self.mint_key()
+        repo = self._seed_repo()
+        self.sign(key, repo / "skills" / "sample-package")
+        subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t",
+                        "commit", "-q", "-m", "sig"], check=True, capture_output=True)
+        rc = octo_pkg.main(["--brain", str(self.root), "install", str(repo),
+                            "--path", "skills/sample-package"])
+        self.assertEqual(rc, 0)
+        self.assertTrue(self.brain.vendor_path("sample-package").is_dir())
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "verify", "--all"]), 0)
+
+    def test_ref_defaults_fall_back_from_main_to_master(self):
+        """Defect 12: --ref used to default to the literal 'main', so a repo on
+        master failed with a clone error that named the wrong thing."""
+        repo = self._seed_repo(branch="master")
+        gh = octo_pkg._github_module()
+        with tempfile.TemporaryDirectory() as td:
+            root, used = octo_pkg._sparse_checkout(gh, str(repo), None,
+                                                   "skills/sample-package", Path(td))
+            self.assertEqual(used, "master")
+            self.assertTrue((root / "skills" / "sample-package" / "SKILL.md").is_file())
+
+    def test_a_git_repo_directory_is_not_treated_as_a_package_directory(self):
+        repo = self._seed_repo()
+        self.assertFalse(octo_pkg._is_local_source(str(repo)))
+        self.assertTrue(octo_pkg._is_local_source(str(FIXTURE / "signed")))
+
+
+class TestUrlParsing(unittest.TestCase):
+    """Defect 9 (CodeQL py/incomplete-url-substring-sanitization) and the
+    /tree/<ref-with-slash>/ split."""
+
+    def test_lookalike_hosts_are_refused(self):
+        for bad in ("https://github.com.evil.test/o/r/tree/main/p",
+                    "https://evil.test/?u=https://github.com/o/r",
+                    "https://gitlab.com/o/r/tree/main/p",
+                    "https://notgithub.com/o/r"):
+            with self.assertRaises(octo_pkg.PkgError, msg=bad):
+                octo_pkg.parse_github_url(bad, None, None)
+
+    def test_real_host_forms_accepted(self):
+        for good in ("https://github.com/o/r/tree/main/p", "https://www.github.com/o/r/tree/main/p"):
+            owner, repo, ref, path = octo_pkg.parse_github_url(good, None, None)
+            self.assertEqual((owner, repo, ref, path), ("o", "r", "main", "p"))
+
+    def test_ref_with_slashes_is_exact_when_path_is_supplied(self):
+        owner, repo, ref, path = octo_pkg.parse_github_url(
+            "https://github.com/o/r/tree/feat/v8/kernel", "skills/x")
+        self.assertEqual((ref, path), ("feat/v8/kernel", "skills/x"))
+
+    def test_dot_git_suffix_stripped(self):
+        owner, repo, _, _ = octo_pkg.parse_github_url("https://github.com/o/r.git", "p", "main")
+        self.assertEqual(repo, "r")
+
+
+class TestLockIntegrity(SandboxCase):
+    def _write_lock(self, packages):
+        self.brain.lock_path.write_text(
+            json.dumps({"version": 1, "packages": packages}, indent=2) + "\n", encoding="utf-8")
+
+    def test_escaped_name_refuses_the_whole_lock(self):
+        self._write_lock([{"name": "../../../escaped", "kind": "skill", "version": "1.0.0",
+                           "tree_sha256": "0" * 64, "signer": "octorato-release",
+                           "source": "/nowhere", "installed_at": "2026-01-01T00:00:00Z"}])
+        with self.assertRaises(octo_pkg.PkgError):
+            self.brain.load_lock()
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "verify", "--all"]), 1,
+                         "an unreadable lock is never a PASS")
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "sync"]), 1)
+        self.assertFalse((self.tmp / "escaped").exists())
+        self.assertFalse((self.root.parent / "escaped").exists())
+
+    def test_absolute_and_reserved_names_refused(self):
+        for bad in ("/etc/passwd", "vendor", "learned", "Bad-Case", "a", "x" * 65, ""):
+            self._write_lock([{"name": bad, "kind": "skill", "version": "1.0.0",
+                               "tree_sha256": "0" * 64, "signer": "s", "source": "/x",
+                               "installed_at": "2026-01-01T00:00:00Z"}])
+            with self.assertRaises(octo_pkg.PkgError, msg=bad):
+                self.brain.load_lock()
+
+    def test_duplicate_names_refused(self):
+        e = {"name": "dup", "kind": "skill", "version": "1.0.0", "tree_sha256": "0" * 64,
+             "signer": "s", "source": "/x", "installed_at": "2026-01-01T00:00:00Z"}
+        self._write_lock([e, dict(e)])
+        with self.assertRaises(octo_pkg.PkgError):
+            self.brain.load_lock()
+
+    def test_save_lock_is_atomic_and_leaves_no_temp_file(self):
+        self.brain.save_lock({"version": 1, "packages": []})
+        strays = [p.name for p in self.root.iterdir() if ".tmp" in p.name]
+        self.assertEqual(strays, [])
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_two_concurrent_installs_keep_both_entries(self):
+        """Defect 4: load-modify-save without a lock loses one of two racing writes."""
+        key = self.mint_key()
+        srcs = []
+        for name in ("pkg-alpha", "pkg-beta"):
+            d = self.tmp / f"src-{name}"
+            shutil.copytree(FIXTURE / "signed", d)
+            man = json.loads((d / "skill.json").read_text(encoding="utf-8"))
+            man["name"] = name
+            (d / "SKILL.md").write_text(f"---\nname: {name}\n---\n# {name}\n", encoding="utf-8")
+            man["tree_sha256"] = octo_pkg.tree_sha256(d, "skill")
+            (d / "skill.json").write_text(json.dumps(man, indent=2) + "\n", encoding="utf-8")
+            self.sign(key, d)
+            srcs.append(d)
+        procs = [subprocess.Popen(
+            [sys.executable, str(SCRIPTS / "octo_pkg.py"), "--brain", str(self.root),
+             "install", str(d)], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            # The sandbox HOME is fine in-process (sys.path is fixed at startup) but a
+            # CHILD re-derives its user site-packages from HOME, so it would lose
+            # jsonschema. The brain is pinned by --brain, not by HOME.
+            env={**os.environ, "HOME": self._home or os.environ["HOME"]}) for d in srcs]
+        outs = [pr.communicate() for pr in procs]
+        for pr, (o, e) in zip(procs, outs):
+            self.assertEqual(pr.returncode, 0, e.decode())
+        names = sorted(p["name"] for p in self.brain.load_lock()["packages"])
+        self.assertEqual(names, ["pkg-alpha", "pkg-beta"],
+                         "a racing install must not drop the other's lock entry")
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "verify", "--all"]), 0)
+
+
+class TestHashCommandAndKinds(SandboxCase):
+    def test_arm_json_inside_a_skill_package_is_hashed(self):
+        """Defect 5: excluding by filename across kinds left a hole to hide bytes in."""
+        d = self.tmp / "pkg"
+        shutil.copytree(FIXTURE / "signed", d)
+        before = octo_pkg.tree_sha256(d, "skill")
+        (d / "arm.json").write_text('{"payload": "not excluded"}\n', encoding="utf-8")
+        self.assertNotEqual(before, octo_pkg.tree_sha256(d, "skill"))
+
+    def test_git_dir_is_hashed_now(self):
+        d = self.tmp / "pkg2"
+        shutil.copytree(FIXTURE / "signed", d)
+        before = octo_pkg.tree_sha256(d, "skill")
+        (d / ".git").mkdir()
+        (d / ".git" / "config").write_text("[core]\n", encoding="utf-8")
+        self.assertNotEqual(before, octo_pkg.tree_sha256(d, "skill"),
+                            "a second repo in the discovery path must not be invisible")
+
+    def test_unknown_kind_refused(self):
+        with self.assertRaises(octo_pkg.PkgError):
+            octo_pkg.tree_sha256(FIXTURE / "signed", "banana")
+
+    def test_hash_command_prints_and_embeds_the_same_digest(self):
+        import contextlib, io
+        d = self.tmp / "pkg3"
+        shutil.copytree(FIXTURE / "signed", d)
+        (d / "extra.txt").write_text("changes the tree\n", encoding="utf-8")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.assertEqual(octo_pkg.main(["--brain", str(self.root), "hash", str(d)]), 0)
+        printed = buf.getvalue().splitlines()[0].strip()
+        self.assertEqual(printed, octo_pkg.tree_sha256(d, "skill"))
+        with contextlib.redirect_stdout(io.StringIO()):
+            octo_pkg.main(["--brain", str(self.root), "hash", str(d), "--write"])
+        self.assertEqual(json.loads((d / "skill.json").read_text(encoding="utf-8"))["tree_sha256"],
+                         printed, "the embedded digest must be the one the installer recomputes")
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_hash_write_then_sign_then_install_is_the_documented_publisher_flow(self):
+        key = self.mint_key()
+        d = self.tmp / "published"
+        shutil.copytree(FIXTURE / "signed", d)
+        (d / "NOTES.md").write_text("a real edit by the publisher\n", encoding="utf-8")
+        import contextlib, io
+        with contextlib.redirect_stdout(io.StringIO()):
+            octo_pkg.main(["--brain", str(self.root), "hash", str(d), "--write"])
+        self.sign(key, d)
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "install", str(d)]), 0)
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "verify", "--all"]), 0)
+
+
+class TestNoHalfInstalls(SandboxCase):
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_a_failure_after_the_copy_leaves_no_orphan_tree(self):
+        """Defect 7: a raise between copytree and the lock write used to leave an
+        unverifiable tree sitting in the discovery path."""
+        key = self.mint_key()
+        pkg = self.stage("signed")
+        self.sign(key, pkg)
+        original = octo_pkg.Brain.save_lock
+
+        def boom(self_, lock):
+            raise OSError("disk full")
+        octo_pkg.Brain.save_lock = boom
+        try:
+            rc = octo_pkg.main(["--brain", str(self.root), "install", str(pkg)])
+        finally:
+            octo_pkg.Brain.save_lock = original
+        self.assertEqual(rc, 1)
+        self.assertFalse(self.brain.vendor_path("sample-package").exists())
+        self.assertFalse(self.brain.link_path("sample-package").is_symlink())
+        self.assertFalse(self.brain.exclude_has("skills/sample-package"))
+        self.assertEqual(self.brain.load_lock()["packages"], [])
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_sync_never_overwrites_a_first_party_directory(self):
+        """Defect 8: sync used to copytree over whatever sat at skills/<name>."""
+        key = self.mint_key()
+        pkg = self.stage("signed")
+        self.sign(key, pkg)
+        octo_pkg.main(["--brain", str(self.root), "install", str(pkg)])
+        shutil.rmtree(self.brain.vendor_path("sample-package"))
+        self.brain.link_path("sample-package").unlink()
+        mine = self.brain.link_path("sample-package")
+        mine.mkdir()
+        (mine / "SKILL.md").write_text("the operator's own work\n", encoding="utf-8")
+        octo_pkg.main(["--brain", str(self.root), "sync"])
+        self.assertEqual((mine / "SKILL.md").read_text(encoding="utf-8"),
+                         "the operator's own work\n")
+        self.assertFalse(self.brain.vendor_path("sample-package").exists())
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_vendor_entry_that_is_a_symlink_is_fail(self):
+        """Defect 6: resolve() would follow it and report PASS on unverified bytes."""
+        key = self.mint_key()
+        pkg = self.stage("signed")
+        self.sign(key, pkg)
+        octo_pkg.main(["--brain", str(self.root), "install", str(pkg)])
+        dest = self.brain.vendor_path("sample-package")
+        moved = self.tmp / "moved-tree"
+        shutil.move(str(dest), str(moved))
+        os.symlink(str(moved), dest, target_is_directory=True)
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "verify", "--all"]), 1)
+
+
+class TestProbeAndExclude(SandboxCase):
+    def test_ssh_keygen_absence_is_fail_on_an_empty_lock_too(self):
+        """Defect 11: verify used to PASS with an empty lock while the doctor,
+        reading the same machine, went FAIL on the probe."""
+        original = octo_pkg.ssh_keygen_y_supported
+        octo_pkg.ssh_keygen_y_supported = lambda: False
+        try:
+            self.assertEqual(self.brain.load_lock()["packages"], [])
+            self.assertEqual(octo_pkg.main(["--brain", str(self.root), "verify", "--all"]), 1)
+        finally:
+            octo_pkg.ssh_keygen_y_supported = original
+
+    def test_exclude_is_never_written_into_an_enclosing_unrelated_repo(self):
+        """Defect 12: a brain root inside someone else's checkout would get its
+        symlink excluded in THEIR .git/info/exclude."""
+        outer = self.tmp / "outer"
+        inner = outer / "nested" / "brain"
+        inner.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(outer)], check=True, capture_output=True)
+        b = octo_pkg.Brain(inner)
+        self.assertIsNone(b._exclude_file())
+        self.assertFalse(b.exclude_add("skills/x"))
+        outer_excl = outer / ".git" / "info" / "exclude"
+        # git init writes this file itself, so its existence proves nothing. What must
+        # hold is that OUR line never reached it.
+        body = outer_excl.read_text(encoding="utf-8") if outer_excl.exists() else ""
+        self.assertNotIn("skills/x", body)
+
+    def test_a_git_worktree_still_gets_its_exclude_written(self):
+        """The first guard for the case above required the git dir to sit UNDER the
+        brain root, which silently disabled the exclude in every worktree: a worktree
+        keeps its common dir back in the main checkout. Found by running the wiki's
+        own commands in a worktree, where install printed 'not a git checkout'."""
+        main_repo = self.tmp / "mainrepo"
+        main_repo.mkdir()
+        subprocess.run(["git", "init", "-q", "-b", "master", str(main_repo)],
+                       check=True, capture_output=True)
+        (main_repo / "f.txt").write_text("x\n", encoding="utf-8")
+        for cmd in (["git", "-C", str(main_repo), "add", "-A"],
+                    ["git", "-C", str(main_repo), "-c", "user.email=t@t", "-c",
+                     "user.name=t", "commit", "-q", "-m", "seed"],
+                    ["git", "-C", str(main_repo), "worktree", "add", "-q", "-b", "wt",
+                     str(self.tmp / "wt")]):
+            subprocess.run(cmd, check=True, capture_output=True)
+        b = octo_pkg.Brain(self.tmp / "wt")
+        self.assertIsNotNone(b._exclude_file())
+        self.assertTrue(b.exclude_add("skills/x"))
+        self.assertTrue(b.exclude_has("skills/x"))
+        b.exclude_remove("skills/x")
+        self.assertFalse(b.exclude_has("skills/x"))
 
 
 class TestGenerator(unittest.TestCase):
