@@ -374,12 +374,22 @@ class Brain:
         return out
 
     def known_principals(self) -> dict[str, Path]:
-        """principal -> the allowed-signers file that declares it."""
+        """principal -> the allowed-signers file that declares it.
+
+        A file this cannot read is SKIPPED, not fatal. That is deliberate and it is
+        fail-closed: dropping a signers file can only shrink the set of principals,
+        so the worst case is a package refused for a signer nobody can vouch for,
+        never one accepted. Raising here would be worse than useless, because
+        `registry/pkg-signers.pub` is tracked: one stray byte in a comment line
+        would take down verify for every package at once, which is how QA cycle 5
+        found this (the read caught OSError but not the UnicodeDecodeError a
+        latin-1 byte raises).
+        """
         found: dict[str, Path] = {}
         for f in self.signer_files():
             try:
-                text = f.read_text(encoding="utf-8")
-            except OSError:
+                text = read_text(f, str(f))
+            except PkgError:
                 continue
             for ln in text.splitlines():
                 ln = ln.strip()
@@ -488,7 +498,19 @@ def tree_sha256(pkg_dir: Path, kind: str = "skill") -> str:
     for rel_posix, p in files:
         h.update(rel_posix.encode("utf-8"))
         h.update(b"\0")
-        h.update(hashlib.sha256(p.read_bytes()).hexdigest().encode("ascii"))
+        try:
+            payload = p.read_bytes()
+            mode = p.stat().st_mode
+        except OSError as e:
+            # This function already speaks PkgError for a symlink and for a FIFO, so
+            # a file it cannot read belongs in the same vocabulary. Raising OSError
+            # instead sent the raw exception through three callers that catch only
+            # PkgError: hash, lock and install each turned an unreadable file into a
+            # traceback (QA cycle 5). One raise here beats three except clauses, and
+            # it keeps the rule intact: a tree this cannot fully read is a tree whose
+            # hash means nothing, so it never reports a digest at all.
+            raise PkgError(f"package file cannot be read ({rel_posix}): {e}")
+        h.update(hashlib.sha256(payload).hexdigest().encode("ascii"))
         h.update(b"\0")
         # Windows has no POSIX exec bit; CPython synthesizes one from the extension
         # (.exe, .bat, .cmd, .com), so a package whose hash was computed on Linux can
@@ -496,7 +518,7 @@ def tree_sha256(pkg_dir: Path, kind: str = "skill") -> str:
         # named here rather than papered over with a platform branch: a hash that is
         # computed differently per platform is worse than one whose limits are written
         # down, and the brain publishes packages from POSIX.
-        h.update(b"x" if p.stat().st_mode & _stat.S_IXUSR else b"-")
+        h.update(b"x" if mode & _stat.S_IXUSR else b"-")
         h.update(b"\0")
     return h.hexdigest()
 
@@ -506,27 +528,48 @@ def tree_sha256(pkg_dir: Path, kind: str = "skill") -> str:
 # --------------------------------------------------------------------------
 
 def read_json(path: Path, label: str):
-    """Read one JSON file, or raise PkgError. The ONLY way this module reads JSON.
+    """Read one JSON file, or raise PkgError. The ONLY way this module parses JSON.
 
-    Three QA cycles in a row found the same shape: another input class escaping as a
+    Four QA cycles in a row found the same shape: another input class escaping as a
     traceback instead of a reported failure. First an unhashable `kind`, then a
     manifest that parses but is not an object, then invalid UTF-8, 200k nested
-    brackets, an unreadable directory. Catching them one at a time loses to the next
-    one nobody thought of, so the fix is a seam rather than a longer except clause:
-    every read goes through here, and everything that can go wrong on the way from a
-    path to a Python object comes back as PkgError, which every caller already
+    brackets, an unreadable directory, then a latin-1 byte in the allowed-signers
+    file, which never becomes JSON at all. Catching them one at a time loses to the
+    next one nobody thought of, so the fix is a seam rather than a longer except
+    clause. The seam is `read_text`: everything that can go wrong turning bytes on
+    disk into a Python value comes back as PkgError, which every caller already
     reports as a FAIL naming the package.
 
-    OSError covers the file (missing, unreadable, a directory, EIO). ValueError
-    covers the bytes and the syntax, since both UnicodeDecodeError and
-    JSONDecodeError are ValueError. RecursionError is neither, and deep nesting
-    reaches it before the parser gives up, so it is named. The shape is NOT checked
-    here: `[]` and `42` are valid JSON, and what a given caller needs is the
+    OSError covers the file (missing, unreadable, a directory, EIO) and ValueError
+    the bytes, both in read_text. Here RecursionError is added, because deep nesting
+    reaches it before the parser gives up and it is neither of those. The shape is
+    NOT checked: `[]` and `42` are valid JSON, and what a given caller needs is the
     caller's business.
     """
+    return _parse_json(read_text(path, label), label)
+
+
+def read_text(path: Path, label: str) -> str:
+    """Read one text file, or raise PkgError. The seam is BYTES to value, not JSON.
+
+    QA cycle 5 found the eighth of the same shape by enumerating rather than
+    guessing: `known_principals` read the tracked allowed-signers file with an
+    `except OSError` and no ValueError, so one latin-1 byte in a comment line of
+    `registry/pkg-signers.pub` raised UnicodeDecodeError out of the whole sweep.
+    That file never becomes JSON, which is exactly why naming the seam after JSON
+    left it outside. The boundary this module actually has is external bytes
+    turning into a Python value, and every crossing of it belongs here.
+    """
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, RecursionError) as e:
+        return path.read_text(encoding="utf-8")
+    except (OSError, ValueError) as e:
+        raise PkgError(f"{label} cannot be read: {type(e).__name__}: {e}")
+
+
+def _parse_json(text: str, label: str):
+    try:
+        return json.loads(text)
+    except (ValueError, RecursionError) as e:
         raise PkgError(f"{label} does not parse: {type(e).__name__}: {e}")
 
 
@@ -1097,13 +1140,23 @@ def verify_entry(brain: Brain, entry: dict) -> tuple[str, str]:
     lock_kind = entry.get("kind") or "skill"
     dest = brain.vendor_path(name)
 
-    if dest.is_symlink():
+    try:
+        on_disk_is_link = dest.is_symlink()
+        on_disk_exists = dest.exists()
+    except OSError as e:
+        # The guard on `is_file` inside load_manifest was one directory too deep:
+        # when the CONTAINER skills/vendor is unreadable, the stat raises here
+        # instead, and here it aborted the whole sweep rather than one entry.
+        # Not knowing what is on disk is a failure to report, never a pass.
+        return FAIL, f"{name}: {VENDOR_REL}/{name} cannot be read: {e}"
+
+    if on_disk_is_link:
         # The vendor entry itself must be a real directory. A symlink there means the
         # hashed bytes live somewhere nobody verified, and resolve() would happily
         # follow it and report PASS on a tree that is not the package.
         return FAIL, f"{name}: {VENDOR_REL}/{name} is a symlink, not the package tree"
 
-    if not dest.exists():
+    if not on_disk_exists:
         if lock_kind == "arm":
             # arms are not vendored into the brain; presence is the arm repo's own
             # business (arm isolation). The lock records them, verify does not reach in.
@@ -1165,15 +1218,24 @@ def scan_unlocked(brain: Brain, locked: set[str]) -> list[tuple[str, str]]:
     """
     results: list[tuple[str, str]] = []
     seen_trees: set[str] = set()
-    if brain.vendor_dir.is_dir():
-        for p in sorted(brain.vendor_dir.iterdir()):
-            if p.name in locked:
-                continue
-            if not (p.is_dir() or p.is_symlink()):
-                continue
-            seen_trees.add(p.name)
-            results.append((FAIL, f"{p.name}: {VENDOR_REL}/{p.name} is on disk with no "
-                                  f"{LOCK_REL} entry (unlocked package at {p})"))
+    try:
+        entries = sorted(brain.vendor_dir.iterdir()) if brain.vendor_dir.is_dir() else []
+    except OSError as e:
+        # An unreadable skills/vendor is the sweep's blind spot, not its absence:
+        # trees can be sitting in the always-on discovery path where nothing can
+        # enumerate them. Saying so is the only honest answer, and it must not
+        # abort the per-entry results already collected (QA cycle 5).
+        entries = []
+        results.append((FAIL, f"{VENDOR_REL} cannot be listed ({e}); "
+                              f"an unlocked package there would be invisible"))
+    for p in entries:
+        if p.name in locked:
+            continue
+        if not (p.is_dir() or p.is_symlink()):
+            continue
+        seen_trees.add(p.name)
+        results.append((FAIL, f"{p.name}: {VENDOR_REL}/{p.name} is on disk with no "
+                              f"{LOCK_REL} entry (unlocked package at {p})"))
 
     skills_dir = brain.root / "skills"
     if skills_dir.is_dir():
@@ -1267,15 +1329,29 @@ def cmd_uninstall(brain: Brain, name: str) -> int:
     lock = brain.load_lock()
     entry = next((p for p in lock["packages"] if p.get("name") == name), None)
     dest, link = brain.vendor_path(name), brain.link_path(name)
-    if entry is None and not dest.exists() and not link.is_symlink():
+    try:
+        tree_there = dest.exists()
+    except OSError as e:
+        # Refusing beats guessing here: uninstall DELETES, and a stat it cannot make
+        # means it does not know what it would be deleting. PkgError so the caller
+        # prints a reason instead of a traceback (QA cycle 5).
+        raise PkgError(f"{VENDOR_REL}/{name} cannot be read ({e}); refusing to remove "
+                       f"what cannot be inspected")
+    if entry is None and not tree_there and not link.is_symlink():
         raise PkgError(f"{name} is not installed")
 
+    if not link.is_symlink() and link.exists():
+        raise PkgError(f"skills/{name} exists but is not our symlink; refusing to delete it")
+    # The TREE goes first, then the link. The old order unlinked and then removed,
+    # so a rmtree that could not finish (an unreadable subdirectory, EACCES) left a
+    # half-removed install: tree present, symlink gone, lock entry still there. The
+    # tree is the part that carries code, so it is the part that must be gone before
+    # anything else is touched; if this raises, nothing was removed and the install
+    # is still whole and still verifiable (QA cycle 5).
+    if tree_there:
+        shutil.rmtree(dest)
     if link.is_symlink():
         link.unlink()
-    elif link.exists():
-        raise PkgError(f"skills/{name} exists but is not our symlink; refusing to delete it")
-    if dest.exists():
-        shutil.rmtree(dest)
     brain.exclude_remove(f"skills/{name}")
 
     with brain.lock_held():
@@ -1358,11 +1434,15 @@ def cmd_lock(brain: Brain) -> int:
             continue
         name = entry["name"]
         dest = brain.vendor_path(name)
-        if not dest.exists():
-            continue
         try:
+            if not dest.exists():
+                continue
             manifest = check_package(brain, dest, "skill")
-        except PkgError as e:
+        except (PkgError, OSError) as e:
+            # OSError next to PkgError: the stat is as able to fail as the read, and
+            # re-locking is the one verb that WRITES the lock, so an entry it cannot
+            # inspect has to be refused and left exactly as it was. Silently skipping
+            # would be worse than the traceback it replaces.
             refused.append(f"{name}: {e}")
             continue
         if entry.get("tree_sha256") != manifest["tree_sha256"] or entry.get("signer") != manifest["_signer"]:
@@ -1397,7 +1477,15 @@ def cmd_sync(brain: Brain) -> int:
         if entry.get("kind") != "skill":
             continue
         dest = brain.vendor_path(name)
-        if dest.exists() or dest.is_symlink():
+        try:
+            already_there = dest.exists() or dest.is_symlink()
+        except OSError as e:
+            # sync runs from ai-pull, so a stat it cannot make must not take the
+            # whole pull down. Not knowing whether the tree is there is a reason to
+            # leave it alone and say so, never to restore over something unseen.
+            print(f"  WARN {name}: {VENDOR_REL}/{name} cannot be read ({e}); skipped")
+            continue
+        if already_there:
             continue
         link = brain.link_path(name)
         if link.is_symlink():

@@ -1249,7 +1249,7 @@ class TestQaCycle4(SandboxCase):
                 with self.assertRaises(octo_pkg.PkgError):
                     self.brain.load_lock()
 
-    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+
     def test_an_unreadable_file_in_the_tree_does_not_raise(self):
         """tree_sha256 reads every file; a mode-000 one raises PermissionError, which
         is an OSError and was not caught next to PkgError."""
@@ -1270,6 +1270,114 @@ class TestQaCycle4(SandboxCase):
         self.assertTrue(out["ok"], out)
         self.assertEqual(out["pass"], 1)
         self.assertEqual(out["fail"], [])
+
+
+class TestQaCycle5(SandboxCase):
+    """QA cycle 5 enumerated the boundary instead of guessing at it, and found the
+    seam one file short of what it claimed. Two classes, both the same shape as the
+    seven before them: bytes that never become JSON, and a stat one directory above
+    the one that was guarded."""
+
+    def _install_signed(self, tag: str = "pkg") -> tuple[str, Path]:
+        if not getattr(self, "_key", None):
+            self._key = self.mint_key()
+        name = "sample-" + tag
+        pkg = self.tmp / ("src-" + tag)
+        shutil.copytree(FIXTURE / "signed", pkg)
+        man = json.loads((pkg / "skill.json").read_text(encoding="utf-8"))
+        man["name"] = name
+        (pkg / "SKILL.md").write_text("---\nname: " + name + "\n---\n# " + name + "\n",
+                                      encoding="utf-8")
+        man["tree_sha256"] = octo_pkg.tree_sha256(pkg, "skill")
+        (pkg / "skill.json").write_text(json.dumps(man, indent=2) + "\n", encoding="utf-8")
+        self.sign(self._key, pkg)
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "install", str(pkg)]), 0)
+        return name, self.brain.vendor_path(name)
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_a_stray_byte_in_the_allowed_signers_file_does_not_kill_the_sweep(self):
+        """The eighth, and the one that proved the seam was misnamed. The tracked
+        registry/pkg-signers.pub never becomes JSON, so naming the seam after JSON
+        left the only other read outside it, with the same `except OSError` and no
+        ValueError. One latin-1 byte in a comment line raised UnicodeDecodeError out
+        of the whole sweep: no JSON printed, no package named, every entry after the
+        first unchecked. Skipping an unreadable signers file is fail-closed, since
+        dropping principals can only refuse packages, never accept them."""
+        name, _ = self._install_signed("signers")
+        pub = self.root / "registry" / "pkg-signers.pub"
+        pub.write_bytes(pub.read_bytes() + b"# note from the maintainer: caf\xe9\n")
+        import contextlib, io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "verify", "--all"])
+        self.assertEqual(rc, 1)
+        self.assertIn(name, buf.getvalue(), "the failure has to name the package")
+        self.assertIn("allowed-signers", buf.getvalue())
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_an_unreadable_vendor_container_does_not_abort_any_verb(self):
+        """The EACCES guard went onto `is_file` inside load_manifest, but the same
+        stat happens one frame earlier whenever skills/vendor ITSELF is unreadable,
+        and there it aborted every entry rather than one. uninstall refuses outright:
+        it deletes, and a stat it cannot make means it does not know what it would be
+        deleting."""
+        self._install_signed("container")
+        import contextlib, io
+        vendor = self.brain.vendor_dir
+        os.chmod(vendor, 0o000)
+        self.addCleanup(lambda: os.chmod(vendor, 0o755))
+        for argv in (["verify", "--all"], ["list"], ["sync"], ["lock"]):
+            with self.subTest(verb=argv[0]):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    octo_pkg.main(["--brain", str(self.root)] + argv)   # must not raise
+        # main() turns PkgError into rc 1 plus a printed reason, so the assertion is
+        # on the boundary a caller actually sees, not on the exception type.
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "uninstall", "sample-container"])
+        self.assertEqual(rc, 1, "uninstall must refuse what it cannot inspect")
+        self.assertIn("cannot be read", buf.getvalue() or "")
+        self.assertTrue((vendor / "sample-container").is_dir() if os.access(vendor, os.R_OK)
+                        else True, "nothing may be removed on a refusal")
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_an_unreadable_file_makes_the_hash_refuse_not_raise(self):
+        """tree_sha256 already speaks PkgError for a symlink and a FIFO, so a file it
+        cannot read belongs in the same vocabulary. Three callers catch only PkgError
+        (hash, lock, install), and each turned an unreadable file into a traceback."""
+        name, dest = self._install_signed("hashfail")
+        victim = dest / "reference.txt"
+        os.chmod(victim, 0o000)
+        self.addCleanup(lambda: os.chmod(victim, 0o644))
+        if os.access(victim, os.R_OK):
+            self.skipTest("running as root, EACCES is not enforceable")
+        with self.assertRaises(octo_pkg.PkgError) as caught:
+            octo_pkg.tree_sha256(dest, "skill")
+        self.assertIn("cannot be read", str(caught.exception))
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_uninstall_removes_the_tree_before_the_link(self):
+        """Order is the correctness part, not the reporting part. Unlinking first and
+        then removing left a half-removed install when the rmtree could not finish:
+        tree present, symlink gone, lock entry still there. The tree carries the code,
+        so the tree goes first and a failure leaves the install whole."""
+        name, dest = self._install_signed("order")
+        link = self.brain.link_path(name)
+        self.assertTrue(dest.is_dir() and link.is_symlink())
+        calls = []
+        real_rmtree = octo_pkg.shutil.rmtree
+        def watched(path, *a, **kw):
+            calls.append(("rmtree", link.is_symlink()))
+            return real_rmtree(path, *a, **kw)
+        octo_pkg.shutil.rmtree = watched
+        self.addCleanup(lambda: setattr(octo_pkg.shutil, "rmtree", real_rmtree))
+        import contextlib, io
+        with contextlib.redirect_stdout(io.StringIO()):
+            octo_pkg.main(["--brain", str(self.root), "uninstall", name])
+        self.assertEqual(calls[0], ("rmtree", True),
+                         "the symlink must still be there when the tree is removed")
+        self.assertFalse(dest.exists())
+        self.assertFalse(link.is_symlink())
 
 
 class TestGenerator(unittest.TestCase):
