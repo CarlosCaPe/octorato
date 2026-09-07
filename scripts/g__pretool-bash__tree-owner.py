@@ -56,8 +56,8 @@ NAMED RESIDUALS, measured as passing and deliberately not covered here. The list
 is pinned by a test, so it stays equal to what the gate actually does:
 `rsync --delete`, `shred`, `ln -sf`, `perl -pi`; a `python -c` body (only
 best-effort, scanned as shell text) including one aimed at the state dir;
-`git apply|rebase|merge|pull|cherry-pick|revert`; variable expansion
-(`rm -rf $DIR`, unknowable without running the shell); a `-c` body nested deeper
+`git apply|rebase|merge|pull|cherry-pick|revert`; variable and brace expansion
+(`rm -rf $DIR`, `rm -rf {pkg,x}`, unknowable without running the shell); a `-c` body nested deeper
 than 3; and xargs fed from STDIN (`cat list | xargs rm`, `xargs rm < list`),
 where the targets never appear in the command at all. Each is a distinct verb
 table or an evaluator, not a gap in this one, and none is the weekend shape.
@@ -148,7 +148,7 @@ def describe(pid: str, row: dict) -> str:
     return f"pid {pid} ({kind}, {when})"
 
 
-def glob_owner(pattern: str, table: dict, pid) -> tuple:
+def glob_owner(pattern: str, table: dict, pid, icase: bool = False) -> tuple:
     """(pid, row) of a LIVE process whose lane the glob actually reaches. The
     prefix test cannot answer this one: the pattern has no literal directory to
     prefix with, so each lane is matched against it instead."""
@@ -158,7 +158,7 @@ def glob_owner(pattern: str, table: dict, pid) -> tuple:
     for other, row in (table.get("processes") or {}).items():
         if other == skip:
             continue
-        if not any(glob_hits(pattern, kernel_proc.norm_path(l))
+        if not any(glob_hits(pattern, kernel_proc.norm_path(l), icase)
                    for l in kernel_proc.lanes_of(row)):
             continue
         if kernel_proc.is_live(other, table, now):
@@ -352,18 +352,18 @@ def find_targets(args: list) -> tuple:
             if os.path.basename(args[i + 1]) in _EXEC_MUTATORS:
                 exec_mutates = True
     if "-delete" not in args and not exec_mutates:
-        return [], None
+        return [], None, False
     roots = []
     for a in args:
         if a.startswith("-") or a in ("(", ")", "!"):
             break
         roots.append(a)
-    pattern = None
+    pattern, icase = None, False
     for i, a in enumerate(args):
         if a in _FIND_FILTERS and i + 1 < len(args):
-            pattern = args[i + 1]
+            pattern, icase = args[i + 1], a in ("-iname", "-ipath")
             break
-    return (roots or ["."]), pattern
+    return (roots or ["."]), pattern, icase
 
 
 def is_release(tokens: list) -> bool:
@@ -514,20 +514,23 @@ def spec_target(spec: str, base_dir: str) -> tuple:
     return "glob", (spec if os.path.isabs(spec) else os.path.join(base_dir, spec))
 
 
-def glob_hits(pattern: str, lane: str) -> bool:
+def glob_hits(pattern: str, lane: str, icase: bool = False) -> bool:
     """Does this glob reach a lane, or any directory on its way? fnmatch's `*`
     spans separators, so a lane deeper than the pattern still matches; the
     ancestor walk covers the reverse, a pattern naming a directory the lane
-    lives in."""
+    lives in. `icase` is `find -iname/-ipath`: the filter that matched a.py
+    while the command said A.PY."""
     import fnmatch
-    if fnmatch.fnmatch(lane, pattern):
+    if icase:
+        pattern, lane = pattern.lower(), lane.lower()
+    if fnmatch.fnmatchcase(lane, pattern):
         return True
     node = lane
     while True:
         parent = os.path.dirname(node)
         if parent == node:
             return False
-        if fnmatch.fnmatch(parent, pattern):
+        if fnmatch.fnmatchcase(parent, pattern):
             return True
         node = parent
 
@@ -627,12 +630,12 @@ def scan(command: str, cwd: str, depth: int = 0) -> list:
                 hits.append((kind, value, f"git {sub}"))
             continue
         if base == "find":
-            roots, pattern = find_targets(tokens[1:])
+            roots, pattern, icase = find_targets(tokens[1:])
             for root in roots:
                 if pattern:
                     # the filter is the point: `find . -name '*.pyc' -delete`
                     # reaches .pyc files, not every lane under the root
-                    hits.append(("glob",
+                    hits.append(("iglob" if icase else "glob",
                                  os.path.join(resolve(root, here), "*" + pattern),
                                  "find -delete"))
                 else:
@@ -705,8 +708,8 @@ def main() -> int:
     for kind, target, verb in hits:
         if kind == "state":
             continue          # floor-only: already tested above
-        if kind == "glob":
-            owner, row = glob_owner(target, table, pid)
+        if kind in ("glob", "iglob"):
+            owner, row = glob_owner(target, table, pid, kind == "iglob")
         else:
             owner, row = kernel_proc.lane_owner(target, table, ignore=pid)
         if not owner:

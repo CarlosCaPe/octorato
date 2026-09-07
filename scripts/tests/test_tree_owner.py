@@ -577,6 +577,8 @@ class QaCycle1(IsolationCase):
                 "git pull", "git cherry-pick HEAD~1", "git revert HEAD",
                 # the shell would expand these; this gate does not run the shell
                 f"DIR={self.tree}/pkg && rm -rf $DIR",
+                # brace expansion is the shell's job too
+                f"rm -rf {self.tree}/{{pkg,x}}",
                 # xargs fed from stdin: the target never appears in the command
                 f"echo {self.tree}/pkg | xargs rm -rf",
                 f"xargs rm -f < /tmp/list",
@@ -631,6 +633,16 @@ class QaCycle2(IsolationCase):
         rc, out = self.run_gate(
             BASH_GATE, self.bash_payload("agent-b", "find . -name '*.py' -delete"))
         self.assertTrue(self.denied(out))
+
+    def test_g1_iname_and_ipath_match_case_insensitively(self):
+        self.hold()
+        for command in ("find . -iname 'A.PY' -delete", "find . -ipath '*PKG/A.PY' -delete"):
+            rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", command))
+            self.assertTrue(self.denied(out), command)
+        # -name stays case-SENSITIVE, which is what find does
+        rc, out = self.run_gate(
+            BASH_GATE, self.bash_payload("agent-b", "find . -name 'A.PY' -delete"))
+        self.assertFalse(self.denied(out))
 
     def test_f3_only_the_token_after_exec_is_the_program(self):
         self.hold()
