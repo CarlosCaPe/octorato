@@ -413,6 +413,18 @@ class TestEachNoWindowRoadNamesItself(DenyCoverageCase):
 
         self.assertEqual(len(set(causes.values())), 4,
                          f"each road has to be distinguishable in the sentence: {causes}")
+        # Distinct is not enough: swapping two roads' strings keeps the set at four
+        # while the doctor tells a reader "shallow clone" over a missing projects
+        # directory, which is a WRONG cause, worse than none (QA cycle 7). So bind
+        # each road to its own discriminator. Substrings, not the whole sentence:
+        # this must survive a reworded message and die on a swapped one.
+        for road, token in (("unreadable subtree", "could not read"),
+                            ("no projects dir", "no projects directory"),
+                            ("shallow clone", "shallow"),
+                            ("no such commit", "no commit adding")):
+            self.assertIn(token, causes[road],
+                          f"the {road} road is telling the reader it was something else: "
+                          f"{causes[road]!r}")
 
 
 class TestTheFourOutcomesReadDifferently(unittest.TestCase):
@@ -504,6 +516,35 @@ class TestTheFourOutcomesReadDifferently(unittest.TestCase):
         self.assertIn(road, result.message,
                       "a cause the reader cannot see is a cause that does not exist")
         self.assertIn("NOT compared", result.message)
+
+    def test_a_pass_message_survives_the_printer(self):
+        """The eighth instance of this session's recurring failure, and the sibling
+        of the first. Instance #1 asserted on the pure function when the bug was in
+        the caller; this one asserted on the caller when the claim was about the
+        PRINTER. My own docstring named both hops ("`check_kernel_replay` forwards
+        one only for FAIL and WARN, AND `render_human` prints one only for FAIL and
+        WARN") and the test crossed one of them. QA proved it by restoring the exact
+        cycle-6 invisibility inside `render_human` and watching all 234 stay green
+        (QA cycle 7).
+
+        `render_human` is the last hop before a human, so the invariant the source
+        states, "a cause the reader cannot see is a cause that does not exist", is
+        only closed here.
+        """
+        import io, contextlib
+        cause = "a shallow clone, whose grafted history cannot say when the hook arrived"
+        r = doctor.Result("kernel-replay", doctor.PASS,
+                          f"0 deny(s) in 7 days; the comparison window could not be "
+                          f"established ({cause}), so the reflex was NOT compared "
+                          f"against the harness record", "")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            doctor.render_human([r])
+        out = buf.getvalue()
+        self.assertIn(cause, out,
+                      "a PASS message must reach stdout; the printer is where the "
+                      "cause was invisible the second time")
+        self.assertIn("kernel-replay", out)
 
     def test_the_warn_needs_an_empty_journal_not_just_other_classes(self):
         """The other one claimed and missing. Dropping the second half of the
