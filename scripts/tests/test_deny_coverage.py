@@ -113,6 +113,23 @@ class TestArmDate(DenyCoverageCase):
         _, seen_after, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         self.assertEqual(seen_after, 0)
 
+    def test_an_old_record_in_a_live_file_is_still_excluded(self):
+        """The per-record timestamp guard had no test that dies without it: the
+        sibling above back-dates the FILE's mtime along with the record, so the mtime
+        prefilter alone carried it. In production the two are not equivalent. A
+        long-running session file gets its mtime bumped by every new line, so a
+        pre-arm record inside a still-active transcript is excluded only by the
+        record's own timestamp (QA cycle 3)."""
+        armed, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        self.write_refusal("automode-blocked", armed - 3600)
+        # the file is LIVE: a later line just landed, so its mtime is now
+        path = self.harness / "projects" / "slug" / "sess" / "transcript.jsonl"
+        os.utime(path, None)
+        self.assertGreater(path.stat().st_mtime, armed,
+                           "the mtime prefilter must NOT be what excludes it")
+        _, seen, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        self.assertEqual(seen, 0, "the record's own timestamp is what excludes it")
+
     def test_a_refusal_after_the_hook_went_live_is_counted(self):
         armed, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         self.write_refusal("automode-blocked", armed + 60)
@@ -190,6 +207,22 @@ class TestTheEvidenceIsWhereTheHarnessWritesIt(DenyCoverageCase):
         os.environ["CLAUDE_CONFIG_DIR"] = str(self.tmp / "nowhere")
         armed, seen, other = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         self.assertIsNone(armed)
+        self.assertEqual((seen, other), (0, 0))
+
+    def test_an_unreadable_subdirectory_claims_nothing_either(self):
+        """The probe guarded the ROOT and glob swallowed the PermissionError one
+        level down, so the silent zero came straight back inside a session folder.
+        Same blind spot, same remedy, as the tree walk in the packages work the same
+        day: a call that fails without raising is its own class (QA cycle 3)."""
+        armed, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        self.write_refusal("automode-blocked", armed + 60)
+        inner = self.harness / "projects" / "slug"
+        os.chmod(inner, 0o000)
+        self.addCleanup(lambda: os.chmod(inner, 0o755))
+        if os.access(inner, os.R_OK):
+            self.skipTest("running as root, EACCES is not enforceable")
+        armed2, seen, other = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        self.assertIsNone(armed2, "a subtree it cannot walk is not evidence of zero")
         self.assertEqual((seen, other), (0, 0))
 
     def test_an_unreadable_projects_dir_claims_nothing(self):
@@ -279,14 +312,34 @@ class TestTheFourOutcomesReadDifferently(unittest.TestCase):
         self.assertNotIn("unexercised", text)
         self.assertNotIn("harness", text)
 
-    def test_the_warn_reaches_the_surface_and_carries_its_hint(self):
-        """The status existed in the pure function and the caller collapsed it into
-        the PASS line, throwing away both the verdict and the guidance. A status the
-        caller does not carry is a status that does not exist (QA cycle 2)."""
+    def test_the_warn_survives_the_pure_function(self):
         status, text, hint = doctor.deny_coverage(0, 1_700_000_000.0, 0, 7)
         self.assertEqual(status, doctor.WARN)
         self.assertIn("7 refusal(s) of other classes", text)
         self.assertIn("toolDenialKind", hint, "a WARN has to say what to confirm")
+
+    def test_the_warn_reaches_the_caller_that_was_dropping_it(self):
+        """The test above is NOT this test, and mistaking one for the other is the
+        finding. The pure function already returned WARN before the fix; the caller
+        collapsed it into its PASS line and threw the hint away. Asserting on the
+        function proved nothing about the caller, and QA showed it by putting the
+        bug back and watching all 216 tests stay green.
+
+        So this one calls `check_kernel_replay` itself, with only the counter
+        stubbed, and asserts on the Result a reader actually sees. It fails on every
+        version of this file before the caller was fixed.
+        """
+        real = doctor._harness_refusals_since_hook
+        doctor._harness_refusals_since_hook = lambda cutoff: (1_700_000_000.0, 0, 7)
+        self.addCleanup(lambda: setattr(doctor, "_harness_refusals_since_hook", real))
+        # This class does not move CLAUDE_DIR, so the replay half of the check runs
+        # against the real checkout, which is what makes the Result a real one.
+        result = doctor.check_kernel_replay(False)
+        self.assertEqual(result.status, doctor.WARN,
+                         "a status the caller does not carry does not exist")
+        self.assertIn("refusal(s) of other classes", result.message)
+        self.assertIn("toolDenialKind", result.hint or "",
+                      "the hint has to survive the trip through the caller")
 
     def test_the_failure_cannot_be_reached_without_a_real_refusal(self):
         """The control. If any input shape produced FAIL, the check would fire on a

@@ -1960,7 +1960,18 @@ def _harness_refusals_since_hook(cutoff: float) -> tuple[float | None, int, int]
         # under this brain's own session-isolation rule.
         return None, 0, 0
     seen, other = 0, 0
-    for path in projects.glob("**/*.jsonl"):
+    transcripts, walk_failed = [], []
+    for dirpath, _dirnames, filenames in os.walk(projects, onerror=walk_failed.append):
+        transcripts.extend(Path(dirpath) / n for n in filenames if n.endswith(".jsonl"))
+    if walk_failed:
+        # glob swallows a PermissionError inside pathlib, so probing only the ROOT
+        # left the silent zero one directory down: a real arm date next to a count
+        # produced by reading nothing, which is the sentence this check exists to
+        # abolish. os.walk with onerror is what makes the failure visible. Same
+        # blind spot, same remedy, as the tree walk in the packages work the same
+        # day: a call that fails without raising is its own class (QA cycle 3).
+        return None, 0, 0
+    for path in transcripts:
         try:
             if path.stat().st_mtime < armed_at:
                 continue
