@@ -220,6 +220,153 @@ class PtableTest(SandboxHome):
         self.assertEqual(written, os.path.abspath(kernel_proc.journal_dir()))
 
 
+class TornWriteTest(SandboxHome):
+    """QA cycle 1, D2. `os.write` may write fewer bytes than asked, and a killed
+    process leaves a file that does not end on a newline. Both used to glue the
+    next record onto the fragment: one unreadable line, a reused seq, a chain
+    that never verified again."""
+
+    def test_a_torn_fragment_is_terminated_and_named_by_index(self):
+        pid = "torn"
+        kernel_proc.append(pid, {"kind": "start"})
+        path = Path(kernel_proc.journal_path(pid))
+        path.write_bytes(path.read_bytes() + b'{"seq":1,"ts":1.0,"start_')  # half a line
+        kernel_proc.append(pid, {"kind": "tool", "tool_name": "Bash"})
+
+        raws = [r for r in path.read_bytes().split(b"\n") if r]
+        self.assertEqual(len(raws), 3, "the fragment became its own line, not a prefix")
+        self.assertEqual(json.loads(raws[2])["seq"], 2, "seq is not reused")
+        code, why = kernel_proc.verify_detail(pid)
+        self.assertEqual(code, 1)
+        self.assertIn("line 1 does not parse", why)
+        self.assertIn("1 break(s)", why, "damage is one named line, not everything after it")
+        # the chain continues from the torn line's bytes
+        import hashlib as _h
+        self.assertEqual(json.loads(raws[2])["prev"], _h.sha256(raws[1]).hexdigest())
+
+    def test_a_complete_line_without_a_newline_recovers_clean(self):
+        pid = "unterminated"
+        kernel_proc.append(pid, {"kind": "start"})
+        path = Path(kernel_proc.journal_path(pid))
+        path.write_bytes(path.read_bytes().rstrip(b"\n"))  # the newline never landed
+        kernel_proc.append(pid, {"kind": "tool"})
+        self.assertEqual(kernel_proc.verify(pid), 0, "no data was lost, so nothing is broken")
+        self.assertEqual([l["seq"] for l in kernel_proc.read_journal(pid)], [0, 1])
+
+    def test_a_short_write_is_retried_until_every_byte_lands(self):
+        import unittest.mock as mock
+        real = os.write
+        state = {"split": True}
+
+        def half(fd, data):
+            if state["split"] and len(data) > 4:
+                state["split"] = False
+                return real(fd, data[:4])   # the kernel accepted only 4 bytes
+            return real(fd, data)
+
+        pid = "short"
+        with mock.patch("os.write", side_effect=half):
+            kernel_proc.append(pid, {"kind": "start"})
+        raw = Path(kernel_proc.journal_path(pid)).read_bytes()
+        self.assertTrue(raw.endswith(b"\n"), "the loop finished the line")
+        self.assertEqual(kernel_proc.verify(pid), 0)
+
+    def test_a_write_that_makes_no_progress_raises(self):
+        import unittest.mock as mock
+        with mock.patch("os.write", return_value=0):
+            with self.assertRaises(OSError):
+                kernel_proc.append("stuck", {"kind": "start"})
+
+
+class RegisterRaceTest(SandboxHome):
+    """QA cycle 1, D1. Ten SessionStart hooks fire at once; every one of them
+    must keep its row."""
+
+    def test_ten_parallel_registers_keep_ten_rows(self):
+        code = (
+            "import sys;"
+            f"sys.path.insert(0, {str(SCRIPTS)!r});"
+            "import kernel_proc;"
+            "kernel_proc.register(sys.argv[1], {'kind':'main','worktree':'/w'})"
+        )
+        env = dict(os.environ)
+        env["HOME"] = self.home
+        env["USERPROFILE"] = self.home
+        procs = [subprocess.Popen([sys.executable, "-c", code, f"p{n}"], env=env)
+                 for n in range(10)]
+        for p in procs:
+            self.assertEqual(p.wait(timeout=120), 0)
+        rows = kernel_proc.read_ptable()["processes"]
+        self.assertEqual(sorted(rows), [f"p{n}" for n in range(10)])
+
+    def test_the_journal_exists_before_the_row_is_published(self):
+        seen = {}
+        real_write = kernel_proc._write_ptable
+
+        def spy(data):
+            seen["journal_first"] = os.path.exists(kernel_proc.journal_path("order"))
+            return real_write(data)
+
+        kernel_proc._write_ptable = spy
+        try:
+            kernel_proc.register("order", {"kind": "main"})
+        finally:
+            kernel_proc._write_ptable = real_write
+        self.assertTrue(seen["journal_first"],
+                        "a row published before its journal can be pruned by a sibling")
+
+    def test_prune_keeps_a_young_row_whose_journal_is_missing(self):
+        kernel_proc.register("young", {"kind": "main"})
+        os.unlink(kernel_proc.journal_path("young"))
+        table = kernel_proc.read_ptable()
+        self.assertEqual(kernel_proc.prune(table), 0)
+        self.assertIn("young", table["processes"])
+
+        table["processes"]["young"]["registered_ts"] = time.time() - kernel_proc.TTL - 60
+        self.assertEqual(kernel_proc.prune(table), 1, "past the TTL it is gone for good")
+        self.assertNotIn("young", table["processes"])
+
+
+class ReRegisterTest(SandboxHome):
+    """QA cycle 1, D3. SessionStart fires on startup, resume, clear and compact."""
+
+    def test_each_registration_appends_its_own_start_line_with_its_source(self):
+        kernel_proc.register("s", {"kind": "main", "source": "startup"})
+        kernel_proc.register("s", {"kind": "main", "source": "resume"})
+        lines = kernel_proc.read_journal("s")
+        self.assertEqual([l["kind"] for l in lines], ["start", "start"])
+        self.assertEqual([l["source"] for l in lines], ["startup", "resume"])
+        self.assertEqual(kernel_proc.verify("s"), 0)
+        row = kernel_proc.read_ptable()["processes"]["s"]
+        self.assertEqual(row["source"], "resume", "the row carries the latest")
+
+
+class FileCleanupTest(SandboxHome):
+    """Journals and locks used to accumulate forever, two files per run."""
+
+    def test_old_files_of_a_dead_pid_are_removed_and_live_ones_are_kept(self):
+        for pid in ("gone", "recent", "livepid"):
+            kernel_proc.register(pid, {"kind": "main"})
+        old = time.time() - (kernel_proc.PRUNE_AFTER + 3600)
+        for pid in ("gone",):
+            for path in (kernel_proc.journal_path(pid), kernel_proc.lock_path(pid)):
+                os.utime(path, (old, old))
+        table = kernel_proc.read_ptable()
+        self.assertEqual(kernel_proc.prune_files(table), 2, "journal and lock both go")
+        self.assertFalse(os.path.exists(kernel_proc.journal_path("gone")))
+        self.assertFalse(os.path.exists(kernel_proc.lock_path("gone")))
+        self.assertTrue(os.path.exists(kernel_proc.journal_path("recent")))
+        self.assertTrue(os.path.exists(kernel_proc.journal_path("livepid")))
+
+    def test_an_old_file_of_a_LIVE_pid_is_kept(self):
+        kernel_proc.register("busy", {"kind": "main"})
+        old = time.time() - (kernel_proc.PRUNE_AFTER + 3600)
+        os.utime(kernel_proc.lock_path("busy"), (old, old))  # stale lock, fresh journal
+        table = kernel_proc.read_ptable()
+        self.assertEqual(kernel_proc.prune_files(table), 0)
+        self.assertTrue(os.path.exists(kernel_proc.lock_path("busy")))
+
+
 class HotPathGateTest(SandboxHome):
     """The gate as the harness runs it: stdin payload, stdout verdict, exit 0."""
 

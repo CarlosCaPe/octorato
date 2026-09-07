@@ -131,27 +131,57 @@ def _dumps(rec: dict) -> bytes:
     return json.dumps(rec, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
 
 
-def _tail_line(path: str) -> bytes:
-    """Last complete line as raw bytes, or b'' when the file is absent or empty.
+def _tail_line(path: str) -> tuple:
+    """(last raw line, file ends on a newline). b'' and True when absent or empty.
 
     Reads the last 8 KiB only: a line is capped at MAX_LINE, so that window
     always contains at least one whole line once the file is bigger than it.
     FileNotFoundError is the empty case; every other OSError propagates, because
     an unreadable journal is exactly what the gate must refuse to run without.
+
+    The second element is what makes a torn write survivable. A process killed
+    mid-append (or a short write) leaves a file that does NOT end on a newline,
+    and an appender that ignores that glues its own record onto the fragment:
+    one unreadable line, a reused seq, and a chain that never verifies again.
+    Reporting the boundary lets append() terminate the fragment first.
     """
     try:
         with open(path, "rb") as fh:
             fh.seek(0, os.SEEK_END)
             size = fh.tell()
             if size == 0:
-                return b""
+                return b"", True
             window = min(size, 8192)
             fh.seek(size - window, os.SEEK_SET)
             chunk = fh.read(window)
     except FileNotFoundError:
-        return b""
+        return b"", True
     parts = [p for p in chunk.split(b"\n") if p]
-    return parts[-1] if parts else b""
+    return (parts[-1] if parts else b""), chunk.endswith(b"\n")
+
+
+def _first_start_ts(path: str):
+    """`start_ts` off line 0, or None. Only reached when the tail is unparseable:
+    a torn line would otherwise reset start_ts for every line after it, which
+    breaks the invariant the whole file rests on (and Phase 3 reads elapsed wall
+    time from any single line). Reading the head is the slow path, and a torn
+    tail is exactly where paying for it is right."""
+    try:
+        with open(path, "rb") as fh:
+            for raw in fh:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    rec = json.loads(raw.decode("utf-8", "replace"))
+                except ValueError:
+                    return None
+                if isinstance(rec, dict) and rec.get("start_ts") is not None:
+                    return float(rec["start_ts"])
+                return None
+    except OSError:
+        return None
+    return None
 
 
 def _count_lines(path: str) -> int:
@@ -201,6 +231,19 @@ def _fit(rec: dict) -> bytes:
     return line
 
 
+def _write_all(fd: int, data: bytes) -> None:
+    """os.write may write FEWER bytes than asked. Ignoring the return value is
+    how a partial line reaches disk while the caller is told the append worked.
+    Loop until every byte lands; a write that returns 0 is not progress, it is a
+    failure, and the caller turns an OSError into a deny."""
+    view = memoryview(data)
+    while view:
+        written = os.write(fd, view)
+        if written <= 0:
+            raise OSError(f"short write: {len(view)} byte(s) unwritten")
+        view = view[written:]
+
+
 def append(pid, record: dict) -> bytes:
     """Append one chained line to <pid>.jsonl and return the raw bytes written.
 
@@ -215,7 +258,7 @@ def append(pid, record: dict) -> bytes:
     try:
         fh = open(lock_path(pid), "a")
         _flock(fh)
-        prev_raw = _tail_line(path)
+        prev_raw, on_boundary = _tail_line(path)
         if prev_raw:
             prev_hash = hashlib.sha256(prev_raw).hexdigest()
             try:
@@ -226,10 +269,13 @@ def append(pid, record: dict) -> bytes:
                 seq = int(prev.get("seq", -1)) + 1
                 start_ts = float(prev.get("start_ts") or record.get("start_ts") or now)
             else:
-                # corrupt tail: keep the chain honest (prev still points at the
+                # Corrupt tail: keep the chain honest (prev still points at the
                 # bytes on disk) and recover seq by counting, the one slow path.
+                # start_ts comes off line 0, not off `now`: letting a torn line
+                # reset it would turn one damaged record into a file whose
+                # elapsed time is wrong from there on.
                 seq = _count_lines(path)
-                start_ts = float(record.get("start_ts") or now)
+                start_ts = float(_first_start_ts(path) or record.get("start_ts") or now)
         else:
             prev_hash = None
             seq = 0
@@ -242,9 +288,16 @@ def append(pid, record: dict) -> bytes:
             if k not in ("seq", "ts", "start_ts", "pid", "kind", "prev"):
                 rec[k] = v
         line = _fit(rec)
+        # A file that does not end on a newline carries a torn record. Open the
+        # new line with one, so the fragment closes as its own (unparseable)
+        # line instead of swallowing this one. Recovery is precise and bounded:
+        # verify_detail() names that line by index and keeps checking, because
+        # the chain continues from its bytes like any other line. One damaged
+        # record, locatable, never a silent break.
+        payload = (b"" if on_boundary else b"\n") + line + b"\n"
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
         try:
-            os.write(fd, line + b"\n")
+            _write_all(fd, payload)
         finally:
             os.close(fd)
         return line
@@ -276,10 +329,14 @@ def read_journal(pid) -> list:
 
 
 def verify_detail(pid) -> tuple:
-    """(0, 'ok') when the chain is intact, else (1, reason).
+    """(0, 'ok') when the chain is intact, else (1, every break it found).
 
     Checks, per line: it parses, `seq` increments from 0, `prev` is the sha256
     of the previous raw line (null on the first), and `start_ts` never moves.
+    A line that does not parse is recorded and verification CONTINUES from its
+    bytes, so a torn write reads as one named line rather than as "broken from
+    here on". Return code stays 1: a journal with a torn line is damaged, and
+    the point is to locate the damage, not to excuse it.
     """
     path = journal_path(pid)
     try:
@@ -292,23 +349,31 @@ def verify_detail(pid) -> tuple:
         return 1, f"empty journal for {safe_pid(pid)}"
     prev_raw = None
     start_ts = None
+    breaks = []
     for i, raw in enumerate(raws):
         try:
             rec = json.loads(raw.decode("utf-8", "replace"))
         except ValueError:
-            return 1, f"line {i} does not parse"
+            rec = None
         if not isinstance(rec, dict):
-            return 1, f"line {i} is not an object"
+            # A torn write, terminated in place by the next append. Report it by
+            # index and keep verifying: the chain continues from these bytes, so
+            # the damage stays one line instead of poisoning the rest.
+            breaks.append(f"line {i} does not parse")
+            prev_raw = raw
+            continue
         if rec.get("seq") != i:
-            return 1, f"line {i} carries seq {rec.get('seq')}"
+            breaks.append(f"line {i} carries seq {rec.get('seq')}")
         want = None if prev_raw is None else hashlib.sha256(prev_raw).hexdigest()
         if rec.get("prev") != want:
-            return 1, f"line {i} prev {rec.get('prev')} != {want}"
-        if i == 0:
+            breaks.append(f"line {i} prev {rec.get('prev')} != {want}")
+        if start_ts is None:
             start_ts = rec.get("start_ts")
         elif rec.get("start_ts") != start_ts:
-            return 1, f"line {i} start_ts moved to {rec.get('start_ts')}"
+            breaks.append(f"line {i} start_ts moved to {rec.get('start_ts')}")
         prev_raw = raw
+    if breaks:
+        return 1, f"{len(breaks)} break(s): " + "; ".join(breaks[:4])
     return 0, f"{len(raws)} line(s) chain"
 
 
@@ -419,33 +484,119 @@ def is_live(pid, table: dict = None, now: float = None, ttl: int = TTL,
 
 
 def prune(table: dict, now: float = None) -> int:
-    """Drop process rows whose journal is gone or older than PRUNE_AFTER.
+    """Drop process rows that are gone for good, and only those.
 
-    Called from the register hooks only. An exited-but-recent row is KEPT so
-    `octo ps` can still show its exit status (Phase 1b).
+    Called from the register hooks only, never from the hot path. An
+    exited-but-recent row is KEPT so `octo ps` can still show its exit status
+    (Phase 1b).
+
+    A row whose journal is ABSENT is kept while its `registered_ts` is younger
+    than TTL. Without that grace window a concurrent register loses rows: ten
+    SessionStart hooks firing at once each take the ptable lock in turn, and
+    whichever one arrives while a sibling has published its row but not yet
+    written its first journal line would delete that sibling outright
+    (reproduced 9/10 rows kept). register() now writes the journal FIRST, which
+    closes the window; this keeps it closed if a journal is deleted underneath
+    a live process.
     """
     now = time.time() if now is None else now
     procs = table.get("processes", {})
     dead = []
     for pid, ent in procs.items():
         mt = _mtime(journal_path(pid))
-        if mt is None or (now - mt) > PRUNE_AFTER:
+        if mt is None:
+            registered = float(ent.get("registered_ts") or 0)
+            if (now - registered) <= TTL:
+                continue  # young row, journal not written (or just removed) yet
+            dead.append(pid)
+        elif (now - mt) > PRUNE_AFTER:
             dead.append(pid)
     for pid in dead:
         procs.pop(pid, None)
+    prune_files(table, now)
     return len(dead)
 
 
-def register(pid, entry: dict, start_record: dict = None) -> dict:
-    """Record a process in the ptable and open its journal with a `start` line.
+def prune_files(table: dict, now: float = None) -> int:
+    """Delete journal and `.lock` files older than PRUNE_AFTER whose pid is not
+    live. Without this the kernel directory only ever grows: every session and
+    every subagent leaves two files behind forever.
 
-    ptable first, journal second, both idempotent: a re-registered pid keeps its
-    first `start` line and gets its row refreshed. Never assumes another hook
-    ran first (same-event hooks run in parallel and SubagentStart may lose the
-    race with the child's own first tool call).
+    Bounded and conservative. A file is removed only when it is older than the
+    retention window AND its process fails the liveness test, so no live writer
+    can be racing it; the per-pid lock is taken first anyway. Register path
+    only, never the hot path. Errors are swallowed: cleanup that breaks a
+    session is worse than a stale file.
+    """
+    now = time.time() if now is None else now
+    jdir = journal_dir()
+    removed = 0
+    try:
+        names = os.listdir(jdir)
+    except OSError:
+        return 0
+    for name in names:
+        if name.endswith(".lock"):
+            pid, path = name[:-len(".jsonl.lock")], os.path.join(jdir, name)
+        elif name.endswith(".jsonl"):
+            pid, path = name[:-len(".jsonl")], os.path.join(jdir, name)
+        else:
+            continue
+        mt = _mtime(path)
+        if mt is None or (now - mt) <= PRUNE_AFTER:
+            continue
+        try:
+            if is_live(pid, table, now):
+                continue
+        except Exception:
+            continue
+        fh = None
+        try:
+            fh = open(lock_path(pid), "a")
+            _flock(fh)
+            os.unlink(path)
+            removed += 1
+        except OSError:
+            pass
+        finally:
+            if fh is not None:
+                _funlock(fh)
+                try:
+                    fh.close()
+                except OSError:
+                    pass
+    return removed
+
+
+def register(pid, entry: dict, start_record: dict = None) -> dict:
+    """Open the process's journal with a `start` line, then publish its ptable row.
+
+    JOURNAL FIRST, ptable second, and the order is the point. Published-then-
+    written left a window where a sibling register (holding the ptable lock,
+    running prune) saw a row with no journal file and deleted it; ten parallel
+    SessionStart hooks kept 9 rows. Writing the start line first means the
+    journal always exists before anything can judge the row by it.
+
+    SessionStart fires on startup, resume, clear and compact, so a pid is
+    registered more than once by design. Each registration appends its OWN
+    `start` line carrying the `source` that caused it: a resumed session is
+    visible in the journal instead of being silently folded into the first one,
+    and `octo replay` can say where a run picked up. The ptable row is merged,
+    not replaced, and `registered_ts` keeps the FIRST registration.
+
+    Never assumes another hook ran first: same-event hooks run in parallel, and
+    SubagentStart may lose the race with the child's own first tool call.
     """
     pid = safe_pid(pid)
     os.makedirs(kernel_dir(), exist_ok=True)
+
+    rec = {"kind": "start"}
+    rec.update(start_record or {})
+    for k in ("ppid", "type", "worktree", "dim_worktree", "cwd", "source"):
+        if entry.get(k):
+            rec.setdefault(k, entry[k])
+    append(pid, rec)
+
     fh = None
     try:
         fh = open(ptable_lock_path(), "a")
@@ -466,12 +617,6 @@ def register(pid, entry: dict, start_record: dict = None) -> dict:
                 fh.close()
             except OSError:
                 pass
-    rec = {"kind": "start"}
-    rec.update(start_record or {})
-    for k in ("ppid", "type", "worktree", "dim_worktree", "cwd"):
-        if entry.get(k):
-            rec.setdefault(k, entry[k])
-    append(pid, rec)
     return rec
 
 
