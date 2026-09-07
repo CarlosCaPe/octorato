@@ -557,11 +557,20 @@ def prune_files(table: dict, now: float = None) -> int:
     live. Without this the kernel directory only ever grows: every session and
     every subagent leaves two files behind forever.
 
-    Bounded and conservative. A file is removed only when it is older than the
-    retention window AND its process fails the liveness test, so no live writer
-    can be racing it; the per-pid lock is taken first anyway. Register path
-    only, never the hot path. Errors are swallowed: cleanup that breaks a
-    session is worse than a stale file.
+    Grouped BY PID, never file by file, and that is the fix for a real leak.
+    `os.listdir` hands back `<pid>.jsonl.lock` before `<pid>.jsonl` half the
+    time; removing the lock first and then taking `lock_path(pid)` again to
+    remove the journal RE-CREATES the lock (open "a" creates), so the sweep
+    left a fresh empty `.lock` behind for every pid it pruned, and the next
+    sweep could not remove it either (its mtime was now young). One locked
+    block per pid, journal unlinked first and the lock unlinked last while it
+    is still held, closes it.
+
+    Bounded and conservative. A pid is swept only when EVERY file it still owns
+    is older than the retention window AND its process fails the liveness test,
+    so no live writer can be racing it. Register path only, never the hot path.
+    Errors are swallowed: cleanup that breaks a session is worse than a stale
+    file.
     """
     now = time.time() if now is None else now
     jdir = journal_dir()
@@ -570,15 +579,18 @@ def prune_files(table: dict, now: float = None) -> int:
         names = os.listdir(jdir)
     except OSError:
         return 0
+    owned = {}
     for name in names:
-        if name.endswith(".lock"):
-            pid, path = name[:-len(".jsonl.lock")], os.path.join(jdir, name)
+        if name.endswith(".jsonl.lock"):
+            pid, key = name[:-len(".jsonl.lock")], "lock"
         elif name.endswith(".jsonl"):
-            pid, path = name[:-len(".jsonl")], os.path.join(jdir, name)
+            pid, key = name[:-len(".jsonl")], "jsonl"
         else:
             continue
-        mt = _mtime(path)
-        if mt is None or (now - mt) <= PRUNE_AFTER:
+        owned.setdefault(pid, {})[key] = os.path.join(jdir, name)
+    for pid, files in owned.items():
+        ages = [_mtime(path) for path in files.values()]
+        if any(mt is None or (now - mt) <= PRUNE_AFTER for mt in ages):
             continue
         try:
             if is_live(pid, table, now):
@@ -589,8 +601,17 @@ def prune_files(table: dict, now: float = None) -> int:
         try:
             fh = open(lock_path(pid), "a")
             _flock(fh)
-            os.unlink(path)
-            removed += 1
+            # journal first; the lock file is the last thing to go, and it goes
+            # while this process still holds it, so nothing re-creates it after.
+            for key in ("jsonl", "lock"):
+                path = files.get(key)
+                if not path:
+                    continue
+                try:
+                    os.unlink(path)
+                    removed += 1
+                except OSError:
+                    pass
         except OSError:
             pass
         finally:
@@ -601,6 +622,36 @@ def prune_files(table: dict, now: float = None) -> int:
                 except OSError:
                     pass
     return removed
+
+
+def prune_locked(now: float = None) -> int:
+    """Take the ptable lock, prune, publish. Returns the number of rows dropped.
+
+    `prune()` mutates a table a caller already holds under the lock (that is how
+    `register` uses it). A reader that wants the same cleanup - `octo ps` prunes
+    on read - needs the lock/read/prune/write cycle around it, and duplicating
+    that cycle in the CLI would put a second ptable writer outside this module.
+    """
+    now = time.time() if now is None else now
+    os.makedirs(kernel_dir(), exist_ok=True)
+    fh = None
+    try:
+        fh = open(ptable_lock_path(), "a")
+        _flock(fh)
+        table = read_ptable()
+        dropped = prune(table, now)
+        if dropped:
+            _write_ptable(table)
+        return dropped
+    except OSError:
+        return 0
+    finally:
+        if fh is not None:
+            _funlock(fh)
+            try:
+                fh.close()
+            except OSError:
+                pass
 
 
 def register(pid, entry: dict, start_record: dict = None) -> dict:

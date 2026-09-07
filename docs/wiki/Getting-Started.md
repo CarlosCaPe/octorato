@@ -145,7 +145,7 @@ Only you, the human operator, ever bridge knowledge between arms. The agent neve
 python3 ~/.claude/scripts/install-runners.py
 ```
 
-This creates `ai-sync`, `ai-push`, `ai-pull`, and `sync-ai-docs` in `~/.local/bin/` for both POSIX and Windows.
+This creates `ai-sync`, `ai-push`, `ai-pull`, `sync-ai-docs` and `octo` in `~/.local/bin/` for both POSIX and Windows.
 
 **Daily workflow:**
 
@@ -193,6 +193,18 @@ Confirm? (yes/no)
 ```
 
 Nothing is written until you reply `yes` (or `sí`, `ok`, `dale`). After the write, the agent runs **3D Diligent** — validates the result and reports PASS/FAIL with evidence — then **4D Disclose** — states the impact radius (everywhere the changed object is referenced). This four-phase cycle is mandatory on every action. Full protocol: [[The-4D-Paradigm]].
+
+### How to see what your agents did
+
+Every session and every subagent runs as a kernel process: a pid, a parent, a worktree, and an append-only hash-chained journal of its tool calls. Three commands read it:
+
+| Command | What it shows |
+|---|---|
+| `octo ps` | Every process the kernel knows: pid, parent, agent type, tool count, exit status, age, worktree. Live ones first |
+| `octo top` | The busiest processes, live plus the last 24 hours, by tool calls and refusals |
+| `octo replay <pid>` | One run as it happened: the start, every tool call in order, every refusal folded into the call it stopped, the children, the exit. Add `--verify` to exit non-zero on a broken hash chain |
+
+`octo journal <pid>` hands back the raw lines when you want the JSON rather than the reading, and `octo bench` measures what the journaling costs per tool call on your machine. Design and guarantees: [`docs/architecture/v8-kernel.md`](../architecture/v8-kernel.md).
 
 ### How to invoke a skill
 
