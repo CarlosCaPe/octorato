@@ -41,6 +41,15 @@ def _load(name: str, path: Path):
 gate = _load("g_pretool_kernel", GATE)
 
 
+def _restore_env(saved: dict) -> None:
+    """Put HOME and USERPROFILE back exactly as they were, unset included."""
+    for k in ("HOME", "USERPROFILE"):
+        if k in saved:
+            os.environ[k] = saved[k]
+        else:
+            os.environ.pop(k, None)
+
+
 class QuotaBase(unittest.TestCase):
     """A sandbox HOME per test, plus the two helpers every test needs: write an
     occupant, and make one tool call as the harness would."""
@@ -48,6 +57,13 @@ class QuotaBase(unittest.TestCase):
     def setUp(self) -> None:
         self.home = Path(tempfile.mkdtemp(prefix="kernel-quota-test-"))
         self.addCleanup(shutil.rmtree, self.home, ignore_errors=True)
+        # Several tests point HOME at the sandbox inline. Restoring it here, once,
+        # is what keeps the leak contained: os.environ is process-wide, so a HOME
+        # left pointing at a deleted temp dir follows every later test module in
+        # the same `unittest discover` run, and a CHILD process started by one of
+        # them re-derives its user site-packages from that dead HOME and loses
+        # every pip --user import.
+        self.addCleanup(_restore_env, dict(os.environ))
 
     def write_occupant(self, text) -> None:
         cfg = self.home / ".claude" / "company" / "config"
