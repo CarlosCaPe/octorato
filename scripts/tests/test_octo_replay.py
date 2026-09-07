@@ -351,8 +351,10 @@ class GateSelftestJournalTest(ReplayCase):
         import gate_selftest
         fdir = ROOT / "registry" / "fixtures" / "SECURITY.never-read-secrets-raw"
         raw = json.loads((fdir / "violation.json").read_text(encoding="utf-8"))
+        # _prep_payload returns (stdin_json, leg_env): the harness lifts a
+        # fixture-declared "_env" out of the payload the gate reads.
         prepared = json.loads(gate_selftest._prep_payload(
-            fdir / "violation.json", fdir, Path(self.home)))
+            fdir / "violation.json", fdir, Path(self.home))[0])
         self.assertEqual(prepared["session_id"],
                          raw.get("session_id") or gate_selftest.SELFTEST_SESSION)
 
@@ -363,7 +365,7 @@ class GateSelftestJournalTest(ReplayCase):
             json.dumps({"session_id": "fixture-owned", "tool_name": "Bash"}),
             encoding="utf-8")
         prepared = json.loads(gate_selftest._prep_payload(
-            fdir / "violation.json", fdir, fdir))
+            fdir / "violation.json", fdir, fdir)[0])
         self.assertEqual(prepared["session_id"], "fixture-owned")
 
     def test_the_assertion_fails_when_a_gate_stops_journaling(self):
