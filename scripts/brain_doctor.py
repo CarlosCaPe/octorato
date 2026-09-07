@@ -1605,7 +1605,7 @@ def check_fixture_seeds_tracked(fix: bool) -> Result:
     root = CLAUDE_DIR / "registry" / "fixtures"
     if not root.exists():
         return Result(key, WARN, "registry/fixtures absent", "")
-    on_disk = sorted(str(f.relative_to(CLAUDE_DIR)) for f in root.rglob("*") if f.is_file())
+    on_disk = sorted(f.relative_to(CLAUDE_DIR).as_posix() for f in root.rglob("*") if f.is_file())
     cp = git("ls-files", "--", "registry/fixtures")
     tracked = set(cp.stdout.split("\n")) if cp.returncode == 0 else set()
     untracked = [f for f in on_disk if f not in tracked]
