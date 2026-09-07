@@ -26,6 +26,8 @@ This is **[RFC #0002](https://github.com/CarlosCaPe/octorato/discussions)** — 
 
 ## Milestones
 
+v8 (the kernel) is the next major and is planned in full, panel-reviewed, in [docs/architecture/v8-kernel.md](docs/architecture/v8-kernel.md): PROCESS, ISOLATION, JOURNAL and PACKAGE as a contract enforced by hooks, scripts and git, no daemon. It covers M1, the non-money half of M2, the replay half of M3 and the package half of M5; M4 stays future.
+
 | Milestone | Theme | Maturity | Gaps |
 |-----------|-------|----------|------|
 | **M1 — The Kernel Boundary** | Define what the OS *is* — the contract everything plugs into | `status: design` | Kernel/syscall ABI · model/harness portability · capability + identity |
