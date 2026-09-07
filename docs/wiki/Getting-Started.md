@@ -233,13 +233,13 @@ python3 scripts/octo_pkg.py verify --all
 ```
 
 `list` shows what is installed, `verify --all` re-checks every entry. Installing takes a
-source: a GitHub URL, `owner/repo` with `--path`, a git repository (remote or a local
-path), or a plain directory.
-
-```bash
-python3 scripts/octo_pkg.py install https://github.com/CarlosCaPe/octorato/tree/master/skills/pdf --path skills/pdf
-python3 scripts/octo_pkg.py uninstall pdf
-```
+source in any of four spellings: a GitHub URL like
+`https://github.com/<owner>/<repo>/tree/<ref>/skills/<name>` paired with
+`--path skills/<name>`, an `<owner>/<repo>` pair with `--path`, a git repository (a
+remote URL or a local path), or a plain directory holding the package. There is nothing
+to install yet from a public source, because a package has to be signed by a principal
+you trust before it is allowed in; the next section builds and installs one end to end,
+which is also the fastest way to see the checks fire.
 
 Before a single byte is copied, the installer validates the package's `skill.json`,
 recomputes a hash over every file in the tree and compares it to the one the manifest
@@ -269,8 +269,15 @@ ssh-keygen -Y sign -f /tmp/my-release-key -n octorato-pkg /tmp/my-skill/skill.js
 
 `hash --write` computes the tree hash with the same function the installer will use and
 embeds it as `tree_sha256`; computing it any other way guarantees a refusal nobody can
-read. `ssh-keygen -Y sign` needs `-f <your private key>` and the `octorato-pkg`
-namespace, and writes the detached `skill.json.sig` beside the manifest. Ship both.
+read. It also deletes any `skill.json.sig` sitting there, and that deletion matters more
+than it looks: `ssh-keygen -Y sign` asks before overwriting an existing `.sig`, and with
+no terminal to answer (a script, a CI step, a heredoc) it declines, keeps the OLD
+signature and still exits 0. Re-signing an edited package would silently ship a
+signature made over a manifest nobody has. So always re-run `hash --write` before
+signing again, never `ssh-keygen -Y sign` on its own.
+
+`ssh-keygen -Y sign` needs `-f <your private key>` and the `octorato-pkg` namespace, and
+writes the detached `skill.json.sig` beside the manifest. Ship both.
 
 To install what you just signed, your principal has to be trusted. Add its public line
 to the gitignored `company/config/pkg-signers` (one line, `<principal> <keytype>
