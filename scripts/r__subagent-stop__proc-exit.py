@@ -118,6 +118,16 @@ def main() -> int:
         pid = str(payload.get("agent_id") or "")
         if not pid or kernel_proc.has_exit(pid):
             return 0
+        # An ending cannot bring a process into existence. `append()` creates
+        # the journal when it is absent, which is right for the hot-path gate
+        # (a first tool call that beats the register hook IS the process's
+        # first trace) and wrong here: the harness fires SubagentStop for agent
+        # ids that never registered, never ran a tool and never produced a
+        # transcript, and writing their exit materialised a whole process out
+        # of one line. Record the ending only for a process that left a trace
+        # of having existed; otherwise do nothing, quietly.
+        if not kernel_proc.has_trace(pid):
+            return 0
         lines = [l for l in kernel_proc.read_journal(pid) if isinstance(l, dict)]
         tail = lines[-1] if lines else {}
         now = time.time()
