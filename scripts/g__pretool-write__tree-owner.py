@@ -38,8 +38,10 @@ parent does not hold its children hostage to paths it claimed before delegating.
 
 The kernel's own state is a floor, not a lane: a write targeting
 `~/.claude/.cache/kernel` (the process table, the journals, the locks) is denied
-for EVERY hooked process, this one included, because a process that can rewrite
-the table can grant itself any lane and erase the record. The operator's terminal
+for EVERY hooked process, this one included, and so is a write to any ANCESTOR of
+it by the same prefix test (`~/.claude/.cache`, `~/.claude`, `$HOME`), because a
+process that can rewrite the table can grant itself any lane and erase the
+record. The operator's terminal
 is not hooked and stays the only writer.
 
 Hot path: one ptable read per call. The arms config is read ONLY when the target

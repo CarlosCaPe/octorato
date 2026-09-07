@@ -559,13 +559,128 @@ class QaCycle1(IsolationCase):
         the report says so. Pinned so the claim stays true instead of drifting
         into a silent regression either way."""
         self.hold()
-        for command in (f"rsync -a --delete /tmp/x/ {self.tree}/pkg/",
-                        f"shred -u {self.a_py}",
-                        f"ln -sf /dev/null {self.a_py}",
-                        f"perl -pi -e s/a/b/ {self.a_py}",
-                        f"dd if=/dev/zero of={self.a_py}"):
+        kdir = kernel_proc.kernel_dir()
+        deep = f"rm -rf {self.tree}/pkg"
+        for _ in range(4):
+            deep = 'bash -c "' + deep.replace('"', '\\"') + '"'
+        for command in (
+                # separate verb tables
+                f"rsync -a --delete /tmp/x/ {self.tree}/pkg/",
+                f"shred -u {self.a_py}",
+                f"ln -sf /dev/null {self.a_py}",
+                f"perl -pi -e s/a/b/ {self.a_py}",
+                # an evaluator: the body is Python, not shell
+                f'python3 -c "import shutil; shutil.rmtree(\'{self.tree}/pkg\')"',
+                f'python3 -c "open(\'{kdir}/ptable.json\',\'w\').write(\'{{}}\')"',
+                # git verbs that rewrite the tree through a different door
+                "git apply /tmp/p.diff", "git rebase main", "git merge main",
+                "git pull", "git cherry-pick HEAD~1", "git revert HEAD",
+                # the shell would expand these; this gate does not run the shell
+                f"DIR={self.tree}/pkg && rm -rf $DIR",
+                # xargs fed from stdin: the target never appears in the command
+                f"echo {self.tree}/pkg | xargs rm -rf",
+                f"xargs rm -f < /tmp/list",
+                f"cat /tmp/list | xargs rm -f",
+                # a -c body nested deeper than the scan limit
+                deep):
             rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", command))
-            self.assertFalse(self.denied(out), command + " is now covered: move it out of the residual list")
+            self.assertFalse(self.denied(out),
+                             command + " is now covered: move it out of the residual list "
+                             "in the gate docstring and the PR comment")
+
+
+class QaCycle2(IsolationCase):
+    """The four false denies and the three residual gaps the cycle-1 widening
+    introduced. A gate that denies work nobody owns is not stricter, it is
+    broken; these pin the line where the widening stops."""
+
+    def hold(self):
+        self.run_gate(WRITE_GATE, self.write_payload("agent-a", self.a_py))
+
+    def test_f1_a_glob_that_reaches_no_lane_passes(self):
+        self.hold()
+        for command in ("rm -f *.log", "git checkout -- *.md", "rm -rf zz*",
+                        "git checkout -- x*.py"):
+            rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", command))
+            self.assertFalse(self.denied(out), command)
+
+    def test_f1_a_glob_that_does_reach_a_lane_is_denied(self):
+        self.hold()
+        for command in ("rm -f *.py", "git checkout -- a*"):
+            rc, out = self.run_gate(BASH_GATE, self.bash_payload(
+                "agent-b", command, cwd=os.path.join(self.tree, "pkg")))
+            self.assertTrue(self.denied(out), command)
+        # a glob one level up still reaches the lane through its directory
+        rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", "rm -rf pk*"))
+        self.assertTrue(self.denied(out))
+
+    def test_f1_the_specs_that_mean_everything_keep_the_root(self):
+        self.hold()
+        for command in ("rm -rf *", "git checkout -- :/", "git checkout -- ':(top)'",
+                        "git checkout -- ."):
+            rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", command))
+            self.assertTrue(self.denied(out), command)
+
+    def test_f2_a_find_name_filter_is_the_target_not_the_root(self):
+        self.hold()
+        for command in ("find . -name '*.pyc' -delete",
+                        f"find {self.tree} -name '*.log' -delete",
+                        "find . -iname '*.tmp' -delete"):
+            rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", command))
+            self.assertFalse(self.denied(out), command)
+        rc, out = self.run_gate(
+            BASH_GATE, self.bash_payload("agent-b", "find . -name '*.py' -delete"))
+        self.assertTrue(self.denied(out))
+
+    def test_f3_only_the_token_after_exec_is_the_program(self):
+        self.hold()
+        for command in ("find pkg -exec grep rm {} ;", "find pkg -name rm -print"):
+            rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", command))
+            self.assertFalse(self.denied(out), command)
+        rc, out = self.run_gate(
+            BASH_GATE, self.bash_payload("agent-b", "find pkg -exec rm {} ;"))
+        self.assertTrue(self.denied(out))
+
+    def test_f4_a_flag_is_not_a_branch_name(self):
+        self.hold()
+        for command in ("git checkout -q", "git checkout --quiet", "git checkout -q -f"):
+            rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", command))
+            self.assertFalse(self.denied(out), command)
+        rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", "git checkout -q main"))
+        self.assertTrue(self.denied(out))
+
+    def test_r2_the_floor_reads_the_state_verbs(self):
+        kdir = kernel_proc.kernel_dir()
+        for command in (f"touch {kdir}/ptable.json", f"chmod 777 {kdir}/ptable.json",
+                        f"chattr +i {kdir}/ptable.json", f"dd if=/dev/zero of={kdir}/ptable.json"):
+            rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", command))
+            self.assertTrue(self.denied(out), command)
+
+    def test_r2_the_state_verbs_are_floor_only(self):
+        """`touch` on a sibling's file is not the collision this rule is about,
+        so the state verbs never become lane denies."""
+        self.hold()
+        for command in (f"touch {self.a_py}", f"chmod 644 {self.a_py}"):
+            rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", command))
+            self.assertFalse(self.denied(out), command)
+
+    def test_n2_the_floor_covers_the_ledgers_ancestors(self):
+        for path in (os.path.dirname(kernel_proc.kernel_dir()),
+                     os.path.join(self.home, ".claude"), self.home):
+            rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", f"rm -rf {path}"))
+            self.assertTrue(self.denied(out), path)
+
+    def test_n1_every_deny_names_the_unlock(self):
+        self.hold()
+        for gate, payload in (
+                (BASH_GATE, self.bash_payload("agent-b", "git reset --hard")),   # tree
+                (BASH_GATE, self.bash_payload("agent-b", "git add -A")),          # stage
+                (BASH_GATE, self.bash_payload("agent-b", "rm -rf pkg")),          # lane
+                (WRITE_GATE, self.write_payload("agent-b", self.a_py))):
+            rc, out = self.run_gate(gate, payload)
+            self.assertTrue(self.denied(out))
+            self.assertIn("octo ps --release", out)
+            self.assertIn("Phase 1b", out)
 
 
 class Selftests(unittest.TestCase):
