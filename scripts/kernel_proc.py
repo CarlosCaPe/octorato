@@ -490,9 +490,12 @@ def update_row(pid, fields: dict) -> bool:
     every later phase writes it through here: Phase 1a-2 marks a process exited,
     Phase 1b records a release, Phase 2 claims lanes. Returns False when the pid
     has no row, which is not an error: a child whose register hook lost its race
-    still has a journal, and the journal is what the gates read.
+    still has a journal, and the journal is what the gates read. A HOME with
+    no table at all returns False without creating the kernel dir or its lock.
     """
     pid = safe_pid(pid)
+    if not os.path.exists(ptable_path()):
+        return False
     os.makedirs(kernel_dir(), exist_ok=True)
     fh = None
     try:

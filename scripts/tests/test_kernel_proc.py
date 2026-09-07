@@ -611,3 +611,18 @@ class SelftestTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class ExitStatusWordBoundaryTest(unittest.TestCase):
+    def test_error_word_boundary(self):
+        import importlib.util, os
+        spec = importlib.util.spec_from_file_location(
+            "proc_exit", os.path.join(os.path.dirname(__file__), "..", "r__subagent-stop__proc-exit.py"))
+        m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+        self.assertEqual(m.status_of("Errors were found and fixed"), "ok")
+        self.assertEqual(m.status_of("Exceptionally good result"), "ok")
+        self.assertEqual(m.status_of("Error: boom"), "error")
+        self.assertEqual(m.status_of("**Fatal** problem"), "error")
+        self.assertEqual(m.status_of(""), "error")
+        self.assertEqual(m.status_of("QA-VERDICT: FAIL"), "ok")
+

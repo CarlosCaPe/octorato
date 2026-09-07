@@ -28,6 +28,7 @@ Stdout: nothing. Exit always 0.
 from __future__ import annotations
 
 import json
+import re
 import os
 import sys
 
@@ -36,7 +37,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # A child that opens its final message with one of these is reporting its own
 # failure. Matched on the first line only: an error named mid-report is a
 # finding, not a crash.
-_ERROR_HEAD = ("error", "fatal", "traceback (most recent call last)", "exception")
+# Word-bounded: "Errors were found and fixed" and "Exceptionally good" are ok.
+_ERROR_HEAD = re.compile(r"^(?:error|fatal|exception)\b|^traceback \(most recent call last\)")
 
 
 def status_of(text) -> str:
@@ -52,7 +54,7 @@ def status_of(text) -> str:
     if not s:
         return "error"
     first = s.splitlines()[0].strip().lstrip("*_# ").lower()
-    return "error" if first.startswith(_ERROR_HEAD) else "ok"
+    return "error" if _ERROR_HEAD.match(first) else "ok"
 
 
 def meta_path(payload: dict, pid: str) -> str:
