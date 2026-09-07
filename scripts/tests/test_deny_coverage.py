@@ -55,9 +55,15 @@ class DenyCoverageCase(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp(prefix="deny-cov-"))
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
-        self.brain = self.tmp / ".claude"
+        # TWO roles, deliberately in different places. The CHECKOUT is where the
+        # git history lives; the HARNESS HOME is where transcripts are written. The
+        # bug was reading the second from the first, and a sandbox that puts both in
+        # one directory cannot tell the two resolutions apart, which is exactly how
+        # the first version of this test passed on the broken code (QA cycle 2).
+        self.brain = self.tmp / "checkout"
         (self.brain / "scripts").mkdir(parents=True)
-        (self.brain / "projects" / "slug" / "sess").mkdir(parents=True)
+        self.harness = self.tmp / "harness-home"
+        (self.harness / "projects" / "slug" / "sess").mkdir(parents=True)
         hook = self.brain / "scripts" / "r__permission-denied__journal.py"
         hook.write_text("# stand-in for the reflex\n", encoding="utf-8")
         env = dict(os.environ)
@@ -81,14 +87,14 @@ class DenyCoverageCase(unittest.TestCase):
         # which is the finding this sandbox now has to model: pointing only
         # CLAUDE_DIR at a fixture used to leave the scan reading the real brain.
         saved_env = dict(os.environ)
-        os.environ["CLAUDE_CONFIG_DIR"] = str(self.brain)
+        os.environ["CLAUDE_CONFIG_DIR"] = str(self.harness)
         self.addCleanup(_restore_env, saved_env)
 
     def write_refusal(self, kind: str, when: float) -> None:
         """One transcript record in the harness's own shape."""
         from datetime import datetime, timezone
         stamp = datetime.fromtimestamp(when, timezone.utc).isoformat().replace("+00:00", "Z")
-        path = self.brain / "projects" / "slug" / "sess" / "transcript.jsonl"
+        path = self.harness / "projects" / "slug" / "sess" / "transcript.jsonl"
         rec = {"type": "user", "timestamp": stamp,
                "message": {"content": [{"type": "tool_result", "is_error": True,
                                         "toolDenialKind": kind}]}}
@@ -168,11 +174,13 @@ class TestTheEvidenceIsWhereTheHarnessWritesIt(DenyCoverageCase):
         a worktree, so that was the normal case."""
         armed, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         self.write_refusal("automode-blocked", armed + 60)
-        # CLAUDE_DIR moved somewhere with no projects/ at all, the worktree shape
-        elsewhere = self.tmp / "worktree"
-        (elsewhere / "scripts").mkdir(parents=True)
-        doctor.CLAUDE_DIR = self.brain          # the git history still resolves
-        self.assertFalse((elsewhere / "projects").exists())
+        # THE control that makes this test discriminate: the checkout has no
+        # projects/ at all, which is the worktree shape, so the old resolution finds
+        # nothing while the new one finds the transcript. The first version of this
+        # test pointed both at one directory and therefore passed on the bug.
+        self.assertFalse((self.brain / "projects").exists(),
+                         "the checkout must NOT carry transcripts, or the two "
+                         "resolutions cannot be told apart")
         _, seen, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         self.assertEqual(seen, 1, "the transcripts are found by the harness home")
 
@@ -184,10 +192,24 @@ class TestTheEvidenceIsWhereTheHarnessWritesIt(DenyCoverageCase):
         self.assertIsNone(armed)
         self.assertEqual((seen, other), (0, 0))
 
+    def test_an_unreadable_projects_dir_claims_nothing(self):
+        """is_dir succeeds on a directory this cannot LIST, and glob then swallows
+        the PermissionError and yields nothing: a real arm date next to a zero
+        produced by reading nothing, which is the sentence this check exists to
+        abolish. Probe the listing, not the stat (QA cycle 2)."""
+        projects = self.harness / "projects"
+        os.chmod(projects, 0o000)
+        self.addCleanup(lambda: os.chmod(projects, 0o755))
+        if os.access(projects, os.R_OK):
+            self.skipTest("running as root, EACCES is not enforceable")
+        armed, seen, other = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        self.assertIsNone(armed, "a directory it cannot list is not evidence of zero")
+        self.assertEqual((seen, other), (0, 0))
+
     def test_a_corrupt_transcript_is_skipped_not_crashed(self):
         """The doctor must not crash on a transcript nobody in this brain wrote."""
         armed, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
-        path = self.brain / "projects" / "slug" / "sess" / "junk.jsonl"
+        path = self.harness / "projects" / "slug" / "sess" / "junk.jsonl"
         deep = "[" * 200000 + "]" * 200000
         path.write_text('"toolDenialKind automode- not an object"\n'
                         + '{"toolDenialKind": "automode-blocked"\n'
@@ -256,6 +278,15 @@ class TestTheFourOutcomesReadDifferently(unittest.TestCase):
         self.assertEqual(status, doctor.PASS)
         self.assertNotIn("unexercised", text)
         self.assertNotIn("harness", text)
+
+    def test_the_warn_reaches_the_surface_and_carries_its_hint(self):
+        """The status existed in the pure function and the caller collapsed it into
+        the PASS line, throwing away both the verdict and the guidance. A status the
+        caller does not carry is a status that does not exist (QA cycle 2)."""
+        status, text, hint = doctor.deny_coverage(0, 1_700_000_000.0, 0, 7)
+        self.assertEqual(status, doctor.WARN)
+        self.assertIn("7 refusal(s) of other classes", text)
+        self.assertIn("toolDenialKind", hint, "a WARN has to say what to confirm")
 
     def test_the_failure_cannot_be_reached_without_a_real_refusal(self):
         """The control. If any input shape produced FAIL, the check would fire on a

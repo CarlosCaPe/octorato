@@ -1843,8 +1843,13 @@ def check_kernel_replay(fix: bool) -> Result:
                       "mechanism (RULE #1): register the rule, or fix the id the gate journals")
     armed_at, harness_denies, other_denies = _harness_refusals_since_hook(cutoff)
     status, coverage, hint = deny_coverage(denies, armed_at, harness_denies, other_denies)
-    if status == FAIL:
-        return Result(key, FAIL, coverage, hint)
+    if status in (FAIL, WARN):
+        # WARN was being collapsed into the PASS line below, which threw away both
+        # the status and the hint: the one new verdict this check introduced was
+        # invisible at the surface and its guidance was dropped on the floor (QA
+        # cycle 2). A status the caller does not carry is a status that does not
+        # exist.
+        return Result(key, status, coverage, hint)
     return Result(key, PASS,
                   f"golden replay verifies byte for byte; {min(len(journals), 5)} real "
                   f"journal(s) replay; {coverage}")
@@ -2003,9 +2008,17 @@ def harness_projects_dir() -> Path | None:
     base = Path(env) if env else Path(os.path.expanduser("~")) / ".claude"
     projects = base / "projects"
     try:
-        return projects if projects.is_dir() else None
+        if not projects.is_dir():
+            return None
+        # is_dir succeeds on a directory this cannot LIST, and glob then swallows the
+        # PermissionError and yields nothing: a real arm date next to a zero produced
+        # by reading nothing, which is the sentence this whole check exists to
+        # abolish. Probe the listing, not the stat (QA cycle 2, same shape as the
+        # rglob blind spot found in the packages work the same day).
+        next(projects.iterdir(), None)
     except OSError:
         return None
+    return projects
 
 
 def _denial_kind(node) -> str | None:
