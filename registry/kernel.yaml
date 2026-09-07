@@ -60,5 +60,10 @@ qa_multiplier: 3
 # receipt ledger already trusts to decide whether a verdict came from a real
 # verifier (scripts/receipt_ledger.py, QA_AGENT_TYPE), matched case-insensitively
 # against the `type` on the process's ptable row. One definition of "this is QA"
-# across the brain, not two that can drift apart.
+# across the brain, not two that can drift apart. It is a SUBSTRING match, not a
+# whitelist of persona names: any type containing `review` or `audit` anywhere in
+# it earns the headroom, which is deliberate (the main loop names its own
+# subagents, and a taxonomy of exact names would go stale in a week) and is safe
+# only because what it grants is a multiplier. A wrongly matched process gets 3x
+# its cap, never no cap.
 qa_agent_types_regex: "(qa|review|reality|evidence|checker|verif|audit)"

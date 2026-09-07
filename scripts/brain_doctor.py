@@ -1502,9 +1502,26 @@ def check_kernel_quota_live(fix: bool) -> Result:
         row = (policy or {}).get(tier) or {}
         caps.append(f"{tier} {row.get('max_tool_calls', 0)} calls/"
                     f"{row.get('max_minutes', 0)} min")
+    # A non-zero cap in the TRACKED slot is a cap shipped to every clone, which
+    # is the one thing slot-not-occupant exists to prevent. It also makes the
+    # occupant line a lie: "nothing capped" would be printed while the slot caps
+    # everybody.
+    slot_capped = [f"{tier}.{cap}={row[cap]}"
+                   for tier in ("subagent", "main")
+                   for row in [(policy or {}).get(tier) or {}]
+                   for cap in ("max_tool_calls", "max_minutes")
+                   if isinstance(row.get(cap), int) and not isinstance(row.get(cap), bool)
+                   and row[cap] > 0]
     occ = CLAUDE_DIR / "company" / "config" / "kernel.json"
     detail = f"quota gate blocks; slot valid ({', '.join(caps)}, 0 = unlimited)"
+    if slot_capped:
+        detail += ("; the tracked slot carries a real cap (" + ", ".join(slot_capped)
+                   + "), and it ships to every clone")
     if not occ.exists():
+        if slot_capped:
+            return Result(key, WARN, detail,
+                          "caps belong in the gitignored company/config/kernel.json; "
+                          "set registry/kernel.yaml back to 0 (unlimited)")
         return Result(key, PASS, detail + "; no occupant, nothing capped on this machine")
     try:
         data = json.loads(occ.read_text(encoding="utf-8"))
@@ -1523,8 +1540,12 @@ def check_kernel_quota_live(fix: bool) -> Result:
         if row:
             ocaps.append(f"{tier} {row.get('max_tool_calls', 0)} calls/"
                          f"{row.get('max_minutes', 0)} min")
-    return Result(key, PASS, detail + "; occupant valid"
-                  + (" (" + ", ".join(ocaps) + ")" if ocaps else ""))
+    detail += "; occupant valid" + (" (" + ", ".join(ocaps) + ")" if ocaps else "")
+    if slot_capped:
+        return Result(key, WARN, detail,
+                      "caps belong in the gitignored company/config/kernel.json; "
+                      "set registry/kernel.yaml back to 0 (unlimited)")
+    return Result(key, PASS, detail)
 
 
 def check_kernel_process_live(fix: bool) -> Result:

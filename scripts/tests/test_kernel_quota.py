@@ -235,11 +235,62 @@ class TestMalformedNeverDenies(QuotaBase):
         self.assertTrue(any("max_tool_calls" in n for n in notes))
         self.assertEqual(self.call(n=4)[0], [])
 
-    def test_negative_cap_is_read_as_unlimited(self):
+    def test_a_bool_is_not_a_cap_of_one(self):
+        """int(True) is 1, so a coerced `true` would refuse from the SECOND call
+        of every process while the doctor calls the same file malformed. The
+        widest gap between what the docs promise and what the gate does."""
+        self.write_occupant({"subagent": {"max_tool_calls": True}})
+        os.environ["HOME"] = str(self.home)
+        policy, notes = gate.load_policy()
+        self.assertEqual(policy["subagent"]["max_tool_calls"], 0)
+        self.assertTrue(any("max_tool_calls" in n for n in notes))
+        self.assertEqual(self.call(n=4)[0], [], "a bool cap never denies")
+
+    def test_a_numeric_string_is_not_a_cap(self):
+        self.write_occupant({"subagent": {"max_tool_calls": "5"}})
+        os.environ["HOME"] = str(self.home)
+        policy, notes = gate.load_policy()
+        self.assertEqual(policy["subagent"]["max_tool_calls"], 0)
+        self.assertTrue(any("max_tool_calls" in n for n in notes))
+        self.assertEqual(self.call(n=7)[0], [])
+
+    def test_a_float_is_not_a_cap(self):
+        """int(5.9) is 5: silently a cap the operator never wrote."""
+        self.write_occupant({"subagent": {"max_minutes": 5.9}})
+        os.environ["HOME"] = str(self.home)
+        policy, notes = gate.load_policy()
+        self.assertEqual(policy["subagent"]["max_minutes"], 0)
+        self.assertTrue(any("max_minutes" in n for n in notes))
+
+    def test_a_bool_multiplier_is_not_a_multiplier(self):
+        self.write_occupant({"subagent": {"max_tool_calls": 5}, "qa_multiplier": True})
+        os.environ["HOME"] = str(self.home)
+        policy, notes = gate.load_policy()
+        self.assertEqual(policy["qa_multiplier"], gate.DEFAULTS["qa_multiplier"])
+        self.assertTrue(any("qa_multiplier" in n for n in notes))
+
+    def test_the_gate_and_the_doctor_agree_on_what_is_malformed(self):
+        """The two readers of this file must not disagree about validity: a
+        value the doctor rejects and the gate coerces is a cap nobody chose."""
+        doctor = _load("brain_doctor_mod", SCRIPTS / "brain_doctor.py")
+        for bad in (True, "5", 5.9, -1):
+            with self.subTest(value=bad):
+                data = {"subagent": {"max_tool_calls": bad}}
+                self.write_occupant(data)
+                os.environ["HOME"] = str(self.home)
+                _, notes = gate.load_policy()
+                problems = doctor._kernel_policy_problems(data, "occupant")
+                self.assertEqual(bool(notes), bool(problems),
+                                 f"{bad!r}: gate says {notes}, doctor says {problems}")
+
+    def test_negative_cap_is_malformed_not_clamped(self):
+        """Clamping -5 to 0 would accept a file the doctor calls malformed, and
+        the operator would never learn the cap they wrote is not running."""
         self.write_occupant({"subagent": {"max_tool_calls": -5}})
         os.environ["HOME"] = str(self.home)
-        policy, _ = gate.load_policy()
+        policy, notes = gate.load_policy()
         self.assertEqual(policy["subagent"]["max_tool_calls"], 0)
+        self.assertTrue(any("max_tool_calls" in n for n in notes))
 
 
 class TestExitPrecedence(QuotaBase):
@@ -271,6 +322,41 @@ class TestExitPrecedence(QuotaBase):
         self.assertEqual(len(exits), 1)
         self.assertEqual(exits[0]["status"], "quota")
         self.assertFalse(exits[0]["ok"])
+
+
+class TestSelftestIsNotDisarmedByTheUnlock(unittest.TestCase):
+    """The gate prints `export OCTO_KERNEL_OPEN=1` as its own unlock, so an
+    operator who followed that advice has it exported in the shell that launches
+    everything, the doctor included. If a selftest leg inherits it, the gate
+    under test is disarmed, the violation fixture stops blocking, and
+    kernel-quota-live FAILs a brain whose only sin is that the unlock worked."""
+
+    def test_quota_selftest_passes_with_the_unlock_exported(self):
+        env = dict(os.environ)
+        env["OCTO_KERNEL_OPEN"] = "1"
+        cp = subprocess.run([sys.executable, str(GATE), "--selftest",
+                             "registry/fixtures/FLOW.kernel-quota"],
+                            capture_output=True, text=True, cwd=str(ROOT), env=env,
+                            timeout=300)
+        self.assertEqual(cp.returncode, 0, cp.stderr or cp.stdout)
+        self.assertIn("PASS", cp.stdout)
+
+    def test_the_override_list_names_it(self):
+        import gate_selftest
+        self.assertIn("OCTO_KERNEL_OPEN", gate_selftest._OVERRIDE_ENV)
+
+
+class TestDoctorSlotCap(unittest.TestCase):
+    """A cap in the TRACKED slot ships to every clone, so the doctor may not
+    call that machine uncapped."""
+
+    def test_a_non_zero_slot_cap_is_never_reported_as_nothing_capped(self):
+        doctor = _load("brain_doctor_slot", SCRIPTS / "brain_doctor.py")
+        src = (SCRIPTS / "brain_doctor.py").read_text(encoding="utf-8")
+        self.assertIn("the tracked slot carries a real cap", src)
+        # the shipped slot is unlimited, so the live check must not WARN
+        self.assertEqual(doctor._kernel_policy_problems(
+            {"subagent": {"max_tool_calls": 0}}, "slot"), [])
 
 
 class TestMiniYaml(unittest.TestCase):

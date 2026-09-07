@@ -146,6 +146,21 @@ def mini_yaml(text: str) -> dict:
     return out
 
 
+def _is_count(val, floor: int) -> bool:
+    """A cap is an int at or above `floor`, and ONLY that, on exactly the terms
+    brain_doctor validates: `True` is not 1, `"5"` is not 5, `5.9` is not 5 and
+    `-1` is not 0.
+
+    Coercion is how the promise "a malformed occupant is a note, never a deny"
+    gets broken quietly: int() takes all four, a bool would become a cap of 1
+    and start refusing from the second call of every process, and clamping a
+    negative to 0 would silently accept a file the doctor calls malformed. The
+    two readers of this file have to agree on what is valid, so this predicate
+    is the gate's half of that agreement (test_kernel_quota asserts they match
+    value by value)."""
+    return isinstance(val, int) and not isinstance(val, bool) and val >= floor
+
+
 def _read(path: str) -> str:
     with open(path, "r", encoding="utf-8") as fh:
         return fh.read()
@@ -181,15 +196,16 @@ def load_policy() -> tuple:
             for cap in _CAPS:
                 if cap not in sub:
                     continue
-                try:
-                    policy[tier][cap] = max(0, int(sub[cap]))
-                except (TypeError, ValueError):
+                if not _is_count(sub[cap], 0):
                     notes.append(f"{os.path.basename(path)}: `{tier}.{cap}` is not a "
-                                 f"number ({sub[cap]!r}), keeping {policy[tier][cap]}")
+                                 f"non-negative number ({sub[cap]!r}), keeping "
+                                 f"{policy[tier][cap]}")
+                    continue
+                policy[tier][cap] = int(sub[cap])
         if "qa_multiplier" in data:
-            try:
-                policy["qa_multiplier"] = max(1, int(data["qa_multiplier"]))
-            except (TypeError, ValueError):
+            if _is_count(data["qa_multiplier"], 1):
+                policy["qa_multiplier"] = int(data["qa_multiplier"])
+            else:
                 notes.append(f"{os.path.basename(path)}: `qa_multiplier` is not a "
                              f"number ({data['qa_multiplier']!r}), keeping "
                              f"{policy['qa_multiplier']}")
