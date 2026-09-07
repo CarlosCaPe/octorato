@@ -229,6 +229,89 @@ class TopTest(OctoCase):
         self.assertNotIn(octo.UNKNOWN_TYPE, known_line)
 
 
+class RowlessChildTest(OctoCase):
+    """QA cycle 2, B: the `children` block of `replay` was the one `_row_type`
+    call nothing pinned. Reverting it to `row.get("type") or "main"` passed the
+    whole suite, and the state it renders wrong is reachable: `claim_lane`
+    creates a row with no `type` when a register hook loses its race with the
+    process's first write."""
+
+    def rowless_child(self, pid="kid", parent="sess-1"):
+        """A child row exactly as the race leaves it: lanes and a parent link,
+        no type. `claim_lane` writes the row, `update_row` merges the link, both
+        of them shipped writers."""
+        kernel_proc.append(pid, {"kind": "tool", "tool_name": "Bash",
+                                 "tool_use_id": "toolu_kid"})
+        kernel_proc.claim_lane(pid, os.path.join(self.home, "w", "a.py"))
+        kernel_proc.update_row(pid, {"ppid": parent})
+        row = kernel_proc.read_ptable()["processes"][pid]
+        self.assertNotIn("type", row, "the race leaves no type; that is the point")
+        return row
+
+    def test_replay_never_calls_a_type_less_child_a_main_loop(self):
+        """A main loop is not something the kernel can infer from a row that is
+        missing its type, and a child least of all: `main` in the children block
+        would be `octo replay` contradicting `octo top` about one process."""
+        self.seed(tools=1)
+        self.rowless_child()
+        rc, out, _ = self.run_octo(["replay", "sess-1"])
+        self.assertEqual(rc, 0)
+        lines = out.splitlines()
+        section = lines[lines.index("children") + 1:]
+        kid_line = [l for l in section if l.strip().startswith("kid")][0]
+        self.assertNotIn("main", kid_line, "the kernel does not know this type")
+        self.assertIn(octo.UNKNOWN_TYPE, kid_line)
+        self.assertIn("no exit recorded", kid_line)
+
+        # and a child the kernel DOES know still reads its real type there, so
+        # the `?` is a statement about knowledge and not a blanket.
+        agent_line = [l for l in section if l.strip().startswith("agent-1")][0]
+        self.assertIn("Reality Checker", agent_line)
+        self.assertNotIn(octo.UNKNOWN_TYPE, agent_line)
+
+
+class CorruptRowTest(OctoCase):
+    """QA cycle 2, A: with one ptable value that is not an object, `ps` and
+    `top` exited 1 and `replay` exited 1 on a healthy journal. The reader keeps
+    working now, and says what it dropped: an invisible repair is its own
+    failure mode."""
+
+    def corrupt(self):
+        """Written straight to the file, bad row first. These three readers walk
+        every row, so position does not decide reachability the way it does for
+        `lane_owner`; putting it first only makes the walk hit it immediately."""
+        with open(kernel_proc.ptable_path(), encoding="utf-8") as fh:
+            data = json.load(fh)
+        procs = {"junk": "not-a-row"}
+        procs.update(data["processes"])
+        data["processes"] = procs
+        with open(kernel_proc.ptable_path(), "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+
+    def test_ps_top_and_replay_all_survive_and_footnote_the_row(self):
+        self.seed(tools=1)
+        self.corrupt()
+        for argv in (["ps"], ["top"], ["replay", "agent-1"]):
+            rc, out, err = self.run_octo(argv)
+            self.assertEqual(rc, 0, f"{argv}: {err}")
+            self.assertIn("agent-1", out, f"{argv} still shows the healthy rows")
+        for argv in (["ps"], ["top"]):
+            _, out, _ = self.run_octo(argv)
+            self.assertIn("1 unreadable row(s) dropped on read: junk", out, argv)
+
+    def test_a_table_of_nothing_but_bad_rows_still_says_what_it_dropped(self):
+        """The empty-table path prints its own line and used to return before
+        anything else could. A reader that says `no processes` while a corrupt
+        row sits in the file has told the operator the opposite of the truth."""
+        kernel_proc.register("gone", {"kind": "main", "type": "main"})
+        with open(kernel_proc.ptable_path(), "w", encoding="utf-8") as fh:
+            json.dump({"version": 1, "processes": {"junk": "not-a-row"}}, fh)
+        rc, out, _ = self.run_octo(["ps"])
+        self.assertEqual(rc, 0)
+        self.assertIn("no processes", out)
+        self.assertIn("1 unreadable row(s) dropped on read: junk", out)
+
+
 class ReplayTest(OctoCase):
     def seed_refusal(self):
         self.seed(tools=0)

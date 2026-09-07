@@ -695,6 +695,56 @@ class QaCycle2(IsolationCase):
             self.assertIn("Phase 1b", out)
 
 
+class DenyNamesWhatIsKnown(IsolationCase):
+    """QA cycle 2, C: `describe()` inferred `main loop` from a missing `ppid`.
+
+    For the row `claim_lane` creates when a register hook loses its race with
+    the process's first write, that inference is simply wrong: the row carries
+    neither `type` nor `ppid`, and the deny told the reader a subagent was a
+    main loop. These strings are read by a human while blocked, so a guess
+    printed as a fact there is expensive.
+    """
+
+    def racer(self, pid="racer"):
+        """The row the race actually leaves: a lane, no type, no parent."""
+        kernel_proc.append(pid, {"kind": "tool", "tool_name": "Write"})
+        kernel_proc.claim_lane(pid, self.a_py, tree=self.tree)
+        row = kernel_proc.read_ptable()["processes"][pid]
+        self.assertNotIn("type", row)
+        self.assertNotIn("ppid", row)
+        return row
+
+    def test_a_lane_claimed_by_a_racing_process_is_not_called_a_main_loop(self):
+        self.racer()
+        for gate, payload in ((WRITE_GATE, self.write_payload("agent-a", self.a_py)),
+                              (BASH_GATE, self.bash_payload("agent-a",
+                                                            f"rm -rf {self.a_py}"))):
+            rc, out = self.run_gate(gate, payload)
+            self.assertTrue(self.denied(out))
+            self.assertNotIn("main loop", out, "the kernel never learned this type")
+            self.assertIn(f"pid racer (type {kernel_proc.UNKNOWN_TYPE}", out)
+
+    def test_a_registered_holder_still_reads_its_real_type(self):
+        """The `?` is a statement about knowledge, not a blanket: a row that
+        carries a type still prints it, so the deny stays as informative as it
+        ever was for the common case."""
+        self.run_gate(WRITE_GATE, self.write_payload("agent-a", self.a_py))
+        rc, out = self.run_gate(WRITE_GATE, self.write_payload("agent-b", self.a_py))
+        self.assertTrue(self.denied(out))
+        self.assertIn("pid agent-a (builder,", out)
+        self.assertNotIn(kernel_proc.UNKNOWN_TYPE, out)
+
+    def test_both_gates_describe_a_process_with_the_same_words(self):
+        """One vocabulary across the two gates, and the same one the readers
+        use. A parent link still proves `subagent`; its absence proves nothing."""
+        for gate, name in ((WRITE_GATE, "wg"), (BASH_GATE, "bg")):
+            mod = _load(gate, name)
+            self.assertIn("subagent", mod.describe("x", {"ppid": "p"}))
+            self.assertIn(f"type {kernel_proc.UNKNOWN_TYPE}", mod.describe("x", {}))
+            self.assertIn(f"type {kernel_proc.UNKNOWN_TYPE}", mod.describe("x", None))
+            self.assertIn("builder", mod.describe("x", {"type": "builder"}))
+
+
 class Selftests(unittest.TestCase):
 
     def test_both_gates_prove_themselves(self):
