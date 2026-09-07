@@ -386,6 +386,41 @@ class UnreadableTableTest(OctoCase):
             self.assertEqual(fh.read(), before)
         self.assertEqual(kernel_proc.quarantines(), [])
 
+    def test_ps_says_how_to_get_out_of_it(self):
+        """A deny with no way out is half a report, and there IS no subcommand:
+        clearing this from inside an agent would be an agent clearing its own
+        gate, so the recovery is a file operation from an unhooked terminal and
+        the listing has to spell it out."""
+        self.list_shaped()
+        _, out, _ = self.run_octo(["ps"])
+        self.assertIn("CARRIED FORWARD", out, "registering again does not clear it")
+        self.assertIn(f"rm {kernel_proc.ptable_path()}", out)
+        self.assertIn(kernel_proc.FAULT_KEY, out)
+
+    def test_a_golden_fixture_is_read_through_the_same_shape_rule(self):
+        """`octo replay --fixture` had its own parser: `data if isinstance(data,
+        dict) else {...}`, which accepts a `processes` that is an array and
+        hands it to the renderer, and a row that is not an object with it.
+        Nothing failed when that was reverted (QA cycle 4, F4). A fixture is
+        read by the SAME renderer as a live table, so a second shape rule here
+        is exactly how the two drift, and the renderer that survives one and
+        crashes on the other is not the one the golden test proved.
+        """
+        fdir = os.path.join(self.home, "fixture")
+        os.makedirs(fdir)
+        for shape in ({"version": 1, "processes": [{"pid": "a"}]},
+                      {"version": 1, "processes": {"junk": "not-a-row",
+                                                   "ok": {"pid": "ok"}}}):
+            with open(os.path.join(fdir, "ptable.json"), "w", encoding="utf-8") as fh:
+                json.dump(shape, fh)
+            table = octo._fixture_table(fdir)
+            procs = table.get("processes")
+            self.assertIsInstance(procs, dict, shape)
+            for row in procs.values():
+                self.assertIsInstance(row, dict, shape)
+        self.assertEqual(sorted(octo._fixture_table(fdir)["processes"]), ["ok"],
+                         "the good row survives; only the unreadable one goes")
+
 
 class ReplayTest(OctoCase):
     def seed_refusal(self):

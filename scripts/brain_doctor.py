@@ -1621,11 +1621,12 @@ def check_kernel_process_live(fix: bool) -> Result:
                       f"row on this machine is missing from every reader, and "
                       f"the isolation gates are denying writes while it reads "
                       f"this way",
-                      f"read {kernel_proc.ptable_path()} from the terminal. The "
-                      f"kernel publishes it with os.replace and never writes a "
-                      f"half-written or oddly shaped one, so a writer that is "
-                      f"not the kernel touched it; the next register hook "
-                      f"preserves a copy beside it before publishing over it")
+                      f"the kernel publishes it with os.replace and never "
+                      f"writes a half-written or oddly shaped one, so a writer "
+                      f"that is not the kernel touched it. The next register "
+                      f"hook preserves a copy beside it and carries the fault "
+                      f"forward, so registering again does not clear this. "
+                      f"{kernel_proc.recovery()}")
     procs = table.get("processes", {})
     now = time.time()
     live, phantom = [], []

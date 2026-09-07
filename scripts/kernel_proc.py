@@ -73,8 +73,26 @@ UNKNOWN_TYPE = "?"
 # overwritten, one file per repair event, newest kept. It is the repair ledger:
 # see `quarantines()` for why the record lives next to the file and not in a
 # process journal.
+#
+# TWO bounds, not one. A count alone bounds the number of files and nothing
+# else, and the multiplicand is chosen by whoever wrote the corrupt table: QA
+# measured a 46.1 MB corrupt ptable producing a 47.7 MB copy, 245 MB peak RSS,
+# 1.64 s of it inside the ptable lock, and a 20-file worst case near 954 MB. So
+# the copy is capped per file, the ledger is capped in total, and the table
+# itself is capped BEFORE it is parsed, which is what actually takes the big
+# read out of the lock window (the parse ran under the lock too).
 QUARANTINE_PREFIX = "ptable.corrupt-"
-MAX_QUARANTINE = 20
+MAX_QUARANTINE = 20                       # files
+MAX_QUARANTINE_BYTES = 1024 * 1024        # of the original preserved per file
+MAX_QUARANTINE_TOTAL = 8 * 1024 * 1024    # of ledger on disk, newest always kept
+MAX_PTABLE_BYTES = 8 * 1024 * 1024        # past this the file is a fault, unparsed
+
+# The key under which a table that could not be read carries its own fault
+# forward. See `_faulted_table`: this is what keeps the gates fail-closed after
+# a register hook publishes over an unreadable table.
+FAULT_KEY = "_faulted"
+MAX_FAULT_ROWS = 64                       # values carried under FAULT_KEY
+MAX_FAULT_BYTES = 64 * 1024               # ... and the byte bound on them
 
 UNLOCK = ("export OCTO_KERNEL_OPEN=1 in the shell that launched Claude Code, "
           "then restart")
@@ -121,6 +139,31 @@ def lock_path(pid) -> str:
 
 def pending_path() -> str:
     return os.path.join(kernel_dir(), "open-pending.json")
+
+
+def recovery() -> str:
+    """The way out of a faulted table, worded ONCE so the two gates, the two
+    listings and the doctor cannot drift on it.
+
+    Deliberately not an `octo` subcommand and not an env hatch. A fault denies
+    every hooked write, so a command that clears it is a command that clears the
+    agent's own gate, and the agent owns its process env: the only hand that can
+    be trusted to lift this is one the hooks do not run under. That is the same
+    reasoning as `octo ps --release` (agent-proof by refusing inside an agent
+    shell) taken one step further, because here the agent would be lifting a
+    denial that names the agent.
+
+    Deleting the file is the honest cost, stated: the next SessionStart rebuilds
+    it, and every lane on the machine is forgotten until each process claims
+    again on its next write. Repairing `processes` by hand keeps the rows that
+    were still in the file, which is why the fault carries them.
+    """
+    return ("Recovery, from a terminal where no hook fires (a command an agent "
+            "could run would be a command that clears its own gate): `rm %s` "
+            "and the next SessionStart rebuilds it, forgetting every lane held "
+            "right now; or repair `processes` to an object and delete the `%s` "
+            "key beside it, which keeps the rows the file still has."
+            % (ptable_path(), FAULT_KEY))
 
 
 # ── locking ─────────────────────────────────────────────────────────────────
@@ -443,6 +486,84 @@ def _shape_fault(data) -> str:
     return "`processes` is a %s, not an object" % _json_kind(procs)
 
 
+def _fault_rows(rows):
+    """What of an unreadable `processes` is worth carrying in the table itself.
+
+    Bounded twice, because the size of this value is chosen by whoever wrote the
+    corrupt file, and it is about to be published into a table every gate reads
+    on every call. The full original is never here: it is in the preserved copy
+    beside the file, which is where evidence belongs. What is here is enough for
+    the operator to repair by hand, and in the list-shaped case that is a lot,
+    since every row is intact and each one carries its own `pid`.
+    """
+    if isinstance(rows, list):
+        rows = rows[:MAX_FAULT_ROWS]
+    try:
+        blob = json.dumps(rows)
+    except (TypeError, ValueError):
+        return "unserializable"
+    if len(blob) > MAX_FAULT_BYTES:
+        return ("%d bytes of rows, too large to carry here; read the preserved "
+                "copy" % len(blob))
+    return rows
+
+
+def _faulted_table(data, reason: str) -> dict:
+    """The table a reader hands back for a file it could not read: no processes,
+    and the fault CARRIED so the next writer publishes it forward.
+
+    This is QA cycle 4, F1, and it is the difference between a fix that lasts
+    and one that lasts minutes. `register()` used to publish `fresh_table()`
+    plus its own row, so the fault DISAPPEARED at the next SessionStart, and
+    SessionStart fires on startup, resume, clear and compact. Measured: the gate
+    denied the intruder while the table was faulted, one register hook later the
+    table was valid again with one row in it, the same intruder was allowed, and
+    the lane the other process held was transferred to it. Publishing the row
+    the hook must write is right; publishing an EMPTY BASE under it is not.
+
+    So the fault travels with the table. Ownership stays UNKNOWN - the rows here
+    are evidence, never owners, and nothing reads them as lanes - which is what
+    keeps both gates fail-closed across as many registrations as it takes for
+    the operator to look. `recovery()` is the way out, and it is a file
+    operation on purpose.
+
+    QA named two options and this is the second, because it CONTAINS the first:
+    a table carrying this key reports a fault on every read, so it is sticky
+    until a human clears it, and on top of that the rows are still here. That
+    matters for the recovery that keeps information: in the list-shaped case
+    nothing is missing from the file, every row is intact and each one carries
+    its own `pid`, so an operator who repairs `processes` by hand keeps the
+    ownership a `rm` would forget. A bare sticky flag would deny just as hard
+    and leave the operator nothing to repair from.
+    """
+    table = fresh_table()
+    rows = data.get("processes") if isinstance(data, dict) and "processes" in data else data
+    count = len(rows) if isinstance(rows, (list, dict, str)) else (0 if rows is None else 1)
+    table[FAULT_KEY] = {"reason": reason, "ts": round(time.time(), 6),
+                        "count": count, "rows": _fault_rows(rows)}
+    return table
+
+
+def carried_fault(data) -> str:
+    """The fault a previous writer carried forward in this table, or ''.
+
+    A table whose shape is fine again is still not a table anyone can trust
+    while this key is in it: the rows it lost were never recovered, so every
+    lane on the machine is still unaccounted for. Sticky by construction, since
+    every writer republishes what it read.
+    """
+    carrier = data.get(FAULT_KEY) if isinstance(data, dict) else None
+    if isinstance(carrier, dict) and carrier.get("reason"):
+        return ("%s (carried in `%s` since %s: the rows it lost are still "
+                "unaccounted for)"
+                % (carrier["reason"], FAULT_KEY,
+                   time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                                 time.gmtime(carrier.get("ts") or 0))))
+    if carrier:
+        return "the ptable carries an unresolved fault under `%s`" % FAULT_KEY
+    return ""
+
+
 def sane_table(data) -> tuple:
     """(table, dropped, fault): the ONE place the ptable's SHAPE is decided.
 
@@ -466,14 +587,20 @@ def sane_table(data) -> tuple:
     failure mode, so `octo ps`, `octo top`, `brain_doctor` and both isolation
     gates say what went missing instead of quietly showing one row less, or
     none.
+
+    A fault SURVIVES the write that follows it (`_faulted_table`), so a table
+    whose shape is healthy again still reports one while it carries the key: the
+    rows are gone either way, and a gate that stops denying because a hook wrote
+    a row is a gate that protects for the length of one SessionStart.
     """
     if not (isinstance(data, dict) and isinstance(data.get("processes"), dict)):
-        return fresh_table(), [], _shape_fault(data)
+        fault = _shape_fault(data)
+        return _faulted_table(data, fault), [], fault
     procs = data["processes"]
     dropped = [pid for pid, row in procs.items() if not isinstance(row, dict)]
     for pid in dropped:
         procs.pop(pid, None)
-    return data, dropped, ""
+    return data, dropped, carried_fault(data)
 
 
 def read_ptable_detail() -> tuple:
@@ -504,16 +631,39 @@ def read_ptable_detail() -> tuple:
     reads through here and republishes what it read, so the bad row leaves on
     the next write, with the original preserved by `_publish`. A read never
     writes, and that now includes the quarantine copy.
+
+    A SIZE CEILING comes before the parse, and it is the one that takes the big
+    read out of the lock window: every locked writer parses through here, so a
+    46.1 MB table (QA measured one) meant 245 MB of peak RSS and seconds of
+    parse INSIDE the ptable lock, chosen by whoever wrote the file. A table past
+    the ceiling is a fault like any other unreadable one, and it is never
+    parsed. A real one is kilobytes: a thousand rows is ~300 KB.
     """
+    path = ptable_path()
     try:
-        with open(ptable_path(), "r", encoding="utf-8") as fh:
-            data = json.load(fh)
+        size = os.path.getsize(path)
     except FileNotFoundError:
         return fresh_table(), [], ""     # the one honest empty table
-    except ValueError as exc:
-        return fresh_table(), [], "the ptable is not valid JSON (%s)" % exc
     except OSError as exc:
         return fresh_table(), [], "the ptable could not be read (%s)" % exc
+    if size > MAX_PTABLE_BYTES:
+        fault = ("the ptable is %d bytes, past the %d byte ceiling, so it was "
+                 "not parsed" % (size, MAX_PTABLE_BYTES))
+        return _faulted_table(None, fault), [], fault
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except FileNotFoundError:
+        return fresh_table(), [], ""     # raced with a delete: still honest
+    except ValueError as exc:
+        fault = "the ptable is not valid JSON (%s)" % exc
+        return _faulted_table(None, fault), [], fault
+    except OSError as exc:
+        # A file this process cannot OPEN is not an empty machine either: it is
+        # a table that is readable to somebody and not to us, so it faults with
+        # every other unreadable shape and the gates fail closed on it.
+        fault = "the ptable could not be read (%s)" % exc
+        return _faulted_table(None, fault), [], fault
     return sane_table(data)
 
 
@@ -531,16 +681,23 @@ def quarantines() -> list:
     """[(mtime, path)] of every preserved copy of a repaired ptable, newest first.
 
     THIS is the repair record, and it is deliberately not a journal line. A
-    journal belongs to a process: its mtime IS that process's liveness signal
-    (`_own_fresh`), and a repair is a fact about the FILE, not about whichever
-    hook happened to be holding the lock when it was noticed. Writing it into
-    that hook's journal would attribute the event to the wrong thing and move a
-    liveness clock for a reason unrelated to the process. Next to the file, one
-    file per event, the count is a `listdir` instead of a walk over every
-    journal on the machine, and the copy carries the lost rows so the operator
-    can read what was there. `brain_doctor` escalates on the FREQUENCY of these,
-    not on the presence of one: a table repaired once is an accident, a table
-    repaired three times in a day is a writer that is still running.
+    repair is a fact about the FILE, not about whichever hook happened to be
+    holding the lock when it was noticed, so it belongs beside the file: it
+    outlives the journal retention that would delete it with that hook's
+    journal, it survives the process ending, and the count the doctor escalates
+    on is one `listdir` instead of a walk over every journal on the machine.
+
+    (The argument this docstring used to make, that a journal line would move an
+    unrelated liveness clock, does not hold and is dropped rather than left
+    standing: the hook holding the lock owns that journal and is alive at that
+    instant, so writing to it would be true. The reason above is the one that
+    survives.)
+
+    The copy carries the lost rows so the operator can read what was there, and
+    the publishing pid so the process that overwrote the table is named.
+    `brain_doctor` escalates on the FREQUENCY of these, not on the presence of
+    one: a table repaired once is an accident, a table repaired three times in a
+    day is a writer that is still running.
     """
     try:
         names = os.listdir(kernel_dir())
@@ -558,8 +715,32 @@ def quarantines() -> list:
     return out
 
 
-def _quarantine(reason: str) -> str:
-    """Copy the ptable aside, with the reason, before a writer overwrites it.
+def _trim_quarantines() -> None:
+    """Hold the ledger to BOTH bounds, count and bytes, newest first.
+
+    A count alone bounds the number of files and lets whoever wrote the corrupt
+    table choose the size of each one: QA measured a 20-file worst case near
+    954 MB from a 46.1 MB original. The newest is always kept, whatever it
+    weighs, because deleting the event that just happened would leave the
+    doctor counting repairs it can no longer show.
+    """
+    total = 0
+    for n, (_mt, path) in enumerate(quarantines()):
+        try:
+            total += os.path.getsize(path)
+        except OSError:
+            pass
+        if n == 0:
+            continue
+        if n >= MAX_QUARANTINE or total > MAX_QUARANTINE_TOTAL:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+
+def _quarantine(reason: str, pid=None) -> str:
+    """Copy the ptable aside, with the reason and WHO, before a writer overwrites it.
 
     Called from `_publish` only, so the copy is made at the moment the original
     is actually about to be replaced and never on a path that merely reads. The
@@ -567,13 +748,27 @@ def _quarantine(reason: str) -> str:
     the parser could not handle, so re-encoding it as JSON would lose exactly
     the evidence worth keeping.
 
+    WHO, because the record used to carry `ts`, `reason` and the bytes, and the
+    process that overwrote every lane on the machine left no trace naming
+    itself. `pid` is the kernel process the writer is acting for (absent from
+    `prune_locked`, which acts for no one); `os_pid` and `argv0` name the OS
+    process and the script, which is what the operator greps for when the writer
+    is not the kernel at all.
+
+    BOUNDED, because the size of what is copied is chosen by whoever wrote the
+    corrupt file. At most `MAX_QUARANTINE_BYTES` of the original is preserved
+    and the truncation is recorded next to the original size, so the copy is a
+    bounded cost with an honest label rather than an unbounded one that looks
+    complete.
+
     Never raises. Preserving evidence must not be able to break the register
     hook that noticed the problem; that trade is the whole lesson of the row
     case above.
     """
     try:
+        size = os.path.getsize(ptable_path())
         with open(ptable_path(), "rb") as fh:
-            raw = fh.read()
+            raw = fh.read(MAX_QUARANTINE_BYTES)
     except OSError:
         return ""
     now = time.time()
@@ -588,18 +783,19 @@ def _quarantine(reason: str) -> str:
     try:
         with open(dst, "w", encoding="utf-8") as fh:
             json.dump({"ts": round(now, 6), "reason": reason,
+                       "pid": safe_pid(pid) if pid else "",
+                       "os_pid": os.getpid(),
+                       "argv0": os.path.basename(sys.argv[0] or "") or "-",
+                       "bytes": size, "kept_bytes": len(raw),
+                       "truncated": len(raw) < size,
                        "ptable": raw.decode("utf-8", "replace")}, fh, indent=2)
     except OSError:
         return ""
-    for _, old in quarantines()[MAX_QUARANTINE:]:
-        try:
-            os.unlink(old)
-        except OSError:
-            pass
+    _trim_quarantines()
     return dst
 
 
-def _publish(table: dict, dropped=(), fault: str = "") -> None:
+def _publish(table: dict, dropped=(), fault: str = "", pid=None) -> None:
     """Write the table, preserving first whatever the read had to repair.
 
     Every locked writer republishes what it read, which is how the repair
@@ -613,10 +809,23 @@ def _publish(table: dict, dropped=(), fault: str = "") -> None:
     So the copy is taken HERE, in the one function that replaces the file, and
     not at the read: a caller that reads and decides not to write leaves the
     evidence exactly where it was.
+
+    ONE copy per EVENT, not one per write. A fault is now carried forward
+    (`_faulted_table`), so every writer after the first one reads a fault too,
+    and quarantining on each of them would fill the ledger with copies of a
+    table that is no longer the corrupt one and would trip the doctor's
+    three-in-24 h escalation off a single event. The carrier records the copy it
+    already has, so the second writer knows the evidence is kept and where. A
+    dropped ROW is always a new event: it is repaired by this very write, so
+    seeing one again means it happened again.
     """
-    if fault or dropped:
-        _quarantine(fault or "%d unreadable row(s) dropped: %s"
-                    % (len(dropped), ", ".join(sorted(dropped)[:5])))
+    carrier = table.get(FAULT_KEY) if isinstance(table, dict) else None
+    already = isinstance(carrier, dict) and carrier.get("quarantine")
+    if dropped or (fault and not already):
+        kept = _quarantine(fault or "%d unreadable row(s) dropped: %s"
+                           % (len(dropped), ", ".join(sorted(dropped)[:5])), pid)
+        if kept and isinstance(carrier, dict) and not already:
+            carrier["quarantine"] = os.path.basename(kept)
     _write_ptable(table)
 
 
@@ -674,6 +883,16 @@ def has_trace(pid) -> bool:
     the create and the first write, and a row whose value is not an object, which
     `pid in procs` accepts because membership tests the key alone. Both let an
     ending create the same phantom shape this guard exists to stop.
+
+    The row half of that is now UNREACHABLE from here, and it is kept anyway as
+    defence in depth, which is a different claim from the one this docstring
+    used to make. `read_ptable` drops a value that is not an object before this
+    function ever sees it (`sane_table`), so on the live path `procs.get(pid)`
+    is `None` either way and `isinstance` and `is not None` cannot be told
+    apart. It stays because it is the same predicate the read applies, at the
+    point of use, so a future caller that reaches this with a table that did not
+    come through the seam still gets the right answer; the anchor for it calls
+    it with such a table on purpose.
     """
     pid = safe_pid(pid)
     try:
@@ -767,7 +986,7 @@ def update_row(pid, fields: dict) -> bool:
             # merge into a row we cannot see is not something to invent.
             return False
         row.update({k: v for k, v in fields.items() if v is not None})
-        _publish(table, dropped, fault)
+        _publish(table, dropped, fault, pid)
         return True
     finally:
         if fh is not None:
@@ -896,7 +1115,7 @@ def claim_lane(pid, path, tree=None) -> bool:
         row["lanes"] = lanes
         if tree and not row.get("tree"):
             row["tree"] = norm_path(tree)
-        _publish(table, dropped, fault)
+        _publish(table, dropped, fault, pid)
         return True
     except OSError:
         return False       # an unclaimable lane must never break the write
@@ -932,7 +1151,7 @@ def release_lanes(pid, reason: str = "release") -> int:
         if not n:
             return 0
         row["lanes"] = []
-        _publish(table, dropped, fault)
+        _publish(table, dropped, fault, pid)
         return n
     except OSError:
         return 0
@@ -1151,7 +1370,7 @@ def register(pid, entry: dict, start_record: dict = None) -> dict:
         # that must: a hook exiting 0 with no row on disk is the silent failure
         # this whole seam exists to stop. `_publish` keeps the original, so the
         # rows this write cannot carry forward are recoverable rather than gone.
-        _publish(table, dropped, fault)
+        _publish(table, dropped, fault, pid)
     finally:
         if fh is not None:
             _funlock(fh)

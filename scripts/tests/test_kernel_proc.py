@@ -423,10 +423,13 @@ class CorruptRowTest(SandboxHome):
         The claim used to be checked with `prune_locked` on a fixture that had
         nothing prunable, so prune returned 0 and never wrote: the assertion
         held for a reason that had nothing to do with the read (QA cycle 3, F3).
-        Here the table carries a prunable row, so the only thing standing
-        between the file and a rewrite is that the read does not write. The
-        bytes are compared, not the parse: a rewrite that happened to keep the
-        same pids would still be a write.
+        Here the table carries a prunable row, so a writer handed this same
+        fixture WOULD rewrite the file, and the test proves that in its last two
+        lines instead of asserting it in prose (QA cycle 4, F6: with the reason
+        only stated, making the row non-prunable left the test passing, because
+        nothing in it ever called a pruner). The bytes are compared, not the
+        parse: a rewrite that happened to keep the same pids would still be a
+        write.
         """
         self.steady_state()
         before = self.raw()
@@ -438,6 +441,13 @@ class CorruptRowTest(SandboxHome):
                          "the read repaired the table in memory and only there")
         self.assertEqual(kernel_proc.quarantines(), [],
                          "and it left no copy either: a read writes NOTHING")
+
+        self.assertEqual(kernel_proc.prune_locked(), 1,
+                         "the fixture IS one a writer rewrites; if this ever "
+                         "returns 0 the assertions above prove nothing")
+        self.assertNotEqual(self.raw(), before,
+                            "so 'the file is untouched' was a fact about the "
+                            "read, not about the fixture")
 
     def test_a_writer_that_erases_the_bad_row_keeps_a_copy_of_what_it_erased(self):
         """QA cycle 3, F3. `octo ps` prunes on read, prune is a writer, and on a
@@ -571,6 +581,36 @@ class CorruptRowTest(SandboxHome):
         self.assertEqual(row.get("type"), "main")
         self.assertIn("bad0", self.rows_on_disk(), "lane_owner is a reader")
 
+    def test_a_row_that_is_not_an_object_is_never_a_trace(self):
+        """`has_trace`'s row guard, pinned where it can actually be reached.
+
+        QA cycle 4, F5 measured that this guard cannot fire through the live
+        path any more: `read_ptable` drops the bad value before `has_trace` sees
+        it, so the lookup returns `None` whether the predicate is `isinstance`
+        or `is not None`, and the docstring claiming it rejects that row was a
+        claim the mechanism no longer supported. Both halves are asserted here.
+
+        The guard is kept as defence in depth (it is the same predicate the read
+        applies, at the point of use), so the table is handed in directly, the
+        one way a caller could still reach it: a future reader assembling a
+        table without going through the seam. `pid in procs` and `is not None`
+        both say True for this row, and an ENDING would then create a process.
+        """
+        from unittest import mock
+        self.corrupt()
+        self.assertNotIn("bad0", kernel_proc.read_ptable()["processes"],
+                         "unreachable through the read: the row is gone first")
+        self.assertFalse(kernel_proc.has_trace("bad0"))
+
+        table = {"version": 1, "processes": {"ghost": "not-a-row"}}
+        with mock.patch.object(kernel_proc, "read_ptable", return_value=table):
+            self.assertIn("ghost", table["processes"], "membership says yes")
+            self.assertFalse(kernel_proc.has_trace("ghost"),
+                             "a value that is not an object is not a process")
+            kernel_proc.append("real", {"kind": "tool", "tool_name": "Bash"})
+            self.assertTrue(kernel_proc.has_trace("real"),
+                            "and a real trace is still a trace")
+
 
 class TableLevelFaultTest(SandboxHome):
     """QA cycle 3, F1. A row that is not an object costs one named row. A
@@ -629,6 +669,17 @@ class TableLevelFaultTest(SandboxHome):
             self.assertTrue(fault, f"{content!r} yielded zero rows and no fault")
             self.assertIn(expected, fault, content)
 
+        # "a file this process cannot open" is on that list and used to be the
+        # one leg this test named and never exercised (QA cycle 4, F7). A
+        # directory where the file should be is the cheapest real OSError that
+        # does not depend on running as a non-root user.
+        os.unlink(kernel_proc.ptable_path())
+        os.makedirs(kernel_proc.ptable_path())
+        table, dropped, fault = kernel_proc.read_ptable_detail()
+        self.assertEqual(table["processes"], {})
+        self.assertIn("could not be read", fault)
+        self.assertEqual(dropped, [])
+
     def test_a_lane_claim_refuses_a_table_it_could_not_read(self):
         """The write half of the same loss. `claim_lane` republishes what it
         read, so on a faulted table it used to publish a ONE-ROW table: every
@@ -675,6 +726,272 @@ class TableLevelFaultTest(SandboxHome):
         self.assertEqual(result.status, bd.FAIL, result.message)
         self.assertIn("process table is unreadable", result.message)
         self.assertIn("array of 2 value(s)", result.message)
+        self.assertIn("rm ", result.hint, "and it says how to get out of it")
+
+    def test_the_fault_outlives_the_register_that_publishes_over_it(self):
+        """QA cycle 4, F1, the serious one. The protection used to last minutes.
+
+        `register` publishes even on a faulted table, which is right: a hook
+        exiting 0 with no row on disk is the silent failure the seam exists to
+        stop. What was wrong is the BASE it published: `fresh_table()` plus its
+        own row, so the fault disappeared with the write, the table read valid
+        again, and the gates went straight back to allowing. Measured on the tip
+        before this change, with the real SessionStart hook: rows on disk
+        `['newsess']`, fault `''`, the intruder allowed, and the lane the other
+        process held transferred to it. SessionStart fires on startup, resume,
+        clear and compact, so that is minutes, not an edge case.
+
+        The row is published, the empty base is not: the unreadable value is
+        carried under `_faulted`, ownership stays unknown, and every reader that
+        decides on this table keeps failing closed until a human clears it.
+        """
+        self.list_shaped()
+        kernel_proc.register("newsess", {"kind": "main", "type": "main"})
+
+        table, dropped, fault = kernel_proc.read_ptable_detail()
+        self.assertIn("newsess", table["processes"], "the hook still writes its row")
+        self.assertTrue(fault, "and the fault it wrote over is still reported")
+        self.assertIn("array of 2 value(s)", fault)
+        self.assertIn(kernel_proc.FAULT_KEY, fault)
+
+        carrier = table[kernel_proc.FAULT_KEY]
+        self.assertEqual(carrier["count"], 2, "it counts what it could not read")
+        self.assertEqual(sorted(r["pid"] for r in carrier["rows"]),
+                         ["other", "owner"],
+                         "and carries the rows, which in the list-shaped case "
+                         "are intact and each carry their own pid")
+        self.assertFalse(kernel_proc.claim_lane("intruder",
+                                                os.path.join(self.home, "a.py")),
+                         "so a claim on it is still refused, register or no register")
+
+    def test_the_fault_survives_every_writer_not_just_the_first(self):
+        """Sticky is not "one more write": the gates have to stay closed for as
+        long as it takes the operator to look. Four registrations and a prune,
+        which is the shape of a session that starts, resumes, compacts and
+        spawns, and the fault is still there at the end."""
+        self.list_shaped()
+        for n in range(4):
+            kernel_proc.register(f"sess{n}", {"kind": "main", "type": "main"})
+        kernel_proc.prune_locked()
+        self.assertTrue(kernel_proc.read_ptable_detail()[2])
+
+    def test_repairing_the_shape_by_hand_is_the_way_out_and_it_is_documented(self):
+        """The recovery path, asserted rather than described. There is no
+        subcommand and no env hatch on purpose: a fault denies every hooked
+        write, so a command that clears it is a command the agent can run to
+        clear its own gate. That leaves two file operations, and both work."""
+        self.list_shaped()
+        kernel_proc.register("newsess", {"kind": "main", "type": "main"})
+        self.assertIn(kernel_proc.ptable_path(), kernel_proc.recovery())
+        self.assertIn(kernel_proc.FAULT_KEY, kernel_proc.recovery())
+
+        with open(kernel_proc.ptable_path(), encoding="utf-8") as fh:
+            data = json.load(fh)
+        data.pop(kernel_proc.FAULT_KEY)          # the hand repair
+        with open(kernel_proc.ptable_path(), "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+        table, dropped, fault = kernel_proc.read_ptable_detail()
+        self.assertEqual(fault, "", "cleared, and the rows still in the file stay")
+        self.assertIn("newsess", table["processes"])
+
+        os.unlink(kernel_proc.ptable_path())     # or the blunt one
+        self.assertEqual(kernel_proc.read_ptable_detail(),
+                         ({"version": 1, "processes": {}}, [], ""))
+
+    def test_a_file_this_process_cannot_open_faults_instead_of_raising(self):
+        """The OSError leg, with its consequence rather than only its text: an
+        unreadable file must reach the callers as a fault they fail closed on,
+        and it must not reach them as an exception, because the readers that
+        take this path run inside hooks that would then exit non-zero."""
+        os.makedirs(kernel_proc.kernel_dir(), exist_ok=True)
+        os.makedirs(kernel_proc.ptable_path())
+        table, dropped, fault = kernel_proc.read_ptable_detail()
+        self.assertIn("could not be read", fault)
+        self.assertEqual(table["processes"], {})
+        self.assertEqual(kernel_proc.read_ptable()["processes"], {})
+        self.assertEqual(kernel_proc.lane_owner("/w/a.py"), (None, None))
+        self.assertFalse(kernel_proc.is_live("anyone"))
+
+    def test_a_table_past_the_byte_ceiling_is_a_fault_and_is_never_parsed(self):
+        """The size of the ptable is chosen by whoever writes it, and every
+        locked writer parses it INSIDE the lock: QA measured 245 MB of peak RSS
+        and 1.64 s in that window from a 46.1 MB file. The ceiling is checked
+        with a stat, before the parse.
+
+        The file here is VALID JSON of a healthy table, padded past the ceiling.
+        A reader that parsed it would find two good rows; this one finds a
+        fault, which is what proves the parse never ran.
+        """
+        os.makedirs(kernel_proc.kernel_dir(), exist_ok=True)
+        rows = {"a": {"pid": "a"}, "b": {"pid": "b"},
+                "pad": {"pid": "pad", "x": "y" * (kernel_proc.MAX_PTABLE_BYTES + 1000)}}
+        with open(kernel_proc.ptable_path(), "w", encoding="utf-8") as fh:
+            json.dump({"version": 1, "processes": rows}, fh)
+        self.assertGreater(os.path.getsize(kernel_proc.ptable_path()),
+                           kernel_proc.MAX_PTABLE_BYTES)
+        table, dropped, fault = kernel_proc.read_ptable_detail()
+        self.assertIn("ceiling", fault)
+        self.assertIn("not parsed", fault)
+        self.assertEqual(table["processes"], {},
+                         "a table nobody parsed grants nobody anything")
+
+
+class QuarantineLedgerTest(SandboxHome):
+    """The repair ledger beside the ptable: what it costs, and who it names.
+
+    QA cycle 4, F2 and F3. The bound was on FILES only, so the size of each one
+    was chosen by whoever wrote the corrupt table (46.1 MB in, 47.7 MB copy,
+    245 MB peak RSS, 1.64 s of it inside the ptable lock, a 20-file worst case
+    near 954 MB), and the record carried `ts`, `reason` and the bytes but never
+    said which process had just overwritten every lane on the machine.
+    """
+
+    def corrupt_table(self, rows=1, pad=0):
+        """A ptable whose `processes` is an array: unreadable, and as big as the
+        caller wants, which is the point of the byte bound."""
+        os.makedirs(kernel_proc.kernel_dir(), exist_ok=True)
+        procs = [{"pid": f"p{i}", "pad": "x" * pad} for i in range(rows)]
+        with open(kernel_proc.ptable_path(), "w", encoding="utf-8") as fh:
+            json.dump({"version": 1, "processes": procs}, fh)
+
+    def old_copies(self, n, size=0):
+        """`n` files already in the ledger, oldest first, each `size` bytes."""
+        os.makedirs(kernel_proc.kernel_dir(), exist_ok=True)
+        made = []
+        for i in range(n):
+            path = os.path.join(kernel_proc.kernel_dir(),
+                                f"{kernel_proc.QUARANTINE_PREFIX}old{i:03d}.json")
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump({"ts": 0, "reason": "old", "ptable": "x" * size}, fh)
+            when = time.time() - (n - i) * 60
+            os.utime(path, (when, when))
+            made.append(path)
+        return made
+
+    def test_the_ledger_is_bounded_by_a_count(self):
+        """The only bound on disk cost the ledger had, and nothing failed when
+        it was removed (QA cycle 4, F4)."""
+        old = self.old_copies(kernel_proc.MAX_QUARANTINE + 5)
+        self.corrupt_table()
+        newest = kernel_proc._quarantine("one more repair")
+        kept = [p for _, p in kernel_proc.quarantines()]
+        self.assertEqual(len(kept), kernel_proc.MAX_QUARANTINE)
+        self.assertIn(newest, kept, "the event that just happened is kept")
+        self.assertNotIn(old[0], kept, "the oldest is the one that goes")
+
+    def test_the_ledger_is_bounded_by_bytes_as_well(self):
+        """A count bounds the number of files and lets the attacker choose the
+        multiplicand. Five copies well inside the file bound already blow the
+        byte budget, and the trim has to notice."""
+        big = kernel_proc.MAX_QUARANTINE_TOTAL // 4
+        self.old_copies(5, size=big)
+        self.assertLess(5, kernel_proc.MAX_QUARANTINE, "the count bound is NOT what fires here")
+        self.corrupt_table()
+        newest = kernel_proc._quarantine("one more repair")
+        kept = [p for _, p in kernel_proc.quarantines()]
+        total = sum(os.path.getsize(p) for p in kept)
+        self.assertLessEqual(total, kernel_proc.MAX_QUARANTINE_TOTAL)
+        self.assertLess(len(kept), 6)
+        self.assertIn(newest, kept)
+
+    def test_one_copy_preserves_a_bounded_slice_and_says_so(self):
+        """The per-file half. A 1.2 MB corrupt table used to be copied whole,
+        through a slurp and a JSON re-encode, inside the ptable lock. What is
+        kept is capped and the truncation is recorded next to the original size,
+        so the copy is honest about being partial instead of looking complete."""
+        self.corrupt_table(rows=40, pad=40 * 1024)
+        size = os.path.getsize(kernel_proc.ptable_path())
+        self.assertGreater(size, kernel_proc.MAX_QUARANTINE_BYTES)
+        path = kernel_proc._quarantine("too big to keep whole")
+        with open(path, encoding="utf-8") as fh:
+            rec = json.load(fh)
+        self.assertTrue(rec["truncated"])
+        self.assertEqual(rec["kept_bytes"], kernel_proc.MAX_QUARANTINE_BYTES)
+        self.assertEqual(rec["bytes"], size, "and it says what the original was")
+        self.assertLess(os.path.getsize(path), 3 * kernel_proc.MAX_QUARANTINE_BYTES)
+
+    def test_two_repairs_in_the_same_millisecond_are_two_files(self):
+        """The collision loop, which nothing failed without (QA cycle 4, F4).
+        Its own comment says why it exists: one file for two events undercounts
+        exactly the frequency `brain_doctor` escalates on, and the doctor's
+        threshold is three in 24 h, so a lost file is a lost escalation."""
+        from unittest import mock
+        self.corrupt_table()
+        with mock.patch("time.time", return_value=1757000000.0):
+            first = kernel_proc._quarantine("event one")
+            second = kernel_proc._quarantine("event two")
+        self.assertNotEqual(first, second)
+        self.assertEqual(len(kernel_proc.quarantines()), 2)
+        reasons = set()
+        for _, path in kernel_proc.quarantines():
+            with open(path, encoding="utf-8") as fh:
+                reasons.add(json.load(fh)["reason"])
+        self.assertEqual(reasons, {"event one", "event two"})
+
+    def test_the_copy_names_the_process_that_overwrote_the_table(self):
+        """QA cycle 4, F3. The record carried `ts`, `reason` and the bytes, so
+        the process that wiped every lane on the machine left no trace naming
+        itself. The kernel pid is the writer's own; `os_pid` and `argv0` are for
+        the case that matters most, where the writer is not the kernel."""
+        self.corrupt_table(rows=2)
+        kernel_proc.register("newsess", {"kind": "main", "type": "main"})
+        kept = kernel_proc.quarantines()
+        self.assertEqual(len(kept), 1)
+        with open(kept[0][1], encoding="utf-8") as fh:
+            rec = json.load(fh)
+        self.assertEqual(rec["pid"], "newsess")
+        self.assertEqual(rec["os_pid"], os.getpid())
+        self.assertTrue(rec["argv0"])
+
+    def test_a_carried_fault_is_preserved_once_not_once_per_write(self):
+        """The ledger counts EVENTS. A fault is now carried forward, so every
+        writer after the first reads a fault too; quarantining on each of them
+        would fill the ledger with copies of a table that is no longer the
+        corrupt one and would trip the doctor's three-in-24 h escalation off a
+        single event. The carrier records the copy it already has."""
+        self.corrupt_table(rows=2)
+        kernel_proc.register("a", {"kind": "main"})
+        kernel_proc.register("b", {"kind": "main"})
+        kernel_proc.register("c", {"kind": "main"})
+        kept = kernel_proc.quarantines()
+        self.assertEqual(len(kept), 1, "one corruption, one copy")
+        carrier = kernel_proc.read_ptable()[kernel_proc.FAULT_KEY]
+        self.assertEqual(carrier["quarantine"], os.path.basename(kept[0][1]),
+                         "and the table points at it")
+
+    def test_the_doctor_escalates_on_three_repairs_in_a_day(self):
+        """The headline of the fix that made repairs countable, and nothing
+        failed when it was removed (QA cycle 4, F4). One repair is an accident
+        and reads as a WARN; three in 24 h is a writer that is not the kernel
+        and is still running, which is an operator's problem right now."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "brain_doctor_freq", str(SCRIPTS / "brain_doctor.py"))
+        bd = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(bd)
+
+        kernel_proc.register("good", {"kind": "main", "type": "main"})
+        for n in range(2):
+            self.drop_one_row(f"bad{n}")
+        self.assertEqual(len(kernel_proc.quarantines()), 2)
+        result = bd.check_kernel_process_live(False)
+        self.assertEqual(result.status, bd.WARN, result.message)
+        self.assertIn("2 repaired ptable(s)", result.message)
+
+        self.drop_one_row("bad2")
+        result = bd.check_kernel_process_live(False)
+        self.assertEqual(result.status, bd.FAIL, result.message)
+        self.assertIn("repaired 3 times", result.message)
+
+    def drop_one_row(self, name):
+        """One repair EVENT: a value that is not an object goes in, a writer
+        reads it, drops it and preserves what it overwrote."""
+        with open(kernel_proc.ptable_path(), encoding="utf-8") as fh:
+            data = json.load(fh)
+        data["processes"][name] = "not-a-row"
+        with open(kernel_proc.ptable_path(), "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+        kernel_proc.update_row("good", {"note": name})
 
 
 class ReRegisterTest(SandboxHome):

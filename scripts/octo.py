@@ -243,9 +243,11 @@ def _print_repair(dropped, fault="") -> None:
               f"  The kernel publishes this file with os.replace, so it writes "
               f"neither a half-written nor an oddly shaped one; a writer that is "
               f"not the kernel touched it.\n"
-              f"  Read {kernel_proc.ptable_path()} before anything registers "
-              f"again. The isolation gates are DENYING writes while it reads "
-              f"this way, which is the fail-closed half of one writer per tree.")
+              f"  The isolation gates are DENYING writes while it reads this "
+              f"way, which is the fail-closed half of one writer per tree, and "
+              f"the fault is CARRIED FORWARD by every writer, so registering "
+              f"again does not clear it.\n"
+              f"  {kernel_proc.recovery()}")
     if not dropped:
         return
     shown = ", ".join(sorted(dropped)[:5])

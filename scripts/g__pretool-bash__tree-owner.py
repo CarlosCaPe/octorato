@@ -745,9 +745,11 @@ def main() -> int:
             "One writer per tree is fail-closed: an unknown owner is denied, "
             "never allowed, because allowing it is how a second writer takes a "
             "lane and the table that recorded the first one gets overwritten. "
-            f"Read {kernel_proc.ptable_path()} from the operator's terminal; "
-            "the next register hook keeps a copy of it beside the file before "
-            "publishing a table it can write."
+            "The next register hook keeps a copy of the file beside it and "
+            "CARRIES THE FAULT FORWARD, so a routine SessionStart (startup, "
+            "resume, clear, compact) does not clear this: ownership stays "
+            "unknown until a human looks. "
+            f"{kernel_proc.recovery()}"
         )
         return 0
     for kind, target, verb in hits:

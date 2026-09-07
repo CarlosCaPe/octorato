@@ -753,6 +753,64 @@ class UnreadableTableFailsClosed(IsolationCase):
                              "and the denied write took no lane: the file is untouched, "
                              "so agent-a's lane is still in it")
 
+    def register_hook(self, payload):
+        """The REAL SessionStart reflex, in its own process. Nothing here may be
+        simulated: the finding is about what that hook publishes."""
+        env = dict(os.environ)
+        env["HOME"] = self.home
+        env["USERPROFILE"] = self.home
+        cp = subprocess.run([sys.executable, str(SCRIPTS / "r__session__proc-register.py")],
+                            input=json.dumps(payload), capture_output=True,
+                            text=True, env=env, cwd=self.home, timeout=60)
+        self.assertEqual(cp.returncode, 0, cp.stderr)
+        return cp
+
+    def test_a_routine_session_start_does_not_reopen_the_gate(self):
+        """QA cycle 4, F1. The gate failed closed and then stopped, because the
+        very next `register` published `fresh_table()` plus its own row and the
+        fault went with it. Measured on the tip before this change, this exact
+        sequence: denied while faulted, register hook rc=0, rows on disk
+        `['newsess']`, fault `''`, the same intruder ALLOWED, and `agent-b`
+        holding the lane `agent-a` had claimed.
+
+        SessionStart fires on startup, resume, clear and compact, so the
+        protection lasted minutes. The row is still published; what does not
+        come with it any more is an empty base.
+        """
+        self.list_shaped()
+        rc, out = self.run_gate(WRITE_GATE, self.write_payload("agent-b", self.a_py))
+        self.assertTrue(self.denied(out), "denied while faulted, as before")
+
+        self.register_hook({"session_id": "newsess", "source": "startup",
+                            "cwd": self.home})
+        with open(kernel_proc.ptable_path(), encoding="utf-8") as fh:
+            disk = json.load(fh)
+        self.assertIn("newsess", disk["processes"], "the hook wrote its row")
+        self.assertIn(kernel_proc.FAULT_KEY, disk, "and carried the fault with it")
+
+        rc, out = self.run_gate(WRITE_GATE, self.write_payload("agent-b", self.a_py))
+        self.assertTrue(self.denied(out),
+                        "a registration is not a repair: the owner of that lane "
+                        "is still unknown")
+        reason = self.reason(out)
+        self.assertIn("process table is unreadable", reason)
+        self.assertIn("array of 3 value(s)", reason, "the original fault, not a new one")
+        self.assertNotIn("lanes", json.dumps(disk["processes"]),
+                         "and no lane was transferred to the intruder")
+
+    def test_the_deny_says_how_to_get_out_of_it(self):
+        """A gate that denies every hooked write with no way out is a brick.
+        There is no subcommand and no env hatch by design (an agent clearing
+        this would be clearing its own gate), so the deny carries the file
+        operation the operator runs in a terminal where no hook fires."""
+        self.list_shaped()
+        rc, out = self.run_gate(WRITE_GATE, self.write_payload("agent-b", self.a_py))
+        reason = self.reason(out)
+        self.assertIn(f"rm {kernel_proc.ptable_path()}", reason)
+        self.assertIn(kernel_proc.FAULT_KEY, reason)
+        self.assertIn("CARRIES THE FAULT FORWARD", reason,
+                      "so nobody waits for a restart to fix it")
+
     def test_the_bash_gate_denies_instead_of_going_blind(self):
         """The twin. Both gates read the same table through the same seam, so a
         fix in one of them and not the other is half a gate."""
