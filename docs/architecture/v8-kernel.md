@@ -67,13 +67,13 @@ Size: 2 new scripts + 11 fixtures, 6 modified, about 700 lines.
 
 ### Phase 3: PROCESS quotas and exit status
 
-Goal: a process carries a quota it cannot exceed (tool calls, wall minutes, USD when the journal has tokens), enforced in the same hot-path script.
+Goal: a process carries a quota it cannot exceed (tool calls, wall minutes, USD when the journal has tokens), enforced in the same hot-path script. Residual as shipped: the USD axis is NOT implemented, because no runtime writes tokens into the journal yet, so a cap in dollars would be enforced against a number that is always zero; tool calls and wall minutes are the two axes that exist, and the USD one waits for Phase 4's token capture.
 
 Files (create): `registry/kernel.yaml` (tracked policy; public defaults unlimited: `subagent: {max_tool_calls: 0, max_minutes: 0}`; `qa_multiplier: 3` for agent types matching the receipt_ledger.py:461 QA regex, a multiplier not an exemption, since the main loop picks `subagent_type` and a worker named "Reality Checker" must not bypass a cap); caps in gitignored `company/config/kernel.json`, the memory-model.md:78-83 "slot not occupant" pattern; `registry/fixtures/FLOW.kernel-quota/{violation.json, violation_minutes.json, benign.json, benign_qa.json (QA type under 3x cap), violation_qa.json (QA type over 3x cap), home/}` (seed journal with 401 tool lines and a `start_ts`, seed `company/config/kernel.json` cap 400, the `FLOW.budget-halt/home` precedent).
 Files (modify): `scripts/g__pretool__kernel.py` (reads `seq` and `start_ts` from the tail line it already holds under the lock; denies with the breached quota named, journals `quota`; `exit: quota` written by the exit hook, not on the hot path); `r__subagent-stop__proc-exit.py` (exit precedence quota > error > ok); `octo ps` shows USED/CAP and EXIT; rules.yaml (`FLOW.kernel-quota` GATE fail-closed, mechanism `g__pretool__kernel.py`, EXIT_CODE `--selftest registry/fixtures/FLOW.kernel-quota`); README FinOps line; CLAUDE.md anchor "Kernel: quotas".
 Selftest: `gate_selftest.run_gate_selftest` with the seed.
 Doctor check `kernel-quota-live`: selftest passes; `registry/kernel.yaml` validates; `company/config/kernel.json` validates when present.
-QA proof: set `max_tool_calls: 5` in a throwaway `company/config/kernel.json`, launch a 10-step subagent, observe the deny on call 6 and `octo ps` showing `EXIT quota`; launch a QA-typed subagent with the same cap and a 12-step task, denied on call 16; restore config.
+QA proof: set `max_tool_calls: 5` in a throwaway `company/config/kernel.json`, launch a 10-step subagent, observe the deny on call 5 and `octo ps` showing `EXIT quota` (5, not 6: a registered child's `start` line is a journal line, and the cap counts journal lines); launch a QA-typed subagent with the same cap and a 20-step task, denied on call 15; restore config.
 Size: 1 new file + fixtures, 6 modified, about 250 lines.
 
 ### Phase 4: JOURNAL closure: every refusal, every receipt, replay proven on real runs

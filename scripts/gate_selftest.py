@@ -40,6 +40,12 @@ from pathlib import Path
 _OVERRIDE_ENV = (
     "OCTO_MERGE_APPROVE", "OCTO_QA_OK", "OCTO_ALLOW_FORCE",
     "OCTO_LANE_OVERRIDE", "OCTO_GRAFO_OVERRIDE",
+    # v8: the kernel gates print this one as their own unlock, so an operator
+    # who ran the prescribed fix has it exported in the shell that launched
+    # Claude Code. Inherited into a selftest leg it disarms the gate under
+    # test, the violation fixture "does not block", and the doctor FAILs a
+    # brain whose only sin is that the unlock worked.
+    "OCTO_KERNEL_OPEN",
 )
 
 
