@@ -1,6 +1,6 @@
 ---
 name: gsap-core
-description: "API core de GSAP: to(), from(), fromTo(), easing, duration, stagger, defaults y matchMedia (responsive, prefers-reduced-motion). Para animacion JS en React, Vue o vanilla, sobre DOM o SVG."
+description: "GSAP core API: to(), from(), fromTo(), easing, duration, stagger, defaults and matchMedia (responsive, prefers-reduced-motion). For JS animation in React, Vue or vanilla, over DOM or SVG."
 license: MIT
 ---
 

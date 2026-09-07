@@ -1,6 +1,6 @@
 ---
 name: do-it-right-not-fast
-description: "Operator canon: fix the ROOT CAUSE, never the quick patch and never a pile of palliative files. Two smells force a stop: the phrase 'the quick fix is' and stacking band-aids instead of repairing what is broken. Load before proposing a fix."
+description: "Operator canon: fix the ROOT CAUSE, never the quick patch and never a pile of palliative files. Two smells force a stop: the phrase 'la solucion rapida es' (the quick fix is) and stacking band-aids instead of repairing what is broken. Load before proposing a fix."
 metadata:
   type: feedback
 ---

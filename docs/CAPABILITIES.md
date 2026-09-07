@@ -97,7 +97,7 @@
 | gh-fix-ci | Use when a user asks to debug or fix failing GitHub PR checks that run in GitHub Actions; use `gh` to inspect checks and... |
 | github-trending-curation | Daily brain discovery loop. Pulls top trending from GitHub + HN + Product Hunt, runs heuristic + LLM filter against exis... |
 | graphify-code-graph | Deterministic, queryable knowledge graph over a codebase with graphify (tree-sitter, 25+ languages, no LLM cost). Use it... |
-| gsap-core | API core de GSAP: to(), from(), fromTo(), easing, duration, stagger, defaults y matchMedia (responsive, prefers-reduced-... |
+| gsap-core | GSAP core API: to(), from(), fromTo(), easing, duration, stagger, defaults and matchMedia (responsive, prefers-reduced-m... |
 | gsap-frameworks | Official GSAP skill for Vue, Svelte, and other non-React frameworks , lifecycle, scoping selectors, cleanup on unmount. ... |
 | gsap-performance | Official GSAP skill for performance , prefer transforms, avoid layout thrashing, will-change, batching. Use when optimiz... |
 | gsap-plugins | Official GSAP skill for GSAP plugins , registration, ScrollToPlugin, ScrollSmoother, Flip, Draggable, Inertia, Observer,... |
@@ -246,7 +246,7 @@
 | web-perf | Audits web performance with the Chrome DevTools MCP: Core Web Vitals (LCP, INP, CLS), render-blocking resources, network... |
 | whatsapp-mcp-bridge-gotchas | Fixes for the lharries/whatsapp-mcp bridge: 403 media download, 405 client-outdated, QR vs phone-code pairing, encrypt-a... |
 | windows-brain-script-portability | Scripts in ~/.claude/scripts/ that run on a Windows brain: use the python3.cmd shim and not bare python3, and reconfigur... |
-| winui-app | Crea, desarrolla y disena apps de escritorio WinUI 3 con C# y Windows App SDK segun guia oficial de Microsoft y Communit... |
+| winui-app | Create, build and design WinUI 3 desktop apps with C# and the Windows App SDK following Microsoft's official guidance an... |
 | workers-best-practices | Reviews and authors Cloudflare Workers code against production best practices. Load when writing new Workers, reviewing ... |
 | workspace-skill-discovery | Discover and include ALL skills across the workspace , not just global ones. Use at the start of every session or when t... |
 | wrangler | Cloudflare Workers CLI for deploying, developing, and managing Workers, KV, R2, D1, Vectorize, Hyperdrive, Workers AI, C... |

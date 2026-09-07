@@ -1,24 +1,24 @@
 #!/usr/bin/env bash
 # Sends a WhatsApp through the SUPPORT channel, never through the operator's personal number.
 #
-# Por que existe: el MCP `whatsapp` esta cableado al puente personal (puerto 8080).
-# Cualquier mcp__whatsapp__send_message sale desde el numero del operador. Para
-# hablarle a un cliente el canal correcto es el puente de soporte (puerto 8081).
-# Se mando un aviso a una clienta desde el numero personal por no tener esta via.
+# Why it exists: the `whatsapp` MCP is wired to the personal bridge (port 8080).
+# Every mcp__whatsapp__send_message leaves from the operator's number. To talk
+# to a client the right channel is the support bridge (port 8081). A notice
+# once went out to a client from the personal number because this path did not exist.
 #
-# Uso:  wa-soporte.sh <destinatario> <mensaje>
-#       destinatario: telefono con lada sin + ni signos, o JID completo
+# Usage:  wa-soporte.sh <recipient> <message>
+#         recipient: phone with country code, no + or symbols, or a full JID
 #
-# Adjuntos:  wa-soporte.sh <destinatario> <mensaje> --archivo <ruta-local>
-# El puente lee `media_path` en SU disco, y desde el cutover ese disco es el de
-# la EC2, no el de aqui. Asi que el archivo viaja: local -> bucket de paso ->
-# EC2 -> /api/send. Las dos copias intermedias se borran siempre, tambien si el
-# envio falla. Antes esto se hacia a mano en cuatro pasos cada vez.
+# Attachments:  wa-soporte.sh <recipient> <message> --archivo <local-path>
+# The bridge reads `media_path` on ITS disk, and since the cutover that disk is
+# the EC2's, not this machine's. So the file travels: local -> staging bucket ->
+# EC2 -> /api/send. Both intermediate copies are always deleted, also when the
+# send fails. This used to be four manual steps every time.
 #
-# Menciones (grupos): exporta WA_MENCIONES con los telefonos separados por coma.
-# El texto TIENE que traer "@<telefono>" para que WhatsApp lo pinte como etiqueta;
-# el celular de quien lee lo cambia por el nombre que tenga guardado. Sin esto la
-# mencion no notifica a nadie, se ve como texto gris.
+# Mentions (groups): export WA_MENCIONES with comma-separated phone numbers.
+# The text MUST contain "@<telefono>" for WhatsApp to render it as a tag; the
+# reader's phone swaps it for the saved contact name. Without it the mention
+# notifies nobody and shows as grey text.
 #   WA_MENCIONES=5215550001111 wa-soporte.sh 1203...@g.us "@5215550001111 buenos dias"
 set -euo pipefail
 
@@ -59,11 +59,12 @@ if [ -n "$archivo" ] && [ ! -f "$archivo" ]; then
   exit 66
 fi
 
-# Desde el cutover del 14-ago-2026 el puente vive en la EC2 octorato-ops.
-# Camino rapido: el tunel SSM local (localhost:8081). Si el tunel no esta
-# (laptop recien encendida, otra maquina, sesion en la nube), NO se cae al
-# personal: se envia DIRECTO por SSM ejecutando curl EN el servidor. El canal
-# deja de depender de esta laptop; solo pide credenciales AWS dataqbs-ops.
+# Since the 2026-08-14 cutover the bridge lives on the octorato-ops EC2.
+# Fast path: the local SSM tunnel (localhost:8081). When the tunnel is down
+# (laptop just booted, another machine, a cloud session) it does NOT fall back
+# to the personal bridge: it sends DIRECTLY over SSM by running curl ON the
+# server. The channel no longer depends on this laptop; it only needs the AWS
+# ops profile credentials.
 INSTANCIA_PUENTE="i-0c0112bf1431dc99e"
 REGION_PUENTE="mx-central-1"
 PERFIL_PUENTE="dataqbs-ops"
@@ -72,9 +73,9 @@ if ! ss -lnt 2>/dev/null | grep -q ":${PUERTO_SOPORTE} "; then
   VIA="ssm"
 fi
 
-# ---- Adjunto: el archivo tiene que existir en el disco DEL PUENTE ----------
-# El identificador de la instancia, la region, el perfil y el bucket de paso
-# salen de la config PRIVADA, no de aqui: este script se publica.
+# ---- Attachment: the file must exist on the BRIDGE's disk -----------------
+# The instance id, region, profile and staging bucket come from the PRIVATE
+# config, not from here: this script is published.
 if [ -n "$archivo" ]; then
   respuesta=$(WA_MENCIONES="${WA_MENCIONES:-}" python3 - "$destinatario" "$mensaje" "$archivo" "$PUERTO_SOPORTE" <<'PY'
 import base64, json, os, shlex, subprocess, sys, time, uuid
