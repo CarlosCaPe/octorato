@@ -1410,11 +1410,22 @@ def check_kernel_process_live(fix: bool) -> Result:
     `open` lines of the last week are counted, so calls that ran unjournaled
     under OCTO_KERNEL_OPEN are a number, never a guess.
 
+    Phase 1b adds the reader's half. The golden replay is compared BYTE FOR
+    BYTE, because `octo replay` is the audit surface: a formatting drift that
+    nobody notices is a fixture that stopped proving anything. And the hot path
+    is timed, reported, and never failed on: timing is not a gate (v8-kernel.md
+    section 3), so a median over the budget is a WARN. It is also never skipped
+    "because the box is busy" - a number measured under load is still the
+    number this machine delivers, and hiding it would be the one way to lose
+    the trend.
+
     Passes on a fresh install with no ptable at all, and never writes."""
     key = "kernel-process-live"
     for loc in ("scripts/r__subagent-start__proc-register.py --selftest "
                 "registry/fixtures/ARCHITECTURE.kernel-process",
                 "scripts/r__subagent-stop__proc-exit.py --selftest "
+                "registry/fixtures/ARCHITECTURE.kernel-process",
+                "scripts/octo.py --selftest "
                 "registry/fixtures/ARCHITECTURE.kernel-process"):
         script = loc.split()[0]
         if not (CLAUDE_DIR / script).exists():
@@ -1488,9 +1499,44 @@ def check_kernel_process_live(fix: bool) -> Result:
             if isinstance(line, dict) and line.get("kind") == "open" \
                     and float(line.get("ts") or 0) >= cutoff:
                 opened += int(line.get("count") or 0)
-    msg = (f"2 selftests pass; {len(procs)} process row(s), {len(live)} live, all journaled; "
-           f"{min(len(journals), 5)} newest chain(s) verify; {opened} call(s) ran unjournaled in 7 days")
-    return Result(key, PASS, msg + ("; " + "; ".join(notes) if notes else ""))
+    # the golden replay, byte for byte: `octo replay` is the audit surface
+    rdir = CLAUDE_DIR / "registry" / "fixtures" / "ARCHITECTURE.kernel-process" / "replay"
+    expected = rdir / "expected.txt"
+    if not expected.exists():
+        return Result(key, FAIL, "the golden replay fixture is missing",
+                      "restore registry/fixtures/ARCHITECTURE.kernel-process/replay/")
+    cp = run([PYTHON or "python3", str(CLAUDE_DIR / "scripts" / "octo.py"),
+              "replay", "--fixture", str(rdir)], cwd=CLAUDE_DIR)
+    if cp.returncode != 0:
+        return Result(key, FAIL, f"octo replay --fixture exited {cp.returncode}",
+                      "the replay reader is broken; run it by hand to see why")
+    if (cp.stdout or "") != expected.read_text(encoding="utf-8"):
+        return Result(key, FAIL, "the golden replay no longer matches expected.txt",
+                      "octo replay changed its output: re-read the diff before "
+                      "regenerating the golden, the fixture is the contract")
+
+    # the hot path, measured. Reported always, never a FAIL: timing is not a gate.
+    bench_note, status = "", PASS
+    cp = run([PYTHON or "python3", str(CLAUDE_DIR / "scripts" / "octo.py"),
+              "bench", "--json"], cwd=CLAUDE_DIR)
+    try:
+        data = json.loads(cp.stdout or "{}")
+        median, budget = float(data["median_ms"]), float(data.get("budget_ms") or 100.0)
+        bench_note = f"hot path median {median:.1f} ms over {data['runs']} run(s)"
+        if median > budget:
+            status = WARN
+            bench_note += f" (over the {budget:.0f} ms budget)"
+    except (ValueError, KeyError, TypeError):
+        status = WARN
+        bench_note = "hot path could not be measured"
+
+    msg = (f"3 selftests pass; {len(procs)} process row(s), {len(live)} live, all journaled; "
+           f"{min(len(journals), 5)} newest chain(s) verify; {opened} call(s) ran unjournaled "
+           f"in 7 days; golden replay matches; {bench_note}")
+    hint = ("the hot path is slower than the budget; it is a WARN by design, "
+            "compare `octo bench` on an idle box before acting"
+            if status == WARN else "")
+    return Result(key, status, msg + ("; " + "; ".join(notes) if notes else ""), hint)
 
 
 def check_querymaster_security_detector(fix: bool) -> Result:
