@@ -1786,6 +1786,10 @@ rules:
     canonical_name: r__subagent-start__proc-register.py
     firing_event: SubagentStart
     firing_matcher: '*'
+  - kind: Reflex
+    canonical_name: r__subagent-stop__proc-exit.py
+    firing_event: SubagentStop
+    firing_matcher: '*'
   proof:
   - method: IN_HOOKS_JSON
     locator: SessionStart|*|r__session__proc-register.py
@@ -1793,8 +1797,14 @@ rules:
   - method: IN_HOOKS_JSON
     locator: SubagentStart|*|r__subagent-start__proc-register.py
     expect: present
+  - method: IN_HOOKS_JSON
+    locator: SubagentStop|*|r__subagent-stop__proc-exit.py
+    expect: present
   - method: EXIT_CODE
     locator: scripts/r__subagent-start__proc-register.py --selftest registry/fixtures/ARCHITECTURE.kernel-process
+    expect: 0
+  - method: EXIT_CODE
+    locator: scripts/r__subagent-stop__proc-exit.py --selftest registry/fixtures/ARCHITECTURE.kernel-process
     expect: 0
   liveness_required: FIRES
 - id: FLOW.kernel-journal

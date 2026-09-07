@@ -383,6 +383,12 @@
           "statusMessage": "🧾 receipt: QA verdict recorded",
           "timeout": 5,
           "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/r__subagent-stop__proc-exit.py",
+          "statusMessage": "⚙ kernel: closing this subagent's record...",
+          "timeout": 5,
+          "type": "command"
         }
       ],
       "matcher": "*"

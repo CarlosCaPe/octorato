@@ -446,6 +446,119 @@ class HotPathGateTest(SandboxHome):
         self.assertEqual(cp.stdout.strip(), "")
 
 
+class ExitHookTest(SandboxHome):
+    """The SubagentStop reflex as the harness runs it. What is pinned: an ending
+    is written once, it carries what the process did, and a child that failed is
+    not recorded as ok."""
+
+    def run_stop(self, payload):
+        env = dict(os.environ)
+        env["HOME"] = self.home
+        env["USERPROFILE"] = self.home
+        env.pop("OCTO_KERNEL_OPEN", None)
+        return subprocess.run([sys.executable, str(SCRIPTS / "r__subagent-stop__proc-exit.py")],
+                              input=json.dumps(payload), capture_output=True,
+                              text=True, env=env, cwd=self.home, timeout=60)
+
+    def child(self, tools=1):
+        kernel_proc.register("s1", {"kind": "main", "worktree": self.home})
+        kernel_proc.register("c1", {"kind": "subagent", "ppid": "s1", "type": "QA",
+                                    "worktree": self.home})
+        for i in range(tools):
+            kernel_proc.append("c1", {"kind": "tool", "tool_name": "Bash",
+                                      "tool_use_id": f"toolu_{i}"})
+
+    def payload(self, **kw):
+        base = {"hook_event_name": "SubagentStop", "session_id": "s1",
+                "agent_id": "c1", "agent_type": "QA",
+                "last_assistant_message": "Reviewed and shipped."}
+        base.update(kw)
+        return base
+
+    def exits(self, pid="c1"):
+        return [l for l in kernel_proc.read_journal(pid)
+                if isinstance(l, dict) and l.get("kind") == "exit"]
+
+    def test_a_normal_exit_is_ok_and_carries_what_the_process_did(self):
+        self.child(tools=2)
+        cp = self.run_stop(self.payload(agent_transcript_path="/tmp/agent-c1.jsonl"))
+        self.assertEqual(cp.returncode, 0)
+        self.assertEqual(cp.stdout.strip(), "", "a reflex never speaks to the model")
+        (e,) = self.exits()
+        self.assertEqual(e["status"], "ok")
+        self.assertIs(e["ok"], True)
+        self.assertEqual(e["tool_count"], 2)
+        self.assertEqual(e["agent_transcript_path"], "/tmp/agent-c1.jsonl")
+        self.assertGreaterEqual(e["duration"], 0)
+        self.assertEqual(kernel_proc.verify("c1"), 0)
+        row = kernel_proc.read_ptable()["processes"]["c1"]
+        self.assertTrue(row["exited"])
+        self.assertEqual(row["status"], "ok")
+        self.assertFalse(kernel_proc.is_live("c1"), "an exited child releases what it held")
+
+    def test_a_child_reporting_an_error_is_not_recorded_as_ok(self):
+        self.child()
+        self.run_stop(self.payload(last_assistant_message="Error: the build failed."))
+        (e,) = self.exits()
+        self.assertEqual(e["status"], "error")
+        self.assertIs(e["ok"], False)
+
+    def test_a_child_that_said_nothing_is_an_error(self):
+        self.child()
+        self.run_stop(self.payload(last_assistant_message=""))
+        self.assertEqual(self.exits()[0]["status"], "error")
+
+    def test_an_error_named_mid_report_is_a_finding_not_a_crash(self):
+        self.child()
+        self.run_stop(self.payload(
+            last_assistant_message="Found the bug: an error in the retry path. Fixed."))
+        self.assertEqual(self.exits()[0]["status"], "ok")
+
+    def test_a_missing_meta_json_is_not_an_error(self):
+        self.child()
+        self.run_stop(self.payload(
+            transcript_path=os.path.join(self.home, "projects", "x", "s1.jsonl")))
+        (e,) = self.exits()
+        self.assertEqual(e["status"], "ok")
+        for absent in ("spawn_depth", "model", "spawn_tool_use_id"):
+            self.assertNotIn(absent, e)
+
+    def test_the_meta_json_fields_are_read_when_present(self):
+        self.child()
+        subs = os.path.join(self.home, "projects", "x", "s1", "subagents")
+        os.makedirs(subs)
+        atp = os.path.join(subs, "agent-c1.jsonl")
+        with open(atp[:-6] + ".meta.json", "w", encoding="utf-8") as fh:
+            json.dump({"spawnDepth": 2, "model": "opus", "toolUseId": "toolu_parent"}, fh)
+        self.run_stop(self.payload(
+            transcript_path=os.path.join(self.home, "projects", "x", "s1.jsonl")))
+        (e,) = self.exits()
+        self.assertEqual((e["spawn_depth"], e["model"], e["spawn_tool_use_id"]),
+                         (2, "opus", "toolu_parent"))
+
+    def test_a_repeated_subagent_stop_writes_no_second_ending(self):
+        self.child()
+        for _ in range(3):
+            self.run_stop(self.payload())
+        self.assertEqual(len(self.exits()), 1)
+        self.assertEqual(kernel_proc.verify("c1"), 0)
+
+    def test_a_payload_without_an_agent_id_is_ignored(self):
+        self.child()
+        cp = self.run_stop(self.payload(agent_id=""))
+        self.assertEqual(cp.returncode, 0)
+        self.assertEqual(self.exits(), [])
+
+    def test_garbage_on_stdin_never_blocks(self):
+        env = dict(os.environ)
+        env["HOME"] = self.home
+        cp = subprocess.run([sys.executable, str(SCRIPTS / "r__subagent-stop__proc-exit.py")],
+                            input="not json", capture_output=True, text=True,
+                            env=env, cwd=self.home, timeout=60)
+        self.assertEqual(cp.returncode, 0)
+        self.assertEqual(cp.stdout.strip(), "")
+
+
 class SchemaTest(SandboxHome):
     def test_every_emitted_line_validates_against_the_schema(self):
         try:
@@ -491,6 +604,25 @@ class SelftestTest(unittest.TestCase):
         cp = self._run("g__pretool__kernel.py", "FLOW.kernel-journal")
         self.assertEqual(cp.returncode, 0, cp.stderr)
 
+    def test_exit_selftest_passes(self):
+        cp = self._run("r__subagent-stop__proc-exit.py", "ARCHITECTURE.kernel-process")
+        self.assertEqual(cp.returncode, 0, cp.stderr)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class ExitStatusWordBoundaryTest(unittest.TestCase):
+    def test_error_word_boundary(self):
+        import importlib.util, os
+        spec = importlib.util.spec_from_file_location(
+            "proc_exit", os.path.join(os.path.dirname(__file__), "..", "r__subagent-stop__proc-exit.py"))
+        m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+        self.assertEqual(m.status_of("Errors were found and fixed"), "ok")
+        self.assertEqual(m.status_of("Exceptionally good result"), "ok")
+        self.assertEqual(m.status_of("Error: boom"), "error")
+        self.assertEqual(m.status_of("**Fatal** problem"), "error")
+        self.assertEqual(m.status_of(""), "error")
+        self.assertEqual(m.status_of("QA-VERDICT: FAIL"), "ok")
+
