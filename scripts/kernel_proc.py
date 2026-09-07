@@ -392,15 +392,54 @@ def verify(pid) -> int:
 
 # ── process table ───────────────────────────────────────────────────────────
 
-def read_ptable() -> dict:
+def sane_table(data) -> tuple:
+    """(table, dropped): the ONE place the ptable's SHAPE is decided.
+
+    A row is a process only if it is an object. Every consumer in the kernel
+    reads a row as `row.get(...)`, so one value that is not an object used to
+    become an AttributeError in whichever reader reached it first, and the
+    table is read in far more places than it is written. Deciding the shape
+    once, here, is what keeps the readers from each needing their own guard.
+
+    Returns the pids that were dropped, never a bare table: a repair nobody can
+    see is its own failure mode, so `octo ps`, `octo top` and `brain_doctor`
+    footnote what went missing instead of quietly showing one row less.
+    """
+    if not (isinstance(data, dict) and isinstance(data.get("processes"), dict)):
+        return {"version": 1, "processes": {}}, []
+    procs = data["processes"]
+    dropped = [pid for pid, row in procs.items() if not isinstance(row, dict)]
+    for pid in dropped:
+        procs.pop(pid, None)
+    return data, dropped
+
+
+def read_ptable_detail() -> tuple:
+    """(table, dropped pids). `read_ptable` for callers that want the count.
+
+    DROPS a malformed row rather than raising, and the difference is the whole
+    point. QA measured what one `"junk": "not-a-row"` value did to the kernel:
+    `octo ps` and `octo top` exited 1, `brain_doctor` reported two kernel checks
+    crashed, and worst of all `prune()` raised INSIDE the ptable lock, so both
+    register hooks exited 0 having published nothing. A reflex that reports
+    success while writing nothing is the failure this seam exists to stop; one
+    unreadable row must never be able to take the whole kernel down with it.
+
+    The repair reaches the file on its own: every locked writer (`register`,
+    `update_row`, `claim_lane`, `release_lanes`, `prune_locked`) reads through
+    here and republishes what it read, so the bad row leaves on the next write.
+    A read never writes.
+    """
     try:
         with open(ptable_path(), "r", encoding="utf-8") as fh:
             data = json.load(fh)
-        if isinstance(data, dict) and isinstance(data.get("processes"), dict):
-            return data
+        return sane_table(data)
     except (FileNotFoundError, ValueError, OSError):
-        pass
-    return {"version": 1, "processes": {}}
+        return {"version": 1, "processes": {}}, []
+
+
+def read_ptable() -> dict:
+    return read_ptable_detail()[0]
 
 
 def _write_ptable(data: dict) -> None:
@@ -749,6 +788,14 @@ def prune(table: dict, now: float = None) -> int:
     procs = table.get("processes", {})
     dead = []
     for pid, ent in procs.items():
+        if not isinstance(ent, dict):
+            # `read_ptable` already drops these, so this fires only for a table
+            # a caller assembled by hand. It stays because prune mutates under
+            # the ptable lock: raising here leaves the lock holder with an
+            # unwritten table and its register hook exiting 0 having published
+            # nothing, which is the exact silent failure the seam above names.
+            dead.append(pid)
+            continue
         mt = _mtime(journal_path(pid))
         if mt is None:
             registered = float(ent.get("registered_ts") or 0)

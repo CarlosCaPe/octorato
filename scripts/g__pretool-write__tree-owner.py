@@ -91,8 +91,20 @@ def journal_deny(pid, fields: dict) -> None:
 
 
 def describe(pid: str, row: dict) -> str:
+    """The one line a human reads while blocked, so it says what is KNOWN.
+
+    A parent link still proves `subagent`: only a child is ever given one. Its
+    ABSENCE proves nothing, and calling that a main loop was a guess printed as
+    a fact. `claim_lane` creates a row with neither `type` nor `ppid` when a
+    register hook loses its race with the process's first write, and for that
+    row the deny used to read `(main loop, never journaled)` about a subagent.
+    `UNKNOWN_TYPE` is the word every other reader already uses for exactly this,
+    so the gates and `octo ps`/`top`/`replay` cannot drift apart on it.
+    """
+    row = row or {}
     age = kernel_proc.process_age(pid)
-    kind = (row or {}).get("type") or ("main loop" if not (row or {}).get("ppid") else "subagent")
+    kind = (row.get("type") or ("subagent" if row.get("ppid")
+                                else f"type {kernel_proc.UNKNOWN_TYPE}"))
     when = "never journaled" if age < 0 else f"last active {int(age)}s ago"
     return f"pid {pid} ({kind}, {when})"
 

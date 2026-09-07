@@ -327,6 +327,130 @@ class RegisterRaceTest(SandboxHome):
         self.assertNotIn("young", table["processes"])
 
 
+class CorruptRowTest(SandboxHome):
+    """QA cycle 2: one ptable value that is not an object bricked the kernel.
+
+    Measured with `"junk": "not-a-row"` in the table: `octo ps` and `octo top`
+    exited 1, `brain_doctor` reported two kernel checks crashed, and both
+    register hooks exited 0 having published NOTHING, because `prune()` raised
+    inside the ptable lock. A reflex that reports success while writing nothing
+    is the worst of those four, so the shape is decided once, at the read, and
+    the drop is REPORTED rather than silent.
+    """
+
+    def corrupt(self, *bad):
+        """A table with one healthy row and `bad` values that are not objects.
+
+        Written the way it happens: a healthy table on disk, then a value
+        replaced under it (a hand edit, a half-migrated file, a foreign writer).
+        The bad rows are NAMED to sort before the healthy one, and the name is
+        the only thing that decides it: `_write_ptable` writes with sort_keys,
+        so insertion order does not survive the first writer. It matters because
+        `lane_owner` returns on its first hit, so a bad row that sorts last is
+        never reached and the test would pass for the wrong reason.
+        """
+        kernel_proc.register("good", {"kind": "main", "type": "main", "worktree": "/w"})
+        with open(kernel_proc.ptable_path(), encoding="utf-8") as fh:
+            data = json.load(fh)
+        procs = {f"bad{i}": value for i, value in enumerate(bad or ("not-a-row",))}
+        procs.update(data["processes"])
+        data["processes"] = procs
+        with open(kernel_proc.ptable_path(), "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+
+    def register_hook(self, script, payload):
+        env = dict(os.environ)
+        env["HOME"] = self.home
+        env["USERPROFILE"] = self.home
+        return subprocess.run([sys.executable, str(SCRIPTS / script)],
+                              input=json.dumps(payload), capture_output=True,
+                              text=True, env=env, cwd=self.home, timeout=60)
+
+    def test_a_value_that_is_not_an_object_is_dropped_and_named(self):
+        """Dropped, not raised: one unreadable row must not be able to take the
+        whole kernel down. Named, not silent: a repair nobody can see is its own
+        failure mode."""
+        self.corrupt("not-a-row", 7, None, ["lanes"])
+        table, dropped = kernel_proc.read_ptable_detail()
+        self.assertEqual(sorted(dropped), ["bad0", "bad1", "bad2", "bad3"])
+        self.assertEqual(sorted(table["processes"]), ["good"])
+        self.assertEqual(kernel_proc.read_ptable()["processes"], table["processes"])
+
+    def test_a_read_reports_the_drop_but_never_writes_it(self):
+        """The repair reaches the file through a writer, never through a reader:
+        `octo ps` prunes on read and must not be the thing that rewrites a table
+        the operator has not seen yet."""
+        self.corrupt()
+        kernel_proc.read_ptable_detail()
+        kernel_proc.prune_locked()
+        with open(kernel_proc.ptable_path(), encoding="utf-8") as fh:
+            self.assertIn("bad0", json.load(fh)["processes"])
+
+    def test_prune_survives_a_table_a_caller_assembled_by_hand(self):
+        """`prune` mutates under the ptable lock, so a raise there leaves the
+        lock holder with an unwritten table and its hook exiting 0 having
+        published nothing. It drops the row instead: a value that is not an
+        object is not a process."""
+        table = {"version": 1, "processes": {"junk": "not-a-row",
+                                             "gone": {"registered_ts": 0}}}
+        self.assertEqual(kernel_proc.prune(table), 2)
+        self.assertEqual(table["processes"], {})
+
+    def test_both_register_hooks_still_publish_their_row(self):
+        """The silent half of the defect. Exit 0 is not the assertion; the row
+        on disk is."""
+        self.corrupt()
+        cp = self.register_hook("r__session__proc-register.py",
+                                {"session_id": "newsess", "source": "startup",
+                                 "cwd": self.home})
+        self.assertEqual(cp.returncode, 0, cp.stderr)
+        cp = self.register_hook("r__subagent-start__proc-register.py",
+                                {"agent_id": "newkid", "session_id": "newsess",
+                                 "agent_type": "Reality Checker", "cwd": self.home})
+        self.assertEqual(cp.returncode, 0, cp.stderr)
+        rows = kernel_proc.read_ptable()["processes"]
+        self.assertIn("newsess", rows)
+        self.assertIn("newkid", rows)
+        self.assertEqual(rows["newkid"]["ppid"], "newsess")
+
+    def test_a_writer_republishes_the_table_without_the_bad_row(self):
+        """The drop is not only in memory: every locked writer reads through the
+        seam, so the row leaves the FILE on the next write, once."""
+        self.corrupt()
+        kernel_proc.register("newsess", {"kind": "main", "type": "main"})
+        with open(kernel_proc.ptable_path(), encoding="utf-8") as fh:
+            procs = json.load(fh)["processes"]
+        self.assertNotIn("bad0", procs)
+        self.assertEqual(sorted(procs), ["good", "newsess"])
+
+    def test_the_doctor_reports_the_drop_instead_of_crashing(self):
+        """`brain_doctor` said `kernel-process-live check crashed: 'str' object
+        has no attribute 'get'`. A health check that crashes on the state it
+        exists to report is the one that has to be loud about it, so this is a
+        WARN naming the row, never a PASS that hides it."""
+        import importlib.util
+        self.corrupt()
+        spec = importlib.util.spec_from_file_location(
+            "brain_doctor_ro", str(SCRIPTS / "brain_doctor.py"))
+        bd = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(bd)
+        result = bd.check_kernel_process_live(False)
+        self.assertEqual(result.status, bd.WARN, result.message)
+        self.assertIn("unreadable ptable row", result.message)
+        self.assertIn("bad0", result.message)
+
+    def test_liveness_and_the_lane_lookup_survive_the_bad_row(self):
+        """The two functions on the hot path. Both walk every row in the table,
+        so both used to raise on the first bad one they reached."""
+        self.corrupt()
+        self.touch_journal("good")
+        kernel_proc.claim_lane("good", os.path.join(self.home, "pkg"))
+        self.assertTrue(kernel_proc.is_live("good"))
+        owner, row = kernel_proc.lane_owner(os.path.join(self.home, "pkg", "a.py"),
+                                            ignore="other")
+        self.assertEqual(owner, "good")
+
+
 class ReRegisterTest(SandboxHome):
     """QA cycle 1, D3. SessionStart fires on startup, resume, clear and compact."""
 

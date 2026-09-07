@@ -1607,7 +1607,7 @@ def check_kernel_process_live(fix: bool) -> Result:
             notes.append("runtime fallback: no SubagentStart hook, a child's start line "
                          "waits for its first tool call (PreToolUse[Agent] + SubagentStop only)")
 
-    table = kernel_proc.read_ptable()
+    table, dropped_rows = kernel_proc.read_ptable_detail()
     procs = table.get("processes", {})
     now = time.time()
     live, phantom = [], []
@@ -1680,12 +1680,28 @@ def check_kernel_process_live(fix: bool) -> Result:
         status = WARN
         bench_note = "hot path could not be measured"
 
+    # A ptable value that is not an object is DROPPED on read (kernel_proc
+    # read_ptable_detail), so one corrupt row can no longer crash this check,
+    # `octo ps`, `octo top` or a register hook. A repair nobody can see would be
+    # its own failure mode, so the doctor says it happened. WARN, not FAIL: the
+    # kernel is working and self-repairing, the operator just gets to read the
+    # row before the next register hook rewrites the table without it.
+    if dropped_rows:
+        status = WARN
+        notes.append(f"{len(dropped_rows)} unreadable ptable row(s) dropped on read: "
+                     + ", ".join(sorted(dropped_rows)[:5]))
     msg = (f"3 selftests pass; {len(procs)} process row(s), {len(live)} live, all journaled; "
            f"{min(len(journals), 5)} newest chain(s) verify; {opened} call(s) ran unjournaled "
            f"in 7 days; golden replay matches; {bench_note}")
-    hint = ("the hot path is slower than the budget; it is a WARN by design, "
-            "compare `octo bench` on an idle box before acting"
-            if status == WARN else "")
+    if dropped_rows:
+        hint = ("a ptable value that is not an object is not a process; read the row in "
+                "~/.claude/.cache/kernel/ptable.json now, the next register hook "
+                "rewrites the table without it")
+    elif status == WARN:
+        hint = ("the hot path is slower than the budget; it is a WARN by design, "
+                "compare `octo bench` on an idle box before acting")
+    else:
+        hint = ""
     return Result(key, status, msg + ("; " + "; ".join(notes) if notes else ""), hint)
 
 

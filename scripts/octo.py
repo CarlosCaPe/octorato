@@ -218,6 +218,25 @@ def _row_type(row) -> str:
     return str(row.get("type") or UNKNOWN_TYPE)
 
 
+def _print_dropped(dropped) -> None:
+    """Say what the read repaired, or say nothing.
+
+    `read_ptable` drops a ptable value that is not an object so one corrupt row
+    cannot take `ps`, `top`, `replay`, the doctor and both register hooks down
+    with it. Dropping it silently would trade a loud failure for a quiet one:
+    the reader would see a shorter table and no reason for it. So the pids are
+    named here, and the fix is named too, because a row that only disappears on
+    the next write is not obviously gone.
+    """
+    if not dropped:
+        return
+    shown = ", ".join(sorted(dropped)[:5])
+    more = f" (+{len(dropped) - 5} more)" if len(dropped) > 5 else ""
+    print(f"{len(dropped)} unreadable row(s) dropped on read: {shown}{more}. "
+          f"A ptable value that is not an object is not a process; the next "
+          f"register hook rewrites the table without them.")
+
+
 def _row_state(pid, row, table, now) -> str:
     if kernel_proc.is_live(pid, table, now):
         return "live"
@@ -232,7 +251,7 @@ def cmd_ps(args) -> int:
     if args.release:
         return _release(args.release)
     kernel_proc.prune_locked()
-    table = kernel_proc.read_ptable()
+    table, dropped = kernel_proc.read_ptable_detail()
     procs = table.get("processes", {})
     now = time.time()
     rows, live_n = [], 0
@@ -250,12 +269,14 @@ def cmd_ps(args) -> int:
         ]))
     if not rows:
         print("no processes: the kernel has registered nothing on this machine yet")
+        _print_dropped(dropped)
         return 0
     rows.sort(key=lambda r: (r[0], r[1]))
     print(_table(["PID", "PPID", "TYPE", "TOOLS", "EXIT", "AGE", "WORKTREE"],
                  [r[2] for r in rows]))
     print(f"\n{len(rows)} process(es), {live_n} live "
           f"(liveness: TTL {kernel_proc.TTL}s, v8-kernel.md section 2)")
+    _print_dropped(dropped)
     return 0
 
 
@@ -299,7 +320,7 @@ def _release(pid: str) -> int:
 # ── top ─────────────────────────────────────────────────────────────────────
 
 def cmd_top(args) -> int:
-    table = kernel_proc.read_ptable()
+    table, dropped = kernel_proc.read_ptable_detail()
     procs = table.get("processes", {})
     now = time.time()
     cutoff = now - DAY
@@ -333,6 +354,7 @@ def cmd_top(args) -> int:
                      _row_state(pid, row, table, now)])
     if not rows:
         print("no activity in the last 24 h and nothing live")
+        _print_dropped(dropped)
         return 0
     rows.sort(key=lambda r: (-int(r[2]), r[0]))
     tools = sum(int(r[2]) for r in rows)
@@ -366,6 +388,7 @@ def cmd_top(args) -> int:
         # these; the difference between the two counts is the point.
         print(f"{unknown} of them have a journal but no ptable row, so their "
               f"type reads `{UNKNOWN_TYPE}` (not shown by `octo ps`)")
+    _print_dropped(dropped)
     if by_rule:
         # WHICH rules are refusing is the number that changes behaviour; a bare
         # deny total says only that something did.
@@ -544,7 +567,9 @@ def _fixture_table(fdir: str) -> dict:
     try:
         with open(os.path.join(fdir, "ptable.json"), encoding="utf-8") as fh:
             data = json.load(fh)
-        return data if isinstance(data, dict) else {"processes": {}}
+        # Through the same shape rule as a real table: a fixture is read by the
+        # same renderer, so a second parser here is exactly how the two drift.
+        return kernel_proc.sane_table(data)[0]
     except (FileNotFoundError, ValueError, OSError):
         return {"processes": {}}
 
