@@ -483,6 +483,38 @@ def is_live(pid, table: dict = None, now: float = None, ttl: int = TTL,
     return False
 
 
+def update_row(pid, fields: dict) -> bool:
+    """Merge `fields` into one ptable row, under the same lock `register` takes.
+
+    The row is the process's mutable half (the journal is the immutable one), so
+    every later phase writes it through here: Phase 1a-2 marks a process exited,
+    Phase 1b records a release, Phase 2 claims lanes. Returns False when the pid
+    has no row, which is not an error: a child whose register hook lost its race
+    still has a journal, and the journal is what the gates read.
+    """
+    pid = safe_pid(pid)
+    os.makedirs(kernel_dir(), exist_ok=True)
+    fh = None
+    try:
+        fh = open(ptable_lock_path(), "a")
+        _flock(fh)
+        table = read_ptable()
+        procs = table.setdefault("processes", {})
+        row = procs.get(pid)
+        if row is None:
+            return False
+        row.update({k: v for k, v in fields.items() if v is not None})
+        _write_ptable(table)
+        return True
+    finally:
+        if fh is not None:
+            _funlock(fh)
+            try:
+                fh.close()
+            except OSError:
+                pass
+
+
 def prune(table: dict, now: float = None) -> int:
     """Drop process rows that are gone for good, and only those.
 
@@ -736,6 +768,38 @@ def _scripts_dir() -> str:
     return os.path.dirname(os.path.abspath(__file__))
 
 
+def _fixture_dir(fixture_dir: str = None) -> str:
+    root = os.path.dirname(_scripts_dir())
+    fdir = fixture_dir or os.path.join("registry", "fixtures",
+                                       "ARCHITECTURE.kernel-process")
+    return fdir if os.path.isabs(fdir) else os.path.join(root, fdir)
+
+
+def _sandbox_env(sandbox: str) -> dict:
+    """A hook's env for a sandbox run: HOME rebound, open mode off, and every
+    GIT_* variable a git hook exports stripped, so a selftest launched from
+    pre-push never operates on the live repo (brain_doctor.py:47-56)."""
+    env = dict(os.environ)
+    for k in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX",
+              "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE",
+              "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_QUARANTINE_PATH",
+              "OCTO_KERNEL_OPEN"):
+        env.pop(k, None)
+    env["HOME"] = sandbox
+    env["USERPROFILE"] = sandbox
+    env["CLAUDE_SESSION_ID"] = "__selftest__"
+    return env
+
+
+def _feed(script: str, payload: dict, sandbox: str, env: dict) -> tuple:
+    """Run one hook script exactly as the harness does: payload on stdin."""
+    import subprocess
+    cp = subprocess.run([sys.executable, os.path.join(_scripts_dir(), script)],
+                        input=json.dumps(payload), capture_output=True,
+                        text=True, cwd=sandbox, env=env, timeout=30)
+    return cp.returncode, cp.stdout
+
+
 def selftest_flow(fixture_dir: str = None) -> int:
     """Prove the PROCESS primitive end to end in a sandbox HOME.
 
@@ -747,14 +811,9 @@ def selftest_flow(fixture_dir: str = None) -> int:
     --selftest so there is one implementation, not three.
     """
     import shutil
-    import subprocess
     import tempfile
 
-    scripts = _scripts_dir()
-    root = os.path.dirname(scripts)
-    fdir = fixture_dir or os.path.join("registry", "fixtures", "ARCHITECTURE.kernel-process")
-    if not os.path.isabs(fdir):
-        fdir = os.path.join(root, fdir)
+    fdir = _fixture_dir(fixture_dir)
     if not os.path.isdir(fdir):
         print(f"selftest FAIL: fixture dir missing: {fdir}", file=sys.stderr)
         return 1
@@ -767,21 +826,10 @@ def selftest_flow(fixture_dir: str = None) -> int:
         if os.path.isdir(seed):
             shutil.copytree(seed, sandbox, dirs_exist_ok=True)
 
-        env = dict(os.environ)
-        for k in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX",
-                  "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE",
-                  "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_QUARANTINE_PATH",
-                  "OCTO_KERNEL_OPEN"):
-            env.pop(k, None)
-        env["HOME"] = sandbox
-        env["USERPROFILE"] = sandbox
-        env["CLAUDE_SESSION_ID"] = "__selftest__"
+        env = _sandbox_env(sandbox)
 
         def feed(script: str, payload: dict) -> tuple:
-            cp = subprocess.run([sys.executable, os.path.join(scripts, script)],
-                                input=json.dumps(payload), capture_output=True,
-                                text=True, cwd=sandbox, env=env, timeout=30)
-            return cp.returncode, cp.stdout
+            return _feed(script, payload, sandbox, env)
 
         with open(os.path.join(fdir, "start.json"), encoding="utf-8") as fh:
             start = json.load(fh)
@@ -848,6 +896,122 @@ def selftest_flow(fixture_dir: str = None) -> int:
         return 1
     print(f"selftest PASS: process registered, journal chained "
           f"(kernel_proc vs {os.path.basename(fdir)})")
+    return 0
+
+
+def selftest_exit_flow(fixture_dir: str = None) -> int:
+    """Prove the exit line end to end in a sandbox HOME (v8 Phase 1a-2).
+
+    Runs the whole life of one child through the REAL hooks: register the
+    session, register the subagent, two tool calls, then SubagentStop. Asserts
+    the `exit` line closes the chain with status ok, the tool count and a
+    duration; that the meta.json fields are picked up from the session dir; that
+    a second SubagentStop writes no second ending; and that a child whose last
+    message opens with an error is recorded as `error`, not `ok`.
+    """
+    import shutil
+    import tempfile
+
+    fdir = _fixture_dir(fixture_dir)
+    stop_seed = os.path.join(fdir, "subagent_stop.json")
+    if not os.path.isfile(stop_seed):
+        print(f"selftest FAIL: fixture missing: {stop_seed}", file=sys.stderr)
+        return 1
+
+    sandbox = tempfile.mkdtemp(prefix="kernel-exit-selftest-")
+    saved = (os.environ.get("HOME"), os.environ.get("USERPROFILE"))
+    failures = []
+    try:
+        seed = os.path.join(fdir, "home")
+        if os.path.isdir(seed):
+            shutil.copytree(seed, sandbox, dirs_exist_ok=True)
+        env = _sandbox_env(sandbox)
+        with open(os.path.join(fdir, "start.json"), encoding="utf-8") as fh:
+            start = json.load(fh)
+        with open(os.path.join(fdir, "subagent_start.json"), encoding="utf-8") as fh:
+            sub = json.load(fh)
+        with open(stop_seed, encoding="utf-8") as fh:
+            stop = json.load(fh)
+        parent = str(start.get("session_id") or "")
+        child = str(sub.get("agent_id") or "")
+
+        # the harness's own layout: <projects>/<slug>/<session>.jsonl next to
+        # <projects>/<slug>/<session>/subagents/agent-<id>.{jsonl,meta.json}
+        sess_dir = os.path.join(sandbox, "projects", "sandbox", parent)
+        subs = os.path.join(sess_dir, "subagents")
+        os.makedirs(subs, exist_ok=True)
+        atp = os.path.join(subs, f"agent-{child}.jsonl")
+        with open(atp, "w", encoding="utf-8") as fh:
+            fh.write("")
+        with open(atp[:-6] + ".meta.json", "w", encoding="utf-8") as fh:
+            json.dump({"agentType": sub.get("agent_type"), "toolUseId": "toolu_seed",
+                       "spawnDepth": 1, "model": "sonnet"}, fh)
+        stop["transcript_path"] = sess_dir + ".jsonl"
+        stop["agent_transcript_path"] = atp
+
+        _feed("r__session__proc-register.py", start, sandbox, env)
+        _feed("r__subagent-start__proc-register.py", sub, sandbox, env)
+        for i in range(2):
+            _feed("g__pretool__kernel.py", {
+                "session_id": parent, "agent_id": child, "tool_name": "Bash",
+                "tool_use_id": f"toolu_exit_{i}", "tool_input": {"command": "true"},
+                "cwd": sandbox}, sandbox, env)
+        rc, out = _feed("r__subagent-stop__proc-exit.py", stop, sandbox, env)
+        if rc != 0 or out.strip():
+            failures.append(f"exit hook was not silent (rc={rc})")
+        _feed("r__subagent-stop__proc-exit.py", stop, sandbox, env)  # idempotent
+
+        os.environ["HOME"] = sandbox
+        os.environ["USERPROFILE"] = sandbox
+        lines = [l for l in read_journal(child) if isinstance(l, dict)]
+        exits = [l for l in lines if l.get("kind") == "exit"]
+        if len(exits) != 1:
+            failures.append(f"{len(exits)} exit line(s), a repeated SubagentStop must add none")
+        if exits:
+            e = exits[0]
+            if e.get("status") != "ok" or e.get("ok") is not True:
+                failures.append(f"exit status {e.get('status')} != ok")
+            if e.get("tool_count") != 2:
+                failures.append(f"tool_count {e.get('tool_count')} != 2")
+            if not isinstance(e.get("duration"), (int, float)):
+                failures.append("exit line carries no duration")
+            if e.get("agent_transcript_path") != atp:
+                failures.append("exit line does not carry the agent transcript path")
+            if e.get("spawn_depth") != 1 or e.get("model") != "sonnet" \
+                    or e.get("spawn_tool_use_id") != "toolu_seed":
+                failures.append("meta.json fields (spawnDepth, model, toolUseId) not recorded")
+        code, why = verify_detail(child)
+        if code != 0:
+            failures.append(f"chain broken after exit: {why}")
+        row = (read_ptable().get("processes", {}).get(safe_pid(child)) or {})
+        if not row.get("exited") or row.get("status") != "ok":
+            failures.append(f"ptable row not marked exited: {row}")
+        if is_live(child):
+            failures.append("an exited child still reads live")
+
+        # a failing child, in its own process so the exit line is the first one
+        bad = dict(stop)
+        bad["agent_id"] = child + "-bad"
+        bad["agent_transcript_path"] = ""
+        bad["last_assistant_message"] = "Error: the build did not compile."
+        _feed("r__subagent-stop__proc-exit.py", bad, sandbox, env)
+        bad_exits = [l for l in read_journal(bad["agent_id"])
+                     if isinstance(l, dict) and l.get("kind") == "exit"]
+        if not bad_exits or bad_exits[0].get("status") != "error":
+            failures.append("a child reporting an error was not recorded as error")
+    finally:
+        os.environ["HOME"] = saved[0] or ""
+        if saved[1] is None:
+            os.environ.pop("USERPROFILE", None)
+        else:
+            os.environ["USERPROFILE"] = saved[1]
+        shutil.rmtree(sandbox, ignore_errors=True)
+
+    if failures:
+        print("selftest FAIL: " + "; ".join(failures), file=sys.stderr)
+        return 1
+    print(f"selftest PASS: exit line written once, chained, ptable marked "
+          f"(proc-exit vs {os.path.basename(fdir)})")
     return 0
 
 

@@ -1,0 +1,9 @@
+{
+  "hook_event_name": "SubagentStop",
+  "session_id": "kernel-selftest-session",
+  "agent_id": "kernel-selftest-agent",
+  "agent_type": "Reality Checker",
+  "transcript_path": "",
+  "agent_transcript_path": "",
+  "last_assistant_message": "Reviewed the diff and ran the tests. Two findings, both fixed."
+}

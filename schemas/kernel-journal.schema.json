@@ -56,6 +56,13 @@
     "last_ts": { "type": "number", "description": "open lines: last unjournaled call" },
     "ok": { "type": "boolean", "description": "exit lines: the subagent finished without an error" },
     "status": { "type": "string", "description": "exit lines: ok | error | quota" },
+    "tool_count": { "type": "integer", "minimum": 0, "description": "exit lines: how many tool calls this process journaled" },
+    "seq_before": { "type": "integer", "description": "exit lines: seq of the last line written before this one, -1 when the exit line is the first" },
+    "duration": { "type": "number", "minimum": 0, "description": "exit lines: seconds between start_ts and the exit" },
+    "spawn_tool_use_id": { "type": "string", "description": "exit lines: the tool_use id of the Agent call that spawned this process, from the harness meta.json; named apart from tool_use_id because that one identifies the call a tool line describes" },
+    "spawn_depth": { "type": "integer", "minimum": 0, "description": "exit lines: spawnDepth from the harness meta.json, how deep in the spawn tree this process sat" },
+    "model": { "type": "string", "description": "exit lines: the engine the child actually ran on, from the harness meta.json" },
+    "agent_transcript_path": { "type": "string", "description": "exit lines: the harness-written transcript of this subagent, the pointer a consumer re-verifies against" },
     "rule": { "type": "string", "description": "deny lines: the registry rule id that refused the call" },
     "reason": { "type": "string", "description": "deny lines: the refusal text shown to the model" }
   },
