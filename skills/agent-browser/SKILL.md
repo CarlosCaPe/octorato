@@ -1,6 +1,6 @@
 ---
 name: agent-browser
-description: "CLI de automatizacion de navegador para agentes, nativo en Rust, sin Playwright. Navega, llena formularios, da clic, toma screenshots y extrae datos. Dispara con 'abre el sitio', 'toma screenshot', 'prueba esta web', 'QA'."
+description: "Rust-native browser automation CLI for agents, no Playwright. Navigates, fills forms, clicks, takes screenshots and extracts data. Triggers on 'abre el sitio', 'toma screenshot', 'prueba esta web', 'QA'."
 ---
 
 # agent-browser: Browser Automation CLI for AI Agents

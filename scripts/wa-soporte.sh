@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Envia un WhatsApp por el canal de SOPORTE, no por el numero personal del operador.
+# Sends a WhatsApp through the SUPPORT channel, never through the operator's personal number.
 #
 # Por que existe: el MCP `whatsapp` esta cableado al puente personal (puerto 8080).
 # Cualquier mcp__whatsapp__send_message sale desde el numero del operador. Para

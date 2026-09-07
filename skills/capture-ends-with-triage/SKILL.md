@@ -1,6 +1,6 @@
 ---
 name: capture-ends-with-triage
-description: "Un pipeline programado que solo vuelca datos crudos obliga al humano a sintetizar, y por eso se omite. Todo capture debe cerrar con un paso de TRIAGE que diagnostique causa y siguiente accion. Aplica al construir o revisar cualquier job periodico."
+description: "A scheduled pipeline that only dumps raw data forces the human to synthesize, and that is why it gets skipped. Every capture must close with a TRIAGE step that diagnoses cause and next action. Applies when building or reviewing any periodic job."
 metadata:
   type: reference
 ---

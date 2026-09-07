@@ -1,36 +1,38 @@
 #!/usr/bin/env python3
-"""d__stop__wa-guardia.py — Stop detector: si mande un mensaje y espero respuesta, arma la guardia.
+"""d__stop__wa-guardia.py: Stop detector: if I sent a message and I am waiting on a reply, arm the watch.
 
-Directiva del operador (2026-08-04): "el hook que arme la guardia solo". Los
-watchers le sirven, pero "a veces entran y a veces no" porque hasta ahora
-dependian de que el modelo se acordara de armarlos, y una regla que depende de
-la memoria del modelo se salta bajo carga (skills/reflexes-over-discipline).
-Su propia acotacion fija el alcance: "al menos cuando esperemos algo, si no pues
-no". Un watcher sin espera es ruido que entrena a ignorar avisos.
+Operator directive (2026-08-04): "el hook que arme la guardia solo" (the hook
+should arm the watch by itself). The watchers are useful to him, but "a veces
+entran y a veces no" (sometimes they fire and sometimes they do not) because so
+far they depended on the model remembering to arm them, and a rule that depends
+on the model memory gets skipped under load (skills/reflexes-over-discipline).
+His own qualifier sets the scope: "al menos cuando esperemos algo, si no pues
+no" (at least when we are waiting on something, otherwise no). A watcher with
+nothing to wait for is noise that trains you to ignore alerts.
 
-La condicion NO es mi intencion, es un hecho verificable en el store del puente:
-mande un mensaje saliente hace poco a un chat y no hay guardia viva para ese
-chat. La evidencia es el mensaje enviado, no lo que yo crea haber hecho.
+The condition is NOT my intent, it is a verifiable fact in the bridge store: I
+sent an outbound message to a chat recently and there is no live watch for that
+chat. The evidence is the sent message, not what I believe I did.
 
-Dispara sobre la CONJUNCION de:
-  1. hay >=1 mensaje saliente en los ultimos VENTANA_MIN minutos, en cualquiera
-     de los dos puentes,
-  2. ese chat no tiene un proceso `wa-guardia.py ... --vigilar` corriendo,
-  3. no se aviso ya por ese chat en esta sesion.
+Fires on the CONJUNCTION of:
+  1. there is >=1 outbound message in the last VENTANA_MIN minutes, on either
+     of the two bridges,
+  2. that chat has no `wa-guardia.py ... --vigilar` process running,
+  3. no alert was raised for that chat in this session already.
 
-Sobre un acierto BLOQUEA una vez con el comando exacto, para que el modelo arme
-el Monitor antes de cerrar el turno.
+On a hit it BLOCKS once with the exact command, so the model arms the Monitor
+before closing the turn.
 
-Que NO cuenta como espera:
-  - los latidos de salud del puente (contenido "latido-...")
-  - mensajes al propio numero del puente (auto-envios de diagnostico)
+What does NOT count as waiting:
+  - bridge health heartbeats (content "latido-...")
+  - messages to the bridge own number (diagnostic self-sends)
 
-Loop safety: stop_hook_active=true significa que ya bloqueamos este turno, pasa.
-Fail-open en todo error: un detector roto jamas debe secuestrar la conversacion.
+Loop safety: stop_hook_active=true means we already blocked this turn, pass.
+Fail-open on every error: a broken detector must never hijack the conversation.
 
 Stdin:  {"transcript_path": str, "stop_hook_active": bool, "session_id": str, ...}
-Stdout: {"decision": "block", "reason": "..."} sobre un acierto, si no nada.
-Exit:   siempre 0.
+Stdout: {"decision": "block", "reason": "..."} on a hit, else nothing.
+Exit:   always 0.
 """
 from __future__ import annotations
 

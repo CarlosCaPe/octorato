@@ -1,40 +1,41 @@
 #!/usr/bin/env python3
-"""Latido activo de puentes de WhatsApp: mide la TUBERIA, no el proceso.
+"""Active heartbeat for WhatsApp bridges: it measures the PIPE, not the process.
 
-POR QUE EXISTE. Un puente puede estar caido dias sin que nadie se entere, porque
-las dos sondas obvias mienten:
+WHY IT EXISTS. A bridge can be down for days without anyone noticing, because
+the two obvious probes lie:
 
-  1. "el proceso existe" (pgrep). Un puente puede estar vivo, autenticado y con
-     socket abierto, y llevar horas sin persistir un solo mensaje.
-  2. "la base se escribio hace poco" (mtime). No distingue ROTO de QUIETO. En un
-     canal de poco trafico, horas sin escribir puede ser silencio legitimo o un
-     atasco, y la sonda no puede decir cual.
+  1. "the process exists" (pgrep). A bridge can be alive, authenticated and with
+     an open socket, and go hours without persisting a single message.
+  2. "the database was written recently" (mtime). It does not tell BROKEN from
+     QUIET. On a low-traffic channel, hours without a write can be legitimate
+     silence or a jam, and the probe cannot say which.
 
-La sonda que no miente es ACTIVA: mandar un mensaje y comprobar que aterriza.
-Es la diferencia entre preguntar "¿respiras?" y ponerle un espejo en la boca.
+The probe that does not lie is ACTIVE: send a message and check that it lands.
+It is the difference between asking "are you breathing?" and holding a mirror to
+the mouth.
 
-ALCANCE HONESTO. Ejercita el camino de SALIDA (API -> whatsmeow -> ack del
-servidor -> escritura a SQLite). NO ejercita el de ENTRADA, que es otro manejador
-del mismo binario. Un puente que envia pero tiene la recepcion atorada pasaria en
-verde. Es mucho mas que pgrep y menos que "la tuberia completa".
+HONEST SCOPE. It exercises the OUTBOUND path (API -> whatsmeow -> server ack ->
+SQLite write). It does NOT exercise the INBOUND one, which is a different
+handler of the same binary. A bridge that sends but has reception stuck would
+pass green. It is far more than pgrep and less than "the whole pipe".
 
-DONDE VIVE EL PUENTE. Un puente puede correr en esta maquina o en un servidor.
-Si su config trae la clave `remoto`, TODAS las sondas (proceso, enlace,
-aterrizaje) y la cura van contra ese servidor por SSM, y levantar el binario
-local queda PROHIBIDO. El 18-ago-2026 esta distincion no existia: el puente de
-soporte ya vivia en la EC2, la sonda de aterrizaje leia la replica local (que se
-refresca cada 5 min, o sea que un sello de hace 40 segundos jamas podia
-aparecer), y la cura levantaba el binario de aqui. Resultado: FAIL garantizado
-cada 10 minutos y una segunda sesion de WhatsApp clonada en cada vuelta.
+WHERE THE BRIDGE LIVES. A bridge can run on this machine or on a server. If its
+config carries the `remoto` key, ALL the probes (process, link, landing) and the
+cure go against that server over SSM, and starting the local binary is
+FORBIDDEN. On 2026-08-18 this distinction did not exist: the support bridge
+already lived on the EC2, the landing probe read the local replica (which
+refreshes every 5 min, so a stamp from 40 seconds ago could never show up), and
+the cure started the binary here. Result: a guaranteed FAIL every 10 minutes and
+a second WhatsApp session cloned on every pass.
 
-CONFIGURACION. Los datos del canal (numeros, rutas) viven en
-company/config/wa-puentes.json, que esta gitignored. Este script es publico y no
-debe contener ningun identificador de cliente.
+CONFIGURATION. The channel data (numbers, paths) lives in
+company/config/wa-puentes.json, which is gitignored. This script is public and
+must not contain any client identifier.
 
-Uso:
-    wa-latido.py                 comprueba, y si hace falta cura
-    wa-latido.py --sin-curar     solo diagnostica
-    wa-latido.py --selftest      autoprueba con fixtures
+Usage:
+    wa-latido.py                 check, and cure if needed
+    wa-latido.py --sin-curar     diagnose only
+    wa-latido.py --selftest      self-test with fixtures
 """
 import argparse
 import fcntl

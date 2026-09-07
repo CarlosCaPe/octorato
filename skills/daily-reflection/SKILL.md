@@ -1,6 +1,6 @@
 ---
 name: daily-reflection
-description: "Retro honesta de fin de sesion, errores primero, que destila la leccion a memoria del cerebro. Dispara con 'que aprendiste hoy?', 'reflexiona', '/reflect', 'what did you learn today', 'how would you be better tomorrow'."
+description: "Honest end-of-session retro, errors first, that distills the lesson into brain memory. Triggers on 'que aprendiste hoy?', 'reflexiona', '/reflect', 'what did you learn today', 'how would you be better tomorrow'."
 metadata:
   type: reflex
   short-description: "Honest session retro → 3 questions → distil the lesson to memory (reflection becomes reflex)"

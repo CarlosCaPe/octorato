@@ -1,6 +1,6 @@
 ---
 name: theory-plus-practice-prompts
-description: "Todo documento tecnico largo que explica un marco y demuestra un caso DEBE llevar prompts ejecutables con datos reales junto a las afirmaciones. Ni teoria sin prompts ni prompts sin teoria. Aplica a POCs, whitepapers y entregables."
+description: "Any long technical document that explains a framework and demonstrates a case MUST carry runnable prompts with real data next to the claims. No theory without prompts, no prompts without theory. Applies to POCs, whitepapers and deliverables."
 ---
 
 # theory-plus-practice-prompts

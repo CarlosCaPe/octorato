@@ -1,6 +1,6 @@
 ---
 name: cotizacion-legal-baseline
-description: "Clausulado legal base Mexico B2B que TODA cotizacion o propuesta lleva desde el borrador 1: propiedad intelectual, LFPDPPP, confidencialidad, limite de responsabilidad, garantia, licenciamiento e IVA."
+description: "Baseline Mexico B2B legal clauses that EVERY quote or proposal carries from draft 1: intellectual property, LFPDPPP, confidentiality, liability cap, warranty, licensing and VAT."
 metadata:
   type: reference
 ---

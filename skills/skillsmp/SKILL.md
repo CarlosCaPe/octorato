@@ -1,6 +1,6 @@
 ---
 name: skillsmp
-description: "Busca, descubre e instala agent skills desde skillsmp.com, la coleccion abierta mas grande de archivos SKILL.md. Dispara al pedir 'busca skills para X', instalar uno de skillsmp, o pedir recomendaciones de skills de la comunidad."
+description: "Searches, discovers and installs agent skills from skillsmp.com, the largest open collection of SKILL.md files. Triggers on 'busca skills para X', on installing one from skillsmp, or on asking for community skill recommendations."
 ---
 
 # SkillsMP - Agent Skills Marketplace Integration

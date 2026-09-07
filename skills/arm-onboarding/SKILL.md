@@ -1,6 +1,6 @@
 ---
 name: arm-onboarding
-description: "Protocolo paso a paso para crear un arm nuevo de cliente: archivos requeridos, sync-ai-docs, el grafo de linaje sellado del arm, alta en QueryMaster y la higiene de gitignore. Dispara con 'crear un arm' u 'onboard a un cliente'."
+description: "Step-by-step protocol to create a new client arm: required files, sync-ai-docs, the arm's sealed lineage graph, QueryMaster registration and gitignore hygiene. Triggers on 'crear un arm' or 'onboard a un cliente'."
 metadata:
   type: workflow
   short-description: "How to onboard a new client arm: required files, sync-ai-docs, sealed lineage graph, QueryMaster connections, one-file rule"

@@ -1,40 +1,41 @@
 #!/usr/bin/env python3
-"""g__stop__goal-anchor.py — Stop gate: la pila de objetivos no se erosiona.
+"""g__stop__goal-anchor.py: Stop gate: the goal stack does not erode.
 
-Problema que resuelve: tras encadenar obstaculos (un permiso, una region
-apagada, un binario que falta), el agente cierra el sub-objetivo con evidencia
-legitima y reporta victoria. El objetivo RAIZ de la sesion lleva turnos sin
-mencionarse. El contexto reescribe `intent` en cada obstaculo, asi que la raiz
-se pierde sin que nadie lo note. Ningun otro mecanismo del cerebro la persiste
-entre turnos.
+The problem it solves: after chaining obstacles (a permission, a disabled
+region, a missing binary), the agent closes the sub-goal with legitimate
+evidence and reports victory. The ROOT goal of the session has gone unmentioned
+for turns. Context rewrites `intent` at every obstacle, so the root is lost
+without anyone noticing. No other mechanism in the brain persists it across
+turns.
 
-Este gate la persiste en disco y bloquea UNA vez cuando el agente declara
-cierre habiendo perdido de vista la raiz.
+This gate persists it to disk and blocks ONCE when the agent declares closure
+having lost sight of the root.
 
-Ciclo por turno (todo dentro del mismo Stop; el payload trae transcript_path):
-  1. Lee del transcript el ultimo mensaje del operador y el ultimo del asistente.
-  2. Ancla. Sin estado previo: el prompt del operador, cortado a 240 chars.
-     Re-ancla SOLO con marcador determinista (prefijo `objetivo:` / `goal:`,
-     frase de pivote, o un ancla ya cerrada mas prompt nuevo). Fuera de eso el
-     ancla es pegajosa toda la sesion: "no me deja entrar" o "sale AccessDenied"
-     son reacciones del operador al obstaculo, NO objetivos nuevos.
-  3. Mencion. Saca palabras de contenido del ancla y las busca en la respuesta.
-     Dos distintas bastan: turns_since_mention vuelve a 0.
-  4. Dispara solo con la conjuncion completa (ver _should_fire).
-  5. Gobernador: techo duro de 2 interrupciones por ancla; en la segunda el
-     ancla se cierra sola y el gate no vuelve a hablar de ella.
+Per-turn cycle (all inside the same Stop; the payload carries transcript_path):
+  1. Read the last operator message and the last assistant message from the
+     transcript.
+  2. Anchor. With no prior state: the operator prompt, cut to 240 chars.
+     Re-anchors ONLY on a deterministic marker (prefix `objetivo:` / `goal:`, a
+     pivot phrase, or an already-closed anchor plus a new prompt). Outside that
+     the anchor is sticky for the whole session: "no me deja entrar" or "sale
+     AccessDenied" are the operator reacting to the obstacle, NOT new goals.
+  3. Mention. Pull content words out of the anchor and look for them in the
+     response. Two distinct ones are enough: turns_since_mention returns to 0.
+  4. Fires only on the full conjunction (see _should_fire).
+  5. Governor: hard ceiling of 2 interruptions per anchor; on the second one the
+     anchor closes itself and the gate stops talking about it.
 
-Conservador por construccion: cualquier duda pasa. Un falso positivo aqui
-interrumpe trabajo real; un falso negativo solo deja pasar un turno.
+Conservative by construction: any doubt passes. A false positive here interrupts
+real work; a false negative only lets one turn through.
 
-Estado: ~/.claude/.cache/goal-anchor/<session_id>.json
+State: ~/.claude/.cache/goal-anchor/<session_id>.json
 
-Escape deliberado: cualquier linea de la respuesta con `goal-anchor-ok` exime
-el turno.
+Deliberate escape: any line of the response carrying `goal-anchor-ok` exempts
+the turn.
 
 Stdin:  {"session_id": str, "transcript_path": str, "stop_hook_active": bool}
-Stdout: {"decision": "block", "reason": "..."} al disparar, si no nada.
-Exit:   siempre 0.
+Stdout: {"decision": "block", "reason": "..."} on a hit, else nothing.
+Exit:   always 0.
 """
 from __future__ import annotations
 

@@ -1,28 +1,30 @@
 #!/usr/bin/env python3
-"""Guardia de chat: que llego y no hemos contestado, aqui y ahora.
+"""Chat watch: what arrived and we have not answered, here and now.
 
-DONDE ENCAJA. La vigilancia DURABLE de un canal es de `wa-sin-respuesta.py`, que
-corre como timer de systemd fuera de cualquier sesion y alerta por correo cuando
-un cliente pasa el umbral sin respuesta. Ese es el dueño del concepto "nadie
-contesto", y una sesion no es infraestructura.
+WHERE IT FITS. The DURABLE watch over a channel belongs to
+`wa-sin-respuesta.py`, which runs as a systemd timer outside any session and
+alerts by email when a client crosses the no-reply threshold. That is the owner
+of the "nobody answered" concept, and a session is not infrastructure.
 
-Esto es la capa de SESION, y contesta otra pregunta: "ponme al dia AHORA".
-No tiene umbral ni alerta, y no sustituye al vigia: si un chat importa de verdad,
-va en la seccion `vigilancia` de la config, no colgado de una sesion viva.
+This is the SESSION layer, and it answers a different question: "catch me up
+NOW". It has no threshold and no alert, and it does not replace the sentry: if a
+chat really matters, it belongs in the `vigilancia` section of the config, not
+hanging off a live session.
 
-Para no tener dos definiciones de lo mismo, la logica que decide QUE cuenta como
-pendiente (el filtro de acuses) y DONDE viven los puentes se importan del vigia.
-Un "gracias" no es un pendiente, y esa regla se escribe una sola vez.
+To avoid two definitions of the same thing, the logic that decides WHAT counts
+as pending (the acknowledgement filter) and WHERE the bridges live are imported
+from the sentry. A "thanks" is not a pending item, and that rule is written
+once.
 
-  --desde-ultimo-mio  (por omision) lo entrante DESPUES de mi ultimo envio.
-                      Responde "que me deben" sin fijar una ventana de horas a
-                      mano, que siempre queda corta o larga.
-  --vigilar           una linea por mensaje nuevo, no termina. Para colgarlo de
-                      un Monitor mientras dura la sesion.
+  --desde-ultimo-mio  (default) what came in AFTER my last send. Answers "who
+                      owes me" without setting a window of hours by hand, which
+                      always ends up too short or too long.
+  --vigilar           one line per new message, never exits. To hang off a
+                      Monitor for as long as the session lasts.
 
-Solo LEE. Nunca escribe en la base ni manda nada.
+Read only. It never writes to the database and never sends anything.
 
-Uso:
+Usage:
   wa-guardia.py <chat_jid> [--puente soporte|personal] [--vigilar] [--con-acuses]
   wa-guardia.py <chat_jid> --horas 24
 """

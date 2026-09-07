@@ -1,6 +1,6 @@
 ---
 name: tramite-mx-assistant
-description: "Asistente de tramites gubernamentales MX: maneja el portal con agent-browser, se DETIENE en captcha, OTP y pago con tarjeta, y recoge el PDF del correo. Para antecedentes penales, actas, apostillas, citas consulares, SAT e IMSS."
+description: "Assistant for MX government procedures: drives the portal with agent-browser, STOPS at captcha, OTP and card payment, and picks up the PDF from email. For criminal-record checks, civil registry certificates, apostilles, consular appointments, SAT and IMSS."
 ---
 
 # Trámite MX Assistant (asistente de trámites guiado)
