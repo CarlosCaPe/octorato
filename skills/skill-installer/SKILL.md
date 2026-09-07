@@ -7,6 +7,29 @@ metadata:
 
 # Skill Installer
 
+## Octorato first: use `octo pkg` for anything that will live in the brain
+
+A skill in `~/.claude/skills/` runs on every prompt. If the skill is going THERE, it
+is a package and it gets installed as one:
+
+```bash
+python3 ~/.claude/scripts/octo_pkg.py install https://github.com/<owner>/<repo>/tree/<ref>/<path>
+python3 ~/.claude/scripts/octo_pkg.py list
+python3 ~/.claude/scripts/octo_pkg.py uninstall <name>
+```
+
+That path validates `skill.json`, recomputes the tree hash, checks the detached
+`ssh-keygen -Y` signature against `registry/pkg-signers.pub`, vendors the tree into
+the gitignored `skills/vendor/<name>`, symlinks `skills/<name>` to it, and records the
+result in the tracked `packages.lock.json` so every machine reproduces it and pre-push
+re-verifies it. See the CLAUDE.md anchor "Kernel: packages".
+
+The scripts below stay for the case they were written for: an UNSIGNED third-party
+skill, installed on the Codex `--dest` path, outside the lock. Nothing claims those
+were verified, which is exactly why they do not get a seat in the brain's skills
+directory. If a skill has no signature and you want it in the brain anyway, that is a
+decision for the operator, not a default.
+
 Helps install skills. By default these are from https://github.com/openai/skills/tree/main/skills/.curated, but users can also provide other locations. Experimental skills live in https://github.com/openai/skills/tree/main/skills/.experimental and can be installed the same way.
 
 Use the helper scripts based on the task:
@@ -45,7 +68,7 @@ All of these scripts use network, so when running in the sandbox, request escala
 - Defaults to direct download for public GitHub repos.
 - If download fails with auth/permission errors, falls back to git sparse checkout.
 - Aborts if the destination skill directory already exists.
-- Installs into `$CODEX_HOME/skills/<skill-name>` (defaults to `~/.codex/skills`).
+- Installs into `$CODEX_HOME/skills/<skill-name>` (defaults to `~/.codex/skills`). It never writes into `~/.claude/skills/`: that is `octo pkg install`'s job, and only for a signed package.
 - Multiple `--path` values install multiple skills in one run, each named from the path basename unless `--name` is supplied.
 - Options: `--ref <ref>` (default `main`), `--dest <path>`, `--method auto|download|git`.
 

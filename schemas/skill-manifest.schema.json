@@ -2,11 +2,44 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://octorato/schemas/skill-manifest-v1.json",
   "title": "Octorato Skill Manifest",
-  "description": "Machine-readable manifest for a distributable skill (Milestone M5 — Distribution). Lets a stranger safely install a versioned skill: identity (name), vintage (semver version), terms (license), and the privileged actions it declares (capabilities). additionalProperties is false so typos surface instead of being silently ignored. Schema evolution happens via v1 → v2 (new $id path).",
+  "description": "Machine-readable manifest for a distributable package (Milestone M5 Distribution; v8 PACKAGE primitive). Lets a stranger safely install a versioned skill: identity (name), vintage (semver version), terms (license), the privileged actions it declares (capabilities), the hash of its own tree (tree_sha256) and the detached signature over this file (signature). additionalProperties is false so typos surface instead of being silently ignored. Schema evolution happens via v1 → v2 (new $id path).",
   "type": "object",
   "additionalProperties": false,
   "required": ["name", "version", "license"],
   "properties": {
+    "kind": {
+      "description": "What this manifest describes. 'skill' is signed, vendored under skills/vendor/<name> and symlinked into the discovery path. 'arm' is a client repo: validated and registered, never signed (an arm is the operator's own repo, so a signature would be the operator signing to himself). Absent means skill.",
+      "type": "string",
+      "enum": ["skill", "arm"]
+    },
+    "tree_sha256": {
+      "description": "sha256 over every file in the package except this manifest and its detached signature, feeding '<posix relpath>\\u0000<sha256 of the bytes>\\u0000' per file in sorted path order. Computed and checked by scripts/octo_pkg.py. Required for an installable skill package; absent on an in-repo manifest, whose tree changes on every edit.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "signature": {
+      "description": "Metadata about the DETACHED signature over this manifest, which lives beside it in skill.json.sig. The bytes are never inlined here: the signature covers this file, so it cannot be inside it. Because the manifest carries tree_sha256, a valid signature over the manifest is a signature over the tree.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "namespace": {
+          "description": "ssh-keygen -Y namespace the signature was made under. Always octorato-pkg.",
+          "type": "string",
+          "const": "octorato-pkg"
+        },
+        "signer": {
+          "description": "Allowed-signers principal expected to verify it, e.g. octorato-release.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "file": {
+          "description": "Relative path of the detached signature. Always skill.json.sig.",
+          "type": "string",
+          "const": "skill.json.sig"
+        }
+      }
+    },
     "name": {
       "description": "Skill slug — lowercase kebab-case, matches the skills/<name>/ directory.",
       "type": "string",
