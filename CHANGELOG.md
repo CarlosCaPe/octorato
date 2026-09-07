@@ -15,6 +15,10 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-09-07]: v7.2.4
+- fix(wa-soporte): bridge identity from private config, fail-closed without it (#275)
+- docs(changelog): backfill v7.2.3 (#274)
+
 ## [2026-09-07]: v7.2.3
 - docs(i18n): English descriptions for 71 skills and 10 script headers (#273)
 - docs(changelog): backfill v7.2.2 (#272)
