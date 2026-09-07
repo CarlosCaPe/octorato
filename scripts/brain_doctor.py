@@ -2155,9 +2155,14 @@ def check_packages_verified(fix: bool) -> Result:
             packages is a healthy brain, not an unfinished one)
       WARN  a lock entry absent on disk. A second machine that pulled the lock while
             offline must still be able to push an unrelated change, so this never
-            blocks; the unlock is `octo pkg sync`, which --fix runs.
-      FAIL  a present entry whose tree hash, signature or symlink does not match, or
-            a lock entry whose signer is in no allowed-signers file.
+            blocks; the unlock is `octo pkg sync`, which --fix runs. A dangling
+            skills/<name> link with no tree and no lock entry lands here too: it
+            resolves to nothing, so it loads nothing.
+      FAIL  a present entry whose tree hash, signature or symlink does not match, a
+            lock entry whose signer is in no allowed-signers file, an entry whose
+            declared kind disagrees with the installed manifest, or a vendored tree
+            with no lock entry at all (verify sweeps skills/vendor on disk, not only
+            the lock, because deleting an entry must not delete the check).
 
     Before any of that, a capability probe: `ssh-keygen -Y` is absent on old Windows
     OpenSSH. A verify that cannot check a signature has not checked it, so the probe
@@ -2197,7 +2202,7 @@ def check_packages_verified(fix: bool) -> Result:
     n_pass = data.get("pass", 0)
     if fails:
         return Result(key, FAIL,
-                      f"{len(fails)}/{total} package(s) are NOT what was signed: "
+                      f"{len(fails)}/{total} package(s) are NOT what the lock signed for: "
                       + "; ".join(fails[:4]),
                       "inspect the package, then reinstall it: "
                       "python3 scripts/octo_pkg.py uninstall <name> && octo pkg sync")

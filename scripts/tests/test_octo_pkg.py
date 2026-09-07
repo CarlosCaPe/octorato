@@ -838,6 +838,256 @@ class TestProbeAndExclude(SandboxCase):
         self.assertFalse(b.exclude_has("skills/x"))
 
 
+class TestQaCycle3(SandboxCase):
+    """Regressions found in QA cycle 3, one test per finding.
+
+    F1 the lock's unsigned `kind` field decided whether the signed ladder ran at all
+    F2 verify was lock-driven only, so a vendored tree with no lock entry was invisible
+    F3 the tree hash covered paths and bytes, so `chmod +x` on a shipped file was free
+    """
+
+    def _install_signed(self) -> Path:
+        key = self.mint_key()
+        pkg = self.stage("signed")
+        self.sign(key, pkg)
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "install", str(pkg)]), 0)
+        return self.brain.vendor_path("sample-package")
+
+    def _set_lock_kind(self, name: str, kind: str) -> None:
+        """Edit ONE field of packages.lock.json, the way a pull from a remote would.
+
+        The lock is tracked and unsigned, which is the whole premise of F1: this edit
+        needs no key, no signature and no write to the package itself.
+        """
+        lock = json.loads(self.brain.lock_path.read_text(encoding="utf-8"))
+        for entry in lock["packages"]:
+            if entry["name"] == name:
+                entry["kind"] = kind
+        self.brain.lock_path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+
+    def _verify_json(self) -> dict:
+        import contextlib, io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            octo_pkg.main(["--brain", str(self.root), "verify", "--all", "--json"])
+        return json.loads(buf.getvalue())
+
+    # -- F1 ---------------------------------------------------------------
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_f1_kind_flipped_to_arm_over_a_tampered_tree_is_fail(self):
+        """The finding, verbatim: one edited field in an unsigned tracked file used to
+        turn the whole ladder off for a present, tampered, vendored tree."""
+        dest = self._install_signed()
+        self._set_lock_kind("sample-package", "arm")
+        (dest / "reference.txt").write_text("tampered by whoever pushed the lock\n",
+                                            encoding="utf-8")
+        data = self._verify_json()
+        self.assertFalse(data["ok"], data)
+        self.assertEqual(data["pass"], 0, data)
+        self.assertEqual(len(data["fail"]), 1, data)
+        self.assertIn("tree changed since install", data["fail"][0],
+                      "the ladder must RUN on a present tree, whatever the lock's kind says")
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "verify", "--all"]), 1)
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_f1_kind_disagreeing_with_the_installed_manifest_is_fail_naming_both(self):
+        """Untampered tree, only the lock's kind edited. Still a FAIL, and the message
+        carries both values because either side could be the edited one."""
+        self._install_signed()
+        self._set_lock_kind("sample-package", "arm")
+        status, msg = octo_pkg.verify_entry(
+            self.brain, self.brain.load_lock()["packages"][0])
+        self.assertEqual(status, octo_pkg.FAIL, msg)
+        self.assertIn("'skill'", msg)
+        self.assertIn("'arm'", msg)
+        self.assertIn("installed manifest", msg)
+
+    def test_f1_installed_kind_comes_from_the_manifest_not_the_filename(self):
+        d = self.tmp / "kinds"
+        shutil.copytree(FIXTURE / "signed", d)
+        self.assertEqual(octo_pkg.installed_kind(d), "skill")
+        man = json.loads((d / "skill.json").read_text(encoding="utf-8"))
+        man["kind"] = "arm"
+        (d / "skill.json").write_text(json.dumps(man, indent=2) + "\n", encoding="utf-8")
+        self.assertEqual(octo_pkg.installed_kind(d), "arm",
+                         "what the manifest declares wins over the file it lives in")
+        del man["kind"]
+        (d / "skill.json").write_text(json.dumps(man, indent=2) + "\n", encoding="utf-8")
+        self.assertEqual(octo_pkg.installed_kind(d), "skill",
+                         "the schema says an absent kind means skill")
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_f1_a_real_arm_entry_with_no_vendor_tree_still_passes(self):
+        """Arm isolation is why verify does not reach into the arm's own repo, and that
+        behaviour is unchanged: it is presence on disk, not the declared kind, that
+        selects the skill ladder."""
+        lock = self.brain.load_lock()
+        lock["packages"].append({"name": "some-arm", "kind": "arm", "version": "1.0.0",
+                                 "tree_sha256": None, "signer": None,
+                                 "source": "git@example.test:o/some-arm.git",
+                                 "installed_at": "2026-01-01T00:00:00Z"})
+        self.brain.save_lock(lock)
+        status, msg = octo_pkg.verify_entry(self.brain, lock["packages"][0])
+        self.assertEqual(status, octo_pkg.PASS, msg)
+        self.assertIn("arm registered (validated, not signed)", msg)
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "verify", "--all"]), 0)
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_f1_an_arm_entry_that_also_has_a_vendor_tree_is_a_contradiction(self):
+        self._install_signed()
+        self._set_lock_kind("sample-package", "arm")
+        status, msg = octo_pkg.verify_entry(
+            self.brain, self.brain.load_lock()["packages"][0])
+        self.assertEqual(status, octo_pkg.FAIL, msg)
+        self.assertIn("an arm is never vendored into the brain", msg)
+
+    # -- F2 ---------------------------------------------------------------
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_f2_an_unlocked_vendor_tree_is_reported_by_verify_all(self):
+        """Delete the lock entry, keep the tree and the symlink: both paths are
+        gitignored and the link is in .git/info/exclude, so nothing else would ever
+        mention this tree again while it kept loading on every prompt."""
+        dest = self._install_signed()
+        self.brain.lock_path.write_text(
+            json.dumps({"version": 1, "packages": []}, indent=2) + "\n", encoding="utf-8")
+        data = self._verify_json()
+        self.assertFalse(data["ok"], data)
+        self.assertEqual(len(data["fail"]), 1, data)
+        self.assertIn("no packages.lock.json entry", data["fail"][0])
+        self.assertIn(str(dest), data["fail"][0], "the message must name the path")
+        self.assertEqual(data["total"], 1,
+                         "an unlocked tree counts toward the total, or the ratio lies")
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "verify", "--all"]), 1)
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_f2_a_dangling_stray_symlink_is_warn_not_fail(self):
+        """Decision, stated in scan_unlocked: a link with no tree resolves to nothing,
+        so it loads no code. It is litter from a half-removed install, and failing a
+        push over litter trains the operator to bypass the gate. Reported, not fatal."""
+        dest = self._install_signed()
+        shutil.rmtree(dest)
+        self.brain.lock_path.write_text(
+            json.dumps({"version": 1, "packages": []}, indent=2) + "\n", encoding="utf-8")
+        data = self._verify_json()
+        self.assertTrue(data["ok"], data)
+        self.assertEqual(data["fail"], [], data)
+        self.assertEqual(len(data["warn"]), 1, data)
+        self.assertIn("stray link", data["warn"][0])
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "verify", "--all"]), 0)
+        # and the unlock the message names actually clears it
+        self.assertEqual(
+            octo_pkg.main(["--brain", str(self.root), "uninstall", "sample-package"]), 0)
+        self.assertEqual(self._verify_json()["warn"], [])
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_f2_a_symlink_to_somewhere_else_entirely_is_not_ours_to_report(self):
+        """skills/<name> pointing outside skills/vendor is the operator's own link."""
+        outside = self.tmp / "his-own-skill"
+        outside.mkdir()
+        os.symlink(str(outside), self.brain.link_path("his-thing"), target_is_directory=True)
+        data = self._verify_json()
+        self.assertEqual((data["fail"], data["warn"]), ([], []), data)
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_f2_a_targeted_verify_does_not_sweep_the_disk(self):
+        """`verify <name>` answers about that name. The sweep belongs to --all."""
+        self._install_signed()
+        self.brain.lock_path.write_text(
+            json.dumps({"version": 1, "packages": []}, indent=2) + "\n", encoding="utf-8")
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "verify", "--all"]), 1)
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "verify", "other-name"]), 1,
+                         "a name that is in no lock is still its own FAIL")
+
+    # -- F3 ---------------------------------------------------------------
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_f3_chmod_x_changes_the_tree_hash_and_turns_verify_fail(self):
+        """A shipped script silently becoming executable is a material change to code
+        that sits in the always-on discovery path."""
+        dest = self._install_signed()
+        before = octo_pkg.tree_sha256(dest, "skill")
+        target = dest / "reference.txt"
+        os.chmod(target, 0o755)
+        self.assertNotEqual(before, octo_pkg.tree_sha256(dest, "skill"))
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "verify", "--all"]), 1)
+        os.chmod(target, 0o644)
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "verify", "--all"]), 0,
+                         "and dropping the bit again restores the original hash")
+
+    def test_f3_only_the_owner_execute_bit_moves_the_hash(self):
+        """Group and other bits are properties of the copy and of the publisher's
+        umask, not of the package. Hashing them would make the same bytes hash
+        differently on two machines for no security gain."""
+        d = self.tmp / "modes"
+        shutil.copytree(FIXTURE / "signed", d)
+        f = d / "reference.txt"
+        os.chmod(f, 0o644)
+        base = octo_pkg.tree_sha256(d, "skill")
+        for benign in (0o600, 0o666, 0o444, 0o640):
+            os.chmod(f, benign)
+            self.assertEqual(base, octo_pkg.tree_sha256(d, "skill"), oct(benign))
+        os.chmod(f, 0o744)
+        self.assertNotEqual(base, octo_pkg.tree_sha256(d, "skill"))
+        os.chmod(f, 0o644)
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "no mkfifo on this platform")
+    def test_f3_a_fifo_in_a_package_is_refused_the_way_a_symlink_is(self):
+        """It used to fall through `if not p.is_file(): continue`, so it was invisible
+        to the hash and still shipped inside the package."""
+        d = self.tmp / "fifo-pkg"
+        shutil.copytree(FIXTURE / "signed", d)
+        os.mkfifo(d / "pipe")
+        with self.assertRaises(octo_pkg.PkgError) as cm:
+            octo_pkg.tree_sha256(d, "skill")
+        self.assertIn("non-regular file", str(cm.exception))
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_f3_a_package_carrying_a_fifo_is_refused_in_staging(self):
+        """It was already refused before the fix, but by accident and far too late:
+        the hash ignored the FIFO, so the tree check passed, the SIGNATURE was checked,
+        and only copytree then choked on the special file and rolled back. Now it dies
+        in the staging area like a tampered tree, with no key involved at all."""
+        key = self.mint_key()
+        d = self.tmp / "fifo-install"
+        shutil.copytree(FIXTURE / "signed", d)
+        if not hasattr(os, "mkfifo"):
+            self.skipTest("no mkfifo on this platform")
+        os.mkfifo(d / "pipe")
+        self.sign(key, d)
+        octo_pkg.SIG_VERIFY_CALLS = 0
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "install", str(d)]), 1)
+        self.assertEqual(octo_pkg.SIG_VERIFY_CALLS, 0,
+                         "a tree this primitive cannot hash is refused before any key is used")
+        self.assertFalse(self.brain.vendor_path("sample-package").exists())
+
+    def test_f3_an_empty_directory_is_documented_as_not_covered(self):
+        """Pinned deliberately, because the docstring claims it. An empty directory
+        carries no bytes and nothing the runtime can load; a non-empty one is covered
+        through the paths of the files inside it."""
+        d = self.tmp / "empty-dir"
+        shutil.copytree(FIXTURE / "signed", d)
+        before = octo_pkg.tree_sha256(d, "skill")
+        (d / "hollow").mkdir()
+        self.assertEqual(before, octo_pkg.tree_sha256(d, "skill"),
+                         "an empty dir is invisible: this is the documented limit")
+        (d / "hollow" / "payload.md").write_text("no longer empty\n", encoding="utf-8")
+        self.assertNotEqual(before, octo_pkg.tree_sha256(d, "skill"),
+                            "the moment it carries a file, it is covered")
+
+    # -- fixtures ---------------------------------------------------------
+    def test_the_violation_fixture_is_the_benign_one_one_edit_away(self):
+        """`tampered/` is `signed/` with its tree_sha256 zeroed. Correcting that ONE
+        field makes it a valid package again, which is what keeps the fixture pair an
+        honest violation/benign pair after a re-hash."""
+        d = self.tmp / "one-edit"
+        shutil.copytree(FIXTURE / "tampered", d)
+        man = json.loads((d / "skill.json").read_text(encoding="utf-8"))
+        self.assertNotEqual(man["tree_sha256"], octo_pkg.tree_sha256(d, "skill"))
+        man["tree_sha256"] = octo_pkg.tree_sha256(d, "skill")
+        (d / "skill.json").write_text(json.dumps(man, indent=2) + "\n", encoding="utf-8")
+        self.assertEqual(json.loads((d / "skill.json").read_text(encoding="utf-8"))["tree_sha256"],
+                         octo_pkg.tree_sha256(d, "skill"))
+
+
 class TestGenerator(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="test-gen-"))

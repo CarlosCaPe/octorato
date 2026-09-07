@@ -252,7 +252,9 @@ out of git, and a row in the tracked `packages.lock.json`.
 That row is what makes a second machine reproducible: `ai-pull` runs `octo pkg sync`,
 which reinstalls from the lock and verifies. `brain_doctor` reports the same ladder as
 `packages-verified`, and pre-push refuses to publish while an installed package has
-drifted from what was signed.
+drifted from what was signed. `verify` also sweeps `skills/vendor` on disk, so a tree
+sitting there with no row in the lock is a failure and not a silence: deleting the row
+does not delete the check.
 
 ### How to publish a skill of your own
 

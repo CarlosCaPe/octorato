@@ -48,9 +48,20 @@ operator signing to himself.
 Verify ladder (`verify --all` exits 1 only on the FAIL tier):
   PASS  present, tree hash matches, signature verifies, symlink resolves
   WARN  a lock entry absent on disk (a second machine pulled the lock offline;
-        it must still be able to push an unrelated change)
-  FAIL  a present entry whose tree hash, signature or symlink does not match, or a
-        lock entry whose signer is in no allowed-signers file
+        it must still be able to push an unrelated change), or a dangling
+        skills/<name> link that points at a vendor tree nobody locked
+  FAIL  a present entry whose tree hash, signature or symlink does not match, a lock
+        entry whose signer is in no allowed-signers file, an entry whose declared
+        kind disagrees with the installed (signed) manifest, or a vendored tree with
+        no lock entry at all
+
+`verify --all` is disk-driven as well as lock-driven. The lock is unsigned and tracked,
+so it is an input, never the authority: deleting an entry, or editing its `kind`, must
+not be able to switch the ladder off for a tree that is still loading on every prompt.
+Presence at skills/vendor/<name> is what selects the skill ladder; the installed
+manifest, which the signature covers, is what says whether the package is a skill or an
+arm. A real arm, with no vendor tree, still PASSes on its lock row alone: arm isolation
+means verify never reaches into the arm's own repo.
 
 Selftest: `python3 scripts/octo_pkg.py --selftest registry/fixtures/META.kernel-package`
 runs every leg under a throwaway HOME with an ed25519 key generated at run time, so
@@ -403,12 +414,43 @@ def tree_sha256(pkg_dir: Path, kind: str = "skill") -> str:
     path, able to carry hooks and to rewrite the tree. Hashing it means a planted one
     changes the hash and verify goes FAIL, which is the whole point.
 
-    Feeds the digest `<posix relpath>\\0<sha256 of the bytes>\\0` per file, in sorted
-    path order, so a rename is a different hash and a content change is a different
-    hash. Symlinks inside a package are refused rather than followed; a package that
-    points outside itself is not a self-contained tree.
+    Feeds the digest `<posix relpath>\\0<sha256 of the bytes>\\0<x|->\\0` per file, in
+    sorted path order, so a rename is a different hash, a content change is a different
+    hash, and a file that BECOMES executable is a different hash. Symlinks inside a
+    package are refused rather than followed; a package that points outside itself is
+    not a self-contained tree, and so is anything that is neither a directory nor a
+    regular file.
+
+    The third field is a normalized boolean, `x` or `-`, never the raw mode. POSIX mode
+    bits are not portable and most of them are not a property of the package: the group
+    and other bits, the setuid bit and the umask a publisher happened to run under would
+    all make the same bytes hash differently on two machines. Owner-execute is the one
+    bit that changes what the file IS, because a shipped script silently becoming
+    executable is a material change to code that sits in the always-on discovery path.
+
+    What this hash does NOT cover, stated so the next reader does not over-trust it:
+
+      empty directories   a directory carries no bytes and no path of its own in the
+                          digest, so adding or removing an EMPTY one is invisible. It
+                          also carries nothing: no file, no code, nothing the runtime
+                          can load. A non-empty directory is covered through the paths
+                          of the files inside it.
+      timestamps, owner   mtime, uid and gid are not hashed. They are properties of the
+                          copy, not of the package, and every copytree rewrites them.
+      the mode's other    group, other, setuid, setgid and sticky bits. On the vendor
+      bits                path the brain owns the tree; the bit that decides whether a
+                          file can run as code is owner-execute, and that is the one.
+      the manifest        `skill.json` (or `arm.json`) and `skill.json.sig`, which carry
+                          the hash and the signature over it.
+
+    FIFOs, sockets and device nodes are not "not covered": they are REFUSED, the same
+    way symlinks are. They used to be skipped by the `is_file()` filter, which meant a
+    planted FIFO was invisible to the hash and still sat in the package. A package is a
+    tree of regular files; anything else in it is not content this primitive can verify,
+    so it is not installed at all.
     """
     import hashlib
+    import stat as _stat
     if kind not in MANIFEST_NAME:
         raise PkgError(f"unknown package kind {kind!r}")
     excluded = {MANIFEST_NAME[kind], SIG_NAME}
@@ -419,8 +461,16 @@ def tree_sha256(pkg_dir: Path, kind: str = "skill") -> str:
         if p.is_symlink():
             raise PkgError(f"package contains a symlink ({rel.as_posix()}); "
                            "a package tree must be self-contained")
-        if not p.is_file():
+        if p.is_dir():
             continue
+        if not p.is_file():
+            # A FIFO blocks the reader that opens it, a device node is not content at
+            # all, and both used to fall through the old `if not p.is_file(): continue`
+            # into the tree unhashed. Refusing is the honest answer: nothing here can
+            # say what those bytes are, so nothing here should claim to have checked
+            # them.
+            raise PkgError(f"package contains a non-regular file ({rel.as_posix()}); "
+                           "a package tree is directories and regular files only")
         if rel.as_posix() in excluded:
             continue
         files.append((rel.as_posix(), p))
@@ -428,6 +478,14 @@ def tree_sha256(pkg_dir: Path, kind: str = "skill") -> str:
         h.update(rel_posix.encode("utf-8"))
         h.update(b"\0")
         h.update(hashlib.sha256(p.read_bytes()).hexdigest().encode("ascii"))
+        h.update(b"\0")
+        # Windows has no POSIX exec bit; CPython synthesizes one from the extension
+        # (.exe, .bat, .cmd, .com), so a package whose hash was computed on Linux can
+        # differ when recomputed on Windows for exactly those files. That residual is
+        # named here rather than papered over with a platform branch: a hash that is
+        # computed differently per platform is worse than one whose limits are written
+        # down, and the brain publishes packages from POSIX.
+        h.update(b"x" if p.stat().st_mode & _stat.S_IXUSR else b"-")
         h.update(b"\0")
     return h.hexdigest()
 
@@ -874,63 +932,209 @@ def install_arm(brain: Brain, source: str, dest: str | None) -> int:
 # verify
 # --------------------------------------------------------------------------
 
-def verify_entry(brain: Brain, entry: dict) -> tuple[str, str]:
-    """Return (status, message) for one lock entry. Never raises."""
+def installed_kind(dest: Path) -> str | None:
+    """What the INSTALLED tree says it is, or None when it says nothing readable.
+
+    The manifest bytes are what the signature covers, so the manifest is the authority
+    on a package's kind. `packages.lock.json` is not: it is tracked, unsigned, and
+    arrives from a remote like any other file.
+
+    A tree carrying both manifests answers from `skill.json`, because that is the one
+    the signature and the tree hash are built around; the extra `arm.json` is content
+    and is hashed as such (see tree_sha256).
+    """
+    for kind in ("skill", "arm"):
+        mpath = dest / MANIFEST_NAME[kind]
+        if not mpath.is_file():
+            continue
+        try:
+            data = json.loads(mpath.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        declared = data.get("kind")
+        if declared in MANIFEST_NAME:
+            # What the manifest DECLARES wins over the file it was written into. A
+            # skill.json saying `"kind": "arm"` is answered as an arm and fails the
+            # comparison below, rather than being read as a skill because of its name.
+            return declared
+        if declared is None:
+            # schemas/skill-manifest.schema.json: "Absent means skill", and the same
+            # default applied to arm.json is the file's own kind.
+            return kind
+        return None
+    return None
+
+
+def _skill_ladder(brain: Brain, entry: dict, dest: Path) -> list[str]:
+    """Every check a PRESENT vendored tree must pass. Returns the problems it found.
+
+    Split out of verify_entry so it can be run unconditionally on a tree that exists,
+    whatever the lock's `kind` claims. It is a list and not an early return because a
+    contradiction (lock says arm, tree is vendored) and a tamper are two facts about the
+    same entry, and reporting only the first hides the second from whoever reads the
+    failure.
+    """
     name = str(entry.get("name") or "?")
-    kind = entry.get("kind") or "skill"
-    dest = brain.vendor_path(name) if kind == "skill" else None
+    problems: list[str] = []
 
     signer = entry.get("signer")
-    if kind == "skill":
-        if not signer:
-            return FAIL, f"{name}: lock entry carries no signer"
-        if signer not in brain.known_principals():
-            return FAIL, f"{name}: signer '{signer}' is in no allowed-signers file"
+    if not signer:
+        problems.append("lock entry carries no signer")
+    elif signer not in brain.known_principals():
+        problems.append(f"signer '{signer}' is in no allowed-signers file")
 
-    if kind == "arm":
-        # arms are not vendored into the brain; presence is the arm repo's own
-        # business (arm isolation). The lock records them, verify does not reach in.
-        return PASS, f"{name}: arm registered (validated, not signed)"
+    link = brain.link_path(name)
+    if not link.is_symlink():
+        problems.append(f"skills/{name} is not a symlink to {VENDOR_REL}/{name}")
+    else:
+        expected = os.path.relpath(dest, link.parent)
+        actual_link = os.readlink(link)
+        # readlink, not resolve: resolve() reports where the link ENDS UP, so a link
+        # rewritten to an absolute path outside the brain that happens to hold a copy of
+        # the tree would compare equal. The stored target itself has to be ours.
+        if actual_link != expected:
+            problems.append(f"skills/{name} points at {actual_link!r}, expected {expected!r}")
+        elif link.resolve() != dest.resolve():
+            problems.append(f"skills/{name} resolves to {link.resolve()}, not {dest}")
+
+    try:
+        actual = tree_sha256(dest, "skill")
+    except PkgError as e:
+        # Without a hash nothing downstream means anything: the signature covers a
+        # manifest that carries a hash, and there is none to compare it to.
+        problems.append(str(e))
+        return problems
+    if actual != entry.get("tree_sha256"):
+        problems.append(f"tree changed since install "
+                        f"(lock {str(entry.get('tree_sha256'))[:12]}, disk {actual[:12]})")
+
+    try:
+        mpath, manifest = load_manifest(dest, "skill")
+        if manifest.get("tree_sha256") != actual:
+            problems.append("installed manifest tree_sha256 does not match its own tree")
+        got = _verify_signature(brain, mpath, dest / SIG_NAME)
+        if got != signer:
+            problems.append(f"signed by '{got}', lock says '{signer}'")
+    except PkgError as e:
+        problems.append(str(e))
+    return problems
+
+
+def verify_entry(brain: Brain, entry: dict) -> tuple[str, str]:
+    """Return (status, message) for one lock entry. Never raises.
+
+    The lock's `kind` is NEVER load-bearing on its own. packages.lock.json is tracked
+    and unsigned, so one edited field arrives through an ordinary `git pull`; when
+    `kind: arm` short-circuited straight to PASS, that single edit switched the whole
+    ladder off for a tampered tree still sitting in the always-on discovery path. Two
+    rules replace it, and they hold in both directions:
+
+      1. a tree at skills/vendor/<name> means the full skill ladder RUNS, whatever the
+         lock says, because the code is loadable either way
+      2. what the package IS comes from the installed manifest, which the signature
+         covers, and a disagreement with the lock is a FAIL naming both values
+
+    A real arm entry, with no vendor tree, still PASSes: an arm lives in its own sealed
+    repo and verify does not reach in (arm isolation). That is why presence on disk, not
+    the declared kind, is what selects the ladder.
+    """
+    name = str(entry.get("name") or "?")
+    lock_kind = entry.get("kind") or "skill"
+    dest = brain.vendor_path(name)
 
     if dest.is_symlink():
         # The vendor entry itself must be a real directory. A symlink there means the
         # hashed bytes live somewhere nobody verified, and resolve() would happily
         # follow it and report PASS on a tree that is not the package.
         return FAIL, f"{name}: {VENDOR_REL}/{name} is a symlink, not the package tree"
+
     if not dest.exists():
+        if lock_kind == "arm":
+            # arms are not vendored into the brain; presence is the arm repo's own
+            # business (arm isolation). The lock records them, verify does not reach in.
+            return PASS, f"{name}: arm registered (validated, not signed)"
+        signer = entry.get("signer")
+        if not signer:
+            return FAIL, f"{name}: lock entry carries no signer"
+        if signer not in brain.known_principals():
+            return FAIL, f"{name}: signer '{signer}' is in no allowed-signers file"
         return WARN, f"{name}: absent on disk"
 
-    link = brain.link_path(name)
-    if not link.is_symlink():
-        return FAIL, f"{name}: skills/{name} is not a symlink to {VENDOR_REL}/{name}"
-    expected = os.path.relpath(dest, link.parent)
-    actual_link = os.readlink(link)
-    # readlink, not resolve: resolve() reports where the link ENDS UP, so a link
-    # rewritten to an absolute path outside the brain that happens to hold a copy of
-    # the tree would compare equal. The stored target itself has to be ours.
-    if actual_link != expected:
-        return FAIL, f"{name}: skills/{name} points at {actual_link!r}, expected {expected!r}"
-    if link.resolve() != dest.resolve():
-        return FAIL, f"{name}: skills/{name} resolves to {link.resolve()}, not {dest}"
+    problems: list[str] = []
+    on_disk = installed_kind(dest)
+    if on_disk is None:
+        problems.append(f"{VENDOR_REL}/{name} exists but declares no readable kind; "
+                        f"nothing there says what this tree is")
+    elif on_disk != lock_kind:
+        problems.append(f"installed manifest says kind '{on_disk}', "
+                        f"{LOCK_REL} says '{lock_kind}'")
+    if lock_kind == "arm":
+        # Both may even agree that it is an arm, and it is still wrong: an arm is a
+        # repo of the operator's own, cloned to its own path and registered in
+        # arms-paths.json. A copy of one under skills/vendor is a directory in the
+        # discovery path that nothing hashed and nothing signed.
+        problems.append(f"{LOCK_REL} says arm, yet {VENDOR_REL}/{name} exists; "
+                        f"an arm is never vendored into the brain")
+    problems += _skill_ladder(brain, entry, dest)
 
-    try:
-        actual = tree_sha256(dest, "skill")
-    except PkgError as e:
-        return FAIL, f"{name}: {e}"
-    if actual != entry.get("tree_sha256"):
-        return FAIL, (f"{name}: tree changed since install "
-                      f"(lock {str(entry.get('tree_sha256'))[:12]}, disk {actual[:12]})")
-
-    try:
-        mpath, manifest = load_manifest(dest, "skill")
-        if manifest.get("tree_sha256") != actual:
-            return FAIL, f"{name}: installed manifest tree_sha256 does not match its own tree"
-        got = _verify_signature(brain, mpath, dest / SIG_NAME)
-    except PkgError as e:
-        return FAIL, f"{name}: {e}"
-    if got != signer:
-        return FAIL, f"{name}: signed by '{got}', lock says '{signer}'"
+    if problems:
+        return FAIL, f"{name}: " + "; ".join(problems)
     return PASS, f"{name} {entry.get('version')}: tree, signature and symlink match"
+
+
+def scan_unlocked(brain: Brain, locked: set[str]) -> list[tuple[str, str]]:
+    """Walk skills/vendor on DISK and report what the lock does not name.
+
+    verify used to be lock-driven only, which made the most dangerous state of all
+    invisible: delete an entry from packages.lock.json, leave the vendored tree and its
+    skills/<name> symlink alone, and verify answered pass 0, fail [], ok true. Both
+    paths are gitignored and the symlink sits in .git/info/exclude, so `git status` had
+    nothing to say either, and the tree kept loading on every prompt. A lock is only a
+    manifest of what SHOULD be there; the disk is what actually runs.
+
+    Two shapes, two tiers:
+
+      FAIL  a directory (or a symlink) at skills/vendor/<name> with no lock entry. That
+            is loadable code nobody signed for, in the always-on discovery path. It is
+            the whole finding.
+      WARN  a dangling skills/<name> symlink into a vendor tree that does not exist.
+            Deliberately not a FAIL: a broken link resolves to nothing, so the runtime
+            loads no code from it. It is litter from a half-removed install, and
+            blocking a push over litter would train the operator to bypass the gate.
+            It is still reported, because nothing else cleans it up: `sync` only unlinks
+            a dangling link when a lock entry asks for a restore, and there is none.
+
+    A plain FILE dropped into skills/vendor is ignored: the discovery path loads
+    skills/<name>/SKILL.md, so a loose file there is not a package and inventing a
+    failure for it would be noise.
+    """
+    results: list[tuple[str, str]] = []
+    seen_trees: set[str] = set()
+    if brain.vendor_dir.is_dir():
+        for p in sorted(brain.vendor_dir.iterdir()):
+            if p.name in locked:
+                continue
+            if not (p.is_dir() or p.is_symlink()):
+                continue
+            seen_trees.add(p.name)
+            results.append((FAIL, f"{p.name}: {VENDOR_REL}/{p.name} is on disk with no "
+                                  f"{LOCK_REL} entry (unlocked package at {p})"))
+
+    skills_dir = brain.root / "skills"
+    if skills_dir.is_dir():
+        for p in sorted(skills_dir.iterdir()):
+            if not p.is_symlink() or p.name in locked or p.name in seen_trees:
+                continue
+            target = Path(os.path.normpath(os.path.join(str(p.parent), os.readlink(p))))
+            # Only links that claim to be ours. A symlink the operator made to somewhere
+            # else in his own filesystem is his business, not this primitive's.
+            if target != brain.vendor_path(p.name) or target.exists():
+                continue
+            results.append((WARN, f"{p.name}: skills/{p.name} points at "
+                                  f"{VENDOR_REL}/{p.name}, which does not exist and is in "
+                                  f"no {LOCK_REL} entry (stray link from a half-removed "
+                                  f"install; fix: octo pkg uninstall {p.name})"))
+    return results
 
 
 def cmd_verify(brain: Brain, names: list[str], all_: bool, as_json: bool) -> int:
@@ -957,6 +1161,12 @@ def cmd_verify(brain: Brain, names: list[str], all_: bool, as_json: bool) -> int
     for n in missing:
         results.append((FAIL, f"{n}: not in {LOCK_REL}"))
 
+    # The disk sweep runs only on the full pass. A targeted `verify <name>` answers
+    # about that name, and turning it into a whole-brain audit would make the doctor's
+    # scoped calls report failures the caller never asked about.
+    strays = scan_unlocked(brain, {str(p.get("name")) for p in lock["packages"]}) if all_ and not names else []
+    results.extend(strays)
+
     # Not conditional on the lock having entries. The doctor reports the probe as FAIL
     # on an empty lock too, and a verify that silently PASSes here while the doctor
     # goes red is the two disagreeing about the same machine.
@@ -966,6 +1176,10 @@ def cmd_verify(brain: Brain, names: list[str], all_: bool, as_json: bool) -> int
     fails = [m for s, m in results if s == FAIL]
     warns = [m for s, m in results if s == WARN]
     passes = [m for s, m in results if s == PASS]
+    # Strays count toward the total, so the doctor's "n/total verified" line stays an
+    # honest ratio: an unlocked tree is a package this brain is carrying, and leaving it
+    # out of the denominator would let the count read full while one of them is unsigned.
+    total = len(pkgs) + len(missing) + len(strays)
 
     if as_json:
         print(json.dumps({
@@ -974,14 +1188,17 @@ def cmd_verify(brain: Brain, names: list[str], all_: bool, as_json: bool) -> int
             "pass": len(passes),
             "warn": warns,
             "fail": fails,
-            "total": len(pkgs) + len(missing),
+            "total": total,
         }, ensure_ascii=False))
     else:
         for status, msg in results:
             print(f"[{status}] {msg}")
         print(f"packages: {len(passes)} verified, {len(warns)} absent, {len(fails)} failed "
-              f"({len(passes)}/{len(pkgs) + len(missing)})")
-        if warns:
+              f"({len(passes)}/{total})")
+        # Only the absent-on-disk WARNs are fixed by a sync. A stray-link WARN carries
+        # its own unlock in its message, and printing "run sync" under it would send the
+        # operator to a command that does nothing for the thing he just read about.
+        if any("fix:" not in m for m in warns):
             print(f"  fix: python3 scripts/{Path(__file__).name} sync")
     return 1 if fails else 0
 
@@ -1386,6 +1603,44 @@ def selftest(fixture: Path, real: Brain) -> int:
         check("sync on an empty lock changed nothing", before == after == [])
         check("verify --all exits 0 on an empty lock",
               main(["--brain", str(brain.root), "verify", "--all"]) == 0)
+
+        # 16. the lock's own fields are not what decides whether the ladder runs, and
+        # the lock is not the only thing verify looks at. Three legs, one per QA cycle 3
+        # finding, because each of them was a state where verify printed ok:true over a
+        # package the brain was still loading.
+        main(["--brain", str(brain.root), "install", str(signed)])
+        lock_json = json.loads(brain.lock_path.read_text(encoding="utf-8"))
+        lock_json["packages"][0]["kind"] = "arm"
+        brain.lock_path.write_text(json.dumps(lock_json, indent=2) + "\n", encoding="utf-8")
+        ref = dest / "reference.txt"
+        keep = ref.read_bytes()
+        ref.write_bytes(keep + b"tampered\n")
+        check("kind flipped to arm over a tampered tree is FAIL, not PASS",
+              main(["--brain", str(brain.root), "verify", "--all"]) == 1)
+        ref.write_bytes(keep)
+        lock_json["packages"][0]["kind"] = "skill"
+        brain.lock_path.write_text(json.dumps(lock_json, indent=2) + "\n", encoding="utf-8")
+        check("green again with the kind and the byte restored",
+              main(["--brain", str(brain.root), "verify", "--all"]) == 0)
+
+        os.chmod(ref, 0o755)
+        check("chmod +x on a package file turns verify FAIL",
+              main(["--brain", str(brain.root), "verify", "--all"]) == 1)
+        os.chmod(ref, 0o644)
+        check("green again once the execute bit is dropped",
+              main(["--brain", str(brain.root), "verify", "--all"]) == 0)
+
+        brain.lock_path.write_text(json.dumps({"version": 1, "packages": []}, indent=2) + "\n",
+                                   encoding="utf-8")
+        check("a vendored tree with no lock entry is FAIL, not invisible",
+              main(["--brain", str(brain.root), "verify", "--all"]) == 1)
+        shutil.rmtree(dest)
+        check("its dangling symlink alone is WARN, not FAIL",
+              main(["--brain", str(brain.root), "verify", "--all"]) == 0)
+        main(["--brain", str(brain.root), "uninstall", name])
+        check("uninstall clears the stray link the WARN named",
+              main(["--brain", str(brain.root), "verify", "--all"]) == 0
+              and not link.is_symlink())
     finally:
         if saved_home is not None:
             os.environ["HOME"] = saved_home
