@@ -82,7 +82,10 @@ if [ "$VIA" = "ssm" ]; then
 import json, sys
 try:
     r = json.load(open(sys.argv[1]))["puentes"]["soporte"]["remoto"]
-    print(r["instancia"], r["region"], r["perfil"])
+    vals = [str(r[k]) for k in ("instancia", "region", "perfil")]
+    if any(not v or v.startswith("{{") for v in vals):
+        raise ValueError("placeholder value still in place, fill the template")
+    print(*vals)
 except (OSError, KeyError, ValueError, TypeError) as e:
     print(f"puentes.soporte.remoto (instancia/region/perfil) missing in {sys.argv[1]}: {e}", file=sys.stderr)
     raise SystemExit(1)
@@ -98,12 +101,14 @@ fi
 # The instance id, region, profile and staging bucket come from the same
 # PRIVATE config (`puentes.soporte.remoto`), never from this published file.
 if [ -n "$archivo" ]; then
-  respuesta=$(WA_MENCIONES="${WA_MENCIONES:-}" python3 - "$destinatario" "$mensaje" "$archivo" "$PUERTO_SOPORTE" <<'PY'
+  # `if ! x=$(...)` keeps set -e from aborting before the JSON is echoed: every
+  # fail-closed branch inside prints its reason on stdout and exits 1.
+  if ! respuesta=$(WA_MENCIONES="${WA_MENCIONES:-}" python3 - "$destinatario" "$mensaje" "$archivo" "$PUERTO_SOPORTE" "$CONFIG_PUENTES" <<'PY'
 import base64, json, os, shlex, subprocess, sys, time, uuid
 from pathlib import Path
 
 destinatario, mensaje, archivo, puerto = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
-cfg_path = Path.home() / ".claude" / "company" / "config" / "wa-puentes.json"
+cfg_path = Path(sys.argv[5])
 try:
     remoto = json.loads(cfg_path.read_text())["puentes"]["soporte"]["remoto"]
     instancia, region = remoto["instancia"], remoto["region"]
@@ -176,12 +181,15 @@ finally:
     subprocess.run(aws + ["s3", "rm", s3_uri, "--only-show-errors"],
                    capture_output=True, timeout=60)
 PY
-)
+  ); then
+    echo "$respuesta"
+    exit 1
+  fi
   echo "$respuesta"
   exit 0
 fi
 
-respuesta=$(WA_MENCIONES="${WA_MENCIONES:-}" WA_VIA="$VIA" WA_INSTANCIA="$INSTANCIA_PUENTE" WA_REGION="$REGION_PUENTE" WA_PERFIL="$PERFIL_PUENTE" python3 - "$destinatario" "$mensaje" "$PUERTO_SOPORTE" <<'PY'
+if ! respuesta=$(WA_MENCIONES="${WA_MENCIONES:-}" WA_VIA="$VIA" WA_INSTANCIA="$INSTANCIA_PUENTE" WA_REGION="$REGION_PUENTE" WA_PERFIL="$PERFIL_PUENTE" python3 - "$destinatario" "$mensaje" "$PUERTO_SOPORTE" <<'PY'
 import json, os, subprocess, sys, time, urllib.request
 destinatario, mensaje, puerto = sys.argv[1], sys.argv[2], sys.argv[3]
 cuerpo = {"recipient": destinatario, "message": mensaje}
@@ -223,5 +231,8 @@ else:
     with urllib.request.urlopen(req, timeout=30) as r:
         print(r.read().decode())
 PY
-)
+); then
+  echo "$respuesta"
+  exit 1
+fi
 echo "$respuesta"
