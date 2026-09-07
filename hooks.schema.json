@@ -6,7 +6,7 @@
     "$schema": { "type": "string" }
   },
   "patternProperties": {
-    "^(UserPromptSubmit|PreToolUse|PostToolUse|Stop|SubagentStop|Notification|PreCompact|SessionStart)$": {
+    "^(UserPromptSubmit|PreToolUse|PostToolUse|Stop|SubagentStart|SubagentStop|PermissionDenied|Notification|PreCompact|SessionStart)$": {
       "type": "array",
       "items": {
         "type": "object",

@@ -675,7 +675,8 @@ REGISTRY_SCHEMA = CLAUDE_DIR / "registry" / "rules.schema.json"
 NAMING_POLICY = CLAUDE_DIR / "registry" / "naming-policy.yaml"
 HOOKS_JSON = CLAUDE_DIR / "hooks.json"
 CLAUDE_MD = CLAUDE_DIR / "CLAUDE.md"
-CC_EVENTS = {"UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionStart", "SubagentStop"}
+CC_EVENTS = {"UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionStart",
+             "SubagentStart", "SubagentStop", "PermissionDenied"}
 
 
 def _rt(p: Path) -> str:

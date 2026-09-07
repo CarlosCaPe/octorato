@@ -258,6 +258,37 @@ if ! "$PYTHON" "$REPO_ROOT/scripts/brain_doctor.py" --registry >/dev/null 2>&1; 
   } >&2
   exit 1
 fi
+
+# v8: the kernel library the gates lean on is proven by unit test, not by eye.
+# `discover` picks up scripts/tests/test_*.py only, so a future `bench_*.py` (the
+# `octo bench` timing harness) is excluded by the pattern: timing is never a gate
+# (docs/architecture/v8-kernel.md section 3), and a slow box must not block a push.
+if [ -d "$REPO_ROOT/scripts/tests" ]; then
+  if [ -z "$PYTHON" ]; then
+    {
+      echo ""
+      echo "✗ pre-push: no working Python found; the unit-test gate requires Python."
+    } >&2
+    exit 1
+  fi
+  # git exports GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE to its hooks, and a test
+  # that shells out to git would then act on the LIVE repo mid-push (the phantom
+  # 'base' commit, 2026-09-05). Scrub them for the whole test run.
+  OCTO_NOGIT="env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_PREFIX \
+    -u GIT_COMMON_DIR -u GIT_OBJECT_DIRECTORY -u GIT_NAMESPACE \
+    -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_QUARANTINE_PATH"
+  if ! (cd "$REPO_ROOT" && $OCTO_NOGIT "$PYTHON" -m unittest discover scripts/tests -p 'test_*.py' >/dev/null 2>&1); then
+    {
+      echo ""
+      echo "✗ pre-push: scripts/tests FAILED."
+      (cd "$REPO_ROOT" && $OCTO_NOGIT "$PYTHON" -m unittest discover scripts/tests -p 'test_*.py' 2>&1 | tail -30 | sed 's/^/  /')
+      echo ""
+      echo "  Fix the failing test (or the code it pins), then re-push."
+    } >&2
+    exit 1
+  fi
+fi
+
 # v7: prove the gates on the exact tree being pushed and write the gate receipt
 # (~/.claude/.cache/receipts/global.jsonl). Without it the outward-send gate
 # refuses every send at this HEAD until a doctor runs; with it, a push and a

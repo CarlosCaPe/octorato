@@ -1,0 +1,719 @@
+#!/usr/bin/env python3
+"""kernel_proc.py: the v8 PROCESS + JOURNAL library (docs/architecture/v8-kernel.md).
+
+Two primitives, one file, stdlib only:
+
+PROCESS - a locked JSON process table at ~/.claude/.cache/kernel/ptable.json.
+    Same shape as the session registry (session-isolation-hook.py:52-75,
+    octo-dim.py:52-62): read-modify-write under `fcntl.flock`, published with
+    `os.replace` so a reader never sees a half-written table. Written from the
+    register hooks only, never from the hot path (Phase 2 adds the one
+    amortized exception, a lane claim on a first write).
+
+JOURNAL - one append-only, hash-chained file per process at
+    ~/.claude/.cache/kernel/journal/<pid>.jsonl. `append()` takes the lock on
+    `<pid>.jsonl.lock`, reads the TAIL line, and derives `seq` and
+    `prev = sha256(previous raw line)` from it, so the hot path never seeks to
+    the head of the file. `start_ts` is copied forward on every line for the
+    same reason: Phase 3 reads the elapsed wall time of a process from the one
+    line it already holds. Writes go through O_APPEND, every line stays under
+    4096 bytes (the POSIX atomic-append bound, trace-storage.md:77-93) and a
+    line that would exceed it is truncated with a `trunc` marker rather than
+    split.
+
+Liveness (one definition, v8-kernel.md section 2, used by every gate):
+    main process    live = own journal mtime, OR any child's journal mtime,
+                    within TTL 900 s, so a parent waiting on a long child never
+                    reads dead.
+    subagent        live = no `exit` line AND parent live AND own journal mtime
+                    within TTL, so a killed or hung child expires after 15
+                    minutes and releases what it holds.
+
+Import budget: this module is imported by the PreToolUse hot-path gate, so its
+module-level imports are exactly json, os, sys, time, hashlib and fcntl (guarded
+for Windows). No pathlib, no tempfile, no re, no subprocess: everything heavier
+is imported inside the function that needs it, which is never a hot-path
+function.
+
+CLI: `python3 scripts/kernel_proc.py --selftest [fixture_dir]` runs the same
+register-and-journal flow the register hooks prove, in a sandbox HOME.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import sys
+import time
+
+try:
+    import fcntl as _fcntl
+    _HAS_FCNTL = True
+except ImportError:  # Windows: no flock. O_APPEND still gives per-write atomicity.
+    _HAS_FCNTL = False
+
+# ── constants ────────────────────────────────────────────────────────────────
+
+TTL = 900               # seconds; session-isolation-hook.py:48 uses the same window
+FUTURE_SKEW = 120       # an mtime this far ahead of now is clock skew, not liveness
+MAX_LINE = 4096         # POSIX atomic-append bound; the newline is counted below
+PRUNE_AFTER = 7 * 24 * 3600
+PID_MAX = 128
+_CORE_KEYS = ("seq", "ts", "start_ts", "pid", "kind", "prev")
+_PID_OK = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+KINDS = ("start", "tool", "exit", "deny", "receipt", "quota", "open", "release")
+
+UNLOCK = ("export OCTO_KERNEL_OPEN=1 in the shell that launched Claude Code, "
+          "then restart")
+
+
+# ── paths (lazy: HOME is rebound by every sandbox selftest) ──────────────────
+
+def brain_dir() -> str:
+    return os.path.join(os.path.expanduser("~"), ".claude")
+
+
+def kernel_dir() -> str:
+    return os.path.join(brain_dir(), ".cache", "kernel")
+
+
+def ptable_path() -> str:
+    return os.path.join(kernel_dir(), "ptable.json")
+
+
+def ptable_lock_path() -> str:
+    return os.path.join(kernel_dir(), ".ptable.lock")
+
+
+def journal_dir() -> str:
+    return os.path.join(kernel_dir(), "journal")
+
+
+def safe_pid(pid) -> str:
+    """A pid reaches us from a hook payload, so it is untrusted text: keep it to
+    one path segment. Anything outside [A-Za-z0-9._-] becomes '_' and the result
+    is capped, so a crafted agent_id cannot escape the journal directory."""
+    s = "".join(c if c in _PID_OK else "_" for c in str(pid))
+    s = s.lstrip(".") or "unknown"
+    return s[:PID_MAX]
+
+
+def journal_path(pid) -> str:
+    return os.path.join(journal_dir(), safe_pid(pid) + ".jsonl")
+
+
+def lock_path(pid) -> str:
+    return journal_path(pid) + ".lock"
+
+
+def pending_path() -> str:
+    return os.path.join(kernel_dir(), "open-pending.json")
+
+
+# ── locking ─────────────────────────────────────────────────────────────────
+
+def _flock(fh) -> None:
+    if _HAS_FCNTL:
+        _fcntl.flock(fh, _fcntl.LOCK_EX)
+
+
+def _funlock(fh) -> None:
+    if _HAS_FCNTL:
+        try:
+            _fcntl.flock(fh, _fcntl.LOCK_UN)
+        except OSError:
+            pass
+
+
+# ── journal ─────────────────────────────────────────────────────────────────
+
+def _dumps(rec: dict) -> bytes:
+    return json.dumps(rec, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+
+
+def _tail_line(path: str) -> bytes:
+    """Last complete line as raw bytes, or b'' when the file is absent or empty.
+
+    Reads the last 8 KiB only: a line is capped at MAX_LINE, so that window
+    always contains at least one whole line once the file is bigger than it.
+    FileNotFoundError is the empty case; every other OSError propagates, because
+    an unreadable journal is exactly what the gate must refuse to run without.
+    """
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            if size == 0:
+                return b""
+            window = min(size, 8192)
+            fh.seek(size - window, os.SEEK_SET)
+            chunk = fh.read(window)
+    except FileNotFoundError:
+        return b""
+    parts = [p for p in chunk.split(b"\n") if p]
+    return parts[-1] if parts else b""
+
+
+def _count_lines(path: str) -> int:
+    n = 0
+    try:
+        with open(path, "rb") as fh:
+            for _ in fh:
+                n += 1
+    except FileNotFoundError:
+        return 0
+    return n
+
+
+def _fit(rec: dict) -> bytes:
+    """Serialize under MAX_LINE (newline included), truncating payload fields.
+
+    Shrinks the longest non-core string first, then drops non-core fields
+    outright, and marks the line `trunc` the moment anything is lost. The core
+    identity fields (seq, ts, start_ts, pid, kind, prev) are never touched: a
+    truncated line still chains and still replays.
+    """
+    line = _dumps(rec)
+    limit = MAX_LINE - 1
+    if len(line) <= limit:
+        return line
+    rec = dict(rec)
+    rec["trunc"] = True
+    core = set(_CORE_KEYS) | {"trunc"}
+    line = _dumps(rec)
+    while len(line) > limit:
+        strings = sorted(((len(v), k) for k, v in rec.items()
+                          if k not in core and isinstance(v, str) and len(v) > 16),
+                         reverse=True)
+        if strings:
+            k = strings[0][1]
+            over = len(line) - limit
+            keep = max(8, len(rec[k]) - over - 8)
+            rec[k] = rec[k][:keep] + "..."
+            line = _dumps(rec)
+            continue
+        extras = [k for k in rec if k not in core]
+        if not extras:
+            return _dumps({k: rec[k] for k in list(_CORE_KEYS) + ["trunc"] if k in rec})
+        extras.sort(key=lambda k: len(_dumps({k: rec[k]})), reverse=True)
+        rec.pop(extras[0])
+        line = _dumps(rec)
+    return line
+
+
+def append(pid, record: dict) -> bytes:
+    """Append one chained line to <pid>.jsonl and return the raw bytes written.
+
+    Raises OSError when the journal cannot be created or written. That is the
+    ONLY failure the hot-path gate turns into a deny, so it must reach the
+    caller unswallowed.
+    """
+    os.makedirs(journal_dir(), exist_ok=True)
+    path = journal_path(pid)
+    now = float(record.get("ts") or time.time())
+    fh = None
+    try:
+        fh = open(lock_path(pid), "a")
+        _flock(fh)
+        prev_raw = _tail_line(path)
+        if prev_raw:
+            prev_hash = hashlib.sha256(prev_raw).hexdigest()
+            try:
+                prev = json.loads(prev_raw.decode("utf-8", "replace"))
+            except ValueError:
+                prev = None
+            if isinstance(prev, dict):
+                seq = int(prev.get("seq", -1)) + 1
+                start_ts = float(prev.get("start_ts") or record.get("start_ts") or now)
+            else:
+                # corrupt tail: keep the chain honest (prev still points at the
+                # bytes on disk) and recover seq by counting, the one slow path.
+                seq = _count_lines(path)
+                start_ts = float(record.get("start_ts") or now)
+        else:
+            prev_hash = None
+            seq = 0
+            start_ts = float(record.get("start_ts") or now)
+
+        rec = {"seq": seq, "ts": round(now, 6), "start_ts": round(start_ts, 6),
+               "pid": safe_pid(pid), "kind": str(record.get("kind") or "tool"),
+               "prev": prev_hash}
+        for k, v in record.items():
+            if k not in ("seq", "ts", "start_ts", "pid", "kind", "prev"):
+                rec[k] = v
+        line = _fit(rec)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        try:
+            os.write(fd, line + b"\n")
+        finally:
+            os.close(fd)
+        return line
+    finally:
+        if fh is not None:
+            _funlock(fh)
+            try:
+                fh.close()
+            except OSError:
+                pass
+
+
+def read_journal(pid) -> list:
+    """Parsed lines, oldest first. Unparseable lines come back as None."""
+    out = []
+    try:
+        with open(journal_path(pid), "rb") as fh:
+            for raw in fh:
+                raw = raw.rstrip(b"\n")
+                if not raw:
+                    continue
+                try:
+                    out.append(json.loads(raw.decode("utf-8", "replace")))
+                except ValueError:
+                    out.append(None)
+    except FileNotFoundError:
+        return []
+    return out
+
+
+def verify_detail(pid) -> tuple:
+    """(0, 'ok') when the chain is intact, else (1, reason).
+
+    Checks, per line: it parses, `seq` increments from 0, `prev` is the sha256
+    of the previous raw line (null on the first), and `start_ts` never moves.
+    """
+    path = journal_path(pid)
+    try:
+        with open(path, "rb") as fh:
+            raws = [r.rstrip(b"\n") for r in fh]
+    except FileNotFoundError:
+        return 1, f"no journal for {safe_pid(pid)}"
+    raws = [r for r in raws if r]
+    if not raws:
+        return 1, f"empty journal for {safe_pid(pid)}"
+    prev_raw = None
+    start_ts = None
+    for i, raw in enumerate(raws):
+        try:
+            rec = json.loads(raw.decode("utf-8", "replace"))
+        except ValueError:
+            return 1, f"line {i} does not parse"
+        if not isinstance(rec, dict):
+            return 1, f"line {i} is not an object"
+        if rec.get("seq") != i:
+            return 1, f"line {i} carries seq {rec.get('seq')}"
+        want = None if prev_raw is None else hashlib.sha256(prev_raw).hexdigest()
+        if rec.get("prev") != want:
+            return 1, f"line {i} prev {rec.get('prev')} != {want}"
+        if i == 0:
+            start_ts = rec.get("start_ts")
+        elif rec.get("start_ts") != start_ts:
+            return 1, f"line {i} start_ts moved to {rec.get('start_ts')}"
+        prev_raw = raw
+    return 0, f"{len(raws)} line(s) chain"
+
+
+def verify(pid) -> int:
+    """0 when the chain is intact, 1 otherwise. As an exit code:
+       python3 -c "import sys,kernel_proc; sys.exit(kernel_proc.verify('<pid>'))"
+    """
+    return verify_detail(pid)[0]
+
+
+# ── process table ───────────────────────────────────────────────────────────
+
+def read_ptable() -> dict:
+    try:
+        with open(ptable_path(), "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        if isinstance(data, dict) and isinstance(data.get("processes"), dict):
+            return data
+    except (FileNotFoundError, ValueError, OSError):
+        pass
+    return {"version": 1, "processes": {}}
+
+
+def _write_ptable(data: dict) -> None:
+    os.makedirs(kernel_dir(), exist_ok=True)
+    tmp = ptable_path() + ".tmp.%d" % os.getpid()
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2, sort_keys=True)
+        os.replace(tmp, ptable_path())
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _mtime(path: str):
+    try:
+        return os.stat(path).st_mtime
+    except OSError:
+        return None
+
+
+def _own_fresh(pid, now: float, ttl: int) -> bool:
+    mt = _mtime(journal_path(pid))
+    if mt is None:
+        return False
+    age = now - mt
+    return -FUTURE_SKEW <= age <= ttl
+
+
+def has_exit(pid) -> bool:
+    """True when the journal's tail carries an `exit` line. Tail-scoped on
+    purpose: `exit` is written last, and a full read on every liveness probe
+    would put the whole journal on the hot path."""
+    path = journal_path(pid)
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            window = min(size, 16384)
+            fh.seek(size - window, os.SEEK_SET)
+            chunk = fh.read(window)
+    except OSError:
+        return False
+    for raw in reversed([p for p in chunk.split(b"\n") if p]):
+        try:
+            rec = json.loads(raw.decode("utf-8", "replace"))
+        except ValueError:
+            continue
+        if isinstance(rec, dict) and rec.get("kind") == "exit":
+            return True
+    return False
+
+
+def is_live(pid, table: dict = None, now: float = None, ttl: int = TTL,
+            _seen: set = None) -> bool:
+    """Liveness exactly as v8-kernel.md section 2 defines it."""
+    pid = safe_pid(pid)
+    now = time.time() if now is None else now
+    table = read_ptable() if table is None else table
+    procs = table.get("processes", {})
+    if _seen is None:
+        _seen = set()
+    if pid in _seen:          # a cycle in ppid links: refuse to loop
+        return False
+    _seen.add(pid)
+
+    entry = procs.get(pid) or {}
+    ppid = entry.get("ppid")
+    if ppid:
+        # subagent: no exit line AND own journal fresh AND parent live
+        if has_exit(pid):
+            return False
+        if not _own_fresh(pid, now, ttl):
+            return False
+        return is_live(ppid, table, now, ttl, _seen)
+
+    # main process: own journal fresh, or ANY child's journal fresh
+    if _own_fresh(pid, now, ttl):
+        return True
+    for child, ent in procs.items():
+        if ent.get("ppid") == pid and _own_fresh(child, now, ttl):
+            return True
+    return False
+
+
+def prune(table: dict, now: float = None) -> int:
+    """Drop process rows whose journal is gone or older than PRUNE_AFTER.
+
+    Called from the register hooks only. An exited-but-recent row is KEPT so
+    `octo ps` can still show its exit status (Phase 1b).
+    """
+    now = time.time() if now is None else now
+    procs = table.get("processes", {})
+    dead = []
+    for pid, ent in procs.items():
+        mt = _mtime(journal_path(pid))
+        if mt is None or (now - mt) > PRUNE_AFTER:
+            dead.append(pid)
+    for pid in dead:
+        procs.pop(pid, None)
+    return len(dead)
+
+
+def register(pid, entry: dict, start_record: dict = None) -> dict:
+    """Record a process in the ptable and open its journal with a `start` line.
+
+    ptable first, journal second, both idempotent: a re-registered pid keeps its
+    first `start` line and gets its row refreshed. Never assumes another hook
+    ran first (same-event hooks run in parallel and SubagentStart may lose the
+    race with the child's own first tool call).
+    """
+    pid = safe_pid(pid)
+    os.makedirs(kernel_dir(), exist_ok=True)
+    fh = None
+    try:
+        fh = open(ptable_lock_path(), "a")
+        _flock(fh)
+        table = read_ptable()
+        procs = table.setdefault("processes", {})
+        prune(table)
+        row = dict(procs.get(pid) or {})
+        row.update({k: v for k, v in entry.items() if v not in (None, "")})
+        row["pid"] = pid
+        row.setdefault("registered_ts", round(time.time(), 6))
+        procs[pid] = row
+        _write_ptable(table)
+    finally:
+        if fh is not None:
+            _funlock(fh)
+            try:
+                fh.close()
+            except OSError:
+                pass
+    rec = {"kind": "start"}
+    rec.update(start_record or {})
+    for k in ("ppid", "type", "worktree", "dim_worktree", "cwd"):
+        if entry.get(k):
+            rec.setdefault(k, entry[k])
+    append(pid, rec)
+    return rec
+
+
+# ── open mode (OCTO_KERNEL_OPEN) ────────────────────────────────────────────
+
+def open_mode() -> bool:
+    """Read from the hook's own process env only. A payload field never counts:
+    the harness owns the env, the model owns the payload (the CLAUDE_SESSION_ID
+    precedent, dimension-awareness-hook.py:98-105)."""
+    v = os.environ.get("OCTO_KERNEL_OPEN", "").strip().lower()
+    return v not in ("", "0", "false", "no", "off")
+
+
+def pending_note(pid) -> None:
+    """Count one tool call that ran while the journal was unwritable. Best
+    effort by construction: the journal is already broken, so a failure here
+    must not change the verdict."""
+    pid = safe_pid(pid)
+    now = round(time.time(), 6)
+    try:
+        os.makedirs(kernel_dir(), exist_ok=True)
+        data = {}
+        try:
+            with open(pending_path(), "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (FileNotFoundError, ValueError, OSError):
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        row = data.get(pid) or {}
+        row["count"] = int(row.get("count") or 0) + 1
+        row.setdefault("first_ts", now)
+        row["last_ts"] = now
+        data[pid] = row
+        tmp = pending_path() + ".tmp.%d" % os.getpid()
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, sort_keys=True)
+        os.replace(tmp, pending_path())
+    except Exception:
+        return
+
+
+def backfill_open(pid) -> bool:
+    """Write the `open` line for calls that ran unjournaled, once the journal is
+    writable again, and clear the pending row. One stat on the hot path when
+    nothing is pending."""
+    path = pending_path()
+    if not os.path.exists(path):
+        return False
+    pid = safe_pid(pid)
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (FileNotFoundError, ValueError, OSError):
+        return False
+    if not isinstance(data, dict) or pid not in data:
+        return False
+    row = data.pop(pid) or {}
+    append(pid, {"kind": "open", "count": int(row.get("count") or 0),
+                 "first_ts": row.get("first_ts"), "last_ts": row.get("last_ts")})
+    try:
+        if data:
+            tmp = path + ".tmp.%d" % os.getpid()
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, sort_keys=True)
+            os.replace(tmp, path)
+        else:
+            os.unlink(path)
+    except OSError:
+        pass
+    return True
+
+
+# ── helpers shared with the hooks ───────────────────────────────────────────
+
+def input_hash(tool_input) -> str:
+    """sha256 of the tool input. The journal records the HASH, never the
+    content: a run stays verifiable and its verdicts reconstructible while the
+    payload itself stays in the harness transcript (v8-kernel.md section 6)."""
+    try:
+        blob = json.dumps(tool_input, sort_keys=True, separators=(",", ":"),
+                          ensure_ascii=True, default=str)
+    except Exception:
+        blob = str(tool_input)
+    return hashlib.sha256(blob.encode("utf-8", "replace")).hexdigest()
+
+
+def enclosing_worktree_root(path: str):
+    """Nearest ancestor holding a `.git` entry, or None. Pure path walk, no git
+    spawn: this runs inside a hook (dimension-awareness-hook.py:310-319)."""
+    p = os.path.abspath(path or ".")
+    while True:
+        if os.path.exists(os.path.join(p, ".git")):
+            return p
+        parent = os.path.dirname(p)
+        if parent == p:
+            return None
+        p = parent
+
+
+def resolve_pid(payload: dict) -> str:
+    """pid = payload agent_id else session_id. One resolution order for the
+    register hooks and the gate, so a child's tool line and its start line land
+    in the same journal."""
+    if not isinstance(payload, dict):
+        return ""
+    for key in ("agent_id", "session_id"):
+        v = payload.get(key)
+        if v:
+            return str(v)
+    return ""
+
+
+# ── selftest ────────────────────────────────────────────────────────────────
+
+def _scripts_dir() -> str:
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def selftest_flow(fixture_dir: str = None) -> int:
+    """Prove the PROCESS primitive end to end in a sandbox HOME.
+
+    Feeds the two register fixtures and three tool payloads carrying agent_id
+    through the REAL hook scripts as subprocesses, then asserts: the ptable
+    holds parent and child with the parent link and a worktree, the child's
+    journal holds start + 3 tool lines, both chains verify, and both processes
+    read live. Shared by the two register hooks and by this module's own
+    --selftest so there is one implementation, not three.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+
+    scripts = _scripts_dir()
+    root = os.path.dirname(scripts)
+    fdir = fixture_dir or os.path.join("registry", "fixtures", "ARCHITECTURE.kernel-process")
+    if not os.path.isabs(fdir):
+        fdir = os.path.join(root, fdir)
+    if not os.path.isdir(fdir):
+        print(f"selftest FAIL: fixture dir missing: {fdir}", file=sys.stderr)
+        return 1
+
+    sandbox = tempfile.mkdtemp(prefix="kernel-selftest-")
+    saved = (os.environ.get("HOME"), os.environ.get("USERPROFILE"))
+    failures = []
+    try:
+        seed = os.path.join(fdir, "home")
+        if os.path.isdir(seed):
+            shutil.copytree(seed, sandbox, dirs_exist_ok=True)
+
+        env = dict(os.environ)
+        for k in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX",
+                  "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE",
+                  "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_QUARANTINE_PATH",
+                  "OCTO_KERNEL_OPEN"):
+            env.pop(k, None)
+        env["HOME"] = sandbox
+        env["USERPROFILE"] = sandbox
+        env["CLAUDE_SESSION_ID"] = "__selftest__"
+
+        def feed(script: str, payload: dict) -> tuple:
+            cp = subprocess.run([sys.executable, os.path.join(scripts, script)],
+                                input=json.dumps(payload), capture_output=True,
+                                text=True, cwd=sandbox, env=env, timeout=30)
+            return cp.returncode, cp.stdout
+
+        with open(os.path.join(fdir, "start.json"), encoding="utf-8") as fh:
+            start = json.load(fh)
+        with open(os.path.join(fdir, "subagent_start.json"), encoding="utf-8") as fh:
+            sub = json.load(fh)
+
+        rc, _ = feed("r__session__proc-register.py", start)
+        if rc != 0:
+            failures.append(f"session register exited {rc}")
+        rc, _ = feed("r__subagent-start__proc-register.py", sub)
+        if rc != 0:
+            failures.append(f"subagent register exited {rc}")
+
+        parent = str(start.get("session_id") or "")
+        child = str(sub.get("agent_id") or "")
+        for i in range(3):
+            rc, out = feed("g__pretool__kernel.py", {
+                "session_id": parent, "agent_id": child,
+                "tool_name": "Bash", "tool_use_id": f"toolu_selftest_{i}",
+                "tool_input": {"command": f"echo {i}"}, "cwd": sandbox,
+            })
+            if rc != 0 or out.strip():
+                failures.append(f"tool call {i} was not allowed silently (rc={rc})")
+
+        # read the sandbox state through this very library
+        os.environ["HOME"] = sandbox
+        os.environ["USERPROFILE"] = sandbox
+        table = read_ptable()
+        procs = table.get("processes", {})
+        if safe_pid(parent) not in procs:
+            failures.append("ptable has no parent row")
+        crow = procs.get(safe_pid(child)) or {}
+        if not crow:
+            failures.append("ptable has no child row")
+        else:
+            if crow.get("ppid") != safe_pid(parent):
+                failures.append(f"child ppid {crow.get('ppid')} != {safe_pid(parent)}")
+            if not crow.get("worktree"):
+                failures.append("child row carries no worktree")
+            if not crow.get("type"):
+                failures.append("child row carries no agent type")
+        lines = read_journal(child)
+        kinds = [(l or {}).get("kind") for l in lines]
+        if kinds != ["start", "tool", "tool", "tool"]:
+            failures.append(f"child journal kinds {kinds} != start + 3 tool")
+        for who, pid in (("child", child), ("parent", parent)):
+            code, why = verify_detail(pid)
+            if code != 0:
+                failures.append(f"{who} chain broken: {why}")
+        if not is_live(child, table):
+            failures.append("child does not read live")
+        if not is_live(parent, table):
+            failures.append("parent does not read live")
+    finally:
+        os.environ["HOME"] = saved[0] or ""
+        if saved[1] is None:
+            os.environ.pop("USERPROFILE", None)
+        else:
+            os.environ["USERPROFILE"] = saved[1]
+        shutil.rmtree(sandbox, ignore_errors=True)
+
+    if failures:
+        print("selftest FAIL: " + "; ".join(failures), file=sys.stderr)
+        return 1
+    print(f"selftest PASS: process registered, journal chained "
+          f"(kernel_proc vs {os.path.basename(fdir)})")
+    return 0
+
+
+def _cli() -> int:
+    if "--selftest" in sys.argv:
+        i = sys.argv.index("--selftest")
+        fixture = sys.argv[i + 1] if len(sys.argv) > i + 1 else None
+        return selftest_flow(fixture)
+    print(__doc__.strip().splitlines()[0])
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(_cli())
