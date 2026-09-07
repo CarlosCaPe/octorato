@@ -52,19 +52,25 @@ and `find ... -delete` (or `-exec rm`). Globs reduce to their longest literal
 directory before the lane test, so `git checkout -- pkg/*.py` cannot walk past a
 lane by never naming it literally, and `:/` / `:(top)` mean the whole root.
 
-NAMED RESIDUALS (measured as passing, deliberately not covered here): `rsync
---delete`, `dd`, `shred`, `ln -sf`, `perl -pi`, a `python -c` body (scanned only
-best-effort, as shell text), `git apply|rebase|merge|pull|cherry-pick|revert`,
-variable expansion (`rm -rf $DIR`, unknowable without running the shell), and a
-`-c` body nested deeper than 3. Each is a distinct verb table or an evaluator,
-not a gap in this one; they belong to a later pass, and none of them is the
-weekend shape.
+NAMED RESIDUALS, measured as passing and deliberately not covered here. The list
+is pinned by a test, so it stays equal to what the gate actually does:
+`rsync --delete`, `shred`, `ln -sf`, `perl -pi`; a `python -c` body (only
+best-effort, scanned as shell text) including one aimed at the state dir;
+`git apply|rebase|merge|pull|cherry-pick|revert`; variable expansion
+(`rm -rf $DIR`, unknowable without running the shell); a `-c` body nested deeper
+than 3; and xargs fed from STDIN (`cat list | xargs rm`, `xargs rm < list`),
+where the targets never appear in the command at all. Each is a distinct verb
+table or an evaluator, not a gap in this one, and none is the weekend shape.
 
 The kernel's own state is not a lane but a floor: any mutation targeting
 `~/.claude/.cache/kernel` (the process table, the journals, the locks) is denied
-for EVERY hooked process, this gate included. A process that can rewrite the
-table can grant itself any lane and erase the record. The operator's terminal is
-not hooked and stays the only writer.
+for EVERY hooked process, this gate included, and so is a mutation of any
+ANCESTOR of it by the same prefix test (`~/.claude/.cache`, `~/.claude`, `$HOME`
+as the target of an `rm -rf`), since a command that takes the parent takes the
+ledger with it. `touch`, `chmod`, `chattr` and `dd of=` are read for this floor
+only, never as lane writes. A process that can rewrite the table can grant itself
+any lane and erase the record. The operator's terminal is not hooked and stays
+the only writer.
 
 Hot path: the command is parsed first and the process table is read ONLY when
 the parse found something that can collide, so an ordinary `ls` or `pytest`
@@ -140,6 +146,24 @@ def describe(pid: str, row: dict) -> str:
     kind = (row or {}).get("type") or ("main loop" if not (row or {}).get("ppid") else "subagent")
     when = "never journaled" if age < 0 else f"last active {int(age)}s ago"
     return f"pid {pid} ({kind}, {when})"
+
+
+def glob_owner(pattern: str, table: dict, pid) -> tuple:
+    """(pid, row) of a LIVE process whose lane the glob actually reaches. The
+    prefix test cannot answer this one: the pattern has no literal directory to
+    prefix with, so each lane is matched against it instead."""
+    import time
+    now = time.time()
+    skip = kernel_proc.safe_pid(pid) if pid else None
+    for other, row in (table.get("processes") or {}).items():
+        if other == skip:
+            continue
+        if not any(glob_hits(pattern, kernel_proc.norm_path(l))
+                   for l in kernel_proc.lanes_of(row)):
+            continue
+        if kernel_proc.is_live(other, table, now):
+            return other, row
+    return None, None
 
 
 # ── token helpers (no `re` on the hot path) ─────────────────────────────────
@@ -302,20 +326,44 @@ def mutation_targets(base: str, args: list) -> list:
         scripted = any(a in ("-e", "-f") or a.startswith(("--expression", "--file"))
                        for a in args)
         return positional if scripted else positional[1:]
-    if base == "find":
-        deletes = "-delete" in args or (
-            any(a in ("-exec", "-execdir") for a in args)
-            and any(os.path.basename(a) in ("rm", "unlink", "shred", "truncate")
-                    for a in args))
-        if not deletes:
-            return []
-        roots = []
-        for a in args:
-            if a.startswith("-") or a in ("(", ")", "!"):
-                break
-            roots.append(a)
-        return roots or ["."]
+    if base in ("touch", "chmod", "chattr"):
+        # `chmod 644 f` / `chattr +i f`: the first positional is the mode, not a path
+        return positional if base == "touch" else positional[1:]
+    if base == "dd":
+        return [a.split("=", 1)[1] for a in args if a.startswith("of=") and len(a) > 3]
     return []
+
+
+_EXEC_MUTATORS = ("rm", "unlink", "shred", "truncate", "mv", "cp", "sed", "tee")
+_FIND_FILTERS = ("-name", "-iname", "-path", "-ipath", "-wholename")
+
+
+def find_targets(args: list) -> tuple:
+    """(search roots, name filter or None) for a `find` that deletes.
+
+    Only the token IMMEDIATELY after -exec/-execdir is the program being run:
+    scanning the whole argument list for the word `rm` made
+    `find pkg -exec grep rm {} \\;` look like a deletion. And a `find` carrying
+    a -name/-path filter does not touch every file under its root, so the roots
+    come back with that filter attached rather than as a bare directory."""
+    exec_mutates = False
+    for i, a in enumerate(args):
+        if a in ("-exec", "-execdir") and i + 1 < len(args):
+            if os.path.basename(args[i + 1]) in _EXEC_MUTATORS:
+                exec_mutates = True
+    if "-delete" not in args and not exec_mutates:
+        return [], None
+    roots = []
+    for a in args:
+        if a.startswith("-") or a in ("(", ")", "!"):
+            break
+        roots.append(a)
+    pattern = None
+    for i, a in enumerate(args):
+        if a in _FIND_FILTERS and i + 1 < len(args):
+            pattern = args[i + 1]
+            break
+    return (roots or ["."]), pattern
 
 
 def is_release(tokens: list) -> bool:
@@ -391,7 +439,8 @@ def whole_tree_verb(sub: str, rest: list):
         return "git worktree remove"
     # A bare `git checkout` prints state and changes nothing; only a checkout
     # that NAMES something switches the tree.
-    if sub == "checkout" and rest and "--" not in rest:
+    if sub == "checkout" and "--" not in rest \
+            and any(not a.startswith("-") for a in rest):
         return "git checkout <branch>"
     return None
 
@@ -426,38 +475,74 @@ def _is_glob(spec: str) -> bool:
     return any(c in spec for c in _MAGIC)
 
 
-def literal_prefix(spec: str, base_dir: str) -> str:
-    """A pathspec reduced to the longest LITERAL directory it can only act
-    inside. `pkg/*.py` becomes `pkg`, which prefix-matches every lane under it,
-    so a glob cannot walk past the lane test by never matching a lane literally.
-    git's magic top pathspecs (`:/`, `:(top)`) name the whole root."""
+_WHOLE_TREE_SPECS = ("*", "./*", ".", "./")
+
+
+def spec_target(spec: str, base_dir: str) -> tuple:
+    """('path', dir) when the spec can only act inside a literal directory;
+    ('glob', pattern) when it cannot.
+
+    `pkg/*.py` reduces to `pkg`, which prefix-matches every lane under it, so a
+    glob cannot walk past the lane test by never naming a lane literally. But a
+    spec whose FIRST component is already a glob (`*.log`, `zz*`) has no literal
+    directory, and reducing it to the tree root denied `rm -f *.log` under any
+    live sibling lane: a false deny on a command that touches nothing anyone
+    owns. Those are matched with fnmatch against each lane instead. Only the
+    specs that really do mean everything (`*`, `./*`, `.`, `:/`, `:(top)`) keep
+    the root."""
     spec = spec.strip()
-    if spec in _TOP_PATHSPECS:
-        return base_dir
+    if spec in _TOP_PATHSPECS or spec in _WHOLE_TREE_SPECS:
+        return "path", base_dir
     if spec.startswith(":"):
         close = spec.find(")")
         spec = spec[close + 1:] if spec.startswith(":(") and close != -1 else spec.lstrip(":")
         if not spec:
-            return base_dir
+            return "path", base_dir
+        if spec in _WHOLE_TREE_SPECS:
+            return "path", base_dir
     spec = os.path.expanduser(spec)
     if not _is_glob(spec):
-        return resolve(spec, base_dir)
-    parts = spec.split(os.sep)
+        return "path", resolve(spec, base_dir)
     keep = []
-    for part in parts:
+    for part in spec.split(os.sep):
         if _is_glob(part):
             break
         keep.append(part)
     literal = os.sep.join(keep)
-    return resolve(literal, base_dir) if literal else base_dir
+    if literal:
+        return "path", resolve(literal, base_dir)
+    return "glob", (spec if os.path.isabs(spec) else os.path.join(base_dir, spec))
+
+
+def glob_hits(pattern: str, lane: str) -> bool:
+    """Does this glob reach a lane, or any directory on its way? fnmatch's `*`
+    spans separators, so a lane deeper than the pattern still matches; the
+    ancestor walk covers the reverse, a pattern naming a directory the lane
+    lives in."""
+    import fnmatch
+    if fnmatch.fnmatch(lane, pattern):
+        return True
+    node = lane
+    while True:
+        parent = os.path.dirname(node)
+        if parent == node:
+            return False
+        if fnmatch.fnmatch(parent, pattern):
+            return True
+        node = parent
 
 
 # ── scan ────────────────────────────────────────────────────────────────────
 
 _TRIGGERS = ("git", "rm", "mv", "cp", "sed", "tee", ">", "octo", "find",
-             "unlink", "truncate", "xargs", "delete")
+             "unlink", "truncate", "xargs", "delete",
+             "touch", "chmod", "chattr", "dd")
 _C_HOSTS = ("bash", "sh", "zsh", "dash", "python", "python3", "py")
-_MUTATORS = ("rm", "mv", "cp", "sed", "tee", "unlink", "truncate", "find")
+_MUTATORS = ("rm", "mv", "cp", "sed", "tee", "unlink", "truncate")
+# Verbs that can damage the kernel's ledger without being a lane write. They are
+# tested against the state floor ONLY, never against a lane: `touch`/`chmod` on
+# a sibling's file is not the collision this rule is about.
+_STATE_VERBS = ("touch", "chmod", "chattr", "dd")
 _BROAD_ADD = ("-u", "--update", "./", ":/", ":(top)")
 _MAX_DEPTH = 3
 
@@ -538,11 +623,29 @@ def scan(command: str, cwd: str, depth: int = 0) -> list:
             if verb and root:
                 hits.append(("tree", root, verb))
             for spec in pathspecs(sub, rest, base_dir):
-                hits.append(("path", literal_prefix(spec, base_dir), f"git {sub}"))
+                kind, value = spec_target(spec, base_dir)
+                hits.append((kind, value, f"git {sub}"))
             continue
-        if base in _MUTATORS or base == "unlink":
+        if base == "find":
+            roots, pattern = find_targets(tokens[1:])
+            for root in roots:
+                if pattern:
+                    # the filter is the point: `find . -name '*.pyc' -delete`
+                    # reaches .pyc files, not every lane under the root
+                    hits.append(("glob",
+                                 os.path.join(resolve(root, here), "*" + pattern),
+                                 "find -delete"))
+                else:
+                    hits.append(("path", resolve(root, here), "find -delete"))
+            continue
+        if base in _MUTATORS:
             for target in mutation_targets(base, tokens[1:]):
-                hits.append(("path", literal_prefix(target, here), base))
+                kind, value = spec_target(target, here)
+                hits.append((kind, value, base))
+            continue
+        if base in _STATE_VERBS:
+            for target in mutation_targets(base, tokens[1:]):
+                hits.append(("state", resolve(target, here), base))
     return hits
 
 
@@ -586,7 +689,7 @@ def main() -> int:
 
     kdir = kernel_proc.norm_path(kernel_proc.kernel_dir())
     for kind, target, verb in hits:
-        if kind == "path" and kernel_proc.paths_conflict(target, kdir):
+        if kind in ("path", "state") and kernel_proc.paths_conflict(target, kdir):
             journal_deny(pid, {"target": target, "verb": verb, "why": "kernel-state"})
             deny(
                 f"KERNEL ISOLATION: `{verb}` targets {target}, inside the kernel's "
@@ -600,7 +703,12 @@ def main() -> int:
 
     table = kernel_proc.read_ptable()      # the one ptable read of this call
     for kind, target, verb in hits:
-        owner, row = kernel_proc.lane_owner(target, table, ignore=pid)
+        if kind == "state":
+            continue          # floor-only: already tested above
+        if kind == "glob":
+            owner, row = glob_owner(target, table, pid)
+        else:
+            owner, row = kernel_proc.lane_owner(target, table, ignore=pid)
         if not owner:
             continue
         journal_deny(pid, {"target": target, "owner": owner, "verb": verb,
@@ -613,7 +721,10 @@ def main() -> int:
                 "work. Stage by EXPLICIT pathspec (`git add <file>...`), or work "
                 "in your own worktree. The dimension gate denies this per session; "
                 "this one denies it per process, which is what two subagents of "
-                "one session need."
+                f"one session need. Its lanes free on its exit line, after "
+                f"{kernel_proc.TTL}s of silence, or when it delegates. The operator can "
+                f"free a stuck one: `octo ps --release {owner}` (Phase 1b; on a brain "
+                "without it, edit the ptable row from the terminal)."
             )
         elif kind == "tree":
             deny(
@@ -621,8 +732,10 @@ def main() -> int:
                 f"{target}, and {describe(owner, row)} holds a lane in it. This "
                 "is the shape that wiped 14 files across three builders on one "
                 "tree. Scope the change to your own paths, work in your own "
-                "worktree, or wait for that process to exit (its lanes free on "
-                f"its exit line, or after {kernel_proc.TTL}s of silence)."
+                "worktree. " + f"Its lanes free on its exit line, after "
+                f"{kernel_proc.TTL}s of silence, or when it delegates. The operator can "
+                f"free a stuck one: `octo ps --release {owner}` (Phase 1b; on a brain "
+                "without it, edit the ptable row from the terminal)."
             )
         else:
             deny(
