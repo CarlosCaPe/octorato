@@ -12,11 +12,37 @@ metadata:
 A skill in `~/.claude/skills/` runs on every prompt. If the skill is going THERE, it
 is a package and it gets installed as one:
 
+Run these from the brain checkout (`cd ~/.claude`):
+
 ```bash
-python3 ~/.claude/scripts/octo_pkg.py install https://github.com/<owner>/<repo>/tree/<ref>/<path>
-python3 ~/.claude/scripts/octo_pkg.py list
-python3 ~/.claude/scripts/octo_pkg.py uninstall <name>
+python3 scripts/octo_pkg.py list
+python3 scripts/octo_pkg.py verify --all
+python3 scripts/octo_pkg.py hash registry/fixtures/META.kernel-package/signed
 ```
+
+Install accepts a GitHub URL, `owner/repo` with `--path`, a git repository (remote URL
+or a local path), or a plain package directory:
+
+```bash
+python3 scripts/octo_pkg.py install <owner>/<repo> --path skills/<name>
+python3 scripts/octo_pkg.py install https://github.com/<owner>/<repo>/tree/<ref>/skills/<name>
+python3 scripts/octo_pkg.py uninstall <name>
+```
+
+`--ref` is optional: unset, it tries `main` then `master`. When a branch name contains
+slashes, pass `--path` so the ref is unambiguous.
+
+Publishing (the two commands a package author runs, in this order):
+
+```bash
+python3 scripts/octo_pkg.py hash <package-dir> --write
+ssh-keygen -Y sign -f <path-to-your-private-key> -n octorato-pkg <package-dir>/skill.json
+```
+
+`hash --write` embeds `tree_sha256` using the same function the installer recomputes.
+`ssh-keygen -Y sign` requires `-f` with the signing key and the `octorato-pkg` namespace;
+it writes the detached `skill.json.sig`, which ships beside the manifest. A worked,
+copy-paste walkthrough with a throwaway key is in the Getting-Started wiki page.
 
 That path validates `skill.json`, recomputes the tree hash, checks the detached
 `ssh-keygen -Y` signature against `registry/pkg-signers.pub`, vendors the tree into

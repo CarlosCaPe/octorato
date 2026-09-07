@@ -2171,9 +2171,13 @@ def check_packages_verified(fix: bool) -> Result:
     py = PYTHON or "python3"
 
     if fix:
-        run([py, str(script), "sync"], cwd=CLAUDE_DIR)
+        run([py, str(script), "--brain", str(CLAUDE_DIR), "sync"], cwd=CLAUDE_DIR)
 
-    cp = run([py, str(script), "verify", "--all", "--json"], cwd=CLAUDE_DIR)
+    # --brain pins the checkout the doctor is reporting on. octo_pkg would otherwise
+    # honor a CLAUDE_DIR in the environment and verify a different brain's lock while
+    # printing the result under this one's name.
+    cp = run([py, str(script), "--brain", str(CLAUDE_DIR), "verify", "--all", "--json"],
+             cwd=CLAUDE_DIR)
     try:
         data = json.loads((cp.stdout or "").strip().splitlines()[-1])
     except (ValueError, IndexError):
