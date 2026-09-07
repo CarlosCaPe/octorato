@@ -1874,8 +1874,15 @@ def deny_coverage(denies: int, armed_at: float | None, harness_denies: int,
         # function that fixed it. Three roads reach here now and one of them is a
         # directory that merely vanishes mid-walk, with no attacker involved, so a
         # reader has to be able to tell "compared and clean" from "never compared".
-        return PASS, (f"{base}; the harness record could not be read, so the reflex "
-                      f"was NOT compared against it"), ""
+        # "could not be read" was false on the shallow-clone road, where this returns
+        # before touching the transcripts at all: the record was fine, the WINDOW
+        # could not be established. And the cause goes in the hint, which is where
+        # FAIL and WARN already put their specifics, so one status keeps one sentence
+        # while the reader still learns which of the three roads it was (QA cycle 5).
+        return PASS, (f"{base}; the comparison window could not be established, so "
+                      f"the reflex was NOT compared against the harness record"), (
+            "one of: a shallow clone, no commit adding the hook, no projects "
+            "directory, or a subtree under it the walk could not read")
     if harness_denies == 0:
         if other_denies and denies == 0:
             # The automode family is the only one this harness was measured to fire
@@ -1951,13 +1958,19 @@ def _harness_refusals_since_hook(cutoff: float) -> tuple[float | None, int, int]
     # LAST commit that touched the file, so the day anyone fixes a typo in the hook
     # the window collapses to that moment and the check goes quiet for good. The
     # question is when the reflex could FIRST have fired, which is when it was added.
-    cp = run(["git", "log", "--diff-filter=A", "--follow", "-1", "--format=%ct", "--",
-              "scripts/r__permission-denied__journal.py"], cwd=CLAUDE_DIR)
-    stamp = (cp.stdout or "").strip().splitlines()
-    stamp = stamp[0] if stamp else ""
-    if cp.returncode != 0 or not stamp.isdigit():
+    # BOTH dates, and the EARLIER wins. %ct is reset forward by any rebase, squash
+    # or filter-repo, and %at survives a rebase but not a squash, so neither alone
+    # is reliable and both fail in the same direction: toward now, which narrows the
+    # window, which is quiet on a broken brain. That is the shallow-clone shape
+    # arriving by another road (QA cycle 5). Taking the earlier of the two errs
+    # wide, which can only make the check louder, never quieter.
+    cp = run(["git", "log", "--diff-filter=A", "--follow", "-1", "--format=%at %ct",
+              "--", "scripts/r__permission-denied__journal.py"], cwd=CLAUDE_DIR)
+    line = (cp.stdout or "").strip().splitlines()
+    stamps = [s for s in (line[0].split() if line else []) if s.isdigit()]
+    if cp.returncode != 0 or not stamps:
         return None, 0, 0
-    armed_at = max(float(stamp), cutoff)
+    armed_at = max(min(float(s) for s in stamps), cutoff)
     projects = harness_projects_dir()
     if projects is None:
         # The evidence is not where this can read it. Reporting zero here would be

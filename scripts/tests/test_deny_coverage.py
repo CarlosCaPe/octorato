@@ -130,6 +130,56 @@ class TestArmDate(DenyCoverageCase):
         _, seen, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         self.assertEqual(seen, 0, "the record's own timestamp is what excludes it")
 
+    def test_the_window_is_clamped_to_the_cutoff(self):
+        """Claimed in a commit message before it existed, which is the failure this
+        PR is about moved into the permanent record: QA reverted the clamp and all
+        228 tests stayed green. Without it the harness window widens to the hook's
+        commit date while the journal window stays seven days, so the two sides count
+        over different spans and the failure is manufactured out of the mismatch."""
+        armed_early, _, _ = doctor._harness_refusals_since_hook(0)
+        self.assertIsNotNone(armed_early)
+        self.assertLess(armed_early, 4_000_000_000.0)
+        armed_clamped, _, _ = doctor._harness_refusals_since_hook(4_000_000_000.0)
+        self.assertEqual(armed_clamped, 4_000_000_000.0,
+                         "the cutoff wins whenever it is later than the add commit")
+
+    def test_the_arm_date_takes_the_earlier_of_the_two_git_dates(self):
+        """%ct is reset forward by any rebase, squash or filter-repo, and %at
+        survives a rebase but not a squash. Both fail toward NOW, which narrows the
+        window, which is quiet on a broken brain: the shallow-clone shape by another
+        road. The earlier of the two errs wide, which can only make the check
+        louder (QA cycle 5)."""
+        # The two dates MUST differ here or the test is blind: in an ordinary commit
+        # %at and %ct are the same instant, so min and max are the same number and
+        # the mutation is invisible. My first version of this test did exactly that
+        # and survived the revert, which the control caught before it shipped. A
+        # rebase is what makes them diverge, so the sandbox reproduces one: an old
+        # author date carried onto a fresh committer date.
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        env["GIT_AUTHOR_DATE"] = "2020-01-01T00:00:00Z"
+        env["GIT_COMMITTER_DATE"] = "2030-01-01T00:00:00Z"
+        hook = self.brain / "scripts" / "r__permission-denied__journal.py"
+        hook.write_text("# re-added after a rewrite\n", encoding="utf-8")
+        for args in (["rm", "-q", "--cached", "scripts/r__permission-denied__journal.py"],
+                     ["commit", "-q", "-m", "drop it"],
+                     ["add", "scripts/r__permission-denied__journal.py"],
+                     ["commit", "-q", "-m", "re-add it, author date older"]):
+            subprocess.run(["git", "-C", str(self.brain)] + args, check=True,
+                           capture_output=True, env=env)
+        out = subprocess.run(["git", "log", "--diff-filter=A", "--follow", "-1",
+                              "--format=%at %ct", "--",
+                              "scripts/r__permission-denied__journal.py"],
+                             cwd=str(self.brain), capture_output=True, text=True,
+                             env=env).stdout.split()
+        self.assertEqual(len(out), 2, "both dates are asked for")
+        self.assertNotEqual(out[0], out[1],
+                            "the fixture must make the two dates diverge, or a test "
+                            "of `earlier of the two` cannot fail")
+        armed, _, _ = doctor._harness_refusals_since_hook(0)
+        self.assertEqual(armed, min(float(out[0]), float(out[1])),
+                         "the EARLIER date wins, which errs wide")
+        self.assertNotEqual(armed, max(float(out[0]), float(out[1])))
+
     def test_a_refusal_after_the_hook_went_live_is_counted(self):
         armed, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         self.write_refusal("automode-blocked", armed + 60)
@@ -226,10 +276,12 @@ class TestTheEvidenceIsWhereTheHarnessWritesIt(DenyCoverageCase):
         self.assertEqual((seen, other), (0, 0))
 
     def test_an_unreadable_projects_dir_claims_nothing(self):
-        """is_dir succeeds on a directory this cannot LIST, and glob then swallows
-        the PermissionError and yields nothing: a real arm date next to a zero
-        produced by reading nothing, which is the sentence this check exists to
-        abolish. Probe the listing, not the stat (QA cycle 2)."""
+        """The ROOT case of the subtree test above, kept because it is the shape
+        found first. What protects it is the ERROR-AWARE WALK, not the listing probe
+        cycle 2 added: that probe was deleted once the walk covered the root too, and
+        this test stayed green through its deletion, which is how it was found
+        pointing at a guard that no longer existed (QA cycle 4 and 5). A docstring
+        that credits a deleted guard tells the next reader to stop looking."""
         projects = self.harness / "projects"
         os.chmod(projects, 0o000)
         self.addCleanup(lambda: os.chmod(projects, 0o755))
@@ -313,7 +365,7 @@ class TestTheFourOutcomesReadDifferently(unittest.TestCase):
         vanishes mid-walk with nobody attacking anything (QA cycle 4)."""
         status, text, _ = doctor.deny_coverage(0, None, 0)
         self.assertEqual(status, doctor.PASS, "it still claims no verdict")
-        self.assertIn("could not be read", text)
+        self.assertIn("window could not be established", text)
         self.assertNotIn("unexercised", text, "that is the OTHER state's sentence")
         _, clean_text, _ = doctor.deny_coverage(0, 1_700_000_000.0, 0)
         self.assertNotEqual(text, clean_text,
@@ -347,6 +399,16 @@ class TestTheFourOutcomesReadDifferently(unittest.TestCase):
         self.assertIn("refusal(s) of other classes", result.message)
         self.assertIn("toolDenialKind", result.hint or "",
                       "the hint has to survive the trip through the caller")
+
+    def test_the_warn_needs_an_empty_journal_not_just_other_classes(self):
+        """The other one claimed and missing. Dropping the second half of the
+        condition fires the WARN on a healthy brain that HAS journal denies, which is
+        the noisy direction and the one an operator learns to scroll past."""
+        status, _, _ = doctor.deny_coverage(4, 1_700_000_000.0, 0, 7)
+        self.assertEqual(status, doctor.PASS,
+                         "denies in the journal mean the reflex is demonstrably alive")
+        status, _, _ = doctor.deny_coverage(0, 1_700_000_000.0, 0, 7)
+        self.assertEqual(status, doctor.WARN, "an empty journal is what makes it a WARN")
 
     def test_the_failure_cannot_be_reached_without_a_real_refusal(self):
         """The control. If any input shape produced FAIL, the check would fire on a
