@@ -102,17 +102,49 @@ _PAT_GIT_PUSH = re.compile(
 _GH_MERGE_HEAD = re.compile(r"^\s*gh\s+pr\s+merge(?=\s|$)")
 _BARE_NUM = re.compile(r"^\d+$")
 
+# Flags of `gh pr merge` that CONSUME the next token (verbatim from `gh help pr
+# merge`, FLAGS + INHERITED FLAGS). Their value must never be read as the PR:
+# `gh pr merge -t 280 281` merges 281, and taking 280 approved the wrong PR.
+# Every other flag there is boolean. A flag wrongly listed here can only cost an
+# extra deny (the number becomes unseen, and an unseen number is a sentinel);
+# one wrongly omitted would allow the wrong merge, so the list errs long.
+_GH_VALUE_FLAGS = frozenset({
+    "-A", "--author-email", "-b", "--body", "-F", "--body-file",
+    "--match-head-commit", "-t", "--subject", "-R", "--repo",
+})
+# short letters of the above, for a bundle like `-dt 280 281`
+_GH_VALUE_SHORTS = frozenset("AbFtR")
+
 
 def _gh_merge_pr_num(sub: str) -> str | None:
-    """First bare numeric token of a gh-pr-merge sub-command, else None."""
+    """First bare numeric ARGUMENT of a gh-pr-merge sub-command, else None.
+
+    Flag values are skipped, so only a positional token can be the PR. `--flag=value`
+    carries its value inside the token; a bare `--` ends flag parsing.
+    """
     m = _GH_MERGE_HEAD.match(sub)
     if not m:
         return None
-    for tok in sub[m.end():].split():
-        tok = tok.strip("\"'")
+    toks = sub[m.end():].split()
+    i, flags_done = 0, False
+    while i < len(toks):
+        tok = toks[i].strip("\"'")
+        i += 1
+        if not flags_done and tok == "--":
+            flags_done = True
+            continue
+        if not flags_done and tok.startswith("-") and len(tok) > 1:
+            if "=" in tok:                       # --body=x: value is inside
+                continue
+            if tok in _GH_VALUE_FLAGS or (
+                not tok.startswith("--") and tok[-1] in _GH_VALUE_SHORTS
+            ):
+                i += 1                           # consume the value token
+            continue
         if _BARE_NUM.match(tok):
             return tok
     return None
+
 
 # API-form publish — the command-shape bypass of `gh pr merge` / `git push`.
 # Intent over mechanism (agent-proof-approval-gate skill, OpenBot lesson #2):

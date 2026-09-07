@@ -11,6 +11,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -60,6 +61,23 @@ class TestPrNumberExtraction(unittest.TestCase):
             with self.subTest(cmd=cmd):
                 self.assertEqual("280", gate._extract_pr_id(cmd))
 
+    def test_flag_value_is_not_read_as_the_pr(self):
+        for flag in ("-t", "--subject", "-b", "--body", "-A", "--author-email",
+                     "-F", "--body-file", "--match-head-commit", "-R", "--repo"):
+            with self.subTest(flag=flag):
+                self.assertEqual("281", gate._extract_pr_id(f"{GH_MERGE} {flag} 280 281"))
+        self.assertEqual("281", gate._extract_pr_id(f"{GH_MERGE} -R X -t 280 281"))
+        self.assertEqual("281", gate._extract_pr_id(f"{GH_MERGE} -dt 280 281"))
+
+    def test_equals_form_and_double_dash(self):
+        self.assertEqual("281", gate._extract_pr_id(f"{GH_MERGE} --subject=280 281"))
+        self.assertEqual("281", gate._extract_pr_id(f"{GH_MERGE} -- 281"))
+
+    def test_boolean_flags_do_not_eat_the_number(self):
+        for flag in ("--admin", "--auto", "-d", "-s", "-m", "-r", "--delete-branch"):
+            with self.subTest(flag=flag):
+                self.assertEqual("280", gate._extract_pr_id(f"{GH_MERGE} {flag} 280"))
+
     def test_branch_argument_has_no_number(self):
         self.assertEqual("unknown", gate._extract_pr_id(f"{GH_MERGE} feat/x"))
 
@@ -103,6 +121,13 @@ class TestGateEndToEnd(unittest.TestCase):
         full = dict(os.environ)
         for k in ("OCTO_MERGE_APPROVE", "OCTO_QA_OK"):
             full.pop(k, None)
+        # sandbox HOME like gate_selftest._run_leg: the gate resolves the brain's
+        # protected-repo scope from HOME, so the real one makes the result depend
+        # on whose machine runs the suite.
+        sandbox = tempfile.mkdtemp(prefix="qa-gate-test-")
+        self.addCleanup(shutil.rmtree, sandbox, True)
+        full["HOME"] = sandbox
+        full["USERPROFILE"] = sandbox
         full.update(env)
         payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command},
                               "cwd": "/nonexistent/repo"})
@@ -126,6 +151,10 @@ class TestGateEndToEnd(unittest.TestCase):
 
     def test_approved_pr_with_flag_before_number_is_allowed(self):
         self.assertEqual(0, self._run(f"{GH_MERGE} -R owner/repo 280",
+                                      {"OCTO_MERGE_APPROVE": "280", "OCTO_QA_OK": "1"}))
+
+    def test_flag_value_number_does_not_authorize_the_real_target(self):
+        self.assertEqual(2, self._run(f"{GH_MERGE} -t 280 281",
                                       {"OCTO_MERGE_APPROVE": "280", "OCTO_QA_OK": "1"}))
 
     def test_qa_ok_alone_never_authorizes(self):
