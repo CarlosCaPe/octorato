@@ -451,11 +451,21 @@ def has_trace(pid) -> bool:
     journal BEFORE it publishes the row, so the journal is the earlier trace.
     The row is still checked, because a journal deleted underneath a live
     process must not turn its exit into a no-op.
+
+    A trace has to be a trace of WORK, not just a name in a file. QA found two
+    states that are not: a zero-byte journal, reachable only from a crash between
+    the create and the first write, and a row whose value is not an object, which
+    `pid in procs` accepts because membership tests the key alone. Both let an
+    ending create the same phantom shape this guard exists to stop.
     """
     pid = safe_pid(pid)
-    if os.path.exists(journal_path(pid)):
-        return True
-    return pid in (read_ptable().get("processes") or {})
+    try:
+        if os.path.getsize(journal_path(pid)) > 0:
+            return True
+    except OSError:
+        pass
+    row = (read_ptable().get("processes") or {}).get(pid)
+    return isinstance(row, dict)
 
 
 def has_exit(pid) -> bool:

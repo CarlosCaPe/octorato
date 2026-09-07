@@ -411,7 +411,11 @@ def replay_text(pid: str, lines: list, table: dict = None,
             denies.setdefault(str(rec["tool_use_id"]), rec)
 
     out = [f"process {pid}"]
-    out.append(f"  type      {st['type'] or 'main'}")
+    # UNKNOWN_TYPE, not "main": `replay` reads a journal, so like `top` it can be
+    # handed a pid with no row, and saying `main` there would make `octo top` and
+    # `octo replay` disagree about the same process. That is the drift this
+    # constant exists to prevent, and QA caught it here after it was fixed in top.
+    out.append(f"  type      {st['type'] or UNKNOWN_TYPE}")
     out.append(f"  worktree  {st['worktree'] or '-'}")
     out.append(f"  lines     {len(lines)}")
     out.append(f"  tools     {st['tools']} ({st['refused']} refused)")
@@ -501,7 +505,7 @@ def replay_text(pid: str, lines: list, table: dict = None,
 
     out.append("")
     out.append("children")
-    out.extend([f"  {child}  {row.get('type') or 'main'}  "
+    out.extend([f"  {child}  {_row_type(row)}  "
                 f"{row.get('status') or 'no exit recorded'}"
                 for child, row in kids] or ["  (none)"])
 

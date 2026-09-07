@@ -628,6 +628,38 @@ class ExitHookTest(SandboxHome):
         self.assertEqual(self.exits("never-existed"), [])
         self.assertEqual(len(self.exits("c1")), 0, "the real process is untouched")
 
+    def test_a_zero_byte_journal_is_not_a_trace(self):
+        """QA cycle 1: an empty file is a name, not work. It is reachable only
+        from a crash between the create and the first write, and treating it as
+        a trace let an ending write the same phantom shape into it."""
+        path = kernel_proc.journal_path("half-open")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        open(path, "wb").close()
+        self.assertEqual(os.path.getsize(path), 0)
+        cp = self.run_stop(self.payload(agent_id="half-open"))
+        self.assertEqual(cp.returncode, 0)
+        self.assertEqual(os.path.getsize(path), 0, "no exit written into an empty journal")
+        self.assertEqual(self.exits("half-open"), [])
+
+    def test_a_row_that_is_not_an_object_is_not_a_trace(self):
+        """`pid in procs` tests the KEY, so a corrupt table whose value is a
+        string or null answered yes and let the ending through. The row has to
+        be a row."""
+        self.child()                        # so a real table exists to corrupt
+        for junk in ("not-a-row", None, 42, ["c1"]):
+            with self.subTest(row=junk):
+                pid = "junk-%s" % type(junk).__name__
+                table = kernel_proc.read_ptable()
+                table.setdefault("processes", {})[pid] = junk
+                path = kernel_proc.ptable_path()
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "w", encoding="utf-8") as fh:
+                    json.dump(table, fh)
+                cp = self.run_stop(self.payload(agent_id=pid))
+                self.assertEqual(cp.returncode, 0)
+                self.assertFalse(os.path.exists(kernel_proc.journal_path(pid)),
+                                 "a malformed row is not evidence the process ran")
+
     def test_a_journal_opened_by_the_hot_path_gate_still_gets_its_exit(self):
         """The legitimate no-`start` process. Same-event hooks run in parallel,
         so a child's first tool call can beat its own SubagentStart: the gate

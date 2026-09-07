@@ -201,6 +201,33 @@ class TopTest(OctoCase):
                 row = [l for l in out.splitlines() if l.startswith(pid)][0]
                 self.assertIn(kind, row)
 
+    def test_replay_uses_the_same_word_as_top_for_a_row_less_pid(self):
+        """QA cycle 1 on this fix: `top` said `?` while `replay` still said
+        `main` for the same journal. Two readers of one table disagreeing about
+        a process is the exact drift UNKNOWN_TYPE exists to prevent, so the
+        third reader is pinned here rather than left to the next incident."""
+        self.seed(tools=1)
+        kernel_proc.append("ghost", {"kind": "tool", "tool_name": "Bash",
+                                     "tool_use_id": "toolu_ghost"})
+        self.assertNotIn("ghost", kernel_proc.read_ptable()["processes"])
+
+        rc, replay_out, _ = self.run_octo(["replay", "ghost"])
+        self.assertEqual(rc, 0)
+        type_line = [l for l in replay_out.splitlines() if l.strip().startswith("type")][0]
+        self.assertNotIn("main", type_line)
+        self.assertIn(octo.UNKNOWN_TYPE, type_line)
+
+        _, top_out, _ = self.run_octo(["top"])
+        ghost_row = [l for l in top_out.splitlines() if l.startswith("ghost")][0]
+        self.assertIn(octo.UNKNOWN_TYPE, ghost_row)
+
+        # and a pid the kernel DOES know still reads its real type in replay,
+        # so the `?` is a statement about knowledge, not a blanket.
+        _, known_out, _ = self.run_octo(["replay", "sess-1"])
+        known_line = [l for l in known_out.splitlines() if l.strip().startswith("type")][0]
+        self.assertIn("main", known_line)
+        self.assertNotIn(octo.UNKNOWN_TYPE, known_line)
+
 
 class ReplayTest(OctoCase):
     def seed_refusal(self):
