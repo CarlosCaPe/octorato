@@ -1841,9 +1841,124 @@ def check_kernel_replay(fix: bool) -> Result:
                       f"{len(orphans)} deny rule id(s) in 7 days are in no registry row: {named}",
                       "a refusal under a name the registry does not carry is an orphan "
                       "mechanism (RULE #1): register the rule, or fix the id the gate journals")
+    armed_at, harness_denies = _harness_refusals_since_hook(cutoff)
+    status, coverage, hint = deny_coverage(denies, armed_at, harness_denies)
+    if status == FAIL:
+        return Result(key, FAIL, coverage, hint)
     return Result(key, PASS,
                   f"golden replay verifies byte for byte; {min(len(journals), 5)} real "
-                  f"journal(s) replay; {denies} deny(s) in 7 days, all naming a registered rule")
+                  f"journal(s) replay; {coverage}")
+
+
+def deny_coverage(denies: int, armed_at: float | None,
+                  harness_denies: int) -> tuple[str, str, str]:
+    """Turn the two counts into (status, sentence, hint). Pure, so it is testable.
+
+    Three states used to print one sentence. A journal with no denies is healthy when
+    nothing was refused and broken when everything was, and `0 deny(s) in 7 days`
+    said both. Separating them is the whole change; keeping the decision out of the
+    check that gathers the numbers is what makes all three reachable in a test
+    instead of only the one the machine happens to be in.
+    """
+    base = f"{denies} deny(s) in 7 days, all naming a registered rule"
+    if armed_at is None:
+        # No commit for the hook: a fresh or shallow clone. Report the count and
+        # claim nothing, rather than reading "no history" as "no refusals".
+        return PASS, base, ""
+    if harness_denies == 0:
+        return PASS, (f"{base}; the harness refused nothing since the hook went live, "
+                      f"so the reflex is unexercised rather than proven"), ""
+    if denies == 0:
+        return FAIL, (f"the harness refused {harness_denies} call(s) since the "
+                      f"PermissionDenied hook went live and the journal recorded none"), (
+            "the reflex is wired and not firing: check hooks.json still carries "
+            "PermissionDenied, then run `scripts/r__permission-denied__journal.py "
+            "--selftest registry/fixtures/FLOW.kernel-journal`")
+    return PASS, f"{base}, against {harness_denies} harness refusal(s) in the same window", ""
+
+
+def _harness_refusals_since_hook(cutoff: float) -> tuple[float | None, int]:
+    """(when the PermissionDenied hook went live, how many refusals it could have seen).
+
+    The journal's deny count means nothing on its own. Zero reads as healthy whether
+    nothing was refused or every refusal was lost, and those are opposite states. The
+    other side of the comparison is the harness's own record: it stamps a refused tool
+    call with `toolDenialKind` in the session transcript, which no hook writes and the
+    model does not own.
+
+    The window starts when the hook could first have fired, not 7 days ago, because
+    refusals from before it existed are nobody's fault. git is the authority on that
+    date: the commit that added the script to the brain. A brain with no such commit
+    (a fresh clone, a shallow one) returns None, and the caller reports the count
+    without the comparison rather than inventing a verdict.
+
+    Only the `automode-` classes are counted. Measured on this harness, that is the
+    only family the PermissionDenied event fires for; a `permission-rule` or a
+    `user-rejected` refusal never reaches the hook, so counting those would
+    manufacture a failure out of a refusal the reflex was never offered.
+    """
+    cp = run(["git", "log", "-1", "--format=%ct", "--",
+              "scripts/r__permission-denied__journal.py"], cwd=CLAUDE_DIR)
+    stamp = (cp.stdout or "").strip()
+    if cp.returncode != 0 or not stamp.isdigit():
+        return None, 0
+    armed_at = max(float(stamp), cutoff)
+    projects = CLAUDE_DIR / "projects"
+    if not projects.is_dir():
+        return armed_at, 0
+    seen = 0
+    for path in projects.glob("**/*.jsonl"):
+        try:
+            if path.stat().st_mtime < armed_at:
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if "toolDenialKind" not in text:
+            continue
+        for line in text.splitlines():
+            if "automode-" not in line or "toolDenialKind" not in line:
+                continue
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            ts = _iso_to_epoch(str(rec.get("timestamp") or ""))
+            if ts is None or ts < armed_at:
+                continue
+            if _carries_automode_denial(rec):
+                seen += 1
+    return armed_at, seen
+
+
+def _carries_automode_denial(node) -> bool:
+    """True when this transcript record holds an `automode-` toolDenialKind anywhere.
+
+    Walked rather than path-indexed: the key sits at different depths depending on the
+    record shape, and a fixed path would silently stop matching when the harness moves
+    it, which is the failure mode this whole check exists to catch.
+    """
+    stack = [node]
+    while stack:
+        x = stack.pop()
+        if isinstance(x, dict):
+            kind = x.get("toolDenialKind")
+            if isinstance(kind, str) and kind.startswith("automode-"):
+                return True
+            stack.extend(x.values())
+        elif isinstance(x, list):
+            stack.extend(x)
+    return False
+
+
+def _iso_to_epoch(value: str) -> float | None:
+    if not value:
+        return None
+    try:
+        from datetime import datetime
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
 
 
 def check_querymaster_security_detector(fix: bool) -> Result:
