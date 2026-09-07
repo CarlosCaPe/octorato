@@ -137,11 +137,12 @@ def _stats(lines: list) -> dict:
     still show on the timeline and in `denies`; they just do not inflate the
     tool count. Both id sets are collected in this same pass.
     """
-    denied, tool_ids = set(), set()
+    denied, tool_ids, deny_rows = set(), set(), []
     st = {"tools": 0, "denies": 0, "tokens": 0, "has_tokens": False,
           "exit": None, "status": None, "start_ts": None, "last_ts": None,
           "type": None, "worktree": None, "source": None, "opens": 0,
-          "by_tool": {}, "by_rule": {}, "by_receipt": {}}
+          "by_tool": {}, "by_rule": {}, "by_receipt": {},
+          "by_rule_paired": {}, "by_rule_other": {}}
     for rec in lines:
         if not isinstance(rec, dict):
             continue
@@ -169,6 +170,7 @@ def _stats(lines: list) -> dict:
             st["denies"] += 1
             rule = str(rec.get("rule") or "(unnamed)")
             st["by_rule"][rule] = st["by_rule"].get(rule, 0) + 1
+            deny_rows.append((rule, str(rec.get("tool_use_id") or "")))
             if rec.get("tool_use_id"):
                 denied.add(str(rec["tool_use_id"]))
         elif kind == "receipt":
@@ -180,6 +182,12 @@ def _stats(lines: list) -> dict:
         elif kind == "open":
             st["opens"] += int(rec.get("count") or 0)
     st["refused"] = len(denied & tool_ids)
+    # Split the same rows the tool-id set already decided: a deny whose call the
+    # hot path journaled refused a CALL; anything else refused something the
+    # gate never saw (a turn, a call denied before PreToolUse ran).
+    for rule, tuid in deny_rows:
+        bucket = "by_rule_paired" if tuid and tuid in tool_ids else "by_rule_other"
+        st[bucket][rule] = st[bucket].get(rule, 0) + 1
     return st
 
 
@@ -345,6 +353,17 @@ def _cell(rec: dict, key: str, default: str = "-") -> str:
     return str(v) if v not in (None, "") else default
 
 
+def _src(rec: dict) -> str:
+    """`source=harness ` on a refusal the RUNTIME made, empty on an Octorato one.
+
+    A reader who cannot tell the two apart cannot act on either: one is a gate
+    to argue with, the other is a permission to grant. Absent means Octorato,
+    so the common case stays unannotated.
+    """
+    source = rec.get("source")
+    return f"source={source}  " if source else ""
+
+
 def replay_text(pid: str, lines: list, table: dict = None,
                 receipts: list = None, chain: tuple = None,
                 receipts_label: str = "receipts") -> str:
@@ -387,7 +406,15 @@ def replay_text(pid: str, lines: list, table: dict = None,
     out.append("")
     out.append("summary")
     out.append(f"  tools     {_counts(st['by_tool'])}")
-    out.append(f"  refused   {_counts(st['by_rule'])}")
+    # Two lines, because they answer two questions. `refused` is the calls the
+    # hot-path gate journaled and a gate then refused, so it reconciles with the
+    # header's "(N refused)". `other denies` is everything else that refused
+    # something: a Stop block ends a TURN, a harness denial can land on a call
+    # PreToolUse never saw. Listing both under one `refused` label made the
+    # summary contradict the header two lines above it.
+    out.append(f"  refused   {_counts(st['by_rule_paired'])}")
+    if st["by_rule_other"]:
+        out.append(f"  other denies  {_counts(st['by_rule_other'])}")
     out.append(f"  receipts  {_counts(st['by_receipt'])}")
     out.append(f"  children  {len(kids)}"
                + (": " + ", ".join(c for c, _ in kids) if kids else ""))
@@ -415,14 +442,15 @@ def replay_text(pid: str, lines: list, table: dict = None,
         if kind == "tool" and tuid in denies:
             d = denies[tuid]
             folded.add(id(d))
-            rest = (f"{_cell(d, 'rule')}  {_cell(rec, 'tool_name')}  {tuid}"
+            rest = (f"{_cell(d, 'rule')}  {_src(d)}{_cell(rec, 'tool_name')}  {tuid}"
                     f"  {_cell(d, 'reason', '')}").rstrip()
             out.append(f"  #{seq_s:<4} {off:>9}  {'REFUSED':<8} {rest}")
             continue
         if kind == "deny":
             if id(rec) in folded:
                 continue
-            rest = f"{_cell(rec, 'rule')}  {tuid}  {_cell(rec, 'reason', '')}".rstrip()
+            rest = (f"{_cell(rec, 'rule')}  {_src(rec)}{tuid}  "
+                    f"{_cell(rec, 'reason', '')}").rstrip()
         elif kind == "tool":
             rest = f"{_cell(rec, 'tool_name')}  {tuid}"
         elif kind == "start":
