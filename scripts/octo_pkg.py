@@ -951,8 +951,17 @@ def installed_kind(dest: Path) -> str | None:
             data = json.loads(mpath.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return None
+        if not isinstance(data, dict):
+            # `[]`, `"skill"`, `42` and `null` all parse as JSON. A manifest that is
+            # not an object says nothing readable about its kind, and .get would
+            # raise on it. Verify never raises: an unreadable manifest is a FAIL
+            # the caller reports, not a traceback that loses the rest of the sweep.
+            return None
         declared = data.get("kind")
-        if declared in MANIFEST_NAME:
+        # isinstance first: `in` on a dict hashes the value, and a crafted list or
+        # dict in `kind` would raise TypeError. A non-string kind is unreadable,
+        # which is what None means here.
+        if isinstance(declared, str) and declared in MANIFEST_NAME:
             # What the manifest DECLARES wins over the file it was written into. A
             # skill.json saying `"kind": "arm"` is answered as an arm and fails the
             # comparison below, rather than being read as a skill because of its name.
@@ -999,7 +1008,7 @@ def _skill_ladder(brain: Brain, entry: dict, dest: Path) -> list[str]:
 
     try:
         actual = tree_sha256(dest, "skill")
-    except PkgError as e:
+    except (PkgError, OSError) as e:
         # Without a hash nothing downstream means anything: the signature covers a
         # manifest that carries a hash, and there is none to compare it to.
         problems.append(str(e))
@@ -1010,12 +1019,15 @@ def _skill_ladder(brain: Brain, entry: dict, dest: Path) -> list[str]:
 
     try:
         mpath, manifest = load_manifest(dest, "skill")
+        if not isinstance(manifest, dict):
+            problems.append("installed manifest is not a JSON object")
+            return problems
         if manifest.get("tree_sha256") != actual:
             problems.append("installed manifest tree_sha256 does not match its own tree")
         got = _verify_signature(brain, mpath, dest / SIG_NAME)
         if got != signer:
             problems.append(f"signed by '{got}', lock says '{signer}'")
-    except PkgError as e:
+    except (PkgError, OSError) as e:
         problems.append(str(e))
     return problems
 

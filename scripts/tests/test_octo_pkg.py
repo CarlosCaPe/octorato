@@ -1074,18 +1074,124 @@ class TestQaCycle3(SandboxCase):
                             "the moment it carries a file, it is covered")
 
     # -- fixtures ---------------------------------------------------------
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
     def test_the_violation_fixture_is_the_benign_one_one_edit_away(self):
         """`tampered/` is `signed/` with its tree_sha256 zeroed. Correcting that ONE
-        field makes it a valid package again, which is what keeps the fixture pair an
-        honest violation/benign pair after a re-hash."""
+        field and signing makes it INSTALLABLE again, which is what keeps the fixture
+        pair an honest violation/benign pair after a re-hash.
+
+        Asserting that the field now equals the hash we just wrote into it would be a
+        tautology (QA cycle 3 said so). The claim is about installability, so the test
+        installs and verifies.
+        """
         d = self.tmp / "one-edit"
         shutil.copytree(FIXTURE / "tampered", d)
         man = json.loads((d / "skill.json").read_text(encoding="utf-8"))
-        self.assertNotEqual(man["tree_sha256"], octo_pkg.tree_sha256(d, "skill"))
+        self.assertNotEqual(man["tree_sha256"], octo_pkg.tree_sha256(d, "skill"),
+                            "the violation fixture must start out mismatched")
+        # the ONE edit
         man["tree_sha256"] = octo_pkg.tree_sha256(d, "skill")
         (d / "skill.json").write_text(json.dumps(man, indent=2) + "\n", encoding="utf-8")
-        self.assertEqual(json.loads((d / "skill.json").read_text(encoding="utf-8"))["tree_sha256"],
-                         octo_pkg.tree_sha256(d, "skill"))
+        key = self.mint_key()
+        self.sign(key, d)
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "install", str(d)]), 0,
+                         "one corrected field must be enough to make it install")
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "verify", "--all"]), 0)
+
+
+class TestQaCycle4(SandboxCase):
+    """QA cycle 3 found that the cycle-3 fix itself could be turned into a traceback.
+
+    verify_entry promises it never raises, and the whole sweep depends on that: an
+    exception aborts the loop, so the other packages and the unlocked-tree scan never
+    report, and the failure that does surface names no package. Fail-closed is not the
+    same as reporting correctly.
+    """
+
+    def _install_signed(self, tag: str = "pkg") -> tuple[str, Path]:
+        """Install one freshly signed package under its own name.
+
+        A per-tag name and staging dir, and one key minted for the whole test: the
+        shared helpers write to fixed paths, and both ssh-keygen and copytree refuse
+        to overwrite, so a loop that reuses them dies on its second turn.
+        """
+        if not getattr(self, "_key", None):
+            self._key = self.mint_key()
+        name = "sample-" + tag
+        pkg = self.tmp / ("src-" + tag)
+        shutil.copytree(FIXTURE / "signed", pkg)
+        man = json.loads((pkg / "skill.json").read_text(encoding="utf-8"))
+        man["name"] = name
+        (pkg / "SKILL.md").write_text("---\nname: " + name + "\n---\n# " + name + "\n",
+                                      encoding="utf-8")
+        man["tree_sha256"] = octo_pkg.tree_sha256(pkg, "skill")
+        (pkg / "skill.json").write_text(json.dumps(man, indent=2) + "\n", encoding="utf-8")
+        self.sign(self._key, pkg)
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "install", str(pkg)]), 0)
+        return name, self.brain.vendor_path(name)
+
+    def _verify_json(self) -> dict:
+        import contextlib, io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            octo_pkg.main(["--brain", str(self.root), "verify", "--all", "--json"])
+        return json.loads(buf.getvalue())
+
+    def _rewrite_manifest(self, dest: Path, raw: str) -> None:
+        (dest / "skill.json").write_text(raw, encoding="utf-8")
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_a_crafted_kind_value_does_not_raise(self):
+        """`kind` as a list or dict used to hit `declared in MANIFEST_NAME`, and `in`
+        on a dict hashes its operand, so an unhashable value raised TypeError."""
+        for i, value in enumerate((["skill"], {}, 42, True)):
+            with self.subTest(kind=value):
+                name, dest = self._install_signed("kind%d" % i)
+                man = json.loads((dest / "skill.json").read_text(encoding="utf-8"))
+                man["kind"] = value
+                self._rewrite_manifest(dest, json.dumps(man))
+                out = self._verify_json()
+                self.assertFalse(out["ok"])
+                hit = [f for f in out["fail"] if f.startswith(name)]
+                self.assertEqual(len(hit), 1, out["fail"])
+                self.assertIn("no readable kind", hit[0])
+                octo_pkg.main(["--brain", str(self.root), "uninstall", name])
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_a_manifest_that_is_not_an_object_does_not_raise(self):
+        """`[]`, `"skill"`, `42` and `null` all parse as JSON. `.get` raises on all of
+        them, so the manifest has to be shape-checked before it is read."""
+        for i, raw in enumerate(("[]", '"skill"', "42", "null")):
+            with self.subTest(manifest=raw):
+                name, dest = self._install_signed("shape%d" % i)
+                self._rewrite_manifest(dest, raw)
+                out = self._verify_json()
+                self.assertFalse(out["ok"])
+                hit = [f for f in out["fail"] if f.startswith(name)]
+                self.assertEqual(len(hit), 1, out["fail"])
+                octo_pkg.main(["--brain", str(self.root), "uninstall", name])
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_an_unreadable_file_in_the_tree_does_not_raise(self):
+        """tree_sha256 reads every file; a mode-000 one raises PermissionError, which
+        is an OSError and was not caught next to PkgError."""
+        name, dest = self._install_signed("unreadable")
+        victim = dest / "reference.txt"
+        os.chmod(victim, 0o000)
+        self.addCleanup(lambda: os.chmod(victim, 0o644))
+        out = self._verify_json()
+        self.assertFalse(out["ok"])
+        self.assertEqual(len(out["fail"]), 1)
+        self.assertIn(name, out["fail"][0])
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_the_control_a_clean_install_still_passes(self):
+        """The guards must refuse crafted input without refusing a real package."""
+        self._install_signed("clean")
+        out = self._verify_json()
+        self.assertTrue(out["ok"], out)
+        self.assertEqual(out["pass"], 1)
+        self.assertEqual(out["fail"], [])
 
 
 class TestGenerator(unittest.TestCase):
