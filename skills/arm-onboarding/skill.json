@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "arm-onboarding",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Step-by-step protocol to create a new client arm: required files, sync-ai-docs, the arm's sealed lineage graph, QueryMaster registration and gitignore hygiene. Triggers on 'crear un arm' or 'onboard a un cliente'."
+}

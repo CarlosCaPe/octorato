@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "phi-aware-rag-ingestion",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Multi-stage RAG ingestion pipeline for regulated content. Fetch → text-normalize → PHI-screen → chunk → embed → route → store → digest. Default-deny routing (local LLM for tainted, cloud LLM only for allowlisted clean sources). Per-user folder isolation via sha256(email)[:12]. Manual slash-command trigger principle for sensitive workloads."
+}

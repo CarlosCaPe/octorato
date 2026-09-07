@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "data-retention-policy-lifecycle",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Data Retention Policy Lifecycle"
+}

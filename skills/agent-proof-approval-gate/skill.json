@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "agent-proof-approval-gate",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Build a fail-closed PreToolUse gate for merge/deploy/destructive actions that the AI agent provably cannot self-bypass. Use when you need human-only override for a consequential action the agent orchestrates."
+}

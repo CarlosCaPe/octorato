@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "harmonization-over-accretion",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Reusable rebuttal pattern for \"let's import all N items from competitor X\" temptations. Explains why connectome-graph brains lose precision (not gain capability) from bulk imports. Use anytime an agent or operator considers mass-adopting skills, agents, commands, or hooks from a peer repo."
+}

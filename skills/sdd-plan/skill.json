@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "sdd-plan",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "SDD step 3. Read feature.md and produce a detailed implementation plan.md tailored to the project's tech stack and architecture. Use after /sdd-feature has produced feature.md."
+}

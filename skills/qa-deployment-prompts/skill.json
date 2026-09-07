@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "qa-deployment-prompts",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "QA Deployment Prompts"
+}

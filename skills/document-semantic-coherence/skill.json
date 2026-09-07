@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "document-semantic-coherence",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Document Semantic Coherence"
+}

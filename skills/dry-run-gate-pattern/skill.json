@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "dry-run-gate-pattern",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Dry-Run Gate Pattern"
+}

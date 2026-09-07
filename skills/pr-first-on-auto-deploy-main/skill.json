@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "pr-first-on-auto-deploy-main",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "On repos where pushing to main auto-deploys to production, default to PR-based workflow even for self-authored changes — PR adds the safety pass that a direct push skips"
+}

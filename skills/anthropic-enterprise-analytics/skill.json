@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "anthropic-enterprise-analytics",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Pull Anthropic's Admin API usage_report into ~/.claude/analytics/ so brain-digest can reconcile estimated cost (from session JSONL list-price math) against actual billed cost (from Anthropic). Closes the estimated-vs-billed gap that any operator running on Pro/Max/Enterprise has."
+}

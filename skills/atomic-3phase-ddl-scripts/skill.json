@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "atomic-3phase-ddl-scripts",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Atomic 3-Phase DDL Scripts"
+}

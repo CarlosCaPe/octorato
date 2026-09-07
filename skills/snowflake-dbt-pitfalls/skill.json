@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "snowflake-dbt-pitfalls",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Snowflake and dbt traps that fail silently or destroy data: CREATE OR REPLACE, Dynamic Tables, PIVOT, sources.yml freshness, versioned models. Each one with its prevention."
+}

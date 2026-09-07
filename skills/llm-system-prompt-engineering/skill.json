@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "llm-system-prompt-engineering",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Design, debug, and optimize LLM system prompts for production chatbots — especially smaller/medium models (7B-70B) that suffer from attention decay in long prompts. Use when a chatbot ignores rules, repeats itself, fabricates content, or when prompt patches stop working and structural redesign is needed."
+}

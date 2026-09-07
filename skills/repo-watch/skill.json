@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "repo-watch",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Daily monitor over a watchlist of GitHub repos: compares the HEAD SHA against the previous snapshot and writes a digest to ~/.claude/knowledge/repo-watch/. Use it to track the pulse of competitors without watching GitHub all day."
+}

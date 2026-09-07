@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "verify-root-cause-before-claiming",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Before telling anyone the CAUSE of a failure, verify it against the data, not against the symptom. A plausible unverified cause hurts trust more than saying 'I will confirm it shortly'. Triggers when writing 'fallo porque' or 'se debe a'."
+}

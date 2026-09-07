@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "spreadsheet",
+  "version": "1.0.0",
+  "license": "Apache-2.0",
+  "description": "Use when tasks involve creating, editing, analyzing, or formatting spreadsheets (`.xlsx`, `.csv`, `.tsv`) with formula-aware workflows, cached recalculation, and visual review."
+}

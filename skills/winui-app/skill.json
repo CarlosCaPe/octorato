@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "winui-app",
+  "version": "1.0.0",
+  "license": "Apache-2.0",
+  "description": "Create, build and design WinUI 3 desktop apps with C# and the Windows App SDK following Microsoft's official guidance and CommunityToolkit. Covers XAML, navigation, theming, accessibility and deployment."
+}

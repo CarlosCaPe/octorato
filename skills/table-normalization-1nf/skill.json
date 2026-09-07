@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "table-normalization-1nf",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Table Normalization (1NF Violations)"
+}

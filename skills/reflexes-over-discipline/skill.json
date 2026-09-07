@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "reflexes-over-discipline",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "When a rule or gate is chronically ignored, when designing enforcement for a new policy, or when the operator says a rule keeps failing. Teaches how to convert a passive \"mental check\" into a mechanical hook (ganglion) that fires without the central brain invoking it."
+}

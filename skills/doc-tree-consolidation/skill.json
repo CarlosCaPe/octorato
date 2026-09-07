@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "doc-tree-consolidation",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Collapse N fragmented markdown docs into a small canonical set without losing content or breaking cross-references. Distinguishes mandatory-location files from consolidatable docs and dead-weight scaffolding."
+}

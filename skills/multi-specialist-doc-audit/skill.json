@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "multi-specialist-doc-audit",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Audit a long technical document for hallucinations and uncited claims by dispatching N specialist agents in parallel, each scoped to a domain. Each returns a severity-tiered table; the orchestrator consolidates and decides surgical-fix vs full-rebuild."
+}
