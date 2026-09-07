@@ -1,0 +1,11 @@
+{
+  "subagent": {
+    "max_tool_calls": 400,
+    "max_minutes": 0
+  },
+  "main": {
+    "max_tool_calls": 0,
+    "max_minutes": 1
+  },
+  "qa_multiplier": 3
+}

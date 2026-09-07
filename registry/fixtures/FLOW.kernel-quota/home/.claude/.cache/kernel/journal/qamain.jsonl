@@ -1,0 +1,3 @@
+{"seq":0,"ts":1700000000.0,"start_ts":1700000000.0,"pid":"qamain","kind":"start","prev":null,"type":"Reality Checker","source":"fixture"}
+{"seq":1,"ts":1700000001.0,"start_ts":1700000000.0,"pid":"qamain","kind":"tool","prev":"f06150bde93333dabffbc08663285c4de084ffc01041f2e481de235dac0ac6c3","tool_name":"Read","tool_use_id":"seed-0","input_sha256":"0000000000000000000000000000000000000000000000000000000000000000","cwd":""}
+{"seq":2,"ts":1700000002.0,"start_ts":1700000000.0,"pid":"qamain","kind":"tool","prev":"bd17be2d6e6d521cfa37936e406a61ef5cb3ef60ff9bca770e30e5cd42a2503b","tool_name":"Read","tool_use_id":"seed-1","input_sha256":"0000000000000000000000000000000000000000000000000000000000000000","cwd":""}

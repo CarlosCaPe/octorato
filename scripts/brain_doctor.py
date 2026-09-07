@@ -1398,6 +1398,156 @@ def check_enforcement_floor(fix: bool) -> Result:
     return Result(key, PASS, ledger)
 
 
+def _kernel_policy_problems(data, where: str) -> list:
+    """Validate one kernel policy layer against the inline schema.
+
+    Deliberately not a JSON-Schema file: the policy is four keys, and a schema
+    in another file is one more thing that can drift from the parser in
+    g__pretool__kernel.py. Reported per BAD KEY, because "your quota config is
+    invalid" sends an operator to read the whole file, while
+    "`subagent.max_minutes` is 'none', not a number" is the edit."""
+    problems = []
+    if not isinstance(data, dict):
+        return [f"{where} is not a mapping"]
+    for tier in ("subagent", "main"):
+        if tier not in data:
+            continue
+        sub = data[tier]
+        if not isinstance(sub, dict):
+            problems.append(f"{where}: `{tier}` is not a mapping")
+            continue
+        for cap in ("max_tool_calls", "max_minutes"):
+            if cap not in sub:
+                continue
+            val = sub[cap]
+            if isinstance(val, bool) or not isinstance(val, int) or val < 0:
+                problems.append(f"{where}: `{tier}.{cap}` is {val!r}, want a "
+                                "non-negative integer (0 = unlimited)")
+        for extra in sub:
+            if extra not in ("max_tool_calls", "max_minutes"):
+                problems.append(f"{where}: `{tier}.{extra}` is not a known cap")
+    if "qa_multiplier" in data:
+        val = data["qa_multiplier"]
+        if isinstance(val, bool) or not isinstance(val, int) or val < 1:
+            problems.append(f"{where}: `qa_multiplier` is {val!r}, want an integer >= 1")
+    if "qa_agent_types_regex" in data:
+        val = data["qa_agent_types_regex"]
+        if not isinstance(val, str) or not val:
+            problems.append(f"{where}: `qa_agent_types_regex` is {val!r}, want a regex string")
+        else:
+            try:
+                re.compile(val)
+            except re.error as exc:
+                problems.append(f"{where}: `qa_agent_types_regex` does not compile ({exc})")
+    for key in data:
+        if key in ("subagent", "main", "qa_multiplier", "qa_agent_types_regex"):
+            continue
+        if str(key).startswith("_"):
+            continue          # `_comment` in the template, and any future note key
+        problems.append(f"{where}: `{key}` is not a known policy key")
+    return problems
+
+
+def check_kernel_quota_live(fix: bool) -> Result:
+    """v8 Phase 3: prove the quota gate refuses, and that the policy it reads parses.
+
+    Three assertions, in the order they can fail on a real machine. The gate
+    still blocks its fixtures. The tracked slot `registry/kernel.yaml` parses
+    under a REAL yaml parser and validates, which is what stops the hot path's
+    12-line scalar reader from silently misreading a file nobody checked. And
+    the operator's occupant, `company/config/kernel.json`, validates when it
+    exists.
+
+    The occupant is a WARN, never a FAIL, and it is the same stance the gate
+    takes: a malformed occupant falls back to the tracked defaults and lets
+    calls run, so it degrades enforcement rather than stopping work. That is
+    worth naming loudly, and it is not worth failing a push over. The slot IS a
+    FAIL: it ships in the repo, so a broken one is broken for everybody."""
+    key = "kernel-quota-live"
+    loc = ("scripts/g__pretool__kernel.py --selftest "
+           "registry/fixtures/FLOW.kernel-quota")
+    if not (CLAUDE_DIR / "scripts" / "g__pretool__kernel.py").exists():
+        return Result(key, FAIL, "scripts/g__pretool__kernel.py is missing",
+                      "restore the kernel hot-path gate")
+    cp = _run_selftest_locator(loc)
+    if cp.returncode != 0:
+        detail = (cp.stderr or cp.stdout or "").strip().splitlines()
+        return Result(key, FAIL,
+                      "quota selftest failed: "
+                      + (detail[-1] if detail else f"exit {cp.returncode}"),
+                      "the quota gate no longer refuses a process over its cap; "
+                      "fix the gate or the fixture")
+
+    slot = CLAUDE_DIR / "registry" / "kernel.yaml"
+    if not slot.exists():
+        return Result(key, FAIL, "registry/kernel.yaml is missing",
+                      "restore the tracked quota policy slot; the gate falls back to "
+                      "unlimited without it, so caps stop being enforced silently")
+    try:
+        import yaml
+        policy = yaml.safe_load(slot.read_text(encoding="utf-8"))
+    except ImportError:
+        return Result(key, WARN, "quota selftest PASS; PyYAML absent, slot unvalidated",
+                      "pip install --user pyyaml to validate registry/kernel.yaml")
+    except Exception as exc:
+        return Result(key, FAIL, f"registry/kernel.yaml does not parse: {exc}",
+                      "fix the YAML; the hot path reads this file on every tool call")
+    problems = _kernel_policy_problems(policy, "registry/kernel.yaml")
+    if problems:
+        return Result(key, FAIL, "; ".join(problems[:4]),
+                      "fix the named key in registry/kernel.yaml")
+
+    caps = []
+    for tier in ("subagent", "main"):
+        row = (policy or {}).get(tier) or {}
+        caps.append(f"{tier} {row.get('max_tool_calls', 0)} calls/"
+                    f"{row.get('max_minutes', 0)} min")
+    # A non-zero cap in the TRACKED slot is a cap shipped to every clone, which
+    # is the one thing slot-not-occupant exists to prevent. It also makes the
+    # occupant line a lie: "nothing capped" would be printed while the slot caps
+    # everybody.
+    slot_capped = [f"{tier}.{cap}={row[cap]}"
+                   for tier in ("subagent", "main")
+                   for row in [(policy or {}).get(tier) or {}]
+                   for cap in ("max_tool_calls", "max_minutes")
+                   if isinstance(row.get(cap), int) and not isinstance(row.get(cap), bool)
+                   and row[cap] > 0]
+    occ = CLAUDE_DIR / "company" / "config" / "kernel.json"
+    detail = f"quota gate blocks; slot valid ({', '.join(caps)}, 0 = unlimited)"
+    if slot_capped:
+        detail += ("; the tracked slot carries a real cap (" + ", ".join(slot_capped)
+                   + "), and it ships to every clone")
+    if not occ.exists():
+        if slot_capped:
+            return Result(key, WARN, detail,
+                          "caps belong in the gitignored company/config/kernel.json; "
+                          "set registry/kernel.yaml back to 0 (unlimited)")
+        return Result(key, PASS, detail + "; no occupant, nothing capped on this machine")
+    try:
+        data = json.loads(occ.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return Result(key, WARN,
+                      detail + f"; company/config/kernel.json does not parse ({exc}), "
+                      "the gate is falling back to the unlimited defaults",
+                      "fix the JSON, or delete it if you meant to run uncapped")
+    bad = _kernel_policy_problems(data, "company/config/kernel.json")
+    if bad:
+        return Result(key, WARN, detail + "; " + "; ".join(bad[:3]),
+                      "fix the named key; until then that cap is not enforced")
+    ocaps = []
+    for tier in ("subagent", "main"):
+        row = data.get(tier) or {}
+        if row:
+            ocaps.append(f"{tier} {row.get('max_tool_calls', 0)} calls/"
+                         f"{row.get('max_minutes', 0)} min")
+    detail += "; occupant valid" + (" (" + ", ".join(ocaps) + ")" if ocaps else "")
+    if slot_capped:
+        return Result(key, WARN, detail,
+                      "caps belong in the gitignored company/config/kernel.json; "
+                      "set registry/kernel.yaml back to 0 (unlimited)")
+    return Result(key, PASS, detail)
+
+
 def check_kernel_process_live(fix: bool) -> Result:
     """v8 Phase 1a-2: prove the kernel's PROCESS record is real on THIS machine.
 
@@ -2009,6 +2159,7 @@ CHECKS = [
     ("kernel-process-live", check_kernel_process_live),
     ("kernel-isolation-gate", check_kernel_isolation_gate),
     ("kernel-replay", check_kernel_replay),
+    ("kernel-quota-live", check_kernel_quota_live),
     ("querymaster-security-detector", check_querymaster_security_detector),
     ("rule-1-naming", check_naming),
     ("rule-1-orphans", check_orphan_hooks),
