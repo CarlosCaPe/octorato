@@ -104,51 +104,54 @@ def hatches(prompt: str) -> set:
     return set(_HATCH.findall(_QUOTE_SPAN.sub(" ", prompt or "")))
 
 
-# 4. A send ask is an imperative or infinitive send verb in the operator's prompt.
-# ES: verb with an optional third-person clitic (mándalo, envíaselo); "me"/"nos"
-# are excluded on purpose, "mándame el texto" is the paste-ready ask that must NOT
-# transmit. EN: bare verb inside an imperative frame (clause start or after
-# please/just/ok/go ahead and/can you...) and followed by an object or the end of
-# the clause, so "reply came in" and "the release notes" do not count. Participles
-# and nouns (enviado, publicación, el envío) never match. A negator anywhere
-# earlier in the same clause negates the ask (no quiero que por ahora lo mande,
-# ni se te ocurra enviarlo); a clause after the ask that is a bare retraction
-# ("no", "espera", "wait", "todavía no") withdraws it.
+# 4. A send ask is a send verb in the operator's prompt inside a clause that
+# carries NO negation or deferral token, with no later clause carrying one.
+# Clauses split on . ; : ! ? newline, comma, and the connectors pero/but/y/and/
+# aunque. ES: imperative or infinitive with an optional third-person clitic
+# (mándalo, envíaselo); "me"/"nos" are excluded, "mándame el texto" is the
+# paste-ready ask that must NOT transmit; subjunctive only inside a "que ..."
+# frame (quiero que lo mandes). EN: bare verb at clause start or after an
+# imperative frame token, followed by an object or the clause end, so "reply
+# came in" and "the release notes" do not count. Any negation or deferral token
+# anywhere in the ask clause ("no quiero que por ahora lo mande", "mándalo pero
+# no ahora", "mándalo mañana", "mandarlo sería un error") or in a later clause
+# ("mándalo. bueno, no", "send it, actually don't") means no ask: the operator
+# repeats the verb alone or uses send-ok. Fail-closed by design.
 _ES_ASK = (r"(?:m[aá]nda|m[aá]nde|mandar|env[ií]a|env[ií]e|enviar|resp[oó]nde|responda|responder"
            r"|cont[eé]sta|conteste|contestar|reenv[ií]a|reenv[ií]e|reenviar|publ[ií]ca|publique|publicar"
            r"|despliega|despliegue|desplegar|lanza|lance|lanzar)(?:lo|la|los|las|le|les|se|selo|sela|selos|selas)?")
+_ES_SUBJ = (r"que\s+(?:(?:me|te|se|lo|la|los|las|le|les)\s+){0,2}"
+            r"(?:mandes|env[ií]es|respondas|contestes|reenv[ií]es|publiques|despliegues|lances)")
 _EN_FRAME = (r"(?:^|(?<![\w-])(?:please|just|ok|okay|go ahead and|can you|could you|would you|you can"
-             r"|now|and|then|yes|yeah|sure|dale|s[ií]|don'?t|do not|not|never)\s+)")
+             r"|now|then|yes|yeah|sure|dale|s[ií])\s+)")
 _EN_ASK = (r"(?:send|reply|respond|forward|publish|deploy|release|ship)"
-           r"(?=\s+(?:it|that|this|them|him|her|the|this|those|these|now|off|out|again|to|in|a|an|my|our|your|that|el|la|lo|ese|esa|eso)(?![\w-])|\s*$)")
-_SEND_ASK = re.compile(r"(?<![\w-])(?P<es>" + _ES_ASK + r")(?![\w-])|" + _EN_FRAME + r"(?P<en>" + _EN_ASK + r")",
+           r"(?=\s+(?:it|that|this|them|him|her|the|those|these|now|off|out|again|to|in|a|an|my|our|your"
+           r"|el|la|lo|ese|esa|eso)(?![\w-])|\s*$)")
+_SEND_ASK = re.compile(r"(?<![\w-])(?:" + _ES_ASK + r"|" + _ES_SUBJ + r")(?![\w-])|" + _EN_FRAME + _EN_ASK,
                        re.IGNORECASE)
-_CLAUSE = re.compile(r"[.;:!?\n,]+")
-_NEG_BEFORE = re.compile(r"(?<![\w-])(?:no|nunca|jam[aá]s|ni|sin|evita\w*|don'?t|do not|never|not|without|nothing)(?![\w-])",
-                         re.IGNORECASE)
-_RETRACT = re.compile(r"^\s*(?:(?:no|nope|nel)\s*$|(?:espera\w*|esp[eé]rate|aguanta|wait|hold on|todav[ií]a no|a[uú]n no"
-                      r"|mejor no|not yet|cancel\w*|cancela\w*|olv[ií]dalo|forget it)(?![\w-]))", re.IGNORECASE)
+_CLAUSE = re.compile(r"[.;:!?\n,]+|\s+(?:pero|but|y|and|aunque|though)\s+", re.IGNORECASE)
+_BLOCKER = re.compile(
+    r"(?<![\w-])(?:no|nunca|jam[aá]s|ni|sin|nel|nope|evita\w*|don'?t|do not|never|not|without|nothing"
+    r"|todav[ií]a|a[uú]n|aun|despu[eé]s|luego|ma[ñn]ana|later|tomorrow|cuando|when|hasta|until"
+    r"|primero|first|antes|before|s[oó]lo si|only if|espera\w*|esp[eé]rate|aguanta|wait|hold|cancel\w*"
+    r"|cancela\w*|olv[ií]dalo|forget|ser[ií]a|would be|mu[eé]strame\w*|show me|quieres|quiere|quieren"
+    r"|debo|deber[ií]a|should|shall|want me)(?![\w-])", re.IGNORECASE)
 
 
 def explicit_send_ask(prompt: str) -> bool:
-    """True when the operator's prompt for the turn asks to send, non-negated and
-    not retracted. Clause-scoped: split on . ; : ! ? newline and comma, so
-    "no sé, mándalo" asks and "no lo mandes, déjalo listo" does not."""
+    """True when the operator's prompt for the turn asks to send and nothing in
+    that clause or after it negates, defers or withdraws the ask."""
     text = _QUOTE_SPAN.sub(" ", prompt or "")
     asked = False
     for clause in _CLAUSE.split(text):
-        if asked and _RETRACT.match(clause):
+        clause = clause.strip()
+        if not clause:
+            continue
+        blocked = bool(_BLOCKER.search(clause))
+        if asked and blocked:
             return False
-        for m in _SEND_ASK.finditer(clause):
-            # The EN frame token (don't, please...) is part of the match: negate on
-            # what precedes the VERB, not the frame.
-            verb_at = m.start("es") if m.start("es") != -1 else m.start("en")
-            if _NEG_BEFORE.search(clause[:verb_at]):
-                if asked:
-                    return False  # "send it. actually don't send it"
-                continue
+        if not asked and not blocked and _SEND_ASK.search(clause):
             asked = True
-            break
     return asked
 
 
