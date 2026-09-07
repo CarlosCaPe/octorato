@@ -240,12 +240,47 @@ def _append(path: Path, record: dict) -> None:
         fh.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+def _mirror_to_journal(pid: str, record: dict) -> None:
+    """v8 Phase 4: copy this receipt's IDENTITY into the process journal.
+
+    {kind, ts, tool_use_id, sha256(record)} and nothing else. The receipt itself
+    stays here, in the ledger; the journal gets only enough to say "a receipt of
+    this kind existed at this point in the run", so `octo replay` can show the
+    seeks next to the calls and the refusals without the journal becoming a
+    second copy of the ledger.
+
+    FAIL-OPEN, and it matters: this runs inside a PostToolUse reflex. A journal
+    error must never cost the ledger its write, which is why the mirror is the
+    LAST thing the writer does and swallows everything. kernel_proc is loaded by
+    path, so an absent kernel (a fresh clone, an older brain) is a no-op.
+    """
+    try:
+        if not pid:
+            return
+        import importlib.util
+        path = str(Path(__file__).resolve().parent / "kernel_proc.py")
+        spec = importlib.util.spec_from_file_location("_kernel_proc_receipt", path)
+        kp = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(kp)
+        kp.journal_receipt(pid, record.get("kind"), record.get("tool_use_id"),
+                           record, record.get("ts"))
+    except Exception:
+        return
+
+
 def append_session(session_id: str, record: dict) -> None:
     _append(session_path(session_id), record)
+    _mirror_to_journal(str(session_id or ""), record)
 
 
 def append_global(record: dict) -> None:
     _append(global_path(), record)
+    # A global receipt belongs to a process only when it names one. The QA
+    # receipt does (agent_id, and its session as the fallback); the doctor's
+    # gate-liveness receipt names neither, and a receipt that belongs to no
+    # process is not mirrored rather than guessed into someone's journal.
+    _mirror_to_journal(str(record.get("agent_id") or record.get("session_id") or ""),
+                       record)
 
 
 def _read(path: Path, max_bytes: int = 1 << 20) -> list:

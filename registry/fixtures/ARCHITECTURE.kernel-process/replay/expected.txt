@@ -1,20 +1,28 @@
 process kernel-golden-agent
   type      Reality Checker
   worktree  /home/agent/workspace
-  lines     6
+  lines     7
   tools     3 (1 refused)
   exit      ok after 3.500s
-  chain     ok: 6 line(s) chain
+  chain     ok: 7 line(s) chain
+
+summary
+  tools     Bash 1, Read 1, Write 1
+  refused   ARCHITECTURE.kernel-isolation 1
+  receipts  seek 1
+  children  1: kernel-golden-child
+  exit      ok
 
 timeline
   #0      +0.000s  start    source=subagent_start  worktree=/home/agent/workspace
   #1      +0.412s  tool     Read  toolu_g1
-  #2      +1.087s  REFUSED  ARCHITECTURE.kernel-isolation  Bash  toolu_g2  git checkout -- a.py touches a lane held by kernel-golden-sibling (live, 2m)
-  #4      +2.301s  tool     Write  toolu_g3
-  #5      +3.500s  exit     ok  tools=3  transcript=agent-kernel-golden-agent.jsonl
+  #2      +0.502s  receipt  seek  toolu_g1
+  #3      +1.087s  REFUSED  ARCHITECTURE.kernel-isolation  Bash  toolu_g2  git checkout -- a.py touches a lane held by kernel-golden-sibling (live, 2m)
+  #5      +2.301s  tool     Write  toolu_g3
+  #6      +3.500s  exit     ok  tools=3  transcript=agent-kernel-golden-agent.jsonl
 
 children
-  (none)
+  kernel-golden-child  Evidence Collector  ok
 
 receipts
-  (none)
+  seek  toolu_g1  2025-06-15T14:26:40+00:00

@@ -1,0 +1,19 @@
+{
+  "processes": {
+    "kernel-golden-agent": {
+      "kind": "subagent",
+      "ppid": "kernel-golden-session",
+      "status": "ok",
+      "type": "Reality Checker",
+      "worktree": "/home/agent/workspace"
+    },
+    "kernel-golden-child": {
+      "kind": "subagent",
+      "ppid": "kernel-golden-agent",
+      "status": "ok",
+      "type": "Evidence Collector",
+      "worktree": "/home/agent/workspace"
+    }
+  },
+  "version": 1
+}
