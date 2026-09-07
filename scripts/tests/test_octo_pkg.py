@@ -1355,6 +1355,63 @@ class TestQaCycle5(SandboxCase):
             octo_pkg.tree_sha256(dest, "skill")
         self.assertIn("cannot be read", str(caught.exception))
 
+    def test_an_unlistable_directory_is_not_a_hole_in_the_digest(self):
+        """The most serious finding of any cycle, and the one a call-site
+        enumeration structurally cannot reach: `Path.rglob` catches the OSError
+        INSIDE pathlib, so a directory the process cannot list contributes nothing
+        and never raises. `chmod 111` leaves every file in it readable by exact
+        path, so a planted script was outside the digest, inside the package,
+        loadable, and verify printed PASS over it."""
+        d = self.tmp / "unlistable"
+        shutil.copytree(FIXTURE / "signed", d)
+        clean = octo_pkg.tree_sha256(d, "skill")
+        evil = d / "evil"
+        evil.mkdir()
+        (evil / "payload.sh").write_text("payload\n", encoding="utf-8")
+        self.assertNotEqual(octo_pkg.tree_sha256(d, "skill"), clean,
+                            "a readable planted directory must change the hash")
+        os.chmod(evil, 0o111)
+        self.addCleanup(lambda: os.chmod(evil, 0o755))
+        if os.access(evil, os.R_OK):
+            self.skipTest("running as root, EACCES is not enforceable")
+        self.assertTrue((evil / "payload.sh").is_file(),
+                        "the planted file is still readable by exact path, "
+                        "which is what makes the blind spot dangerous")
+        with self.assertRaises(octo_pkg.PkgError) as caught:
+            octo_pkg.tree_sha256(d, "skill")
+        self.assertIn("cannot be listed", str(caught.exception))
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_verify_refuses_a_package_hiding_an_unlistable_directory(self):
+        """The same hole end to end, because the unit test above proves the digest
+        and this proves the verdict a reader actually sees."""
+        import contextlib, io
+        name, dest = self._install_signed("hidden")
+        evil = dest / "evil"
+        evil.mkdir()
+        (evil / "payload.sh").write_text("payload\n", encoding="utf-8")
+        os.chmod(evil, 0o111)
+        self.addCleanup(lambda: os.chmod(evil, 0o755))
+        if os.access(evil, os.R_OK):
+            self.skipTest("running as root, EACCES is not enforceable")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "verify", "--all"])
+        self.assertEqual(rc, 1, "PASS over an unhashed file is the guarantee failing")
+        self.assertIn("cannot be listed", buf.getvalue())
+
+    def test_the_brain_argument_survives_a_symlink_loop(self):
+        """pathlib turns ELOOP into RuntimeError, not OSError, so this call sitting
+        outside the backstop meant a traceback for a bad argument."""
+        import contextlib, io
+        loop = self.tmp / "loop"
+        os.symlink(loop, loop)
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            rc = octo_pkg.main(["--brain", str(loop), "verify", "--all"])
+        self.assertEqual(rc, 1)
+        self.assertIn("cannot be resolved", buf.getvalue())
+
     @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
     def test_a_cp1252_byte_in_the_git_exclude_unwinds_the_install(self):
         """The severest of the ten, and the one that broke a stated invariant rather

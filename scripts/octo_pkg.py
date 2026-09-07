@@ -437,6 +437,41 @@ def resolve_brain(arg: str | None) -> Brain:
 # tree hash
 # --------------------------------------------------------------------------
 
+def _walk_or_fail(root: Path) -> list[Path]:
+    """Every path under root, sorted, or PkgError if any directory cannot be listed.
+
+    NOT `rglob`. This is the one crossing seven QA cycles of call-site enumeration
+    could not find, because the failure does not happen at the call: `Path.rglob`
+    catches the OSError INSIDE pathlib, so a directory the process cannot list
+    contributes nothing and never raises. Measured: `chmod 111` on a subdirectory
+    makes it unlistable while every file in it stays readable by exact path, so a
+    planted script was outside the digest, inside the package, loadable, and
+    `verify --all` printed PASS over it. For a tool whose whole job is to say
+    whether the bytes on disk are the bytes that were signed, that is the guarantee
+    itself, defeated by one chmod.
+
+    `os.walk` with `onerror` is what makes the failure visible: iterdir and scandir
+    both raise where rglob swallows, and onerror hands the error over instead of
+    skipping the directory silently. A tree this cannot fully enumerate has a hash
+    that means nothing, so it never reports one, which is the same rule an
+    unreadable FILE already followed.
+    """
+    problems: list[OSError] = []
+    out: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(root, onerror=problems.append,
+                                                followlinks=False):
+        if problems:
+            break
+        base = Path(dirpath)
+        for name in dirnames + filenames:
+            out.append(base / name)
+    if problems:
+        e = problems[0]
+        rel = os.path.relpath(str(getattr(e, "filename", root) or root), str(root))
+        raise PkgError(f"package directory cannot be listed ({rel}): {e}")
+    return sorted(out)
+
+
 def tree_sha256(pkg_dir: Path, kind: str = "skill") -> str:
     """Deterministic hash over the package tree.
 
@@ -498,7 +533,7 @@ def tree_sha256(pkg_dir: Path, kind: str = "skill") -> str:
     excluded = {MANIFEST_NAME[kind], SIG_NAME}
     h = hashlib.sha256()
     files = []
-    for p in sorted(pkg_dir.rglob("*")):
+    for p in _walk_or_fail(pkg_dir):
         rel = p.relative_to(pkg_dir)
         if p.is_symlink():
             raise PkgError(f"package contains a symlink ({rel.as_posix()}); "
@@ -975,14 +1010,19 @@ def install_skill(brain: Brain, source: str, subpath: str | None, ref: str,
             # too. Nothing is swallowed: PkgError carries the reason out, and
             # anything that is not an Exception is re-raised after the cleanup, so a
             # Ctrl-C still stops the program.
-            if link.is_symlink():
-                link.unlink()
-            if dest.exists():
-                shutil.rmtree(dest, ignore_errors=True)
+            # The WHOLE cleanup is wrapped, not just the exclude call. A bare stat
+            # in here can raise on a tree that became unreadable mid-install, and
+            # then the unwind does not happen AND the original cause is lost, which
+            # is the state this handler exists to prevent (QA cycle 7, reachable
+            # only by injection but written down rather than assumed).
             try:
+                if link.is_symlink():
+                    link.unlink()
+                if dest.exists():
+                    shutil.rmtree(dest, ignore_errors=True)
                 brain.exclude_remove(f"skills/{name}")
             except (OSError, PkgError):
-                pass          # the exclude file is what failed; do not mask the cause
+                pass          # the cleanup is what failed; do not mask the cause
             if not isinstance(e, Exception):
                 raise
             raise PkgError(f"install of {name} rolled back: {type(e).__name__}: {e}")
@@ -1601,9 +1641,14 @@ def cmd_sync(brain: Brain) -> int:
                     link.parent.mkdir(parents=True, exist_ok=True)
                     os.symlink(os.path.relpath(dest, link.parent), link, target_is_directory=True)
                     brain.exclude_add(f"skills/{name}")
-                except OSError as e:
-                    # Same rollback stance as install: a half-restore leaves an
-                    # unverifiable tree in the discovery path.
+                except BaseException:
+                    # The same stance as install, and now literally the same width.
+                    # The comment used to claim they matched while this caught only
+                    # OSError; when exclude_add started raising PkgError through the
+                    # seam, that walked past this into the outer handler and sync
+                    # reported "0 restored, 1 skipped" for a package it had in fact
+                    # restored whole (QA cycle 7). A half-restore leaves an
+                    # unverifiable tree in the discovery path, so any failure unwinds.
                     if link.is_symlink():
                         link.unlink()
                     if dest.exists():
@@ -1933,7 +1978,15 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     ap = build_parser()
     args = ap.parse_args(argv if argv is not None else sys.argv[1:])
-    brain = resolve_brain(args.brain)
+    try:
+        brain = resolve_brain(args.brain)
+    except (OSError, RuntimeError) as e:
+        # RuntimeError is not a typo: pathlib converts a symlink loop into one, so
+        # "filesystem crossing" and "OSError" are not the same set even inside the
+        # standard library. This call sat outside the backstop below (QA cycle 7).
+        print(f"error: --brain cannot be resolved: {type(e).__name__}: {e}",
+              file=sys.stderr)
+        return 1
 
     if args.selftest:
         return selftest(Path(args.selftest) if os.path.isabs(args.selftest)
@@ -1964,7 +2017,7 @@ def main(argv: list[str] | None = None) -> int:
     except PkgError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
-    except OSError as e:
+    except (OSError, UnicodeDecodeError) as e:
         # The backstop, and the reason this is the last cycle of its kind. Six QA
         # rounds each found one more crossing of the filesystem boundary that left
         # as a traceback instead of a report, and each fix named the site it had
@@ -1973,9 +2026,12 @@ def main(argv: list[str] | None = None) -> int:
         # WHICH package failed and let the sweep finish, which is the whole value.
         # It replaces the traceback with a report for the crossing that was missed,
         # so a future miss costs a worse message rather than the caller's output.
-        # Deliberately NOT Exception: a TypeError here is a bug in this module and
-        # must keep its traceback, because a bug that reports itself as a refusal is
-        # a bug nobody fixes.
+        # UnicodeDecodeError is named alongside OSError because it is the class that
+        # actually recurred, twice, and it is a ValueError: the net that caught only
+        # OSError would not have held the very thing it was built for. Still NOT
+        # Exception: a TypeError here is a bug in this module and must keep its
+        # traceback, because a bug that reports itself as a refusal is a bug nobody
+        # fixes.
         print(f"error: {type(e).__name__}: {e}", file=sys.stderr)
         print("       (an unguarded filesystem crossing; the operation did not "
               "complete and may have left work half done)", file=sys.stderr)
