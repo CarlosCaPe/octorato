@@ -65,17 +65,38 @@ fi
 # to the personal bridge: it sends DIRECTLY over SSM by running curl ON the
 # server. The channel no longer depends on this laptop; it only needs the AWS
 # ops profile credentials.
-INSTANCIA_PUENTE="i-0c0112bf1431dc99e"
-REGION_PUENTE="mx-central-1"
-PERFIL_PUENTE="dataqbs-ops"
 VIA="tunel"
 if ! ss -lnt 2>/dev/null | grep -q ":${PUERTO_SOPORTE} "; then
   VIA="ssm"
 fi
 
+# The bridge's instance id, region and AWS profile are deployment identity,
+# not framework code: they live in the PRIVATE config (gitignored), the same
+# `puentes.soporte.remoto` block the attachment path already reads. The tunnel
+# path never needs them; the SSM path refuses to run without them (fail-closed,
+# never a fallback to the personal bridge).
+CONFIG_PUENTES="${OCTO_WA_PUENTES:-$HOME/.claude/company/config/wa-puentes.json}"
+INSTANCIA_PUENTE=""; REGION_PUENTE=""; PERFIL_PUENTE=""
+if [ "$VIA" = "ssm" ]; then
+  if ! remoto=$(python3 - "$CONFIG_PUENTES" <<'PY'
+import json, sys
+try:
+    r = json.load(open(sys.argv[1]))["puentes"]["soporte"]["remoto"]
+    print(r["instancia"], r["region"], r["perfil"])
+except (OSError, KeyError, ValueError, TypeError) as e:
+    print(f"puentes.soporte.remoto (instancia/region/perfil) missing in {sys.argv[1]}: {e}", file=sys.stderr)
+    raise SystemExit(1)
+PY
+  ); then
+    echo '{"success": false, "message": "no local tunnel and no private bridge config: see templates/company/config/wa-puentes.json.template"}'
+    exit 1
+  fi
+  read -r INSTANCIA_PUENTE REGION_PUENTE PERFIL_PUENTE <<< "$remoto"
+fi
+
 # ---- Attachment: the file must exist on the BRIDGE's disk -----------------
-# The instance id, region, profile and staging bucket come from the PRIVATE
-# config, not from here: this script is published.
+# The instance id, region, profile and staging bucket come from the same
+# PRIVATE config (`puentes.soporte.remoto`), never from this published file.
 if [ -n "$archivo" ]; then
   respuesta=$(WA_MENCIONES="${WA_MENCIONES:-}" python3 - "$destinatario" "$mensaje" "$archivo" "$PUERTO_SOPORTE" <<'PY'
 import base64, json, os, shlex, subprocess, sys, time, uuid

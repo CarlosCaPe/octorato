@@ -7,6 +7,9 @@
 # Without this the link shows up untracked in every worktree and could be
 # committed, publishing the private path layout.
 company
+# The public seed templates under templates/company/ are framework, not company data.
+!templates/company/
+!templates/company/**
 
 # External reference repos (cloned separately, not part of the brain repo)
 *-ref/
