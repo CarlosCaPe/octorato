@@ -160,6 +160,7 @@ https://github.com/CarlosCaPe/octorato
 - [x] **Per-arm cost rollup + USD conversion** (`scripts/_pricing.py` + `skill-cost-profiler.py` aggregates by arm, digest renders the table)
 - [x] **Cost-spike watchdog** (`watchdog.py` z-score over tokens/day per skill·arm against 30d baseline; floor at 100k tokens to avoid noise)
 - [x] **Budget caps + PreToolUse hard-stop hook** (`scripts/budget-check.py` reads `budgets.yaml`, exit 2 = halt; see [`finops-budget-policy`](skills/finops-budget-policy/SKILL.md))
+- [x] **Per-process quotas** (v8 kernel: `registry/kernel.yaml` declares the slot, gitignored `company/config/kernel.json` carries the caps, `scripts/g__pretool__kernel.py` refuses the call that would exceed them, so spend is capped per arm AND per process, subagents included)
 - [x] **Anthropic Enterprise Analytics API ingest** (`scripts/anthropic-analytics-pull.py` reconciles estimated vs billed; see [`anthropic-enterprise-analytics`](skills/anthropic-enterprise-analytics/SKILL.md))
 - [x] **Claude Cowork integration shape**: quarantined pseudo-arm `cowork-shared`, never mounts a client arm directory ([design](docs/specs-archive/2026-05-20-claude-cowork-plugin/feature.md)). Enforcement hook deferred until Anthropic publishes the Cowork session-event API surface; Cowork billed cost is already captured today via the Admin Analytics ingest.
 

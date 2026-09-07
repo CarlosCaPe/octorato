@@ -21,6 +21,10 @@ pid is a no-op, not a second line.
 
 Never blocks. Fail-open on every error.
 
+Exit precedence is quota > error > ok: a `quota` line anywhere in the journal
+means the kernel stopped this process, and that outranks how it phrased its own
+last message.
+
 Stdin:  {"session_id", "agent_id", "agent_type", "agent_transcript_path",
          "transcript_path", "last_assistant_message", ...}
 Stdout: nothing. Exit always 0.
@@ -41,15 +45,21 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 _ERROR_HEAD = re.compile(r"^(?:error|fatal|exception)\b|^traceback \(most recent call last\)")
 
 
-def status_of(text) -> str:
-    """ok | error, read from the child's last assistant message.
+def status_of(text, quota_hit: bool = False) -> str:
+    """quota | ok | error, in that precedence (v8-kernel.md section 3, Phase 3).
 
-    No final message at all is the crash case: the process ended without ever
-    saying anything. Everything that is not an opening error marker is ok.
+    A quota line in the journal outranks whatever the child said on its way out,
+    because a capped process usually stops mid-sentence and reports its refusal
+    as prose: reading that prose would record the SYMPTOM (an error, or worse an
+    ok) instead of the cause the kernel already knows. The gate writes those
+    lines; this hook only reads them.
+
+    Below the quota branch: no final message at all is the crash case, the
+    process ended without ever saying anything. Everything that is not an
+    opening error marker is ok.
     """
-    # TODO(Phase 3, v8-kernel.md section 3): exit precedence is quota > error >
-    # ok. The hot-path gate writes the `quota` line; this hook will read the
-    # journal tail for it and stamp status "quota" ahead of both branches below.
+    if quota_hit:
+        return "quota"
     s = str(text or "").strip()
     if not s:
         return "error"
@@ -113,7 +123,8 @@ def main() -> int:
         now = time.time()
         rec = {
             "kind": "exit",
-            "status": status_of(payload.get("last_assistant_message")),
+            "status": status_of(payload.get("last_assistant_message"),
+                                 any(l.get("kind") == "quota" for l in lines)),
             "tool_count": sum(1 for l in lines if l.get("kind") == "tool"),
             "seq_before": int(tail.get("seq", -1)),
             "duration": round(max(0.0, now - float(tail.get("start_ts") or now)), 3),
