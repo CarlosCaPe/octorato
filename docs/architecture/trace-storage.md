@@ -126,6 +126,20 @@ to the right validator.
   but the trace itself does not bridge between arms. Arm isolation rule
   still applies.
 
+## Not the same file as the kernel journal (v8)
+
+The traces described here stay what they are, observability: one daily file, no
+locking, and no claim of audit. The v8 kernel journal
+(`~/.claude/.cache/kernel/journal/<pid>.jsonl`, `scripts/kernel_proc.py`,
+`schemas/kernel-journal.schema.json`) is a second, deliberately separate record
+with a different contract: one file per PROCESS instead of one per day, written
+under `fcntl.flock` on `<pid>.jsonl.lock` instead of lock-free, and hash-chained
+so an edited byte is detectable. It keeps this document's 4096-byte line rule,
+for the same POSIX reason, and truncates an oversized record with a `trunc`
+marker rather than splitting it. Read a trace to ask what the brain has been
+doing; read a journal to replay one run and verify it. Tamper evidence is not
+tamper proofing: the file still sits under `$HOME`, the same residual v7 states.
+
 ## Cross-references
 
 - Schema: `~/.claude/schemas/trace-event.schema.json`

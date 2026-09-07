@@ -1768,3 +1768,66 @@ rules:
     locator: SubagentStop|*|r__subagent-stop__qa-receipt.py
     expect: present
   liveness_required: FIRES
+- id: ARCHITECTURE.kernel-process
+  title: 'Kernel PROCESS: every main loop and every subagent has a pid, a parent and a worktree'
+  category: ARCHITECTURE
+  source:
+    file: CLAUDE.md
+    anchor: 'Kernel: process and journal'
+  strength: REFLEX
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Reflex
+    canonical_name: r__session__proc-register.py
+    firing_event: SessionStart
+    firing_matcher: '*'
+  - kind: Reflex
+    canonical_name: r__subagent-start__proc-register.py
+    firing_event: SubagentStart
+    firing_matcher: '*'
+  - kind: Reflex
+    canonical_name: r__subagent-stop__proc-exit.py
+    firing_event: SubagentStop
+    firing_matcher: '*'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: SessionStart|*|r__session__proc-register.py
+    expect: present
+  - method: IN_HOOKS_JSON
+    locator: SubagentStart|*|r__subagent-start__proc-register.py
+    expect: present
+  - method: IN_HOOKS_JSON
+    locator: SubagentStop|*|r__subagent-stop__proc-exit.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/r__subagent-start__proc-register.py --selftest registry/fixtures/ARCHITECTURE.kernel-process
+    expect: 0
+  - method: EXIT_CODE
+    locator: scripts/r__subagent-stop__proc-exit.py --selftest registry/fixtures/ARCHITECTURE.kernel-process
+    expect: 0
+  liveness_required: FIRES
+- id: FLOW.kernel-journal
+  title: 'Kernel JOURNAL: no tool call runs unjournaled (append-only, hash-chained, per process)'
+  category: FLOW
+  source:
+    file: CLAUDE.md
+    anchor: 'Kernel: process and journal'
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Gate
+    canonical_name: g__pretool__kernel.py
+    firing_event: PreToolUse
+    firing_matcher: '*'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: PreToolUse|*|g__pretool__kernel.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/g__pretool__kernel.py --selftest registry/fixtures/FLOW.kernel-journal
+    expect: 0
+  liveness_required: FIRES

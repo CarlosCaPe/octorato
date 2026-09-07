@@ -9,10 +9,10 @@
 | Skills | 233 |
 | Agents | 167 |
 | Divisions | 13 |
-| Scripts: wired | 107 |
+| Scripts: wired | 112 |
 | Scripts: orphan | 7 |
-| Rules | 72 |
-| Hook entries | 43 |
+| Rules | 74 |
+| Hook entries | 48 |
 
 ## Skills (233)
 
@@ -486,7 +486,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (114)
+## Scripts (119)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -541,6 +541,7 @@
 | g__pretool-bash__prod-write.py | PreToolUse Bash hook , compuerta de ESCRITURA EN PRODUCCION (FAIL-CLOSED). | wired |
 | g__pretool-mcp__chat-context.py | g__pretool-mcp__chat-context.py: PreToolUse gate for COMMS.chat-context-before-send. | wired |
 | g__pretool-mcp__outward-send.py | g__pretool-mcp__outward-send.py: the ONE outward-send gate (v7 phase 2). | wired |
+| g__pretool__kernel.py | g__pretool__kernel.py: PreToolUse `*` gate. No tool call runs unjournaled. | wired |
 | g__stop__defer-today.py | g__stop__defer-today.py: Stop gate: "no dejes para mañana lo que puedas hacer hoy" (do not put off u... | wired |
 | g__stop__delegation-audit.py | g__stop__delegation-audit.py: Stop gate for FLOW.bulk-fetch-delegation. | wired |
 | g__stop__draft-promise.py | g__stop__draft-promise.py , Stop gate: no future-tense promises in paste-ready drafts. | wired |
@@ -566,6 +567,7 @@
 | install-git-hooks.sh | install-git-hooks.sh , Install the brain-stays-generic git hooks into ~/.claude/.git/hooks/. | wired |
 | install-observability-timer.py | install-observability-timer.py - schedule the brain's daily observability digest. | wired |
 | install-runners.py | install-runners.py , make ~/.local/bin runners thin thunks into the tracked ai_sync.py. | wired |
+| kernel_proc.py | kernel_proc.py: the v8 PROCESS + JOURNAL library (docs/architecture/v8-kernel.md). | wired |
 | lineage-doctor.py | lineage-doctor.py , fail-closed integrity check for the surface/derivation graph. | wired |
 | mail-guardia.py | Mail watch: what arrived and we have not answered. Sibling of wa-guardia.py. | wired |
 | memory_lexicon_es_en.json |  | orphan |
@@ -584,6 +586,9 @@
 | quickstart.py | quickstart.py , zero-to-alive for a brand-new Octorato user, in one command. | wired |
 | r__posttool__receipt-seek.py | r__posttool__receipt-seek.py: PostToolUse reflex that writes a SEEK receipt. | wired |
 | r__pretool-write__base-freshness.py | r__pretool-write__base-freshness.py: PreToolUse warner for a STALE EDIT BASE. | wired |
+| r__session__proc-register.py | r__session__proc-register.py: SessionStart reflex that opens a kernel process. | wired |
+| r__subagent-start__proc-register.py | r__subagent-start__proc-register.py: SubagentStart reflex, a child process. | wired |
+| r__subagent-stop__proc-exit.py | r__subagent-stop__proc-exit.py: SubagentStop reflex, the child's exit line. | wired |
 | r__subagent-stop__qa-receipt.py | r__subagent-stop__qa-receipt.py: SubagentStop reflex that writes a QA receipt. | wired |
 | receipt_ledger.py | receipt_ledger.py: the v7 receipt ledger (shared library, not a hook). | wired |
 | repo_watch.py | repo_watch.py , daily monitor for high-value GitHub repos. | wired |
@@ -605,7 +610,7 @@
 | wa-soporte.sh | Sends a WhatsApp through the SUPPORT channel, never through the operator's personal number. | wired |
 | watchdog.py | watchdog.py , observability surface 4 anomaly detector. Reads the JSONL trace files written by trace... | wired |
 
-## Rules (72)
+## Rules (74)
 
 ### ARCHITECTURE
 
@@ -613,6 +618,7 @@
 - ARCHITECTURE.core-principles
 - ARCHITECTURE.drift-self-heal
 - ARCHITECTURE.information-flow
+- ARCHITECTURE.kernel-process
 - ARCHITECTURE.layers
 - ARCHITECTURE.octopus-architecture
 - ARCHITECTURE.session-isolation
@@ -663,6 +669,7 @@
 - FLOW.graph-before-grep
 - FLOW.image-analyzer-trigger
 - FLOW.impact-radius
+- FLOW.kernel-journal
 - FLOW.orchestrated-planning-reporting-contract
 - FLOW.prune-dead-cells
 - FLOW.qa-receipt
@@ -714,7 +721,9 @@
 | Event | Wired Scripts |
 |---|---|
 | PostToolUse | cadence-lint.py, canon-heal-hook.py, client-doc-lint-hook.py, d__posttool__delegation-ledger.py, impact-radius-hook.py, r__posttool__receipt-seek.py, trace-hook.py |
-| PreToolUse | budget-check.py, config-ship-verify.py, delegate-gate.py, dimension-awareness-hook.py, g__pretool-bash__git-discipline.py, g__pretool-mcp__chat-context.py, g__pretool-mcp__outward-send.py, grafo-gate.py, qa-merge-gate.py, r__pretool-write__base-freshness.py, secrets-grep-guard.py, trace-hook.py |
-| SessionStart | merge-hooks.py, session-isolation-hook.py |
+| PreToolUse | budget-check.py, config-ship-verify.py, delegate-gate.py, dimension-awareness-hook.py, g__pretool-bash__git-discipline.py, g__pretool-mcp__chat-context.py, g__pretool-mcp__outward-send.py, g__pretool__kernel.py, grafo-gate.py, qa-merge-gate.py, r__pretool-write__base-freshness.py, secrets-grep-guard.py, trace-hook.py |
+| SessionStart | merge-hooks.py, r__session__proc-register.py, session-isolation-hook.py |
 | Stop | cadence-stop-hook.py, claim-verify-stop.py, d__stop__wa-guardia.py, g__stop__defer-today.py, g__stop__delegation-audit.py, g__stop__draft-promise.py, g__stop__goal-anchor.py, g__stop__paste-ready-raw.py, g__stop__unsourced-absence.py, g__stop__unsourced-attribute.py, grafo-ledger-check.py, no-pause-suggestion.py, source-attribution-check.py, trace-hook.py |
+| SubagentStart | r__subagent-start__proc-register.py |
+| SubagentStop | r__subagent-stop__proc-exit.py, r__subagent-stop__qa-receipt.py |
 | UserPromptSubmit | 4d-reminder.py, arm-recall-hook.py, brain-memory-recall.py, connectome-heartbeat.py, eye-check.py, grafo-turn-reset.py, inbox-sweep-reflex.py, trace-hook.py |

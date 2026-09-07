@@ -1,0 +1,6 @@
+This directory stands where the process `kernel-vio` expects its journal FILE.
+Seeding the broken path per-pid (not the whole journal directory) is deliberate:
+one `home/` seed serves every leg of the fixture, so breaking the directory
+itself would deny the benign legs too and the gate could never prove it allows.
+The append raises IsADirectoryError here, an OSError, which is the one and only
+condition g__pretool__kernel.py turns into a deny.

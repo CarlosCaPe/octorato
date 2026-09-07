@@ -675,7 +675,8 @@ REGISTRY_SCHEMA = CLAUDE_DIR / "registry" / "rules.schema.json"
 NAMING_POLICY = CLAUDE_DIR / "registry" / "naming-policy.yaml"
 HOOKS_JSON = CLAUDE_DIR / "hooks.json"
 CLAUDE_MD = CLAUDE_DIR / "CLAUDE.md"
-CC_EVENTS = {"UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionStart", "SubagentStop"}
+CC_EVENTS = {"UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionStart",
+             "SubagentStart", "SubagentStop", "PermissionDenied"}
 
 
 def _rt(p: Path) -> str:
@@ -1397,6 +1398,101 @@ def check_enforcement_floor(fix: bool) -> Result:
     return Result(key, PASS, ledger)
 
 
+def check_kernel_process_live(fix: bool) -> Result:
+    """v8 Phase 1a-2: prove the kernel's PROCESS record is real on THIS machine.
+
+    A selftest proves the hooks work on fixtures; it says nothing about the
+    table those hooks have actually been writing. So this reads the real one,
+    read-only, and asserts the invariant the later phases lean on: a process the
+    liveness rule calls LIVE has a journal. A live row with no journal is a
+    phantom, and Phase 2 would deny writes on its behalf forever. The newest
+    five chains are verified (tamper evidence is worthless unverified), and the
+    `open` lines of the last week are counted, so calls that ran unjournaled
+    under OCTO_KERNEL_OPEN are a number, never a guess.
+
+    Passes on a fresh install with no ptable at all, and never writes."""
+    key = "kernel-process-live"
+    for loc in ("scripts/r__subagent-start__proc-register.py --selftest "
+                "registry/fixtures/ARCHITECTURE.kernel-process",
+                "scripts/r__subagent-stop__proc-exit.py --selftest "
+                "registry/fixtures/ARCHITECTURE.kernel-process"):
+        script = loc.split()[0]
+        if not (CLAUDE_DIR / script).exists():
+            return Result(key, FAIL, f"{script} is missing", "restore the kernel hook")
+        cp = _run_selftest_locator(loc)
+        if cp.returncode != 0:
+            detail = (cp.stderr or cp.stdout or "").strip().splitlines()
+            return Result(key, FAIL,
+                          f"{Path(script).name} selftest failed: "
+                          + (detail[-1] if detail else f"exit {cp.returncode}"),
+                          "the register/exit reflexes no longer prove themselves; fix the hook or the fixture")
+    sys.path.insert(0, str(CLAUDE_DIR / "scripts"))
+    try:
+        import time
+
+        import kernel_proc
+    except Exception as e:
+        return Result(key, FAIL, f"cannot import kernel_proc: {e}", "restore scripts/kernel_proc.py")
+
+    notes = []
+    if not (CLAUDE_DIR / "hooks.json").exists():
+        notes.append("hooks.json absent")
+    else:
+        try:
+            wired = json.loads((CLAUDE_DIR / "hooks.json").read_text(encoding="utf-8"))
+        except ValueError:
+            wired = {}
+        if not wired.get("SubagentStart"):
+            notes.append("runtime fallback: no SubagentStart hook, a child's start line "
+                         "waits for its first tool call (PreToolUse[Agent] + SubagentStop only)")
+
+    table = kernel_proc.read_ptable()
+    procs = table.get("processes", {})
+    now = time.time()
+    live, phantom = [], []
+    for pid in procs:
+        if kernel_proc.is_live(pid, table, now):
+            live.append(pid)
+            if not os.path.exists(kernel_proc.journal_path(pid)):
+                phantom.append(pid)
+    if phantom:
+        return Result(key, FAIL,
+                      f"{len(phantom)} live process(es) with no journal: " + ", ".join(phantom[:5]),
+                      "a live row with no journal holds lanes nothing can release; "
+                      "delete the row from ~/.claude/.cache/kernel/ptable.json")
+
+    jdir = kernel_proc.journal_dir()
+    journals = []
+    if os.path.isdir(jdir):
+        for name in os.listdir(jdir):
+            if not name.endswith(".jsonl"):
+                continue
+            path = os.path.join(jdir, name)
+            try:
+                journals.append((os.stat(path).st_mtime, name[:-6]))
+            except OSError:
+                continue
+    journals.sort(reverse=True)
+    for _, pid in journals[:5]:
+        code, why = kernel_proc.verify_detail(pid)
+        if code != 0:
+            return Result(key, FAIL, f"journal chain broken for pid {pid}: {why}",
+                          "the journal is append-only and hash-chained; a broken chain is tamper "
+                          "evidence, read it before deleting the file")
+    opened = 0
+    cutoff = now - 7 * 24 * 3600
+    for mtime, pid in journals:
+        if mtime < cutoff:
+            continue
+        for line in kernel_proc.read_journal(pid):
+            if isinstance(line, dict) and line.get("kind") == "open" \
+                    and float(line.get("ts") or 0) >= cutoff:
+                opened += int(line.get("count") or 0)
+    msg = (f"2 selftests pass; {len(procs)} process row(s), {len(live)} live, all journaled; "
+           f"{min(len(journals), 5)} newest chain(s) verify; {opened} call(s) ran unjournaled in 7 days")
+    return Result(key, PASS, msg + ("; " + "; ".join(notes) if notes else ""))
+
+
 def check_querymaster_security_detector(fix: bool) -> Result:
     """Actually RUN the querymaster security-canon detector so SECURITY.querymaster-rules
     is genuinely lived, not presence-with-extra-steps.
@@ -1707,6 +1803,7 @@ CHECKS = [
     ("waiver-age", check_waiver_age),
     ("incident-fixture-coverage", check_incident_fixture_coverage),
     ("reflex-triage", check_reflex_triage),
+    ("kernel-process-live", check_kernel_process_live),
     ("querymaster-security-detector", check_querymaster_security_detector),
     ("rule-1-naming", check_naming),
     ("rule-1-orphans", check_orphan_hooks),
