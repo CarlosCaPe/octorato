@@ -132,6 +132,12 @@
         {
           "command": "python3 ~/.claude/scripts/r__pretool-write__base-freshness.py",
           "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/g__pretool-write__tree-owner.py",
+          "statusMessage": "⚙ kernel: one writer per lane...",
+          "timeout": 5,
+          "type": "command"
         }
       ],
       "matcher": "Write|Edit|NotebookEdit|MultiEdit"
@@ -174,6 +180,12 @@
         },
         {
           "command": "python3 ~/.claude/scripts/config-ship-verify.py",
+          "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/g__pretool-bash__tree-owner.py",
+          "statusMessage": "⚙ kernel: one writer per tree...",
+          "timeout": 5,
           "type": "command"
         }
       ],

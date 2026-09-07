@@ -154,6 +154,6 @@ decisions:
     decided: 2026-09-05
   - slug: lesson_session_isolation_worktree
     decision: gate
-    mechanism: scripts/dimension-awareness-hook.py
-    reason: "the session half is live (session-isolation-hook forks a newcomer into its own worktree; the dimension gate denies broad staging on a shared tree while other dimensions are live); the subagent half (a builder running git checkout/restore on files another builder owns) has no detector yet: candidate is a PreToolUse deny on git checkout -- / restore / stash / reset --hard against paths dirty in the tree, or one worktree per writing subagent by protocol"
-    decided: 2026-09-06
+    mechanism: scripts/g__pretool-bash__tree-owner.py
+    reason: "both halves are live: the session half forks a newcomer into its own worktree and denies broad staging on a shared tree, and the subagent half is now denied per process, not per session (v8 Phase 2 keys lanes by pid, so two subagents of one session are two writers): a whole-tree verb (checkout/switch/reset --hard/stash/clean -f/worktree remove) in a root another live process holds a lane in, a pathspec verb or a Bash mutation on that lane, and octo --release from Bash, all denied with the holder named; the Write twin is scripts/g__pretool-write__tree-owner.py"
+    decided: 2026-09-07

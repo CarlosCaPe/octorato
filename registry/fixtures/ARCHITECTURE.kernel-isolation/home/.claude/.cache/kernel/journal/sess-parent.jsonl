@@ -1,0 +1,2 @@
+{"seq":0,"ts":1788782922.837362,"start_ts":1788782922.837362,"pid":"sess-parent","kind":"start","prev":null,"type":"main loop","worktree":"work/tree"}
+{"seq":1,"ts":1788782922.837699,"start_ts":1788782922.837362,"pid":"sess-parent","kind":"tool","prev":"6b0050e2eaec2f4eb250ae47c6dc9fded9998ada220830cbf63c1b0bc755181d","tool_name":"Agent","input_sha256":"seed"}

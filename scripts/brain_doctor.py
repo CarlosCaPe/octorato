@@ -1493,6 +1493,51 @@ def check_kernel_process_live(fix: bool) -> Result:
     return Result(key, PASS, msg + ("; " + "; ".join(notes) if notes else ""))
 
 
+def check_kernel_isolation_gate(fix: bool) -> Result:
+    """v8 Phase 2: prove the two ISOLATION gates block AND are actually wired.
+
+    Two assertions, because either one alone lies. A selftest that passes on a
+    script nobody calls is a gate on paper; a hooks.json entry for a script that
+    no longer denies is a gate in name. So: run both `--selftest` proofs against
+    the shared fixture dir, then confirm each script sits in hooks.json at the
+    PreToolUse matcher it claims.
+
+    ORDER IS NEVER ASSERTED. Hooks on one event run in parallel and a PreToolUse
+    call is denied when ANY hook denies, so "after the dimension gate" would be a
+    claim about the runtime that the runtime does not make."""
+    key = "kernel-isolation-gate"
+    fixtures = "registry/fixtures/ARCHITECTURE.kernel-isolation"
+    wanted = {
+        "g__pretool-write__tree-owner.py": "Write|Edit|NotebookEdit|MultiEdit",
+        "g__pretool-bash__tree-owner.py": "Bash",
+    }
+    if not (CLAUDE_DIR / fixtures).is_dir():
+        return Result(key, FAIL, f"{fixtures} is missing",
+                      "restore the isolation fixtures; without them neither gate proves itself")
+    for script in wanted:
+        if not (CLAUDE_DIR / "scripts" / script).exists():
+            return Result(key, FAIL, f"scripts/{script} is missing",
+                          "restore the isolation gate")
+        cp = _run_selftest_locator(f"scripts/{script} --selftest {fixtures}")
+        if cp.returncode != 0:
+            detail = (cp.stderr or cp.stdout or "").strip().splitlines()
+            return Result(key, FAIL,
+                          f"{script} selftest failed: "
+                          + (detail[-1] if detail else f"exit {cp.returncode}"),
+                          "one writer per tree and per lane is not enforced; fix the gate or the fixture")
+    idx = _hooks_index()
+    unwired = [f"{script} at PreToolUse|{matcher}" for script, matcher in wanted.items()
+               if not any(e == "PreToolUse" and b == script and (mm == matcher or mm == "*")
+                          for (e, mm, b) in idx)]
+    if unwired:
+        return Result(key, FAIL, "not wired in hooks.json: " + "; ".join(unwired),
+                      "add the gate to hooks.json at its matcher, then run merge-hooks.py")
+    return Result(key, PASS,
+                  "both isolation gates prove themselves and are wired "
+                  "(Write|Edit|NotebookEdit|MultiEdit and Bash); hook order not asserted, "
+                  "same-event hooks run in parallel")
+
+
 def check_querymaster_security_detector(fix: bool) -> Result:
     """Actually RUN the querymaster security-canon detector so SECURITY.querymaster-rules
     is genuinely lived, not presence-with-extra-steps.
@@ -1804,6 +1849,7 @@ CHECKS = [
     ("incident-fixture-coverage", check_incident_fixture_coverage),
     ("reflex-triage", check_reflex_triage),
     ("kernel-process-live", check_kernel_process_live),
+    ("kernel-isolation-gate", check_kernel_isolation_gate),
     ("querymaster-security-detector", check_querymaster_security_detector),
     ("rule-1-naming", check_naming),
     ("rule-1-orphans", check_orphan_hooks),
