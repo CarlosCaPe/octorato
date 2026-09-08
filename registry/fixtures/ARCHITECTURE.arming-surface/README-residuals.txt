@@ -74,17 +74,24 @@ own header carries the same list; this file carries the commands.
    {Write, Edit, NotebookEdit, MultiEdit, Bash} and a protected path in
    tool_input; benign_foreign_tool.json pins the current behaviour.
 
-7. A SETTINGS SCOPE OUTSIDE THE LIVE ROOT.  PASSES.
-     (Write ~/.claude.json)                      -> allowed
+7. A SETTINGS SCOPE OUTSIDE THE LIVE ROOT.  PARTLY CLOSED.
      (Write /etc/claude-code/managed-settings.json) -> allowed
-   Three scopes, all measured 2026-09-08. Enterprise/managed policy lives
-   outside $HOME and is root-owned, so the OS is the gate there. `~/.claude.json`
-   is a SIBLING of the brain root, not inside it, and it carries `mcpServers`
-   (a command the next session runs), which makes it the strongest uncovered
-   surface left; it is deliberately not taken here because the harness rewrites
-   it on every session and hand-repairing it is real work with no worktree copy
-   to do it in. A project root outside the live tree (an arm's own
-   `.claude/settings.json`) is that arm's business, not this gate's.
+     (Write ~/Documents/github/<arm>/.claude/settings.json) -> allowed
+     (Write ~/.claude.json)                      -> DENIED, no longer a residual
+   `~/.claude.json` stood here as "the strongest uncovered surface left", on
+   the reasoning that the harness rewrites it every session so a deny would
+   leave no development path. That reasoning was wrong, and it is written down
+   so it does not come back: a PreToolUse hook only ever sees the AGENT's tool
+   calls, never the harness writing its own state file, so there was nothing to
+   fight. It carries `mcpServers` (three entries, each with `command`, `args`,
+   `env`, `type`), which makes a write there a program the next session runs at
+   startup, and it is now covered by NAME, the one member of the set outside
+   the live root. Measured after: Write, Edit, `sed -i`, `>` redirect, `cp`,
+   `mv`, `rm` and an interpreter write all deny; `cat`, a `-c` read,
+   `~/.claude.json.bak` and a worktree `.claude.json` all allow.
+   What remains: enterprise/managed policy lives outside $HOME and is
+   root-owned, so the OS is the gate there. A project root outside the live
+   tree (an arm's own `.claude/settings.json`) is that arm's business.
    What IS covered, and was not before: PROJECT scope inside the live root.
    `<any dir>/.claude/settings*.json` under ~/.claude is denied by path shape,
    and so is a `.claude` DIRECTORY that holds one. A `.claude` directory that

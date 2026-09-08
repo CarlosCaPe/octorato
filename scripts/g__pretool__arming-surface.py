@@ -87,17 +87,37 @@ THE FILE SET, and why each one is an arming surface.
       project roots without enumerating them, and the live tree really carries
       one: claude-mem-ref/.claude/settings.json.
 
-      SCOPES COVERED: user (`<brain>/settings*.json`) and project, for every
-      project root INSIDE the live tree.
-      SCOPES THIS GATE CANNOT SEE, each measured, each a residual below:
-      enterprise/managed policy outside $HOME, `~/.claude.json` (user config,
-      `mcpServers`), and any project root outside the live root (an arm's own
-      `.claude/settings.json` is that arm's business, not this gate's).
+      SCOPES COVERED: user (`<brain>/settings*.json`), project, for every
+      project root INSIDE the live tree, and the harness user config
+      `~/.claude.json` (next entry, covered by name because it is the one
+      member outside the root).
+      SCOPES THIS GATE CANNOT SEE, both measured, both a residual below:
+      enterprise/managed policy outside $HOME, and any project root outside the
+      live root (an arm's own `.claude/settings.json` is that arm's business,
+      not this gate's).
       NOT an arming surface, checked rather than assumed: a worktree's
       `hooks.json`. It is octorato's tracked source, projected into the live
       settings.json by merge-hooks.py and guarded by check-hooks-drift.py; the
       harness never loads `<repo>/hooks.json`. Every `wt/*` and `dim/*` copy
       stays writable (measured: 6 of 6 ALLOW).
+  ~/.claude.json
+      The harness's USER CONFIG, and the one member of this set that lives
+      outside the live root: a sibling of the brain directory, not a file
+      inside it. It carries `mcpServers`, measured 2026-09-08 as three entries,
+      each an object with `command`, `args`, `env` and `type`. Writing it names
+      a PROGRAM the next session executes at startup with an environment of the
+      writer's choosing, which is the same disarm class as an `env` block in
+      settings and a worse one, since it is a direct command rather than a
+      variable. The rule is "the surfaces that arm the next session", so this
+      one is covered by NAME while everything under the root stays covered by
+      shape. There is nothing to fight for a development path, checked rather
+      than assumed: a PreToolUse hook only ever sees the AGENT's tool calls,
+      never the harness writing its own state file, so denying the agent's
+      write costs the harness nothing, exactly like the live settings.json
+      whose only legitimate writer is also not a hooked process. Measured
+      after: Write, Edit, `sed -i`, a `>` redirect, `cp`, `mv`, `rm` and an
+      interpreter write all deny; `cat`, a `-c` READ, `~/.claude.json.bak` and
+      a worktree copy all allow.
   hooks.json
       The tracked source of the registrations; settings.json's hook block is
       its projection (brain_doctor: "settings.json hooks == validated hooks.json
@@ -159,16 +179,19 @@ NAMED RESIDUALS, measured, deliberately not covered:
     the marker from the list turns that fixture red (proven by running all 14
     deletions). Before that, 12 of 14 were dead weight, provable by deleting
     them with the selftest still green.
-  - A SETTINGS SCOPE OUTSIDE THE LIVE ROOT. Three, all measured today:
-    enterprise/managed policy (`/etc/claude-code/managed-settings.json` on
-    Linux) is outside $HOME and root-owned, so the OS is the gate there and
-    this one never sees it; `~/.claude.json` is a sibling of the brain root,
-    not inside it, and it carries `mcpServers` (a command the next session
-    runs), so it is the strongest uncovered surface left, deliberately not
-    taken here because it is written by the harness itself on every session and
-    hand-repairing it is real work with no worktree copy to do it in; a project
-    root outside the live tree (an arm's `.claude/settings.json`) is that arm's
-    business. Reproduction: `Write ~/.claude.json` is allowed.
+  - A SETTINGS SCOPE OUTSIDE THE LIVE ROOT, minus the one that was taken.
+    `~/.claude.json` used to be listed here as "the strongest uncovered surface
+    left", on the reasoning that the harness rewrites it every session and a
+    deny would leave no development path. That reasoning was wrong and is
+    recorded here so it does not come back: a PreToolUse hook never sees the
+    harness write its own state file, only the agent's tool calls, so there was
+    nothing to fight. It is now covered by name (see the file set above).
+    What remains: enterprise/managed policy
+    (`/etc/claude-code/managed-settings.json` on Linux) is outside $HOME and
+    root-owned, so the OS is the gate there and this one never sees it; a
+    project root outside the live tree (an arm's `.claude/settings.json`) is
+    that arm's business. Reproduction: `Write /etc/claude-code/
+    managed-settings.json` and a write to an arm's own settings are allowed.
   - AN ANCESTOR-DIRECTORY DELETE OF A DEEP PROJECT ROOT. `rm -rf
     ~/.claude/claude-mem-ref` takes that root's `.claude/settings.json` without
     naming it or its `.claude` directory. Covering it means listing the live
@@ -298,6 +321,31 @@ _PROJECT_DIR_WHY = (
     "without ever naming the file"
 )
 
+# The ONE member of the set that lives outside the live root. `~/.claude.json`
+# is the harness's user config, a sibling of the brain directory rather than a
+# file inside it, and it carries `mcpServers`: measured 2026-09-08, three
+# entries, each an object with `command`, `args`, `env` and `type`. Writing it
+# names a PROGRAM the next session executes at startup with an environment of
+# the writer's choosing, which is the same disarm class as an `env` block in
+# settings and a worse one, since it is a direct command rather than a
+# variable. The rule this gate enforces is "the surfaces that arm the next
+# session"; most of them sit under the live root, this one does not, so it is
+# covered by NAME while everything under the root stays covered by shape.
+#
+# There is no development case to protect, checked rather than assumed: a
+# PreToolUse hook only ever sees the AGENT's tool calls, never the harness
+# writing its own state file, so denying the agent's write costs the harness
+# nothing. Same position as the live settings.json, whose only legitimate
+# writer is also not a hooked process.
+_USER_CONFIG_NAME = ".claude.json"
+_USER_CONFIG_WHY = (
+    "the harness's user config, which carries `mcpServers`: each entry names a "
+    "`command` plus its `args` and `env`, so a write here hands the NEXT "
+    "session a program to run at startup in an environment of the writer's "
+    "choosing. It is the one arming surface outside the live root, covered by "
+    "name because it has no copy anywhere else"
+)
+
 # Whole-tree git verbs, as the shared parser labels them: they rewrite every
 # file in the set at once. `git worktree remove` is the one the shared parser
 # calls whole-tree that is NOT one here, measured: it deletes a SIBLING
@@ -358,6 +406,12 @@ def scripts_dir() -> str:
     return os.path.join(brain_root(), "scripts")
 
 
+def user_config_path(brain: str) -> str:
+    """`~/.claude.json`, derived from the brain root so a sandboxed HOME (every
+    selftest leg) resolves its own instead of the real one."""
+    return os.path.join(os.path.dirname(brain), _USER_CONFIG_NAME)
+
+
 def _is_gate_script(basename: str) -> bool:
     return any(fnmatch.fnmatch(basename, p) for p in _SCRIPT_PATTERNS)
 
@@ -415,6 +469,9 @@ def classify(target: str) -> tuple:
     if not target:
         return None, None
     brain = brain_root()
+    cfg = user_config_path(brain)
+    if kernel_proc.paths_conflict(target, cfg):
+        return cfg, _USER_CONFIG_WHY           # the one member outside the root
     if not kernel_proc.paths_conflict(target, brain):
         return None, None                      # fast out: not in the brain
     for rel, why in _EXACT.items():
@@ -494,6 +551,8 @@ def _needles() -> list:
     for rel in rels:
         out.append(os.path.join(brain, *rel.split("/")))
         out.append("~/.claude/" + rel)
+    out.append(user_config_path(brain))
+    out.append("~/" + _USER_CONFIG_NAME)
     return out
 
 
@@ -745,6 +804,10 @@ def _build_sandbox(sandbox: str, setup: dict) -> None:
         os.makedirs(os.path.join(live, rel), exist_ok=True)
     for rel in ("settings.json", "settings.local.json", "hooks.json"):
         _touch(os.path.join(live, rel), "{}\n")
+    # the harness user config, a SIBLING of the live root, plus a neighbour one
+    # character away from it that must stay writable.
+    _touch(os.path.join(sandbox, ".claude.json"), '{"mcpServers": {}}\n')
+    _touch(os.path.join(sandbox, ".claude.json.bak"), "{}\n")
     # PROJECT scope, the second surface. `<live>/.claude/settings*.json` is what
     # a session whose cwd is the live root loads ON TOP of the user-scope pair,
     # `<live>/.claude/commands/` is a neighbour inside the same directory that
@@ -772,6 +835,7 @@ def _build_sandbox(sandbox: str, setup: dict) -> None:
     # the SAME project-scope shape one directory over: source, not loaded, and
     # the over-fire control for the whole project-scope rule.
     _touch(os.path.join(wt, ".claude", "settings.json"), "{}\n")
+    _touch(os.path.join(wt, ".claude.json"), "{}\n")
     _touch(os.path.join(wt, "registry", "rules.yaml"), "rules: []\n")
     _touch(os.path.join(wt, ".githooks", "pre-push"), "#!/bin/sh\n")
     for name in ("qa-merge-gate.py", "g__pretool__kernel.py",
