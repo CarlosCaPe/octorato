@@ -52,15 +52,38 @@ and `find ... -delete` (or `-exec rm`). Globs reduce to their longest literal
 directory before the lane test, so `git checkout -- pkg/*.py` cannot walk past a
 lane by never naming it literally, and `:/` / `:(top)` mean the whole root.
 
+QA CYCLE 10 closed four more, all of them in THIS parser rather than in any one
+gate, which is why fixing them here fixes every gate that imports it:
+`install` (its destination is the last positional, or `-t DIR`, or every
+positional under `-d`) is `cp`; `busybox`/`toybox` are WRAPPERS whose next token
+is the real program, peeled like `env` and `nohup`; `$HOME`, `${HOME}` and a
+leading `~` are EXPANDED before a path is normalized, because a shell sets HOME
+in every session and this process knows its own, so `rm "$HOME/.claude/x"` is no
+longer a one-token bypass of every path rule here; and a non-symbolic `ln` (or
+`cp -l`) is denied on its SOURCE as well as its destination, because a hardlink
+is a second name for one inode, `realpath` does not resolve it, and the write
+through the new name is invisible to every gate afterwards.
+
 NAMED RESIDUALS, measured as passing and deliberately not covered here. The list
 is pinned by a test, so it stays equal to what the gate actually does:
-`rsync --delete`, `shred`, `ln -sf`, `perl -pi` AGAINST A LANE (against the
-KERNEL DIRECTORY they are denied, see below);
+`rsync --delete`, `shred`, `perl -pi` AGAINST A LANE (against the KERNEL
+DIRECTORY they are denied, see below);
 `git apply|rebase|merge|pull|cherry-pick|revert`; variable and brace expansion
-(`rm -rf $DIR`, `rm -rf {pkg,x}`, unknowable without running the shell); a `-c` body nested deeper
+OTHER than HOME (`rm -rf $DIR`, `rm -rf {pkg,x}`, unknowable without running the
+shell); a `-c` body nested deeper
 than 3; and xargs fed from STDIN (`cat list | xargs rm`, `xargs rm < list`),
 where the targets never appear in the command at all. Each is a distinct verb
 table or an evaluator, not a gap in this one, and none is the weekend shape.
+
+Three residuals belong specifically to the hardlink rule and are stated rather
+than discovered: a SYMBOLIC link over a lane's path is denied (it is a write to
+that path) but a symbolic link whose SOURCE is a lane is not, because it stores
+a path rather than an inode and the write through it resolves back to the lane
+where the ordinary test still runs; a hardlink made by a tool outside this table
+(`rsync --link-dest`, `pax -l`, `python3 -c "os.link(...)"`) is as invisible as
+any other evaluator; and an alias that ALREADY EXISTS on disk when the session
+starts was never seen by this gate at all. The deny is on the act of aliasing,
+so it can only cover aliases this gate watched being made.
 
 The kernel's own state is not a lane but a floor, and since QA cycle 9 that
 floor is a NAMED-PATH test rather than a verb table: any segment that names a
@@ -207,8 +230,30 @@ def peel_env(tokens: list) -> list:
     return tokens[i:]
 
 
+# THE ONLY TWO EXPANSIONS THIS GATE PERFORMS, and the line is drawn where the
+# answer stops being deterministic. `~` and `$HOME` do not depend on the state
+# of a shell nobody ran: HOME is set in every login shell and THIS PROCESS KNOWS
+# ITS OWN, so expanding them reads a value the gate already holds rather than
+# guessing one. Every OTHER variable (`$DIR`, `$PWD`, `$1`) and brace expansion
+# stay unexpanded and stay a NAMED RESIDUAL, because their value lives in a
+# shell this gate never runs and inventing one would deny work nobody owns.
+#
+# QA cycle 10 F3: `rm "$HOME/.claude/settings.json"` was a one-token bypass of
+# every path rule in this file, the kernel floor included, while the same
+# command spelled absolutely was correctly denied. `$HOME` is expanded only at
+# the START of a token and only when what follows it is a separator or the end
+# of the token, so `$HOMEBREW/bin` is left alone.
+def expand_home(path: str) -> str:
+    if path.startswith("${HOME}"):
+        path = os.path.expanduser("~") + path[len("${HOME}"):]
+    elif path.startswith("$HOME") and (
+            len(path) == 5 or not (path[5].isalnum() or path[5] == "_")):
+        path = os.path.expanduser("~") + path[5:]
+    return os.path.expanduser(path)
+
+
 def resolve(path: str, here: str) -> str:
-    path = os.path.expanduser(path)
+    path = expand_home(path)
     return kernel_proc.norm_path(path if os.path.isabs(path) else os.path.join(here, path))
 
 
@@ -241,6 +286,15 @@ _WRAPPERS = {
                          "--max-args", "--replace", "--max-procs", "--delimiter",
                          "--arg-file", "--max-lines"),
               "cd": (), "arg": 0},
+    # A MULTI-CALL BINARY IS A WRAPPER, NOT A PROGRAM. `busybox rm -f <lane>`
+    # runs busybox's own rm and the file is exactly as gone; QA cycle 10 F2
+    # measured it passing while the bare `rm` was denied, for no reason other
+    # than that the first token was not a verb anybody had listed. This is the
+    # same shape as `env`/`nohup`/`command` above (peel the token, the next one
+    # is the real program), so it belongs in THIS table rather than in a new
+    # one. `toybox` is the same binary shape and is peeled with it.
+    "busybox": {"valued": (), "cd": (), "arg": 0},
+    "toybox": {"valued": (), "cd": (), "arg": 0},
 }
 
 
@@ -310,9 +364,17 @@ def redirect_targets(tokens: list) -> tuple:
     return targets, rest
 
 
+# Options that ALWAYS consume a separate argument. `--backup`, `--reflink` and
+# `--sparse` are deliberately absent: their argument is optional and only ever
+# arrives with `=`, so listing them would eat the first SOURCE of
+# `cp --backup src dst` and turn a covered command into an uncovered one.
 _VALUED_MUTATOR_OPTS = {
     "truncate": ("-s", "--size", "-r", "--reference"),
     "sed": ("-e", "--expression", "-f", "--file", "-l", "--line-length"),
+    "install": ("-m", "--mode", "-o", "--owner", "-g", "--group",
+                "-t", "--target-directory", "-S", "--suffix", "--strip-program"),
+    "ln": ("-t", "--target-directory", "-S", "--suffix"),
+    "cp": ("-t", "--target-directory", "-S", "--suffix"),
 }
 
 
@@ -333,14 +395,76 @@ def _positional(base: str, args: list) -> list:
     return out
 
 
+def _valued(args: list, names: tuple):
+    """The value of the first of `names` present, as `-t DIR` or `--long=VAL`."""
+    for i, tok in enumerate(args):
+        name, eq, val = tok.partition("=")
+        if name in names:
+            if eq:
+                return val
+            if i + 1 < len(args):
+                return args[i + 1]
+    return None
+
+
+def _short_flag(args: list, letter: str, long_forms: tuple) -> bool:
+    """A bundled short flag (`-sf` carries `s`) or one of its long spellings."""
+    for tok in args:
+        if tok in long_forms:
+            return True
+        if tok.startswith("-") and not tok.startswith("--") and letter in tok[1:]:
+            return True
+    return False
+
+
+# `cp`, `install` and `ln` all take SOURCES and then a DESTINATION, so they get
+# ONE target rule rather than three copies that drift apart.
+#
+# QA cycle 10 F1, the destination half: `install /dev/null <lane>` overwrites
+# the file exactly as `cp /dev/null <lane>` does, and this gate denied the
+# second and allowed the first for one reason, that `install` was missing from a
+# list of verbs. The destination is the last positional, or the directory named
+# by `-t`, or EVERY positional under `install -d`, which creates directories
+# instead of copying files.
+#
+# QA cycle 10 F4, the SOURCE half, and it is NOT symmetrical with the others: a
+# non-symbolic `ln` (and `cp -l`) creates a SECOND NAME FOR THE SAME INODE.
+# `realpath` does not resolve a hardlink, so the new name is a path no gate can
+# connect back to the protected one, and the later write through it is invisible
+# by construction. The `ln` is therefore the last moment anything is decidable
+# and it is where the deny has to land. A SYMBOLIC link is not this: it is a new
+# file whose content is a path, and a write through it resolves to the original,
+# where the ordinary lane test still runs. So `-s` keeps only the destination.
+def _copy_targets(base: str, args: list, positional: list) -> list:
+    if base == "install" and _short_flag(args, "d", ("--directory",)):
+        return positional               # `install -d a b c` creates all of them
+    into = _valued(args, ("-t", "--target-directory"))
+    if into:
+        dest, sources = [into], positional
+    elif len(positional) >= 2:
+        dest, sources = positional[-1:], positional[:-1]
+    elif positional:
+        # `ln <src>` links into the cwd under the source's basename; a lone
+        # `cp`/`install` argument is an error and names no destination.
+        dest = [os.path.basename(positional[0])] if base == "ln" else []
+        sources = positional
+    else:
+        return []
+    if base == "ln" and not _short_flag(args, "s", ("--symbolic",)):
+        return dest + sources
+    if base == "cp" and _short_flag(args, "l", ("--link",)):
+        return dest + sources
+    return dest
+
+
 def mutation_targets(base: str, args: list) -> list:
     """Paths a non-git mutation writes. `cp` writes only its destination; `sed`
     writes nothing unless it is in-place."""
     positional = _positional(base, args)
     if base in ("rm", "mv", "tee", "unlink", "truncate"):
         return positional
-    if base == "cp":
-        return positional[-1:] if len(positional) >= 2 else []
+    if base in ("cp", "install", "ln"):
+        return _copy_targets(base, args, positional)
     if base == "sed":
         in_place = any(a == "-i" or (a.startswith("-i") and not a.startswith("--"))
                        or a.startswith("--in-place") for a in args)
@@ -357,7 +481,8 @@ def mutation_targets(base: str, args: list) -> list:
     return []
 
 
-_EXEC_MUTATORS = ("rm", "unlink", "shred", "truncate", "mv", "cp", "sed", "tee")
+_EXEC_MUTATORS = ("rm", "unlink", "shred", "truncate", "mv", "cp", "sed", "tee",
+                  "install", "ln")
 _FIND_FILTERS = ("-name", "-iname", "-path", "-ipath", "-wholename")
 
 
@@ -484,8 +609,9 @@ def pathspecs(sub: str, rest: list, base_dir: str) -> list:
         return args
     out = []
     for a in args:
-        probe = a if os.path.isabs(a) else os.path.join(base_dir, a)
-        if os.path.exists(os.path.expanduser(probe)) or _is_glob(a):
+        probe = expand_home(a)
+        probe = probe if os.path.isabs(probe) else os.path.join(base_dir, probe)
+        if os.path.exists(probe) or _is_glob(a):
             out.append(a)
     return out
 
@@ -523,7 +649,7 @@ def spec_target(spec: str, base_dir: str) -> tuple:
             return "path", base_dir
         if spec in _WHOLE_TREE_SPECS:
             return "path", base_dir
-    spec = os.path.expanduser(spec)
+    spec = expand_home(spec)
     if not _is_glob(spec):
         return "path", resolve(spec, base_dir)
     keep = []
@@ -561,10 +687,10 @@ def glob_hits(pattern: str, lane: str, icase: bool = False) -> bool:
 # ── scan ────────────────────────────────────────────────────────────────────
 
 _TRIGGERS = ("git", "rm", "mv", "cp", "sed", "tee", ">", "octo", "find",
-             "unlink", "truncate", "xargs", "delete",
+             "unlink", "truncate", "xargs", "delete", "install", "ln",
              "touch", "chmod", "chattr", "dd")
 _C_HOSTS = ("bash", "sh", "zsh", "dash", "python", "python3", "py")
-_MUTATORS = ("rm", "mv", "cp", "sed", "tee", "unlink", "truncate")
+_MUTATORS = ("rm", "mv", "cp", "sed", "tee", "unlink", "truncate", "install", "ln")
 # Verbs that can damage the kernel's ledger without being a lane write. They are
 # tested against the state floor ONLY, never against a lane: `touch`/`chmod` on
 # a sibling's file is not the collision this rule is about.

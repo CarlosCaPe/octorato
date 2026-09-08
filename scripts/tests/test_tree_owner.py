@@ -601,7 +601,11 @@ class QaCycle1(IsolationCase):
                 # separate verb tables
                 f"rsync -a --delete /tmp/x/ {self.tree}/pkg/",
                 f"shred -u {self.a_py}",
-                f"ln -sf /dev/null {self.a_py}",
+                # `ln -sf /dev/null <lane>` USED TO SIT HERE and no longer
+                # does: QA cycle 10 put `ln` in the mutator table, so the
+                # destination of a link is a write like any other. It is
+                # pinned as DENIED in
+                # `QaCycle10.test_f4_the_destination_of_a_link_is_a_write`.
                 f"perl -pi -e s/a/b/ {self.a_py}",
                 # an evaluator: the body is Python, not shell. AIMED AT A LANE,
                 # which is what is still uncovered. The same evaluators aimed at
@@ -1256,9 +1260,25 @@ class TheAgentProofClaimIsMeasured(IsolationCase):
         self.assertTrue(self.denied(cp.stdout),
                         "and the answer it gets there is a DENY, because one of "
                         "those targets is a LIVE holder's lane")
-        self.assertIn("agent-a", cp.stdout,
-                      "naming the holder, which is the whole point of failing "
-                      "closed rather than just failing")
+        # NAMING A HOLDER IS THE PROPERTY; naming `agent-a` SPECIFICALLY is not.
+        # This line used to assert the second one and it is the very defect the
+        # docstring above warns about one paragraph earlier: it pins WHICH
+        # BRANCH RAN, and which branch runs is decided by the clock. Reproduced
+        # on 2026-09-08 with six busy cores, three runs each, on THIS build and
+        # on HEAD alike: the gate spends its journal budget before it reaches
+        # `agent-a`'s lane, correctly denies on an unread `stale-N` row instead,
+        # and says so in the deny. That is the fail-closed answer, not a miss.
+        # So what is asserted is what the mechanism guarantees under both
+        # outcomes: a holder is named, and when it is not the live one the deny
+        # says the budget is why.
+        named = [pid for pid in ["agent-a"] + ["stale-%d" % k for k in range(16)]
+                 if pid in cp.stdout]
+        self.assertTrue(named,
+                        "naming the holder, which is the whole point of failing "
+                        "closed rather than just failing")
+        if named != ["agent-a"]:
+            self.assertIn("budget", cp.stdout,
+                          "a holder that was not confirmed live has to say so")
 
     def test_the_exclusion_reading_kernel_state_is_not_denied(self):
         """The over-fire half, and it is the price of inverting the floor: a
@@ -1603,6 +1623,183 @@ class QaCycle4(IsolationCase):
         rc, out = self.run_gate(WRITE_GATE,
                                 self.write_payload("agent-b", os.path.join(self.tree, "b.py")))
         self.assertFalse(self.denied(out))
+
+
+class QaCycle10(IsolationCase):
+    """Four holes adversarial QA found in the SHARED command parser rather than
+    in any one gate, which is why they are pinned here: `scan()` and its verb
+    tables are imported by every gate that peels a command, so all of them were
+    open at once.
+
+    Every one of the four is the SAME defect wearing four costumes. The kernel
+    floor stopped being a verb list in cycle 9 (`_KSTATE_READONLY` names the
+    programs that provably cannot write, and everything else is denied at the
+    kernel directory), and these four are the places where the LANE test is
+    still a verb list and lost to the next verb, the next wrapper, the next
+    spelling of a path, and the next way of naming an inode.
+
+    Each test below fails with its own fix reverted. That was measured, not
+    asserted: the failing test is named in the PR report next to the line that
+    was put back.
+    """
+
+    def hold(self):
+        self.run_gate(WRITE_GATE, self.write_payload("agent-a", self.a_py))
+
+    def decide(self, command, pid="agent-b"):
+        rc, out = self.run_gate(BASH_GATE, self.bash_payload(pid, command))
+        return "deny" if self.denied(out) else "allow"
+
+    # ── F1 `install` is `cp` ────────────────────────────────────────────────
+    def test_f1_install_writes_its_destination_exactly_as_cp_does(self):
+        """`install /dev/null <lane>` truncates and rewrites the file byte for
+        byte the way `cp /dev/null <lane>` does. Measured at HEAD: the `cp` was
+        denied and the `install` was allowed, and the only difference between
+        them was which words a table happened to contain."""
+        self.hold()
+        for command in (f"install /dev/null {self.a_py}",
+                        f"install -m 644 /dev/null {self.a_py}",
+                        f"install -m 755 -o me -g me /dev/null {self.a_py}",
+                        f"install -t {self.tree}/pkg /dev/null",
+                        f"install -d {self.tree}/pkg"):
+            self.assertEqual(self.decide(command), "deny", command)
+        self.assertEqual(self.decide(f"cp /dev/null {self.a_py}"), "deny",
+                         "the control that was already right")
+
+    def test_f1_install_into_a_path_nobody_holds_still_passes(self):
+        """`install` has real work to do. A build that installs its own output
+        must not become collateral: one edit from each violation above, the
+        same verb aimed somewhere nobody owns."""
+        self.hold()
+        os.makedirs(os.path.join(self.tree, "dist"), exist_ok=True)
+        for command in (f"install /dev/null {self.tree}/dist/tool",
+                        f"install -m 755 /dev/null {self.tree}/dist/tool",
+                        f"install -d {self.tree}/dist/sub",
+                        f"install -t {self.tree}/dist /dev/null",
+                        f"install /dev/null {self.tree}/pkg/z.py",
+                        "install --help"):
+            self.assertEqual(self.decide(command), "allow", command)
+
+    # ── F2 a multi-call binary is a wrapper ─────────────────────────────────
+    def test_f2_a_multicall_binary_is_a_wrapper_not_a_program(self):
+        """`busybox rm -f <lane>` runs busybox's own rm and the file is exactly
+        as gone. It is the shape `env`, `nohup` and `command` were already
+        peeled for; busybox was simply never named, so the parser read
+        `busybox` as the program and stopped."""
+        self.hold()
+        for command in (f"busybox rm -f {self.a_py}",
+                        f"busybox mv {self.a_py} /tmp/qa10-x",
+                        f"toybox rm -f {self.a_py}",
+                        f"env -u HOME busybox rm -f {self.a_py}",
+                        f"busybox sh -c \"rm -rf {self.tree}/pkg\""):
+            self.assertEqual(self.decide(command), "deny", command)
+
+    def test_f2_busybox_is_peeled_not_blanket_denied(self):
+        """The peel has to leave a READ readable. One edit from the violation:
+        the same wrapper, an applet that writes nothing, and the same applet
+        aimed at a path nobody holds."""
+        self.hold()
+        for command in (f"busybox ls {self.tree}/pkg",
+                        f"busybox cat {self.a_py}",
+                        f"busybox rm -f {self.tree}/pkg/z.py",
+                        "busybox"):
+            self.assertEqual(self.decide(command), "allow", command)
+
+    # ── F3 HOME is a value this process holds, not a guess ──────────────────
+    def test_f3_home_is_expanded_because_this_process_knows_its_own(self):
+        """A ONE-TOKEN BYPASS OF EVERY PATH RULE IN THE GATE, kernel floor
+        included: `rm "$HOME/.claude/settings.json"` passed while the same
+        command spelled absolutely was denied. Expanding `$HOME` is not the
+        variable expansion the residual list refuses; that one needs a shell
+        this gate never runs, and this one reads a value the gate already
+        holds."""
+        self.hold()
+        for command in ('rm -rf "$HOME/work/tree/pkg"',
+                        "rm -rf ${HOME}/work/tree/pkg",
+                        "rm -rf $HOME/work/tree/pkg",
+                        'rm -f "$HOME/.claude/.cache/kernel/ptable.json"'):
+            self.assertEqual(self.decide(command), "deny", command)
+
+    def test_f3_only_home_is_expanded_and_the_rest_stays_a_residual(self):
+        """Where the expansion stops, and why it stops there. `$HOMEBREW` is
+        not `$HOME` with a suffix, and `$DIR` is a value that lives in a shell
+        nobody ran: inventing one would deny work nobody owns."""
+        self.hold()
+        os.makedirs(os.path.join(self.home, "work", "solo"), exist_ok=True)
+        for command in ('rm -rf "$HOME/work/solo"',
+                        'rm -rf "$HOMEBREW/x"',
+                        'rm -rf "$HOME_DIR/x"',
+                        f"DIR={self.tree}/pkg && rm -rf $DIR"):
+            self.assertEqual(self.decide(command), "allow", command)
+
+    # ── F4 a hardlink is a second name for one inode ────────────────────────
+    def test_f4_a_hardlink_is_a_second_name_for_the_same_inode(self):
+        """`realpath` does not resolve a hardlink, so once the alias exists no
+        gate can connect the new name back to the protected one and the write
+        through it is invisible BY CONSTRUCTION. The act of aliasing is the
+        last moment anything is decidable, so that is where the deny lands."""
+        self.hold()
+        os.makedirs(os.path.join(self.tree, "dist"), exist_ok=True)
+        alias = os.path.join(self.tree, "alias.py")
+        for command in (f"ln {self.a_py} {alias}",
+                        f"ln -f {self.a_py} {alias}",
+                        f"cp -l {self.a_py} {alias}",
+                        f"cp --link {self.a_py} {alias}",
+                        f"ln -t {self.tree}/dist {self.a_py}",
+                        f"ln {self.a_py}"):
+            self.assertEqual(self.decide(command), "deny", command)
+
+    def test_f4_the_source_rule_is_not_the_destination_rule_wearing_a_hat(self):
+        """THE MASKED-BY-A-NEIGHBOUR CHECK, run rather than reasoned. `ln` also
+        writes its DESTINATION, and a violation whose destination is a lane
+        would deny for that reason and prove nothing about the source rule. So
+        the destination here is a path nobody holds, and the only rule that can
+        produce this deny is the hardlink one: flip the SOURCE to an unowned
+        file and the same command allows."""
+        self.hold()
+        alias = os.path.join(self.tree, "alias.py")
+        self.assertEqual(self.decide(f"ln {self.a_py} {alias}"), "deny")
+        self.assertEqual(self.decide(f"ln {self.tree}/b.py {alias}"), "allow")
+
+    def test_f4_a_symlink_of_a_lane_is_not_an_alias_of_its_inode(self):
+        """One edit from the violation, and the edit is the whole rule: `-s`
+        stores a PATH, not an inode, so a write through the link resolves back
+        to the lane where the ordinary test still runs. Denying it would be
+        denying a legitimate `ln -s` in a worktree, which is the shape this
+        repo uses every day."""
+        self.hold()
+        for command in (f"ln -s {self.a_py} {self.tree}/alias.py",
+                        f"ln -sf {self.a_py} {self.tree}/alias.py",
+                        "ln -s pkg/a.py alias.py",
+                        f"ln {self.tree}/b.py {self.tree}/c.py",
+                        f"cp {self.a_py} {self.tree}/c.py"):
+            self.assertEqual(self.decide(command), "allow", command)
+
+    def test_the_four_fixes_compose(self):
+        """THE ONLY TEST HERE THAT IS ALLOWED TO FAIL ON MORE THAN ONE REVERT,
+        and it is here so the four above do not have to be. Each of those pins
+        exactly one rule, using no shape that depends on another, so a
+        regression says WHICH rule moved. This one pins that they still stack:
+        the wrapper peel has to hand the real verb to the mutator table, and
+        the expansion has to happen before either looks at a path. Measured
+        with all four reverted one at a time: the four single-rule tests fail
+        one each, and this one fails on every revert, by design."""
+        self.hold()
+        for command in (f"busybox install /dev/null {self.a_py}",
+                        'install /dev/null "$HOME/work/tree/pkg/a.py"',
+                        'ln "$HOME/work/tree/pkg/a.py" alias.py',
+                        'busybox rm -rf "$HOME/work/tree/pkg"'):
+            self.assertEqual(self.decide(command), "deny", command)
+
+    def test_f4_the_destination_of_a_link_is_a_write(self):
+        """`ln -sf /dev/null <lane>` was a NAMED RESIDUAL until `ln` joined the
+        mutator table. It is not one now, so it is pinned here and removed from
+        `test_named_residuals_are_honestly_uncovered` rather than left in a
+        list that has stopped being true."""
+        self.hold()
+        for command in (f"ln -sf /dev/null {self.a_py}",
+                        f"ln -f /dev/null {self.a_py}"):
+            self.assertEqual(self.decide(command), "deny", command)
 
 
 class Selftests(unittest.TestCase):
