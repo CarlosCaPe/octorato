@@ -64,6 +64,40 @@ THE FILE SET, and why each one is an arming surface.
       and therefore no development case to protect: every write to them is a
       write to the arming surface. This is the file that makes the merge gate's
       OCTO_MERGE_APPROVE forgeable for the next session.
+  <any dir>/.claude/settings*.json inside the live root
+      The same surface at PROJECT scope, which OUTRANKS user scope. The two
+      files above are the USER-scope pair; Claude Code also loads
+      `<project root>/.claude/settings.json` and `settings.local.json`, and the
+      brain root is itself a project root (`cd ~/.claude` is how this repo is
+      developed, and it is literally what the `ai-push` thunk does). Measured
+      2026-09-08, before this was covered:
+
+        DENY   Write ~/.claude/settings.json
+        ALLOW  Write ~/.claude/.claude/settings.json         (9705 B, 109 allow)
+        ALLOW  Write ~/.claude/.claude/settings.local.json  (14756 B, 182 allow)
+
+      The exact disarm this gate exists to prevent was reachable one directory
+      over, because the set was named by FILENAME while the effect is "settings
+      the next session loads". The test is now a path SHAPE, not a list, so the
+      next subdirectory does not reopen it: any `settings*.json` under any
+      `.claude/` directory anywhere inside the live root, plus a `.claude`
+      directory THAT HOLDS ONE (taking the directory takes the file without
+      naming it; a `.claude` holding no settings disarms nothing by being
+      deleted, and the live tree carries several of those). That covers deeper
+      project roots without enumerating them, and the live tree really carries
+      one: claude-mem-ref/.claude/settings.json.
+
+      SCOPES COVERED: user (`<brain>/settings*.json`) and project, for every
+      project root INSIDE the live tree.
+      SCOPES THIS GATE CANNOT SEE, each measured, each a residual below:
+      enterprise/managed policy outside $HOME, `~/.claude.json` (user config,
+      `mcpServers`), and any project root outside the live root (an arm's own
+      `.claude/settings.json` is that arm's business, not this gate's).
+      NOT an arming surface, checked rather than assumed: a worktree's
+      `hooks.json`. It is octorato's tracked source, projected into the live
+      settings.json by merge-hooks.py and guarded by check-hooks-drift.py; the
+      harness never loads `<repo>/hooks.json`. Every `wt/*` and `dim/*` copy
+      stays writable (measured: 6 of 6 ALLOW).
   hooks.json
       The tracked source of the registrations; settings.json's hook block is
       its projection (brain_doctor: "settings.json hooks == validated hooks.json
@@ -120,6 +154,28 @@ NAMED RESIDUALS, measured, deliberately not covered:
     same `-c` passes, which is why the layer needs the marker. Anything that
     reaches the file through a script file, a variable or an unlisted write
     idiom passes. Reproduction: see registry/fixtures/…/README-residuals.txt.
+    Every one of the 14 markers is individually load-bearing: each has a
+    violation fixture whose body carries THAT marker and no other, and deleting
+    the marker from the list turns that fixture red (proven by running all 14
+    deletions). Before that, 12 of 14 were dead weight, provable by deleting
+    them with the selftest still green.
+  - A SETTINGS SCOPE OUTSIDE THE LIVE ROOT. Three, all measured today:
+    enterprise/managed policy (`/etc/claude-code/managed-settings.json` on
+    Linux) is outside $HOME and root-owned, so the OS is the gate there and
+    this one never sees it; `~/.claude.json` is a sibling of the brain root,
+    not inside it, and it carries `mcpServers` (a command the next session
+    runs), so it is the strongest uncovered surface left, deliberately not
+    taken here because it is written by the harness itself on every session and
+    hand-repairing it is real work with no worktree copy to do it in; a project
+    root outside the live tree (an arm's `.claude/settings.json`) is that arm's
+    business. Reproduction: `Write ~/.claude.json` is allowed.
+  - AN ANCESTOR-DIRECTORY DELETE OF A DEEP PROJECT ROOT. `rm -rf
+    ~/.claude/claude-mem-ref` takes that root's `.claude/settings.json` without
+    naming it or its `.claude` directory. Covering it means listing the live
+    tree on the hot path for every rm, which is the cost this gate refuses to
+    pay; `rm -rf ~/.claude` and `rm -rf ~/.claude/.claude` are both denied
+    because they conflict with a path the classifier already holds.
+    Reproduction: `rm -rf ~/.claude/claude-mem-ref` is allowed.
   - `git merge`, `git pull`, `git rebase`, `git apply` in the live tree: the
     shared parser classifies none of them as whole-tree, and they are the
     sanctioned route by which reviewed work lands. Reproduction: `git -C
@@ -151,6 +207,20 @@ command with no mutation token, and ~90-190 ms more for one that has a token
 tree-owner gate is already paying in parallel for the same command). Same-event
 hooks run in parallel, so the wall-clock addition is bounded by the slowest
 hook, not the sum. Everything except a real hit fails OPEN.
+
+NO `timeout` IN THE REGISTRATION, decided rather than inherited. The sibling
+PreToolUse gates carry `timeout: 5`; this one carries none and takes the
+harness default of 60 s. A timeout is a KILL, and a killed hook writes nothing
+to stdout, which the harness reads as ALLOW. So for a fail-closed gate the
+timeout is not a safety budget, it is the cheapest disarm available to anyone
+who can make the gate slow: with `timeout: 5` an adversarial input has to stall
+5 s to be let through, with 60 s it has to stall 60. Measured worst cases here
+are ~1.3 s for a 200 KB command and ~0.2 s for 500 targets, so neither number
+binds on real traffic and the only thing the smaller one changes is how easy
+the kill is. The cost of the larger one is honest and accepted: a genuinely
+hung call (a stat that blocks on a dead mount) makes the user wait up to a
+minute instead of five seconds. For a floor-class gate, waiting is the correct
+failure and being skipped is not. Symmetry with the siblings is not a reason.
 
 Stdin:  PreToolUse payload {"tool_name", "tool_input", "cwd", …}
 Stdout: deny JSON on a hit, else nothing. Exit always 0.
@@ -198,6 +268,36 @@ _SCRIPT_PATTERNS = ("g__pretool*.py", "g__stop__*.py", "qa-merge-gate.py",
 _SCRIPT_WHY = ("the body of a fail-closed gate (or the harness and libraries "
                "every gate is proven and read by)")
 
+# PROJECT-scope settings, which outrank the user-scope pair above. A session
+# whose cwd is a project root loads `<root>/.claude/settings.json` and
+# `settings.local.json` ON TOP of `~/.claude/settings.json`, and the brain root
+# IS such a project root: `cd ~/.claude` is how this repo is developed and what
+# the `ai-push` thunk does. Measured 2026-09-08 on the live tree, before this
+# was covered: ~/.claude/.claude/settings.json (9705 bytes, 109 allow entries)
+# and settings.local.json (14756 bytes, 182) both existed and both were
+# WRITABLE while ~/.claude/settings.json was denied. Same loaded effect, one
+# directory over, which is a set named by FILENAME instead of by EFFECT.
+#
+# So the test is a path SHAPE, not a list: `<anything>/.claude/settings*.json`
+# under the live root. That covers every project root inside the live tree
+# without enumerating them, including the vendored reference checkouts measured
+# today (claude-mem-ref/.claude/settings.json). A `.claude` directory itself is
+# in the set too, because deleting or moving it rewrites the settings it holds
+# without ever naming them.
+_PROJECT_DIRNAME = ".claude"
+_PROJECT_SETTINGS_GLOB = "settings*.json"
+_PROJECT_WHY = (
+    "a PROJECT-scope settings file, which the harness loads ON TOP of the "
+    "user-scope one and which OUTRANKS it: same `permissions` and same `env` "
+    "block injected into every hook the next session spawns, one directory "
+    "over from the file this gate already denied"
+)
+_PROJECT_DIR_WHY = (
+    "the PROJECT-scope settings directory the harness reads when a session "
+    "starts in this root: taking the directory takes settings*.json inside it "
+    "without ever naming the file"
+)
+
 # Whole-tree git verbs, as the shared parser labels them: they rewrite every
 # file in the set at once. `git worktree remove` is the one the shared parser
 # calls whole-tree that is NOT one here, measured: it deletes a SIBLING
@@ -210,6 +310,20 @@ _TREE_EXEMPT = ("git worktree remove",)
 
 # Interpreter `-c` bodies: best-effort only, and only with a write marker, so a
 # `python3 -c` that READS settings.json (a real, frequent shape) still passes.
+#
+# Every marker below is PROVEN, one fixture each. The list used to be a claim:
+# only `'w'` and `.write(` appeared in any fixture, and they appeared in the
+# SAME body, so deleting the other 12 left the selftest green and the list said
+# nothing about what the gate catches. Each entry now has
+# `violation_marker_<slug>.json` whose `-c` body carries THAT marker and no
+# other (checked mechanically), a `benign_marker_<slug>.json` one edit away
+# that reads the same file through the same idiom, and the violation's
+# expectation names the marker in the deny text, so a fixture cannot pass on
+# some other entry's behalf. Deleting any one marker turns exactly its own
+# fixture red; all 14 deletions were run.
+# `writeFileSync`/`appendFileSync` are Node idioms and node takes `-e`, not
+# `-c`, so their reachable shape is a nested one (`sh -c "node -e …"`) and that
+# is what their fixtures use.
 _C_HOSTS = ("bash", "sh", "zsh", "dash", "python", "python3", "py", "node",
             "perl", "ruby")
 _WRITE_MARKERS = ("'w'", '"w"', "'w+'", '"w+"', "'a'", '"a"',
@@ -248,6 +362,52 @@ def _is_gate_script(basename: str) -> bool:
     return any(fnmatch.fnmatch(basename, p) for p in _SCRIPT_PATTERNS)
 
 
+def project_scope(target: str, brain: str) -> tuple:
+    """(live_path, why) when `target` is project-scope settings INSIDE the live
+    root, else (None, None). Pure string work, no stat and no listing, so it
+    costs nothing on the hot path.
+
+    Only paths strictly under the live root are tested here. The root itself
+    and any ancestor of it are already a hit through _EXACT (a target that
+    contains ~/.claude contains ~/.claude/settings.json), so they never reach
+    this and never need a second answer.
+    """
+    if not target.startswith(brain + os.sep):
+        return None, None
+    parts = target[len(brain) + 1:].split(os.sep)
+    if len(parts) >= 2 and parts[-2] == _PROJECT_DIRNAME and \
+            fnmatch.fnmatch(parts[-1], _PROJECT_SETTINGS_GLOB):
+        return target, _PROJECT_WHY
+    if parts[-1] == _PROJECT_DIRNAME and _holds_settings(target):
+        return target, _PROJECT_DIR_WHY
+    return None, None
+
+
+def _holds_settings(directory: str) -> bool:
+    """True when a `.claude` directory actually holds settings to take.
+
+    The shape alone over-fires, measured: the live tree carries `.claude`
+    directories that hold no settings at all (vendored reference checkouts
+    under knowledge/, the `home/.claude` fixture roots), and denying
+    housekeeping on those buys nothing, since a directory with no settings
+    disarms nothing by being deleted. Nothing is lost by asking: creating an
+    empty `.claude` is allowed, and the FILE rule denies putting settings into
+    it, so the line is held by the file test either way.
+
+    Unreadable counts as TRUE. A directory of exactly this shape that cannot be
+    listed is the ambiguous case, and this gate resolves ambiguity closed. One
+    listdir, reached only after the fast-out has proven the path is inside the
+    live root, so an ordinary command never pays it.
+    """
+    try:
+        names = os.listdir(directory)
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except OSError:
+        return True
+    return any(fnmatch.fnmatch(n, _PROJECT_SETTINGS_GLOB) for n in names)
+
+
 def classify(target: str) -> tuple:
     """(live_path, why) when `target` reaches a live arming surface, else
     (None, None). Containment counts in BOTH directions: `rm -rf
@@ -261,6 +421,9 @@ def classify(target: str) -> tuple:
         live = os.path.join(brain, *rel.split("/"))
         if kernel_proc.paths_conflict(target, live):
             return live, why
+    live, why = project_scope(target, brain)
+    if live:
+        return live, why
     sdir = scripts_dir()
     if kernel_proc.paths_conflict(target, sdir):
         if target == sdir or sdir.startswith(target + os.sep):
@@ -314,10 +477,21 @@ def _bash_scan():
 
 
 def _needles() -> list:
-    """Literal spellings of a protected path an interpreter body could carry."""
+    """Literal spellings of a protected path an interpreter body could carry.
+
+    The project-scope pair is spelled out here rather than derived from the
+    path SHAPE the classifier uses, because a literal scan has nothing to match
+    a shape against: it needs the string. That names the one project root that
+    is always there (the brain root itself, the root `cd ~/.claude` opens); a
+    deeper project root inside the live tree is covered by the classifier for
+    Write/Edit and shell mutations, and is a named residual for this
+    best-effort `-c` layer only.
+    """
     brain = brain_root()
     out = []
-    for rel in _EXACT:
+    rels = list(_EXACT) + [_PROJECT_DIRNAME + "/settings.json",
+                           _PROJECT_DIRNAME + "/settings.local.json"]
+    for rel in rels:
         out.append(os.path.join(brain, *rel.split("/")))
         out.append("~/.claude/" + rel)
     return out
@@ -571,6 +745,18 @@ def _build_sandbox(sandbox: str, setup: dict) -> None:
         os.makedirs(os.path.join(live, rel), exist_ok=True)
     for rel in ("settings.json", "settings.local.json", "hooks.json"):
         _touch(os.path.join(live, rel), "{}\n")
+    # PROJECT scope, the second surface. `<live>/.claude/settings*.json` is what
+    # a session whose cwd is the live root loads ON TOP of the user-scope pair,
+    # `<live>/.claude/commands/` is a neighbour inside the same directory that
+    # must stay writable, and `<live>/vendor-ref/.claude/` is a DEEPER project
+    # root of the same shape (the live tree really carries one).
+    for rel in ("settings.json", "settings.local.json"):
+        _touch(os.path.join(live, ".claude", rel), "{}\n")
+    _touch(os.path.join(live, ".claude", "commands", "note.md"), "# stub\n")
+    _touch(os.path.join(live, "vendor-ref", ".claude", "settings.json"), "{}\n")
+    # a `.claude` directory of the same shape holding NO settings: the live tree
+    # carries several, and they must stay removable.
+    _touch(os.path.join(live, "knowledge-ref", ".claude", "commands", "x.md"), "#\n")
     _touch(os.path.join(live, "registry", "rules.yaml"), "rules: []\n")
     _touch(os.path.join(live, ".githooks", "pre-push"), "#!/bin/sh\n")
     for name in ("qa-merge-gate.py", "g__pretool__kernel.py",
@@ -583,6 +769,9 @@ def _build_sandbox(sandbox: str, setup: dict) -> None:
         os.makedirs(os.path.join(wt, rel), exist_ok=True)
     _touch(os.path.join(wt, ".git"), "gitdir: " + os.path.join(live, ".git") + "\n")
     _touch(os.path.join(wt, "hooks.json"), "{}\n")
+    # the SAME project-scope shape one directory over: source, not loaded, and
+    # the over-fire control for the whole project-scope rule.
+    _touch(os.path.join(wt, ".claude", "settings.json"), "{}\n")
     _touch(os.path.join(wt, "registry", "rules.yaml"), "rules: []\n")
     _touch(os.path.join(wt, ".githooks", "pre-push"), "#!/bin/sh\n")
     for name in ("qa-merge-gate.py", "g__pretool__kernel.py",

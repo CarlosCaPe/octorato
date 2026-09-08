@@ -185,7 +185,10 @@ arming surface, and until v8 nothing watched them: `~/.claude/settings.json` car
 injects into every hook it spawns, no PreToolUse hook watched it, and none watched the gate scripts either. The
 merge gate's env was unreachable; its registration was not. `scripts/g__pretool__arming-surface.py` (PreToolUse
 `*`, fail-closed) closes that: a Write/Edit or a Bash mutation (`rm`, `mv`, `sed -i`, `tee`, a `>` redirect, a
-`git checkout -- <path>`) aimed at the LIVE copy of `settings.json`, `settings.local.json`, `hooks.json`,
+`git checkout -- <path>`) aimed at the LIVE copy of `settings.json`, `settings.local.json`, any
+`<dir>/.claude/settings*.json` inside the live root (PROJECT scope, which OUTRANKS user scope: a session whose cwd
+is the brain, which is what `ai-push` does, loads `~/.claude/.claude/settings.json` on top of the user-scope pair,
+and that file was writable while the user-scope one was denied), `hooks.json`,
 `registry/rules.yaml`, `.githooks/pre-push`, any `scripts/g__pretool*.py` or `scripts/g__stop__*.py`,
 `qa-merge-gate.py`, `gate_selftest.py`, `brain_doctor.py`, `receipt_ledger.py`, `kernel_proc.py` or
 `dimension-awareness-hook.py` is DENIED, and so is a whole-tree `git checkout|switch|reset --hard|stash|clean -f`
@@ -200,8 +203,11 @@ commands of the session that found the hole: editing a gate script in a worktree
 allowed to denied. A symlink whose path looks like a worktree is caught (every candidate is retested through
 `realpath`), and so is `git -C ~/.claude` from anywhere. There is NO env unlock, deliberately: the variable that
 lifted this rule would be writable from the very file it protects. Same stance as the kernel's state floor, the
-operator's terminal is not hooked and stays the only writer. Residuals, each with its reproduction, live in the
-gate's own header; the fixture pair is `registry/fixtures/ARCHITECTURE.arming-surface` (18 block + 25 allow).
+operator's terminal is not hooked and stays the only writer. The protected set is a path SHAPE, not a list, so a
+new subdirectory does not reopen it, and the 14 interpreter write markers are proven one fixture each rather than
+claimed. Residuals, each with its reproduction, live in the gate's own header: the scopes outside the live root
+(enterprise policy, `~/.claude.json`, another repo's project settings) and an ancestor delete of a deep project
+root. The fixture pair is `registry/fixtures/ARCHITECTURE.arming-surface` (37 block + 44 allow).
 
 ### ULTRA RULE — Do-it-today (no dejes para mañana lo que puedas hacer hoy)
 **Do-it-today.** Operator-canonical (2026-08-18, tras recordarlo a diario durante semanas): el trabajo que YO puedo ejecutar se ejecuta en el turno, no se reporta. La forma sutil del aplazamiento no es negarse, es **reportar un pendiente que yo mismo podía cerrar** y dejárselo al operador en la bandeja; a su volumen, eso convierte cada sesión en una lista que él tiene que administrar. Un pendiente solo es legítimo en dos casos, y en los dos viaja **con su comando exacto para pegar**: (1) es un paso irreducible suyo (un clic de consentimiento, una contraseña, un permiso que solo él concede), o (2) es un bloqueo MEDIDO, no supuesto (el clasificador lo negó, el remoto lo rechazó, la regla del repo lo impide). Esto NO contradice `do-it-right-not-fast`: empieza hoy, hazlo bien, no lo apures; lo prohibido es diferirlo. Mecanismo: `scripts/g__stop__defer-today.py` (Stop gate, bloquea una vez), que dispara cuando el cierre del turno aplaza trabajo propio en primera persona sin ninguna de las dos salidas. Es consciente de citas (repetir el "espero mañana me contestes" de un cliente no lo trippea) y de hechos con fecha; para mantener una línea marcada a propósito, ponle `defer-ok`. HOW completo en `skills/execution-bias/SKILL.md`.
