@@ -315,8 +315,17 @@ class Brain:
         whole commit is about, one layer down, so the wait is a LOCK_NB poll against
         a deadline and a caller that asked for 2s gets a PkgError after 2s. The
         refusal is deliberate over an unbounded wait: every caller here is a CLI verb
-        an operator is watching, and `ai-pull` calling `sync` must not hang a pull
-        behind a session that is holding the lock for a clone.
+        an operator is watching.
+
+        The bound is per ACQUIRE, and saying so is the point. The first version of
+        this paragraph closed on "`ai-pull` calling `sync` must not hang a pull behind
+        a session holding the lock for a clone", which is a per-RUN claim this
+        mechanism cannot make: `cmd_sync` acquires once per absent package inside a
+        `try` that turns a refusal into a WARN and continues, so QA measured three
+        absent packages against a held lock at 90.5s, three times the 30s the argument
+        names. A caller that takes this lock in a LOOP has to carry its own deadline
+        and hand each acquire what is left of it; cmd_sync now does, and its docstring
+        carries the run-level number it measured.
         """
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
         guard = self.lock_path.with_name(self.lock_path.name + ".lock")
@@ -2159,6 +2168,9 @@ def cmd_lock(brain: Brain) -> int:
     return 1 if (refused or skipped) else 0
 
 
+SYNC_LOCK_BUDGET = 30.0
+
+
 def cmd_sync(brain: Brain) -> int:
     """Install from the lock what is not on disk, then verify.
 
@@ -2200,12 +2212,43 @@ def cmd_sync(brain: Brain) -> int:
     fetch fails keeps that stray instead of having it swept. verify reports it as a
     WARN with its own fix, and a sync that restores nothing tidying the discovery
     path on its way past was never the contract.
+
+    The lock wait is bounded per RUN and not per acquire. lock_held's `timeout` is a
+    per-acquire bound, this loop acquires once per absent package, and its
+    `except PkgError` turns a refusal into a WARN and continues, so the sentence that
+    justified making the wait bounded at all ("a pull must not hang behind a session
+    holding the lock for a clone") was a claim at a scope nothing imposed: QA measured
+    three absent packages against a lock held throughout at 90.5s, and the 234 rows in
+    this brain would be ~117 minutes of sequential 30-second waits on a fresh clone.
+    One deadline is computed before the loop now and every acquire is handed what is
+    left of it, so the bound is SYNC_LOCK_BUDGET seconds of WAITING for the lock per
+    RUN, whatever is holding it and however many packages are absent. Measured with a
+    second process holding a real flock: three absent packages against a lock held
+    throughout take 30.1s where the per-acquire shape took 90.5s, and the same fixture
+    with nothing holding the lock is 0.5s and three restores, because an acquire late
+    in a run that has spent nothing waiting is still handed the whole budget. The
+    fetches are the unbounded part and they are outside this, and outside the lock, so
+    what is bounded is the WAITING and only the waiting.
+
+    What the bound costs, stated rather than left to be found: a run that spends its
+    budget REFUSES the packages after it, where a per-acquire timeout would have
+    restored the ones whose turn happened to fall after the holder let go. Measured
+    against a 40s holder, same fixture, same box: 30.1s and three WARNs here against
+    39.1s and two restores before, so the wall time bought is real and so is the
+    package lost. They are named in the receipt as skipped and verify names them
+    absent, rc stays 0 because absent is not a failure, and the next sync restores
+    them: sync is idempotent and `ai-pull` runs it on every pull. A bounded pull that
+    leaves work for the next pull is the trade being made; an unbounded one is what
+    this docstring promised not to be.
     """
     lock = brain.load_lock()
     if not lock["packages"]:
         print("packages: empty lock, nothing to sync")
         return 0
     restored, warned = 0, []
+    # ONE deadline for the whole run, handed out as the REMAINING budget below. See
+    # the paragraph on the run-level bound above for what this costs and why.
+    lock_deadline = time.monotonic() + SYNC_LOCK_BUDGET
     for entry in list(lock["packages"]):
         name = str(entry.get("name") or "?")
         if lock_kind(entry) != "skill":
@@ -2247,7 +2290,7 @@ def cmd_sync(brain: Brain) -> int:
                 if manifest.get("name") != name:
                     warned.append(f"{name}: source now publishes {manifest.get('name')!r}; not installed")
                     continue
-                with brain.lock_held():
+                with brain.lock_held(timeout=max(0.0, lock_deadline - time.monotonic())):
                     row = next((p for p in brain.load_lock()["packages"]
                                 if p.get("name") == name), None)
                     if row is None:

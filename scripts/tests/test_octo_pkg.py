@@ -3002,6 +3002,211 @@ class TestQaCycle14(ArmFixture):
         self.assertLess(waited, 5, f"asked for 0.5s, waited {waited:.1f}s")
 
 
+class TestQaCycle15(ArmFixture):
+    """cmd_sync's two pre-fetch guards, and the run-level bound the lock never had.
+
+    Cycle 14 pinned every field of the identity that the in-lock re-check compares.
+    Four lines ABOVE that re-check, `cmd_sync` has two guards that nothing reached:
+    the fetched manifest's hash against the row's, and the fetched manifest's NAME
+    against the row's. Both survived all 359 tests and all 58 selftest legs; the
+    no-op control in the same mutation batch survived too, so the run discriminated.
+
+    The name one is the worst finding of this series because its failure mode is
+    silent and green. The threat model is the module's own: packages.lock.json is
+    TRACKED and UNSIGNED, so one edited row arrives through an ordinary `git pull`.
+    Point row `sample-aaa` at a source that publishes `sample-bbb` and edit that row's
+    tree_sha256 to match, which is exactly what gets past the hash guard one line up,
+    and without the name guard package B lands installed and symlinked under package
+    A's name, at rc 0, under `1 restored, 0 skipped`, with verify reporting
+    `2 verified, 0 failed`. Verify checks the tree against the manifest INSIDE it and
+    never against the row's name, so nothing downstream ever names it, and a skill in
+    skills/ runs on every prompt.
+    """
+
+    _install_signed = TestQaCycle13._install_signed
+    _race = TestQaCycle13._race
+    _read_lock = TestQaCycle13._read_lock
+    _row = TestQaCycle13._row
+
+    def _detach(self, name: str) -> Path:
+        """Take the package off disk, leaving only its lock row: what sync restores."""
+        dest = self.brain.vendor_path(name)
+        link = self.brain.link_path(name)
+        shutil.rmtree(dest)
+        link.unlink()
+        self.brain.exclude_remove(f"skills/{name}")
+        return dest
+
+    def _edit_row(self, name: str, **fields) -> None:
+        """Edit ONE row of the tracked, unsigned lockfile. This is not a contrivance:
+        it is the exact shape in which a lock change reaches a machine, an ordinary
+        `git pull`, and it is why every field read out of this file is a guard's job
+        rather than a fact."""
+        lock = json.loads(self.brain.lock_path.read_text(encoding="utf-8"))
+        for entry in lock["packages"]:
+            if entry["name"] == name:
+                entry.update(fields)
+        self.brain.lock_path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+
+    def _sync(self) -> tuple[int, str]:
+        import contextlib, io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "sync"])
+        return rc, buf.getvalue()
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_sync_does_not_install_one_package_under_another_packages_name(self):
+        """Row A points at a source publishing B, with A's hash edited to match.
+
+        The hash guard one line above passes BY CONSTRUCTION here: the row carries B's
+        hash and the fetch produces B's tree. So this test can only be carried by the
+        name guard, and the in-lock identity re-check cannot carry it either, because
+        nothing races and the row is byte-identical to the entry it was read from.
+
+        Without the guard, measured: tree installed at skills/vendor/sample-aaa whose
+        SKILL.md says sample-bbb, symlink created, `1 restored, 0 skipped`, rc 0, and
+        verify `2 verified, 0 failed (2/2)`.
+        """
+        a, dest_a = self._install_signed("aaa")
+        b, _ = self._install_signed("bbb")
+        src_b = self.tmp / "src-bbb"
+        self._edit_row(a, source=str(src_b),
+                       tree_sha256=json.loads((src_b / "skill.json").read_text(
+                           encoding="utf-8"))["tree_sha256"])
+        self._detach(a)
+
+        rc, said = self._sync()
+
+        installed = ""
+        if (dest_a / "SKILL.md").exists():
+            installed = (dest_a / "SKILL.md").read_text(encoding="utf-8")
+        self.assertFalse(dest_a.exists(),
+                         f"{b} is installed at {octo_pkg.VENDOR_REL}/{a}: a package "
+                         f"under another package's name, in the always-on discovery "
+                         f"path, at rc {rc} under a success receipt. What landed says "
+                         f"{installed!r}")
+        self.assertFalse(self.brain.link_path(a).is_symlink())
+        self.assertFalse(self.brain.exclude_has(f"skills/{a}"))
+        self.assertIn("source now publishes", said)
+        self.assertIn(b, said, "the WARN has to name what the source actually "
+                               "publishes; that is the whole content of the message")
+        self.assertIn("0 restored", said)
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_sync_does_not_install_a_tree_the_lock_row_does_not_describe(self):
+        """One edited hash on a row whose source is real, signed and unchanged.
+
+        The name guard cannot carry this (the source publishes exactly this name) and
+        neither can the in-lock re-check (nothing races). Without the guard the tree
+        is restored, the symlink created and the receipt says `1 restored`, and only
+        the trailing verify then fails at rc 1: less severe than the name guard only
+        because it eventually surfaces, and it still put an unverifiable tree in the
+        discovery path first.
+        """
+        name, dest = self._install_signed("drift")
+        self._edit_row(name, source=str(self.tmp / "src-drift"), tree_sha256="f" * 64)
+        self._detach(name)
+
+        rc, said = self._sync()
+
+        self.assertFalse(dest.exists(),
+                         "a tree whose hash the lock row does not carry was restored "
+                         "into the discovery path, and only verify said so afterwards")
+        self.assertFalse(self.brain.link_path(name).is_symlink())
+        self.assertFalse(self.brain.exclude_has(f"skills/{name}"))
+        self.assertIn("source tree hash differs", said)
+        self.assertIn("0 restored", said)
+
+    @unittest.skipUnless(_fcntl_ok(), "no fcntl: the POSIX branch is not the one that runs here")
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_sync_bounds_the_lock_wait_of_a_whole_run_not_of_one_acquire(self):
+        """The fourteenth instance of this commit's own pattern, in this commit.
+
+        lock_held's timeout is per ACQUIRE. cmd_sync acquires once per absent package
+        inside a `try` whose `except PkgError` turns a refusal into a WARN and
+        continues, so the docstring's bound ("a pull must not hang behind a session
+        holding the lock for a clone") was a per-RUN claim at a scope nothing imposed.
+        QA measured three absent packages against a held lock at 90.5s, and 234 rows
+        would be ~117 minutes of sequential 30-second waits.
+
+        The kill is exact rather than timed, because a timeout is not a detection and
+        this box has run this module at 22s and at 900s: after the first acquire spends
+        the whole budget, every later acquire is handed 0.0, which is what "one
+        deadline for the run" MEANS. Per-acquire hands out the same number three times.
+        The wall-clock assertion is over the lock wait ONLY, summed inside the wrapper,
+        so no fetch, install or verify time is in it.
+        """
+        import contextlib, fcntl, time
+        budget = 0.4
+        names = []
+        for i in range(3):
+            name, _ = self._install_signed("bound%d" % i)
+            self._edit_row(name, source=str(self.tmp / ("src-bound%d" % i)))
+            self._detach(name)
+            names.append(name)
+
+        guard = self.brain.lock_path.with_name(self.brain.lock_path.name + ".lock")
+        guard.parent.mkdir(parents=True, exist_ok=True)
+        holder = open(guard, "a+")
+        self.addCleanup(holder.close)
+        fcntl.flock(holder.fileno(), fcntl.LOCK_EX)   # a second fd: flock is per ofd
+
+        asked, waits = [], []
+        real = octo_pkg.Brain.lock_held
+
+        @contextlib.contextmanager
+        def recording(self_, timeout=30.0):
+            asked.append(timeout)
+            started = time.monotonic()
+            try:
+                with real(self_, timeout):
+                    waits.append(time.monotonic() - started)
+                    yield
+            except octo_pkg.PkgError:
+                waits.append(time.monotonic() - started)
+                raise
+
+        octo_pkg.Brain.lock_held = recording
+        self.addCleanup(lambda: setattr(octo_pkg.Brain, "lock_held", real))
+        prior = octo_pkg.SYNC_LOCK_BUDGET
+        octo_pkg.SYNC_LOCK_BUDGET = budget
+        self.addCleanup(lambda: setattr(octo_pkg, "SYNC_LOCK_BUDGET", prior))
+
+        rc, said = self._sync()
+
+        self.assertEqual(len(asked), 3, "one acquire per absent package")
+        # First, because it is the one that names the bug: a per-acquire timeout hands
+        # out the same number three times and a run deadline hands out what is left.
+        self.assertEqual(asked[1:], [0.0, 0.0],
+                         f"each acquire was handed a fresh budget ({asked}): the bound "
+                         f"is per acquire and a run of N absent packages waits N times "
+                         f"it, which is the claim the docstring makes and the mechanism "
+                         f"does not impose")
+        self.assertLessEqual(asked[0], budget)
+        self.assertLess(sum(waits), 2 * budget,
+                        f"the whole run waited {sum(waits):.2f}s for a lock it was "
+                        f"told to wait {budget}s for")
+        for name in names:
+            self.assertFalse(self.brain.vendor_path(name).exists(),
+                             "the lock was held throughout: nothing can be restored")
+        self.assertEqual(said.count("could not acquire"), 3)
+        self.assertIn("0 restored", said)
+
+    def test_the_identity_labels_are_in_the_order_the_identity_returns(self):
+        """Using IDENTITY_FIELDS removed the LENGTH half of the drift risk, not the
+        order half. cmd_lock's WARN zips the constant against the tuple, so reordering
+        the constant mis-names every field that moved and no test failed. Each field's
+        name is its own value here, so the identity of a row built from the constant
+        IS the constant when, and only when, the two agree in order.
+        """
+        self.assertEqual(
+            octo_pkg.entry_identity({f: f for f in octo_pkg.IDENTITY_FIELDS}),
+            octo_pkg.IDENTITY_FIELDS,
+            "entry_identity returns its fields in a different order than "
+            "IDENTITY_FIELDS labels them: the WARN names the wrong field")
+
+
 class TestGenerator(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="test-gen-"))
