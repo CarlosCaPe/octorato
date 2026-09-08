@@ -17,6 +17,7 @@ import importlib.util
 import json
 import os
 import shutil
+import sys
 import subprocess
 import tempfile
 import time
@@ -416,21 +417,62 @@ class TestEachNoWindowRoadNamesItself(DenyCoverageCase):
         # Distinct is not enough: swapping two roads' strings keeps the set at four
         # while the doctor tells a reader "shallow clone" over a missing projects
         # directory, which is a WRONG cause, worse than none (QA cycle 7). So bind
-        # each road to its own discriminator. Substrings, not the whole sentence:
-        # this must survive a reworded message and die on a swapped one.
-        for road, token in (("unreadable subtree", "could not read"),
-                            ("no projects dir", "no projects directory"),
-                            ("shallow clone", "shallow"),
-                            ("no such commit", "no commit adding")):
+        # each road to its own discriminator.
+        #
+        # Presence alone is not enough either. Give all four roads the same
+        # four-cause boilerplate and every `assertIn` passes while the reader gets a
+        # MENU instead of a cause, which is this check's own disease (QA cycle 8). So
+        # each road must also NOT carry the other three tokens.
+        #
+        # The tokens name the CONDITION, never the adjective: "shallow" alone made a
+        # correct rewording to "a depth-limited clone, whose grafted history..." turn
+        # the test red, so the binding was pinning the word and not the meaning.
+        tokens = {"unreadable subtree": "could not read",
+                  "no projects dir": "no projects directory",
+                  "shallow clone": "grafted history",
+                  "no such commit": "no commit adding"}
+        for road, token in tokens.items():
             self.assertIn(token, causes[road],
                           f"the {road} road is telling the reader it was something else: "
                           f"{causes[road]!r}")
+            for other, other_token in tokens.items():
+                if other == road:
+                    continue
+                self.assertNotIn(other_token, causes[road],
+                                 f"the {road} road also offers the reader the "
+                                 f"{other} cause, which is a menu, not an answer: "
+                                 f"{causes[road]!r}")
 
 
 class TestTheFourOutcomesReadDifferently(unittest.TestCase):
     """The whole point: states that used to print one sentence now print four, and
     exactly one of them fails. Pure inputs, so every branch is reachable here rather
     than only the one this machine happens to be in."""
+
+    def own_the_deny_count(self):
+        """Point the journal scan at an EMPTY directory, so `denies` is 0 by
+        construction instead of by luck.
+
+        Any test here that calls `check_kernel_replay` was reading the live
+        `~/.claude/.cache/kernel/journal/`, and the WARN branch needs `denies == 0`.
+        The brain recorded its first deny inside the 7-day window mid-session and the
+        suite went red at an untouched HEAD, deterministically, on any machine that
+        has refused one call in a week (QA cycle 8). A test whose inputs it does not
+        own is a test that will be deleted the first time the world moves.
+
+        This stubs ONLY the real-journal scan. The golden replay above it runs off
+        its own fixture and still executes for real, so the trip through the caller
+        is still a real trip: what it stops measuring is a count that was never the
+        subject.
+        """
+        import tempfile
+        sys.path.insert(0, str(doctor.CLAUDE_DIR / "scripts"))
+        import kernel_proc
+        empty = tempfile.mkdtemp(prefix="deny-cov-journal-")
+        self.addCleanup(shutil.rmtree, empty, ignore_errors=True)
+        real = kernel_proc.journal_dir
+        kernel_proc.journal_dir = lambda: empty
+        self.addCleanup(lambda: setattr(kernel_proc, "journal_dir", real))
 
     def test_no_refusals_since_the_hook_is_unexercised_not_proven(self):
         status, text, _ = doctor.deny_coverage(0, 1_700_000_000.0, 0)
@@ -484,6 +526,7 @@ class TestTheFourOutcomesReadDifferently(unittest.TestCase):
         stubbed, and asserts on the Result a reader actually sees. It fails on every
         version of this file before the caller was fixed.
         """
+        self.own_the_deny_count()
         real = doctor._harness_refusals_since_hook
         doctor._harness_refusals_since_hook = lambda cutoff: (1_700_000_000.0, 0, 7, "")
         self.addCleanup(lambda: setattr(doctor, "_harness_refusals_since_hook", real))
@@ -507,6 +550,7 @@ class TestTheFourOutcomesReadDifferently(unittest.TestCase):
         and it dies on any version that puts the cause anywhere but the sentence
         (QA cycle 6)."""
         road = "a shallow clone, whose grafted history cannot say when the hook arrived"
+        self.own_the_deny_count()
         real = doctor._harness_refusals_since_hook
         doctor._harness_refusals_since_hook = lambda cutoff: (None, 0, 0, road)
         self.addCleanup(lambda: setattr(doctor, "_harness_refusals_since_hook", real))
@@ -545,6 +589,44 @@ class TestTheFourOutcomesReadDifferently(unittest.TestCase):
                       "a PASS message must reach stdout; the printer is where the "
                       "cause was invisible the second time")
         self.assertIn("kernel-replay", out)
+
+    def test_the_cause_travels_from_the_check_to_stdout_through_main(self):
+        """The NINTH instance, and it names the pattern: every fix moves the
+        assertion one hop downstream and leaves the new last hop unpinned. #1 was
+        the pure function vs its caller. #8 was the caller vs the printer. This is
+        the printer vs the caller of the printer.
+
+        `test_a_pass_message_survives_the_printer` hands `render_human` a Result it
+        built itself, so the producer end and the printer end are each pinned and
+        the WIRE between them is not. QA proved it: in `main`, filtering the PASS
+        results out of the `render_human` call restores the cycle-6 invisibility one
+        hop up, and all 235 tests stay green while the reader sees nothing at all,
+        not even the check's name (QA cycle 8).
+
+        So this one runs the real `check_kernel_replay` through the real `main` and
+        reads stdout. Nothing is hand-built except the road.
+        """
+        import io, contextlib
+        self.own_the_deny_count()
+        road = "a shallow clone, whose grafted history cannot say when the hook arrived"
+        real = doctor._harness_refusals_since_hook
+        doctor._harness_refusals_since_hook = lambda cutoff: (None, 0, 0, road)
+        self.addCleanup(lambda: setattr(doctor, "_harness_refusals_since_hook", real))
+        real_checks = doctor.CHECKS
+        doctor.CHECKS = [("kernel-replay", doctor.check_kernel_replay)]
+        self.addCleanup(lambda: setattr(doctor, "CHECKS", real_checks))
+        real_argv = sys.argv
+        sys.argv = ["brain_doctor.py"]
+        self.addCleanup(lambda: setattr(sys, "argv", real_argv))
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = doctor.main()
+        out = buf.getvalue()
+        self.assertEqual(rc, 0, "no window is not a failure")
+        self.assertIn(road, out,
+                      "the cause has to survive every hop from the check to the "
+                      "terminal, and main is the last one")
+        self.assertIn("kernel-replay", out, "so does the name of the check saying it")
 
     def test_the_warn_needs_an_empty_journal_not_just_other_classes(self):
         """The other one claimed and missing. Dropping the second half of the
