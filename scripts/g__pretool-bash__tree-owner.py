@@ -93,13 +93,38 @@ DIRECTORY they are denied, see below);
 OTHER than HOME (`rm -rf $DIR`, `rm -rf {pkg,x}`, unknowable without running the
 shell); a `-c` body nested deeper
 than 3; xargs fed from STDIN (`cat list | xargs rm`, `xargs rm < list`),
-where the targets never appear in the command at all; a heredoc whose receiver
-carries a VALUED OPTION this parser does not know (`python3 -W ignore <<EOF`),
-where a non-flag token sits where an operand would and the body reads as data;
+where the targets never appear in the command at all;
 and a heredoc fed to `ssh` or a container `exec`, whose body is a command on
 ANOTHER machine, where this machine's kernel directory is not the one being
 named. Each is a distinct verb
 table or an evaluator, not a gap in this one, and none is the weekend shape.
+
+QA CYCLE 12 closed the four channels cycle 11 had claimed and the one it had
+never looked at, and it enumerates each class rather than pinning one member,
+because "close a member, call the class done" is the failure this file has now
+repeated three times (verb, then path, then flag). The five, with the class
+written out where the class is what matters, are at the parser itself; in
+summary: COMMAND SUBSTITUTION is a command (`$(…)`, backticks, nested, in an
+assignment, in a redirect TARGET, inside double quotes, inside an unquoted
+heredoc body); an UNQUOTED heredoc terminator makes the body a command channel
+whoever receives it; the terminator line is matched the way BASH matches it
+(equality, tabs stripped only for `<<-`); the DELIMITER is any word in any
+quoting (`<<\\EOF`, `<<'1EOF'`, `<<'E!'`, `<<"EOF"`, `<<E'OF'`, `<< EOF`); a
+grouping opener is not the receiver (`( python3 - <<'EOF' … )`); stdin has every
+name PROCFS gives it (`/proc/self/fd/0` was missing); a project runner is a
+wrapper BY SHAPE (`uv run python -`), which inverts the tool name away; a valued
+option does not hide the operand (`bash -o pipefail`, `python3 -X utf8`), and
+`bash -s` MEANS stdin rather than being an unknown flag; and the parse is
+BOUNDED, denying on oversize instead of letting the harness kill decide, since
+a kill produces no verdict and no verdict reads as ALLOW.
+
+Cycle 12 leaves three residuals of its own, each MEASURED as allowed and pinned
+by `QaCycle12.test_named_residuals_of_cycle_12`: a runner whose SUBCOMMAND sits
+where an operand would (`deno run -`, `bun run -`); a flag that consumes a value
+BETWEEN the run verb and the program (`uv run --with rich python -`); and
+`${ cmd; }` / `${| cmd; }`, ksh93 value substitution, which bash gained in 5.3
+and which this host (bash 5.2.21) rejects outright. One residual is retired
+rather than restated: `python3 -W ignore <<EOF` is covered.
 
 Three residuals belong specifically to the hardlink rule and are stated rather
 than discovered: a SYMBOLIC link over a lane's path is denied (it is a write to
@@ -151,17 +176,31 @@ RULE_ID = "ARCHITECTURE.kernel-isolation"
 _RESET_FLAGS = ("--hard", "--merge", "--keep")
 
 
+# The borrowed helpers are MEMOIZED, and QA cycle 12 C8 is why. Each of these
+# `exec_module`s a whole file, `scan()` calls both, and `scan()` recurses once
+# per `-c` body, per process substitution and (since C1) per command
+# substitution. Measured before memoizing: 2000 recursions cost 22.6 s, ~11 ms
+# of module execution each, so the parse budget stopped the recursion long
+# after the harness timeout would have. One load per process now.
+_SHELL_C_CACHE = None
+_DIM_CACHE = None
+
+
 def _shell_c():
     """Borrow the `<shell> -c <body>` detector the receipt gate already proves
     (receipt_ledger.py:79). One regex for the whole brain, same reason as the
     splitter: a second copy drifts and the drift is invisible until a deny fails
     to fire."""
+    global _SHELL_C_CACHE
+    if _SHELL_C_CACHE is not None:
+        return _SHELL_C_CACHE
     import importlib.util
     path = os.path.join(_HERE, "receipt_ledger.py")
     spec = importlib.util.spec_from_file_location("receipt_ledger_borrow", path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    return mod._SHELL_C
+    _SHELL_C_CACHE = mod._SHELL_C
+    return _SHELL_C_CACHE
 
 
 def _dim_helpers():
@@ -169,12 +208,16 @@ def _dim_helpers():
     dimension gate already proves (dimension-awareness-hook.py:214,:259). One
     parser for the whole brain: a second copy would drift and the drift would be
     invisible until a deny failed to fire."""
+    global _DIM_CACHE
+    if _DIM_CACHE is not None:
+        return _DIM_CACHE
     import importlib.util
     path = os.path.join(_HERE, "dimension-awareness-hook.py")
     spec = importlib.util.spec_from_file_location("dimension_awareness_hook", path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    return mod._split_subcmds, mod._broad_git_verb
+    _DIM_CACHE = (mod._split_subcmds, mod._broad_git_verb)
+    return _DIM_CACHE
 
 
 def deny(reason: str) -> None:
@@ -326,12 +369,63 @@ _WRAPPERS = {
 }
 
 
+# The verbs a project runner puts between itself and the real program.
+# QA cycle 12 C6: `uv run python - <<EOF` and `poetry run python - <<EOF` both
+# passed, and both binaries are installed on this box. The fix is NOT another
+# tool list. It is the SHAPE, which inverts the tool name away: whatever the
+# first token is, `<tool> run|exec|x … <program>` is a wrapper when the first
+# non-flag token after the verb is a program THIS FILE ALREADY HAS A TABLE FOR
+# (a code host, a mutator, a state verb, `git`, `find`). `npm run build` is not
+# peeled because `build` is in none of them, and `uv run python` is peeled
+# without `uv` ever being named.
+#
+# Stated under-fire: a flag that consumes a value between the verb and the
+# program (`uv run --with rich python -`) stops the peel, because without a
+# per-runner option table the parser cannot tell `--with rich` from
+# `--isolated python`. It fails toward ALLOW, one member wide, and the shape
+# above covers the spelling every runner documents.
+_RUN_VERBS = ("run", "exec", "x")
+# Runners whose `run` puts the program on ANOTHER machine or in another
+# filesystem namespace. `docker run python3 - <<EOF` writes the CONTAINER's
+# `~/.claude/.cache/kernel`, not this host's, so peeling them would turn a
+# stated under-fire (the header's ssh / container-exec residual) into a false
+# deny. They stay unpeeled, and the residual stays what it already says it is.
+_REMOTE_RUNNERS = ("docker", "podman", "nerdctl", "kubectl", "oc", "ssh",
+                   "lxc", "machinectl", "distrobox", "toolbox", "flatpak",
+                   "apptainer", "singularity", "vagrant")
+
+
+def _peel_run_wrapper(tokens: list):
+    """*tokens* from the real program on, when they are `<tool> run <program>`;
+    None when they are not that shape."""
+    if len(tokens) < 3 or tokens[1] not in _RUN_VERBS:
+        return None
+    if tokens[0].startswith("-"):
+        return None
+    if os.path.basename(tokens[0]) in _REMOTE_RUNNERS:
+        return None
+    for j in range(2, len(tokens)):
+        if tokens[j].startswith("-"):
+            continue
+        base = os.path.basename(tokens[j])
+        known = (is_code_host(base) or base in _MUTATORS or base in _STATE_VERBS
+                 or base in ("git", "find"))
+        return tokens[j:] if known else None
+    return None
+
+
 def peel_wrappers(tokens: list, here: str) -> tuple:
     """(tokens with wrapper prefixes removed, the cwd they leave behind).
 
     `env -C <dir> rm x` and `sudo -D <dir> rm x` move the directory a relative
     target resolves against, so the peel returns it rather than dropping it."""
-    while tokens and os.path.basename(tokens[0]) in _WRAPPERS:
+    while True:
+        if not tokens or os.path.basename(tokens[0]) not in _WRAPPERS:
+            peeled = _peel_run_wrapper(tokens)
+            if peeled is None:
+                return tokens, here
+            tokens = peeled
+            continue
         spec = _WRAPPERS[os.path.basename(tokens[0])]
         skip = spec["arg"]
         i = 1
@@ -358,7 +452,6 @@ def peel_wrappers(tokens: list, here: str) -> tuple:
         if i >= len(tokens):
             return [], here
         tokens = tokens[i:]
-    return tokens, here
 
 
 def redirect_targets(tokens: list) -> tuple:
@@ -837,59 +930,336 @@ def code_names_kernel_state(seg: str, kdir: str) -> bool:
 # `stdin_is_program` is the test, and it is a POSITION test rather than a name
 # test: an interpreter with no operand, or with `-` or `/dev/stdin` as its
 # operand, runs what arrives on stdin (`python3 <<EOF`, `bash -s <<EOF`,
-# `cat <<EOF | python3 -`). One carrying `-c`/`-e`/`-m`/`-f`, or a script file,
-# does not: there the program is elsewhere and the body is its input.
+# `cat <<EOF | python3 -`). One carrying `-c`/`-m`/`-e`, or a script file, does
+# not: there the program is elsewhere and the body is its input.
 #
 # Here-strings and process substitutions are the same channel wearing other
 # syntax and are lifted from the merge gate's `_stdin_channel_texts` rather
 # than rediscovered: `bash <<< "rm -rf <lane>"` hands a command to a shell, and
 # `<(...)`/`>(...)` is a command by construction whatever the outer program is.
-_HEREDOC_PATTERN = r"<<-?\s*(['\"]?)([A-Za-z_][\w.-]*)\1"
-_HEREDOC_RE = None
+#
+# ── QA CYCLE 12: the four ways a body was still reached, and the class ───────
+#
+# Cycle 11 closed ONE spelling of the heredoc and the matrix then read the rest
+# of the class as closed with it. It was not. Five findings, and four of them
+# live inside the channel cycle 11 had just claimed:
+#
+#   C2  `cat <<EOF` with `$(rm -f <kdir>/ptable.json)` in the body. An UNQUOTED
+#       terminator means BASH expands the body before anything receives it, so
+#       the body is a command channel whoever the receiver is; only a QUOTED
+#       terminator (`<<'EOF'`, `<<"EOF"`, `<<\EOF`) makes it literal. The old
+#       pattern captured the quote character and then dropped it.
+#   C3  a decoy line of `"  EOF"` closed the parse early because the terminator
+#       match was `.strip()`. Bash requires the line to EQUAL the delimiter;
+#       only `<<-` strips, and only leading TABS.
+#   C4  the delimiter charset was `['"]?[A-Za-z_][\w.-]*`, so `<<\EOF`,
+#       `<<'1EOF'` and `<<'E!'` were not heredocs at all to this parser.
+#   C5  `( python3 - <<'EOF' … )`: the host read was `shlex.split(...)[0]`,
+#       which is `(`, so the receiver came back empty and the body was dropped.
+#
+# THE CLASS, ENUMERATED, because closing one member and calling the class done
+# is the failure this PR chain has now repeated three times (verb, then path,
+# then flag). A heredoc redirection in bash is:
+#
+#   operator      `<<`  or  `<<-` (the dash strips leading TABS from every body
+#                 line AND from the terminator line, nothing else);
+#   spacing       blanks are allowed between the operator and the delimiter
+#                 (`cat << EOF`);
+#   delimiter     any WORD: bare (`EOF`, `END1`, `_x`, `a.b-c`), single-quoted
+#                 (`'EOF'`, `'1EOF'`, `'E!'`, `'a b'` — a delimiter may contain
+#                 a space when quoted), double-quoted (`"EOF"`),
+#                 backslash-escaped (`\EOF`), or PARTIALLY quoted (`E'OF'`,
+#                 `"E"OF`);
+#   quoting       the body is LITERAL when any character of the delimiter was
+#                 quoted or escaped, and EXPANDED otherwise. That is the whole
+#                 rule, and it is per delimiter, not per quote style;
+#   terminator    a line equal to the delimiter, exactly, with no leading or
+#                 trailing whitespace (`<<-` allows leading tabs);
+#   neighbours    `<<<` is a HERE-STRING, a different operator, and `<` is a
+#                 file redirect; several heredocs may open on one line and
+#                 their bodies follow in the order the delimiters appear.
+#
+# `_heredoc_ops` implements exactly that list, quote-aware so a `<<` inside an
+# ordinary quoted argument is not an operator, and `split_heredocs` matches the
+# terminator by equality (tab-stripped only for `<<-`). The "no terminator line
+# means it was never a heredoc" rule stays: it is what keeps `echo "a << b"`
+# from swallowing the rest of the command.
+#
+# RESIDUAL, stated: `<<` inside an ARITHMETIC context (`$(( 1 << 2 ))`) is read
+# as an operator here, so a later line equal to `2` would be eaten as a body.
+# It costs coverage, never a false deny, and no real command on this host has
+# the shape.
+#
+# ── QA CYCLE 12 / C1: command substitution is a command ─────────────────────
+#
+# `$(...)` and backticks were never parsed as commands anywhere in this file.
+# They were caught only INCIDENTALLY, when a literal kernel path survived
+# tokenization as a bare token and the outer verb was not read-only, which is
+# why `x=$(rm -f <kdir>/ptable.json)` denied while `echo $(python3 -c "…")`,
+# `true $(rm -f …)` and `` echo `…` `` all sailed through: `echo` is on the
+# read-only list, so the token scan never ran, and an interpreter that COMPUTES
+# the path leaves no literal to find.
+#
+# THE CLASS, ENUMERATED. Every construct in bash that runs a command inside a
+# word, and what this parser does with each:
+#
+#   `$(cmd)`        command substitution, nestable      SCANNED as a command
+#   `` `cmd` ``     legacy form, nests via `` \` ``     SCANNED as a command
+#   `<(cmd)`        process substitution (input)        SCANNED (since cycle 11)
+#   `>(cmd)`        process substitution (output)       SCANNED (since cycle 11)
+#   `$(<file)`      bash's file-read fast path          scanned; runs no command
+#   `$((expr))`     ARITHMETIC, not a command           left verbatim on purpose
+#   `${ cmd; }`     ksh93/bash-5.3 value substitution   RESIDUAL: this host runs
+#                   `${| cmd; }`                        bash 5.2.21, which
+#                                                       rejects it outright
+#   `$[expr]`       removed arithmetic form             not a command
+#
+# STATED OVER-FIRE, one line wide: a `#` COMMENT is not stripped anywhere in
+# this parser, so a substitution written inside one is read as the command it
+# textually is. `echo hi  # $(rm -rf pkg/)` is denied on a line that runs
+# nothing. It fails toward DENY, which is the correct direction here and the
+# same direction the `-c` raw-text rule has always failed in.
+#
+# POSITIONS, also enumerated, because a substitution is a WORD construct and
+# every word position is therefore a channel: an ordinary argument, the RHS of
+# an assignment (`x=$(…)`), a REDIRECT TARGET (`echo hi > $(echo <kdir>)/p`),
+# the word of a here-string, the body of an UNQUOTED heredoc (C2 above), and
+# anywhere inside DOUBLE quotes. Not inside single quotes and not in a quoted
+# heredoc body, where the text is literal and nothing runs.
+#
+# `split_command_substitutions` masks each one with an opaque marker and hands
+# back the bodies, which buys three things at once:
+#   1. the body is scanned as a command, with the cwd of the segment it sits in;
+#   2. the outer command still tokenizes, and a body containing `;` or `|` can
+#      no longer tear the outer command apart at `_split_subcmds` (the splitter
+#      tracks `(` depth, so `$(a; b)` survived, but `` `a; b` `` did not);
+#   3. a token that CONTAINS a marker is opaque, which is the honest answer for
+#      `echo hi > $(echo <kdir>)/ptable.json`: the destination is computed by a
+#      command this gate does not run, so the raw-text kernel floor is applied
+#      to the body TEXT instead, and a substitution that spells the kernel
+#      directory cannot be laundered through a write target.
+# The deliberate opaque-token behaviour for a verb that COMES FROM a
+# substitution (`$(echo rm) -f x`) is unchanged: the marker is not a read-only
+# program either, so the token scan still runs over the segment.
+#
+# WHERE THIS BELONGS, and it is NOT here. `qa-merge-gate.py` is the PROVIDER of
+# the command-boundary parser for this brain (`receipt_ledger._qa_gate_helpers()`
+# borrows `_split_subcmds` and `_strip_leading` from it; this file borrows its
+# splitter from `dimension-awareness-hook.py` and `_stdin_channel_texts` from
+# that gate in cycle 11), so the AUTHORITY on "what is a command substitution"
+# is `qa-merge-gate._command_substitution_texts`, which landed on
+# `fix/qa-gate-blanket-override` at e0f9444 while this cycle was being written.
+# An import the other way would close a cycle through a module that
+# `exec_module`s this one.
+#
+# What is here is not a second copy of that rule, it is the SPANS the rule
+# implies, and the difference is load-bearing. A texts-only extractor discards
+# WHERE each substitution was, and points 2 and 3 above both need the position:
+# the outer command has to keep tokenizing with the substitution as one token,
+# and a computed write target has to be recognizable as opaque. The body half of
+# the two is one function call apart —
+# `list(split_command_substitutions(t)[1].values())` is exactly
+# `_command_substitution_texts(t)` — and
+# `SharedParserConvergence.test_the_substitution_rule_has_one_authority` asserts
+# that equality over a corpus, SKIPPING with a named reason on a base where the
+# provider does not carry the function yet and arming itself the moment it does.
+# 14/14 agreement measured against e0f9444. This gate takes no runtime import of
+# an unmerged branch: an import that silently fails open would disable C1 until
+# the sibling merged, which is the worst of both.
+#
+# `>(…)` is the one member the two split differently on purpose: the merge gate
+# returns it from `_command_substitution_texts`, this file leaves it to
+# `stdin_channel_texts` where `<(…)` already lives, so the convergence corpus is
+# the `$(…)` and backtick class.
 _SUBST_OPENERS = ("<(", ">(")
+# Characters that END an unquoted word. Bash's own metacharacter set, which is
+# what decides where a heredoc delimiter stops.
+_WORD_ENDS = " \t\n;|&<>()"
 
 
-def _heredoc_re():
-    """Compiled once, lazily: `re` stays off the hot path for a command that
-    carries no `<<` at all."""
-    global _HEREDOC_RE
-    if _HEREDOC_RE is None:
-        import re
-        _HEREDOC_RE = re.compile(_HEREDOC_PATTERN)
-    return _HEREDOC_RE
+def _read_word(text: str, i: int) -> tuple:
+    """(word, quoted, index just past it) reading one shell WORD at *text*[i].
 
-
-def split_heredocs(cmd: str) -> tuple:
-    """(*cmd* with heredoc BODIES removed, [(opening_line, body)]).
-
-    The pattern is the merge gate's `_split_heredocs`, deliberately identical so
-    the two can converge on one definition instead of drifting: the same
-    `<<-?` with an optionally quoted terminator, the same "no terminator line
-    means it was never a heredoc" rule, so a `<<` inside ordinary text
-    (`echo "a << b"`) can never swallow the commands that follow it.
+    `quoted` is True when ANY character of the word was quoted or escaped,
+    which is bash's own rule for whether a heredoc body expands. Partial
+    quoting counts, so `E'OF'` yields ("EOF", True).
     """
-    rx = _heredoc_re()
+    out, quoted, n = [], False, len(text)
+    while i < n:
+        c = text[i]
+        if c == "\\" and i + 1 < n:
+            out.append(text[i + 1])
+            quoted = True
+            i += 2
+            continue
+        if c == "'":
+            j = text.find("'", i + 1)
+            if j < 0:
+                out.append(text[i + 1:])
+                return "".join(out), True, n
+            out.append(text[i + 1:j])
+            quoted = True
+            i = j + 1
+            continue
+        if c == '"':
+            j, buf = i + 1, []
+            while j < n and text[j] != '"':
+                if text[j] == "\\" and j + 1 < n:
+                    buf.append(text[j + 1])
+                    j += 2
+                    continue
+                buf.append(text[j])
+                j += 1
+            out.append("".join(buf))
+            quoted = True
+            i = min(j + 1, n)
+            continue
+        if c in _WORD_ENDS:
+            break
+        out.append(c)
+        i += 1
+    return "".join(out), quoted, i
+
+
+def _heredoc_ops(line: str) -> list:
+    """[(delimiter, quoted, tabstrip)] for every heredoc *line* opens, in order.
+
+    Quote-aware, so `echo "a <<EOF b"` opens nothing: an operator inside an
+    ordinary quoted argument is text. `<<<` is skipped explicitly because it is
+    a here-string, handled by `stdin_channel_texts`.
+    """
+    if "<<" not in line:
+        return []                    # the C-level test that keeps a 20000-line
+    ops, i, n = [], 0, len(line)     # DATA body off this char loop entirely
+    in_sq = in_dq = False
+    while i < n:
+        c = line[i]
+        if in_sq:
+            if c == "'":
+                in_sq = False
+            i += 1
+            continue
+        if in_dq:
+            if c == "\\":
+                i += 2
+                continue
+            if c == '"':
+                in_dq = False
+                i += 1
+                continue
+            # `<<` cannot open a heredoc inside a double-quoted word either
+            i += 1
+            continue
+        if c == "\\":
+            i += 2
+            continue
+        if c == "'":
+            in_sq = True
+            i += 1
+            continue
+        if c == '"':
+            in_dq = True
+            i += 1
+            continue
+        if line.startswith("<<<", i):
+            i += 3
+            continue
+        if line.startswith("<<", i):
+            j = i + 2
+            tabstrip = False
+            if j < n and line[j] == "-":
+                tabstrip = True
+                j += 1
+            while j < n and line[j] in " \t":
+                j += 1
+            word, quoted, j = _read_word(line, j)
+            if word:
+                ops.append((word, quoted, tabstrip))
+                i = j
+            else:
+                i += 2
+            continue
+        i += 1
+    return ops
+
+
+def _terminator_index(lines: list) -> tuple:
+    """({exact line: [indices]}, {tab-stripped line: [indices]}).
+
+    Built once per command instead of re-walking the tail for every `<<`. The
+    old spelling was a nested loop, so a command carrying many openers and no
+    terminators cost O(lines^2) — the parse-cost cliff from the other side.
+    """
+    exact, detabbed = {}, {}
+    for j, line in enumerate(lines):
+        exact.setdefault(line, []).append(j)
+        stripped = line.lstrip("\t")
+        if stripped != line:
+            detabbed.setdefault(stripped, []).append(j)
+    return exact, detabbed
+
+
+def _find_terminator(index, term: str, tabstrip: bool, start: int):
+    """The first line at or after *start* that CLOSES a heredoc on *term*.
+
+    Bash wants the line to equal the delimiter exactly. `<<-` strips leading
+    TABS (only tabs, only leading) from body lines and from this one, so the
+    tab-stripped view is consulted for that operator and for no other. QA cycle
+    12 C3: the old test was `lines[j].strip() == term`, so a decoy line of
+    `"  EOF"` closed the parse here while bash kept the body open, and every
+    command after the decoy was read as data.
+    """
+    exact, detabbed = index
+    hits = exact.get(term) or []
+    if tabstrip:
+        hits = sorted(set(hits) | set(detabbed.get(term) or []))
+    for j in hits:
+        if j >= start:
+            return j
+    return None
+
+
+def split_heredocs(cmd: str, budget: list = None) -> tuple:
+    """(*cmd* with heredoc BODIES removed, [(opening_line, body, quoted)]).
+
+    `quoted` is the third element since QA cycle 12 C2: an UNQUOTED terminator
+    means bash expands `$(...)` and backticks in the body before any command
+    receives it, so the body is a command channel whatever the receiver is.
+    The old pattern captured the quote character and then ignored it.
+    """
+    if "<<" not in cmd:
+        return cmd, []
     lines = cmd.split("\n")
+    index = None
     kept, bodies, i = [], [], 0
     while i < len(lines):
         line = lines[i]
         kept.append(line)
         i += 1
-        for _quote, term in rx.findall(line):
-            end = None
-            for j in range(i, len(lines)):
-                if lines[j].strip() == term:
-                    end = j
-                    break
+        for term, quoted, tabstrip in _heredoc_ops(line):
+            # An OPENER is a sub-command's worth of parsing too, and a command
+            # made of nothing but openers is the cheapest way to buy this loop
+            # (QA cycle 12 C8): 200000 of them cost 17 s before the charge.
+            if budget is not None:
+                budget[0] -= 1
+                if budget[0] < 0:
+                    raise ParseTooLarge(
+                        f"more than {_MAX_SEGMENTS} sub-commands to parse")
+            if index is None:
+                # built on the FIRST opener, never for a command that only
+                # mentions `<<` inside a quoted argument
+                index = _terminator_index(lines)
+            end = _find_terminator(index, term, tabstrip, i)
             if end is None:
                 continue                     # no terminator: not a heredoc
-            bodies.append((line, "\n".join(lines[i:end])))
+            bodies.append((line, "\n".join(lines[i:end]), quoted))
             i = end + 1
     return "\n".join(kept), bodies
 
 
 def _claim_heredocs(seg: str, pending: dict) -> list:
-    """The (opening_line, body) pairs *seg* opens, removed from *pending*.
+    """The (opening_line, body, quoted) triples *seg* opens, removed from
+    *pending*.
 
     A sub-command claims a body by naming its terminator, which is how a body
     gets back the cwd of the line it belongs to. Bodies nothing claims stay in
@@ -898,7 +1268,7 @@ def _claim_heredocs(seg: str, pending: dict) -> list:
     out = []
     if not pending or "<<" not in seg:
         return out
-    for _quote, term in _heredoc_re().findall(seg):
+    for term, _quoted, _tabstrip in _heredoc_ops(seg):
         items = pending.get(term)
         if items:
             out.append(items.pop(0))
@@ -907,16 +1277,221 @@ def _claim_heredocs(seg: str, pending: dict) -> list:
     return out
 
 
-# Flags whose argument IS the program. A command carrying one of these reads no
-# program from stdin, so whatever arrives there is the program's input.
-# ONLY the flags that unambiguously mean "the program is this argument". `-e`,
-# `-E`, `-m` and `-f` are NOT here: to a shell they mean errexit, ERR-trap
-# inheritance, job control and noglob, so listing them would read `bash -e
-# <<EOF` as data and miss a live channel. Where they really do carry a program
-# (`awk -f prog.awk`, `python3 -m mod`, `node -e 'code'`) the operand rule below
-# already answers, because the value itself is a non-flag operand.
-_PROGRAM_FLAGS = ("-c", "--command")
-_STDIN_OPERANDS = ("-", "/dev/stdin", "/dev/fd/0")
+# The marker a masked command substitution leaves behind. Plain identifier
+# characters so `shlex` keeps it as one token and `os.path.join` treats it as an
+# ordinary path component.
+_SUBST_MARK = "__OCTOSUBST"
+
+
+def _match_paren(text: str, k: int) -> int:
+    """Index just past the `)` that closes the `(` at *text*[k], quotes
+    respected. An unterminated substitution returns the end of the text, so its
+    body is the rest of the command rather than nothing."""
+    depth, i, n = 0, k, len(text)
+    in_sq = in_dq = False
+    while i < n:
+        c = text[i]
+        if c == "\\" and i + 1 < n:
+            i += 2
+            continue
+        if in_sq:
+            if c == "'":
+                in_sq = False
+            i += 1
+            continue
+        if in_dq:
+            if c == '"':
+                in_dq = False
+            i += 1
+            continue
+        if c == "'":
+            in_sq = True
+        elif c == '"':
+            in_dq = True
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return n
+
+
+def split_command_substitutions(text: str) -> tuple:
+    """(*text* with every COMMAND SUBSTITUTION masked, {marker: body}).
+
+    QA cycle 12 C1. See the enumeration above for what counts: `$(...)` and
+    backticks are masked and their bodies handed back; `$((...))` is arithmetic
+    and is copied through verbatim; single-quoted text is literal and is copied
+    through as-is; double-quoted text still expands, so it is scanned.
+
+    Contract note for the convergence with `qa-merge-gate.py`: a texts-only
+    extractor is exactly `list(split_command_substitutions(t)[1].values())`.
+    The masked text is the half this gate needs and a texts-only helper cannot
+    provide, because a `(kind, path, verb)` hit has to know that the token
+    holding the substitution is opaque.
+    """
+    if "$(" not in text and "`" not in text:
+        return text, {}
+    out, subs, i, n = [], {}, 0, len(text)
+    in_dq = False
+    while i < n:
+        c = text[i]
+        if c == "\\" and i + 1 < n:
+            out.append(text[i:i + 2])
+            i += 2
+            continue
+        if not in_dq and c == "'":
+            j = text.find("'", i + 1)
+            j = n if j < 0 else j + 1
+            out.append(text[i:j])
+            i = j
+            continue
+        if c == '"':
+            in_dq = not in_dq
+            out.append(c)
+            i += 1
+            continue
+        if text.startswith("$((", i):
+            j = _match_paren(text, i + 2)
+            out.append(text[i:j])
+            i = j
+            continue
+        if text.startswith("$(", i):
+            j = _match_paren(text, i + 1)
+            body = text[i + 2:j - 1] if text[j - 1:j] == ")" else text[i + 2:j]
+            mark = "%s%d__" % (_SUBST_MARK, len(subs))
+            subs[mark] = body
+            out.append(mark)
+            i = j
+            continue
+        if c == "`":
+            j, buf = i + 1, []
+            while j < n:
+                if text[j] == "\\" and j + 1 < n:
+                    buf.append(text[j + 1])
+                    j += 2
+                    continue
+                if text[j] == "`":
+                    break
+                buf.append(text[j])
+                j += 1
+            mark = "%s%d__" % (_SUBST_MARK, len(subs))
+            subs[mark] = "".join(buf)
+            out.append(mark)
+            i = min(j + 1, n)
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out), subs
+
+
+def markers_in(text: str) -> list:
+    """Every substitution marker *text* carries, found in ONE pass.
+
+    QA cycle 12 C8, second cliff: the first spelling asked `mark in seg` for
+    every registered marker, which is O(markers x segment) and cost 5.5 s on a
+    256 KiB line of 15000 substitutions. The markers are self-describing, so
+    reading them out of the text costs one scan instead.
+    """
+    if _SUBST_MARK not in text:
+        return []
+    out, i = [], 0
+    while True:
+        k = text.find(_SUBST_MARK, i)
+        if k < 0:
+            return out
+        j = text.find("__", k + len(_SUBST_MARK))
+        if j < 0:
+            return out
+        out.append(text[k:j + 2])
+        i = j + 2
+
+
+def subst_names_kernel_state(tok: str, subs: dict, kdir: str) -> bool:
+    """True when *tok* holds a masked substitution whose BODY spells the kernel
+    directory. The value of a substitution is unknowable without running it, so
+    a write whose destination is computed by a command that names the kernel
+    directory is denied on the body's text, the same raw-text rule the `-c` and
+    heredoc channels already pay for."""
+    if not subs or _SUBST_MARK not in tok:
+        return False
+    return any(code_names_kernel_state(subs[mark], kdir)
+               for mark in markers_in(tok) if mark in subs)
+
+
+# Flags whose argument IS the program, PER HOST since QA cycle 12 C7. A single
+# shared tuple could only hold `-c`, because the same letter is a program flag
+# for one interpreter and an ordinary option for another: `-e` is a program for
+# perl and node and errexit for every shell, `-m` is a module for python and
+# monitor mode for bash, `-f` is a program file for awk and noglob for sh. The
+# per-host table says which is which instead of guessing, and a host with no
+# row falls back to `-c`, which every shell honours.
+_PROGRAM_FLAGS = ("-c", "--command")             # the fallback, and the export
+_PROGRAM_FLAGS_BY_HOST = {
+    "bash": ("-c", "--command"), "sh": ("-c",), "zsh": ("-c",), "dash": ("-c",),
+    "ksh": ("-c",),
+    "python": ("-c", "-m"), "py": ("-c", "-m"),
+    "perl": ("-e", "-E"),
+    "ruby": ("-e",),
+    "node": ("-e", "--eval", "-p", "--print"),
+    "deno": ("-e", "--eval"), "bun": ("-e", "--eval"),
+    "php": ("-r",),
+    "awk": ("-f",), "gawk": ("-f", "--file", "--source"), "mawk": ("-f",),
+    "sed": ("-e", "--expression", "-f", "--file"),
+    "lua": ("-e",), "Rscript": ("-e",),
+}
+# Options that CONSUME THE NEXT TOKEN without being a program. QA cycle 12 C7
+# measured every one of these passing: the value landed where an operand would
+# be, `stdin_is_program` read it as a script and the body became data.
+# `sed -i` and `perl -i` are deliberately absent: their argument is optional and
+# only ever arrives attached, so listing them would eat the script.
+_VALUED_HOST_OPTS = {
+    "bash": ("-o", "+o", "-O", "+O", "--rcfile", "--init-file"),
+    "sh": ("-o", "+o"), "zsh": ("-o", "+o"), "dash": ("-o", "+o"),
+    "ksh": ("-o", "+o"),
+    "python": ("-X", "-W", "--check-hash-based-pycs"),
+    "py": ("-X", "-W"),
+    "perl": ("-I",),
+    "ruby": ("-I", "-r", "-C", "-K", "-E", "--encoding"),
+    "node": ("-r", "--require", "--import", "--loader", "--experimental-loader",
+             "--conditions", "--max-old-space-size", "--stack-size"),
+    "awk": ("-v", "-F", "--assign", "--field-separator"),
+    "gawk": ("-v", "-F", "--assign", "--field-separator"),
+    "mawk": ("-v", "-F"),
+    "lua": ("-l",),
+}
+# Flags that MEAN "read the program from stdin". `bash -s` is not an unknown
+# option to be skipped, it is the operand-free spelling of `bash -`: the
+# positional arguments after it are `$0` and friends, not a script. QA cycle 12
+# C7 called this a straight defect rather than a residual, and it is.
+_STDIN_FLAGS = {"bash": ("-s",), "sh": ("-s",), "zsh": ("-s",), "dash": ("-s",),
+                "ksh": ("-s",)}
+# Paths that NAME this process's own stdin. Not a list of spellings someone
+# thought of: on Linux the kernel provides exactly `/dev/stdin`, `/dev/fd/N`
+# (a symlink to `/proc/self/fd`), `/proc/self/fd/N`, `/proc/thread-self/fd/N`
+# and `/proc/<pid>/fd/N`, so the set is closed by procfs rather than by this
+# table. QA cycle 12 C6: the old tuple held three of them and `/proc/self/fd/0`
+# — the spelling a script writes when it wants to be portable — was not one.
+_STDIN_OPERANDS = ("-", "/dev/stdin", "/dev/fd/0", "/proc/self/fd/0",
+                   "/proc/thread-self/fd/0")
+_FD_DIRS = ("/dev/fd", "/proc/self/fd", "/proc/thread-self/fd")
+
+
+def is_stdin_operand(tok: str) -> bool:
+    """True when *tok* names this process's stdin, in any spelling procfs
+    provides. `-` is the shell convention; the rest are real paths."""
+    if tok == "-" or tok in _STDIN_OPERANDS:
+        return True
+    head, sep, base = tok.rpartition("/")
+    if not sep or base != "0":
+        return False
+    if head in _FD_DIRS:
+        return True
+    parts = head.split("/")
+    return (len(parts) == 4 and parts[0] == "" and parts[1] == "proc"
+            and parts[2].isdigit() and parts[3] == "fd")
 
 
 def _interp_base(name: str) -> str:
@@ -945,30 +1520,87 @@ def is_code_host(name: str) -> bool:
     return name in _CODE_HOSTS or _interp_base(name) in _CODE_HOSTS
 
 
+def _host_key(name: str) -> str:
+    """The row of the per-host option tables that *name* uses."""
+    if name in _PROGRAM_FLAGS_BY_HOST or name in _VALUED_HOST_OPTS:
+        return name
+    return _interp_base(name)
+
+
 def stdin_is_program(tokens: list) -> bool:
     """True when this command runs whatever arrives on its STDIN.
 
-    A position test, not a name test. `python3 <<EOF` and `python3 - <<EOF` run
-    the body; `python3 script.py <<EOF` and `python3 -c '…' <<EOF` do not, and
-    for those the body is the program's INPUT, which is data.
+    A position test, not a name test. `python3 <<EOF`, `python3 - <<EOF`,
+    `bash -s <<EOF` and `python3 -W ignore - <<EOF` run the body;
+    `python3 script.py <<EOF` and `python3 -c '…' <<EOF` do not, and for those
+    the body is the program's INPUT, which is data.
 
-    Residual, stated: a valued option this table does not know
-    (`python3 -W ignore <<EOF`) puts a non-flag token where an operand would be,
-    so the body reads as data and the channel is missed. It fails toward ALLOW,
-    which is the right failure for a rule whose cost is denying the dominant
-    idiom.
+    Options are read against the PER-HOST tables above rather than a single
+    shared tuple (QA cycle 12 C7). `--` ends the options: whatever follows is
+    an operand, so a script name there still means the body is data.
+
+    Residual, stated and narrowed: a valued option NEITHER table knows still
+    puts a non-flag token where an operand would be and the body reads as data.
+    It fails toward ALLOW, which is the right failure for a rule whose cost is
+    denying the dominant idiom.
     """
-    if not tokens or not is_code_host(os.path.basename(tokens[0])):
+    if not tokens:
         return False
-    for tok in tokens[1:]:
-        if tok.partition("=")[0] in _PROGRAM_FLAGS:
-            return False
-        if tok in _STDIN_OPERANDS:
-            return True
-        if tok.startswith("-"):
+    host = os.path.basename(tokens[0])
+    if not is_code_host(host):
+        return False
+    key = _host_key(host)
+    program = _PROGRAM_FLAGS_BY_HOST.get(key, _PROGRAM_FLAGS)
+    valued = _VALUED_HOST_OPTS.get(key, ())
+    stdin_flags = _STDIN_FLAGS.get(key, ())
+    i, end_of_flags = 1, False
+    while i < len(tokens):
+        tok = tokens[i]
+        if not end_of_flags and tok.startswith("-") and tok != "-":
+            if tok == "--":
+                end_of_flags = True
+                i += 1
+                continue
+            name = tok.partition("=")[0]
+            if tok in program or name in program:
+                return False
+            if tok in stdin_flags:
+                return True
+            # a short-option BUNDLE: `bash -se` is `bash -s -e`
+            if not tok.startswith("--") and any(
+                    len(f) == 2 and f[1] in tok[1:] for f in stdin_flags):
+                return True
+            if tok in valued or name in valued:
+                i += 1 if "=" in tok else 2
+                continue
+            i += 1
             continue
+        if is_stdin_operand(tok):
+            return True
         return False                 # a script operand: stdin is its input
     return True                      # no operand at all: stdin is the program
+
+
+# Tokens that open a GROUP rather than name a program. QA cycle 12 C5:
+# `( python3 - <<'EOF' … )` shlex-split to `['(', 'python3', …]`, so the host
+# came back empty and the body was discarded. The sibling gate's head-position
+# rule skips the same set.
+_GROUP_OPENERS = ("(", "{", "!", "then", "else", "elif", "do", "time")
+
+
+def strip_group_openers(tokens: list) -> list:
+    """*tokens* with any leading grouping or compound-command keyword removed,
+    so the next token is the program. Handles `( python3` and `(python3`."""
+    while tokens:
+        head = tokens[0]
+        if head in _GROUP_OPENERS:
+            tokens = tokens[1:]
+            continue
+        if len(head) > 1 and head[0] in "({":
+            tokens = [head[1:]] + tokens[1:]
+            continue
+        break
+    return tokens
 
 
 def stdin_program_host(opening: str, here: str, split_subcmds) -> str:
@@ -984,6 +1616,7 @@ def stdin_program_host(opening: str, here: str, split_subcmds) -> str:
             toks = shlex.split(seg)
         except ValueError:
             toks = seg.split()
+        toks = strip_group_openers(toks)
         _redirects, toks = redirect_targets(toks)
         toks, _here = peel_wrappers(peel_env(toks), here)
         if stdin_is_program(toks):
@@ -995,7 +1628,7 @@ def stdin_channel_texts(seg: str) -> tuple:
     """(here-string texts, process-substitution bodies) of one segment.
 
     Lifted from `qa-merge-gate._stdin_channel_texts`, which found the same hole
-    from the other side: `_HEREDOC_RE` matches `<<WORD` only, so a here-string
+    from the other side: the heredoc scan matches `<<WORD` only, so a here-string
     was never a body and the stdin test was never consulted. The two are
     returned SEPARATELY because they are not the same claim: a here-string is a
     command only when its receiver reads stdin as a program, while a process
@@ -1036,9 +1669,45 @@ def stdin_channel_texts(seg: str) -> tuple:
 
 _BROAD_ADD = ("-u", "--update", "./", ":/", ":(top)")
 _MAX_DEPTH = 3
+# THE PARSE BUDGET (QA cycle 12 C8). `arm_invocation_budget()` bounds the
+# JOURNAL reads; nothing bounded the parse, and the harness kills this hook at
+# `timeout: 5`. A kill produces no verdict, and no verdict reads as ALLOW in
+# every matrix in this PR, so the cliff was a silent bypass for anyone willing
+# to pad a command.
+#
+# MEASURED on this box, and the cost is per SEGMENT PARSED, not per byte: a
+# 20000-line DATA heredoc costs 7.6 ms (the body is split off and never
+# tokenized), while 20000 command lines cost 4.95 s and a 20000-line EXECUTED
+# heredoc body costs 7.07 s. So the budget counts segments, which leaves a
+# large file written through `cat > f <<'EOF'` exactly as cheap as it is today
+# and bounds only the shape that actually costs.
+#
+# 2000 segments is ~0.5 s at the measured 250 us/segment, against a largest
+# real command of 2.57 ms. Exhausting it means the parse is INCOMPLETE, and an
+# incomplete parse answers UNKNOWN, which never allows (commit 27d51b3).
+_MAX_SEGMENTS = 2000
+# Two SIZE bounds, because the segment budget can only be spent once the text
+# has been split and the splitting is itself O(characters) of pure-Python char
+# loop. Both measured on this box at 512 KiB, worst line shape:
+#   `_split_subcmds` + `split_command_substitutions` over the parsed text  1.7 s
+#   `split_heredocs` over a command that is nothing but openers            2.6 s
+# `_MAX_PARSE_CHARS` bounds the FIRST pair and is measured against the command
+# with data heredoc bodies REMOVED, so `cat > f <<'EOF'` writing a megabyte
+# stays allowed and stays cheap (99 ms at 512 KiB, its body is never
+# tokenized). `_MAX_COMMAND_CHARS` bounds the raw text before anything is read,
+# because `cmd.split("\n")` on an unbounded string is a memory decision rather
+# than a parse decision.
+_MAX_PARSE_CHARS = 256 * 1024
+_MAX_COMMAND_CHARS = 4 * 1024 * 1024
 
 
-def scan(command: str, cwd: str, depth: int = 0) -> list:
+class ParseTooLarge(Exception):
+    """The command has more sub-commands than the parse budget allows, so no
+    verdict can be reached by reading it. Denied, never dropped."""
+
+
+def scan(command: str, cwd: str, depth: int = 0, budget: list = None,
+         subs: dict = None) -> list:
     """Every collision candidate in one command, as (kind, path, verb) where
     kind is 'release', 'tree', 'stage' or 'path'. Pure parsing: no process
     table, no liveness, no I/O beyond the existence probe a bare
@@ -1056,33 +1725,69 @@ def scan(command: str, cwd: str, depth: int = 0) -> list:
     split_subcmds, broad_git_verb = _dim_helpers()
     shell_c = _shell_c() if depth < _MAX_DEPTH else None
     here = kernel_proc.norm_path(cwd or os.getcwd())
+    if budget is None:
+        budget = [_MAX_SEGMENTS]
+    if len(command or "") > _MAX_COMMAND_CHARS:
+        raise ParseTooLarge(
+            f"{len(command)} characters, past the {_MAX_COMMAND_CHARS} this "
+            "gate reads")
     # The trigger test above reads the WHOLE command, bodies included, because a
     # body is where the kernel path lives; the parse below reads the command
     # with the bodies taken out, because a body is not a command line. The
     # bodies are then handed back to whatever executes them, and to nothing
     # else (QA cycle 11).
-    body_cmd, heredocs = split_heredocs(command or "")
+    body_cmd, heredocs = split_heredocs(command or "", budget)
+    if len(body_cmd) > _MAX_PARSE_CHARS:
+        raise ParseTooLarge(
+            f"{len(body_cmd)} characters of command line to parse, past the "
+            f"{_MAX_PARSE_CHARS} this gate reads inside the harness timeout")
+    # COMMAND SUBSTITUTIONS come out next and BEFORE `_split_subcmds`, because a
+    # backtick body carrying `;` or `|` tears the outer command apart at the
+    # splitter (which tracks `(` depth, so `$(a; b)` survived and `` `a; b` ``
+    # did not). Masking first makes both shapes one token, and the bodies are
+    # handed back to the segment they appear in, with that segment's cwd.
+    body_cmd, own_subs = split_command_substitutions(body_cmd)
+    # A marker keeps its meaning INSIDE a nested scan. `bash -c "rm -f $(echo
+    # <kdir>)/ptable.json"` masks the substitution at this frame and then hands
+    # the `-c` body to a recursion that never saw it, so the inherited registry
+    # travels with the recursion while only the ones created HERE are scanned
+    # and drained here.
+    subs = dict(subs or {})
+    subs.update(own_subs)
+    seen_subs = set()
+    # Each substitution is a COMMAND, so it spends the same budget a segment
+    # does. Charged up front because the masking has already happened and the
+    # count is exact: a command carrying more of them than the budget allows
+    # cannot be read inside the timeout however cheap each one is.
+    budget[0] -= len(own_subs)
+    if budget[0] < 0:
+        raise ParseTooLarge(
+            f"more than {_MAX_SEGMENTS} sub-commands to parse")
     # Keyed by TERMINATOR, so a sub-command can claim its own body back. A line
     # that opens two of them (`cat <<A | python3 - <<B`) returns its bodies in
     # the order its terminators appear, which is the pairing used here; a body
     # no key finds is drained at the end rather than dropped.
     pending, nth = {}, {}
-    for opening, body in heredocs:
-        terms = [t for _quote, t in _heredoc_re().findall(opening)]
+    for opening, body, quoted in heredocs:
+        terms = [t for t, _q, _s in _heredoc_ops(opening)]
         i = nth.get(opening, 0)
         nth[opening] = i + 1
         term = terms[i] if i < len(terms) else (terms[0] if terms else "")
-        pending.setdefault(term, []).append((opening, body))
+        pending.setdefault(term, []).append((opening, body, quoted))
     hits = []
     here0 = here
     for seg in split_subcmds(body_cmd):
+        budget[0] -= 1
+        if budget[0] < 0:
+            raise ParseTooLarge(
+                f"more than {_MAX_SEGMENTS} sub-commands to parse")
         seg = seg.strip().rstrip(";").strip()
         # a subshell or group: `(rm -rf pkg)` is a command, not a token soup
         if depth < _MAX_DEPTH and seg[:1] in ("(", "{"):
             inner = seg[1:].strip()
             if inner[-1:] in (")", "}"):
                 inner = inner[:-1]
-            hits.extend(scan(inner, here, depth + 1))
+            hits.extend(scan(inner, here, depth + 1, budget, subs))
             continue
         if shell_c is not None:
             m = shell_c.match(seg)
@@ -1092,7 +1797,7 @@ def scan(command: str, cwd: str, depth: int = 0) -> list:
                 except ValueError:
                     body = []
                 if body:
-                    hits.extend(scan(body[0], here, depth + 1))
+                    hits.extend(scan(body[0], here, depth + 1, budget, subs))
                     continue
         try:
             tokens = shlex.split(seg)
@@ -1100,6 +1805,11 @@ def scan(command: str, cwd: str, depth: int = 0) -> list:
             tokens = seg.split()
         redirects, tokens = redirect_targets(tokens)
         for target in redirects:
+            # `echo hi > $(echo <kdir>)/ptable.json` (QA cycle 12 C1): the
+            # destination is computed by a command, so the literal path is not
+            # in the token and never was. The body's text answers instead.
+            if subst_names_kernel_state(target, subs, kdir):
+                hits.append(("state", kdir, ">"))
             hits.append(("path", resolve(target, here), ">"))
         pre_peel = list(tokens)
         tokens, here = peel_wrappers(peel_env(tokens), here)
@@ -1118,6 +1828,21 @@ def scan(command: str, cwd: str, depth: int = 0) -> list:
                 host == "find" and not find_targets(tokens[1:])[0]):
             for target in names_kernel_state(pre_peel, here, kdir):
                 hits.append(("state", target, host or "assignment"))
+            for tok in pre_peel:
+                if subst_names_kernel_state(tok, subs, kdir):
+                    hits.append(("state", kdir, host or "assignment"))
+                    break
+        # THE SUBSTITUTION BODIES this segment carries, scanned as commands with
+        # the cwd this segment runs in. Kept OUT of the branch above because a
+        # read-only head (`echo $(rm -f <kdir>/ptable.json)`) is exactly the
+        # shape that was passing: the outer verb touches nothing, the inner one
+        # touches everything.
+        if own_subs and _SUBST_MARK in seg and depth < _MAX_DEPTH:
+            for mark in markers_in(seg):
+                if mark in own_subs and mark not in seen_subs:
+                    seen_subs.add(mark)
+                    hits.extend(scan(own_subs[mark], here, depth + 1, budget,
+                                     subs))
         # THE STDIN CHANNELS, resolved against the cwd THIS segment runs in.
         # Claiming a body inside the loop rather than after it is what keeps
         # `cd pkg && bash <<EOF ... rm -f a.py ... EOF` covered: the body is a
@@ -1125,7 +1850,7 @@ def scan(command: str, cwd: str, depth: int = 0) -> list:
         # mean.
         if pending or "<<" in seg or "<(" in seg or ">(" in seg:
             hits.extend(stdin_channel_hits(seg, tokens, here, kdir, depth,
-                                           split_subcmds, pending))
+                                           split_subcmds, pending, budget, subs))
         if not tokens:
             continue
         if tokens[0] in ("cd", "pushd") and len(tokens) > 1:
@@ -1139,7 +1864,7 @@ def scan(command: str, cwd: str, depth: int = 0) -> list:
         if depth < _MAX_DEPTH and _interp_base(base) in _C_HOSTS and "-c" in tokens:
             i = tokens.index("-c")
             if i + 1 < len(tokens):
-                hits.extend(scan(tokens[i + 1], here, depth + 1))
+                hits.extend(scan(tokens[i + 1], here, depth + 1, budget, subs))
                 continue
         if base == "git":
             parsed = git_parse(tokens)
@@ -1190,14 +1915,22 @@ def scan(command: str, cwd: str, depth: int = 0) -> list:
     # body with no content. It is resolved against the cwd the command started
     # in, which is the only one still known here.
     for items in pending.values():
-        for opening, body in items:
-            hits.extend(heredoc_hits(opening, body, here0, kdir, depth,
-                                     split_subcmds))
+        for opening, body, quoted in items:
+            hits.extend(heredoc_hits(opening, body, quoted, here0, kdir, depth,
+                                     split_subcmds, budget, subs))
+    # A substitution no segment claimed is still a command bash will run. It is
+    # resolved against the cwd the command started in, the only one still known.
+    if depth < _MAX_DEPTH:
+        for mark, body in own_subs.items():
+            if mark not in seen_subs:
+                seen_subs.add(mark)
+                hits.extend(scan(body, here0, depth + 1, budget, subs))
     return hits
 
 
 def stdin_channel_hits(seg: str, tokens: list, here: str, kdir: str,
-                       depth: int, split_subcmds, pending: dict) -> list:
+                       depth: int, split_subcmds, pending: dict,
+                       budget: list = None, subs: dict = None) -> list:
     """Collision candidates one segment carries on STDIN rather than in a token.
 
     Three channels, one rule each, and the difference between them is who
@@ -1214,25 +1947,27 @@ def stdin_channel_hits(seg: str, tokens: list, here: str, kdir: str,
       the outer program is, so it is scanned unconditionally.
     """
     hits = []
-    for opening, body in _claim_heredocs(seg, pending):
-        hits.extend(heredoc_hits(opening, body, here, kdir, depth, split_subcmds))
+    for opening, body, quoted in _claim_heredocs(seg, pending):
+        hits.extend(heredoc_hits(opening, body, quoted, here, kdir, depth,
+                                 split_subcmds, budget, subs))
     if depth >= _MAX_DEPTH:
         return hits
     strings, substitutions = stdin_channel_texts(seg)
     for text in substitutions:
-        hits.extend(scan(text, here, depth + 1))
+        hits.extend(scan(text, here, depth + 1, budget, subs))
     if strings and stdin_is_program(tokens):
         host = os.path.basename(tokens[0])
         for text in strings:
             if code_names_kernel_state(text, kdir):
                 hits.append(("state", kdir, host + " <<<"))
             if _interp_base(host) in _C_HOSTS:
-                hits.extend(scan(text, here, depth + 1))
+                hits.extend(scan(text, here, depth + 1, budget, subs))
     return hits
 
 
-def heredoc_hits(opening: str, body: str, here: str, kdir: str, depth: int,
-                 split_subcmds) -> list:
+def heredoc_hits(opening: str, body: str, quoted: bool, here: str, kdir: str,
+                 depth: int, split_subcmds, budget: list = None,
+                 subs: dict = None) -> list:
     """What one heredoc body is worth, given the line that declared it.
 
     For a body the interpreter runs, the raw-text kernel test applies exactly as
@@ -1243,22 +1978,36 @@ def heredoc_hits(opening: str, body: str, here: str, kdir: str, depth: int,
 
     MEASURED on 3186 real heredocs rather than assumed. 40 commands are newly
     denied: 20 genuinely reach the live kernel directory through an interpreter,
-    8 name a SANDBOX directory spelled `.claude/.cache/kernel` (the relative
-    spelling `_KDIR_SPELLINGS` has carried since cycle 9, inherited here rather
-    than introduced), and 12 name the path only in PROSE inside a patch script,
-    which is this rule's own false-positive class and the same one `-c` has had
-    all along. Against them, 15 false denies GO AWAY, because a data heredoc is
-    no longer split into segments and read as commands. Net over-fire +5 in
-    3186, and a data body is the shape that was denying commit messages.
+    8 name a SANDBOX directory spelled `.claude/.cache/kernel` — the relative
+    spelling `_KDIR_SPELLINGS` has carried since cycle 9, but cycle 11 is the
+    first to apply the path test to heredoc BODIES, so those 8 are NEWLY
+    REACHABLE through this channel even though the spelling they match is old —
+    and 12 name the path only in PROSE inside a patch script, which is this
+    rule's own false-positive class and the same one `-c` has had all along.
+    Against them, 15 false denies GO AWAY, because a data heredoc is no longer
+    split into segments and read as commands. Net over-fire +5 in 3186, and a
+    data body is the shape that was denying commit messages.
+
+    QA cycle 12 C2 adds the half that does not depend on the receiver at all.
+    An UNQUOTED terminator (`cat <<EOF`) means BASH expands `$(...)` and
+    backticks in the body before `cat` ever sees it, so the body is a command
+    channel whoever receives it; a QUOTED terminator (`<<'EOF'`, `<<"EOF"`,
+    `<<\\EOF`, `<<E'OF'`) makes it literal and it stays data. The expansion is
+    read first and the receiver test second, because they are two different
+    claims about the same text.
     """
+    hits = []
+    if not quoted and depth < _MAX_DEPTH:
+        _masked, body_subs = split_command_substitutions(body)
+        for sub_body in body_subs.values():
+            hits.extend(scan(sub_body, here, depth + 1, budget, subs))
     host = stdin_program_host(opening, here, split_subcmds)
     if not host:
-        return []                    # a data heredoc: `cat > notes <<EOF`
-    hits = []
+        return hits                  # a data heredoc: `cat > notes <<EOF`
     if code_names_kernel_state(body, kdir):
         hits.append(("state", kdir, host + " <<"))
     if depth < _MAX_DEPTH and _interp_base(host) in _C_HOSTS:
-        hits.extend(scan(body, here, depth + 1))
+        hits.extend(scan(body, here, depth + 1, budget, subs))
     return hits
 
 
@@ -1283,6 +2032,26 @@ def main() -> int:
 
     try:
         hits = scan(command, str(payload.get("cwd") or ""))
+    except ParseTooLarge as exc:
+        # NOT the fail-open below. Every other parser failure is a bug in
+        # reading a command the shell will run anyway; this one is the parse
+        # REFUSING to finish, and a parse that does not finish has not looked at
+        # the part of the command that matters. Before the budget the harness
+        # made this decision by killing the hook at `timeout: 5`, which produces
+        # no verdict at all, and no verdict is read as ALLOW by every matrix in
+        # this PR. Unknown never allows (commit 27d51b3).
+        journal_deny(pid, {"why": "parse-too-large", "command": command[:200],
+                           "limit": _MAX_SEGMENTS})
+        deny(
+            f"KERNEL ISOLATION: this command has more than {_MAX_SEGMENTS} "
+            f"sub-commands to parse ({exc}), which is past the budget this gate "
+            "can read inside the harness timeout. A parse that cannot finish "
+            "cannot tell whether the command writes into the kernel's own state "
+            "or into another process's lane, and an unknown answer is denied, "
+            "never allowed. Split it into separate calls, or write the file "
+            "with the Write tool instead of through a shell."
+        )
+        return 0
     except Exception:
         return 0            # a parser that cannot read the command denies nothing
     if not hits:

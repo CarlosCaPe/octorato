@@ -1,0 +1,11 @@
+{
+  "session_id": "sess-parent",
+  "tool_name": "Bash",
+  "tool_use_id": "toolu_iso",
+  "tool_input": {
+    "command": "docker run python3 - <<'EOF'\nopen('{{SANDBOX}}/.claude/.cache/kernel/ptable.json','w')\nEOF"
+  },
+  "cwd": "{{SANDBOX}}/work/tree",
+  "agent_id": "agent-b",
+  "_setup": {}
+}

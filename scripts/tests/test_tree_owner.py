@@ -1971,25 +1971,339 @@ class QaCycle11(IsolationCase):
                 f"cat <<'EOF' | python3.12 -\nopen('{k}','a').write('x')\nEOF"):
             self.assertEqual(self.decide(command), "deny", command)
 
-    def test_named_residuals_of_the_stdin_channels(self):
-        """Stated rather than discovered, and pinned so the claim stays true.
-        An unknown valued option puts a non-flag token where an operand would
-        be, so the body reads as data and the channel is missed.
+    def test_the_cycle_11_residual_was_a_closed_list_and_is_now_covered(self):
+        """`python3 -W ignore <<EOF` was cycle 11's ONE named residual, and QA
+        cycle 12 C7 measured four more of the same shape (`bash -o pipefail`,
+        `bash -s foo`, `bash -s -- foo`, `python3 -X utf8`). One example was
+        pinned; the CLASS was not, which is the failure this PR chain keeps
+        repeating. The per-host option tables cover it now and the surviving
+        residual is pinned in `QaCycle12.test_named_residuals_of_cycle_12`.
 
-        The cwd half of this list did NOT survive being measured, which is why
-        it is not in it: a first draft resolved every body against the cwd the
-        COMMAND started in, and `cd pkg && bash <<EOF … rm -f a.py … EOF` went
-        from denied at HEAD to allowed. A body is claimed by the sub-command
-        that opens it instead, so it keeps that line's cwd, and the case is
-        pinned as DENIED in
+        The cwd half of the cycle-11 list did NOT survive being measured, which
+        is why it was never in it: a first draft resolved every body against the
+        cwd the COMMAND started in, and `cd pkg && bash <<EOF … rm -f a.py …
+        EOF` went from denied at HEAD to allowed. A body is claimed by the
+        sub-command that opens it instead, so it keeps that line's cwd, and the
+        case is pinned as DENIED in
         `test_f1_a_shell_that_does_run_the_body_is_still_scanned`."""
         self.hold()
         k = self.kfile()
+        self.assertEqual(
+            self.decide(f"python3 -W ignore <<'EOF'\nopen('{k}','a').write('x')\nEOF"),
+            "deny")
+
+
+
+class QaCycle12(IsolationCase):
+    """Cycle 11 closed ONE spelling of the heredoc and the matrix read the rest
+    of the class as closed with it. Nine findings, measured with a passing
+    positive control (`python3 - <<'EOF'` still denies), and four of them live
+    INSIDE the channel cycle 11 had just claimed.
+
+    The finding that is bigger than the heredoc is C1: `$(...)` and backticks
+    were never parsed as commands anywhere in this file. They were caught only
+    incidentally, when a literal kernel path survived tokenization as a bare
+    token AND the outer verb was not read-only, which is why
+    `x=$(rm -f <kdir>/ptable.json)` denied while `echo $(python3 -c "…")` and
+    any interpreter that COMPUTES the path sailed through.
+
+    Each test below fails with its own fix reverted, measured one at a time and
+    named in the PR report.
+    """
+
+    def hold(self):
+        self.run_gate(WRITE_GATE, self.write_payload("agent-a", self.a_py))
+
+    def decide(self, command, pid="agent-b"):
+        rc, out = self.run_gate(BASH_GATE, self.bash_payload(pid, command))
+        return "deny" if self.denied(out) else "allow"
+
+    def kfile(self):
+        return os.path.join(kernel_proc.kernel_dir(), "journal", "agent-a.jsonl")
+
+    # ── C1 a command substitution is a command ──────────────────────────────
+    def test_c1_a_substitution_runs_a_command_wherever_it_sits(self):
+        """Every WORD POSITION a substitution can occupy, because a
+        substitution is a word construct and the position is the whole class:
+        an argument to a read-only verb, an assignment RHS, a redirect TARGET,
+        inside double quotes, nested, and inside a `-c` body one level down.
+        The redirect case is the one that needs the marker rather than the
+        recursion: the destination is computed by a command this gate does not
+        run, so the body's TEXT answers instead of the token."""
+        k = self.kfile()
+        kdir = kernel_proc.kernel_dir()
         for command in (
-                f"python3 -W ignore <<'EOF'\nopen('{k}','a').write('x')\nEOF",):
+                f'echo $(python3 -c "open(\'{k}\',\'a\').write(\'x\')")',
+                f"true $(rm -f {k})",
+                f"echo `rm -f {k}`",
+                f"echo $(echo $(rm -f {k}))",
+                f'echo "$(rm -f {k})"',
+                f"echo `cd /tmp; rm -f {k}`",
+                f"echo hi > $(echo {kdir})/ptable.json",
+                f'bash -c "rm -f $(echo {kdir})/ptable.json"'):
+            self.assertEqual(self.decide(command), "deny", command)
+
+    def test_c1_a_substitution_that_only_reads_is_still_a_read(self):
+        """One edit from each violation above. A substitution is scanned as the
+        command it is, so a read stays a read and single-quoted text stays
+        literal: bash expands nothing inside `'…'`, and neither does this."""
+        self.hold()
+        k = self.kfile()
+        for command in (f"echo $(cat {k})",
+                        f"echo 'x $(rm -f {k})'",
+                        "echo $((1 << 3)) && echo done"):
+            self.assertEqual(self.decide(command), "allow", command)
+
+    def test_c1_a_verb_that_comes_from_an_expansion_stays_opaque(self):
+        """The deliberate behaviour cycle 12 must NOT regress. `$(echo rm)` is
+        a program name this gate cannot know, so the marker it leaves is not a
+        read-only program either and the token scan still runs over the
+        segment."""
+        self.assertEqual(self.decide(f"$(echo rm) -f {self.kfile()}"), "deny")
+
+    # ── C2 an unquoted terminator makes the body a command channel ───────────
+    def test_c2_an_unquoted_terminator_expands_the_body(self):
+        """`cat` is not a stdin-program host, so cycle 11 read this body as
+        data. Bash reads it as a command channel anyway: with an UNQUOTED
+        terminator it expands `$(...)` and backticks in the body before `cat`
+        ever sees it."""
+        k = self.kfile()
+        for command in (f"cat <<EOF\n$(rm -f {k})\nEOF",
+                        f"cat <<EOF\n`rm -f {k}`\nEOF"):
+            self.assertEqual(self.decide(command), "deny", command)
+
+    def test_c2_a_quoted_terminator_keeps_the_body_literal(self):
+        """One edit from each violation above: the quotes. A quoted delimiter
+        is bash's own way of saying the body is data, and it stays data."""
+        self.hold()
+        k = self.kfile()
+        for command in (f"cat <<'EOF'\n$(rm -f {k})\nEOF",
+                        f'cat <<"EOF"\n`rm -f {k}`\nEOF'):
+            self.assertEqual(self.decide(command), "allow", command)
+
+    # ── C3 the terminator is matched the way bash matches it ────────────────
+    def test_c3_a_whitespace_decoy_does_not_close_the_body(self):
+        """`.strip()` let a line of `"  EOF"` close the parse here while bash
+        kept the body open, so everything after the decoy was read as data.
+        Bash wants the line to EQUAL the delimiter; only `<<-` strips, and only
+        leading TABS."""
+        k = self.kfile()
+        for command in (f"python3 - <<'EOF'\n  EOF\nopen('{k}','a')\nEOF",
+                        f"python3 - <<-EOF\n\topen('{k}','a')\n\tEOF"):
+            self.assertEqual(self.decide(command), "deny", command)
+
+    def test_c3_a_real_terminator_still_ends_the_body(self):
+        """One edit from the decoy: the same line without its leading spaces.
+        The body ends there and what follows is an ordinary command again."""
+        self.hold()
+        k = self.kfile()
+        self.assertEqual(
+            self.decide(f"python3 - <<'EOF'\nprint(1)\nEOF\nstat {k}"), "allow")
+
+    # ── C4 the delimiter charset was a closed list too ──────────────────────
+    def test_c4_every_spelling_of_a_delimiter_is_a_delimiter(self):
+        """THE CLASS, not one member. A heredoc delimiter is any WORD: bare,
+        single-quoted, double-quoted, backslash-escaped or PARTIALLY quoted,
+        with optional blanks after the operator. The old pattern was
+        `['\"]? [A-Za-z_] [\\w.-]*`, so a delimiter that started with a digit, was
+        escaped rather than quoted, or held a `!` was not a heredoc at all."""
+        k = self.kfile()
+        for command in (f"python3 - <<\\EOF\nopen('{k}','a')\nEOF",
+                        f"python3 - <<'1EOF'\nopen('{k}','a')\n1EOF",
+                        f"python3 - <<'E!'\nopen('{k}','a')\nE!",
+                        f'python3 - <<"EOF"\nopen(\'{k}\',\'a\')\nEOF',
+                        f"python3 - <<E'OF'\nopen('{k}','a')\nEOF",
+                        f"python3 - << EOF\nopen('{k}','a')\nEOF"):
+            self.assertEqual(self.decide(command), "deny", command)
+
+    def test_c4_a_shift_operator_is_not_a_delimiter(self):
+        """One edit away from the widening being too wide. `<<` with no
+        terminator line is not a heredoc, which is what keeps the wider charset
+        from swallowing the rest of a command."""
+        self.hold()
+        self.assertEqual(self.decide("echo 'a << b' && echo ok"), "allow")
+
+    # ── C5 a grouping opener is not the receiver ────────────────────────────
+    def test_c5_a_group_opener_is_not_the_program(self):
+        """`shlex.split('( python3 - <<EOF')[0]` is `(`, so the host came back
+        empty and the body was discarded on its way out of the drain."""
+        k = self.kfile()
+        for command in (f"( python3 - <<'EOF'\nopen('{k}','a')\nEOF\n)",
+                        f"{{ python3 - <<'EOF'\nopen('{k}','a')\nEOF\n}}"):
+            self.assertEqual(self.decide(command), "deny", command)
+
+    # ── C6 the two closed lists ─────────────────────────────────────────────
+    def test_c6_stdin_is_every_name_procfs_gives_it(self):
+        """`/dev/fd/0` was in the list and `/proc/self/fd/0` was not, which is
+        a list rather than a rule. The set is closed by PROCFS: `/dev/stdin`,
+        `/dev/fd/N`, `/proc/self/fd/N`, `/proc/thread-self/fd/N` and
+        `/proc/<pid>/fd/N` are the names the kernel provides, and nothing
+        else names this process's stdin."""
+        k = self.kfile()
+        for operand in ("-", "/dev/stdin", "/dev/fd/0", "/proc/self/fd/0",
+                        "/proc/thread-self/fd/0", "/proc/1234/fd/0"):
+            command = f"python3 {operand} <<'EOF'\nopen('{k}','a')\nEOF"
+            self.assertEqual(self.decide(command), "deny", command)
+
+    def test_c6_a_project_runner_is_a_wrapper_by_shape(self):
+        """`uv run python - <<EOF` and `poetry run python - <<EOF` both passed
+        and both binaries are installed on this box. The fix is the SHAPE, not
+        another tool list: `<tool> run|exec|x … <program>` is a wrapper when the
+        first non-flag token after the verb is a program this file already has a
+        table for, so the tool name never has to be enumerated."""
+        k = self.kfile()
+        for command in (f"uv run python - <<'EOF'\nopen('{k}','a')\nEOF",
+                        f"poetry run python - <<'EOF'\nopen('{k}','a')\nEOF",
+                        f"pipenv run python3 - <<'EOF'\nopen('{k}','a')\nEOF",
+                        f"mise exec -- python3 - <<'EOF'\nopen('{k}','a')\nEOF"):
+            self.assertEqual(self.decide(command), "deny", command)
+
+    def test_c6_a_run_verb_whose_operand_is_not_a_program_is_not_peeled(self):
+        """One edit from the violations above, and the reason the shape is safe
+        to invert: `npm run build` names a SCRIPT, not a program, so nothing is
+        peeled and the heredoc after it stays data.
+
+        `docker run python3 -` is the second edit, and it is deliberate rather
+        than missed: the body runs in the CONTAINER's filesystem, where
+        `~/.claude/.cache/kernel` is not this host's, so peeling it would turn
+        the header's stated ssh / container-exec under-fire into a false deny.
+        `_REMOTE_RUNNERS` keeps those runners out of the shape."""
+        self.hold()
+        k = self.kfile()
+        self.assertEqual(
+            self.decide("npm run build <<'EOF'\nsome data\nEOF"), "allow")
+        self.assertEqual(
+            self.decide(f"docker run python3 - <<'EOF'\nopen('{k}','a')\nEOF"),
+            "allow")
+
+    # ── C7 a valued option must not hide the operand ────────────────────────
+    def test_c7_a_valued_option_does_not_turn_a_program_into_data(self):
+        """Five spellings, one defect and four residuals of the same shape. The
+        value of an option this parser did not know landed where an operand
+        would be, `stdin_is_program` read it as a script name and the body
+        became data. `bash -s` is the straight defect in the set: it is not an
+        unknown option, it MEANS read the program from stdin, and its operands
+        are `$0` and the positional parameters."""
+        k = self.kfile()
+        for command in (f"bash -o pipefail <<EOF\nrm -f {k}\nEOF",
+                        f"bash -s foo <<EOF\nrm -f {k}\nEOF",
+                        f"bash -s -- foo <<EOF\nrm -f {k}\nEOF",
+                        f"python3 -X utf8 <<EOF\nopen('{k}','a')\nEOF",
+                        f"python3 -W ignore - <<EOF\nopen('{k}','a')\nEOF"):
+            self.assertEqual(self.decide(command), "deny", command)
+
+    def test_c7_a_script_operand_still_means_the_body_is_input(self):
+        """One edit from each violation above: a real script name after the
+        option. There the program is the file and the body is its stdin, which
+        is data, and reading data as a command is the over-fire cycle 11
+        removed."""
+        self.hold()
+        k = self.kfile()
+        for command in (f"python3 -W ignore run.py <<EOF\nopen('{k}','a')\nEOF",
+                        f"bash -o pipefail run.sh <<EOF\nrm -f {k}\nEOF"):
+            self.assertEqual(self.decide(command), "allow", command)
+
+    # ── C8 the parse is bounded, and the bound denies ───────────────────────
+    def test_c8_a_parse_that_cannot_finish_denies_instead_of_being_killed(self):
+        """The cliff was a silent bypass. `scan()` cost ~250 us per SEGMENT and
+        the harness kills this hook at `timeout: 5`, so past roughly 20000
+        sub-commands the gate produced NO verdict, and no verdict is read as
+        ALLOW by every matrix in this PR. The budget is on segments because the
+        cost is per segment: a 20000-line DATA heredoc costs 30 ms because its
+        body is split off and never tokenized."""
+        self.assertEqual(self.decide("\n".join(["echo rm"] * 2100)), "deny")
+
+    def test_c8_a_command_under_the_budget_is_untouched(self):
+        """One edit from the violation: 200 fewer sub-commands. And the shape
+        the budget must never punish, a large file written through a data
+        heredoc, whose body is not parsed at all."""
+        self.hold()
+        self.assertEqual(self.decide("\n".join(["echo rm"] * 1900)), "allow")
+        body = "\n".join("line %d rm git" % i for i in range(9000))
+        self.assertEqual(self.decide(f"cat > notes.md <<'EOF'\n{body}\nEOF"),
+                         "allow")
+
+    # ── the residuals this cycle leaves, stated rather than discovered ──────
+    def test_named_residuals_of_cycle_12(self):
+        """Pinned so the claim stays true, and each one is a MEASURED allow.
+
+        1. a runner whose SUBCOMMAND sits where an operand would (`deno run -`,
+           `bun run -`): the peel needs the program to be a known one and `run`
+           is not, so the body reads as data;
+        2. a flag that consumes a value BETWEEN the run verb and the program
+           (`uv run --with rich python -`), where no per-runner option table
+           exists to tell `--with rich` from `--isolated python`;
+        3. `${ cmd; }` / `${| cmd; }`, ksh93's value substitution, which bash
+           gained in 5.3 and this host (bash 5.2.21) rejects outright.
+
+        All three fail toward ALLOW, which is the right failure for a rule
+        whose cost is denying the dominant idiom."""
+        self.hold()
+        k = self.kfile()
+        for command in (
+                f"deno run --allow-read - <<'EOF'\nopen('{k}','a')\nEOF",
+                f"uv run --with rich python - <<'EOF'\nopen('{k}','a')\nEOF",
+                f"echo ${{ rm -f {k}; }}"):
             self.assertEqual(self.decide(command), "allow",
-                             command + " is now covered: move it out of the residual "
-                             "list in `stdin_is_program` and in the PR report")
+                             command + " is now covered: move it out of the "
+                             "residual list and out of the PR report")
+
+
+
+class SharedParserConvergence(unittest.TestCase):
+    """One rule, one authority, and an alarm when the copies drift.
+
+    `qa-merge-gate.py` is this brain's PROVIDER of the command-boundary parser:
+    `receipt_ledger._qa_gate_helpers()` borrows `_split_subcmds` and
+    `_strip_leading` from it, and cycle 11 borrowed `_stdin_channel_texts` from
+    it for the heredoc work. `_command_substitution_texts` is the authority on
+    what a command substitution IS. The Bash gate needs the same rule expressed
+    as SPANS rather than texts, because it has to keep the outer command
+    tokenizing and has to recognise a computed write target as opaque, so it
+    carries `split_command_substitutions` — whose body half is one call away
+    from the provider's whole contract.
+
+    This test is what keeps that from becoming a third drifting copy. It skips
+    with a named reason on a base whose merge gate does not carry the function
+    yet, and it arms itself the moment that branch lands.
+    """
+
+    CORPUS = (
+        "echo $(rm -f /x)",
+        "echo `rm -f /x`",
+        "echo $((1 << 3))",
+        "echo 'x $(rm -f /x)'",
+        'echo "$(a) $(b)"',
+        "x=$(echo $(y))",
+        "echo hi > $(echo /d)/f",
+        'git commit -m "$(date)"',
+        "echo $(cd /tmp; rm -f a)",
+        'bash -c "rm -f $(echo /k)/p"',
+        "cat <<EOF\n$(rm -f /k)\nEOF",
+        "echo no substitution here",
+        "echo \\$(not a sub)",
+        "echo $(a `b` c)",
+    )
+
+    def test_the_substitution_rule_has_one_authority(self):
+        merge_gate = SCRIPTS / "qa-merge-gate.py"
+        if not merge_gate.exists():
+            self.skipTest("no qa-merge-gate.py on this base")
+        theirs = getattr(_load(merge_gate, "qa_merge_gate_convergence"),
+                         "_command_substitution_texts", None)
+        if theirs is None:
+            self.skipTest(
+                "qa-merge-gate.py on this base carries no "
+                "`_command_substitution_texts`; it lands with "
+                "fix/qa-gate-blanket-override (e0f9444) and this test arms "
+                "itself the moment it does")
+        mine = _load(BASH_GATE, "bash_gate_convergence")
+        for text in self.CORPUS:
+            self.assertEqual(
+                list(mine.split_command_substitutions(text)[1].values()),
+                theirs(text),
+                "the two spellings of the substitution rule disagree on "
+                + repr(text) + ": converge them instead of keeping both")
 
 
 class Selftests(unittest.TestCase):
