@@ -1802,6 +1802,196 @@ class QaCycle10(IsolationCase):
             self.assertEqual(self.decide(command), "deny", command)
 
 
+class QaCycle11(IsolationCase):
+    """The channel the floor never looked at, measured on the machine's own
+    traffic rather than on the vocabulary the gate names.
+
+    Cycle 9 made the kernel floor a NAMED-PATH test and cycle 10 reported it
+    closed. It was closed for `-c`. Of 16350 distinct real Bash commands in the
+    harness transcripts, 3186 carry a HEREDOC and 3601 carry a `-c`, and the
+    heredoc form of the identical write passed: with `python3 - <<EOF` the
+    program arrives on stdin, there is no flag whose argument is the program,
+    and the raw-text test was handed an opening line that names nothing.
+
+    The same reading closes an over-fire that was already live in the other
+    direction. A heredoc body is DATA unless the command it feeds runs stdin as
+    its program, and until now every body was split into segments and read as
+    commands, so a note whose prose said `rm -rf pkg/` was a deletion.
+
+    Each test below fails with its own fix reverted, measured one at a time and
+    named in the PR report.
+    """
+
+    def hold(self):
+        self.run_gate(WRITE_GATE, self.write_payload("agent-a", self.a_py))
+
+    def decide(self, command, pid="agent-b"):
+        rc, out = self.run_gate(BASH_GATE, self.bash_payload(pid, command))
+        return "deny" if self.denied(out) else "allow"
+
+    def kfile(self):
+        return os.path.join(kernel_proc.kernel_dir(), "journal", "agent-a.jsonl")
+
+    # ── F1 the heredoc is a command channel with no flag ────────────────────
+    def test_f1_a_heredoc_body_is_a_program_when_its_receiver_runs_stdin(self):
+        """The dominant idiom, and the floor was open through all of it. Every
+        command here writes the same journal line as the `-c` control, which is
+        pinned last so a green here can never be a green that stopped testing
+        the kernel floor at all."""
+        k = self.kfile()
+        for command in (
+                f"python3 - <<'EOF'\nopen('{k}','a').write('x')\nEOF",
+                f"python3 <<'EOF'\nopen('{k}','a').write('x')\nEOF",
+                f"python3 <<EOF\nopen('{k}','a').write('x')\nEOF",
+                f"cat <<'EOF' | python3 -\nopen('{k}','a').write('x')\nEOF",
+                f"bash -s <<'EOF'\nrm -f {k}\nEOF",
+                f"bash <<-EOF\n\trm -f {k}\nEOF"):
+            self.assertEqual(self.decide(command), "deny", command)
+        self.assertEqual(
+            self.decide(f"""python3 -c "open('{k}','a').write('x')" """), "deny",
+            "the control that was already right")
+
+    def test_f1_a_heredoc_body_nobody_runs_stays_data(self):
+        """ONE EDIT FROM THE VIOLATION, and the edit is the whole rule: the same
+        body, handed to a program that does not execute stdin. A gate that
+        denies the dominant idiom gets turned off, which is worse than the hole,
+        so the receiver decides and not the presence of a path."""
+        self.hold()
+        k = self.kfile()
+        notes = os.path.join(self.tree, "notes.md")
+        for command in (
+                f"cat > {notes} <<'EOF'\nthe journals live in {k}\nEOF",
+                f"cat <<'EOF'\nthe journals live in {k}\nEOF",
+                f"python3 tool.py <<'EOF'\n{k}\nEOF",
+                f"grep -c x <<'EOF'\n{k}\nEOF"):
+            self.assertEqual(self.decide(command), "allow", command)
+
+    def test_f1_a_data_heredoc_is_no_longer_read_as_a_deletion(self):
+        """The over-fire this reading removes, measured at HEAD before the fix:
+        the body was split into segments, so a note ABOUT a command was read as
+        the command. Held lane, prose that names it, and nothing is executed."""
+        self.hold()
+        notes = os.path.join(self.tree, "notes.md")
+        for command in (
+                f"cat > {notes} <<'EOF'\nto reset it: rm -rf {self.tree}/pkg\nEOF",
+                f"cat > {notes} <<'EOF'\nrun `git checkout -- {self.a_py}` to undo\nEOF",
+                f"tee {notes} <<'EOF'\nrm -f {self.a_py}\nEOF"):
+            self.assertEqual(self.decide(command), "allow", command)
+
+    def test_f1_a_shell_that_does_run_the_body_is_still_scanned(self):
+        """The other half of the same rule, so the fix above cannot be a
+        blanket amnesty for heredocs: when the receiver IS a shell, the body is
+        a command list and the lane test runs on it exactly as before."""
+        self.hold()
+        for command in (f"bash <<'EOF'\nrm -rf {self.tree}/pkg\nEOF",
+                        f"sh -s <<'EOF'\ngit checkout -- {self.a_py}\nEOF",
+                        f"cd {self.tree}/pkg && bash <<'EOF'\nrm -f a.py\nEOF"):
+            self.assertEqual(self.decide(command), "deny", command)
+
+    # ── F2 a versioned interpreter is the same interpreter ──────────────────
+    def test_f2_a_versioned_interpreter_is_the_same_interpreter(self):
+        """`python3.12` is the only versioned binary on this host and it was
+        the one name the host match could not make: stripping trailing digits
+        from `python3.12` leaves `python3.`, dot included, which matches
+        nothing. Adversarial QA found the identical defect in the merge gate,
+        so it is one bug in shared logic rather than two."""
+        k = self.kfile()
+        for command in (
+                f"""python3.12 -c "open('{k}','a').write('x')" """,
+                f"""python3.13 -c "open('{k}','a').write('x')" """,
+                f"""perl5.36 -e "open(F,'>>','{k}')" """):
+            self.assertEqual(self.decide(command), "deny", command)
+
+    def test_f2_a_version_strip_does_not_widen_anything_else(self):
+        """Where the strip stops. It widens the INTERPRETER tables and nothing
+        else: `base64` normalizes to `base`, so a read-only program would lose
+        its place in `_KSTATE_READONLY` if the same strip ran there, and a
+        versioned interpreter aimed at a path nobody owns still has work to
+        do."""
+        self.hold()
+        k = self.kfile()
+        for command in (f"base64 {k}",
+                        f"""python3.12 -c "print('hello')" """,
+                        f"python3.12 {self.tree}/tool.py",
+                        f"python3.12 - <<'EOF'\nprint('hello')\nEOF"):
+            self.assertEqual(self.decide(command), "allow", command)
+
+    # ── F3 the channels that are not a heredoc ──────────────────────────────
+    def test_f3_a_here_string_and_a_process_substitution_are_channels_too(self):
+        """Lifted from the merge gate's `_stdin_channel_texts`, which found the
+        same hole from the other side. A here-string reaches a shell the way a
+        heredoc does; a process substitution runs its body whatever the outer
+        program is, which is why it needs no receiver test at all."""
+        self.hold()
+        k = self.kfile()
+        for command in (f'bash <<< "rm -f {k}"',
+                        f'bash <<<"rm -rf {self.tree}/pkg"',
+                        f'cat <(rm -rf {self.tree}/pkg)',
+                        f'diff <(rm -f {self.a_py}) /dev/null'):
+            self.assertEqual(self.decide(command), "deny", command)
+
+    def test_f3_a_here_string_of_data_is_data(self):
+        """One edit from each violation above: the same syntax carrying text
+        nobody executes, and a process substitution that only reads."""
+        self.hold()
+        k = self.kfile()
+        for command in ('grep -c x <<< "some line"',
+                        f'grep -c x <<< "{k}"',
+                        f'diff <(cat {k}) /dev/null',
+                        f'diff <(git show HEAD:pkg/a.py) {self.a_py}'):
+            self.assertEqual(self.decide(command), "allow", command)
+
+    def test_the_splitter_claims_what_a_shell_would_claim(self):
+        """The three claims `split_heredocs` makes about where a body starts and
+        ends, each of which the shell also makes. A `<<` with no terminator line
+        is not a heredoc at all, so it can never swallow the commands after it;
+        a body ends at the FIRST line equal to its terminator, so what follows
+        is an ordinary command again; and a line that opens two heredocs pairs
+        them with its terminators in order, so the second body goes to the
+        command that runs it and not to the one that only prints it."""
+        k = self.kfile()
+        for command in (
+                f"cat <<'A' | python3 - <<'B'\njust data\nA\nopen('{k}','a')\nB",
+                f"python3 - <<'PY'\nx = 1 << 3\nopen('{k}','a').write('x')\nPY"):
+            self.assertEqual(self.decide(command), "deny", command)
+        self.hold()
+        for command in ("echo 'a << b' && rm -f /tmp/qa11-nothing",
+                        f"python3 - <<'PY'\nprint('done')\nPY\nstat {k}/ptable.json"):
+            self.assertEqual(self.decide(command), "allow", command)
+
+    def test_the_cycle_11_fixes_compose(self):
+        """THE ONLY TEST HERE ALLOWED TO FAIL ON MORE THAN ONE REVERT, and it
+        is here so the others do not have to be. Measured with each fix
+        reverted alone: the version strip has to run before the channel test
+        can recognise the receiver, and the channel has to exist before the
+        version matters to it."""
+        k = self.kfile()
+        for command in (
+                f"python3.12 - <<'EOF'\nopen('{k}','a').write('x')\nEOF",
+                f"cat <<'EOF' | python3.12 -\nopen('{k}','a').write('x')\nEOF"):
+            self.assertEqual(self.decide(command), "deny", command)
+
+    def test_named_residuals_of_the_stdin_channels(self):
+        """Stated rather than discovered, and pinned so the claim stays true.
+        An unknown valued option puts a non-flag token where an operand would
+        be, so the body reads as data and the channel is missed.
+
+        The cwd half of this list did NOT survive being measured, which is why
+        it is not in it: a first draft resolved every body against the cwd the
+        COMMAND started in, and `cd pkg && bash <<EOF … rm -f a.py … EOF` went
+        from denied at HEAD to allowed. A body is claimed by the sub-command
+        that opens it instead, so it keeps that line's cwd, and the case is
+        pinned as DENIED in
+        `test_f1_a_shell_that_does_run_the_body_is_still_scanned`."""
+        self.hold()
+        k = self.kfile()
+        for command in (
+                f"python3 -W ignore <<'EOF'\nopen('{k}','a').write('x')\nEOF",):
+            self.assertEqual(self.decide(command), "allow",
+                             command + " is now covered: move it out of the residual "
+                             "list in `stdin_is_program` and in the PR report")
+
+
 class Selftests(unittest.TestCase):
 
     FIXTURES = "registry/fixtures/ARCHITECTURE.kernel-isolation"

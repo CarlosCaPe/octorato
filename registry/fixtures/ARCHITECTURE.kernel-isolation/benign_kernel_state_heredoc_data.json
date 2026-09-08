@@ -1,0 +1,11 @@
+{
+  "session_id": "sess-parent",
+  "tool_name": "Bash",
+  "tool_use_id": "toolu_iso",
+  "tool_input": {
+    "command": "cat > {{SANDBOX}}/work/tree/notes.md <<'EOF'\nthe journals live in {{SANDBOX}}/.claude/.cache/kernel/journal\nEOF"
+  },
+  "cwd": "{{SANDBOX}}/work/tree",
+  "agent_id": "agent-b",
+  "_setup": {}
+}

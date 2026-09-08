@@ -64,6 +64,27 @@ longer a one-token bypass of every path rule here; and a non-symbolic `ln` (or
 is a second name for one inode, `realpath` does not resolve it, and the write
 through the new name is invisible to every gate afterwards.
 
+QA CYCLE 11 closed the channel the floor had never looked at, and it is the
+one the machine actually uses. Measured over the harness transcripts: of 16350
+distinct real Bash commands, 3186 carry a HEREDOC and 3601 carry a `-c`. Both
+gates covered `-c`; neither covered the heredoc, so `python3 - <<'EOF' /
+open('<kdir>/journal/x.jsonl','a').write('x') / EOF` was ALLOWED while the same
+write behind `-c` was denied. With `python3 - <<EOF` the program arrives on
+STDIN and there is no flag whose argument is the program. Heredoc bodies are
+now split off before anything else is parsed (`split_heredocs`) and handed back
+only to a command that RUNS stdin as its program (`stdin_is_program`: no
+operand, or `-` / `/dev/stdin`, and no `-c`); here-strings and process
+substitutions are the same channel in other syntax and are lifted from the
+merge gate's `_stdin_channel_texts` rather than rediscovered. The same reading
+removes an over-fire that was already live in the other direction: a body
+nobody executes is DATA, so `cat > notes.md <<'EOF'` whose prose said
+`rm -rf pkg/` is no longer read as a deletion. Second half of the same cycle,
+`python3.12`: `_interp_base` strips a trailing VERSION, because the old
+`rstrip("0123456789")` left `python3.` with the dot and matched nothing, so the
+only versioned interpreter on this host escaped both the raw-text test and the
+`-c` re-scan. Adversarial QA found that one independently in the merge gate,
+which makes it one bug in shared logic rather than two.
+
 NAMED RESIDUALS, measured as passing and deliberately not covered here. The list
 is pinned by a test, so it stays equal to what the gate actually does:
 `rsync --delete`, `shred`, `perl -pi` AGAINST A LANE (against the KERNEL
@@ -71,8 +92,13 @@ DIRECTORY they are denied, see below);
 `git apply|rebase|merge|pull|cherry-pick|revert`; variable and brace expansion
 OTHER than HOME (`rm -rf $DIR`, `rm -rf {pkg,x}`, unknowable without running the
 shell); a `-c` body nested deeper
-than 3; and xargs fed from STDIN (`cat list | xargs rm`, `xargs rm < list`),
-where the targets never appear in the command at all. Each is a distinct verb
+than 3; xargs fed from STDIN (`cat list | xargs rm`, `xargs rm < list`),
+where the targets never appear in the command at all; a heredoc whose receiver
+carries a VALUED OPTION this parser does not know (`python3 -W ignore <<EOF`),
+where a non-flag token sits where an operand would and the body reads as data;
+and a heredoc fed to `ssh` or a container `exec`, whose body is a command on
+ANOTHER machine, where this machine's kernel directory is not the one being
+named. Each is a distinct verb
 table or an evaluator, not a gap in this one, and none is the weekend shape.
 
 Three residuals belong specifically to the hardlink rule and are stated rather
@@ -93,7 +119,9 @@ locks) - or any ANCESTOR of it by the same prefix test (`~/.claude/.cache`,
 process, this gate included, WHATEVER VERB carries it, unless the program is on
 the short read-only list in `_KSTATE_READONLY`. For an interpreter the same test
 runs against the raw segment text, because there the path is inside a quoted
-program and no parser will tokenize it out. `touch`, `chmod`, `chattr` and `dd
+program and no parser will tokenize it out - and since cycle 11 that same
+raw-text test runs against a heredoc body or a here-string the interpreter
+executes, which is the same program arriving through a channel with no flag. `touch`, `chmod`, `chattr` and `dd
 of=` are read for this floor only, never as lane writes. A process that can
 rewrite the table can grant itself any lane and erase the record; a process that
 can put a FIFO at a journal path can wedge every gate that reads it. The
@@ -781,6 +809,231 @@ def code_names_kernel_state(seg: str, kdir: str) -> bool:
     if kdir and kdir in seg:
         return True
     return any(spell in seg for spell in _KDIR_SPELLINGS)
+# ── the heredoc is a COMMAND CHANNEL WITH NO FLAG (QA cycle 11) ─────────────
+#
+# The floor above was described as closed while the dominant idiom on this
+# machine was open. Measured over the harness transcripts: of 16350 distinct
+# real Bash commands, 3186 carry a heredoc and 3601 carry a `-c`. Both gates
+# covered `-c`. Neither covered the heredoc, and the interpreter half of the
+# floor looks for a FLAG whose argument is the program:
+#
+#     python3 -c "open('<kdir>/journal/x.jsonl','a').write('x')"   denied
+#     python3 -  <<'EOF' ... same body ... EOF                     ALLOWED
+#     python3    <<'EOF' ... same body ... EOF                     ALLOWED
+#
+# With `python3 - <<EOF` the program arrives on STDIN and there is no flag to
+# find, so `code_names_kernel_state` was handed an opening line that names
+# nothing and the body was split into "segments" that tokenize to noise. Same
+# effect, same directory, different channel.
+#
+# THE BODY IS SPLIT OFF BEFORE ANYTHING ELSE IS PARSED, which fixes the hole in
+# both directions at once. A heredoc body is DATA unless the command it feeds
+# reads its PROGRAM from stdin, and scanning data as if it were a command is an
+# over-fire that was already live here: `cat > notes.md <<'EOF'` whose prose
+# said `rm -rf pkg/` had that line split out as a segment and read as a
+# deletion. Bodies now go back to the command that receives them, and only
+# there.
+#
+# `stdin_is_program` is the test, and it is a POSITION test rather than a name
+# test: an interpreter with no operand, or with `-` or `/dev/stdin` as its
+# operand, runs what arrives on stdin (`python3 <<EOF`, `bash -s <<EOF`,
+# `cat <<EOF | python3 -`). One carrying `-c`/`-e`/`-m`/`-f`, or a script file,
+# does not: there the program is elsewhere and the body is its input.
+#
+# Here-strings and process substitutions are the same channel wearing other
+# syntax and are lifted from the merge gate's `_stdin_channel_texts` rather
+# than rediscovered: `bash <<< "rm -rf <lane>"` hands a command to a shell, and
+# `<(...)`/`>(...)` is a command by construction whatever the outer program is.
+_HEREDOC_PATTERN = r"<<-?\s*(['\"]?)([A-Za-z_][\w.-]*)\1"
+_HEREDOC_RE = None
+_SUBST_OPENERS = ("<(", ">(")
+
+
+def _heredoc_re():
+    """Compiled once, lazily: `re` stays off the hot path for a command that
+    carries no `<<` at all."""
+    global _HEREDOC_RE
+    if _HEREDOC_RE is None:
+        import re
+        _HEREDOC_RE = re.compile(_HEREDOC_PATTERN)
+    return _HEREDOC_RE
+
+
+def split_heredocs(cmd: str) -> tuple:
+    """(*cmd* with heredoc BODIES removed, [(opening_line, body)]).
+
+    The pattern is the merge gate's `_split_heredocs`, deliberately identical so
+    the two can converge on one definition instead of drifting: the same
+    `<<-?` with an optionally quoted terminator, the same "no terminator line
+    means it was never a heredoc" rule, so a `<<` inside ordinary text
+    (`echo "a << b"`) can never swallow the commands that follow it.
+    """
+    rx = _heredoc_re()
+    lines = cmd.split("\n")
+    kept, bodies, i = [], [], 0
+    while i < len(lines):
+        line = lines[i]
+        kept.append(line)
+        i += 1
+        for _quote, term in rx.findall(line):
+            end = None
+            for j in range(i, len(lines)):
+                if lines[j].strip() == term:
+                    end = j
+                    break
+            if end is None:
+                continue                     # no terminator: not a heredoc
+            bodies.append((line, "\n".join(lines[i:end])))
+            i = end + 1
+    return "\n".join(kept), bodies
+
+
+def _claim_heredocs(seg: str, pending: dict) -> list:
+    """The (opening_line, body) pairs *seg* opens, removed from *pending*.
+
+    A sub-command claims a body by naming its terminator, which is how a body
+    gets back the cwd of the line it belongs to. Bodies nothing claims stay in
+    *pending* and are drained by the caller against the starting cwd.
+    """
+    out = []
+    if not pending or "<<" not in seg:
+        return out
+    for _quote, term in _heredoc_re().findall(seg):
+        items = pending.get(term)
+        if items:
+            out.append(items.pop(0))
+            if not items:
+                pending.pop(term, None)
+    return out
+
+
+# Flags whose argument IS the program. A command carrying one of these reads no
+# program from stdin, so whatever arrives there is the program's input.
+# ONLY the flags that unambiguously mean "the program is this argument". `-e`,
+# `-E`, `-m` and `-f` are NOT here: to a shell they mean errexit, ERR-trap
+# inheritance, job control and noglob, so listing them would read `bash -e
+# <<EOF` as data and miss a live channel. Where they really do carry a program
+# (`awk -f prog.awk`, `python3 -m mod`, `node -e 'code'`) the operand rule below
+# already answers, because the value itself is a non-flag operand.
+_PROGRAM_FLAGS = ("-c", "--command")
+_STDIN_OPERANDS = ("-", "/dev/stdin", "/dev/fd/0")
+
+
+def _interp_base(name: str) -> str:
+    """*name* with a trailing VERSION removed: `python3.12` -> `python`.
+
+    QA cycle 11 F2. The old spelling was `name.rstrip("0123456789")`, which
+    leaves `python3.` (the DOT survives) and matches nothing, so `python3.12`
+    — the only versioned interpreter installed on this host — escaped both the
+    `_CODE_HOSTS` raw-text test and the `-c` re-scan while bare `python3` was
+    caught. Adversarial QA found the identical defect in the merge gate's own
+    host match, which makes it one bug in shared logic rather than two.
+
+    Used ONLY to widen the interpreter tables. `_KSTATE_READONLY` keeps its
+    exact match on purpose: `base64` normalizes to `base` and a read-only
+    program must never lose its place in that list to a version strip.
+    """
+    base = name
+    while base and (base[-1].isdigit() or base[-1] == "."):
+        base = base[:-1]
+    base = base.rstrip("-_")
+    return base or name
+
+
+def is_code_host(name: str) -> bool:
+    """True when *name* is a program whose PROGRAM is text, version or not."""
+    return name in _CODE_HOSTS or _interp_base(name) in _CODE_HOSTS
+
+
+def stdin_is_program(tokens: list) -> bool:
+    """True when this command runs whatever arrives on its STDIN.
+
+    A position test, not a name test. `python3 <<EOF` and `python3 - <<EOF` run
+    the body; `python3 script.py <<EOF` and `python3 -c '…' <<EOF` do not, and
+    for those the body is the program's INPUT, which is data.
+
+    Residual, stated: a valued option this table does not know
+    (`python3 -W ignore <<EOF`) puts a non-flag token where an operand would be,
+    so the body reads as data and the channel is missed. It fails toward ALLOW,
+    which is the right failure for a rule whose cost is denying the dominant
+    idiom.
+    """
+    if not tokens or not is_code_host(os.path.basename(tokens[0])):
+        return False
+    for tok in tokens[1:]:
+        if tok.partition("=")[0] in _PROGRAM_FLAGS:
+            return False
+        if tok in _STDIN_OPERANDS:
+            return True
+        if tok.startswith("-"):
+            continue
+        return False                 # a script operand: stdin is its input
+    return True                      # no operand at all: stdin is the program
+
+
+def stdin_program_host(opening: str, here: str, split_subcmds) -> str:
+    """The interpreter on *opening* that reads its program from stdin, else "".
+
+    The whole LINE is read rather than one sub-command, because the receiver of
+    a heredoc need not be the command that opens it: `cat <<'EOF' | python3 -`
+    declares the body on `cat` and executes it on `python3`.
+    """
+    import shlex
+    for seg in split_subcmds(opening or ""):
+        try:
+            toks = shlex.split(seg)
+        except ValueError:
+            toks = seg.split()
+        _redirects, toks = redirect_targets(toks)
+        toks, _here = peel_wrappers(peel_env(toks), here)
+        if stdin_is_program(toks):
+            return os.path.basename(toks[0])
+    return ""
+
+
+def stdin_channel_texts(seg: str) -> tuple:
+    """(here-string texts, process-substitution bodies) of one segment.
+
+    Lifted from `qa-merge-gate._stdin_channel_texts`, which found the same hole
+    from the other side: `_HEREDOC_RE` matches `<<WORD` only, so a here-string
+    was never a body and the stdin test was never consulted. The two are
+    returned SEPARATELY because they are not the same claim: a here-string is a
+    command only when its receiver reads stdin as a program, while a process
+    substitution runs its own body whatever the outer program is.
+    """
+    import shlex
+    here_strings, substitutions = [], []
+    i = 0
+    while True:
+        k = seg.find("<<<", i)
+        if k < 0:
+            break
+        rest = seg[k + 3:].lstrip()
+        try:
+            piece = shlex.split(rest)[:1]
+        except ValueError:
+            piece = rest.split()[:1]
+        if piece:
+            here_strings.append(piece[0])
+        i = k + 3
+    for opener in _SUBST_OPENERS:
+        i = 0
+        while True:
+            k = seg.find(opener, i)
+            if k < 0:
+                break
+            depth, j = 1, k + 2
+            while j < len(seg) and depth:
+                if seg[j] == "(":
+                    depth += 1
+                elif seg[j] == ")":
+                    depth -= 1
+                j += 1
+            substitutions.append(seg[k + 2:j - 1] if depth == 0 else seg[k + 2:])
+            i = max(j, k + 2)
+    return here_strings, substitutions
+
+
 _BROAD_ADD = ("-u", "--update", "./", ":/", ":(top)")
 _MAX_DEPTH = 3
 
@@ -803,8 +1056,26 @@ def scan(command: str, cwd: str, depth: int = 0) -> list:
     split_subcmds, broad_git_verb = _dim_helpers()
     shell_c = _shell_c() if depth < _MAX_DEPTH else None
     here = kernel_proc.norm_path(cwd or os.getcwd())
+    # The trigger test above reads the WHOLE command, bodies included, because a
+    # body is where the kernel path lives; the parse below reads the command
+    # with the bodies taken out, because a body is not a command line. The
+    # bodies are then handed back to whatever executes them, and to nothing
+    # else (QA cycle 11).
+    body_cmd, heredocs = split_heredocs(command or "")
+    # Keyed by TERMINATOR, so a sub-command can claim its own body back. A line
+    # that opens two of them (`cat <<A | python3 - <<B`) returns its bodies in
+    # the order its terminators appear, which is the pairing used here; a body
+    # no key finds is drained at the end rather than dropped.
+    pending, nth = {}, {}
+    for opening, body in heredocs:
+        terms = [t for _quote, t in _heredoc_re().findall(opening)]
+        i = nth.get(opening, 0)
+        nth[opening] = i + 1
+        term = terms[i] if i < len(terms) else (terms[0] if terms else "")
+        pending.setdefault(term, []).append((opening, body))
     hits = []
-    for seg in split_subcmds(command or ""):
+    here0 = here
+    for seg in split_subcmds(body_cmd):
         seg = seg.strip().rstrip(";").strip()
         # a subshell or group: `(rm -rf pkg)` is a command, not a token soup
         if depth < _MAX_DEPTH and seg[:1] in ("(", "{"):
@@ -840,13 +1111,21 @@ def scan(command: str, cwd: str, depth: int = 0) -> list:
         # lives in the segment that was dropped, which is why the scan reads the
         # tokens as they arrived rather than as they were peeled.
         host = os.path.basename(tokens[0]) if tokens else ""
-        if host in _CODE_HOSTS:
+        if is_code_host(host):
             if code_names_kernel_state(seg, kdir):
                 hits.append(("state", kdir, host))
         elif host not in _KSTATE_READONLY and not (
                 host == "find" and not find_targets(tokens[1:])[0]):
             for target in names_kernel_state(pre_peel, here, kdir):
                 hits.append(("state", target, host or "assignment"))
+        # THE STDIN CHANNELS, resolved against the cwd THIS segment runs in.
+        # Claiming a body inside the loop rather than after it is what keeps
+        # `cd pkg && bash <<EOF ... rm -f a.py ... EOF` covered: the body is a
+        # command list and its relative paths mean what the `cd` made them
+        # mean.
+        if pending or "<<" in seg or "<(" in seg or ">(" in seg:
+            hits.extend(stdin_channel_hits(seg, tokens, here, kdir, depth,
+                                           split_subcmds, pending))
         if not tokens:
             continue
         if tokens[0] in ("cd", "pushd") and len(tokens) > 1:
@@ -857,7 +1136,7 @@ def scan(command: str, cwd: str, depth: int = 0) -> list:
             continue
         base = os.path.basename(tokens[0])
         # a wrapped or non-anchored `-c` form the raw-segment match above missed
-        if depth < _MAX_DEPTH and base.rstrip("0123456789") in _C_HOSTS and "-c" in tokens:
+        if depth < _MAX_DEPTH and _interp_base(base) in _C_HOSTS and "-c" in tokens:
             i = tokens.index("-c")
             if i + 1 < len(tokens):
                 hits.extend(scan(tokens[i + 1], here, depth + 1))
@@ -906,6 +1185,80 @@ def scan(command: str, cwd: str, depth: int = 0) -> list:
         if base in _STATE_VERBS:
             for target in mutation_targets(base, tokens[1:]):
                 hits.append(("state", resolve(target, here), base))
+    # A body no segment claimed still has to be read: an opener this parser
+    # could not put back with its own sub-command is a body with no cwd, not a
+    # body with no content. It is resolved against the cwd the command started
+    # in, which is the only one still known here.
+    for items in pending.values():
+        for opening, body in items:
+            hits.extend(heredoc_hits(opening, body, here0, kdir, depth,
+                                     split_subcmds))
+    return hits
+
+
+def stdin_channel_hits(seg: str, tokens: list, here: str, kdir: str,
+                       depth: int, split_subcmds, pending: dict) -> list:
+    """Collision candidates one segment carries on STDIN rather than in a token.
+
+    Three channels, one rule each, and the difference between them is who
+    decides that the text is a command:
+
+    * a HEREDOC body counts when the LINE that declares it hands stdin to an
+      interpreter as its PROGRAM (`python3 - <<EOF`, and `cat <<EOF | python3 -`
+      where the declarer and the receiver are different commands). Fed to
+      anything else it is data, and reading data as a command is the over-fire
+      that was already live here;
+    * a HERE-STRING is the same test on this segment's own head, in other
+      syntax;
+    * a PROCESS SUBSTITUTION needs no such test: `<(...)` runs its body whatever
+      the outer program is, so it is scanned unconditionally.
+    """
+    hits = []
+    for opening, body in _claim_heredocs(seg, pending):
+        hits.extend(heredoc_hits(opening, body, here, kdir, depth, split_subcmds))
+    if depth >= _MAX_DEPTH:
+        return hits
+    strings, substitutions = stdin_channel_texts(seg)
+    for text in substitutions:
+        hits.extend(scan(text, here, depth + 1))
+    if strings and stdin_is_program(tokens):
+        host = os.path.basename(tokens[0])
+        for text in strings:
+            if code_names_kernel_state(text, kdir):
+                hits.append(("state", kdir, host + " <<<"))
+            if _interp_base(host) in _C_HOSTS:
+                hits.extend(scan(text, here, depth + 1))
+    return hits
+
+
+def heredoc_hits(opening: str, body: str, here: str, kdir: str, depth: int,
+                 split_subcmds) -> list:
+    """What one heredoc body is worth, given the line that declared it.
+
+    For a body the interpreter runs, the raw-text kernel test applies exactly as
+    it does to a `-c` body: the path lives inside a program, not in a token, so
+    a MENTION is denied along with a write. That over-fire is the price already
+    paid for `-c`, and cycle 11 keeps the two channels equal rather than making
+    the quieter one stricter.
+
+    MEASURED on 3186 real heredocs rather than assumed. 40 commands are newly
+    denied: 20 genuinely reach the live kernel directory through an interpreter,
+    8 name a SANDBOX directory spelled `.claude/.cache/kernel` (the relative
+    spelling `_KDIR_SPELLINGS` has carried since cycle 9, inherited here rather
+    than introduced), and 12 name the path only in PROSE inside a patch script,
+    which is this rule's own false-positive class and the same one `-c` has had
+    all along. Against them, 15 false denies GO AWAY, because a data heredoc is
+    no longer split into segments and read as commands. Net over-fire +5 in
+    3186, and a data body is the shape that was denying commit messages.
+    """
+    host = stdin_program_host(opening, here, split_subcmds)
+    if not host:
+        return []                    # a data heredoc: `cat > notes <<EOF`
+    hits = []
+    if code_names_kernel_state(body, kdir):
+        hits.append(("state", kdir, host + " <<"))
+    if depth < _MAX_DEPTH and _interp_base(host) in _C_HOSTS:
+        hits.extend(scan(body, here, depth + 1))
     return hits
 
 
