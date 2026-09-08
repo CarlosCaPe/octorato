@@ -72,16 +72,56 @@ def run(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess
     cp.stdout.strip() crash with a NoneType error that points at the caller and
     hides the real drift the subprocess was reporting. Decoding as UTF-8 with
     replacement keeps stdout a str on every platform and every call site.
+
+    LC_ALL=C for git is the same class of defect one layer out. git TRANSLATES
+    its own diagnosis prefixes, so `git_failure_cause` — which selects on
+    `fatal:` / `error:` — matches nothing under a localised git and falls back to
+    the last line, which is the REMEDY. Measured on git 2.43 with a compiled `de`
+    catalog and GIT_TEXTDOMAINDIR pointed at it, the row printed exactly the
+    sentence that selection exists to abolish:
+
+        git itself failed on this checkout (git config --global --add
+        safe.directory <path>)
+
+    git's own po files carry those prefixes: de gives `Schwerwiegend: `, fr gives
+    `fatal : ` with a space before the colon, es leaves `fatal: ` unchanged. The
+    parser cannot be taught every translation, so the OUTPUT is pinned instead.
+    Here and not at the call site, because a call site wrapped as
+    `env LC_ALL=C git …` changes argv, and every caller and stub that reads
+    `args[:2] == ["git", …]` breaks with it. LANGUAGE is not cleared: glibc
+    ignores it once the locale is C, measured on this machine as
+    `LANGUAGE=de LC_ALL=C`, which printed English.
+
+    Reach today is small and worth saying rather than hiding: this distro's git
+    package ships zero `.mo` files and the operator's locale is Spanish, whose
+    prefix is unchanged. It is real on any distro that ships git localisation.
     """
-    return subprocess.run(
-        args,
-        cwd=str(cwd) if cwd else None,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        env=scrubbed_env(),
-    )
+    env = scrubbed_env()
+    if args and Path(str(args[0])).name in ("git", "git.exe"):
+        env["LC_ALL"] = "C"
+    try:
+        return subprocess.run(
+            args,
+            cwd=str(cwd) if cwd else None,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+        )
+    except (FileNotFoundError, PermissionError, NotADirectoryError) as exc:
+        # A binary that is missing, not executable, or shadowed by a file where a
+        # directory belongs is NOT a non-zero exit: subprocess raises before any
+        # child exists, so the promise above was kept and the caller got a
+        # traceback anyway. Through run_all that surfaced as `FAIL check crashed:
+        # [Errno 2] No such file or directory: 'git'` — a traceback where a cause
+        # belongs, which is the defect this file is being cleaned of, arriving by
+        # the one road that never reaches the parser. Answer it as a cause, with
+        # the shell's own conventional codes (127 not found, 126 not executable),
+        # so `git_failure_cause` names it like every other failure.
+        rc = 127 if isinstance(exc, FileNotFoundError) else 126
+        return subprocess.CompletedProcess(
+            args, rc, "", f"{args[0]}: {exc.strerror or exc}")
 
 
 def git(*args: str) -> subprocess.CompletedProcess:
@@ -634,10 +674,9 @@ def check_release_drift(fix: bool) -> Result:
                                   f"drift repaired locally: {len(added)} entr"
                                   f"{'y' if len(added) == 1 else 'ies'} added by "
                                   f"changelog-sync; commit via normal PR flow")
-                detail = (cp.stderr or cp.stdout or "").strip().splitlines()
                 return Result(key, WARN,
                               f"changelog-sync --apply did not repair the drift "
-                              f"({detail[-1] if detail else 'no output'})",
+                              f"({selftest_cause(cp, 'no output')})",
                               "run `python3 scripts/changelog-sync.py --apply` and inspect")
             return Result(key, WARN,
                           f"newest tag {newest} ahead of CHANGELOG top v{top_version} — "
@@ -1302,8 +1341,8 @@ def check_gate_liveness(fix: bool) -> Result:
     for r, loc in proofs:
         cp = _run_selftest_locator(loc)
         if cp.returncode != 0:
-            detail = (cp.stderr or cp.stdout or "").strip().splitlines()
-            failed.append(f"{r.get('id', '?')}: {detail[-1] if detail else 'selftest exit '+str(cp.returncode)}")
+            failed.append(f"{r.get('id', '?')}: "
+                          f"{selftest_cause(cp, 'selftest exit ' + str(cp.returncode))}")
     if failed:
         return Result(key, FAIL,
                       f"{len(failed)}/{len(proofs)} gate selftest(s) do NOT block+allow correctly: "
@@ -1472,10 +1511,8 @@ def check_kernel_quota_live(fix: bool) -> Result:
                       "restore the kernel hot-path gate")
     cp = _run_selftest_locator(loc)
     if cp.returncode != 0:
-        detail = (cp.stderr or cp.stdout or "").strip().splitlines()
         return Result(key, FAIL,
-                      "quota selftest failed: "
-                      + (detail[-1] if detail else f"exit {cp.returncode}"),
+                      "quota selftest failed: " + selftest_cause(cp),
                       "the quota gate no longer refuses a process over its cap; "
                       "fix the gate or the fixture")
 
@@ -1583,10 +1620,9 @@ def check_kernel_process_live(fix: bool) -> Result:
             return Result(key, FAIL, f"{script} is missing", "restore the kernel hook")
         cp = _run_selftest_locator(loc)
         if cp.returncode != 0:
-            detail = (cp.stderr or cp.stdout or "").strip().splitlines()
             return Result(key, FAIL,
                           f"{Path(script).name} selftest failed: "
-                          + (detail[-1] if detail else f"exit {cp.returncode}"),
+                          + selftest_cause(cp),
                           "the register/exit reflexes no longer prove themselves; fix the hook or the fixture")
     sys.path.insert(0, str(CLAUDE_DIR / "scripts"))
     try:
@@ -1728,10 +1764,8 @@ def check_kernel_isolation_gate(fix: bool) -> Result:
                           "restore the isolation gate")
         cp = _run_selftest_locator(f"scripts/{script} --selftest {fixtures}")
         if cp.returncode != 0:
-            detail = (cp.stderr or cp.stdout or "").strip().splitlines()
             return Result(key, FAIL,
-                          f"{script} selftest failed: "
-                          + (detail[-1] if detail else f"exit {cp.returncode}"),
+                          f"{script} selftest failed: " + selftest_cause(cp),
                           "one writer per tree and per lane is not enforced; fix the gate or the fixture")
     idx = _hooks_index()
     unwired = [f"{script} at PreToolUse|{matcher}" for script, matcher in wanted
@@ -1820,10 +1854,9 @@ def check_kernel_replay(fix: bool) -> Result:
     cp = run([py, str(CLAUDE_DIR / "scripts" / "r__permission-denied__journal.py"),
               "--selftest", "registry/fixtures/FLOW.kernel-journal"], cwd=CLAUDE_DIR)
     if cp.returncode != 0:
-        detail = (cp.stderr or cp.stdout or "").strip().splitlines()
         return Result(key, FAIL,
                       "the PermissionDenied reflex selftest failed: "
-                      + (detail[-1] if detail else f"exit {cp.returncode}"),
+                      + selftest_cause(cp),
                       "a harness denial would go unrecorded; fix the reflex or the fixture")
 
     sys.path.insert(0, str(CLAUDE_DIR / "scripts"))
@@ -2042,15 +2075,66 @@ def git_failure_cause(stderr: str, returncode: int) -> str:
 
     So: the first `fatal:` or `error:` line, which is git's own convention for the
     diagnosis, and the last non-empty line only when git said neither (a wrapper on
-    PATH, a shim, a localised message this does not recognise). Falling back rather
-    than returning nothing keeps every road named, which is the property the caller
+    PATH, a shim, a message this does not recognise). Falling back rather than
+    returning nothing keeps every road named, which is the property the caller
     depends on.
+
+    The prefixes are matched literally and that is only safe because `run` pins
+    LC_ALL=C on every git call. Under a localised git they are translated
+    (`Schwerwiegend: `, `fatal : `), nothing matches, and the fallback hands back
+    the remedy again — the defect above, reappearing one layer out. The pin lives
+    in `run` and the reason lives there with it.
+
+    A diagnosis that ENDS in a colon is continued on the next line, and the noun is
+    the part the reader needs. Measured on git 2.43 in a repo with
+    `core.repositoryformatversion=1` and an unknown `extensions.bogus`:
+
+        fatal: unknown repository extension found:
+        \tbogus
+
+    so the unjoined cause named a class of failure without naming the thing that
+    caused it. One continuation line is taken, not all of them: git lists one
+    extension per line and a row is a sentence, not a dump.
     """
     detail = [ln.strip() for ln in (stderr or "").strip().splitlines() if ln.strip()]
-    for line in detail:
+    for i, line in enumerate(detail):
         if line.startswith(("fatal:", "error:")):
+            if line.endswith(":") and i + 1 < len(detail):
+                return f"{line} {detail[i + 1]}"
             return line
     return detail[-1] if detail else f"exit {returncode}"
+
+
+def selftest_cause(cp: subprocess.CompletedProcess, empty: str | None = None) -> str:
+    """The LAST line of a failed helper's output, which is where its summary is.
+
+    The sibling of `git_failure_cause`, and deliberately its opposite: git puts the
+    diagnosis first and the remedy last, while the selftest printers this doctor
+    reads collapse every failure into ONE final line — `gate_selftest.py` prints
+    `selftest FAIL: a; b` to stderr and returns 1, and
+    `r__permission-denied__journal.py` prints the same shape. So `[-1]` is right
+    here for a reason, and the reason was the problem: six call sites depended on it
+    and nothing asserted it, which is the same unguarded assumption that put a remedy
+    where a cause belonged one function above. One function now, one contract, and
+    `TestTheSelftestSummaryIsTheLastLine` holds those two printers to it by running
+    them until they fail.
+
+    What that test does NOT cover, said rather than implied: `changelog-sync.py`,
+    whose --apply output is read through here too and is pinned by nothing. It is
+    the one caller that is not a selftest, and if it ever grows a multi-line tail
+    this row will name the tail. That is a WARN row about a local repair, not a
+    cause a reader acts on blind, which is why it is recorded here instead of
+    growing a third fixture.
+
+    stderr before stdout because that is where both printers write the FAIL line;
+    stdout is the fallback for a helper that prints everything on one stream. `empty`
+    lets a caller name the silence in its own words; the default says what the reader
+    needs when a helper failed without a word: the exit code.
+    """
+    detail = (cp.stderr or cp.stdout or "").strip().splitlines()
+    if detail:
+        return detail[-1].strip()
+    return empty if empty is not None else f"exit {cp.returncode}"
 
 
 def _harness_refusals_since_hook(cutoff: float) -> tuple[float | None, int, int, str]:
@@ -2115,9 +2199,11 @@ def _harness_refusals_since_hook(cutoff: float) -> tuple[float | None, int, int,
     shallow = run(["git", "rev-parse", "--is-shallow-repository"], cwd=CLAUDE_DIR)
     answer = (shallow.stdout or "").strip()
     if shallow.returncode != 0:
-        # Not a shallow clone. git EXITS NON-ZERO here for its own reasons: not a
-        # repository, `detected dubious ownership`, no git on PATH. Every one of
-        # those leaves stdout empty, and `!= "false"` then read them all as a
+        # Not a shallow clone. git ANSWERS NON-ZERO here for its own reasons: not
+        # a repository, `detected dubious ownership`, or no git on PATH at all —
+        # and that last one is not an exit, it is a FileNotFoundError out of
+        # subprocess that `run` converts into rc 127, because a traceback is not a
+        # cause. Every one of these leaves stdout empty, and `!= "false"` then read them all as a
         # grafted history, so the row named a cause that had not happened while the
         # real one went unsaid. A wrong cause is worse than no cause, which is the
         # argument this whole check is built on (QA cycle 13).

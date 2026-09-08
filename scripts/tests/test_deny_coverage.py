@@ -529,8 +529,10 @@ class TestEachNoWindowRoadNamesItself(DenyCoverageCase):
     collapse this whole check exists to undo, reappearing one level up (QA cycle 6).
 
     Three of the seven were roads that answered under someone else's name, or under
-    none. `git rev-parse` exiting 128 (not a repository, dubious ownership, git
-    missing) leaves stdout empty, and `!= "false"` read every one of them as a
+    none. `git rev-parse` answering non-zero (128 for not a repository or for
+    dubious ownership; 127 for a git that is not on PATH, which does not exit at
+    all and is not 128: subprocess raises and `run` converts it) leaves stdout
+    empty, and `!= "false"` read every one of them as a
     grafted history; an unreadable transcript FILE was skipped by a bare `continue`,
     so the count came back confident and unread; a future-dated arm commit skipped
     every record and the row said "unexercised" (QA cycle 13). A wrong cause is worse
@@ -629,8 +631,25 @@ class TestEachNoWindowRoadNamesItself(DenyCoverageCase):
             else os.environ.pop("GIT_TEST_ASSUME_DIFFERENT_OWNER", None))
         probe = doctor.run(["git", "rev-parse", "--is-shallow-repository"], cwd=notarepo)
         if "dubious ownership" not in (probe.stderr or ""):
-            self.skipTest("this git does not honour GIT_TEST_ASSUME_DIFFERENT_OWNER; "
-                          "the recorded-stderr sibling still covers the selection")
+            # The skip reason names what was MEASURED, not a diagnosis nobody
+            # checked. The first one asserted that this git ignores
+            # GIT_TEST_ASSUME_DIFFERENT_OWNER, and on a de_DE machine that was
+            # false: git honoured it and answered `Schwerwiegend: detected dubious
+            # ownership`, so the phrase was missing because it was TRANSLATED, not
+            # because the check had not fired. A wrong cause inside the test that
+            # guards against wrong causes, skipping on precisely the machine where
+            # the defect lives. That road is shut now (`run` pins LC_ALL=C on git,
+            # see test_git_answers_in_c_whatever_the_ambient_locale), so what is
+            # left here is a git that really did not run the ownership check, and
+            # the reader gets git's own words for it either way.
+            self.skipTest(
+                "no `dubious ownership` diagnosis came back from this git, so the "
+                "ownership check did not fire here (a git too old for "
+                "GIT_TEST_ASSUME_DIFFERENT_OWNER, or one that already owns the "
+                "path). git said: "
+                + (repr((probe.stderr or "").strip()[:200]) or "nothing")
+                + f" (rc={probe.returncode}). The recorded-stderr sibling still "
+                  "covers the selection.")
         doctor.CLAUDE_DIR = notarepo
         why = self._why()
         self.assertIn("git itself failed", why, "still the git-failed road")
@@ -668,6 +687,224 @@ class TestEachNoWindowRoadNamesItself(DenyCoverageCase):
                          "and a last word")
         self.assertEqual(doctor.git_failure_cause("", 129), "exit 129")
         self.assertEqual(doctor.git_failure_cause("   \n\n", 129), "exit 129")
+
+    def test_an_error_line_is_a_diagnosis_just_like_a_fatal_one(self):
+        """`error:` is half the selection and no fixture opened with it, so deleting
+        it from the tuple changed nothing any test could see. git writes `error:` for
+        the recoverable half of the same convention (a config file it could not lock,
+        a ref it could not update) and then keeps talking, so the last line is as
+        wrong a cause there as it is after a `fatal:`."""
+        stderr = ("error: could not lock config file .git/config: File exists\n"
+                  "Please make sure the file is writable and try again.\n")
+        self.assertEqual(doctor.git_failure_cause(stderr, 255),
+                         "error: could not lock config file .git/config: File exists")
+
+    def test_a_diagnosis_that_ends_in_a_colon_carries_its_next_line(self):
+        """One real git message puts the noun on the LINE AFTER the diagnosis, and
+        the cause then arrives without the thing that caused it. Verbatim git 2.43,
+        in a repo with `core.repositoryformatversion=1` and an unknown
+        `extensions.bogus`:
+
+            fatal: unknown repository extension found:
+            <tab>bogus
+
+        `fatal: unknown repository extension found:` names a class of failure and not
+        the instance of it, which is a smaller copy of the collapse this check
+        undoes. Recorded rather than hand-typed, for the reason the sibling fixture
+        states: the shape under test has to be the shape git writes.
+        """
+        recorded = (BRAIN / "scripts" / "tests" / "fixtures"
+                    / "git-unknown-extension.stderr").read_text(encoding="utf-8")
+        self.assertTrue(recorded.strip().splitlines()[0].endswith(":"),
+                        "this fixture is only interesting while git leaves the "
+                        "diagnosis hanging on a colon")
+        because = doctor.git_failure_cause(recorded, 128)
+        self.assertEqual(because, "fatal: unknown repository extension found: bogus")
+        # And the join is scoped to a continuation: the ownership fixture's fatal
+        # line ends in a quoted path, so nothing is appended and the remedy two
+        # lines below it stays out.
+        ownership = (BRAIN / "scripts" / "tests" / "fixtures"
+                     / "git-dubious-ownership.stderr").read_text(encoding="utf-8")
+        self.assertNotIn("safe.directory", doctor.git_failure_cause(ownership, 128))
+
+    def test_git_answers_in_c_whatever_the_ambient_locale(self):
+        """`fatal:` and `error:` are TRANSLATED, so the selection above is sound only
+        while git speaks C. It does not by default: git ships message catalogs, and
+        its own po files give `Schwerwiegend: ` for de and `fatal : ` (a space before
+        the colon) for fr, which match neither prefix. Nothing matches, the fallback
+        takes the last line, and the row prints the remedy as the cause again, which
+        is the defect this file exists to remove arriving one layer out.
+
+        Asserted on the CHILD's environment rather than on a translated message,
+        because a message needs a `.mo` file this distro does not ship and the pin
+        has to be provable on every machine, not only where the defect bites. A git
+        alias with `!` runs a shell, so this is git handing back what it actually
+        got. The localised end-to-end sibling covers the rest of the road.
+        """
+        saved = {k: os.environ.get(k) for k in ("LC_ALL", "LANG", "LANGUAGE")}
+
+        def restore():
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+        self.addCleanup(restore)
+        os.environ["LC_ALL"] = "de_DE.UTF-8"
+        os.environ["LANG"] = "de_DE.UTF-8"
+        os.environ["LANGUAGE"] = "de"
+
+        cp = doctor.run(["git", "-c",
+                         'alias.showlocale=!printf "%s\n" "${LC_ALL-unset}"',
+                         "showlocale"], cwd=self.brain)
+        self.assertEqual(cp.returncode, 0, cp.stderr)
+        self.assertEqual((cp.stdout or "").strip(), "C",
+                         "git ran under the ambient locale, so it is free to "
+                         "translate `fatal:` and the cause selection reads the "
+                         "remedy again")
+
+        # Scoped to git, and the scope is the point: pinning C on every subprocess
+        # would silently change what every other script in this brain prints.
+        other = doctor.run([sys.executable, "-c",
+                            "import os;print(os.environ.get('LC_ALL'))"])
+        self.assertEqual((other.stdout or "").strip(), "de_DE.UTF-8",
+                         "the pin reached a non-git command; what is being pinned "
+                         "is git's message catalog, not the whole doctor")
+
+    def test_a_localised_git_still_names_the_diagnosis(self):
+        """The same pin, end to end, out of the SENTENCE a reader gets.
+
+        Reproduced the way it was found: compile a `de` catalog carrying git's own
+        `fatal: ` msgid and point GIT_TEXTDOMAINDIR at it. Before the pin, on this
+        machine, the row read
+
+            git itself failed on this checkout (git config --global --add
+            safe.directory <path>)
+
+        This one can skip and says exactly what it could not do when it does: it
+        needs `msgfmt` and a generated de_DE locale. Its unconditional sibling above
+        asserts the same pin off the child's environment, so the anchor does not
+        vanish with the skip.
+        """
+        if not shutil.which("msgfmt"):
+            self.skipTest("no msgfmt on PATH, so no catalog can be compiled here; "
+                          "test_git_answers_in_c_whatever_the_ambient_locale asserts "
+                          "the pin without one")
+        locales = subprocess.run(["locale", "-a"], capture_output=True, text=True)
+        have_de = any(ln.strip().lower().startswith("de_de.utf8")
+                      for ln in (locales.stdout or "").splitlines())
+        if not have_de:
+            self.skipTest("no de_DE.utf8 locale is generated here, so gettext falls "
+                          "back to C and nothing would be translated; "
+                          "test_git_answers_in_c_whatever_the_ambient_locale asserts "
+                          "the pin without one")
+        podir = self.tmp / "locale"
+        (podir / "de" / "LC_MESSAGES").mkdir(parents=True)
+        po = self.tmp / "git.po"
+        po.write_text(
+            'msgid ""\nmsgstr ""\n'
+            '"MIME-Version: 1.0\\n"\n'
+            '"Content-Type: text/plain; charset=UTF-8\\n"\n'
+            '"Content-Transfer-Encoding: 8bit\\n"\n\n'
+            'msgid "fatal: "\nmsgstr "Schwerwiegend: "\n\n'
+            'msgid "error: "\nmsgstr "Fehler: "\n',
+            encoding="utf-8")
+        built = subprocess.run(
+            ["msgfmt", "-o", str(podir / "de" / "LC_MESSAGES" / "git.mo"), str(po)],
+            capture_output=True, text=True)
+        self.assertEqual(built.returncode, 0, built.stderr)
+
+        notarepo = self.tmp / "dubious-de"
+        (notarepo / "scripts").mkdir(parents=True)
+        env = dict(os.environ)
+        for k in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX",
+                  "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE"):
+            env.pop(k, None)
+        subprocess.run(["git", "-C", str(notarepo), "init", "-q"], check=True,
+                       capture_output=True, env=env)
+
+        saved = {k: os.environ.get(k) for k in
+                 ("LC_ALL", "LANG", "GIT_TEXTDOMAINDIR",
+                  "GIT_TEST_ASSUME_DIFFERENT_OWNER")}
+
+        def restore():
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+        self.addCleanup(restore)
+        os.environ["LC_ALL"] = "de_DE.utf8"
+        os.environ["LANG"] = "de_DE.utf8"
+        os.environ["GIT_TEXTDOMAINDIR"] = str(podir)
+        os.environ["GIT_TEST_ASSUME_DIFFERENT_OWNER"] = "1"
+
+        # The catalog has to actually bite, or this test would pass on the broken
+        # code by translating nothing. Measured through a raw subprocess, outside
+        # `run`, which is the thing under test.
+        raw = subprocess.run(["git", "-C", str(notarepo), "rev-parse",
+                              "--is-shallow-repository"],
+                             capture_output=True, text=True, env=dict(os.environ))
+        if "Schwerwiegend:" not in (raw.stderr or ""):
+            self.skipTest("the compiled catalog did not translate this git's prefix "
+                          f"(git said {(raw.stderr or '').strip()[:120]!r}), so a "
+                          "localised git cannot be reproduced here")
+
+        doctor.CLAUDE_DIR = notarepo
+        why = self._why()
+        self.assertIn("git itself failed", why)
+        self.assertIn("fatal:", why,
+                      "under a translated git nothing matched and the fallback "
+                      "handed back the last line, which is the remedy")
+        self.assertNotIn("safe.directory", why)
+
+    def test_a_missing_git_is_a_named_cause_not_a_traceback(self):
+        """`run` promises never to raise on non-zero and it keeps that promise, but a
+        binary that is not there never exits at all: subprocess raises
+        FileNotFoundError before a child exists. Through `run_all` that became
+
+            FAIL check crashed: [Errno 2] No such file or directory: 'git'
+
+        a traceback where a cause belongs, arriving by the one road that never
+        reaches the parser. Nobody saw it because another FAIL short-circuited before
+        this road ran.
+        """
+        # Caught rather than left to propagate: an unhandled raise reports as an
+        # ERROR with a traceback, which is the very shape under test, and a reader
+        # scanning the output cannot tell a broken test from a caught defect. Red
+        # with a sentence instead.
+        try:
+            cp = doctor.run(["git-this-binary-does-not-exist", "--version"])
+        except OSError as exc:
+            self.fail(f"run raised {type(exc).__name__} ({exc}) instead of "
+                      f"answering; a binary that is not there never exits, so the "
+                      f"caller gets a traceback where a cause belongs")
+        self.assertEqual(cp.returncode, 127,
+                         "a missing binary has to be ANSWERED, with the shell's own "
+                         "not-found code, not raised past the caller")
+        self.assertIn("git-this-binary-does-not-exist", cp.stderr)
+        self.assertEqual(cp.stdout, "", "no child ran, so there is no output")
+
+        # And out of the sentence, with git genuinely off PATH. PATH is
+        # process-wide, so it is restored the way CLAUDE_CONFIG_DIR is.
+        saved_path = os.environ.get("PATH")
+
+        def restore_path():
+            if saved_path is None:
+                os.environ.pop("PATH", None)
+            else:
+                os.environ["PATH"] = saved_path
+        self.addCleanup(restore_path)
+        os.environ["PATH"] = str(self.tmp / "no-binaries-here")
+        try:
+            why = self._why()
+        except OSError as exc:
+            self.fail(f"the road raised {type(exc).__name__} ({exc}) instead of "
+                      f"naming a cause; through run_all that is `FAIL check crashed`")
+        self.assertIn("git itself failed", why, "still the git-failed road")
+        self.assertIn("No such file or directory", why,
+                      "the reader gets the reason git could not run")
+        self.assertNotIn("Traceback", why)
 
     def test_every_road_gives_its_own_cause(self):
         causes = {}
@@ -784,6 +1021,96 @@ class TestEachNoWindowRoadNamesItself(DenyCoverageCase):
                                  f"the {road} road also offers the reader the "
                                  f"{other} cause, which is a menu, not an answer: "
                                  f"{causes[road]!r}")
+
+
+class TestTheSelftestSummaryIsTheLastLine(unittest.TestCase):
+    """Six call sites read a failed helper's cause as the LAST line of its output,
+    and nothing held the helpers to writing it there.
+
+    `git_failure_cause` exists because `detail[-1]` picked the remedy out of git's
+    stderr. Eleven lines above that fix, and five more times through the file, the
+    same `detail[-1]` reads `cp.stderr or cp.stdout` off a gate selftest, the kernel
+    selftests, the isolation gates, the PermissionDenied reflex and changelog-sync.
+    Those are not wrong: `gate_selftest.py` collapses every failure into one
+    `selftest FAIL: a; b` line on stderr and returns 1, and
+    `r__permission-denied__journal.py` prints the same shape, so the last line IS the
+    summary there. They were UNGUARDED, which is the shape this PR is about: an
+    assumption six sites depend on and no test states. The sites are one function now
+    (`selftest_cause`), and this class is the contract that function is written
+    against, measured against the real printers rather than described.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="selftest-cause-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def test_the_gate_printer_summarises_on_one_final_stderr_line(self):
+        """Two failures, a noisy gate, one line, and it is last.
+
+        The failure mode `[-1]` would have here is a helper that prints its summary
+        first and keeps talking, or one that lets a leg's own stderr through after
+        it. So the stub gate writes two lines to stderr and allows both violations,
+        which is two failures for the printer to join.
+        """
+        fdir = self.tmp / "fixtures"
+        fdir.mkdir()
+        for name in ("violation-one.json", "violation-two.json", "benign.json"):
+            (fdir / name).write_text(
+                json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                            "tool_input": {"command": "echo hi"}}), encoding="utf-8")
+        stub = self.tmp / "g__stub__allows-everything.py"
+        stub.write_text("import sys\n"
+                        "sys.stdin.read()\n"
+                        "sys.stderr.write('leg noise one\\nleg noise two\\n')\n"
+                        "sys.exit(0)\n", encoding="utf-8")
+
+        cp = subprocess.run([sys.executable, str(BRAIN / "scripts" / "gate_selftest.py"),
+                             str(stub), str(fdir)],
+                            capture_output=True, text=True, timeout=120)
+        self.assertEqual(cp.returncode, 1, cp.stdout + cp.stderr)
+        lines = [ln for ln in (cp.stderr or "").splitlines() if ln.strip()]
+        self.assertTrue(lines, "the printer said nothing at all")
+        self.assertTrue(lines[-1].startswith("selftest FAIL: "),
+                        f"the summary is not the last line: {lines!r}")
+        self.assertIn("violation-one.json", lines[-1])
+        self.assertIn("violation-two.json", lines[-1],
+                      "both failures have to ride the SAME line, or `[-1]` hands "
+                      "the reader one of two causes and hides the other")
+        self.assertNotIn("leg noise", cp.stderr,
+                         "a leg's own stderr reached the parent, so the last line "
+                         "is whatever the last leg happened to say")
+
+        # And that is exactly the string the doctor puts in the row.
+        self.assertEqual(doctor.selftest_cause(cp), lines[-1])
+
+    def test_the_reflex_printer_summarises_on_one_final_stderr_line(self):
+        """The other printer the doctor reads, held to the same contract. A fixture
+        directory with no seed is the cheapest real failure it has."""
+        empty = self.tmp / "no-fixtures"
+        empty.mkdir()
+        cp = subprocess.run(
+            [sys.executable,
+             str(BRAIN / "scripts" / "r__permission-denied__journal.py"),
+             "--selftest", str(empty)],
+            capture_output=True, text=True, timeout=120)
+        self.assertNotEqual(cp.returncode, 0)
+        lines = [ln for ln in (cp.stderr or "").splitlines() if ln.strip()]
+        self.assertTrue(lines[-1].startswith("selftest FAIL: "),
+                        f"the summary is not the last line: {lines!r}")
+        self.assertEqual(doctor.selftest_cause(cp), lines[-1])
+
+    def test_the_helper_prefers_stderr_and_names_a_silent_failure(self):
+        """stderr first because that is where both printers write; stdout only when a
+        helper puts everything on one stream; and a helper that failed without a word
+        still owes the reader something, which is its exit code unless the caller has
+        better words."""
+        noisy = subprocess.CompletedProcess([], 1, "on stdout\n", "first\nlast\n")
+        self.assertEqual(doctor.selftest_cause(noisy), "last")
+        stdout_only = subprocess.CompletedProcess([], 1, "only\nthis\n", "")
+        self.assertEqual(doctor.selftest_cause(stdout_only), "this")
+        silent = subprocess.CompletedProcess([], 3, "", "   \n\n")
+        self.assertEqual(doctor.selftest_cause(silent), "exit 3")
+        self.assertEqual(doctor.selftest_cause(silent, "no output"), "no output")
 
 
 class TestTheFourOutcomesReadDifferently(unittest.TestCase):
