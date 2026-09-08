@@ -54,30 +54,27 @@ lane by never naming it literally, and `:/` / `:(top)` mean the whole root.
 
 NAMED RESIDUALS, measured as passing and deliberately not covered here. The list
 is pinned by a test, so it stays equal to what the gate actually does:
-`rsync --delete`, `shred`, `ln -sf`, `perl -pi`; a `python -c` or `perl -e`
-body (only best-effort, scanned as shell text) including one aimed at the state
-dir, which cycle 6 measured: `printf x >> <journal>` and `touch -d '1 hour ago'
-<journal>` DENY, while the same two effects through `open(j,"a").write(...)`,
-`os.utime` or `perl -e` emit no decision at all. The gate enumerates shell VERBS
-and the effect is what matters. Recognising the effect is a new detector class
-with its own false positives, and after C-A neither form transfers a lane any
-more (an unreadable record is UNKNOWN and unknown holds), so it stays a named
-residual rather than a verb-table expansion;
+`rsync --delete`, `shred`, `ln -sf`, `perl -pi` AGAINST A LANE (against the
+KERNEL DIRECTORY they are denied, see below);
 `git apply|rebase|merge|pull|cherry-pick|revert`; variable and brace expansion
 (`rm -rf $DIR`, `rm -rf {pkg,x}`, unknowable without running the shell); a `-c` body nested deeper
 than 3; and xargs fed from STDIN (`cat list | xargs rm`, `xargs rm < list`),
 where the targets never appear in the command at all. Each is a distinct verb
 table or an evaluator, not a gap in this one, and none is the weekend shape.
 
-The kernel's own state is not a lane but a floor: any mutation targeting
-`~/.claude/.cache/kernel` (the process table, the journals, the locks) is denied
-for EVERY hooked process, this gate included, and so is a mutation of any
-ANCESTOR of it by the same prefix test (`~/.claude/.cache`, `~/.claude`, `$HOME`
-as the target of an `rm -rf`), since a command that takes the parent takes the
-ledger with it. `touch`, `chmod`, `chattr` and `dd of=` are read for this floor
-only, never as lane writes. A process that can rewrite the table can grant itself
-any lane and erase the record. The operator's terminal is not hooked and stays
-the only writer.
+The kernel's own state is not a lane but a floor, and since QA cycle 9 that
+floor is a NAMED-PATH test rather than a verb table: any segment that names a
+path inside `~/.claude/.cache/kernel` (the process table, the journals, the
+locks) - or any ANCESTOR of it by the same prefix test (`~/.claude/.cache`,
+`~/.claude`, `$HOME` as the target of an `rm -rf`) - is denied for EVERY hooked
+process, this gate included, WHATEVER VERB carries it, unless the program is on
+the short read-only list in `_KSTATE_READONLY`. For an interpreter the same test
+runs against the raw segment text, because there the path is inside a quoted
+program and no parser will tokenize it out. `touch`, `chmod`, `chattr` and `dd
+of=` are read for this floor only, never as lane writes. A process that can
+rewrite the table can grant itself any lane and erase the record; a process that
+can put a FIFO at a journal path can wedge every gate that reads it. The
+operator's terminal is not hooked and stays the only writer.
 
 Hot path: the command is parsed first and the process table is read ONLY when
 the parse found something that can collide, so an ordinary `ls` or `pytest`
@@ -572,6 +569,92 @@ _MUTATORS = ("rm", "mv", "cp", "sed", "tee", "unlink", "truncate")
 # tested against the state floor ONLY, never against a lane: `touch`/`chmod` on
 # a sibling's file is not the collision this rule is about.
 _STATE_VERBS = ("touch", "chmod", "chattr", "dd")
+
+# ── the kernel floor is a NAMED-PATH floor, not a verb list ──────────────────
+#
+# QA CYCLE 9 F1. The floor above was an ALLOWLIST OF VERBS, and an allowlist of
+# verbs loses to the next verb. Measured on this file at HEAD~1: `rm`, `mv`,
+# `truncate` and `unlink` denied, while `mkfifo`, `ln -sf`, `shred -u`,
+# `install` and `busybox rm` all passed undecided. So
+# `mkfifo $HOME/bf && ln -sf $HOME/bf <kernel>/journal/<holder>.jsonl` was
+# allowed, and from then on every tree-owner gate blocked inside `open()`, was
+# killed at the harness `timeout: 5`, wrote no stdout and emitted no decision -
+# which every matrix in this PR reads as ALLOW. `kernel_proc._kernel_fd` closes
+# the hang; this closes the move that creates it.
+#
+# THE HEADER OF THIS FILE ARGUED THE OTHER WAY AND THE ARGUMENT IS REFUTED, so
+# it is corrected rather than left standing. It said effect recognition "stays a
+# named residual" because "after C-A neither form transfers a lane any more (an
+# unreadable record is UNKNOWN and unknown holds)". That holds for a record the
+# reader can READ AND REJECT. A fifo is not an unreadable record, it is a reader
+# that never returns, and a hook that never returns is not UNKNOWN, it is no
+# decision at all.
+#
+# SO THE FLOOR IS INVERTED: any segment that NAMES a path inside the kernel
+# directory is denied unless its program is on the short read-only list below.
+# The set of verbs that can create, replace or unlink a path is open-ended; the
+# set of programs that provably cannot is small, nameable and closed.
+#
+# THE OVER-FIRE IS REAL AND IT IS THE PRICE, stated rather than discovered: a
+# READ of kernel state through a tool that is not on this list is denied too
+# (`xxd ptable.json`, `python3 -c "print(open(p).read())"`). The deny names the
+# path and the operator's terminal is not hooked, so the cost is one message and
+# a `cat`, against a wedged session for the other direction.
+_KSTATE_READONLY = (
+    "cat", "head", "tail", "less", "more", "ls", "stat", "file", "wc",
+    "grep", "egrep", "fgrep", "rg", "sort", "uniq", "cut", "diff", "cmp",
+    "du", "df", "md5sum", "sha1sum", "sha256sum", "b2sum", "cksum", "base64",
+    "od", "strings", "jq", "readlink", "realpath", "basename", "dirname",
+    "echo", "printf", "test", "true", "false", "pwd", "which", "wait", "date",
+    "cd", "pushd", "popd",
+)
+# Programs that take CODE as an argument. For these the token scan is blind by
+# construction: the path lives inside a quoted program, not in a token, which is
+# exactly the interpreter hole the header names. They are matched on the raw
+# SEGMENT TEXT instead, and the over-fire is the same one, one step wider: a
+# read-only one-liner that merely mentions the path is denied.
+_CODE_HOSTS = ("bash", "sh", "zsh", "dash", "ksh", "python", "python3", "py",
+               "perl", "ruby", "node", "deno", "bun", "php", "awk", "gawk",
+               "mawk", "sed", "tclsh", "lua", "Rscript")
+# How the kernel directory can be SPELLED in a command. The absolute form comes
+# from `kernel_proc.kernel_dir()`; these cover the spellings a shell would have
+# expanded and the parser never does.
+_KDIR_SPELLINGS = ("~/.claude/.cache/kernel", "$HOME/.claude/.cache/kernel",
+                   "${HOME}/.claude/.cache/kernel", ".claude/.cache/kernel")
+
+
+def names_kernel_state(tokens: list, here: str, kdir: str) -> list:
+    """Every token of one segment that RESOLVES to a path inside `kdir`.
+
+    Env-assignment VALUES are scanned too (`K=~/.claude/.cache/kernel` in one
+    segment and `rm $K/journal/x` in the next is one move, and the second
+    segment carries no path a parser can resolve), and so is the token that
+    names the program, because `/usr/bin/env` style invocation is already peeled
+    and what is left may itself be the target.
+    """
+    out = []
+    for tok in tokens:
+        if not tok or tok.startswith("-"):
+            continue
+        for cand in (tok, tok.partition("=")[2]):
+            if not cand:
+                continue
+            try:
+                target = resolve(cand, here)
+            except Exception:
+                continue
+            if kernel_proc.paths_conflict(target, kdir):
+                out.append(target)
+                break
+    return out
+
+
+def code_names_kernel_state(seg: str, kdir: str) -> bool:
+    """True when a segment's raw text spells the kernel directory. Used only for
+    the interpreter hosts, where the path is inside a quoted program."""
+    if kdir and kdir in seg:
+        return True
+    return any(spell in seg for spell in _KDIR_SPELLINGS)
 _BROAD_ADD = ("-u", "--update", "./", ":/", ":(top)")
 _MAX_DEPTH = 3
 
@@ -583,7 +666,13 @@ def scan(command: str, cwd: str, depth: int = 0) -> list:
     `git checkout <arg>` needs to tell a branch from a file."""
     import shlex
 
-    if not any(t in command for t in _TRIGGERS):
+    kdir = kernel_proc.norm_path(kernel_proc.kernel_dir())
+    # The trigger table is a VERB table too, and `mkfifo`/`ln` are in none of
+    # its entries, so the fast path used to return [] before the floor below
+    # could look at anything. A command that spells the kernel directory is
+    # always worth parsing, whatever verb it carries.
+    if not any(t in command for t in _TRIGGERS) and \
+            not code_names_kernel_state(command, kdir):
         return []
     split_subcmds, broad_git_verb = _dim_helpers()
     shell_c = _shell_c() if depth < _MAX_DEPTH else None
@@ -615,7 +704,23 @@ def scan(command: str, cwd: str, depth: int = 0) -> list:
         redirects, tokens = redirect_targets(tokens)
         for target in redirects:
             hits.append(("path", resolve(target, here), ">"))
+        pre_peel = list(tokens)
         tokens, here = peel_wrappers(peel_env(tokens), here)
+        # THE KERNEL FLOOR, BEFORE ANY VERB DISPATCH AND BEFORE THE EMPTY TEST,
+        # because the verb is what kept losing and an ENV ASSIGNMENT has no verb
+        # at all. `mkfifo`, `ln -sf`, `shred -u`, `install` and `busybox rm`
+        # reach this line and none of them reaches the `_MUTATORS` branch below;
+        # `K=<kdir> && mkfifo $K/journal/x` peels to NOTHING here and the path
+        # lives in the segment that was dropped, which is why the scan reads the
+        # tokens as they arrived rather than as they were peeled.
+        host = os.path.basename(tokens[0]) if tokens else ""
+        if host in _CODE_HOSTS:
+            if code_names_kernel_state(seg, kdir):
+                hits.append(("state", kdir, host))
+        elif host not in _KSTATE_READONLY and not (
+                host == "find" and not find_targets(tokens[1:])[0]):
+            for target in names_kernel_state(pre_peel, here, kdir):
+                hits.append(("state", target, host or "assignment"))
         if not tokens:
             continue
         if tokens[0] in ("cd", "pushd") and len(tokens) > 1:
@@ -681,6 +786,9 @@ def scan(command: str, cwd: str, depth: int = 0) -> list:
 # ── main ────────────────────────────────────────────────────────────────────
 
 def main() -> int:
+    # QA cycle 9 F2: the budget that matters is the INVOCATION's, because the
+    # invocation is what the harness kills at `timeout: 5`.
+    kernel_proc.arm_invocation_budget()
     try:
         payload = json.loads(sys.stdin.read())
     except Exception:

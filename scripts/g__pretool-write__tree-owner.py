@@ -171,6 +171,9 @@ def target_of(tool_input: dict):
 
 
 def main() -> int:
+    # QA cycle 9 F2: the budget that matters is the INVOCATION's, because the
+    # invocation is what the harness kills at `timeout: 5`.
+    kernel_proc.arm_invocation_budget()
     try:
         payload = json.loads(sys.stdin.read())
     except Exception:
@@ -534,6 +537,22 @@ def build_sandbox(fdir: str, sandbox: str, setup=None) -> None:
         except OSError:
             pass
         os.mkfifo(table_path)
+    for pid in (setup.get("journal_fifo") or ()):
+        # QA cycle 9 F1: F5's move at a JOURNAL path instead of the table's.
+        # `os.path.getsize` succeeds on a fifo, `_journal_age` passes its size
+        # ceiling on 0 bytes and `open` then blocks forever with no writer, so
+        # both gates ran past 20 s, were killed at the harness `timeout: 5` and
+        # emitted no decision at all - which every matrix here reads as ALLOW.
+        # No `os.utime` and no oversized file needed: `is_live` -> `has_exit` ->
+        # `has_exit_line` opens the journal before any freshness check, so this
+        # is left with a FRESH mtime on purpose. The selftest timeout is the
+        # assertion, same as `ptable_fifo`.
+        path = os.path.join(jdir, f"{pid}.jsonl")
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        os.mkfifo(path)
     for pid in (setup.get("drop_journals") or ()):
         # F4: the holder's liveness record removed with the table intact.
         try:

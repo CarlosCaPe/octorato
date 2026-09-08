@@ -75,6 +75,7 @@ register-and-journal flow the register hooks prove, in a sandbox HOME.
 """
 from __future__ import annotations
 
+import errno as _errno
 import hashlib
 import json
 import os
@@ -96,6 +97,13 @@ MAX_LINE = 4096         # POSIX atomic-append bound; the newline is counted belo
 MAX_JOURNAL_SCAN = 8 * 1024 * 1024   # bytes `_journal_age` will read; see there
 MAX_JOURNAL_LINES = 20000            # and lines: cost tracks lines, not bytes
 SCAN_BUDGET = 1.5       # seconds of journal parsing one FAN-OUT may spend
+INVOCATION_BUDGET = 3.5  # seconds one HOOK INVOCATION may spend, measured from
+                         # this module's IMPORT. Sized against the number that
+                         # kills the process: the harness `timeout: 5`, minus
+                         # the 0.09-0.21 s measured (7 runs, idle) between
+                         # process spawn and this import, minus room for the
+                         # emit and for that startup under load. See
+                         # `arm_invocation_budget`.
 PRUNE_AFTER = 7 * 24 * 3600
 PID_MAX = 128
 MAX_LANES = 512          # a lane list is a working set, not a history
@@ -282,17 +290,29 @@ def recovery(kind: str = "") -> str:
     NOT an `octo` subcommand and not an env hatch, and the reason is now what
     is TRUE rather than what was claimed. The claim was that a command an agent
     could run would be a command that clears its own gate. What the Bash gate
-    actually verifies today is the direct file verbs: `rm`, `mv`, `cp`, `sed`,
-    `tee`, `unlink`, `truncate` and a `>` redirect aimed at the kernel
-    directory are denied, and so are `touch`, `chmod`, `chattr` and `dd`. The
-    INTERPRETER PATH IS OPEN, and QA measured it: `python3 -c` is rescanned as
-    shell text, so Python source that unlinks or rewrites this file is never
-    seen, and `ln` is in no verb list at all, so `ln -sf` reaches the same
-    path. Closing that is a real expansion of the gate's verb detection with
-    its own false-positive risk and it is deliberately not this change. Until
-    it lands the honest statement is: an agent that goes through an interpreter
-    can still reach the kernel's state, which is a reason to keep the recovery
-    out of its hands, not evidence that it already is.
+    actually verifies today is no longer a verb list at all: any segment that
+    NAMES a path inside the kernel directory is denied whatever verb carries it,
+    unless the program is on that gate's short read-only list. `rm`, `mv`, `cp`,
+    `sed`, `tee`, `unlink`, `truncate`, a `>` redirect, `touch`, `chmod`,
+    `chattr` and `dd` are denied as they always were, and so now are `ln -sf`,
+    `mkfifo`, `mknod`, `shred`, `install`, `busybox <anything>` and the
+    interpreter path (`python3 -c`, `perl -e`), which are matched on the raw
+    segment text because there the path sits inside a quoted program and no
+    parser will tokenize it out.
+
+    QA CYCLE 9 IS WHY THAT PARAGRAPH IS REWRITTEN RATHER THAN EXTENDED. It used
+    to label the interpreter route open and call closing it "a real expansion of
+    the gate's verb detection with its own false-positive risk", deliberately
+    left for another change. The residual it labelled turned out to include
+    `mkfifo`/`ln -sf` AT A JOURNAL PATH, which does not transfer a lane,
+    it WEDGES every gate that reads that journal inside `open()` until the
+    harness kills it, and a killed hook emits no decision, which reads as allow.
+    A residual that can disable the gate is not a residual.
+
+    The remaining honest statement is smaller and it stays: the deny is a PARSE,
+    so a path this parser cannot resolve (built by shell expansion it does not
+    run) still reaches the kernel directory, which is a reason to keep the
+    recovery out of an agent's hands rather than evidence that it already is.
     """
     latched = (
         "The table ITSELF was unreadable, so its rows are gone and their count "
@@ -353,6 +373,73 @@ def recovery(kind: str = "") -> str:
         "qdir": os.path.join(kernel_dir(), ""), "qpre": QUARANTINE_PREFIX}
 
 
+# ── opening kernel state ────────────────────────────────────────────────────
+
+def _kernel_fd(path: str, flags: int, mode: int = 0o600) -> int:
+    """`os.open` on a KERNEL-STATE path that can neither BLOCK nor land on a
+    file this kernel did not write. Every open of a journal, a lock and the
+    process table goes through here or through `_kernel_open` below.
+
+    QA CYCLE 9 F1, AND IT IS THE CROSS-FUNCTION SYMMETRY MISS, NOT A NEW CLASS.
+    Cycle 4 F5 already measured this exact failure against the PROCESS TABLE and
+    fixed it there, at `read_ptable`'s `S_ISREG` pre-check: `os.path.getsize`
+    SUCCEEDS on a fifo, and the `open` that follows blocks forever waiting for a
+    writer. The guard was applied to the one path that had been attacked and to
+    no other, so `mkfifo` (or `ln -sf` at a fifo) on a HOLDER'S JOURNAL bought
+    the same wedge back at O(1) cost: `_journal_age` `getsize`s the fifo, reads
+    0 bytes, passes the size ceiling, and hangs inside `open`. Both gates were
+    measured still running past 20 s, killed at the harness `timeout: 5`, with
+    no stdout and therefore no `permissionDecision` - which every matrix in this
+    PR reads as ALLOW. It needs no `os.utime` and no 300 MB file, because
+    `is_live` -> `has_exit` -> `has_exit_line` opens the journal before any
+    freshness check runs, so a FRESH mtime hangs too.
+
+    O_NONBLOCK AND THEN `fstat`, not `stat` and then `open`, and the difference
+    is the whole reason this is a function rather than a copied line. A stat
+    followed by an open is two syscalls with a window between them, and the
+    thing being defended against is a writer who is choosing what sits at that
+    path. `O_NONBLOCK` makes the open itself refuse to wait (a fifo opened for
+    reading returns immediately; opened for writing with no reader it fails
+    ENXIO), and `fstat` then asks what was ACTUALLY opened rather than what was
+    there a moment ago. A regular file ignores the flag entirely, so the fast
+    path costs nothing.
+
+    Raises OSError for anything that is not a regular file, which is the shape
+    every caller here already handles: an unreadable journal is UNKNOWN (held),
+    an unreadable table faults, and an unwritable journal is a deny.
+    """
+    fd = os.open(path, flags | getattr(os, "O_NONBLOCK", 0), mode)
+    try:
+        st = os.fstat(fd)
+    except OSError:
+        os.close(fd)
+        raise
+    if not _stat.S_ISREG(st.st_mode):
+        kind = _stat_kind(st.st_mode)
+        os.close(fd)
+        raise OSError(_errno.EINVAL,
+                      "%s is a %s, not a regular file, so it was not read"
+                      % (path, kind))
+    return fd
+
+
+def _kernel_open(path: str, mode: str = "rb", encoding: str = None):
+    """`open()` for a kernel-state path, through `_kernel_fd`. Same modes this
+    module actually uses: 'rb', 'r', 'ab', 'a', 'w', 'wb'."""
+    if "a" in mode:
+        flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
+    elif "w" in mode:
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    else:
+        flags = os.O_RDONLY
+    fd = _kernel_fd(path, flags)
+    try:
+        return os.fdopen(fd, mode, encoding=encoding)
+    except Exception:
+        os.close(fd)
+        raise
+
+
 # ── locking ─────────────────────────────────────────────────────────────────
 
 def _flock(fh) -> None:
@@ -389,7 +476,7 @@ def _tail_line(path: str) -> tuple:
     Reporting the boundary lets append() terminate the fragment first.
     """
     try:
-        with open(path, "rb") as fh:
+        with _kernel_open(path, "rb") as fh:
             fh.seek(0, os.SEEK_END)
             size = fh.tell()
             if size == 0:
@@ -410,7 +497,7 @@ def _first_start_ts(path: str):
     time from any single line). Reading the head is the slow path, and a torn
     tail is exactly where paying for it is right."""
     try:
-        with open(path, "rb") as fh:
+        with _kernel_open(path, "rb") as fh:
             for raw in fh:
                 raw = raw.strip()
                 if not raw:
@@ -430,7 +517,7 @@ def _first_start_ts(path: str):
 def _count_lines(path: str) -> int:
     n = 0
     try:
-        with open(path, "rb") as fh:
+        with _kernel_open(path, "rb") as fh:
             for _ in fh:
                 n += 1
     except FileNotFoundError:
@@ -499,7 +586,7 @@ def append(pid, record: dict) -> bytes:
     now = float(record.get("ts") or time.time())
     fh = None
     try:
-        fh = open(lock_path(pid), "a")
+        fh = _kernel_open(lock_path(pid), "a")
         _flock(fh)
         prev_raw, on_boundary = _tail_line(path)
         if prev_raw:
@@ -538,7 +625,7 @@ def append(pid, record: dict) -> bytes:
         # the chain continues from its bytes like any other line. One damaged
         # record, locatable, never a silent break.
         payload = (b"" if on_boundary else b"\n") + line + b"\n"
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        fd = _kernel_fd(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND)
         try:
             _write_all(fd, payload)
         finally:
@@ -557,7 +644,7 @@ def read_journal(pid) -> list:
     """Parsed lines, oldest first. Unparseable lines come back as None."""
     out = []
     try:
-        with open(journal_path(pid), "rb") as fh:
+        with _kernel_open(journal_path(pid), "rb") as fh:
             for raw in fh:
                 raw = raw.rstrip(b"\n")
                 if not raw:
@@ -583,7 +670,7 @@ def verify_detail(pid) -> tuple:
     """
     path = journal_path(pid)
     try:
-        with open(path, "rb") as fh:
+        with _kernel_open(path, "rb") as fh:
             raws = [r.rstrip(b"\n") for r in fh]
     except FileNotFoundError:
         return 1, f"no journal for {safe_pid(pid)}"
@@ -1456,7 +1543,7 @@ def read_ptable_detail(ignore_pid=None) -> tuple:
                  "not parsed" % (size, MAX_PTABLE_BYTES))
         return _faulted_table(None, fault), [], fault
     try:
-        with open(path, "r", encoding="utf-8") as fh:
+        with _kernel_open(path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
     except FileNotFoundError:
         return _absent_table(ignore_pid)  # raced with a delete: ask the journals
@@ -1638,7 +1725,7 @@ def _quarantine(reason: str, pid=None) -> str:
     """
     try:
         size = os.path.getsize(ptable_path())
-        with open(ptable_path(), "rb") as fh:
+        with _kernel_open(ptable_path(), "rb") as fh:
             raw = fh.read(MAX_QUARANTINE_BYTES)
     except OSError:
         return ""
@@ -1652,7 +1739,7 @@ def _quarantine(reason: str, pid=None) -> str:
         n += 1
         dst = os.path.join(kernel_dir(), "%s%s-%d.json" % (QUARANTINE_PREFIX, stamp, n))
     try:
-        with open(dst, "w", encoding="utf-8") as fh:
+        with _kernel_open(dst, "w", encoding="utf-8") as fh:
             json.dump({"ts": round(now, 6), "reason": reason,
                        "pid": safe_pid(pid) if pid else "",
                        "os_pid": os.getpid(),
@@ -1760,7 +1847,7 @@ def _write_ptable(data: dict) -> None:
     os.makedirs(kernel_dir(), exist_ok=True)
     tmp = ptable_path() + ".tmp.%d" % os.getpid()
     try:
-        with open(tmp, "w", encoding="utf-8") as fh:
+        with _kernel_open(tmp, "w", encoding="utf-8") as fh:
             json.dump(data, fh, indent=2, sort_keys=True)
         os.replace(tmp, ptable_path())
     except Exception:
@@ -1814,6 +1901,60 @@ def _num(val):
 
 
 _scan_until = None      # monotonic deadline for the current fan-out, or None
+_invoke_until = None    # monotonic deadline for the whole hook invocation
+_IMPORTED_AT = time.monotonic()   # as close to process start as this module gets
+
+
+def arm_invocation_budget(seconds: float = None) -> None:
+    """Bound the journal parsing of ONE HOOK INVOCATION, not of one fan-out.
+
+    QA CYCLE 9 F2, AND IT IS THE DEFECT b6bc709 FIXED ONE LEVEL DOWN, VERBATIM.
+    That commit's own message says it: "they bound a FILE; the attack answered
+    with more files". `SCAN_BUDGET` then bounded a FAN-OUT, and the attack
+    answered with more fan-outs. `lane_owner` calls `reset_scan_budget()` on
+    entry and the Bash gate calls `lane_owner` ONCE PER TARGET, so a command
+    with N targets opened N budgets: instrumented and load-independent, 1/2/4/8/
+    16 targets opened 1/2/4/8/16 of them, ceiling 1.5 s x N. Measured end to
+    end, 8 targets with one stale row and 8000 journal lines took 6.65 s, past
+    the harness `timeout: 5`, and a killed gate writes no stdout, emits no
+    `permissionDecision`, and every matrix in this PR reads that as ALLOW.
+
+    THE BOUND HAS TO MATCH THE THING THAT KILLS THE PROCESS. `SCAN_BUDGET`
+    protects a fan-out from one expensive row; this protects the INVOCATION from
+    many fan-outs, because the invocation is what the harness kills. They
+    compose rather than replace: `reset_scan_budget` takes the EARLIER of the
+    two deadlines, so a single fan-out still cannot spend more than
+    `SCAN_BUDGET`, and N fan-outs together still cannot spend more than what is
+    left of `INVOCATION_BUDGET`.
+
+    THE EXPLOIT WINDOW WAS NON-MONOTONIC IN N and that is why a bigger
+    `SCAN_BUDGET` was never the answer: a fan-out that EXHAUSTS its budget
+    answers UNKNOWN, UNKNOWN reads LIVE, and the gate DENIES and short-circuits,
+    so the dangerous sizes were the ones just UNDER the per-fan-out cap. With an
+    invocation deadline the exhaustion is shared: past it every fan-out answers
+    UNKNOWN immediately, which denies, which is the fail-closed direction and
+    costs one `stat` per colliding row.
+
+    MEASURED FROM THIS MODULE'S IMPORT, not from the call. The gates load
+    `receipt_ledger` and `dimension-awareness-hook` dynamically inside `scan()`,
+    and that import cost is inside the 5 s the harness is counting; a deadline
+    armed after it would hand the scan a budget the process no longer has.
+
+    Armed only by a HOOK (both isolation gates call it first thing in `main`).
+    A library caller, a test or the CLI leaves it unarmed and keeps the old
+    per-fan-out behaviour, which is what stops a test process that makes
+    thousands of calls from accumulating its way into spurious UNKNOWNs.
+    """
+    global _invoke_until
+    _invoke_until = _IMPORTED_AT + (INVOCATION_BUDGET if seconds is None
+                                    else seconds)
+
+
+def invocation_budget_spent() -> bool:
+    """True when the invocation deadline is armed and gone. For the deny text,
+    which has to tell "this holder was not confirmed live" from "this holder is
+    live"."""
+    return _invoke_until is not None and time.monotonic() > _invoke_until
 
 
 def reset_scan_budget(seconds: float = None) -> None:
@@ -1842,7 +1983,12 @@ def reset_scan_budget(seconds: float = None) -> None:
     what a direct call to `_quiet_for` outside any fan-out gets.
     """
     global _scan_until
-    _scan_until = time.monotonic() + (SCAN_BUDGET if seconds is None else seconds)
+    deadline = time.monotonic() + (SCAN_BUDGET if seconds is None else seconds)
+    if _invoke_until is not None:
+        # The EARLIER of the two, which is what makes them compose instead of
+        # the second one handing the first a fresh budget it has already spent.
+        deadline = min(deadline, _invoke_until)
+    _scan_until = deadline
 
 
 def _scan_exhausted() -> bool:
@@ -2001,7 +2147,7 @@ def _journal_age(pid, now: float):
             return UNKNOWN              # BUDGET: this fan-out is out of time
         if os.path.getsize(path) > MAX_JOURNAL_SCAN:
             return UNKNOWN              # SIZE: bigger than this reader will read
-        with open(path, "rb") as fh:
+        with _kernel_open(path, "rb") as fh:
             for raw in fh:
                 raw = raw.rstrip(b"\n")
                 if not raw:
@@ -2208,7 +2354,7 @@ def has_exit_line(pid) -> bool:
     """
     path = journal_path(pid)
     try:
-        with open(path, "rb") as fh:
+        with _kernel_open(path, "rb") as fh:
             fh.seek(0, os.SEEK_END)
             size = fh.tell()
             window = min(size, 16384)
@@ -2253,9 +2399,20 @@ def has_exit(pid, table: dict = None) -> bool:
     around the one that was already there. QA measured that emptying a row's
     `lanes` frees the lane in one ptable edit, so the ptable was always the
     floor; what an append-only forgery bought was a strictly CHEAPER bypass of
-    it. After this, faking an ending costs what breaking the ptable costs, and
-    the ptable is behind a lock, `sane_table`, the fault carrier and the
-    quarantine copy.
+    it. After this, faking an ending costs what breaking the ptable costs, AND
+    NOT ONE THING MORE, which is the honest sentence and it replaces one that
+    was not. This used to end "and the ptable is behind a lock, `sane_table`,
+    the fault carrier and the quarantine copy", which reads as four checks a
+    forger has to beat. QA cycle 9 measured that none of them is: writing
+    `exited: true` onto the row plus a well-formed exit line frees the lane with
+    `sane_table`, `carried_fault`, `fault_kind` and `quarantines` all reading
+    CLEAN, because the forged row is perfectly well shaped and nothing here
+    asks WHO wrote it. THE LOCK SERIALIZES WRITERS, IT DOES NOT AUTHENTICATE
+    THEM, and the fault machinery answers "is this table readable", never "is
+    this row true". So the floor after this change is exactly the pre-existing
+    ptable floor: one edit to a file the attacker can already write. What was
+    deleted was the way of getting the same result with 15 appended bytes and
+    no ptable write at all.
 
     `is True`, not truthiness, and cycle 6's `"_faulted": null` is the anchor
     for that: the hook writes the literal `True` and nothing else, so a value of
@@ -2304,7 +2461,7 @@ def has_work_trace(pid) -> bool:
     """
     path = journal_path(pid)
     try:
-        with open(path, "rb") as fh:
+        with _kernel_open(path, "rb") as fh:
             fh.seek(0, os.SEEK_END)
             size = fh.tell()
             if size == 0:
@@ -2375,7 +2532,7 @@ def update_row(pid, fields: dict) -> bool:
     os.makedirs(kernel_dir(), exist_ok=True)
     fh = None
     try:
-        fh = open(ptable_lock_path(), "a")
+        fh = _kernel_open(ptable_lock_path(), "a")
         _flock(fh)
         table, dropped, fault = read_ptable_detail()
         procs = table.setdefault("processes", {})
@@ -2577,7 +2734,7 @@ def claim_lane(pid, path, tree=None) -> bool:
     os.makedirs(kernel_dir(), exist_ok=True)
     fh = None
     try:
-        fh = open(ptable_lock_path(), "a")
+        fh = _kernel_open(ptable_lock_path(), "a")
         _flock(fh)
         table, dropped, fault = read_ptable_detail()
         if fault or dropped:
@@ -2632,7 +2789,7 @@ def release_lanes(pid, reason: str = "release") -> int:
         return 0
     fh = None
     try:
-        fh = open(ptable_lock_path(), "a")
+        fh = _kernel_open(ptable_lock_path(), "a")
         _flock(fh)
         table, dropped, fault = read_ptable_detail()
         row = (table.get("processes") or {}).get(pid)
@@ -2758,6 +2915,8 @@ def prune(table: dict, now: float = None) -> int:
             registered = _row_ts(ent)
             if registered is not None and (now - registered) > PRUNE_AFTER:
                 dead.append(pid)
+            elif registered is None and not lanes_of(ent):
+                dead.append(pid)     # no clock and nothing held: see below
             continue
         if quiet is None:
             registered = _row_ts(ent)
@@ -2772,8 +2931,31 @@ def prune(table: dict, now: float = None) -> int:
                 # no clock is kept, exactly as the UNKNOWN branch above keeps
                 # one, and if it holds lanes it is FAULTED rather than trusted,
                 # exactly as a row with no journal beside it already is.
+                #
+                # QA CYCLE 9 F3: "KEPT" WAS TOO WIDE BY EXACTLY ONE CASE, and
+                # the case it was too wide by is the one that grows without
+                # bound. Cycle 7 replaced `registered = 0.0` (1970, infinitely
+                # old, dropped with its lanes and no fault) with keeping the
+                # row, and kept ALL of them, lanes or no lanes. Measured at
+                # now + 70 days: five injected clock-less rows, ZERO dropped,
+                # five still present, where HEAD~1 dropped all five. The ptable
+                # is attacker-writable, so that is unbounded growth in the file
+                # every fan-out walks, which is the fuel for F2's budget
+                # exhaustion one function over.
+                #
+                # THE SPLIT IS ON WHAT THE ROW HOLDS, because that is what
+                # cycle 7's fix was actually protecting. A row with lanes is
+                # kept and faulted: dropping it FREES A LANE, silently, which
+                # was the loss. A row with NO lanes grants nothing, denies
+                # nothing and records nothing, so dropping it can free nothing;
+                # what it does is stop the table from being an append-only log
+                # of anything a foreign writer ever put in it. `register`
+                # always stamps `registered_ts`, so a row without a readable
+                # one is not this kernel's row to begin with.
                 if lanes_of(ent):
                     lost.append(pid)
+                else:
+                    dead.append(pid)
                 continue
             if (now - registered) <= TTL:
                 continue  # young row, journal not written (or just removed) yet
@@ -2857,7 +3039,7 @@ def prune_files(table: dict, now: float = None) -> int:
             continue
         fh = None
         try:
-            fh = open(lock_path(pid), "a")
+            fh = _kernel_open(lock_path(pid), "a")
             _flock(fh)
             # journal first; the lock file is the last thing to go, and it goes
             # while this process still holds it, so nothing re-creates it after.
@@ -2901,7 +3083,7 @@ def prune_locked(now: float = None) -> int:
     os.makedirs(kernel_dir(), exist_ok=True)
     fh = None
     try:
-        fh = open(ptable_lock_path(), "a")
+        fh = _kernel_open(ptable_lock_path(), "a")
         _flock(fh)
         table, unreadable, fault = read_ptable_detail()
         pruned = prune(table, now)
@@ -2950,7 +3132,7 @@ def register(pid, entry: dict, start_record: dict = None) -> dict:
 
     fh = None
     try:
-        fh = open(ptable_lock_path(), "a")
+        fh = _kernel_open(ptable_lock_path(), "a")
         _flock(fh)
         # `pid` is handed in so the journal this call wrote four lines up does
         # not read as "somebody else is running" on a machine whose table has
@@ -2999,7 +3181,7 @@ def pending_note(pid) -> None:
         os.makedirs(kernel_dir(), exist_ok=True)
         data = {}
         try:
-            with open(pending_path(), "r", encoding="utf-8") as fh:
+            with _kernel_open(pending_path(), "r", encoding="utf-8") as fh:
                 data = json.load(fh)
         except (FileNotFoundError, ValueError, OSError):
             data = {}
@@ -3011,7 +3193,7 @@ def pending_note(pid) -> None:
         row["last_ts"] = now
         data[pid] = row
         tmp = pending_path() + ".tmp.%d" % os.getpid()
-        with open(tmp, "w", encoding="utf-8") as fh:
+        with _kernel_open(tmp, "w", encoding="utf-8") as fh:
             json.dump(data, fh, sort_keys=True)
         os.replace(tmp, pending_path())
     except Exception:
@@ -3027,7 +3209,7 @@ def backfill_open(pid) -> bool:
         return False
     pid = safe_pid(pid)
     try:
-        with open(path, "r", encoding="utf-8") as fh:
+        with _kernel_open(path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
     except (FileNotFoundError, ValueError, OSError):
         return False
@@ -3039,7 +3221,7 @@ def backfill_open(pid) -> bool:
     try:
         if data:
             tmp = path + ".tmp.%d" % os.getpid()
-            with open(tmp, "w", encoding="utf-8") as fh:
+            with _kernel_open(tmp, "w", encoding="utf-8") as fh:
                 json.dump(data, fh, sort_keys=True)
             os.replace(tmp, path)
         else:

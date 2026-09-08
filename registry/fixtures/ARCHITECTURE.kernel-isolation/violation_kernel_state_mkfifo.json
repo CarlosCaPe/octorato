@@ -1,0 +1,13 @@
+{
+  "session_id": "sess-parent",
+  "tool_name": "Bash",
+  "tool_use_id": "toolu_iso",
+  "tool_input": {
+    "command": "mkfifo {{SANDBOX}}/.claude/.cache/kernel/journal/agent-a.jsonl"
+  },
+  "cwd": "{{SANDBOX}}/work/tree",
+  "agent_id": "agent-b",
+  "_setup": {
+    "expect_names": "kernel"
+  }
+}

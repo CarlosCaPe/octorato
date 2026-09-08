@@ -1390,13 +1390,29 @@ class RecoveryTextTest(SandboxHome):
         was stated as a fact: "a command an agent could run would be a command
         that clears its own gate". QA verified it for `rm`, `mv` and `>` and
         DEFEATED it with `python3 -c` and `ln -sf`, which the Bash gate's verb
-        detection does not see. Closing that is its own change; overstating it
-        is not allowed in the meantime.
+        detection did not see.
+
+        QA CYCLE 9 CLOSED THAT AND THIS TEST MOVED WITH IT. `python3 -c` and
+        `ln -sf` at a kernel path are denied now (the floor is a named-path test
+        rather than a verb list), so a pin on the words "INTERPRETER PATH IS
+        OPEN" would be pinning a residual that no longer exists - the same
+        defect one direction over. What is pinned instead is that the two named
+        routes are labelled DENIED, and that the honest residual the new text
+        keeps is still stated: the deny is a PARSE, so a path built by shell
+        expansion this parser does not run still reaches the kernel directory.
+        The gate-level half is `TheAgentProofClaimIsMeasured` in
+        test_tree_owner.py, which runs those commands rather than reading about
+        them.
         """
         doc = kernel_proc.recovery.__doc__
         self.assertIn("python3 -c", doc)
         self.assertIn("ln -sf", doc)
-        self.assertIn("INTERPRETER PATH IS OPEN", doc)
+        self.assertIn("mkfifo", doc)
+        self.assertNotIn("INTERPRETER PATH IS OPEN", doc,
+                         "the residual is closed; the docstring may not still "
+                         "advertise it")
+        self.assertIn("the deny is a PARSE", doc,
+                      "and what IS still open has to stay said")
         self.assertNotIn("a command an agent could run would be a command",
                          kernel_proc.recovery(),
                          "and the unverified version is not printed to anyone")
@@ -3383,3 +3399,337 @@ class ScanBudgetFanOutTest(SandboxHome):
                          "journal and lock both swept: the sweep opens its own "
                          "budget rather than inheriting a spent one")
         self.assertFalse(os.path.exists(path))
+
+
+class NonRegularKernelStateTest(SandboxHome):
+    """QA cycle 9 F1. A FIFO at a kernel-state path is not a slow read, it is a
+    reader that never returns, and a PreToolUse hook that never returns is
+    neither fail-closed nor fail-open: the harness kills it at `timeout: 5`, it
+    writes no stdout, it emits no `permissionDecision`, and every matrix in this
+    PR reads that as ALLOW. Measured over 20 s on both gates.
+
+    The guard already existed for the PROCESS TABLE (cycle 4 F5,
+    `read_ptable`'s `S_ISREG` pre-check) and for nothing else, which is the
+    cross-function symmetry miss this cycle names: `mkfifo` on a HOLDER'S
+    JOURNAL bought the same wedge back at O(1) cost, no `os.utime` and no
+    oversized file, because `is_live` -> `has_exit` -> `has_exit_line` opens the
+    journal before any freshness check runs.
+
+    EVERY TEST HERE RUNS UNDER AN ALARM, because the failure mode of a revert is
+    a HANG and a hanging test reports nothing. The alarm turns it back into a
+    named failure.
+    """
+
+    def deadline(self, seconds=10):
+        import signal
+        if not hasattr(signal, "SIGALRM"):       # Windows: no alarm, no guard
+            return
+        def blew(_sig, _frm):
+            raise AssertionError(
+                "no answer within %ds: this is the HANG, which is what a "
+                "non-regular kernel path buys when nothing checks S_ISREG"
+                % seconds)
+        old = signal.signal(signal.SIGALRM, blew)
+        signal.alarm(seconds)
+        self.addCleanup(signal.signal, signal.SIGALRM, old)
+        self.addCleanup(signal.alarm, 0)
+
+    def held_lane(self):
+        kernel_proc.register("owner", {"kind": "main", "type": "main"})
+        lane = os.path.join(self.home, "work", "tree", "a.py")
+        self.assertTrue(kernel_proc.claim_lane("owner", lane))
+        kernel_proc.append("owner", {"kind": "tool", "tool_name": "Write"})
+        return lane
+
+    def fifo_journal(self, pid="owner"):
+        path = kernel_proc.journal_path(pid)
+        os.unlink(path)
+        os.mkfifo(path)
+        return path
+
+    def test_f1_a_fifo_at_a_journal_path_answers_unknown_and_holds_the_lane(self):
+        self.deadline()
+        lane = self.held_lane()
+        path = self.fifo_journal()
+        self.assertIs(kernel_proc._journal_age("owner", time.time()),
+                      kernel_proc.UNKNOWN,
+                      "an unopenable journal is UNKNOWN, never a hang")
+        # and with the mtime backdated too, so `_quiet_for` cannot short-circuit
+        # on it: this is the state that used to free the lane on both gates.
+        stale = time.time() - (kernel_proc.TTL + 300)
+        os.utime(path, (stale, stale))
+        self.assertIs(kernel_proc._quiet_for("owner", time.time()),
+                      kernel_proc.UNKNOWN)
+        self.assertTrue(kernel_proc._own_fresh("owner", time.time(),
+                                               kernel_proc.TTL))
+        self.assertEqual(kernel_proc.lane_owner(lane, ignore="x")[0], "owner")
+
+    def test_f1_the_ending_reader_does_not_open_it_either(self):
+        """`has_exit_line` is the one that runs FIRST and with a FRESH mtime, so
+        it is the half a backdating-free attack reaches. Its own contract is
+        unchanged: it cannot see an exit line, and no exit means live."""
+        self.deadline()
+        self.held_lane()
+        self.fifo_journal()
+        self.assertFalse(kernel_proc.has_exit_line("owner"))
+        self.assertFalse(kernel_proc.has_exit("owner"))
+
+    def test_f1_appending_to_a_fifo_journal_raises_rather_than_blocking(self):
+        """The WRITE half. `append`'s OSError is the one failure the hot-path
+        gate turns into a deny, so it has to arrive as an OSError and not as a
+        wedged process."""
+        self.deadline()
+        self.held_lane()
+        self.fifo_journal()
+        with self.assertRaises(OSError):
+            kernel_proc.append("owner", {"kind": "tool"})
+
+    def test_f1_a_fifo_at_the_lock_path_does_not_wedge_the_writer(self):
+        """The lock file is kernel state too, and every locked writer opens it
+        with `open(..., "a")`, which blocks on a fifo exactly as the journal
+        did."""
+        self.deadline()
+        self.held_lane()
+        lock = kernel_proc.lock_path("owner")
+        os.unlink(lock)
+        os.mkfifo(lock)
+        with self.assertRaises(OSError):
+            kernel_proc.append("owner", {"kind": "tool"})
+
+    def test_f1_a_character_device_at_a_journal_path_is_unknown_too(self):
+        """S_ISREG's OWN shape, and the mutation run is why this test exists as
+        a separate one. Deleting `S_ISREG` from `_kernel_fd` left every fifo
+        test GREEN: `O_NONBLOCK` opens a fifo with no writer and the first read
+        returns EOF, so the fifo is answered by the OTHER guard. A guard masked
+        by its neighbour is the exact defect this PR already recorded for
+        `MAX_JOURNAL_LINES`, one function over.
+
+        A CHARACTER DEVICE separates them. `/dev/zero` opens fine with
+        `O_NONBLOCK` and then yields infinite bytes with no newline in them, so
+        the line iterator buffers until the machine gives up: measured as a hard
+        hang at 20 s with the check removed, which is the same wedge a fifo
+        used to buy. `ln -sf /dev/zero <journal>` is one command.
+        """
+        self.deadline()
+        if not (os.path.exists("/dev/zero") and os.path.exists("/dev/null")):
+            self.skipTest("no character devices on this platform")
+        lane = self.held_lane()
+        path = kernel_proc.journal_path("owner")
+
+        # THE ISOLATING ASSERTION, TAKEN AT THE OPEN AND NOT AT THE READ, and
+        # that is deliberate rather than timid: with `S_ISREG` removed,
+        # `_journal_age` on /dev/zero does not fail, it BUFFERS - the line
+        # iterator asks for a newline that never comes and allocates until the
+        # machine dies. Running the mutant through the reader OOM'd this box
+        # once already, so the mutant is caught one syscall earlier, where the
+        # answer is instant and costs nothing.
+        os.unlink(path)
+        os.symlink("/dev/zero", path)
+        with self.assertRaises(OSError):
+            os.close(kernel_proc._kernel_fd(path, os.O_RDONLY))
+
+        # and the end-to-end half on a character device that DOES terminate, so
+        # the reader's answer is measured rather than assumed.
+        os.unlink(path)
+        os.symlink("/dev/null", path)
+        self.assertIs(kernel_proc._journal_age("owner", time.time()),
+                      kernel_proc.UNKNOWN)
+        self.assertFalse(kernel_proc.has_exit_line("owner"))
+        self.assertEqual(kernel_proc.lane_owner(lane, ignore="x")[0], "owner")
+
+    def test_f1_the_exclusion_a_regular_journal_still_reads_and_still_expires(self):
+        """One edit from the violation: the same path, a REGULAR file. Without
+        this the rule would read "nothing is ever readable", which passes a
+        block-everything guard."""
+        self.deadline()
+        lane = self.held_lane()
+        self.assertIsInstance(kernel_proc._quiet_for("owner", time.time()), float)
+        self.assertEqual(kernel_proc.lane_owner(lane, ignore="x")[0], "owner")
+        self.age_journal_whole("owner", kernel_proc.TTL + 300)
+        self.assertIsNone(kernel_proc.lane_owner(lane, ignore="x")[0],
+                          "a readable journal that went quiet still frees")
+
+    def age_journal_whole(self, pid, seconds):
+        kernel_proc.backdate_journal(kernel_proc.journal_path(pid), seconds)
+
+
+class InvocationBudgetTest(SandboxHome):
+    """QA cycle 9 F2. `SCAN_BUDGET` bounds a FAN-OUT; the harness timeout bounds
+    an INVOCATION, and the two are not the same number.
+
+    `lane_owner` calls `reset_scan_budget()` on entry and the Bash gate calls
+    `lane_owner` ONCE PER TARGET, so N targets opened N budgets: instrumented
+    and load-independent, 1/2/4/8/16 targets opened 1/2/4/8/16 of them, ceiling
+    `SCAN_BUDGET` x N. Measured end to end, 8 targets with one stale row and
+    8000 journal lines took 6.65 s, past the harness `timeout: 5`, and a killed
+    gate emits no decision, which reads as ALLOW.
+
+    Deterministic on purpose, no clock to wait on: `arm_invocation_budget`
+    measures from THIS MODULE'S IMPORT, so a tiny budget is already spent by the
+    time any test runs.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(setattr, kernel_proc, "_invoke_until", None)
+        self.addCleanup(kernel_proc.reset_scan_budget, kernel_proc.SCAN_BUDGET)
+
+    def test_f2_a_second_fan_out_does_not_get_a_second_budget(self):
+        """THE DEFECT, as a unit. Each `reset_scan_budget` used to hand out a
+        full `SCAN_BUDGET` however many had already been spent."""
+        kernel_proc.arm_invocation_budget(0.001)
+        for fan_out in range(1, 5):
+            kernel_proc.reset_scan_budget()
+            self.assertTrue(kernel_proc._scan_exhausted(),
+                            "fan-out %d got a fresh budget past the invocation "
+                            "deadline" % fan_out)
+        self.assertTrue(kernel_proc.invocation_budget_spent())
+
+    def test_f2_an_unspent_invocation_budget_leaves_the_fan_out_alone(self):
+        """The exclusion, one edit away: the same call with the deadline still
+        ahead. Without it the rule would read "every scan is exhausted", which
+        denies everything and passes as a guard."""
+        kernel_proc.arm_invocation_budget(3600)
+        kernel_proc.reset_scan_budget()
+        self.assertFalse(kernel_proc._scan_exhausted())
+        self.assertFalse(kernel_proc.invocation_budget_spent())
+
+    def test_f2_unarmed_is_still_per_fan_out(self):
+        """A library caller, a test or the CLI arms nothing and keeps the old
+        behaviour, which is what stops a long-running test process from
+        accumulating its way into spurious UNKNOWNs."""
+        kernel_proc._invoke_until = None
+        kernel_proc.reset_scan_budget()
+        self.assertFalse(kernel_proc._scan_exhausted())
+        self.assertFalse(kernel_proc.invocation_budget_spent())
+
+    def test_f2_an_exhausted_invocation_holds_the_lane_rather_than_freeing_it(self):
+        """The direction of the failure, which is the half that makes the bound
+        safe to have: past the deadline every row answers UNKNOWN, UNKNOWN reads
+        LIVE, and the gate denies. Fail-closed, and it costs one `stat`."""
+        kernel_proc.register("owner", {"kind": "main", "type": "main"})
+        lane = os.path.join(self.home, "work", "tree", "a.py")
+        self.assertTrue(kernel_proc.claim_lane("owner", lane))
+        kernel_proc.backdate_journal(kernel_proc.journal_path("owner"),
+                                     kernel_proc.TTL + 600)
+        self.assertIsNone(kernel_proc.lane_owner(lane, ignore="x")[0],
+                          "a quiet holder frees while there is budget to read it")
+        kernel_proc.arm_invocation_budget(0.001)
+        self.assertEqual(kernel_proc.lane_owner(lane, ignore="x")[0], "owner",
+                         "and an unread record is held, not freed")
+
+    def test_f2_the_budget_is_checked_DURING_a_pass_and_not_only_before_it(self):
+        """The mid-pass check, isolated with a fake clock so the pre-check
+        CANNOT be what fails. Deleting the pre-check leaves this green and
+        deleting this leaves the pre-check's own test green, which is what
+        "isolating" has to mean here: the mutation run found this one surviving
+        a green suite because every existing fixture was small enough that one
+        file never outlasted a whole budget.
+
+        The clock is faked rather than raced: `reset_scan_budget` reads
+        `monotonic` once, the pre-check reads it once and finds time to spare,
+        and the reading taken 1000 lines in is a million seconds later.
+        """
+        kernel_proc.register("owner", {"kind": "main", "type": "main"})
+        for _ in range(3):
+            kernel_proc.append("owner", {"kind": "tool"})
+        path = kernel_proc.journal_path("owner")
+        with open(path, "rb") as fh:
+            raw = fh.read()
+        one = raw.split(b"\n")[0]
+        with open(path, "ab") as fh:               # >1000 lines, all unreadable
+            fh.write(b"\n".join([one] * 2000) + b"\n")
+
+        real = kernel_proc.time
+        ticks = iter([0.0, 0.1] + [1e6] * 64)
+        class Clock:
+            def __getattr__(self, name):
+                return getattr(real, name)
+            def monotonic(self):
+                try:
+                    return next(ticks)
+                except StopIteration:
+                    return 1e6
+        kernel_proc.time = Clock()
+        self.addCleanup(setattr, kernel_proc, "time", real)
+        kernel_proc.reset_scan_budget(1.0)          # tick 0: deadline at 1.0
+        self.assertIs(kernel_proc._journal_age("owner", real.time()),
+                      kernel_proc.UNKNOWN,
+                      "tick 1 (0.1) leaves the pre-check satisfied; the pass "
+                      "has to notice the clock itself")
+
+    def test_f2_both_gates_arm_it(self):
+        """The bound is only real if the two processes the harness kills are the
+        two that arm it. A source assertion, because the alternative is a
+        wall-clock one and this file asserts no timing."""
+        for name in ("g__pretool-bash__tree-owner.py",
+                     "g__pretool-write__tree-owner.py"):
+            body = (SCRIPTS / name).read_text(encoding="utf-8")
+            self.assertIn("kernel_proc.arm_invocation_budget()", body, name)
+
+
+class ClocklessRowExpiryTest(SandboxHome):
+    """QA cycle 9 F3, and it is cycle 7's fix having been one case too wide.
+
+    Cycle 7 replaced `registered = 0.0` (1970, infinitely old, so a row whose
+    registration time could not be read was dropped WITH ITS LANES, no fault,
+    nothing on any surface) with keeping the row. It kept all of them, lanes or
+    no lanes. Measured at now + 70 days: five injected clock-less rows, zero
+    dropped, five still present, where the parent commit dropped all five. The
+    ptable is attacker-writable, so that is unbounded growth in the file every
+    fan-out walks.
+
+    The split is on what the row HOLDS, because that is what cycle 7 was
+    actually protecting: dropping a row with lanes FREES A LANE; dropping one
+    with none frees nothing.
+    """
+
+    def rows(self, count, lanes=None):
+        kernel_proc.register("seed", {"kind": "main", "type": "main"})
+        table = kernel_proc.read_ptable()
+        for i in range(count):
+            table["processes"]["ghost-%d" % i] = {
+                "pid": "ghost-%d" % i, "type": "main",
+                "registered_ts": "not-a-time",
+                "lanes": list(lanes or []),
+            }
+        with open(kernel_proc.ptable_path(), "w", encoding="utf-8") as fh:
+            json.dump(table, fh)
+        return kernel_proc.read_ptable()
+
+    def test_f3_a_clockless_row_holding_nothing_expires(self):
+        table = self.rows(5)
+        kernel_proc.prune(table, time.time() + 70 * 24 * 3600)
+        left = [p for p in table["processes"] if p.startswith("ghost-")]
+        self.assertEqual(left, [], "a row with no clock and no lanes grants "
+                                   "nothing and must not accumulate forever")
+
+    def test_f3_the_exclusion_a_clockless_row_holding_a_lane_is_kept_and_faulted(self):
+        """One edit from the violation: the same rows, with a lane. This is
+        cycle 7's finding and it must stay closed - dropping these is what freed
+        a holder's lane silently."""
+        lane = os.path.join(self.home, "work", "tree", "a.py")
+        table = self.rows(5, [lane])
+        kernel_proc.prune(table, time.time() + 70 * 24 * 3600)
+        left = sorted(p for p in table["processes"] if p.startswith("ghost-"))
+        self.assertEqual(len(left), 5)
+        self.assertTrue(kernel_proc.carried_fault(table))
+        self.assertEqual(kernel_proc.lane_owner(lane, table=table,
+                                                ignore="x")[0], "ghost-0")
+
+    def test_f3_a_clockless_row_with_an_unreadable_journal_expires_too(self):
+        """The UNKNOWN branch beside it, which had the same hole for the same
+        reason: a journal that is THERE and unreadable, a row with no clock, and
+        nothing held."""
+        kernel_proc.register("torn", {"kind": "main", "type": "main"})
+        with open(kernel_proc.journal_path("torn"), "ab") as fh:
+            fh.write(b"not-json\n")
+        stale = time.time() - (kernel_proc.TTL + 600)
+        os.utime(kernel_proc.journal_path("torn"), (stale, stale))
+        table = kernel_proc.read_ptable()
+        table["processes"]["torn"]["registered_ts"] = "not-a-time"
+        table["processes"]["torn"]["lanes"] = []
+        self.assertIs(kernel_proc._quiet_for("torn", time.time()),
+                      kernel_proc.UNKNOWN)
+        kernel_proc.prune(table, time.time() + 70 * 24 * 3600)
+        self.assertNotIn("torn", table["processes"])

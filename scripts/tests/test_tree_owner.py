@@ -594,8 +594,6 @@ class QaCycle1(IsolationCase):
         the report says so. Pinned so the claim stays true instead of drifting
         into a silent regression either way."""
         self.hold()
-        kdir = kernel_proc.kernel_dir()
-        jnl = kernel_proc.journal_path("agent-a")
         deep = f"rm -rf {self.tree}/pkg"
         for _ in range(4):
             deep = 'bash -c "' + deep.replace('"', '\\"') + '"'
@@ -605,19 +603,12 @@ class QaCycle1(IsolationCase):
                 f"shred -u {self.a_py}",
                 f"ln -sf /dev/null {self.a_py}",
                 f"perl -pi -e s/a/b/ {self.a_py}",
-                # an evaluator: the body is Python, not shell
+                # an evaluator: the body is Python, not shell. AIMED AT A LANE,
+                # which is what is still uncovered. The same evaluators aimed at
+                # the KERNEL DIRECTORY moved to
+                # `test_the_kernel_floor_is_an_effect_not_a_verb` in QA cycle 9,
+                # because they now deny.
                 f'python3 -c "import shutil; shutil.rmtree(\'{self.tree}/pkg\')"',
-                f'python3 -c "open(\'{kdir}/ptable.json\',\'w\').write(\'{{}}\')"',
-                # cycle 6 C-A measured these three against the live gate: the
-                # gate enumerates shell VERBS and the EFFECT is what matters, so
-                # `printf x >> j` and `touch -d` deny while the same two writes
-                # through an interpreter emit no decision at all. After C-A they
-                # no longer transfer a lane (an unreadable record is UNKNOWN and
-                # UNKNOWN holds); what they still buy is a row that does not
-                # expire until PRUNE_AFTER after it registered.
-                f'python3 -c "open(\'{jnl}\',\'a\').write(\'x\')"',
-                f'python3 -c "import os;os.utime(\'{jnl}\',(1,1))"',
-                f'perl -e "open(F,\'>>\',\'{jnl}\')"',
                 # git verbs that rewrite the tree through a different door
                 "git apply /tmp/p.diff", "git rebase main", "git merge main",
                 "git pull", "git cherry-pick HEAD~1", "git revert HEAD",
@@ -1121,11 +1112,14 @@ class TheAgentProofClaimIsMeasured(IsolationCase):
     command that clears its own gate". QA verified it for `rm`, `mv` and `>`
     and DEFEATED it with `python3 -c` and `ln -sf`.
 
-    The docstring now lists exactly which verbs are denied at the kernel
-    directory and says the interpreter path is open. A list in prose drifts, so
-    it is measured here: every verb it names as denied must deny, and the two
-    it names as open must still be allowed. When that second half stops being
-    true, the honest move is to update the docstring, not this test.
+    The docstring lists exactly which verbs are denied at the kernel directory.
+    A list in prose drifts, so it is measured here: every verb it names as
+    denied must deny. QA cycle 9 replaced the second half of that contract: the
+    two paths it used to name as OPEN are closed, the floor is a named-path test
+    rather than a verb list, and what is measured now is that the closed ones
+    deny AND that reading kernel state through the read-only list still does
+    not. When either half stops being true, the honest move is to update the
+    docstring, not these tests.
     """
 
     def decide(self, command):
@@ -1148,17 +1142,138 @@ class TheAgentProofClaimIsMeasured(IsolationCase):
             self.assertIn(f"`{label}`" if label not in ("redirect",) else "`>`", doc,
                           f"{label} is denied but the docstring does not name it")
 
-    def test_the_two_open_paths_are_still_open_and_still_labelled(self):
-        """Not a wish: this is the residual, and the PR says so instead of
-        closing it here. Expanding the gate's verb detection to cover an
-        interpreter body is a change with its own false-positive risk."""
+    def test_the_kernel_floor_is_an_effect_not_a_verb(self):
+        """QA cycle 9 F1, AND IT IS THE INVERSION OF THE TEST THAT USED TO SIT
+        HERE. That test pinned two paths as OPEN (`ln -sf` and a `python3 -c`
+        body aimed at the ptable) on the stated grounds that closing them was
+        "a real expansion of the gate's verb detection with its own
+        false-positive risk". What it was actually pinning was a way to DISABLE
+        both gates: `mkfifo` (or `ln -sf` at a fifo) on a HOLDER'S JOURNAL wedges
+        every gate that reads it inside `open()` until the harness kills it at
+        `timeout: 5`, and a killed hook writes no stdout, emits no
+        `permissionDecision`, and every matrix in this PR reads that as ALLOW.
+        Measured over 20 s on both gates before the fix.
+
+        So the floor is a NAMED-PATH test now, and this pins the direction it
+        was inverted in: an allowlist of VERBS loses to the next verb, and the
+        verbs below are the ones QA reached for after `rm` was denied. What this
+        test STOPPED covering is the old "these two are open" claim, which was
+        true and is now false; the interpreter aimed at a LANE is still open and
+        is still pinned, one class up, in
+        `QaCycle1.test_named_residuals_are_honestly_uncovered`.
+        """
         tbl = kernel_proc.ptable_path()
-        self.assertEqual(self.decide(f"ln -sf /dev/null {tbl}"), "allow")
-        self.assertEqual(
-            self.decide(f'python3 -c "import os; os.unlink(\'{tbl}\')"'), "allow")
+        jnl = kernel_proc.journal_path("agent-a")
+        for command in (f"ln -sf /dev/null {tbl}",
+                        f"mkfifo {jnl}",
+                        f"mknod {jnl} p",
+                        f"shred -u {jnl}",
+                        f"install -m 644 /dev/null {jnl}",
+                        f"busybox rm -f {jnl}",
+                        f'python3 -c "import os; os.unlink(\'{tbl}\')"',
+                        f'python3 -c "open(\'{jnl}\',\'a\').write(\'x\')"',
+                        f'python3 -c "import os;os.utime(\'{jnl}\',(1,1))"',
+                        f'perl -e "open(F,\'>>\',\'{jnl}\')"',
+                        f"cd {os.path.dirname(jnl)} && mkfifo agent-a.jsonl",
+                        f"K={kernel_proc.kernel_dir()} && mkfifo $K/journal/x.jsonl"):
+            self.assertEqual(self.decide(command), "deny", command)
         doc = kernel_proc.recovery.__doc__
-        self.assertIn("INTERPRETER PATH IS OPEN", doc)
-        self.assertIn("ln -sf", doc)
+        self.assertNotIn("INTERPRETER PATH IS OPEN", doc)
+        self.assertIn("mkfifo", doc)
+
+    def test_the_invocation_budget_bounds_the_whole_call_not_one_fan_out(self):
+        """QA cycle 9 F2, at the gate, with the harness's own number as the
+        assertion. `SCAN_BUDGET` bounded a fan-out and the Bash gate opens one
+        per TARGET, so N targets bought N budgets: 8 targets over one stale row
+        with an 8000-line journal measured 6.65 s, past `timeout: 5`, and a
+        killed hook emits no `permissionDecision` at all, which every matrix in
+        this PR reads as ALLOW.
+
+        `timeout=5` here IS the harness. If a correct gate cannot answer inside
+        it, neither can the real one, so this is the true property and not a
+        wall-clock guess dressed up as one.
+
+        THE VERDICT IS PINNED WITH A LIVE HOLDER RATHER THAN WITH THE CLOCK, and
+        the first version of this test got that wrong in a way worth recording:
+        it asserted DENY over sixteen STALE rows, which is the verdict only when
+        the budget runs out before they are all read. That passed on a loaded
+        box and failed on an idle one, where the gate has time to read every row
+        and correctly FREES them. A test whose expected answer depends on how
+        busy the machine is measures the machine. So `agent-a`'s real lane is
+        one of the targets: the answer is DENY under both outcomes (it is found
+        live if the scan reaches it, and UNKNOWN reads live if the budget is
+        spent first), and what the clock decides is only how the gate got there.
+        """
+        import hashlib as _h
+        self.run_gate(WRITE_GATE, self.write_payload("agent-a", self.a_py))
+        table = kernel_proc.read_ptable()
+        start = time.time() - kernel_proc.TTL * 10
+        targets = []
+        for k in range(16):
+            d = os.path.join(self.tree, "dead%d" % k)
+            os.makedirs(d, exist_ok=True)
+            f = os.path.join(d, "f.py")
+            with open(f, "w") as fh:
+                fh.write("x\n")
+            targets.append(f)
+            pid = "stale-%d" % k
+            table["processes"][pid] = {
+                "pid": pid, "type": "main", "worktree": self.tree,
+                "registered_ts": start, "lanes": [f]}
+            out, prev = [], None
+            for i in range(8000):
+                rec = {"seq": i, "ts": round(start + i * 1e-3, 6),
+                       "start_ts": start, "pid": pid, "kind": "tool",
+                       "prev": prev}
+                raw = json.dumps(rec, separators=(",", ":"),
+                                 sort_keys=True).encode()
+                out.append(raw)
+                prev = _h.sha256(raw).hexdigest()
+            jp = kernel_proc.journal_path(pid)
+            with open(jp, "wb") as fh:
+                fh.write(b"\n".join(out) + b"\n")
+            old = time.time() - kernel_proc.TTL * 5
+            os.utime(jp, (old, old))
+        with open(kernel_proc.ptable_path(), "w", encoding="utf-8") as fh:
+            json.dump(table, fh)
+
+        # the live holder's own lane, last, so every stale row is walked first
+        targets.append(self.a_py)
+        command = " && ".join("rm -f %s" % t for t in targets)
+        env = dict(os.environ)
+        env["HOME"] = self.home
+        env["USERPROFILE"] = self.home
+        env.pop("OCTO_LANE_OVERRIDE", None)
+        try:
+            cp = subprocess.run(
+                [sys.executable, str(BASH_GATE)],
+                input=json.dumps(self.bash_payload("agent-b", command)),
+                capture_output=True, text=True, cwd=self.home, env=env,
+                timeout=5)
+        except subprocess.TimeoutExpired:
+            self.fail("no verdict inside the harness timeout: the gate would "
+                      "be killed with no decision, which reads as ALLOW")
+        self.assertTrue(self.denied(cp.stdout),
+                        "and the answer it gets there is a DENY, because one of "
+                        "those targets is a LIVE holder's lane")
+        self.assertIn("agent-a", cp.stdout,
+                      "naming the holder, which is the whole point of failing "
+                      "closed rather than just failing")
+
+    def test_the_exclusion_reading_kernel_state_is_not_denied(self):
+        """The over-fire half, and it is the price of inverting the floor: a
+        READ through a tool that is not on the read-only list is denied too. So
+        the list has to actually work, or the gate stops being a floor and
+        becomes a wall. One edit from each violation above: the same path, a
+        program that cannot write it."""
+        tbl = kernel_proc.ptable_path()
+        jdir = kernel_proc.journal_dir()
+        for command in (f"cat {tbl}", f"ls {jdir}", f"wc -l {tbl}",
+                        f"grep -c pid {tbl}", f"stat {tbl}",
+                        f"find {jdir} -name '*.jsonl'",
+                        "mkfifo /tmp/qa9-not-kernel", "ln -sf /tmp/a /tmp/b",
+                        'python3 -c "print(1)"', "echo kernel", "git status"):
+            self.assertEqual(self.decide(command), "allow", command)
 
 
 class QaCycle4(IsolationCase):
