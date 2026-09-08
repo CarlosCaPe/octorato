@@ -11,6 +11,7 @@ Cross-platform: pure pathlib + subprocess with explicit args, no bash-isms.
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
 import re
@@ -52,6 +53,10 @@ PYTHON = detect_python()
 GIT_HOOK_ENV = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX",
                 "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE",
                 "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_QUARANTINE_PATH")
+
+# Ceiling for every subprocess this file runs. See `run` for why it exists and why
+# it is this generous.
+RUN_TIMEOUT = 300
 
 
 def scrubbed_env(base=None) -> dict:
@@ -95,10 +100,36 @@ def run(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess
     Reach today is small and worth saying rather than hiding: this distro's git
     package ships zero `.mo` files and the operator's locale is Spanish, whose
     prefix is unchanged. It is real on any distro that ships git localisation.
+
+    The pin is keyed on the BASENAME, so `/usr/bin/git` is pinned and a wrapper on
+    PATH under another name (`mygit`) is not. That is by design and not a hole:
+    nothing in this doctor calls git under another name, and a name-blind pin would
+    put LC_ALL=C on every helper this file runs, several of which print Spanish.
+
+    A call that never answers has no cause at all, which is the same reader-facing
+    failure one step further out. `git ls-remote --heads origin` below reaches the
+    NETWORK: over ssh with no agent it waits on a passphrase, over https it waits on
+    a username, and a repo mid-`git gc` waits on a lock, each one hanging the doctor
+    and, through `.githooks/pre-push`, the push behind it, with no row and no exit
+    code. Three guards, cheapest first: stdin is /dev/null so nothing can read from
+    the operator's terminal or from the ref list pre-push feeds this process;
+    GIT_TERMINAL_PROMPT=0 makes git say `could not read Username for ...` instead of
+    asking; and RUN_TIMEOUT is the backstop for the rest, answered as rc 124, the
+    `timeout(1)` convention, so a hang arrives as a named cause like every other
+    failure. 300s is deliberately generous: the slowest thing through here is a gate
+    selftest that clones repos, and a doctor that FAILs a healthy slow machine would
+    be printing a wrong cause, which is the defect this file exists to remove.
+
+    What the timeout is NOT: a reaper. `subprocess.run` kills the direct child, so a
+    git that had already spawned ssh leaves the grandchild behind. The doctor gets
+    its row and its exit code, which is what a reader and `pre-push` need; a stray
+    ssh is the operator's to notice, and a process group would be a bigger change
+    than the failure justifies.
     """
     env = scrubbed_env()
     if args and Path(str(args[0])).name in ("git", "git.exe"):
         env["LC_ALL"] = "C"
+        env["GIT_TERMINAL_PROMPT"] = "0"
     try:
         return subprocess.run(
             args,
@@ -108,8 +139,14 @@ def run(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess
             encoding="utf-8",
             errors="replace",
             env=env,
+            stdin=subprocess.DEVNULL,
+            timeout=RUN_TIMEOUT,
         )
-    except (FileNotFoundError, PermissionError, NotADirectoryError) as exc:
+    except subprocess.TimeoutExpired as exc:
+        return subprocess.CompletedProcess(
+            args, 124, exc.stdout or "",
+            f"{args[0]}: no answer in {RUN_TIMEOUT}s, killed")
+    except OSError as exc:
         # A binary that is missing, not executable, or shadowed by a file where a
         # directory belongs is NOT a non-zero exit: subprocess raises before any
         # child exists, so the promise above was kept and the caller got a
@@ -119,9 +156,23 @@ def run(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess
         # the one road that never reaches the parser. Answer it as a cause, with
         # the shell's own conventional codes (127 not found, 126 not executable),
         # so `git_failure_cause` names it like every other failure.
-        rc = 127 if isinstance(exc, FileNotFoundError) else 126
+        #
+        # The class, not three of its members. FileNotFoundError, PermissionError
+        # and NotADirectoryError were named one by one and ENOEXEC (a git wrapper
+        # saved without a shebang, a wrong-arch binary on a shared mount) is a
+        # plain OSError (errno 8, measured), so it still handed the caller the
+        # traceback this clause says it removed; ELOOP and E2BIG likewise. Every
+        # one of them means the same thing: exec failed before a child existed.
+        #
+        # And the name in the sentence is the one the OS blamed, not args[0]. With
+        # a cwd that does not exist the exec fails with ENOENT on the DIRECTORY
+        # (measured: filename='/no/such/dir') and `args[0]` printed `git: No such
+        # file or directory` about a git that is installed and fine, a wrong cause
+        # inside the fix for wrong causes. Reach is nil today, every `cwd=` here is
+        # CLAUDE_DIR, and the sentence is wrong anyway.
+        rc = 127 if exc.errno == errno.ENOENT else 126
         return subprocess.CompletedProcess(
-            args, rc, "", f"{args[0]}: {exc.strerror or exc}")
+            args, rc, "", f"{exc.filename or args[0]}: {exc.strerror or exc}")
 
 
 def git(*args: str) -> subprocess.CompletedProcess:
@@ -2095,42 +2146,88 @@ def git_failure_cause(stderr: str, returncode: int) -> str:
     so the unjoined cause named a class of failure without naming the thing that
     caused it. One continuation line is taken, not all of them: git lists one
     extension per line and a row is a sentence, not a dump.
+
+    Translation was one way for a diagnosis to go unrecognised and it is not the
+    only one. `fatal:` and `error:` are what a SUBCOMMAND writes; git the dispatcher
+    has prefixes of its own, and the fallback turned one of them into the same
+    remedy-as-cause. Verbatim git 2.43, for a subcommand this git does not have
+    (the day this doctor calls one newer than the installed git):
+
+        git: 'revparse' is not a git command. See 'git --help'.
+
+        The most similar command is
+        <tab>rev-parse
+
+    and the row read `rev-parse` - the suggestion, offered as the reason. `BUG:` is
+    git's own internal-assert prefix (usage.c), unrecognised for the same reason and
+    landing correctly today only by the luck of sitting on the first line. Both join
+    the tuple. `git: ` is also the shape `run` synthesises when exec fails, so a
+    binary that is not there is named by the same road as every other failure.
     """
     detail = [ln.strip() for ln in (stderr or "").strip().splitlines() if ln.strip()]
     for i, line in enumerate(detail):
-        if line.startswith(("fatal:", "error:")):
+        if line.startswith(("fatal:", "error:", "BUG:", "git: ")):
             if line.endswith(":") and i + 1 < len(detail):
                 return f"{line} {detail[i + 1]}"
             return line
     return detail[-1] if detail else f"exit {returncode}"
 
 
+SELFTEST_FAILURE_MARKERS = ("selftest FAIL", "FAIL", "X ", "✗", "✘")
+
+
 def selftest_cause(cp: subprocess.CompletedProcess, empty: str | None = None) -> str:
-    """The LAST line of a failed helper's output, which is where its summary is.
+    """The first MARKED failure line of a failed helper, across stderr then stdout.
 
-    The sibling of `git_failure_cause`, and deliberately its opposite: git puts the
-    diagnosis first and the remedy last, while the selftest printers this doctor
-    reads collapse every failure into ONE final line — `gate_selftest.py` prints
-    `selftest FAIL: a; b` to stderr and returns 1, and
-    `r__permission-denied__journal.py` prints the same shape. So `[-1]` is right
-    here for a reason, and the reason was the problem: six call sites depended on it
-    and nothing asserted it, which is the same unguarded assumption that put a remedy
-    where a cause belonged one function above. One function now, one contract, and
-    `TestTheSelftestSummaryIsTheLastLine` holds those two printers to it by running
-    them until they fail.
+    The sibling of `git_failure_cause`, and it was built on the same unguarded
+    assumption: `detail[-1]`, the LAST line, chosen because that is where
+    `gate_selftest.py` and `r__permission-denied__journal.py` put their joined
+    `selftest FAIL: a; b` summary. Twenty of the thirty-three scripts behind these
+    six call sites go through `gate_selftest.py` and hold. One does not, and it is
+    reachable. `r__pretool-write__base-freshness.py` writes its verdict to STDOUT,
+    and the `git clone` of an empty bare origin that its selftest builds lets git's
+    own setup warning through to STDERR. Measured, with its violation leg forced to
+    fail, `[-1]` on `stderr or stdout` produced:
 
-    What that test does NOT cover, said rather than implied: `changelog-sync.py`,
-    whose --apply output is read through here too and is pinned by nothing. It is
-    the one caller that is not a selftest, and if it ever grows a multi-line tail
-    this row will name the tail. That is a WARN row about a local repair, not a
-    cause a reader acts on blind, which is why it is recorded here instead of
-    growing a third fixture.
+        GIT.version-control: 'warning: You appear to have cloned an empty repository.'
 
-    stderr before stdout because that is where both printers write the FAIL line;
-    stdout is the fallback for a helper that prints everything on one stream. `empty`
-    lets a caller name the silence in its own words; the default says what the reader
-    needs when a helper failed without a word: the exit code.
+    a FAIL row, one a reader acts on, naming a clone warning as the cause. Three
+    smaller members of the same class: `commit_msg_language_gate.py` writes
+    `selftest FAIL:` and then its items on the lines below, so the last line was one
+    item and the first of two was hidden; `querymaster-security-detector.py` prints
+    one missing needle per line; `dimension-awareness-hook.py` prints two
+    independent FAIL lines.
+
+    So the selection is by CONVENTION, the way `git_failure_cause` selects on
+    `fatal:`, not by position: the first line carrying one of this brain's failure
+    markers, stderr first because that is where most printers write, then stdout for
+    the ones that do not. A diagnosis that ENDS in a colon carries its next line, for
+    the reason the sibling gives, which is how `commit_msg_language_gate.py` now
+    names its first failure instead of its last.
+
+    The setup noise is NOT a defect in `base-freshness`, and that is the point of
+    fixing this end. Its selftest builds a real repo with real git, and git warning
+    about an empty clone is git telling the truth about the setup; a helper's stderr
+    carries its grandchildren's output and always will. Teaching thirty-three
+    printers to be quiet is the symptom in thirty-three places. Reading by marker is
+    the cause in one.
+
+    `[-1]` survives as the FALLBACK, for a helper that failed with no marker at all:
+    `changelog-sync.py --apply`, the one caller here that is not a selftest, and
+    `querymaster-security-detector.py`, whose lines are all failures and none of them
+    marked, so the reader gets the last of N rather than all N. That is a real cause,
+    not a wrong one, and it is recorded here rather than grown into a third fixture.
+
+    `empty` lets a caller name the silence in its own words; the default says what
+    the reader needs when a helper failed without a word: the exit code.
     """
+    for stream in (cp.stderr, cp.stdout):
+        detail = [ln.strip() for ln in (stream or "").splitlines() if ln.strip()]
+        for i, line in enumerate(detail):
+            if line.startswith(SELFTEST_FAILURE_MARKERS):
+                if line.endswith(":") and i + 1 < len(detail):
+                    return f"{line} {detail[i + 1]}"
+                return line
     detail = (cp.stderr or cp.stdout or "").strip().splitlines()
     if detail:
         return detail[-1].strip()

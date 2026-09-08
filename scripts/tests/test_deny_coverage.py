@@ -771,6 +771,32 @@ class TestEachNoWindowRoadNamesItself(DenyCoverageCase):
                          "the pin reached a non-git command; what is being pinned "
                          "is git's message catalog, not the whole doctor")
 
+        # And keyed on the BASENAME, which nothing said. Replacing the basename
+        # test with `args[0] == "git"` passed every assertion above while an
+        # absolute path went unpinned, and an absolute path is how a doctor on a
+        # machine with two gits would call the one it means.
+        gitpath = shutil.which("git")
+        self.assertTrue(gitpath, "no git on PATH, so the basename cannot be probed")
+        absolute = doctor.run([gitpath, "-c",
+                               'alias.showlocale=!printf "%s\n" "${LC_ALL-unset}"',
+                               "showlocale"], cwd=self.brain)
+        self.assertEqual((absolute.stdout or "").strip(), "C",
+                         "git called by its absolute path ran under the ambient "
+                         "locale: the pin is testing the whole argv, not the name")
+
+        # The other half of the same guard, and the reason it is a basename and not
+        # a path: a wrapper on PATH under ANOTHER name is deliberately NOT pinned,
+        # because nothing here calls git under another name and a name-blind pin
+        # would land on the helpers this file runs, several of which print Spanish.
+        wrapper = self.tmp / "mygit"
+        wrapper.write_text("#!/bin/sh\nprintf '%s\\n' \"${LC_ALL-unset}\"\n",
+                           encoding="utf-8")
+        wrapper.chmod(0o755)
+        aliased = doctor.run([str(wrapper)])
+        self.assertEqual((aliased.stdout or "").strip(), "de_DE.UTF-8",
+                         "a wrapper under another name got the git pin, so the "
+                         "guard is not the basename it is documented to be")
+
     def test_a_localised_git_still_names_the_diagnosis(self):
         """The same pin, end to end, out of the SENTENCE a reader gets.
 
@@ -906,6 +932,174 @@ class TestEachNoWindowRoadNamesItself(DenyCoverageCase):
                       "the reader gets the reason git could not run")
         self.assertNotIn("Traceback", why)
 
+    def test_the_class_of_exec_failures_answers_not_only_three_of_its_members(self):
+        """FileNotFoundError, PermissionError and NotADirectoryError were named one
+        by one, and naming members leaves the rest of the class raising.
+
+        Measured on this machine, a file with junk bytes and no shebang:
+
+            run(['<that file>'])  ->  OSError, errno 8 (ENOEXEC)
+
+        which is a git wrapper saved without a shebang, or a wrong-arch binary on a
+        shared mount, and it still handed the caller the traceback the clause says it
+        removes. ELOOP and E2BIG are the same shape. `except OSError` with
+        `127 if errno == ENOENT else 126` closes the class and matches what a shell
+        returns for each.
+
+        126 had no anchor at all: deleting the branch, or swapping the two codes,
+        changed nothing any test could see (mutants M05 and M07). Both codes are
+        pinned here, off real files.
+        """
+        noexec = self.tmp / "not-a-binary"
+        noexec.write_bytes(b"\x7fELF\x00 this is not a program\n")
+        noexec.chmod(0o755)
+        try:
+            cp = doctor.run([str(noexec)])
+        except OSError as exc:
+            self.fail(f"run raised {type(exc).__name__} (errno {exc.errno}) instead "
+                      f"of answering; exec failed before a child existed, which is "
+                      f"the class the three named members belong to")
+        self.assertEqual(cp.returncode, 126,
+                         "a file that cannot be exec'd is the shell's 126, not 127: "
+                         "it is there, it just will not run")
+        self.assertIn("not-a-binary", cp.stderr)
+        self.assertNotIn("Traceback", cp.stderr)
+
+        # The other member of the 126 branch, and the discriminator against 127.
+        unreadable = self.tmp / "no-permission"
+        unreadable.write_text("#!/bin/sh\ntrue\n", encoding="utf-8")
+        unreadable.chmod(0o644)
+        denied = doctor.run([str(unreadable)])
+        self.assertEqual(denied.returncode, 126,
+                         "a binary that is there and not executable is 126")
+        missing = doctor.run([str(self.tmp / "no-such-binary-at-all")])
+        self.assertEqual(missing.returncode, 127,
+                         "and only a binary that is NOT THERE is 127; collapsing "
+                         "the two tells the reader the wrong thing about a file "
+                         "that exists")
+
+    def test_the_name_in_the_sentence_is_the_one_the_os_blamed(self):
+        """`args[0]` was printed as the thing that failed, and it is not always the
+        thing that failed. Measured:
+
+            run(['git','--version'], cwd='<directory that does not exist>')
+              ->  rc=127  stderr='git: No such file or directory'
+
+        The git exists and is fine. The cwd is what is missing, and the exception
+        carries that truth in `exc.filename`. A wrong cause inside the fix for wrong
+        causes. Reach is nil today, every `cwd=` in this file is CLAUDE_DIR derived
+        from `__file__`, and the sentence is wrong anyway, which is the whole
+        argument this PR is built on.
+        """
+        gone = self.tmp / "this-cwd-does-not-exist"
+        cp = doctor.run(["git", "--version"], cwd=gone)
+        self.assertEqual(cp.returncode, 127)
+        self.assertIn(str(gone), cp.stderr,
+                      "the reader is told what the OS actually blamed")
+        self.assertFalse(cp.stderr.startswith("git:"),
+                         "the row blames git, which is installed and fine, for a "
+                         "directory that is not there")
+
+    def test_a_call_that_never_answers_is_a_named_cause_too(self):
+        """No cause at all is the same reader-facing failure, one step further out.
+
+        `git ls-remote --heads origin` reaches the NETWORK. Over ssh with no agent it
+        waits on a passphrase, over https on a username, and a repo mid-`git gc` waits
+        on a lock: each one hangs the doctor and, through `.githooks/pre-push`, the
+        push behind it, with no row and no exit code. Three guards, and each is
+        asserted here rather than described.
+        """
+        saved = doctor.RUN_TIMEOUT
+        self.addCleanup(lambda: setattr(doctor, "RUN_TIMEOUT", saved))
+        doctor.RUN_TIMEOUT = 1
+        try:
+            cp = doctor.run([sys.executable, "-c", "import time; time.sleep(30)"])
+        except subprocess.TimeoutExpired:
+            self.fail("run raised TimeoutExpired instead of answering; through "
+                      "run_all a hang becomes `FAIL check crashed`, and before the "
+                      "timeout it was not even that, it was a doctor that never "
+                      "returned")
+        self.assertEqual(cp.returncode, 124,
+                         "a call killed for taking too long answers with the "
+                         "timeout(1) convention, so it reads like every other rc")
+        self.assertIn("no answer in 1s", cp.stderr)
+        doctor.RUN_TIMEOUT = saved
+
+        # The cheapest of the three guards, and the one that stops the hang instead
+        # of timing it out: nothing this doctor spawns can read from the operator's
+        # terminal, or from the ref list `pre-push` feeds this process on stdin.
+        if not Path("/proc/self/fd/0").exists():
+            self.skipTest("no /proc on this platform, so fd 0 cannot be named")
+        fd0 = doctor.run([sys.executable, "-c",
+                          "import os;print(os.readlink('/proc/self/fd/0'))"])
+        self.assertEqual((fd0.stdout or "").strip(), "/dev/null",
+                         "a child inherited this process's stdin: a git that decides "
+                         "to ask for a password will get an answer from whatever is "
+                         "on the other end, or wait forever for one")
+
+        # And git is told not to ask in the first place, which turns the wait into a
+        # sentence instead of a 300-second silence.
+        prompt = doctor.run(["git", "-c",
+                             'alias.showprompt=!printf "%s\n" "${GIT_TERMINAL_PROMPT-unset}"',
+                             "showprompt"], cwd=self.brain)
+        self.assertEqual((prompt.stdout or "").strip(), "0", prompt.stderr)
+
+    def test_a_subcommand_this_git_does_not_have_names_the_diagnosis(self):
+        """Translation was one way for a diagnosis to go unrecognised. It is not the
+        only one, and the fallback turned another into the same remedy-as-cause.
+
+        `fatal:`/`error:` is what a SUBCOMMAND writes. git the dispatcher has its own
+        prefix, and nothing matched it. Recorded from git 2.43 on this machine:
+
+            git: 'revparse' is not a git command. See 'git --help'.
+
+            The most similar command is
+            <tab>rev-parse
+
+        No prefix matched, the fallback took the last line, and the row read
+        `rev-parse`: a SUGGESTION offered as the reason, which is exactly the shape
+        the dubious-ownership fixture was written to abolish. Reachable the day this
+        doctor calls a subcommand newer than the installed git.
+        """
+        recorded = (BRAIN / "scripts" / "tests" / "fixtures"
+                    / "git-not-a-command.stderr").read_text(encoding="utf-8")
+        because = doctor.git_failure_cause(recorded, 1)
+        self.assertEqual(because,
+                         "git: 'revparse' is not a git command. See 'git --help'.")
+        self.assertNotIn("most similar", because)
+        self.assertNotEqual(because.strip(), "rev-parse",
+                            "the row hands the reader the fix and calls it the cause")
+
+        # `BUG:` is git's own internal-assert prefix (usage.c). It is outside the
+        # tuple's original two and landed correctly only by the luck of sitting on
+        # the first line, which the fallback happens to reach when there is one line.
+        bug = ("BUG: refs.c:1234: reference not found in transaction\n"
+               "Aborting. Report this to the git mailing list.\n")
+        self.assertEqual(doctor.git_failure_cause(bug, 134),
+                         "BUG: refs.c:1234: reference not found in transaction")
+
+    def test_the_continuation_is_one_line_and_not_the_whole_list(self):
+        """The colon join takes ONE line, and the claim was unpinned: taking all of
+        them passed every test (mutant M12). git lists one extension per line and a
+        row is a sentence, not a dump, so a repo with TWO unknown extensions is what
+        holds the join to its word. Recorded from git 2.43 with
+        `core.repositoryformatversion=1` and both `extensions.bogus` and
+        `extensions.bogus2` set:
+
+            fatal: unknown repository extensions found:
+            <tab>bogus
+            <tab>bogus2
+        """
+        recorded = (BRAIN / "scripts" / "tests" / "fixtures"
+                    / "git-unknown-extensions-two.stderr").read_text(encoding="utf-8")
+        self.assertEqual(len(recorded.strip().splitlines()), 3,
+                         "this fixture is only interesting while git lists two")
+        because = doctor.git_failure_cause(recorded, 128)
+        self.assertEqual(because, "fatal: unknown repository extensions found: bogus")
+        self.assertNotIn("bogus2", because,
+                         "the join swallowed the rest of the list, so the row is a "
+                         "dump and the next multi-line git message will be a page")
+
     def test_every_road_gives_its_own_cause(self):
         causes = {}
         inner = self.harness / "projects" / "slug"
@@ -1023,21 +1217,24 @@ class TestEachNoWindowRoadNamesItself(DenyCoverageCase):
                                  f"{causes[road]!r}")
 
 
-class TestTheSelftestSummaryIsTheLastLine(unittest.TestCase):
-    """Six call sites read a failed helper's cause as the LAST line of its output,
-    and nothing held the helpers to writing it there.
+class TestTheSelftestCauseIsTheMarkedLine(unittest.TestCase):
+    """Six call sites read a failed helper's cause, and the selection was by POSITION.
 
     `git_failure_cause` exists because `detail[-1]` picked the remedy out of git's
     stderr. Eleven lines above that fix, and five more times through the file, the
-    same `detail[-1]` reads `cp.stderr or cp.stdout` off a gate selftest, the kernel
+    same `detail[-1]` read `cp.stderr or cp.stdout` off a gate selftest, the kernel
     selftests, the isolation gates, the PermissionDenied reflex and changelog-sync.
-    Those are not wrong: `gate_selftest.py` collapses every failure into one
-    `selftest FAIL: a; b` line on stderr and returns 1, and
-    `r__permission-denied__journal.py` prints the same shape, so the last line IS the
-    summary there. They were UNGUARDED, which is the shape this PR is about: an
-    assumption six sites depend on and no test states. The sites are one function now
-    (`selftest_cause`), and this class is the contract that function is written
-    against, measured against the real printers rather than described.
+    Twenty of the thirty-three scripts behind those sites go through
+    `gate_selftest.py`, which collapses every failure into one `selftest FAIL: a; b`
+    line on stderr, so the last line IS the summary there and `[-1]` looked right.
+
+    It was UNGUARDED, and one printer that does not go through `gate_selftest.py` is
+    reachable: `r__pretool-write__base-freshness.py` writes its verdict to stdout
+    while the `git clone` its selftest runs lets git's own setup warning onto stderr,
+    and `[-1]` on `stderr or stdout` produced a FAIL row naming the clone warning as
+    the cause. So the selection is by CONVENTION now, the way the sibling selects on
+    `fatal:`: the first MARKED failure line, stderr then stdout. This class is that
+    contract, held against the real printers' real streams rather than described.
     """
 
     def setUp(self) -> None:
@@ -1098,6 +1295,106 @@ class TestTheSelftestSummaryIsTheLastLine(unittest.TestCase):
         self.assertTrue(lines[-1].startswith("selftest FAIL: "),
                         f"the summary is not the last line: {lines!r}")
         self.assertEqual(doctor.selftest_cause(cp), lines[-1])
+
+    def test_a_printer_outside_gate_selftest_still_names_its_own_failure(self):
+        """The measured defect, out of a REAL printer's REAL streams.
+
+        `r__pretool-write__base-freshness.py` is the one selftest of the thirty-three
+        that neither goes through `gate_selftest.py` nor writes its verdict to
+        stderr, and its setup builds a real repo: `git clone` of an empty bare origin
+        warns, on stderr, and that warning has nothing to do with why the selftest
+        failed. `[-1]` on `stderr or stdout` therefore produced
+
+            GIT.version-control: 'warning: You appear to have cloned an empty
+            repository.'
+
+        a FAIL row a reader acts on, naming a setup warning as the cause.
+
+        The failure is forced the way it happens: a `git` wrapper earlier on PATH
+        that refuses `fetch`. The selftest's own setup (init, clone, commit, push)
+        passes through, `check()` cannot see the remote move ahead, and the violation
+        leg legitimately does not warn. Nothing in the script is edited, which is the
+        point: the contract is about printers as they are.
+        """
+        if not shutil.which("git"):
+            self.skipTest("no git on PATH")
+        bindir = self.tmp / "bin"
+        bindir.mkdir()
+        real_git = shutil.which("git")
+        wrapper = bindir / "git"
+        wrapper.write_text(
+            "#!/bin/sh\n"
+            'for a in "$@"; do [ "$a" = "fetch" ] && exit 1; done\n'
+            f'exec {real_git} "$@"\n', encoding="utf-8")
+        wrapper.chmod(0o755)
+
+        home = self.tmp / "home"
+        home.mkdir()
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        env["PATH"] = f"{bindir}:{env.get('PATH', '')}"
+        env["HOME"] = str(home)          # keeps the TTL marker out of the real cache
+        env.pop("SSH_AUTH_SOCK", None)
+        cp = subprocess.run(
+            [sys.executable,
+             str(BRAIN / "scripts" / "r__pretool-write__base-freshness.py"),
+             "--selftest"],
+            capture_output=True, text=True, timeout=180, env=env)
+        self.assertEqual(cp.returncode, 1,
+                         f"the selftest did not fail, so there is no cause to read\n"
+                         f"stdout={cp.stdout!r}\nstderr={cp.stderr!r}")
+        self.assertIn("You appear to have cloned an empty repository", cp.stderr,
+                      "the setup no longer leaks git's warning onto stderr, so this "
+                      "anchor is measuring a stream that is no longer there")
+        self.assertIn("violation fixture did NOT warn", cp.stdout,
+                      "the forced failure did not land where this test expects it")
+
+        because = doctor.selftest_cause(cp)
+        self.assertIn("violation fixture did NOT warn", because,
+                      "the row is not telling the reader why the selftest failed")
+        self.assertNotIn("cloned an empty repository", because,
+                         "the row hands the reader a setup warning as the cause, "
+                         "which is the defect this whole file is about")
+
+    def test_a_printer_that_lists_its_failures_below_the_marker_names_the_first(self):
+        """The smaller member of the same class, also out of a real printer.
+
+        `commit_msg_language_gate.py` writes `selftest FAIL:` and then one item per
+        line below it, so `[-1]` gave the reader the LAST item and silently dropped
+        the first. The colon continuation the sibling already uses for git answers
+        it: the marker line carries its next line, which is the first failure, and a
+        row stays a sentence rather than becoming a dump.
+
+        Both legs are forced to fail at once by inverting the fixture pair, which is
+        the cheapest way to get a printer to list two.
+        """
+        fdir = self.tmp / "inverted-fixtures"
+        fdir.mkdir()
+        # violation.txt must be Spanish for the gate to block it, benign.txt English.
+        # Swapped, both assertions fail and the printer has two items to list.
+        (fdir / "violation.txt").write_text(
+            "add a gate that blocks a non-English commit subject\n", encoding="utf-8")
+        (fdir / "benign.txt").write_text(
+            "corrige el mensaje del commit porque no está en inglés\n",
+            encoding="utf-8")
+        cp = subprocess.run(
+            [sys.executable,
+             str(BRAIN / "scripts" / "commit_msg_language_gate.py"),
+             "--selftest", str(fdir)],
+            capture_output=True, text=True, timeout=120)
+        self.assertEqual(cp.returncode, 1, cp.stdout + cp.stderr)
+        lines = [ln.strip() for ln in (cp.stderr or "").splitlines() if ln.strip()]
+        self.assertEqual(lines[0], "selftest FAIL:",
+                         f"this printer no longer lists below a bare marker: {lines!r}")
+        self.assertEqual(len(lines), 3,
+                         f"both legs have to fail or there is only one item: {lines!r}")
+
+        because = doctor.selftest_cause(cp)
+        self.assertEqual(because, f"selftest FAIL: {lines[1]}")
+        self.assertNotIn(lines[2], because,
+                         "the row took the whole list; a cause is a sentence")
+        self.assertNotEqual(because, "selftest FAIL:",
+                            "the row names a class of failure and not one instance "
+                            "of it, which is the collapse this file undoes")
 
     def test_the_helper_prefers_stderr_and_names_a_silent_failure(self):
         """stderr first because that is where both printers write; stdout only when a
