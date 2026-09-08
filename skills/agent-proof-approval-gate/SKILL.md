@@ -94,14 +94,29 @@ Recurse on the first set, never on the second, and you get both halves. The same
 
 ## Residual Risk
 
-What remains for `qa-merge-gate.py`, each measured 2026-09-08 by feeding the payload on stdin:
+**NINE residuals**, the canonical list; `scripts/qa-merge-gate.py`'s own header carries it in full and this is the summary. Each was measured on 2026-09-08 by feeding the payload on stdin (deny = exit 2). Counting matters: three separate surfaces used to quote three different numbers, which is how a residual stops being tracked.
 
 ```bash
-X="pr merge"; gh $X 291            # the VERB comes from an expansion, not from text
-$(echo "gh pr merge 291")          # the whole command inside one substitution
-./deploy.sh                        # the merge lives in a file the hook never reads
-python3 -c "...requests.put(...)"  # a non-shell runtime doing the API call
+# 1  the VERB comes from an expansion, not from text
+X="pr merge"; gh $X 291 ; $(echo "gh pr merge 291") ; C="gh pr merge 291"; eval "$C"
+# 2  the merge lives in a file the hook never reads
+./deploy.sh
+# 3  a non-shell runtime does the API call
+python3 -c "...requests.put(...)"
+# 4  gh repo set-default, whose EFFECT on a later merge is unmeasured
+# 5  a REPO-LOCAL git alias (only the user-global config is read)
+# 6  GH_REPO / GH_HOST / GH_CONFIG_DIR arriving on a channel the hook cannot see
+# 7  the v7 boundary: receipt files live under $HOME and the model can append
+# 8  the `-c` count/query allowlist: a program NAMED grep/psql/gcc on the HEAD is
+#    exempt from the unnamed-wrapper `-c` reading, and an unlisted counter reached
+#    through `find -exec` or `xargs` still over-fires
+grep -c "gh pr merge 292" notes.md          # allowed, correctly
+find . -exec grep -c "gh pr merge 292" {} \;  # still denies: over-fire, head-anchored
+# 9  parse TIME: a crafted ~25 KB line of `$a -f` noise approaches the 5 s hook
+#    budget, and a killed hook writes no stdout, which the harness reads as ALLOW
 ```
+
+Residuals 8 and 9 arrived with the cycle-4 fixes, and both are stated rather than traded away. 8 is the price of ending an over-fire class that denied three ordinary read-only commands, and it is fenced to the HEAD word so a wrapper's path argument exempts nothing: `flock /var/lock/grep -c "gh pr merge 291"` still denies. 9 is bounded, not eliminated: the three quadratics measured this cycle went 39.7 s to 0.43 s (20000 benign words), 52.2 s to 0.7 s (8000 opaque tokens) and 9.2 s to 0.03 s (8000 heredoc openers) against a 5 s budget, while two shapes stay superlinear — a line alternating an opaque token with a write-marker flag (`git $a -f …`) sits near 3 s at 2500 pairs, and a 6000-line pasted script sits near 3 s because every line is its own sub-command.
 
 The opaque-HEAD half of that first family IS closable, and closing it costs nothing: when the head is unresolvable (`$(echo gh)`, `${PATH:0:0}gh`, `$'gh'`, `$G`) the REMAINDER still carries the verb, so try the remainder against every head you know and deny if it is a merge whoever the head turns out to be.
 

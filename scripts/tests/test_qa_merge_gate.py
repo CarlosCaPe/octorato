@@ -1271,3 +1271,315 @@ class TestTokenizerBulkTakeIsExact(unittest.TestCase):
                          [t for t, _s, _e in gate._tokenize("a 'b c' d")])
         self.assertEqual(["a", "b c", "d"],
                          [t for t, _s, _e in gate._tokenize('a "b c" d')])
+
+
+class TestOptionsAfterTheCommandFlag(unittest.TestCase):
+    """QA cycle 4, root cause (a). `_command_flag_value` returned the token
+    IMMEDIATELY after `-c`, but bash, sh, dash and ksh keep parsing OPTIONS after
+    it: the command string is the first NON-option word, and `--` ends option
+    parsing. So the gate read `--` or `-e` as the command, the recursion found
+    nothing in it, and the fall-through direct match cannot see a quoted token.
+
+    `bash -c -- "…"`, `bash -c -e "…"` and `sh -c -- "…"` all ALLOWED and all
+    three were proved to execute, by running them with a fake `gh` first on PATH
+    and reading `pr merge` back out of its log.
+    """
+
+    def test_an_option_between_the_flag_and_the_string_does_not_hide_it(self):
+        for cmd in (f'bash -c -- "{GH_MERGE} 292"',
+                    f'bash -c -e "{GH_MERGE} 292"',
+                    f'sh -c -- "{GH_MERGE} 292"',
+                    f'dash -c -- "{GH_MERGE} 292"',
+                    f'ksh -c -x -- "{GH_MERGE} 292"',
+                    f'bash --norc -c -- "{GH_MERGE} 292"',
+                    'sh -c -e -x "git push origin main"'):
+            with self.subTest(cmd=cmd):
+                self.assertTrue(gate._find_publish_subcmds(cmd), cmd)
+
+    def test_the_end_of_options_marker_hands_over_the_next_word_even_if_it_looks_like_a_flag(self):
+        self.assertEqual("-x", gate._command_flag_value(["-c", "--", "-x"]))
+        self.assertIsNone(gate._command_flag_value(["-c", "--"]))
+
+    def test_the_string_itself_is_still_the_string(self):
+        self.assertEqual(f"{GH_MERGE} 292",
+                         gate._command_flag_value(["-c", f"{GH_MERGE} 292"]))
+
+    def test_the_benign_twin_one_edit_away_stays_benign(self):
+        for cmd in (f'bash -c -- "gh pr view 292"',
+                    f'sh -c -- "git status --short"'):
+            with self.subTest(cmd=cmd):
+                self.assertEqual([], gate._find_publish_subcmds(cmd), cmd)
+
+
+class TestTheEqualsSpellingIsTheSameFlag(unittest.TestCase):
+    """QA cycle 4, root cause (c). `--command "x"` denied and `--command="x"`
+    allowed — the same flag, spelled the way `su(1)` and `flock(1)` document it.
+    """
+
+    def test_both_spellings_of_the_long_flag_carry_the_command(self):
+        for cmd in (f'su --command="{GH_MERGE} 292"',
+                    f'su --command="{GH_MERGE} 292" git',
+                    f'flock --command="{GH_MERGE} 292" /tmp/l',
+                    f'flock --command "{GH_MERGE} 292" /tmp/l'):
+            with self.subTest(cmd=cmd):
+                self.assertTrue(gate._find_publish_subcmds(cmd), cmd)
+
+    def test_the_inline_value_is_the_value(self):
+        self.assertEqual("x y", gate._command_flag_value(["--command=x y"]))
+        self.assertIsNone(gate._command_flag_value(["--command="]))
+
+    def test_an_unrelated_long_flag_with_an_equals_is_not_the_command_flag(self):
+        self.assertIsNone(gate._command_flag_value(["--rcfile=/dev/null"]))
+        self.assertIsNone(gate._command_flag_value(["--exec=/bin/true"]))
+
+
+class TestTheCommandHeadIsAPosition(unittest.TestCase):
+    """QA cycle 4, root cause (b). `_reparse_args` tested EVERY word ahead of the
+    re-parsing head against `_CMD_HEADS` and returned "nothing re-parses" on a
+    hit. So any wrapper whose path or user argument had the basename `gh`, `git`,
+    `curl` or `cd` was a total bypass — and `git` is the canonical service-account
+    and lock-file name, which makes `flock /var/lock/git -c "…"` and
+    `sudo -u git bash -c "…"` ordinary shapes. Both measured ALLOW and both proved
+    to execute against a fake `gh` on PATH.
+
+    QA's mutant M51 deleted that short-circuit and SURVIVED the whole suite: the
+    controls the commit credited to it (`git commit -m "gh pr merge 96"`) are
+    protected by the `-c`-flag requirement, not by it.
+    """
+
+    def test_a_command_head_in_an_argument_hides_nothing(self):
+        for cmd in (f'flock /var/lock/git -c "{GH_MERGE} 292"',
+                    f'flock /tmp/locks/gh -c "{GH_MERGE} 292"',
+                    'flock /var/lock/curl -c "git push origin main"',
+                    f'sudo -u git bash -c "{GH_MERGE} 292"',
+                    'sudo -u gh sh -c "git push origin main"',
+                    f'runuser -u git -c "{GH_MERGE} 292"'):
+            with self.subTest(cmd=cmd):
+                self.assertTrue(gate._find_publish_subcmds(cmd), cmd)
+
+    def test_the_head_is_read_past_env_assignments_and_redirections(self):
+        for cmd in (f'FOO=1 flock /tmp/git -c "{GH_MERGE} 292"',
+                    f'> /tmp/log flock /tmp/git -c "{GH_MERGE} 292"',
+                    f'2>/dev/null flock /tmp/git -c "{GH_MERGE} 292"'):
+            with self.subTest(cmd=cmd):
+                self.assertTrue(gate._find_publish_subcmds(cmd), cmd)
+
+    def test_head_index_skips_only_the_shell_noise(self):
+        self.assertEqual(0, gate._head_index(["git", "status"]))
+        self.assertEqual(1, gate._head_index(["FOO=1", "git", "status"]))
+        self.assertEqual(2, gate._head_index([">", "/tmp/x", "git", "status"]))
+        self.assertEqual(1, gate._head_index(["2>&1", "git", "status"]))
+
+    def test_the_real_head_still_short_circuits(self):
+        for cmd in (f'git commit -m "{GH_MERGE} 96"',
+                    f'FOO=1 git commit -m "{GH_MERGE} 96"',
+                    'gh pr view 292 --json state',
+                    'cd /repo && git status'):
+            with self.subTest(cmd=cmd):
+                self.assertEqual([], gate._find_publish_subcmds(cmd), cmd)
+
+
+class TestACountFlagIsNotACommandChannel(unittest.TestCase):
+    """QA cycle 4, root cause (d) — over-fire, treated here as a security failure
+    because a gate people route around is off. `grep -c`, `grep -rc`, `grep -ic`
+    and `psql -c` all DENIED while publishing nothing.
+
+    Three independent narrowings, each asserted on its own:
+      * a `-c` inside a letter BUNDLE is not a command flag on the unnamed path;
+      * a program whose `-c` is a count or a query is not a command channel;
+      * the value must parse as a whole command LINE, not as a quoted MENTION
+        inside somebody else's data.
+    """
+
+    def test_the_measured_over_fires_are_gone(self):
+        for cmd in (f'grep -c "{GH_MERGE} 292" notes.md',
+                    'grep -rc "git push origin main" docs/',
+                    f'grep -ic "{GH_MERGE} 292" notes.md',
+                    "psql -c \"insert into log values ('git push origin main')\"",
+                    f'rg -c "{GH_MERGE} 292" .',
+                    'sort -c file.txt', 'uniq -c log', 'gcc -c main.c -o main.o'):
+            with self.subTest(cmd=cmd):
+                self.assertEqual([], gate._find_publish_subcmds(cmd), cmd)
+
+    def test_a_bundle_is_not_a_command_flag_on_the_unnamed_path(self):
+        self.assertIsNone(gate._command_flag_value(["-rc", "x y"], bundles=False))
+        self.assertEqual("x y", gate._command_flag_value(["-rc", "x y"]))
+
+    def test_a_quoted_mention_inside_a_value_is_not_a_command_line(self):
+        text = "insert into log values ('git push origin main')"
+        self.assertEqual([], gate._publish_carriers(text, mentions=False))
+        self.assertTrue(gate._publish_carriers(text))
+
+    def test_the_wrapper_twin_one_edit_away_still_denies(self):
+        # the SAME `-c` and the SAME value, on a head that is not a counter
+        for cmd in (f'flock -c "{GH_MERGE} 292" /tmp/l',
+                    f'su -c "{GH_MERGE} 292"'):
+            with self.subTest(cmd=cmd):
+                self.assertTrue(gate._find_publish_subcmds(cmd), cmd)
+
+    def test_a_stdin_channel_keeps_the_mention_reading(self):
+        # the second reading is a stdin-channel rule, not a universal one
+        self.assertTrue(gate._find_publish_subcmds(f'bash <(echo "{GH_MERGE} 292")'))
+
+
+class TestSshCarriesItsCommandTwoWays(unittest.TestCase):
+    """QA cycle 4. `ssh -o RemoteCommand='gh pr merge 292' host` ALLOWED; `ssh -G`
+    confirms the option carries the command. The old read took `rest[1:]` — every
+    word after the FIRST argument — so one option in front shifted the
+    destination and the remote command was read a word early."""
+
+    def test_the_remote_command_option_is_a_command(self):
+        for cmd in (f"ssh -o RemoteCommand='{GH_MERGE} 292' host",
+                    f"ssh -oRemoteCommand='{GH_MERGE} 292' host",
+                    "ssh -o RemoteCommand='git push origin main' host"):
+            with self.subTest(cmd=cmd):
+                self.assertTrue(gate._find_publish_subcmds(cmd), cmd)
+
+    def test_the_destination_is_found_past_valued_options(self):
+        for cmd in (f"ssh -p 2222 host {GH_MERGE} 292",
+                    f"ssh -i /keys/git host {GH_MERGE} 292",
+                    f"ssh -l git -p 22 host {GH_MERGE} 292",
+                    f"ssh host {GH_MERGE} 292"):
+            with self.subTest(cmd=cmd):
+                self.assertTrue(gate._find_publish_subcmds(cmd), cmd)
+
+    def test_ssh_that_runs_nothing_publishing_stays_benign(self):
+        for cmd in ("ssh -o StrictHostKeyChecking=no host uptime",
+                    "ssh -p 2222 host 'git status --short'",
+                    "ssh host"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual([], gate._find_publish_subcmds(cmd), cmd)
+
+
+class TestTheDepthCapDoesNotEatAnApprovableMerge(_GateRunner, unittest.TestCase):
+    """QA cycle 4, M52 (cap 5 → 1) survived both legs: nothing asserted that a
+    merge nested INSIDE the cap resolves to its PR number instead of the depth
+    deny. The cap has two edges and only the far one was pinned."""
+
+    def test_an_approved_merge_two_to_four_shells_deep_is_approved(self):
+        for depth in (2, 3, 4):
+            with self.subTest(depth=depth):
+                self._allow(_nest(depth, f"{GH_MERGE} 292"),
+                            {"OCTO_MERGE_APPROVE": "292", "OCTO_QA_OK": "1"})
+
+    def test_an_unapproved_merge_inside_the_cap_denies_by_PR_NUMBER_not_by_depth(self):
+        for depth in (2, 3, 4):
+            with self.subTest(depth=depth):
+                rc, err = self._run(_nest(depth, f"{GH_MERGE} 292"), {})
+                self.assertEqual(2, rc, err)
+                self.assertIn("PR #292", err)
+                self.assertNotIn("nests shells deeper", err)
+
+    def test_benign_nesting_inside_the_cap_is_not_a_depth_deny(self):
+        for depth in (2, 3, 4):
+            with self.subTest(depth=depth):
+                self._allow(_nest(depth, "gh pr view 292 --json state"))
+
+
+class TestTheParseFitsTheHookBudget(unittest.TestCase):
+    """`hooks.json` gives this gate 5 seconds, and a hook that is killed writes no
+    stdout, which the harness reads as ALLOW — a timeout is a bypass with a
+    stopwatch. Three quadratics were inherited from the parent and measured
+    against that budget on 2026-09-08:
+
+      * `_peel_candidates` built and joined a tail LIST for every token, head or
+        not: 20000 benign words took 39.7 s.
+      * `_api_write_action` ran a 1.7 ms regex per CANDIDATE, and an opaque head
+        synthesizes one `curl` candidate per token: 5000 `$a` tokens took 45.5 s.
+      * `_split_heredocs` scanned every remaining line per `<<WORD`: 2000
+        unterminated openers took 3.6 s.
+
+    Asserted against the real budget rather than against a ratio, because the
+    contract is "finishes inside 5 s", and every case here is 10x-90x under it on
+    the machine that measured the numbers above.
+    """
+
+    BUDGET = 5.0
+
+    def _under_budget(self, label: str, cmd: str):
+        import time
+        for cache in ("_PARTS_CACHE", "_ENV_CHAIN_CACHE", "_TOKENS_CACHE",
+                      "_ARG_TOKENS_CACHE"):
+            getattr(gate, cache, {}).clear()
+        start = time.monotonic()
+        gate._find_publish_subcmds(cmd)
+        spent = time.monotonic() - start
+        self.assertLess(spent, self.BUDGET,
+                        f"{label} took {spent:.1f}s of a {self.BUDGET}s hook budget")
+
+    def test_a_long_benign_word_list_parses_inside_the_budget(self):
+        self._under_budget("20000 benign words", " ".join(["word"] * 20000))
+
+    def test_a_long_opaque_head_line_parses_inside_the_budget(self):
+        self._under_budget("5000 opaque tokens", "git " + " ".join(["$a"] * 5000))
+        self._under_budget("5000 opaque tokens with write markers",
+                           "git " + " ".join(["$a -f"] * 1000))
+
+    def test_many_unterminated_heredoc_openers_parse_inside_the_budget(self):
+        self._under_budget("2000 << openers",
+                           "\n".join(f"echo 'a << T{i}'" for i in range(2000)))
+
+    def test_the_heredoc_terminator_scan_is_not_quadratic(self):
+        """Pinned on `_split_heredocs` alone, and at 8000 lines, because the
+        whole-parse budget test could not tell: the terminator scan cost 0.57 s
+        at 2000 lines and the 5 s budget swallowed it, so reverting the fix left
+        the anchor green. On its own it is a clean quadratic — 0.57 s / 2.10 s /
+        9.17 s at 2000 / 4000 / 8000 — against 0.00 / 0.01 / 0.03 with the index.
+        One second at 8000 is a 30x margin on the fix and a clear failure without
+        it."""
+        import time
+        cmd = "\n".join(f"echo 'a << T{i}'" for i in range(8000))
+        start = time.monotonic()
+        gate._split_heredocs(cmd)
+        spent = time.monotonic() - start
+        self.assertLess(spent, 1.0,
+                        f"_split_heredocs took {spent:.1f}s on 8000 openers")
+
+    def test_the_alias_form_test_short_circuits_before_its_lazy_regexes(self):
+        """`_PAT_GIT_CONFIG_ALIAS` and `_PAT_GIT_C_ALIAS_DEF` both carry a lazy
+        `[^|&;]*?` run that backtracks across the whole sub-command, and
+        `_normalize` asks this question once per CANDIDATE. Both patterns REQUIRE
+        the word `alias`, so a C-level substring test decides it first.
+
+        Pinned on the function and at 200 calls because the whole-parse budget
+        test could not tell at 5000 tokens: the other fixes absorbed it and the
+        anchor stayed green through a revert. On its own it is 0.004 s fixed
+        against 1.282 s reverted, on the same 36 KB string."""
+        import time
+        sub = "git " + " ".join(["$a"] * 12000)
+        start = time.monotonic()
+        for _ in range(200):
+            gate._alias_definition_form(sub)
+        spent = time.monotonic() - start
+        self.assertLess(spent, 0.2,
+                        f"200 _alias_definition_form calls took {spent:.2f}s")
+        # and it still SAYS yes when the line really does define one
+        self.assertTrue(gate._alias_definition_form(
+            "git config alias.pm 'push origin main'"))
+
+    def test_the_heredoc_index_still_finds_the_right_terminator(self):
+        """The index replaced a linear scan from the CURRENT position, so it has
+        to keep that: the first terminator at or past the opener, never an
+        earlier line that happens to carry the same word."""
+        cmd = "EOF\nbash <<EOF\ngh pr merge 292\nEOF\necho done"
+        body_cmd, bodies = gate._split_heredocs(cmd)
+        self.assertEqual([("bash <<EOF", "gh pr merge 292")], bodies)
+        self.assertEqual(["gh"], [f for _s, f in gate._find_publish_subcmds(cmd)])
+
+    def test_two_heredocs_on_one_line_keep_their_own_bodies(self):
+        cmd = "cat <<A <<B\nfirst\nA\nsecond\nB"
+        _body, bodies = gate._split_heredocs(cmd)
+        self.assertEqual([("cat <<A <<B", "first"), ("cat <<A <<B", "second")],
+                         bodies)
+
+    def test_the_merge_at_the_end_of_a_long_line_is_still_found(self):
+        cmd = " ".join(["word"] * 20000) + " ; " + f"{GH_MERGE} 292"
+        self.assertEqual(["gh"], [f for _s, f in gate._find_publish_subcmds(cmd)])
+
+    def test_the_curl_candidate_bound_keeps_a_real_api_write(self):
+        # the bound drops synthesized `curl` heads PAST the last write marker;
+        # a real one, and an opaque head in front of one, must survive it.
+        self.assertTrue(gate._find_publish_subcmds(
+            "curl -X PUT https://api.github.com/repos/o/r/pulls/280/merge"))
+        self.assertTrue(gate._find_publish_subcmds(
+            "$TOOL -X PUT https://api.github.com/repos/o/r/pulls/280/merge"))

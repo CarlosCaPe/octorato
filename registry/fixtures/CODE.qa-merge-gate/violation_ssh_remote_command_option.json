@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "ssh -o RemoteCommand='gh pr merge 291' build-host"
+  },
+  "cwd": "/nonexistent/repo"
+}

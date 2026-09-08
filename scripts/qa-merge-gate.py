@@ -20,9 +20,13 @@ A head whose STRING ARGUMENT is itself a command (`bash -c`, `sh -lc`, `eval`,
 re-identified; a head that does not re-parse (`git commit`, `echo`, `cat`,
 `python3 -`) does not. That property, not the presence of quotes, is the line.
 
-RESIDUAL, each one MEASURED against this file on 2026-09-08 by feeding the
-payload on stdin (deny = exit 2). This list is what remains, not what is
-convenient — the previous one omitted five reachable families:
+RESIDUAL — NINE, each one MEASURED against this file on 2026-09-08 by feeding
+the payload on stdin (deny = exit 2). This list is what remains, not what is
+convenient — an earlier one omitted five reachable families. It is the CANONICAL
+count: `skills/agent-proof-approval-gate`, `skills/command-boundary-hook-matching`
+and `docs/architecture/v7-nothing-ships-unverified.md` summarize this list and
+used to read 4, 3 and 5 against a header that said 7, which is how a residual
+stops being tracked. One number, four surfaces, reconciled 2026-09-08.
 
   1. The VERB supplied by an expansion instead of by literal text:
      ``X="pr merge"; gh $X 291``, ``$(echo "gh pr merge 291")``,
@@ -55,6 +59,41 @@ convenient — the previous one omitted five reachable families:
   7. The v7 boundary itself: the receipt files live under $HOME and the model can
      append to them. Only the harness env (OCTO_MERGE_APPROVE) is a real
      boundary. See docs/architecture/v7-nothing-ships-unverified.md.
+  8. `_NON_SHELL_C_HEADS`, the one ALLOW-side enumeration in this file. A program
+     whose `-c` means COUNT or QUERY is exempt from the unnamed-wrapper `-c`
+     reading, which is what ended the `grep -c` / `grep -rc` / `psql -c`
+     over-fire class. Two edges, both measured, both stated rather than traded:
+     a wrapper deliberately NAMED for a counter escapes that reading
+     (``./grep -c "gh pr merge 291"`` — ALLOW), and an unlisted counter reached
+     through ANOTHER program still over-fires (``find . -exec grep -c "…" {} ';'``
+     and ``xargs grep -c "…"`` — both DENY). The exemption is anchored on the HEAD
+     word ALONE, because any other anchor re-opens the path-argument bypass this
+     cycle just closed: ``flock /var/lock/grep -c "gh pr merge 291"`` and
+     ``flock /var/lock/psql -c "…"`` both still DENY, and that is the trade.
+  9. Parse TIME. `hooks.json` gives this gate 5 s; a hook killed at its budget
+     writes no stdout, and the harness reads that as ALLOW, so a slow parse is a
+     bypass with a stopwatch. Four superlinear paths were fixed this cycle, all
+     measured whole-parse unless noted:
+       - `_peel_candidates` built and joined a tail LIST per token, head or not:
+         20000 benign words 39.7 s -> 0.43 s.
+       - `_api_write_action` ran a 1.7 ms regex per synthesized `curl` candidate,
+         and an opaque head synthesizes one per token: 8000 `$a` 52.2 s -> 0.7 s.
+       - `_alias_definition_form` ran two lazy `[^|&;]*?` regexes per candidate:
+         0.004 s vs 1.282 s for 200 calls on a 36 KB sub-command.
+       - `_split_heredocs` scanned every remaining line per `<<WORD`: 9.2 s ->
+         0.03 s at 8000 openers, measured on the function.
+     Two shapes stay superlinear and are BOUNDED rather than eliminated. A
+     crafted line alternating an opaque token with a write-marker flag
+     (``git $a -f $a -f …``) sits near 3 s at 2500 pairs (25 KB), so roughly
+     4000 pairs would reach the budget. A 6000-LINE pasted script sits near 3 s
+     for an unrelated reason — every line is its own sub-command and each one is
+     normalized — which is 4x better than before and still inside the budget only
+     up to about 10000 lines. Pinned by TestTheParseFitsTheHookBudget against the
+     5 s budget itself rather than against a ratio, because the budget is the
+     contract, plus one fixture (benign_long_opaque_argument_list.json): the
+     selftest harness kills a leg at 30 s, which is what turns time into the
+     verdict a fixture can assert. The heredoc scan has no fixture — proving it
+     needs a 240 KB payload — and is unit-anchored only.
 
 KNOWN COST, not a hole: a gh-merge line whose PR number the RAW parse cannot
 read (`gh "pr" merge 291`, an unclosed quote) is identified as a merge and falls
@@ -819,19 +858,49 @@ def _peel_candidates(s: str) -> list[tuple[str, str]]:
     toks = _tokens_with_offsets(s)
     if toks is None:
         toks = _ws_tokens(s)
+    # The decoded remainder of position i is a SUFFIX of the decoded whole, so
+    # it is built once and sliced, never re-joined per token. The old code built
+    # `toks[i + 1:]` and joined it for EVERY token, head or not: O(tokens²) on a
+    # line that contains no head at all. 20000 benign words took 20.3 s against a
+    # 5 s `hooks.json` budget, and a hook that is killed writes no stdout, which
+    # the harness reads as ALLOW — a timeout is a bypass with a stopwatch.
+    flat_parts = [t for t, _s2, _e2 in toks]
+    flat = " ".join(flat_parts)
+    dec_at: list[int] = []          # offset of token i inside `flat`
+    pos = 0
+    for t in flat_parts:
+        dec_at.append(pos)
+        pos += len(t) + 1
+    # A synthesized `curl` reaches exactly ONE pattern, `_api_write_action`, and
+    # that needs an `_API_WRITE` marker somewhere in the candidate's remainder.
+    # Every remainder is a SUFFIX of `flat`, so the LAST marker in `flat` bounds
+    # all of them at once: past it a `curl` candidate can match nothing, and
+    # synthesizing it anyway cost a 1.7 ms regex per opaque token — 9.6 s on a
+    # 5000-token line, against a 5 s `hooks.json` budget. Exact, not a heuristic:
+    # a match lying wholly inside a suffix that starts after the last match would
+    # itself be a later match in `flat`.
+    last_write = -1
+    if "-" in flat:
+        for _m in _API_WRITE.finditer(flat):
+            last_write = _m.start()
     out: list[tuple[str, str]] = []
     for i, (text, _start, end) in enumerate(toks):
         bare = text.strip("\"'")
         head = os.path.basename(bare)
-        tail = [t for t, _s2, _e2 in toks[i + 1:]]
-        if head in _CMD_HEADS:
-            out.append((head + s[end:], " ".join([head] + tail)))
-        elif _OPAQUE_HEAD.search(bare):
-            for h in ("gh", "git", "curl"):
-                out.append((h + s[end:], " ".join([h] + tail)))
+        is_cmd = head in _CMD_HEADS
+        if not is_cmd and not _OPAQUE_HEAD.search(bare):
+            continue
+        at = dec_at[i + 1] if i + 1 < len(flat_parts) else len(flat)
+        rest_dec = flat[at:] if i + 1 < len(flat_parts) else ""
+        suffix = (" " + rest_dec) if rest_dec else ""
+        if is_cmd:
+            out.append((head + s[end:], head + suffix))
+        else:
+            heads = ("gh", "git", "curl") if at <= last_write else ("gh", "git")
+            for h in heads:
+                out.append((h + s[end:], h + suffix))
     if not out:
-        flat = " ".join(t for t, _s2, _e2 in toks) if toks else s
-        out.append((s, flat))
+        out.append((s, flat if toks else s))
     return out
 
 
@@ -1000,6 +1069,14 @@ _ALIAS_PUSH_BODY = re.compile(
 
 def _alias_definition_form(sub: str) -> bool:
     """True when *sub* defines a gh or git alias that could expand to a merge."""
+    # `_PAT_GIT_CONFIG_ALIAS` and `_PAT_GIT_C_ALIAS_DEF` both carry `[^|&;]*?`,
+    # a lazy run that backtracks across the WHOLE sub-command, and `_normalize`
+    # asks this question once per candidate head. 5000 `$a` tokens (three
+    # candidates each, all opaque) spent 14 s inside these two. The word `alias`
+    # is required by both patterns, so a C-level substring test decides it first
+    # and the regexes only run on a line that could actually match.
+    if "alias" not in sub:
+        return False
     if _PAT_GH_ALIAS_IMPORT.match(sub):
         return True
     if _PAT_GH_ALIAS_SET.match(sub) and _ALIAS_MERGE_BODY.search(sub):
@@ -1264,6 +1341,12 @@ def _split_heredocs(cmd: str) -> tuple[str, list[tuple[str, str]]]:
     commands that follow it.
     """
     lines = cmd.split("\n")
+    # Where each stripped line CONTENT occurs, built once. The terminator used to
+    # be found by scanning every remaining line per `<<WORD`, so a line carrying
+    # many openers with no terminator was O(lines²).
+    at: dict[str, list[int]] = {}
+    for j, ln in enumerate(lines):
+        at.setdefault(ln.strip(), []).append(j)
     kept: list[str] = []
     bodies: list[tuple[str, str]] = []
     i = 0
@@ -1273,8 +1356,8 @@ def _split_heredocs(cmd: str) -> tuple[str, list[tuple[str, str]]]:
         i += 1
         for _q, term in _HEREDOC_RE.findall(line):
             end = None
-            for j in range(i, len(lines)):
-                if lines[j].strip() == term:
+            for j in at.get(term, ()):        # ascending; first one at or past i
+                if j >= i:
                     end = j
                     break
             if end is None:
@@ -1346,15 +1429,157 @@ def _is_command_flag(w: str) -> bool:
     return "c" in letters and all(ch in _SHELL_OPT_LETTERS for ch in letters)
 
 
-def _command_flag_value(words: list[str]) -> str | None:
-    """The token a `-c`-style flag in *words* hands to a shell, else None."""
+def _command_flag_value(words: list[str], bundles: bool = True) -> str | None:
+    """The token a `-c`-style flag in *words* hands to a shell, else None.
+
+    Three things the old one-liner (`if _is_command_flag(w): return words[i+1]`)
+    got wrong, every one of them measured as an ALLOW that executed the real gh
+    through a fake `gh` on PATH (QA cycle 4):
+
+    * bash, sh, dash and ksh keep parsing OPTIONS after `-c`. The command string
+      is the first NON-option word, and `--` ends option parsing. Taking
+      `words[i + 1]` handed back `--` or `-e`, the recursion found nothing in it,
+      and `bash -c -- "gh pr merge 292"`, `bash -c -e "…"` and `sh -c -- "…"`
+      all walked.
+    * the long flag was only ever matched whole, so `su --command="…"` and
+      `flock --command="…" f` allowed while `flock --command "…" f` denied. The
+      `=` spelling is the same flag.
+    * *bundles*: on the UNNAMED-wrapper path a `-c` inside a letter bundle is a
+      non-shell option cluster far more often than a shell's `-lc`, and reading
+      it as a command channel DENIED `grep -rc "git push origin main" docs/` and
+      `grep -ic "gh pr merge 292" notes.md`. A named shell head keeps the bundle
+      reading (`bash -lc` is real); nobody-named gets the exact flag only.
+    """
     for i, w in enumerate(words):
-        if _is_command_flag(w) and i + 1 < len(words):
-            return words[i + 1]
+        if w.startswith("--") and "=" in w:
+            name, _eq, inline = w.partition("=")
+            if _is_command_flag(name):
+                return inline or None
+            continue
+        if not _is_command_flag(w):
+            continue
+        if not bundles and w != "-c" and w != "--command":
+            continue
+        j = i + 1
+        while j < len(words):
+            t = words[j]
+            if t == "--":                       # end of options: the next word
+                return words[j + 1] if j + 1 < len(words) else None
+            if len(t) > 1 and t.startswith("-"):
+                j += 1                          # another option, keep looking
+                continue
+            return t
+        return None
     return None
 
 
-def _publish_carriers(text: str) -> list[str]:
+# The first word of a sub-command, once the shell's own leading noise is gone.
+_ENV_WORD_RE = re.compile(r"^[A-Za-z_]\w*=")
+_REDIR_WORD_RE = re.compile(r"^\d*[<>]")
+_BARE_REDIR_RE = re.compile(r"^\d*[<>]+$")
+
+
+def _head_index(words: list[str]) -> int:
+    """Index of the COMMAND HEAD in *words*: the first word that is not a leading
+    env assignment, a redirection or a grouping opener.
+
+    The head POSITION is the point. `_reparse_args` used to test EVERY word ahead
+    of the re-parsing head against `_CMD_HEADS` and return "nothing re-parses" on
+    a hit, so any wrapper carrying a path or a user name whose basename happened
+    to be `gh`, `git`, `curl` or `cd` was a total bypass:
+    `flock /var/lock/git -c "gh pr merge 292"` and `sudo -u git bash -c "…"` both
+    allowed and both executed the real gh (QA cycle 4, root cause b). `git` is the
+    canonical service-account and lock-file name, so that shape is ordinary rather
+    than exotic. Anchoring the short-circuit on the head is what makes the
+    argument a mere argument again.
+    """
+    i = 0
+    while i < len(words):
+        w = words[i]
+        if w in ("(", "{"):
+            i += 1
+            continue
+        if _ENV_WORD_RE.match(w):
+            i += 1
+            continue
+        if _BARE_REDIR_RE.match(w):
+            i += 2                    # `> file`: the target is not the head
+            continue
+        if _REDIR_WORD_RE.match(w):
+            i += 1                    # `>file`, `2>&1`
+            continue
+        return i
+    return len(words)
+
+
+# Programs whose `-c` means COUNT or "run this QUERY", not "run this COMMAND".
+# The unnamed-wrapper inversion below reads a `-c` as a command channel, which is
+# right for `flock`, `su`, `runuser` and every wrapper nobody named, and wrong for
+# these: `grep -c "gh pr merge 292" notes.md` counts matching lines and
+# `psql -c "insert into log values ('git push origin main')"` runs SQL. Both
+# DENIED (QA cycle 4) — over-fire, and a gate people route around is off.
+#
+# This is an ALLOW-side enumeration, the one shape this file otherwise refuses,
+# so it is fenced three ways: it is consulted ONLY on the unnamed path (a real
+# `bash`/`sh`/`eval`/`ssh` head is still read as a shell, so `sh -c` inside one of
+# these is unaffected), it anchors on the HEAD word alone (a `grep` sitting in a
+# wrapper's path argument exempts nothing — that is bypass (b) again), and its
+# failure mode is a loud over-fire on an unlisted counter, never a silent allow.
+_NON_SHELL_C_HEADS = frozenset({
+    "grep", "egrep", "fgrep", "zgrep", "zegrep", "rg", "ag", "ack", "ugrep",
+    "uniq", "sort", "nl", "pgrep", "wc", "cut", "comm", "od",
+    "psql", "mysql", "mariadb", "sqlite3", "duckdb", "clickhouse-client",
+    "redis-cli", "mongosh", "cqlsh", "influx",
+    "gcc", "g++", "cc", "clang", "clang++", "as", "ld", "javac",
+    "tar", "cpio", "openssl", "objcopy", "objdump", "install",
+})
+
+# ssh short options that take a VALUE, so the word after them is not the
+# destination. `-o` is the one that can carry a whole command line.
+_SSH_VALUE_SHORTS = frozenset("BbcDEeFIiJLlmOoPpQRSWw")
+_SSH_REMOTE_CMD_RE = re.compile(r"^remotecommand=(.+)$", re.IGNORECASE | re.DOTALL)
+
+
+def _ssh_commands(rest: list[str]) -> list[str]:
+    """Every command line an `ssh` invocation carries, given its arguments.
+
+    Two channels, and the old `rest[1:]` read neither correctly:
+
+    * the words after the DESTINATION. `rest[1:]` assumed the destination was the
+      first argument, so one option in front shifted the read a word early.
+    * `-o RemoteCommand=…`, which `ssh -G` confirms is honoured as the command to
+      run: `ssh -o RemoteCommand='gh pr merge 292' host` ALLOWED (QA cycle 4).
+    """
+    out: list[str] = []
+    i = 0
+    dest = None
+    while i < len(rest):
+        w = rest[i]
+        if w == "--":
+            i += 1
+            continue
+        if not (w.startswith("-") and len(w) > 1):
+            dest = i
+            break
+        val = None
+        for k, ch in enumerate(w[1:]):
+            if ch in _SSH_VALUE_SHORTS:
+                val = w[k + 2:]
+                if not val and i + 1 < len(rest):
+                    i += 1
+                    val = rest[i]
+                break
+        if val:
+            m = _SSH_REMOTE_CMD_RE.match(val.strip("\"'"))
+            if m:
+                out.append(m.group(1))
+        i += 1
+    if dest is not None and dest + 1 < len(rest):
+        out.append(" ".join(rest[dest + 1:]))
+    return out
+
+
+def _publish_carriers(text: str, mentions: bool = True) -> list[str]:
     """The parts of *text* that ARE a publish form, when *text* is content a
     shell will execute. Empty list when it carries none.
 
@@ -1363,10 +1588,18 @@ def _publish_carriers(text: str) -> list[str]:
     quoted argument it hands on (`echo "gh pr merge 292"` inside a `<(...)`).
     A single-word token is never a carrier — one token cannot supply the two
     words a verb needs after a head, which is what keeps a mention benign.
+
+    *mentions* selects the second reading. It is a stdin-channel rule, not a
+    universal one: `bash <(echo "gh pr merge 292")` really does run the quoted
+    argument, but on the unnamed-wrapper `-c` path the same reading turned a
+    quoted MENTION inside somebody else's data into a merge —
+    `psql -c "insert into log values ('git push origin main')"` DENIED (QA cycle
+    4), because the token `('git push origin main')` unwraps to a push. There the
+    value has to parse as a whole command LINE, which that SQL statement does not.
     """
     out = [sub for sub in _split_subcmds(text)
            if _is_publish_form(_unwrap_sub_match(sub))]
-    if out:
+    if out or not mentions:
         return out
     toks = _tokens_with_offsets(text)
     if toks is None:
@@ -1429,23 +1662,42 @@ def _reparse_args(raw_sub: str) -> list[str]:
     comes first, ANY `-c`-style flag or stdin channel whose content PARSES as a
     publish form is a re-parse, whatever the wrapper is called.
 
-    The inversion is bounded by that parse, which is what keeps its over-fire at
-    zero on the corpus: `echo "gh pr merge 96"` carries no command flag, and
-    `git commit -m "…"` is a command head, so neither reaches it. `gcc -c main.c`
-    has the flag and no publish form. The residual cost is a command that takes a
-    literal `-c "git push origin main"` and does NOT execute it — measured as none
-    on the over-fire corpus, and loud rather than silent when it happens.
+    The inversion is bounded FOUR ways, because the first cut of it was measured
+    denying three ordinary read-only commands (`grep -c`, `grep -rc`, `psql -c`)
+    and over-fire is a security failure with extra steps — a gate people route
+    around is off:
+
+      * the HEAD must not be a command head. That test is on the head POSITION
+        now, not on every word, which is what closed the `flock /var/lock/git -c`
+        and `sudo -u git bash -c` bypasses (see `_head_index`).
+      * the flag must be EXACTLY `-c` or `--command`. A letter bundle on a
+        wrapper nobody named is an option cluster far more often than a shell's
+        `-lc`, and reading `-rc`/`-ic` as a command channel is what denied
+        `grep -rc "git push origin main" docs/`.
+      * the HEAD must not be a program whose `-c` counts or queries
+        (`_NON_SHELL_C_HEADS`). Stated as residual 8 in the header, with both of
+        its edges measured.
+      * the value must parse as a whole command LINE, not as a quoted MENTION
+        inside it (`mentions=False`), which is what stopped a `git push origin
+        main` inside a SQL string literal from being read as a push.
+
+    `echo "gh pr merge 96"` carries no command flag and `git commit -m "…"` is a
+    command head, so neither ever reaches the inversion. `gcc -c main.c` has the
+    flag and no publish form. The residual cost is a command that takes a literal
+    `-c "git push origin main"` and does NOT execute it — measured as none on a
+    50-command over-fire corpus, and loud rather than silent when it happens.
     """
     toks = _tokens_with_offsets(raw_sub)
     if toks is None:
         toks = _ws_tokens(raw_sub)
     words = [t for t, _s, _e in toks]
+    h = _head_index(words)
+    head0 = os.path.basename(words[h].strip("\"'")) if h < len(words) else ""
+    if head0 in _CMD_HEADS:
+        return []                  # the HEAD is a command head: nothing re-parses
     named = None
-    for i, w in enumerate(words):
-        head = os.path.basename(w.strip("\"'"))
-        if head in _CMD_HEADS:
-            return []              # a command head comes first: nothing re-parses
-        if head in _REPARSE_HEADS:
+    for i in range(h, len(words)):
+        if os.path.basename(words[i].strip("\"'")) in _REPARSE_HEADS:
             named = i
             break
     out: list[str] = []
@@ -1461,17 +1713,15 @@ def _reparse_args(raw_sub: str) -> list[str]:
             if rest:
                 out.append(" ".join(rest))
         elif head == "ssh":
-            # everything after the destination is the remote command line
-            if len(rest) >= 2:
-                out.append(" ".join(rest[1:]))
+            out.extend(_ssh_commands(rest))
         else:
             v = _command_flag_value(rest)
             if v is not None:
                 out.append(v)
-    if not out:
-        v = _command_flag_value(words[1:] if words else [])
+    if not out and head0 not in _NON_SHELL_C_HEADS:
+        v = _command_flag_value(words[h + 1:], bundles=False)
         if v is not None:
-            out.extend(_publish_carriers(v))
+            out.extend(_publish_carriers(v, mentions=False))
     for text in _stdin_channel_texts(raw_sub):
         out.extend(_publish_carriers(text))
     return out

@@ -127,13 +127,21 @@ Two rules keep the anchor honest once you have it:
 
 ## Residual Risk
 
-What string matching still cannot see:
+What string matching still cannot see. The canonical list is **nine** residuals, kept in full in `scripts/qa-merge-gate.py`'s header and summarized in [[agent-proof-approval-gate]]. The three lines below are residuals 1 and 2 of that list, the two that are purely a parsing limit.
 
 ```bash
 X="pr merge"; gh $X 291      # the verb itself comes from an expansion
 $(echo "gh pr merge 96")     # the whole command inside one substitution
 ./deploy.sh                  # the command lives in a file
 ```
+
+Two more are parsing-layer and were added by the cycle-4 fixes, so they belong here too: a program whose `-c` means COUNT or QUERY (`grep`, `psql`, `gcc`) is exempt from the unnamed-wrapper `-c` reading, anchored on the HEAD word only, so an unlisted counter reached through `find -exec` still over-fires and a wrapper deliberately NAMED `grep` escapes; and parse TIME on an adversarially long line, where a hook killed at its budget writes no stdout and the harness reads that as ALLOW.
+
+Three flag-parsing rules earned the same way, each measured executing the real command through a fake binary on PATH:
+
+- A shell keeps parsing OPTIONS after `-c`. The command string is the first NON-option word, and `--` ends option parsing — `bash -c -- "…"` and `bash -c -e "…"` are not `bash -c "--"`.
+- `--command=X` is the same flag as `--command X`. Match the name before the `=`.
+- The command HEAD is a POSITION, not "any word in the line". Testing every word against a list of safe heads makes any wrapper carrying a path or a user named `git` a total bypass: `flock /var/lock/git -c "…"`, `sudo -u git bash -c "…"`.
 
 An opaque HEAD is closable (try the remainder against every head you know, and deny if the remainder is the action). An opaque VERB is not, without denying legitimate lines like `docs='gh pr merge'; echo $docs`. The string-matching layer identifies the action; the env-var layer authorizes it, and the env channel is immune to indirection (see [[agent-proof-approval-gate]]).
 

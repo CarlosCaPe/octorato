@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "grep -rc \"gh pr merge 291\" docs/"
+  },
+  "cwd": "/nonexistent/repo"
+}
