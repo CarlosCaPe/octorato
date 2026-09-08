@@ -4,7 +4,7 @@
   "tool_name": "Bash",
   "tool_use_id": "toolu_arm",
   "tool_input": {
-    "command": "git checkout master"
+    "command": "git checkout -b tmp && git checkout evil"
   },
   "cwd": "{{SANDBOX}}/.claude",
   "_setup": {

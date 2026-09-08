@@ -4,10 +4,10 @@
   "tool_name": "Bash",
   "tool_use_id": "toolu_arm",
   "tool_input": {
-    "command": "git checkout master"
+    "command": "dd if=/dev/null of={{SANDBOX}}/.claude/settings.json"
   },
-  "cwd": "{{SANDBOX}}/.claude",
+  "cwd": "{{SANDBOX}}/wt/state-gate",
   "_setup": {
-    "expect_names": "rewrites every tracked file"
+    "expect_names": "settings.json"
   }
 }

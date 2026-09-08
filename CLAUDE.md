@@ -194,8 +194,16 @@ and that file was writable while the user-scope one was denied), `hooks.json`,
 sees the harness write its own state file, only the agent's), `registry/rules.yaml`, `.githooks/pre-push`, any
 `scripts/g__pretool*.py` or `scripts/g__stop__*.py`,
 `qa-merge-gate.py`, `gate_selftest.py`, `brain_doctor.py`, `receipt_ledger.py`, `kernel_proc.py` or
-`dimension-awareness-hook.py` is DENIED, and so is a whole-tree `git checkout|switch|reset --hard|stash|clean -f`
-at the live root, which would swap all of them in one move.
+`dimension-awareness-hook.py` is DENIED, and so is a whole-tree `git checkout|switch|reset --hard|stash|clean -f|
+read-tree -u|checkout-index -a -f` at the live root, which would swap all of them in one move. A `checkout -b` or
+`switch -c` is NOT one of those: it makes a ref at HEAD and rewrites no file. The set is a path shape, and it
+covers the `.claude` DIRECTORY for every verb that writes: "what does it hold?" is only a question for a verb that
+TAKES. Asking it of everything left two doors open, an absent destination (`mv <staged dir> <live>/x/.claude`, two
+allowed steps to a project-scope settings file carrying a forged approval) and an existing empty one (`cp
+settings.json <live>/knowledge/.../.claude/`, which made all eight of the empty directories a drop box). The
+listing is consulted only for `rm`, `unlink`, `find -delete` and `git rm`, so those eight stay removable, and
+`mkdir` never reaches the gate.
+Every comparison is case-folded, because `.Claude/SETTINGS.JSON` is the same file on Windows and on macOS.
 
 **The boundary is the COPY, not the file, and that is what keeps the brain developable by its own agent.**
 `~/.claude` is the MAIN worktree of this repo and the tree the harness actually loads; every `~/.octorato/wt/*`
@@ -208,9 +216,18 @@ allowed to denied. A symlink whose path looks like a worktree is caught (every c
 lifted this rule would be writable from the very file it protects. Same stance as the kernel's state floor, the
 operator's terminal is not hooked and stays the only writer. The protected set is a path SHAPE, not a list, so a
 new subdirectory does not reopen it, and the 14 interpreter write markers are proven one fixture each rather than
-claimed. Residuals, each with its reproduction, live in the gate's own header: enterprise policy outside `$HOME`
-(root-owned, the OS is the gate there), another repo's project settings, and an ancestor delete of a deep project
-root. The fixture pair is `registry/fixtures/ARCHITECTURE.arming-surface` (43 block + 48 allow).
+claimed. Two INLINE channels are read, and they ask different questions because they are different things: a `-c`
+argument is matched on a write marker next to a protected literal, while a heredoc DOCUMENT is matched only when
+the literal is the write's own destination. Measured on 17,232 real Bash calls, the loose test on heredocs flipped
+23 to deny at a precision of 2/23, and the 21 false ones were this repo editing its own header, fixtures and
+CLAUDE.md; the narrow one fires on 2 of 3,296, both a command writing a test harness whose text carries the
+attack literal. Commands over 64 KB carrying an inline channel are DENIED rather
+than scanned, because shlex is quadratic in one token and a killed hook reads as allow (largest real command
+measured: 32,359 bytes). A parser that cannot LOAD denies too, after a blanket `except` was found turning the
+whole Bash half into a silent all-allow. Residuals, each with its reproduction, live in the gate's own header:
+enterprise policy outside `$HOME` (root-owned, the OS is the gate there), another repo's project settings, an
+ancestor directory of a deep project root in both directions, and an inline write that reaches the path through a
+variable. The fixture pair is `registry/fixtures/ARCHITECTURE.arming-surface` (84 block + 92 allow).
 
 ### ULTRA RULE — Do-it-today (no dejes para mañana lo que puedas hacer hoy)
 **Do-it-today.** Operator-canonical (2026-08-18, tras recordarlo a diario durante semanas): el trabajo que YO puedo ejecutar se ejecuta en el turno, no se reporta. La forma sutil del aplazamiento no es negarse, es **reportar un pendiente que yo mismo podía cerrar** y dejárselo al operador en la bandeja; a su volumen, eso convierte cada sesión en una lista que él tiene que administrar. Un pendiente solo es legítimo en dos casos, y en los dos viaja **con su comando exacto para pegar**: (1) es un paso irreducible suyo (un clic de consentimiento, una contraseña, un permiso que solo él concede), o (2) es un bloqueo MEDIDO, no supuesto (el clasificador lo negó, el remoto lo rechazó, la regla del repo lo impide). Esto NO contradice `do-it-right-not-fast`: empieza hoy, hazlo bien, no lo apures; lo prohibido es diferirlo. Mecanismo: `scripts/g__stop__defer-today.py` (Stop gate, bloquea una vez), que dispara cuando el cierre del turno aplaza trabajo propio en primera persona sin ninguna de las dos salidas. Es consciente de citas (repetir el "espero mañana me contestes" de un cliente no lo trippea) y de hechos con fecha; para mantener una línea marcada a propósito, ponle `defer-ok`. HOW completo en `skills/execution-bias/SKILL.md`.
