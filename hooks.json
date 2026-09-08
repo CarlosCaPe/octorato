@@ -225,6 +225,10 @@
           "command": "python3 ~/.claude/scripts/g__pretool__kernel.py",
           "timeout": 5,
           "type": "command"
+        },
+        {
+          "type": "command",
+          "command": "python3 ~/.claude/scripts/g__pretool__arming-surface.py"
         }
       ],
       "matcher": "*"
@@ -417,7 +421,7 @@
       "hooks": [
         {
           "command": "python3 ~/.claude/scripts/r__permission-denied__journal.py",
-          "statusMessage": "\u2699 kernel: recording the harness refusal...",
+          "statusMessage": "⚙ kernel: recording the harness refusal...",
           "timeout": 5,
           "type": "command"
         }

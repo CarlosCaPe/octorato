@@ -1851,6 +1851,36 @@ rules:
     locator: scripts/g__pretool-bash__tree-owner.py --selftest registry/fixtures/ARCHITECTURE.kernel-isolation
     expect: 0
   liveness_required: FIRES
+- id: ARCHITECTURE.arming-surface
+  title: 'Arming surface: the LIVE files that decide whether the gates run at all'
+  category: ARCHITECTURE
+  source:
+    file: CLAUDE.md
+    anchor: Arming surface
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - hook
+  # One script, the PreToolUse `*` matcher, because the arming surface can be
+  # reached by any tool that writes: Write/Edit today, an MCP filesystem tool
+  # tomorrow. The gate returns on the first line for every tool it does not own.
+  mechanism:
+  - kind: Gate
+    canonical_name: g__pretool__arming-surface.py
+    firing_event: PreToolUse
+    firing_matcher: '*'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: PreToolUse|*|g__pretool__arming-surface.py
+    expect: present
+  - method: FILE_EXISTS
+    locator: scripts/g__pretool__arming-surface.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/g__pretool__arming-surface.py --selftest registry/fixtures/ARCHITECTURE.arming-surface
+    expect: 0
+  liveness_required: FIRES
 - id: FLOW.kernel-journal
   title: 'Kernel JOURNAL: no tool call runs unjournaled (append-only, hash-chained, per process)'
   category: FLOW
