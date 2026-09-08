@@ -96,6 +96,31 @@ _ROW = re.compile(r"^\s*\[(PASS|WARN|FAIL)\]\s+\S\s+(\S+)\s\s+(.*)$")
 _HINT = re.compile(r"^\s*↳ fix:\s(.*)$")
 
 
+_SUMMARY = re.compile(r"^\s+(\d+) passed, (\d+) warn, (\d+) fail\s*$")
+
+
+def parse_summary(out: str) -> dict:
+    """The `N passed, N warn, N fail` footer, as a dict.
+
+    Kept OUT of `parse_human`'s row namespace on purpose: putting it there made
+    three sibling tests fail on an unexpected key, and a row dict that carries one
+    entry which is not a row is a trap for every later caller. Separate reader,
+    explicit assertion.
+
+    It was the last thing the printer emits with nothing watching it. Swapping the
+    warn and fail counts, zeroing them, or deleting the line all stayed green,
+    while the JSON twin was asserted whole in the same class under a comment
+    saying the counts are not interchangeable (QA cycle 11). A variant, not a hop,
+    which is why every earlier sweep walked past it.
+    """
+    for line in out.splitlines():
+        m = _SUMMARY.match(line)
+        if m:
+            return {"passed": int(m.group(1)), "warn": int(m.group(2)),
+                    "fail": int(m.group(3))}
+    return {}
+
+
 def parse_human(out: str) -> dict:
     """What `render_human` printed, as {key: {status, message, hint}}.
 
@@ -115,6 +140,7 @@ def parse_human(out: str) -> dict:
         m = _HINT.match(line)
         if m and last is not None:
             rows[last]["hint"] = m.group(1).rstrip()
+
     return rows
 
 
@@ -957,6 +983,9 @@ class TestTheWireCarriesEveryRow(unittest.TestCase):
             self.assertEqual(got["hint"], r.hint,
                              "a FAIL or WARN hint is not decoration, and a PASS has "
                              "none to print")
+        self.assertEqual(parse_summary(out), {"passed": 1, "warn": 1, "fail": 2},
+                         "the footer is the line a hurried reader trusts, and it was "
+                         "the last thing the printer emits with nothing watching it")
 
     def test_a_warn_only_run_exits_zero(self):
         """`rc == 1` on the fixture above is also satisfied by counting WARN as a
@@ -1081,9 +1110,29 @@ class TestTheWireCarriesEveryRow(unittest.TestCase):
             self.addCleanup(lambda n=name, r=real: setattr(doctor, n, r))
         rc, out = run_main(stub_checks(self.wire()), argv=("brain_doctor.py", "--registry"))
         self.assertEqual(rc, 0)
-        self.assertEqual(set(parse_human(out)),
+        rows = parse_human(out)
+        self.assertEqual(set(rows),
                          {"reg-stub", "naming-stub", "orphan-stub"},
                          "all three, and nothing from CHECKS")
+
+    def test_the_registry_surface_can_still_block_a_push(self):
+        """Running the three checks is not the invariant. `.githooks/pre-push:251`
+        reads this surface by EXIT CODE alone, so forcing every registry row to
+        PASS makes it silently stop blocking, and that survived all 248 tests
+        (QA cycle 11). Its sibling above asserted the checks ran and stopped one
+        step short of what the only consumer reads.
+        """
+        for name, key in (("check_registry", "reg-stub"),
+                          ("check_naming", "naming-stub"),
+                          ("check_orphan_hooks", "orphan-stub")):
+            status = doctor.FAIL if key == "orphan-stub" else doctor.PASS
+            real = getattr(doctor, name)
+            setattr(doctor, name,
+                    (lambda k, st: (lambda fix: [doctor.Result(k, st, f"{k} ran", "fix it")]))(key, status))
+            self.addCleanup(lambda n=name, r=real: setattr(doctor, n, r))
+        rc, out = run_main(stub_checks(self.wire()), argv=("brain_doctor.py", "--registry"))
+        self.assertEqual(rc, 1, "a registry FAIL has to reach pre-push as a non-zero exit")
+        self.assertEqual(parse_human(out)["orphan-stub"]["status"], doctor.FAIL)
 
 
 if __name__ == "__main__":
