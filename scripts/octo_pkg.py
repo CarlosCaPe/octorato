@@ -306,6 +306,17 @@ class Brain:
         of the two packages is on disk with no lock entry: it then verifies as an
         untracked stray forever. The lock lives beside the lockfile and is never
         committed.
+
+        `timeout` is real on BOTH platforms, and until QA cycle 14 it was real on
+        neither the platform this actually runs on nor in the docstring. The POSIX
+        branch called a BLOCKING `flock(LOCK_EX)` and ignored the argument entirely:
+        QA asked for 2s against a held lock and waited the full 11s the holder took.
+        A parameter that names a bound it does not impose is the overclaim shape this
+        whole commit is about, one layer down, so the wait is a LOCK_NB poll against
+        a deadline and a caller that asked for 2s gets a PkgError after 2s. The
+        refusal is deliberate over an unbounded wait: every caller here is a CLI verb
+        an operator is watching, and `ai-pull` calling `sync` must not hang a pull
+        behind a session that is holding the lock for a clone.
         """
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
         guard = self.lock_path.with_name(self.lock_path.name + ".lock")
@@ -313,7 +324,6 @@ class Brain:
         try:
             try:
                 import fcntl
-                fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
             except ImportError:
                 # No fcntl (Windows): fall back to an O_EXCL sentinel with a timeout,
                 # so the contract degrades in speed, never in correctness.
@@ -333,6 +343,18 @@ class Brain:
                 finally:
                     sentinel.unlink(missing_ok=True)
                 return
+            deadline = time.time() + timeout
+            while True:
+                try:
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    # flock is per open-file-description, so this is contention with
+                    # another RUN, not with this one: nothing in here nests lock_held.
+                    if time.time() > deadline:
+                        raise PkgError(f"could not acquire {guard} within {timeout}s; "
+                                       f"another octo pkg run is holding it")
+                    time.sleep(0.05)
             yield
         finally:
             fh.close()
@@ -369,7 +391,17 @@ class Brain:
             # set membership test and a list value raised TypeError; `source` reached
             # .startswith in sync. The lock is tracked and unsigned, so these arrive
             # from a remote like any other file (QA cycle 4).
-            for field in ("signer", "source", "tree_sha256", "version"):
+            #
+            # `installed_at` joined the list in cycle 14, and the hole is what a
+            # control measures rather than what the list looks like: a list `source`
+            # was refused while a dict, a list or an int `installed_at` was accepted,
+            # because the field arrived as a consumer (entry_identity) without
+            # arriving here. It is the field the identity check leans on hardest, and
+            # `str()` over an unchecked value is how two different rows come out
+            # comparing equal. The comment in _render_arm_location that holds this
+            # function up as the place that type-checks EVERY field it reads is only
+            # true with this line in it.
+            for field in ("signer", "source", "tree_sha256", "version", "installed_at"):
                 value = entry.get(field)
                 if value is not None and not isinstance(value, str):
                     raise PkgError(f"{LOCK_REL} entry {name}: {field} must be a string")
@@ -1469,7 +1501,10 @@ def lock_kind(entry: dict) -> str:
     return str(entry.get("kind") or "skill")
 
 
-def entry_identity(entry: dict) -> tuple[str, str, str]:
+IDENTITY_FIELDS = ("kind", "source", "installed_at", "tree_sha256", "signer")
+
+
+def entry_identity(entry: dict) -> tuple[str, str, str, str, str]:
     """What makes a lock row THE row, beyond its name.
 
     A name is a key, not an identity. Two verbs compute something expensive outside
@@ -1485,14 +1520,31 @@ def entry_identity(entry: dict) -> tuple[str, str, str]:
         while `source` stayed the new one, which surfaces later as a false "tree
         changed since install" blaming the wrong package.
 
-    So kind, source and installed_at together: kind and source say what the row is,
-    installed_at says whether it is the same installation (install_skill and
-    install_arm stamp it on every write, so a delete-and-re-add from the same source
-    still moves it). Compared as a tuple of strings because the lock is tracked and
-    unsigned; load_lock already type-checks source, and kind is enumerated there.
+    kind and source say what the row is; installed_at says whether it is the same
+    installation, because install_skill and install_arm stamp it on every write. The
+    first version of this function stopped there and its docstring said that closed
+    the re-add from the SAME source. It did not, and cycle 14 measured the corruption
+    still landing through the gap: `installed_at` is written with
+    `strftime("%Y-%m-%dT%H:%M:%SZ")`, one-second granularity, so a delete-and-re-add
+    inside the same second is identity-identical to the row it replaced, and the old
+    package's hash and signer went onto the new row at rc 0 under
+    `re-locked: 1 entry(ies) updated`. Sub-second precision would have narrowed that
+    window without closing it; naming the right fields closes it.
+
+    So tree_sha256 and signer are part of the identity too, and they are the exact
+    fields cmd_lock overwrites. That is what makes them the right ones rather than
+    more of them: an update is computed against the values a row HELD, so a row whose
+    hash or signer is no longer those values is, by definition, not the row that was
+    hashed. Any re-add differing in nothing at all is a no-op to stamp.
+
+    Compared as a tuple of strings because the lock is tracked and unsigned, and
+    every field read here is type-checked in load_lock (kind enumerated, the other
+    four string-or-absent), so `str()` is a normalisation of None, never a coercion
+    that could collapse two different values into one.
     """
     return (lock_kind(entry), str(entry.get("source") or ""),
-            str(entry.get("installed_at") or ""))
+            str(entry.get("installed_at") or ""),
+            str(entry.get("tree_sha256") or ""), str(entry.get("signer") or ""))
 
 
 def verify_entry(brain: Brain, entry: dict) -> tuple[str, str]:
@@ -2040,9 +2092,10 @@ def cmd_lock(brain: Brain) -> int:
     Applying BY NAME is not enough on its own, which is the half cycle 12's fix did
     not claim and cycle 13 measured: the name can survive while the package under it
     changes. So each update also carries the identity of the row it was computed for
-    (entry_identity: kind, source, installed_at), and a row that no longer matches it
-    is SKIPPED and reported rather than stamped. rc 1 then, the same as a refusal: the
-    operator asked for a re-lock of that row and did not get one.
+    (entry_identity, which since cycle 14 includes the two fields this verb actually
+    overwrites), and a row that no longer matches it is SKIPPED and reported rather
+    than stamped. rc 1 then, the same as a refusal: the operator asked for a re-lock
+    of that row and did not get one.
     """
     updates: dict[str, dict] = {}
     computed_from: dict[str, tuple[str, str, str]] = {}
@@ -2083,8 +2136,12 @@ def cmd_lock(brain: Brain) -> int:
                 # re-check exists to stop, so the row is left exactly as it is and the
                 # operator is told which field moved: re-running lock is the whole fix.
                 was = computed_from[name]
+                # IDENTITY_FIELDS and not a literal: zip() truncates to the shorter
+                # side, so a hand-written label tuple that fell behind the identity
+                # would silently stop naming the field that moved, which is the whole
+                # content of the message.
                 moved = [f"{f}: {w!r} -> {n!r}" for f, w, n
-                         in zip(("kind", "source", "installed_at"), was, now) if w != n]
+                         in zip(IDENTITY_FIELDS, was, now) if w != n]
                 skipped.append(f"{name}: the lock row changed while it was being "
                                f"hashed ({'; '.join(moved)}); not updated")
                 continue
@@ -2121,6 +2178,22 @@ def cmd_sync(brain: Brain) -> int:
     Holding the lock across the fetch instead would block every other writer for the
     length of a clone, so the shape is the one cmd_lock now uses: compute outside,
     re-check identity inside, write only if the row is still the row.
+
+    The copytree IS inside the lock, and unlike install_skill's, which is outside it.
+    That asymmetry is deliberate and was decided rather than inherited (QA cycle 14
+    asked). install takes the lock only to APPEND a row for a package it already owns
+    on disk: no other row can invalidate that decision, so nothing is gained by
+    holding the lock while it copies. sync's write is CONDITIONAL on a row it does
+    not own, and the condition ("this row is still the row, and nothing is at dest")
+    has to still hold at the instant the tree lands, so the check and the write
+    belong in one critical section. Splitting them would mean copying to a staging
+    directory inside skills/vendor and renaming under the lock, which trades a
+    bounded hold for an unbounded stray: a kill between copy and rename leaves
+    `skills/vendor/.<name>.<pid>` in the one directory scan_unlocked treats as the
+    dangerous one. And the hold is bounded, measured rather than assumed: what is
+    copied is an already-fetched local tree, 0.25 ms for the median of the 234 skills
+    in this brain and 55 ms for the largest (321 files, 1.4 MiB). The network fetch,
+    the part that runs in seconds to minutes, is the part that is outside.
 
     One consequence, stated because it is a change: the dangling `skills/<name>` link
     of a half-removed install is now cleared as part of a RESTORE, so a machine whose
@@ -2181,12 +2254,18 @@ def cmd_sync(brain: Brain) -> int:
                         warned.append(f"{name}: its {LOCK_REL} entry was removed while "
                                       f"the source was being fetched; not restored")
                         continue
-                    if (entry_identity(row) != entry_identity(entry)
-                            or row.get("tree_sha256") != entry.get("tree_sha256")):
+                    if entry_identity(row) != entry_identity(entry):
                         # Same name, different package. Restoring the fetched bytes
                         # here would put a tree on disk that the CURRENT lock row does
                         # not describe, which verify then reports against the wrong
                         # source. Re-running sync fetches what the row now says.
+                        #
+                        # This used to carry `or row.tree_sha256 != entry.tree_sha256`
+                        # beside it. entry_identity now holds tree_sha256, so that
+                        # clause could not fail on its own any more: it read as a
+                        # second guard and was a copy of half of the first, which is
+                        # a mutant that survives every test by construction. One
+                        # comparison, and the identity is the one place to add to.
                         warned.append(f"{name}: its {LOCK_REL} entry changed while the "
                                       f"source was being fetched; not restored")
                         continue
@@ -2546,6 +2625,14 @@ def selftest(fixture: Path, real: Brain) -> int:
               verify_entry(brain, brain.load_lock()["packages"][0])[0] == WARN)
         check("verify --all still exits 0 on that WARN, so a push does not break",
               main(["--brain", str(brain.root), "verify", "--all"]) == 0)
+        # A registry value that is not a path, through the always-on reader. This leg
+        # exists to FAIL on a guard this family shipped: revert _render_arm_location's
+        # type-check and the line reads `$HOME/['Documents']` as a place to go.
+        cfg.write_text(json.dumps({"selftest-arm": [["Documents"]]}) + "\n",
+                       encoding="utf-8")
+        _bad_status, _bad_msg = verify_entry(brain, brain.load_lock()["packages"][0])
+        check("a registry value that is not a path is NAMED, never joined onto $HOME",
+              "no usable path" in _bad_msg and os.environ["HOME"] not in _bad_msg)
         cfg.write_text(json.dumps({"selftest-arm": "Documents/github/selftest-arm"},
                                   indent=2) + "\n", encoding="utf-8")
         check("uninstall of an arm exits 0",
@@ -2554,6 +2641,67 @@ def selftest(fixture: Path, real: Brain) -> int:
               json.loads(cfg.read_text(encoding="utf-8")) == {}
               and brain.load_lock()["packages"] == [])
         check("and it never deleted the operator's own clone", armdest.is_dir())
+
+        # ---- the identity re-check, under a race ------------------------------
+        # Same finding as the arm leg, one cycle on, and this time about the guard
+        # the commit was written for: 55 legs and not one of them could fail if
+        # cmd_lock's identity re-check were deleted, because the state it defends
+        # only exists while two writers overlap. The window is driven from lock_held
+        # rather than raced for, which is deterministic where a real second process
+        # is not, and it puts the concurrent write exactly where the measured one
+        # arrived. Restored in a finally: brain_doctor runs this in its own process.
+        main(["--brain", str(brain.root), "install", str(signed)])
+        stale = json.loads(brain.lock_path.read_text(encoding="utf-8"))
+        for row in stale["packages"]:
+            row["tree_sha256"] = "0" * 64      # so `lock` has an update to apply
+        brain.lock_path.write_text(json.dumps(stale, indent=2) + "\n", encoding="utf-8")
+        real_lock_held = Brain.lock_held
+
+        def _racing_lock_held(self_, timeout=30.0):
+            # A re-add from the SAME source inside the same second: kind, source and
+            # installed_at all identical, only the package different. That is the
+            # shape one-second `installed_at` cannot see (QA cycle 14).
+            cur = json.loads(self_.lock_path.read_text(encoding="utf-8"))
+            for row_ in cur["packages"]:
+                row_["signer"] = "someone-else"
+            self_.lock_path.write_text(json.dumps(cur, indent=2) + "\n", encoding="utf-8")
+            return real_lock_held(self_, timeout)
+
+        Brain.lock_held = _racing_lock_held
+        try:
+            rc = main(["--brain", str(brain.root), "lock"])
+        finally:
+            Brain.lock_held = real_lock_held
+        raced = brain.load_lock()["packages"][0]
+        check("a re-lock whose row changed under it is skipped, not stamped",
+              rc == 1 and raced["tree_sha256"] == "0" * 64
+              and raced["signer"] == "someone-else")
+        main(["--brain", str(brain.root), "uninstall", name])
+
+        # And the same re-check in sync, which is the one with a NETWORK fetch for a
+        # window. Its branch was the last one in this family with no fixture behind
+        # it, so deleting the condition outright was invisible to the gate.
+        main(["--brain", str(brain.root), "install", str(signed)])
+        shutil.rmtree(dest)
+        link.unlink()
+        brain.exclude_remove(f"skills/{name}")   # the state a half-removed install is in
+
+        def _racing_lock_held_for_sync(self_, timeout=30.0):
+            cur = json.loads(self_.lock_path.read_text(encoding="utf-8"))
+            for row_ in cur["packages"]:
+                row_["tree_sha256"] = "d" * 64
+            self_.lock_path.write_text(json.dumps(cur, indent=2) + "\n", encoding="utf-8")
+            return real_lock_held(self_, timeout)
+
+        Brain.lock_held = _racing_lock_held_for_sync
+        try:
+            main(["--brain", str(brain.root), "sync"])
+        finally:
+            Brain.lock_held = real_lock_held
+        check("sync does not restore a tree the CURRENT lock row no longer describes",
+              not dest.exists() and not link.is_symlink()
+              and not brain.exclude_has(f"skills/{name}"))
+        main(["--brain", str(brain.root), "uninstall", name])
     finally:
         if saved_home is not None:
             os.environ["HOME"] = saved_home
@@ -2563,7 +2711,8 @@ def selftest(fixture: Path, real: Brain) -> int:
         print(f"selftest FAILED: {len(failures)} leg(s): " + "; ".join(failures), file=sys.stderr)
         return 1
     print("selftest OK: install, refusal, tamper-before-signature, verify ladder, "
-          "sync, uninstall and the arm install/verify/deregister leg all proven")
+          "sync, uninstall, the arm install/verify/deregister leg and the raced "
+          "identity re-check all proven")
     return 0
 
 

@@ -48,6 +48,16 @@ def _ssh_ok() -> bool:
     return shutil.which("ssh-keygen") is not None and octo_pkg.ssh_keygen_y_supported()
 
 
+def _fcntl_ok() -> bool:
+    """Whether lock_held takes its POSIX branch here. The Windows branch already
+    honoured its timeout; the test below is about the one that was ignoring it."""
+    try:
+        import fcntl  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
 class SandboxCase(unittest.TestCase):
     """A brain checkout in a temp dir, with a key minted per test class."""
 
@@ -1228,10 +1238,19 @@ class TestQaCycle4(SandboxCase):
         fields arrive from a remote like any other file. A list-valued `signer`
         reached a set membership test and raised TypeError; a list-valued `source`
         reached .startswith inside sync, which `ai-pull` runs. Both are type-checked
-        at the ONE place the file is read, not at each use."""
+        at the ONE place the file is read, not at each use.
+
+        `installed_at` was added in cycle 14, and what found it was a control rather
+        than a re-read of the list: a list `source` was refused here while a dict, a
+        list or an int `installed_at` was accepted, because the field gained a
+        consumer (entry_identity) without gaining a check. Each shape is its own
+        subTest, so removing one field from the reader's tuple fails on that field
+        and not on a neighbour's."""
         self._install_signed("locktype")
         for field, value in (("signer", ["octorato-release"]), ("signer", {"a": 1}),
-                             ("source", ["x"]), ("tree_sha256", 7)):
+                             ("source", ["x"]), ("tree_sha256", 7),
+                             ("installed_at", {"a": 1}), ("installed_at", ["x"]),
+                             ("installed_at", 7)):
             with self.subTest(field=field, value=value):
                 lock = json.loads(self.brain.lock_path.read_text(encoding="utf-8"))
                 good = json.dumps(lock, indent=2) + "\n"
@@ -2716,6 +2735,272 @@ class TestQaCycle13(ArmFixture):
                          "the generic backstop's guess, printed over a run that knows")
         self.assertIn("put back byte for byte", said)
         self.assertIn("PermissionError", said, "and the cause is not swallowed")
+        self.assertNotIn("had already been removed", said,
+                         "`gone` is a COPY of `removed` taken before the protected "
+                         "region; aliasing it lets the deregistration this sentence "
+                         "just said was put back appear in the same sentence as "
+                         "something that is gone (cycle 14 mutation M16)")
+
+
+class TestQaCycle14(ArmFixture):
+    """Cycle 13 NARROWED the delete-and-re-add shape and its docstring said closed.
+
+    `entry_identity` was (kind, source, installed_at), and the docstring credited
+    installed_at with catching "a delete-and-re-add from the same source". No test
+    varied one field on its own: the re-add test moved source, installed_at, version,
+    signer and tree_sha256 at once, so dropping installed_at from the identity, or
+    dropping source, each passed all 349 tests. Only `kind` was really pinned.
+
+    And installed_at is `strftime("%Y-%m-%dT%H:%M:%SZ")`, one second wide, so a re-add
+    from the SAME source inside one second is identity-identical to the row it
+    replaced. QA measured the corruption still landing through that: the old package's
+    hash and signer stamped onto the new row, rc 0, `re-locked: 1 entry(ies) updated`.
+
+    So every identity field gets its own test that varies THAT field and nothing else.
+    The point is not the count, it is that each mutant has exactly one test it can die
+    to, and no test can borrow a neighbour's evidence.
+    """
+
+    # Bound, not copied and not inherited: cycle 13 copied cycle 12's helpers because
+    # a shared-fixture refactor at that depth could silently change what an existing
+    # test covers. Binding the same function objects has neither cost. Subclassing
+    # TestQaCycle13 would re-run its whole suite a second time under this name.
+    _install_signed = TestQaCycle13._install_signed
+    _race = TestQaCycle13._race
+    _read_lock = TestQaCycle13._read_lock
+    _row = TestQaCycle13._row
+    _stale_hash = TestQaCycle13._stale_hash
+
+    def _pin(self, tag: str, field: str, value) -> str:
+        """Install a skill, make `lock` want to rewrite its row, then change exactly
+        ONE identity field under the lock.
+
+        Everything else in the row is byte-identical, so the whole-row assertion below
+        can only be carried by `field`. A stamp shows up as tree_sha256 going back to
+        the tree's real hash, which is what `lock` would have written.
+        """
+        import contextlib, io
+        name, _ = self._install_signed(tag)
+        self._stale_hash(name)
+        before = dict(self._row(name))
+
+        def other_process_changes_one_field(brain):
+            cur = json.loads(brain.lock_path.read_text(encoding="utf-8"))
+            for entry in cur["packages"]:
+                if entry["name"] == name:
+                    entry[field] = value
+            brain.lock_path.write_text(json.dumps(cur, indent=2) + "\n", encoding="utf-8")
+
+        self._race(other_process_changes_one_field)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "lock"])
+        said = buf.getvalue()
+        self.assertEqual(self._row(name), dict(before, **{field: value}),
+                         f"{field} moved under the lock and the row was stamped "
+                         f"anyway: an update computed against a row that no longer "
+                         f"exists, written at rc 0 under a success receipt")
+        self.assertEqual(rc, 1, "a re-lock the operator asked for and did not get")
+        self.assertIn("not updated", said)
+        self.assertIn(field, said, "the WARN has to name the field that moved; that "
+                                   "is the whole content of the message")
+        return said
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_identity_pins_kind_on_its_own(self):
+        self._pin("pinkind", "kind", "arm")
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_identity_pins_source_on_its_own(self):
+        self._pin("pinsource", "source", "git@example.test:other/repo")
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_identity_pins_installed_at_on_its_own(self):
+        self._pin("pinwhen", "installed_at", "2030-01-01T00:00:00Z")
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_identity_pins_tree_sha256_on_its_own(self):
+        """The field `lock` overwrites, which is what makes it the right one to read:
+        an update is computed against the hash a row HELD, so a row whose hash is no
+        longer that is not the row that was hashed."""
+        self._pin("pinhash", "tree_sha256", "b" * 64)
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_identity_pins_signer_on_its_own(self):
+        """The other field `lock` overwrites. Stamping a signer is worse than stamping
+        a hash: it is the value the whole trust ladder reads back."""
+        self._pin("pinsigner", "signer", "someone-else")
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_lock_does_not_stamp_a_re_add_from_the_same_source_in_one_second(self):
+        """The hole cycle 13's docstring said installed_at had closed, measured.
+
+        Not a single-field pin, on purpose: this is the reproduction. kind, source and
+        installed_at are carried over from the old row byte for byte, which is exactly
+        what an uninstall-plus-reinstall from the same source inside one second
+        produces, and against the three-field identity it compared EQUAL. Measured on
+        shipped HEAD: rc 0, the row left holding the old package's hash and the old
+        package's signer, under `re-locked: 1 entry(ies) updated`.
+        """
+        import contextlib, io
+        name, _ = self._install_signed("samesrc")
+        self._stale_hash(name)
+        old = dict(self._row(name))
+
+        def other_process_re_adds_from_the_same_source(brain):
+            cur = json.loads(brain.lock_path.read_text(encoding="utf-8"))
+            cur["packages"] = [p for p in cur["packages"] if p["name"] != name]
+            cur["packages"].append(dict(old, version="9.9.9", tree_sha256="c" * 64,
+                                        signer="someone-else"))
+            brain.lock_path.write_text(json.dumps(cur, indent=2) + "\n", encoding="utf-8")
+
+        self._race(other_process_re_adds_from_the_same_source)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "lock"])
+        row = self._row(name)
+        self.assertEqual(row["tree_sha256"], "c" * 64,
+                         "the old package's hash on the new row surfaces later as a "
+                         "false 'tree changed since install' blaming a package that "
+                         "was never installed from there")
+        self.assertEqual(row["signer"], "someone-else")
+        self.assertEqual(row["version"], "9.9.9")
+        self.assertEqual(rc, 1)
+        self.assertIn("not updated", buf.getvalue())
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_sync_does_not_restore_over_a_row_whose_hash_alone_moved(self):
+        """What the removed clause used to say, said by the identity instead.
+
+        cmd_sync compared `row.tree_sha256 != entry.tree_sha256` beside its identity
+        check. With tree_sha256 inside the identity that clause cannot fail on its
+        own, so it reads as a second guard while being a copy of half the first: a
+        mutant that survives by construction. It is gone, and this is the test that
+        keeps what it was doing.
+        """
+        import contextlib, io
+        name, dest = self._install_signed("synchash")
+        link = self.brain.link_path(name)
+        lock = json.loads(self.brain.lock_path.read_text(encoding="utf-8"))
+        for entry in lock["packages"]:
+            entry["source"] = str(self.tmp / "src-synchash")
+        self.brain.lock_path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+        shutil.rmtree(dest)
+        link.unlink()
+        self.brain.exclude_remove(f"skills/{name}")
+
+        def other_process_moves_the_hash(brain):
+            cur = json.loads(brain.lock_path.read_text(encoding="utf-8"))
+            for entry in cur["packages"]:
+                entry["tree_sha256"] = "d" * 64
+            brain.lock_path.write_text(json.dumps(cur, indent=2) + "\n", encoding="utf-8")
+
+        self._race(other_process_moves_the_hash)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            octo_pkg.main(["--brain", str(self.root), "sync"])
+        self.assertFalse(dest.exists(),
+                         "the bytes fetched describe the hash the row held before it "
+                         "moved; restoring them puts a tree on disk the CURRENT row "
+                         "does not describe, and verify then blames the wrong source")
+        self.assertFalse(link.is_symlink())
+        self.assertFalse(self.brain.exclude_has(f"skills/{name}"))
+        self.assertIn("entry changed while", buf.getvalue())
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_sync_does_not_copy_over_an_install_that_landed_while_it_fetched(self):
+        """The other race sync's critical section defends, and it deletes work.
+
+        `if dest.exists() or dest.is_symlink(): continue` inside the lock reads like
+        tidiness and is not: without it, sync reaches shutil.copytree over a tree that
+        an install put there while sync was fetching, copytree raises FileExistsError,
+        and sync's own unwind then rmtree's the OTHER run's freshly installed package
+        and drops its exclude line. The row is untouched, so nothing downstream ever
+        explains where the tree went. Untested until cycle 14.
+        """
+        import contextlib, io
+        name, dest = self._install_signed("syncwin")
+        link = self.brain.link_path(name)
+        lock = json.loads(self.brain.lock_path.read_text(encoding="utf-8"))
+        for entry in lock["packages"]:
+            entry["source"] = str(self.tmp / "src-syncwin")
+        self.brain.lock_path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+        kept = dest / "INSTALLED-BY-THE-OTHER-RUN.md"
+        shutil.rmtree(dest)
+        link.unlink()
+
+        def other_process_finishes_installing_it(brain):
+            # The lock row is left EXACTLY as it is: this is the same package from the
+            # same source, so the identity check passes and the dest check is the only
+            # thing between sync and the other run's tree.
+            shutil.copytree(self.tmp / "src-syncwin", dest)
+            kept.write_text("landed while sync was fetching\n", encoding="utf-8")
+            os.symlink(os.path.relpath(dest, link.parent), link, target_is_directory=True)
+
+        self._race(other_process_finishes_installing_it)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            octo_pkg.main(["--brain", str(self.root), "sync"])
+        self.assertTrue(kept.exists(),
+                        "sync copied over a tree another run had just installed, and "
+                        "its unwind then deleted that run's package")
+        self.assertTrue(link.is_symlink())
+        self.assertTrue(self.brain.exclude_has(f"skills/{name}"))
+
+    def test_an_unusable_registry_value_is_printed_bounded(self):
+        """_short exists to bound what a receipt pastes back, and nothing measured it.
+
+        arms-paths.json is hand-edited and gitignored, so an unusable value can be any
+        size at all. A verify line that pastes a whole nested object back at the
+        operator is not a receipt, it is the file (cycle 14 mutation M23).
+        """
+        said = octo_pkg._render_arm_location([["x" * 500]])
+        self.assertIn("no usable path", said)
+        self.assertNotIn("x" * 100, said, "the value is NAMED, not reproduced")
+        self.assertLess(len(said), 200, said)
+
+    @unittest.skipUnless(_fcntl_ok(), "no fcntl: the POSIX branch is not the one that runs here")
+    def test_lock_held_refuses_within_the_timeout_it_advertises(self):
+        """`timeout` was real on the Windows branch and ignored on the one that runs.
+
+        POSIX called a BLOCKING flock(LOCK_EX): QA asked for 2s against a held lock
+        and waited the full 11s the holder took. A parameter naming a bound it does
+        not impose is this commit's own finding one layer down. The holder here is a
+        second file descriptor, which conflicts with this one because flock is per
+        open-file-description and not per process (measured, not assumed), and the
+        attempt runs in a daemon thread so that a revert to the blocking call FAILS
+        this test in ten seconds instead of hanging the suite: a hang is not a
+        detection.
+        """
+        import fcntl, threading, time
+        self.brain.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        guard = self.brain.lock_path.with_name(self.brain.lock_path.name + ".lock")
+        holder = open(guard, "a+")
+        self.addCleanup(holder.close)
+        fcntl.flock(holder.fileno(), fcntl.LOCK_EX)
+
+        outcome = {}
+
+        def attempt():
+            try:
+                with self.brain.lock_held(timeout=0.5):
+                    outcome["acquired"] = True
+            except octo_pkg.PkgError as e:
+                outcome["refused"] = str(e)
+
+        started = time.monotonic()
+        t = threading.Thread(target=attempt, daemon=True)
+        t.start()
+        t.join(10)
+        waited = time.monotonic() - started
+        self.assertFalse(t.is_alive(),
+                         "lock_held(timeout=0.5) was still blocking after 10s: the "
+                         "argument names a bound it does not impose")
+        self.assertNotIn("acquired", outcome, "the lock was held by another fd")
+        self.assertIn("refused", outcome)
+        self.assertIn("0.5", outcome["refused"], "and it says what it waited for")
+        self.assertLess(waited, 5, f"asked for 0.5s, waited {waited:.1f}s")
+
 
 class TestGenerator(unittest.TestCase):
     def setUp(self):
