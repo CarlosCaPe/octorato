@@ -3,5 +3,5 @@
   "tool_input": {
     "command": "cd sub && git push origin main"
   },
-  "cwd": 5
+  "cwd": "/nonexistent/repo"
 }

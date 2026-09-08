@@ -118,18 +118,24 @@ def is_merge_command(command: str) -> tuple[bool, str | None]:
 | **Context-injection** (informational) | FAIL-OPEN — skip, never block |
 | **Gate/block** (authorization) | FAIL-CLOSED — treat ambiguous = not authorized, block |
 
-If shell indirection (`bash -c "..."`, `eval`) makes the real command opaque, a fail-closed gate correctly blocks until a human grants the env-var approval (see [[agent-proof-approval-gate]]).
+If shell indirection makes the real command opaque, a fail-closed gate correctly blocks until a human grants the env-var approval (see [[agent-proof-approval-gate]]).
+
+Two rules keep the anchor honest once you have it:
+
+- Match the verb on **decoded** tokens. `gh "pr" merge 291` is the same command as `gh pr merge 291`, and a raw-string matcher sees neither. Decoding does not re-match a quoted mention: a whole-token quote stays ONE token.
+- Recurse into a head that **re-parses** its string argument (`bash -c`, `sh -lc`, `eval`, `ssh host`, `script -qc`, a shell reading a heredoc); never into one that does not (`git commit -m`, `echo`, `cat <<EOF`). Quoting is not the discriminator; re-parsing is.
 
 ## Residual Risk
 
-Shell indirection still evades string-based detection:
+What string matching still cannot see:
 
 ```bash
-bash -c "gh pr merge 96"     # sub-command content is inside a string literal
-$(echo gh pr merge 96)       # command substitution
+X="pr merge"; gh $X 291      # the verb itself comes from an expansion
+$(echo "gh pr merge 96")     # the whole command inside one substitution
+./deploy.sh                  # the command lives in a file
 ```
 
-This is accepted. The string-matching layer identifies the action; the env-var layer authorizes it. The env channel is immune to indirection (see [[agent-proof-approval-gate]]).
+An opaque HEAD is closable (try the remainder against every head you know, and deny if the remainder is the action). An opaque VERB is not, without denying legitimate lines like `docs='gh pr merge'; echo $docs`. The string-matching layer identifies the action; the env-var layer authorizes it, and the env channel is immune to indirection (see [[agent-proof-approval-gate]]).
 
 ## When to Use
 

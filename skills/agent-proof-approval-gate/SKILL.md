@@ -77,17 +77,35 @@ The identification half is therefore where the work is. Peel by **allowlist** an
 
 Identification also has to cover the API call *behind* each CLI verb, not only the verb. `gh pr merge --auto` was denied while `gh api graphql -f query='mutation{enablePullRequestAutoMerge(...)}'`, the exact call it makes, was allowed. And the target has to be resolved the way the tool resolves it: `gh` reads `-R`, then `GH_REPO`, then the cwd repo, so a gate that reads only `-R` and cwd ungates `GH_REPO=<protected> gh pr merge <n>` fired from an unrelated directory.
 
+Match the verb words on **decoded** tokens, not on the raw string. One quote pair defeats a raw matcher completely: `gh "pr" merge 291`, `gh pr "merge" 291`, `git "push" origin main`, `git push origin ma"in"` and `gh api -X PUT .../pulls/291/me"rge"` all invoked the real tool while the anchor saw nothing (measured 2026-09-08). Decoding costs no over-fire, because a whole-token quoted *mention* is ONE token and one token can never supply the two words a verb needs after a head. Keep the raw form for reading argument VALUES (a PR number off `gh pr merge -t "x 280" 281` must still be 281) — the two needs are separable, and conflating them is what made the raw string look load-bearing.
+
+Try the anchor at **every** command-head position in a sub-command, not the first. A benign head in front otherwise swallows the merge behind it (`git status & gh pr merge 291`). And treat `&` as a separator: it backgrounds what precedes it and starts a new command.
+
+## The "forced trade" is not forced
+
+A gate that stops at string matching concludes it must choose between catching `bash -c "gh pr merge 96"` and not re-matching `git commit -m "gh pr merge 96"`. That is false, and the distinguishing property is not quoting. It is whether the head **re-parses its string argument as a command**:
+
+| Head | Re-parses? | Verdict |
+|---|---|---|
+| `bash -c`, `sh -lc`, `zsh -c`, `eval`, `ssh host`, `script -qc`, a shell reading a heredoc | yes | recurse into the argument, identify |
+| `git commit -m`, `echo`, `cat > f <<EOF`, `python3 -` | no | the argument is data, leave it alone |
+
+Recurse on the first set, never on the second, and you get both halves. The same rule fixes heredocs in the other direction: a heredoc BODY is data on stdin, so `cat > notes.md <<EOF ... EOF` must not match what the note SAYS, while `bash <<EOF ... EOF` must.
+
 ## Residual Risk
 
-After the peel above, what remains for `qa-merge-gate.py` (measured 2026-09-08):
+What remains for `qa-merge-gate.py`, each measured 2026-09-08 by feeding the payload on stdin:
 
 ```bash
-bash -c "gh pr merge 96"          # merge lives inside a QUOTED token
-eval "gh pr merge 96"             # same (unquoted `eval gh pr merge 96` IS caught)
-$(echo gh) pr merge 96            # command substitution
+X="pr merge"; gh $X 291            # the VERB comes from an expansion, not from text
+$(echo "gh pr merge 291")          # the whole command inside one substitution
+./deploy.sh                        # the merge lives in a file the hook never reads
+python3 -c "...requests.put(...)"  # a non-shell runtime doing the API call
 ```
 
-These cannot be closed by string matching without re-matching a quoted *mention* (`git commit -m "gh pr merge 96"`), which is the false positive command-boundary anchoring exists to prevent. You get one or the other, so pick the one that does not cry wolf and write the other down.
+The opaque-HEAD half of that first family IS closable, and closing it costs nothing: when the head is unresolvable (`$(echo gh)`, `${PATH:0:0}gh`, `$'gh'`, `$G`) the REMAINDER still carries the verb, so try the remainder against every head you know and deny if it is a merge whoever the head turns out to be.
+
+Do not buy the rest by substituting same-line assignments everywhere: that also denies `docs='gh pr merge'; echo $docs`, which is a legitimate command. Over-fire is a security failure with extra steps — a gate people route around is off — so measure it against a corpus of real commands before and after every change, and write down what you did not close.
 
 See [[command-boundary-hook-matching]] for the parsing half.
 

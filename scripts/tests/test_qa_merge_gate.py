@@ -36,6 +36,12 @@ def _load(name: str, filename: str):
 gate = _load("qa_merge_gate_under_test", "qa-merge-gate.py")
 gate_selftest = _load("gate_selftest_under_test", "gate_selftest.py")
 
+# Snapshot taken at import, BEFORE any test has patched anything. TestRepoScope
+# asserts against these, so a cleanup that restores the wrong value (or none)
+# fails loudly instead of leaking a dead path into every later test.
+_ORIG_BRAIN = gate._BRAIN
+_ORIG_PROTECTED_CFG = gate._PROTECTED_CFG
+
 
 class TestSubcommandCollection(unittest.TestCase):
     def test_every_merge_in_a_chain_is_collected(self):
@@ -137,11 +143,41 @@ class TestWrapperPeel(unittest.TestCase):
             with self.subTest(cmd=cmd):
                 self.assertEqual([], gate._find_publish_subcmds(cmd))
 
-    def test_documented_residual_stays_documented(self):
-        # bash -c / eval "..." keep the merge inside a QUOTED token, which is
-        # the same shape as the false positive above. Asserted so the docstring's
-        # residual list and the code cannot drift apart silently.
-        for cmd in (f'bash -c "{GH_MERGE} 96"', f"eval '{GH_MERGE} 96'"):
+    def test_a_reparsing_head_does_not_hide_the_merge(self):
+        # Replaces test_documented_residual_stays_documented, whose only job was
+        # to assert this vulnerability EXISTED. The trade it pinned was false:
+        # the property that separates these from the quoted mention above is not
+        # quoting, it is that bash/sh/ssh/script RE-PARSE their string argument
+        # as a command while git commit and echo never do (A4).
+        for cmd in (f'bash -c "{GH_MERGE} 96"', f"sh -lc '{GH_MERGE} 96'",
+                    f'ssh localhost "{GH_MERGE} 96"',
+                    f'script -qc "{GH_MERGE} 96" /dev/null',
+                    f'zsh -c "{GH_MERGE} 96"',
+                    f'bash <<EOF\n{GH_MERGE} 96\nEOF'):
+            with self.subTest(cmd=cmd):
+                found = gate._find_publish_subcmds(cmd)
+                self.assertEqual([("gh")], [f for _s, f in found])
+                self.assertEqual("96", gate._extract_pr_id(found[0][0]))
+
+    def test_eval_reparses_its_arguments_quoted_or_not(self):
+        # `eval gh pr merge 96` denied through the peel while `eval "gh pr merge
+        # 96"` allowed (measured 2026-09-08) — the quoting, not the command, was
+        # deciding. eval concatenates ALL its arguments and runs the result, so
+        # both are the same command and both deny.
+        for cmd in (f'eval "{GH_MERGE} 96"', f"eval '{GH_MERGE} 96'",
+                    f"eval {GH_MERGE} 96"):
+            with self.subTest(cmd=cmd):
+                found = gate._find_publish_subcmds(cmd)
+                self.assertEqual([("gh")], [f for _s, f in found])
+                self.assertEqual("96", gate._extract_pr_id(found[0][0]))
+
+    def test_a_head_that_does_not_reparse_keeps_the_mention_benign(self):
+        # The control for the test above: without it, "recursion into a quoted
+        # argument" would just be the false positive re-introduced.
+        for cmd in (f'git commit -m "{GH_MERGE} 96"',
+                    f'echo "{GH_MERGE} 96" >> notes.txt',
+                    'echo "git push origin main"',
+                    f"python3 - <<'PY'\nprint('{GH_MERGE} 96')\nPY"):
             with self.subTest(cmd=cmd):
                 self.assertEqual([], gate._find_publish_subcmds(cmd))
 
@@ -174,8 +210,8 @@ class TestGhAliases(unittest.TestCase):
         patcher = unittest.mock.patch.dict(os.environ, {"GH_CONFIG_DIR": d})
         patcher.start()
         self.addCleanup(patcher.stop)
-        gate._aliases_cache = None
-        self.addCleanup(setattr, gate, "_aliases_cache", None)
+        gate._aliases_cache = {}
+        self.addCleanup(setattr, gate, "_aliases_cache", {})
 
     def test_alias_is_resolved_to_the_merge_it_runs(self):
         self._with_aliases("git_protocol: https\naliases:\n"
@@ -218,16 +254,37 @@ class TestRepoScope(unittest.TestCase):
                 encoding="utf-8")
         return d
 
+    def setUp(self):
+        # Registered FIRST so it runs LAST (cleanups are LIFO): by then every
+        # patch below must have put the module back exactly as it was.
+        self.addCleanup(self._assert_module_globals_restored)
+
+    def _assert_module_globals_restored(self):
+        # D (tenth instance of the PR #282 class): the old cleanup captured its
+        # restore value AFTER patcher.start(), so `Path.home()` already resolved
+        # to the sandbox and it restored _BRAIN to a dead path; _PROTECTED_CFG
+        # was never restored at all. Measured: every later in-process test ran
+        # with gate._BRAIN pointing at a deleted temp dir. It changed no verdict
+        # only because later classes mock around it — luck, not isolation.
+        self.assertEqual(_ORIG_BRAIN, gate._BRAIN)
+        self.assertEqual(_ORIG_PROTECTED_CFG, gate._PROTECTED_CFG)
+
     def _protected(self, command: str, env: dict | None = None):
         home = self._sandbox()
+        # patch.object snapshots the CURRENT value before setting, so the
+        # restore cannot depend on anything the other patches changed.
+        for name, value in (("_BRAIN", home / ".claude"),
+                            ("_PROTECTED_CFG",
+                             home / ".claude" / "company" / "config"
+                             / "protected-repos.json")):
+            p = unittest.mock.patch.object(gate, name, value)
+            p.start()
+            self.addCleanup(p.stop)
         patcher = unittest.mock.patch.dict(
             os.environ, dict({"HOME": str(home), "USERPROFILE": str(home)},
                              **(env or {})))
         patcher.start()
         self.addCleanup(patcher.stop)
-        gate._BRAIN = home / ".claude"
-        gate._PROTECTED_CFG = gate._BRAIN / "company" / "config" / "protected-repos.json"
-        self.addCleanup(setattr, gate, "_BRAIN", Path.home() / ".claude")
         sub = gate._find_publish_subcmds(command)[0][0]
         return gate._is_protected_target(command, sub, str(home / "other"))
 
@@ -368,7 +425,32 @@ class TestGateEndToEnd(unittest.TestCase):
     stderr line is the assertion and the exit code is the sanity check.
     """
 
-    def _run(self, command: str, env: dict):
+    SESSION = "sess-qa-gate-test"
+
+    def _seed_receipt(self, sandbox: str, pr: str, verdict: str, agent_type: str):
+        """A harness-SHAPED QA receipt: ledger line plus the agent transcript it
+        points at, laid out where the harness writes one. Anything less is
+        rejected by receipt_ledger.qa_pass_for, which is the point."""
+        agent_id = "agentqa1"
+        tdir = (Path(sandbox) / ".claude" / "projects" / "slug" / self.SESSION
+                / "subagents")
+        tdir.mkdir(parents=True)
+        tpath = tdir / f"agent-{agent_id}.jsonl"
+        tpath.write_text(json.dumps({
+            "type": "assistant", "uuid": "u1", "parentUuid": None,
+            "sessionId": self.SESSION, "timestamp": "2026-09-08T00:00:00Z",
+            "message": {"content": [{"type": "text", "text":
+                                     f"QA-VERDICT: {verdict}\nQA-SCOPE: PR #{pr}"}]},
+        }) + "\n", encoding="utf-8")
+        ledger = Path(sandbox) / ".claude" / ".cache" / "receipts"
+        ledger.mkdir(parents=True, exist_ok=True)
+        (ledger / "global.jsonl").write_text(json.dumps({
+            "kind": "qa", "verdict": verdict, "agent_type": agent_type,
+            "agent_id": agent_id, "agent_transcript_path": str(tpath),
+            "ts": "2026-09-08T00:00:00Z", "scope": f"PR #{pr}",
+        }) + "\n", encoding="utf-8")
+
+    def _run(self, command: str, env: dict, receipt: dict | None = None):
         full = dict(os.environ)
         for k in ("OCTO_MERGE_APPROVE", "OCTO_QA_OK"):
             full.pop(k, None)
@@ -380,15 +462,18 @@ class TestGateEndToEnd(unittest.TestCase):
         full["HOME"] = sandbox
         full["USERPROFILE"] = sandbox
         full.update(env)
+        if receipt:
+            self._seed_receipt(sandbox, **receipt)
         payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command},
-                              "cwd": "/nonexistent/repo"})
+                              "cwd": "/nonexistent/repo",
+                              "session_id": self.SESSION})
         cp = subprocess.run([sys.executable, str(SCRIPTS / "qa-merge-gate.py")],
                             input=payload, capture_output=True, text=True, env=full,
                             timeout=30)
         return cp.returncode, cp.stderr
 
-    def _deny(self, command: str, env: dict, *reasons: str):
-        rc, err = self._run(command, env)
+    def _deny(self, command: str, env: dict, *reasons: str, receipt: dict | None = None):
+        rc, err = self._run(command, env, receipt)
         self.assertEqual(2, rc, err)
         for reason in reasons:
             self.assertIn(reason, err)
@@ -432,9 +517,471 @@ class TestGateEndToEnd(unittest.TestCase):
         # B1 end to end: `time gh pr merge 291` reached GitHub before this.
         self._deny(f"time {GH_MERGE} 291", {}, "merge of PR #291 needs operator approval")
 
+    def test_approval_without_a_qa_receipt_denies_for_the_receipt_reason(self):
+        # C: v7's whole contract had ZERO coverage. Mutating `if not qa_ok:` to
+        # `if False:` deleted the receipt requirement — an approval alone merged
+        # — and 255 tests plus all 27 selftest legs still passed, because every
+        # fixture that set OCTO_MERGE_APPROVE also set OCTO_QA_OK=1, so nothing
+        # ever took this branch. HOME is a sandbox here, so the ledger is empty
+        # and qa_pass_for returns None the same way it does on a real miss.
+        self._deny(f"{GH_MERGE} 280", {"OCTO_MERGE_APPROVE": "280"},
+                   "carries NO QA receipt", "QA-VERDICT: PASS", "QA-SCOPE: PR #280")
+
+    def test_a_qa_receipt_for_the_approved_pr_allows_the_merge(self):
+        # The control: without it the test above passes on a gate that denies
+        # every approved merge, receipt or not.
+        rc, err = self._run(
+            f"{GH_MERGE} 280", {"OCTO_MERGE_APPROVE": "280"},
+            receipt={"pr": "280", "verdict": "PASS", "agent_type": "qa-reviewer"})
+        self.assertEqual(0, rc, err)
+
+    def test_a_qa_receipt_for_a_DIFFERENT_pr_does_not_travel(self):
+        self._deny(f"{GH_MERGE} 280", {"OCTO_MERGE_APPROVE": "280"},
+                   "carries NO QA receipt",
+                   receipt={"pr": "279", "verdict": "PASS",
+                            "agent_type": "qa-reviewer"})
+
     def test_alias_definition_denies_with_its_own_reason(self):
-        self._deny('gh alias set m "pr merge"', {},
-                   "DEFINES a gh alias that expands to a merge")
+        for cmd in ('gh alias set m "pr merge"',
+                    "git config alias.pm 'push origin main'",
+                    "git -c alias.p='push origin main' p"):
+            with self.subTest(cmd=cmd):
+                self._deny(cmd, {}, "DEFINES a gh or git alias that expands")
+
+
+class TestQuotedVerbIsStillTheVerb(unittest.TestCase):
+    """A1: one quote pair defeated the whole matcher.
+
+    Every line here was measured ALLOWED by the live gate at 2ceb87c while
+    actually invoking gh/git (logging stub on PATH). Root cause: the peel decoded
+    only the HEAD token and matched the verb words against the raw remainder, so
+    `gh "pr" merge` never looked like `gh pr merge`. The verbs are matched on
+    DECODED tokens now; a whole-token quoted mention is ONE token and can never
+    supply a verb word, which is why this costs no over-fire.
+    """
+
+    def test_a_quoted_or_escaped_verb_word_still_identifies_the_merge(self):
+        for cmd, form in (('gh "pr" merge 291', "gh"),
+                          ('gh pr "merge" 291', "gh"),
+                          ("gh 'pr' 'merge' 291", "gh"),
+                          ('gh pr me\\rge 291', "gh"),
+                          ('git "push" origin main', "push"),
+                          ('git push "origin" main', "push"),
+                          ('git push origin ma"in"', "push"),
+                          ('git push origin "main"', "push")):
+            with self.subTest(cmd=cmd):
+                self.assertEqual([(form)],
+                                 [f for _s, f in gate._find_publish_subcmds(cmd)])
+
+    def test_a_quoted_api_path_still_identifies_the_merge(self):
+        cmd = 'gh api -X PUT repos/CarlosCaPe/octorato/pulls/291/me"rge"'
+        self.assertEqual([("api")], [f for _s, f in gate._find_publish_subcmds(cmd)])
+        self.assertEqual("291", gate._extract_pr_id(cmd))
+
+    def test_the_pr_number_is_still_read_off_the_RAW_form(self):
+        # The reason the two normalizations are kept separate. Flattening the
+        # quoting for extraction too would read 280 (a flag VALUE) as the PR and
+        # let an approval for 280 merge 281.
+        self.assertEqual("281", gate._extract_pr_id(f'{GH_MERGE} -t "x 280" 281'))
+        self.assertEqual("281", gate._extract_pr_id(f'{GH_MERGE} --body "see 280" 281'))
+
+
+class TestSeparatorsAndHeadPositions(unittest.TestCase):
+    """A2: `&` is a separator, and a benign head in front must not swallow the
+    merge behind it. Both shapes were measured ALLOWED at 2ceb87c."""
+
+    def test_background_separator_does_not_hide_the_next_command(self):
+        for cmd in (f"git status & {GH_MERGE} 291",
+                    f"cd /tmp & {GH_MERGE} 291",
+                    f"ls & {GH_MERGE} 291"):
+            with self.subTest(cmd=cmd):
+                found = gate._find_publish_subcmds(cmd)
+                self.assertEqual([("gh")], [f for _s, f in found])
+                self.assertEqual("291", gate._extract_pr_id(found[0][0]))
+
+    def test_the_separators_that_already_denied_still_deny(self):
+        for cmd in (f"git status && {GH_MERGE} 291",
+                    f"git status |& {GH_MERGE} 291",
+                    f"for i in 291; do {GH_MERGE} $i; done",
+                    f"{GH_MERGE} 291 &",
+                    f"({GH_MERGE} 291)",
+                    f"( {GH_MERGE} 291 )"):
+            with self.subTest(cmd=cmd):
+                self.assertTrue(gate._find_publish_subcmds(cmd), cmd)
+
+    def test_ampersand_is_a_separator(self):
+        # Pinned directly. The two halves of A2 (this split, and trying the
+        # anchor at EVERY head position below) overlap on every shape either one
+        # can be written as today, so each is pinned at its own seam rather than
+        # through a command that both happen to catch. `&` backgrounds what
+        # precedes it, so the cwd walk and the env walk have to see two
+        # sub-commands here, not one.
+        parts = [p.strip() for p in gate._split_subcmds(f"git status & {GH_MERGE} 291")
+                 if p.strip()]
+        self.assertEqual(["git status", f"{GH_MERGE} 291"], parts)
+
+    def test_every_head_position_is_a_candidate(self):
+        cands = gate._peel_candidates(f"git status & {GH_MERGE} 291")
+        self.assertEqual(2, len(cands))
+        self.assertTrue(any(dec.startswith(GH_MERGE) for _raw, dec in cands), cands)
+
+    def test_a_trailing_ampersand_still_carries_the_pr_number(self):
+        found = gate._find_publish_subcmds(f"{GH_MERGE} 291 &")
+        self.assertEqual("291", gate._extract_pr_id(found[0][0]))
+
+
+class TestShellProducedHeads(unittest.TestCase):
+    """A3: heads the shell resolves and the tokenizer cannot.
+
+    An opaque head is not decidable without executing something, so it is
+    handled the deny-by-default way: the REMAINDER is tried against every head
+    this gate knows. `$(cmd) push origin main` is a push to main whoever `cmd`
+    turns out to be.
+    """
+
+    def test_an_opaque_head_with_a_merge_remainder_is_identified(self):
+        for cmd in ("$(echo gh) pr merge 96",
+                    "`echo gh` pr merge 96",
+                    "${PATH:0:0}gh pr merge 96",
+                    "$'gh' pr merge 96",
+                    "G=gh; $G pr merge 96",
+                    "$HOME/bin/gh pr merge 96",
+                    "$(which git) push origin main"):
+            with self.subTest(cmd=cmd):
+                self.assertTrue(gate._find_publish_subcmds(cmd), cmd)
+
+    def test_an_opaque_word_that_is_not_a_merge_stays_benign(self):
+        # The control: the substitution must not turn every `$var` into a merge.
+        for cmd in ("docs='gh pr merge'; echo $docs",
+                    "echo $HOME",
+                    "python3 $SCRIPT --selftest",
+                    "$(which git) status"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual([], gate._find_publish_subcmds(cmd))
+
+    def test_a_command_substitution_is_one_token(self):
+        toks = gate._tokens_with_offsets("$(echo gh) pr merge 96")
+        self.assertEqual(["$(echo gh)", "pr", "merge", "96"],
+                         [t for t, _s, _e in toks])
+
+
+class TestGitAliases(unittest.TestCase):
+    """A5: the git half of the alias surface, which was never fixed.
+
+    `-c` needs no config file at all, so alias RESOLUTION could never catch it;
+    the DEFINITION is what gets gated, exactly as `gh alias set` is.
+    """
+
+    def test_an_inline_c_alias_to_a_push_is_gated(self):
+        for cmd in ("git -c alias.p='push origin main' p",
+                    'git -c alias.p="push origin master" p',
+                    "git -c alias.z='!gh pr merge 1' z"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual([("alias")],
+                                 [f for _s, f in gate._find_publish_subcmds(cmd)])
+
+    def test_defining_a_push_alias_with_git_config_is_gated(self):
+        for cmd in ("git config alias.pm 'push origin main'",
+                    "git config --global alias.pm 'push origin main'",
+                    "git config alias.pm 'push origin main' && git pm"):
+            with self.subTest(cmd=cmd):
+                self.assertIn("alias",
+                              [f for _s, f in gate._find_publish_subcmds(cmd)])
+
+    def test_a_harmless_git_alias_is_not_gated(self):
+        for cmd in ("git config alias.st status",
+                    "git config --get alias.st",
+                    "git -c alias.l='log --oneline' l"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual([], gate._find_publish_subcmds(cmd))
+
+    def test_a_global_config_alias_is_resolved_to_what_it_runs(self):
+        d = tempfile.mkdtemp(prefix="gitcfg-")
+        self.addCleanup(shutil.rmtree, d, True)
+        Path(d, "gitconfig").write_text(
+            "[user]\n\tname = x\n[alias]\n\tpm = push origin main\n\tst = status\n",
+            encoding="utf-8")
+        patcher = unittest.mock.patch.dict(
+            os.environ, {"GIT_CONFIG_GLOBAL": str(Path(d, "gitconfig"))})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        gate._git_aliases_cache = {}
+        self.addCleanup(setattr, gate, "_git_aliases_cache", {})
+        self.assertEqual([("push")],
+                         [f for _s, f in gate._find_publish_subcmds("git pm")])
+        self.assertEqual([], gate._find_publish_subcmds("git st"))
+
+
+class TestGhAliasSurfaces(unittest.TestCase):
+    """A6: two gh alias surfaces the resolver could not see, both verified
+    against the installed gh 2.88.1."""
+
+    def _cfg(self, body: str) -> str:
+        d = tempfile.mkdtemp(prefix="gh-cfg-")
+        self.addCleanup(shutil.rmtree, d, True)
+        Path(d, "config.yml").write_text(body, encoding="utf-8")
+        gate._aliases_cache = {}
+        self.addCleanup(setattr, gate, "_aliases_cache", {})
+        return d
+
+    def test_flow_style_aliases_are_read(self):
+        d = self._cfg("git_protocol: https\naliases: {mrg: pr merge, co: pr checkout}\n")
+        patcher = unittest.mock.patch.dict(os.environ, {"GH_CONFIG_DIR": d})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.assertEqual([("gh")], [f for _s, f in gate._find_publish_subcmds("gh mrg 291")])
+        self.assertEqual([], gate._find_publish_subcmds("gh co 291"))
+
+    def test_gh_config_dir_set_on_the_command_line_is_honoured(self):
+        # The hook's own env does NOT carry it: the agent set it for gh only.
+        d = self._cfg("aliases:\n    mrg: pr merge\n")
+        for cmd in (f"GH_CONFIG_DIR={d} gh mrg 291",
+                    f"export GH_CONFIG_DIR={d}; gh mrg 291"):
+            with self.subTest(cmd=cmd):
+                found = gate._find_publish_subcmds(cmd)
+                self.assertEqual([("gh")], [f for _s, f in found])
+                self.assertEqual(
+                    "291",
+                    gate._extract_pr_id(found[0][0], gate._cfg_dir_for(cmd, found[0][0])))
+
+
+class TestOverFireIsASecurityFailure(unittest.TestCase):
+    """E: a gate people route around is off. Each of these was DENIED by the
+    live gate at 2ceb87c while performing no merge at all."""
+
+    def test_a_heredoc_body_is_data_not_a_command(self):
+        for cmd in ("cat > /tmp/n2.md <<'EOF'\nTo publish: git push origin main\nEOF",
+                    f"cat > /tmp/notes.md <<'EOF'\nRun this:\n{GH_MERGE} 291\nEOF",
+                    f"python3 - <<'PY'\nprint('{GH_MERGE} 291')\nPY"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual([], gate._find_publish_subcmds(cmd))
+
+    def test_a_shell_reading_that_same_heredoc_still_denies(self):
+        # The control: the body is dropped because `cat` does not execute it.
+        for cmd in (f"bash <<'EOF'\n{GH_MERGE} 291\nEOF",
+                    "sh <<EOF\ngit push origin main\nEOF"):
+            with self.subTest(cmd=cmd):
+                self.assertTrue(gate._find_publish_subcmds(cmd), cmd)
+
+    def test_an_unterminated_heredoc_marker_swallows_nothing(self):
+        cmd = f'echo "a << b"\n{GH_MERGE} 291'
+        self.assertEqual([("gh")], [f for _s, f in gate._find_publish_subcmds(cmd)])
+
+    def test_pushing_local_main_INTO_another_branch_is_not_a_publish(self):
+        for cmd in ("git push origin main:refs/heads/feature-x",
+                    "git push origin master:feature-x",
+                    "git push origin main:refs/heads/wip"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual([], gate._find_publish_subcmds(cmd))
+
+    def test_every_real_push_to_main_still_denies(self):
+        # The control for the refspec fix: the destination is what matters, and
+        # every spelling of "the destination is main" still matches.
+        for cmd in ("git push origin main", "git push origin HEAD:main",
+                    "git push origin :main", "git push origin +main",
+                    "git push -u origin master", "git push origin main:main",
+                    "git push origin feature:refs/heads/main",
+                    "git push origin main --force"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual([("push")],
+                                 [f for _s, f in gate._find_publish_subcmds(cmd)])
+
+    def test_asking_for_help_merges_nothing(self):
+        for cmd in (f"{GH_MERGE} --help", f"{GH_MERGE} -h", f"{GH_MERGE} 291 --help"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual([], gate._find_publish_subcmds(cmd))
+
+    def test_a_dash_h_that_is_a_flag_VALUE_is_not_a_help_request(self):
+        # The control: `-h` inside a value must not turn a real merge into an
+        # allow. This is why the check walks tokens instead of searching.
+        for cmd in (f'{GH_MERGE} -t "-h" 291', f'{GH_MERGE} --body "-h" 291'):
+            with self.subTest(cmd=cmd):
+                self.assertEqual([("gh")],
+                                 [f for _s, f in gate._find_publish_subcmds(cmd)])
+                self.assertEqual("291", gate._extract_pr_id(cmd))
+
+
+class TestPinnedInternals(unittest.TestCase):
+    """Seven mutants that survived both the 255 tests and all 27 selftest legs.
+
+    Each test below dies when its mutation is re-applied. They pin INTERNALS on
+    purpose: the fixtures prove the gate blocks, and these prove WHY it blocks,
+    which is the part a refactor silently deletes.
+    """
+
+    def test_group_chars_are_stripped_before_the_head_scan(self):
+        # mutant: _W_GROUP strip removed. `(gh ...` is one token whose basename
+        # is `(gh`, so without the strip nothing anchors.
+        self.assertEqual([("gh")],
+                         [f for _s, f in gate._find_publish_subcmds(f"({GH_MERGE} 291)")])
+        self.assertEqual("291", gate._extract_pr_id(f"({GH_MERGE} 291)"))
+
+    def test_prefix_env_stops_at_the_command_head(self):
+        # mutant: the break-on-head removed. Without it an ARGUMENT that looks
+        # like an assignment is read as env, and
+        # `gh pr merge 291 --body GH_REPO=someone/unrelated` would resolve the
+        # target to an unrelated repo and ungate a protected merge.
+        self.assertEqual({}, gate._prefix_env(f"{GH_MERGE} 291 --body GH_REPO=x/y"))
+        self.assertEqual({"GH_REPO": "o/r"},
+                         gate._prefix_env(f"GH_REPO=o/r {GH_MERGE} 291"))
+
+    def test_cd_is_a_command_head_so_the_cwd_walk_sees_it_through_a_wrapper(self):
+        # mutant: `cd` dropped from _CMD_HEADS. The cwd walk peels to a head
+        # before reading `cd <path>`, so without it a wrapped cd is invisible
+        # and the effective cwd is wrong.
+        cmd = "nohup cd /tmp/zz; git push origin main"
+        sub = gate._find_publish_subcmds(cmd)[0][0]
+        self.assertEqual("/tmp/zz", gate._effective_cwd(cmd, sub, "/base"))
+
+    def test_curl_is_a_command_head_so_a_wrapped_api_write_anchors(self):
+        # mutant: `curl` dropped from _CMD_HEADS. Then the peel finds no head,
+        # the ^curl anchor fails and the API write walks.
+        cmd = "time curl -X PUT https://api.github.com/repos/o/r/pulls/1/merge"
+        self.assertEqual([("api")], [f for _s, f in gate._find_publish_subcmds(cmd)])
+        self.assertEqual("1", gate._extract_pr_id(cmd))
+
+    def test_the_unclosed_quote_fallback_still_yields_tokens(self):
+        # mutant: _ws_tokens returns []. Then a wrapped command with an unclosed
+        # quote has no tokens, no head is found, the anchor is lost and the gate
+        # falls OPEN on the one input it cannot parse.
+        self.assertTrue(gate._ws_tokens('time gh pr merge 291 "'))
+        self.assertEqual([("gh")],
+                         [f for _s, f in gate._find_publish_subcmds(f'time {GH_MERGE} 291 "')])
+        self.assertEqual("unknown", gate._extract_pr_id(f'time {GH_MERGE} 291 "'))
+
+
+class TestCrossScriptContract(unittest.TestCase):
+    """receipt_ledger imports two names out of this gate. 2ceb87c deleted one of
+    them and the consumer's `except Exception` swallowed it, so the split
+    silently became a no-op. No test noticed, which is the whole problem."""
+
+    def test_receipt_ledger_can_still_borrow_the_splitter(self):
+        ledger = _load("receipt_ledger_under_test", "receipt_ledger.py")
+        split, strip = ledger._qa_gate_helpers()
+        self.assertEqual(2, len([p for p in split("a && b") if p.strip()]))
+        self.assertEqual("git status", strip("A=1 2>/dev/null git status"))
+
+    def test_receipt_ledger_subcommands_actually_splits(self):
+        ledger = _load("receipt_ledger_under_test2", "receipt_ledger.py")
+        self.assertGreaterEqual(len(ledger.subcommands("echo a && echo b")), 2)
+
+
+class TestCrashPathJournalsItsRefusal(unittest.TestCase):
+    """A fail-closed crash printed and exited 2 without a kernel journal line,
+    so the one refusal nobody can re-run left no record."""
+
+    def setUp(self):
+        self.addCleanup(setattr, gate, "_PUBLISH_IDENTIFIED", False)
+        self.addCleanup(setattr, gate, "_LAST_PAYLOAD", None)
+
+    def test_the_crash_handler_journals(self):
+        seen = []
+        with unittest.mock.patch.object(gate, "main", side_effect=RuntimeError("boom")), \
+                unittest.mock.patch.object(gate, "_journal_deny",
+                                           side_effect=lambda *a, **k: seen.append(a)):
+            gate._PUBLISH_IDENTIFIED = True
+            gate._LAST_PAYLOAD = {"session_id": "s"}
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(2, gate._guarded_main())
+        self.assertEqual(1, len(seen))
+        self.assertIn("crashed", seen[0][0])
+        self.assertEqual({"session_id": "s"}, seen[0][1])
+
+
+class TestProtectedTargetResolution(unittest.TestCase):
+    """The two repo-resolution mutants: the clone-slug check and the linked
+    worktree gitdir candidate. Both survived the whole suite."""
+
+    def setUp(self):
+        self.addCleanup(self._assert_module_globals_restored)
+
+    def _assert_module_globals_restored(self):
+        self.assertEqual(_ORIG_BRAIN, gate._BRAIN)
+        self.assertEqual(_ORIG_PROTECTED_CFG, gate._PROTECTED_CFG)
+
+    def _home(self):
+        d = Path(tempfile.mkdtemp(prefix="qa-gate-resolve-"))
+        self.addCleanup(shutil.rmtree, d, True)
+        for name, url in ((".claude", "CarlosCaPe/octorato"),
+                          ("other", "someone/unrelated")):
+            (d / name / ".git").mkdir(parents=True)
+            (d / name / ".git" / "config").write_text(
+                '[remote "origin"]\n\turl = https://github.com/%s.git\n' % url,
+                encoding="utf-8")
+        for name, value in (("_BRAIN", d / ".claude"),
+                            ("_PROTECTED_CFG",
+                             d / ".claude" / "company" / "config"
+                             / "protected-repos.json")):
+            p = unittest.mock.patch.object(gate, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+        return d
+
+    def _protected(self, home, cwd):
+        cmd = "git push origin main"
+        sub = gate._find_publish_subcmds(cmd)[0][0]
+        return gate._is_protected_target(cmd, sub, str(cwd))
+
+    def test_a_clone_of_a_protected_repo_anywhere_is_protected(self):
+        # mutant: the tgt_slug comparison removed. A clone of the brain living
+        # outside every protected PATH would then classify as ungated.
+        home = self._home()
+        clone = home / "elsewhere" / "octorato-clone"
+        (clone / ".git").mkdir(parents=True)
+        (clone / ".git" / "config").write_text(
+            '[remote "origin"]\n\turl = git@github.com:CarlosCaPe/octorato.git\n',
+            encoding="utf-8")
+        self.assertIs(True, self._protected(home, clone))
+
+    def test_an_unrelated_clone_is_still_ungated(self):
+        home = self._home()
+        self.assertIs(False, self._protected(home, home / "other"))
+
+    def test_a_linked_worktree_of_a_protected_repo_is_protected(self):
+        # mutant: the gitdir candidate dropped from `candidates`. A linked
+        # worktree's .git is a FILE pointing into the main repo's .git dir, and
+        # that pointer is the ONLY thing tying it to the brain: its own path is
+        # outside every protected root and it carries no remote of its own.
+        home = self._home()
+        (home / ".claude" / ".git" / "worktrees" / "wt1").mkdir(parents=True)
+        wt = home / "wt" / "qa-gate"
+        wt.mkdir(parents=True)
+        (wt / ".git").write_text(
+            "gitdir: %s\n" % (home / ".claude" / ".git" / "worktrees" / "wt1"),
+            encoding="utf-8")
+        self.assertIs(True, self._protected(home, wt))
+
+    def test_a_push_to_the_protected_repo_BY_URL_is_protected(self):
+        # The target of a push can be a URL where a remote name goes, and then
+        # the cwd repo is not the repo being written. Fired from an unrelated
+        # repo this ungated; it only denied from a non-repo cwd, by luck.
+        home = self._home()
+        for url in ("https://github.com/CarlosCaPe/octorato.git",
+                    "git@github.com:CarlosCaPe/octorato.git",
+                    "https://github.com/CarlosCaPe/octorato"):
+            with self.subTest(url=url):
+                cmd = f"git push {url} main"
+                sub = gate._find_publish_subcmds(cmd)[0][0]
+                self.assertIs(True, gate._is_protected_target(
+                    cmd, sub, str(home / "other")))
+
+    def test_a_push_to_an_unrelated_url_from_an_unrelated_repo_still_ungates(self):
+        # The control: the URL check is positive-only, so it must not gate
+        # everything that happens to carry a github URL.
+        home = self._home()
+        cmd = "git push https://github.com/someone/unrelated.git main"
+        sub = gate._find_publish_subcmds(cmd)[0][0]
+        self.assertIs(False, gate._is_protected_target(cmd, sub, str(home / "other")))
+
+    def test_a_linked_worktree_of_an_unrelated_repo_is_not_protected(self):
+        home = self._home()
+        (home / "other" / ".git" / "worktrees" / "wt1").mkdir(parents=True)
+        wt = home / "wt" / "other-arm"
+        wt.mkdir(parents=True)
+        (wt / ".git").write_text(
+            "gitdir: %s\n" % (home / "other" / ".git" / "worktrees" / "wt1"),
+            encoding="utf-8")
+        self.assertIs(False, self._protected(home, wt))
 
 
 if __name__ == "__main__":
