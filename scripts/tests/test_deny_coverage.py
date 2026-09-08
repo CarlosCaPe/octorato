@@ -113,7 +113,13 @@ def parse_summary(out: str) -> dict:
     saying the counts are not interchangeable (QA cycle 11). A variant, not a hop,
     which is why every earlier sweep walked past it.
     """
-    for line in out.splitlines():
+    # La ULTIMA, no la primera. El pie va al final y un mensaje puede traer un
+    # salto de linea con una linea con forma de resumen: `check crashed: {e}`
+    # incrusta texto de excepcion arbitrario, y la salida de un subproceso llega
+    # a los mensajes. Leyendo la primera, ese texto tapa el pie real y la
+    # asercion que descansa en este lector mide el mensaje, no el resumen
+    # (QA ciclo 12).
+    for line in reversed(out.splitlines()):
         m = _SUMMARY.match(line)
         if m:
             return {"passed": int(m.group(1)), "warn": int(m.group(2)),
@@ -959,7 +965,16 @@ class TestTheWireCarriesEveryRow(unittest.TestCase):
                               "fix the other stub too"),
                 doctor.Result("stub-warn", doctor.WARN, "the stub warned",
                               "look at the stub that warned"),
-                doctor.Result("stub-pass", doctor.PASS, "the stub passed", "")]
+                doctor.Result("stub-pass", doctor.PASS, "the stub passed", ""),
+                # TRES pases, no uno. Con 2 FAIL / 1 WARN / 1 PASS los conteos eran
+                # passed == warn == 1, asi que intercambiar esas dos posiciones daba una
+                # linea BYTE POR BYTE identica, y dos mutaciones sobrevivian bajo una
+                # asercion que dice "los conteos no son intercambiables". El segundo FAIL
+                # se habia agregado por esta misma razon para romper el empate warn/fail:
+                # tres posiciones son tres pares, y solo uno estaba roto. Con {3,1,2} las
+                # seis permutaciones se distinguen (QA ciclo 12).
+                doctor.Result("stub-pass-two", doctor.PASS, "another stub passed", ""),
+                doctor.Result("stub-pass-three", doctor.PASS, "a third passed", "")]
 
     def test_every_verdict_survives_the_whole_wire_to_a_real_byte_stream(self):
         """Kills the six mutations 236 tests missed in cycle 9 (deleting the WARN line
@@ -983,7 +998,7 @@ class TestTheWireCarriesEveryRow(unittest.TestCase):
             self.assertEqual(got["hint"], r.hint,
                              "a FAIL or WARN hint is not decoration, and a PASS has "
                              "none to print")
-        self.assertEqual(parse_summary(out), {"passed": 1, "warn": 1, "fail": 2},
+        self.assertEqual(parse_summary(out), {"passed": 3, "warn": 1, "fail": 2},
                          "the footer is the line a hurried reader trusts, and it was "
                          "the last thing the printer emits with nothing watching it")
 
@@ -1022,7 +1037,7 @@ class TestTheWireCarriesEveryRow(unittest.TestCase):
                              {"key": r.key, "status": r.status, "message": r.message,
                               "hint": r.hint},
                              "the whole row, hint included")
-        self.assertEqual(doc["summary"], {"passed": 1, "warn": 1, "fail": 2},
+        self.assertEqual(doc["summary"], {"passed": 3, "warn": 1, "fail": 2},
                          "the summary counts are not interchangeable")
 
     def test_run_all_forwards_the_fix_flag_it_was_given(self):
