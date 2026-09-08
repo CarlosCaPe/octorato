@@ -17,6 +17,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 CLAUDE_DIR = Path(__file__).resolve().parent.parent
@@ -1634,12 +1635,19 @@ def check_kernel_process_live(fix: bool) -> Result:
             except OSError:
                 continue
     journals.sort(reverse=True)
+    # The SAME defect the sibling check just had, four functions up and in this same
+    # file: the sentence below printed `min(len(journals), 5)`, a bound read off the
+    # list instead of off the loop, so narrowing the slice left the row claiming five
+    # chains verified while one had. Fixed here too rather than left as the twin of a
+    # bug this file now says it abolished.
+    verified = 0
     for _, pid in journals[:5]:
         code, why = kernel_proc.verify_detail(pid)
         if code != 0:
             return Result(key, FAIL, f"journal chain broken for pid {pid}: {why}",
                           "the journal is append-only and hash-chained; a broken chain is tamper "
                           "evidence, read it before deleting the file")
+        verified += 1
     opened = 0
     cutoff = now - 7 * 24 * 3600
     for mtime, pid in journals:
@@ -1681,7 +1689,7 @@ def check_kernel_process_live(fix: bool) -> Result:
         bench_note = "hot path could not be measured"
 
     msg = (f"3 selftests pass; {len(procs)} process row(s), {len(live)} live, all journaled; "
-           f"{min(len(journals), 5)} newest chain(s) verify; {opened} call(s) ran unjournaled "
+           f"{verified} newest chain(s) verify; {opened} call(s) ran unjournaled "
            f"in 7 days; golden replay matches; {bench_note}")
     hint = ("the hot path is slower than the budget; it is a WARN by design, "
             "compare `octo bench` on an idle box before acting"
@@ -1738,6 +1746,24 @@ def check_kernel_isolation_gate(fix: bool) -> Result:
                   "release); hook order not asserted, same-event hooks run in parallel")
 
 
+# The rule id `scripts/r__permission-denied__journal.py` stamps on every line it
+# writes, and the ONLY id the coverage comparison may count.
+#
+# Why the rule id and not `source == "harness"`, which the journal schema also
+# documents as "who refused". Both are written by the same reflex and its selftest
+# asserts both, and on this brain the two are indistinguishable in the data: all
+# 571 deny lines in the window carry no `source` at all. So the choice is made on
+# failure direction, not on evidence. Counting by `source` is the FAIL-OPEN one: a
+# future writer that records a harness refusal under a different rule id would keep
+# the row green while THIS reflex is dead, which is the exact silence the check
+# exists to break. Counting by the rule id fails LOUD instead, on the day the id
+# moves, and loud is the direction this check has taken at every other fork. The
+# rule id is also the registry's own key, checked one line away by the orphan
+# assertion, where `source` is a free-form string whose schema entry is shadowed by
+# the SessionStart `source` of the same name.
+HARNESS_DENY_RULE = "HARNESS.permission-denied"
+
+
 def check_kernel_replay(fix: bool) -> Result:
     """v8 Phase 4: prove the JOURNAL is closed and replayable on THIS machine.
 
@@ -1755,6 +1781,11 @@ def check_kernel_replay(fix: bool) -> Result:
        attributed to a rule the registry does not carry is an orphan mechanism,
        and it is a FAIL, not a WARN, because the alternative is a gate that
        refuses work under a name nobody can look up.
+    4. The PermissionDenied reflex's OWN deny lines, since the hook was armed, are
+       compared against the harness's own record of what it refused. That count is
+       `HARNESS_DENY_RULE` only, never assertion 3's total: the total is every
+       gate's refusals, and comparing it to a harness record made the row read PASS
+       on a brain whose reflex had recorded nothing at all.
 
     Never writes. Passes on a fresh install with no journals at all: zero
     journals is zero orphans, and saying so is honest where inventing a WARN
@@ -1808,12 +1839,19 @@ def check_kernel_replay(fix: bool) -> Result:
             except OSError:
                 continue
     journals.sort(reverse=True)
+    # COUNTED, not restated. The PASS sentence used to print `min(len(journals), 5)`,
+    # a bound computed from the list rather than from the loop, so narrowing the
+    # slice to `[:1]` left the row claiming five journals replayed while one had
+    # (QA cycle 13). A bound stated in prose that the mechanism does not impose is
+    # the same defect this whole check exists to abolish, one level down.
+    replayed = 0
     for _, pid in journals[:5]:
         cp = run([py, str(octo), "replay", pid, "--verify"], cwd=CLAUDE_DIR)
         if cp.returncode != 0:
             return Result(key, FAIL, f"replay --verify failed for pid {pid}",
                           "a real journal does not replay or its chain is broken; "
                           f"run `octo replay {pid} --verify` and read it before deleting")
+        replayed += 1
 
     try:
         registered = {r.id for r in Registry.load(REGISTRY_PATH).rules}
@@ -1822,7 +1860,7 @@ def check_kernel_replay(fix: bool) -> Result:
                       "fix rules.yaml, then re-run")
     now = time.time()
     cutoff = now - 7 * 24 * 3600
-    denies, orphans = 0, {}
+    denies, orphans, reflex_ts = 0, {}, []
     for mtime, pid in journals:
         if mtime < cutoff:
             continue
@@ -1833,6 +1871,16 @@ def check_kernel_replay(fix: bool) -> Result:
                 continue
             denies += 1
             rule = str(line.get("rule") or "")
+            # TWO counts, because they answer two questions. `denies` is every
+            # gate's refusal and it is what the orphan-rule assertion below is
+            # about. `reflex_ts` is only the lines the PermissionDenied reflex
+            # wrote, and it is the only number the coverage comparison may use:
+            # thirteen other gates journal `kind: deny` under their own rule ids,
+            # so on this brain the total was 571 while the reflex's own count was
+            # 0, and feeding the total to `deny_coverage` made a dead reflex read
+            # PASS against a live harness refusal (QA cycle 13).
+            if rule == HARNESS_DENY_RULE:
+                reflex_ts.append(float(line.get("ts") or 0))
             if rule not in registered:
                 orphans.setdefault(rule or "(unnamed)", []).append(pid)
     if orphans:
@@ -1842,8 +1890,14 @@ def check_kernel_replay(fix: bool) -> Result:
                       "a refusal under a name the registry does not carry is an orphan "
                       "mechanism (RULE #1): register the rule, or fix the id the gate journals")
     armed_at, harness_denies, other_denies, why = _harness_refusals_since_hook(cutoff)
-    status, coverage, hint = deny_coverage(denies, armed_at, harness_denies,
-                                           other_denies, why)
+    # The harness side counts refusals since the hook was armed, so the journal
+    # side has to start at the same instant or the two numbers describe different
+    # windows. `armed_at` is never earlier than `cutoff`, so this only ever
+    # narrows.
+    reflex_denies = (len(reflex_ts) if armed_at is None
+                     else sum(1 for t in reflex_ts if t >= armed_at))
+    status, coverage, hint = deny_coverage(reflex_denies, armed_at, harness_denies,
+                                           other_denies, why, denies)
     if status in (FAIL, WARN):
         # WARN was being collapsed into the PASS line below, which threw away both
         # the status and the hint: the one new verdict this check introduced was
@@ -1852,24 +1906,37 @@ def check_kernel_replay(fix: bool) -> Result:
         # exist.
         return Result(key, status, coverage, hint)
     return Result(key, PASS,
-                  f"golden replay verifies byte for byte; {min(len(journals), 5)} real "
+                  f"golden replay verifies byte for byte; {replayed} real "
                   f"journal(s) replay; {coverage}")
 
 
-def deny_coverage(denies: int, armed_at: float | None, harness_denies: int,
-                  other_denies: int = 0, why: str = "") -> tuple[str, str, str]:
-    """Turn the two counts into (status, sentence, hint). Pure, so it is testable.
+def deny_coverage(reflex_denies: int, armed_at: float | None, harness_denies: int,
+                  other_denies: int = 0, why: str = "",
+                  total_denies: int | None = None) -> tuple[str, str, str]:
+    """Turn the counts into (status, sentence, hint). Pure, so it is testable.
 
     Three states used to print one sentence. A journal with no denies is healthy when
     nothing was refused and broken when everything was, and `0 deny(s) in 7 days`
     said both. Separating them is the whole change; keeping the decision out of the
     check that gathers the numbers is what makes all three reachable in a test
     instead of only the one the machine happens to be in.
+
+    TWO deny counts, and only one of them decides anything. `reflex_denies` is the
+    lines the PermissionDenied reflex itself wrote, in the same window as
+    `harness_denies`, and it is what every branch below tests. `total_denies` is
+    every gate's refusals and appears in the sentence only because that is what the
+    orphan-rule assertion above ranged over; comparing it to the harness record was
+    comparing the qa-merge-gate's 495 refusals against a reflex that had written
+    none, which returned PASS on a brain whose reflex had never fired (QA cycle 13).
+    It defaults to `reflex_denies` so a caller that has only one number cannot
+    accidentally claim a second.
     """
-    base = f"{denies} deny(s) in 7 days, all naming a registered rule"
+    total = reflex_denies if total_denies is None else total_denies
+    base = f"{total} deny(s) in 7 days, all naming a registered rule"
     if armed_at is None:
-        # No window: a fresh or shallow clone, no projects dir, or a subtree the walk
-        # could not read. Claiming nothing is right, and SAYING nothing is not: this
+        # No window. SEVEN roads reach here and `why` is the only thing that tells
+        # them apart; they are enumerated in `_harness_refusals_since_hook`.
+        # Claiming nothing is right, and SAYING nothing is not: this
         # used to print the same PASS line as a comparison that ran and came back
         # clean, which is cycle 1's own thesis reappearing one level up, inside the
         # function that fixed it. Three roads reach here now and one of them is a
@@ -1889,42 +1956,57 @@ def deny_coverage(denies: int, armed_at: float | None, harness_denies: int,
                       f"{cause}, so the reflex was NOT compared against the "
                       f"harness record"), ""
     if harness_denies == 0:
-        if other_denies and denies == 0:
-            # The automode family is the only one this harness was measured to fire
-            # PermissionDenied for, and that measurement has never been confirmed
-            # against a post-arm refusal, because there has not been one. Counting
-            # only automode is therefore the FAIL-OPEN choice: if the runtime does
-            # fire for another class, or starts to, a wired and dead reflex would
-            # read PASS. So the classes outside the family are counted separately
-            # and reported as a WARN, which asks a human to look without blocking a
-            # push on a claim the data does not support either way (QA cycle 1).
-            return WARN, (f"{base}; {other_denies} refusal(s) of other classes since "
-                          f"the hook went live and none reached the journal; if this "
-                          f"harness fires PermissionDenied for them, the reflex is "
-                          f"dead rather than unexercised"), (
-                "confirm which toolDenialKind classes reach the hook on this runtime, "
-                "then either widen the count in _harness_refusals_since_hook or "
-                "record the measurement in its docstring")
+        if other_denies:
+            if reflex_denies == 0:
+                # The automode family is the only one this harness was measured to
+                # fire PermissionDenied for, and that measurement has never been
+                # confirmed against a post-arm refusal, because there has not been
+                # one. Counting only automode is therefore the FAIL-OPEN choice: if
+                # the runtime does fire for another class, or starts to, a wired and
+                # dead reflex would read PASS. So the classes outside the family are
+                # counted separately and reported as a WARN, which asks a human to
+                # look without blocking a push on a claim the data does not support
+                # either way (QA cycle 1).
+                return WARN, (f"{base}; {other_denies} refusal(s) of other classes since "
+                              f"the hook went live and none reached the journal; if this "
+                              f"harness fires PermissionDenied for them, the reflex is "
+                              f"dead rather than unexercised"), (
+                    "confirm which toolDenialKind classes reach the hook on this runtime, "
+                    "then either widen the count in _harness_refusals_since_hook or "
+                    "record the measurement in its docstring")
+            # Refusals happened, just not of the family the hook fires for, and the
+            # reflex has lines of its own. "The harness refused nothing" was printed
+            # here too and it was simply false: nine refusals had happened. A
+            # sentence that survives only because nobody counts is the defect this
+            # check is about (QA cycle 13).
+            return PASS, (f"{base}, {reflex_denies} of them from the reflex; the hook's "
+                          f"own family refused nothing since it went live, though "
+                          f"{other_denies} refusal(s) of other classes did"), ""
         return PASS, (f"{base}; the harness refused nothing since the hook went live, "
                       f"so the reflex is unexercised rather than proven"), ""
-    if denies == 0:
+    if reflex_denies == 0:
         return FAIL, (f"the harness refused {harness_denies} call(s) since the "
                       f"PermissionDenied hook went live and the journal recorded none"), (
             "the reflex is wired and not firing: check hooks.json still carries "
             "PermissionDenied, then run `scripts/r__permission-denied__journal.py "
             "--selftest registry/fixtures/FLOW.kernel-journal`")
-    return PASS, f"{base}, against {harness_denies} harness refusal(s) in the same window", ""
+    return PASS, (f"{base}, {reflex_denies} of them from the reflex, against "
+                  f"{harness_denies} harness refusal(s) in the same window"), ""
 
 
 def _harness_refusals_since_hook(cutoff: float) -> tuple[float | None, int, int, str]:
     """(arm date, refusals the hook fires for, every other class, why there is no window).
 
-    The fourth element is not decoration. Four roads reach a None arm date and they
-    are not equally alarming: a shallow clone is permanent for that checkout, a
-    missing projects dir is a config mismatch, an unreadable subtree is transient or
-    hostile. Rendering them as one non-event is a smaller copy of the collapse this
-    check exists to undo, so each road names itself and the caller puts the name in
-    the SENTENCE. It was in the hint for one cycle, where measurement showed it never
+    The fourth element is not decoration. SEVEN roads reach a None arm date and they
+    are not equally alarming: a shallow clone is permanent for that checkout, a git
+    that will not answer at all is a broken environment, a future-dated arm commit is
+    a clock, a missing projects dir is a config mismatch, an unreadable subtree or an
+    unreadable FILE is transient or hostile. Rendering them as one non-event is a
+    smaller copy of the collapse this check exists to undo, so each road names itself
+    and the caller puts the name in the SENTENCE. Three of the seven were added after
+    QA found them answering under another road's name or not answering at all: git
+    exiting non-zero was reported as a shallow clone, an unreadable file was reported
+    as nothing, and a future arm date was reported as an unexercised reflex. It was in the hint for one cycle, where measurement showed it never
     reached a reader: the caller forwards a hint only for FAIL and WARN, and the
     printer prints one only for FAIL and WARN, so a PASS hint is invisible twice over
     (QA cycle 6). A cause the reader cannot see is a cause that does not exist.
@@ -1967,8 +2049,22 @@ def _harness_refusals_since_hook(cutoff: float) -> tuple[float | None, int, int,
     # the newest possible, hence the narrowest possible window, hence quiet on a
     # broken brain. No history is a reason to claim nothing, not to claim a date.
     shallow = run(["git", "rev-parse", "--is-shallow-repository"], cwd=CLAUDE_DIR)
-    if (shallow.stdout or "").strip() != "false":
+    answer = (shallow.stdout or "").strip()
+    if shallow.returncode != 0:
+        # Not a shallow clone. git EXITS NON-ZERO here for its own reasons: not a
+        # repository, `detected dubious ownership`, no git on PATH. Every one of
+        # those leaves stdout empty, and `!= "false"` then read them all as a
+        # grafted history, so the row named a cause that had not happened while the
+        # real one went unsaid. A wrong cause is worse than no cause, which is the
+        # argument this whole check is built on (QA cycle 13).
+        detail = (shallow.stderr or "").strip().splitlines()
+        because = detail[-1].strip() if detail else f"exit {shallow.returncode}"
+        return None, 0, 0, f"git itself failed on this checkout ({because})"
+    if answer == "true":
         return None, 0, 0, "a shallow clone, whose grafted history cannot say when the hook arrived"
+    if answer != "false":
+        return None, 0, 0, (f"git answered {answer!r} to is-shallow-repository, which is "
+                            f"neither true nor false")
     # --diff-filter=A --follow, not a bare log -1: the bare form answers with the
     # LAST commit that touched the file, so the day anyone fixes a typo in the hook
     # the window collapses to that moment and the check goes quiet for good. The
@@ -1985,7 +2081,23 @@ def _harness_refusals_since_hook(cutoff: float) -> tuple[float | None, int, int,
     stamps = [s for s in (line[0].split() if line else []) if s.isdigit()]
     if cp.returncode != 0 or not stamps:
         return None, 0, 0, "no commit adding the hook to this checkout"
-    armed_at = max(min(float(s) for s in stamps), cutoff)
+    added_at = min(float(s) for s in stamps)
+    if added_at > time.time():
+        # A clock skew, a rebase with a forged date, an import from a machine set
+        # ahead: the arm date lands after every transcript, every record is skipped,
+        # the count comes back 0 and the row says "unexercised". That is a real
+        # sentence produced by reading nothing, which is the disease, not a state.
+        #
+        # Tested on the COMMIT STAMP, not on the clamped `armed_at`. Clamping is
+        # what makes both sides count over the same seven days, and a caller is
+        # entitled to hand in any cutoff it likes; blaming the commit for a window
+        # the CALLER opened in the future would be this check's other disease, a
+        # cause that did not happen (`test_the_window_is_clamped_to_the_cutoff`
+        # passes 4_000_000_000.0 for exactly that reason). In production `cutoff` is
+        # always now minus seven days, so the two can only diverge in a test.
+        return None, 0, 0, ("the commit that added the hook is dated in the future, "
+                            "so the window has not opened yet")
+    armed_at = max(added_at, cutoff)
     projects = harness_projects_dir()
     if projects is None:
         # The evidence is not where this can read it. Reporting zero here would be
@@ -2010,8 +2122,17 @@ def _harness_refusals_since_hook(cutoff: float) -> tuple[float | None, int, int,
             if path.stat().st_mtime < armed_at:
                 continue
             text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
+        except OSError as exc:
+            # `continue` here was the directory road's silent zero one level down:
+            # os.walk lists a file the process cannot open (mode 000, a vanished
+            # session, a full-disk read error) and the loop moved on, so a count
+            # produced without reading the file that might hold the refusals came
+            # back as a confident "refused nothing". The DIRECTORY road named
+            # itself and the FILE road did not, which is why deleting this
+            # `continue` altogether changed no test (QA cycle 13). Same failure,
+            # same remedy: no window, and say which road.
+            return None, 0, 0, (f"a transcript file under projects that could not be "
+                                f"read ({type(exc).__name__})")
         if "toolDenialKind" not in text:
             continue
         for line in text.splitlines():

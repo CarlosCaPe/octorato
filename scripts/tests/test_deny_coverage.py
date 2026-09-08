@@ -193,14 +193,31 @@ class DenyCoverageCase(unittest.TestCase):
         os.environ["CLAUDE_CONFIG_DIR"] = str(self.harness)
         self.addCleanup(_restore_env, saved_env)
 
-    def write_refusal(self, kind: str, when: float) -> None:
-        """One transcript record in the harness's own shape."""
+    def write_refusal(self, kind: str, when: float, nested: bool = False) -> None:
+        """One transcript record in the harness's own shape.
+
+        TOP LEVEL, next to `type` and `timestamp`. The fixture used to bury
+        `toolDenialKind` inside `message.content[0]`, and every real record on this
+        machine carries it at the record's root: measured, 226 of 226 in
+        ~/.claude/projects, zero nested. `_denial_kind` walks the record so both
+        shapes are found and nothing broke, which is exactly why the drift was
+        invisible: the shape under test was not the harness's shape, so the coverage
+        the suite claimed over the real record was coverage of an invented one
+        (QA cycle 13). `nested=True` keeps a case for the walk itself, and it is
+        labelled as tolerance rather than evidence, because no record in the
+        measurement had that shape.
+        """
         from datetime import datetime, timezone
         stamp = datetime.fromtimestamp(when, timezone.utc).isoformat().replace("+00:00", "Z")
         path = self.harness / "projects" / "slug" / "sess" / "transcript.jsonl"
         rec = {"type": "user", "timestamp": stamp,
-               "message": {"content": [{"type": "tool_result", "is_error": True,
-                                        "toolDenialKind": kind}]}}
+               "message": {"role": "user",
+                           "content": [{"type": "tool_result", "is_error": True,
+                                        "content": "denied"}]}}
+        if nested:
+            rec["message"]["content"][0]["toolDenialKind"] = kind
+        else:
+            rec["toolDenialKind"] = kind
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(rec) + "\n")
         os.utime(path, (when + 5, when + 5))
@@ -447,17 +464,42 @@ class TestWhichClassesCount(DenyCoverageCase):
         armed, _, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         for kind in ("permission-rule", "user-rejected"):
             self.write_refusal(kind, armed + 60)
-        _, seen, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        _, seen, other, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         self.assertEqual(seen, 0, "a refusal the hook never sees is not its failure")
+        # `other` had NOTHING asserting it anywhere: deleting `other += 1` from the
+        # collector left all 249 tests green while the only new verdict this check
+        # introduced lost its entire input, and the WARN became unreachable by data
+        # rather than by logic (QA cycle 13). A count that decides a status is not
+        # allowed to be the one number nobody reads.
+        self.assertEqual(other, 2, "a refusal outside the family is counted, not dropped")
         for kind in ("automode-blocked", "automode-unavailable", "automode-parsing-error"):
             self.write_refusal(kind, armed + 60)
-        _, seen, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        _, seen, other, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         self.assertEqual(seen, 3)
+        self.assertEqual(other, 2, "the family the hook fires for does not join `other`")
+
+    def test_a_nested_record_is_still_counted_end_to_end(self):
+        """The walk is only worth its comment if the COUNTER sees a nested record
+        too, not just the predicate. No record on this machine has that shape, so
+        this is the one place the tolerance is exercised at all."""
+        armed, _, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        self.write_refusal("automode-blocked", armed + 60, nested=True)
+        _, seen, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        self.assertEqual(seen, 1)
 
     def test_the_key_is_found_wherever_it_sits(self):
         """Walked, not path-indexed. A fixed path would stop matching the day the
         harness moves the field, which is exactly the silence this check exists to
-        break."""
+        break.
+
+        TOLERANCE, not evidence. Measured in ~/.claude/projects: 226 of 226 records
+        carry `toolDenialKind` at the record root and none carries it nested, so this
+        pins what the walk BUYS if the harness ever moves the field, and the sandbox
+        fixture writes the shape the harness actually writes (QA cycle 13)."""
+        flat = {"type": "user", "toolDenialKind": "automode-blocked",
+                "message": {"content": [{"type": "tool_result"}]}}
+        self.assertTrue(doctor._carries_automode_denial(flat),
+                        "the shape every real record on this machine has")
         deep = {"a": [{"b": {"c": {"toolDenialKind": "automode-blocked"}}}]}
         self.assertTrue(doctor._carries_automode_denial(deep))
         self.assertFalse(doctor._carries_automode_denial({"toolDenialKind": "permission-rule"}))
@@ -466,11 +508,22 @@ class TestWhichClassesCount(DenyCoverageCase):
 
 
 class TestEachNoWindowRoadNamesItself(DenyCoverageCase):
-    """Four roads end at "no window" and they are not the same news. A shallow clone
+    """Seven roads end at "no window" and they are not the same news. A shallow clone
     is permanent for that checkout, a missing projects dir is a config mismatch, an
-    unreadable subtree is transient or hostile, and a checkout with no such commit is
-    a fresh one. Rendering them as one non-event is the collapse this whole check
-    exists to undo, reappearing one level up (QA cycle 6)."""
+    unreadable subtree or an unreadable FILE is transient or hostile, a checkout with
+    no such commit is a fresh one, a git that exits non-zero is a broken environment,
+    and an arm date in the future is a clock. Rendering them as one non-event is the
+    collapse this whole check exists to undo, reappearing one level up (QA cycle 6).
+
+    Three of the seven were roads that answered under someone else's name, or under
+    none. `git rev-parse` exiting 128 (not a repository, dubious ownership, git
+    missing) leaves stdout empty, and `!= "false"` read every one of them as a
+    grafted history; an unreadable transcript FILE was skipped by a bare `continue`,
+    so the count came back confident and unread; a future-dated arm commit skipped
+    every record and the row said "unexercised" (QA cycle 13). A wrong cause is worse
+    than no cause, which is the argument this PR is built on, so the wrong ones are
+    tested exactly like the right ones.
+    """
 
     def _why(self):
         armed, _, _, why = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
@@ -481,7 +534,32 @@ class TestEachNoWindowRoadNamesItself(DenyCoverageCase):
         self.assertTrue(why, "and it must name itself on the way")
         return why
 
-    def test_the_four_roads_give_four_different_causes(self):
+    def test_an_answer_that_is_neither_true_nor_false_says_so(self):
+        """The one road no fixture can reach through git itself, and the reason it
+        exists. `git rev-parse --is-shallow-repository` prints exactly `true` or
+        `false`, and a git too old to know the flag EXITS NON-ZERO, which is the road
+        above. So the branch guards a future git, a wrapper on PATH, or a shim, and a
+        guard nothing exercises is prose. Stubbed at `doctor.run`, narrowly: only the
+        is-shallow call is answered, everything else goes to the real one, or the
+        stub would also be answering the `git log` this road never reaches.
+        """
+        real_run = doctor.run
+
+        def fake(args, cwd=None):
+            if args[:2] == ["git", "rev-parse"]:
+                return subprocess.CompletedProcess(args, 0, "maybe\n", "")
+            return real_run(args, cwd)
+
+        doctor.run = fake
+        self.addCleanup(lambda: setattr(doctor, "run", real_run))
+        why = self._why()
+        self.assertIn("neither true nor false", why)
+        self.assertIn("'maybe'", why, "the reader gets the answer git actually gave")
+        self.assertNotIn("grafted history", why,
+                         "an unknown answer is not a shallow clone, which is the "
+                         "mislabelling this road was split out of")
+
+    def test_every_road_gives_its_own_cause(self):
         causes = {}
         inner = self.harness / "projects" / "slug"
         os.chmod(inner, 0o000)
@@ -514,7 +592,56 @@ class TestEachNoWindowRoadNamesItself(DenyCoverageCase):
         doctor.CLAUDE_DIR = empty
         causes["no such commit"] = self._why()
 
-        self.assertEqual(len(set(causes.values())), 4,
+        # git EXITS NON-ZERO, which is not a shallow clone and used to be reported
+        # as one. A directory that is no repository at all is the cheapest real
+        # instance of the class; `git init` answers "false" there, which is why the
+        # existing shallow-clone test could never see this road.
+        notarepo = self.tmp / "notarepo"
+        (notarepo / "scripts").mkdir(parents=True)
+        doctor.CLAUDE_DIR = notarepo
+        causes["git failed"] = self._why()
+
+        # An arm date AFTER every transcript. Reached by committing the hook with a
+        # future author and committer date, which is what a skewed clock or an
+        # imported history produces; the check takes the EARLIER of the two, so both
+        # have to move or the road is not reached.
+        future = self.tmp / "future"
+        (future / "scripts").mkdir(parents=True)
+        (future / "scripts" / "r__permission-denied__journal.py").write_text("#\n",
+                                                                            encoding="utf-8")
+        env = dict(os.environ)
+        for k in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX",
+                  "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE"):
+            env.pop(k, None)
+        ahead = time.strftime("%Y-%m-%dT%H:%M:%S",
+                              time.gmtime(time.time() + 3 * 86400)) + "+0000"
+        env["GIT_AUTHOR_DATE"] = env["GIT_COMMITTER_DATE"] = ahead
+        for args in (["init", "-q"], ["config", "user.email", "t@example.invalid"],
+                     ["config", "user.name", "t"],
+                     ["add", "scripts/r__permission-denied__journal.py"],
+                     ["commit", "-q", "-m", "add the reflex"]):
+            subprocess.run(["git", "-C", str(future)] + args, check=True,
+                           capture_output=True, env=env)
+        doctor.CLAUDE_DIR = future
+        causes["future arm date"] = self._why()
+
+        # A transcript FILE the process cannot open, with its DIRECTORY readable, so
+        # the walk succeeds and only the open fails. That is the difference between
+        # this road and the unreadable-subtree one, and it is the difference the
+        # bare `except OSError: continue` erased.
+        doctor.CLAUDE_DIR = self.brain
+        armed_now, _, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        self.assertIsNotNone(armed_now, "the sandbox brain must have a real window")
+        self.write_refusal("automode-blocked", armed_now + 60)
+        blind = self.harness / "projects" / "slug" / "sess" / "transcript.jsonl"
+        os.chmod(blind, 0o000)
+        try:
+            causes["unreadable file"] = self._why()
+        finally:
+            os.chmod(blind, 0o644)
+            blind.unlink()
+
+        self.assertEqual(len(set(causes.values())), len(causes),
                          f"each road has to be distinguishable in the sentence: {causes}")
         # Distinct is not enough: swapping two roads' strings keeps the set at four
         # while the doctor tells a reader "shallow clone" over a missing projects
@@ -529,10 +656,13 @@ class TestEachNoWindowRoadNamesItself(DenyCoverageCase):
         # The tokens name the CONDITION, never the adjective: "shallow" alone made a
         # correct rewording to "a depth-limited clone, whose grafted history..." turn
         # the test red, so the binding was pinning the word and not the meaning.
-        tokens = {"unreadable subtree": "could not read",
+        tokens = {"unreadable subtree": "the walk could not read",
                   "no projects dir": "no projects directory",
                   "shallow clone": "grafted history",
-                  "no such commit": "no commit adding"}
+                  "no such commit": "no commit adding",
+                  "git failed": "git itself failed",
+                  "future arm date": "dated in the future",
+                  "unreadable file": "transcript file"}
         for road, token in tokens.items():
             self.assertIn(token, causes[road],
                           f"the {road} road is telling the reader it was something else: "
@@ -776,12 +906,53 @@ class TestTheFourOutcomesReadDifferently(unittest.TestCase):
 
     def test_the_failure_cannot_be_reached_without_a_real_refusal(self):
         """The control. If any input shape produced FAIL, the check would fire on a
-        healthy brain and be turned off by the next person who saw it."""
-        for denies, armed, harness in ((0, None, 0), (0, 1.0, 0), (5, 1.0, 0),
-                                       (5, 1.0, 5), (1, 1.0, 99)):
-            with self.subTest(denies=denies, armed=armed, harness=harness):
-                self.assertEqual(doctor.deny_coverage(denies, armed, harness)[0],
+        healthy brain and be turned off by the next person who saw it.
+
+        The last row is the one that changed meaning. `(1, 1.0, 99)` used to read "a
+        journal with one deny of ANY kind covers 99 harness refusals", which is the
+        defect: the one deny was the qa-merge-gate's and the reflex had recorded
+        nothing. The first argument is now the REFLEX's own count, so one reflex line
+        against 99 refusals is a live reflex under-recording, which is a PASS here by
+        design (the check asks whether the reflex fires at all, not whether it
+        catches every class the harness refuses for). The old reading is now a FAIL,
+        and it is pinned end to end where it belongs, on the check rather than on the
+        pure function, by `test_another_gates_deny_is_not_coverage_for_the_reflex`.
+        """
+        for reflex_denies, armed, harness in ((0, None, 0), (0, 1.0, 0), (5, 1.0, 0),
+                                              (5, 1.0, 5), (1, 1.0, 99)):
+            with self.subTest(reflex_denies=reflex_denies, armed=armed, harness=harness):
+                self.assertEqual(doctor.deny_coverage(reflex_denies, armed, harness)[0],
                                  doctor.PASS)
+
+    def test_the_total_is_reported_and_the_reflex_count_is_the_one_that_decides(self):
+        """Both numbers reach the reader, and only one of them votes. The live brain
+        that produced this PR is the fixture: 571 deny lines in the window, none of
+        them the reflex's, nine harness refusals of classes the hook does not fire
+        for. The old code took 571 into the comparison and printed PASS."""
+        status, text, _ = doctor.deny_coverage(0, 1_700_000_000.0, 0, 9,
+                                               total_denies=571)
+        self.assertEqual(status, doctor.WARN,
+                         "571 refusals by other gates are not this reflex firing")
+        self.assertIn("571 deny(s) in 7 days", text, "the total still reaches the reader")
+        self.assertIn("9 refusal(s) of other classes", text)
+        # And the same total with the reflex alive is not a WARN.
+        status, text, _ = doctor.deny_coverage(4, 1_700_000_000.0, 0, 9,
+                                               total_denies=571)
+        self.assertEqual(status, doctor.PASS)
+        self.assertIn("4 of them from the reflex", text)
+
+    def test_refusals_of_other_classes_never_print_that_nothing_was_refused(self):
+        """The sentence QA measured as false: with nine other-class refusals on
+        record the row said "the harness refused nothing since the hook went live".
+        Nine refusals had happened. It survived because the WARN needed an empty
+        journal and the journal was never empty, so every live brain landed on this
+        line (QA cycle 13)."""
+        _, text, _ = doctor.deny_coverage(4, 1_700_000_000.0, 0, 9)
+        self.assertNotIn("the harness refused nothing", text)
+        self.assertIn("9 refusal(s) of other classes", text)
+        # the branch that IS entitled to say it: nothing was refused at all
+        _, quiet, _ = doctor.deny_coverage(4, 1_700_000_000.0, 0, 0)
+        self.assertIn("the harness refused nothing", quiet)
 
 
 class TestTheJournalScanActuallyRuns(unittest.TestCase):
@@ -843,9 +1014,115 @@ class TestTheJournalScanActuallyRuns(unittest.TestCase):
 
     def no_harness_refusals(self) -> None:
         """Pin the OTHER half of the check, so a PASS here is about the journal."""
+        self.harness_refused(0)
+
+    def harness_refused(self, count: int, armed: float = 1_700_000_000.0) -> None:
+        """Pin the harness side to `count` refusals since `armed`."""
         real = doctor._harness_refusals_since_hook
-        doctor._harness_refusals_since_hook = lambda cutoff: (1_700_000_000.0, 0, 0, "")
+        doctor._harness_refusals_since_hook = lambda cutoff: (armed, count, 0, "")
         self.addCleanup(lambda: setattr(doctor, "_harness_refusals_since_hook", real))
+
+    def other_rule(self) -> str:
+        """A registered rule id that is NOT the harness reflex's."""
+        ids = sorted(r.id for r in doctor.Registry.load(doctor.REGISTRY_PATH).rules)
+        return next(i for i in ids if i != doctor.HARNESS_DENY_RULE)
+
+    def test_another_gates_deny_is_not_coverage_for_the_reflex(self):
+        """THE merge blocker of cycle 13, and the one this whole PR turns on.
+
+        `denies` was every journal line with `kind: deny`, and thirteen Octorato
+        gates write that kind under their own rule ids. Measured on this brain in a
+        7-day window: 571 deny lines, 495 from the qa-merge-gate, 50 from the
+        arming-surface gate, 26 from the isolation gate, and ZERO from the reflex
+        the coverage claim is about. So `denies == 0` was never reachable on a
+        working machine, the FAIL branch was dead, and the row printed PASS while
+        the reflex had recorded nothing at all.
+
+        One deny from another gate, twelve harness refusals. The old code counted
+        the one, took the final PASS and said "against 12 harness refusal(s)". The
+        reflex still recorded none, so this has to FAIL.
+        """
+        jdir = self.sandbox()
+        self.harness_refused(12)
+        now = time.time()
+        self.seed(jdir, "other-gate-agent",
+                  [self.start(now),
+                   {"kind": "deny", "ts": now, "rule": self.other_rule(),
+                    "reason": "some other gate refused something"}])
+        result = doctor.check_kernel_replay(False)
+        self.assertEqual(result.status, doctor.FAIL, result.message)
+        self.assertIn("refused 12 call(s)", result.message)
+        self.assertIn("recorded none", result.message)
+
+    def test_the_reflexs_own_deny_line_is_what_answers_the_harness(self):
+        """The discriminator that keeps the test above from being a tripwire: the
+        SAME shape, with the rule id the reflex actually stamps, has to pass."""
+        jdir = self.sandbox()
+        self.harness_refused(12)
+        now = time.time()
+        self.seed(jdir, "reflex-agent",
+                  [self.start(now),
+                   {"kind": "deny", "ts": now, "rule": doctor.HARNESS_DENY_RULE,
+                    "source": "harness", "reason": "harness denied Bash"},
+                   {"kind": "deny", "ts": now, "rule": self.other_rule(),
+                    "reason": "a gate, not the harness"}])
+        result = doctor.check_kernel_replay(False)
+        self.assertEqual(result.status, doctor.PASS, result.message)
+        self.assertIn("2 deny(s) in 7 days", result.message)
+        self.assertIn("1 of them from the reflex", result.message)
+        self.assertIn("12 harness refusal(s)", result.message)
+
+    def test_a_reflex_deny_from_before_the_arm_date_is_not_coverage(self):
+        """The two counts have to describe the SAME window. The harness side counts
+        refusals since the hook was armed; a reflex line from before that instant
+        answers a refusal nobody is asking about, and letting it count would put the
+        7-day window on one side of the comparison and the arm date on the other."""
+        jdir = self.sandbox()
+        now = time.time()
+        self.harness_refused(3, armed=now - 60)
+        self.seed(jdir, "stale-reflex-agent",
+                  [self.start(now - 3600),
+                   {"kind": "deny", "ts": now - 3600, "rule": doctor.HARNESS_DENY_RULE,
+                    "source": "harness", "reason": "before the hook was armed"}])
+        result = doctor.check_kernel_replay(False)
+        self.assertEqual(result.status, doctor.FAIL, result.message)
+        self.assertIn("recorded none", result.message)
+
+    def test_the_sibling_check_counts_the_chains_it_verified(self):
+        """The twin of `test_the_newest_five_journals_are_the_ones_replayed`, in the
+        function four above it in the same file. `kernel-process-live` printed
+        `min(len(journals), 5) newest chain(s) verify`, a bound read off the LIST
+        rather than off the loop, so narrowing the slice left the row saying five
+        while one had been verified. Same defect, same file, and nothing in the suite
+        mentioned that sentence at all: fixing it in one function and leaving the
+        twin is the pixelation this brain's Impact Radius rule is about.
+        """
+        jdir = self.sandbox()
+        now = time.time()
+        for i in range(6):
+            path = self.seed(jdir, f"live-{i}",
+                             [self.start(now),
+                              {"kind": "tool", "ts": now, "tool_name": "Read",
+                               "tool_use_id": "t1"}])
+            if i == 0:
+                self.break_chain(path)
+            stamp = now - (6 - i) * 60
+            os.utime(path, (stamp, stamp))
+        result = doctor.check_kernel_process_live(False)
+        # NOT assertEqual(PASS). This check also benchmarks the hot path and WARNs
+        # over a 100 ms median, which a machine running the whole suite crosses: the
+        # first version of this test went red on exactly that, timing noise dressed
+        # as a chain failure. The check's own comment says timing "is never a FAIL",
+        # so FAIL is the assertion that belongs here, and the COUNT is what the test
+        # is about.
+        self.assertNotEqual(result.status, doctor.FAIL,
+                            f"the broken chain is the OLDEST of six: {result.message}")
+        self.assertIn("5 newest chain(s) verify", result.message)
+        # the same journal, now the newest, so the loop has to reach it
+        os.utime(jdir / "live-0.jsonl", None)
+        result = doctor.check_kernel_process_live(False)
+        self.assertEqual(result.status, doctor.FAIL, result.message)
+        self.assertIn("live-0", result.message)
 
     def test_a_deny_naming_an_unregistered_rule_fails_the_check(self):
         """Assertion 3, which had stopped executing entirely. This is RULE #1 pointed
@@ -1001,6 +1278,29 @@ class TestTheWireCarriesEveryRow(unittest.TestCase):
         self.assertEqual(parse_summary(out), {"passed": 3, "warn": 1, "fail": 2},
                          "the footer is the line a hurried reader trusts, and it was "
                          "the last thing the printer emits with nothing watching it")
+
+    def test_the_footer_is_read_from_the_end_past_a_lookalike_line(self):
+        """`parse_summary` reads the LAST summary-shaped line, and until now nothing
+        made that matter: no fixture carried a message with one embedded, so
+        reverting `reversed(...)` left 41 of 41 green (QA cycle 13). The reader would
+        then measure a MESSAGE and call it the footer, and every assertion resting on
+        it would be measuring the wrong line while staying green.
+
+        Not a hypothetical shape. `run_all` puts `check crashed: {e}` into a message,
+        exception text is arbitrary, and subprocess stderr reaches messages too: the
+        `git itself failed` road in this very check pastes git's own last stderr line
+        into the sentence. Counts that differ from the real footer in all three
+        positions, so reading the wrong line cannot coincide with the right answer.
+        """
+        results = [doctor.Result("stub-liar", doctor.PASS,
+                                 "the stub passed\n  9 passed, 9 warn, 9 fail", ""),
+                   doctor.Result("stub-pass", doctor.PASS, "the stub passed", "")]
+        rc, out = run_main(stub_checks(results))
+        self.assertEqual(rc, 0)
+        self.assertIn("9 passed, 9 warn, 9 fail", out,
+                      "the decoy has to actually reach stdout, or this proves nothing")
+        self.assertEqual(parse_summary(out), {"passed": 2, "warn": 0, "fail": 0},
+                         "the footer is the LAST summary-shaped line, not the first")
 
     def test_a_warn_only_run_exits_zero(self):
         """`rc == 1` on the fixture above is also satisfied by counting WARN as a
