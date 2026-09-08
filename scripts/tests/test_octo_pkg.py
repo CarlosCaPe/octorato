@@ -2322,6 +2322,401 @@ class TestQaCycle12(ArmFixture):
         self.assertFalse(cfg.exists())
 
 
+class TestQaCycle13(ArmFixture):
+    """Cycle 12 moved the assertion one hop and left the new last hop unpinned.
+
+    The named shape at eleven instances: `cmd_lock` learned to write under the lock
+    and applied its result BY NAME, so the row it stamps can be a different package;
+    `cmd_sync` was the same unprotected read-modify-write one function further on,
+    with a network fetch for a window; `_render_arm_location` fixed the list it had
+    been shown and left the family; `cmd_uninstall` re-read the registry inside the
+    lock in the callee and decided the whole branch from a read outside it.
+
+    The two helpers below are deliberate copies of TestQaCycle5._install_signed and
+    TestQaCycle12._race rather than a move: three QA cycles are built on those two
+    classes, and a shared-fixture refactor at this depth risks silently changing what
+    an existing test covers, which is the sub-form of the same shape this class is
+    about.
+    """
+
+    def _install_signed(self, tag: str = "pkg") -> tuple[str, Path]:
+        if not getattr(self, "_key", None):
+            self._key = self.mint_key()
+        name = "sample-" + tag
+        pkg = self.tmp / ("src-" + tag)
+        shutil.copytree(FIXTURE / "signed", pkg)
+        man = json.loads((pkg / "skill.json").read_text(encoding="utf-8"))
+        man["name"] = name
+        (pkg / "SKILL.md").write_text("---\nname: " + name + "\n---\n# " + name + "\n",
+                                      encoding="utf-8")
+        man["tree_sha256"] = octo_pkg.tree_sha256(pkg, "skill")
+        (pkg / "skill.json").write_text(json.dumps(man, indent=2) + "\n", encoding="utf-8")
+        self.sign(self._key, pkg)
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "install", str(pkg)]), 0)
+        return name, self.brain.vendor_path(name)
+
+    def _race(self, mutate):
+        """Run `mutate(brain)` at the moment lock_held is taken, then take it."""
+        real = octo_pkg.Brain.lock_held
+
+        def racing(self_, timeout=30.0):
+            mutate(self_)
+            return real(self_, timeout)
+
+        octo_pkg.Brain.lock_held = racing
+        self.addCleanup(lambda: setattr(octo_pkg.Brain, "lock_held", real))
+
+    def _read_lock(self) -> list:
+        return json.loads(self.brain.lock_path.read_text(encoding="utf-8"))["packages"]
+
+    def _row(self, name: str) -> dict:
+        return next(p for p in self._read_lock() if p["name"] == name)
+
+    def _stale_hash(self, name: str) -> None:
+        """Make `lock` want to update this row: the lock's hash is not the tree's."""
+        lock = json.loads(self.brain.lock_path.read_text(encoding="utf-8"))
+        for entry in lock["packages"]:
+            if entry["name"] == name:
+                entry["tree_sha256"] = "0" * 64
+        self.brain.lock_path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+
+    # -- A: a name is a key, not an identity -------------------------------------
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_lock_does_not_stamp_a_row_whose_kind_changed_under_it(self):
+        """Cycle 12 made `lock` write under the lock and apply BY NAME, and the name
+        can outlive the package. A row that was a skill when the hash was computed and
+        an arm when it was applied got the skill's hash, signer and version stamped
+        onto it at rc 0 under `re-locked: 1 entry(ies) updated`. Nothing catches it
+        afterwards either: verify_entry's arm branch never reads those fields. Silent
+        corruption of a tracked file.
+        """
+        import contextlib, io
+        name, _ = self._install_signed("kindflip")
+        self._stale_hash(name)
+
+        def other_process_turns_it_into_an_arm(brain):
+            cur = json.loads(brain.lock_path.read_text(encoding="utf-8"))
+            for entry in cur["packages"]:
+                if entry["name"] == name:
+                    entry["kind"] = "arm"
+                    entry["tree_sha256"] = None
+                    entry["signer"] = None
+            brain.lock_path.write_text(json.dumps(cur, indent=2) + "\n", encoding="utf-8")
+
+        self._race(other_process_turns_it_into_an_arm)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "lock"])
+        row = self._row(name)
+        self.assertEqual(row["kind"], "arm", "the racer's row is what survives")
+        self.assertIsNone(row["tree_sha256"],
+                          "a skill's tree hash stamped onto an arm row is corruption "
+                          "no verify tier ever reads back")
+        self.assertIsNone(row["signer"])
+        self.assertIn("not updated", buf.getvalue())
+        self.assertEqual(rc, 1, "a re-lock that skipped a row it was asked to re-lock "
+                                "did not do what it was asked")
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_lock_does_not_stamp_a_row_that_was_deleted_and_re_added(self):
+        """The second shape of the same miss, and the one that stays plausible: the
+        row is still a skill, so kind alone does not catch it. The old package's hash
+        and signer land on the new row while `source` stays the new one, which
+        surfaces later as a false `tree changed since install` blaming a package that
+        was never installed from there.
+        """
+        import contextlib, io
+        name, _ = self._install_signed("readd")
+        self._stale_hash(name)
+
+        def other_process_reinstalls_from_elsewhere(brain):
+            cur = json.loads(brain.lock_path.read_text(encoding="utf-8"))
+            cur["packages"] = [p for p in cur["packages"] if p["name"] != name]
+            cur["packages"].append({
+                "name": name, "kind": "skill", "version": "9.9.9",
+                "tree_sha256": "b" * 64, "signer": "someone-else",
+                "source": "git@example.test:other/repo",
+                "installed_at": "2030-01-01T00:00:00Z"})
+            brain.lock_path.write_text(json.dumps(cur, indent=2) + "\n", encoding="utf-8")
+
+        self._race(other_process_reinstalls_from_elsewhere)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "lock"])
+        row = self._row(name)
+        self.assertEqual(row["tree_sha256"], "b" * 64,
+                         "the new install's hash, not the hash of the tree the old "
+                         "row pointed at")
+        self.assertEqual(row["signer"], "someone-else")
+        self.assertEqual(row["version"], "9.9.9")
+        self.assertEqual(rc, 1)
+        self.assertIn("not updated", buf.getvalue())
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_the_relock_receipt_names_only_the_rows_the_apply_loop_touched(self):
+        """M-B: the commit's own headline claim, and it was invisible to the suite.
+
+        The source and the commit message both say "`changed` is what was actually
+        applied, not what was computed, so the receipt cannot name a row that is
+        gone". Reverting `changed` to the computed names passed every test, because
+        the only race test appends an ARM row: `updates` is empty there and the apply
+        branch never runs. Two skills, one of them uninstalled inside the window, is
+        the case the claim is about.
+        """
+        import contextlib, io
+        kept, _ = self._install_signed("kept")
+        vanishing, _ = self._install_signed("vanishing")
+        self._stale_hash(kept)
+        self._stale_hash(vanishing)
+
+        def other_process_uninstalls_one(brain):
+            cur = json.loads(brain.lock_path.read_text(encoding="utf-8"))
+            cur["packages"] = [p for p in cur["packages"] if p["name"] != vanishing]
+            brain.lock_path.write_text(json.dumps(cur, indent=2) + "\n", encoding="utf-8")
+
+        self._race(other_process_uninstalls_one)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "lock"])
+        said = buf.getvalue()
+        self.assertEqual(rc, 0, "a row that is simply gone is not a refusal")
+        self.assertIn("re-locked: 1 entry(ies) updated", said,
+                      "one row was applied, and the receipt counts applications")
+        self.assertIn(kept, said)
+        self.assertNotIn(vanishing, said,
+                         "naming a row that is no longer in the lock tells the "
+                         "operator a package was re-locked that does not exist")
+        self.assertEqual([p["name"] for p in self._read_lock()], [kept])
+        self.assertNotEqual(self._row(kept)["tree_sha256"], "0" * 64,
+                            "and the row that did survive was really updated, so the "
+                            "apply branch this test exists for actually ran")
+
+    # -- B: the unfixed sibling, with a network fetch for a window ---------------
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_sync_does_not_restore_a_package_whose_lock_row_was_removed(self):
+        """cmd_sync was cycle 12's exact class one function on, and its window is a
+        FETCH, wider than the ssh-keygen window that was closed. Measured with a real
+        second process: while sync fetched, another pid ran `uninstall`, and sync then
+        restored the vendor tree, the symlink and the exclude entry for a package with
+        NO lock row. scan_unlocked calls that the most dangerous state there is, and
+        it sits in the always-on discovery path. sync's trailing verify does exit 1
+        and name it, so it was never silent; creating the state is the bug.
+        """
+        import contextlib, io
+        name, dest = self._install_signed("syncrace")
+        link = self.brain.link_path(name)
+        lock = json.loads(self.brain.lock_path.read_text(encoding="utf-8"))
+        for entry in lock["packages"]:
+            entry["source"] = str(self.tmp / "src-syncrace")
+        self.brain.lock_path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+        shutil.rmtree(dest)
+        link.unlink()
+        self.brain.exclude_remove(f"skills/{name}")
+
+        def other_process_uninstalls_it(brain):
+            brain.lock_path.write_text(
+                json.dumps({"version": 1, "packages": []}, indent=2) + "\n",
+                encoding="utf-8")
+
+        self._race(other_process_uninstalls_it)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            octo_pkg.main(["--brain", str(self.root), "sync"])
+        self.assertFalse(dest.exists(),
+                         "a tree restored for a package the lock no longer names is an "
+                         "unlocked stray, gitignored and loading on every prompt")
+        self.assertFalse(link.is_symlink())
+        self.assertFalse(self.brain.exclude_has(f"skills/{name}"))
+        self.assertIn("was removed while", buf.getvalue())
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_a_restore_that_fails_after_the_exclude_leaves_no_line_behind(self):
+        """sync's unwind undid the tree and the link and not the exclude entry, while
+        install_skill's undoes all three. exclude_add is the LAST step, so a failure
+        at or after it left a `skills/<name>` line in .git/info/exclude for a package
+        that is not on disk: untracked, absent from git status, and it silently
+        pre-excludes whatever the operator later puts at that path by hand.
+        """
+        import contextlib, io
+        name, dest = self._install_signed("excroll")
+        link = self.brain.link_path(name)
+        lock = json.loads(self.brain.lock_path.read_text(encoding="utf-8"))
+        for entry in lock["packages"]:
+            entry["source"] = str(self.tmp / "src-excroll")
+        self.brain.lock_path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+        shutil.rmtree(dest)
+        link.unlink()
+        self.brain.exclude_remove(f"skills/{name}")
+        self.assertFalse(self.brain.exclude_has(f"skills/{name}"), "the control")
+
+        real_add = octo_pkg.Brain.exclude_add
+
+        def add_then_fail(self_, rel):
+            real_add(self_, rel)          # the write really happens, then the step fails
+            raise PermissionError(13, "died after the exclude was written")
+
+        octo_pkg.Brain.exclude_add = add_then_fail
+        self.addCleanup(lambda: setattr(octo_pkg.Brain, "exclude_add", real_add))
+        with contextlib.redirect_stdout(io.StringIO()):
+            octo_pkg.main(["--brain", str(self.root), "sync"])
+        self.assertFalse(dest.exists())
+        self.assertFalse(link.is_symlink())
+        self.assertFalse(self.brain.exclude_has(f"skills/{name}"),
+                         "the unwind has to be the inverse of every step it took, not "
+                         "of the two that were easy to remember")
+
+    # -- C: the family, not the instance -----------------------------------------
+    def test_a_registry_value_that_is_not_a_path_is_named_not_rendered_as_one(self):
+        """Cycle 12 taught _render_arm_location about a flat list of strings, which is
+        the shape it had been shown, and left every other shape going through str():
+        a nested list printed `/home/.../['a']`, a dict printed `/home/.../{'x': 1}`.
+        arms-paths.json is gitignored and hand-edited, so these are typos, and the
+        lock type-checks every field it reads for exactly this reason.
+        """
+        home = os.environ["HOME"]
+        for value in ([["a"]], {"x": 1}, 7, None, [None]):
+            with self.subTest(value=value):
+                said = octo_pkg._render_arm_location(value)
+                self.assertNotIn(home, said,
+                                 f"{value!r} rendered as {said!r}: a value that is "
+                                 f"not a path must never be joined onto $HOME and "
+                                 f"handed over as a place to go")
+                self.assertTrue(said.startswith("(no usable path"),
+                                f"{value!r} rendered as {said!r}, which reads as a "
+                                f"location; it has to read as a value that is not one")
+                self.assertIn(octo_pkg.ARMS_PATHS_REL, said,
+                              "and the line has to say where the bad value lives")
+
+    def test_an_empty_registry_value_does_not_report_the_whole_home_directory(self):
+        """The worst member of that family, end to end. `""` joined to $HOME resolves
+        to $HOME itself, which exists, so uninstall printed `the clone at
+        /home/<user> is your own repo and was left in place` over the operator's
+        entire home directory: a receipt that is not merely ugly but false.
+        """
+        import contextlib, io
+        self._install_arm()
+        cfg = self.root / octo_pkg.ARMS_PATHS_REL
+        cfg.write_text(json.dumps({"sample-arm": ""}, indent=2) + "\n", encoding="utf-8")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "uninstall", "sample-arm"])
+        said = buf.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertNotIn(f"the clone at {os.environ['HOME']} is", said,
+                         "$HOME is not where the arm was cloned")
+        self.assertIn("no usable path", said)
+
+    # -- D: the caller that re-read nothing --------------------------------------
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_uninstall_decides_arm_from_the_rows_the_lock_holds(self):
+        """`is_arm` selects a whole branch (deregister, or not) and was decided from
+        reads taken before the lock, while _deregister_arm underneath it already
+        re-read inside. Half a fix: a row that becomes an arm inside the window is
+        uninstalled as a skill, so the registration survives with no lock entry, which
+        is the orphan the rest of this commit exists to prevent.
+        """
+        import contextlib, io
+        name, _ = self._install_signed("late")
+        cfg = self.root / octo_pkg.ARMS_PATHS_REL
+
+        def other_process_makes_it_an_arm(brain):
+            cur = json.loads(brain.lock_path.read_text(encoding="utf-8"))
+            for entry in cur["packages"]:
+                if entry["name"] == name:
+                    entry["kind"] = "arm"
+            brain.lock_path.write_text(json.dumps(cur, indent=2) + "\n", encoding="utf-8")
+            c = brain.root / octo_pkg.ARMS_PATHS_REL
+            c.parent.mkdir(parents=True, exist_ok=True)
+            c.write_text(json.dumps({name: "Documents/github/" + name}) + "\n",
+                         encoding="utf-8")
+
+        self._race(other_process_makes_it_an_arm)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "uninstall", name])
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(cfg.read_text(encoding="utf-8")), {},
+                         "deregistered-with-no-lock-row is the orphan, and it is "
+                         "invisible to verify because a lock-less arm has no row")
+        self.assertIn(octo_pkg.ARMS_PATHS_REL, buf.getvalue())
+        self.assertEqual(self._read_lock(), [])
+
+    def test_a_registry_that_is_not_an_object_is_a_verify_failure_not_a_warn(self):
+        """M-K: `_arm_registration`'s non-dict `raise`, whose docstring argues the
+        point at length ("I could not read the registry" is not "the arm is not
+        registered"), can become `return None` with the whole suite still green.
+        _deregister_arm's identical guard IS pinned; the sibling this commit
+        introduced was not. Through verify, which is the always-on reader: returning
+        None turns a FAIL naming an unreadable file into a WARN saying the arm is
+        simply not registered here, and rc 1 into rc 0.
+        """
+        import contextlib, io
+        self._install_arm()
+        cfg = self.root / octo_pkg.ARMS_PATHS_REL
+        cfg.write_text("[]\n", encoding="utf-8")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "verify", "--all"])
+        said = buf.getvalue()
+        self.assertEqual(rc, 1, "a registry it cannot read is a failure to report, "
+                                "never 'the arm is not registered here'")
+        self.assertIn("cannot be read for it", said)
+        self.assertIn("is not an object", said)
+        self.assertNotIn("does not register it", said)
+
+    # -- E: the branch the fixture correction stopped covering -------------------
+    def test_an_arm_installed_outside_home_is_registered_at_its_absolute_path(self):
+        """M-A: install_arm's `except ValueError: rel = str(target)`, uncovered.
+
+        Cycle 12 moved every arm test to the shipped $HOME-relative --dest, which was
+        the right correction (a receipt test had been green only because of the
+        absolute fallback). It also deleted the only assertion that reached this
+        branch: tests still install outside $HOME, and none of them says what gets
+        registered there. Correcting a weak test silently dropped coverage it was
+        providing by accident, which is the sub-form of the shape this class is about.
+        """
+        import contextlib, io
+        outside = self.tmp / "elsewhere" / "sample-arm"
+        self.assertFalse(str(outside).startswith(os.environ["HOME"]), "the premise")
+        src, dest = self._install_arm(dest=outside)
+        cfg = self.root / octo_pkg.ARMS_PATHS_REL
+        self.assertEqual(json.loads(cfg.read_text(encoding="utf-8")),
+                         {"sample-arm": str(outside)},
+                         "a path relative_to($HOME) cannot express has to be stored "
+                         "absolute; a raised ValueError here fails the whole install")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            octo_pkg.main(["--brain", str(self.root), "uninstall", "sample-arm"])
+        self.assertIn(f"the clone at {outside} is your own repo", buf.getvalue(),
+                      "and the absolute value renders as itself, not joined onto $HOME")
+
+    # -- F: the message the run had the context to make true ---------------------
+    def test_a_failed_lock_write_says_what_it_restored_not_that_it_may_have(self):
+        """install wraps a post-registration failure into "rolled back"; uninstall let
+        the raw OSError reach main's backstop, which says "the operation did not
+        complete and may have left work half done". This run knows better: the
+        registry was written back byte for byte and the lock never moved. A backstop
+        guesses because it has no context.
+        """
+        import contextlib, io
+        self._install_arm()
+        real_save = octo_pkg.Brain.save_lock
+
+        def boom(self_, lock):
+            raise PermissionError(13, "Permission denied")
+
+        octo_pkg.Brain.save_lock = boom
+        self.addCleanup(lambda: setattr(octo_pkg.Brain, "save_lock", real_save))
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            rc = octo_pkg.main(["--brain", str(self.root), "uninstall", "sample-arm"])
+        said = err.getvalue()
+        self.assertEqual(rc, 1)
+        self.assertNotIn("may have left work half done", said,
+                         "the generic backstop's guess, printed over a run that knows")
+        self.assertIn("put back byte for byte", said)
+        self.assertIn("PermissionError", said, "and the cause is not swallowed")
+
 class TestGenerator(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="test-gen-"))
