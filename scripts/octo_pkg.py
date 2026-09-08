@@ -1086,6 +1086,60 @@ def install_skill(brain: Brain, source: str, subpath: str | None, ref: str,
     return 0
 
 
+def _arm_registration(brain: Brain, name: str):
+    """The value `name` is registered at in arms-paths.json, or None.
+
+    Raises PkgError when the file cannot be read or is not an object, because "I
+    could not read the registry" is not "the arm is not registered": every caller
+    here either reports that as a failure or refuses to write over it.
+    """
+    cfg = brain.root / ARMS_PATHS_REL
+    if not stat_ok(cfg.exists, False, ARMS_PATHS_REL):
+        return None
+    arms = read_json(cfg, ARMS_PATHS_REL)
+    if not isinstance(arms, dict):
+        raise PkgError(f"{ARMS_PATHS_REL} is not an object")
+    return arms.get(name)
+
+
+def _render_arm_location(value) -> str:
+    """Render one arms-paths.json value as a path the operator can open.
+
+    Two things it is not allowed to do, both measured. It may not print the stored
+    string as if it were a location: the shipped shape is relative to $HOME
+    (`Documents/github/<arm>`), so `cd` on it from anywhere else misses. And it may
+    not print a LIST through str(): brain_doctor.resolve_home_relative and CLAUDE.md
+    both document a value as a string OR an array of candidate paths, and the array
+    rendered `the clone at ['a/b', 'c/d'] is your own repo`.
+
+    Candidates resolve the way the doctor resolves them, first existing wins, so the
+    normal case names the one directory that is actually there. With none of them on
+    disk there is nothing to prefer, so all of them are printed.
+    """
+    try:
+        home = Path.home()
+    except (RuntimeError, OSError):
+        # verify_entry calls this and promises never to raise. With no resolvable
+        # $HOME there is nothing to join a relative candidate to, so it is printed
+        # as it is stored rather than taking the sweep down over a cosmetic line.
+        home = None
+    candidates = [str(v) for v in value] if isinstance(value, list) else [str(value)]
+    absolute = []
+    for rel in candidates:
+        p = Path(os.path.expanduser(rel))
+        absolute.append(p if (p.is_absolute() or home is None) else home / p)
+    for p in absolute:
+        try:
+            if p.exists():
+                return str(p)
+        except OSError:
+            continue          # a candidate this cannot stat is simply not preferred
+    if not absolute:
+        # An empty array registers no path at all. Saying so beats printing "".
+        return f"(no path recorded in {ARMS_PATHS_REL})"
+    return " or ".join(str(p) for p in absolute)
+
+
 def install_arm(brain: Brain, source: str, dest: str | None) -> int:
     """Clone an arm, validate arm.json, register it, sync its AI docs.
 
@@ -1136,9 +1190,16 @@ def install_arm(brain: Brain, source: str, dest: str | None) -> int:
     # and the retry is permanently blocked by "destination already exists" with no
     # word about what was left behind (QA cycle 10).
     # The same audit, asked once more, found the second half of the asymmetry and it
-    # is worse than the first: install_skill, uninstall and lock all wrap their
+    # is worse than the first: install_skill and uninstall wrap their
     # read-modify-write of packages.lock.json in brain.lock_held(), and THIS was the
-    # one lock writer that never took the lock. Measured with two processes and the
+    # one lock writer that never took the lock. (The sentence used to name `lock` in
+    # that list and it was FALSE: cmd_lock read the file, spent seconds hashing trees
+    # and running ssh-keygen, and only then took the lock to write a snapshot from
+    # before all of it. QA cycle 12 measured a concurrent install vanishing at rc 0
+    # through exactly that window; cmd_lock now re-reads inside the lock, so the claim
+    # is true of all three, but it is worth recording that a comment defending a fix
+    # asserted an invariant nobody had checked one function over.) Measured with two
+    # processes and the
     # skill path as a positive control: install_skill waited 2.11s for the lock,
     # install_arm took 0.19s without waiting, wrote a lock computed from a snapshot
     # taken before the skill's write, and printed success while its own entry
@@ -1160,7 +1221,13 @@ def install_arm(brain: Brain, source: str, dest: str | None) -> int:
             # the fix: `[]` unwound and `{ oops` did not, and that split is the tell
             # that the guard had been placed by the one failure it was written for
             # rather than by the boundary the failures cross (QA cycle 11).
-            if cfg.exists():
+            # Through the seam, not a raw `cfg.exists()`. Its own new sibling
+            # `_deregister_arm` already went through stat_ok and this one did not, so
+            # an unsearchable company/config/ answered with a bare `PermissionError:
+            # [Errno 13]` wrapped in "rolled back", where the seam names the file that
+            # could not be read. A seam adopted in one of two symmetric places is half
+            # a seam (QA cycle 12).
+            if stat_ok(cfg.exists, False, ARMS_PATHS_REL):
                 cfg_before = read_text(cfg, ARMS_PATHS_REL)
             cfg_known = True
             arms_before = (_parse_json(cfg_before, ARMS_PATHS_REL)
@@ -1204,11 +1271,33 @@ def install_arm(brain: Brain, source: str, dest: str | None) -> int:
             # alone is also the correct restore.
             if cfg_known:
                 if cfg_before is None:
-                    cfg.unlink(missing_ok=True)
+                    # The unwind has to be the INVERSE of the write, and over a
+                    # dangling symlink it was not. `cfg.exists()` follows the link, so
+                    # a link pointing at nothing reads absent; write_text then follows
+                    # it too and creates the file at the far end. Unlinking cfg here
+                    # deleted the operator's SYMLINK and left that stray file behind:
+                    # both halves backwards, and "restores byte for byte" false for
+                    # the one shape where the write and the delete disagree about what
+                    # the path means. A link to a real file never reaches this branch
+                    # (it read as existing, so the restore rewrites its target), and a
+                    # directory at cfg still falls to the unlink, where it raises and
+                    # is caught below, which is the correct no-op it always was.
+                    if cfg.is_symlink():
+                        Path(os.path.realpath(cfg)).unlink(missing_ok=True)
+                    else:
+                        cfg.unlink(missing_ok=True)
                 else:
                     cfg.write_text(cfg_before, encoding="utf-8")
         except OSError:
             pass          # the registry is what failed; do not mask the cause
+        # What leaves here, stated so the code and the claim agree (QA cycle 12 caught
+        # the commit message saying "a non-PkgError is re-raised" while the condition
+        # says something narrower). An OSError is NOT re-raised: it is wrapped into
+        # PkgError, which is this module's whole stance, a reported refusal with rc 1
+        # instead of a traceback. Only a BaseException that is not an Exception, a
+        # KeyboardInterrupt or a SystemExit, goes back out untouched, because those are
+        # the operator or the interpreter stopping the program and swallowing them into
+        # rc 1 would make Ctrl-C look like a failed install.
         if not isinstance(e, Exception):
             raise
         raise PkgError(f"install of arm {name} rolled back: {type(e).__name__}: {e}")
@@ -1389,7 +1478,26 @@ def verify_entry(brain: Brain, entry: dict) -> tuple[str, str]:
         if declared_kind == "arm":
             # arms are not vendored into the brain; presence is the arm repo's own
             # business (arm isolation). The lock records them, verify does not reach in.
-            return PASS, f"{name}: arm registered (validated, not signed)"
+            #
+            # It does read the one thing that is the BRAIN's own bookkeeping. This line
+            # printed the word "registered" without ever opening arms-paths.json, so it
+            # said it over an arm that was not: an install that half-unwound, an older
+            # uninstall that dropped the lock entry alone, a hand-edited lock. WARN and
+            # not FAIL, because "in the lock, not on this machine" is also what every
+            # second machine looks like after `ai-pull` (arms-paths.json is gitignored,
+            # the lock is tracked), and a push must not break there. It carries its own
+            # `fix:` so cmd_verify does not print "run sync" underneath: sync skips
+            # non-skill entries, so it would prescribe a command that does nothing.
+            try:
+                where = _arm_registration(brain, name)
+            except PkgError as e:
+                return FAIL, f"{name}: {ARMS_PATHS_REL} cannot be read for it: {e}"
+            if where is None:
+                return WARN, (f"{name}: {LOCK_REL} says arm, but {ARMS_PATHS_REL} does "
+                              f"not register it; fix: install it here, or "
+                              f"uninstall {name} to drop the lock entry")
+            return PASS, (f"{name}: arm registered at {_render_arm_location(where)} "
+                          f"(validated, not signed)")
         signer = entry.get("signer")
         if not signer:
             return FAIL, f"{name}: lock entry carries no signer"
@@ -1595,8 +1703,21 @@ def cmd_uninstall(brain: Brain, name: str) -> int:
         # prints a reason instead of a traceback (QA cycle 5).
         raise PkgError(f"{VENDOR_REL}/{name} cannot be read ({e}); refusing to remove "
                        f"what cannot be inspected")
-    if entry is None and not tree_there and not link.is_symlink():
+    # The orphan this whole commit is about had no exit. An arm registered in
+    # arms-paths.json with no lock entry is reachable from every install that predates
+    # the unwind, from a half-finished one, and from a hand-edited lock, and `uninstall`
+    # answered it with rc 1 "is not installed" and left the registration standing. The
+    # only way out was hand-editing arms-paths.json, which is the habit the lock exists
+    # to remove: a primitive that can make a state and cannot unmake it is half a
+    # primitive (QA cycle 12). A read that fails RAISES rather than answering "not
+    # registered": this verb deletes, so not knowing is a refusal, the same stance the
+    # stat above takes.
+    registered = _arm_registration(brain, name)
+    if entry is None and not tree_there and not link.is_symlink() and registered is None:
         raise PkgError(f"{name} is not installed")
+    # An entry decides by its own kind; with no entry at all, a registration is the
+    # only thing left that says "arm", and it is enough to act on.
+    is_arm = (lock_kind(entry) == "arm") if entry is not None else (registered is not None)
 
     if not link.is_symlink() and link.exists():
         raise PkgError(f"skills/{name} exists but is not our symlink; refusing to delete it")
@@ -1633,44 +1754,83 @@ def cmd_uninstall(brain: Brain, name: str) -> int:
         removed.append("exclude entry")
 
     arm_path = None
+    cfg = brain.root / ARMS_PATHS_REL
+    cfg_before: str | None = None
     with brain.lock_held():
         lock = brain.load_lock()
-        if entry is not None and lock_kind(entry) == "arm":
-            # An arm is DEREGISTERED, never deleted, and that is a choice between two
-            # wrong-looking options. `uninstall <arm>` used to remove the lock entry
-            # and nothing else, leaving the clone on disk and the arm still in
-            # arms-paths.json: registered with no lock entry is precisely the orphan
-            # install_arm's unwind exists to prevent, and it is invisible to verify,
-            # because a lock-less arm has no row and the stray scan only walks
-            # skills/vendor. Manufacturing that state and then printing "vendor tree,
-            # symlink, exclude entry and lock entry removed" was a silent partial
-            # removal under a false receipt.
-            #
-            # Deleting the clone would make the receipt true and is the wrong verb:
-            # the arm is the operator's own repo, with its own history and quite
-            # possibly uncommitted work, and this primitive did not create the
-            # contents. Refusing arms outright is worse still, because install has no
-            # inverse then and the operator hand-edits arms-paths.json, which is the
-            # habit the lock exists to remove. So uninstall undoes exactly what
-            # install_arm did to the BRAIN, both halves together under the same lock,
-            # and says where the clone was left.
-            arm_path = _deregister_arm(brain, name)
-            if arm_path is not None:
-                removed.append(f"{ARMS_PATHS_REL} entry")
-        if any(p.get("name") == name for p in lock["packages"]):
-            lock["packages"] = [p for p in lock["packages"] if p.get("name") != name]
-            removed.append("lock entry")
-        brain.save_lock(lock)
+        # An arm is DEREGISTERED, never deleted, and that is a choice between two
+        # wrong-looking options. `uninstall <arm>` used to remove the lock entry
+        # and nothing else, leaving the clone on disk and the arm still in
+        # arms-paths.json: registered with no lock entry is precisely the orphan
+        # install_arm's unwind exists to prevent, and it is invisible to verify,
+        # because a lock-less arm has no row and the stray scan only walks
+        # skills/vendor. Manufacturing that state and then printing "vendor tree,
+        # symlink, exclude entry and lock entry removed" was a silent partial
+        # removal under a false receipt.
+        #
+        # Deleting the clone would make the receipt true and is the wrong verb:
+        # the arm is the operator's own repo, with its own history and quite
+        # possibly uncommitted work, and this primitive did not create the
+        # contents. Refusing arms outright is worse still, because install has no
+        # inverse then and the operator hand-edits arms-paths.json, which is the
+        # habit the lock exists to remove. So uninstall undoes exactly what
+        # install_arm did to the BRAIN, both halves together under the same lock,
+        # and says where the clone was left.
+        #
+        # The try is the unwind install_arm has and this had none, the same asymmetry
+        # one verb over: _deregister_arm WRITES arms-paths.json and save_lock can fail
+        # after it, leaving deregistered-but-still-locked. That is this commit's orphan
+        # mirrored, and the retry then meets "is not registered" with the lock entry
+        # still standing (QA cycle 12).
+        try:
+            if is_arm:
+                was, cfg_before = _deregister_arm(brain, name)
+                if was is not None:
+                    arm_path = _render_arm_location(was)
+                    removed.append(f"{ARMS_PATHS_REL} entry")
+            # The guard, and what pins it is a concurrent uninstall of the same name:
+            # `entry` was read before the lock, so by the time the lock is held the row
+            # can already be gone, and appending "lock entry removed" unconditionally
+            # would put a removal this process did not perform on the receipt. It is
+            # unreachable in a single process by construction, which is why it is
+            # tested through a writer that lands inside the window rather than deleted.
+            if any(p.get("name") == name for p in lock["packages"]):
+                lock["packages"] = [p for p in lock["packages"] if p.get("name") != name]
+                removed.append("lock entry")
+            brain.save_lock(lock)
+        except BaseException:
+            if cfg_before is not None:
+                try:
+                    cfg.write_text(cfg_before, encoding="utf-8")
+                except OSError:
+                    pass      # the registry is what failed; do not mask the cause
+            raise
     print(f"uninstalled {name}: " + (", ".join(removed) + " removed" if removed
                                      else "nothing was there to remove"))
     if arm_path is not None:
         print(f"  the clone at {arm_path} is your own repo and was left in place")
+    elif is_arm:
+        # Silence here was backwards. The clone survives in BOTH cases, and the case
+        # with no registration to read is the one where the operator is least likely
+        # to know where it is, so suppressing the line withheld it exactly when the
+        # registry was already inconsistent (QA cycle 12).
+        print(f"  {name} was not in {ARMS_PATHS_REL}; if its clone is on disk it is "
+              f"your own repo and was left in place")
     return 0
 
 
-def _deregister_arm(brain: Brain, name: str) -> str | None:
-    """Drop `name` from arms-paths.json. Returns the path it was registered at, or
-    None when it was not registered. Call inside brain.lock_held().
+def _deregister_arm(brain: Brain, name: str) -> tuple[object | None, str | None]:
+    """Drop `name` from arms-paths.json. Call inside brain.lock_held().
+
+    Returns (the value it was registered at, the file's exact text before the
+    rewrite). Both are None when nothing was written, and the second one is what lets
+    the caller put the file back byte for byte when a later step fails: this function
+    writes, and everything after it in uninstall can still raise.
+
+    The value is returned RAW, never str()'d here. It is a $HOME-relative string or an
+    array of candidates (brain_doctor.resolve_home_relative, CLAUDE.md), and rendering
+    it for a human is `_render_arm_location`'s job; flattening it here is what printed
+    `the clone at ['a/b', 'c/d']`.
 
     A read it cannot make REFUSES rather than skipping: uninstall reaches here before
     it has touched the lock entry, so raising leaves registered-and-locked, which is a
@@ -1679,16 +1839,17 @@ def _deregister_arm(brain: Brain, name: str) -> str | None:
     """
     cfg = brain.root / ARMS_PATHS_REL
     if not stat_ok(cfg.exists, False, ARMS_PATHS_REL):
-        return None
-    arms = read_json(cfg, ARMS_PATHS_REL)
+        return None, None
+    before = read_text(cfg, ARMS_PATHS_REL)
+    arms = _parse_json(before, ARMS_PATHS_REL)
     if not isinstance(arms, dict):
         raise PkgError(f"{ARMS_PATHS_REL} is not an object; refusing to deregister "
                        f"{name} from a file this cannot rewrite safely")
     if name not in arms:
-        return None
+        return None, None
     was = arms.pop(name)
     cfg.write_text(json.dumps(arms, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    return str(was)
+    return was, before
 
 
 def cmd_list(brain: Brain, as_json: bool) -> int:
@@ -1755,10 +1916,22 @@ def cmd_lock(brain: Brain) -> int:
     The honest use is after a deliberate, verified local change to a vendored
     package. It never invents a signer: an entry whose signature no longer verifies
     is reported and left alone, so re-locking cannot launder a tampered tree.
+
+    The read-modify-write is split on purpose, and this was THE unprotected one. The
+    recompute hashes whole trees and shells out to ssh-keygen once per package, so the
+    window between the read and the write is seconds to minutes; the old shape read
+    the lock at the top, mutated those objects, and took lock_held only to save that
+    stale snapshot. save_lock uses os.replace, so a concurrent install landing in the
+    window was lost totally and silently, at rc 0, with `lock` printing success. QA
+    cycle 12 measured exactly that. So the recompute produces UPDATES BY NAME, nothing
+    else, and the entries they are applied to are the ones read INSIDE the lock: an
+    install that arrived meanwhile keeps its row, and an uninstall that removed a row
+    is not resurrected by an update computed before it. `changed` is what was actually
+    applied, not what was computed, so the receipt cannot name a row that is gone.
     """
-    lock = brain.load_lock()
-    changed, refused = [], []
-    for entry in lock["packages"]:
+    updates: dict[str, dict] = {}
+    refused: list[str] = []
+    for entry in brain.load_lock()["packages"]:
         if lock_kind(entry) != "skill":
             continue
         name = entry["name"]
@@ -1775,11 +1948,17 @@ def cmd_lock(brain: Brain) -> int:
             refused.append(f"{name}: {e}")
             continue
         if entry.get("tree_sha256") != manifest["tree_sha256"] or entry.get("signer") != manifest["_signer"]:
-            entry["tree_sha256"] = manifest["tree_sha256"]
-            entry["signer"] = manifest["_signer"]
-            entry["version"] = manifest["version"]
-            changed.append(name)
+            updates[name] = {"tree_sha256": manifest["tree_sha256"],
+                             "signer": manifest["_signer"],
+                             "version": manifest["version"]}
+    changed = []
     with brain.lock_held():
+        lock = brain.load_lock()
+        for entry in lock["packages"]:
+            update = updates.get(str(entry.get("name")))
+            if update is not None:
+                entry.update(update)
+                changed.append(str(entry.get("name")))
         brain.save_lock(lock)
     for r in refused:
         print(f"[FAIL] {r}")

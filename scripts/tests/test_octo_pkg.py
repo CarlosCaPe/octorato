@@ -920,7 +920,15 @@ class TestQaCycle3(SandboxCase):
     def test_f1_a_real_arm_entry_with_no_vendor_tree_still_passes(self):
         """Arm isolation is why verify does not reach into the arm's own repo, and that
         behaviour is unchanged: it is presence on disk, not the declared kind, that
-        selects the skill ladder."""
+        selects the skill ladder.
+
+        The fixture now REGISTERS the arm, because the word "registered" in that
+        message became a fact this reads rather than one it asserts (QA cycle 12). The
+        thing this test protects is untouched: no vendor tree, no ladder, still PASS.
+        """
+        cfg = self.root / octo_pkg.ARMS_PATHS_REL
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        cfg.write_text('{"some-arm": "Documents/github/some-arm"}\n', encoding="utf-8")
         lock = self.brain.load_lock()
         lock["packages"].append({"name": "some-arm", "kind": "arm", "version": "1.0.0",
                                  "tree_sha256": None, "signer": None,
@@ -929,7 +937,7 @@ class TestQaCycle3(SandboxCase):
         self.brain.save_lock(lock)
         status, msg = octo_pkg.verify_entry(self.brain, lock["packages"][0])
         self.assertEqual(status, octo_pkg.PASS, msg)
-        self.assertIn("arm registered (validated, not signed)", msg)
+        self.assertIn("(validated, not signed)", msg)
         self.assertEqual(octo_pkg.main(["--brain", str(self.root), "verify", "--all"]), 0)
 
     @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
@@ -1700,17 +1708,8 @@ class TestQaCycle5(SandboxCase):
         self.assertFalse(link.is_symlink())
 
 
-class TestQaCycle11(SandboxCase):
-    """The arm path, which had one test and therefore one covered line of it.
-
-    Cycle 10 fixed install_arm's unwind and shipped three holes: the read the unwind
-    depends on sat above the try, the lock every other writer takes was still not
-    taken here, and uninstall manufactured the very orphan the unwind prevents while
-    printing that it had removed four things. Cycle 11 also found the older guard
-    (`except PkgError` around the clone validation) uncovered, because cycle 10's test
-    was strengthened past it: correcting a weak test un-covered a real guard, so both
-    ends of that flow are pinned here.
-    """
+class ArmFixture(SandboxCase):
+    """A real arm repo and an installed arm, shared by the two arm cycles. No tests."""
 
     def _arm_src(self, name: str = "sample-arm", manifest: dict | None = None) -> Path:
         src = self.tmp / f"arm-src-{name}"
@@ -1728,15 +1727,40 @@ class TestQaCycle11(SandboxCase):
                            capture_output=True, env=env, timeout=120)
         return src
 
-    def _install_arm(self, name: str = "sample-arm") -> tuple[Path, Path]:
+    def arm_dest(self, name: str = "sample-arm") -> Path:
+        """Where an arm goes in the SHIPPED configuration: under $HOME, so what lands
+        in arms-paths.json is the relative `Documents/github/<name>`.
+
+        This is not decoration. A --dest outside $HOME makes install_arm fall back to
+        an absolute `rel`, and one receipt test was green only because of that: it
+        asserted the printed line contained the absolute dest, which the shipped shape
+        never puts there (QA cycle 12).
+        """
+        return Path(os.environ["HOME"]) / "Documents" / "github" / name
+
+    def _install_arm(self, name: str = "sample-arm",
+                     dest: Path | None = None) -> tuple[Path, Path]:
         import contextlib, io
         src = self._arm_src(name)
-        dest = self.tmp / f"armdest-{name}"
+        dest = dest if dest is not None else self.arm_dest(name)
         with contextlib.redirect_stdout(io.StringIO()):
             rc = octo_pkg.main(["--brain", str(self.root), "install", "--kind", "arm",
                                 "--dest", str(dest), str(src)])
         self.assertEqual(rc, 0)
         return src, dest
+
+
+class TestQaCycle11(ArmFixture):
+    """The arm path, which had one test and therefore one covered line of it.
+
+    Cycle 10 fixed install_arm's unwind and shipped three holes: the read the unwind
+    depends on sat above the try, the lock every other writer takes was still not
+    taken here, and uninstall manufactured the very orphan the unwind prevents while
+    printing that it had removed four things. Cycle 11 also found the older guard
+    (`except PkgError` around the clone validation) uncovered, because cycle 10's test
+    was strengthened past it: correcting a weak test un-covered a real guard, so both
+    ends of that flow are pinned here.
+    """
 
     def test_install_arm_waits_for_the_lock_every_other_writer_takes(self):
         """B1: the one lock writer that never took the lock.
@@ -1826,7 +1850,14 @@ class TestQaCycle11(SandboxCase):
         import contextlib, io
         src, dest = self._install_arm()
         cfg = self.root / octo_pkg.ARMS_PATHS_REL
-        self.assertIn("sample-arm", json.loads(cfg.read_text(encoding="utf-8")))
+        # The fixture is now the SHIPPED shape, and this line is why. The receipt
+        # assertion below used to pass because --dest sat outside $HOME, where
+        # install_arm falls back to an absolute `rel`; with the registry holding the
+        # relative string it shows what the operator would really be handed, and an
+        # openable absolute path is what a location line is for (QA cycle 12).
+        self.assertEqual(json.loads(cfg.read_text(encoding="utf-8"))["sample-arm"],
+                         "Documents/github/sample-arm",
+                         "the registered value is relative to $HOME")
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             rc = octo_pkg.main(["--brain", str(self.root), "uninstall", "sample-arm"])
@@ -1838,7 +1869,10 @@ class TestQaCycle11(SandboxCase):
         self.assertTrue(dest.exists(),
                         "the clone is the operator's own repo and is never deleted")
         self.assertIn(octo_pkg.ARMS_PATHS_REL, said)
-        self.assertIn(str(dest), said, "and it says where the repo was left")
+        self.assertIn(str(dest), said,
+                      "and it says where the repo was left, as a path that can be "
+                      "opened: printing the registry's $HOME-relative string as if it "
+                      "were a location sends the operator to the wrong directory")
         for lie in ("vendor tree", "symlink", "exclude entry"):
             self.assertNotIn(lie, said,
                              f"an arm has no {lie}; claiming it is a false receipt")
@@ -1962,6 +1996,330 @@ class TestQaCycle11(SandboxCase):
                       "ensure_ascii=False sends the surrogate into the "
                       "errors='replace' stream and the name it reads is a "
                       "different string")
+
+
+class TestQaCycle12(ArmFixture):
+    """Cycle 11 protected install_arm and left its neighbours unprotected.
+
+    The shape repeats: an invariant is established in one function, the comment
+    defending it CLAIMS its siblings already hold it, and nobody checked. `lock` was
+    named in that claim and was the one unprotected read-modify-write left. uninstall
+    got the deregistration and not the unwind. verify printed the word "registered"
+    without reading the registry. And two guards shipped with no test at all, which
+    is the state that tells the next reader to stop looking.
+    """
+
+    def _race(self, mutate):
+        """Run `mutate(brain)` at the moment lock_held is taken, then take it.
+
+        The window these bugs live in is between an unprotected READ and the write
+        that lands under the lock, so a second process has to land inside it. Driving
+        that from lock_held itself is deterministic where a real race is not, and it
+        puts the concurrent write exactly where the measured one arrived.
+        """
+        real = octo_pkg.Brain.lock_held
+
+        def racing(self_, timeout=30.0):
+            mutate(self_)
+            return real(self_, timeout)
+
+        octo_pkg.Brain.lock_held = racing
+        self.addCleanup(lambda: setattr(octo_pkg.Brain, "lock_held", real))
+
+    # -- A: the unprotected read-modify-write the comment said did not exist ------
+    def test_lock_writes_against_the_file_it_is_about_to_overwrite(self):
+        """cmd_lock read the lock, hashed every tree and shelled out to ssh-keygen,
+        then wrote that stale snapshot back inside lock_held. os.replace makes the
+        loss total and silent: QA measured a concurrent install of `newcomer-b`
+        vanishing while `lock` printed success at rc 0.
+        """
+        import contextlib, io
+        lock = self.brain.load_lock()
+        lock["packages"].append({"name": "already-here", "kind": "arm",
+                                 "version": "1.0.0", "source": "git@example.test:o/a"})
+        self.brain.save_lock(lock)
+
+        def other_process_installs(brain):
+            cur = json.loads(brain.lock_path.read_text(encoding="utf-8"))
+            cur["packages"].append({"name": "newcomer-b", "kind": "arm",
+                                    "version": "2.0.0", "source": "git@example.test:o/b"})
+            brain.lock_path.write_text(json.dumps(cur, indent=2) + "\n", encoding="utf-8")
+
+        self._race(other_process_installs)
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc = octo_pkg.main(["--brain", str(self.root), "lock"])
+        self.assertEqual(rc, 0)
+        names = [p["name"] for p in self.brain.load_lock()["packages"]]
+        self.assertIn("newcomer-b", names,
+                      "an install that landed while lock was hashing was overwritten "
+                      "by a snapshot taken before it, at rc 0, with no message")
+        self.assertIn("already-here", names, "and the entry it was re-locking survives")
+
+    # -- B: the unwind uninstall never got, and the word verify never checked -----
+    def test_uninstall_puts_arms_paths_back_when_the_lock_write_fails(self):
+        """_deregister_arm WRITES, and save_lock can fail after it. Without an unwind
+        that leaves deregistered-but-still-locked: the mirror image of the orphan
+        install_arm's unwind exists to prevent, and just as invisible.
+        """
+        import contextlib, io
+        self._install_arm()
+        cfg = self.root / octo_pkg.ARMS_PATHS_REL
+        before = cfg.read_text(encoding="utf-8")
+        real_save = octo_pkg.Brain.save_lock
+
+        def boom(self_, lock):
+            raise PermissionError(13, "Permission denied")
+
+        octo_pkg.Brain.save_lock = boom
+        self.addCleanup(lambda: setattr(octo_pkg.Brain, "save_lock", real_save))
+        with contextlib.redirect_stderr(io.StringIO()), \
+                contextlib.redirect_stdout(io.StringIO()):
+            rc = octo_pkg.main(["--brain", str(self.root), "uninstall", "sample-arm"])
+        self.assertEqual(rc, 1)
+        self.assertEqual(cfg.read_text(encoding="utf-8"), before,
+                         "the registration is written back byte for byte, or the arm "
+                         "is deregistered with its lock entry still standing")
+        self.assertEqual([p["name"] for p in self.brain.load_lock()["packages"]],
+                         ["sample-arm"], "and the lock is what it was, so a retry works")
+
+    def test_verify_does_not_say_registered_over_an_arm_that_is_not(self):
+        """`arm registered (validated, not signed)` was printed without ever opening
+        arms-paths.json. WARN and not FAIL on purpose: a second machine after
+        ai-pull has the tracked lock and not the gitignored registry, and a push must
+        not break there. It carries its own `fix:` because sync skips non-skill
+        entries, so prescribing sync would prescribe a no-op.
+        """
+        import contextlib, io
+        lock = self.brain.load_lock()
+        entry = {"name": "some-arm", "kind": "arm", "version": "1.0.0",
+                 "tree_sha256": None, "signer": None,
+                 "source": "git@example.test:o/some-arm.git"}
+        lock["packages"].append(entry)
+        self.brain.save_lock(lock)
+
+        status, msg = octo_pkg.verify_entry(self.brain, entry)
+        self.assertEqual(status, octo_pkg.WARN, msg)
+        self.assertIn("does not register it", msg)
+        self.assertIn("fix:", msg, "or cmd_verify prints 'run sync' under a WARN sync "
+                                   "cannot fix")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.assertEqual(
+                octo_pkg.main(["--brain", str(self.root), "verify", "--all"]), 0,
+                "an unregistered arm is not a push-blocking failure")
+        self.assertNotIn("fix: python3", buf.getvalue())
+
+        cfg = self.root / octo_pkg.ARMS_PATHS_REL
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        cfg.write_text('{"some-arm": "Documents/github/some-arm"}\n', encoding="utf-8")
+        status, msg = octo_pkg.verify_entry(self.brain, entry)
+        self.assertEqual(status, octo_pkg.PASS, msg)
+        self.assertIn(str(Path(os.environ["HOME"]) / "Documents" / "github" / "some-arm"),
+                      msg, "and when it does say registered, it says where")
+
+    # -- C: the unwind is the inverse of the write, symlinks included -------------
+    def test_the_unwind_over_a_symlinked_registry_deletes_what_the_write_created(self):
+        """With arms-paths.json a DANGLING symlink, exists() reads absent and
+        write_text creates the file at the far end. `cfg.unlink()` then deleted the
+        operator's SYMLINK and left that stray file: both halves backwards, and
+        "restores byte for byte" false for the one shape where the write and the
+        delete disagree about what the path means.
+        """
+        import contextlib, io
+        cfg = self.root / octo_pkg.ARMS_PATHS_REL
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        far = self.tmp / "elsewhere" / "arms-paths.json"
+        far.parent.mkdir(parents=True)
+        cfg.symlink_to(far)
+        self.assertFalse(cfg.exists(), "the fixture is a DANGLING link, the shape that "
+                                       "makes the write and the unwind disagree")
+        src = self._arm_src()
+        dest = self.arm_dest()
+        self.brain.lock_path.write_text("{ not json", encoding="utf-8")
+        with contextlib.redirect_stderr(io.StringIO()), \
+                contextlib.redirect_stdout(io.StringIO()):
+            rc = octo_pkg.main(["--brain", str(self.root), "install", "--kind", "arm",
+                                "--dest", str(dest), str(src)])
+        self.assertEqual(rc, 1)
+        self.assertFalse(dest.exists())
+        self.assertTrue(cfg.is_symlink(),
+                        "the symlink is the operator's, not something the write made")
+        self.assertFalse(far.exists(),
+                         "and the file the write DID make, at the far end, is gone")
+
+    # -- E: two guards that shipped with no test ---------------------------------
+    def test_a_lock_row_that_vanished_mid_uninstall_is_not_claimed_as_removed(self):
+        """The `any(p.get("name") == name ...)` guard. `entry` is read before the
+        lock, so a concurrent uninstall of the same name can take the row away before
+        this one writes; appending "lock entry" unconditionally would put a removal
+        this process did not perform on the receipt. Unreachable in one process, which
+        is why the writer that reaches it is driven from lock_held.
+        """
+        import contextlib, io
+        lock = self.brain.load_lock()
+        lock["packages"].append({"name": "ghost", "kind": "skill", "version": "1.0.0",
+                                 "signer": "octorato-release", "tree_sha256": "d0",
+                                 "source": "git@example.test:o/ghost.git"})
+        self.brain.save_lock(lock)
+
+        def other_process_uninstalls(brain):
+            cur = json.loads(brain.lock_path.read_text(encoding="utf-8"))
+            cur["packages"] = [p for p in cur["packages"] if p["name"] != "ghost"]
+            brain.lock_path.write_text(json.dumps(cur, indent=2) + "\n", encoding="utf-8")
+
+        self._race(other_process_uninstalls)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "uninstall", "ghost"])
+        self.assertEqual(rc, 0)
+        self.assertIn("nothing was there to remove", buf.getvalue())
+        self.assertNotIn("lock entry", buf.getvalue(),
+                         "the row was gone before this process wrote; claiming it is "
+                         "a receipt for work someone else did")
+
+    def test_a_registry_that_stopped_being_an_object_refuses_the_deregistration(self):
+        """_deregister_arm's non-dict `raise PkgError`. Replacing it with a `return`
+        was invisible to the whole suite, though the docstring argues at length that
+        skipping leaves registered-and-unlocked, the orphan this branch exists to stop
+        making. Reachable the same way as the guard above: the file is a dict when
+        uninstall reads it and a list by the time the lock is held.
+        """
+        import contextlib, io
+        self._install_arm()
+        cfg = self.root / octo_pkg.ARMS_PATHS_REL
+
+        def other_process_corrupts_it(brain):
+            (brain.root / octo_pkg.ARMS_PATHS_REL).write_text("[]\n", encoding="utf-8")
+
+        self._race(other_process_corrupts_it)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            rc = octo_pkg.main(["--brain", str(self.root), "uninstall", "sample-arm"])
+        self.assertEqual(rc, 1)
+        self.assertIn("is not an object", err.getvalue())
+        self.assertEqual(cfg.read_text(encoding="utf-8"), "[]\n",
+                         "a file it refuses to understand is a file it does not rewrite")
+        self.assertEqual([p["name"] for p in self.brain.load_lock()["packages"]],
+                         ["sample-arm"],
+                         "refusing leaves registered-and-locked, which a retry can act "
+                         "on; skipping leaves the orphan")
+
+    # -- F: the seam its own sibling already used --------------------------------
+    def test_an_unreadable_registry_is_named_by_the_seam_at_install(self):
+        """`if cfg.exists():` was raw while _deregister_arm went through stat_ok, so
+        an unsearchable company/config/ answered with a bare Errno 13 instead of the
+        seam's sentence naming the file.
+        """
+        import contextlib, io
+        cfgdir = self.root / "company" / "config"
+        cfgdir.mkdir(parents=True)
+        os.chmod(cfgdir, 0o000)
+        self.addCleanup(lambda: os.chmod(cfgdir, 0o755))
+        if os.access(cfgdir, os.X_OK):
+            self.skipTest("running as root, EACCES is not enforceable")
+        src = self._arm_src()
+        dest = self.arm_dest()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            rc = octo_pkg.main(["--brain", str(self.root), "install", "--kind", "arm",
+                                "--dest", str(dest), str(src)])
+        self.assertEqual(rc, 1)
+        self.assertIn(f"{octo_pkg.ARMS_PATHS_REL} cannot be read", err.getvalue(),
+                      "the raw stat says PermissionError over an absolute path and "
+                      "never says which file the install could not read")
+        self.assertFalse(dest.exists(), "and the clone still unwinds")
+
+    # -- G: a value that is documented as a list ---------------------------------
+    def test_a_candidate_array_is_rendered_as_a_path_not_as_a_python_list(self):
+        """brain_doctor.resolve_home_relative and CLAUDE.md both say a value may be an
+        array of candidates. `str(was)` printed `the clone at ['a/b', 'c/d']`. The
+        first candidate that exists wins, the way the doctor resolves it.
+        """
+        import contextlib, io
+        src, dest = self._install_arm()
+        cfg = self.root / octo_pkg.ARMS_PATHS_REL
+        cfg.write_text(json.dumps({"sample-arm": ["Documents/github/nowhere",
+                                                  "Documents/github/sample-arm"]},
+                                  indent=2) + "\n", encoding="utf-8")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "uninstall", "sample-arm"])
+        said = buf.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertIn(str(dest), said)
+        self.assertNotIn("['", said, "a Python list repr is not a location")
+        self.assertNotIn("nowhere", said,
+                         "and the candidate that is not on disk is not the answer")
+
+    # -- H and I: the orphan's exit, and the clone it never mentioned -------------
+    def test_an_arm_registered_with_no_lock_entry_can_be_uninstalled(self):
+        """The state this whole commit is about had no exit: `uninstall` answered rc 1
+        "is not installed" and left the registration, so hand-editing arms-paths.json
+        was the only way out, which is the habit the lock exists to remove.
+        """
+        import contextlib, io
+        cfg = self.root / octo_pkg.ARMS_PATHS_REL
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        cfg.write_text('{"orphan-arm": "Documents/github/orphan-arm"}\n',
+                       encoding="utf-8")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "uninstall", "orphan-arm"])
+        said = buf.getvalue()
+        self.assertEqual(rc, 0, "an install that half-unwound has to be undoable")
+        self.assertEqual(json.loads(cfg.read_text(encoding="utf-8")), {})
+        self.assertIn(octo_pkg.ARMS_PATHS_REL, said)
+        self.assertIn("left in place", said)
+
+    def test_the_clone_is_still_reported_when_the_registry_is_already_gone(self):
+        """With no arms-paths.json the `arm_path is None` branch said nothing about
+        the clone, so the operator was told it survives everywhere except where he is
+        least likely to know: with the registry already inconsistent.
+        """
+        import contextlib, io
+        self._install_arm()
+        (self.root / octo_pkg.ARMS_PATHS_REL).unlink()
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "uninstall", "sample-arm"])
+        said = buf.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertIn("lock entry", said)
+        self.assertIn("left in place", said,
+                      "the clone survives in BOTH branches; silence in one of them is "
+                      "a receipt that hides a directory on disk")
+        self.assertIn(octo_pkg.ARMS_PATHS_REL, said)
+
+    # -- J: the claim and the code, saying the same thing ------------------------
+    def test_an_os_error_after_the_registration_is_wrapped_not_re_raised(self):
+        """The other half of `if not isinstance(e, Exception): raise`, and the half a
+        commit message described backwards ("a non-PkgError is re-raised"). An OSError
+        is NOT re-raised: it is wrapped into PkgError, a reported refusal at rc 1
+        instead of a traceback, which is this module's stance everywhere. Only a
+        BaseException that is not an Exception goes back out, and the KeyboardInterrupt
+        test one class up pins that side.
+        """
+        import contextlib, io
+        src = self._arm_src()
+        dest = self.arm_dest()
+        cfg = self.root / octo_pkg.ARMS_PATHS_REL
+        real_save = octo_pkg.Brain.save_lock
+
+        def boom(self_, lock):
+            raise OSError(28, "No space left on device")
+
+        octo_pkg.Brain.save_lock = boom
+        self.addCleanup(lambda: setattr(octo_pkg.Brain, "save_lock", real_save))
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            rc = octo_pkg.main(["--brain", str(self.root), "install", "--kind", "arm",
+                                "--dest", str(dest), str(src)])
+        self.assertEqual(rc, 1)
+        self.assertIn("install of arm sample-arm rolled back: OSError", err.getvalue(),
+                      "re-raising here would reach main's generic backstop, which "
+                      "cannot say what was rolled back")
+        self.assertFalse(dest.exists())
+        self.assertFalse(cfg.exists())
 
 
 class TestGenerator(unittest.TestCase):
