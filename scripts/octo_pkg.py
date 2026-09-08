@@ -333,8 +333,10 @@ class Brain:
         hour, so a caller that asked for 30s waits until the holder lets go and
         cmd_sync's run budget is defeated from underneath by a clock rather than by
         contention. QA cycle 16 raised it as a post-merge watch item and it is four
-        lines, so it is here instead. `time.monotonic()` cannot step, and the test
-        drives this with a clock that does.
+        lines, so it is here instead. `time.monotonic()` cannot step, and the tests
+        drive this with a clock that does -- on BOTH branches since cycle 17, which
+        measured that reverting the two sites in the O_EXCL branch survived the whole
+        module because every lock test skips unless fcntl is importable.
         """
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
         guard = self.lock_path.with_name(self.lock_path.name + ".lock")
@@ -343,8 +345,18 @@ class Brain:
             try:
                 import fcntl
             except ImportError:
-                # No fcntl (Windows): fall back to an O_EXCL sentinel with a timeout,
-                # so the contract degrades in speed, never in correctness.
+                # No fcntl (Windows): fall back to an O_EXCL sentinel with a timeout.
+                # It is NOT flock's contract at a lower speed, and saying it was is
+                # the overclaim shape this commit is about, in this commit. flock is
+                # held by an open file description and the kernel drops it when the
+                # process dies; a sentinel is an ordinary file, so a run killed
+                # between the os.open and the unlink leaves it on disk and every
+                # later acquire on that machine refuses until someone deletes it by
+                # hand (measured, QA cycle 17). Breaking a sentinel on age is not the
+                # four-line fix it looks like -- two runs can both judge it stale and
+                # both proceed, which is worse than refusing -- so the branch keeps
+                # the behaviour and stops claiming it is equivalent. What it does
+                # promise is the timeout: bounded, monotonic, and tested below.
                 sentinel = Path(str(guard) + ".excl")
                 deadline = time.monotonic() + timeout
                 while True:
@@ -2284,6 +2296,20 @@ def cmd_sync(brain: Brain) -> int:
         the lock is ACQUIRED, so the copytree under it is not waiting either; on a
         refusal the whole elapsed time was waiting, and `acquired` is what keeps the
         two from being charged twice.
+
+        Both charges are load-bearing and only one of them was tested. QA cycle 17
+        deleted the ACQUIRED one and all 365 tests stayed green: the contended test
+        above refuses every acquire, so the refusal charge carries it, and the
+        uncontended one asserts a full budget at every acquire, which is exactly what
+        charging nothing produces. Re-measured here with eight absent packages, a 1.0s
+        budget, and a holder that releases 0.5s after each acquire begins and re-takes
+        the guard only once the run has had it: charged, the acquires are handed
+        [1.0, 0.495, 0.0 x6] for 1.01s of total waiting, 2 restored and 6 skipped;
+        uncharged, they are handed [1.0] x8 and wait 0.505 to 0.525s each for 4.09s
+        of total waiting, 8 restored. So the deletion buys back the six packages by
+        spending 4x the bound, the waiting grows as N x HOLD, and SYNC_LOCK_BUDGET
+        stops being one. test_sync_charges_the_run_budget_for_a_wait_that_succeeded is
+        the leg that dies when this line goes, and it is the only one.
         """
         nonlocal lock_budget_left
         started = time.monotonic()

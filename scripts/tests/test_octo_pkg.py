@@ -3333,10 +3333,16 @@ class TestQaCycle15(ArmFixture):
 
         "and no test failed" is what this test was first written against, and QA cycle
         16 measured that it is not true of EVERY reordering, so the claim is narrowed
-        to what was measured. Swapping `installed_at` with `tree_sha256` kills three
-        tests, two of which already failed at the parent commit for their own reasons.
-        The reordering that nothing caught is `kind` with `source`: it survives all 151
-        tests at the parent commit and dies only here.
+        to what was measured. Both halves of that narrowing then named the wrong
+        commit, which is this PR's own defect one layer down: "the parent commit" was
+        5e5be15, the GRANDPARENT, and the parent a5b509c is where this very test
+        arrived. Re-measured at cycle 17, one swap per archived checkout: swapping
+        `installed_at` with `tree_sha256` kills three tests here and at a5b509c, two of
+        which (test_identity_pins_installed_at_on_its_own and
+        test_identity_pins_tree_sha256_on_its_own) already failed at 5e5be15 for their
+        own reasons. The reordering that nothing caught is `kind` with `source`: it
+        survives all 151 tests at 5e5be15 and dies, alone, on this assertion -- 155
+        tests at a5b509c, FAILED (failures=1).
         """
         self.assertEqual(
             octo_pkg.entry_identity({f: f for f in octo_pkg.IDENTITY_FIELDS}),
@@ -3344,6 +3350,287 @@ class TestQaCycle15(ArmFixture):
             "entry_identity returns its fields in a different order than "
             "IDENTITY_FIELDS labels them: the WARN names the wrong field")
 
+
+class TestQaCycle17(ArmFixture):
+    """The two halves of the lock this commit was still taking on trust.
+
+    Cycle 16's finding was that the run budget was being spent by FETCHING; the fix
+    charges the waiting. Cycle 17 deleted the charge on the ACQUIRED path -- the one
+    line `lock_budget_left -= time.monotonic() - started` that runs when the lock is
+    actually handed over -- and all 365 tests stayed green, this module's 157 among
+    them. Both budget tests above survive that deletion, for opposite reasons: the
+    contended one holds the lock throughout, so every acquire REFUSES and the charge
+    on the refusal path carries it, and the uncontended one asserts every acquire was
+    handed a FULL budget, which is precisely what a run that charges nothing produces.
+    Neither can see a wait that SUCCEEDED, and a wait that succeeds is the one a real
+    contended run mostly does. Measured here with eight absent packages,
+    SYNC_LOCK_BUDGET at 1.0s, and a holder that releases 0.5s after each acquire
+    begins and re-takes the guard only once the run has had it: shipped hands out
+    [1.0, 0.495, 0.0 x6] for 1.01s of total waiting and the receipt reads 2 restored,
+    6 skipped; the deletion hands out [1.0] x8, waits 0.505-0.525s at every one of
+    them for 4.09s of total waiting, and restores all 8. The six packages are bought
+    back at 4x the bound. So without that line the run-level bound holds only on runs
+    where every acquire is refused, and the waiting grows as N x the hold everywhere
+    else.
+
+    And lock_held's O_EXCL branch had no test at all. All four lock tests above carry
+    @skipUnless(_fcntl_ok()), so on this box the branch is never entered: reverting
+    BOTH of its `time.monotonic()` sites to `time.time()` survives the whole module,
+    while the docstring paragraph that covers both branches said "the test drives this
+    with a clock that does". It drove one. `sys.modules["fcntl"] = None` makes the
+    function's own `import fcntl` raise the way it raises on Windows, which is the only
+    door into the branch on a POSIX box, and it is one name rather than the whole
+    import machinery.
+    """
+
+    _install_signed = TestQaCycle13._install_signed
+    _detach = TestQaCycle15._detach
+    _edit_row = TestQaCycle15._edit_row
+    _sync = TestQaCycle15._sync
+
+    def _windows(self) -> None:
+        """Make `import fcntl` fail, and put sys.modules back however it was.
+
+        Shimming one entry in sys.modules rather than builtins.__import__ keeps the
+        blast radius to one name: every other import in this process, including the
+        ones the daemon threads below make, still goes through the real machinery.
+        A test that leaves a module poisoned leaks into every later module of the same
+        `discover` run, so the restore is a cleanup and not a `finally` in the body.
+        """
+        had = "fcntl" in sys.modules
+        prior = sys.modules.get("fcntl")
+        sys.modules["fcntl"] = None
+
+        def restore():
+            if had:
+                sys.modules["fcntl"] = prior
+            else:
+                sys.modules.pop("fcntl", None)
+
+        self.addCleanup(restore)
+
+    def _guard(self) -> Path:
+        guard = self.brain.lock_path.with_name(self.brain.lock_path.name + ".lock")
+        guard.parent.mkdir(parents=True, exist_ok=True)
+        return guard
+
+    def _sentinel(self) -> Path:
+        """The O_EXCL branch's lock file, and a cleanup that removes it either way."""
+        sentinel = Path(str(self._guard()) + ".excl")
+        self.addCleanup(lambda: sentinel.unlink(missing_ok=True))
+        return sentinel
+
+    # -- A: the budget is charged for the waits that SUCCEED, too -----------------
+    @unittest.skipUnless(_fcntl_ok(), "no fcntl: the POSIX branch is not the one that runs here")
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_sync_charges_the_run_budget_for_a_wait_that_succeeded(self):
+        """The sixteenth instance of the pattern, inside the fix for the fifteenth.
+
+        The lock is held across the FIRST acquire only and released 0.5s after that
+        acquire begins, so the first wait succeeds and the second acquire is the
+        measurement. Two packages and a 2.0s budget mean nothing here is refused and
+        both packages are restored under either accounting, so this test can only be
+        carried by the arithmetic: shipped charges the 0.5s it waited and hands the
+        second acquire at most 1.5s, the deletion charges nothing and hands it the
+        full 2.0s. The margin is one-sided by construction -- the releaser sleeps
+        AFTER the acquire is under way, so a slower box makes the first wait longer
+        and the asserted number smaller, never larger.
+        """
+        import contextlib
+        import fcntl
+        import threading
+        import time
+        budget, hold = 2.0, 0.5
+        names = []
+        for i in range(2):
+            name, _ = self._install_signed("charge%d" % i)
+            self._edit_row(name, source=str(self.tmp / ("src-charge%d" % i)))
+            self._detach(name)
+            names.append(name)
+
+        holder = open(self._guard(), "a+")
+        self.addCleanup(holder.close)
+        fcntl.flock(holder.fileno(), fcntl.LOCK_EX)   # a second fd: flock is per ofd
+
+        asking = threading.Event()
+        released = threading.Event()
+
+        def release_once():
+            if not asking.wait(60):
+                return
+            time.sleep(hold)
+            fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
+            released.set()
+
+        releaser = threading.Thread(target=release_once, daemon=True)
+        releaser.start()
+        # If the run never asks for the lock, the releaser would sit on its wait until
+        # the process ends. Unblock it in the cleanup and join it, so nothing of this
+        # test outlives this test.
+        self.addCleanup(releaser.join, 30)
+        self.addCleanup(asking.set)
+
+        asked = []
+        real = octo_pkg.Brain.lock_held
+
+        @contextlib.contextmanager
+        def recording(self_, timeout=30.0):
+            asked.append(timeout)
+            asking.set()
+            with real(self_, timeout):
+                yield
+
+        octo_pkg.Brain.lock_held = recording
+        self.addCleanup(lambda: setattr(octo_pkg.Brain, "lock_held", real))
+        prior = octo_pkg.SYNC_LOCK_BUDGET
+        octo_pkg.SYNC_LOCK_BUDGET = budget
+        self.addCleanup(lambda: setattr(octo_pkg, "SYNC_LOCK_BUDGET", prior))
+
+        rc, said = self._sync()
+
+        self.assertEqual(len(asked), 2, "one acquire per absent package")
+        self.assertEqual(asked[0], budget, "the first acquire is handed the whole run")
+        self.assertTrue(released.is_set(),
+                        "the holder never let go: this leg is about a wait that WON")
+        self.assertLessEqual(
+            asked[1], budget - (hold - 0.1),
+            f"the first acquire waited {hold}s and then GOT the lock, and the second "
+            f"was still handed {asked[1]}s of a {budget}s budget: only a REFUSED wait "
+            f"is charged, so a run whose acquires succeed waits N times the bound and "
+            f"SYNC_LOCK_BUDGET is not one")
+        for name in names:
+            self.assertTrue(self.brain.vendor_path(name).exists(),
+                            "the lock was released: both packages are restorable, so "
+                            "nothing but the accounting can carry this test")
+        self.assertEqual(rc, 0)
+        self.assertIn("2 restored", said)
+
+    # -- B: the branch that is never taken on this box ----------------------------
+    def test_lock_held_without_fcntl_takes_and_clears_its_sentinel(self):
+        """The O_EXCL branch, entered at all for the first time.
+
+        Everything below this asserts something about a timeout, and a timeout test
+        that silently ran the POSIX branch would assert it about the wrong code. This
+        one is the control: it proves the door opens, by naming the file only the
+        O_EXCL branch creates.
+        """
+        self._windows()
+        sentinel = self._sentinel()
+        self.assertFalse(sentinel.exists())
+        with self.brain.lock_held(timeout=1.0):
+            self.assertTrue(sentinel.exists(),
+                            "no sentinel: the POSIX branch ran and every timeout "
+                            "assertion below is about code this box does not enter")
+        self.assertFalse(sentinel.exists(), "the sentinel outlived the block it guards")
+
+    def test_lock_held_without_fcntl_refuses_within_the_timeout_it_advertises(self):
+        """The bound is real on this branch too, and it names what it could not take.
+
+        No thread here, unlike the POSIX pair above: this branch polls against a
+        deadline in every version of itself, so a regression refuses late rather than
+        hanging, and the wall-clock assertion is the detection.
+        """
+        import time
+        self._windows()
+        sentinel = self._sentinel()
+        os.close(os.open(str(sentinel), os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+
+        started = time.monotonic()
+        with self.assertRaises(octo_pkg.PkgError) as caught:
+            with self.brain.lock_held(timeout=0.5):
+                pass
+        waited = time.monotonic() - started
+
+        self.assertIn("0.5", str(caught.exception), "it says what it waited for")
+        self.assertIn(sentinel.name, str(caught.exception), "and what it waited on")
+        self.assertGreater(waited, 0.4, f"refused after {waited:.2f}s: it did not wait")
+        self.assertLess(waited, 5, f"asked for 0.5s, waited {waited:.1f}s")
+        self.assertTrue(sentinel.exists(),
+                        "a refused acquire removed a sentinel it never created")
+
+    def test_lock_held_without_fcntl_refuses_an_exhausted_budget_without_sleeping(self):
+        """timeout=0.0 is a real caller, not a degenerate one.
+
+        cmd_sync hands `max(0.0, lock_budget_left)`, so every acquire after the run
+        budget is spent arrives here as 0.0. The deadline check runs BEFORE the sleep,
+        which is what makes that a single probe rather than a 50ms one: 234 rows on a
+        fresh clone whose budget is gone would otherwise be 12 seconds of sleeping to
+        reach the same refusals. The bound asserted is BELOW one sleep quantum, so
+        moving the deadline check under the sleep fails this test rather than merely
+        slowing it: measured worst-case over 200 consecutive refusals on this box,
+        1.97ms, against the 40ms asserted and the 50ms one sleep costs.
+        """
+        import time
+        self._windows()
+        sentinel = self._sentinel()
+        os.close(os.open(str(sentinel), os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+
+        started = time.monotonic()
+        with self.assertRaises(octo_pkg.PkgError):
+            with self.brain.lock_held(timeout=0.0):
+                pass
+        waited = time.monotonic() - started
+        self.assertLess(waited, 0.04,
+                        f"an exhausted budget still spent {waited * 1000:.0f}ms before "
+                        f"refusing, which is a 50ms sleep: the deadline is checked "
+                        f"after the sleep and not before it")
+
+    def test_lock_held_without_fcntl_measures_its_bound_on_a_clock_that_cannot_step_back(self):
+        """The same NTP step-back as the POSIX leg, on the branch that had no test.
+
+        Reverting BOTH `time.monotonic()` sites in this branch to `time.time()` was
+        measured green across this whole module, because nothing entered the branch.
+        The shim is the real time module with one method replaced, so the sleep and
+        the monotonic clock under it stay genuine, and the attempt runs in a daemon
+        thread so a revert FAILS in ten seconds instead of hanging the suite. The
+        cleanups run last-registered-first, so `octo_pkg.time` is restored before the
+        sentinel is removed: a leaked thread's next poll then reads a real clock that
+        is already past a real deadline and it ends.
+        """
+        import threading
+        import time
+        self._windows()
+        sentinel = self._sentinel()
+        os.close(os.open(str(sentinel), os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+
+        class ClockStepsBack:
+            """time, except that time() jumps an hour back after the first read."""
+
+            def __init__(self_):
+                self_.reads = 0
+
+            def time(self_):
+                self_.reads += 1
+                return time.time() - (3600 if self_.reads > 1 else 0)
+
+            def __getattr__(self_, k):
+                return getattr(time, k)      # monotonic and sleep stay real
+
+        octo_pkg.time = ClockStepsBack()
+        self.addCleanup(lambda: setattr(octo_pkg, "time", time))
+
+        outcome = {}
+
+        def attempt():
+            try:
+                with self.brain.lock_held(timeout=0.5):
+                    outcome["acquired"] = True
+            except octo_pkg.PkgError as e:
+                outcome["refused"] = str(e)
+
+        started = time.monotonic()
+        t = threading.Thread(target=attempt, daemon=True)
+        t.start()
+        t.join(10)
+        waited = time.monotonic() - started
+
+        self.assertFalse(t.is_alive(),
+                         "the clock stepped back an hour and the O_EXCL branch is "
+                         "still polling: its bound is measured on a wall clock, so an "
+                         "NTP correction suspends it")
+        self.assertNotIn("acquired", outcome, "the sentinel was already on disk")
+        self.assertIn("refused", outcome)
+        self.assertLess(waited, 5, f"asked for 0.5s, waited {waited:.1f}s")
 
 class TestGenerator(unittest.TestCase):
     def setUp(self):
