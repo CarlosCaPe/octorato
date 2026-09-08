@@ -1653,20 +1653,54 @@ class TestTheParseFitsTheHookBudget(unittest.TestCase):
         unterminated openers took 3.6 s.
 
     Asserted against the real budget rather than against a ratio, because the
-    contract is "finishes inside 5 s", and every case here is 10x-90x under it on
-    the machine that measured the numbers above.
+    contract is "finishes inside 5 s".
+
+    On FENCE SIZE, which is the whole design of this class. Two of these shapes
+    are superlinear and bounded rather than eliminated, so each has a measured
+    EDGE — the size at which it reaches 5 s — and the fence deliberately does not
+    sit there. A fence at the edge is red the first time the box is busy, and a
+    fence that goes red under normal agent load gets deleted, which is strictly
+    worse than no fence. So every leg is sized at roughly a THIRD of the budget
+    on a BUSY box, and what it therefore catches is a regression of about 3x or
+    more in the cost of that shape, not the last 20% before the edge. The edges
+    themselves are measurements recorded in residual 9, not assertions; do not
+    read a green run here as "the shape is 5 s-safe at any size".
+
+Sized against a LOADED box on purpose, not a quiet one, because that is
+    the box a fence has to survive. Re-measured 2026-09-08 on 4 cores across
+    load averages 8 to 20 (2x to 5x oversubscribed, five sibling agents), worst
+    observed over eight rounds reported: 20000 benign words 1.01 s, 5000 opaque
+    tokens well under, 2000 `<<` openers well under, 1500 opaque/write-marker
+    pairs 0.84 s (edge 3500), 3500 `$(…)` substitutions 1.86 s (edge ~6000).
+    Both bounded legs take a min of 5 for the reason in `_under_budget`: at a
+    min of 3 the substitution shape returned 2.87 s once at load 19.6, and not
+    as one unlucky sample but as three consecutive slow ones. The module ran
+    green at load 18.1, 19.0 and 20.1, which is the evidence that these are
+    sized and not tuned to a quiet box.
     """
 
     BUDGET = 5.0
 
-    def _under_budget(self, label: str, cmd: str):
+    def _under_budget(self, label: str, cmd: str, runs: int = 1):
+        """Best of *runs*, because the number that matters is the cost of the
+        PARSE and not the cost of whatever else the box was doing during one
+        sample. The spread is not small and it is not noise around a mean: one
+        substitution line measured 0.69 s to 1.27 s over six single runs at load
+        12, and a min of THREE still returned 2.87 s at load 19.6, as three
+        consecutive slow samples rather than one unlucky one. A min of five over
+        eight rounds stays inside 1.86 s on a shape 40% larger. So `runs` is 5
+        for the two bounded shapes, which are sized closest to the budget, and
+        stays 1 for the legs with a 5x-90x margin, where no spread this box
+        produces can reach 5 s."""
         import time
-        for cache in ("_PARTS_CACHE", "_ENV_CHAIN_CACHE", "_TOKENS_CACHE",
-                      "_ARG_TOKENS_CACHE"):
-            getattr(gate, cache, {}).clear()
-        start = time.monotonic()
-        gate._find_publish_subcmds(cmd)
-        spent = time.monotonic() - start
+        spent = float("inf")
+        for _ in range(runs):
+            for cache in ("_PARTS_CACHE", "_ENV_CHAIN_CACHE", "_TOKENS_CACHE",
+                          "_ARG_TOKENS_CACHE"):
+                getattr(gate, cache, {}).clear()
+            start = time.monotonic()
+            gate._find_publish_subcmds(cmd)
+            spent = min(spent, time.monotonic() - start)
         self.assertLess(spent, self.BUDGET,
                         f"{label} took {spent:.1f}s of a {self.BUDGET}s hook budget")
 
@@ -1675,8 +1709,64 @@ class TestTheParseFitsTheHookBudget(unittest.TestCase):
 
     def test_a_long_opaque_head_line_parses_inside_the_budget(self):
         self._under_budget("5000 opaque tokens", "git " + " ".join(["$a"] * 5000))
-        self._under_budget("5000 opaque tokens with write markers",
-                           "git " + " ".join(["$a -f"] * 1000))
+        # 1500 pairs, not the 1000 this shipped with. Residual 9 measures the
+        # EDGE of this shape at 3500 pairs (4.99 s), and a fence three and a
+        # half times under the regime it claims to defend defends nothing that
+        # will ever happen. Raised TOWARD the edge and not TO it, and 1500
+        # rather than the 2000 tried first, because the ceiling is the busy box:
+        # at load 17, 3500 pairs is 4.07 s and 2000 is 3.47 s, a 1.4x margin
+        # that goes red on any hotter box. 1500 is 0.84 s worst of eight
+        # min-of-5 rounds across loads 10-20, a 6x margin, and still catches the
+        # 3x-and-up regression this class is for.
+        self._under_budget("1500 opaque-token/write-marker pairs",
+                           "git " + " ".join(["$a -f"] * 1500), runs=5)
+
+    def test_a_long_command_substitution_line_parses_inside_the_budget(self):
+        """The cost this cycle INTRODUCED, and until now the one cost in
+        residual 9 with no regression fence at all: reading the contents of
+        every `$(…)` runs each one through the whole recursion, so a line of N
+        substitutions naming a head is N parses. Residual 9 measured the curve
+        (0.56 s at 1000, 3.05 s at 4000, roughly 6000 to reach the budget) and
+        then said it was "pinned", which it was not — no leg in this class
+        carried a `$(` at all. Measured is not fenced, and a residual written to
+        be honest is the last place to blur the two.
+
+        Sized at 3500, against an edge of roughly 6000, and the size is a TRADE
+        made in this direction on purpose. 2000 and 2500 were both measured
+        first and both dropped: they are quieter (worst of eight rounds 1.09 s
+        at 2500 against 1.86 s at 3500) but the regression below stays GREEN at
+        both, and a fence that cannot fail is the thing this PR keeps finding in
+        other people's code. So headroom was spent, not hoarded, down to a 2.7x
+        margin — still three times the 1.2x a fence at the edge would have, and
+        green through eight rounds and three whole-module runs at loads 8 to 20.
+
+        FAILABILITY, run rather than asserted, and reported with the runs that
+        did NOT go red as well. Revert the one line in `_line_env_chain` that
+        reads three keys back to the whole-process walk it replaced — the cost
+        this recursion exposed and paid down, and the regression this leg most
+        plausibly has to catch — copy the tree, and run THIS test against the
+        copy in a shell of 491 variables. It goes RED: 5.44 s of the 5 s budget
+        against 1.33 s for the fix, same box, same load. It also came back GREEN
+        twice on the same revert, at 4.04 s and at 4.6 s, when the box was
+        quieter.
+
+        That straddle is the honest limit of a wall-clock budget assertion and
+        it is worth stating plainly rather than quoting only the red run. The
+        revert costs a steady 4x-6x, but this box's own throughput swings about
+        3x between load 8 and load 20, so a fixed 5 s line falls inside the
+        regression's range instead of below it: the leg catches this regression
+        at the loads where it crosses 5 s, and 5 s is the contract, so that is
+        the right thing for it to measure. What it does NOT do is detect every
+        regression at every load, and a green run here is not proof that no
+        constant-factor cost was added — on the 91-variable environment of this
+        session the same revert is 2.33 s against 1.34 s, a real 1.7x that stays
+        green at any size that keeps the fixed side sane. The env-size
+        dependence is the point: the three-key read is what makes this parse
+        cost the same in a fat shell as in a lean one, and a fat shell is where
+        the revert crosses."""
+        self._under_budget("3500 $(…) substitutions naming a head",
+                           " ".join(f"$(gh pr merge {i})" for i in range(3500)),
+                           runs=5)
 
     def test_many_unterminated_heredoc_openers_parse_inside_the_budget(self):
         self._under_budget("2000 << openers",

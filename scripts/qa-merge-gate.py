@@ -120,11 +120,44 @@ stops being tracked. One number, four surfaces, reconciled 2026-09-08.
      miss and now reads three keys (4.98 s of a 9.34 s parse, profiled), and both
      new scans carry a `_may_publish` pre-filter that is sound by construction
      (20000 benign words 5.10 s -> 1.01 s, which is BETTER than the 1.33 s this
-     shape cost before the cycle). Pinned by TestTheParseFitsTheHookBudget against the
-     5 s budget itself rather than against a ratio, because the budget is the
-     contract, plus one fixture (benign_long_opaque_argument_list.json): the
-     selftest harness kills a leg at 30 s, which is what turns time into the
-     verdict a fixture can assert. The heredoc scan has no fixture — proving it
+     shape cost before the cycle). What is FENCED and what is only MEASURED are
+     different lists, and cycle 6 caught this paragraph conflating them: it said
+     the substitution shape was "pinned by TestTheParseFitsTheHookBudget" when
+     no leg in that class carried a `$(` at all — the one cost this cycle
+     introduced was the one cost with no regression fence. FENCED, each leg
+     asserted against the 5 s budget itself rather than against a ratio because
+     the budget is the contract: 20000 benign words, 5000 opaque tokens, 2000
+     `<<` openers, 1500 opaque-token/write-marker pairs, and now 3500 `$(…)`
+     substitutions naming a head. MEASURED and NOT fenced: the edges themselves
+     (3500 pairs, ~6000 substitutions, ~10000 script lines) and the crossover
+     curves above. A fence sits BELOW its shape's edge on purpose: at the edge,
+     3500 pairs measures 4.07 s at load 17, a margin of 1.2x that is red the
+     first busy day, and a fence that goes red under normal agent load is
+     deleted, which is worse than no fence. Sizes are picked against a BUSY box
+     (loads 8 to 20 on 4 cores, five sibling agents) and the two bounded legs
+     take the min of five runs: worst of eight rounds is 0.84 s at 1500 pairs
+     and 1.86 s at 3500 substitutions. Where the two pressures met, failability
+     won: 2000 and 2500 substitutions are quieter (1.09 s worst at 2500) and
+     both leave the regression below GREEN, so the leg sits at 3500 and spends
+     the headroom down to 2.7x — a fence that cannot fail is not a fence, and
+     2.7x is still three times the margin a fence at the edge would have. That
+     failability was RUN, not claimed, and the runs that stayed green are
+     reported too: with `_line_env_chain` reverted to the whole-process walk in
+     a copy of the tree, the leg fails at 5.44 s of the 5 s budget on a
+     491-variable environment against 1.33 s for the fix, and on the same revert
+     it also came back green twice, at 4.04 s and 4.6 s, when the box was
+     quieter. That straddle is the honest limit of a wall-clock budget
+     assertion: the revert costs a steady 4x-6x, but this box swings about 3x in
+     throughput between load 8 and load 20, so a fixed 5 s line lands inside the
+     regression's range rather than below it. The leg catches this regression at
+     the loads where it crosses 5 s, which is what the contract says, and it is
+     not a detector for every constant-factor cost — on a 91-variable
+     environment the same revert is 2.33 s against 1.34 s and stays green, and
+     that env-size dependence is exactly what the three-key read removes.
+     One fixture backs the opaque-argument shape
+     (benign_long_opaque_argument_list.json): the selftest harness kills a leg
+     at 30 s, which is what turns time into a verdict a fixture can assert. The
+     heredoc scan has no fixture — proving it
      needs a 240 KB payload — and is unit-anchored only.
  10. bash 5.3's funsub spellings of command substitution, ``${ cmd; }`` and
      ``${| cmd; }``. NOT reachable on the installed bash (5.2.21): measured
