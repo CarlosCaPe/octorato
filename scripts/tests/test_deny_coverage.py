@@ -14,8 +14,10 @@ is what makes it evidence rather than a second opinion from the same source.
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import os
+import re
 import shutil
 import sys
 import subprocess
@@ -46,6 +48,74 @@ def _restore_env(saved: dict) -> None:
             os.environ[k] = saved[k]
         else:
             os.environ.pop(k, None)
+
+
+def run_main(checks, argv=("brain_doctor.py",)):
+    """Run the REAL `main` with `checks` in place of CHECKS, over a REAL byte stream.
+
+    Every earlier attempt at this pinned one path at whatever hop had just been
+    fixed, and the next mutation moved one hop past it. Ten instances in, the answer
+    is not another single-path test: it is one wire that carries everything a reader
+    gets (status, message, hint, name, exit code, encoding) for a FAIL and a WARN and
+    a PASS at once.
+
+    Bytes, not StringIO. `redirect_stdout(io.StringIO())` swallows the
+    `AttributeError` from `sys.stdout.reconfigure` and never encodes, so deleting the
+    encoding hop in `main` was invisible while `PYTHONIOENCODING=ascii python3
+    scripts/brain_doctor.py` died on the brain emoji before printing a single result
+    (QA cycle 9). An ascii TextIOWrapper reproduces exactly that: `reconfigure` is
+    real on a TextIOWrapper, so the hop is what keeps the glyphs encodable and
+    dropping it raises here.
+    """
+    raw = io.BytesIO()
+    stream = io.TextIOWrapper(raw, encoding="ascii", errors="strict")
+    real_checks, real_argv = doctor.CHECKS, sys.argv
+    real_out, real_err = sys.stdout, sys.stderr
+    doctor.CHECKS = list(checks)
+    sys.argv = list(argv)
+    sys.stdout = stream
+    sys.stderr = io.TextIOWrapper(io.BytesIO(), encoding="ascii", errors="strict")
+    try:
+        rc = doctor.main()
+    finally:
+        try:
+            stream.flush()
+        except Exception:
+            pass
+        doctor.CHECKS, sys.argv = real_checks, real_argv
+        sys.stdout, sys.stderr = real_out, real_err
+    return rc, raw.getvalue().decode("utf-8")
+
+
+def stub_checks(results):
+    """CHECKS entries that hand back exactly these Results, one per check."""
+    return [(r.key, (lambda r: (lambda fix: r))(r)) for r in results]
+
+
+_ROW = re.compile(r"^\s*\[(PASS|WARN|FAIL)\]\s+\S\s+(\S+)\s\s+(.*)$")
+_HINT = re.compile(r"^\s*↳ fix:\s(.*)$")
+
+
+def parse_human(out: str) -> dict:
+    """What `render_human` printed, as {key: {status, message, hint}}.
+
+    BY KEY, never "is this string somewhere in the blob". Presence-anywhere
+    assertions stay green when the FAIL and WARN markers are swapped onto each
+    other's rows, and when every row prints its NEIGHBOUR's hint: the reader is told
+    the wrong thing about the right check and every `assertIn` is satisfied (QA
+    cycle 10). Parsing the rows is what makes association assertable at all.
+    """
+    rows, last = {}, None
+    for line in out.splitlines():
+        m = _ROW.match(line)
+        if m:
+            last = m.group(2)
+            rows[last] = {"status": m.group(1), "message": m.group(3).rstrip(), "hint": ""}
+            continue
+        m = _HINT.match(line)
+        if m and last is not None:
+            rows[last]["hint"] = m.group(1).rstrip()
+    return rows
 
 
 class DenyCoverageCase(unittest.TestCase):
@@ -471,8 +541,19 @@ class TestTheFourOutcomesReadDifferently(unittest.TestCase):
         So the directory holds the tracked golden journal instead, with a fresh
         mtime: the replay and chain verification execute for real, deterministically
         and on every machine, while the deny count stays 0 because that journal's own
-        timestamps are years outside the 7-day window. Deny counting and journal
-        verification were only ever entangled by accident.
+        timestamps are years outside the 7-day window.
+
+        HALF of that claim was false, and the false half is the one it was written to
+        fix. Instrumented, the replay loop does enter with `journals=1` and fires
+        three times, so assertion 2 executes. Assertion 3 does NOT: the `ts < cutoff`
+        guard sits before `denies += 1`, so the golden journal's three deny lines are
+        seen and none is counted, and the comparison against the registry that used
+        to run over 46 real deny lines now runs over zero. Deny counting and the
+        orphan check are not entangled by accident, they are entangled by one `if`.
+        Unentangling them is not a matter of choosing a better journal for THIS
+        helper, whose WARN branch needs `denies == 0` by construction: the orphan
+        branch gets journals of its own, with fresh timestamps, in
+        `TestTheJournalScanActuallyRuns` (QA cycle 10).
 
         The redirection is HOME, not a monkeypatch, because `octo replay --verify`
         runs in a SUBPROCESS: an in-process stub of `kernel_proc.journal_dir` cannot
@@ -651,80 +732,6 @@ class TestTheFourOutcomesReadDifferently(unittest.TestCase):
                       "terminal, and main is the last one")
         self.assertIn("kernel-replay", out, "so does the name of the check saying it")
 
-    def run_main_over_bytes(self, results, argv=("brain_doctor.py",)):
-        """Run the REAL `main` with real stub checks over a REAL byte stream.
-
-        Every earlier attempt at this pinned one path at whatever hop had just been
-        fixed, and the next mutation moved one hop past it. Ten instances in, the
-        answer is not another single-path test: it is one test that carries every
-        thing a reader gets (status, hint, name, exit code, encoding) across the
-        whole wire at once, for a FAIL and a WARN and not only a PASS.
-
-        Bytes, not StringIO. `redirect_stdout(io.StringIO())` swallows the
-        `AttributeError` from `sys.stdout.reconfigure` and never encodes, so
-        deleting the encoding hop in `main` was invisible while
-        `PYTHONIOENCODING=ascii python3 scripts/brain_doctor.py` died on the brain
-        emoji before printing a single result (QA cycle 9). An ascii TextIOWrapper
-        reproduces exactly that.
-        """
-        import io
-        raw = io.BytesIO()
-        stream = io.TextIOWrapper(raw, encoding="ascii", errors="strict")
-        real_checks, real_argv = doctor.CHECKS, sys.argv
-        real_out, real_err = sys.stdout, sys.stderr
-        doctor.CHECKS = [(r.key, (lambda r: (lambda fix: r))(r)) for r in results]
-        sys.argv = list(argv)
-        sys.stdout = stream
-        sys.stderr = io.TextIOWrapper(io.BytesIO(), encoding="ascii", errors="strict")
-        try:
-            rc = doctor.main()
-        finally:
-            try:
-                stream.flush()
-            except Exception:
-                pass
-            doctor.CHECKS, sys.argv = real_checks, real_argv
-            sys.stdout, sys.stderr = real_out, real_err
-        return rc, raw.getvalue().decode("utf-8")
-
-    def test_every_verdict_survives_the_whole_wire_to_a_real_byte_stream(self):
-        """Kills six mutations that all 236 tests missed (QA cycle 9): deleting the
-        WARN line from the printer, deleting the hint block, `return 0` instead of
-        `1 if fails`, truncating the results list, dropping the encoding hop, and
-        printing the icon without the status.
-
-        The WARN one is this PR's own verdict, the one cycle 2 caught the caller
-        collapsing, collapsible again one hop further down; and the exit code is what
-        `ai_sync.py` reads as the doctor's closing word.
-        """
-        results = [doctor.Result("stub-fail", doctor.FAIL, "the stub failed",
-                                 "fix the stub that failed"),
-                   doctor.Result("stub-warn", doctor.WARN, "the stub warned",
-                                 "look at the stub that warned")]
-        rc, out = self.run_main_over_bytes(results)
-        self.assertEqual(rc, 1, "a FAIL has to leave a non-zero exit; ai-sync reads it")
-        for r in results:
-            self.assertIn(r.key, out, "every check's name reaches the reader")
-            self.assertIn(r.message, out, "and so does its message")
-            self.assertIn(r.hint, out, "and a FAIL or WARN hint is not decoration")
-            self.assertIn(f"[{r.status}]", out, "the status is text, not only a glyph")
-
-    def test_the_json_surface_carries_what_the_human_one_does(self):
-        """The same invariant on the machine-readable side, which had no test at all:
-        emptying `checks` was invisible."""
-        import json as _json
-        results = [doctor.Result("stub-fail", doctor.FAIL, "the stub failed", "fix it"),
-                   doctor.Result("stub-warn", doctor.WARN, "the stub warned", "look")]
-        rc, out = self.run_main_over_bytes(results, argv=("brain_doctor.py", "--json"))
-        self.assertEqual(rc, 1)
-        doc = _json.loads(out)
-        got = {c["key"]: c for c in doc["checks"]}
-        self.assertEqual(set(got), {"stub-fail", "stub-warn"},
-                         "every check reaches the JSON consumer too")
-        for r in results:
-            self.assertEqual(got[r.key]["status"], r.status)
-            self.assertEqual(got[r.key]["message"], r.message)
-
     def test_the_warn_needs_an_empty_journal_not_just_other_classes(self):
         """The other one claimed and missing. Dropping the second half of the
         condition fires the WARN on a healthy brain that HAS journal denies, which is
@@ -743,6 +750,340 @@ class TestTheFourOutcomesReadDifferently(unittest.TestCase):
             with self.subTest(denies=denies, armed=armed, harness=harness):
                 self.assertEqual(doctor.deny_coverage(denies, armed, harness)[0],
                                  doctor.PASS)
+
+
+class TestTheJournalScanActuallyRuns(unittest.TestCase):
+    """Assertions 2 and 3 of `check_kernel_replay`, each with a journal of its own.
+
+    Both live one function away from the silent zero this PR exists to abolish, and
+    both were reading whatever the machine happened to have. The helper that made the
+    surrounding class deterministic seeds the tracked golden journal, whose `ts`
+    values are years old, which is exactly what keeps the deny count at 0 for the
+    WARN branch and exactly what stops assertion 3 from counting anything: the
+    `ts < cutoff` guard sits before `denies += 1`. So the orphan branch gets its own
+    journals here, with FRESH timestamps, and stops depending on a fixture chosen for
+    the opposite property.
+
+    Every test in this class also pins the SCAN itself. The journals are seeded under
+    a sandbox HOME, which is where `kernel_proc.journal_dir()` reads; resolving it
+    from CLAUDE_DIR instead (a `.cache/kernel/journal` that does not exist in a
+    worktree, which under this brain's own isolation rule is the normal shape) or
+    skipping every `.jsonl` name turns all four red.
+    """
+
+    def sandbox(self) -> Path:
+        home = Path(tempfile.mkdtemp(prefix="deny-cov-journal-"))
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        jdir = home / ".claude" / ".cache" / "kernel" / "journal"
+        jdir.mkdir(parents=True)
+        saved = os.environ.get("HOME")
+        os.environ["HOME"] = str(home)
+        self.addCleanup(lambda: os.environ.__setitem__("HOME", saved)
+                        if saved is not None else os.environ.pop("HOME", None))
+        # HOME, not a monkeypatch: `octo replay --verify` runs in a SUBPROCESS and
+        # inherits the environment, so an in-process stub of `journal_dir` would
+        # leave the child reading the live directory. The paths in kernel_proc are
+        # lazy for this reason, so importing it before or after the rebind is the
+        # same thing.
+        sys.path.insert(0, str(BRAIN / "scripts"))
+        import kernel_proc
+        self.kernel_proc = kernel_proc
+        return jdir
+
+    def seed(self, jdir: Path, pid: str, records) -> Path:
+        """A REAL chained journal, written by the writer under test's own library.
+        Hand-rolling the `prev` hashes would test my arithmetic, not the chain."""
+        for rec in records:
+            self.kernel_proc.append(pid, rec)
+        return jdir / f"{pid}.jsonl"
+
+    def start(self, ts: float) -> dict:
+        return {"kind": "start", "ts": ts, "start_ts": ts, "type": "Reality Checker"}
+
+    def break_chain(self, path: Path) -> None:
+        """Rewrite line 0 so line 1's `prev` no longer matches its bytes. Tampering
+        with the LAST line proves nothing: no later line points at it."""
+        lines = path.read_text(encoding="utf-8").splitlines()
+        first = json.loads(lines[0])
+        first["type"] = "Rewritten After The Fact"
+        lines[0] = json.dumps(first, separators=(",", ":"))
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    def no_harness_refusals(self) -> None:
+        """Pin the OTHER half of the check, so a PASS here is about the journal."""
+        real = doctor._harness_refusals_since_hook
+        doctor._harness_refusals_since_hook = lambda cutoff: (1_700_000_000.0, 0, 0, "")
+        self.addCleanup(lambda: setattr(doctor, "_harness_refusals_since_hook", real))
+
+    def test_a_deny_naming_an_unregistered_rule_fails_the_check(self):
+        """Assertion 3, which had stopped executing entirely. This is RULE #1 pointed
+        at the journal: a refusal attributed to a rule the registry does not carry is
+        a gate refusing work under a name nobody can look up."""
+        jdir = self.sandbox()
+        now = time.time()
+        self.seed(jdir, "orphan-agent",
+                  [self.start(now),
+                   {"kind": "deny", "ts": now, "rule": "NOWHERE.no-such-rule",
+                    "reason": "seeded"}])
+        result = doctor.check_kernel_replay(False)
+        self.assertEqual(result.status, doctor.FAIL, result.message)
+        self.assertIn("NOWHERE.no-such-rule", result.message,
+                      "the orphan rule id has to reach the reader by name")
+        self.assertIn("in no registry row", result.message)
+
+    def test_a_deny_naming_a_registered_rule_is_counted_and_passes(self):
+        """The sibling that makes the one above a discriminator rather than a
+        tripwire, and the assertion that the COUNT is real: a deny inside the window
+        has to reach `denies`, so the sentence says two rather than zero. This is
+        what dies the moment the `ts` guard swallows the count again."""
+        jdir = self.sandbox()
+        self.no_harness_refusals()
+        rule = sorted(r.id for r in doctor.Registry.load(doctor.REGISTRY_PATH).rules)[0]
+        now = time.time()
+        self.seed(jdir, "registered-agent",
+                  [self.start(now),
+                   {"kind": "deny", "ts": now, "rule": rule, "reason": "seeded"},
+                   {"kind": "deny", "ts": now, "rule": rule, "reason": "seeded again"}])
+        result = doctor.check_kernel_replay(False)
+        self.assertEqual(result.status, doctor.PASS, result.message)
+        self.assertIn("2 deny(s) in 7 days, all naming a registered rule", result.message)
+
+    def test_a_journal_whose_chain_is_broken_fails_by_pid(self):
+        """Assertion 2 had no assertion. `for _, pid in journals[:5]:` replaced by
+        `for _, pid in []:` was invisible to all 238 tests, and the loop had been
+        "proved" to run by planting a `raise` inside it, which is a diagnostic, not a
+        test: nothing that survives in the suite asserted it."""
+        jdir = self.sandbox()
+        now = time.time()
+        path = self.seed(jdir, "tampered-agent",
+                         [self.start(now),
+                          {"kind": "tool", "ts": now, "tool_name": "Read",
+                           "tool_use_id": "t1"}])
+        self.break_chain(path)
+        self.assertEqual(self.kernel_proc.verify_detail("tampered-agent")[0], 1,
+                         "the fixture has to be a chain that actually breaks, or the "
+                         "test passes on a check that never looked")
+        result = doctor.check_kernel_replay(False)
+        self.assertEqual(result.status, doctor.FAIL, result.message)
+        # The whole sentence, not `assertIn("tampered-agent", ...)`. Measured: with
+        # the `.jsonl` filter inverted, the scan picks up the sibling `.lock` file and
+        # reports `pid tampered-agent.json`, which satisfies both of the substring
+        # assertions this replaced while naming a journal that does not exist.
+        self.assertEqual(result.message, "replay --verify failed for pid tampered-agent")
+
+    def test_the_newest_five_journals_are_the_ones_replayed(self):
+        """`journals.sort(reverse=True)` and then `[:5]`. Sorting the other way makes
+        the check inspect the five OLDEST of hundreds, which on a real brain is the
+        same silent zero by another road and survives any single-journal test."""
+        jdir = self.sandbox()
+        self.no_harness_refusals()
+        now = time.time()
+        for i in range(6):
+            path = self.seed(jdir, f"chain-{i}",
+                             [self.start(now),
+                              {"kind": "tool", "ts": now, "tool_name": "Read",
+                               "tool_use_id": "t1"}])
+            if i == 0:
+                self.break_chain(path)
+            stamp = now - (6 - i) * 60
+            os.utime(path, (stamp, stamp))
+        result = doctor.check_kernel_replay(False)
+        self.assertEqual(result.status, doctor.PASS,
+                         "the broken chain is the OLDEST of six, outside the newest "
+                         f"five: {result.message}")
+        self.assertIn("5 real journal(s) replay", result.message)
+        # the same journal, now the newest: one more line would do it in production
+        os.utime(jdir / "chain-0.jsonl", None)
+        result = doctor.check_kernel_replay(False)
+        self.assertEqual(result.status, doctor.FAIL, result.message)
+        self.assertIn("chain-0", result.message)
+
+
+class TestTheWireCarriesEveryRow(unittest.TestCase):
+    """`run_all` and both printers, exercised through the real `main`.
+
+    Stubbing CHECKS is what made the wire deterministic, and it is also what took
+    `run_all` itself back out of it: the `fix` flag, the per-check crash handler and
+    the list-returning check were all unmeasured one hop further out, and a read-only
+    doctor run that silently performed repairs (`git remote set-url`, `pip install
+    --user`, writing `~/.cursor/hooks.json`, setting `core.hooksPath`, regenerating
+    `neural_map.json`) is a real safety property of this tool. Stubbing an input to
+    make a test deterministic deletes coverage silently; the stubs stay, and now they
+    RECORD what `run_all` did to them (QA cycle 10).
+    """
+
+    def wire(self):
+        """Two FAILs, a WARN and a PASS.
+
+        The PASS is not padding. The fixture that carried only a FAIL and a WARN let
+        `render_human` drop the `[PASS]` marker and let `main` drop PASS rows from the
+        JSON `checks` array, both invisible, which is the eleventh instance of this
+        session's pattern inside the test written to end it. A PASS is a VARIANT, not
+        a hop, and every hop of it was covered while none of the variants was.
+
+        The SECOND fail is not padding either, and it is my own miss caught by the
+        control: with one WARN and one FAIL, swapping the `warn` and `fail` counts in
+        the JSON summary produces the identical object, so the assertion that was
+        written to catch that mutation could not. Asymmetric counts are what make the
+        two positions distinguishable at all.
+        """
+        return [doctor.Result("stub-fail", doctor.FAIL, "the stub failed",
+                              "fix the stub that failed"),
+                doctor.Result("stub-fail-two", doctor.FAIL, "the other stub failed",
+                              "fix the other stub too"),
+                doctor.Result("stub-warn", doctor.WARN, "the stub warned",
+                              "look at the stub that warned"),
+                doctor.Result("stub-pass", doctor.PASS, "the stub passed", "")]
+
+    def test_every_verdict_survives_the_whole_wire_to_a_real_byte_stream(self):
+        """Kills the six mutations 236 tests missed in cycle 9 (deleting the WARN line
+        from the printer, deleting the hint block, `return 0` instead of `1 if fails`,
+        truncating the results list, dropping the encoding hop, printing the icon
+        without the status) and the three cycle 10 added one hop out: suppressing the
+        `[PASS]` marker, swapping the FAIL and WARN labels onto each other's rows, and
+        printing every row's neighbour's hint. The last two are why this asserts BY
+        KEY: both keep every marker and every hint present in the blob."""
+        results = self.wire()
+        rc, out = run_main(stub_checks(results))
+        self.assertEqual(rc, 1, "a FAIL has to leave a non-zero exit; ai-sync reads it")
+        rows = parse_human(out)
+        self.assertEqual(set(rows), {r.key for r in results},
+                         f"every check's name reaches the reader: {out!r}")
+        for r in results:
+            got = rows[r.key]
+            self.assertEqual(got["status"], r.status,
+                             "the status belongs to THIS row, not to a neighbour")
+            self.assertEqual(got["message"], r.message)
+            self.assertEqual(got["hint"], r.hint,
+                             "a FAIL or WARN hint is not decoration, and a PASS has "
+                             "none to print")
+
+    def test_a_warn_only_run_exits_zero(self):
+        """`rc == 1` on the fixture above is also satisfied by counting WARN as a
+        failure, which contradicts the module docstring's "WARN never fails the run"
+        and would block every push on a check that only asked a human to look."""
+        results = [doctor.Result("stub-warn", doctor.WARN, "the stub warned", "look"),
+                   doctor.Result("stub-pass", doctor.PASS, "the stub passed", "")]
+        rc, out = run_main(stub_checks(results))
+        self.assertEqual(rc, 0, "a WARN is not a failure")
+        rows = parse_human(out)
+        self.assertEqual(rows["stub-warn"]["status"], doctor.WARN)
+        self.assertEqual(rows["stub-pass"]["status"], doctor.PASS)
+
+    def test_the_json_surface_carries_the_whole_row_and_the_summary(self):
+        """The machine-readable side, asserted whole. Key/status/message alone left
+        `hint` droppable from `to_dict` and the `warn`/`fail` summary counts
+        swappable, both silent.
+
+        The expected row is written out LITERALLY rather than compared against
+        `r.to_dict()`. Comparing the output of the function under test against that
+        same function is not an assertion: dropping `hint` from `to_dict` changes
+        both sides and the equality holds. The control caught this one in the test
+        written to kill it, which is the same shape as everything else in this file.
+        """
+        results = self.wire()
+        rc, out = run_main(stub_checks(results), argv=("brain_doctor.py", "--json"))
+        self.assertEqual(rc, 1)
+        doc = json.loads(out)
+        got = {c["key"]: c for c in doc["checks"]}
+        self.assertEqual(set(got), {r.key for r in results},
+                         "every check reaches the JSON consumer too, PASS included")
+        for r in results:
+            self.assertEqual(got[r.key],
+                             {"key": r.key, "status": r.status, "message": r.message,
+                              "hint": r.hint},
+                             "the whole row, hint included")
+        self.assertEqual(doc["summary"], {"passed": 1, "warn": 1, "fail": 2},
+                         "the summary counts are not interchangeable")
+
+    def test_run_all_forwards_the_fix_flag_it_was_given(self):
+        """`out = fn(True)` inside `run_all` survived every test in this file. A
+        read-only doctor run would then perform repairs nobody asked for, which is
+        this tool's whole contract with the operator: `--fix` is opt-in."""
+        seen = []
+
+        def recorder(fix):
+            seen.append(fix)
+            return doctor.Result("stub-fix", doctor.PASS, f"called with fix={fix}", "")
+
+        rc, out = run_main([("stub-fix", recorder)])
+        self.assertEqual(seen, [False], "a bare run must never repair anything")
+        self.assertEqual(rc, 0)
+        self.assertIn("fix=False", parse_human(out)["stub-fix"]["message"])
+        rc, out = run_main([("stub-fix", recorder)], argv=("brain_doctor.py", "--fix"))
+        self.assertEqual(seen, [False, True], "and --fix has to actually arrive")
+        self.assertIn("fix=True", parse_human(out)["stub-fix"]["message"])
+
+    def test_a_check_that_raises_becomes_a_fail_row(self):
+        """`run_all`'s per-check crash handler was unpinned: reporting PASS for a
+        check that raised would turn every crash into a green run, which is the
+        loudest possible version of the silence this whole PR is about."""
+        def boom(fix):
+            raise RuntimeError("the stub exploded")
+
+        rc, out = run_main([("stub-boom", boom),
+                            ("stub-pass", lambda fix: doctor.Result(
+                                "stub-pass", doctor.PASS, "the stub passed", ""))])
+        self.assertEqual(rc, 1, "a crashed check fails the run")
+        rows = parse_human(out)
+        self.assertEqual(rows["stub-boom"]["status"], doctor.FAIL)
+        self.assertIn("the stub exploded", rows["stub-boom"]["message"],
+                      "the exception text is what a reader debugs from")
+        self.assertEqual(rows["stub-pass"]["status"], doctor.PASS,
+                         "one bad check never takes the rest of the run with it")
+
+    def test_a_check_returning_two_results_yields_both(self):
+        """Four checks in CHECKS return lists. Keeping only the first Result of one
+        would silently halve `sync-targets` or the RULE #1 registry rows."""
+        pair = [doctor.Result("stub-one", doctor.PASS, "the first row", ""),
+                doctor.Result("stub-two", doctor.FAIL, "the second row", "fix the second")]
+        rc, out = run_main([("stub-list", lambda fix: list(pair))])
+        self.assertEqual(rc, 1, "the FAIL is in the SECOND Result of the list")
+        rows = parse_human(out)
+        self.assertEqual(set(rows), {"stub-one", "stub-two"})
+        self.assertEqual(rows["stub-two"]["hint"], "fix the second")
+
+    def test_the_gate_receipt_surface_runs_the_real_gate_check(self):
+        """`--gate-receipt` is what `.githooks/pre-push` runs, and it is its only
+        other reader. Returning a hardcoded PASS without calling
+        `check_gate_liveness` survived: no test ran this surface at all. The receipt
+        is written inside that function, so calling it is the invariant here."""
+        calls = []
+
+        def stub(fix):
+            calls.append(fix)
+            return doctor.Result("gate-liveness", doctor.FAIL,
+                                 "the stub gate check ran", "look at the gates")
+
+        real = doctor.check_gate_liveness
+        doctor.check_gate_liveness = stub
+        self.addCleanup(lambda: setattr(doctor, "check_gate_liveness", real))
+        rc, out = run_main(stub_checks(self.wire()),
+                           argv=("brain_doctor.py", "--gate-receipt"))
+        self.assertEqual(calls, [False], "the real gate check has to be the one that ran")
+        rows = parse_human(out)
+        self.assertEqual(set(rows), {"gate-liveness"},
+                         "--gate-receipt runs ONLY the gate check, never the rest")
+        self.assertEqual(rows["gate-liveness"]["status"], doctor.FAIL)
+        self.assertEqual(rc, 1, "pre-push has to be able to block on it")
+
+    def test_the_registry_surface_runs_all_three_registry_checks(self):
+        """`--registry` is the other pre-push surface. Dropping
+        `check_orphan_hooks` from it survived, and an orphan hook is a mechanism
+        RULE #1 says cannot exist."""
+        for name, key in (("check_registry", "reg-stub"),
+                          ("check_naming", "naming-stub"),
+                          ("check_orphan_hooks", "orphan-stub")):
+            real = getattr(doctor, name)
+            setattr(doctor, name,
+                    (lambda k: (lambda fix: [doctor.Result(k, doctor.PASS,
+                                                           f"{k} ran", "")]))(key))
+            self.addCleanup(lambda n=name, r=real: setattr(doctor, n, r))
+        rc, out = run_main(stub_checks(self.wire()), argv=("brain_doctor.py", "--registry"))
+        self.assertEqual(rc, 0)
+        self.assertEqual(set(parse_human(out)),
+                         {"reg-stub", "naming-stub", "orphan-stub"},
+                         "all three, and nothing from CHECKS")
 
 
 if __name__ == "__main__":

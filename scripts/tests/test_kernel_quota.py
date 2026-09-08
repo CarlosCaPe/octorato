@@ -40,14 +40,47 @@ def _load(name: str, path: Path):
 
 gate = _load("g_pretool_kernel", GATE)
 
+# Captured at IMPORT, before any test in this module has run, so it is the real
+# thing rather than whatever a sibling left behind.
+_HOME_AT_IMPORT = {k: os.environ.get(k) for k in ("HOME", "USERPROFILE")}
+
 
 class QuotaBase(unittest.TestCase):
     """A sandbox HOME per test, plus the two helpers every test needs: write an
     occupant, and make one tool call as the harness would."""
 
     def setUp(self) -> None:
+        # Registered FIRST so it runs LAST: cleanups are LIFO, so every restore this
+        # test queues afterwards has already run by the time this looks. Without it
+        # the fix below is a convention, and a convention is what the nine leaks were
+        # (PR #282: a leaked HOME follows the process into every later module).
+        self.addCleanup(self.assert_home_restored)
         self.home = Path(tempfile.mkdtemp(prefix="kernel-quota-test-"))
         self.addCleanup(shutil.rmtree, self.home, ignore_errors=True)
+
+    def assert_home_restored(self) -> None:
+        for var, was in _HOME_AT_IMPORT.items():
+            self.assertEqual(os.environ.get(var), was,
+                             f"{var} was left pointing somewhere else; os.environ is "
+                             f"process-wide and this follows every later test module")
+
+    def use_sandbox_home(self) -> None:
+        """Point HOME (and USERPROFILE, which is what expanduser reads on Windows) at
+        this test's sandbox, and put BOTH back on the way out, unset included.
+
+        `os.environ` belongs to the PROCESS, so a test that rebinds HOME and never
+        restores it leaves every later test module running against a directory that
+        has already been deleted. Nine sites in this file did exactly that, eight
+        tests plus `seed_journal`, and the only reason nothing broke is that `d`
+        sorts before `k`, so the module whose own helper saves the real HOME happens
+        to run first. That is not a property, it is a filename (PR #282, recurring).
+        """
+        for var in ("HOME", "USERPROFILE"):
+            saved = os.environ.get(var)
+            self.addCleanup(
+                (lambda v, s: (lambda: os.environ.__setitem__(v, s) if s is not None
+                               else os.environ.pop(v, None)))(var, saved))
+            os.environ[var] = str(self.home)
 
     def write_occupant(self, text) -> None:
         cfg = self.home / ".claude" / "company" / "config"
@@ -93,22 +126,18 @@ class QuotaBase(unittest.TestCase):
                      ptype: str = "") -> None:
         """A journal with `lines` tool lines whose start_ts is `age_seconds` ago."""
         import time
-        env_home = os.environ.get("HOME")
-        os.environ["HOME"] = str(self.home)
-        os.environ["USERPROFILE"] = str(self.home)
-        try:
-            for mod in ("kernel_proc",):
-                sys.modules.pop(mod, None)
-            import kernel_proc
-            ts = time.time() - age_seconds
-            kernel_proc.append(pid, {"kind": "start", "ts": ts, "start_ts": ts,
-                                     "type": ptype})
-            for i in range(lines):
-                kernel_proc.append(pid, {"kind": "tool", "ts": ts + 0.001 * i,
-                                         "tool_name": "Read", "tool_use_id": f"s{i}"})
-        finally:
-            if env_home is not None:
-                os.environ["HOME"] = env_home
+        # The old restore here put HOME back only when it had been SET, and never
+        # put USERPROFILE back at all, so it leaked on both roads.
+        self.use_sandbox_home()
+        for mod in ("kernel_proc",):
+            sys.modules.pop(mod, None)
+        import kernel_proc
+        ts = time.time() - age_seconds
+        kernel_proc.append(pid, {"kind": "start", "ts": ts, "start_ts": ts,
+                                 "type": ptype})
+        for i in range(lines):
+            kernel_proc.append(pid, {"kind": "tool", "ts": ts + 0.001 * i,
+                                     "tool_name": "Read", "tool_use_id": f"s{i}"})
 
 
 class TestDefaultsUnlimited(QuotaBase):
@@ -201,7 +230,7 @@ class TestQaMultiplier(QuotaBase):
 class TestOccupantOverridesSlot(QuotaBase):
     def test_occupant_wins_key_by_key(self):
         self.write_occupant({"subagent": {"max_tool_calls": 7}})
-        os.environ["HOME"] = str(self.home)
+        self.use_sandbox_home()
         policy, notes = gate.load_policy()
         self.assertEqual(notes, [])
         self.assertEqual(policy["subagent"]["max_tool_calls"], 7)
@@ -221,7 +250,7 @@ class TestOccupantOverridesSlot(QuotaBase):
 class TestMalformedNeverDenies(QuotaBase):
     def test_unparseable_occupant_falls_back_with_a_note(self):
         self.write_occupant("{ this is not json")
-        os.environ["HOME"] = str(self.home)
+        self.use_sandbox_home()
         policy, notes = gate.load_policy()
         self.assertTrue(notes, "a malformed occupant must produce a note")
         self.assertEqual(policy["subagent"]["max_tool_calls"], 0)
@@ -229,7 +258,7 @@ class TestMalformedNeverDenies(QuotaBase):
 
     def test_bad_cap_value_keeps_the_default_and_notes_the_key(self):
         self.write_occupant({"subagent": {"max_tool_calls": "lots"}})
-        os.environ["HOME"] = str(self.home)
+        self.use_sandbox_home()
         policy, notes = gate.load_policy()
         self.assertEqual(policy["subagent"]["max_tool_calls"], 0)
         self.assertTrue(any("max_tool_calls" in n for n in notes))
@@ -240,7 +269,7 @@ class TestMalformedNeverDenies(QuotaBase):
         of every process while the doctor calls the same file malformed. The
         widest gap between what the docs promise and what the gate does."""
         self.write_occupant({"subagent": {"max_tool_calls": True}})
-        os.environ["HOME"] = str(self.home)
+        self.use_sandbox_home()
         policy, notes = gate.load_policy()
         self.assertEqual(policy["subagent"]["max_tool_calls"], 0)
         self.assertTrue(any("max_tool_calls" in n for n in notes))
@@ -248,7 +277,7 @@ class TestMalformedNeverDenies(QuotaBase):
 
     def test_a_numeric_string_is_not_a_cap(self):
         self.write_occupant({"subagent": {"max_tool_calls": "5"}})
-        os.environ["HOME"] = str(self.home)
+        self.use_sandbox_home()
         policy, notes = gate.load_policy()
         self.assertEqual(policy["subagent"]["max_tool_calls"], 0)
         self.assertTrue(any("max_tool_calls" in n for n in notes))
@@ -257,14 +286,14 @@ class TestMalformedNeverDenies(QuotaBase):
     def test_a_float_is_not_a_cap(self):
         """int(5.9) is 5: silently a cap the operator never wrote."""
         self.write_occupant({"subagent": {"max_minutes": 5.9}})
-        os.environ["HOME"] = str(self.home)
+        self.use_sandbox_home()
         policy, notes = gate.load_policy()
         self.assertEqual(policy["subagent"]["max_minutes"], 0)
         self.assertTrue(any("max_minutes" in n for n in notes))
 
     def test_a_bool_multiplier_is_not_a_multiplier(self):
         self.write_occupant({"subagent": {"max_tool_calls": 5}, "qa_multiplier": True})
-        os.environ["HOME"] = str(self.home)
+        self.use_sandbox_home()
         policy, notes = gate.load_policy()
         self.assertEqual(policy["qa_multiplier"], gate.DEFAULTS["qa_multiplier"])
         self.assertTrue(any("qa_multiplier" in n for n in notes))
@@ -277,7 +306,7 @@ class TestMalformedNeverDenies(QuotaBase):
             with self.subTest(value=bad):
                 data = {"subagent": {"max_tool_calls": bad}}
                 self.write_occupant(data)
-                os.environ["HOME"] = str(self.home)
+                self.use_sandbox_home()
                 _, notes = gate.load_policy()
                 problems = doctor._kernel_policy_problems(data, "occupant")
                 self.assertEqual(bool(notes), bool(problems),
@@ -287,7 +316,7 @@ class TestMalformedNeverDenies(QuotaBase):
         """Clamping -5 to 0 would accept a file the doctor calls malformed, and
         the operator would never learn the cap they wrote is not running."""
         self.write_occupant({"subagent": {"max_tool_calls": -5}})
-        os.environ["HOME"] = str(self.home)
+        self.use_sandbox_home()
         policy, notes = gate.load_policy()
         self.assertEqual(policy["subagent"]["max_tool_calls"], 0)
         self.assertTrue(any("max_tool_calls" in n for n in notes))
