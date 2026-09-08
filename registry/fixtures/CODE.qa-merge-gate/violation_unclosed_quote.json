@@ -1,7 +1,7 @@
 {
   "tool_name": "Bash",
   "tool_input": {
-    "command": "gh pr merge -R CarlosCaPe/octorato --subject 280 281"
+    "command": "gh pr merge \"280"
   },
   "cwd": "/nonexistent/repo",
   "_env": {

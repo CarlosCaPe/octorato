@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "time gh pr view 281 --json state"
+  },
+  "cwd": "/nonexistent/repo"
+}

@@ -1,23 +1,43 @@
 #!/usr/bin/env python3
 """PreToolUse Bash hook — QA gate (FAIL-CLOSED for merge actions).
 
-NOTE on security boundary: the regex command-matching below is a speed-bump for
-honest mistakes; the AGENT-PROOF env channel (OCTO_MERGE_APPROVE, which an inline
-env cannot pass to the harness-run hook) is the actual security boundary — shell
-indirection (e.g. ``$(echo gh) pr merge``) can evade string-matching and that is
-accepted residual risk by design.  Detection is now command-boundary-anchored:
-the full command string is split on UNQUOTED shell separators (; && || | newline)
-before pattern matching, so a publish pattern that appears only inside a quoted
-argument (``git commit -m "gh pr merge 96"``) does NOT trigger the gate.
-Shell indirection (``bash -c "..."``, ``$(...)``) remains accepted residual risk.
+NOTE on security boundary: the command-matching below IDENTIFIES the action; the
+AGENT-PROOF env channel (OCTO_MERGE_APPROVE, which an inline env cannot pass to
+the harness-run hook) AUTHORIZES it. The two fail differently, and conflating
+them is how this gate was bypassed: the env channel is immune to FORGERY, not to
+EVASION. Authorization is only consulted AFTER the command is identified as a
+merge, so a command shape the matcher does not identify never reaches the env
+check at all — an evasion is a total bypass, not a degraded authorization.
+Detection is command-boundary-anchored: the string is split on UNQUOTED shell
+separators (; && || | newline), so a pattern inside a quoted argument
+(``git commit -m "gh pr merge 96"``) does NOT trigger the gate, and each
+sub-command is peeled down to its command head so no wrapper defeats the anchor.
+
+RESIDUAL, measured 2026-09-08 (what actually remains after that peel):
+  * A merge hidden inside a QUOTED string a wrapper will re-parse:
+    ``bash -c "gh pr merge 96"``, ``eval "gh pr merge 96"``, ``sh -c '...'``.
+    Unquoting it here would re-match a quoted MENTION, which is the false
+    positive the boundary anchoring exists to prevent, so the two cannot both be
+    had by string matching. (Unquoted ``eval gh pr merge 96`` IS caught: the peel
+    drops `eval` like any other leading token.)
+  * Command substitution: ``$(echo gh) pr merge 96``, backticks.
+  * `gh repo set-default`, which records a resolved base repo in the cwd repo's
+    own git config; the cwd repo here resolves by its remote `url`. Not measured
+    (no such config exists to test against), stated rather than claimed fixed.
+  * GH_REPO/GH_HOST set in a way this hook cannot see. All three channels that
+    ARE reachable are read (see _line_env): the inline prefix, a same-line
+    export, and the harness process env. A Bash tool call does not keep exports
+    for the next call — measured — so there is no fourth one today.
 
 When a Bash command is detected as a merge action, this hook BLOCKS execution
 unless the operator's AGENT-PROOF env approval is present for EVERY merge
 sub-command in the line.
-Detected forms: `gh pr merge`; `git push` directly to main/master; and the
-gh api / curl API equivalents (a write call to REST `/pulls/<N>/merge`, a
-GraphQL mergePullRequest mutation, `POST /repos/.../merges` into main/master, or
-a `PATCH`/`DELETE` of `/git/refs/heads/(main|master)`). API reads pass; only a
+Detected forms: `gh pr merge` (including through a gh ALIAS, resolved from gh's
+own config, and the alias DEFINITION that would arm one); `git push` directly to
+main/master; and the gh api / curl API equivalents (a write call to REST
+`/pulls/<N>/merge`, a GraphQL `mergePullRequest` / `enablePullRequestAutoMerge` /
+`mergeBranch` mutation, `POST /repos/.../merges` into main/master, or a
+`PATCH`/`DELETE` of `/git/refs/heads/(main|master)`). API reads pass; only a
 write method or body flag qualifies. The one channel, plus its receipt waiver:
 
   1. OCTO_MERGE_APPROVE=<pr_number>  — env var, PR-scoped, AGENT-PROOF (preferred).
@@ -26,10 +46,12 @@ write method or body flag qualifies. The one channel, plus its receipt waiver:
      reach this hook).  Only the operator, who exports the var in their shell
      before invoking Claude Code, can set it — making it a true operator signal.
 
-  2. OCTO_QA_OK=1: an explicit one-time waiver of the QA RECEIPT for the PR named
-     in OCTO_MERGE_APPROVE. It is not a channel and authorizes nothing on its own:
+  2. OCTO_QA_OK=1: an explicit waiver of the QA RECEIPT for the PR named in
+     OCTO_MERGE_APPROVE. It is not a channel and authorizes nothing on its own:
      without a matching OCTO_MERGE_APPROVE=<same pr> the merge is still denied.
-     DISCOURAGED.
+     Scope, precisely: per COMMAND, not per session-lifetime "once" — nothing
+     consumes it, so every merge of that same PR while the shell keeps the var
+     exported is waived. DISCOURAGED; unset it after the merge it was for.
 
 The file channel (~/.claude/connectome/merge-approvals.json, written by
 octo-dim.py approve-merge) is NO LONGER an authorizer: an agent owns its own
@@ -168,7 +190,13 @@ _API_WRITE = re.compile(
     re.IGNORECASE,
 )
 _API_PR_NUM_RE = re.compile(r"/pulls/(\d+)/merge\b")
-_API_GRAPHQL_MERGE = re.compile(r"mergePullRequest\b")
+# GraphQL mutations that merge. `enablePullRequestAutoMerge` is the mutation
+# `gh pr merge --auto` itself makes: the CLI spelling was gated while the exact
+# API call behind it was not, so `gh api graphql -f query='mutation{
+# enablePullRequestAutoMerge(...)}'` armed a merge that lands the moment checks
+# go green. `mergeBranch` is the GraphQL twin of POST /repos/../merges.
+_API_GRAPHQL_MERGE = re.compile(
+    r"\b(?:mergePullRequest|enablePullRequestAutoMerge|mergeBranch)\b")
 _API_MERGES_RE = re.compile(r"repos/[\w.-]+/[\w.-]+/merges\b")
 _API_REFS_RE = re.compile(r"git/refs\b")
 _API_MASTER_BRANCH_RE = re.compile(r"heads/(main|master)\b")
@@ -301,7 +329,7 @@ def _effective_cwd(cmd: str, matched_sub: str, session_cwd: str) -> str:
     for raw in _split_subcmds(_join_continuations(cmd)):
         if raw == matched_sub:
             break
-        s = _strip_leading(raw).strip()
+        s = _unwrap_sub(raw).strip()
         m = re.match(r"^cd\s+(\S+)", s)
         if m:
             p = os.path.expanduser(m.group(1).strip("'\""))
@@ -312,7 +340,13 @@ def _effective_cwd(cmd: str, matched_sub: str, session_cwd: str) -> str:
 def _is_protected_target(cmd: str, matched_sub: str, session_cwd: str):
     """True = protected, False = positively NOT protected, None = unresolvable
     (treated as protected: the gate stays fail-closed when unsure)."""
-    sub = _strip_leading(matched_sub)
+    sub = _unwrap_sub(matched_sub)
+
+    # An alias DEFINITION has no repo: gh's config is per-user, so an alias that
+    # expands to a merge arms every repo the agent can reach, protected ones
+    # included. Unresolvable by construction → gate.
+    if _alias_definition_form(sub):
+        return None
 
     # gh api / curl write (PR merge, branch merge into main/master, or a
     # main/master ref update): the target repo is in the REST path, NOT the cwd
@@ -330,12 +364,21 @@ def _is_protected_target(cmd: str, matched_sub: str, session_cwd: str):
             return None
         return slug in known
 
-    # gh pr merge with an explicit -R/--repo slug: compare against the slugs
-    # of the protected roots. No parsable slugs → None (gate).
+    # gh pr merge: the target is -R/--repo if given, else GH_REPO, else the cwd
+    # repo — the same order gh itself resolves in. Reading only -R and the cwd
+    # let `GH_REPO=<protected slug> gh pr merge <n>`, fired from an unrelated
+    # repo, resolve to that unrelated repo and UNGATE a merge of the protected
+    # one. GH_HOST moves the whole request to another server, which this gate
+    # cannot check against, so a non-github.com host is unresolvable, not safe.
     if _PAT_GH_MERGE.match(sub):
+        line_env = _line_env(cmd, matched_sub)
+        host = (line_env.get("GH_HOST") or "").strip().strip("\"'").lower()
+        if host and host not in ("github.com", "api.github.com"):
+            return None
         m = re.search(r"(?:^|\s)(?:-R|--repo)[=\s]+(\S+)", sub)
-        if m:
-            slug = _canon_slug(m.group(1))
+        raw = m.group(1) if m else (line_env.get("GH_REPO") or "").strip()
+        if raw:
+            slug = _canon_slug(raw)
             known = [s for s in (_remote_slug(r) for r in _protected_roots()) if s]
             if not known or slug is None:
                 return None  # unparseable either side → gate
@@ -382,42 +425,246 @@ def _join_continuations(cmd: str) -> str:
 
 # Strip leading wrapper tokens from an already-split sub-command before pattern
 # matching. Applied PER sub-command so it never crosses a real separator boundary.
-# Covers: grouping openers, env-assignments (VAR=val), redirections, the `env`
-# wrapper (with its own -flags and VAR=val args), and the `command` builtin.
-# SECURITY: without the env/command peel, `env A=1 gh pr merge` or `command gh pr
-# merge` evade the ^gh/^git anchor and bypass the approval gate. Iterative so the
-# wrappers may interleave (`env A=1 command git push origin main`). The real
-# approval channels stay the agent-proof env/file, never an inline token.
+#
+# SECURITY (measured against the live gate, 2026-09-08): the publish patterns are
+# anchored at the START of the sub-command, so ANY leading token that is not the
+# verb defeats the anchor. `env A=1 gh pr merge` and `command gh pr merge` were
+# peeled by name — and `time`, `nohup`, `nice`, `timeout 30`, `stdbuf -o0`,
+# `setsid`, `sudo`, `exec`, `eval`, `xargs` and a leading `\gh` all walked
+# straight through, each one actually invoking gh.
+#
+# DESIGN CHOICE — deny-by-default over an allowlist. Naming wrappers is a list
+# that has to grow every time someone finds another one, and the one you have not
+# named is a total bypass. So the default is inverted: leading tokens are DROPPED
+# until one of them IS a command head this gate knows how to read. An
+# unrecognized leading token is suspicious, not trusted, and no wrapper needs to
+# be named — including the ones whose own options consume a following token
+# (`timeout N`, `nice -n 5`, `stdbuf -o0`, `sudo -u x`), because those options and
+# their values are just more unrecognized tokens on the way to the head.
+#
+# The cost, MEASURED 2026-09-08 rather than guessed: a command that passes an
+# unquoted merge command as arguments (`echo gh pr merge 280`, `grep -rn gh pr
+# merge scripts/`) is identified as a merge, so it denies from inside a PROTECTED
+# repo and ungates elsewhere like any other merge. Quoting it — how anyone writes
+# that line anyway — makes it a non-match. A QUOTED mention
+# (`git commit -m "gh pr merge 96"`) is never a match: the tokenizer keeps a
+# quoted argument as ONE token and a head only counts as a whole bare token.
+# That is the fail-closed side of the trade, and it is loud, not silent.
 _W_GROUP = re.compile(r"^[({]\s*")
-_W_ASSIGN = re.compile(r"^[A-Za-z_]\w*=\S*\s+")
-_W_REDIR = re.compile(r"^\d*[<>]+\S*\s+")
-_W_ENV = re.compile(r"^env\b\s*")
-_W_ENVARG = re.compile(r"^(?:-\S+|[A-Za-z_]\w*=\S*)\s+")
-_W_COMMAND = re.compile(r"^command\s+")
+_CMD_HEADS = frozenset({"gh", "git", "curl", "cd"})
 
 
-def _strip_leading(s: str) -> str:
-    """Return *s* with leading grouping / env-assignments / redirections / the
-    `env` wrapper (and its flags+assigns) / the `command` builtin removed."""
+def _tokens_with_offsets(s: str):
+    """[(decoded_token, start, end)] for *s*, split on UNQUOTED whitespace.
+
+    Quotes and backslash escapes are honored, so a quoted argument stays one
+    token (that is what keeps a quoted mention from looking like a merge) and
+    `\\gh` decodes to `gh`. Offsets are into the ORIGINAL string, so slicing
+    from `end` preserves the rest of the command verbatim — flattening the
+    quoting there would let a quoted flag value be re-read as the PR number.
+    Returns None when the string does not tokenize (unclosed quote).
+    """
+    toks: list[tuple[str, int, int]] = []
+    buf: list[str] = []
+    start = -1
+    in_single = in_double = False
+    i, n = 0, len(s)
+    while i < n:
+        ch = s[i]
+        if ch == "\\" and not in_single and i + 1 < n:
+            if start < 0:
+                start = i
+            buf.append(s[i + 1])
+            i += 2
+            continue
+        if ch == "'" and not in_double:
+            if start < 0:
+                start = i
+            in_single = not in_single
+            i += 1
+            continue
+        if ch == '"' and not in_single:
+            if start < 0:
+                start = i
+            in_double = not in_double
+            i += 1
+            continue
+        if ch.isspace() and not in_single and not in_double:
+            if start >= 0:
+                toks.append(("".join(buf), start, i))
+                buf, start = [], -1
+            i += 1
+            continue
+        if start < 0:
+            start = i
+        buf.append(ch)
+        i += 1
+    if in_single or in_double:
+        return None
+    if start >= 0:
+        toks.append(("".join(buf), start, n))
+    return toks
+
+
+def _ws_tokens(s: str):
+    """Quote-blind whitespace tokens, used ONLY when the string does not
+    tokenize. An unclosed quote is a shell syntax error, so nothing runs; the
+    fallback exists so the gate still IDENTIFIES the merge instead of losing the
+    anchor and falling open."""
+    return [(m.group(0), m.start(), m.end()) for m in re.finditer(r"\S+", s)]
+
+
+def _peel_to_head(s: str) -> str:
+    """*s* from its first recognized command head on, wrappers dropped."""
     s = s.lstrip()
-    prev = None
-    while s != prev:
-        prev = s
-        for pat in (_W_GROUP, _W_ASSIGN, _W_REDIR, _W_COMMAND):
-            m = pat.match(s)
-            if m:
-                s = s[m.end():]
-                break
-        else:
-            m = _W_ENV.match(s)
-            if m:
-                s = s[m.end():]
-                while True:
-                    m2 = _W_ENVARG.match(s)
-                    if not m2:
-                        break
-                    s = s[m2.end():]
+    m = _W_GROUP.match(s)
+    while m:
+        s = s[m.end():]
+        m = _W_GROUP.match(s)
+    toks = _tokens_with_offsets(s)
+    if toks is None:
+        toks = _ws_tokens(s)
+    for text, _start, end in toks:
+        head = os.path.basename(text.strip("\"'"))
+        if head in _CMD_HEADS:
+            # the DECODED head plus the untouched remainder: `\gh pr merge 1`
+            # and `/usr/bin/gh pr merge 1` both normalize to `gh pr merge 1`
+            # without disturbing the quoting of any later argument.
+            return head + s[end:]
     return s
+
+
+# gh aliases (B4). `gh mrg 291` reached GitHub: an alias expands inside gh, so
+# the verb anchor never sees `pr merge`. Aliases live in gh's own config file, so
+# resolving them is a deterministic file read of the same shape as _remote_slug.
+_ALIAS_BLOCK_RE = re.compile(r"^aliases:\s*$")
+_ALIAS_ENTRY_RE = re.compile(r"^\s+([\w.-]+):\s*(.+?)\s*$")
+_GH_FIRST_WORD_RE = re.compile(r"^gh\s+([A-Za-z][\w.-]*)(?=\s|$)")
+_aliases_cache: dict | None = None
+
+
+def _gh_aliases() -> dict:
+    """{alias: expansion} read off gh's config.yml. Empty on any error."""
+    global _aliases_cache
+    if _aliases_cache is not None:
+        return _aliases_cache
+    _aliases_cache = {}
+    try:
+        d = os.environ.get("GH_CONFIG_DIR")
+        path = (Path(d) if d else Path.home() / ".config" / "gh") / "config.yml"
+        text = path.read_text(encoding="utf-8")
+    except Exception:
+        return _aliases_cache
+    in_block = False
+    for line in text.splitlines():
+        if not in_block:
+            in_block = bool(_ALIAS_BLOCK_RE.match(line))
+            continue
+        if line.strip() and not line[:1].isspace():
+            break  # dedent: the aliases block ended
+        m = _ALIAS_ENTRY_RE.match(line)
+        if m:
+            _aliases_cache[m.group(1)] = m.group(2).strip().strip("\"'")
+    return _aliases_cache
+
+
+def _expand_gh_alias(sub: str) -> str:
+    """`gh <alias> args` rewritten to what gh will actually run."""
+    m = _GH_FIRST_WORD_RE.match(sub)
+    if not m:
+        return sub
+    exp = _gh_aliases().get(m.group(1))
+    if not exp:
+        return sub
+    rest = sub[m.end(1):]
+    if exp.startswith("!"):          # shell alias: the expansion IS the line
+        return exp[1:].lstrip() + rest
+    return "gh " + exp + rest
+
+
+# Defining an alias is one ungated command away from an ungated merge, and it
+# beats alias RESOLUTION on a single line: `gh alias set m 'pr merge' && gh m 291`
+# fires this hook once, before the config file the resolver reads has been
+# written. So the definition is gated too. `alias import` reads definitions from
+# a file this hook cannot see, so it is unresolvable and always gates.
+_PAT_GH_ALIAS_SET = re.compile(r"^\s*gh\s+alias\s+set\b")
+_PAT_GH_ALIAS_IMPORT = re.compile(r"^\s*gh\s+alias\s+import\b")
+_ALIAS_MERGE_BODY = re.compile(
+    r"pr\s+merge\b|/merge\b|mergePullRequest|enablePullRequestAutoMerge|mergeBranch")
+
+
+def _alias_definition_form(sub: str) -> bool:
+    """True when *sub* defines a gh alias that could expand to a merge."""
+    if _PAT_GH_ALIAS_IMPORT.match(sub):
+        return True
+    return bool(_PAT_GH_ALIAS_SET.match(sub) and _ALIAS_MERGE_BODY.search(sub))
+
+
+def _unwrap_sub(s: str) -> str:
+    """Return *s* normalized for pattern matching: leading wrappers dropped and
+    a gh alias expanded, repeatedly, because a shell alias can expand back into
+    a wrapper (`!time gh pr merge`). Bounded so it cannot loop."""
+    cur = s
+    for _ in range(5):
+        peeled = _peel_to_head(cur)
+        expanded = _expand_gh_alias(peeled)
+        if expanded == peeled:
+            return peeled
+        cur = expanded
+    return cur
+
+
+def _prefix_env(sub: str) -> dict:
+    """VAR=val assignments in the wrapper prefix of *sub* (before the head).
+
+    `GH_REPO=o/r gh pr merge 291` and `env GH_REPO=o/r gh pr merge 291` both put
+    the variable here, and the peel above drops it — so it has to be read before
+    it is dropped, not after.
+    """
+    toks = _tokens_with_offsets(sub)
+    if toks is None:
+        toks = _ws_tokens(sub)
+    out = {}
+    for text, _s, _e in toks:
+        if os.path.basename(text.strip("\"'")) in _CMD_HEADS:
+            break                    # the head: the prefix ends here
+        k, sep, v = text.partition("=")
+        if sep and re.fullmatch(r"[A-Za-z_]\w*", k):
+            out[k] = v.strip("\"'")
+    return out
+
+
+def _line_env(cmd: str, matched_sub: str) -> dict:
+    """Env the matched sub-command will actually see, from what is VISIBLE.
+
+    Three reachable channels, all of them visible to a PreToolUse hook:
+      * the wrapper prefix of the sub-command itself (see _prefix_env);
+      * an `export VAR=val` or a bare assignment in an EARLIER sub-command of the
+        same line. Measured 2026-09-08: an `export` in one Bash tool call does
+        NOT survive into the next call, and the hook process never sees it, so
+        same-line is the only way an agent can set a variable for a merge;
+      * the hook's own process env, which is what an operator export before
+        launching the harness looks like.
+    Later channels lose to earlier ones, the way the shell resolves them.
+    """
+    out = {k: v for k, v in os.environ.items() if k in ("GH_REPO", "GH_HOST")}
+    for raw in _split_subcmds(_join_continuations(cmd)):
+        if raw == matched_sub:
+            break
+        toks = _tokens_with_offsets(raw)
+        if toks is None:
+            toks = _ws_tokens(raw)
+        words = [t for t, _s, _e in toks]
+        if words and os.path.basename(words[0]) == "export":
+            words = words[1:]
+        for text in words:
+            k, sep, v = text.partition("=")
+            if sep and re.fullmatch(r"[A-Za-z_]\w*", k):
+                out[k] = v.strip("\"'")
+            else:
+                break
+    out.update(_prefix_env(matched_sub))
+    return out
 
 
 def _split_subcmds(cmd: str) -> list[str]:
@@ -469,8 +716,9 @@ def _find_publish_subcmds(cmd: str) -> list[tuple[str, str]]:
 
     Every one, not just the first: a line chaining two merges is two merges, and
     gating only the head let the second through under the approval granted for
-    the first. *form* is "gh", "push" or "api" and says which pattern matched,
-    which is what makes a branch sentinel refusable on the API form alone.
+    the first. *form* is "gh", "push", "api" or "alias" and says which pattern
+    matched, which is what makes a branch sentinel refusable on the API form
+    alone and an alias definition refusable with its own reason.
 
     Processing order (FIX 5 → split → FIX 3+4 → pattern):
       1. Join backslash-newline continuations (FIX 5) so multi-line commands
@@ -487,13 +735,15 @@ def _find_publish_subcmds(cmd: str) -> list[tuple[str, str]]:
     cmd = _join_continuations(cmd)
     found: list[tuple[str, str]] = []
     for raw_sub in _split_subcmds(cmd):
-        s = _strip_leading(raw_sub)
+        s = _unwrap_sub(raw_sub)
         if _PAT_GH_MERGE.match(s):
             found.append((raw_sub, "gh"))
         elif _PAT_GIT_PUSH.match(s):
             found.append((raw_sub, "push"))
         elif _api_write_action(s) is not None:
             found.append((raw_sub, "api"))
+        elif _alias_definition_form(s):
+            found.append((raw_sub, "alias"))
     return found
 
 
@@ -504,7 +754,7 @@ def _extract_pr_id(matched_sub: str) -> str:
     _find_publish_subcmd.  Strip leading prefixes before matching so that
     `FOO=1 git push origin main` still yields 'main'.
     """
-    sub = _strip_leading(matched_sub)
+    sub = _unwrap_sub(matched_sub)
     num = _gh_merge_pr_num(sub)
     if num:
         return num
@@ -554,6 +804,12 @@ def _nudge(text: str) -> None:
 
 
 def main() -> int:
+    # The flag is per INVOCATION, not per process. The hook runs one command per
+    # process, so this is a no-op in production; it is what lets a test call
+    # main() more than once without a previous merge leaving the crash policy
+    # armed for a later non-merge command.
+    global _PUBLISH_IDENTIFIED
+    _PUBLISH_IDENTIFIED = False
     # Parse stdin — if this fails we cannot know if it's a merge, so exit 0.
     try:
         data = json.load(sys.stdin)
@@ -573,9 +829,16 @@ def main() -> int:
     matched_sub = matches[0][0]
 
     # Positively identified as a merge action — from here on, a crash must fail
-    # CLOSED (the __main__ handler reads this flag and exits 2, not 0).
-    global _PUBLISH_IDENTIFIED
+    # CLOSED (_guarded_main reads this flag and exits 2, not 0).
     _PUBLISH_IDENTIFIED = True
+    # Fault injection for the crash-handler fixture, and for nothing else. It
+    # needs BOTH the harness-only session marker gate_selftest._run_leg sets and
+    # an OCTO_ override the fixture declares, so it is reachable only from the
+    # selftest harness — and even if it were reachable, its ONLY effect is to
+    # make this gate DENY, so it can never be an authorization path.
+    if (os.environ.get("CLAUDE_SESSION_ID") == "__selftest__"
+            and os.environ.get("OCTO_GATE_CRASH_SELFTEST") == "1"):
+        raise RuntimeError("selftest fault injected after merge identification")
     # One entry per merge in the line. A chained line is gated as a whole: every
     # target must carry the same operator approval, so an approval for one PR can
     # never ride a second merge appended after it.
@@ -605,6 +868,18 @@ def main() -> int:
     # ── The one channel: env, PR-scoped, agent-proof ─────────────────────────
     env_approve = os.environ.get("OCTO_MERGE_APPROVE", "").strip()
     qa_ok = os.environ.get("OCTO_QA_OK", "").strip() == "1"
+    if any(form == "alias" for _pid, form in targets):
+        print(
+            "✗ QA GATE (fail-closed): this line DEFINES a gh alias that expands to a "
+            "merge.\n  An alias is per-user, so it arms an ungated merge in every repo, "
+            "and defining it\n  in the same line that uses it beats alias resolution "
+            "(the config file is read\n  before it is written). No PR number exists yet, "
+            "so no approval can scope it.\n  Operator: run the merge itself with "
+            "OCTO_MERGE_APPROVE=<pr> instead of aliasing it.",
+            file=sys.stderr,
+        )
+        _journal_deny("gh alias definition expanding to a merge blocked", data)
+        return 2
     if sentinels:
         print(
             f"✗ QA GATE (fail-closed): this line merges {sentinels[0]!r}, which is a "
@@ -700,16 +975,18 @@ def _selftest() -> int:
     return gate_selftest.run_gate_selftest(__file__, fixture)
 
 
-if __name__ == "__main__":
-    if "--selftest" in sys.argv:
-        sys.exit(_selftest())
-    # Outer try only guards catastrophic interpreter errors.
-    # We must NOT silently swallow a deliberate exit(2) block.
-    # Fail-open ONLY while we cannot know this is a merge; once a publish/merge
-    # sub-command was positively identified, a crash exits 2 (fail-closed) —
-    # otherwise any exception after identification would silently open the gate.
+def _guarded_main() -> int:
+    """main() with the crash policy. A FUNCTION, not an inline __main__ block:
+    the branch that decides fail-open vs fail-closed on a crash is the one branch
+    an agent most benefits from breaking, and code that cannot be called cannot
+    be tested — mutating it was invisible to the whole suite.
+
+    Fail-open ONLY while we cannot know this is a merge; once a publish/merge
+    sub-command was positively identified, a crash exits 2, because any exception
+    after identification would otherwise silently open the gate.
+    """
     try:
-        result = main()
+        return main()
     except Exception:
         if _PUBLISH_IDENTIFIED:
             print(
@@ -717,7 +994,14 @@ if __name__ == "__main__":
                 "was identified — blocking instead of failing open.",
                 file=sys.stderr,
             )
-            result = 2
-        else:
-            result = 0  # fail-open for unexpected crashes on non-merge paths
-    sys.exit(result)
+            return 2
+        return 0  # fail-open for unexpected crashes on non-merge paths
+
+
+if __name__ == "__main__":
+    if "--selftest" in sys.argv:
+        sys.exit(_selftest())
+    # The guard only covers catastrophic errors; it must NOT swallow a
+    # deliberate exit(2) block, which is why main() returns codes rather than
+    # raising SystemExit.
+    sys.exit(_guarded_main())

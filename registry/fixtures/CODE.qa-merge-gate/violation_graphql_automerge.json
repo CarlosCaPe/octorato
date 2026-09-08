@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "gh api graphql -f query=\"mutation{enablePullRequestAutoMerge(input:{pullRequestId:\\\"PR_kw\\\"}){clientMutationId}}\""
+  },
+  "cwd": "/tmp"
+}

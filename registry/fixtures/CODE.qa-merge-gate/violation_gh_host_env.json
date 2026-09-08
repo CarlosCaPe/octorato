@@ -1,0 +1,6 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "cd otherrepo && GH_HOST=ghe.example.com gh pr merge 281"
+  }
+}

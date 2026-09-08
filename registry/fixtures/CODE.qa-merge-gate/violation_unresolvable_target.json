@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "cd sub && git push origin main"
+  },
+  "cwd": 5
+}

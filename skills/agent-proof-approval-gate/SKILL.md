@@ -66,18 +66,28 @@ The approved value must encode the **exact action**:
 
 A stale `OCTO_MERGE_APPROVE=95` cannot authorize PR 96. This prevents approval replay.
 
+## Identification and authorization fail differently
+
+The env channel is immune to **forgery**, not to **evasion**, and conflating the two is how this gate got bypassed. Authorization is only consulted *after* the command has been identified as a merge, so a command shape the matcher never identifies never reaches the env check at all. An evasion is a total bypass, not a degraded authorization. Two jobs, two failure modes:
+
+- Env channel for **authorization** (unforgeable: the agent's command-scoped env never becomes the hook's env).
+- Command parsing for **identification** (best-effort; every ambiguity fails closed).
+
+The identification half is therefore where the work is. Peel by **allowlist** and the wrapper you did not name is a total bypass: `env` and `command` were peeled, and `time gh pr merge 291`, `nice`, `nohup`, `timeout 30`, `stdbuf -o0`, `setsid`, `sudo -u x`, `exec`, `eval`, `xargs` and a leading `\gh` all walked through, each one actually invoking gh (measured 2026-09-08). Invert the default instead: drop leading tokens until one of them IS a command head you know how to read. An unrecognized leading token is suspicious, not trusted, and a wrapper's own value-taking options (`timeout N`, `nice -n 5`) need no special case because they are just more unrecognized tokens.
+
+Identification also has to cover the API call *behind* each CLI verb, not only the verb. `gh pr merge --auto` was denied while `gh api graphql -f query='mutation{enablePullRequestAutoMerge(...)}'`, the exact call it makes, was allowed. And the target has to be resolved the way the tool resolves it: `gh` reads `-R`, then `GH_REPO`, then the cwd repo, so a gate that reads only `-R` and cwd ungates `GH_REPO=<protected> gh pr merge <n>` fired from an unrelated directory.
+
 ## Residual Risk
 
-Shell indirection can evade **string-based** command detection (the part that extracts the PR number from the command):
+After the peel above, what remains for `qa-merge-gate.py` (measured 2026-09-08):
 
 ```bash
-bash -c "gh pr merge 96"          # hard to parse correctly
-eval "gh pr merge 96"             # same
+bash -c "gh pr merge 96"          # merge lives inside a QUOTED token
+eval "gh pr merge 96"             # same (unquoted `eval gh pr merge 96` IS caught)
+$(echo gh) pr merge 96            # command substitution
 ```
 
-The env channel is immune to this because it doesn't depend on parsing the command — it only checks the env. If the action is truly critical, combine:
-- Env channel for authorization (unforgeable).
-- Command parsing for action identification (parse best-effort; fail-closed on ambiguity).
+These cannot be closed by string matching without re-matching a quoted *mention* (`git commit -m "gh pr merge 96"`), which is the false positive command-boundary anchoring exists to prevent. You get one or the other, so pick the one that does not cry wolf and write the other down.
 
 See [[command-boundary-hook-matching]] for the parsing half.
 
@@ -99,7 +109,7 @@ Mechanism: `scripts/g__pretool-bash__prod-write.py` (Registry `SEC.prod-write-ga
 
 ## Reference Implementation
 
-`~/.claude/scripts/qa-merge-gate.py`: full gate with the agent-proof env channel (`OCTO_MERGE_APPROVE`), the discouraged `OCTO_QA_OK`, which waives the QA receipt only and still requires `OCTO_MERGE_APPROVE` to name the same PR, and command-boundary PR-number extraction. The forgeable file channel was removed (see the lesson above).
+`~/.claude/scripts/qa-merge-gate.py`: full gate with the agent-proof env channel (`OCTO_MERGE_APPROVE`), the discouraged `OCTO_QA_OK`, which waives the QA receipt only, still requires `OCTO_MERGE_APPROVE` to name the same PR, and is scoped per COMMAND rather than "once" (nothing consumes it, so it keeps waiving while the shell keeps it exported), and command-boundary PR-number extraction. The forgeable file channel was removed (see the lesson above).
 
 `~/.claude/scripts/g__pretool-bash__prod-write.py` is the production-write sibling: per-destination scoping, payload inspection for SSM and ssh, a read-first allowlist that keeps false positives at zero, and a crash path that denies once a prod channel is identified.
 

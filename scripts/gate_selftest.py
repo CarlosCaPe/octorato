@@ -60,6 +60,10 @@ _OVERRIDE_ENV = (
     # test, the violation fixture "does not block", and the doctor FAILs a
     # brain whose only sin is that the unlock worked.
     "OCTO_KERNEL_OPEN",
+    # qa-merge-gate's crash-handler fault injection. Stripped like the rest so a
+    # stray export cannot poison every leg; the one fixture that needs it
+    # declares it in its own "_env" and gets it back after this strip.
+    "OCTO_GATE_CRASH_SELFTEST",
 )
 
 
@@ -197,6 +201,23 @@ def _run_leg(script: Path, payload: str, sandbox: Path,
     return cp.returncode, cp.stdout
 
 
+def _materialize_seed(sandbox: Path) -> None:
+    """Rename every `dotgit` directory the seed copied into a real `.git`.
+
+    A fixture cannot SHIP a `.git` directory: git refuses to record a tree entry
+    named `.git` at any depth, so a seed that needs a repository has to spell it
+    `dotgit` in the repo and be renamed here. Without this, a gate whose verdict
+    depends on which repository the command targets can only be fixture-proven on
+    an unresolvable target, which is the one case that denies for free.
+    """
+    for path in sorted(sandbox.rglob("dotgit"), key=lambda p: len(p.parts), reverse=True):
+        if path.is_dir():
+            try:
+                path.rename(path.with_name(".git"))
+            except OSError:
+                pass
+
+
 def run_gate_selftest(script_path, fixture_dir) -> int:
     """Return 0 iff every violation blocks AND every benign allows. Prints one line."""
     script = Path(script_path).resolve()
@@ -219,6 +240,7 @@ def run_gate_selftest(script_path, fixture_dir) -> int:
         seed = fdir / "home"
         if seed.is_dir():
             shutil.copytree(seed, sandbox, dirs_exist_ok=True)
+            _materialize_seed(sandbox)
         failures = []
         rule = _kernel_rule_of(script)
         for vf in violations:
