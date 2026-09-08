@@ -2228,26 +2228,414 @@ class QaCycle12(IsolationCase):
         """Pinned so the claim stays true, and each one is a MEASURED allow.
 
         1. a runner whose SUBCOMMAND sits where an operand would (`deno run -`,
-           `bun run -`): the peel needs the program to be a known one and `run`
-           is not, so the body reads as data;
-        2. a flag that consumes a value BETWEEN the run verb and the program
-           (`uv run --with rich python -`), where no per-runner option table
-           exists to tell `--with rich` from `--isolated python`;
-        3. `${ cmd; }` / `${| cmd; }`, ksh93's value substitution, which bash
+           `bun run -`): the head is a CODE HOST, so nothing is peeled in front
+           of it, and `run` lands where an operand would;
+        2. `${ cmd; }` / `${| cmd; }`, ksh93's value substitution, which bash
            gained in 5.3 and this host (bash 5.2.21) rejects outright.
 
-        All three fail toward ALLOW, which is the right failure for a rule
-        whose cost is denying the dominant idiom."""
+        Both fail toward ALLOW, which is the right failure for a rule whose
+        cost is denying the dominant idiom.
+
+        CYCLE 12'S RESIDUAL 2 IS GONE, and its removal is the measurement that
+        matters here: `uv run --with rich python -` allowed because the peel
+        stopped at the first valued flag, and cycle 13 inverted the wrapper
+        away from the tool name entirely, so `--with`, `rich` and `uv` are all
+        just tokens the search walks past on its way to `python`. It is pinned
+        as a DENY in `test_c13_the_wrapper_is_a_shape_not_a_table` instead."""
         self.hold()
         k = self.kfile()
         for command in (
                 f"deno run --allow-read - <<'EOF'\nopen('{k}','a')\nEOF",
-                f"uv run --with rich python - <<'EOF'\nopen('{k}','a')\nEOF",
                 f"echo ${{ rm -f {k}; }}"):
             self.assertEqual(self.decide(command), "allow",
                              command + " is now covered: move it out of the "
                              "residual list and out of the PR report")
 
+
+
+class QaCycle13(IsolationCase):
+    """Cycle 12 enumerated three classes and the ENUMERATION became the new
+    place to be wrong. Every test below is measured against a REAL HELD LANE
+    with `rm -f <lane>` as the passing positive control, because cycle 12's
+    wrapper measurement was taken against the kernel directory, where the
+    named-path floor catches any verb and hid three holes.
+
+    Each test fails with its own fix reverted, measured one at a time and named
+    in the PR report.
+    """
+
+    def hold(self):
+        self.run_gate(WRITE_GATE, self.write_payload("agent-a", self.a_py))
+
+    def decide(self, command, pid="agent-b"):
+        rc, out = self.run_gate(BASH_GATE, self.bash_payload(pid, command))
+        return "deny" if self.denied(out) else "allow"
+
+    def kfile(self):
+        return os.path.join(kernel_proc.kernel_dir(), "journal", "agent-a.jsonl")
+
+    def test_the_positive_control_denies(self):
+        """The measurement every other test in this class depends on. Cycle 12
+        measured the wrapper class against the KERNEL directory, where the
+        named-path floor denies whatever verb arrives, so a wrapper that was
+        never peeled still produced a deny and the hole stayed invisible. A
+        lane has no such floor: only the verb rule reaches it."""
+        self.hold()
+        self.assertEqual(self.decide(f"rm -f {self.a_py}"), "deny")
+
+    # ── C13-1 arithmetic is a word context, not a sealed span ───────────────
+    def test_c13_a_substitution_inside_arithmetic_is_still_a_command(self):
+        """The enumeration said `$((expr))` is "ARITHMETIC, not a command, left
+        verbatim on purpose". That is a false statement about bash. Measured on
+        bash 5.2.21, each of these removes the file:
+
+            echo $(( $(rm -f a; echo 1) ))     x=$((`rm -f b; echo 2`))
+            (( $(rm -f c; echo 3) ))           echo $[ $(rm -f d; echo 1) ]
+
+        Arithmetic is evaluated AFTER expansion, so it is an ordinary word
+        context and the scan has to continue inside it."""
+        self.hold()
+        k, lane = self.kfile(), self.a_py
+        for command in (f"echo $(( $(rm -f {k}) ))",
+                        f"x=$(( $(rm -f {k}) ))",
+                        f"echo $(( 1 + $(rm -f {k}) ))",
+                        f"echo $[ $(rm -f {k}) ]",
+                        f"echo $(( $(rm -f {lane}) ))"):
+            self.assertEqual(self.decide(command), "deny", command)
+
+    def test_c13_arithmetic_that_computes_is_still_arithmetic(self):
+        """One edit from each violation above. The `$((` is copied through, so
+        an expression with no command in it runs no command and nothing is
+        denied; a substitution that only READS stays a read."""
+        self.hold()
+        k = self.kfile()
+        for command in (f"echo $((1 << 3))",
+                        f"echo $(( 2 * 3 )) && echo done",
+                        f"echo $(( $(cat {k} | wc -l) ))"):
+            self.assertEqual(self.decide(command), "allow", command)
+
+    # ── C13-2 the wrapper is a SHAPE, not a table ───────────────────────────
+    def test_c13_the_wrapper_is_a_shape_not_a_table(self):
+        """Every one of these was measured ALLOWING against a held lane at
+        cycle 12's tip, and every binary is installed on this host. `setsid -w`
+        is the one that matters most: it is mandated by the hard rules of every
+        brief this repo is built under, so it stood in front of nearly every
+        command an agent here runs.
+
+        The last two are cycle 12's own residual and its `run`-verb shape,
+        closed by the same inversion: `uv` and `--with rich` are just tokens the
+        forward search walks past."""
+        self.hold()
+        lane = self.a_py
+        for command in (f"setsid -w rm -f {lane}",
+                        f"flock /tmp/octo-c13.lock rm -f {lane}",
+                        f"ionice -c 3 rm -f {lane}",
+                        f"taskset -c 0 rm -f {lane}",
+                        f"unshare -r rm -f {lane}",
+                        f"strace -o /dev/null rm -f {lane}",
+                        f"systemd-run --user rm -f {lane}",
+                        f"watch -x rm -f {lane}",
+                        f"uv run --with rich python3 -c \"import os\"" 
+                        f" && rm -f {lane}",
+                        f"uvx some-tool rm -f {lane}"):
+            self.assertEqual(self.decide(command), "deny", command)
+
+    def test_c13_what_the_inversion_must_not_peel(self):
+        """The four bounds, one edit from the violations above. A SCRIPT
+        runner's `run` names a package.json script or a crate, not a program on
+        PATH — both of these were measured DENYING at cycle 12's tip and both
+        are over-fires. A REMOTE runner acts on another file system. A package
+        manager's `install` is not `/usr/bin/install`. And a cloud CLI's `cp`
+        writes an object store, not this disk."""
+        self.hold()
+        lane = self.a_py
+        for command in (f"npm run rm -- {lane}",
+                        f"cargo run rm {lane}",
+                        f"docker run --rm alpine rm -f {lane}",
+                        f"ssh buildhost rm -f {lane}",
+                        f"apt-get install -y curl wget",
+                        f"pip install requests",
+                        f"aws s3 cp {lane} s3://bucket/a.py"):
+            self.assertEqual(self.decide(command), "allow", command)
+
+    def test_c13_a_reserved_word_head_is_not_an_unknown_program(self):
+        """The over-fire the inversion had before it was bounded, measured over
+        19191 real Bash commands from this machine's transcripts: a python
+        heredoc body carrying `for ln in mem.read_text().splitlines():` peeled
+        at `ln`, a real mutator in a real table, on a line that is not a shell
+        command at all. And `case … pend) ;; *) break;; esac` arrives as ONE
+        segment from the borrowed splitter, so a search with no stop walked
+        past `;;`, `esac` and `done` into the next command entirely."""
+        self.hold()
+        lane = self.a_py
+        for command in (f"for ln in $(ls); do echo $ln; done",
+                        f"case x in pend) ;; *) break;; esac"):
+            self.assertEqual(self.decide(command), "allow", command)
+
+    # ── C13-3 the `-c` channel in every spelling that eats the next word ────
+    def test_c13_a_bundle_ending_in_c_is_minus_c(self):
+        """`_shell_c` and the wrapped fallback both looked for the token `-c`,
+        exactly, so a short-option bundle walked. On an UNMODELED head the rule
+        is the merge gate's inversion rather than a wrapper table: when no
+        program this file knows comes first, a `-c`-shaped flag is a re-parse
+        whatever the wrapper is called."""
+        self.hold()
+        lane = self.a_py
+        for command in (f"bash -ec 'rm -f {lane}'",
+                        f"sh -euc 'rm -f {lane}'",
+                        f"script -qc 'rm -f {lane}' /dev/null",
+                        f"flock /tmp/octo-c13b.lock -c 'rm -f {lane}'"):
+            self.assertEqual(self.decide(command), "deny", command)
+
+    def test_c13_a_c_that_is_not_a_command_flag_is_left_alone(self):
+        """The bounds on the inversion above, and the reason it is safe. The
+        first three heads are programs this file MODELS as read-only, so the
+        unmodeled-head rule never reaches them and `-c` keeps meaning count.
+        `git -c` is a config setting on a head this file models. And a REMOTE
+        runner is excluded for the same reason it is excluded from the peel:
+        `docker run alpine sh -c '…'` runs in the container's file system, and
+        `ssh -c` is a cipher, not a command."""
+        self.hold()
+        lane = self.a_py
+        for command in (f"grep -rc rm {lane}",
+                        f"wc -lc {lane}",
+                        f"sort -uc {lane}",
+                        f"git -c user.name=x status",
+                        f"docker run --rm alpine sh -c 'rm -f {lane}'",
+                        f"ssh -c aes256-ctr buildhost uptime",
+                        f"ffmpeg -i a.mp4 -c copy b.mp4"):
+            self.assertEqual(self.decide(command), "allow", command)
+
+    # ── C13-4 eval ─────────────────────────────────────────────────────────
+    def test_c13_eval_reparses_its_arguments_joined(self):
+        """The one member of the class with no flag at all: every argument
+        `eval` takes, joined, is a command line."""
+        self.hold()
+        self.assertEqual(self.decide(f"eval 'rm -f {self.a_py}'"), "deny")
+        self.assertEqual(self.decide(f"eval rm -f {self.a_py}"), "deny")
+
+    def test_c13_eval_of_a_read_is_a_read(self):
+        self.hold()
+        self.assertEqual(self.decide(f"eval 'cat {self.a_py}'"), "allow")
+
+    # ── C13-5 a heredoc feeds a DESCRIPTOR ─────────────────────────────────
+    def test_c13_a_heredoc_is_paired_with_the_operand_by_number(self):
+        """`is_stdin_operand` accepted base 0 while `_heredoc_ops` accepted
+        `3<<`, so `python3 /dev/fd/3 3<<'EOF'` executed and allowed. The path
+        forms are the same defect one `/` wide: `//dev/stdin` and `/dev//fd/0`
+        are the same files to the kernel and were different strings to the
+        table."""
+        self.hold()
+        k = self.kfile()
+        for command in (f"python3 /dev/fd/3 3<<'EOF'\nopen('{k}','a')\nEOF",
+                        f"python3 /proc/self/fd/4 4<<'EOF'\nopen('{k}','a')\nEOF",
+                        f"python3 //dev/stdin <<'EOF'\nopen('{k}','a')\nEOF",
+                        f"python3 /dev//fd/0 <<'EOF'\nopen('{k}','a')\nEOF"):
+            self.assertEqual(self.decide(command), "deny", command)
+
+    def test_c13_a_descriptor_nothing_feeds_is_still_data(self):
+        """One edit: the operand names fd 3 and the heredoc feeds fd 0, so the
+        body is the SCRIPT's input and not its program."""
+        self.hold()
+        k = self.kfile()
+        self.assertEqual(
+            self.decide(f"python3 /dev/fd/3 <<'EOF'\nopen('{k}','a')\nEOF"),
+            "allow")
+
+    # ── C13-6 a missing terminator is still a heredoc ──────────────────────
+    def test_c13_a_heredoc_with_no_terminator_still_runs_its_body(self):
+        """Bash warns ("here-document delimited by end-of-file") and runs the
+        body anyway. `split_heredocs` said "not a heredoc" and handed the body
+        to the command splitter, so a body destined for an interpreter was read
+        as a list of shell words instead of the program it is. One byte cheaper
+        than the decoy closed in cycle 12 C3, and in the opposite direction."""
+        self.hold()
+        k, lane = self.kfile(), self.a_py
+        self.assertEqual(self.decide(f"bash -s <<EOF\nrm -f {lane}"), "deny")
+        self.assertEqual(self.decide(f"python3 - <<EOF\nopen('{k}','a')"), "deny")
+
+    def test_c13_a_data_body_with_no_terminator_is_still_data(self):
+        """One edit: `cat > notes` is not a stdin-program host, so the body is
+        data whether it is closed or not, and the rest of the input belongs to
+        it exactly as bash says it does."""
+        self.hold()
+        self.assertEqual(
+            self.decide(f"cat > notes.txt <<'EOF'\nrm -f {self.a_py}"), "allow")
+
+    # ── C13-7 a heredoc opened inside a WORD ───────────────────────────────
+    def test_c13_a_heredoc_opened_inside_a_substitution_has_a_host(self):
+        """`result=$(python3 - <<EOF …)` is the common idiom. The body was
+        split off first, the opener was masked to a marker, the recursion saw
+        no body, and the orphan drained against a line whose head is `x=` —
+        which `peel_env` removes, leaving no host at all."""
+        self.hold()
+        k, lane = self.kfile(), self.a_py
+        for command in (f"x=$(bash -s <<'EOF'\nrm -f {lane}\nEOF\n)",
+                        f"x=$(python3 - <<'EOF'\nopen('{k}','a')\nEOF\n)",
+                        f"x=`python3 - <<'EOF'\nopen('{k}','a')\nEOF\n`"):
+            self.assertEqual(self.decide(command), "deny", command)
+
+    def test_c13_a_data_heredoc_inside_a_substitution_is_still_data(self):
+        self.hold()
+        self.assertEqual(
+            self.decide(f"x=$(cat <<'EOF'\nrm -f {self.a_py}\nEOF\n)"), "allow")
+
+    # ── C13-8 one rule, one scope ──────────────────────────────────────────
+    def test_c13_a_computed_write_target_reaches_a_lane_too(self):
+        """`subst_names_kernel_state` applied the raw-text test to the KERNEL
+        directory and to nothing else, so one rule had two scopes: a computed
+        target that spelled the kernel directory denied while the same shape
+        aimed at another process's lane walked."""
+        self.hold()
+        pkg = os.path.dirname(self.a_py)
+        self.assertEqual(self.decide(f"echo hi > $(echo {pkg})/a.py"), "deny")
+        self.assertEqual(self.decide(f"echo hi > $(dirname {self.a_py})/a.py"),
+                         "deny")
+
+    def test_c13_a_computed_target_is_the_token_not_the_word(self):
+        """The bound, and it is what keeps the rule from denying a whole tree:
+        the word from the body is substituted INTO the token, so
+        `> $(echo <pkg>)/notes.txt` names `<pkg>/notes.txt` and not `<pkg>`.
+        Returning the bare word put a hit on the directory, which prefix-matches
+        every lane under it."""
+        self.hold()
+        pkg = os.path.dirname(self.a_py)
+        self.assertEqual(self.decide(f"echo hi > $(echo {pkg})/notes.txt"),
+                         "allow")
+
+    def test_c13_a_separator_only_word_names_no_path(self):
+        """Measured over the real corpus: `> $T/g_$(echo $ref | tr '/' '_').py`
+        put a hit on `/` — the filesystem root, which prefix-matches every lane
+        there is — on 14 commands, out of the `'/'` argument of `tr`."""
+        self.hold()
+        self.assertEqual(
+            self.decide("echo hi > /tmp/g_$(echo x | tr '/' '_').py"), "allow")
+
+    # ── C13-9 characters are charged where they are WALKED ─────────────────
+    def test_c13_the_opener_walk_is_charged_before_it_runs(self):
+        """M10. The cap was a TEST taken after `split_heredocs` had already
+        char-walked every line carrying `<<`, so that walk was free: QA measured
+        13.3 s and 11.8 s on multi-megabyte shapes and, under a 5 s emulated
+        kill, rc 124 with zero bytes on stdout — twice — which is the
+        no-verdict-reads-as-allow path this budget exists to close."""
+        gate = _load(BASH_GATE, "bash_gate_opener_charge")
+        pad = "a" * (gate._MAX_PARSE_CHARS + 4096)
+        # `split_heredocs` is called DIRECTLY, because the whole claim is about
+        # ORDER: `scan` charges the parsed text too, one line later, and a test
+        # that only asks "was it denied" cannot tell the two charges apart. This
+        # one asks the earlier of the two, and goes green only while the walk
+        # itself is what refuses.
+        budget = [gate._MAX_SEGMENTS, gate._MAX_PARSE_CHARS]
+        with self.assertRaises(gate.ParseTooLarge):
+            gate.split_heredocs("cat <<EOF " + pad + "\nbody\nEOF", budget)
+
+    def test_c13_an_unquoted_body_is_charged_before_it_is_scanned(self):
+        """The second uncharged walk: a heredoc body is exempt from the parse
+        cap by design, and then the substitution scanner reads every character
+        of an UNQUOTED one in a pure-Python loop."""
+        gate = _load(BASH_GATE, "bash_gate_body_charge")
+        pad = "a" * (gate._MAX_PARSE_CHARS + 4096)
+        with self.assertRaises(gate.ParseTooLarge):
+            gate.scan("cat <<EOF\n" + pad + "\nrm -f x\nEOF", self.tree)
+
+    def test_c13_a_quoted_body_is_not_charged_because_it_is_not_walked(self):
+        """The control that keeps the charge honest, and the reason the cap can
+        be this low: a QUOTED body runs nothing, is never scanned for
+        substitutions, and a large file written through `cat > f <<'EOF'` stays
+        exactly as cheap and as allowed as it is today."""
+        gate = _load(BASH_GATE, "bash_gate_quoted_body")
+        pad = "a" * (gate._MAX_PARSE_CHARS * 4)
+        hits = gate.scan("cat > f.txt <<'EOF'\n" + pad + "\nEOF", self.tree)
+        self.assertEqual(hits, [("path",
+                                 kernel_proc.norm_path(
+                                     os.path.join(self.tree, "f.txt")), ">")])
+
+    def test_c13_the_substitution_count_is_charged(self):
+        """M8. Each masked substitution is a COMMAND and spends a segment; the
+        charge is taken up front because the masking has already happened and
+        the count is exact."""
+        gate = _load(BASH_GATE, "bash_gate_subst_charge")
+        with self.assertRaises(gate.ParseTooLarge):
+            gate.scan("echo " + "$(rm)" * (gate._MAX_SEGMENTS + 50), self.tree)
+
+    def test_c13_the_parse_cap_is_a_spend_not_a_test(self):
+        """M9. The cap is cumulative across FRAMES, so text a recursion re-reads
+        is charged for both readings — the cap bounds the WALKING, not the
+        command. A `bash -c` body is walked twice, so it costs twice."""
+        self.hold()
+        gate = _load(BASH_GATE, "bash_gate_parse_cap")
+        half = "a" * int(gate._MAX_PARSE_CHARS * 0.6)
+        with self.assertRaises(gate.ParseTooLarge):
+            gate.scan("bash -c 'rm -f x " + half + "'", self.tree)
+        self.assertEqual(
+            self.decide("bash -c 'echo " + "a" * 4096 + "'"), "allow")
+
+    # ── the three mutants cycle 12 left unpinned ───────────────────────────
+    def test_c13_m5_a_tab_decoy_does_not_close_a_plain_heredoc(self):
+        """`<<-` strips leading TABS from the terminator line and a plain `<<`
+        strips nothing, so a `\tEOF` line does not close a `<<EOF`. Cycle 12 C3
+        has a fixture for the SPACE decoy only, and the mutant that drops the
+        tabstrip test flipped this to allow with nothing failing."""
+        self.hold()
+        k = self.kfile()
+        # The decoy has to sit BEFORE the dangerous line, or both readings deny
+        # and the test measures nothing: with the tabstrip test dropped, `\tEOF`
+        # closes the body at line 1 and `open('<kdir>/…')` becomes a top-level
+        # segment whose token is not a path, so the mutant ALLOWS.
+        self.assertEqual(
+            self.decide(f"python3 - <<EOF\nimport os\n\tEOF\n"
+                        f"open('{k}','a')\nEOF"), "deny")
+        # and the operator that DOES strip tabs still strips them: `<<-EOF`
+        # closes on `\tEOF`, so the line after it is a command and not a body
+        self.assertEqual(
+            self.decide(f"python3 - <<-EOF\nimport os\n\tEOF\nrm -f {self.a_py}"),
+            "deny")
+
+    def test_c13_m17_an_apostrophe_inside_double_quotes_is_not_a_quote(self):
+        """M17. Inside double quotes a `'` is an ordinary character, so the
+        single-quote state must not toggle on it. No test had an apostrophe
+        before a substitution, and the mutant that stops tracking `in_dq`
+        flipped this to allow."""
+        self.hold()
+        k = self.kfile()
+        self.assertEqual(self.decide(f'echo "it\'s $(rm -f {k})"'), "deny")
+
+    def test_c13_m18_a_substitution_marker_travels_into_a_recursion(self):
+        """M18. The end-of-scan drain is the only thing covering a substitution
+        whose marker is masked at one frame and handed to a recursion that never
+        saw it. Both spellings were unpinned."""
+        self.hold()
+        lane = self.a_py
+        self.assertEqual(self.decide(f'bash -c "echo $(rm -f {lane})"'), "deny")
+        self.assertEqual(self.decide(f"( echo $(rm -f {lane}) )"), "deny")
+
+    # ── the residuals this cycle leaves, stated rather than discovered ──────
+    def test_named_residuals_of_cycle_13(self):
+        """Each one a MEASURED allow, pinned so the claim stays true.
+
+        1. a wrapper whose PROGRAM is computed (`setsid $(echo rm) -f x`): the
+           peel target is a marker, not a program, so the segment falls back to
+           the token scan — the behaviour a computed verb has had since cycle 12;
+        2. a wrapper that hides its program past `_PEEL_SCAN` tokens, or behind
+           one that ends in `)` or `;`;
+        3. a python heredoc body that deletes a LANE (`os.remove('<lane>')`):
+           an interpreter body is tested against the kernel floor as RAW TEXT
+           and re-scanned as commands only for a shell, so a lane path inside
+           python is not a shell target. Unchanged by this cycle, and named
+           because cycle 13's own probe hit it.
+
+        THE CLASS IS NOT CLOSED, and this is the honest statement the report
+        carries: the wrapper table is now a shape, but the shape has a stated
+        end (`_PEEL_SCAN`, the stop words, the four bounds) and a command can be
+        written past it."""
+        self.hold()
+        lane = self.a_py
+        for command in (f"setsid $(echo rm) -f {lane}",
+                        f"weird --a 1 --b 2 --c 3 x y z w rm -f {lane}",
+                        f"python3 - <<'EOF'\nimport os\nos.remove('{lane}')\nEOF"):
+            self.assertEqual(self.decide(command), "allow",
+                             command + " is now covered: move it out of the "
+                             "residual list and out of the PR report")
 
 
 class SharedParserConvergence(unittest.TestCase):
@@ -2272,6 +2660,17 @@ class SharedParserConvergence(unittest.TestCase):
         "echo $(rm -f /x)",
         "echo `rm -f /x`",
         "echo $((1 << 3))",
+        # QA cycle 13: the corpus that AVOIDS the divergence is the same shape
+        # as a fixture set that avoids the bug. Bash expands `$(cmd)` and
+        # backticks INSIDE `$(( ))` — measured, `bash -c 'echo $(( $(rm -f a;
+        # echo 1) ))'` removes the file — so arithmetic is an ordinary word
+        # context and these four were a live disagreement the old corpus could
+        # not see: this gate returned [] and the provider returned the inner
+        # command.
+        "echo $(( $(c) ))",
+        "echo $(( $(rm -f /x) ))",
+        "x=$((`b`))",
+        "echo $(( 1 + $(a) ))",
         "echo 'x $(rm -f /x)'",
         'echo "$(a) $(b)"',
         "x=$(echo $(y))",
