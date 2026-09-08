@@ -460,19 +460,42 @@ class TestTheFourOutcomesReadDifferently(unittest.TestCase):
         has refused one call in a week (QA cycle 8). A test whose inputs it does not
         own is a test that will be deleted the first time the world moves.
 
-        This stubs ONLY the real-journal scan. The golden replay above it runs off
-        its own fixture and still executes for real, so the trip through the caller
-        is still a real trip: what it stops measuring is a count that was never the
-        subject.
+        The first version of this pointed the scan at an EMPTY directory, and the
+        commit message called what it stopped measuring "a count that was never the
+        subject". That was wrong, and measured wrong: the check's second and third
+        assertions (the newest real journals replay and verify, and every deny line
+        names a registered rule) ran over 448 journals before and over zero after.
+        Incidental, machine-dependent coverage is still coverage, and taking it to
+        zero everywhere is a regression (QA cycle 9).
+
+        So the directory holds the tracked golden journal instead, with a fresh
+        mtime: the replay and chain verification execute for real, deterministically
+        and on every machine, while the deny count stays 0 because that journal's own
+        timestamps are years outside the 7-day window. Deny counting and journal
+        verification were only ever entangled by accident.
+
+        The redirection is HOME, not a monkeypatch, because `octo replay --verify`
+        runs in a SUBPROCESS: an in-process stub of `kernel_proc.journal_dir` cannot
+        reach it, and the child went on reading the live directory. HOME is restored
+        unconditionally, since a leaked one is what broke every later test module in
+        PR #282.
         """
         import tempfile
-        sys.path.insert(0, str(doctor.CLAUDE_DIR / "scripts"))
-        import kernel_proc
-        empty = tempfile.mkdtemp(prefix="deny-cov-journal-")
-        self.addCleanup(shutil.rmtree, empty, ignore_errors=True)
-        real = kernel_proc.journal_dir
-        kernel_proc.journal_dir = lambda: empty
-        self.addCleanup(lambda: setattr(kernel_proc, "journal_dir", real))
+        sandbox = Path(tempfile.mkdtemp(prefix="deny-cov-home-"))
+        self.addCleanup(shutil.rmtree, sandbox, ignore_errors=True)
+        jdir = sandbox / ".claude" / ".cache" / "kernel" / "journal"
+        jdir.mkdir(parents=True)
+        golden = (doctor.CLAUDE_DIR / "registry" / "fixtures"
+                  / "ARCHITECTURE.kernel-process" / "replay" / "journal.jsonl")
+        self.assertTrue(golden.is_file(), "the golden journal fixture must exist")
+        seeded = jdir / "kernel-golden-agent.jsonl"
+        shutil.copyfile(golden, seeded)
+        os.utime(seeded, None)
+        saved = os.environ.get("HOME")
+        os.environ["HOME"] = str(sandbox)
+        self.addCleanup(lambda: os.environ.__setitem__("HOME", saved)
+                        if saved is not None else os.environ.pop("HOME", None))
+        return jdir
 
     def test_no_refusals_since_the_hook_is_unexercised_not_proven(self):
         status, text, _ = doctor.deny_coverage(0, 1_700_000_000.0, 0)
@@ -627,6 +650,80 @@ class TestTheFourOutcomesReadDifferently(unittest.TestCase):
                       "the cause has to survive every hop from the check to the "
                       "terminal, and main is the last one")
         self.assertIn("kernel-replay", out, "so does the name of the check saying it")
+
+    def run_main_over_bytes(self, results, argv=("brain_doctor.py",)):
+        """Run the REAL `main` with real stub checks over a REAL byte stream.
+
+        Every earlier attempt at this pinned one path at whatever hop had just been
+        fixed, and the next mutation moved one hop past it. Ten instances in, the
+        answer is not another single-path test: it is one test that carries every
+        thing a reader gets (status, hint, name, exit code, encoding) across the
+        whole wire at once, for a FAIL and a WARN and not only a PASS.
+
+        Bytes, not StringIO. `redirect_stdout(io.StringIO())` swallows the
+        `AttributeError` from `sys.stdout.reconfigure` and never encodes, so
+        deleting the encoding hop in `main` was invisible while
+        `PYTHONIOENCODING=ascii python3 scripts/brain_doctor.py` died on the brain
+        emoji before printing a single result (QA cycle 9). An ascii TextIOWrapper
+        reproduces exactly that.
+        """
+        import io
+        raw = io.BytesIO()
+        stream = io.TextIOWrapper(raw, encoding="ascii", errors="strict")
+        real_checks, real_argv = doctor.CHECKS, sys.argv
+        real_out, real_err = sys.stdout, sys.stderr
+        doctor.CHECKS = [(r.key, (lambda r: (lambda fix: r))(r)) for r in results]
+        sys.argv = list(argv)
+        sys.stdout = stream
+        sys.stderr = io.TextIOWrapper(io.BytesIO(), encoding="ascii", errors="strict")
+        try:
+            rc = doctor.main()
+        finally:
+            try:
+                stream.flush()
+            except Exception:
+                pass
+            doctor.CHECKS, sys.argv = real_checks, real_argv
+            sys.stdout, sys.stderr = real_out, real_err
+        return rc, raw.getvalue().decode("utf-8")
+
+    def test_every_verdict_survives_the_whole_wire_to_a_real_byte_stream(self):
+        """Kills six mutations that all 236 tests missed (QA cycle 9): deleting the
+        WARN line from the printer, deleting the hint block, `return 0` instead of
+        `1 if fails`, truncating the results list, dropping the encoding hop, and
+        printing the icon without the status.
+
+        The WARN one is this PR's own verdict, the one cycle 2 caught the caller
+        collapsing, collapsible again one hop further down; and the exit code is what
+        `ai_sync.py` reads as the doctor's closing word.
+        """
+        results = [doctor.Result("stub-fail", doctor.FAIL, "the stub failed",
+                                 "fix the stub that failed"),
+                   doctor.Result("stub-warn", doctor.WARN, "the stub warned",
+                                 "look at the stub that warned")]
+        rc, out = self.run_main_over_bytes(results)
+        self.assertEqual(rc, 1, "a FAIL has to leave a non-zero exit; ai-sync reads it")
+        for r in results:
+            self.assertIn(r.key, out, "every check's name reaches the reader")
+            self.assertIn(r.message, out, "and so does its message")
+            self.assertIn(r.hint, out, "and a FAIL or WARN hint is not decoration")
+            self.assertIn(f"[{r.status}]", out, "the status is text, not only a glyph")
+
+    def test_the_json_surface_carries_what_the_human_one_does(self):
+        """The same invariant on the machine-readable side, which had no test at all:
+        emptying `checks` was invisible."""
+        import json as _json
+        results = [doctor.Result("stub-fail", doctor.FAIL, "the stub failed", "fix it"),
+                   doctor.Result("stub-warn", doctor.WARN, "the stub warned", "look")]
+        rc, out = self.run_main_over_bytes(results, argv=("brain_doctor.py", "--json"))
+        self.assertEqual(rc, 1)
+        doc = _json.loads(out)
+        got = {c["key"]: c for c in doc["checks"]}
+        self.assertEqual(set(got), {"stub-fail", "stub-warn"},
+                         "every check reaches the JSON consumer too")
+        for r in results:
+            self.assertEqual(got[r.key]["status"], r.status)
+            self.assertEqual(got[r.key]["message"], r.message)
 
     def test_the_warn_needs_an_empty_journal_not_just_other_classes(self):
         """The other one claimed and missing. Dropping the second half of the
