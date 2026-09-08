@@ -338,6 +338,11 @@ class Brain:
         measured that reverting the two sites in the O_EXCL branch survived the whole
         module because every lock test skips unless fcntl is importable.
         """
+        # Not a dead guard, though it reads like one and QA cycle 18 filed it as a
+        # surviving mutant: the parent here is the BRAIN ROOT, and `resolve_brain`
+        # never checks that the root exists. `--brain <a path that is not there yet>`
+        # reaches this line, and without it the open below raises FileNotFoundError
+        # on the guard file (measured both ways).
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
         guard = self.lock_path.with_name(self.lock_path.name + ".lock")
         fh = open(guard, "a+")
@@ -354,9 +359,19 @@ class Brain:
                 # later acquire on that machine refuses until someone deletes it by
                 # hand (measured, QA cycle 17). Breaking a sentinel on age is not the
                 # four-line fix it looks like -- two runs can both judge it stale and
-                # both proceed, which is worse than refusing -- so the branch keeps
-                # the behaviour and stops claiming it is equivalent. What it does
-                # promise is the timeout: bounded, monotonic, and tested below.
+                # both proceed, which is worse than refusing. That was the whole
+                # argument until QA cycle 18 named the alternative it left out:
+                # msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1) is a byte-range
+                # lock on the handle already open above, the kernel releases it when
+                # the process dies exactly as it releases flock, and it polls
+                # non-blockingly against the same deadline this branch already
+                # computes, with no sentinel file to leave behind. That is the fix
+                # this residual names for itself. It is not written here because
+                # nothing in this stack runs Windows to measure it on, and a lock
+                # implementation shipped unmeasured is the overclaim shape this whole
+                # commit is about. Until then the branch keeps the behaviour and stops
+                # claiming it is equivalent. What it does promise is the timeout:
+                # bounded, monotonic, and tested below.
                 sentinel = Path(str(guard) + ".excl")
                 deadline = time.monotonic() + timeout
                 while True:
@@ -2308,8 +2323,28 @@ def cmd_sync(brain: Brain) -> int:
         uncharged, they are handed [1.0] x8 and wait 0.505 to 0.525s each for 4.09s
         of total waiting, 8 restored. So the deletion buys back the six packages by
         spending 4x the bound, the waiting grows as N x HOLD, and SYNC_LOCK_BUDGET
-        stops being one. test_sync_charges_the_run_budget_for_a_wait_that_succeeded is
-        the leg that dies when this line goes, and it is the only one.
+        stops being one.
+
+        TWO legs cover the charge now, and they are not redundant. Cycle 18 measured
+        that test_sync_charges_the_run_budget_for_a_wait_that_succeeded is one-sided
+        BY CONSTRUCTION: `started` is stamped before lock_held is entered, so the
+        holder's sleep begins after the stamp and the first wait can only come out
+        longer than the hold. Its assertion is therefore an upper bound, and an upper
+        bound cannot see an OVER-charge -- charging `2 * (time.monotonic() - started)`
+        left it green. `acquired` was then killed only as a SIDE EFFECT of the
+        uncontended test's floor, by 21ms of margin that a 30ms copytree happens to
+        supply, which a faster box retires. So
+        test_sync_charges_a_successful_wait_exactly_once_on_a_clock_it_owns replaces
+        lock_held with a stub that advances a fake monotonic by exactly the hold and
+        asserts an EQUALITY, which kills both the double charge and the removal of
+        `acquired` on any box at any load. The real-clock leg proves the wiring a
+        stub cannot -- a real flock, a real holder, a real release, and that the
+        arithmetic is charging THOSE; the stub proves the arithmetic a real clock
+        cannot. Its fake wall clock also steps back an hour, so the sites below are
+        step-back tested too, which they were not before: reverting all three of them
+        together hands the second acquire 3602s of a 2.0s budget, and reverting the
+        acquired charge alone hands it 0.0s. Both fail there. That was the last clock
+        class cycle 18 left open on this function.
         """
         nonlocal lock_budget_left
         started = time.monotonic()

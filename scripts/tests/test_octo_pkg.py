@@ -3381,6 +3381,16 @@ class TestQaCycle17(ArmFixture):
     function's own `import fcntl` raise the way it raises on Windows, which is the only
     door into the branch on a POSIX box, and it is one name rather than the whole
     import machinery.
+
+    Cycle 18 then found that the budget leg it asked for is one-sided BY CONSTRUCTION:
+    `started` is stamped before `lock_held` is entered, so a real wait always comes
+    out a little longer than the holder's sleep and the assertion can only be an upper
+    bound. It sees the charge going missing and cannot see it landing twice -- the
+    double charge measured green -- and the `acquired` flag survived only on 21ms of
+    margin borrowed from a different test's floor. The second budget leg below owns
+    the clock instead of measuring it, so its assertion is an equality and both
+    mutants die on any box. The pair is deliberate: the real clock proves the wiring,
+    the fake one proves the arithmetic.
     """
 
     _install_signed = TestQaCycle13._install_signed
@@ -3501,6 +3511,118 @@ class TestQaCycle17(ArmFixture):
         for name in names:
             self.assertTrue(self.brain.vendor_path(name).exists(),
                             "the lock was released: both packages are restorable, so "
+                            "nothing but the accounting can carry this test")
+        self.assertEqual(rc, 0)
+        self.assertIn("2 restored", said)
+
+    # -- A2: the same charge, two-sided, on a clock this test owns ---------------
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_sync_charges_a_successful_wait_exactly_once_on_a_clock_it_owns(self):
+        """The arithmetic of the charge, where the leg above can only bound it.
+
+        The real-clock leg is one-sided BY CONSTRUCTION and cycle 18 measured why:
+        `bounded_lock` stamps `started` before `lock_held` is entered, so the
+        releaser's sleep begins after the stamp and the first wait comes out a little
+        LONGER than the hold every time. `asked[1]` can therefore only be asserted
+        from above, and an upper bound cannot see an OVER-charge. Charging
+        `lock_budget_left -= 2 * (time.monotonic() - started)` leaves that leg green
+        at `asked[1]` around 0.99. The `acquired` flag, whose only job is to keep the
+        acquired charge and the refused charge from both landing, is then killed
+        purely as a side effect of the UNCONTENDED test's floor: removing it puts
+        `min(asked)` at 0.339 against a 0.36 floor, 21ms of margin supplied by about
+        30ms of in-lock copytree per package. A faster box or a leaner install path
+        and that guard has no test at all.
+
+        So this leg owns the clock instead of measuring one. `lock_held` is replaced
+        by a stub that advances a fake `octo_pkg.time.monotonic` by exactly `hold`
+        and returns without waiting, which makes the charge exact and the assertion
+        an EQUALITY: the second acquire is handed `budget - hold`, not at most it.
+        Either way of charging twice -- the flag removed, or the subtraction doubled
+        -- hands it `budget - 2 * hold` and fails here on any box under any load.
+        Load is the reason this is a fake clock rather than a tightened real-clock
+        bound: this module has been measured at 900s on this box.
+
+        The fake wall clock steps an hour BACK after its first read, so
+        `bounded_lock`'s clock sites are covered here as well, and they were covered
+        nowhere before: cycle 18's module-wide wall-clock revert was killed only by
+        the two `lock_held` legs, which leaves these three. Reverting all three
+        together makes the wait come out at -3600s and hands the second acquire
+        3601.99s of a 2.0s budget; reverting the acquired charge alone makes it come
+        out at +1.7e9 and hands it 0.0s. Measured, both fail here.
+
+        Both legs stay. This one proves the arithmetic, which a real clock cannot;
+        the one above proves that a real flock, a real holder and a real release are
+        what the arithmetic is charging, which a stub cannot.
+        """
+        import contextlib
+        import time
+        budget, hold = 2.0, 0.5
+        names = []
+        for i in range(2):
+            name, _ = self._install_signed("bench%d" % i)
+            self._edit_row(name, source=str(self.tmp / ("src-bench%d" % i)))
+            self._detach(name)
+            names.append(name)
+
+        class Bench:
+            """The real time module, with monotonic under this test's hand.
+
+            `monotonic` moves only when the stub below moves it, so the charge is a
+            number this test chose rather than one it measured. `time` steps an hour
+            back after its first read, the way an NTP correction steps it, so a
+            revert of either charge site to the wall clock fails here rather than
+            flaking somewhere else.
+            """
+
+            def __init__(self_):
+                self_.mono = 1000.0
+                self_.wall_reads = 0
+
+            def monotonic(self_):
+                return self_.mono
+
+            def time(self_):
+                self_.wall_reads += 1
+                return time.time() - (3600 if self_.wall_reads > 1 else 0)
+
+            def __getattr__(self_, k):
+                return getattr(time, k)   # sleep and everything else stay real
+
+        clock = Bench()
+        asked = []
+        real = octo_pkg.Brain.lock_held
+
+        @contextlib.contextmanager
+        def instant(self_, timeout=30.0):
+            """A wait of exactly `hold`, costing no wall time and taking no lock."""
+            asked.append(timeout)
+            clock.mono += hold
+            yield
+
+        octo_pkg.Brain.lock_held = instant
+        self.addCleanup(lambda: setattr(octo_pkg.Brain, "lock_held", real))
+        octo_pkg.time = clock
+        self.addCleanup(lambda: setattr(octo_pkg, "time", time))
+        prior = octo_pkg.SYNC_LOCK_BUDGET
+        octo_pkg.SYNC_LOCK_BUDGET = budget
+        self.addCleanup(lambda: setattr(octo_pkg, "SYNC_LOCK_BUDGET", prior))
+
+        rc, said = self._sync()
+
+        self.assertEqual(len(asked), 2, "one acquire per absent package")
+        self.assertEqual(asked[0], budget, "the first acquire is handed the whole run")
+        # 1000.0 and 0.5 are exact in binary and the stub is the only thing that moves
+        # this clock, so this is an equality and not a tolerance.
+        self.assertEqual(
+            asked[1], budget - hold,
+            f"a wait of exactly {hold}s off a {budget}s budget left {asked[1]}s for "
+            f"the next acquire instead of {budget - hold}s: a successful wait is not "
+            f"charged exactly once. Less means it is charged twice -- the `acquired` "
+            f"flag gone, or the subtraction doubled -- and more means it is not "
+            f"charged at all")
+        for name in names:
+            self.assertTrue(self.brain.vendor_path(name).exists(),
+                            "the stub never refuses, so both packages restore and "
                             "nothing but the accounting can carry this test")
         self.assertEqual(rc, 0)
         self.assertIn("2 restored", said)
