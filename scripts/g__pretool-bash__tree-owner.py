@@ -742,7 +742,7 @@ def main() -> int:
         )
         return 0
     if not fault and dropped:
-        # A ROW-LEVEL DROP IS A DENY TOO (QA cycle 6 F1c). Corrupting one row is
+        # A ROW-LEVEL DROP IS A DENY TOO (QA cycle 4 F1c). Corrupting one row is
         # the most surgical version of this attack: the holder's row replaced
         # with a string, the fault empty, this gate allowing, and the next
         # register republishing the table without that row so the lane is gone
@@ -784,7 +784,7 @@ def main() -> int:
         # targets named here are exactly the ones the ownership loop below would
         # have looked up.
         #
-        # The SENTENCE is picked from the hit's kind, and QA cycle 5 F6 is why.
+        # The SENTENCE is picked from the hit's kind, and QA cycle 3 F6 is why.
         # A `tree` or `stage` hit is not a contested path, it is a whole working
         # tree, and the first version of this deny said "cannot tell whether
         # another process holds <root>" about `git stash` in the process's OWN
@@ -814,8 +814,8 @@ def main() -> int:
             "The next register hook CARRIES THE FAULT FORWARD (and keeps a "
             "copy of the file when there is one left to copy), so a routine "
             "SessionStart (startup, resume, clear, compact) does not clear "
-            "this: ownership stays unknown until a human looks. "
-            f"{kernel_proc.recovery()}"
+            "this while the fault stands. "
+            f"{kernel_proc.recovery(kernel_proc.fault_kind(table))}"
         )
         return 0
     for kind, target, verb in hits:
@@ -857,11 +857,7 @@ def main() -> int:
             deny(
                 f"KERNEL ISOLATION: `{verb}` targets {target}, the lane of "
                 f"{describe(owner, row)}. One writer per lane, the parent "
-                "included. Touch your own paths, or wait for that process to "
-                f"exit (lanes free on the exit line, or after {kernel_proc.TTL}s "
-                f"of silence). The operator can free a stuck one: `octo ps "
-                f"--release {owner}` (Phase 1b; on a brain without it, edit the "
-                "ptable row from the terminal)."
+                f"included. Touch your own paths. {kernel_proc.lane_recovery(owner)}"
             )
         return 0
     return 0
@@ -892,7 +888,7 @@ if __name__ == "__main__":
         # or the arms config, where allowing the call is the right failure. The
         # one exception that must NOT arrive here is the ownership question
         # itself, which is why `main()` denies around `read_ptable_detail`
-        # rather than leaving it to this line (QA cycle 6 F2: a RecursionError
+        # rather than leaving it to this line (QA cycle 4 F2: a RecursionError
         # from the parser reached here and exited 0 with empty stdout, empty
         # stderr and no journal line).
         sys.exit(0)

@@ -9,11 +9,11 @@
   "cwd": "{{SANDBOX}}/work/tree",
   "agent_id": "agent-b",
   "_setup": {
-    "ptable": {
-      "version": 1,
-      "processes": {}
+    "mangle_lanes": {
+      "agent-a": [
+        ""
+      ]
     },
-    "journals": "none",
-    "kernel_history": "none"
+    "expect_names": "could not be read"
   }
 }

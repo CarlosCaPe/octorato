@@ -12,6 +12,7 @@
       "version": 1,
       "processes": {}
     },
-    "journals": "none"
+    "journals": "none",
+    "kernel_history": "none"
   }
 }

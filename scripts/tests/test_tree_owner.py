@@ -14,6 +14,7 @@ Timing is never asserted (v8-kernel.md section 3).
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -22,6 +23,7 @@ import sys
 import tempfile
 import time
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parent.parent
@@ -58,6 +60,18 @@ class IsolationCase(unittest.TestCase):
         for child in ("agent-a", "agent-b"):
             kernel_proc.register(child, {"ppid": "sess-parent", "type": "builder",
                                          "worktree": self.tree})
+        # EACH ONE HAS RUN A TOOL, which is what "these processes are running"
+        # means everywhere below. Registered-and-never-worked was the state the
+        # setup actually built, and cycle 5 C3 made the difference load-bearing:
+        # `live_journal_pids` now ignores a journal that carries only `start`
+        # lines, because a registration in flight holds no lane (`claim_lane`
+        # creates the row and runs off a tool call), and counting one made two
+        # SessionStart hooks on a table-less machine fault each other forever.
+        # A lane holder that has never journaled a tool call is not a state a
+        # real machine sits in; it was a shortcut in the fixture.
+        for pid in ("sess-parent", "agent-a", "agent-b"):
+            kernel_proc.append(pid, {"kind": "tool", "tool_name": "Read",
+                                     "tool_use_id": f"toolu_{pid}"})
 
     def tearDown(self):
         for key, value in zip(("HOME", "USERPROFILE"), self._saved):
@@ -77,6 +91,22 @@ class IsolationCase(unittest.TestCase):
                             capture_output=True, text=True, cwd=self.home, env=env,
                             timeout=30)
         return cp.returncode, cp.stdout
+
+    def age_journal(self, pid, age_seconds):
+        """Backdate BOTH halves of a journal's liveness: its mtime AND the `ts`
+        of its last chained record. `os.utime` alone is the cycle 5 C4 ATTACK,
+        not an expiry, and `test_c4_*` asserts it stays denied."""
+        path = kernel_proc.journal_path(pid)
+        when = time.time() - age_seconds
+        with open(path, encoding="utf-8") as fh:
+            lines = [ln for ln in fh.read().split("\n") if ln.strip()]
+        if lines:
+            rec = json.loads(lines[-1])
+            rec["ts"] = when
+            lines[-1] = json.dumps(rec, separators=(",", ":"))
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("\n".join(lines) + "\n")
+        os.utime(path, (when, when))
 
     def denied(self, out: str) -> bool:
         try:
@@ -151,8 +181,7 @@ class ExpiredHolder(IsolationCase):
 
     def test_a_holder_past_the_ttl_holds_nothing(self):
         self.run_gate(WRITE_GATE, self.write_payload("agent-a", self.a_py))
-        stale = time.time() - (kernel_proc.TTL + 300)
-        os.utime(kernel_proc.journal_path("agent-a"), (stale, stale))
+        self.age_journal("agent-a", kernel_proc.TTL + 300)
         rc, out = self.run_gate(
             BASH_GATE, self.bash_payload("agent-b", "git checkout -- pkg/a.py"))
         self.assertFalse(self.denied(out))
@@ -528,7 +557,7 @@ class QaCycle1(IsolationCase):
         self.assertIn("sess-parent", out)
 
     def test_d10_no_ptable_on_disk_claims_nothing(self):
-        """Still claims nothing, and since QA cycle 5 F3 it also DENIES, because
+        """Still claims nothing, and since QA cycle 3 F3 it also DENIES, because
         the journals of the three registered processes are sitting right there:
         a table that is gone beside live journals is a machine whose record was
         removed, not a machine with nothing on it. The half this test was
@@ -703,7 +732,7 @@ class QaCycle2(IsolationCase):
 
 
 class UnreadableTableFailsClosed(IsolationCase):
-    """QA cycle 3, F1. The serious one: a `processes` that is not an object was
+    """QA cycle 1, F1. The serious one: a `processes` that is not an object was
     a silent TOTAL loss, and the gate then let the intruder through.
 
     Measured on the tip before this change. A healthy table where `owner` holds
@@ -773,7 +802,7 @@ class UnreadableTableFailsClosed(IsolationCase):
         return cp
 
     def test_a_routine_session_start_does_not_reopen_the_gate(self):
-        """QA cycle 4, F1. The gate failed closed and then stopped, because the
+        """QA cycle 2, F1. The gate failed closed and then stopped, because the
         very next `register` published `fresh_table()` plus its own row and the
         fault went with it. Measured on the tip before this change, this exact
         sequence: denied while faulted, register hook rc=0, rows on disk
@@ -835,7 +864,7 @@ class UnreadableTableFailsClosed(IsolationCase):
 
 
 class DeletedTableFailsClosed(IsolationCase):
-    """QA cycle 5, F3. Corrupting the table was the loud attack and it was
+    """QA cycle 3, F3. Corrupting the table was the loud attack and it was
     guarded; DELETING it was the cheap one and it was not, and both reach the
     file through the same door (`rm` is denied here, `python3 -c` and `ln -sf`
     are not, which `QaCycle1.test_named_residuals_are_honestly_uncovered`
@@ -878,18 +907,39 @@ class DeletedTableFailsClosed(IsolationCase):
         self.assertIn("absent", self.reason(out))
 
     def test_a_machine_with_nothing_running_is_still_a_fresh_install(self):
-        """The half that keeps this from being "deny always". With the journals
-        gone too there is nothing on this machine to protect, and both gates
-        have to allow: a rule that cannot tell a fresh install from a loss is a
-        broken laptop, not a stricter gate."""
+        """The half that keeps this from being "deny always". A quiet machine
+        still has its journals, it just has old ones, and both gates have to
+        allow: a rule that cannot tell a fresh install from a loss is a broken
+        laptop, not a stricter gate.
+
+        The journals used to be DELETED here to build "quiet", and cycle 5 M1
+        made that a different state with a different answer: an empty journal
+        directory on a machine that has run hooks is a sweep, not an idle
+        laptop, and the kernel cannot produce it (`register` writes its own
+        journal before it takes the lock). The test below is that half.
+        """
         os.unlink(kernel_proc.ptable_path())
         for name in os.listdir(kernel_proc.journal_dir()):
-            os.unlink(os.path.join(kernel_proc.journal_dir(), name))
+            if name.endswith(".jsonl"):
+                self.age_journal(name[:-len(".jsonl")], kernel_proc.TTL + 300)
         rc, out = self.run_gate(WRITE_GATE, self.write_payload("agent-b", self.a_py))
         self.assertFalse(self.denied(out))
         rc, out = self.run_gate(BASH_GATE,
                                 self.bash_payload("agent-b", f"rm -f {self.a_py}"))
         self.assertFalse(self.denied(out))
+
+    def test_the_table_and_the_journals_swept_together_is_denied(self):
+        """Cycle 5 M1 state 1, and the one edit from the test above: `rm
+        ptable.json journal/*.jsonl`. The directory stays, so the deletion guard
+        reads it as usable, and no journal reads live because there are none.
+        Two deletions, every history marker intact, and both gates allowed."""
+        self.hold()
+        os.unlink(kernel_proc.ptable_path())
+        for name in os.listdir(kernel_proc.journal_dir()):
+            os.unlink(os.path.join(kernel_proc.journal_dir(), name))
+        rc, out = self.run_gate(WRITE_GATE, self.write_payload("agent-b", self.a_py))
+        self.assertTrue(self.denied(out))
+        self.assertIn("journal directory", self.reason(out))
 
     def test_an_expired_holder_does_not_hold_the_machine_faulted(self):
         """Liveness is the existing definition, not a file count: journals past
@@ -897,15 +947,15 @@ class DeletedTableFailsClosed(IsolationCase):
         machine that really has nothing running."""
         self.hold()
         os.unlink(kernel_proc.ptable_path())
-        old = time.time() - (kernel_proc.TTL + 300)
         for name in os.listdir(kernel_proc.journal_dir()):
-            os.utime(os.path.join(kernel_proc.journal_dir(), name), (old, old))
+            if name.endswith(".jsonl"):
+                self.age_journal(name[:-len(".jsonl")], kernel_proc.TTL + 300)
         rc, out = self.run_gate(WRITE_GATE, self.write_payload("agent-b", self.a_py))
         self.assertFalse(self.denied(out))
 
 
 class SymlinkLoopFailsClosed(IsolationCase):
-    """QA cycle 5, F1, from the gate. `read_ptable_detail` had two `except
+    """QA cycle 3, F1, from the gate. `read_ptable_detail` had two `except
     OSError` legs and only one of them carried the fault forward. The tested
     shape (a directory at the ptable path) failed at `open` and hit the carrying
     leg; an ELOOP symlink fails one line earlier at the stat and hit the other,
@@ -960,7 +1010,7 @@ class SymlinkLoopFailsClosed(IsolationCase):
 
 
 class FaultDenyMessageIsAboutTheRightThing(IsolationCase):
-    """QA cycle 5, F6. During a fault the Bash gate denies `git stash` in the
+    """QA cycle 3, F6. During a fault the Bash gate denies `git stash` in the
     process's OWN tree, which is right (that verb rewrites every file under the
     root, including files held by processes the gate can no longer see) and the
     message was wrong about why: it said "cannot tell whether another process
@@ -1055,7 +1105,7 @@ class DenyNamesWhatIsKnown(IsolationCase):
 
 
 class TheAgentProofClaimIsMeasured(IsolationCase):
-    """QA cycle 5. `kernel_proc.recovery` explains why the way out is a file
+    """QA cycle 3. `kernel_proc.recovery` explains why the way out is a file
     operation and not a subcommand, and it used to explain it with a claim the
     mechanism does not support: "a command an agent could run would be a
     command that clears its own gate". QA verified it for `rm`, `mv` and `>`
@@ -1101,7 +1151,7 @@ class TheAgentProofClaimIsMeasured(IsolationCase):
         self.assertIn("ln -sf", doc)
 
 
-class QaCycle6(IsolationCase):
+class QaCycle4(IsolationCase):
     """The same class of bug as the corrupt table, reached seven cheaper ways.
 
     Every assertion here lands on the GATE, which is the last hop and the one
@@ -1132,12 +1182,26 @@ class QaCycle6(IsolationCase):
         with open(kernel_proc.ptable_path(), "w", encoding="utf-8") as fh:
             json.dump(data, fh)
 
-    def both_deny(self, needle, why=""):
-        """The intruder's write and the intruder's `rm`, on both gates."""
+    def both_deny(self, needle, why="", setup=None):
+        """The intruder's write and the intruder's `rm`, on both gates.
+
+        `setup` is re-applied before the SECOND gate, and cycle 5 is why it had
+        to exist. The first gate's own `journal_deny` calls `append`, which
+        creates the journal directory, so a test that removed that directory
+        measured the second gate against a machine where it was back: the fault
+        changed from journal-evidence to zero-rows and the assertion passed
+        anyway, because the needle was sitting in the generic `recovery()` text
+        appended to every deny. Per-kind recovery took that boilerplate away and
+        exposed it. Each gate is measured in the state the test built.
+        """
+        if setup:
+            setup()
         rc, out = self.run_gate(WRITE_GATE, self.write_payload("agent-b", self.a_py))
         self.assertEqual(rc, 0)
         self.assertTrue(self.denied(out), f"the write gate allowed it {why}")
         self.assertIn(needle, self.reason(out))
+        if setup:
+            setup()
         rc, out = self.run_gate(BASH_GATE,
                                 self.bash_payload("agent-b", f"rm -f {self.a_py}"))
         self.assertEqual(rc, 0)
@@ -1182,7 +1246,8 @@ class QaCycle6(IsolationCase):
         a loss is a broken laptop, not a stricter gate."""
         self.write_table({"version": 1, "processes": {}})
         for name in os.listdir(kernel_proc.journal_dir()):
-            os.unlink(os.path.join(kernel_proc.journal_dir(), name))
+            if name.endswith(".jsonl"):
+                self.age_journal(name[:-len(".jsonl")], kernel_proc.TTL + 300)
         self.both_allow("on a machine with nothing running")
 
     # ── F1b/F1c: rows that could not be read ───────────────────────────────
@@ -1277,27 +1342,37 @@ class QaCycle6(IsolationCase):
         ALLOW on both gates for `rm ptable.json && rm -rf journal/`. The kernel
         directory still shows it has run hooks, which is what tells this apart
         from a machine that never did."""
-        os.unlink(kernel_proc.ptable_path())
-        shutil.rmtree(kernel_proc.journal_dir())
-        self.both_deny("journal directory", "with the journals gone too")
+        def wipe():
+            if os.path.exists(kernel_proc.ptable_path()):
+                os.unlink(kernel_proc.ptable_path())
+            shutil.rmtree(kernel_proc.journal_dir(), ignore_errors=True)
+        self.both_deny("journal directory", "with the journals gone too", wipe)
 
     def test_f3_an_unreadable_journal_directory_is_denied(self):
         """The same move without the deletion. This one needs no history check:
         a directory that exists and cannot be walked is a state the kernel
         cannot produce."""
-        os.unlink(kernel_proc.ptable_path())
-        os.chmod(kernel_proc.journal_dir(), 0o000)
+        def lock_out():
+            if os.path.exists(kernel_proc.ptable_path()):
+                os.unlink(kernel_proc.ptable_path())
+            os.makedirs(kernel_proc.journal_dir(), exist_ok=True)
+            os.chmod(kernel_proc.journal_dir(), 0o000)
         try:
-            self.both_deny("cannot be read", "with the journals unreadable")
+            self.both_deny("cannot be read", "with the journals unreadable",
+                           lock_out)
         finally:
             os.chmod(kernel_proc.journal_dir(), 0o755)
 
     def test_f3_a_file_where_the_journal_directory_belongs_is_denied(self):
-        os.unlink(kernel_proc.ptable_path())
-        shutil.rmtree(kernel_proc.journal_dir())
-        with open(kernel_proc.journal_dir(), "w", encoding="utf-8") as fh:
-            fh.write("not a directory\n")
-        self.both_deny("cannot be read", "with a file where the journals were")
+        def replace_with_file():
+            if os.path.exists(kernel_proc.ptable_path()):
+                os.unlink(kernel_proc.ptable_path())
+            if os.path.isdir(kernel_proc.journal_dir()):
+                shutil.rmtree(kernel_proc.journal_dir())
+            with open(kernel_proc.journal_dir(), "w", encoding="utf-8") as fh:
+                fh.write("not a directory\n")
+        self.both_deny("cannot be read", "with a file where the journals were",
+                       replace_with_file)
 
     def test_f3_the_residual_is_a_home_that_shows_no_history_at_all(self):
         """Stated, measured and allowed, the way `recovery()` states the
@@ -1416,8 +1491,30 @@ class Selftests(unittest.TestCase):
                                 cwd=str(SCRIPTS.parent), timeout=180)
             self.assertEqual(cp.returncode, 0, cp.stderr or cp.stdout)
 
+    def test_a_gate_that_never_returns_is_a_named_failure_not_a_traceback(self):
+        """The fifo fixture's whole assertion is that the gate RETURNS, and it
+        was written as a bare `subprocess.run(timeout=30)`: a hang escaped as
+        `TimeoutExpired` and killed the selftest with a stack trace instead of
+        saying which fixture hung. A harness that fails by crashing cannot tell
+        a hang from a bug in itself."""
+        from unittest import mock
+        write = _load(WRITE_GATE, "tree_owner_write_hang")
+        with mock.patch.object(
+                write, "__name__", write.__name__), \
+             mock.patch("subprocess.run",
+                        side_effect=subprocess.TimeoutExpired("gate", 30)):
+            out = io.StringIO()
+            err = io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
+                rc = write.run_isolation_selftest(
+                    str(WRITE_GATE), str(SCRIPTS.parent / self.FIXTURES),
+                    write.WRITE_TOOLS + ("Agent",), "hang-probe")
+        self.assertEqual(rc, 1)
+        self.assertIn("HUNG", err.getvalue())
+        self.assertNotIn("Traceback", err.getvalue())
+
     def test_the_fault_branch_is_inside_the_mechanism_that_proves_the_gates(self):
-        """QA cycle 5, F4, and it is RULE #1 territory. The whole fail-closed
+        """QA cycle 3, F4, and it is RULE #1 territory. The whole fail-closed
         fault branch could be DELETED from both gates and both selftests still
         passed with identical counts (3+2/29 and 16+13/5), and `brain_doctor`
         still reported that both isolation gates prove themselves. No fixture
@@ -1442,7 +1539,7 @@ class Selftests(unittest.TestCase):
             setup = json.loads(path.read_text())["_setup"]
             self.assertIn("ptable", setup, name)
 
-    def test_every_qa_cycle_6_branch_has_a_fixture_on_both_gates(self):
+    def test_every_qa_cycle_4_branch_has_a_fixture_on_both_gates(self):
         """Same rule, one cycle later. Seven more ways into the same class of
         bug, so seven more branches the doctor's gate-liveness check has to
         actually exercise: a fixture that does not exist is a count that cannot
@@ -1482,6 +1579,33 @@ class Selftests(unittest.TestCase):
                 path = fdir / f"{prefix}{stem}.json"
                 self.assertTrue(path.is_file(), path)
                 self.assertIn(key, json.loads(path.read_text())["_setup"], path.name)
+
+        # Cycle 5 adds four branches to the same manifest, for the same
+        # reason: `_readable_row`'s null and empty-string lanes were caught by
+        # unit tests and by NEITHER selftest, so the doctor's gate-liveness
+        # check could not move on them; M1's sweep and M2's damaged directory
+        # beside an intact table had no fixture at all.
+        cycle5 = {
+            "ptable_lanes_null": "mangle_lanes",              # C1-era row shapes
+            "ptable_lanes_empty_string": "mangle_lanes",
+            "ptable_deleted_journals_swept": "journals",      # M1 state 1
+            "journals_gone_table_intact": "journal_dir",      # M2
+        }
+        for stem, key in cycle5.items():
+            for prefix in ("violation_", "violation_write_"):
+                path = fdir / f"{prefix}{stem}.json"
+                self.assertTrue(path.is_file(), path)
+                self.assertIn(key, json.loads(path.read_text())["_setup"], path.name)
+        for prefix in ("benign_", "benign_write_"):
+            path = fdir / f"{prefix}journals_gone_no_history.json"
+            self.assertTrue(path.is_file(), path)          # M2's one-edit control
+        # M1's control is the fresh install, and what makes it benign is now
+        # STATED in the fixture rather than inherited from a gitignored file
+        # that happens not to be in the seed.
+        for stem in ("ptable_fresh_install", "ptable_empty_no_journals"):
+            for prefix in ("benign_", "benign_write_"):
+                setup = json.loads((fdir / f"{prefix}{stem}.json").read_text())["_setup"]
+                self.assertEqual(setup.get("kernel_history"), "none", stem)
 
         # F3's pair is the one whose meaning is a SINGLE key, so it is checked
         # as a pair rather than as two files. It also may not live in the seed:

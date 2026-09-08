@@ -3,14 +3,14 @@
   "tool_name": "Write",
   "tool_use_id": "toolu_iso",
   "tool_input": {
-    "file_path": "{{SANDBOX}}/work/tree/pkg/a.py",
-    "content": "print('hello')\n"
+    "file_path": "{{SANDBOX}}/work/solo/a.py",
+    "content": "print(1)\n"
   },
   "cwd": "{{SANDBOX}}/work/tree",
   "agent_id": "agent-b",
   "_setup": {
-    "ptable": "absent",
-    "journals": "none",
-    "kernel_history": "none"
+    "journal_dir": "gone",
+    "kernel_history": "seen",
+    "expect_names": "journal directory"
   }
 }

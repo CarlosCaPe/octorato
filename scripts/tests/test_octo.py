@@ -300,7 +300,7 @@ class CorruptRowTest(OctoCase):
             self.assertIn("1 unreadable row(s) dropped on read: junk", out, argv)
 
     def test_ps_names_the_row_even_when_its_own_prune_erases_it(self):
-        """QA cycle 3, F3. `cmd_ps` pruned BEFORE it read, and `prune_locked` is
+        """QA cycle 1, F3. `cmd_ps` pruned BEFORE it read, and `prune_locked` is
         a writer: on a table carrying one old dead row (the steady state of any
         machine that has run for a while, not an exotic fixture) it republished
         the file without the corrupt row, and the read that followed measured
@@ -337,7 +337,7 @@ class CorruptRowTest(OctoCase):
         anything else could. A reader that says `no processes` while a corrupt
         row sits in the file has told the operator the opposite of the truth.
 
-        Since QA cycle 6 F1a it does not print `no processes` here at ALL, and
+        Since QA cycle 4 F1a it does not print `no processes` here at ALL, and
         that is the stronger version of the same rule: `gone` is registered and
         its journal reads live, so a table that yields zero rows next to it is a
         machine whose record was removed, not a machine with nothing on it. The
@@ -345,6 +345,7 @@ class CorruptRowTest(OctoCase):
         row it dropped, which is what this always meant to pin.
         """
         kernel_proc.register("gone", {"kind": "main", "type": "main"})
+        kernel_proc.append("gone", {"kind": "tool", "tool_name": "Read"})
         with open(kernel_proc.ptable_path(), "w", encoding="utf-8") as fh:
             json.dump({"version": 1, "processes": {"junk": "not-a-row"}}, fh)
         rc, out, _ = self.run_octo(["ps"])
@@ -355,7 +356,7 @@ class CorruptRowTest(OctoCase):
         self.assertIn("1 unreadable row(s) dropped on read: junk", out)
 
     def test_the_two_listings_stop_contradicting_each_other(self):
-        """QA cycle 6 F1a, and it is the contradiction this PR cites as its own
+        """QA cycle 4 F1a, and it is the contradiction this PR cites as its own
         proof, reproduced by the cheapest move of all: one write of
         `{"version":1,"processes":{}}` over the file. `octo ps` printed "the
         kernel has registered nothing on this machine yet" while `octo top`
@@ -364,6 +365,8 @@ class CorruptRowTest(OctoCase):
         kernel_proc.register("sess-1", {"kind": "main", "type": "main", "worktree": "/w"})
         kernel_proc.register("agent-1", {"kind": "subagent", "ppid": "sess-1",
                                          "type": "Reality Checker", "worktree": "/w"})
+        for pid in ("sess-1", "agent-1"):
+            kernel_proc.append(pid, {"kind": "tool", "tool_name": "Read"})
         with open(kernel_proc.ptable_path(), "w", encoding="utf-8") as fh:
             json.dump({"version": 1, "processes": {}}, fh)
 
@@ -379,7 +382,7 @@ class CorruptRowTest(OctoCase):
 
 
 class UnreadableTableTest(OctoCase):
-    """QA cycle 3, F1, at the reader. With `processes` shaped as an array,
+    """QA cycle 1, F1, at the reader. With `processes` shaped as an array,
     `octo ps` printed `no processes: the kernel has registered nothing on this
     machine yet` over a file holding every row on the machine. A listing is
     allowed to say it found nothing; it is not allowed to say nothing was ever
@@ -434,7 +437,7 @@ class UnreadableTableTest(OctoCase):
         """`octo replay --fixture` had its own parser: `data if isinstance(data,
         dict) else {...}`, which accepts a `processes` that is an array and
         hands it to the renderer, and a row that is not an object with it.
-        Nothing failed when that was reverted (QA cycle 4, F4). A fixture is
+        Nothing failed when that was reverted (QA cycle 2, F4). A fixture is
         read by the SAME renderer as a live table, so a second shape rule here
         is exactly how the two drift, and the renderer that survives one and
         crashes on the other is not the one the golden test proved.
@@ -456,7 +459,7 @@ class UnreadableTableTest(OctoCase):
 
 
 class DeletedTableTest(OctoCase):
-    """QA cycle 5, F3, at the readers. The two of them contradicted each other
+    """QA cycle 3, F3, at the readers. The two of them contradicted each other
     out loud: with the table deleted and the journals untouched, `octo ps`
     printed "no processes: the kernel has registered nothing on this machine
     yet" while `octo top`, which walks the journal directory as well as the
@@ -621,3 +624,47 @@ class SelftestTest(OctoCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ConditionFaultListingTest(OctoCase):
+    """QA cycle 5, C1, at the reader. `octo ps` printed the TABLE-level
+    boilerplate ("Every row on this machine is missing from this listing, and
+    the count is unknown") directly under a listing that showed both rows, and
+    told the operator the fault is carried forward by every writer when this one
+    clears itself. The sentence was picked from a substring of the fault text;
+    it is picked from the fault KIND now, which is the same "decide on the
+    result, never on how it was spelled" rule the rest of this PR is about."""
+
+    def lost_lane_fault(self):
+        kernel_proc.register("owner", {"kind": "main", "worktree": "/w",
+                                       "type": "main"})
+        kernel_proc.claim_lane("owner", "/w/a.py")
+        kernel_proc.append("owner", {"kind": "tool", "tool_name": "Write"})
+        os.unlink(kernel_proc.journal_path("owner"))
+        table = kernel_proc.read_ptable()
+        table["processes"]["owner"]["registered_ts"] = time.time() - (kernel_proc.TTL + 60)
+        kernel_proc._write_ptable(table)
+        kernel_proc.register("sess-2", {"kind": "main", "worktree": "/w",
+                                        "type": "main"})
+
+    def test_ps_does_not_claim_the_rows_are_missing_while_it_lists_them(self):
+        self.lost_lane_fault()
+        rc, out, _ = self.run_octo(["ps"])
+        self.assertEqual(rc, 0)
+        self.assertIn("THE PROCESS TABLE IS UNREADABLE", out)
+        self.assertIn("owner", out, "the row is right there in the listing")
+        self.assertNotIn("Every row on this machine is missing", out)
+        self.assertNotIn("registering again does not clear it", out)
+        self.assertIn("clears itself", out)
+
+    def test_ps_still_says_the_rows_are_gone_when_they_are(self):
+        """The exclusion, one edit away: a table-level fault really does cost
+        every row, and that listing has to keep saying so."""
+        kernel_proc.register("owner", {"kind": "main", "worktree": "/w",
+                                       "type": "main"})
+        with open(kernel_proc.ptable_path(), "w", encoding="utf-8") as fh:
+            json.dump({"version": 1, "processes": []}, fh)
+        rc, out, _ = self.run_octo(["ps"])
+        self.assertEqual(rc, 0)
+        self.assertIn("Every row on this machine is missing", out)
+        self.assertIn("registering again does not clear it", out)

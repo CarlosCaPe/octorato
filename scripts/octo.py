@@ -218,7 +218,7 @@ def _row_type(row) -> str:
     return str(row.get("type") or UNKNOWN_TYPE)
 
 
-def _print_repair(dropped, fault="") -> None:
+def _print_repair(dropped, fault="", table=None) -> None:
     """Say what the read repaired, at whichever level it repaired it, or say nothing.
 
     `read_ptable_detail` drops a ptable value that is not an object so one
@@ -236,26 +236,44 @@ def _print_repair(dropped, fault="") -> None:
     everything under it.
     """
     if fault:
-        # The middle line is picked from the fault, because the two causes are
-        # not the same sentence and printing the corruption one over a DELETED
-        # table would be its own small falsehood (QA cycle 5, F3). What they
-        # share is the consequence, which is the line under it.
-        why = ("The file is not there, and the journals beside it say this "
-               "machine is not idle: the record of who holds what was removed "
-               "under running processes."
-               if "absent" in fault else
-               "Every row on this machine is missing from this listing, and "
-               "the count is unknown: nothing in a value that is not an object "
-               "maps back to a pid. The kernel publishes this file with "
-               "os.replace, so it writes neither a half-written nor an oddly "
-               "shaped one; a writer that is not the kernel touched it.")
+        # The middle line is picked from the fault KIND, not from a substring of
+        # its text, and cycle 5 C1 is why that had to change. Two of the five
+        # kinds leave every row in place and readable, and this printed the
+        # table-level boilerplate ("Every row on this machine is missing from
+        # this listing") directly under a listing that showed both rows. A
+        # reader that contradicts the table above it is the exact failure this
+        # whole seam cites as its own evidence.
+        kind = kernel_proc.fault_kind(table if table is not None else {})
+        why = {
+            kernel_proc.FAULT_ZERO_ROWS: (
+                "The rows are gone, and the journals beside the table say this "
+                "machine is not idle: the record of who holds what was removed "
+                "under running processes."),
+            kernel_proc.FAULT_LOST_LANES: (
+                "The rows below are intact; what is missing is the JOURNAL of "
+                "the ones the fault names, so their lanes cannot be released "
+                "by anything that reads them."),
+            kernel_proc.FAULT_JOURNAL_EVIDENCE: (
+                "The rows below are intact; what is missing is the directory "
+                "every liveness answer comes out of, so who is still running "
+                "is unknowable."),
+        }.get(kind,
+              "Every row on this machine is missing from this listing, and "
+              "the count is unknown: nothing in a value that is not an object "
+              "maps back to a pid. The kernel publishes this file with "
+              "os.replace, so it writes neither a half-written nor an oddly "
+              "shaped one; a writer that is not the kernel touched it.")
+        sticky = ("the fault is CARRIED FORWARD by every writer, so registering "
+                  "again does not clear it"
+                  if kind in ("", kernel_proc.FAULT_LATCHED) else
+                  "the fault is RE-DERIVED on every read, so it clears itself "
+                  "as soon as the condition below is gone")
         print(f"x THE PROCESS TABLE IS UNREADABLE: {fault}.\n"
               f"  {why}\n"
               f"  The isolation gates are DENYING writes while it reads this "
               f"way, which is the fail-closed half of one writer per tree, and "
-              f"the fault is CARRIED FORWARD by every writer, so registering "
-              f"again does not clear it.\n"
-              f"  {kernel_proc.recovery()}")
+              f"{sticky}.\n"
+              f"  {kernel_proc.recovery(kind)}")
     if not dropped:
         return
     shown = ", ".join(sorted(dropped)[:5])
@@ -313,14 +331,14 @@ def cmd_ps(args) -> int:
         # opposite of the truth to print here.
         if not fault:
             print("no processes: the kernel has registered nothing on this machine yet")
-        _print_repair(dropped, fault)
+        _print_repair(dropped, fault, table)
         return 0
     rows.sort(key=lambda r: (r[0], r[1]))
     print(_table(["PID", "PPID", "TYPE", "TOOLS", "EXIT", "AGE", "WORKTREE"],
                  [r[2] for r in rows]))
     print(f"\n{len(rows)} process(es), {live_n} live "
           f"(liveness: TTL {kernel_proc.TTL}s, v8-kernel.md section 2)")
-    _print_repair(dropped, fault)
+    _print_repair(dropped, fault, table)
     return 0
 
 
@@ -399,7 +417,7 @@ def cmd_top(args) -> int:
     if not rows:
         if not fault:
             print("no activity in the last 24 h and nothing live")
-        _print_repair(dropped, fault)
+        _print_repair(dropped, fault, table)
         return 0
     rows.sort(key=lambda r: (-int(r[2]), r[0]))
     tools = sum(int(r[2]) for r in rows)
@@ -433,7 +451,7 @@ def cmd_top(args) -> int:
         # these; the difference between the two counts is the point.
         print(f"{unknown} of them have a journal but no ptable row, so their "
               f"type reads `{UNKNOWN_TYPE}` (not shown by `octo ps`)")
-    _print_repair(dropped, fault)
+    _print_repair(dropped, fault, table)
     if by_rule:
         # WHICH rules are refusing is the number that changes behaviour; a bare
         # deny total says only that something did.

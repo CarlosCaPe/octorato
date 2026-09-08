@@ -1705,7 +1705,7 @@ def check_kernel_process_live(fix: bool) -> Result:
     # `octo ps`, `octo top` or a register hook. A repair nobody can see would be
     # its own failure mode, so the doctor says it happened.
     #
-    # FAIL, not WARN, since QA cycle 6 F1c. The old rationale was that "a
+    # FAIL, not WARN, since QA cycle 4 F1c. The old rationale was that "a
     # row-level drop costs n named rows and leaves a working, self-repairing
     # kernel", and it does not survive n being ALL of them: every row on this
     # machine can be lost one row at a time, and the self-repair is the part

@@ -8,8 +8,11 @@
   "cwd": "{{SANDBOX}}/work/tree",
   "agent_id": "agent-b",
   "_setup": {
-    "ptable": "absent",
-    "journals": "none",
-    "kernel_history": "none"
+    "mangle_lanes": {
+      "agent-a": [
+        ""
+      ]
+    },
+    "expect_names": "could not be read"
   }
 }

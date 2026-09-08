@@ -10,6 +10,7 @@
   "_setup": {
     "ptable": "absent",
     "journals": "none",
-    "kernel_history": "none"
+    "kernel_history": "seen",
+    "expect_names": "journal directory"
   }
 }

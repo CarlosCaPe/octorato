@@ -238,7 +238,7 @@ def main() -> int:
         )
         return 0
     if not fault and dropped:
-        # A ROW-LEVEL DROP IS A DENY TOO (QA cycle 6 F1c). Corrupting one row is
+        # A ROW-LEVEL DROP IS A DENY TOO (QA cycle 4 F1c). Corrupting one row is
         # the most surgical version of this attack: the holder's row replaced
         # with a string, the fault empty, this gate allowing, and the next
         # register republishing the table without that row so the lane is gone
@@ -286,8 +286,8 @@ def main() -> int:
             "The next register hook CARRIES THE FAULT FORWARD (and keeps a "
             "copy of the file when there is one left to copy), so a routine "
             "SessionStart (startup, resume, clear, compact) does not clear "
-            "this: ownership stays unknown until a human looks. "
-            f"{kernel_proc.recovery()}"
+            "this while the fault stands. "
+            f"{kernel_proc.recovery(kernel_proc.fault_kind(table))}"
         )
         return 0
 
@@ -297,11 +297,7 @@ def main() -> int:
         deny(
             f"KERNEL ISOLATION: {target} is the lane of {describe(owner, row)}. "
             "One writer per lane, the parent included: a second writer on one "
-            "file is how a changeset gets shredded. Wait for that process to "
-            "exit (its lane frees on its exit line, or after "
-            f"{kernel_proc.TTL}s of silence), work in your own worktree, or have "
-            f"the operator free it from a terminal: `octo ps --release {owner}` "
-            "(Phase 1b; on a brain without it, edit the ptable row from the terminal)."
+            f"file is how a changeset gets shredded. {kernel_proc.lane_recovery(owner)}"
         )
         return 0
 
@@ -361,7 +357,7 @@ def build_sandbox(fdir: str, sandbox: str, setup=None) -> None:
     5. stamp every journal mtime to NOW, except the pids the leg wants EXPIRED,
        which are stamped past the TTL so their lanes read released.
 
-    The two overrides exist for QA cycle 5 F4, which found the central
+    The two overrides exist for QA cycle 3 F4, which found the central
     protection of this change covered by no fixture at all: the fail-closed
     fault branch could be DELETED from both gates and both selftests still
     passed with identical counts, because a count that cannot move looks like a
@@ -379,7 +375,7 @@ def build_sandbox(fdir: str, sandbox: str, setup=None) -> None:
                         or "the gate denies when it cannot read the table"
                         would be indistinguishable from "the gate denies".
 
-    QA cycle 6 added six more, all applied LAST (see the block at the end):
+    QA cycle 4 added six more, all applied LAST (see the block at the end):
 
       `_setup.corrupt_rows`  [pid, ...] whose row VALUE is replaced in the
                         seeded table, keeping every other row and its rewritten
@@ -473,9 +469,31 @@ def build_sandbox(fdir: str, sandbox: str, setup=None) -> None:
         if pid is None:
             continue
         stamp = now - (kernel_proc.TTL + 300) if pid in (age_pids or ()) else now
-        os.utime(os.path.join(jdir, name), (stamp, stamp))
+        path = os.path.join(jdir, name)
+        # THE RECORD IS STAMPED TOO, since cycle 5 C4. Liveness no longer reads
+        # the mtime alone: a stale mtime is re-checked against the `ts` of the
+        # last CHAINED record, because `touch` on a live holder's journal used
+        # to free its lane with nothing deleted and the chain intact. That makes
+        # the seeded `ts` load-bearing, and a fixture whose two halves disagree
+        # about when a process last ran expresses no state at all: `age_pids`
+        # would have stopped meaning "expired" the moment it started meaning
+        # "expired by mtime and live by record". Only the LAST line is rewritten,
+        # which is the only one `_record_ts` reads and the one no `prev` hash
+        # points at, so the chain still verifies.
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                lines = [ln for ln in fh.read().split("\n") if ln.strip()]
+            if lines:
+                rec = json.loads(lines[-1])
+                rec["ts"] = stamp
+                lines[-1] = json.dumps(rec, separators=(",", ":"))
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write("\n".join(lines) + "\n")
+        except (OSError, ValueError):
+            pass
+        os.utime(path, (stamp, stamp))
 
-    # QA cycle 6 overrides, applied LAST because each one leaves the kernel
+    # QA cycle 4 overrides, applied LAST because each one leaves the kernel
     # directory in a state the steps above could not walk. Each names the
     # finding it seeds, so a fixture that stops meaning something is traceable
     # to the branch it was built for.
@@ -595,10 +613,22 @@ def run_isolation_selftest(script: str, fdir: str, my_tools, label: str) -> int:
             env["HOME"] = sandbox
             env["USERPROFILE"] = sandbox
             env["CLAUDE_SESSION_ID"] = "__selftest__"
-            cp = subprocess.run([sys.executable, script], input=body,
-                                capture_output=True, text=True, cwd=sandbox,
-                                env=env, timeout=30)
-            did_block = gate_selftest.emits_block(cp.returncode, cp.stdout)
+            try:
+                cp = subprocess.run([sys.executable, script], input=body,
+                                    capture_output=True, text=True, cwd=sandbox,
+                                    env=env, timeout=30)
+            except subprocess.TimeoutExpired:
+                # A NAMED FAILURE, not a traceback. The fifo fixture's whole
+                # assertion is that the gate RETURNS, and a hook that never
+                # returns is neither fail-closed nor fail-open, it is a wedged
+                # session. Letting TimeoutExpired escape made that assertion a
+                # crash: the selftest died with a stack trace instead of saying
+                # which fixture hung and for how long, and a harness that fails
+                # by crashing cannot tell a hang from a bug in itself.
+                failures.append(f"{name} HUNG: no verdict within 30s")
+                continue
+            rc, out = cp.returncode, cp.stdout
+            did_block = gate_selftest.emits_block(rc, out)
         finally:
             shutil.rmtree(sandbox, ignore_errors=True)
 
@@ -610,15 +640,15 @@ def run_isolation_selftest(script: str, fdir: str, my_tools, label: str) -> int:
             continue
         if name.startswith("violation"):
             if not did_block:
-                failures.append(f"{name} did NOT block (rc={cp.returncode})")
+                failures.append(f"{name} did NOT block (rc={rc})")
                 continue
             blocked += 1
             want = setup.get("expect_names")
-            if want and want not in cp.stdout:
+            if want and want not in out:
                 failures.append(f"{name} blocked without naming {want}")
         else:
             if did_block:
-                failures.append(f"{name} WAS blocked (must allow, rc={cp.returncode})")
+                failures.append(f"{name} WAS blocked (must allow, rc={rc})")
                 continue
             allowed += 1
 
@@ -647,7 +677,7 @@ if __name__ == "__main__":
         # config or the payload shape, where allowing the call is the right
         # failure. The one exception that must NOT arrive here is the ownership
         # question itself, which is why `main()` denies around
-        # `read_ptable_detail` rather than leaving it to this line (QA cycle 6
+        # `read_ptable_detail` rather than leaving it to this line (QA cycle 4
         # F2: a RecursionError from the parser reached here and exited 0 with
         # empty stdout, empty stderr and no journal line).
         sys.exit(0)
