@@ -124,18 +124,22 @@ Two rules keep the anchor honest once you have it:
 
 - Match the verb on **decoded** tokens. `gh "pr" merge 291` is the same command as `gh pr merge 291`, and a raw-string matcher sees neither. Decoding does not re-match a quoted mention: a whole-token quote stays ONE token.
 - Recurse into a head that **re-parses** its string argument (`bash -c`, `sh -lc`, `eval`, `ssh host`, `script -qc`, a shell reading a heredoc); never into one that does not (`git commit -m`, `echo`, `cat <<EOF`). Quoting is not the discriminator; re-parsing is.
+- Decide re-parsing by the **head**, never by a list of channels. `-c`, `--command`, stdin, `-o RemoteCommand=` is an enumeration, and an enumeration of channels loses to the next channel the same way an enumeration of verbs loses to the next verb: `env -S`, `--split-string=`, `watch`, a bare `| bash` and `git -c core.sshCommand=` all arrived in ONE review cycle. Invert it — on a head that is neither a command head nor one whose arguments are DATA, every argument that parses as a whole command line is a command that wrapper runs — and carry the enumeration on the head dimension instead, where the members are finite, famous, and fail as a loud over-fire rather than a silent allow.
+- Three CHANNELS execute a span of the line regardless of the head, so read them before you look at the head at all: `$(…)` and backticks, `<(…)`/`>(…)`, and a `|` into a stage that executes its stdin. When you close one member of that class, enumerate the others in the same commit — closing `<(…)` and leaving `$(…)` open for two cycles is what this rule is made of.
 
 ## Residual Risk
 
-What string matching still cannot see. The canonical list is **nine** residuals, kept in full in `scripts/qa-merge-gate.py`'s header and summarized in [[agent-proof-approval-gate]]. The three lines below are residuals 1 and 2 of that list, the two that are purely a parsing limit.
+What string matching still cannot see. The canonical list is **eleven** residuals, kept in full in `scripts/qa-merge-gate.py`'s header and summarized in [[agent-proof-approval-gate]]. The three lines below are residuals 1 and 2 of that list, the two that are purely a parsing limit.
 
 ```bash
 X="pr merge"; gh $X 291      # the verb itself comes from an expansion
-$(echo "gh pr merge 96")     # the whole command inside one substitution
+$(echo "gh pr merge 96")     # the verb is inside a QUOTED string the sub echoes
 ./deploy.sh                  # the command lives in a file
 ```
 
-Two more are parsing-layer and were added by the cycle-4 fixes, so they belong here too: a program whose `-c` means COUNT or QUERY (`grep`, `psql`, `gcc`) is exempt from the unnamed-wrapper `-c` reading, anchored on the HEAD word only, so an unlisted counter reached through `find -exec` still over-fires and a wrapper deliberately NAMED `grep` escapes; and parse TIME on an adversarially long line, where a hook killed at its budget writes no stdout and the harness reads that as ALLOW.
+Read the middle line precisely, because its literal twin is NOT a residual any more: `$(echo gh pr merge 96)` denies, and so do `echo $(gh pr merge 291)`, `x=$(…)` and the backtick spelling. A command substitution is a CHANNEL whose contents are re-matched, exactly like the `<(…)` closed a cycle earlier; what stays open is the verb arriving from an EXPANSION, which is a different thing wearing the same parentheses.
+
+Two more are parsing-layer and were added by the cycle-4 fixes, so they belong here too: a program whose arguments are DATA (`grep`, `psql`, `gcc`, `echo`, `awk`) is exempt from the unnamed-wrapper argument reading, anchored on the HEAD word only, so an unlisted counter reached through `find -exec` still over-fires and a wrapper deliberately NAMED `grep` escapes; and parse TIME on an adversarially long line, where a hook killed at its budget writes no stdout and the harness reads that as ALLOW.
 
 Three flag-parsing rules earned the same way, each measured executing the real command through a fake binary on PATH:
 

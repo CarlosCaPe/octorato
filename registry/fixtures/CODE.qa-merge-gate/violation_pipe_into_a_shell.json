@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "printf %s \"gh pr merge 291\" | bash"
+  },
+  "cwd": "/nonexistent/repo"
+}

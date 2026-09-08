@@ -1422,6 +1422,169 @@ class TestACountFlagIsNotACommandChannel(unittest.TestCase):
         self.assertTrue(gate._find_publish_subcmds(f'bash <(echo "{GH_MERGE} 292")'))
 
 
+class TestACommandSubstitutionIsAChannel(unittest.TestCase):
+    """QA cycle 5, Class A — a fix that closed ONE member of a class and declared
+    the class handled. Cycle 3 closed `<(…)` as a channel whose contents are
+    re-matched; `$(…)` is the same channel, more common, and its contents were
+    never looked at. `cat <(gh pr merge 291)` DENIED while
+    `echo $(gh pr merge 291)` ALLOWED, both measured executing a fake `gh` on
+    PATH — the asymmetry is the proof, because both spellings run the merge.
+
+    This is NOT residual 1. There the verb comes FROM an expansion and sits
+    OUTSIDE the substitution (`$(echo gh) pr merge 291`); here the verb is fully
+    literal and sits INSIDE a `$(…)` that runs it.
+    """
+
+    def test_every_substitution_spelling_carries_the_merge(self):
+        for cmd in (f"echo $({GH_MERGE} 291)",
+                    f"x=$({GH_MERGE} 291)",
+                    f"echo `{GH_MERGE} 291`",
+                    f'eval "$(echo {GH_MERGE} 291)"',
+                    f"tee >({GH_MERGE} 291) < /dev/null",
+                    "y=`git push origin main`",
+                    f"git commit -m \"$({GH_MERGE} 291)\"",
+                    f"echo $(x $({GH_MERGE} 291))"):
+            with self.subTest(cmd=cmd):
+                self.assertTrue(gate._find_publish_subcmds(cmd), cmd)
+
+    def test_the_scanner_returns_the_contents_not_the_wrapper(self):
+        self.assertEqual([f"{GH_MERGE} 291"],
+                         gate._command_substitution_texts(f"echo $({GH_MERGE} 291)"))
+        self.assertEqual([f"{GH_MERGE} 291"],
+                         gate._command_substitution_texts(f"echo `{GH_MERGE} 291`"))
+
+    def test_the_opaque_head_reading_is_not_regressed(self):
+        # residual 1's deliberate behaviour: the verb comes from the REMAINDER,
+        # and the substitution itself carries no publish form.
+        self.assertEqual(["echo gh"],
+                         gate._command_substitution_texts("$(echo gh) pr merge 291"))
+        self.assertEqual([], gate._find_publish_subcmds("echo gh"))
+        self.assertTrue(gate._find_publish_subcmds("$(echo gh) pr merge 291"))
+
+    def test_what_a_substitution_is_not(self):
+        # arithmetic opens with the same two characters and runs nothing; a
+        # substitution inside SINGLE quotes is not one; and the contents are read
+        # as a command LINE, so a quoted mention inside them is that command's
+        # data (`grep` is reading a file, not merging).
+        for cmd in ("echo $((1+2)) && echo done",
+                    f"docs='{GH_MERGE}'; echo $docs",
+                    f'x=$(grep "{GH_MERGE} 291" notes.md)',
+                    'echo "$(git log --oneline -1)"',
+                    "msg=$(git rev-parse --short HEAD); echo $msg"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual([], gate._find_publish_subcmds(cmd), cmd)
+
+
+class TestAnOptionAfterTheCommandFlagCanTakeAValue(unittest.TestCase):
+    """QA cycle 5, Class B — the cycle-4 fix left half done. `--` and boolean
+    short options after `-c` were handled; an option that takes a VALUE was
+    skipped without its value, so the VALUE came back as the command string
+    (`bash -c -o pipefail "gh pr merge 292"` returned `pipefail` and ALLOWED),
+    and the `+` spellings did not even look like options (`+O` does not start
+    with `-`, so it was returned as the command itself).
+
+    `sh -c -o` and `dash -c -o` also allowed but do NOT execute on those shells
+    (measured), so they are not counted as bypasses here — only bash's do.
+    """
+
+    def test_the_command_string_is_found_past_a_valued_option(self):
+        for rest, want in ((["-c", "-o", "pipefail", "CMD"], "CMD"),
+                           (["-c", "+o", "pipefail", "CMD"], "CMD"),
+                           (["-c", "-O", "extglob", "CMD"], "CMD"),
+                           (["-c", "+O", "extglob", "CMD"], "CMD"),
+                           (["-co", "pipefail", "CMD"], "CMD"),
+                           (["-c", "-Oextglob", "CMD"], "CMD"),
+                           (["-c", "--rcfile", "/dev/null", "CMD"], "CMD")):
+            with self.subTest(rest=rest):
+                self.assertEqual(want, gate._command_flag_value(rest))
+
+    def test_the_boolean_and_double_dash_readings_still_hold(self):
+        self.assertEqual("CMD", gate._command_flag_value(["-c", "--", "CMD"]))
+        self.assertEqual("CMD", gate._command_flag_value(["-c", "-e", "CMD"]))
+        self.assertEqual("CMD", gate._command_flag_value(["-c", "CMD"]))
+
+    def test_the_shapes_that_execute_deny_end_to_end(self):
+        for cmd in (f'bash -c -o pipefail "{GH_MERGE} 292"',
+                    f'bash -c +O extglob "{GH_MERGE} 292"',
+                    f'bash -co pipefail "{GH_MERGE} 292"'):
+            with self.subTest(cmd=cmd):
+                self.assertTrue(gate._find_publish_subcmds(cmd), cmd)
+
+    def test_a_valued_option_that_carries_no_merge_stays_benign(self):
+        for cmd in ('bash -c -o pipefail "ls | wc -l"',
+                    'bash -c +O extglob "git status --short"'):
+            with self.subTest(cmd=cmd):
+                self.assertEqual([], gate._find_publish_subcmds(cmd), cmd)
+
+
+class TestTheQuotedCommandPathIsDenyByDefaultToo(unittest.TestCase):
+    """QA cycle 5, Class C — the architectural one. Deny-by-default was applied
+    to BARE-HEAD peeling; the quoted-command path went back to an ENUMERATION of
+    CHANNELS (`-c`, `--command`, stdin, ssh RemoteCommand, `eval`), and five
+    wrappers arrived in one cycle that run their quoted argument through some
+    other channel. An enumeration of channels loses to the next channel exactly
+    the way an enumeration of verbs lost to the next verb.
+
+    The fence moved onto the HEAD: on a head that is neither a command head nor
+    a head whose arguments are DATA, EVERY argument that parses as a whole
+    publish command line is a command that wrapper runs.
+    """
+
+    def test_the_five_channels_that_arrived_in_one_cycle(self):
+        for cmd in (f'env -S "{GH_MERGE} 291"',
+                    f'env --split-string="{GH_MERGE} 291"',
+                    f'watch -n1 "{GH_MERGE} 291"',
+                    f'parallel "{GH_MERGE} 291" ::: a',
+                    f'printf %s "{GH_MERGE} 291" | bash',
+                    f'echo "{GH_MERGE} 291" | sh',
+                    f'echo "{GH_MERGE} 291" | xargs -I{{}} bash -c "{{}}"',
+                    f"git -c core.sshCommand='{GH_MERGE} 291' fetch origin",
+                    f"git -c sequence.editor='{GH_MERGE} 291' rebase -i HEAD~1"):
+            with self.subTest(cmd=cmd):
+                self.assertTrue(gate._find_publish_subcmds(cmd), cmd)
+
+    def test_the_wrapper_nobody_has_named_yet_is_covered_by_the_same_rule(self):
+        # the point of the inversion: these were never enumerated anywhere.
+        for cmd in (f'systemd-run --user "{GH_MERGE} 291"',
+                    f'chpst -u git "{GH_MERGE} 291"',
+                    f'nsenter -t 1 -m "{GH_MERGE} 291"'):
+            with self.subTest(cmd=cmd):
+                self.assertTrue(gate._find_publish_subcmds(cmd), cmd)
+
+    def test_a_head_whose_arguments_are_DATA_still_publishes_nothing(self):
+        # the whole cost of the inversion sits here: over-fire is a security
+        # failure, because a gate people route around is off.
+        for cmd in (f'echo "{GH_MERGE} 291"',
+                    f"printf 'next: git push origin main\\n'",
+                    f'logger "deploy step: {GH_MERGE} 291"',
+                    f'python3 -c "print(\'git push origin main\')"',
+                    f'grep -c "{GH_MERGE} 291" notes.md',
+                    f'mail -s "{GH_MERGE} 291" ops@example.com',
+                    f'sed -n "s/{GH_MERGE} 291//p" notes.md'):
+            with self.subTest(cmd=cmd):
+                self.assertEqual([], gate._find_publish_subcmds(cmd), cmd)
+
+    def test_a_pipe_into_something_that_only_READS_is_not_a_channel(self):
+        for cmd in (f'echo "{GH_MERGE} 291" | grep merge',
+                    f'echo "{GH_MERGE} 291" | wc -l',
+                    f'echo "{GH_MERGE} 291" | tee /tmp/x',
+                    f'echo "{GH_MERGE} 291" | mail -s note ops@example.com'):
+            with self.subTest(cmd=cmd):
+                self.assertEqual([], gate._find_publish_subcmds(cmd), cmd)
+
+    def test_runs_its_stdin_reads_the_shape_not_a_name(self):
+        self.assertTrue(gate._runs_its_stdin("bash"))
+        self.assertTrue(gate._runs_its_stdin("sh -x"))
+        self.assertTrue(gate._runs_its_stdin("xargs -I{} bash -c '{}'"))
+        self.assertFalse(gate._runs_its_stdin("bash /tmp/script.sh"))
+        self.assertFalse(gate._runs_its_stdin(f'bash -c "{GH_MERGE} 291"'))
+        self.assertFalse(gate._runs_its_stdin("grep merge"))
+
+    def test_the_separator_that_makes_the_pipe_a_channel_is_kept(self):
+        self.assertEqual([("a ", "|"), (" b", "")], gate._split_subcmds_sep("a | b"))
+        self.assertEqual(["a ", " b"], gate._split_subcmds("a | b"))
+
+
 class TestSshCarriesItsCommandTwoWays(unittest.TestCase):
     """QA cycle 4. `ssh -o RemoteCommand='gh pr merge 292' host` ALLOWED; `ssh -G`
     confirms the option carries the command. The old read took `rest[1:]` — every

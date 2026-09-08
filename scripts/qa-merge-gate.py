@@ -18,9 +18,16 @@ token and one token can never supply the two words a verb needs after a head.
 A head whose STRING ARGUMENT is itself a command (`bash -c`, `sh -lc`, `eval`,
 `ssh host`, `script -qc`, a shell reading a heredoc) has that argument
 re-identified; a head that does not re-parse (`git commit`, `echo`, `cat`,
-`python3 -`) does not. That property, not the presence of quotes, is the line.
+`python3 -`) does not. That property, not the presence of quotes, is the line —
+and since QA cycle 5 it is decided by the HEAD rather than by a list of channels
+(`_INERT_ARG_HEADS`), because a list of channels loses to the next channel.
+Three CHANNELS run a span of the line as a line of its own no matter what the
+head is, so they are read before the head is even consulted: a command
+substitution `$(…)` or `` `…` `` (`_command_substitution_texts`), a process
+substitution `<(…)`/`>(…)`, and a `|` into something that executes its stdin
+(`_runs_its_stdin`).
 
-RESIDUAL — NINE, each one MEASURED against this file on 2026-09-08 by feeding
+RESIDUAL — ELEVEN, each one MEASURED against this file on 2026-09-08 by feeding
 the payload on stdin (deny = exit 2). This list is what remains, not what is
 convenient — an earlier one omitted five reachable families. It is the CANONICAL
 count: `skills/agent-proof-approval-gate`, `skills/command-boundary-hook-matching`
@@ -42,7 +49,15 @@ stops being tracked. One number, four surfaces, reconciled 2026-09-08.
      Measured ALLOW. The gate reads the command string, not the filesystem.
   3. A merge through a NON-SHELL runtime: ``python3 -c "...requests.put(...)"``,
      node, or any HTTP client that is not curl. Measured ALLOW. Only `gh api`
-     and `curl` are recognized API tools.
+     and `curl` are recognized API tools. It also covers a runtime that SHELLS
+     OUT, which is the same hole with a shorter spelling:
+     ``awk 'BEGIN{system("gh pr merge 291")}'`` — measured ALLOW and measured
+     EXECUTING a fake `gh` on PATH (QA cycle 5). Identifying a merge inside one
+     of these means writing an interpreter for that language: the argument is a
+     PROGRAM, not a command line, and `perl -e`, `ruby -e`, `node -e`,
+     `php -r`, `lua -e` and `sed -e 'e …'` are all the same shape. They are in
+     `_INERT_ARG_HEADS` for exactly that reason, so the cost is stated here
+     rather than paid as an over-fire on every awk one-liner.
   4. `gh repo set-default`, which records a resolved base repo in the cwd repo's
      own git config; the cwd repo here resolves by its remote `url`. Measured
      ALLOW as a command; its EFFECT on a later `gh pr merge` is not measured (no
@@ -59,7 +74,15 @@ stops being tracked. One number, four surfaces, reconciled 2026-09-08.
   7. The v7 boundary itself: the receipt files live under $HOME and the model can
      append to them. Only the harness env (OCTO_MERGE_APPROVE) is a real
      boundary. See docs/architecture/v7-nothing-ships-unverified.md.
-  8. `_NON_SHELL_C_HEADS`, the one ALLOW-side enumeration in this file. A program
+  8. The ALLOW-side enumerations. There are TWO of them now and they nest:
+     `_NON_SHELL_C_HEADS` ⊂ `_INERT_ARG_HEADS`. Cycle 5 made the choice
+     deliberate rather than accidental — see `_INERT_ARG_HEADS` — so this file
+     carries its enumeration on the HEAD dimension (the programs whose arguments
+     are text: finite, famous, and failing LOUD as an over-fire) instead of on
+     the CHANNEL dimension (open-ended: five new members arrived in one cycle).
+     The cost of the outer set is the same shape as the inner one described
+     below: a head listed there whose argument really IS a command walks. A
+     program
      whose `-c` means COUNT or QUERY is exempt from the unnamed-wrapper `-c`
      reading, which is what ended the `grep -c` / `grep -rc` / `psql -c`
      over-fire class. Two edges, both measured, both stated rather than traded:
@@ -82,18 +105,42 @@ stops being tracked. One number, four surfaces, reconciled 2026-09-08.
          0.004 s vs 1.282 s for 200 calls on a 36 KB sub-command.
        - `_split_heredocs` scanned every remaining line per `<<WORD`: 9.2 s ->
          0.03 s at 8000 openers, measured on the function.
-     Two shapes stay superlinear and are BOUNDED rather than eliminated. A
+     THREE shapes stay superlinear and are BOUNDED rather than eliminated, all
+     re-measured as the min of 3 runs on 2026-09-08 after the cycle-5 fixes. A
      crafted line alternating an opaque token with a write-marker flag
-     (``git $a -f $a -f …``) sits near 3 s at 2500 pairs (25 KB), so roughly
-     4000 pairs would reach the budget. A 6000-LINE pasted script sits near 3 s
-     for an unrelated reason — every line is its own sub-command and each one is
-     normalized — which is 4x better than before and still inside the budget only
-     up to about 10000 lines. Pinned by TestTheParseFitsTheHookBudget against the
+     (``git $a -f $a -f …``) sits at 2.90 s at 2500 pairs and 4.99 s at 3500, so
+     3500 pairs is the edge of the budget. A 6000-LINE pasted script sits at
+     3.38 s for an unrelated reason — every line is its own sub-command and each
+     one is normalized — still inside the budget up to about 10000 lines. NEW in
+     cycle 5, the price of reading command substitutions: a line of N distinct
+     `$(…)` whose contents name a head runs each one through the recursion —
+     0.56 s at 1000, 1.48 s at 2000, 3.05 s at 4000, so roughly 6000 reaches the
+     budget. Two costs the recursion exposed were paid down rather than
+     accepted: `_line_env_chain` walked the whole process environment per cache
+     miss and now reads three keys (4.98 s of a 9.34 s parse, profiled), and both
+     new scans carry a `_may_publish` pre-filter that is sound by construction
+     (20000 benign words 5.10 s -> 1.01 s, which is BETTER than the 1.33 s this
+     shape cost before the cycle). Pinned by TestTheParseFitsTheHookBudget against the
      5 s budget itself rather than against a ratio, because the budget is the
      contract, plus one fixture (benign_long_opaque_argument_list.json): the
      selftest harness kills a leg at 30 s, which is what turns time into the
      verdict a fixture can assert. The heredoc scan has no fixture — proving it
      needs a 240 KB payload — and is unit-anchored only.
+ 10. bash 5.3's funsub spellings of command substitution, ``${ cmd; }`` and
+     ``${| cmd; }``. NOT reachable on the installed bash (5.2.21): measured
+     `noexec`, a syntax error, so there is no way to run a fixture pair for them
+     here and wiring them would be a claim rather than a mechanism. They are
+     listed as a residual and not as a bypass because all four spellings measured
+     DENY today anyway — `${` carries a `$`, so the opaque-head reading takes the
+     remainder and finds the verb. That is a coincidence of the opaque path, not
+     coverage of the channel: on bash 5.3 the honest fix is two more openers in
+     `_command_substitution_texts`, with the fixture pair that box can run.
+ 11. A pipe whose consumer executes stdin only after ANOTHER hop:
+     ``echo "gh pr merge 291" | ssh host bash`` (ssh forwards the stream to a
+     remote shell) and ``echo "…" | tee /tmp/x.sh; bash /tmp/x.sh`` (which is
+     residual 2 wearing a pipe). Measured ALLOW. `_runs_its_stdin` reads the
+     stage on the right of the `|`, and in both of these that stage executes
+     nothing itself.
 
 KNOWN COST, not a hole: a gh-merge line whose PR number the RAW parse cannot
 read (`gh "pr" merge 291`, an unclosed quote) is identified as a merge and falls
@@ -1210,8 +1257,12 @@ def _line_env_chain(cmd: str) -> list[dict]:
     chain = _ENV_CHAIN_CACHE.get(key)
     if chain is not None:
         return chain
-    acc = {k: v for k, v in os.environ.items()
-           if k in ("GH_REPO", "GH_HOST", "GH_CONFIG_DIR")}
+    # Three lookups, not a walk of the whole environment. Identical result; the
+    # walk cost ~92 decodes per cache MISS, and the Class A recursion turned one
+    # miss per line into one per command substitution (2000 of them: 4.98 s of a
+    # 9.3 s parse, profiled 2026-09-08).
+    acc = {k: os.environ[k] for k in ("GH_REPO", "GH_HOST", "GH_CONFIG_DIR")
+           if k in os.environ}
     chain = []
     for raw in _line_parts(cmd):
         chain.append(dict(acc))
@@ -1245,7 +1296,28 @@ def _cfg_dir_for(cmd: str, sub: str) -> str | None:
 
 
 def _split_subcmds(cmd: str) -> list[str]:
+    """The sub-commands of *cmd*, separators dropped. See `_split_subcmds_sep`.
+
+    Kept as its own name because `receipt_ledger._qa_gate_helpers()` imports it
+    (see `_strip_leading`), and a consumer's `except Exception` turns a renamed
+    helper into a silent no-op rather than a failure.
+    """
+    return [p for p, _sep in _split_subcmds_sep(cmd)]
+
+
+_SPLIT_CACHE: dict[str, list[tuple[str, str]]] = {}
+
+
+def _split_subcmds_sep(cmd: str) -> list[tuple[str, str]]:
     """Split *cmd* on unquoted shell separators (;  &&  ||  |  &  newline).
+
+    Returns [(sub_command, separator_that_ENDED_it)], "" for the last one. The
+    separator is kept because `|` is not just a boundary, it is a CHANNEL: the
+    text one stage prints is the SCRIPT the next stage runs when that stage is a
+    shell reading stdin. `printf 'gh pr merge 291' | bash` and
+    `echo "gh pr merge 291" | xargs -I{} bash -c "{}"` were both measured
+    executing a fake `gh` on PATH while this gate ALLOWED them (QA cycle 5,
+    Class C), because each half is innocent and only the pipe joins them.
 
     `&` is a separator (A2): it BACKGROUNDS the command before it and starts a
     new one, so `git status & gh pr merge 291` is two commands, and omitting it
@@ -1257,7 +1329,10 @@ def _split_subcmds(cmd: str) -> list[str]:
     quoted strings are treated as literal characters and do NOT cause a split.
     Returns a list of raw sub-command strings (may be empty after stripping).
     """
-    parts: list[str] = []
+    cached = _SPLIT_CACHE.get(cmd)
+    if cached is not None:
+        return cached
+    parts: list[tuple[str, str]] = []
     buf: list[str] = []
     in_single = False
     in_double = False
@@ -1288,11 +1363,11 @@ def _split_subcmds(cmd: str) -> list[str]:
             # Check for two-char separators first
             two = cmd[i:i + 2]
             if two in ("&&", "||"):
-                parts.append("".join(buf))
+                parts.append(("".join(buf), two))
                 buf = []
                 i += 2
             elif ch in (";", "|", "\n", "&"):
-                parts.append("".join(buf))
+                parts.append(("".join(buf), ch))
                 buf = []
                 i += 1
             else:
@@ -1301,7 +1376,10 @@ def _split_subcmds(cmd: str) -> list[str]:
         else:
             buf.append(ch)
             i += 1
-    parts.append("".join(buf))
+    parts.append(("".join(buf), ""))
+    if len(_SPLIT_CACHE) > 256:
+        _SPLIT_CACHE.clear()
+    _SPLIT_CACHE[cmd] = parts
     return parts
 
 
@@ -1375,6 +1453,13 @@ def _split_heredocs(cmd: str) -> tuple[str, list[tuple[str, str]]]:
 # no test failed, and the seek-receipt detection behind the outward-send gate
 # quietly degraded. The gate itself uses the richer peel above; this stays as
 # the published, prefix-only stripper its consumer asked for.
+#
+# The PUBLISHED surface of this file, for any gate that needs the same rule
+# rather than a second copy of it: `_split_subcmds` / `_split_subcmds_sep`
+# (boundaries), `_strip_leading` (prefix noise), `_command_substitution_texts`
+# (the `$(…)`, backtick and `>(…)` channels) and `_may_publish` (its sound
+# pre-filter). All four are pure string -> string with no intra-file dependency,
+# so borrowing one adds nothing to the borrower's hot path.
 _STRIP_PREFIX_RE = re.compile(
     r"^(?:[({]\s*)*"               # grouping openers
     r"(?:[A-Za-z_]\w*=\S*\s+)*"    # env assignments  VAR=val
@@ -1429,18 +1514,51 @@ def _is_command_flag(w: str) -> bool:
     return "c" in letters and all(ch in _SHELL_OPT_LETTERS for ch in letters)
 
 
+# Shell option LETTERS whose VALUE is the next word: `-o pipefail` names a set
+# -o option, `-O extglob` names a shopt. Both also spell with a leading `+` to
+# turn the option off, and `+` is not `-`, which is the whole of Class B below.
+_SHELL_VALUE_OPT_LETTERS = frozenset("oO")
+# Long shell options that take a separate value word.
+_SHELL_VALUE_OPT_LONGS = frozenset({"--rcfile", "--init-file"})
+
+
+def _opt_consumes_next(w: str) -> bool:
+    """True when option word *w* eats the FOLLOWING word as its value.
+
+    Class B, QA cycle 5. `_command_flag_value`'s option walk skipped an option
+    but never its VALUE, so the value came back as the command string and the
+    real command behind it was never looked at:
+    `bash -c -o pipefail "gh pr merge 292"` returned `pipefail` and ALLOWED,
+    measured executing a fake `gh` on PATH. The `+` spellings were worse than
+    skipped — `+O` does not start with `-`, so the walk read it as the command
+    string itself and `bash -c +O extglob "gh pr merge 292"` ALLOWED too.
+    An attached value (`-Oextglob`) consumes nothing; a bundle whose LAST letter
+    takes a value does (`bash -co pipefail "…"` — measured executing).
+    """
+    if w.startswith("--"):
+        return "=" not in w and w in _SHELL_VALUE_OPT_LONGS
+    letters = w[1:]
+    for k, ch in enumerate(letters):
+        if ch in _SHELL_VALUE_OPT_LETTERS:
+            return k == len(letters) - 1
+    return False
+
+
 def _command_flag_value(words: list[str], bundles: bool = True) -> str | None:
     """The token a `-c`-style flag in *words* hands to a shell, else None.
 
-    Three things the old one-liner (`if _is_command_flag(w): return words[i+1]`)
+    Four things the old one-liner (`if _is_command_flag(w): return words[i+1]`)
     got wrong, every one of them measured as an ALLOW that executed the real gh
-    through a fake `gh` on PATH (QA cycle 4):
+    through a fake `gh` on PATH (QA cycles 4 and 5):
 
     * bash, sh, dash and ksh keep parsing OPTIONS after `-c`. The command string
       is the first NON-option word, and `--` ends option parsing. Taking
       `words[i + 1]` handed back `--` or `-e`, the recursion found nothing in it,
       and `bash -c -- "gh pr merge 292"`, `bash -c -e "…"` and `sh -c -- "…"`
       all walked.
+    * an option that takes a VALUE consumes the next word too, and the `+`
+      spellings are options as well. See `_opt_consumes_next` — that half of the
+      walk was left undone in the fix above and cost five more ALLOWs.
     * the long flag was only ever matched whole, so `su --command="…"` and
       `flock --command="…" f` allowed while `flock --command "…" f` denied. The
       `=` spelling is the same flag.
@@ -1460,13 +1578,13 @@ def _command_flag_value(words: list[str], bundles: bool = True) -> str | None:
             continue
         if not bundles and w != "-c" and w != "--command":
             continue
-        j = i + 1
+        j = i + 2 if _opt_consumes_next(w) else i + 1
         while j < len(words):
             t = words[j]
             if t == "--":                       # end of options: the next word
                 return words[j + 1] if j + 1 < len(words) else None
-            if len(t) > 1 and t.startswith("-"):
-                j += 1                          # another option, keep looking
+            if len(t) > 1 and t[0] in "-+":     # another option, keep looking
+                j += 2 if _opt_consumes_next(t) else 1
                 continue
             return t
         return None
@@ -1532,6 +1650,46 @@ _NON_SHELL_C_HEADS = frozenset({
     "redis-cli", "mongosh", "cqlsh", "influx",
     "gcc", "g++", "cc", "clang", "clang++", "as", "ld", "javac",
     "tar", "cpio", "openssl", "objcopy", "objdump", "install",
+})
+
+# Heads whose ARGUMENTS ARE DATA. The Class C inversion (`_reparse_args`) reads
+# every argument of an unnamed wrapper as a command line it may run, which is
+# right for `env -S`, `watch`, `parallel`, `su`, `flock`, `systemd-run` and every
+# wrapper nobody has named yet — and wrong for a program whose argument is a
+# MESSAGE, a PATTERN, a FILENAME or a program in another language.
+#
+# The trade, stated plainly: this file refuses allow-side enumerations because an
+# enumeration loses to its next member, and this is one. It is the deliberate
+# choice of WHICH dimension carries the enumeration. The channel dimension is
+# open-ended (five new channels arrived in one QA cycle); the "programs whose
+# arguments are text" dimension is finite, its members are famous, and its
+# failure mode is a loud OVER-FIRE on an unlisted one, never a silent allow. It
+# is the same reasoning, and the same fences, as `_NON_SHELL_C_HEADS` (residual
+# 8), which is why that set is folded in whole rather than duplicated.
+#
+# Interpreters are here on purpose: `awk 'BEGIN{system("gh pr merge 291")}'`,
+# `python3 -c "os.system(…)"` and `perl -e 'system …'` all execute, and all three
+# are residual 3 (a merge through a NON-SHELL runtime), not a shell channel. The
+# argument is a program in another language, and identifying a merge inside one
+# means writing an interpreter for that language — see the header.
+_INERT_ARG_HEADS = _CMD_HEADS | _NON_SHELL_C_HEADS | frozenset({
+    # text out
+    "echo", "printf", "cat", "tee", "less", "more", "logger", "notify-send",
+    "banner", "figlet", "cowsay", "say", "espeak", "wall", "write", "zenity",
+    "yes", "expr", "test", "[", "basename", "dirname", "seq", "readlink",
+    # mail and messaging: the argument is a subject or a body
+    "mail", "mailx", "sendmail", "msmtp", "mutt", "neomutt",
+    # text processing: the argument is a PATTERN or a script in its own language
+    "sed", "awk", "gawk", "mawk", "nawk", "tr", "rev", "fold", "fmt", "column",
+    "jq", "yq", "xmlstarlet", "csvtool", "miller", "mlr", "datamash",
+    # other-language runtimes: residual 3, not a shell channel
+    "python", "python2", "python3", "perl", "ruby", "node", "nodejs", "deno",
+    "bun", "php", "lua", "tclsh", "Rscript", "julia", "ghc", "runghc", "bc",
+    "dc", "osascript",
+    # search and archive: the argument is a pattern or a member name
+    "find", "locate", "fd", "diff", "cmp", "patch", "zip", "unzip", "gzip",
+    # version control that is not git/gh: the argument is a message
+    "hg", "svn", "bzr", "jj", "hub", "glab", "tea",
 })
 
 # ssh short options that take a VALUE, so the word after them is not the
@@ -1645,6 +1803,134 @@ def _stdin_channel_texts(raw_sub: str) -> list[str]:
     return out
 
 
+# Every publish pattern in this file needs one of these five substrings to be
+# present in the text, after quoting and backslash escapes are flattened:
+#   `_PAT_GH_MERGE` -> "merge"; `_PAT_GIT_PUSH` -> "push"; the alias-definition
+#   forms -> "gh" or "git"; and every `_api_write_action` shape -> "merge"
+#   (/pulls/N/merge, /merges, mergePullRequest, enablePullRequestAutoMerge,
+#   mergeBranch) or "git" (/git/refs/heads/main). An OPAQUE head synthesizes
+#   `gh`/`git`/`curl`, but the REMAINDER still has to carry the verb, so the
+#   probe holds there too.
+# It is a PRE-FILTER for the two channels this cycle added, never for an
+# existing path: at worst it declines to open a new channel, which is the
+# behaviour before the channel existed. It exists because both new scans are
+# per-WORD and per-SUBSTITUTION, and residual 9 says a gate the harness kills at
+# 5 s is a gate that never says no. Measured: 20000 benign words 5.10 s -> 1.43 s.
+_MAY_PUBLISH = ("gh", "git", "curl", "merge", "push")
+_FLATTEN = str.maketrans("", "", "\\\"'")
+
+
+def _may_publish(text: str) -> bool:
+    """False when *text* provably matches no publish pattern in this file."""
+    probe = text.translate(_FLATTEN).lower()
+    return any(w in probe for w in _MAY_PUBLISH)
+
+
+def _command_substitution_texts(s: str) -> list[str]:
+    """The CONTENTS of every command substitution in *s*, outermost first.
+
+    Class A, QA cycle 5, and it is a skipped fix rather than a residual. Cycle 3
+    closed `<(…)` by treating it as a channel whose contents are re-matched, and
+    the tokenizer learned to swallow `$(…)` as ONE token in the same commit — but
+    only so an OPAQUE HEAD could be recognized (`$(echo gh) pr merge 291`). What
+    is INSIDE the parens was never looked at, so the more common literal twin of
+    the closed channel walked: `cat <(gh pr merge 291)` DENIED while
+    `echo $(gh pr merge 291)` ALLOWED, both measured executing a fake `gh` on
+    PATH. Same channel, same execution, opposite verdicts.
+
+    Every OTHER member of this class, enumerated so the next reader can check it
+    rather than trust it. A member is any syntax that makes the shell execute a
+    span of the CURRENT command line as a command line of its own:
+      * ``$(…)``           — command substitution.        Closed here.
+      * ``` `…` ```        — the archaic spelling of it.  Closed here.
+      * ``>(…)``           — process substitution, write side; the contents run.
+                             Measured executing (``tee >(gh pr merge 291)``).
+                             Closed here.
+      * ``<(…)``           — process substitution, read side. Closed in cycle 3;
+                             it stays in `_stdin_channel_texts` because a shell
+                             may also read the resulting FILE as a script, which
+                             is the one place the quoted-mention reading applies.
+      * ``$((…))``         — arithmetic, NOT a command. Skipped explicitly, and
+                             it has to be skipped explicitly because it opens
+                             with the same two characters.
+      * ``${ …; }`` / ``${| …; }`` — bash 5.3 funsubs. NOT reachable on the
+                             installed bash (5.2: measured `noexec`, a syntax
+                             error), so wiring them would be untestable here.
+                             Named as residual 10 rather than pretended.
+      * a substitution inside SINGLE quotes is not a substitution at all, so the
+        scan tracks quote state; `git -c core.pager='gh pr merge 291'` is a
+        different class entirely (Class C, the git config channel).
+
+    Contents are returned RAW and re-identified by the caller's recursion, which
+    is what makes nesting free: `$(x $(gh pr merge 291))` finds the inner one at
+    the next depth. They are NOT run through the quoted-mention reading — a
+    `$(…)` is executed as a command LINE, so a quoted string inside it is that
+    command's data (`x=$(grep "gh pr merge 291" notes.md)` publishes nothing).
+
+    SHARED ON PURPOSE, in the direction the import graph already flows. This is
+    a module-level function over a plain string returning plain strings, with no
+    dependency on anything else in this file — deliberately, so the other gates
+    borrow it the way `receipt_ledger._qa_gate_helpers()` already borrows
+    `_split_subcmds` and `_strip_leading` from here (see `_STRIP_PREFIX_RE`).
+    This file is the PROVIDER of the command-boundary parser, not a consumer:
+    `g__pretool-bash__tree-owner.py` borrows ITS splitter from
+    `dimension-awareness-hook.py`, and `receipt_ledger.py` borrows from here, so
+    an import the other way would close a cycle through a module that
+    `exec_module`s this one. Three copies of one rule is what this session keeps
+    paying for; one copy, borrowed downhill, is the fix.
+    """
+    out: list[str] = []
+    i, n = 0, len(s)
+    in_single = in_double = False
+    while i < n:
+        ch = s[i]
+        if ch == "\\" and not in_single and i + 1 < n:
+            i += 2
+            continue
+        if ch == "'" and not in_double:
+            in_single = not in_single
+            i += 1
+            continue
+        if ch == '"' and not in_single:
+            in_double = not in_double
+            i += 1
+            continue
+        if in_single:
+            i += 1
+            continue
+        if ch == "`":
+            j = s.find("`", i + 1)
+            if j < 0:
+                break
+            out.append(s[i + 1:j])
+            i = j + 1
+            continue
+        opens_sub = (ch == "$" and i + 1 < n and s[i + 1] == "("
+                     and not (i + 2 < n and s[i + 2] == "("))
+        # `>(…)` is a redirection to a process, not a substitution inside a
+        # string, so it is only one outside double quotes — same rule `<(…)`
+        # already follows in the tokenizer.
+        opens_proc = (ch == ">" and not in_double
+                      and i + 1 < n and s[i + 1] == "(")
+        if opens_sub or opens_proc:
+            depth, j = 0, i + 1
+            while j < n:
+                if s[j] == "(":
+                    depth += 1
+                elif s[j] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                j += 1
+            if j >= n:
+                break                       # unclosed: nothing runs
+            out.append(s[i + 2:j])
+            i = j + 1
+            continue
+        i += 1
+    return out
+
+
 def _reparse_args(raw_sub: str) -> list[str]:
     """Every command STRING *raw_sub* will hand to a shell, in order.
 
@@ -1686,7 +1972,37 @@ def _reparse_args(raw_sub: str) -> list[str]:
     flag and no publish form. The residual cost is a command that takes a literal
     `-c "git push origin main"` and does NOT execute it — measured as none on a
     50-command over-fire corpus, and loud rather than silent when it happens.
+
+    CYCLE 5, Class C — the enumeration moved, so it lost again. The inversion
+    above was on the WRAPPER, but the CHANNEL went back to a list: `-c`,
+    `--command`, stdin, ssh RemoteCommand. Five wrappers arrived in one cycle
+    that run their quoted argument through some OTHER channel, every one measured
+    executing a fake `gh` on PATH: `env -S "…"`, `env --split-string="…"`,
+    `watch "…"`, `parallel "…"`, and `xargs` behind a pipe. An enumeration of
+    channels loses to the next channel exactly the way an enumeration of verbs
+    lost to the next verb, which is the lesson this whole PR is built on, so it
+    is inverted here too and the fence moves entirely onto the HEAD:
+
+        on a head that is neither a command head nor a head whose arguments are
+        DATA (`_INERT_ARG_HEADS`), EVERY argument that parses as a whole publish
+        command LINE is a command this wrapper runs.
+
+    The `-c` reading is not deleted, it is subsumed: a `-c` value is an argument.
+    What the head fence buys is that the over-fire surface is now enumerable and
+    finite (the programs whose arguments are text), instead of the channel
+    surface, which is not. Measured 2026-09-08, before-vs-after against 8e544c6:
+    0 denials on a 74-command read-only corpus, and 0 NEW denials on 400 real
+    commands extracted from this repo's own docs (1 pre-existing deny there,
+    `git push --force-with-lease origin master`, which is a real push to master).
+    The shapes both corpora cover are pinned as unit anchors in
+    TestTheQuotedCommandPathIsDenyByDefaultToo, so the measurement is repeatable
+    rather than a number in a comment.
     """
+    # A command substitution executes NO MATTER WHAT THE HEAD IS, so it is read
+    # before the command-head short-circuit below: `git commit -m "$(gh pr merge
+    # 291)"` merges, and `git` is a command head.
+    out: list[str] = [t for t in _command_substitution_texts(raw_sub)
+                      if _may_publish(t)]
     toks = _tokens_with_offsets(raw_sub)
     if toks is None:
         toks = _ws_tokens(raw_sub)
@@ -1694,13 +2010,32 @@ def _reparse_args(raw_sub: str) -> list[str]:
     h = _head_index(words)
     head0 = os.path.basename(words[h].strip("\"'")) if h < len(words) else ""
     if head0 in _CMD_HEADS:
-        return []                  # the HEAD is a command head: nothing re-parses
+        # The HEAD is a command head, so its own arguments are arguments. One
+        # exception, and it is git's own: `git -c KEY=VALUE` where git RUNS the
+        # value through a shell. `core.sshCommand` and `sequence.editor` were
+        # both measured executing a fake `gh`; `core.pager`, `core.editor` and
+        # `diff.external` are the same mechanism with a tty or a diff in the way.
+        # Read as an inversion, not as a key list: ANY `-c` value that parses as
+        # a publish command line is one, because no benign `git -c` carries a
+        # merge on its right-hand side. The alias spelling is gated separately
+        # (`_PAT_GIT_C_ALIAS_DEF`), as a DEFINITION rather than a run.
+        if head0 == "git":
+            for k in range(h + 1, len(words)):
+                if words[k] == "-c" and k + 1 < len(words):
+                    _key, _eq, val = words[k + 1].partition("=")
+                    if _eq:
+                        out.extend(_publish_carriers(val, mentions=False))
+                elif words[k].startswith("-c") and len(words[k]) > 2:
+                    _key, _eq, val = words[k][2:].partition("=")
+                    if _eq:
+                        out.extend(_publish_carriers(val, mentions=False))
+        return out
     named = None
     for i in range(h, len(words)):
         if os.path.basename(words[i].strip("\"'")) in _REPARSE_HEADS:
             named = i
             break
-    out: list[str] = []
+    before_named = len(out)
     if named is not None:
         rest = words[named + 1:]
         head = os.path.basename(words[named].strip("\"'"))
@@ -1718,10 +2053,29 @@ def _reparse_args(raw_sub: str) -> list[str]:
             v = _command_flag_value(rest)
             if v is not None:
                 out.append(v)
-    if not out and head0 not in _NON_SHELL_C_HEADS:
-        v = _command_flag_value(words[h + 1:], bundles=False)
-        if v is not None:
-            out.extend(_publish_carriers(v, mentions=False))
+    if (named is None and len(out) == before_named
+            and head0 not in _INERT_ARG_HEADS):
+        rest = words[h + 1:]
+        skip = -1
+        for k, w in enumerate(rest):
+            # A here-string is a STDIN channel and `_stdin_channel_texts` below
+            # already reads it. Reading it here too would report the same merge
+            # twice, and a doubled target is a doubled approval requirement on
+            # one command (`bash <<< "gh pr merge 292"`, measured).
+            if w.startswith("<<<"):
+                skip = k + 1 if w == "<<<" else -1
+                continue
+            if k == skip:
+                continue
+            # A whole command line needs at least a head and a verb, so a word
+            # with no whitespace in it can never be one — the same reasoning
+            # `_publish_carriers` already applies to a quoted mention. Skipping
+            # it is what keeps a 20000-argument line inside the hook budget.
+            if not (" " in w or "\t" in w) or not _may_publish(w):
+                continue
+            out.extend(_publish_carriers(w, mentions=False))
+            if w.startswith("--") and "=" in w:
+                out.extend(_publish_carriers(w.partition("=")[2], mentions=False))
     for text in _stdin_channel_texts(raw_sub):
         out.extend(_publish_carriers(text))
     return out
@@ -1739,6 +2093,42 @@ def _reparses_stdin(opening_line: str) -> bool:
         if head in _STDIN_REPARSE_HEADS:
             return True
     return False
+
+
+def _runs_its_stdin(sub: str) -> bool:
+    """True when *sub*, standing on the right of a `|`, EXECUTES what it reads.
+
+    Two shapes, both measured executing a fake `gh` on PATH while the gate
+    allowed the whole line (QA cycle 5, Class C):
+      * a bare shell — `printf 'gh pr merge 291' | bash`, `… | sh`. A shell with
+        no `-c` value and no script FILE operand reads its script from stdin.
+      * `xargs` that names a shell — `… | xargs -I{} bash -c "{}"`. The merge
+        text is xargs' INPUT and reaches the shell through the placeholder, so
+        no argument of either half is ever the command.
+    A consumer that merely READS the text (`| grep`, `| wc`, `| tee`, `| mail`)
+    executes nothing and is not one of these, which is what keeps a pipeline
+    that only inspects a mention benign.
+    """
+    toks = _tokens_with_offsets(sub)
+    if toks is None:
+        toks = _ws_tokens(sub)
+    words = [t for t, _s, _e in toks]
+    h = _head_index(words)
+    if h >= len(words):
+        return False
+    head = os.path.basename(words[h].strip("\"'"))
+    rest = words[h + 1:]
+    if head == "xargs":
+        return any(os.path.basename(w.strip("\"'")) in _STDIN_REPARSE_HEADS
+                   for w in rest)
+    if head not in _STDIN_REPARSE_HEADS:
+        return False
+    if _command_flag_value(rest) is not None:
+        return False                    # `| bash -c "…"`: the script is the arg
+    for w in rest:
+        if not w.startswith("-"):
+            return False                # a script FILE operand: stdin is data
+    return True
 
 
 def _find_publish_subcmds(cmd: str, _depth: int = 0) -> list[tuple[str, str]]:
@@ -1764,8 +2154,13 @@ def _find_publish_subcmds(cmd: str, _depth: int = 0) -> list[tuple[str, str]]:
     """
     body_cmd, heredocs = _split_heredocs(_join_continuations(cmd))
     found: list[tuple[str, str]] = []
-    for raw_sub in _split_subcmds(body_cmd):
+    staged = _split_subcmds_sep(body_cmd)
+    for idx, (raw_sub, _sep) in enumerate(staged):
         inners = _reparse_args(raw_sub)
+        # The `|` channel: when THIS stage executes what it reads, the stage
+        # feeding it is not printing text, it is writing a script.
+        if idx and staged[idx - 1][1] == "|" and _runs_its_stdin(raw_sub):
+            inners = inners + _publish_carriers(staged[idx - 1][0])
         before = len(found)
         if _depth < _MAX_REPARSE_DEPTH:
             for inner in inners:
