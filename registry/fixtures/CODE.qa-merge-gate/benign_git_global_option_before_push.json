@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "git --no-pager fetch origin main"
+  },
+  "cwd": "/nonexistent/repo"
+}

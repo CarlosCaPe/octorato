@@ -11,10 +11,23 @@ check at all — an evasion is a total bypass, not a degraded authorization.
 Detection is command-boundary-anchored: the string is split on UNQUOTED shell
 separators (; && || | & newline), heredoc BODIES are removed (they are data on
 stdin, not command lines), and each sub-command is matched at EVERY command-head
-position it contains, on DECODED tokens. Decoding is what makes `gh "pr" merge`
-the same command as `gh pr merge`; it cannot manufacture a verb out of a quoted
-MENTION (`git commit -m "gh pr merge 96"`), because a whole-token quote is ONE
-token and one token can never supply the two words a verb needs after a head.
+position it contains, on DECODED tokens. Decoding is what makes `gh "pr" merge`,
+`gh pr $'\x6derge'` and `gh pr $"merge"` the same command as `gh pr merge` — all
+four spellings of quoting (`'…'`, `"…"`, ANSI-C `$'…'`, locale `$"…"`, plus the
+backslash) are resolved by the SHELL before the program runs, so they are
+resolved here too. It cannot manufacture a verb out of a quoted MENTION
+(`git commit -m "gh pr merge 96"`), because a whole-token quote is ONE token and
+one token can never supply the two words a verb needs after a head.
+Between the head and the verb, an ENUMERATED set of the tool's own GLOBAL
+options is skipped, each with its value consumed as a value: `-R`/`--repo` for
+gh (space and `=` spellings, before the `pr` group and before the verb — both
+positions measured accepted by the installed gh 2.88.1, which returns
+`{"number":288}` for `gh pr -R CarlosCaPe/octorato view 288 --json number`) and
+git's documented globals (`_GIT_GLOBALS`). "EVERY position" means
+every position in that enumeration, never "any word starting with a dash" — a
+general dash-skip would hand the verb a place to hide behind a crafted flag.
+Cycle 7 measured eight spellings walking the old adjacency requirement,
+`gh pr -R X merge N` (the spelling in gh's own docs) among them.
 A head whose STRING ARGUMENT is itself a command (`bash -c`, `sh -lc`, `eval`,
 `ssh host`, `script -qc`, a shell reading a heredoc) has that argument
 re-identified; a head that does not re-parse (`git commit`, `echo`, `cat`,
@@ -40,7 +53,15 @@ stops being tracked. One number, four surfaces, reconciled 2026-09-08.
      ``C="gh pr merge 291"; eval "$C"``. All measured ALLOW. The opaque-HEAD
      case is closed (``$(echo gh) pr merge 291``, ``${PATH:0:0}gh``, ``$'gh'``,
      ``G=gh; $G pr merge 291`` all deny) because the remainder still carries the
-     verb. Substituting same-line assignments everywhere would close this and
+     verb. CORRECTED in cycle 7: `$'gh'` is listed there as closed and it was
+     closed only at the HEAD position, for that same reason. In every OTHER
+     position ANSI-C quoting walked — `gh pr $'merge' 288`,
+     `gh pr $'\x6derge' 288`, `git push origin $'main'` and nine more, all
+     measured executing a fake binary on PATH. None of them is an expansion:
+     `$'…'` and `$"…"` are QUOTING, so they are decoded in the tokenizer and
+     leave this residual entirely. What remains here is the case where a
+     VARIABLE supplies the verb.
+     Substituting same-line assignments everywhere would close this and
      would also deny ``docs='gh pr merge'; echo $docs``, a legitimate command in
      the over-fire corpus, so it is left open and named rather than traded for a
      false positive.
@@ -88,8 +109,12 @@ stops being tracked. One number, four surfaces, reconciled 2026-09-08.
      over-fire class. Two edges, both measured, both stated rather than traded:
      a wrapper deliberately NAMED for a counter escapes that reading
      (``./grep -c "gh pr merge 291"`` — ALLOW), and an unlisted counter reached
-     through ANOTHER program still over-fires (``find . -exec grep -c "…" {} ';'``
-     and ``xargs grep -c "…"`` — both DENY). The exemption is anchored on the HEAD
+     through ANOTHER program can still over-fire (``xargs grep -c "…"`` — DENY).
+     The ``find . -exec grep -c "…" {} ';'`` half of that sentence was STALE:
+     re-measured in cycle 7 it is ALLOW, in both the quoted `';'` and the
+     backslash spelling. The direction is harmless — an over-fire that is not
+     there — but an unmeasured claim is exactly what this file keeps catching in
+     other people's code. The exemption is anchored on the HEAD
      word ALONE, because any other anchor re-opens the path-argument bypass this
      cycle just closed: ``flock /var/lock/grep -c "gh pr merge 291"`` and
      ``flock /var/lock/psql -c "…"`` both still DENY, and that is the trade.
@@ -109,28 +134,53 @@ stops being tracked. One number, four surfaces, reconciled 2026-09-08.
      re-measured as the min of 3 runs on 2026-09-08 after the cycle-5 fixes. A
      crafted line alternating an opaque token with a write-marker flag
      (``git $a -f $a -f …``) sits at 2.90 s at 2500 pairs and 4.99 s at 3500, so
-     3500 pairs is the edge of the budget. A 6000-LINE pasted script sits at
-     3.38 s for an unrelated reason — every line is its own sub-command and each
-     one is normalized — still inside the budget up to about 10000 lines. NEW in
+     3500 pairs is the edge of the budget. A 6000-LINE pasted script costs
+     1.20 s of CPU for an unrelated reason — every line is its own sub-command
+     and each one is normalized. The 3.38 s WALL figure this paragraph used to
+     carry, and the "inside the budget up to about 10000 lines" that followed
+     from it, were taken on a quiet box and stated without their load: cycle 7
+     measured the same 6000 lines at 5.40 s of wall at load 18.8, which is OVER
+     the 5 s budget. CPU is the load-free number and is the one quoted here now;
+     the wall figure is a range, not a constant, and the 10000-line headroom
+     only exists on an idle box. NEW in
      cycle 5, the price of reading command substitutions: a line of N distinct
      `$(…)` whose contents name a head runs each one through the recursion —
      0.56 s at 1000, 1.48 s at 2000, 3.05 s at 4000, so roughly 6000 reaches the
      budget. Two costs the recursion exposed were paid down rather than
      accepted: `_line_env_chain` walked the whole process environment per cache
      miss and now reads three keys (4.98 s of a 9.34 s parse, profiled), and both
-     new scans carry a `_may_publish` pre-filter that is sound by construction
-     (20000 benign words 5.10 s -> 1.01 s, which is BETTER than the 1.33 s this
-     shape cost before the cycle). What is FENCED and what is only MEASURED are
-     different lists, and cycle 6 caught this paragraph conflating them: it said
+     new scans carry a `_may_publish` pre-filter (20000 benign words 5.10 s ->
+     1.01 s, which is BETTER than the 1.33 s this shape cost before the cycle).
+     It was called "sound by construction" and it is sound only for the ALPHABET
+     its flatten table knows, which cycle 7 walked: the hex row
+     `$'\x6d\x65\x72\x67\x65'` flattens to `$x6dx65x72x67x65`, carries none
+     of the five probe words, and a substitution holding it was dropped before
+     the recursion could look at it. The probe now decodes ANSI-C and locale
+     quoting first, with the same reader the tokenizer uses; the decode only
+     ever ADDS text, so it can widen the filter and never narrow it.
+     What is FENCED and what is only MEASURED are different lists, and
+     CORRECTED in cycle 7 the fenced list is not uniform either: "each leg
+     asserted against the 5 s budget itself" is true of the WHOLE-PARSE legs
+     only. Two fences are function-level and assert their own line, because the
+     whole-parse budget could not tell the fix from the revert — `_split_heredocs`
+     at 1.0 s on 8000 openers and `_alias_definition_form` at 0.2 s for 200
+     calls — and the alias one appeared in neither list below. A third, added in
+     cycle 7, asserts CPU rather than wall (see the failability note at the end
+     of this residual). Cycle 6 caught this paragraph conflating fenced with
+     measured: it said
      the substitution shape was "pinned by TestTheParseFitsTheHookBudget" when
      no leg in that class carried a `$(` at all — the one cost this cycle
-     introduced was the one cost with no regression fence. FENCED, each leg
-     asserted against the 5 s budget itself rather than against a ratio because
-     the budget is the contract: 20000 benign words, 5000 opaque tokens, 2000
-     `<<` openers, 1500 opaque-token/write-marker pairs, and now 3500 `$(…)`
-     substitutions naming a head. MEASURED and NOT fenced: the edges themselves
-     (3500 pairs, ~6000 substitutions, ~10000 script lines) and the crossover
-     curves above. A fence sits BELOW its shape's edge on purpose: at the edge,
+     introduced was the one cost with no regression fence. FENCED against the
+     5 s budget itself rather than against a ratio, because the budget is the
+     contract: 20000 benign words, 5000 opaque tokens, 2000 `<<` openers, 1500
+     opaque-token/write-marker pairs, and 3500 `$(…)` substitutions naming a
+     head. FENCED on a FUNCTION and against its own line, because the whole
+     parse could not tell: `_split_heredocs` (1.0 s on 8000 openers) and
+     `_alias_definition_form` (0.2 s for 200 calls). FENCED on CPU and against
+     2.5 s, because wall clock straddles: the 3500-substitution parse in a
+     ~900-variable child. MEASURED and NOT fenced: the edges themselves (3500
+     pairs, ~6000 substitutions, the script-line edge, which is load-dependent
+     and NOT ~10000 on a busy box) and the crossover curves above. A fence sits BELOW its shape's edge on purpose: at the edge,
      3500 pairs measures 4.07 s at load 17, a margin of 1.2x that is red the
      first busy day, and a fence that goes red under normal agent load is
      deleted, which is worse than no fence. Sizes are picked against a BUSY box
@@ -154,6 +204,32 @@ stops being tracked. One number, four surfaces, reconciled 2026-09-08.
      not a detector for every constant-factor cost — on a 91-variable
      environment the same revert is 2.33 s against 1.34 s and stays green, and
      that env-size dependence is exactly what the three-key read removes.
+     FAILABILITY, and a REASON that was wrong. Cycle 6 declined a sensitivity
+     fence on the ground that it "needs `os.environ` mutation" and this brain
+     carries a lesson about that leaking across modules. The lesson is about
+     IN-PROCESS writes to `os.environ`; `subprocess.run(env=…)` writes nothing
+     in the test process, and it is also how the hook actually runs — the
+     harness spawns it with an environment rather than importing it. Wall clock
+     is not the only clock either: `time.process_time()` removes the load axis
+     the straddle above lives on, because CPU stays within 1.1x-1.3x on this box
+     while wall swings 3x-5x. So the straddle is now fenced rather than only
+     described. `test_the_env_read_is_flat_in_a_fat_environment` spawns one
+     interpreter with ~900 padded variables and asserts the CPU of the
+     3500-substitution parse under 2.5 s: measured 0.52 / 0.53 / 0.62 s with the
+     three-key read and 4.62 / 4.80 / 5.60 s with it reverted to the
+     whole-process walk. The first size tried, ~450 variables, was rejected for
+     being red by only 1.02x (2.55 / 2.92 / 2.68 s) — red on this box is not red
+     on a quieter one. The wall-clock leg stays the BUDGET contract; this one is
+     the REGRESSION contract, and they measure different things on purpose.
+     A cross-product shape QA built in cycle 7 (100 substitutions against 200
+     opaque/`-f` pairs, 121 KB) measured 11.29 s of wall at load 18 and 2.36 s
+     of CPU — residual 9's known quadratic rearranged rather than a new class,
+     and inside the budget on a quiet box. On how a payload REACHES this gate:
+     it arrives as JSON on stdin, not as argv, so no ARG_MAX bound applies to
+     the gate at all; and the harness runs Bash tool calls in a PERSISTENT shell
+     (measured — a `cd` in one call is still in effect in the next), so the
+     command is written to that shell rather than passed as one `bash -c`
+     argument. The ~128 KB single-argument limit bounds neither path.
      One fixture backs the opaque-argument shape
      (benign_long_opaque_argument_list.json): the selftest harness kills a leg
      at 30 s, which is what turns time into a verdict a fixture can assert. The
@@ -176,10 +252,15 @@ stops being tracked. One number, four surfaces, reconciled 2026-09-08.
      nothing itself.
 
 KNOWN COST, not a hole: a gh-merge line whose PR number the RAW parse cannot
-read (`gh "pr" merge 291`, an unclosed quote) is identified as a merge and falls
-to the 'unknown' sentinel, which no approval can name — so that spelling denies
-forever, even for the operator. The number is read off the raw form on purpose:
-flattening the quoting there would read a flag VALUE as the PR.
+read (`gh "pr" merge 291`, `gh pr $'merge' 291`, an unclosed quote) is identified
+as a merge and falls to the 'unknown' sentinel, which no approval can name — so
+that spelling denies forever, even for the operator. The number is read off the
+raw form on purpose: flattening the quoting there would read a flag VALUE as the
+PR (`-t $'x 280' 281` merges 281). The GLOBAL-OPTION spellings closed in cycle 7
+are NOT in this class and were checked for it: `gh pr -R owner/repo merge 288`
+and its five siblings all still read 288, because the option is skipped inside
+the same anchor that finds the verb, so the remainder the number is read from
+starts where it always did.
 
 When a Bash command is detected as a merge action, this hook BLOCKS execution
 unless the operator's AGENT-PROOF env approval is present for EVERY merge
@@ -247,8 +328,18 @@ for _stream in (sys.stdout, sys.stderr):
 # Using ^\s* because after splitting we still want to tolerate leading spaces.
 # ---------------------------------------------------------------------------
 
-# gh pr merge <N> [flags]  — anchored at sub-command start
-_PAT_GH_MERGE = re.compile(r"^\s*gh\s+pr\s+merge\b")
+# gh pr merge <N> [flags]  — anchored at sub-command start.
+# ADJACENCY IS NOT THE COMMAND. `gh -R owner/repo pr merge 288`,
+# `gh --repo=owner/repo pr merge 288` and `gh pr -R owner/repo merge 288` all run
+# the same merge — the last of those is the spelling in gh's own `pr merge`
+# docs — and all three walked this anchor until cycle 7 measured them. gh parses
+# `--repo` as a persistent flag, so it is accepted at EVERY position between the
+# head and the verb, with the value attached (`=`) or in the next word. Only that
+# one flag is skipped, and its value is consumed AS a value: a general "skip any
+# word starting with a dash" would let a crafted flag hide the verb behind it.
+_GH_GLOBAL_OPT = r"(?:(?:-R|--repo)(?:=\S+|\s+\S+)\s+)*"
+_PAT_GH_MERGE = re.compile(
+    r"^\s*gh\s+" + _GH_GLOBAL_OPT + r"pr\s+" + _GH_GLOBAL_OPT + r"merge\b")
 
 # git [-C <path>] [-c key=val] push [opts] <remote> <ref>
 # Catches: git push origin main  /  git push origin "main"  /
@@ -257,12 +348,39 @@ _PAT_GH_MERGE = re.compile(r"^\s*gh\s+pr\s+merge\b")
 # Does NOT catch: main-feature / feature/main-redesign / my-main /
 #                 git push-mirror / git push-all (hyphenated, not a subcommand) /
 #                 "push" appearing only inside a quoted arg of a different subcommand.
-# FIX 1+2: push must be the git SUBCOMMAND — only the standard global flags
-# -C <path> and -c <key=val> are allowed between `git` and `push`.
+# FIX 1+2: push must be the git SUBCOMMAND — only git's own documented GLOBAL
+# options are allowed between `git` and `push`.
 # `push(?=\s)` requires whitespace after push, so `push-mirror` is rejected.
+# Cycle 7: this admitted only `-C` and `-c` while `git --help` documents a dozen
+# more, so `git --no-pager push origin main`, `git --no-optional-locks push …`,
+# `git --work-tree=. push …` and `git --git-dir=.git push …` all walked — every
+# one of them a real push, and `git --no-pager --no-optional-locks status -s`
+# runs, so the positions are not hypothetical. The list is git's, ENUMERATED and
+# split by whether the option takes a value, because "any word starting with a
+# dash" would hand the verb a hiding place. A global omitted here can only cost
+# a MISS, never an over-fire, so it errs toward listing. Measured against the
+# installed git 2.43.0: every option below is accepted before a subcommand
+# except `--no-lazy-fetch`, `--no-advice` and `--super-prefix`, which that
+# version rejects. They stay listed on purpose — a newer git accepts them, and
+# an option the local git refuses can only cost a deny on a line that was never
+# going to run.
+_GIT_GLOBAL_VALUE_OPT = (
+    r"(?:-C|-c|--git-dir|--work-tree|--namespace|--super-prefix|--attr-source"
+    r"|--config-env)"
+)
+_GIT_GLOBAL_BOOL_OPT = (
+    r"(?:-p|-P|--paginate|--no-pager|--no-replace-objects|--no-lazy-fetch"
+    r"|--no-optional-locks|--no-advice|--bare|--literal-pathspecs"
+    r"|--glob-pathspecs|--noglob-pathspecs|--icase-pathspecs)"
+)
+_GIT_GLOBALS = (
+    r"(?:" + _GIT_GLOBAL_VALUE_OPT + r"(?:=\S+|\s+\S+)\s+"
+    r"|--exec-path=\S+\s+"
+    r"|" + _GIT_GLOBAL_BOOL_OPT + r"\s+)*"
+)
 _PAT_GIT_PUSH = re.compile(
     r"^\s*git\s+"
-    r"(?:-C\s+\S+\s+|-c\s+\S+\s+)*"
+    + _GIT_GLOBALS +
     r"push(?=\s)"
     r"[^|&;]*?"
     r'(?:[\s:/\'"+])(?:HEAD:)?\+?(main|master)(?=$|\s|[\'"])'
@@ -281,7 +399,8 @@ _PAT_GIT_PUSH = re.compile(
 # are documented forms, and reading only the first token yielded "unknown",
 # which denied a correctly approved PR. So: take the first BARE all-digit token.
 # A flag and its value are skipped because neither is all digits.
-_GH_MERGE_HEAD = re.compile(r"^\s*gh\s+pr\s+merge(?=\s|$)")
+_GH_MERGE_HEAD = re.compile(
+    r"^\s*gh\s+" + _GH_GLOBAL_OPT + r"pr\s+" + _GH_GLOBAL_OPT + r"merge(?=\s|$)")
 _BARE_NUM = re.compile(r"^\d+$")
 
 # Flags of `gh pr merge` that CONSUME the next token (verbatim from `gh help pr
@@ -393,7 +512,7 @@ def _gh_merge_is_help(sub: str) -> bool:
     return False
 
 
-_GIT_PUSH_HEAD = re.compile(r"^\s*git\s+(?:-C\s+\S+\s+|-c\s+\S+\s+)*push(?=\s|$)")
+_GIT_PUSH_HEAD = re.compile(r"^\s*git\s+" + _GIT_GLOBALS + r"push(?=\s|$)")
 # git-push flags that CONSUME the next token, so a `-n` sitting in a flag VALUE
 # is never read as `--dry-run`. Erring long here can only cost an extra deny.
 _GIT_PUSH_VALUE_FLAGS = frozenset({
@@ -745,6 +864,109 @@ _CMD_HEADS = frozenset({"gh", "git", "curl", "cd"})
 _DQ_STOP = re.compile(r"[\"\\$`]")
 _PLAIN_RUN = re.compile(r"[^\s'\"\\$`<]+")
 
+# ANSI-C quoting, `$'…'`, and locale quoting, `$"…"`. Both are QUOTING, not
+# expansion: bash decodes them at parse time and the word that reaches the
+# program is the decoded text, so `gh pr $'\x6derge' 288` and `gh pr merge 288`
+# are the SAME command line. Cycle 7 measured 12 spellings of this walking the
+# gate, and one of them is a regression this branch introduced in 1f0ca89: that
+# commit moved verb matching onto decoded tokens, the decoder turned `$'main'`
+# into `$main`, and `git push origin $'main'` went from DENY on 2ceb87c to ALLOW
+# — one spelling closed and another opened in the same change. Residual 1 says
+# an expansion supplies the verb and is out of scope; `$'…'` never was an
+# expansion, so nothing here reads a variable.
+_ANSI_C_SIMPLE = {
+    "a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n",
+    "r": "\r", "t": "\t", "v": "\v", "\\": "\\", "'": "'", '"': '"', "?": "?",
+}
+_HEXDIGITS = frozenset("0123456789abcdefABCDEF")
+_OCTDIGITS = frozenset("01234567")
+
+
+def _ansi_c_body(s: str, i: int) -> tuple[str, int, bool]:
+    r"""(decoded text, index past the closing quote, closed?) for the ANSI-C
+    string opening at ``s[i:i+2] == "$'"``.
+
+    Faithful to bash on the escape that is NOT recognized: `$'\z'` is `\z`, the
+    backslash retained, so this can never manufacture a verb bash would not
+    produce. An unclosed opener is a shell syntax error and reports closed=False,
+    which the tokenizer treats exactly as it treats any other unclosed quote.
+    """
+    out: list[str] = []
+    j, n = i + 2, len(s)
+    while j < n and s[j] != "'":
+        ch = s[j]
+        if ch != "\\" or j + 1 >= n:
+            out.append(ch)
+            j += 1
+            continue
+        esc = s[j + 1]
+        if esc in _ANSI_C_SIMPLE:
+            out.append(_ANSI_C_SIMPLE[esc])
+            j += 2
+        elif esc == "x":
+            k, digits = j + 2, ""
+            while k < n and len(digits) < 2 and s[k] in _HEXDIGITS:
+                digits += s[k]
+                k += 1
+            if digits:
+                out.append(chr(int(digits, 16)))
+                j = k
+            else:
+                out.append("\\" + esc)
+                j += 2
+        elif esc in ("u", "U"):
+            width = 4 if esc == "u" else 8
+            k, digits = j + 2, ""
+            while k < n and len(digits) < width and s[k] in _HEXDIGITS:
+                digits += s[k]
+                k += 1
+            if digits:
+                try:
+                    out.append(chr(int(digits, 16)))
+                except ValueError:
+                    pass
+                j = k
+            else:
+                out.append("\\" + esc)
+                j += 2
+        elif esc in _OCTDIGITS:
+            k, digits = j + 1, ""
+            while k < n and len(digits) < 3 and s[k] in _OCTDIGITS:
+                digits += s[k]
+                k += 1
+            out.append(chr(int(digits, 8) & 0xFF))
+            j = k
+        elif esc == "c" and j + 2 < n:
+            out.append(chr(ord(s[j + 2].upper()) ^ 0x40))
+            j += 3
+        else:
+            out.append("\\" + esc)
+            j += 2
+    if j < n and s[j] == "'":
+        return "".join(out), j + 1, True
+    return "".join(out), n, False
+
+
+def _ansi_c_expand(text: str) -> str:
+    """*text* with every `$'…'` replaced by its decoding and the `$` of every
+    `$"…"` dropped. QUOTE-BLIND on purpose: it is only ever used to widen a
+    pre-filter, where reading a `$'…'` that bash would have taken literally can
+    make the filter say YES too often and never NO too often."""
+    if "$'" not in text and '$"' not in text:
+        return text
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        if text[i] == "$" and i + 1 < n and text[i + 1] == "'":
+            body, i, _closed = _ansi_c_body(text, i)
+            out.append(body)
+        elif text[i] == "$" and i + 1 < n and text[i + 1] == '"':
+            i += 1
+        else:
+            out.append(text[i])
+            i += 1
+    return "".join(out)
+
 _TOKENS_CACHE: dict[str, list | None] = {}
 
 
@@ -783,8 +1005,18 @@ def _tokenize(s: str):
         if ch == "\\" and not in_single and i + 1 < n:
             if start < 0:
                 start = i
-            buf.append(s[i + 1])
-            i += 2
+            # Inside DOUBLE quotes bash escapes only ``$ ` " \\`` and a newline;
+            # before anything else the backslash is LITERAL. Eating it there was
+            # not cosmetic: `echo "gh pr $'\\x6derge' 291" | bash` handed the
+            # stdin channel `$'x6derge'`, the hex escapes stripped of the
+            # backslashes that made them escapes, and the re-parse then decoded
+            # a word that is not the verb. Measured ALLOW before this line.
+            if in_double and s[i + 1] not in "$`\"\\\n":
+                buf.append(ch)
+                i += 1
+            else:
+                buf.append(s[i + 1])
+                i += 2
             continue
         # A command substitution is ONE word to the shell no matter how many
         # spaces it contains, so it has to be one token here too. Without this,
@@ -829,6 +1061,28 @@ def _tokenize(s: str):
                 j += 1
             buf.append(s[i:j])
             i = j
+            continue
+        # ANSI-C and locale quoting. Both are decided by the SHELL before the
+        # program ever runs, so they belong in the decoder next to `\\` and `"`,
+        # not in the opaque-head reading: `$'merge'` is the word `merge`, and it
+        # is not an expansion of anything. Neither is special inside quotes, so
+        # both quote states are read here (`"$'x'"` really is a literal `$'x'`).
+        if (ch == "$" and not in_single and not in_double
+                and i + 1 < n and s[i + 1] == "'"):
+            if start < 0:
+                start = i
+            text_ac, j, closed = _ansi_c_body(s, i)
+            if not closed:
+                return None            # unclosed quote: a shell syntax error
+            buf.append(text_ac)
+            i = j
+            continue
+        if (ch == "$" and not in_single and not in_double
+                and i + 1 < n and s[i + 1] == '"'):
+            if start < 0:
+                start = i
+            in_double = True           # `$"…"` is `"…"` with a translation pass
+            i += 2
             continue
         if ch == "`" and not in_single:
             if start < 0:
@@ -1060,7 +1314,7 @@ def _expand_gh_alias(sub: str, cfg_dir: str | None = None) -> str:
 # needs no config file at all — which is why RESOLUTION alone could never be
 # the fix and the DEFINITION is gated as well (see _alias_definition_form).
 _GIT_FIRST_WORD_RE = re.compile(
-    r"^git\s+((?:-C\s+\S+\s+|-c\s+\S+\s+)*)([A-Za-z][\w.-]*)(?=\s|$)")
+    r"^git\s+(" + _GIT_GLOBALS + r")([A-Za-z][\w.-]*)(?=\s|$)")
 _GIT_C_ALIAS_RE = re.compile(r"-c\s+alias\.([\w.-]+)=(\S+|'[^']*'|\"[^\"]*\")")
 _GIT_ALIAS_SECTION_RE = re.compile(r"^\s*\[\s*alias\s*\]\s*$", re.IGNORECASE)
 _GIT_SECTION_RE = re.compile(r"^\s*\[")
@@ -1854,8 +2108,16 @@ _FLATTEN = str.maketrans("", "", "\\\"'")
 
 
 def _may_publish(text: str) -> bool:
-    """False when *text* provably matches no publish pattern in this file."""
-    probe = text.translate(_FLATTEN).lower()
+    """False when *text* provably matches no publish pattern in this file.
+
+    "Sound by construction" is sound only for the ALPHABET the flatten table
+    knows, which cycle 7 measured: `$'\\x6d\\x65\\x72\\x67\\x65'` flattens to
+    `$x6dx65x72x67x65`, carries none of the five words, and a substitution
+    holding it was dropped before the recursion could ever look at it. So the
+    probe decodes ANSI-C and locale quoting first, by the same reader the
+    tokenizer uses. The decode only ever ADDS text, so the filter can widen and
+    never narrow."""
+    probe = _ansi_c_expand(text).translate(_FLATTEN).lower()
     return any(w in probe for w in _MAY_PUBLISH)
 
 

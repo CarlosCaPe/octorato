@@ -99,6 +99,11 @@ Recurse on the first set, never on the second, and you get both halves. The same
 ```bash
 # 1  the VERB comes from an expansion, not from text
 X="pr merge"; gh $X 291 ; $(echo "gh pr merge 291") ; C="gh pr merge 291"; eval "$C"
+#    cycle 7: ANSI-C and locale QUOTING left this residual. `$'gh'` used to be
+#    listed here as closed and was closed only at the HEAD position; in every
+#    other position `gh pr $'merge' 288`, `gh pr $'\x6derge' 288` and
+#    `git push origin $'main'` walked. They are quoting, not expansion, and are
+#    decoded in the tokenizer now.
 # 2  the merge lives in a file the hook never reads
 ./deploy.sh
 # 3  a non-shell runtime does the API call, or shells out from inside one
@@ -112,9 +117,13 @@ awk 'BEGIN{system("gh pr merge 291")}'      # measured executing; the argument i
 # 8  the two nested ALLOW-side enumerations, _NON_SHELL_C_HEADS < _INERT_ARG_HEADS:
 #    a program NAMED grep/psql/gcc/echo/awk on the HEAD is exempt from the
 #    unnamed-wrapper argument reading, and an unlisted counter reached through
-#    `find -exec` or `xargs` still over-fires
+#    `xargs` still over-fires
 grep -c "gh pr merge 292" notes.md          # allowed, correctly
-find . -exec grep -c "gh pr merge 292" {} \;  # still denies: over-fire, head-anchored
+xargs grep -c "gh pr merge 292"             # denies: over-fire, head-anchored
+find . -exec grep -c "…" {} \;               # cycle 7: re-measured ALLOW. This
+                                            # line used to claim a deny; the
+                                            # claim was stale, harmless in
+                                            # direction, and untrue.
 # 9  parse TIME: a crafted ~25 KB line of `$a -f` noise approaches the 5 s hook
 #    budget, and a killed hook writes no stdout, which the harness reads as ALLOW
 # 10 bash 5.3 funsubs ${ cmd; } / ${| cmd; }: unreachable on the installed bash
@@ -125,6 +134,8 @@ echo "gh pr merge 291" | ssh host bash      # ssh itself executes nothing
 ```
 
 Cycle 5 closed three classes and added residuals 10 and 11. Class A: `$(…)` and backticks are the SAME channel as the `<(…)` cycle 3 closed, and their contents were never re-matched — `cat <(gh pr merge 291)` denied while `echo $(gh pr merge 291)` allowed, both executing. Class B: the cycle-4 option walk skipped an option but not its VALUE, so `bash -c -o pipefail "…"` returned `pipefail` as the command. Class C is the architectural one: deny-by-default had been applied to bare-head peeling only, and the quoted-command path went back to an ENUMERATION OF CHANNELS, which lost to five new ones in a single cycle (`env -S`, `--split-string=`, `watch`, a bare `| bash`, `git -c core.sshCommand=`). The fence moved onto the HEAD — on a head that is neither a command head nor one whose arguments are DATA, every argument that parses as a whole publish command line is a command that wrapper runs — measured at 0 new denials on a 74-command read-only corpus and 0 on 400 real commands taken from this repo's own docs.
+
+Cycle 7 returned FAIL with 22 spellings that pass the gate and execute a real merge against a fake binary on PATH, in two classes plus one regression this branch had introduced itself. The regression: `1f0ca89` moved verb matching onto decoded tokens to close `gh "pr" merge`, its decoder turned `$'main'` into `$main`, and `git push origin $'main'` went DENY on the commit before it and ALLOW on it — one spelling closed and another opened in the same change. Class 1 is that family: `$'…'` and `$"…"` are QUOTING, resolved by the shell before the program runs, so twelve spellings of the verb, the head, the branch and the API path walked (`gh pr $'\x6derge' 288`, the all-hex `$'\x67\x68' $'\x70\x72' $'\x6d\x65\x72\x67\x65' 288`, `curl -X $'PUT' …`). The hex row also defeated `_may_publish`, whose "sound by construction" held only for the alphabet its flatten table knew. Class 2 is ADJACENCY: the gh anchor required `gh pr merge` with nothing between the words and the git one admitted only `-C`/`-c`, so `gh pr -R owner/repo merge 288` — the spelling in gh's own docs — and `git --no-pager push origin main` walked. Both are closed by decoding quoting in the tokenizer and by skipping an ENUMERATED set of each tool's own global options with their values, never "any word starting with a dash".
 
 Residuals 8 and 9 arrived with the cycle-4 fixes, and both are stated rather than traded away. 8 is the price of ending an over-fire class that denied three ordinary read-only commands, and it is fenced to the HEAD word so a wrapper's path argument exempts nothing: `flock /var/lock/grep -c "gh pr merge 291"` still denies. 9 is bounded, not eliminated: the three quadratics measured this cycle went 39.7 s to 0.43 s (20000 benign words), 52.2 s to 0.7 s (8000 opaque tokens) and 9.2 s to 0.03 s (8000 heredoc openers) against a 5 s budget, while two shapes stay superlinear — a line alternating an opaque token with a write-marker flag (`git $a -f …`) sits near 3 s at 2500 pairs, and a 6000-line pasted script sits near 3 s because every line is its own sub-command.
 

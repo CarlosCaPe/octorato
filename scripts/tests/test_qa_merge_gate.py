@@ -1639,6 +1639,188 @@ class TestTheDepthCapDoesNotEatAnApprovableMerge(_GateRunner, unittest.TestCase)
                 self._allow(_nest(depth, "gh pr view 292 --json state"))
 
 
+class TestAnsiCQuotingIsPartOfTheWord(unittest.TestCase):
+    r"""QA cycle 7, class 1 — and the first of these anchors is one this branch
+    OWES, not one it found.
+
+    `1f0ca89` ("match the verb on decoded tokens") closed `gh "pr" merge` by
+    moving verb matching onto decoded tokens. Its decoder turned `$'main'` into
+    `$main`, the verb path read that as an expansion, and residual 1 declares an
+    expansion out of scope — so `git push origin $'main'` went DENY on `2ceb87c`
+    and ALLOW on `1f0ca89`, measured by running both revisions against the same
+    payload. One spelling closed and another opened in the same change, which is
+    this session's signature pattern landing inside our own fix, and it was live
+    on the branch from that commit until this one.
+
+    `test_the_regression_this_branch_introduced` is the anchor that would have
+    caught it in `1f0ca89`. The rest of the class is the family it belongs to:
+    `$'…'` and `$"…"` are QUOTING, decided by the shell before the program runs,
+    so `gh pr $'\x6derge' 288` is the same command line as `gh pr merge 288`.
+    Twelve spellings were measured walking the gate and executing a fake `gh` on
+    PATH; residual 1's line saying `$'gh'` is closed was true only at the HEAD
+    position, where the remainder still carries the verb.
+    """
+
+    def test_the_regression_this_branch_introduced(self):
+        # DENY on 2ceb87c, ALLOW on 1f0ca89 through d3cb502, DENY again here.
+        self.assertEqual(
+            ["push"], [f for _s, f in gate._find_publish_subcmds(
+                "git push origin $'main'")])
+
+    def test_every_measured_spelling_carries_the_verb(self):
+        hexgh = r"$'\x67\x68' $'\x70\x72'"
+        for cmd in (
+            r"gh pr $'merge' 288",
+            r"gh pr $'\x6derge' 288",
+            hexgh + r" $'\x6d\x65\x72\x67\x65' 288",
+            r"gh pr $'\155erge' 288",
+            r"gh pr m$'\x65'rge 288",
+            'gh pr $"merge" 288',
+            r"git push origin $'main'",
+            r"git $'push' origin main",
+            r"curl -X $'PUT' https://api.github.com/repos/o/r/pulls/288/merge",
+            r"gh api -X PUT repos/o/r/pulls/288/$'merge'",
+            'bash -c "gh pr ' + r"$'merge'" + ' 288"',
+            'echo "gh pr ' + r"$'\x6d\x65\x72\x67\x65'" + ' 288" | bash',
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertTrue(gate._find_publish_subcmds(cmd), cmd)
+
+    def test_the_pre_filter_decodes_the_same_alphabet(self):
+        """`_may_publish` is "sound by construction" only for the alphabet its
+        flatten table knows. The hex row flattens to `$x6dx65x72x67x65`, carries
+        none of the five probe words, and a substitution holding it was dropped
+        before the recursion could look at it — measured ALLOW."""
+        hexmerge = r"$'\x67\x68' $'\x70\x72' $'\x6d\x65\x72\x67\x65' 291"
+        self.assertTrue(gate._may_publish(hexmerge))
+        self.assertTrue(gate._find_publish_subcmds("echo $(" + hexmerge + ")"))
+        self.assertTrue(gate._find_publish_subcmds("tee >(" + hexmerge + ")"))
+        # and it still says NO to a line that really carries nothing
+        self.assertFalse(gate._may_publish(r"echo $'\x68\x69 there'"))
+
+    def test_the_decoder_is_faithful_to_bash(self):
+        cases = {
+            r"$'merge'": "merge",
+            r"$'\x6derge'": "merge",
+            r"$'\155erge'": "merge",
+            r"$'merge'": "merge",
+            r"m$'\x65'rge": "merge",
+            r"$'a\tb'": "a\tb",
+            r"$'it\'s'": "it's",
+            # an escape bash does NOT recognize keeps its backslash, so this can
+            # never manufacture a word bash would not produce
+            r"$'\zmerge'": r"\zmerge",
+        }
+        for raw, want in cases.items():
+            with self.subTest(raw=raw):
+                self.assertEqual(want, gate._ansi_c_expand(raw))
+        # `$"…"` is `"…"` with a translation pass; the quotes survive the expand
+        # and the tokenizer strips them.
+        self.assertEqual('"merge"', gate._ansi_c_expand('$"merge"'))
+        self.assertEqual(["merge"], [t for t, _s, _e in gate._tokenize('$"merge"')])
+
+    def test_a_backslash_inside_double_quotes_is_literal(self):
+        r"""Inside double quotes bash escapes only ``$ ` " \`` and a newline.
+        Eating the backslash before anything else handed the stdin channel
+        `$'x6derge'` — the hex escapes stripped of what made them escapes — and
+        `echo "gh pr $'\x6derge' 291" | bash` measured ALLOW because of it."""
+        self.assertEqual([r"a\x6db"],
+                         [t for t, _s, _e in gate._tokenize(r'"a\x6db"')])
+        for raw, want in ((r'"a\$b"', "a$b"), (r'"a\"b"', 'a"b'),
+                          (r'"a\\b"', "a\\b")):
+            with self.subTest(raw=raw):
+                self.assertEqual([want], [t for t, _s, _e in gate._tokenize(raw)])
+
+    def test_an_ansi_c_mention_is_still_one_token(self):
+        """The over-fire twin. Decoding cannot manufacture a verb out of a
+        whole-token quote: one token can never supply the two words a verb needs
+        after a head, whichever quoting spelled it."""
+        for cmd in (f"git commit -m $'{GH_MERGE} 96'",
+                    f"echo $'{GH_MERGE} 96'",
+                    r"grep -rn $'merge' scripts/"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual([], gate._find_publish_subcmds(cmd))
+
+    def test_an_unclosed_ansi_c_opener_does_not_lose_the_anchor(self):
+        """An unclosed `$'` is a shell syntax error, so nothing runs; it is
+        reported like any other unclosed quote and the whitespace fallback still
+        IDENTIFIES rather than falling open."""
+        self.assertIsNone(gate._tokenize(r"gh pr $'merge 288"))
+        self.assertTrue(gate._find_publish_subcmds(r"gh pr merge $'288"))
+
+
+class TestAnOptionIsNotTheVerbsAdjacency(unittest.TestCase):
+    """QA cycle 7, class 2 — the header claimed "an option is not a payload" and
+    the patterns required ADJACENCY. `_PAT_GH_MERGE` was `^\\s*gh\\s+pr\\s+merge\\b`
+    and the git pattern admitted `-C` and `-c` only, while `git --help`
+    documents a dozen more globals. Eight spellings walked, and the tools accept
+    every one of those positions: `gh -R CarlosCaPe/octorato pr view 288 --json
+    number` returns `{"number":288}`, `git --no-pager --no-optional-locks status
+    -s` runs, and `gh pr -R X merge N` is the spelling in gh's own docs.
+
+    The skip is ENUMERATED, never "any word starting with a dash": a general
+    dash-skip would let a crafted flag hide the verb behind it, and the value of
+    a valued option is consumed AS a value for the same reason.
+    """
+
+    def test_the_documented_gh_positions_carry_the_merge(self):
+        for cmd in (f"gh -R CarlosCaPe/octorato pr merge 288",
+                    f"gh --repo=CarlosCaPe/octorato pr merge 288",
+                    f"gh --repo CarlosCaPe/octorato pr merge 288",
+                    f"gh pr -R CarlosCaPe/octorato merge 288",
+                    f"gh pr --repo CarlosCaPe/octorato merge 288",
+                    f"gh pr --repo=CarlosCaPe/octorato merge 288"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(["gh"],
+                                 [f for _s, f in gate._find_publish_subcmds(cmd)])
+
+    def test_gits_documented_globals_do_not_hide_push(self):
+        for cmd in ("git --no-pager push origin main",
+                    "git --no-optional-locks push origin main",
+                    "git --work-tree=. push origin main",
+                    "git --git-dir=.git push origin main",
+                    "git --git-dir .git push origin main",
+                    "git --literal-pathspecs push origin master",
+                    "git -p push origin main",
+                    "git --no-pager --no-optional-locks push origin main"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(["push"],
+                                 [f for _s, f in gate._find_publish_subcmds(cmd)])
+
+    def test_the_pr_number_survives_the_option(self):
+        """A deny the operator cannot approve is a merge blocked forever, so the
+        widened anchor has to keep reading the PR rather than fall to the
+        unapprovable sentinel."""
+        for cmd in ("gh -R CarlosCaPe/octorato pr merge 288",
+                    "gh --repo=CarlosCaPe/octorato pr merge 288",
+                    "gh pr -R CarlosCaPe/octorato merge 288",
+                    "gh pr --repo CarlosCaPe/octorato merge 288"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual("288", gate._extract_pr_id(cmd))
+        # a valued option is still consumed as a VALUE, not read as the PR
+        self.assertEqual("281", gate._extract_pr_id(
+            "gh -R o/r pr merge -t 280 281"))
+
+    def test_the_help_and_dry_run_readings_still_hold_past_an_option(self):
+        self.assertEqual([], gate._find_publish_subcmds(
+            "gh -R CarlosCaPe/octorato pr merge --help"))
+        self.assertEqual([], gate._find_publish_subcmds(
+            "git --no-pager push --dry-run origin main"))
+
+    def test_another_verb_behind_the_same_option_stays_benign(self):
+        """The benign twin of each violation, one word away: the option skip
+        must not turn every `gh pr <verb>` into a merge or every `git <verb>`
+        into a push."""
+        for cmd in ("gh pr -R CarlosCaPe/octorato view 288",
+                    "gh -R CarlosCaPe/octorato pr list",
+                    "git --no-pager fetch origin main",
+                    "git --no-pager log --oneline -3",
+                    "git --git-dir=.git status -s",
+                    "git push-mirror origin main"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual([], gate._find_publish_subcmds(cmd))
+
+
 class TestTheParseFitsTheHookBudget(unittest.TestCase):
     """`hooks.json` gives this gate 5 seconds, and a hook that is killed writes no
     stdout, which the harness reads as ALLOW — a timeout is a bypass with a
@@ -1828,6 +2010,65 @@ Sized against a LOADED box on purpose, not a quiet one, because that is
     def test_the_merge_at_the_end_of_a_long_line_is_still_found(self):
         cmd = " ".join(["word"] * 20000) + " ; " + f"{GH_MERGE} 292"
         self.assertEqual(["gh"], [f for _s, f in gate._find_publish_subcmds(cmd)])
+
+    def test_the_env_read_is_flat_in_a_fat_environment(self):
+        """The FAILABILITY fence for `_line_env_chain`, and the thing the
+        wall-clock leg above cannot be: deterministic.
+
+        Cycle 6 declined this shape because a sensitivity fence "needs
+        os.environ mutation", and this brain has a lesson about that leaking
+        across modules. Cycle 7 corrected the reason and the correction is
+        right: that lesson is about IN-PROCESS writes to `os.environ`, and
+        `subprocess.run(env=…)` writes nothing in this process. It is also how
+        the hook actually runs — the harness spawns it with an environment, it
+        does not import it.
+
+        Wall clock is not the only clock either. `time.process_time()` measures
+        CPU, which removes the load axis the leg above straddles on: measured on
+        this box, CPU stays within 1.1x-1.3x while wall swings 3x-5x. With the
+        three-key read reverted to `dict(os.environ)` in a copy of the tree:
+
+            env vars   fixed CPU   revert CPU   ratio
+            91         0.70 s      1.34 s       1.9x
+            541        0.80 s      4.57 s       5.7x
+
+        SIZED, not guessed, and the first size was wrong: at ~450 padded
+        variables the revert measured 2.55 / 2.92 / 2.68 s against a 2.5 s line
+        — red, but by 1.02x, which is a fence that a quiet box turns green. At
+        900 the same three runs are 4.62 / 4.80 / 5.60 s against 0.52 / 0.53 /
+        0.62 s for the fix: a 4x margin on the green side and 1.9x on the red
+        one. That is the property the three-key read buys — the parse costs the
+        same in a fat shell as in a lean one — and CPU is what makes the two
+        sides stop overlapping. The wall-clock leg above stays as the BUDGET
+        contract (5 s is what `hooks.json` gives the hook); this one is the
+        REGRESSION contract. Cost is one interpreter spawn."""
+        import subprocess
+        import textwrap
+        child = textwrap.dedent(
+            """
+            import importlib.util, sys, time
+            spec = importlib.util.spec_from_file_location("g", sys.argv[1])
+            m = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(m)
+            cmd = " ".join("$(gh pr merge %d)" % i for i in range(3500))
+            t0 = time.process_time()
+            m._find_publish_subcmds(cmd)
+            print("%.3f" % (time.process_time() - t0))
+            """
+        )
+        env = {k: v for k, v in os.environ.items()
+               if k in ("PATH", "HOME", "LANG", "PYTHONPATH")}
+        env.update({"OCTO_FENCE_PAD_%04d" % i: "x" * 40 for i in range(900)})
+        out = subprocess.run(
+            [sys.executable, "-c", child, str(SCRIPTS / "qa-merge-gate.py")],
+            capture_output=True, text=True, env=env, timeout=120)
+        self.assertEqual(0, out.returncode, out.stderr)
+        cpu = float(out.stdout.strip())
+        self.assertLess(
+            cpu, 2.5,
+            f"3500 $(…) substitutions cost {cpu:.2f}s of CPU in a "
+            f"{len(env)}-variable environment; the three-key env read keeps "
+            f"this flat, a whole-process walk does not (measured 4.6-5.6s)")
 
     def test_the_curl_candidate_bound_keeps_a_real_api_write(self):
         # the bound drops synthesized `curl` heads PAST the last write marker;
