@@ -179,6 +179,30 @@ _GH_VALUE_FLAGS = frozenset({
 _GH_VALUE_SHORTS = frozenset("AbFtR")
 
 
+_ARG_TOKENS_CACHE: dict[str, list[str] | None] = {}
+
+
+def _arg_tokens(s: str):
+    """Argument tokens of *s* (quoting honoured), or None when it does not parse.
+
+    Replaces `shlex.split(posix=True)`, which was called TWICE over the same
+    string (the help walk and the PR-number walk) and whose character state
+    machine cost 4.1 s of an 8.4 s run on an 80 KB `-b` body — against a hook
+    timeout of 5 s (QA cycle 3, bypass 6). This file's own tokenizer does the
+    same job in milliseconds, and it keeps `$(...)` and `<(...)` as ONE opaque
+    word where shlex splits them into fragments a PR number could hide in.
+    Memoized because the two walks ask the identical question.
+    """
+    if s in _ARG_TOKENS_CACHE:
+        return _ARG_TOKENS_CACHE[s]
+    toks = _tokens_with_offsets(s)
+    out = None if toks is None else [t for t, _s, _e in toks]
+    if len(_ARG_TOKENS_CACHE) > 256:
+        _ARG_TOKENS_CACHE.clear()
+    _ARG_TOKENS_CACHE[s] = out
+    return out
+
+
 def _gh_merge_pr_num(sub: str) -> str | None:
     """First bare numeric ARGUMENT of a gh-pr-merge sub-command, else None.
 
@@ -188,13 +212,12 @@ def _gh_merge_pr_num(sub: str) -> str | None:
     m = _GH_MERGE_HEAD.match(sub)
     if not m:
         return None
-    # shlex, not whitespace: a quoted flag value ("x 280") is ONE token, so a
-    # number inside it can never be read as the PR (QA cycle 3). An unclosed
-    # quote is unparseable and falls through to the sentinel, which denies.
-    try:
-        import shlex
-        toks = shlex.split(sub[m.end():], posix=True)
-    except ValueError:
+    # A real tokenizer, not whitespace: a quoted flag value ("x 280") is ONE
+    # token, so a number inside it can never be read as the PR (QA cycle 3). An
+    # unclosed quote is unparseable and falls through to the sentinel, which
+    # denies.
+    toks = _arg_tokens(sub[m.end():])
+    if toks is None:
         return None
     i, flags_done = 0, False
     while i < len(toks):
@@ -228,10 +251,8 @@ def _gh_merge_is_help(sub: str) -> bool:
     m = _GH_MERGE_HEAD.match(sub)
     if not m:
         return False
-    try:
-        import shlex
-        toks = shlex.split(sub[m.end():], posix=True)
-    except ValueError:
+    toks = _arg_tokens(sub[m.end():])
+    if toks is None:
         return False
     i, flags_done = 0, False
     while i < len(toks):
@@ -249,6 +270,48 @@ def _gh_merge_is_help(sub: str) -> bool:
         if tok in _GH_VALUE_FLAGS or (
             not tok.startswith("--") and tok[-1] in _GH_VALUE_SHORTS
         ):
+            i += 1                               # consume the value token
+    return False
+
+
+_GIT_PUSH_HEAD = re.compile(r"^\s*git\s+(?:-C\s+\S+\s+|-c\s+\S+\s+)*push(?=\s|$)")
+# git-push flags that CONSUME the next token, so a `-n` sitting in a flag VALUE
+# is never read as `--dry-run`. Erring long here can only cost an extra deny.
+_GIT_PUSH_VALUE_FLAGS = frozenset({
+    "-o", "--push-option", "--repo", "--receive-pack", "--exec",
+})
+
+
+def _git_push_is_dry_run(sub: str) -> bool:
+    """True when a git-push line only REHEARSES the push and writes nothing.
+
+    `git push --dry-run origin main` denied (measured 2026-09-08) — an over-fire
+    on a command whose whole point is that it does not publish, and the kind that
+    teaches people to route around the gate. Walked as TOKENS, not searched as a
+    substring, for the same reason `_gh_merge_is_help` is: a `--dry-run` sitting
+    inside a quoted flag VALUE (`git push -o "--dry-run" origin main`) is a value,
+    not a flag, and a substring search there would turn a real push into an allow.
+    """
+    m = _GIT_PUSH_HEAD.match(sub)
+    if not m:
+        return False
+    toks = _arg_tokens(sub[m.end():])
+    if toks is None:
+        return False
+    i, flags_done = 0, False
+    while i < len(toks):
+        tok = toks[i]
+        i += 1
+        if not flags_done and tok == "--":
+            flags_done = True
+            continue
+        if flags_done or not tok.startswith("-") or len(tok) == 1:
+            continue
+        if tok in ("--dry-run", "-n"):
+            return True
+        if "=" in tok:
+            continue
+        if tok in _GIT_PUSH_VALUE_FLAGS:
             i += 1                               # consume the value token
     return False
 
@@ -558,7 +621,30 @@ _W_GROUP_END = re.compile(r"[\s;)}]+$")
 _CMD_HEADS = frozenset({"gh", "git", "curl", "cd"})
 
 
+# Characters that end a bulk run in `_tokenize`. Inside double quotes only these
+# four are special; outside quotes, add whitespace, both quote marks and `<`.
+_DQ_STOP = re.compile(r"[\"\\$`]")
+_PLAIN_RUN = re.compile(r"[^\s'\"\\$`<]+")
+
+_TOKENS_CACHE: dict[str, list | None] = {}
+
+
 def _tokens_with_offsets(s: str):
+    """Memoized `_tokenize`. The peel, the env walk, the PR-number walk and the
+    help walk all ask the identical question about the identical string, and the
+    answer depends on nothing else — an 80 KB `-b` body was tokenized FIVE times
+    per invocation, 1.9 s of a run against a 5 s hook timeout. Callers only read
+    the tuples, so one list is safe to share."""
+    if s in _TOKENS_CACHE:
+        return _TOKENS_CACHE[s]
+    out = _tokenize(s)
+    if len(_TOKENS_CACHE) > 256:
+        _TOKENS_CACHE.clear()
+    _TOKENS_CACHE[s] = out
+    return out
+
+
+def _tokenize(s: str):
     """[(decoded_token, start, end)] for *s*, split on UNQUOTED whitespace.
 
     Quotes and backslash escapes are honored, so a quoted argument stays one
@@ -602,6 +688,29 @@ def _tokens_with_offsets(s: str):
             buf.append(s[i:j])
             i = j
             continue
+        # Process substitution is ONE word to the shell too, and unlike `$(...)`
+        # it is a CHANNEL: `bash <(echo "gh pr merge 292")` hands the shell a
+        # file whose contents are that command line. Splitting it into `<(echo`
+        # and `gh pr merge 292)` is how the channel disappeared entirely (QA
+        # cycle 3, bypass 4 — measured executing the real gh). It is not a
+        # substitution inside double quotes, so both quote states matter here.
+        if (ch == "<" and not in_single and not in_double
+                and i + 1 < n and s[i + 1] == "("):
+            if start < 0:
+                start = i
+            depth, j = 0, i + 1
+            while j < n:
+                if s[j] == "(":
+                    depth += 1
+                elif s[j] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        j += 1
+                        break
+                j += 1
+            buf.append(s[i:j])
+            i = j
+            continue
         if ch == "`" and not in_single:
             if start < 0:
                 start = i
@@ -630,8 +739,29 @@ def _tokens_with_offsets(s: str):
             continue
         if start < 0:
             start = i
-        buf.append(ch)
-        i += 1
+        # Bulk-take the run of characters none of the branches above can claim,
+        # instead of stepping one at a time. EXACT, not an approximation: every
+        # stop character below is a character one of those branches handles in
+        # this state, and every other character reached this line to be appended
+        # verbatim anyway. It is what keeps a padded argument from starving the
+        # hook: a 500 KB `-b` body ran 4.9 s against a 5 s timeout, and a gate the
+        # harness kills is a gate that never says no (QA cycle 3, bypass 6).
+        if in_single:
+            j = s.find("'", i)          # in single quotes NOTHING else is special
+            if j < 0:
+                j = n
+        elif in_double:
+            m2 = _DQ_STOP.search(s, i)
+            j = n if m2 is None else m2.start()
+        else:
+            m2 = _PLAIN_RUN.match(s, i)
+            j = m2.end() if m2 else i
+        if j <= i:
+            buf.append(ch)              # no run here: guarantee forward progress
+            i += 1
+        else:
+            buf.append(s[i:j])
+            i = j
     if in_single or in_double:
         return None
     if start >= 0:
@@ -889,7 +1019,7 @@ def _is_publish_form(dec: str):
     if _PAT_GH_MERGE.match(dec):
         return None if _gh_merge_is_help(dec) else "gh"
     if _PAT_GIT_PUSH.match(dec):
-        return "push"
+        return None if _git_push_is_dry_run(dec) else "push"
     if _api_write_action(dec) is not None:
         return "api"
     if _alias_definition_form(dec):
@@ -968,11 +1098,46 @@ def _line_env(cmd: str, matched_sub: str) -> dict:
         launching the harness looks like.
     Later channels lose to earlier ones, the way the shell resolves them.
     """
-    out = {k: v for k, v in os.environ.items()
+    parts = _line_parts(cmd)
+    chain = _line_env_chain(cmd)
+    try:
+        idx = parts.index(matched_sub)
+    except ValueError:
+        idx = len(parts)          # not a part of this line: every assignment applies
+    out = dict(chain[idx])
+    out.update(_prefix_env(matched_sub))
+    return out
+
+
+_ENV_CHAIN_CACHE: dict[str, list[dict]] = {}
+
+
+def _line_env_chain(cmd: str) -> list[dict]:
+    """chain[i] = the env sub-command i of *cmd* sees, computed ONCE per line.
+
+    This used to be O(n²) and it was a real hole, not a nuisance:
+    `_cfg_dir_for` called `_line_env` once PER sub-command, and each call
+    re-split and re-tokenized the WHOLE command. 500 `;`-joined no-ops plus a
+    merge took 9.7 s (measured 2026-09-08) against this gate's `hooks.json`
+    timeout of 5 s, and 2000 took 132 s. The gate still returned 2; it just
+    never got to say so. A fail-closed contract that depends on the process
+    surviving is not fail-closed, so the fix is the complexity, not the
+    timeout. One extra entry at the end: the env after every part, which is
+    what a sub-command that is not in this list should see.
+    """
+    # The process env is part of the answer, so it is part of the key: caching on
+    # the command string alone would hand a stale chain to the next caller after
+    # an export (and to the next test that patches os.environ).
+    key = (cmd, os.environ.get("GH_REPO"), os.environ.get("GH_HOST"),
+           os.environ.get("GH_CONFIG_DIR"))
+    chain = _ENV_CHAIN_CACHE.get(key)
+    if chain is not None:
+        return chain
+    acc = {k: v for k, v in os.environ.items()
            if k in ("GH_REPO", "GH_HOST", "GH_CONFIG_DIR")}
+    chain = []
     for raw in _line_parts(cmd):
-        if raw == matched_sub:
-            break
+        chain.append(dict(acc))
         toks = _tokens_with_offsets(raw)
         if toks is None:
             toks = _ws_tokens(raw)
@@ -982,11 +1147,14 @@ def _line_env(cmd: str, matched_sub: str) -> dict:
         for text in words:
             k, sep, v = text.partition("=")
             if sep and re.fullmatch(r"[A-Za-z_]\w*", k):
-                out[k] = v.strip("\"'")
+                acc[k] = v.strip("\"'")
             else:
                 break
-    out.update(_prefix_env(matched_sub))
-    return out
+    chain.append(dict(acc))
+    if len(_ENV_CHAIN_CACHE) > 64:
+        _ENV_CHAIN_CACHE.clear()
+    _ENV_CHAIN_CACHE[key] = chain
+    return chain
 
 
 def _cfg_dir_for(cmd: str, sub: str) -> str | None:
@@ -1029,6 +1197,17 @@ def _split_subcmds(cmd: str) -> list[str]:
             buf.append(ch)
             i += 1
         elif not in_single and not in_double:
+            # A `#` that STARTS a word opens a shell comment: everything to the
+            # end of the line is text the shell never runs. Keeping it made the
+            # peel try a head position inside a comment, so
+            # `git status # gh pr merge 292` DENIED — an over-fire measured
+            # 2026-09-08 on a command that publishes nothing. A `#` in the
+            # middle of a word is not a comment (`curl https://x#frag`), which
+            # is why the preceding character has to be whitespace or nothing.
+            if ch == "#" and (i == 0 or cmd[i - 1].isspace()):
+                j = cmd.find("\n", i)
+                i = n if j < 0 else j
+                continue
             # Check for two-char separators first
             two = cmd[i:i + 2]
             if two in ("&&", "||"):
@@ -1056,7 +1235,18 @@ _HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][\w.-]*)\1")
 _REPARSE_HEADS = frozenset({"bash", "sh", "zsh", "dash", "ksh", "ssh", "script",
                             "eval"})
 _STDIN_REPARSE_HEADS = frozenset({"bash", "sh", "zsh", "dash", "ksh", "ssh"})
-_MAX_REPARSE_DEPTH = 3
+# Single-letter options that may legitimately share a bundle with `c` on a shell
+# or a shell-like wrapper (`bash -lc`, `sh -ic`, `script -qc`). A bundle carrying
+# any letter outside this set is not a command flag, which is what stops the old
+# substring test from reading `--norc` as one.
+_SHELL_OPT_LETTERS = frozenset("abcefhiklmnopqrstuvxBCDEHIPT")
+# Recursion bound. It is a COST bound, not a security one: at the cap a remaining
+# re-parsing head is treated as a merge and DENIED, because "I stopped looking"
+# is not "there is nothing there". Failing OPEN here meant depth 3 denied and
+# depth 4 allowed — four nested `bash -c` executed the real gh (QA cycle 3,
+# bypass 2). Raised from 3 to 5 so the deny lands past any nesting a real command
+# uses, and the cost stays bounded because each level parses a shorter string.
+_MAX_REPARSE_DEPTH = 5
 
 
 def _split_heredocs(cmd: str) -> tuple[str, list[tuple[str, str]]]:
@@ -1114,53 +1304,177 @@ def _strip_leading(s: str) -> str:
     return _STRIP_PREFIX_RE.sub("", s, count=1)
 
 
+_PARTS_CACHE: dict[str, list[str]] = {}
+
+
 def _line_parts(cmd: str) -> list[str]:
     """The sub-commands of *cmd*: continuations joined, heredoc bodies removed,
     split on unquoted separators. One definition, so the matcher, the cwd walk
-    and the env walk can never disagree about where a sub-command starts."""
-    return _split_subcmds(_split_heredocs(_join_continuations(cmd))[0])
+    and the env walk can never disagree about where a sub-command starts.
+
+    Memoized: it depends on nothing but the string, and the cwd walk, the env
+    chain and the matcher all ask for the same line. Re-deriving it per
+    sub-command is where 11.8 s of a 14 s parse went (see _line_env_chain).
+    """
+    parts = _PARTS_CACHE.get(cmd)
+    if parts is None:
+        parts = _split_subcmds(_split_heredocs(_join_continuations(cmd))[0])
+        if len(_PARTS_CACHE) > 64:
+            _PARTS_CACHE.clear()
+        _PARTS_CACHE[cmd] = parts
+    return parts
 
 
-def _reparse_arg(raw_sub: str):
-    """The command STRING a re-parsing head will execute, else None.
+def _is_command_flag(w: str) -> bool:
+    """True when *w* is the flag that says 'the next token is a COMMAND'.
 
-    A4: the "forced trade" this file used to claim is not one. The property that
-    separates the two is not quoted-vs-unquoted, it is whether the head RE-PARSES
-    its string argument as a command. `git commit -m "gh pr merge 96"` never
-    does, `echo "..."` never does; `bash -c`, `sh -lc`, `ssh host`, `script -qc`
-    always do. So the quoted MENTION stays a non-match and the quoted COMMAND is
-    identified — both, not one or the other.
+    Matched EXACTLY, or as a shorthand bundle whose letters are ALL known shell
+    options and one of them is `c` (`-lc`, `-ic`, `-xc`, `-qc`, `-lic`). The old
+    test was a SUBSTRING — `w.startswith("-") and "c" in w.lstrip("-")` — so
+    `--norc` looked like a command flag, `_reparse_arg` returned the literal
+    `-c` as the command to run, and the caller then skipped the direct match on
+    the outer sub-command as well. `bash --norc -c "gh pr merge 292"` allowed
+    and executed the real gh (QA cycle 3, bypass 1). A wrong guess must never
+    REPLACE the check; here it cannot even be made, and the caller falls through
+    to the direct match either way.
+    """
+    if not w.startswith("-") or w in ("-", "--"):
+        return False
+    if w.startswith("--"):
+        return w == "--command"
+    letters = w[1:]
+    return "c" in letters and all(ch in _SHELL_OPT_LETTERS for ch in letters)
+
+
+def _command_flag_value(words: list[str]) -> str | None:
+    """The token a `-c`-style flag in *words* hands to a shell, else None."""
+    for i, w in enumerate(words):
+        if _is_command_flag(w) and i + 1 < len(words):
+            return words[i + 1]
+    return None
+
+
+def _publish_carriers(text: str) -> list[str]:
+    """The parts of *text* that ARE a publish form, when *text* is content a
+    shell will execute. Empty list when it carries none.
+
+    Two readings, because a channel can carry the command either way: as one of
+    its own sub-commands (`cd /r && gh pr merge 292` behind a `-c`), or as a
+    quoted argument it hands on (`echo "gh pr merge 292"` inside a `<(...)`).
+    A single-word token is never a carrier — one token cannot supply the two
+    words a verb needs after a head, which is what keeps a mention benign.
+    """
+    out = [sub for sub in _split_subcmds(text)
+           if _is_publish_form(_unwrap_sub_match(sub))]
+    if out:
+        return out
+    toks = _tokens_with_offsets(text)
+    if toks is None:
+        toks = _ws_tokens(text)
+    return [t for t, _s, _e in toks
+            if " " in t and _is_publish_form(_unwrap_sub_match(t))]
+
+
+def _stdin_channel_texts(raw_sub: str) -> list[str]:
+    """Texts *raw_sub* feeds to a command's STDIN through a channel that is not
+    a heredoc: a here-string (`<<< "…"`, `<<<"…"`) or a process substitution
+    (`<(…)`, which is also how `/dev/stdin` gets its content).
+
+    `_HEREDOC_RE` matches `<<WORD` only, so a here-string never became a body and
+    `_reparses_stdin` was never consulted: `bash <<< "gh pr merge 292"` and
+    `bash /dev/stdin <<< "…"` both allowed and both executed the real gh (QA
+    cycle 3, bypass 3).
     """
     toks = _tokens_with_offsets(raw_sub)
     if toks is None:
         toks = _ws_tokens(raw_sub)
     words = [t for t, _s, _e in toks]
-    idx = None
+    out: list[str] = []
+    for i, w in enumerate(words):
+        if w.startswith("<<<"):
+            rest = w[3:].strip()
+            if rest:
+                out.append(rest)
+            elif i + 1 < len(words):
+                out.append(words[i + 1])
+        start = w.find("<(")
+        if start >= 0:
+            depth, j = 0, start + 1
+            while j < len(w):
+                if w[j] == "(":
+                    depth += 1
+                elif w[j] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                j += 1
+            out.append(w[start + 2:j])
+    return out
+
+
+def _reparse_args(raw_sub: str) -> list[str]:
+    """Every command STRING *raw_sub* will hand to a shell, in order.
+
+    A4: the property that separates a quoted MENTION from a quoted COMMAND is not
+    quoted-vs-unquoted, it is whether the head RE-PARSES its argument. `git commit
+    -m "gh pr merge 96"` never does, `echo "…"` never does; `bash -c`, `sh -lc`,
+    `eval`, `ssh host`, `script -qc` always do.
+
+    But `_REPARSE_HEADS` is an ALLOWLIST, and the wrapper nobody named is a total
+    bypass: `flock /tmp/l -c "gh pr merge 292"` and `su -c "…"` walked straight
+    through (QA cycle 3, bypass 5). That is cycle 1's wrapper finding one layer up
+    — the deny-by-default peel only inverted identification for BARE head tokens,
+    and when the command is a quoted ARGUMENT identification was back on an
+    enumeration. So it is inverted here the same way: when no head this gate reads
+    comes first, ANY `-c`-style flag or stdin channel whose content PARSES as a
+    publish form is a re-parse, whatever the wrapper is called.
+
+    The inversion is bounded by that parse, which is what keeps its over-fire at
+    zero on the corpus: `echo "gh pr merge 96"` carries no command flag, and
+    `git commit -m "…"` is a command head, so neither reaches it. `gcc -c main.c`
+    has the flag and no publish form. The residual cost is a command that takes a
+    literal `-c "git push origin main"` and does NOT execute it — measured as none
+    on the over-fire corpus, and loud rather than silent when it happens.
+    """
+    toks = _tokens_with_offsets(raw_sub)
+    if toks is None:
+        toks = _ws_tokens(raw_sub)
+    words = [t for t, _s, _e in toks]
+    named = None
     for i, w in enumerate(words):
         head = os.path.basename(w.strip("\"'"))
         if head in _CMD_HEADS:
-            return None            # a command head comes first: nothing re-parses
+            return []              # a command head comes first: nothing re-parses
         if head in _REPARSE_HEADS:
-            idx = i
+            named = i
             break
-    if idx is None:
-        return None
-    rest = words[idx + 1:]
-    head = os.path.basename(words[idx].strip("\"'"))
-    if head == "eval":
-        # eval concatenates ALL its arguments and runs the result. It carries no
-        # `-c`, so the loop below never saw it and `eval "gh pr merge 291"`
-        # allowed (measured 2026-09-08) — while UNQUOTED `eval gh pr merge 291`
-        # denied through the peel, which is the tell that the quoting, not the
-        # command, was doing the deciding.
-        return " ".join(rest) if rest else None
-    if head == "ssh":
-        # everything after the destination is the remote command line
-        return " ".join(rest[1:]) if len(rest) >= 2 else None
-    for i, w in enumerate(rest):
-        if w.startswith("-") and "c" in w.lstrip("-") and i + 1 < len(rest):
-            return rest[i + 1]
-    return None
+    out: list[str] = []
+    if named is not None:
+        rest = words[named + 1:]
+        head = os.path.basename(words[named].strip("\"'"))
+        if head == "eval":
+            # eval concatenates ALL its arguments and runs the result. It carries
+            # no `-c`, so the flag walk never saw it and `eval "gh pr merge 291"`
+            # allowed (measured 2026-09-08) — while UNQUOTED `eval gh pr merge
+            # 291` denied through the peel, the tell that the quoting, not the
+            # command, was doing the deciding.
+            if rest:
+                out.append(" ".join(rest))
+        elif head == "ssh":
+            # everything after the destination is the remote command line
+            if len(rest) >= 2:
+                out.append(" ".join(rest[1:]))
+        else:
+            v = _command_flag_value(rest)
+            if v is not None:
+                out.append(v)
+    if not out:
+        v = _command_flag_value(words[1:] if words else [])
+        if v is not None:
+            out.extend(_publish_carriers(v))
+    for text in _stdin_channel_texts(raw_sub):
+        out.extend(_publish_carriers(text))
+    return out
 
 
 def _reparses_stdin(opening_line: str) -> bool:
@@ -1201,17 +1515,38 @@ def _find_publish_subcmds(cmd: str, _depth: int = 0) -> list[tuple[str, str]]:
     body_cmd, heredocs = _split_heredocs(_join_continuations(cmd))
     found: list[tuple[str, str]] = []
     for raw_sub in _split_subcmds(body_cmd):
-        inner = _reparse_arg(raw_sub) if _depth < _MAX_REPARSE_DEPTH else None
-        if inner is not None:
-            found.extend(_find_publish_subcmds(inner, _depth + 1))
+        inners = _reparse_args(raw_sub)
+        before = len(found)
+        if _depth < _MAX_REPARSE_DEPTH:
+            for inner in inners:
+                found.extend(_find_publish_subcmds(inner, _depth + 1))
+        elif inners:
+            # At the cap. Stopping the walk is a cost decision; ALLOWING what is
+            # behind it is not one this gate gets to make, so the unresolved
+            # re-parse is itself the finding. `_extract_pr_id` will read no
+            # number off it and land on the unapprovable sentinel — deny, and
+            # nothing an approval can name.
+            found.append((raw_sub, "depth"))
+        # FALL THROUGH, not `continue`. A re-parse that produced no finding is a
+        # guess that did not pay off, and the old code still skipped the direct
+        # match after it: one misread flag (`--norc` read as `-c`, so the command
+        # string came back as the literal `-c`) DELETED the check instead of
+        # falling back to it, and the merge behind it walked. The direct match now
+        # runs whenever the re-parse found nothing, so a wrong guess can only cost
+        # a wasted look. It is skipped when the re-parse DID find the merge,
+        # because that is the same merge read twice.
+        if len(found) > before:
             continue
         form = _is_publish_form(_unwrap_sub_match(raw_sub, _cfg_dir_for(cmd, raw_sub)))
         if form:
             found.append((raw_sub, form))
-    if _depth < _MAX_REPARSE_DEPTH:
-        for opening, body in heredocs:
-            if _reparses_stdin(opening):
-                found.extend(_find_publish_subcmds(body, _depth + 1))
+    for opening, body in heredocs:
+        if not _reparses_stdin(opening):
+            continue                       # a body nothing executes is data
+        if _depth < _MAX_REPARSE_DEPTH:
+            found.extend(_find_publish_subcmds(body, _depth + 1))
+        else:
+            found.append((opening, "depth"))
     return found
 
 
@@ -1359,6 +1694,19 @@ def main() -> int:
             file=sys.stderr,
         )
         _journal_deny("alias definition expanding to a merge blocked", data)
+        return 2
+    if any(form == "depth" for _pid, form in targets):
+        print(
+            "✗ QA GATE (fail-closed): this line nests shells deeper than the gate "
+            f"re-parses ({_MAX_REPARSE_DEPTH} levels).\n  What runs at the bottom is "
+            "unreadable from here, and 'I stopped looking' is not 'there is nothing\n"
+            "  there' — allowing it made four nested `bash -c` a total bypass while "
+            "three denied.\n  No PR number is readable, so no approval can scope it.\n"
+            "  Operator: run the merge itself with OCTO_MERGE_APPROVE=<pr>, not "
+            "through nested shells.",
+            file=sys.stderr,
+        )
+        _journal_deny("re-parse depth cap reached with a shell still to read: blocked", data)
         return 2
     if sentinels:
         _journal_deny(f"merge of sentinel {sentinels[0]!r} blocked: not an identifier", data)

@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "bash -c 'git status --short'"
+  },
+  "cwd": "/nonexistent/repo"
+}

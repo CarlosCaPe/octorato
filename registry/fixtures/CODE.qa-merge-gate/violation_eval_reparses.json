@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "eval \"gh pr merge 291\""
+  },
+  "cwd": "/nonexistent/repo"
+}

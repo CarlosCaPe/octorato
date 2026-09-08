@@ -415,14 +415,11 @@ class TestSelftestEnvAllowlist(unittest.TestCase):
             self.assertEqual(str(sandbox), out.strip())
 
 
-class TestGateEndToEnd(unittest.TestCase):
-    """Every deny asserts its REASON, not just rc=2.
+class _GateRunner:
+    """Runs the gate end to end under a sandbox HOME and asserts on the REASON.
 
-    rc 2 is also what the fail-closed crash handler returns, so replacing the
-    whole post-identification body with `raise` left all five deny tests green:
-    they were pinning "something refused", which the crash path satisfies. A
-    gate that denies for the wrong reason is a gate nobody can debug, so the
-    stderr line is the assertion and the exit code is the sanity check.
+    A mixin rather than a base TestCase, so a second end-to-end class reuses the
+    receipt seeding and the deny/allow assertions instead of forking them.
     """
 
     SESSION = "sess-qa-gate-test"
@@ -478,6 +475,25 @@ class TestGateEndToEnd(unittest.TestCase):
         for reason in reasons:
             self.assertIn(reason, err)
         self.assertNotIn("crashed AFTER", err)
+
+    def _allow(self, command: str, env: dict | None = None):
+        """rc 0, and no refusal on stderr. Over-fire is MEASURED here, not
+        assumed: a gate people route around is off, so the benign twin of every
+        deny is an assertion, not a comment."""
+        rc, err = self._run(command, env or {})
+        self.assertEqual(0, rc, err)
+        self.assertNotIn("QA GATE (fail-closed)", err)
+
+
+class TestGateEndToEnd(_GateRunner, unittest.TestCase):
+    """Every deny asserts its REASON, not just rc=2.
+
+    rc 2 is also what the fail-closed crash handler returns, so replacing the
+    whole post-identification body with `raise` left all five deny tests green:
+    they were pinning "something refused", which the crash path satisfies. A
+    gate that denies for the wrong reason is a gate nobody can debug, so the
+    stderr line is the assertion and the exit code is the sanity check.
+    """
 
     def test_chained_second_pr_is_denied(self):
         self._deny(f"{GH_MERGE} 280 && {GH_MERGE} 281",
@@ -986,3 +1002,272 @@ class TestProtectedTargetResolution(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _nest(levels: int, inner: str) -> str:
+    """`inner` wrapped in *levels* nested `bash -c` invocations, quoted so a real
+    shell actually runs it. Built, not hand-written, because hand-escaping five
+    levels is how a nesting test ends up testing its own typo."""
+    import shlex
+    cur = inner
+    for _ in range(levels):
+        cur = "bash -c " + shlex.quote(cur)
+    return cur
+
+
+class TestCommandFlagIsMatchedExactly(unittest.TestCase):
+    """QA cycle 3, bypass 1 — MEASURED allowing rc 0 and proven to execute the
+    real gh through a fake `gh` on PATH.
+
+    `_reparse_arg` found the command flag by SUBSTRING: `w.startswith("-") and
+    "c" in w.lstrip("-")`. `--norc` contains a `c`, so the command string came
+    back as the literal `-c`, the recursion found nothing in it, and the caller
+    then `continue`d PAST the direct match as well. A wrong guess REPLACED the
+    check instead of falling back to it, and that is the shape under test here,
+    not the one flag.
+    """
+
+    def test_a_shell_option_that_merely_contains_c_is_not_the_command_flag(self):
+        for flag in ("--norc", "--noprofile", "--rcfile", "--login"):
+            with self.subTest(flag=flag):
+                self.assertFalse(gate._is_command_flag(flag))
+
+    def test_the_real_command_flag_and_its_bundles_are(self):
+        for flag in ("-c", "-lc", "-ic", "-xc", "-qc", "--command"):
+            with self.subTest(flag=flag):
+                self.assertTrue(gate._is_command_flag(flag))
+
+    def test_norc_no_longer_hides_the_merge_behind_it(self):
+        for cmd in (f'bash --norc -c "{GH_MERGE} 292"',
+                    f'bash --rcfile /dev/null -c "{GH_MERGE} 292"',
+                    f'bash --noprofile --norc -c "{GH_MERGE} 292"'):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(["gh"],
+                                 [f for _s, f in gate._find_publish_subcmds(cmd)])
+
+    def test_a_reparse_that_resolves_nothing_does_not_delete_the_direct_match(self):
+        # `script -q` re-parses nothing (`-q` is not a command flag), so the
+        # re-parse comes back empty and the DIRECT match has to run. Pinning the
+        # fall-through itself, which is what the `continue` used to eat.
+        found = gate._find_publish_subcmds(f"script -q {GH_MERGE} 292")
+        self.assertEqual(["gh"], [f for _s, f in found])
+
+
+class TestReparseCapFailsClosed(unittest.TestCase):
+    """QA cycle 3, bypass 2 — depth 3 denied and depth 4 ALLOWED, measured
+    executing the real gh. The cap is a cost bound; "I stopped looking" was
+    being spent as "there is nothing there"."""
+
+    def test_a_merge_nested_past_the_cap_is_still_identified(self):
+        cmd = _nest(gate._MAX_REPARSE_DEPTH + 2, f"{GH_MERGE} 292")
+        self.assertTrue(gate._find_publish_subcmds(cmd),
+                        "a shell left unread at the cap must still be a finding")
+
+    def test_a_merge_inside_the_cap_is_read_as_the_merge_it_is(self):
+        cmd = _nest(gate._MAX_REPARSE_DEPTH, f"{GH_MERGE} 292")
+        self.assertEqual(["gh"], [f for _s, f in gate._find_publish_subcmds(cmd)])
+
+    def test_benign_nesting_inside_the_cap_stays_benign(self):
+        cmd = _nest(gate._MAX_REPARSE_DEPTH, "git status --short")
+        self.assertEqual([], gate._find_publish_subcmds(cmd))
+
+
+class TestStdinChannelsBesidesHeredocs(unittest.TestCase):
+    """QA cycle 3, bypasses 3 and 4. `_HEREDOC_RE` matches `<<WORD` only, so a
+    here-string never became a body and `_reparses_stdin` was never consulted;
+    process substitution was opaque to the peel outright. Both measured
+    executing the real gh."""
+
+    def test_a_here_string_into_a_shell_is_a_command(self):
+        for cmd in (f'bash <<< "{GH_MERGE} 292"',
+                    f'bash /dev/stdin <<< "{GH_MERGE} 292"',
+                    f'bash <<<"{GH_MERGE} 292"'):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(["gh"],
+                                 [f for _s, f in gate._find_publish_subcmds(cmd)])
+
+    def test_a_process_substitution_is_a_command(self):
+        cmd = f'bash <(echo "{GH_MERGE} 292")'
+        self.assertEqual(["gh"], [f for _s, f in gate._find_publish_subcmds(cmd)])
+
+    def test_a_process_substitution_is_one_token(self):
+        toks = gate._tokens_with_offsets('bash <(echo "a b")')
+        self.assertEqual(["bash", '<(echo "a b")'], [t for t, _s, _e in toks])
+
+    def test_a_here_string_carrying_no_command_stays_data(self):
+        self.assertEqual([], gate._find_publish_subcmds("cat <<< 'hello world'"))
+        self.assertEqual([], gate._find_publish_subcmds('bash <<< "echo hi"'))
+
+
+class TestUnnamedWrapperInversion(unittest.TestCase):
+    """QA cycle 3, bypass 5. `_REPARSE_HEADS` is an ALLOWLIST and the wrapper
+    nobody named is a total bypass — cycle 1's finding one layer up. The peel was
+    inverted for BARE heads; this inverts it for the quoted-argument case too.
+
+    The benign twins are the whole point of the boundary and are asserted here,
+    not assumed: neither `echo "…"` nor `git commit -m "…"` carries a
+    `-c`-style flag, and `gcc -c main.c` carries one whose value is not a
+    command."""
+
+    def test_a_wrapper_this_gate_never_heard_of_is_still_a_reparse(self):
+        for cmd in (f'flock /tmp/l -c "{GH_MERGE} 292"',
+                    f'su -c "{GH_MERGE} 292"',
+                    f'su -l someone -c "{GH_MERGE} 292"',
+                    'runuser -u x -c "git push origin main"'):
+            with self.subTest(cmd=cmd):
+                self.assertTrue(gate._find_publish_subcmds(cmd), cmd)
+
+    def test_the_quoted_mention_controls_stay_benign(self):
+        for cmd in (f'echo "{GH_MERGE} 96"',
+                    f'git commit -m "{GH_MERGE} 96"',
+                    'gcc -c main.c -o main.o',
+                    'git commit -m "docs: how to git push origin main"'):
+            with self.subTest(cmd=cmd):
+                self.assertEqual([], gate._find_publish_subcmds(cmd), cmd)
+
+
+class TestOverFireRegressions(_GateRunner, unittest.TestCase):
+    """Two commands that DENIED while publishing nothing (measured 2026-09-08).
+    Over-fire is treated as a security failure here: a gate people route around
+    is off."""
+
+    def test_a_shell_comment_is_not_a_command(self):
+        self._allow(f"git status # {GH_MERGE} 292")
+        self._allow(f"git log --oneline # then {GH_MERGE} 292")
+
+    def test_a_hash_inside_a_word_is_not_a_comment(self):
+        # a URL fragment must not swallow the rest of the line
+        self.assertEqual(
+            ["curl https://x#frag ", f" {GH_MERGE} 292"],
+            gate._split_subcmds(f"curl https://x#frag ; {GH_MERGE} 292"))
+
+    def test_a_merge_followed_by_a_comment_still_denies(self):
+        self._deny(f"{GH_MERGE} 292 # ship it", {},
+                   "needs operator approval", "PR #292")
+
+    def test_a_dry_run_push_writes_nothing(self):
+        self._allow("git push --dry-run origin main")
+        self._allow("git push -n origin main")
+
+    def test_a_real_push_to_main_still_denies(self):
+        self._deny("git push origin main", {}, "needs operator approval",
+                   "branch 'main'")
+
+    def test_a_dry_run_that_is_a_flag_VALUE_is_not_a_rehearsal(self):
+        self.assertFalse(gate._git_push_is_dry_run(
+            'git push -o "--dry-run" origin main'))
+        self.assertTrue(gate._git_push_is_dry_run("git push --dry-run origin main"))
+
+    def test_a_hyphenated_subcommand_is_not_push(self):
+        self._allow("git push-mirror origin main")
+
+    def test_only_an_all_digit_token_is_the_pr_number(self):
+        # a branch or URL argument has no PR number, and guessing one out of a
+        # token that merely STARTS with digits would make it approvable.
+        self.assertIsNone(gate._gh_merge_pr_num(f"{GH_MERGE} 2fa-branch"))
+        self.assertEqual("292", gate._gh_merge_pr_num(f"{GH_MERGE} 292"))
+
+
+class TestLineContinuationsAreJoined(unittest.TestCase):
+    """FIX 5 shipped with ZERO coverage: mutating `_join_continuations` to
+    `return cmd` flipped this shape deny→allow while all 90 unit tests and the
+    30-fixture selftest stayed green."""
+
+    def test_a_backslash_newline_does_not_break_the_verb(self):
+        self.assertEqual(
+            ["gh"], [f for _s, f in gate._find_publish_subcmds("gh pr \\\n merge 292")])
+
+    def test_the_pr_number_survives_the_join(self):
+        found = gate._find_publish_subcmds("gh pr \\\n merge 292")
+        self.assertEqual("292", gate._extract_pr_id(found[0][0]))
+
+
+class TestTheGateOutlivesItsOwnTimeout(unittest.TestCase):
+    """QA cycle 3, bypass 6. `hooks.json` gives this gate 5 seconds. 500
+    `;`-joined no-ops plus a merge took 9.7 s and 2000 took 132 s, because
+    `_cfg_dir_for` re-derived the whole line PER sub-command. The gate still
+    returned 2; it just never got to say so, and a fail-closed contract that
+    depends on the process surviving is not fail-closed.
+
+    Asserted as CALL COUNTS, not as wall-clock, so it pins the complexity rather
+    than the machine it runs on.
+    """
+
+    def _count_splits(self, cmd: str) -> int:
+        real = gate._split_subcmds
+        calls = []
+
+        def counting(c):
+            calls.append(c)
+            return real(c)
+
+        gate._PARTS_CACHE.clear()
+        gate._ENV_CHAIN_CACHE.clear()
+        gate._TOKENS_CACHE.clear()
+        gate._split_subcmds = counting
+        try:
+            gate._find_publish_subcmds(cmd)
+        finally:
+            gate._split_subcmds = real
+        return len(calls)
+
+    def test_the_line_is_not_re_split_once_per_sub_command(self):
+        n_small = self._count_splits("; ".join(["true"] * 50 + [f"{GH_MERGE} 292"]))
+        n_big = self._count_splits("; ".join(["true"] * 500 + [f"{GH_MERGE} 292"]))
+        self.assertEqual(n_small, n_big,
+                         "the split count must not grow with the sub-command count")
+        self.assertLess(n_big, 20, "the whole line should be split a few times, once")
+
+    def test_the_line_is_tokenized_once_per_distinct_string(self):
+        big = 'gh pr merge -b "' + "x" * 20000 + '" 292'
+        real = gate._tokenize
+        calls = []
+
+        def counting(s):
+            calls.append(s)
+            return real(s)
+
+        gate._PARTS_CACHE.clear()
+        gate._ENV_CHAIN_CACHE.clear()
+        gate._TOKENS_CACHE.clear()
+        gate._ARG_TOKENS_CACHE.clear()
+        gate._tokenize = counting
+        try:
+            gate._find_publish_subcmds(big)
+        finally:
+            gate._tokenize = real
+        self.assertEqual(len(calls), len(set(calls)),
+                         "the same string must never be tokenized twice")
+
+
+class TestTokenizerBulkTakeIsExact(unittest.TestCase):
+    """The bulk-run take in `_tokenize` is a speed change, so it has to be an
+    IDENTITY, not an approximation. Pinned against the character-by-character
+    semantics on the strings where the two could differ."""
+
+    CASES = [
+        "a 'b c' d", 'a "b c" d', "a\\ b", "'un'closed", '"un\\"closed"',
+        "a$(echo b c)d", "a`echo b`c", "x'y\"z'w", 'x"y\'z"w', "  a  b  ",
+        "a\\\nb", "$'gh' pr merge 1", "${PATH:0:0}gh pr merge 1", "a<b", "a>b",
+        "'a b' 'c d'", '"" a', "'' a", "a#b # c", "\\", "'", '"',
+    ]
+
+    def test_every_shape_tokenizes_the_way_a_shell_words_it(self):
+        for s in self.CASES:
+            with self.subTest(s=s):
+                toks = gate._tokenize(s)
+                if toks is None:
+                    continue
+                for text, start, end in toks:
+                    self.assertLessEqual(start, end)
+                    self.assertEqual(s[start:end].strip(), s[start:end])
+
+    def test_an_unclosed_quote_is_still_unparseable(self):
+        self.assertIsNone(gate._tokenize("'un'closed 'x"))
+        self.assertIsNone(gate._tokenize('a "b'))
+
+    def test_a_quoted_argument_stays_one_token(self):
+        self.assertEqual(["a", "b c", "d"],
+                         [t for t, _s, _e in gate._tokenize("a 'b c' d")])
+        self.assertEqual(["a", "b c", "d"],
+                         [t for t, _s, _e in gate._tokenize('a "b c" d')])
