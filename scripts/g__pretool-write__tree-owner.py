@@ -105,7 +105,14 @@ def describe(pid: str, row: dict) -> str:
     age = kernel_proc.process_age(pid)
     kind = (row.get("type") or ("subagent" if row.get("ppid")
                                 else f"type {kernel_proc.UNKNOWN_TYPE}"))
-    when = "never journaled" if age < 0 else f"last active {int(age)}s ago"
+    # THREE STATES, because `process_age` now has three answers (C-A). NaN is
+    # "its journal is there and its last record cannot be read", which is
+    # neither "never journaled" nor a number, and printing either of those for
+    # it is the verdict-and-explanation split this function exists to avoid.
+    when = ("last activity UNKNOWN (its journal's last record is unreadable, so "
+            "it is held, not free)" if age != age
+            else "never journaled" if age < 0
+            else f"last active {int(age)}s ago")
     return f"pid {pid} ({kind}, {when})"
 
 
@@ -468,30 +475,21 @@ def build_sandbox(fdir: str, sandbox: str, setup=None) -> None:
         pid = name[:-len(".jsonl")] if name.endswith(".jsonl") else None
         if pid is None:
             continue
-        stamp = now - (kernel_proc.TTL + 300) if pid in (age_pids or ()) else now
         path = os.path.join(jdir, name)
-        # THE RECORD IS STAMPED TOO, since cycle 5 C4. Liveness no longer reads
-        # the mtime alone: a stale mtime is re-checked against the `ts` of the
-        # last CHAINED record, because `touch` on a live holder's journal used
-        # to free its lane with nothing deleted and the chain intact. That makes
-        # the seeded `ts` load-bearing, and a fixture whose two halves disagree
-        # about when a process last ran expresses no state at all: `age_pids`
-        # would have stopped meaning "expired" the moment it started meaning
-        # "expired by mtime and live by record". Only the LAST line is rewritten,
-        # which is the only one `_record_ts` reads and the one no `prev` hash
-        # points at, so the chain still verifies.
-        try:
-            with open(path, "r", encoding="utf-8") as fh:
-                lines = [ln for ln in fh.read().split("\n") if ln.strip()]
-            if lines:
-                rec = json.loads(lines[-1])
-                rec["ts"] = stamp
-                lines[-1] = json.dumps(rec, separators=(",", ":"))
-                with open(path, "w", encoding="utf-8") as fh:
-                    fh.write("\n".join(lines) + "\n")
-        except (OSError, ValueError):
-            pass
-        os.utime(path, (stamp, stamp))
+        # THE WHOLE FILE IS STAMPED, since cycle 5 C4 and cycle 6 C-A. Liveness
+        # no longer reads the mtime alone: a stale mtime is re-checked against
+        # the last record, because `touch` on a live holder's journal used to
+        # free its lane with nothing deleted and the chain intact. That made the
+        # seeded `ts` load-bearing, and cycle 6 made the seeded FILE
+        # load-bearing: `_record_ts` checks the tail against line 0's `start_ts`
+        # and against the line before it, so rewriting the last line alone now
+        # produces the signature of a forgery rather than of an expiry, and the
+        # reader correctly holds the lane. `backdate_journal` shifts every line
+        # and re-chains, so `age_pids` says one coherent thing again.
+        if pid in (age_pids or ()):
+            kernel_proc.backdate_journal(path, kernel_proc.TTL + 300)
+        else:
+            os.utime(path, (now, now))
 
     # QA cycle 4 overrides, applied LAST because each one leaves the kernel
     # directory in a state the steps above could not walk. Each names the
@@ -553,6 +551,55 @@ def build_sandbox(fdir: str, sandbox: str, setup=None) -> None:
                 os.unlink(os.path.join(kernel, name))
             except OSError:
                 pass
+    for pid in (setup.get("torn_journals") or ()):
+        # C-A: one appended line that chains to nothing, plus the backdating
+        # `touch`. The chain is left untouched and nothing is deleted, which is
+        # the whole point: the record the reader falls back to is unreadable, so
+        # the answer is UNKNOWN and the lane stays held.
+        path = os.path.join(jdir, f"{pid}.jsonl")
+        try:
+            with open(path, "ab") as fh:
+                fh.write(b"not-json\n")
+            stale = time.time() - (kernel_proc.TTL + 300)
+            os.utime(path, (stale, stale))
+        except OSError:
+            pass
+    for pid, age in (setup.get("truncate_journals") or {}).items():
+        # C-B: the journal truncated to its own first line. The start line is
+        # copied verbatim, so it is genuine and chain-valid, and the file's
+        # mtime becomes NOW because truncating writes. "stale" leaves the
+        # seeded `start_ts` where it is (a process that started long before the
+        # truncation: tampering); "fresh" moves it to now (a registration
+        # genuinely in flight, which is C3's benign race and must still allow).
+        path = os.path.join(jdir, f"{pid}.jsonl")
+        try:
+            with open(path, "rb") as fh:
+                first = fh.read().split(b"\n")[0]
+            rec = json.loads(first)
+            if age == "fresh":
+                rec["start_ts"] = rec["ts"] = round(time.time(), 6)
+            else:
+                rec["start_ts"] = rec["ts"] = round(
+                    time.time() - (kernel_proc.START_ONLY_GRACE + 600), 6)
+            with open(path, "wb") as fh:
+                fh.write(json.dumps(rec, separators=(",", ":")).encode() + b"\n")
+            os.utime(path, None)
+        except (OSError, ValueError):
+            pass
+    if setup.get("fault_carrier"):
+        # M-C: a carrier written by hand, on a table whose rows are intact. The
+        # `kind` it claims is the untrusted field that used to select which
+        # verification ran.
+        try:
+            with open(table_path, encoding="utf-8") as fh:
+                data = json.load(fh)
+            carrier = dict(setup["fault_carrier"])
+            carrier.setdefault("ts", time.time())
+            data[kernel_proc.FAULT_KEY] = carrier
+            with open(table_path, "w", encoding="utf-8") as fh:
+                json.dump(data, fh)
+        except (OSError, ValueError):
+            pass
     want_jdir = setup.get("journal_dir")
     if want_jdir == "gone":
         # F3: the deletion guard's own evidence, removed by the same move.

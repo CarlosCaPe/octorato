@@ -54,8 +54,15 @@ lane by never naming it literally, and `:/` / `:(top)` mean the whole root.
 
 NAMED RESIDUALS, measured as passing and deliberately not covered here. The list
 is pinned by a test, so it stays equal to what the gate actually does:
-`rsync --delete`, `shred`, `ln -sf`, `perl -pi`; a `python -c` body (only
-best-effort, scanned as shell text) including one aimed at the state dir;
+`rsync --delete`, `shred`, `ln -sf`, `perl -pi`; a `python -c` or `perl -e`
+body (only best-effort, scanned as shell text) including one aimed at the state
+dir, which cycle 6 measured: `printf x >> <journal>` and `touch -d '1 hour ago'
+<journal>` DENY, while the same two effects through `open(j,"a").write(...)`,
+`os.utime` or `perl -e` emit no decision at all. The gate enumerates shell VERBS
+and the effect is what matters. Recognising the effect is a new detector class
+with its own false positives, and after C-A neither form transfers a lane any
+more (an unreadable record is UNKNOWN and unknown holds), so it stays a named
+residual rather than a verb-table expansion;
 `git apply|rebase|merge|pull|cherry-pick|revert`; variable and brace expansion
 (`rm -rf $DIR`, `rm -rf {pkg,x}`, unknowable without running the shell); a `-c` body nested deeper
 than 3; and xargs fed from STDIN (`cat list | xargs rm`, `xargs rm < list`),
@@ -156,7 +163,14 @@ def describe(pid: str, row: dict) -> str:
     age = kernel_proc.process_age(pid)
     kind = (row.get("type") or ("subagent" if row.get("ppid")
                                 else f"type {kernel_proc.UNKNOWN_TYPE}"))
-    when = "never journaled" if age < 0 else f"last active {int(age)}s ago"
+    # THREE STATES, because `process_age` now has three answers (C-A). NaN is
+    # "its journal is there and its last record cannot be read", which is
+    # neither "never journaled" nor a number, and printing either of those for
+    # it is the verdict-and-explanation split this function exists to avoid.
+    when = ("last activity UNKNOWN (its journal's last record is unreadable, so "
+            "it is held, not free)" if age != age
+            else "never journaled" if age < 0
+            else f"last active {int(age)}s ago")
     return f"pid {pid} ({kind}, {when})"
 
 

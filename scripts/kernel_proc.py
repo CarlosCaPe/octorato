@@ -29,6 +29,41 @@ Liveness (one definition, v8-kernel.md section 2, used by every gate):
                     within TTL, so a killed or hung child expires after 15
                     minutes and releases what it holds.
 
+THE READER INVARIANT (one sentence, and every reader in this file is checked
+against it): A PARSE THAT FAILS ANSWERS `UNKNOWN`, AND `UNKNOWN` NEVER SELECTS
+THE PERMISSIVE BRANCH.
+
+    Twelve findings across six QA cycles are the same defect wearing different
+    clothes: a reader could not read something, said so by returning the value
+    that ALSO means "nothing is here", and a caller that had no way to tell the
+    two apart chose the branch that hands a lane to a second writer. Deleted
+    table, unparseable table, non-object `processes`, unreadable row, unreadable
+    `lanes`, deleted journal, unwalkable journal directory, empty journal
+    directory, torn journal record, truncated journal, an unsigned `kind`
+    choosing which verification runs. Enumerating them one at a time is how a
+    class of bug reaches its twelfth instance.
+
+    So it is written down once, and it has three parts:
+    1. THREE ANSWERS, NOT TWO. A reader that can fail returns "here is the
+       value", "there is genuinely nothing here", and "I could not read it"
+       as three distinct things (`_quiet_for`: a float, `None`, `UNKNOWN`).
+       Collapsing the last two is the bug; `if not x` over a reader that can
+       fail is where it hides.
+    2. UNKNOWN HOLDS. Liveness, ownership and fault resolution all answer
+       "still held / still faulted" on UNKNOWN. That direction costs an
+       outage; the other direction costs the isolation the kernel exists for.
+    3. UNKNOWN NEEDS A CLOCK THE WRITER DOES NOT OWN, or "holds" becomes
+       "never expires". Where an UNKNOWN would otherwise latch forever, the
+       bound comes from a DIFFERENT file than the one that could not be read
+       (`prune` bounds a torn journal by the ptable row's `registered_ts`), so
+       lifting the bound is a strictly larger primitive than producing the
+       UNKNOWN.
+
+    The one place this file deliberately answers permissively on an unreadable
+    input is `live_journal_pids`'s `os.listdir` OSError, and it is safe only
+    because `journal_evidence_fault()` has already faulted that state before
+    the walk is reached. That ordering is load-bearing; do not reorder it.
+
 Import budget: this module is imported by the PreToolUse hot-path gate, so its
 module-level imports are exactly json, os, sys, time, hashlib and fcntl (guarded
 for Windows). No pathlib, no tempfile, no re, no subprocess: everything heavier
@@ -63,7 +98,31 @@ PID_MAX = 128
 MAX_LANES = 512          # a lane list is a working set, not a history
 _CORE_KEYS = ("seq", "ts", "start_ts", "pid", "kind", "prev")
 _PID_OK = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
-KINDS = ("start", "tool", "exit", "deny", "receipt", "quota", "open", "release")
+KINDS = ("start", "tool", "exit", "deny", "receipt", "quota", "open", "release",
+         "fault")
+START_ONLY_GRACE = 120   # seconds a start-only journal may read as a register
+                         # still in flight; past it, it is somebody's truncation
+
+
+class _Unknown:
+    """The third answer, and the reason it is an object rather than a number.
+
+    See THE READER INVARIANT at the top of this file. A reader that can fail
+    needs to say "I could not read it" in a way no caller can accidentally
+    treat as "there is nothing here": `None` already means the second, and any
+    number would compare. This compares equal to nothing and orders against
+    nothing, so a caller that forgets to handle it raises inside a locked
+    writer instead of silently choosing the permissive branch. Every caller in
+    this file tests it with `is`.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "UNKNOWN"
+
+
+UNKNOWN = _Unknown()
 # What every reader prints for a process whose type the kernel never learned.
 # `octo top` and `brain-digest` both walk the journal DIRECTORY, so both reach
 # pids the ptable has no row for; defaulting those to "main" claimed twice over
@@ -136,6 +195,14 @@ FAULT_LOST_LANES = "lost-lanes"
 FAULT_JOURNAL_EVIDENCE = "journal-evidence"
 FAULT_ZERO_ROWS = "zero-rows"
 MAX_FAULT_PIDS = 64                       # pids a condition fault re-derives on
+# Every kind this module can write. A carrier claiming anything else is a
+# carrier the kernel did not write, and `_carrier_kind` reads it as latched.
+FAULT_KINDS = (FAULT_LATCHED, FAULT_LOST_LANES, FAULT_JOURNAL_EVIDENCE,
+               FAULT_ZERO_ROWS)
+# Kinds whose re-derivation is keyed on the pids the carrier names. An empty
+# `pids` on one of these is vacuously resolved, and the kernel never writes one:
+# `_zero_rows_fault` carries the live pids it found and `prune` the rows it kept.
+FAULT_PID_KEYED = (FAULT_LOST_LANES, FAULT_ZERO_ROWS)
 
 UNLOCK = ("export OCTO_KERNEL_OPEN=1 in the shell that launched Claude Code, "
           "then restart")
@@ -652,6 +719,52 @@ def _fault_carrier(reason: str, kind: str = FAULT_LATCHED, pids=(),
             "count": count, "rows": rows}
 
 
+def _carrier_kind(carrier) -> str:
+    """The kind this carrier is ENTITLED to, which is not always the one it claims.
+
+    M-C, and it is `lesson_unsigned_input_must_not_select_the_trusted_check`
+    (PR #282) reaching this file: `kind` is a string in a file a foreign writer
+    can rewrite, and it CHOSE which re-derivation `fault_resolved` ran. QA
+    measured the consequence end to end: take a genuine `latched` fault, flip
+    the string on disk to `zero-rows` and set `pids: []`, and the re-derivation
+    it selected was vacuously true, the gate ALLOWED, and `_publish` then popped
+    the key and deleted the evidence.
+
+    The security claim is deliberately small, because an honest small claim is
+    worth more than the overstated one this file used to carry: a writer who can
+    edit this key can also DELETE it, so the write primitive is unchanged and
+    nothing here makes the carrier trustworthy. What changes is that an
+    untrusted field no longer selects the trusted check. The rule is DOWNWARD
+    ONLY - a carrier may claim a kind that is at least as strong as what its own
+    shape supports, never a weaker one:
+
+      * a `kind` that is not one of `FAULT_KINDS` is not a kind this module
+        writes, so it reads as `latched`, which is the strongest (never
+        re-derives);
+      * a pid-keyed kind with no pids is a carrier the kernel cannot produce
+        (`_zero_rows_fault` carries the live pids it found, `prune` the rows it
+        kept), and its re-derivation would be vacuously true, so it reads as
+        `latched` too.
+
+    THE UPGRADE PATH IS THE THIRD CASE and it is named rather than discovered: a
+    carrier written before this branch existed has no `kind` at all, so it reads
+    as `latched`. That is fail-closed, and it means an old prune-written
+    `lost-lanes` fault stops expiring on its own and becomes one a human clears.
+    Those carriers age out with PRUNE_AFTER at the latest and the trade is one
+    operator step against a silent weakening on upgrade.
+    """
+    if not isinstance(carrier, dict):
+        return FAULT_LATCHED
+    kind = carrier.get("kind")
+    if not isinstance(kind, str) or kind not in FAULT_KINDS:
+        return FAULT_LATCHED
+    if kind in FAULT_PID_KEYED:
+        pids = carrier.get("pids")
+        if not isinstance(pids, list) or not pids:
+            return FAULT_LATCHED
+    return kind
+
+
 def fault_resolved(carrier, table=None) -> bool:
     """True when the CONDITION this fault names is measurably gone.
 
@@ -663,10 +776,20 @@ def fault_resolved(carrier, table=None) -> bool:
     there and the deny still on.
 
     Re-derived, never trusted: the answer comes from the same evidence the fault
-    came from (the rows, the journal directory, the journals), so a carrier an
-    attacker writes by hand cannot claim to be resolved when it is not, and a
-    carrier the kernel wrote clears the moment the operator does what
-    `recovery()` says.
+    came from (the rows, the journal directory, the journals), and a carrier the
+    kernel wrote clears the moment the operator does what `recovery()` says.
+
+    WHAT THIS DOES NOT CLAIM, since the sentence that used to sit here was
+    measured false. It said "a carrier an attacker writes by hand cannot claim
+    to be resolved when it is not". It could: the carrier's own `kind` picked
+    the re-derivation, so `latched` -> `zero-rows` with `pids: []` resolved
+    vacuously (M-C). A writer who can edit this key can also delete it, so no
+    wording here buys integrity the file does not have. Two things are true
+    instead, and they are the ones this function actually enforces:
+    `_carrier_kind` means the claimed kind can only be as strong as the
+    carrier's own shape supports, never weaker; and NO kind resolves while the
+    journals cannot be used as evidence, which is a condition derived from disk
+    without reading the carrier at all.
 
     `latched` is the class that does NOT re-derive, and it is the F1 protection:
     a table whose rows were lost stays faulted across as many registrations as
@@ -676,7 +799,17 @@ def fault_resolved(carrier, table=None) -> bool:
     """
     if not isinstance(carrier, dict):
         return False
-    kind = carrier.get("kind") or FAULT_LATCHED
+    kind = _carrier_kind(carrier)
+    if kind == FAULT_LATCHED:
+        return False        # named first: it never re-derives, and the walk
+                            # below costs syscalls that answer nothing for it
+    # DERIVED, NOT CLAIMED, and asked for EVERY kind. The journals are the
+    # evidence every re-derivation below leans on, so a directory that cannot be
+    # used as evidence makes all of them unknowable, and unknown does not
+    # resolve. `_zero_rows_fault` already asks this first when it SETS a fault;
+    # asking it here is the same question at the other end of the fault's life.
+    if journal_evidence_fault():
+        return False
     pids = carrier.get("pids") or []
     if kind == FAULT_LOST_LANES:
         # True exactly while a named row still holds lanes with no journal.
@@ -691,10 +824,8 @@ def fault_resolved(carrier, table=None) -> bool:
                 return False
         return True
     if kind == FAULT_JOURNAL_EVIDENCE:
-        return not journal_evidence_fault()
+        return True          # the derived precondition above IS this condition
     if kind == FAULT_ZERO_ROWS:
-        if journal_evidence_fault():
-            return False
         now = time.time()
         for pid in pids:
             if _own_fresh(pid, now, TTL) and not has_exit(pid):
@@ -705,11 +836,24 @@ def fault_resolved(carrier, table=None) -> bool:
 
 def fault_kind(table) -> str:
     """The kind of fault this table carries, or ''. The gates read it so the
-    recovery they print is the one that works for the fault they hit."""
-    carrier = table.get(FAULT_KEY) if isinstance(table, dict) else None
+    recovery they print is the one that works for the fault they hit.
+
+    Through `_carrier_kind`, so the recovery the operator READS and the check
+    `fault_resolved` RUNS come from the same answer. They used to come from two:
+    this one took the string verbatim, so a carrier claiming a kind the module
+    never writes printed a recovery for a fault that was not the one denying.
+    """
+    if not isinstance(table, dict) or FAULT_KEY not in table:
+        return ""
+    carrier = table[FAULT_KEY]
     if isinstance(carrier, dict) and carrier.get("reason"):
-        return carrier.get("kind") or FAULT_LATCHED
-    return FAULT_LATCHED if carrier else ""
+        return _carrier_kind(carrier)
+    # PRESENT AND SHAPELESS is not ABSENT, and `.get()` could not tell them
+    # apart: `"_faulted": null` returned None from `.get` exactly like a table
+    # with no fault at all. The kernel writes this key as an object with a
+    # reason or does not write it, so anything else under it is a foreign
+    # writer's, and the strongest kind is the honest reading of it.
+    return FAULT_LATCHED
 
 
 def _faulted_table(data, reason: str, kind: str = FAULT_LATCHED,
@@ -766,11 +910,13 @@ def carried_fault(data) -> str:
     repair `recovery()` prescribes and denied every hooked write on the machine
     for good.
     """
-    carrier = data.get(FAULT_KEY) if isinstance(data, dict) else None
+    if not isinstance(data, dict) or FAULT_KEY not in data:
+        return ""
+    carrier = data[FAULT_KEY]
     if isinstance(carrier, dict) and carrier.get("reason"):
         if fault_resolved(carrier, data):
             return ""
-        kind = carrier.get("kind") or FAULT_LATCHED
+        kind = _carrier_kind(carrier)
         tail = ("the rows it lost are still unaccounted for"
                 if kind == FAULT_LATCHED
                 else "still true when this table was last read")
@@ -779,9 +925,15 @@ def carried_fault(data) -> str:
                    time.strftime("%Y-%m-%dT%H:%M:%SZ",
                                  time.gmtime(carrier.get("ts") or 0)),
                    kind, tail))
-    if carrier:
-        return "the ptable carries an unresolved fault under `%s`" % FAULT_KEY
-    return ""
+    # PRESENT is the test, not TRUTHY. `data.get(FAULT_KEY)` gave None for a
+    # table with no fault AND for `"_faulted": null`, and the same collapse ran
+    # for `0`, `""` and `[]`: a key the kernel writes only as an object with a
+    # reason, read as "no fault at all" because the value it carried was falsy.
+    # That is THE READER INVARIANT one level up - a value nobody can read is not
+    # a value that says nothing is wrong - and the key's presence is the fault.
+    return ("the ptable carries an unresolved fault under `%s` whose value is a "
+            "%s, which is not a shape this kernel writes"
+            % (FAULT_KEY, _json_kind(carrier)))
 
 
 def _readable_row(row) -> bool:
@@ -859,6 +1011,26 @@ def sane_table(data) -> tuple:
     return data, dropped, carried_fault(data)
 
 
+def _registration_in_flight(pid, now: float) -> bool:
+    """True when a journal that carries only `start` lines is young enough to BE
+    what C3 says it is: a `register` that has written its journal and has not
+    yet published its row.
+
+    Read off line 0's `start_ts`, never off the file's mtime, and the direction
+    matters: an attacker wants "in flight" (the skip), and the mtime is the one
+    field a single syscall sets, so keying the grace on it would hand the
+    permissive branch to `touch`. A `start_ts` that cannot be read at all - an
+    unparseable line 0, a zero-byte journal, a field that is absent or not a
+    number - is UNKNOWN, so it is NOT in flight and the caller counts the
+    journal as live. `_skew_age` covers the other direction: a `start_ts` dated
+    into the future is skew, not youth, and reads infinitely old.
+    """
+    ts = _first_start_ts(journal_path(pid))
+    if ts is None:
+        return False
+    return _skew_age(now, ts) <= START_ONLY_GRACE
+
+
 def live_journal_pids(now: float = None, limit: int = 8, ignore=None) -> list:
     """Pids the JOURNALS say are live, read WITHOUT the process table.
 
@@ -912,7 +1084,7 @@ def live_journal_pids(now: float = None, limit: int = 8, ignore=None) -> list:
             continue
         if has_exit(pid):
             continue
-        if not has_work_trace(pid):
+        if not has_work_trace(pid) and _registration_in_flight(pid, now):
             # C3, and it uses this file's own doctrine (`has_trace`: a trace has
             # to be evidence of WORK). A journal carrying a `start` line and
             # nothing else belongs to a process that has claimed no lane, because
@@ -929,6 +1101,27 @@ def live_journal_pids(now: float = None, limit: int = 8, ignore=None) -> list:
             # one's published row instead of losing it, and a process that HAS
             # worked carries a `tool` line that cannot be forged without breaking
             # the hash chain.
+            #
+            # AND IT IS BOUNDED BY AGE SINCE C-B, because the property it reads
+            # belongs to a FILE an attacker can write. A start-only journal for a
+            # process that DOES hold a lane is produced by truncating that
+            # journal to its own first line: the start line is copied verbatim,
+            # so it is genuine and chain-valid, and `truncate -s 0` reaches the
+            # same skip through the zero-byte leg. QA measured both with two live
+            # holders and `{"version":1,"processes":{}}` over the table: no
+            # fault, no kind, `live_journal_pids: []`, `lane_owner: (None,
+            # None)`, and an intruder allowed onto a held lane. That is the
+            # silent allow-everything machine `_absent_table` exists to stop,
+            # rebuilt inside the filter that was meant to be one tool call wide.
+            #
+            # The bound is the claim itself: "a registration in flight" is only
+            # true while the registration IS in flight, which is one ptable-lock
+            # acquisition (milliseconds). START_ONLY_GRACE is 120s, four orders
+            # of magnitude of slack, and a start-only journal older than that is
+            # evidence of tampering rather than of a race, so it counts as live
+            # and the machine faults. Cheaper than verifying the chain, and it
+            # holds where chain verification would NOT have: the surviving line
+            # of a truncated journal verifies.
             continue
         out.append(pid)
         if limit and len(out) >= limit:
@@ -1001,6 +1194,27 @@ def journal_evidence_fault() -> str:
     whoever writes it, and it also keyed the non-directory case on
     NotADirectoryError, which is the same "decide on the syscall, not on the
     result" shape this whole seam exists to remove.
+
+    M-D IS A MEASURED RESIDUAL OF THE EMPTY BRANCH, and it is stated here
+    rather than closed, with the reason the close was rejected. The condition
+    ERASES ITSELF: the gate's own `journal_deny` writes into the directory it is
+    faulting about, and so does every hot-path tool call, so QA measured a sweep
+    that was visible for exactly one hook call (deny, one `intruder.jsonl`
+    created, then no fault, no carried fault, zero quarantine entries). The lane
+    denies survive on the intact rows, so this is forensics, not an open door.
+
+    Two closes were built and measured. Refusing to write the deny record buys
+    nothing: `g__pretool__kernel.py` is the kernel's own recorder and recreates
+    a journal on the next tool call whatever this gate does. Latching the empty
+    branch as its own non-re-deriving kind DOES survive, and it breaks the
+    recovery for F4: deleting the ONLY journal on a machine leaves an empty
+    directory, so the more specific `lost-lanes` fault (which lifts when the
+    journal is restored, `test_c1_restoring_the_journal_lifts_it_too`) was
+    preempted by a fault only a human could clear. Seven anchors failed on it,
+    and turning F4's re-derivable fault into a lockout is a worse trade than a
+    sweep that is loud for one hook call. So the branch stays re-derivable, and
+    the durable half is the one a WRITER persists: a register that observes the
+    sweep carries it forward, and `_note_lift` journals the moment it clears.
     """
     jdir = journal_dir()
     try:
@@ -1443,6 +1657,33 @@ def _quarantine(reason: str, pid=None) -> str:
     return dst
 
 
+def _note_lift(pid, carrier) -> None:
+    """One journal line for a fault that CLEARED, and it is the other half of a
+    ledger that only ever recorded the setting.
+
+    A set fault quarantines the file, denies on every gate and FAILs the doctor;
+    a cleared one used to leave nothing at all, so "the machine was faulted for
+    three hours yesterday and then it was not" was unanswerable from disk. The
+    line says which kind lifted and when it was set, so a replay can bracket the
+    outage. Fail-open like every other journal mirror: a fault that cleared and
+    could not be written down is still a fault that cleared.
+
+    `pid` is the writer's, and only the four locked writers that have one pass
+    it (`register`, `claim_lane`, `release_lanes`, `update_row`); `prune_locked`
+    has none, so a lift it performs is silent and that is the residual, not a
+    guess written into somebody else's journal.
+    """
+    try:
+        if not pid:
+            return
+        append(pid, {"kind": "fault", "fault": "lifted",
+                     "fault_kind": _carrier_kind(carrier),
+                     "fault_ts": carrier.get("ts"),
+                     "reason": str(carrier.get("reason") or "")[:200]})
+    except Exception:
+        pass
+
+
 def _publish(table: dict, dropped=(), fault: str = "", pid=None) -> None:
     """Write the table, preserving first whatever the read had to repair.
 
@@ -1477,6 +1718,7 @@ def _publish(table: dict, dropped=(), fault: str = "", pid=None) -> None:
     if isinstance(carrier, dict) and carrier.get("reason") \
             and fault_resolved(carrier, table):
         table.pop(FAULT_KEY, None)
+        _note_lift(pid, carrier)
         carrier = None
     already = isinstance(carrier, dict) and carrier.get("quarantine")
     reason = fault or ("%d unreadable row(s) dropped: %s"
@@ -1527,28 +1769,125 @@ def _mtime(path: str):
         return None
 
 
-def _record_ts(pid):
-    """The `ts` of the last CHAINED RECORD in this pid's journal, or None.
+def _tail_window(path: str) -> tuple:
+    """(raw lines in the last 8 KiB, oldest first; whether the FIRST of them is
+    known whole). ([], True) when the file is absent or empty.
 
-    The kernel writes this field, it sits inside the hash chain, and unlike the
-    file's mtime it is not something a caller can rewrite with one syscall.
+    `_tail_line` takes the last element of this and never has to care, because
+    only the first element can be a fragment the window cut in half. A reader
+    that wants the line BEFORE the last one does have to care, so the boundary
+    is reported instead of guessed.
     """
     try:
-        raw, _ends = _tail_line(journal_path(pid))
-    except OSError:
-        return None
-    if not raw:
-        return None
+        with open(path, "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            if size == 0:
+                return [], True
+            window = min(size, 8192)
+            fh.seek(size - window, os.SEEK_SET)
+            chunk = fh.read(window)
+    except FileNotFoundError:
+        return [], True
+    parts = [p for p in chunk.split(b"\n") if p]
+    return parts, size <= window
+
+
+def _kernel_line(raw):
+    """The parsed record when `raw` is a line THIS KERNEL COULD HAVE WRITTEN,
+    else None. Shape only: it never claims the line is authentic.
+
+    `append` writes every one of `_CORE_KEYS` on every line and `_fit` never
+    drops them, `ts` is `now` and `start_ts` is copied forward, so `ts` can
+    never predate the line's own `start_ts`. A record that fails any of that is
+    not this kernel's record, and reading a `ts` out of it would be reading a
+    number a foreign writer chose.
+    """
     try:
         rec = json.loads(raw.decode("utf-8", "replace"))
     except ValueError:
         return None
     if not isinstance(rec, dict):
         return None
-    try:
-        return float(rec.get("ts"))
-    except (TypeError, ValueError):
+    if any(k not in rec for k in _CORE_KEYS):
         return None
+    ts, start = _num(rec.get("ts")), _num(rec.get("start_ts"))
+    if ts is None or start is None or ts < start - FUTURE_SKEW:
+        return None
+    return rec
+
+
+def _num(val):
+    """A finite float, or None. `bool` is excluded on purpose: `True` is an int
+    to `isinstance` and a timestamp to nobody."""
+    if isinstance(val, bool) or not isinstance(val, (int, float)):
+        return None
+    val = float(val)
+    if val != val or val in (float("inf"), float("-inf")):
+        return None
+    return val
+
+
+def _record_ts(pid):
+    """The `ts` of the last record in this pid's journal, or None when there is
+    no `ts` here that this kernel could have written.
+
+    C-A, AND THE HONEST VERSION OF THE CLAIM THIS FUNCTION USED TO MAKE. It said
+    the field "sits inside the hash chain", which is true of how the kernel
+    writes it and false as a defence: nothing on this path calls `verify()`, so
+    the old reader took `float(rec.get("ts"))` off whatever the last line
+    happened to be. QA measured four appends that walked straight through it and
+    freed a live holder's lane once the mtime was backdated: `not-json`, `[]`
+    and `{"ts":null}` returned None and the caller then fell back to the raw
+    mtime, and `{"ts":1}` was worse, because it PARSED - a number saying 1970,
+    read as a process that went quiet 56 years ago.
+
+    Three questions now, and every one of them answers None (UNKNOWN) on
+    failure, never a fallback:
+      SHAPE     `_kernel_line`: the core keys are all there and `ts` does not
+                predate the line's own `start_ts`. Kills `{"ts":1}`, which
+                carries neither `start_ts` nor anything else.
+      ANCHOR    the tail's `start_ts` equals line 0's. `append` copies that
+                field forward unchanged, so the two agree in every file this
+                kernel wrote, and a forger who backdates the tail to escape the
+                shape check has to contradict the head to do it.
+      DIRECTION `ts` never goes backwards. This is the one that costs an
+                attacker the file. With shape and anchor alone, appending one
+                line with `ts` equal to the real `start_ts` reads as death for
+                any process that registered more than TTL ago, which is most of
+                them. Monotonic means the appended line has to be at least as
+                new as the last real one, and to fake death the whole tail has
+                to be rewritten rather than extended.
+
+    None of this makes the journal unforgeable, and the price is what changed:
+    from ONE appended line to rewriting a file whose head, whose ordering and
+    whose chain all have to agree. Where the window cannot show the previous
+    line whole, the direction check is skipped and says so rather than guessing
+    - that is a window artifact, not a property of the file, and MAX_LINE is
+    4096 so an 8 KiB window holds two whole lines except at the very top of a
+    barely-started journal.
+    """
+    try:
+        parts, first_whole = _tail_window(journal_path(pid))
+    except OSError:
+        return None
+    if not parts:
+        return None
+    rec = _kernel_line(parts[-1])
+    if rec is None:
+        return None
+    ts, start = _num(rec.get("ts")), _num(rec.get("start_ts"))
+    head = _first_start_ts(journal_path(pid))
+    if head is None or abs(head - start) > 1e-6:
+        return None                     # ANCHOR: the tail contradicts line 0
+    if len(parts) >= 2 and (first_whole or len(parts) >= 3):
+        prev = _kernel_line(parts[-2])
+        if prev is None:
+            return None                 # a line nobody can read is not an order
+        prev_ts = _num(prev.get("ts"))
+        if prev_ts is None or ts < prev_ts - FUTURE_SKEW:
+            return None                 # DIRECTION: time went backwards
+    return ts
 
 
 def _own_fresh(pid, now: float, ttl: int) -> bool:
@@ -1570,14 +1909,27 @@ def _own_fresh(pid, now: float, ttl: int) -> bool:
     says stale, which on a healthy machine means a process that has really gone
     quiet: the live path is the same single stat it always was.
 
-    The honest claim, since a claim that overstates is worse than none: this
-    raises the price of faking death from one metadata syscall to rewriting the
-    last line of a hash-chained file (and the Bash gate denies the direct verbs
-    that reach it). It is not unforgeable. The direction it can still be wrong
-    in is the safe one: an mtime touched FORWARD keeps a lane held, which
-    expires at PRUNE_AFTER, rather than handing it to a second writer.
+    THE CLAIM THAT USED TO SIT HERE WAS WRONG TWICE and QA measured both halves,
+    which is why it is replaced rather than softened. It said faking death now
+    costs "rewriting the last line of a hash-chained file": it costs APPENDING
+    one line that chains to nothing, because no reader on this path calls
+    `verify()`. And it said the Bash gate "denies the direct verbs that reach
+    it": the gate enumerates SHELL VERBS, so `printf x >>` and `touch` deny
+    while `python3 -c 'open(j,"a").write(...)'`, `os.utime` and `perl -e` walk
+    past with no decision at all. Both were measured; the mitigation the
+    parenthesis named did not exist.
+
+    What is true is that neither one transfers a lane any more, because the
+    answer no longer comes from whichever of the two the writer left intact. A
+    record that cannot be read is UNKNOWN (`_quiet_for`), and UNKNOWN reads
+    LIVE here. The interpreter path into the kernel directory is still open and
+    is stated as a residual in `recovery()`; what it can still buy is a row that
+    does not expire until PRUNE_AFTER after it registered, which is an
+    availability cost and not a lane.
     """
     age = _quiet_for(pid, now)
+    if age is UNKNOWN:
+        return True         # unreadable record + stale mtime: unknown holds
     return age is not None and age <= ttl
 
 
@@ -1602,6 +1954,27 @@ def _quiet_for(pid, now: float):
     None is returned only for an ABSENT journal, which is the case `lane_owner`
     and `prune` each decide for themselves (F4): a removed record is not a dead
     process.
+
+    UNKNOWN IS THE THIRD ANSWER AND C-A IS WHY IT EXISTS. `_record_ts` returns
+    None for four different things - an unparseable tail, a tail that is not an
+    object, a missing `ts`, a `ts` that is not a number - and this function used
+    to fall back to the RAW MTIME on all of them, which answers "stale mtime
+    plus unreadable record" as DEATH. QA measured the transfer end to end: with
+    the existing chain untouched, `>> not-json` (or `{"ts":1}`, `{"ts":null}`,
+    `[]`) followed by a backdating `touch` freed a LIVE holder's lane on both
+    gates. `touch` alone already denied, which is exactly the shape of the
+    defect: the fix that closed the metadata half read the record, and then
+    treated "I could not read the record" as the same answer as "the record
+    says it is old".
+
+    So it is UNKNOWN, and THE READER INVARIANT at the top of this file decides
+    the rest: liveness answers held (`_own_fresh` -> live), `process_age`
+    answers "unknown" rather than a number it does not have, and `prune` does
+    NOT expire the row on the mtime the attacker just wrote. The cost of a
+    torn journal never expiring is real, so it does not: `prune` bounds an
+    UNKNOWN by the ROW's `registered_ts`, which lives in the ptable and not in
+    the journal, so shortening that bound is a strictly larger primitive than
+    producing the UNKNOWN.
     """
     mt = _mtime(journal_path(pid))
     if mt is None:
@@ -1610,7 +1983,9 @@ def _quiet_for(pid, now: float):
     if age <= TTL:
         return age          # fresh by mtime: no second opinion is needed
     ts = _record_ts(pid)
-    return age if ts is None else min(age, _skew_age(now, ts))
+    if ts is None:
+        return UNKNOWN
+    return min(age, _skew_age(now, ts))
 
 
 def has_trace(pid) -> bool:
@@ -1689,9 +2064,18 @@ def has_work_trace(pid) -> bool:
     same predicate one level up, for the one caller that has to tell "a process
     is running here" from "a process is starting here". A `start` line is what
     `register` writes before it takes the ptable lock, so a journal that carries
-    only start lines proves a registration in flight and nothing else, and a
+    only start lines is CONSISTENT WITH a registration in flight, and a
     registration in flight holds no lane: `claim_lane` creates the row it needs
     and runs off a tool call.
+
+    "Consistent with" is the honest verb, and cycle 6 C-B is why it replaced
+    "proves". This function reads a property of a FILE, and the file belongs to
+    whoever can write it: truncating a live holder's journal to its own first
+    line produces the same False out of a process that holds a lane and has
+    worked for hours. So the one caller that decides on it (`live_journal_pids`)
+    pairs this answer with `_registration_in_flight`, which asks whether the
+    registration this shape claims could still be happening. This one keeps
+    saying only what it can see.
 
     Tail-scoped like `has_exit`, and the two out-of-window cases both answer
     TRUE, which is the fail-closed direction here (it keeps the fault): a
@@ -2007,6 +2391,19 @@ def release_lanes(pid, reason: str = "release") -> int:
                 pass
 
 
+def _row_ts(row, key: str = "registered_ts"):
+    """A numeric timestamp off a ptable row, or None when it cannot be read.
+
+    THE READER INVARIANT, applied to the one clock that is not in the journal.
+    `float(ent.get("registered_ts") or 0)` was the old reading and it failed the
+    invariant twice: a value that is not a number raised ValueError INSIDE the
+    ptable lock (the exact silent-failure shape `prune` guards a non-dict row
+    against, one field lower), and a missing value became 0, which on every
+    clock in this file means infinitely old, which is the permissive answer.
+    """
+    return _num(row.get(key)) if isinstance(row, dict) else None
+
+
 def process_age(pid, now: float = None) -> float:
     """Seconds since this process last journaled, or -1 when it never has. The
     deny prints it, because "who holds this" is only actionable next to "for how
@@ -2022,6 +2419,12 @@ def process_age(pid, now: float = None) -> float:
     quiet = _quiet_for(pid, time.time() if now is None else now)
     if quiet is None:
         return -1.0
+    if quiet is UNKNOWN:
+        # NaN, and it is not the same statement as -1. -1 says "this process
+        # never journaled"; a torn record is a process that journaled and whose
+        # last line nobody can read, and printing either a number or "never" for
+        # it would be the split this docstring warns about, one step further on.
+        return float("nan")
     return max(0.0, 0.0 if quiet == float("inf") else quiet)
 
 
@@ -2075,8 +2478,25 @@ def prune(table: dict, now: float = None) -> int:
         # the next SessionStart and freed the lane without the lane check ever
         # being consulted. That is C4's move against the cheaper target.
         quiet = _quiet_for(pid, now)
+        if quiet is UNKNOWN:
+            # C-A, AND THIS IS WHERE TTL AND PRUNE_AFTER HAD TO ANSWER
+            # DIFFERENTLY, stated rather than left implicit. Liveness reads
+            # UNKNOWN as LIVE (`_own_fresh`), so a torn record keeps its lane;
+            # if expiry read it the same way, a journal with one unparseable
+            # line appended would hold its lane forever and a `>> not-json` on
+            # any journal would be a permanent denial of service on that tree.
+            # So it expires, on a clock the journal's writer does not own: the
+            # ROW's `registered_ts`, in the ptable, behind the ptable lock and
+            # behind the same fault machinery every gate reads. An UNKNOWN whose
+            # row carries no readable registration time has no clock at all, and
+            # that one is kept (it is one `register` away from having one).
+            registered = _row_ts(ent)
+            if registered is not None and (now - registered) > PRUNE_AFTER:
+                dead.append(pid)
+            continue
         if quiet is None:
-            registered = float(ent.get("registered_ts") or 0)
+            registered = _row_ts(ent)
+            registered = 0.0 if registered is None else registered
             if (now - registered) <= TTL:
                 continue  # young row, journal not written (or just removed) yet
             if lanes_of(ent) and (now - registered) <= PRUNE_AFTER:
@@ -2488,6 +2908,53 @@ def _feed(script: str, payload: dict, sandbox: str, env: dict) -> tuple:
                         input=json.dumps(payload), capture_output=True,
                         text=True, cwd=sandbox, env=env, timeout=30)
     return cp.returncode, cp.stdout
+
+
+def backdate_journal(path: str, seconds: float) -> bool:
+    """Move a whole journal `seconds` into the past, RE-CHAINED. Fixture
+    machinery, shared so the four places that build an "expired" process cannot
+    drift into four different states.
+
+    EVERY line moves, `ts` and `start_ts` together, and the chain is recomputed
+    over the new bytes. Backdating the LAST line alone is what the helpers used
+    to do, and cycle 6 made that stop meaning "expired": `_record_ts` now checks
+    the tail against its own file, so a last line whose `ts` predates its own
+    `start_ts`, contradicts line 0's `start_ts`, or is older than the line
+    before it is a record this kernel could not have written - which is exactly
+    what a one-line rewrite produces. A fixture in that state expresses
+    tampering, not silence, and the reader is right to hold the lane.
+
+    The file's mtime moves with it, because a process that went quiet is quiet
+    on both halves. `os.utime` ALONE stays what it always was, the C4 attack,
+    and the anchors that mean the attack call `os.utime` themselves.
+    """
+    try:
+        with open(path, "rb") as fh:
+            raws = [ln for ln in fh.read().split(b"\n") if ln.strip()]
+    except OSError:
+        return False
+    out, prev_hash = [], None
+    for raw in raws:
+        try:
+            rec = json.loads(raw.decode("utf-8", "replace"))
+        except ValueError:
+            out.append(raw)                 # leave a damaged line damaged
+            prev_hash = hashlib.sha256(raw).hexdigest()
+            continue
+        if isinstance(rec, dict):
+            for key in ("ts", "start_ts"):
+                val = _num(rec.get(key))
+                if val is not None:
+                    rec[key] = round(val - seconds, 6)
+            rec["prev"] = prev_hash
+            raw = _dumps(rec)
+        out.append(raw)
+        prev_hash = hashlib.sha256(raw).hexdigest()
+    with open(path, "wb") as fh:
+        fh.write(b"\n".join(out) + (b"\n" if out else b""))
+    when = time.time() - seconds
+    os.utime(path, (when, when))
+    return True
 
 
 def selftest_flow(fixture_dir: str = None) -> int:

@@ -1,0 +1,20 @@
+{
+  "session_id": "sess-parent",
+  "tool_name": "Bash",
+  "tool_use_id": "toolu_iso",
+  "tool_input": {
+    "command": "rm -rf {{SANDBOX}}/work/solo"
+  },
+  "cwd": "{{SANDBOX}}/work/tree",
+  "agent_id": "agent-b",
+  "_setup": {
+    "fault_carrier": {
+      "reason": "every row in the ptable was unreadable and dropped",
+      "kind": "zero-rows",
+      "pids": [],
+      "count": 0,
+      "rows": null
+    },
+    "expect_names": "unreadable"
+  }
+}

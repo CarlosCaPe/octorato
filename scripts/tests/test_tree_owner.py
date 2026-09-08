@@ -93,20 +93,12 @@ class IsolationCase(unittest.TestCase):
         return cp.returncode, cp.stdout
 
     def age_journal(self, pid, age_seconds):
-        """Backdate BOTH halves of a journal's liveness: its mtime AND the `ts`
-        of its last chained record. `os.utime` alone is the cycle 5 C4 ATTACK,
-        not an expiry, and `test_c4_*` asserts it stays denied."""
-        path = kernel_proc.journal_path(pid)
-        when = time.time() - age_seconds
-        with open(path, encoding="utf-8") as fh:
-            lines = [ln for ln in fh.read().split("\n") if ln.strip()]
-        if lines:
-            rec = json.loads(lines[-1])
-            rec["ts"] = when
-            lines[-1] = json.dumps(rec, separators=(",", ":"))
-            with open(path, "w", encoding="utf-8") as fh:
-                fh.write("\n".join(lines) + "\n")
-        os.utime(path, (when, when))
+        """Backdate the WHOLE journal, mtime and every record, re-chained.
+        `os.utime` alone is the cycle 5 C4 ATTACK, not an expiry, and
+        `test_c4_*` asserts it stays denied; backdating only the LAST record is
+        cycle 6 C-A's forgery signature (the tail contradicts line 0 and the
+        line before it), so it stopped meaning "expired" too."""
+        kernel_proc.backdate_journal(kernel_proc.journal_path(pid), age_seconds)
 
     def denied(self, out: str) -> bool:
         try:
@@ -596,6 +588,7 @@ class QaCycle1(IsolationCase):
         into a silent regression either way."""
         self.hold()
         kdir = kernel_proc.kernel_dir()
+        jnl = kernel_proc.journal_path("agent-a")
         deep = f"rm -rf {self.tree}/pkg"
         for _ in range(4):
             deep = 'bash -c "' + deep.replace('"', '\\"') + '"'
@@ -608,6 +601,16 @@ class QaCycle1(IsolationCase):
                 # an evaluator: the body is Python, not shell
                 f'python3 -c "import shutil; shutil.rmtree(\'{self.tree}/pkg\')"',
                 f'python3 -c "open(\'{kdir}/ptable.json\',\'w\').write(\'{{}}\')"',
+                # cycle 6 C-A measured these three against the live gate: the
+                # gate enumerates shell VERBS and the EFFECT is what matters, so
+                # `printf x >> j` and `touch -d` deny while the same two writes
+                # through an interpreter emit no decision at all. After C-A they
+                # no longer transfer a lane (an unreadable record is UNKNOWN and
+                # UNKNOWN holds); what they still buy is a row that does not
+                # expire until PRUNE_AFTER after it registered.
+                f'python3 -c "open(\'{jnl}\',\'a\').write(\'x\')"',
+                f'python3 -c "import os;os.utime(\'{jnl}\',(1,1))"',
+                f'perl -e "open(F,\'>>\',\'{jnl}\')"',
                 # git verbs that rewrite the tree through a different door
                 "git apply /tmp/p.diff", "git rebase main", "git merge main",
                 "git pull", "git cherry-pick HEAD~1", "git revert HEAD",
@@ -1599,6 +1602,60 @@ class Selftests(unittest.TestCase):
         for prefix in ("benign_", "benign_write_"):
             path = fdir / f"{prefix}journals_gone_no_history.json"
             self.assertTrue(path.is_file(), path)          # M2's one-edit control
+
+        # CYCLE 6 adds three, and all three are the SAME defect the manifest
+        # above is a list of: a parse that failed selected the permissive
+        # branch. They are here because unit anchors alone were what let cycle 4
+        # F6 and cycle 5 M1/M2 reach the doctor's gate-liveness check unmeasured
+        # - a branch with no fixture is a count that cannot move, and a count
+        # that cannot move looks exactly like a count that was checked.
+        cycle6 = {
+            "torn_journal_of_holder": "torn_journals",           # C-A
+            "journals_truncated_to_start": "truncate_journals",  # C-B
+            "fault_carrier_kind_flipped": "fault_carrier",       # M-C
+        }
+        cycle6_pairs = {
+            # C-A's control follows F4's shape: the same tear on a row that
+            # holds no lane here, so "any journal I cannot read denies the
+            # machine" is not the rule that shipped. Its semantic exclusion is
+            # `benign_expired`, where the WHOLE journal says the process went
+            # quiet and the lane frees on schedule.
+            "torn_journal_of_idle_row": "torn_journals",
+            "journals_truncated_to_start": "truncate_journals",
+            "fault_carrier_kind_flipped": "fault_carrier",
+        }
+        for stem, key in cycle6.items():
+            for prefix in ("violation_", "violation_write_"):
+                path = fdir / f"{prefix}{stem}.json"
+                self.assertTrue(path.is_file(), path)
+                self.assertIn(key, json.loads(path.read_text())["_setup"], path.name)
+        for stem, key in cycle6_pairs.items():
+            for prefix in ("benign_", "benign_write_"):
+                path = fdir / f"{prefix}{stem}.json"
+                self.assertTrue(path.is_file(), path)
+                self.assertIn(key, json.loads(path.read_text())["_setup"], path.name)
+        # C-B's and M-C's benign legs are ONE VALUE away from their violations,
+        # which is what makes each violation a measurement of the rule rather
+        # than of the gate's appetite for denying: a start-only journal whose
+        # `start_ts` is NOW is C3's real registration race, and a `zero-rows`
+        # carrier that names a pid IS re-derivable.
+        for prefix in ("", "write_"):
+            v = json.loads((fdir / f"violation_{prefix}journals_truncated_to_start.json").read_text())
+            b = json.loads((fdir / f"benign_{prefix}journals_truncated_to_start.json").read_text())
+            self.assertEqual(set(v["_setup"]["truncate_journals"].values()), {"stale"})
+            self.assertEqual(set(b["_setup"]["truncate_journals"].values()), {"fresh"})
+            self.assertEqual(v["_setup"]["truncate_journals"].keys(),
+                             b["_setup"]["truncate_journals"].keys())
+            v = json.loads((fdir / f"violation_{prefix}fault_carrier_kind_flipped.json").read_text())
+            b = json.loads((fdir / f"benign_{prefix}fault_carrier_kind_flipped.json").read_text())
+            self.assertEqual(v["_setup"]["fault_carrier"]["pids"], [])
+            self.assertTrue(b["_setup"]["fault_carrier"]["pids"])
+            self.assertEqual({k: x for k, x in v["_setup"]["fault_carrier"].items()
+                              if k != "pids"},
+                             {k: x for k, x in b["_setup"]["fault_carrier"].items()
+                              if k != "pids"},
+                             "the benign leg must differ by that value alone")
+
         # M1's control is the fresh install, and what makes it benign is now
         # STATED in the fixture rather than inherited from a gitignored file
         # that happens not to be in the seed.

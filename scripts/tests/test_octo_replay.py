@@ -503,16 +503,11 @@ class TopTest(ReplayCase):
         kernel_proc.register("sess-old", {"kind": "main", "worktree": "/w"})
         path = kernel_proc.journal_path("sess-old")
         old = time.time() - (kernel_proc.TTL + 600)
-        # BOTH halves, since cycle 5 C4: liveness re-checks a stale mtime
-        # against the `ts` of the last chained record, so `os.utime` alone is
-        # the attack it now refuses, not an expiry.
-        with open(path, encoding="utf-8") as fh:
-            lines = [l for l in fh.read().split("\n") if l.strip()]
-        rec = json.loads(lines[-1]); rec["ts"] = old
-        lines[-1] = json.dumps(rec, separators=(",", ":"))
-        with open(path, "w", encoding="utf-8") as fh:
-            fh.write("\n".join(lines) + "\n")
-        os.utime(path, (old, old))
+        # THE WHOLE FILE, since cycle 5 C4 and cycle 6 C-A: liveness re-checks a
+        # stale mtime against the last record, and that record is checked
+        # against its own file, so neither `os.utime` alone nor a one-line
+        # rewrite says "this process went quiet" any more.
+        kernel_proc.backdate_journal(path, kernel_proc.TTL + 600)
         _, ps_out, _ = self.run_octo(["ps"])
         _, top_out, _ = self.run_octo(["top"])
         ps_row = [l for l in ps_out.splitlines() if l.startswith("sess-old")][0]

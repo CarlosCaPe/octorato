@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -52,6 +53,13 @@ class SandboxHome(unittest.TestCase):
         """Backdate BOTH halves of a journal's liveness: the file's mtime AND the
         `ts` of its last chained record.
 
+        THE WHOLE FILE MOVES, not just the last line, since cycle 6 C-A. The
+        tail is now checked against its own file (`_record_ts`: shape, anchor
+        and direction), so a last line backdated on its own contradicts line 0's
+        `start_ts` and the line before it, which is the signature of a forged
+        record and not of an expiry. `backdate_journal` shifts every line and
+        re-chains, so the fixture says one coherent thing.
+
         `os.utime` alone stopped meaning "this process went quiet" in cycle 5:
         `_own_fresh` re-checks a stale mtime against the record, because one
         `touch` on a live holder's journal used to free its lane with nothing
@@ -62,19 +70,9 @@ class SandboxHome(unittest.TestCase):
         stays held.
         """
         path = kernel_proc.journal_path(pid)
-        when = time.time() - age_seconds
-        try:
-            with open(path, encoding="utf-8") as fh:
-                lines = [ln for ln in fh.read().split("\n") if ln.strip()]
-        except OSError:
-            lines = []
-        if lines:
-            rec = json.loads(lines[-1])
-            rec["ts"] = when
-            lines[-1] = json.dumps(rec, separators=(",", ":"))
-            with open(path, "w", encoding="utf-8") as fh:
-                fh.write("\n".join(lines) + "\n")
-        os.utime(path, (when, when))
+        if not kernel_proc.backdate_journal(path, age_seconds):
+            when = time.time() - age_seconds
+            os.utime(path, (when, when))
 
     def touch_journal(self, pid, age_seconds=0.0):
         """Make <pid>'s journal exist and read `age_seconds` old."""
@@ -2428,3 +2426,302 @@ class JournalDirectoryWithRowsTest(SandboxHome):
         kernel_proc.append("owner", {"kind": "tool", "tool_name": "Write"})
         self.assertIn("of silence", kernel_proc.lane_recovery("owner"),
                       "and a busy holder keeps the ordinary advice")
+
+
+class UnreadableRecordTest(SandboxHome):
+    """QA cycle 6, C-A. The third appearance of one defect: a reader that could
+    not read something returned the value that also means "nothing is here", and
+    the caller chose the permissive branch off it.
+
+    `_record_ts` answered None for an unparseable tail, a non-dict tail and a
+    missing `ts`, and `_quiet_for` then fell back to the RAW MTIME, which reads
+    a backdated file as DEATH. `{"ts":1}` was worse, because it parsed: a number
+    saying 1970, taken as a process that went quiet 56 years ago. Every one of
+    these leaves the existing chain untouched and costs one appended line, and
+    nothing on this path calls `verify()`.
+    """
+
+    def held_lane(self):
+        kernel_proc.register("owner", {"kind": "main", "type": "main"})
+        lane = os.path.join(self.home, "work", "tree", "a.py")
+        self.assertTrue(kernel_proc.claim_lane("owner", lane))
+        kernel_proc.append("owner", {"kind": "tool", "tool_name": "Write"})
+        return lane
+
+    def tear(self, pid, tail: bytes):
+        """Append `tail` and backdate the mtime: the measured attack, verbatim."""
+        path = kernel_proc.journal_path(pid)
+        with open(path, "ab") as fh:
+            fh.write(tail)
+        old = time.time() - (kernel_proc.TTL + 600)
+        os.utime(path, (old, old))
+
+    def test_ca_an_unreadable_tail_plus_a_touch_does_not_free_the_lane(self):
+        for tail in (b"not-json\n", b'{"ts":1}\n', b'{"ts":null}\n', b"[]\n"):
+            with self.subTest(tail=tail):
+                self.setUp()
+                lane = self.held_lane()
+                self.tear("owner", tail)
+                self.assertIs(kernel_proc._quiet_for("owner", time.time()),
+                              kernel_proc.UNKNOWN)
+                self.assertTrue(kernel_proc._own_fresh("owner", time.time(),
+                                                       kernel_proc.TTL))
+                self.assertEqual(kernel_proc.lane_owner(lane, ignore="x")[0], "owner")
+
+    def test_ca_the_age_the_deny_prints_says_unknown_rather_than_never(self):
+        """-1 means "never journaled" to both gates. A torn record is a process
+        that DID journal, so it gets its own answer instead of borrowing one."""
+        self.held_lane()
+        self.tear("owner", b"not-json\n")
+        age = kernel_proc.process_age("owner")
+        self.assertNotEqual(age, age, "NaN, not -1 and not a number")
+
+    def test_ca_a_tail_that_contradicts_line_zero_is_unknown(self):
+        """The ANCHOR check. `append` copies `start_ts` forward unchanged, so a
+        tail whose `start_ts` disagrees with line 0's is not this kernel's line.
+        Without it, a forger backdates `start_ts` alongside `ts` and the shape
+        check passes."""
+        self.held_lane()
+        path = kernel_proc.journal_path("owner")
+        with open(path, encoding="utf-8") as fh:
+            lines = [l for l in fh.read().split("\n") if l.strip()]
+        rec = json.loads(lines[-1])
+        rec["ts"] = rec["start_ts"] = time.time() - (kernel_proc.TTL + 600)
+        lines[-1] = json.dumps(rec, separators=(",", ":"))
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+        old = time.time() - (kernel_proc.TTL + 600)
+        os.utime(path, (old, old))
+        self.assertIs(kernel_proc._quiet_for("owner", time.time()),
+                      kernel_proc.UNKNOWN)
+
+    def test_ca_a_tail_older_than_the_line_before_it_is_unknown(self):
+        """The DIRECTION check, and it is the one that costs an attacker the
+        FILE rather than one line. With shape and anchor alone, appending a line
+        whose `ts` equals the real `start_ts` reads as death for any process
+        that registered more than TTL ago, which is most of them."""
+        self.held_lane()
+        path = kernel_proc.journal_path("owner")
+        with open(path, encoding="utf-8") as fh:
+            head = json.loads(fh.read().split("\n")[0])
+        forged = dict(head)
+        forged.update({"seq": 99, "kind": "tool",
+                       "ts": time.time() - (kernel_proc.TTL + 600)})
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(forged, separators=(",", ":")) + "\n")
+        old = time.time() - (kernel_proc.TTL + 600)
+        os.utime(path, (old, old))
+        self.assertIs(kernel_proc._quiet_for("owner", time.time()),
+                      kernel_proc.UNKNOWN)
+
+    def test_ca_the_exclusion_a_coherently_quiet_journal_still_expires(self):
+        """The half that makes the rule a measurement and not an appetite for
+        denying: a journal whose WHOLE history says it went quiet frees its lane
+        on schedule. Without this, "any journal I cannot read denies the
+        machine" would be the shipped rule."""
+        lane = self.held_lane()
+        self.age_journal("owner", kernel_proc.TTL + 600)
+        self.assertIsInstance(kernel_proc._quiet_for("owner", time.time()), float)
+        self.assertFalse(kernel_proc._own_fresh("owner", time.time(), kernel_proc.TTL))
+        self.assertIsNone(kernel_proc.lane_owner(lane, ignore="x")[0])
+
+    def test_ca_prune_bounds_an_unknown_by_the_row_and_not_by_the_journal(self):
+        """TTL and PRUNE_AFTER answer DIFFERENTLY here, and that is deliberate.
+        Liveness holds on UNKNOWN, so expiry has to have a clock or a torn
+        journal never expires and `>> not-json` becomes a permanent denial of
+        service on that tree. The clock is the ROW's `registered_ts`, which is
+        in the ptable, not in the journal the writer just tore."""
+        self.held_lane()
+        self.tear("owner", b"not-json\n")
+        kernel_proc.register("newsess", {"kind": "main", "type": "main"})
+        self.assertIn("owner", kernel_proc.read_ptable()["processes"],
+                      "a torn journal does not expire the row on the attacker's clock")
+
+        table = kernel_proc.read_ptable()
+        table["processes"]["owner"]["registered_ts"] = \
+            time.time() - (kernel_proc.PRUNE_AFTER + 600)
+        kernel_proc._write_ptable(table)
+        kernel_proc.register("newsess2", {"kind": "main", "type": "main"})
+        self.assertNotIn("owner", kernel_proc.read_ptable()["processes"],
+                         "but it DOES expire, on the clock the journal cannot reach")
+
+    def test_ca_a_row_whose_registration_time_is_unreadable_is_kept(self):
+        """An UNKNOWN age on an UNKNOWN clock has nothing to expire against, so
+        it is kept. `float(ent.get('registered_ts') or 0)` used to read a
+        garbage value as 0, which on every clock in this file means infinitely
+        old, and raised ValueError inside the ptable lock on the way there."""
+        self.held_lane()
+        self.tear("owner", b"not-json\n")
+        table = kernel_proc.read_ptable()
+        table["processes"]["owner"]["registered_ts"] = "not-a-number"
+        kernel_proc._write_ptable(table)
+        kernel_proc.register("newsess", {"kind": "main", "type": "main"})
+        self.assertIn("owner", kernel_proc.read_ptable()["processes"])
+
+
+class TruncatedJournalTest(SandboxHome):
+    """QA cycle 6, C-B. The C3 filter reads a property of a FILE, and the file
+    is attacker-writable: truncating a live holder's journal to its own first
+    line copies the start line verbatim, so it stays genuine and chain-valid
+    while the journal reads as "a registration in flight" and is skipped.
+    `truncate -s 0` reaches the same skip through the zero-byte leg. With the
+    table emptied, that is the silent allow-everything machine `_absent_table`
+    exists to stop."""
+
+    def running_machine(self):
+        kernel_proc.register("owner", {"kind": "main", "type": "main"})
+        kernel_proc.claim_lane("owner", os.path.join(self.home, "a.py"))
+        kernel_proc.append("owner", {"kind": "tool", "tool_name": "Write"})
+        # A holder that has been running a while, which is what a holder looks
+        # like. The truncation below then sets the mtime to NOW.
+        kernel_proc.backdate_journal(kernel_proc.journal_path("owner"),
+                                     kernel_proc.START_ONLY_GRACE + 600)
+
+    def truncate(self, pid, to_zero=False):
+        path = kernel_proc.journal_path(pid)
+        with open(path, "rb") as fh:
+            first = fh.read().split(b"\n")[0]
+        with open(path, "wb") as fh:
+            fh.write(b"" if to_zero else first + b"\n")
+        os.utime(path, None)
+
+    def test_cb_a_start_only_journal_older_than_the_grace_reads_live(self):
+        self.running_machine()
+        self.truncate("owner")
+        self.assertFalse(kernel_proc.has_work_trace("owner"),
+                         "the setup really does reach the C3 branch")
+        self.assertIn("owner", kernel_proc.live_journal_pids())
+
+    def test_cb_a_zero_byte_journal_reads_live_too(self):
+        """The other door into the same skip: `has_work_trace` returns False for
+        an empty file, and a file with no `start_ts` in it has no age to be
+        young by, so it is UNKNOWN and counted."""
+        self.running_machine()
+        self.truncate("owner", to_zero=True)
+        self.assertIn("owner", kernel_proc.live_journal_pids())
+
+    def test_cb_the_emptied_table_faults_instead_of_reading_fresh(self):
+        self.running_machine()
+        self.truncate("owner")
+        kernel_proc._write_ptable({"version": 1, "processes": {}})
+        fault = kernel_proc.read_ptable_detail()[2]
+        self.assertIn("read live", fault)
+        self.assertFalse(kernel_proc.claim_lane("intruder",
+                                                os.path.join(self.home, "a.py")))
+
+    def test_cb_the_exclusion_a_real_registration_in_flight_still_allows(self):
+        """C3 itself, and it must keep working: two SessionStart hooks on a
+        table-less machine, `register` writing its journal before it takes the
+        ptable lock, the sibling's brand-new start line beside it. That is a
+        first run with two terminals and the documented `rm ptable.json`
+        recovery, so counting it produced a fault that was false."""
+        kernel_proc.register("owner", {"kind": "main", "type": "main"})
+        self.assertFalse(kernel_proc.has_work_trace("owner"))
+        self.assertEqual(kernel_proc.live_journal_pids(), [],
+                         "a start line written seconds ago is a race, not a truncation")
+
+    def test_cb_the_grace_is_read_off_line_zero_and_not_off_the_mtime(self):
+        """The direction the bound must not be gameable in: an attacker wants
+        the SKIP, and the mtime is the field one syscall sets. Touching a
+        truncated journal forward must not buy the in-flight grace."""
+        self.running_machine()
+        self.truncate("owner")
+        os.utime(kernel_proc.journal_path("owner"), None)
+        self.assertFalse(kernel_proc._registration_in_flight("owner", time.time()))
+
+
+class CarrierKindTest(SandboxHome):
+    """QA cycle 6, M-C, and a literal recurrence of
+    `lesson_unsigned_input_must_not_select_the_trusted_check` (PR #282): an
+    editable field decided WHICH verification ran. A genuine `latched` carrier
+    flipped on disk to `zero-rows` with `pids: []` re-derived vacuously, the
+    gates allowed, and `_publish` popped the key and deleted the evidence."""
+
+    def machine(self):
+        kernel_proc.register("owner", {"kind": "main", "type": "main"})
+        kernel_proc.claim_lane("owner", os.path.join(self.home, "a.py"))
+        kernel_proc.append("owner", {"kind": "tool", "tool_name": "Write"})
+
+    def carry(self, **fields):
+        table = kernel_proc.read_ptable()
+        carrier = {"reason": "rows lost", "ts": time.time(), "kind": "latched",
+                   "pids": [], "count": 0, "rows": None}
+        carrier.update(fields)
+        table[kernel_proc.FAULT_KEY] = carrier
+        kernel_proc._write_ptable(table)
+        return carrier
+
+    def test_mc_a_weaker_kind_with_no_pids_does_not_resolve(self):
+        self.machine()
+        self.carry(kind="zero-rows", pids=[])
+        self.assertTrue(kernel_proc.read_ptable_detail()[2],
+                        "the fault still stands")
+        kernel_proc.register("newsess", {"kind": "main", "type": "main"})
+        with open(kernel_proc.ptable_path(), encoding="utf-8") as fh:
+            table = json.load(fh)
+        self.assertIn(kernel_proc.FAULT_KEY, table,
+                      "and the evidence is not deleted by the next writer")
+
+    def test_mc_the_exclusion_a_real_condition_fault_still_lifts(self):
+        """One edit, `pids`. A `zero-rows` fault that names a pid with no
+        journal beside it IS resolved, and it has to lift or the whole condition
+        machinery is a lockout again (C1)."""
+        self.machine()
+        self.carry(kind="zero-rows", pids=["ghost"])
+        self.assertFalse(kernel_proc.read_ptable_detail()[2])
+
+    def test_mc_a_kind_this_module_never_writes_reads_as_latched(self):
+        self.machine()
+        carrier = self.carry(kind="not-a-kind", pids=["ghost"])
+        self.assertEqual(kernel_proc._carrier_kind(carrier), kernel_proc.FAULT_LATCHED)
+        self.assertTrue(kernel_proc.read_ptable_detail()[2])
+
+    def test_mc_a_carrier_from_before_this_branch_reads_as_latched(self):
+        """The upgrade path, named rather than discovered: a carrier written
+        before `kind` existed has none, so it is the strongest kind. Fail-closed,
+        and it turns an old prune-written `lost-lanes` fault into one a human
+        clears."""
+        self.machine()
+        table = kernel_proc.read_ptable()
+        table[kernel_proc.FAULT_KEY] = {"reason": "old carrier", "ts": time.time()}
+        kernel_proc._write_ptable(table)
+        self.assertEqual(kernel_proc.fault_kind(kernel_proc.read_ptable_detail()[0]),
+                         kernel_proc.FAULT_LATCHED)
+
+    def test_mc_a_present_but_shapeless_carrier_is_a_fault(self):
+        """`data.get(FAULT_KEY)` returned None for a table with no fault AND for
+        `"_faulted": null`, and the same collapse ran for 0, "" and []. The key
+        is written as an object with a reason or not written, so its PRESENCE is
+        the fault."""
+        for value in (None, 0, "", [], {}):
+            with self.subTest(value=value):
+                self.setUp()
+                self.machine()
+                table = kernel_proc.read_ptable()
+                table[kernel_proc.FAULT_KEY] = value
+                kernel_proc._write_ptable(table)
+                self.assertTrue(kernel_proc.read_ptable_detail()[2],
+                                "a value nobody can read is not 'nothing is wrong'")
+
+    def test_mc_no_kind_resolves_while_the_journals_are_unusable(self):
+        """The derived precondition, asked for every kind and read off disk
+        without touching the carrier: the journals are the evidence every
+        re-derivation leans on."""
+        self.machine()
+        carrier = self.carry(kind="zero-rows", pids=["ghost"])
+        self.assertTrue(kernel_proc.fault_resolved(carrier, kernel_proc.read_ptable()))
+        shutil.rmtree(kernel_proc.journal_dir(), ignore_errors=True)
+        self.assertFalse(kernel_proc.fault_resolved(carrier, kernel_proc.read_ptable()))
+
+    def test_a_lifted_fault_leaves_a_line_in_the_journal(self):
+        """The other half of a ledger that only ever recorded the SETTING. A set
+        fault quarantines, denies and FAILs the doctor; a cleared one used to
+        leave nothing at all."""
+        self.machine()
+        self.carry(kind="zero-rows", pids=["ghost"])
+        kernel_proc.register("newsess", {"kind": "main", "type": "main"})
+        lines = [l for l in kernel_proc.read_journal("newsess") if l]
+        lifted = [l for l in lines if l.get("kind") == "fault"]
+        self.assertTrue(lifted, "the lift is recorded")
+        self.assertEqual(lifted[0]["fault"], "lifted")
+        self.assertEqual(lifted[0]["fault_kind"], kernel_proc.FAULT_ZERO_ROWS)
