@@ -96,8 +96,34 @@ def _download_repo_zip(owner: str, repo: str, ref: str, dest_dir: str) -> str:
     return os.path.join(dest_dir, next(iter(top_levels)))
 
 
+# Ceiling on a git child. The clones here are shallow and blob-filtered, so a child
+# still alive after this has stopped fetching and started waiting.
+#
+# Chosen, not derived. Measured reference: the exact clone shape below, against a 29 MB
+# repository on a 4-core box at load 18, took 3.7 s. The ceiling is ~160x that. It has
+# not been measured against a large repository or a throttled link, so it is deliberate
+# headroom: a ceiling that cuts a slow but correct fetch would be worse than no ceiling.
+_GIT_TIMEOUT = 600.0
+
+
 def _run_git(args: list[str]) -> None:
-    result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    # An unattended installer must never leave a child waiting for a human, and the
+    # channels a child can wait on are not one thing. Measured: a git credential prompt
+    # for a repo that answers 401 goes to /dev/tty, so it hangs even with stdin closed
+    # and only GIT_TERMINAL_PROMPT=0 stops it; a prompt that reads stdin (ssh-keygen's
+    # overwrite question, in the sibling module) is stopped by DEVNULL and not by the
+    # env. Neither covers the channel this comment cannot name yet, which is what the
+    # timeout is for: this function clones over https AND ssh, and only the https half
+    # is measured here.
+    env = dict(os.environ)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    try:
+        result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                stdin=subprocess.DEVNULL, text=True, env=env,
+                                timeout=_GIT_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        raise InstallError(f"git took longer than {_GIT_TIMEOUT:.0f}s and was killed: "
+                           + " ".join(args[:3]))
     if result.returncode != 0:
         raise InstallError(result.stderr.strip() or "Git command failed.")
 

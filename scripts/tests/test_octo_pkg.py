@@ -14,13 +14,17 @@ parses, and the manifest generator.
 """
 from __future__ import annotations
 
+import http.server
 import importlib.util
 import json
 import os
 import shutil
+import socketserver
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -40,12 +44,39 @@ def _load(name: str, path: Path):
     return mod
 
 
+def _sp(args, **kw):
+    """subprocess.run with the two things this module is not allowed to omit.
+
+    No inherited stdin: half the calls below are `ssh-keygen`, which reads its
+    "Overwrite (y/n)?" answer from STDIN, so a suite run from a terminal would block
+    on the first one that finds a signature already in place. And always a deadline:
+    the defect these tests regress is a HANG, and an unbounded child here wedges the
+    suite that is supposed to be proving the hang is gone. Callers that already pass
+    stdin or timeout keep theirs.
+    """
+    kw.setdefault("stdin", subprocess.DEVNULL)
+    kw.setdefault("timeout", 300)
+    return subprocess.run(args, **kw)
+
+
 octo_pkg = _load("octo_pkg_under_test", SCRIPTS / "octo_pkg.py")
 gen = _load("gen_skill_manifests_under_test", SCRIPTS / "gen_skill_manifests.py")
 
 
 def _ssh_ok() -> bool:
     return shutil.which("ssh-keygen") is not None and octo_pkg.ssh_keygen_y_supported()
+
+
+def _pty_ok() -> bool:
+    """Whether this platform can give a child a controlling terminal.
+
+    pty and SIGKILL are POSIX-only, and importing them at module scope would take the
+    WHOLE suite down on Windows over two tests. Probed, not assumed."""
+    try:
+        import pty, signal  # noqa: F401
+    except ImportError:
+        return False
+    return hasattr(signal, "SIGKILL")
 
 
 def _fcntl_ok() -> bool:
@@ -74,7 +105,7 @@ class SandboxCase(unittest.TestCase):
                      self.root / "schemas" / "skill-manifest.schema.json")
         (self.root / "packages.lock.json").write_text(
             json.dumps({"version": 1, "packages": []}, indent=2) + "\n", encoding="utf-8")
-        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        _sp(["git", "init", "-q", str(self.root)], check=True)
         os.environ["HOME"] = str(home)
         self.addCleanup(self._restore_home)
         self.brain = octo_pkg.Brain(self.root)
@@ -85,7 +116,7 @@ class SandboxCase(unittest.TestCase):
 
     def mint_key(self, principal: str = "octorato-release") -> Path:
         key = self.tmp / f"key-{principal}"
-        subprocess.run(["ssh-keygen", "-t", "ed25519", "-N", "", "-C", principal,
+        _sp(["ssh-keygen", "-t", "ed25519", "-N", "", "-C", principal,
                         "-f", str(key)], check=True, capture_output=True)
         pub = key.with_suffix(".pub").read_text(encoding="utf-8").split()
         line = f"{principal} {pub[0]} {pub[1]}\n"
@@ -100,7 +131,7 @@ class SandboxCase(unittest.TestCase):
         return dst
 
     def sign(self, key: Path, pkg: Path):
-        subprocess.run(["ssh-keygen", "-Y", "sign", "-f", str(key), "-n",
+        _sp(["ssh-keygen", "-Y", "sign", "-f", str(key), "-n",
                         octo_pkg.SIG_NAMESPACE, str(pkg / "skill.json")],
                        check=True, capture_output=True)
 
@@ -199,7 +230,7 @@ class TestSigners(SandboxCase):
     @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
     def test_a_key_that_is_in_no_signers_file_does_not_verify(self):
         stray = self.tmp / "stray"
-        subprocess.run(["ssh-keygen", "-t", "ed25519", "-N", "", "-f", str(stray)],
+        _sp(["ssh-keygen", "-t", "ed25519", "-N", "", "-f", str(stray)],
                        check=True, capture_output=True)
         self.mint_key()  # a known principal exists, but it is not this key
         pkg = self.stage("signed")
@@ -346,7 +377,7 @@ class TestSelftest(unittest.TestCase):
     @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
     def test_selftest_passes_as_a_subprocess(self):
         """The same invocation the registry proof and pre-push use."""
-        cp = subprocess.run([sys.executable, str(SCRIPTS / "octo_pkg.py"), "--selftest",
+        cp = _sp([sys.executable, str(SCRIPTS / "octo_pkg.py"), "--selftest",
                              "registry/fixtures/META.kernel-package"],
                             cwd=str(BRAIN), capture_output=True, text=True)
         self.assertEqual(cp.returncode, 0, cp.stdout + cp.stderr)
@@ -379,7 +410,7 @@ class TestGitHubPath(SandboxCase):
                     ["git", "-C", str(repo), "add", "-A"],
                     ["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t",
                      "commit", "-q", "-m", "seed"]):
-            subprocess.run(cmd, check=True, capture_output=True)
+            _sp(cmd, check=True, capture_output=True)
         return repo
 
     @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
@@ -387,8 +418,8 @@ class TestGitHubPath(SandboxCase):
         key = self.mint_key()
         repo = self._seed_repo()
         self.sign(key, repo / "skills" / "sample-package")
-        subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, capture_output=True)
-        subprocess.run(["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t",
+        _sp(["git", "-C", str(repo), "add", "-A"], check=True, capture_output=True)
+        _sp(["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t",
                         "commit", "-q", "-m", "sig"], check=True, capture_output=True)
         rc = octo_pkg.main(["--brain", str(self.root), "install", str(repo),
                             "--path", "skills/sample-package"])
@@ -447,7 +478,7 @@ class TestQaCycle2(SandboxCase):
         repo = self.tmp / f"r-{branch}-{extra_ref}"
         (repo / "skills").mkdir(parents=True)
         shutil.copytree(FIXTURE / "signed", repo / "skills" / "pdf")
-        run = lambda *c: subprocess.run(c, check=True, capture_output=True)
+        run = lambda *c: _sp(c, check=True, capture_output=True)
         run("git", "init", "-q", "-b", branch, str(repo))
         run("git", "-C", str(repo), "add", "-A")
         run("git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t",
@@ -495,7 +526,7 @@ class TestQaCycle2(SandboxCase):
         repo = self._seed(branch="master", extra_ref="release-1")
         pkg_in_repo = repo / "skills" / "pdf"
         self.sign(key, pkg_in_repo)
-        run = lambda *c: subprocess.run(c, check=True, capture_output=True)
+        run = lambda *c: _sp(c, check=True, capture_output=True)
         run("git", "-C", str(repo), "checkout", "-q", "release-1")
         (pkg_in_repo / "ONLY-ON-RELEASE-1.md").write_text("pinned\n", encoding="utf-8")
         man = json.loads((pkg_in_repo / "skill.json").read_text(encoding="utf-8"))
@@ -540,8 +571,8 @@ class TestQaCycle2(SandboxCase):
         key = self.mint_key()
         repo = self._seed()
         self.sign(key, repo / "skills" / "pdf")
-        subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, capture_output=True)
-        subprocess.run(["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t",
+        _sp(["git", "-C", str(repo), "add", "-A"], check=True, capture_output=True)
+        _sp(["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t",
                         "commit", "-q", "-m", "sig"], check=True, capture_output=True)
         # same argument shape as the wiki line: a path-carrying source plus --path
         rc = octo_pkg.main(["--brain", str(self.root), "install", str(repo),
@@ -571,7 +602,7 @@ class TestQaCycle2(SandboxCase):
     def test_lock_scratch_files_are_gitignored_by_a_tracked_pattern(self):
         brain_root = BRAIN
         names = [f"packages.lock.json.{os.getpid()}.tmp", "packages.lock.json.lock"]
-        cp = subprocess.run(["git", "check-ignore", "-v", "--no-index", *names],
+        cp = _sp(["git", "check-ignore", "-v", "--no-index", *names],
                             cwd=str(brain_root), capture_output=True, text=True)
         self.assertEqual(cp.returncode, 0, f"not ignored: {cp.stdout or cp.stderr}")
         self.assertEqual(len(cp.stdout.strip().splitlines()), len(names), cp.stdout)
@@ -615,7 +646,7 @@ class TestQaCycle2(SandboxCase):
         man = json.loads((d / "skill.json").read_text(encoding="utf-8"))
         man["version"] = "9.9.9"
         (d / "skill.json").write_text(json.dumps(man, indent=2) + "\n", encoding="utf-8")
-        cp = subprocess.run(["ssh-keygen", "-Y", "sign", "-f", str(key), "-n",
+        cp = _sp(["ssh-keygen", "-Y", "sign", "-f", str(key), "-n",
                              octo_pkg.SIG_NAMESPACE, str(d / "skill.json")],
                             stdin=subprocess.DEVNULL, capture_output=True)
         self.assertEqual(cp.returncode, 0, "ssh-keygen reports success")
@@ -681,8 +712,11 @@ class TestLockIntegrity(SandboxCase):
             # The sandbox HOME is fine in-process (sys.path is fixed at startup) but a
             # CHILD re-derives its user site-packages from HOME, so it would lose
             # jsonschema. The brain is pinned by --brain, not by HOME.
+            stdin=subprocess.DEVNULL,
             env={**os.environ, "HOME": self._home or os.environ["HOME"]}) for d in srcs]
-        outs = [pr.communicate() for pr in procs]
+        # Bounded: these two children race for the lock, and a lock bug is exactly the
+        # shape that would make one of them wait forever on the other.
+        outs = [pr.communicate(timeout=300) for pr in procs]
         for pr, (o, e) in zip(procs, outs):
             self.assertEqual(pr.returncode, 0, e.decode())
         names = sorted(p["name"] for p in self.brain.load_lock()["packages"])
@@ -814,7 +848,7 @@ class TestProbeAndExclude(SandboxCase):
         outer = self.tmp / "outer"
         inner = outer / "nested" / "brain"
         inner.mkdir(parents=True)
-        subprocess.run(["git", "init", "-q", str(outer)], check=True, capture_output=True)
+        _sp(["git", "init", "-q", str(outer)], check=True, capture_output=True)
         b = octo_pkg.Brain(inner)
         self.assertIsNone(b._exclude_file())
         self.assertFalse(b.exclude_add("skills/x"))
@@ -831,7 +865,7 @@ class TestProbeAndExclude(SandboxCase):
         own commands in a worktree, where install printed 'not a git checkout'."""
         main_repo = self.tmp / "mainrepo"
         main_repo.mkdir()
-        subprocess.run(["git", "init", "-q", "-b", "master", str(main_repo)],
+        _sp(["git", "init", "-q", "-b", "master", str(main_repo)],
                        check=True, capture_output=True)
         (main_repo / "f.txt").write_text("x\n", encoding="utf-8")
         for cmd in (["git", "-C", str(main_repo), "add", "-A"],
@@ -839,7 +873,7 @@ class TestProbeAndExclude(SandboxCase):
                      "user.name=t", "commit", "-q", "-m", "seed"],
                     ["git", "-C", str(main_repo), "worktree", "add", "-q", "-b", "wt",
                      str(self.tmp / "wt")]):
-            subprocess.run(cmd, check=True, capture_output=True)
+            _sp(cmd, check=True, capture_output=True)
         b = octo_pkg.Brain(self.tmp / "wt")
         self.assertIsNotNone(b._exclude_file())
         self.assertTrue(b.exclude_add("skills/x"))
@@ -1437,7 +1471,7 @@ class TestQaCycle5(SandboxCase):
         # so an in-process capture cannot see this at all and the first version of
         # this test survived the mutation that breaks the guard. The invariant lives
         # on the real stdout, so the test has to use one.
-        cp = subprocess.run([sys.executable, str(SCRIPTS / "octo_pkg.py"),
+        cp = _sp([sys.executable, str(SCRIPTS / "octo_pkg.py"),
                              "--brain", str(self.root), "verify", "--all"],
                             capture_output=True, text=True, timeout=90)
         self.assertEqual(cp.returncode, 1, cp.stderr)
@@ -1469,7 +1503,7 @@ class TestQaCycle5(SandboxCase):
         for args in (["init", "-q"], ["config", "user.email", "t@example.invalid"],
                      ["config", "user.name", "t"], ["add", "-A"],
                      ["commit", "-q", "-m", "arm"]):
-            subprocess.run(["git", "-C", str(src)] + args, check=True,
+            _sp(["git", "-C", str(src)] + args, check=True,
                            capture_output=True, env=env)
         self.brain.lock_path.write_text("{ not json", encoding="utf-8")
         dest = self.tmp / "armdest"
@@ -1742,7 +1776,7 @@ class ArmFixture(SandboxCase):
         for args in (["init", "-q"], ["config", "user.email", "t@example.invalid"],
                      ["config", "user.name", "t"], ["add", "-A"],
                      ["commit", "-q", "-m", "arm"]):
-            subprocess.run(["git", "-C", str(src)] + args, check=True,
+            _sp(["git", "-C", str(src)] + args, check=True,
                            capture_output=True, env=env, timeout=120)
         return src
 
@@ -2004,7 +2038,7 @@ class TestQaCycle11(ArmFixture):
         vendor = self.brain.vendor_dir
         vendor.mkdir(parents=True, exist_ok=True)
         os.mkdir(os.path.join(bytes(vendor), b"stray\xff"))
-        cp = subprocess.run([sys.executable, str(SCRIPTS / "octo_pkg.py"),
+        cp = _sp([sys.executable, str(SCRIPTS / "octo_pkg.py"),
                              "--brain", str(self.root), "verify", "--all", "--json"],
                             capture_output=True, text=True, timeout=180,
                             env={**os.environ, "HOME": self._home or os.environ["HOME"]})
@@ -3826,6 +3860,268 @@ class TestGenerator(unittest.TestCase):
         gen.main(["--root", str(self.root), "--write", "--default-license", "MIT"])
         man = json.loads((d / "skill.json").read_text(encoding="utf-8"))
         self.assertEqual(man["license"], "Apache-2.0")
+
+
+class TestNoChildWaitsForAHuman(SandboxCase):
+    """One class of defect: a child of this codebase asks a question nobody answers.
+
+    Two channels, and closing one does nothing for the other:
+
+      ssh-keygen "Overwrite (y/n)?"   read from STDIN     closed by stdin=DEVNULL
+      git "Username for ..."          read from /dev/TTY  closed by GIT_TERMINAL_PROMPT=0
+
+    A closed stdin was measured NOT to stop the git prompt, which is why that one has
+    its own test rather than a shared assumption. And the channel is not the whole
+    class either: separate functions spawn these commands and each has to be closed on
+    its own, so the same prompt is tested against every spawner this change touches
+    instead of against the first one found.
+
+      octo_pkg._run                        ssh-keygen, git clone, the sync child
+      install-skill-from-github._run_git   every clone of a GitHub skill
+
+    That enumeration is not the repo's full list. brain_doctor.run was measured with
+    the same defect, on the pre-push path where the prompt wedges a push with no output
+    at all, and it is not covered here because it is not this change's file.
+
+    Every test below was measured RED with its own fix reverted, in exactly the way it
+    asserts, and every child here is bounded: the defect is a hang, so an unbounded
+    wait would wedge the suite that is proving it gone.
+    """
+
+    TTL = 45          # a child of this class that is still alive is a failed child
+
+    # ---------------------------------------------------------------- helpers
+
+    def _live_stdin_child(self, body: str) -> "subprocess.Popen":
+        """Run `body` in a python child whose stdin is an open pipe.
+
+        This test never writes to that pipe and never closes it, which is what an
+        operator's terminal looks like to a subprocess: readable, and silent. The
+        pipe is the whole point, so communicate() is not used anywhere near it --
+        communicate() closes stdin and would hide the very defect under test.
+        """
+        prog = (
+            "import importlib.util, sys\n"
+            f"spec = importlib.util.spec_from_file_location('m', {str(SCRIPTS / 'octo_pkg.py')!r})\n"
+            "m = importlib.util.module_from_spec(spec)\n"
+            "sys.modules['m'] = m\n"
+            "spec.loader.exec_module(m)\n"
+        ) + body
+        return subprocess.Popen(
+            [sys.executable, "-c", prog], stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env={**os.environ, "HOME": self._home or os.environ["HOME"]})
+
+    def _finish(self, proc, what: str) -> str:
+        """Wait for a child, and FAIL by name if it is still waiting on a human."""
+        try:
+            proc.wait(timeout=self.TTL)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=self.TTL)
+            self.fail(f"{what}: the child never returned. Something below it is "
+                      f"blocked on a prompt, waiting for an answer that cannot arrive.")
+        out = proc.stdout.read().decode("utf-8", "replace")
+        err = proc.stderr.read().decode("utf-8", "replace")
+        self.assertEqual(proc.returncode, 0, f"{what} exited {proc.returncode}: {err}")
+        return out
+
+    def _signed_copy(self) -> tuple:
+        """A package that already carries a .sig, copied the way a publish copies it.
+
+        This is the reported shape: copytree brings skill.json.sig along, and the next
+        ssh-keygen finds its destination occupied.
+        """
+        key = self.mint_key()
+        src = self.stage("signed")
+        self.sign(key, src)
+        self.assertTrue((src / octo_pkg.SIG_NAME).is_file())
+        pub = self.tmp / "publish"
+        shutil.copytree(src, pub)
+        self.assertTrue((pub / octo_pkg.SIG_NAME).is_file(),
+                        "the copy must carry the stale signature, or this proves nothing")
+        return key, pub
+
+    # ---------------------------------------------------------------- stdin
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_run_does_not_hand_a_child_a_live_stdin(self):
+        """RED before the fix: _run passed input=None, subprocess handed the child the
+        parent's stdin, and ssh-keygen sat on the overwrite prompt forever."""
+        key, pub = self._signed_copy()
+        proc = self._live_stdin_child(
+            f"cp = m._run(['ssh-keygen', '-Y', 'sign', '-f', {str(key)!r}, '-n',"
+            f" m.SIG_NAMESPACE, {str(pub / 'skill.json')!r}])\n"
+            "print('RETURNED', cp.returncode)\n")
+        out = self._finish(proc, "_run over an existing signature")
+        # Not just "it came back": rc 0 is a signature that was actually written,
+        # rc 124 is the deadline rescuing a child that hung on the prompt. Asserting
+        # only that it returned lets the deadline stand in for the dead stdin, and
+        # then this test stays green while every child waits out the full ceiling.
+        self.assertIn("RETURNED 0", out,
+                      "the child came back, but not by signing: a 124 here means it "
+                      "sat on the overwrite prompt until the deadline killed it, so "
+                      "stdin was live and only the ceiling ended it")
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_publishing_the_same_package_twice_signs_the_manifest_both_times(self):
+        """Idempotence, which is the half a timeout would not have fixed.
+
+        Publish once, change the manifest, publish again into the same directory. The
+        second signature must cover the second manifest. Before the fix the second
+        ssh-keygen either blocked on the prompt or, on EOF, declined it and exited 0
+        leaving the FIRST signature in place: rc 0, and a package whose signature
+        verifies against bytes nobody has.
+        """
+        key, pub = self._signed_copy()
+        mpath = pub / "skill.json"
+        proc = self._live_stdin_child(
+            "import json, pathlib\n"
+            f"key, mpath = {str(key)!r}, pathlib.Path({str(mpath)!r})\n"
+            "def covers():\n"
+            "    sig = mpath.with_name(mpath.name + '.sig')\n"
+            "    cp = m._run(['ssh-keygen', '-Y', 'check-novalidate', '-n',"
+            " m.SIG_NAMESPACE, '-s', str(sig)], stdin_bytes=mpath.read_bytes())\n"
+            "    return cp.returncode == 0\n"
+            "m._sign(pathlib.Path(key), mpath)\n"
+            "print('PUBLISH1', covers())\n"
+            "man = json.loads(mpath.read_text())\n"
+            "man['version'] = '9.9.9'\n"
+            "mpath.write_text(json.dumps(man, indent=2) + chr(10))\n"
+            "m._sign(pathlib.Path(key), mpath)\n"
+            "print('PUBLISH2', covers())\n")
+        out = self._finish(proc, "publishing the same package twice")
+        self.assertIn("PUBLISH1 True", out, "the first publish did not sign the manifest")
+        self.assertIn("PUBLISH2 True", out,
+                      "the second publish left a signature over the previous manifest: "
+                      "the stale .sig was not cleared before ssh-keygen ran")
+
+    # ---------------------------------------------------------------- the deadline
+
+    def test_a_child_that_outlives_its_deadline_comes_back_as_a_failure(self):
+        """The timeout branch is what covers a channel nobody enumerated, so it is the
+        one path that must not be taken on trust.
+
+        A sleeping child is the honest stand-in for a child sitting on a prompt: from
+        the parent, waiting on a human and waiting on a clock are the same thing. What
+        the caller must see is a FAILED CompletedProcess, not an exception, because
+        every call site in this module branches on cp.returncode and an exception there
+        would turn a wedge into a traceback instead of a message.
+        """
+        started = time.monotonic()
+        cp = octo_pkg._run([sys.executable, "-c", "import time; time.sleep(30)"],
+                           timeout=1.5)
+        self.assertEqual(cp.returncode, 124,
+                         "a killed child must report 124, the shape coreutils timeout "
+                         "uses, so cp.returncode != 0 catches it like any other failure")
+        self.assertLess(time.monotonic() - started, 15,
+                        "_run returned only after the child finished on its own: the "
+                        "deadline was not enforced")
+        self.assertIn(b"killed after", cp.stderr or b"",
+                      "the reason a call failed must survive into stderr, or the caller "
+                      "reports a blank failure")
+
+    def test_the_deadline_does_not_cut_a_child_that_is_working(self):
+        """The benign half. A ceiling that fires early would be its own outage, so the
+        same call one edit away from the one above has to come back rc 0."""
+        cp = octo_pkg._run([sys.executable, "-c", "print('done')"], timeout=1.5)
+        self.assertEqual(cp.returncode, 0, (cp.stderr or b"").decode())
+        self.assertIn(b"done", cp.stdout or b"")
+
+    # ---------------------------------------------------------------- /dev/tty
+
+    def _http_401(self) -> str:
+        """A local git remote that answers 401, so git asks for a username.
+
+        Local and offline on purpose: the prompt is the subject, the network is not.
+        """
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(401)
+                self.send_header("WWW-Authenticate", 'Basic realm="git"')
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def log_message(self, *a):
+                pass
+
+        srv = socketserver.ThreadingTCPServer(("127.0.0.1", 0), Handler)
+        srv.daemon_threads = True
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.shutdown)
+        return "http://127.0.0.1:%d/owner/repo.git" % srv.server_address[1]
+
+    def _under_a_controlling_terminal(self, fn, what: str):
+        """Run `fn` in a child that OWNS a terminal, and fail if it does not finish.
+
+        pty.fork, not a pipe: git's credential prompt is read from /dev/tty, so a child
+        with no controlling terminal never reaches the code path under test. This is
+        the harness that separates the /dev/tty channel from the stdin one.
+        """
+        import pty
+        import signal
+
+        pid, fd = pty.fork()
+        if pid == 0:                                   # pragma: no cover - child
+            try:
+                fn()
+                os._exit(0)
+            except BaseException:
+                os._exit(1)
+        deadline = time.monotonic() + self.TTL
+        try:
+            while time.monotonic() < deadline:
+                done, status = os.waitpid(pid, os.WNOHANG)
+                if done:
+                    return os.WEXITSTATUS(status)
+                time.sleep(0.05)
+            os.kill(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+            self.fail(f"{what}: the child owned a terminal and never returned. It is "
+                      f"sitting on a prompt that only a human could answer.")
+        finally:
+            os.close(fd)
+
+    @unittest.skipUnless(_pty_ok(), "no pty/SIGKILL on this platform")
+    def test_a_git_child_cannot_block_on_a_credential_prompt(self):
+        """The member a closed stdin does NOT close.
+
+        Measured both ways before the fix: with the parent's stdin inherited AND with
+        stdin=DEVNULL, `git clone` against a 401 remote hung, because it reads the
+        username from /dev/tty. Only GIT_TERMINAL_PROMPT=0 ends it, which is why _env
+        sets it and why this test exists next to the stdin one instead of trusting it.
+        """
+        url, dest = self._http_401(), self.tmp / "clone-run"
+        rc = self._under_a_controlling_terminal(
+            lambda: octo_pkg._run(["git", "-c", "credential.helper=", "clone",
+                                   url, str(dest)]),
+            "octo_pkg._run(git clone) against a remote that asks for a password")
+        self.assertEqual(rc, 0, "the child raised instead of returning a failed clone")
+        self.assertFalse(dest.exists(), "a 401 must not leave a checkout behind")
+
+    @unittest.skipUnless(_pty_ok(), "no pty/SIGKILL on this platform")
+    def test_the_installers_git_helper_cannot_block_either(self):
+        """Same channel, the other spawner, and the one that actually clones GitHub.
+
+        install-skill-from-github.py runs git through its own helper, not through
+        _run, so fixing _run alone would have left the busiest path in this codebase
+        hanging on the same prompt.
+        """
+        # Loaded through octo_pkg's own importer, so this is the same module object a
+        # real GitHub install gets, sys.path shim and all.
+        gh = octo_pkg._github_module()
+        url, dest = self._http_401(), self.tmp / "clone-gh"
+
+        def clone():
+            try:
+                gh._run_git(["git", "-c", "credential.helper=", "clone", url, str(dest)])
+            except gh.InstallError:
+                return                                 # a refusal is the right ending
+
+        rc = self._under_a_controlling_terminal(
+            clone, "install-skill-from-github._run_git against the same remote")
+        self.assertEqual(rc, 0, "the helper raised something other than InstallError")
+        self.assertFalse(dest.exists(), "a 401 must not leave a checkout behind")
 
 
 if __name__ == "__main__":

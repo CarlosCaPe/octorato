@@ -160,22 +160,73 @@ class PkgError(Exception):
 # process helpers
 # --------------------------------------------------------------------------
 
+# The ceiling on any child of this module. Nothing spawned here is interactive: the
+# heaviest job is cloning one package or one arm repo. A child still running after
+# this has most likely stopped working and started waiting, and a wedge is worse than
+# a loud failure, so it is killed and reported as one.
+#
+# 600 is a CHOSEN value, and the reference it was chosen against is this: a full clone
+# of this repository, 29 MB and the heaviest shape any call below takes, ran in 7.4 s
+# on a 4-core box at load 18. The ceiling sits about 80x over that. It has NOT been
+# measured against a much larger arm repo, a throttled link, or the ai_sync child at
+# the end of an arm install, so it is headroom by argument, not by measurement. A
+# ceiling that fires on a slow but correct run would be its own outage, and the moment
+# it would fire is the moment the machine is busiest; err high.
+_RUN_TIMEOUT = 600.0
+
+
 def _env() -> dict:
     e = dict(os.environ)
     for k in _GIT_HOOK_ENV:
         e.pop(k, None)
+    # Git asks for a username on /dev/tty, NOT on stdin, so the stdin discipline in
+    # _run does not reach it: `git clone` against a host that answers 401 was measured
+    # hanging with stdin=DEVNULL and finishing rc 128 with this variable set. Every
+    # git child of this module is unattended, so a credential prompt is never an
+    # answerable question here, only a wedge.
+    e["GIT_TERMINAL_PROMPT"] = "0"
     return e
 
 
-def _run(args: list[str], cwd: Path | None = None, stdin_bytes: bytes | None = None):
-    return subprocess.run(
-        args,
-        cwd=str(cwd) if cwd else None,
-        input=stdin_bytes,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        env=_env(),
-    )
+def _run(args: list[str], cwd: Path | None = None, stdin_bytes: bytes | None = None,
+         timeout: float | None = _RUN_TIMEOUT):
+    """Run a child with a dead stdin and a deadline.
+
+    A child that inherits this process's stdin can ask a question and wait for an
+    answer that never comes. Measured on `ssh-keygen -Y sign` over an existing .sig:
+    it asks "Overwrite (y/n)?" and reads STDIN, so with a terminal inherited it hangs
+    forever, and on EOF it declines, keeps the OLD signature and still exits 0.
+
+    stdin=DEVNULL, not input=b"": the two are mutually exclusive in subprocess (input
+    forces a pipe), and only stdin_bytes callers need that pipe. Both give a reading
+    child EOF, which is the property that matters here. They differ on a WRITING child,
+    measured: fd 0 from input=b"" is the read end of a pipe and a write to it fails
+    EBADF, while DEVNULL is a normal handle and the write is discarded. A child that
+    writes to fd 0 is unusual but it is not this module's business to break it, so
+    DEVNULL, which is also one fd instead of a pipe pair per call.
+
+    The timeout is the part that is not an enumeration. Closing stdin closes the
+    members that read stdin, and git's credential prompt was measured NOT to be one of
+    them (it opens /dev/tty and needs GIT_TERMINAL_PROMPT=0 instead), so the list of
+    channels a child can wait on is longer than this docstring can promise to know. A
+    deadline does not need to name them: rc 124, the shape coreutils `timeout` uses, so
+    every existing `cp.returncode != 0` path already handles it.
+    """
+    stdin_kw = {"input": stdin_bytes} if stdin_bytes is not None else {"stdin": subprocess.DEVNULL}
+    try:
+        return subprocess.run(
+            args,
+            cwd=str(cwd) if cwd else None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=_env(),
+            timeout=timeout,
+            **stdin_kw,
+        )
+    except subprocess.TimeoutExpired as e:
+        # subprocess.run has already killed the child and reaped it.
+        note = f"\noct-pkg: killed after {timeout}s: {' '.join(args[:3])}".encode()
+        return subprocess.CompletedProcess(args, 124, e.stdout or b"", (e.stderr or b"") + note)
 
 
 def ssh_keygen_y_supported() -> bool:
@@ -2103,10 +2154,16 @@ def cmd_hash(brain: Brain, target: str, write: bool) -> int:
     print(f"embedded in {mpath}")
     # The manifest just changed, so any signature beside it now covers different bytes.
     # It cannot be left there: `ssh-keygen -Y sign` over an existing .sig PROMPTS to
-    # overwrite, and on EOF (a script, a CI step, a heredoc) it declines, keeps the OLD
-    # signature and STILL EXITS 0. The publisher then ships a package whose signature
-    # verifies against a manifest nobody has. Deleting it here makes that impossible:
-    # sign writes fresh, or there is no signature at all and install refuses.
+    # overwrite, and that prompt has two endings, both bad. On EOF (a script, a CI
+    # step, a heredoc) it declines, keeps the OLD signature and STILL EXITS 0, and the
+    # publisher ships a package whose signature verifies against a manifest nobody has.
+    # On a terminal it reads the answer from STDIN and waits for a human forever, which
+    # is how a publish wedges. This paragraph used to stop at the first ending and
+    # enforce neither; both are enforced now, in two places and for two reasons.
+    # Deleting the signature here is the correctness half: sign writes fresh, or there
+    # is no signature at all and install refuses. _sign and _run are the liveness half:
+    # _sign clears its own destination, and no child of this module inherits a stdin it
+    # could block on. Neither half is a substitute for the other.
     sig = d / SIG_NAME
     if sig.exists():
         sig.unlink()
@@ -2507,6 +2564,16 @@ def _sandbox_brain(tmp: Path, real: Brain) -> Brain:
 
 
 def _sign(key: Path, mpath: Path) -> None:
+    # ssh-keygen writes <mpath>.sig and PROMPTS when that file already exists, so the
+    # destination is cleared here rather than at each call site. The publish flow
+    # below reaches this with a signature already in place: it copies an already-signed
+    # tree, and copytree carries the source's .sig along. A re-publish over the same
+    # destination is the same shape one run later. Unlinking is what makes both
+    # idempotent -- letting the prompt decide is not, because declining keeps a
+    # signature over bytes that may have changed.
+    sig = mpath.with_name(mpath.name + ".sig")
+    if sig.exists():
+        sig.unlink()
     cp = _run(["ssh-keygen", "-Y", "sign", "-f", str(key), "-n", SIG_NAMESPACE, str(mpath)])
     if cp.returncode != 0:
         raise PkgError("ssh-keygen -Y sign failed: "
