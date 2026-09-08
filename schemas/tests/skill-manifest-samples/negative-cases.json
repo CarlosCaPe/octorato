@@ -26,7 +26,8 @@
     {
       "name": "root-required-license-missing",
       "rule": [
-        "required"
+        "required",
+        "license"
       ],
       "why": "no license at all: the terms field is not optional on a package a stranger installs",
       "manifest": {
@@ -711,6 +712,438 @@
           "file": "skill.json.sig"
         }
       }
+    },
+    {
+      "name": "root-not-an-object",
+      "rule": [
+        "type"
+      ],
+      "manifest": [],
+      "why": "The manifest is a JSON array. Nothing else in the schema applies to a non-object, so `type` is the only thing that rejects it."
+    },
+    {
+      "name": "root-required-name-missing",
+      "rule": [
+        "required",
+        "name"
+      ],
+      "manifest": {
+        "kind": "skill",
+        "version": "1.4.0",
+        "license": "MIT",
+        "description": "Global database query agent, dry-run by default across 6 engines.",
+        "capabilities": [
+          "Bash",
+          "Read"
+        ],
+        "dependencies": {
+          "token-efficient-prompting": ">=1.0.0"
+        },
+        "author": "octorato",
+        "homepage": "https://github.com/CarlosCaPe/octorato",
+        "tree_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "signature": {
+          "namespace": "octorato-pkg",
+          "signer": "octorato-release",
+          "file": "skill.json.sig"
+        }
+      },
+      "why": "No name. A package with no identity cannot be installed, upgraded or deduplicated."
+    },
+    {
+      "name": "root-required-version-missing",
+      "rule": [
+        "required",
+        "version"
+      ],
+      "manifest": {
+        "kind": "skill",
+        "name": "querymaster",
+        "license": "MIT",
+        "description": "Global database query agent, dry-run by default across 6 engines.",
+        "capabilities": [
+          "Bash",
+          "Read"
+        ],
+        "dependencies": {
+          "token-efficient-prompting": ">=1.0.0"
+        },
+        "author": "octorato",
+        "homepage": "https://github.com/CarlosCaPe/octorato",
+        "tree_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "signature": {
+          "namespace": "octorato-pkg",
+          "signer": "octorato-release",
+          "file": "skill.json.sig"
+        }
+      },
+      "why": "No version. An install with no vintage cannot be reproduced or upgraded."
+    },
+    {
+      "name": "tree-sha256-not-a-string",
+      "rule": [
+        "properties",
+        "tree_sha256",
+        "type"
+      ],
+      "manifest": {
+        "kind": "skill",
+        "name": "querymaster",
+        "version": "1.4.0",
+        "license": "MIT",
+        "description": "Global database query agent, dry-run by default across 6 engines.",
+        "capabilities": [
+          "Bash",
+          "Read"
+        ],
+        "dependencies": {
+          "token-efficient-prompting": ">=1.0.0"
+        },
+        "author": "octorato",
+        "homepage": "https://github.com/CarlosCaPe/octorato",
+        "tree_sha256": 5,
+        "signature": {
+          "namespace": "octorato-pkg",
+          "signer": "octorato-release",
+          "file": "skill.json.sig"
+        }
+      },
+      "why": "A number where the tree hash goes. `pattern` never fires on a non-string, so only `type` catches it."
+    },
+    {
+      "name": "signature-not-an-object",
+      "rule": [
+        "properties",
+        "signature",
+        "type"
+      ],
+      "manifest": {
+        "kind": "skill",
+        "name": "querymaster",
+        "version": "1.4.0",
+        "license": "MIT",
+        "description": "Global database query agent, dry-run by default across 6 engines.",
+        "capabilities": [
+          "Bash",
+          "Read"
+        ],
+        "dependencies": {
+          "token-efficient-prompting": ">=1.0.0"
+        },
+        "author": "octorato",
+        "homepage": "https://github.com/CarlosCaPe/octorato",
+        "tree_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "signature": "signed"
+      },
+      "why": "The signature block as a bare string. Its `properties` and `additionalProperties` say nothing about a string."
+    },
+    {
+      "name": "signature-signer-not-a-string",
+      "rule": [
+        "properties",
+        "signature",
+        "properties",
+        "signer",
+        "type"
+      ],
+      "manifest": {
+        "kind": "skill",
+        "name": "querymaster",
+        "version": "1.4.0",
+        "license": "MIT",
+        "description": "Global database query agent, dry-run by default across 6 engines.",
+        "capabilities": [
+          "Bash",
+          "Read"
+        ],
+        "dependencies": {
+          "token-efficient-prompting": ">=1.0.0"
+        },
+        "author": "octorato",
+        "homepage": "https://github.com/CarlosCaPe/octorato",
+        "tree_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "signature": {
+          "namespace": "octorato-pkg",
+          "signer": 5,
+          "file": "skill.json.sig"
+        }
+      },
+      "why": "A number for the principal. minLength/maxLength do not apply to it."
+    },
+    {
+      "name": "name-not-a-string",
+      "rule": [
+        "properties",
+        "name",
+        "type"
+      ],
+      "manifest": {
+        "kind": "skill",
+        "name": 5,
+        "version": "1.4.0",
+        "license": "MIT",
+        "description": "Global database query agent, dry-run by default across 6 engines.",
+        "capabilities": [
+          "Bash",
+          "Read"
+        ],
+        "dependencies": {
+          "token-efficient-prompting": ">=1.0.0"
+        },
+        "author": "octorato",
+        "homepage": "https://github.com/CarlosCaPe/octorato",
+        "tree_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "signature": {
+          "namespace": "octorato-pkg",
+          "signer": "octorato-release",
+          "file": "skill.json.sig"
+        }
+      },
+      "why": "A number for the slug. It also slips past the directory check, which only compares when the name is a str, so `type` is the whole defence."
+    },
+    {
+      "name": "version-not-a-string",
+      "rule": [
+        "properties",
+        "version",
+        "type"
+      ],
+      "manifest": {
+        "kind": "skill",
+        "name": "querymaster",
+        "version": 1,
+        "license": "MIT",
+        "description": "Global database query agent, dry-run by default across 6 engines.",
+        "capabilities": [
+          "Bash",
+          "Read"
+        ],
+        "dependencies": {
+          "token-efficient-prompting": ">=1.0.0"
+        },
+        "author": "octorato",
+        "homepage": "https://github.com/CarlosCaPe/octorato",
+        "tree_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "signature": {
+          "namespace": "octorato-pkg",
+          "signer": "octorato-release",
+          "file": "skill.json.sig"
+        }
+      },
+      "why": "The number 1 as a version. The semver `pattern` cannot see it."
+    },
+    {
+      "name": "license-not-a-string",
+      "rule": [
+        "properties",
+        "license",
+        "type"
+      ],
+      "manifest": {
+        "kind": "skill",
+        "name": "querymaster",
+        "version": "1.4.0",
+        "license": 42,
+        "description": "Global database query agent, dry-run by default across 6 engines.",
+        "capabilities": [
+          "Bash",
+          "Read"
+        ],
+        "dependencies": {
+          "token-efficient-prompting": ">=1.0.0"
+        },
+        "author": "octorato",
+        "homepage": "https://github.com/CarlosCaPe/octorato",
+        "tree_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "signature": {
+          "namespace": "octorato-pkg",
+          "signer": "octorato-release",
+          "file": "skill.json.sig"
+        }
+      },
+      "why": "A number for the terms. This is the field a package's legal claim lives in and nothing but `type` keeps it a string."
+    },
+    {
+      "name": "description-not-a-string",
+      "rule": [
+        "properties",
+        "description",
+        "type"
+      ],
+      "manifest": {
+        "kind": "skill",
+        "name": "querymaster",
+        "version": "1.4.0",
+        "license": "MIT",
+        "description": 5,
+        "capabilities": [
+          "Bash",
+          "Read"
+        ],
+        "dependencies": {
+          "token-efficient-prompting": ">=1.0.0"
+        },
+        "author": "octorato",
+        "homepage": "https://github.com/CarlosCaPe/octorato",
+        "tree_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "signature": {
+          "namespace": "octorato-pkg",
+          "signer": "octorato-release",
+          "file": "skill.json.sig"
+        }
+      },
+      "why": "A number for the summary. `maxLength` does not apply."
+    },
+    {
+      "name": "capabilities-not-an-array",
+      "rule": [
+        "properties",
+        "capabilities",
+        "type"
+      ],
+      "manifest": {
+        "kind": "skill",
+        "name": "querymaster",
+        "version": "1.4.0",
+        "license": "MIT",
+        "description": "Global database query agent, dry-run by default across 6 engines.",
+        "capabilities": "Bash",
+        "dependencies": {
+          "token-efficient-prompting": ">=1.0.0"
+        },
+        "author": "octorato",
+        "homepage": "https://github.com/CarlosCaPe/octorato",
+        "tree_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "signature": {
+          "namespace": "octorato-pkg",
+          "signer": "octorato-release",
+          "file": "skill.json.sig"
+        }
+      },
+      "why": "The blast-radius list as a bare string. `items` and `uniqueItems` never fire on it."
+    },
+    {
+      "name": "dependencies-not-an-object",
+      "rule": [
+        "properties",
+        "dependencies",
+        "type"
+      ],
+      "manifest": {
+        "kind": "skill",
+        "name": "querymaster",
+        "version": "1.4.0",
+        "license": "MIT",
+        "description": "Global database query agent, dry-run by default across 6 engines.",
+        "capabilities": [
+          "Bash",
+          "Read"
+        ],
+        "dependencies": [],
+        "author": "octorato",
+        "homepage": "https://github.com/CarlosCaPe/octorato",
+        "tree_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "signature": {
+          "namespace": "octorato-pkg",
+          "signer": "octorato-release",
+          "file": "skill.json.sig"
+        }
+      },
+      "why": "Dependencies as an array. `propertyNames` and `additionalProperties` say nothing about a list."
+    },
+    {
+      "name": "dependency-range-not-a-string",
+      "rule": [
+        "properties",
+        "dependencies",
+        "additionalProperties",
+        "type"
+      ],
+      "manifest": {
+        "kind": "skill",
+        "name": "querymaster",
+        "version": "1.4.0",
+        "license": "MIT",
+        "description": "Global database query agent, dry-run by default across 6 engines.",
+        "capabilities": [
+          "Bash",
+          "Read"
+        ],
+        "dependencies": {
+          "token-efficient-prompting": 5
+        },
+        "author": "octorato",
+        "homepage": "https://github.com/CarlosCaPe/octorato",
+        "tree_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "signature": {
+          "namespace": "octorato-pkg",
+          "signer": "octorato-release",
+          "file": "skill.json.sig"
+        }
+      },
+      "why": "A number where the semver range goes. `minLength` does not apply to it."
+    },
+    {
+      "name": "author-not-a-string",
+      "rule": [
+        "properties",
+        "author",
+        "type"
+      ],
+      "manifest": {
+        "kind": "skill",
+        "name": "querymaster",
+        "version": "1.4.0",
+        "license": "MIT",
+        "description": "Global database query agent, dry-run by default across 6 engines.",
+        "capabilities": [
+          "Bash",
+          "Read"
+        ],
+        "dependencies": {
+          "token-efficient-prompting": ">=1.0.0"
+        },
+        "author": 5,
+        "homepage": "https://github.com/CarlosCaPe/octorato",
+        "tree_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "signature": {
+          "namespace": "octorato-pkg",
+          "signer": "octorato-release",
+          "file": "skill.json.sig"
+        }
+      },
+      "why": "A number for the attribution."
+    },
+    {
+      "name": "homepage-not-a-string",
+      "rule": [
+        "properties",
+        "homepage",
+        "type"
+      ],
+      "manifest": {
+        "kind": "skill",
+        "name": "querymaster",
+        "version": "1.4.0",
+        "license": "MIT",
+        "description": "Global database query agent, dry-run by default across 6 engines.",
+        "capabilities": [
+          "Bash",
+          "Read"
+        ],
+        "dependencies": {
+          "token-efficient-prompting": ">=1.0.0"
+        },
+        "author": "octorato",
+        "homepage": 5,
+        "tree_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "signature": {
+          "namespace": "octorato-pkg",
+          "signer": "octorato-release",
+          "file": "skill.json.sig"
+        }
+      },
+      "why": "A number for the URL. Both the scheme `pattern` and the `format` annotation are string-only, so neither of them rejects it."
     }
   ]
 }

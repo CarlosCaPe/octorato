@@ -42,6 +42,39 @@ def _load(name: str, path: Path):
     return mod
 
 
+MIT_BODY_TEXT = """\
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+"""
+# Enough of the Apache 2.0 header that only its real text carries: the title LINE, the
+# version LINE and the terms LINE. The fixture this replaces was the single phrase
+# "Apache License, Version 2.0", which is also what a sentence DENYING the license says.
+APACHE_HEAD_TEXT = """\
+                                 Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+   1. Definitions.
+"""
+MIT_FILE_TEXT = "MIT License\n\nCopyright (c) 2026 Someone Else, Inc.\n\n" + MIT_BODY_TEXT
+
 octo_pkg = _load("octo_pkg_under_test", SCRIPTS / "octo_pkg.py")
 gen = _load("gen_skill_manifests_under_test", SCRIPTS / "gen_skill_manifests.py")
 
@@ -916,7 +949,7 @@ class TestGenerator(unittest.TestCase):
 
     def test_per_skill_license_beats_the_repo_default(self):
         d = self._skill("zeta", "---\nname: zeta\ndescription: d\n---\n")
-        (d / "LICENSE.txt").write_text("Apache License, Version 2.0\n", encoding="utf-8")
+        (d / "LICENSE.txt").write_text(APACHE_HEAD_TEXT, encoding="utf-8")
         gen.main(["--root", str(self.root), "--write", "--default-license", "MIT"])
         man = json.loads((d / "skill.json").read_text(encoding="utf-8"))
         self.assertEqual(man["license"], "Apache-2.0")
@@ -927,7 +960,13 @@ class TestGenerator(unittest.TestCase):
     # reported rather than relabelled: a wrong license on a public package is a
     # legal claim about someone else's work.
 
-    _MIT_BODY = ('Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction.\\n\\nThe above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.\\n\\nTHE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED.\\n')
+    # The MIT license in full, written out in this module rather than imported from the
+    # one under test: a fixture derived from the recognizer agrees with it by
+    # construction. The fixture this replaces was an ABRIDGED MIT on one line (a grant
+    # cut off at "without restriction", a disclaimer cut off at "EXPRESS OR IMPLIED")
+    # and the recognizer called it MIT, which is the same defect as the EULA: a prefix
+    # match names a document after reading its first clause.
+    _MIT_BODY = MIT_BODY_TEXT
     _FOREIGN_TERMS = ('Use of these skills and related files ("Materials") is governed by the Vendor Developer Terms (available at https://vendor.example/legal/developer-terms/).\\n')
 
     def test_no_license_falls_back_to_the_repo_default(self):
@@ -1008,26 +1047,325 @@ class TestGenerator(unittest.TestCase):
         self.assertFalse((self.root / "nu" / "skill.json").exists())
 
 
+class TestTheRecognizerRefusesMitLookalikes(unittest.TestCase):
+    """MIT recognized end to end, or not at all.
+
+    The prefix recognizer this replaces anchored the grant through "obtaining a copy"
+    and matched the as-is clause by prefix, so text could be spliced into the grant and
+    appended after the disclaimer and the document still came back MIT. Each case here
+    is one edit away from `MIT_FILE_TEXT`, which must stay MIT: a refusal that also
+    refuses the real thing is not a fix.
+    """
+
+    def test_the_benign_counterpart_is_still_mit(self):
+        self.assertEqual(gen.license_terms(MIT_FILE_TEXT), ("MIT", ""))
+
+    def test_a_proprietary_evaluation_eula_is_not_mit(self):
+        # Opens with MIT's exact first words, grants thirty days of evaluation and
+        # forbids redistribution, then carries MIT's notice and disclaimer verbatim.
+        # The old recognizer wrote this out as MIT end to end.
+        eula = ("Copyright (c) 2026 Vendor Inc. All rights reserved.\n\n"
+                "Permission is hereby granted, free of charge, to any person obtaining "
+                "a copy of this software to EVALUATE the Software for thirty (30) days. "
+                "No other right is granted. Redistribution is prohibited.\n\n"
+                + MIT_BODY_TEXT.split("subject to the following conditions:", 1)[1].lstrip())
+        ident, why = gen.license_terms(eula)
+        self.assertIsNone(ident, "a proprietary EULA was recognized as MIT")
+        self.assertIn("grant sentence is not MIT's", why)
+
+    def test_a_commons_clause_after_mit_is_not_mit(self):
+        text = MIT_FILE_TEXT + ("\nCommons Clause: the Licensor grants no right to Sell "
+                                "the Software.\n")
+        ident, why = gen.license_terms(text)
+        self.assertIsNone(ident, "MIT plus a no-sale rider was recognized as MIT")
+        self.assertIn("continues past the end of the MIT text", why)
+
+    def test_a_non_commercial_restriction_spliced_into_the_grant_is_not_mit(self):
+        text = MIT_FILE_TEXT.replace("without restriction,",
+                                     "without restriction for non-commercial purposes only,")
+        self.assertIsNone(gen.license_terms(text)[0])
+
+    def test_an_indemnity_appended_to_the_disclaimer_is_not_mit(self):
+        text = MIT_FILE_TEXT.rstrip() + (" LICENSEE SHALL INDEMNIFY THE AUTHORS AGAINST "
+                                         "ALL CLAIMS ARISING FROM ITS USE.\n")
+        self.assertIsNone(gen.license_terms(text)[0])
+
+    def test_additional_terms_appended_are_not_mit(self):
+        text = MIT_FILE_TEXT + "\nADDITIONAL TERMS: Licensee may not redistribute.\n"
+        self.assertIsNone(gen.license_terms(text)[0])
+
+    # --- the same document, dressed differently: these ARE MIT ----------------
+    def test_a_markdown_heading_over_mit_is_still_mit(self):
+        self.assertEqual(gen.license_terms("# MIT License\n\n" + MIT_BODY_TEXT)[0], "MIT")
+
+    def test_an_spdx_tag_line_over_mit_is_still_mit(self):
+        text = "SPDX-License-Identifier: MIT\n\nCopyright (c) 2026 X\n\n" + MIT_BODY_TEXT
+        self.assertEqual(gen.license_terms(text)[0], "MIT")
+
+    def test_a_byte_order_mark_does_not_change_the_terms(self):
+        self.assertEqual(gen.license_terms("﻿" + MIT_FILE_TEXT)[0], "MIT")
+
+    def test_an_unexplained_preamble_is_refused_by_its_own_reason(self):
+        # Still refused, and that is right: nobody can vouch for a sentence sitting
+        # above a grant. What changed is the SENTENCE. Reporting "carries terms this
+        # generator does not recognize" about verbatim MIT sends the reader to the
+        # wrong place, which is the same wrong-cause defect as calling an undecodable
+        # file unrecognized.
+        ident, why = gen.license_terms("Skill bundle terms\n\n" + MIT_BODY_TEXT)
+        self.assertIsNone(ident)
+        self.assertIn("above the MIT grant", why)
+        self.assertNotIn("does not recognize", why)
+
+
+class TestTheRecognizerReadsLicenseTextNotMentions(unittest.TestCase):
+    """`search` for a license title answers about any sentence that names it."""
+
+    def test_a_denial_of_apache_is_not_apache(self):
+        text = "This software is NOT licensed under the Apache License, Version 2.0.\n"
+        self.assertIsNone(gen.license_terms(text)[0],
+                          "a sentence denying Apache was read as granting it")
+
+    def test_the_real_apache_header_still_resolves(self):
+        self.assertEqual(gen.license_terms(APACHE_HEAD_TEXT)[0], "Apache-2.0")
+
+    def test_a_dual_license_expression_is_refused_not_halved(self):
+        ident, why = gen.license_terms("SPDX-License-Identifier: Apache-2.0 OR MIT\n")
+        self.assertIsNone(ident, "one side of a dual license was picked, dropping the other")
+        self.assertIn("ONE identifier", why)
+
+    def test_a_grant_notice_naming_gpl_is_not_the_gpl_text(self):
+        text = ("GNU GENERAL PUBLIC LICENSE Version 3 or any later version applies to "
+                "this work.\n")
+        self.assertIsNone(gen.license_terms(text)[0],
+                          "a notice granting 'or later' was flattened to GPL-3.0-only")
+
+    def test_an_spdx_tag_that_contradicts_the_text_is_refused(self):
+        text = "SPDX-License-Identifier: Apache-2.0\n\n" + MIT_BODY_TEXT
+        ident, why = gen.license_terms(text)
+        self.assertIsNone(ident)
+        self.assertIn("while its text is MIT", why)
+
+
+class TestLicenseFileBlindSpots(unittest.TestCase):
+    """A name that says LICENSE and holds no readable terms is a question, not a default.
+
+    Every case here USED to write a manifest claiming the repo default, silently,
+    because the lookup filtered on is_file() and on an exact three-name list.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="test-lic-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def _dir(self, name):
+        d = self.tmp / name
+        d.mkdir()
+        return d
+
+    def test_a_directory_named_license_is_reported(self):
+        d = self._dir("isdir")
+        (d / "LICENSE").mkdir()
+        ident, why = gen.resolve_license(d)
+        self.assertIsNone(ident)
+        self.assertIn("is a directory", why)
+
+    def test_a_dangling_symlink_named_license_is_reported(self):
+        d = self._dir("dangling")
+        os.symlink(str(d / "gone.txt"), d / "LICENSE")
+        ident, why = gen.resolve_license(d)
+        self.assertIsNone(ident)
+        self.assertIn("dangling symlink", why)
+
+    def test_copying_is_read_like_a_license(self):
+        d = self._dir("copying")
+        (d / "COPYING").write_text(MIT_FILE_TEXT, encoding="utf-8")
+        self.assertEqual(gen.resolve_license(d), ("MIT", ""))
+
+    def test_a_license_with_a_suffix_is_read_like_a_license(self):
+        d = self._dir("suffixed")
+        (d / "LICENSE-MIT").write_text(MIT_FILE_TEXT, encoding="utf-8")
+        self.assertEqual(gen.resolve_license(d), ("MIT", ""))
+
+    def test_a_second_license_file_is_opened_too(self):
+        # MIT first by preference order, foreign terms in the file the old lookup
+        # never opened. Preference order decided the answer; now both are read.
+        d = self._dir("second")
+        (d / "LICENSE").write_text(MIT_FILE_TEXT, encoding="utf-8")
+        (d / "LICENSE.md").write_text("Vendor Developer Terms govern this material.\n",
+                                      encoding="utf-8")
+        ident, why = gen.resolve_license(d)
+        self.assertIsNone(ident, "the second license file was never opened")
+        self.assertIn("LICENSE.md", why)
+
+    def test_two_recognized_licenses_that_disagree_say_so(self):
+        d = self._dir("disagree")
+        (d / "LICENSE").write_text(MIT_FILE_TEXT, encoding="utf-8")
+        (d / "LICENSE-APACHE").write_text(APACHE_HEAD_TEXT, encoding="utf-8")
+        ident, why = gen.resolve_license(d)
+        self.assertIsNone(ident)
+        self.assertIn("disagree", why)
+        self.assertIn("MIT", why)
+        self.assertIn("Apache-2.0", why)
+
+    def test_a_utf16_license_reports_the_decoding_not_the_terms(self):
+        # The wrong-cause class: "does not recognize the terms" about a file nobody
+        # could decode sends whoever fixes it to read a document that is not text.
+        d = self._dir("utf16")
+        (d / "LICENSE").write_bytes(MIT_FILE_TEXT.encode("utf-16"))
+        ident, why = gen.resolve_license(d)
+        self.assertIsNone(ident)
+        self.assertIn("not readable text", why)
+        self.assertNotIn("does not recognize", why)
+
+    def test_a_latin1_license_reports_the_decoding_not_the_terms(self):
+        d = self._dir("latin1")
+        (d / "LICENSE").write_bytes("Copyright © 2026\n".encode("latin-1")
+                                    + MIT_BODY_TEXT.encode("utf-8"))
+        ident, why = gen.resolve_license(d)
+        self.assertIsNone(ident)
+        self.assertIn("not valid UTF-8", why)
+
+    def test_a_crlf_license_is_the_same_document(self):
+        d = self._dir("crlf")
+        (d / "LICENSE").write_bytes(MIT_FILE_TEXT.replace("\n", "\r\n").encode("utf-8"))
+        self.assertEqual(gen.resolve_license(d), ("MIT", ""))
+
+    def test_no_license_file_at_all_is_the_only_road_to_a_default(self):
+        self.assertEqual(gen.resolve_license(self._dir("bare")), (None, ""))
+
+
+class TestPartialOutput(unittest.TestCase):
+    """A run that exits 1 must leave the tree agreeing with the exit code."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="test-partial-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.root = self.tmp / "skills"
+        self.root.mkdir()
+
+    def _skill(self, name, body):
+        d = self.root / name
+        d.mkdir()
+        (d / "SKILL.md").write_text(body, encoding="utf-8")
+        return d
+
+    def test_a_failing_run_writes_none_of_the_manifests_it_could_have_written(self):
+        # `aaa` sorts before `zzz`, so the loop reached it first and wrote it before
+        # ever seeing the skill it could not describe. The report then said the run
+        # exited non-zero and nothing was written, while `aaa/skill.json` was on disk.
+        ok = self._skill("aaa", "---\nname: aaa\ndescription: fine\n---\n")
+        bad = self._skill("zzz", "no front matter, no heading\n")
+        rc = gen.main(["--root", str(self.root), "--write", "--default-license", "MIT"])
+        self.assertEqual(rc, 1)
+        self.assertFalse((bad / "skill.json").exists())
+        self.assertFalse((ok / "skill.json").exists(),
+                         "a failing run left a manifest on disk for the skills it "
+                         "happened to reach first")
+
+    def test_a_clean_run_still_writes_every_manifest(self):
+        a = self._skill("aaa", "---\nname: aaa\ndescription: fine\n---\n")
+        b = self._skill("zzz", "---\nname: zzz\ndescription: also fine\n---\n")
+        rc = gen.main(["--root", str(self.root), "--write", "--default-license", "MIT"])
+        self.assertEqual(rc, 0)
+        self.assertTrue((a / "skill.json").exists())
+        self.assertTrue((b / "skill.json").exists())
+
+
+class TestUpstreamWithoutLicenseIsVisible(unittest.TestCase):
+    """A skill that names an upstream source and ships no license file takes the repo
+    default, and the corpus check has no license file to compare against, so it cannot
+    see it. Report, never refuse: which of them may carry this repo's terms is a
+    human's call, and this only stops the class from being invisible."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="test-upstream-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.root = self.tmp / "skills"
+        self.root.mkdir()
+
+    def _skill(self, name, body):
+        d = self.root / name
+        d.mkdir()
+        (d / "SKILL.md").write_text(body, encoding="utf-8")
+        return d
+
+    def test_a_front_matter_source_with_no_license_is_named_in_the_report(self):
+        self._skill("borrowed", "---\nname: borrowed\ndescription: d\n"
+                                "metadata:\n  source: \"Adapted from upstream/project\"\n---\n")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = gen.main(["--root", str(self.root), "--write", "--default-license", "MIT"])
+        out = buf.getvalue()
+        self.assertEqual(rc, 0, "the report is a report, not a refusal")
+        self.assertIn("[upstream, no LICENSE] borrowed", out)
+        self.assertIn("Adapted from upstream/project", out)
+        self.assertEqual(json.loads((self.root / "borrowed" / "skill.json")
+                                    .read_text(encoding="utf-8"))["license"], "MIT")
+
+    def test_a_prose_adapted_from_line_counts_too(self):
+        self._skill("prose", "---\nname: prose\ndescription: d\n---\n"
+                             "# Prose\n\nAdapted from upstream/other (see notes).\n")
+        self.assertIsNotNone(gen.upstream_source(self.root / "prose"))
+
+    def test_a_skill_that_ships_its_own_license_is_not_in_the_report(self):
+        d = self._skill("owned", "---\nname: owned\ndescription: d\n"
+                                 "metadata:\n  source: \"upstream/project\"\n---\n")
+        (d / "LICENSE").write_text(MIT_FILE_TEXT, encoding="utf-8")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            gen.main(["--root", str(self.root), "--write", "--default-license", "MIT"])
+        self.assertNotIn("[upstream, no LICENSE] owned", buf.getvalue())
+
+
 class TestInRepoManifestLicenses(unittest.TestCase):
     """The corpus itself, not a sandbox: no shipped manifest may claim the repo's own
     license over a third party's terms."""
 
+    def test_the_repo_default_exists(self):
+        # Without this the corpus test below passes vacuously: if the default were
+        # None, `declared == default` is false for every manifest and the loop
+        # certifies a corpus it never compared against anything.
+        self.assertIsNotNone(gen.repo_default_license(BRAIN),
+                             "the repo's own license could not be established, so every "
+                             "comparison below is against nothing")
+
     def test_no_manifest_claims_the_repo_default_over_foreign_terms(self):
         default = gen.repo_default_license(BRAIN)
+        self.assertIsNotNone(default)
         offenders = []
         for manifest in sorted((BRAIN / "skills").glob("*/skill.json")):
-            lic_path = gen.license_file(manifest.parent)
-            if lic_path is None:
-                continue
-            derived = gen.spdx_of(gen.read_license(lic_path))
+            derived, problem = gen.resolve_license(manifest.parent)
             declared = json.loads(manifest.read_text(encoding="utf-8"))["license"]
-            if derived is None and declared == default:
-                offenders.append(f"{manifest.parent.name} claims {declared} over "
-                                 f"{lic_path.name}, whose terms are unrecognized")
-            elif derived is not None and declared != derived:
-                offenders.append(f"{manifest.parent.name} declares {declared}, "
-                                 f"{lic_path.name} says {derived}")
+            if problem:
+                # Present and unanswerable. Only a hand-written value may stand here,
+                # and the repo default is exactly what may not.
+                if declared == default:
+                    offenders.append(f"{manifest.parent.name} claims {declared} while "
+                                     f"{problem}")
+            elif derived is None:
+                if declared != default:
+                    offenders.append(f"{manifest.parent.name} declares {declared} with "
+                                     f"no license file, so it should carry {default}")
+            elif declared != derived:
+                offenders.append(f"{manifest.parent.name} declares {declared}, its "
+                                 f"license file says {derived}")
         self.assertEqual(offenders, [])
+
+    def test_the_upstream_report_over_the_real_corpus_is_self_consistent(self):
+        # Not a verdict on any skill. Every name it prints must really carry an
+        # upstream marker and really have no license file, and the report must not be
+        # empty on a corpus that has both: an empty report would be the invisibility
+        # this exists to end.
+        listed = [d.name for d in sorted((BRAIN / "skills").iterdir())
+                  if d.is_dir() and (d / "SKILL.md").is_file()
+                  and gen.upstream_source(d) and not gen.license_entries(d)]
+        self.assertTrue(listed, "no skill declares an upstream source without a license "
+                                "file; if that is true the report is correct, but check "
+                                "the detector before believing it")
+        for name in listed:
+            d = BRAIN / "skills" / name
+            self.assertIsNotNone(gen.upstream_source(d))
+            self.assertEqual(gen.license_entries(d), [])
 
 
 if __name__ == "__main__":

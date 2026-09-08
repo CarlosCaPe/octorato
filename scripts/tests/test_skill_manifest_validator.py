@@ -79,6 +79,30 @@ class TestSchemaIsExercised(unittest.TestCase):
                                  "still rejected with its rule deleted: the fixture is "
                                  "not what makes that rule fire")
 
+    def test_the_denominator_is_stated_and_not_whatever_the_walker_notices(self):
+        # `type` and per-member `required` used to sit outside CONSTRAINT_KEYWORDS, so
+        # 22 schema mutations passed every check green while nothing exercised them.
+        # `format` stays out ON PURPOSE and is named, because a rule silently dropped
+        # and a rule deliberately excluded look identical in a coverage number.
+        self.assertIn("type", vsm.CONSTRAINT_KEYWORDS)
+        self.assertEqual(vsm.ANNOTATION_KEYWORDS, {"format"})
+        paths = vsm.constraint_paths(SCHEMA)
+        for member in SCHEMA["required"]:
+            self.assertIn(("required", member), paths)
+        self.assertNotIn(("required",), paths, "one omission stood in for three fields")
+        self.assertNotIn(("properties", "homepage", "format"), paths)
+        # subsumed: an enum or a const on the same subschema already pins the type
+        self.assertNotIn(("properties", "kind", "type"), paths)
+        self.assertIn(("properties", "license", "type"), paths)
+
+    def test_a_non_string_name_is_rejected_by_the_schema_not_by_the_directory_check(self):
+        # The concrete hole: with `properties/name/type` gone, {"name": 5} validated,
+        # and `directory_errors` waved it through because it only compares a str.
+        bad = dict(CASES["base"], name=5)
+        self.assertTrue(list(vsm.make_validator(SCHEMA).iter_errors(bad)))
+        self.assertEqual(vsm.directory_errors("/anywhere/alpha/skill.json", bad), [],
+                         "the directory check is not what catches this, the schema is")
+
     def test_selftest_exits_zero(self):
         cp = _run(["--selftest"])
         self.assertEqual(cp.returncode, 0, cp.stdout + cp.stderr)

@@ -51,19 +51,41 @@ NEGATIVE_CASES = SAMPLES_DIR / "negative-cases.json"
 # Keywords that are a RULE (something a manifest can violate) rather than prose or
 # structure. Used by the selftest to assert every rule has a negative fixture: a schema
 # rule no fixture exercises is a rule nobody has ever seen fire.
-CONSTRAINT_KEYWORDS = {"pattern", "minLength", "maxLength", "enum", "const",
+CONSTRAINT_KEYWORDS = {"type", "pattern", "minLength", "maxLength", "enum", "const",
                        "uniqueItems", "required", "propertyNames", "additionalProperties"}
+
+# Keywords that LOOK like a rule and are not one here. Named, because a denominator
+# the walker picks by accident is a coverage number nobody can check:
+#   `format` is an annotation. jsonschema enforces it only where the optional format
+#   extras are installed, so a fixture for it would pass or fail by machine rather than
+#   by branch, and `homepage` is guarded by its `pattern`, which IS a rule.
+ANNOTATION_KEYWORDS = {"format"}
 
 
 def constraint_paths(node, path=()):
-    """Every constraint keyword in the schema, as a JSON path tuple."""
+    """Every constraint keyword in the schema, as a JSON path tuple.
+
+    Two keywords are addressed more finely than the schema writes them, because the
+    coarse form lets one fixture stand in for rules it never touches:
+      * `required` is emitted per MEMBER (`required/name`). One fixture that drops
+        `license` says nothing about whether `name` is enforced.
+      * `type` is emitted only where nothing else on the same subschema already pins
+        the JSON type. Beside an `enum` or a `const` it is subsumed: no value can
+        violate `type` alone, so no fixture can isolate it and its control can never
+        pass. Skipping it silently would be the same defect one level up, so it is
+        skipped HERE, in one place, with the reason attached.
+    """
     out = []
     if not isinstance(node, dict):
         return out
     for key, value in node.items():
         here = path + (key,)
+        if key == "type" and ("enum" in node or "const" in node):
+            continue
         if key in CONSTRAINT_KEYWORDS:
-            if key == "additionalProperties" and isinstance(value, dict):
+            if key == "required" and isinstance(value, list):
+                out += [here + (member,) for member in value]
+            elif key == "additionalProperties" and isinstance(value, dict):
                 out += constraint_paths(value, here)   # a subschema, not a constraint
             else:
                 out.append(here)                       # propertyNames: the subschema IS it
@@ -132,10 +154,23 @@ def duplicate_name_errors(seen):
 
 
 def _delete(schema, path):
+    """Remove exactly one rule from a copy of the schema, and return what was removed
+    (None when the path names nothing). `required` is addressed per member, so the last
+    segment can be an entry in a list rather than a key in an object."""
     node = schema
     for key in path[:-1]:
+        if not isinstance(node, dict) or key not in node:
+            return None
         node = node[key]
-    return node.pop(path[-1], None)
+    last = path[-1]
+    if isinstance(node, list):
+        if last not in node:
+            return None
+        node.remove(last)
+        return last
+    if not isinstance(node, dict):
+        return None
+    return node.pop(last, None)
 
 
 def run_selftest(schema):
