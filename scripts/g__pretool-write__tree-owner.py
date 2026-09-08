@@ -214,7 +214,52 @@ def main() -> int:
         )
         return 0
 
-    table, _dropped, fault = kernel_proc.read_ptable_detail()   # the one ptable read of this call
+    try:
+        # the one ptable read of this call, and the one call whose EXCEPTIONS
+        # are a deny rather than the fail-open at the bottom of this file. QA
+        # cycle 6 F2: `json.load` on a deeply nested file raises RecursionError,
+        # which is neither ValueError nor OSError, so it walked past every fault
+        # leg in the reader and out through `except Exception: sys.exit(0)`,
+        # producing rc=0 with nothing on either stream. The scope is deliberate:
+        # a blanket deny on any exception in this hook would wedge the harness
+        # on a bug in the path matching or the arms config, where allowing the
+        # write is the right failure. Here it is not, because this call IS the
+        # ownership question.
+        table, dropped, fault = kernel_proc.read_ptable_detail()
+    except Exception as exc:
+        journal_deny(pid, {"target": target, "why": "ptable-read-raised",
+                           "error": f"{type(exc).__name__}: {exc}"})
+        deny(
+            "KERNEL ISOLATION: reading the process table raised "
+            f"{type(exc).__name__}: {exc}, so this gate cannot tell whether "
+            f"another process holds {target}. A reader that cannot finish is a "
+            "table nobody can read, and an unknown owner is denied, never "
+            f"allowed. {kernel_proc.recovery()}"
+        )
+        return 0
+    if not fault and dropped:
+        # A ROW-LEVEL DROP IS A DENY TOO (QA cycle 6 F1c). Corrupting one row is
+        # the most surgical version of this attack: the holder's row replaced
+        # with a string, the fault empty, this gate allowing, and the next
+        # register republishing the table without that row so the lane is gone
+        # for good. The lanes of a row that could not be read are exactly as
+        # unknowable as the lanes of a table that could not be read; the only
+        # difference is how many of them there are.
+        journal_deny(pid, {"target": target, "why": "ptable-row-unreadable",
+                           "dropped": sorted(dropped)[:5]})
+        deny(
+            "KERNEL ISOLATION: "
+            f"{len(dropped)} row(s) in the process table could not be read "
+            f"({', '.join(sorted(dropped)[:5])}), so this gate cannot tell "
+            f"whether one of them holds {target}. One writer per lane is "
+            "fail-closed: rows whose lanes are unreadable are treated as "
+            "holding everything, not nothing, because the alternative is the "
+            "lane transfer this seam exists to stop. The next register hook "
+            "repairs the table and CARRIES THE LOSS FORWARD, so a routine "
+            "SessionStart does not clear this. "
+            f"{kernel_proc.recovery()}"
+        )
+        return 0
     if fault:
         # FAIL CLOSED. This gate answers one question, "does another live
         # process hold this path", and it answers it out of the process table.
@@ -333,6 +378,30 @@ def build_sandbox(fdir: str, sandbox: str, setup=None) -> None:
                         has to be a table that is empty for an HONEST reason,
                         or "the gate denies when it cannot read the table"
                         would be indistinguishable from "the gate denies".
+
+    QA cycle 6 added six more, all applied LAST (see the block at the end):
+
+      `_setup.corrupt_rows`  [pid, ...] whose row VALUE is replaced in the
+                        seeded table, keeping every other row and its rewritten
+                        lane paths (F1c).
+      `_setup.mangle_lanes` {pid: value} to write a `lanes` that is not a list
+                        of paths on an otherwise perfect row (F6).
+      `_setup.ptable_nest`  depth of nested `[` written over the table: valid
+                        JSON that makes `json.load` raise RecursionError (F2).
+      `_setup.ptable_fifo`  a fifo at the ptable path, which `open` blocks on
+                        forever (F5); here the selftest timeout is the
+                        assertion.
+      `_setup.drop_journals` [pid, ...] whose journal file is deleted with the
+                        table left intact (F4).
+      `_setup.journal_dir`  "gone" or "file" to remove or replace the journal
+                        directory, which is where the deletion guard's own
+                        evidence lives (F3).
+      `_setup.kernel_history` "seen" to leave `.ptable.lock` behind (a machine
+                        hooks have run on) or "none" to strip every trace but
+                        the table and the journals (a wiped cache). It is the
+                        one edit between F3's violation and its benign pair, and
+                        it is applied here rather than seeded because `*.lock`
+                        is gitignored.
     """
     import shutil
     import time
@@ -405,6 +474,75 @@ def build_sandbox(fdir: str, sandbox: str, setup=None) -> None:
             continue
         stamp = now - (kernel_proc.TTL + 300) if pid in (age_pids or ()) else now
         os.utime(os.path.join(jdir, name), (stamp, stamp))
+
+    # QA cycle 6 overrides, applied LAST because each one leaves the kernel
+    # directory in a state the steps above could not walk. Each names the
+    # finding it seeds, so a fixture that stops meaning something is traceable
+    # to the branch it was built for.
+    table_path = os.path.join(kernel, "ptable.json")
+    corrupt = setup.get("corrupt_rows") or ()
+    mangled = setup.get("mangle_lanes") or {}
+    if corrupt or mangled:
+        # F1c and F6: the seeded table keeps every other row, and its lanes keep
+        # their rewritten {{SANDBOX}} paths, which an inline `ptable` override
+        # cannot do (it is written after the rewrite, verbatim).
+        with open(table_path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        for pid in corrupt:
+            data["processes"][pid] = "not-a-row"
+        for pid, value in mangled.items():
+            data["processes"][pid]["lanes"] = value
+        with open(table_path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+    if setup.get("ptable_nest"):
+        # F2: valid JSON, far under the byte ceiling, and `json.load` raises
+        # RecursionError on it, which is neither ValueError nor OSError.
+        depth = int(setup["ptable_nest"])
+        with open(table_path, "w", encoding="utf-8") as fh:
+            fh.write("[" * depth + "]" * depth)
+    if setup.get("ptable_fifo"):
+        # F5: `os.path.getsize` succeeds on a fifo and `open` then blocks
+        # forever with no writer. A gate that never returns is neither
+        # fail-closed nor fail-open, so the selftest timeout is the assertion.
+        try:
+            os.unlink(table_path)
+        except OSError:
+            pass
+        os.mkfifo(table_path)
+    for pid in (setup.get("drop_journals") or ()):
+        # F4: the holder's liveness record removed with the table intact.
+        try:
+            os.unlink(os.path.join(jdir, f"{pid}.jsonl"))
+        except OSError:
+            pass
+    history = setup.get("kernel_history")
+    if history == "seen":
+        # The F3 violation's ONE edit, and it is written here rather than seeded
+        # in `home/` because `*.lock` is gitignored: a fixture whose meaning
+        # lives in an untracked file is a gate that is armed on this machine and
+        # disarmed in every clone. `.ptable.lock` is what every locked writer
+        # opens and nothing in the kernel removes, so its presence is how a
+        # machine says hooks have run on it. Its ABSENCE is the benign half: the
+        # same two deletions on a HOME that shows no history are byte for byte a
+        # wiped cache, which is the residual this pair states rather than hides.
+        with open(os.path.join(kernel, ".ptable.lock"), "a"):
+            pass
+    elif history == "none":
+        for name in os.listdir(kernel):
+            if name in ("ptable.json", "journal"):
+                continue
+            try:
+                os.unlink(os.path.join(kernel, name))
+            except OSError:
+                pass
+    want_jdir = setup.get("journal_dir")
+    if want_jdir == "gone":
+        # F3: the deletion guard's own evidence, removed by the same move.
+        shutil.rmtree(jdir, ignore_errors=True)
+    elif want_jdir == "file":
+        shutil.rmtree(jdir, ignore_errors=True)
+        with open(jdir, "w", encoding="utf-8") as fh:
+            fh.write("not a directory\n")
 
 
 def run_isolation_selftest(script: str, fdir: str, my_tools, label: str) -> int:
@@ -503,4 +641,13 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except Exception:
-        sys.exit(0)  # fail-open: never break the user's tool call
+        # Fail-open, and it stays fail-open ON PURPOSE for everything that is
+        # not the ptable read. A hook that denies on any exception of its own
+        # wedges every write in the session on a bug in path matching, the arms
+        # config or the payload shape, where allowing the call is the right
+        # failure. The one exception that must NOT arrive here is the ownership
+        # question itself, which is why `main()` denies around
+        # `read_ptable_detail` rather than leaving it to this line (QA cycle 6
+        # F2: a RecursionError from the parser reached here and exited 0 with
+        # empty stdout, empty stderr and no journal line).
+        sys.exit(0)

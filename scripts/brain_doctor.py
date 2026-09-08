@@ -1703,13 +1703,29 @@ def check_kernel_process_live(fix: bool) -> Result:
     # A ptable value that is not an object is DROPPED on read (kernel_proc
     # read_ptable_detail), so one corrupt row can no longer crash this check,
     # `octo ps`, `octo top` or a register hook. A repair nobody can see would be
-    # its own failure mode, so the doctor says it happened. WARN, not FAIL: the
-    # kernel is working and self-repairing, the operator just gets to read the
-    # row before the next register hook rewrites the table without it.
+    # its own failure mode, so the doctor says it happened.
+    #
+    # FAIL, not WARN, since QA cycle 6 F1c. The old rationale was that "a
+    # row-level drop costs n named rows and leaves a working, self-repairing
+    # kernel", and it does not survive n being ALL of them: every row on this
+    # machine can be lost one row at a time, and the self-repair is the part
+    # that hurts, because the next register republishes the table without those
+    # rows and the lanes they held are gone for good. Both isolation gates deny
+    # on a drop now for that reason, so a machine in this state is one where
+    # every hooked write is refused, which is not a kernel that is working. The
+    # drop is also carried forward (kernel_proc._publish), so this does not
+    # clear itself at the next SessionStart either.
     if dropped_rows:
-        status = WARN
-        notes.append(f"{len(dropped_rows)} unreadable ptable row(s) dropped on read: "
-                     + ", ".join(sorted(dropped_rows)[:5]))
+        return Result(key, FAIL,
+                      f"{len(dropped_rows)} unreadable ptable row(s) dropped on "
+                      f"read: " + ", ".join(sorted(dropped_rows)[:5])
+                      + "; the lanes those rows held are unaccounted for and "
+                      "both isolation gates are denying writes while the table "
+                      "reads this way",
+                      "the kernel publishes rows it wrote itself, so a row it "
+                      "cannot read came from a writer that is not the kernel. "
+                      "The file as it was is preserved beside it. "
+                      f"{kernel_proc.recovery()}")
 
     # FREQUENCY, not presence. A writer preserves the table it had to repair
     # before publishing over it (`kernel_proc.quarantines`), so the repairs are
@@ -1737,11 +1753,11 @@ def check_kernel_process_live(fix: bool) -> Result:
     msg = (f"3 selftests pass; {len(procs)} process row(s), {len(live)} live, all journaled; "
            f"{min(len(journals), 5)} newest chain(s) verify; {opened} call(s) ran unjournaled "
            f"in 7 days; golden replay matches; {bench_note}")
-    if dropped_rows:
-        hint = ("a ptable value that is not an object is not a process; read the row in "
-                "~/.claude/.cache/kernel/ptable.json now, the next register hook "
-                "rewrites the table without it")
-    elif kept:
+    # No `dropped_rows` branch here any more: a drop returns FAIL above, so a
+    # hint that read "the next register hook rewrites the table without it"
+    # would be both unreachable and, since that is now the loss rather than the
+    # repair, wrong.
+    if kept:
         hint = ("the table has been repaired before; the copies are in "
                 "~/.claude/.cache/kernel/ptable.corrupt-*.json, each with the "
                 "reason and the rows it lost. Read them and deleting them is "

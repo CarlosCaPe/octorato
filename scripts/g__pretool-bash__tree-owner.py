@@ -716,7 +716,55 @@ def main() -> int:
             )
             return 0
 
-    table, _dropped, fault = kernel_proc.read_ptable_detail()   # the one ptable read of this call
+    checked_hits = [(k, t, v) for k, t, v in hits if k != "state"] or [hits[0]]
+    try:
+        # the one ptable read of this call, and the one call whose EXCEPTIONS
+        # are a deny rather than the fail-open at the bottom of this file. QA
+        # cycle 6 F2: `json.load` on a deeply nested file raises RecursionError,
+        # which is neither ValueError nor OSError, so it walked past every fault
+        # leg in the reader and out through `except Exception: sys.exit(0)`,
+        # producing rc=0 with nothing on either stream. The scope is deliberate:
+        # a blanket deny on any exception in this hook would wedge the harness
+        # on a bug in the command parsing, where allowing the call is the right
+        # failure. Here it is not, because this call IS the ownership question.
+        table, dropped, fault = kernel_proc.read_ptable_detail()
+    except Exception as exc:
+        kind, target, verb = checked_hits[0]
+        journal_deny(pid, {"target": target, "verb": verb,
+                           "why": "ptable-read-raised", "command": command[:200],
+                           "error": f"{type(exc).__name__}: {exc}"})
+        deny(
+            "KERNEL ISOLATION: reading the process table raised "
+            f"{type(exc).__name__}: {exc}, so this gate cannot tell whether "
+            f"another process holds {target}. A reader that cannot finish is a "
+            "table nobody can read, and an unknown owner is denied, never "
+            f"allowed. {kernel_proc.recovery()}"
+        )
+        return 0
+    if not fault and dropped:
+        # A ROW-LEVEL DROP IS A DENY TOO (QA cycle 6 F1c). Corrupting one row is
+        # the most surgical version of this attack: the holder's row replaced
+        # with a string, the fault empty, this gate allowing, and the next
+        # register republishing the table without that row so the lane is gone
+        # for good. The lanes of a row that could not be read are exactly as
+        # unknowable as the lanes of a table that could not be read.
+        kind, target, verb = checked_hits[0]
+        journal_deny(pid, {"target": target, "verb": verb,
+                           "why": "ptable-row-unreadable", "command": command[:200],
+                           "dropped": sorted(dropped)[:5]})
+        deny(
+            "KERNEL ISOLATION: "
+            f"{len(dropped)} row(s) in the process table could not be read "
+            f"({', '.join(sorted(dropped)[:5])}), so this gate cannot tell "
+            f"whether one of them holds {target}, which `{verb}` takes. One "
+            "writer per lane is fail-closed: rows whose lanes are unreadable "
+            "are treated as holding everything, not nothing, because the "
+            "alternative is the lane transfer this seam exists to stop. The "
+            "next register hook repairs the table and CARRIES THE LOSS "
+            "FORWARD, so a routine SessionStart does not clear this. "
+            f"{kernel_proc.recovery()}"
+        )
+        return 0
     if fault:
         # FAIL CLOSED. This gate answers one question, "does another live
         # process hold this path", and it answers it out of the process table.
@@ -746,8 +794,7 @@ def main() -> int:
         # see may be holding), so the fix is the message, not the verdict: it
         # has to say what is actually unknown, which is whether anyone ELSE is
         # writing in that tree.
-        checked = [(k, t, v) for k, t, v in hits if k != "state"] or [hits[0]]
-        kind, target, verb = checked[0]
+        kind, target, verb = checked_hits[0]
         journal_deny(pid, {"target": target, "verb": verb, "why": "ptable-unreadable",
                            "fault": fault, "command": command[:200]})
         if kind in ("tree", "stage"):
@@ -839,4 +886,13 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except Exception:
-        sys.exit(0)  # fail-open: never break the user's tool call
+        # Fail-open, and it stays fail-open ON PURPOSE for everything that is
+        # not the ptable read. A hook that denies on any exception of its own
+        # wedges every Bash call in the session on a bug in the command parsing
+        # or the arms config, where allowing the call is the right failure. The
+        # one exception that must NOT arrive here is the ownership question
+        # itself, which is why `main()` denies around `read_ptable_detail`
+        # rather than leaving it to this line (QA cycle 6 F2: a RecursionError
+        # from the parser reached here and exited 0 with empty stdout, empty
+        # stderr and no journal line).
+        sys.exit(0)

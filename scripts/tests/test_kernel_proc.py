@@ -394,12 +394,45 @@ class CorruptRowTest(SandboxHome):
     def test_a_value_that_is_not_an_object_is_dropped_and_named(self):
         """Dropped, not raised: one unreadable row must not be able to take the
         whole kernel down. Named, not silent: a repair nobody can see is its own
-        failure mode."""
+        failure mode.
+
+        NAMED WHERE IT IS USED, which is QA cycle 6 F7. This asserted that the
+        pure function returns the pid and stopped there, while the two callers
+        that DECIDE on it wrote `table, _dropped, fault = ...` and threw the
+        name away: the exact "asserting on the pure function when the caller was
+        the bug" shape, and F1c was living in that underscore. So the name is
+        followed to each consumer that has to act on it: the writer that carries
+        the loss forward, the claim that refuses, and the doctor that reports
+        it. The gates are the last hop and they are pinned in
+        test_tree_owner.QaCycle6, in their own process, where the deny text is
+        what the operator actually reads.
+        """
         self.corrupt("not-a-row", 7, None, ["lanes"])
         table, dropped, _fault = kernel_proc.read_ptable_detail()
         self.assertEqual(sorted(dropped), ["bad0", "bad1", "bad2", "bad3"])
         self.assertEqual(sorted(table["processes"]), ["good"])
         self.assertEqual(kernel_proc.read_ptable()["processes"], table["processes"])
+
+        self.assertFalse(kernel_proc.claim_lane("good", os.path.join(self.home, "a.py")),
+                         "a claim asserts nobody else holds this, and four rows "
+                         "it could not read are no basis for that")
+        self.assertIn("bad0", self.rows_on_disk(), "and the refused claim wrote nothing")
+
+        kernel_proc.register("newsess", {"kind": "main", "type": "main"})
+        carried = self.raw().decode("utf-8")
+        self.assertIn(kernel_proc.FAULT_KEY, carried,
+                      "the writer that repairs the table carries the loss with it")
+        for pid in ("bad0", "bad1", "bad2", "bad3"):
+            self.assertIn(pid, carried, f"and names {pid} in the fault it carries")
+
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "brain_doctor_named", str(SCRIPTS / "brain_doctor.py"))
+        bd = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(bd)
+        result = bd.check_kernel_process_live(False)
+        self.assertEqual(result.status, bd.FAIL, result.message)
+        self.assertIn("bad0", result.message)
 
     def steady_state(self, pid="ancient"):
         """A healthy row plus a row whose journal has been gone longer than the
@@ -541,8 +574,19 @@ class CorruptRowTest(SandboxHome):
     def test_the_doctor_reports_the_drop_instead_of_crashing(self):
         """`brain_doctor` said `kernel-process-live check crashed: 'str' object
         has no attribute 'get'`. A health check that crashes on the state it
-        exists to report is the one that has to be loud about it, so this is a
-        WARN naming the row, never a PASS that hides it."""
+        exists to report is the one that has to be loud about it, so it names
+        the row and never PASSes over it.
+
+        FAIL, where this used to assert WARN, and QA cycle 6 F1c is the reason
+        the severity moved. The WARN rationale was "a row-level drop costs n
+        named rows and leaves a working, self-repairing kernel"; it does not
+        survive n being all of them, one row at a time, and the self-repair is
+        the part that hurts, because the next register republishes the table
+        without those rows and their lanes are gone. Both gates deny on a drop
+        now, so this machine refuses every hooked write, which is not a working
+        kernel. The two things the WARN was protecting are still asserted: the
+        check does not crash, and it names the row.
+        """
         import importlib.util
         self.corrupt()
         spec = importlib.util.spec_from_file_location(
@@ -550,9 +594,10 @@ class CorruptRowTest(SandboxHome):
         bd = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(bd)
         result = bd.check_kernel_process_live(False)
-        self.assertEqual(result.status, bd.WARN, result.message)
+        self.assertEqual(result.status, bd.FAIL, result.message)
         self.assertIn("unreadable ptable row", result.message)
         self.assertIn("bad0", result.message)
+        self.assertIn("rm ", result.hint, "and it says how to get out of it")
 
     def test_liveness_and_the_lane_lookup_survive_the_bad_row(self):
         """The two functions on the hot path. Both walk every row in the table,
@@ -566,10 +611,19 @@ class CorruptRowTest(SandboxHome):
         after it. The world is built first and the corruption injected last, and
         the file is checked on both sides of the two calls, so the bad row is
         provably still there while they run and neither of them is a writer.
+
+        The world is now built on a CLEAN table on purpose. Since QA cycle 6 F1c
+        `claim_lane` refuses a table with a dropped row (a row it could not read
+        is a set of lanes it could not read, so "nobody else holds this" has no
+        basis), so building the lane through the corruption would silently claim
+        nothing and both assertions below would read None for the wrong reason.
+        That refusal is asserted here too, at the end, where it cannot be
+        mistaken for the setup.
         """
-        self.corrupt()
+        kernel_proc.register("good", {"kind": "main", "type": "main", "worktree": "/w"})
         self.touch_journal("good")
-        kernel_proc.claim_lane("good", os.path.join(self.home, "pkg"))
+        self.assertTrue(kernel_proc.claim_lane("good", os.path.join(self.home, "pkg")),
+                        "the lane is claimed on a table that is still readable")
         self.inject()                       # the writer is done; corrupt it now
         self.assertIn("bad0", self.rows_on_disk(), "the bad row must be on disk HERE")
 
@@ -580,6 +634,11 @@ class CorruptRowTest(SandboxHome):
         self.assertEqual(owner, "good")
         self.assertEqual(row.get("type"), "main")
         self.assertIn("bad0", self.rows_on_disk(), "lane_owner is a reader")
+
+        self.assertFalse(
+            kernel_proc.claim_lane("other", os.path.join(self.home, "pkg", "b.py")),
+            "and a claim on a table carrying an unreadable row is refused (F1c)")
+        self.assertIn("bad0", self.rows_on_disk(), "a refused claim writes nothing")
 
     def test_a_row_that_is_not_an_object_is_never_a_trace(self):
         """`has_trace`'s row guard, pinned where it can actually be reached.
@@ -649,12 +708,41 @@ class TableLevelFaultTest(SandboxHome):
         self.assertIn("processes", fault)
 
     def test_zero_rows_from_a_file_that_exists_is_never_a_fresh_install(self):
-        """There is exactly ONE honest empty table: the file is not there. Every
-        other way of yielding zero rows is a machine whose table was readable to
-        somebody and is not readable to us, and calling that a fresh install is
-        what let a total loss pass for a new laptop."""
+        """Zero rows is the truth about this machine in exactly one state, and
+        the state is about the MACHINE, not about the file: nothing beside the
+        table reads live. Any other way of yielding zero rows is a machine whose
+        table was readable to somebody and is not readable to us.
+
+        The docstring used to assert that universal and the body used to
+        enumerate five shapes the code already handled (QA cycle 6 F7): the two
+        cheapest counterexamples, a `processes` written EMPTY and a `processes`
+        whose every row is dropped, appeared nowhere, and the test passed
+        because of what it did not test. Both are the first thing here now, each
+        with a live journal beside the table, which is the condition that makes
+        them a loss rather than a new laptop.
+        """
         self.assertFalse(os.path.exists(kernel_proc.ptable_path()))
         self.assertEqual(kernel_proc.read_ptable_detail(), ({"version": 1, "processes": {}}, [], ""))
+
+        # A machine with something running on it, which is what every one of the
+        # shapes below is lying about.
+        kernel_proc.register("owner", {"kind": "main", "type": "main"})
+        kernel_proc.claim_lane("owner", os.path.join(self.home, "a.py"))
+        self.assertEqual(kernel_proc.live_journal_pids(), ["owner"])
+
+        for content, expected in (('{"version": 1, "processes": {}}', "carries no row"),
+                                  ('{"processes": {"owner": "x"}}', "unreadable and dropped"),
+                                  ('{"processes": {"owner": {"pid": "owner", "lanes": 7}}}',
+                                   "unreadable and dropped")):
+            with open(kernel_proc.ptable_path(), "w", encoding="utf-8") as fh:
+                fh.write(content)
+            table, dropped, fault = kernel_proc.read_ptable_detail()
+            self.assertEqual(table["processes"], {}, content)
+            self.assertIn(expected, fault, content)
+            self.assertIn("owner", fault, "and it names what is still running")
+            self.assertFalse(
+                kernel_proc.claim_lane("intruder", os.path.join(self.home, "a.py")),
+                f"so the intruder gets nothing out of {content}")
 
         os.makedirs(kernel_proc.kernel_dir(), exist_ok=True)
         for content, expected in (("", "not valid JSON"),
@@ -987,6 +1075,184 @@ class AbsentTableTest(SandboxHome):
         self.assertEqual(len(kernel_proc.live_journal_pids(limit=0)), 12)
 
 
+class QaCycle6ReaderTest(SandboxHome):
+    """The reader's half of QA cycle 6, one leg per finding.
+
+    These are deliberately NOT the whole proof: what a second writer is allowed
+    to do is decided at the gates, and that is pinned in
+    test_tree_owner.QaCycle6, in the gates' own processes. What lives here is
+    the discrimination the gate tests cannot give on their own, because several
+    of these findings have two independent guards and a gate test passes on
+    either one. Each test below dies when ITS OWN guard is removed.
+    """
+
+    def running_machine(self):
+        """One live process holding one lane, which is what every shape below
+        is about to claim does not exist."""
+        kernel_proc.register("owner", {"kind": "main", "type": "main"})
+        lane = os.path.join(self.home, "a.py")
+        self.assertTrue(kernel_proc.claim_lane("owner", lane))
+        return lane
+
+    def test_f2_a_recursion_error_in_the_parser_is_a_fault_not_an_exception(self):
+        """The reader's guard, alone. `json.load` on 9998 nested `[` raises
+        RecursionError, a RuntimeError, so `except ValueError` and
+        `except OSError` both missed it and it left the reader as an exception.
+        The gates now deny around this call as well, so a gate test passes with
+        either guard in place; this one fails if the reader stops catching it.
+        """
+        self.running_machine()
+        with open(kernel_proc.ptable_path(), "w", encoding="utf-8") as fh:
+            fh.write("[" * 9998 + "]" * 9998)
+        self.assertLess(os.path.getsize(kernel_proc.ptable_path()),
+                        kernel_proc.MAX_PTABLE_BYTES,
+                        "the byte ceiling is not what stops this one")
+        table, dropped, fault = kernel_proc.read_ptable_detail()
+        self.assertIn("could not be parsed", fault)
+        self.assertIn("RecursionError", fault)
+        self.assertEqual(table["processes"], {})
+        self.assertIn(kernel_proc.FAULT_KEY, table, "and it carries like any other")
+
+    def test_f5_a_fifo_is_never_opened_and_the_read_returns(self):
+        """`os.path.getsize` succeeds on a fifo and `open` blocks forever with
+        no writer. The assertion is the TIMEOUT: this runs in its own process
+        because a hang inside the test runner would take the suite with it, and
+        a hang is exactly the failure being pinned."""
+        os.makedirs(kernel_proc.kernel_dir(), exist_ok=True)
+        os.mkfifo(kernel_proc.ptable_path())
+        code = (f"import sys; sys.path.insert(0, {str(SCRIPTS)!r});"
+                "import kernel_proc; print(kernel_proc.read_ptable_detail()[2])")
+        env = dict(os.environ)
+        env["HOME"] = self.home
+        env["USERPROFILE"] = self.home
+        cp = subprocess.run([sys.executable, "-c", code], capture_output=True,
+                            text=True, env=env, timeout=30)
+        self.assertEqual(cp.returncode, 0, cp.stderr)
+        self.assertIn("not a regular file", cp.stdout)
+        self.assertIn("never opened", cp.stdout)
+
+    def test_f3_the_journal_directory_is_evidence_and_it_can_be_attacked(self):
+        """`live_journal_pids` returns `[]` on any OSError, so the evidence the
+        deletion guard reads is removable by the same move it guards. The three
+        shapes QA measured, each reaching a different errno, and the residual
+        that is left after them."""
+        self.running_machine()
+        jdir = kernel_proc.journal_dir()
+        os.unlink(kernel_proc.ptable_path())
+
+        os.chmod(jdir, 0o000)
+        try:
+            self.assertIn("cannot be read", kernel_proc.read_ptable_detail()[2])
+        finally:
+            os.chmod(jdir, 0o755)
+
+        import shutil as _shutil
+        _shutil.rmtree(jdir)
+        with open(jdir, "w", encoding="utf-8") as fh:
+            fh.write("not a directory\n")
+        self.assertIn("cannot be read", kernel_proc.read_ptable_detail()[2])
+
+        os.unlink(jdir)
+        self.assertTrue(kernel_proc._kernel_has_history(),
+                        "the lock file every writer leaves is what says so")
+        self.assertIn("is gone on a machine", kernel_proc.read_ptable_detail()[2])
+
+        # The residual, stated where it is measured rather than in a footnote.
+        for name in os.listdir(kernel_proc.kernel_dir()):
+            os.unlink(os.path.join(kernel_proc.kernel_dir(), name))
+        self.assertFalse(kernel_proc._kernel_has_history())
+        self.assertEqual(kernel_proc.read_ptable_detail(),
+                         ({"version": 1, "processes": {}}, [], ""),
+                         "a HOME with nothing left is indistinguishable from a "
+                         "wiped cache, and denying every fresh install is worse")
+
+    def test_f4_a_deleted_journal_does_not_release_the_lane_it_recorded(self):
+        """`_mtime` returns None, `_own_fresh` reads that as False and `is_live`
+        reads dead, so the row stayed in the table and simply stopped owning
+        anything. `lane_owner` asks the question the gate asks, so it is the one
+        that has to treat a missing record as unknown rather than as dead."""
+        lane = self.running_machine()
+        self.assertEqual(kernel_proc.lane_owner(lane)[0], "owner")
+        os.unlink(kernel_proc.journal_path("owner"))
+        self.assertFalse(kernel_proc.is_live("owner"),
+                         "liveness itself still reads dead, which is honest")
+        self.assertEqual(kernel_proc.lane_owner(lane)[0], "owner",
+                         "but the lane is held: a missing record is not a death")
+
+    def test_f4_prune_keeps_the_row_and_faults_instead_of_freeing_it(self):
+        """The second move: wait out the TTL and let one SessionStart do the
+        rest. `prune` treated a row with no journal as dead past `registered_ts
+        + TTL`, so the row went and the lane went with it. It is kept and the
+        table faults, bounded by PRUNE_AFTER so it still expires on its own."""
+        lane = self.running_machine()
+        os.unlink(kernel_proc.journal_path("owner"))
+        table = kernel_proc.read_ptable()
+        table["processes"]["owner"]["registered_ts"] = time.time() - (kernel_proc.TTL + 60)
+        kernel_proc._write_ptable(table)
+
+        kernel_proc.register("newsess", {"kind": "main", "type": "main"})
+        table, _dropped, fault = kernel_proc.read_ptable_detail()
+        self.assertIn("owner", table["processes"], "the row survives the prune")
+        self.assertIn("hold lanes with no journal", fault)
+        self.assertIn("owner", fault)
+        self.assertFalse(kernel_proc.claim_lane("intruder", lane),
+                         "so the lane is not transferred either")
+
+    def test_f4_the_keep_is_bounded_and_an_idle_row_still_ages_out(self):
+        """The bound, and the one edit that separates it from the test above. A
+        row with no journal and NO lane is an ordinary dead row: it prunes, and
+        nothing faults. Without that, "any missing journal denies the machine"
+        would be the rule, which is the broken-laptop version of the same idea.
+        """
+        kernel_proc.register("owner", {"kind": "main", "type": "main"})
+        kernel_proc.register("idle", {"kind": "main", "type": "main"})
+        os.unlink(kernel_proc.journal_path("idle"))
+        table = kernel_proc.read_ptable()
+        table["processes"]["idle"]["registered_ts"] = time.time() - (kernel_proc.TTL + 60)
+        kernel_proc._write_ptable(table)
+
+        kernel_proc.register("newsess", {"kind": "main", "type": "main"})
+        table, _dropped, fault = kernel_proc.read_ptable_detail()
+        self.assertNotIn("idle", table["processes"])
+        self.assertEqual(fault, "")
+
+        # and the lane-holding row is bounded too: past PRUNE_AFTER it goes.
+        kernel_proc.claim_lane("owner", os.path.join(self.home, "a.py"))
+        os.unlink(kernel_proc.journal_path("owner"))
+        table = kernel_proc.read_ptable()
+        table["processes"]["owner"]["registered_ts"] = time.time() - (kernel_proc.PRUNE_AFTER + 60)
+        kernel_proc._write_ptable(table)
+        kernel_proc.register("newsess2", {"kind": "main", "type": "main"})
+        self.assertNotIn("owner", kernel_proc.read_ptable()["processes"],
+                         "a fault nobody clears must still expire on its own")
+
+    def test_f6_lanes_that_are_not_lanes_make_the_row_unreadable(self):
+        """Measured ALLOW on an otherwise perfect row for `lanes` as a string,
+        as null and as a list of numbers: `lanes_of` coerced each to `[]`, the
+        row forfeited the path it held, and nothing was dropped or faulted. An
+        ABSENT `lanes` is the one shape that stays healthy, because it is what
+        every row looks like between `register` and its first write."""
+        lane = self.running_machine()
+        # The file is re-read RAW each round: `read_ptable` drops the row this
+        # test just wrote, so reading through the seam would lose it and the
+        # second shape onward would be testing an empty table.
+        with open(kernel_proc.ptable_path(), encoding="utf-8") as fh:
+            healthy = json.load(fh)
+        for bad in (lane, None, [12345], {}, [""], [lane, 3]):
+            with self.subTest(lanes=bad):
+                table = json.loads(json.dumps(healthy))
+                table["processes"]["owner"]["lanes"] = bad
+                kernel_proc._write_ptable(table)
+                self.assertEqual(kernel_proc.read_ptable_detail()[1], ["owner"],
+                                 "the row is dropped and NAMED")
+
+        table = json.loads(json.dumps(healthy))
+        table["processes"]["owner"] = {"pid": "owner", "registered_ts": time.time()}
+        kernel_proc._write_ptable(table)
+        self.assertEqual(kernel_proc.read_ptable_detail()[1], [],
+                         "a row that has claimed nothing yet is healthy")
+
+
 class RecoveryTextTest(SandboxHome):
     """QA cycle 5, F2. The text described the file's PRE-register shape while
     the deny it is attached to only persists into the POST-register one.
@@ -1279,14 +1545,32 @@ class QuarantineLedgerTest(SandboxHome):
         self.assertIn("repaired 3 times", result.message)
 
     def drop_one_row(self, name):
-        """One repair EVENT: a value that is not an object goes in, a writer
-        reads it, drops it and preserves what it overwrote."""
+        """One repair EVENT, START TO FINISH: a value that is not an object goes
+        in, a writer reads it, drops it, preserves what it overwrote, and the
+        OPERATOR then clears the carried fault the way `recovery()` says.
+
+        That last step is not decoration, it is what keeps this test about
+        FREQUENCY. Since QA cycle 6 F1c a dropped row is carried forward as a
+        fault, exactly like a table-level one, so without a repair between the
+        events the doctor returns FAIL on the fault at its first branch and the
+        three-in-24 h counter below is never reached. An operator who fixes the
+        machine after each incident and finds a third one the same day is
+        precisely the case that branch exists to catch.
+        """
         with open(kernel_proc.ptable_path(), encoding="utf-8") as fh:
             data = json.load(fh)
         data["processes"][name] = "not-a-row"
         with open(kernel_proc.ptable_path(), "w", encoding="utf-8") as fh:
             json.dump(data, fh)
         kernel_proc.update_row("good", {"note": name})
+        with open(kernel_proc.ptable_path(), encoding="utf-8") as fh:
+            data = json.load(fh)
+        self.assertEqual(data.pop(kernel_proc.FAULT_KEY)["reason"],
+                         "1 unreadable row(s) dropped: %s" % name,
+                         "the drop is carried forward, and this is the operator "
+                         "clearing it; the preserved copies are what stay")
+        with open(kernel_proc.ptable_path(), "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
 
 
 class ReRegisterTest(SandboxHome):

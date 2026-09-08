@@ -335,14 +335,47 @@ class CorruptRowTest(OctoCase):
     def test_a_table_of_nothing_but_bad_rows_still_says_what_it_dropped(self):
         """The empty-table path prints its own line and used to return before
         anything else could. A reader that says `no processes` while a corrupt
-        row sits in the file has told the operator the opposite of the truth."""
+        row sits in the file has told the operator the opposite of the truth.
+
+        Since QA cycle 6 F1a it does not print `no processes` here at ALL, and
+        that is the stronger version of the same rule: `gone` is registered and
+        its journal reads live, so a table that yields zero rows next to it is a
+        machine whose record was removed, not a machine with nothing on it. The
+        listing has to say the table is unreadable, and it still has to name the
+        row it dropped, which is what this always meant to pin.
+        """
         kernel_proc.register("gone", {"kind": "main", "type": "main"})
         with open(kernel_proc.ptable_path(), "w", encoding="utf-8") as fh:
             json.dump({"version": 1, "processes": {"junk": "not-a-row"}}, fh)
         rc, out, _ = self.run_octo(["ps"])
         self.assertEqual(rc, 0)
-        self.assertIn("no processes", out)
+        self.assertNotIn("no processes", out,
+                         "zero rows beside a live journal is not an empty machine")
+        self.assertIn("THE PROCESS TABLE IS UNREADABLE", out)
         self.assertIn("1 unreadable row(s) dropped on read: junk", out)
+
+    def test_the_two_listings_stop_contradicting_each_other(self):
+        """QA cycle 6 F1a, and it is the contradiction this PR cites as its own
+        proof, reproduced by the cheapest move of all: one write of
+        `{"version":1,"processes":{}}` over the file. `octo ps` printed "the
+        kernel has registered nothing on this machine yet" while `octo top`
+        listed the live processes out of the same directory. Two readers of one
+        machine, and one of them was wrong."""
+        kernel_proc.register("sess-1", {"kind": "main", "type": "main", "worktree": "/w"})
+        kernel_proc.register("agent-1", {"kind": "subagent", "ppid": "sess-1",
+                                         "type": "Reality Checker", "worktree": "/w"})
+        with open(kernel_proc.ptable_path(), "w", encoding="utf-8") as fh:
+            json.dump({"version": 1, "processes": {}}, fh)
+
+        rc, ps_out, _ = self.run_octo(["ps"])
+        self.assertEqual(rc, 0)
+        self.assertNotIn("registered nothing on this machine", ps_out)
+        self.assertIn("THE PROCESS TABLE IS UNREADABLE", ps_out)
+
+        rc, top_out, _ = self.run_octo(["top"])
+        self.assertEqual(rc, 0)
+        self.assertIn("agent-1", top_out,
+                      "the journals still say something is running here")
 
 
 class UnreadableTableTest(OctoCase):

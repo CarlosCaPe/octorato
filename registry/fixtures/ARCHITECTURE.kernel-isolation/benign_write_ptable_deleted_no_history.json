@@ -1,0 +1,15 @@
+{
+  "session_id": "sess-parent",
+  "tool_name": "Write",
+  "tool_use_id": "toolu_iso",
+  "tool_input": {
+    "file_path": "{{SANDBOX}}/work/tree/pkg/a.py",
+    "content": "print('hello')\n"
+  },
+  "cwd": "{{SANDBOX}}/work/tree",
+  "agent_id": "agent-b",
+  "_setup": {
+    "ptable": "absent",
+    "journal_dir": "gone"
+  }
+}

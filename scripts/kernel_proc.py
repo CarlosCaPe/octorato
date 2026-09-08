@@ -43,6 +43,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import stat as _stat
 import sys
 import time
 
@@ -197,12 +198,19 @@ def recovery() -> str:
             "journal beside it is a fault too: the deny lifts once the next "
             "SessionStart rebuilds the table or those journals go quiet. "
             "Either way every lane held right now is forgotten until each "
-            "process claims again. The file as it was is preserved beside it "
-            "as %s%s*.json, newest last by name; read that, and then deleting "
-            "those copies is safe."
+            "process claims again. If the fault names ROWS THAT HOLD LANES "
+            "WITH NO JOURNAL, or names %s itself, the `%s` key is not the "
+            "thing to delete: remove those rows from `processes` (or put the "
+            "journal directory back), because there the row is the evidence "
+            "and clearing the key alone re-faults on the next prune. If it "
+            "names the journal directory as GONE on a machine that has run "
+            "hooks, `rm -rf %s` is the whole-cache reset, and it is the one "
+            "state this cannot tell apart from a fresh install. The file as it "
+            "was is preserved beside it as %s%s*.json, newest last by name; "
+            "read that, and then deleting those copies is safe."
             % (ptable_path(), FAULT_KEY, FAULT_KEY, FAULT_KEY, FAULT_KEY,
-               ptable_path(), journal_dir(), TTL,
-               os.path.join(kernel_dir(), ""), QUARANTINE_PREFIX))
+               ptable_path(), journal_dir(), TTL, journal_dir(), FAULT_KEY,
+               kernel_dir(), os.path.join(kernel_dir(), ""), QUARANTINE_PREFIX))
 
 
 # ── locking ─────────────────────────────────────────────────────────────────
@@ -487,6 +495,22 @@ def fresh_table() -> dict:
     return {"version": 1, "processes": {}}
 
 
+def _stat_kind(mode) -> str:
+    """The name of what is at a path, for a fault message a human reads.
+
+    No symlink row: the caller uses `os.stat`, which follows them, so a symlink
+    reports whatever it points at (and a loop never gets here, it raises ELOOP
+    one leg earlier). A name the mechanism cannot produce does not belong in a
+    message that claims to say what was found.
+    """
+    for pred, name in ((_stat.S_ISDIR, "directory"), (_stat.S_ISFIFO, "fifo"),
+                       (_stat.S_ISSOCK, "socket"), (_stat.S_ISCHR, "character device"),
+                       (_stat.S_ISBLK, "block device")):
+        if pred(mode):
+            return name
+    return "special file"
+
+
 def _json_kind(value) -> str:
     """The JSON name of a Python value, for a fault message a human reads."""
     if value is None:
@@ -603,14 +627,50 @@ def carried_fault(data) -> str:
     return ""
 
 
+def _readable_row(row) -> bool:
+    """True when a row is one the kernel could have written, LANES INCLUDED.
+
+    `isinstance(row, dict)` used to be the whole test, and QA cycle 6 F6
+    measured what that let through: `lanes` as a string, as `null`, or as a list
+    of numbers, on a row that was otherwise perfect. `lanes_of` coerced every one
+    of those to `[]` and `norm_path` swallowed the elements, so the row kept its
+    pid, its type and its worktree, appeared in every listing as a healthy
+    process, and silently forfeited every path it held: no drop, no fault,
+    nothing on any surface, and both gates allowed an intruder onto the lane.
+
+    A row whose lanes cannot be read is a row whose OWNERSHIP cannot be read,
+    and ownership is the one field the isolation gates ask this table for. So it
+    is dropped like any other unreadable row, which is what puts it on the
+    surfaces (`octo ps`, the doctor, the quarantine copy) and makes the gates
+    fail closed on it.
+
+    An ABSENT `lanes` is readable: that is a process that holds nothing yet, and
+    it is the shape of every row between `register` and the first write. A
+    `lanes` that is PRESENT and null is not the same thing and is not readable,
+    which is why the test is `in` and not `.get()`: `row.get("lanes")` returns
+    None for both, and `"lanes": null` is a shape the kernel never writes
+    (`claim_lane` writes a list, `register` merges no None values), so it is a
+    foreign writer's row wearing the fresh row's answer.
+    """
+    if not isinstance(row, dict):
+        return False
+    if "lanes" not in row:
+        return True
+    lanes = row["lanes"]
+    if not isinstance(lanes, list):
+        return False
+    return all(isinstance(lane, str) and lane for lane in lanes)
+
+
 def sane_table(data) -> tuple:
     """(table, dropped, fault): the ONE place the ptable's SHAPE is decided.
 
-    A row is a process only if it is an object. Every consumer in the kernel
-    reads a row as `row.get(...)`, so one value that is not an object used to
-    become an AttributeError in whichever reader reached it first, and the
-    table is read in far more places than it is written. Deciding the shape
-    once, here, is what keeps the readers from each needing their own guard.
+    A row is a process only if `_readable_row` says so: an object, and one whose
+    `lanes` can be read as lanes. Every consumer in the kernel reads a row as
+    `row.get(...)`, so one value that is not an object used to become an
+    AttributeError in whichever reader reached it first, and the table is read
+    in far more places than it is written. Deciding the shape once, here, is
+    what keeps the readers from each needing their own guard.
 
     TWO levels, and they are not the same event, which is what QA cycle 3 found.
     `dropped` is per ROW: n rows lost, each named, the rest of the table intact
@@ -636,7 +696,7 @@ def sane_table(data) -> tuple:
         fault = _shape_fault(data)
         return _faulted_table(data, fault), [], fault
     procs = data["processes"]
-    dropped = [pid for pid, row in procs.items() if not isinstance(row, dict)]
+    dropped = [pid for pid, row in procs.items() if not _readable_row(row)]
     for pid in dropped:
         procs.pop(pid, None)
     return data, dropped, carried_fault(data)
@@ -675,6 +735,12 @@ def live_journal_pids(now: float = None, limit: int = 8, ignore=None) -> list:
     try:
         names = os.listdir(journal_dir())
     except OSError:
+        # "I could not walk the evidence" is NOT "there is no evidence", and
+        # this leg must never be the one that decides. It stays permissive on
+        # purpose: `_zero_rows_fault` asks `journal_evidence_fault()` FIRST, so
+        # an unreadable journal directory has already faulted before anybody
+        # reaches here. QA cycle 6 F3 is why the order matters: the deletion
+        # guard's evidence lives in the directory the attacker is deleting.
         return []
     out = []
     for name in sorted(names):
@@ -693,6 +759,113 @@ def live_journal_pids(now: float = None, limit: int = 8, ignore=None) -> list:
         if limit and len(out) >= limit:
             break
     return out
+
+
+def _kernel_has_history() -> bool:
+    """True when this HOME has run a hook before, decided WITHOUT the two things
+    an attacker deletes (`ptable.json` and the journals).
+
+    Every locked writer opens `.ptable.lock` with mode "a", and nothing in the
+    kernel ever removes it, so its presence is the cheapest honest answer to
+    "has a register hook ever run here". The test is deliberately wider than
+    that one name: any entry in the kernel directory that is neither the table
+    nor the journal directory nor a `.tmp.` file from an interrupted publish is
+    history, so a quarantine copy or `open-pending.json` counts too and a file a
+    later phase adds counts without anyone remembering to list it here.
+
+    A machine that never ran a hook has no kernel directory at all, because
+    `register` is what creates it and every read path refuses to (`prune_locked`
+    and `claim_lane` return early on an absent table for exactly this reason).
+    """
+    kdir = kernel_dir()
+    try:
+        names = os.listdir(kdir)
+    except OSError:
+        return False
+    for name in names:
+        if name in ("ptable.json", "journal") or ".tmp." in name:
+            continue
+        return True
+    return False
+
+
+def journal_evidence_fault() -> str:
+    """'' when the journals can be used as evidence, else why they cannot.
+
+    QA cycle 6 F3: the deletion guard reads the journals to decide whether an
+    absent table is a fresh install or a loss, and the journals live in a
+    directory the same attacker can reach. Measured ALLOW on both gates for all
+    three of `rm ptable.json && rm -rf journal/`, `rm ptable.json && chmod 000
+    journal/`, and `rm ptable.json` with `journal/` replaced by a regular file:
+    `live_journal_pids` returned `[]` on the OSError and `[]` reads as "nothing
+    is running here".
+
+    Two of those three are unambiguous and fault unconditionally: a directory
+    that exists and cannot be walked, or a non-directory where the journals
+    belong, is a state the kernel cannot produce. The third, a directory that is
+    simply GONE, is the one that genuinely looks like a fresh install, so it
+    faults only when `_kernel_has_history()` says hooks have run on this HOME.
+
+    The residual is real and is not hidden: an attacker who removes the whole
+    kernel directory, `.ptable.lock` included, leaves a HOME that is
+    byte-for-byte a wiped cache, and no reader can tell those apart from inside.
+    That is a strictly larger move than the one this closes, and it is stated in
+    `docs/architecture/v8-kernel.md` rather than left to be discovered.
+    """
+    jdir = journal_dir()
+    try:
+        os.listdir(jdir)
+        return ""
+    except FileNotFoundError:
+        if not _kernel_has_history():
+            return ""          # a HOME no hook has ever run on
+        return ("the journal directory %s is gone on a machine whose kernel "
+                "state says hooks have run here, so the only record of what is "
+                "running was removed along with the process table" % jdir)
+    except OSError as exc:
+        return ("the journal directory %s cannot be read (%s), so whether "
+                "anything is running on this machine is unknowable" % (jdir, exc))
+
+
+def _zero_rows_fault(what: str, ignore_pid=None) -> str:
+    """'' when zero usable rows is the TRUTH about this machine, else the fault.
+
+    The one question the table cannot answer about itself, asked in the one
+    place it has to be asked, and QA cycle 6 F1 is why it is a function rather
+    than a branch inside `_absent_table`. That branch keyed on
+    `FileNotFoundError`, so it only ever ran for a table that was DELETED, and
+    three cheaper moves walked straight past it: writing
+    `{"version":1,"processes":{}}` over the file, corrupting every row's value
+    so the drop empties the table, and corrupting only the holder's row. All
+    three yielded zero rows from a file that exists, all three read as a fresh
+    install, and both gates allowed an intruder onto a held lane. The reader
+    contradiction reproduced verbatim: `octo ps` said "the kernel has registered
+    nothing on this machine yet" while `octo top` listed four live processes out
+    of the same directory.
+
+    So the decision is keyed on the RESULT, zero rows, and never on which
+    syscall produced it. It stays correct for a legitimately empty table because
+    the kernel never publishes zero rows while a journal that is not the
+    writer's own reads live: `register` publishes its own row, and `prune` only
+    removes rows whose process failed the liveness test.
+
+    `ignore_pid` is the fresh-install carve-out and only `register` passes it:
+    see `live_journal_pids`. It reaches every zero-rows path now, not just the
+    absent one, because a register that finds an empty table on disk is in
+    exactly the same position as one that finds no table at all.
+    """
+    evidence = journal_evidence_fault()
+    if evidence:
+        return evidence
+    live = live_journal_pids(ignore=ignore_pid)
+    if not live:
+        return ""
+    return ("%s while at least %d journal(s) beside it read live (%s): a table "
+            "with no rows is not a machine that never registered, it is a "
+            "machine whose record of who holds what was removed under running "
+            "processes"
+            % (what, len(live),
+               ", ".join(live[:3]) + (", ..." if len(live) > 3 else "")))
 
 
 def _absent_table(ignore_pid=None) -> tuple:
@@ -729,15 +902,16 @@ def _absent_table(ignore_pid=None) -> tuple:
     because exactly one caller is entitled to it, and a hidden set of "journals
     this process wrote" would quietly extend that to every caller in the same
     interpreter.
+
+    Since QA cycle 6 F1 this function owns only the ABSENT half of the question
+    and the decision itself lives in `_zero_rows_fault`, because keying that
+    decision on `FileNotFoundError` was the defect: writing an empty
+    `processes` over the file reaches the same zero rows without ever touching
+    this branch.
     """
-    live = live_journal_pids(ignore=ignore_pid)
-    if not live:
+    fault = _zero_rows_fault("the ptable is absent", ignore_pid)
+    if not fault:
         return fresh_table(), [], ""     # the one honest empty table
-    fault = ("the ptable is absent while at least %d journal(s) beside it read "
-             "live (%s): a table that is gone is not a machine that never "
-             "registered, it is a machine whose record of who holds what was "
-             "removed under running processes"
-             % (len(live), ", ".join(live[:3]) + (", ..." if len(live) > 3 else "")))
     return _faulted_table(None, fault), [], fault
 
 
@@ -756,14 +930,19 @@ def read_ptable_detail(ignore_pid=None) -> tuple:
     success while writing nothing is the failure this seam exists to stop; one
     unreadable row must never be able to take the whole kernel down with it.
 
-    A FAULT is the other half, and it is not a drop. There is exactly one state
-    in which an empty table is the truth, and it is narrower than "the file is
-    not there": the file is not there AND no journal beside it reads live, so
-    nothing on this machine is running that a table would have to account for
-    (`_absent_table`). Every other way of yielding zero rows - a file
-    that is not JSON, a top level that is not an object, a `processes` that is
-    an array, a file this process cannot open - is a machine whose process table
-    was readable to somebody and is not readable to us. `_write_ptable`
+    A FAULT is the other half, and it is not a drop. Zero rows is the truth
+    about this machine in exactly one state, and the state is about the MACHINE
+    rather than about the file: no journal beside the table reads live, and the
+    journals themselves can be walked (`_zero_rows_fault`). How the file reached
+    zero rows does not enter into it, which is QA cycle 6 F1: keying that
+    decision on `FileNotFoundError` covered only a DELETED table, and writing
+    `{"version":1,"processes":{}}` over it, or corrupting every row's value,
+    reached the same zero rows and read as a fresh install. Any other way of
+    yielding zero rows - a file that is not JSON, a top level that is not an
+    object, a `processes` that is an array, a file this process cannot open or
+    cannot parse, a table under an unreadable journal directory - is a machine
+    whose process table was readable to somebody and is not readable to us.
+    `_write_ptable`
     publishes a fully written temp file with `os.replace`, so the kernel itself
     can produce neither a half-written nor an oddly shaped table: a fault means
     a writer that is not the kernel touched the file. Callers that DECIDE on
@@ -785,7 +964,7 @@ def read_ptable_detail(ignore_pid=None) -> tuple:
     """
     path = ptable_path()
     try:
-        size = os.path.getsize(path)
+        st = os.stat(path)
     except FileNotFoundError:
         return _absent_table(ignore_pid)
     except OSError as exc:
@@ -796,12 +975,27 @@ def read_ptable_detail(ignore_pid=None) -> tuple:
         # SessionStart, fault empty, ALLOW, the owner's row and lane gone, and
         # no quarantine file because nothing was ever carried for `_publish` to
         # preserve). Which leg a fault lands on is chosen by the ATTACKER, not
-        # by the kernel: a directory at this path fails at `open` and hit the
-        # carrying leg, an ELOOP symlink fails HERE at the stat and hit the
+        # by the kernel: a directory at this path used to fail at `open` and hit
+        # the carrying leg, an ELOOP symlink fails HERE at the stat and hit the
         # forgetting one. A fail-closed rule that depends on which syscall
-        # noticed is not fail-closed.
+        # noticed is not fail-closed. (The directory now stops one line below,
+        # at the regular-file test added for F5, and keeps the same words.)
         fault = "the ptable could not be read (%s)" % exc
         return _faulted_table(None, fault), [], fault
+    if not _stat.S_ISREG(st.st_mode):
+        # QA cycle 6 F5. `os.path.getsize` SUCCEEDS on a FIFO, and the `open`
+        # below then blocks forever waiting for a writer: both gates were still
+        # running at 60 s, and a PreToolUse hook that never returns is neither
+        # fail-closed nor fail-open, it is a hung session. The kernel publishes
+        # this path with `os.replace` of a regular temp file, so anything that
+        # is not a regular file is a foreign writer's, and it faults without
+        # ever being opened. The wording keeps "could not be read" because that
+        # is what it is, and because the directory case used to arrive at the
+        # `open` leg below with those words.
+        fault = ("the ptable could not be read (it is a %s, not a regular "
+                 "file, so it was never opened)" % _stat_kind(st.st_mode))
+        return _faulted_table(None, fault), [], fault
+    size = st.st_size
     if size > MAX_PTABLE_BYTES:
         fault = ("the ptable is %d bytes, past the %d byte ceiling, so it was "
                  "not parsed" % (size, MAX_PTABLE_BYTES))
@@ -820,7 +1014,42 @@ def read_ptable_detail(ignore_pid=None) -> tuple:
         # every other unreadable shape and the gates fail closed on it.
         fault = "the ptable could not be read (%s)" % exc
         return _faulted_table(None, fault), [], fault
-    return sane_table(data)
+    except Exception as exc:
+        # QA cycle 6 F2, and the catch-all is the fix rather than one more named
+        # leg. `json.load` on 20 KB of `[` nested 9998 deep raises
+        # RecursionError, which is a RuntimeError and therefore caught by
+        # neither `ValueError` nor `OSError`: it escaped every fault leg, reached
+        # the gates' outer `except Exception: sys.exit(0)`, and produced rc=0
+        # with empty stdout and empty stderr. No deny, no journal line, no
+        # quarantine, no doctor FAIL, from a file well under the byte ceiling:
+        # strictly quieter than the deletion this seam had just closed. A parse
+        # that fails is a table we could not read, whatever the parser called
+        # the failure, so the class is caught by shape and not by name.
+        fault = ("the ptable could not be parsed (%s: %s)"
+                 % (type(exc).__name__, exc))
+        return _faulted_table(None, fault), [], fault
+
+    table, dropped, fault = sane_table(data)
+    if fault or table.get("processes"):
+        return table, dropped, fault
+    # ZERO ROWS FROM A FILE THAT EXISTS (QA cycle 6 F1). Reached three ways:
+    # `processes` written empty, every row dropped, or a table that really has
+    # nothing in it. The first two are a loss and the third is the truth, and
+    # nothing in the file tells them apart, so the journals do
+    # (`_zero_rows_fault`). Off the hot path by construction: a machine with
+    # anything registered on it has rows, so this runs only before the first
+    # register or after everything on it has ended.
+    zero = _zero_rows_fault(
+        ("every row in the ptable was unreadable and dropped (%s)"
+         % ", ".join(sorted(dropped)[:5])) if dropped
+        else "the ptable is present and carries no row", ignore_pid)
+    if not zero:
+        return table, dropped, ""
+    # The dropped VALUES are not carried: they are junk by definition, which is
+    # why they were dropped, and the file exactly as it was is preserved beside
+    # it by `_publish`. The fault names the pids; the quarantine copy has the
+    # bytes.
+    return _faulted_table(None, zero), dropped, zero
 
 
 def read_ptable() -> dict:
@@ -993,11 +1222,27 @@ def _publish(table: dict, dropped=(), fault: str = "", pid=None) -> None:
     """
     carrier = table.get(FAULT_KEY) if isinstance(table, dict) else None
     already = isinstance(carrier, dict) and carrier.get("quarantine")
+    reason = fault or ("%d unreadable row(s) dropped: %s"
+                       % (len(dropped), ", ".join(sorted(dropped)[:5])))
     if dropped or (fault and not already):
-        kept = _quarantine(fault or "%d unreadable row(s) dropped: %s"
-                           % (len(dropped), ", ".join(sorted(dropped)[:5])), pid)
-        if kept and isinstance(carrier, dict) and not already:
-            carrier["quarantine"] = os.path.basename(kept)
+        kept = _quarantine(reason, pid)
+    else:
+        kept = ""
+    if dropped and not fault:
+        # A DROP IS CARRIED FORWARD TOO, and QA cycle 6 F1c is why. Corrupting
+        # one row was the most surgical version of this whole attack: the
+        # holder's row replaced with a string, `fault` empty, the gates allowed,
+        # and the very next `register` republished the table WITHOUT that row,
+        # so `lane_owner` returned the holder before the registration and `None`
+        # after it. Repairing in memory is right; letting the repair erase the
+        # only evidence that a lane went missing is not. The rows this write
+        # cannot carry forward are unaccounted for in exactly the sense the
+        # table-level fault means, so they stick the same way: both gates keep
+        # failing closed and the doctor keeps FAILing until a human looks.
+        carrier = _faulted_table(None, reason)[FAULT_KEY]
+        table[FAULT_KEY] = carrier
+    if kept and isinstance(carrier, dict) and not already:
+        carrier["quarantine"] = os.path.basename(kept)
     _write_ptable(table)
 
 
@@ -1215,6 +1460,18 @@ def lane_owner(path, table: dict = None, now: float = None, ignore=None,
 
     Passing the enclosing worktree root as `path` answers the whole-tree
     question too: a lane inside the root is a prefix match.
+
+    A colliding row whose JOURNAL FILE IS GONE holds its lane, and QA cycle 6 F4
+    is why that is not the same as `is_live`. `_mtime` returns None for a
+    deleted journal, `_own_fresh` reads that as False and `is_live` reads dead,
+    so `rm journal/<holder>.jsonl` freed the holder's lane with the table fully
+    intact and both gates allowed the intruder onto it. That is the same
+    inference this whole seam rejects for the process table: a missing RECORD is
+    not a dead process, it is a record somebody removed, and the permissive
+    branch is the wrong one to select from it. The state is unreachable from the
+    kernel's own writers, because `prune` removes a row before `prune_files`
+    can reach that pid's journal. chmod, truncation and garbage in the journal
+    already blocked; only deletion was permissive.
     """
     target = norm_path(path)
     if not target:
@@ -1227,6 +1484,8 @@ def lane_owner(path, table: dict = None, now: float = None, ignore=None,
             continue
         if not any(paths_conflict(target, norm_path(l)) for l in lanes_of(row)):
             continue
+        if _mtime(journal_path(pid)) is None:
+            return pid, row          # record removed, not process ended (F4)
         if is_live(pid, table, now, ttl):
             return pid, row
     return None, None
@@ -1267,12 +1526,18 @@ def claim_lane(pid, path, tree=None) -> bool:
         fh = open(ptable_lock_path(), "a")
         _flock(fh)
         table, dropped, fault = read_ptable_detail()
-        if fault:
+        if fault or dropped:
             # FAIL CLOSED, same reasoning as the gate that called us. A claim is
             # the assertion "nobody else holds this path", and on a table we
             # could not read that assertion has no basis. Writing it anyway is
             # the F1 loss verbatim: the claim republishes a one-row table and
             # every other process's lanes are gone, granted to the claimant.
+            #
+            # `dropped` counts here for the same reason it counts at the gates
+            # (QA cycle 6 F1c): a row that could not be read is a set of lanes
+            # that could not be read, so the assertion has no basis for those
+            # paths either. The row is still repaired, by `register`, which is
+            # the writer that must publish through anything.
             return False
         procs = table.setdefault("processes", {})
         row = procs.get(pid)
@@ -1361,10 +1626,20 @@ def prune(table: dict, now: float = None) -> int:
     (reproduced 9/10 rows kept). register() now writes the journal FIRST, which
     closes the window; this keeps it closed if a journal is deleted underneath
     a live process.
+
+    A row that HOLDS LANES and whose journal is absent is neither pruned nor
+    trusted: it is kept and the table is FAULTED (QA cycle 6 F4). Freeing that
+    lane is what `rm journal/<holder>.jsonl` was buying, one SessionStart after
+    the deletion, and freeing it silently is the half that mattered. The row is
+    still bounded: past PRUNE_AFTER since its registration it goes with
+    everything else, so a fault the operator never clears expires on its own
+    instead of holding a path for good. `recovery()` names the row as the thing
+    to delete, because here, unlike a corrupt table, the row IS the evidence and
+    clearing the key without it just re-faults on the next prune.
     """
     now = time.time() if now is None else now
     procs = table.get("processes", {})
-    dead = []
+    dead, lost = [], []
     for pid, ent in procs.items():
         if not isinstance(ent, dict):
             # `read_ptable` already drops these, so this fires only for a table
@@ -1379,11 +1654,21 @@ def prune(table: dict, now: float = None) -> int:
             registered = float(ent.get("registered_ts") or 0)
             if (now - registered) <= TTL:
                 continue  # young row, journal not written (or just removed) yet
+            if lanes_of(ent) and (now - registered) <= PRUNE_AFTER:
+                lost.append(pid)
+                continue
             dead.append(pid)
         elif (now - mt) > PRUNE_AFTER:
             dead.append(pid)
     for pid in dead:
         procs.pop(pid, None)
+    if lost and not carried_fault(table):
+        reason = ("%d process row(s) hold lanes with no journal beside them "
+                  "(%s): a journal the kernel did not delete is a liveness "
+                  "record somebody removed, and the lanes those rows hold "
+                  "cannot be released by anything that reads them"
+                  % (len(lost), ", ".join(sorted(lost)[:5])))
+        table[FAULT_KEY] = _faulted_table(None, reason)[FAULT_KEY]
     prune_files(table, now)
     return len(dead)
 

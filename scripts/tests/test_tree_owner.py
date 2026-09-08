@@ -1101,6 +1101,310 @@ class TheAgentProofClaimIsMeasured(IsolationCase):
         self.assertIn("ln -sf", doc)
 
 
+class QaCycle6(IsolationCase):
+    """The same class of bug as the corrupt table, reached seven cheaper ways.
+
+    Every assertion here lands on the GATE, which is the last hop and the one
+    that decides. The library-level twins in test_kernel_proc.py pin the
+    reader's answer; these pin what a second writer is actually allowed to do
+    with it, because "the reader reports a fault" and "the intruder is denied"
+    were two different measurements in every earlier cycle of this PR.
+    """
+
+    def setUp(self):
+        super().setUp()
+        rc, out = self.run_gate(WRITE_GATE, self.write_payload("agent-a", self.a_py))
+        self.assertFalse(self.denied(out), "the owner claims its own lane")
+        self.assertIn(kernel_proc.norm_path(self.a_py),
+                      kernel_proc.read_ptable()["processes"]["agent-a"]["lanes"])
+
+    # ── helpers ────────────────────────────────────────────────────────────
+    def reason(self, out: str) -> str:
+        obj = json.loads(out or "{}")
+        return (obj.get("hookSpecificOutput") or {}).get("permissionDecisionReason") or ""
+
+    def on_disk(self) -> dict:
+        """The file, parsed WITHOUT the seam under test."""
+        with open(kernel_proc.ptable_path(), encoding="utf-8") as fh:
+            return json.load(fh)
+
+    def write_table(self, data) -> None:
+        with open(kernel_proc.ptable_path(), "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+
+    def both_deny(self, needle, why=""):
+        """The intruder's write and the intruder's `rm`, on both gates."""
+        rc, out = self.run_gate(WRITE_GATE, self.write_payload("agent-b", self.a_py))
+        self.assertEqual(rc, 0)
+        self.assertTrue(self.denied(out), f"the write gate allowed it {why}")
+        self.assertIn(needle, self.reason(out))
+        rc, out = self.run_gate(BASH_GATE,
+                                self.bash_payload("agent-b", f"rm -f {self.a_py}"))
+        self.assertEqual(rc, 0)
+        self.assertTrue(self.denied(out), f"the bash gate allowed it {why}")
+        self.assertIn(needle, self.reason(out))
+
+    def both_allow(self, why=""):
+        rc, out = self.run_gate(WRITE_GATE, self.write_payload("agent-b", self.a_py))
+        self.assertFalse(self.denied(out), f"the write gate denied it {why}")
+        rc, out = self.run_gate(BASH_GATE,
+                                self.bash_payload("agent-b", f"rm -f {self.a_py}"))
+        self.assertFalse(self.denied(out), f"the bash gate denied it {why}")
+
+    def register_hook(self, pid="newsess"):
+        """The REAL SessionStart reflex, in its own process."""
+        env = dict(os.environ)
+        env["HOME"] = self.home
+        env["USERPROFILE"] = self.home
+        cp = subprocess.run([sys.executable, str(SCRIPTS / "r__session__proc-register.py")],
+                            input=json.dumps({"session_id": pid, "source": "startup",
+                                              "cwd": self.home}),
+                            capture_output=True, text=True, env=env, cwd=self.home,
+                            timeout=60)
+        self.assertEqual(cp.returncode, 0, cp.stderr)
+        return cp
+
+    # ── F1a: a table that exists and carries no row ────────────────────────
+    def test_f1a_a_table_written_empty_is_a_loss_not_a_fresh_install(self):
+        """The cheapest of the seven, and cheaper than the `rm` this PR closed:
+        one write of `{"version":1,"processes":{}}`. The guard keyed on
+        `FileNotFoundError`, so this walked straight past it with `dropped=[]`
+        and `fault=''`, and both gates allowed the intruder onto agent-a's lane.
+        The decision is on the RESULT now, zero rows, never on which syscall
+        produced it."""
+        self.write_table({"version": 1, "processes": {}})
+        self.both_deny("carries no row", "over an empty table")
+
+    def test_f1a_an_empty_table_on_a_quiet_machine_still_allows(self):
+        """The half that keeps this from being "deny always", and the one edit
+        that separates it from the test above: the same empty table, with
+        nothing running beside it. A rule that cannot tell a fresh install from
+        a loss is a broken laptop, not a stricter gate."""
+        self.write_table({"version": 1, "processes": {}})
+        for name in os.listdir(kernel_proc.journal_dir()):
+            os.unlink(os.path.join(kernel_proc.journal_dir(), name))
+        self.both_allow("on a machine with nothing running")
+
+    # ── F1b/F1c: rows that could not be read ───────────────────────────────
+    def test_f1b_a_table_whose_every_row_is_junk_is_the_same_loss(self):
+        """Zero rows reached by DROPPING rather than by writing. `dropped` named
+        the pid and `fault` was empty, and both gates read the empty result as
+        an empty machine."""
+        self.write_table({"version": 1, "processes": {"agent-a": "x"}})
+        self.both_deny("every row in the ptable was unreadable")
+
+    def test_f1c_corrupting_only_the_holders_row_is_denied(self):
+        """The most surgical version of the whole attack: ONE row edited, every
+        other row intact, so the table is not empty and the zero-rows rule above
+        never fires. Measured before the fix: `dropped=['agent-a']`, `fault=''`,
+        both gates ALLOW. The lanes of a row that could not be read are exactly
+        as unknowable as the lanes of a table that could not be read."""
+        data = self.on_disk()
+        data["processes"]["agent-a"] = "x"
+        self.write_table(data)
+        self.assertTrue(data["processes"].get("agent-b"),
+                        "other rows survive, so this is not the zero-rows case")
+        self.both_deny("could not be read", "with one row corrupted")
+
+    def test_f1c_a_session_start_does_not_free_the_lane_it_lost(self):
+        """The half that made one row edit enough. `register` republishes what
+        it read, so the repair DELETED the holder's row: measured `lane_owner`
+        returning `agent-a` before the registration and `None` after it, with
+        nothing on any surface. The drop is carried forward now, so the gate
+        keeps denying and the doctor keeps failing until a human looks."""
+        data = self.on_disk()
+        data["processes"]["agent-a"] = "x"
+        self.write_table(data)
+        self.register_hook()
+
+        disk = self.on_disk()
+        self.assertNotIn("agent-a", disk["processes"], "the repair really removed it")
+        self.assertIn("newsess", disk["processes"], "and the hook still wrote its row")
+        self.assertIn(kernel_proc.FAULT_KEY, disk,
+                      "so the loss has to travel with the table")
+        self.both_deny("process table is unreadable", "after a routine SessionStart")
+        self.assertTrue(kernel_proc.quarantines(),
+                        "and the row as it was is preserved beside the file")
+
+    # ── F2: a parser that fails in a way nobody caught ─────────────────────
+    def nested(self, depth=9998):
+        """20 KB of `[`: valid JSON, far under the byte ceiling, and `json.load`
+        raises RecursionError, which is a RuntimeError."""
+        with open(kernel_proc.ptable_path(), "w", encoding="utf-8") as fh:
+            fh.write("[" * depth + "]" * depth)
+        self.assertLess(os.path.getsize(kernel_proc.ptable_path()),
+                        kernel_proc.MAX_PTABLE_BYTES,
+                        "the ceiling is not what stops this one")
+
+    def test_f2_a_parser_failure_is_a_deny_and_not_a_silent_exit_zero(self):
+        """RecursionError is neither ValueError nor OSError, so it escaped every
+        fault leg in the reader and left through the gates' outer
+        `except Exception: sys.exit(0)`. Measured rc=0, empty stdout, empty
+        stderr: no deny, no journal line, no quarantine, no doctor FAIL, which
+        is strictly quieter than the deletion this PR had just closed."""
+        self.nested()
+        self.both_deny("could not be parsed")
+        rc, out = self.run_gate(WRITE_GATE, self.write_payload("agent-b", self.a_py))
+        self.assertIn("RecursionError", self.reason(out),
+                      "and it says which failure it was")
+
+    def test_f2_the_refusal_is_journaled_like_every_other_one(self):
+        """The finding was not only "allowed", it was "allowed leaving no
+        trace". A deny that writes no journal line is a deny nobody can audit,
+        so the line is asserted separately from the verdict."""
+        self.nested()
+        self.run_gate(WRITE_GATE, self.write_payload("agent-b", self.a_py))
+        denies = [l for l in kernel_proc.read_journal("agent-b")
+                  if isinstance(l, dict) and l.get("kind") == "deny"]
+        self.assertTrue(denies, "the refusal left no record at all")
+        self.assertIn(denies[-1].get("why"), ("ptable-unreadable", "ptable-read-raised"))
+
+    def test_f2_the_gates_stay_fail_open_for_everything_that_is_not_this(self):
+        """The scope of the change, asserted rather than promised. Denying on
+        ANY exception would wedge the harness on a bug in path matching or the
+        arms config, where allowing the call is the right failure, so only the
+        ptable read is wrapped. A payload that is not even a dict still exits 0
+        with no output."""
+        for gate in (WRITE_GATE, BASH_GATE):
+            rc, out = self.run_gate(gate, ["not", "a", "dict"])
+            self.assertEqual(rc, 0)
+            self.assertEqual(out.strip(), "")
+
+    # ── F3: the deletion guard's own evidence ──────────────────────────────
+    def test_f3_deleting_the_journal_directory_with_the_table_is_denied(self):
+        """`live_journal_pids` returned `[]` on any OSError, so the evidence the
+        deletion guard reads was removable by the same move it guards: measured
+        ALLOW on both gates for `rm ptable.json && rm -rf journal/`. The kernel
+        directory still shows it has run hooks, which is what tells this apart
+        from a machine that never did."""
+        os.unlink(kernel_proc.ptable_path())
+        shutil.rmtree(kernel_proc.journal_dir())
+        self.both_deny("journal directory", "with the journals gone too")
+
+    def test_f3_an_unreadable_journal_directory_is_denied(self):
+        """The same move without the deletion. This one needs no history check:
+        a directory that exists and cannot be walked is a state the kernel
+        cannot produce."""
+        os.unlink(kernel_proc.ptable_path())
+        os.chmod(kernel_proc.journal_dir(), 0o000)
+        try:
+            self.both_deny("cannot be read", "with the journals unreadable")
+        finally:
+            os.chmod(kernel_proc.journal_dir(), 0o755)
+
+    def test_f3_a_file_where_the_journal_directory_belongs_is_denied(self):
+        os.unlink(kernel_proc.ptable_path())
+        shutil.rmtree(kernel_proc.journal_dir())
+        with open(kernel_proc.journal_dir(), "w", encoding="utf-8") as fh:
+            fh.write("not a directory\n")
+        self.both_deny("cannot be read", "with a file where the journals were")
+
+    def test_f3_the_residual_is_a_home_that_shows_no_history_at_all(self):
+        """Stated, measured and allowed, the way `recovery()` states the
+        interpreter path. Removing the table, the journals AND everything else
+        the kernel left behind produces a HOME that is byte for byte a wiped
+        cache, and no reader can tell those apart from inside. It is a strictly
+        larger move than the one closed above, and the honest answer is to allow
+        it and say so, not to deny every fresh install."""
+        os.unlink(kernel_proc.ptable_path())
+        shutil.rmtree(kernel_proc.journal_dir())
+        for name in os.listdir(kernel_proc.kernel_dir()):
+            os.unlink(os.path.join(kernel_proc.kernel_dir(), name))
+        self.assertFalse(kernel_proc._kernel_has_history())
+        self.both_allow("on a HOME with no kernel state left")
+
+    # ── F4: a holder's journal is not its life ─────────────────────────────
+    def test_f4_deleting_the_holders_journal_does_not_free_its_lane(self):
+        """`_mtime` returns None for a deleted journal, `_own_fresh` reads that
+        as False and `is_live` reads dead, so `rm journal/agent-a.jsonl` freed
+        the lane with the table fully intact and both gates allowed the
+        intruder. A missing liveness RECORD selecting the permissive branch is
+        the exact inference this PR rejects for the process table."""
+        os.unlink(kernel_proc.journal_path("agent-a"))
+        self.both_deny("agent-a", "with the holder's journal deleted")
+
+    def test_f4_a_session_start_does_not_free_it_either(self):
+        """The second move, which is what made the first one worth making.
+        `prune` treated a row with no journal as dead once its `registered_ts`
+        aged past the TTL, so one SessionStart 15 minutes later removed the row
+        and the lane went with it. That row is kept and the table is faulted
+        instead, bounded by PRUNE_AFTER so it still expires on its own."""
+        os.unlink(kernel_proc.journal_path("agent-a"))
+        data = self.on_disk()
+        data["processes"]["agent-a"]["registered_ts"] = time.time() - (kernel_proc.TTL + 60)
+        self.write_table(data)
+        self.register_hook()
+
+        disk = self.on_disk()
+        self.assertIn("agent-a", disk["processes"], "the row is not pruned away")
+        self.assertIn(kernel_proc.FAULT_KEY, disk, "and the loss is on the table")
+        self.both_deny("hold lanes with no journal", "after a SessionStart")
+
+    def test_f4_a_row_that_holds_nothing_still_ages_out_normally(self):
+        """The bound, and the one edit that separates it from the test above: a
+        row whose journal is gone and which holds NO lane is an ordinary dead
+        row, so it prunes and nothing faults. Without this the rule would be
+        "any missing journal denies the machine", which is the broken-laptop
+        version of the same idea."""
+        kernel_proc.register("idle", {"ppid": "sess-parent", "type": "builder"})
+        os.unlink(kernel_proc.journal_path("idle"))
+        data = self.on_disk()
+        data["processes"]["idle"]["registered_ts"] = time.time() - (kernel_proc.TTL + 60)
+        self.write_table(data)
+        self.register_hook()
+
+        disk = self.on_disk()
+        self.assertNotIn("idle", disk["processes"], "it prunes like any dead row")
+        self.assertNotIn(kernel_proc.FAULT_KEY, disk, "and nothing is faulted")
+
+    # ── F5: a read that never returns ──────────────────────────────────────
+    def test_f5_a_fifo_at_the_ptable_path_denies_instead_of_hanging(self):
+        """`os.path.getsize` SUCCEEDS on a fifo and `open` then blocks forever
+        with no writer: both gates were still running at 60 s. A PreToolUse hook
+        that never returns is neither fail-closed nor fail-open, it is a hung
+        session, so the stat comes first and a path that is not a regular file
+        is never opened.
+
+        The TIMEOUT is the assertion here: `run_gate` waits 30 s and raises
+        `subprocess.TimeoutExpired` on a hang, which is the failure this test
+        exists to catch. The deny text is the second half.
+        """
+        os.unlink(kernel_proc.ptable_path())
+        os.mkfifo(kernel_proc.ptable_path())
+        self.both_deny("not a regular file", "with a fifo at the ptable path")
+
+    # ── F6: lanes that are not lanes ───────────────────────────────────────
+    def test_f6_a_lanes_field_that_is_not_a_list_of_paths_drops_the_row(self):
+        """Three shapes on an OTHERWISE PERFECT row, all measured ALLOW:
+        `lanes` as the path string itself, as null, and as a list of numbers.
+        `lanes_of` coerced every one to `[]` and `norm_path` swallowed the
+        elements, so the row kept its pid, its type and its worktree, appeared
+        healthy in every listing, and silently forfeited the path it held. A row
+        whose lanes cannot be read is a row whose ownership cannot be read."""
+        for bad in (kernel_proc.norm_path(self.a_py), None, [12345], {}, [""]):
+            with self.subTest(lanes=bad):
+                data = self.on_disk()
+                data["processes"]["agent-a"]["lanes"] = bad
+                self.write_table(data)
+                self.assertEqual(
+                    sorted(kernel_proc.read_ptable_detail()[1]), ["agent-a"],
+                    "the row is dropped, which is what puts it on the surfaces")
+                self.both_deny("could not be read", f"with lanes={bad!r}")
+
+    def test_f6_a_row_with_no_lanes_key_at_all_is_still_healthy(self):
+        """The one edit that keeps the rule from being "any row without a lane
+        list is corrupt": an ABSENT `lanes` is the shape of every row between
+        `register` and its first write, and it must stay readable. `null` is not
+        the same thing and is covered above."""
+        data = self.on_disk()
+        data["processes"]["agent-b"].pop("lanes", None)
+        self.write_table(data)
+        self.assertEqual(kernel_proc.read_ptable_detail()[1], [])
+        rc, out = self.run_gate(WRITE_GATE,
+                                self.write_payload("agent-b", os.path.join(self.tree, "b.py")))
+        self.assertFalse(self.denied(out))
+
+
 class Selftests(unittest.TestCase):
 
     FIXTURES = "registry/fixtures/ARCHITECTURE.kernel-isolation"
@@ -1137,6 +1441,65 @@ class Selftests(unittest.TestCase):
             self.assertTrue(path.is_file(), path)
             setup = json.loads(path.read_text())["_setup"]
             self.assertIn("ptable", setup, name)
+
+    def test_every_qa_cycle_6_branch_has_a_fixture_on_both_gates(self):
+        """Same rule, one cycle later. Seven more ways into the same class of
+        bug, so seven more branches the doctor's gate-liveness check has to
+        actually exercise: a fixture that does not exist is a count that cannot
+        move, and a count that cannot move looks exactly like a count that was
+        checked.
+
+        The `_setup` key each one needs is asserted, not just the file, because
+        a fixture that lost its override still runs, still passes, and stops
+        covering the branch it was written for. The benign legs are listed with
+        them: each is ONE `_setup` edit away from its violation, which is what
+        makes the violation a measurement of the rule rather than of the gate's
+        appetite for denying.
+        """
+        fdir = SCRIPTS.parent / self.FIXTURES
+        wanted = {
+            "ptable_empty": "ptable",                       # F1a
+            "ptable_row_corrupt": "corrupt_rows",           # F1c
+            "ptable_lanes_string": "mangle_lanes",          # F6
+            "ptable_nested": "ptable_nest",                 # F2
+            "ptable_fifo": "ptable_fifo",                   # F5
+            "ptable_deleted_journals_gone": "journal_dir",  # F3
+            "ptable_deleted_journals_file": "journal_dir",  # F3
+            "journal_of_holder_deleted": "drop_journals",   # F4
+        }
+        pairs = {
+            "ptable_empty_no_journals": "journals",             # the F1a control
+            "ptable_deleted_no_history": "journal_dir",         # the F3 residual
+            "journal_of_idle_row_deleted": "drop_journals",     # the F4 control
+        }
+        for stem, key in wanted.items():
+            for prefix in ("violation_", "violation_write_"):
+                path = fdir / f"{prefix}{stem}.json"
+                self.assertTrue(path.is_file(), path)
+                self.assertIn(key, json.loads(path.read_text())["_setup"], path.name)
+        for stem, key in pairs.items():
+            for prefix in ("benign_", "benign_write_"):
+                path = fdir / f"{prefix}{stem}.json"
+                self.assertTrue(path.is_file(), path)
+                self.assertIn(key, json.loads(path.read_text())["_setup"], path.name)
+
+        # F3's pair is the one whose meaning is a SINGLE key, so it is checked
+        # as a pair rather than as two files. It also may not live in the seed:
+        # `.ptable.lock` matches the repo's `*.lock` ignore, and a fixture whose
+        # meaning depends on an untracked file is a gate armed on one machine
+        # and disarmed in every clone.
+        for prefix in ("", "write_"):
+            v = json.loads((fdir / f"violation_{prefix}ptable_deleted_journals_gone.json").read_text())
+            b = json.loads((fdir / f"benign_{prefix}ptable_deleted_no_history.json").read_text())
+            self.assertEqual(v["_setup"].get("kernel_history"), "seen")
+            self.assertNotIn("kernel_history", b["_setup"])
+            self.assertEqual({k: x for k, x in v["_setup"].items()
+                              if k not in ("kernel_history", "expect_names")},
+                             b["_setup"],
+                             "the benign leg must differ by that key alone")
+        self.assertFalse((fdir / "home" / ".claude" / ".cache" / "kernel"
+                          / ".ptable.lock").exists(),
+                         "and it must not be seeded, because *.lock is ignored")
 
 
 if __name__ == "__main__":
