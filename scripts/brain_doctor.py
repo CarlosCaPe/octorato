@@ -1747,21 +1747,28 @@ def check_kernel_isolation_gate(fix: bool) -> Result:
 
 
 # The rule id `scripts/r__permission-denied__journal.py` stamps on every line it
-# writes, and the ONLY id the coverage comparison may count.
+# writes. A line counts as the reflex's own coverage only when it carries this id
+# AND `source == "harness"`, which is `HARNESS_DENY_SOURCE` below.
 #
-# Why the rule id and not `source == "harness"`, which the journal schema also
-# documents as "who refused". Both are written by the same reflex and its selftest
-# asserts both, and on this brain the two are indistinguishable in the data: all
-# 571 deny lines in the window carry no `source` at all. So the choice is made on
-# failure direction, not on evidence. Counting by `source` is the FAIL-OPEN one: a
-# future writer that records a harness refusal under a different rule id would keep
-# the row green while THIS reflex is dead, which is the exact silence the check
-# exists to break. Counting by the rule id fails LOUD instead, on the day the id
-# moves, and loud is the direction this check has taken at every other fork. The
-# rule id is also the registry's own key, checked one line away by the orphan
-# assertion, where `source` is a free-form string whose schema entry is shadowed by
-# the SessionStart `source` of the same name.
+# BOTH, not either. The first draft argued rule-over-source and the argument held
+# only half. Counting by `source` alone is FAIL-OPEN in the obvious direction: a
+# future writer recording a harness refusal under a different rule id keeps the row
+# green while THIS reflex is dead, the exact silence the check exists to break. But
+# the rule id alone is not the loud choice it was sold as. It fails loud on the day
+# the id moves ONLY where automode refusals exist after arming, and on this brain
+# that is 0 of 571, so an id move presents as the same WARN the row already shows
+# rather than as a FAIL. Requiring both costs nothing on live data (the reflex
+# writes `source` on every line, r__permission-denied__journal.py:80, and its
+# selftest asserts it) and closes the hole rule-only leaves open: a DIFFERENT writer
+# stamping this same id would otherwise be counted as coverage for a reflex that
+# recorded nothing. Two conditions is strictly more fail-closed than either alone.
+#
+# Both fields are also bound to their writer by the suite rather than by prose:
+# `test_the_doctors_rule_id_is_the_one_the_reflex_writes` imports the reflex module
+# and compares, so the pair cannot drift silently, which is what the id choice
+# exists to make loud in the first place.
 HARNESS_DENY_RULE = "HARNESS.permission-denied"
+HARNESS_DENY_SOURCE = "harness"
 
 
 def check_kernel_replay(fix: bool) -> Result:
@@ -1867,7 +1874,23 @@ def check_kernel_replay(fix: bool) -> Result:
         for line in kernel_proc.read_journal(pid):
             if not isinstance(line, dict) or line.get("kind") != "deny":
                 continue
-            if float(line.get("ts") or 0) < cutoff:
+            # NAMED, not raised. `float()` on a `ts` that is not a number threw
+            # ValueError straight out of the check, and `run_all` rendered it as
+            # "FAIL check crashed: could not convert string to float", a traceback
+            # where a cause belongs. The direction was already fail-closed and the
+            # shape is tamper-only (`kernel_proc.append` computes `float(ts)` itself
+            # and refuses to write such a line), so what was missing was never the
+            # verdict, only the sentence.
+            try:
+                ts = float(line.get("ts") or 0)
+            except (TypeError, ValueError):
+                return Result(key, FAIL,
+                              f"a deny line in journal {pid} carries a ts that is not a "
+                              f"number ({line.get('ts')!r})",
+                              "append() cannot write that line, so the journal was edited "
+                              f"after the fact: read `octo replay {pid}` before trusting "
+                              "any count from it")
+            if ts < cutoff:
                 continue
             denies += 1
             rule = str(line.get("rule") or "")
@@ -1879,8 +1902,13 @@ def check_kernel_replay(fix: bool) -> Result:
             # so on this brain the total was 571 while the reflex's own count was
             # 0, and feeding the total to `deny_coverage` made a dead reflex read
             # PASS against a live harness refusal (QA cycle 13).
-            if rule == HARNESS_DENY_RULE:
-                reflex_ts.append(float(line.get("ts") or 0))
+            #
+            # Rule id AND source, for the reason spelled out at HARNESS_DENY_RULE:
+            # the id alone would count a line some OTHER writer stamped with it as
+            # coverage for a reflex that recorded nothing.
+            if (rule == HARNESS_DENY_RULE
+                    and str(line.get("source") or "") == HARNESS_DENY_SOURCE):
+                reflex_ts.append(ts)
             if rule not in registered:
                 orphans.setdefault(rule or "(unnamed)", []).append(pid)
     if orphans:
@@ -1994,6 +2022,37 @@ def deny_coverage(reflex_denies: int, armed_at: float | None, harness_denies: in
                   f"{harness_denies} harness refusal(s) in the same window"), ""
 
 
+def git_failure_cause(stderr: str, returncode: int) -> str:
+    """The line of git's stderr that says WHY, not the one that says what to type.
+
+    `detail[-1]` was the whole selection, and on the case this function's caller
+    names first it picks the wrong line. Measured on git 2.43, inside a repo with
+    `GIT_TEST_ASSUME_DIFFERENT_OWNER=1`:
+
+        fatal: detected dubious ownership in repository at '<path>'
+        To add an exception for this directory, call:
+
+            git config --global --add safe.directory <path>
+
+    git puts the diagnosis FIRST and the remedy LAST, so the last line handed the
+    reader a command where the cause belongs, and the row read "git itself failed
+    on this checkout (git config --global --add safe.directory ...)". A remedy
+    printed as a cause is the wrong-cause defect this whole check is built to
+    abolish, arriving inside the check itself.
+
+    So: the first `fatal:` or `error:` line, which is git's own convention for the
+    diagnosis, and the last non-empty line only when git said neither (a wrapper on
+    PATH, a shim, a localised message this does not recognise). Falling back rather
+    than returning nothing keeps every road named, which is the property the caller
+    depends on.
+    """
+    detail = [ln.strip() for ln in (stderr or "").strip().splitlines() if ln.strip()]
+    for line in detail:
+        if line.startswith(("fatal:", "error:")):
+            return line
+    return detail[-1] if detail else f"exit {returncode}"
+
+
 def _harness_refusals_since_hook(cutoff: float) -> tuple[float | None, int, int, str]:
     """(arm date, refusals the hook fires for, every other class, why there is no window).
 
@@ -2034,11 +2093,16 @@ def _harness_refusals_since_hook(cutoff: float) -> tuple[float | None, int, int,
     What this is NOT: tamper-anchored. The transcripts are ordinary files under
     $HOME and the model can reach them with Bash, so deleting the day's
     `toolDenialKind` lines removes the failing branch from play and leaves no mark
-    in this check. Inflating the count only harms the inflater; deflating it is the
-    direction that matters, and it is possible. What the check buys is that the two
-    sides have different AUTHORS, so a reflex that silently stops firing is caught,
-    which is the failure it was built for. Same residual v7 already states for the
-    QA receipt, said here rather than implied.
+    in this check. The mtime skip in the scan below belongs INSIDE this residual and
+    not outside it: it exists to avoid reading files that cannot hold a record in
+    the window, and under honest conditions deleting it changes only how long the
+    scan takes, but `touch -d` on a transcript is a CHEAPER deflation than editing
+    it, since one timestamp takes the whole file out of the count and no line has to
+    be removed. Inflating the count only harms the inflater; deflating it is the
+    direction that matters, and it is possible by either road. What the check buys is
+    that the two sides have different AUTHORS, so a reflex that silently stops firing
+    is caught, which is the failure it was built for. Same residual v7 already states
+    for the QA receipt, said here rather than implied.
 
     Note on reach: `.githooks/pre-push` runs brain_doctor with `--registry` and
     `--gate-receipt`, and neither calls run_all, so this check never blocks a push.
@@ -2057,8 +2121,7 @@ def _harness_refusals_since_hook(cutoff: float) -> tuple[float | None, int, int,
         # grafted history, so the row named a cause that had not happened while the
         # real one went unsaid. A wrong cause is worse than no cause, which is the
         # argument this whole check is built on (QA cycle 13).
-        detail = (shallow.stderr or "").strip().splitlines()
-        because = detail[-1].strip() if detail else f"exit {shallow.returncode}"
+        because = git_failure_cause(shallow.stderr, shallow.returncode)
         return None, 0, 0, f"git itself failed on this checkout ({because})"
     if answer == "true":
         return None, 0, 0, "a shallow clone, whose grafted history cannot say when the hook arrived"

@@ -337,6 +337,19 @@ class TestArmDate(DenyCoverageCase):
         _, seen, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
         self.assertEqual(seen, 1)
 
+    def test_a_refusal_exactly_at_the_arm_date_is_counted(self):
+        """The boundary itself, on the harness side, so the two sides can be asserted
+        to agree. `ts < armed_at` skips, which means the instant the hook was armed
+        COUNTS. Nothing pinned that: flipping it to `<=` left every test green, and
+        the journal side has the mirror hole (see the reflex sibling in
+        `TestTheJournalScanActuallyRuns`). A boundary each side reads differently is
+        a comparison of two windows that differ by one record."""
+        armed, _, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        self.assertIsNotNone(armed)
+        self.write_refusal("automode-blocked", armed)
+        _, seen, _, _ = doctor._harness_refusals_since_hook(time.time() - 7 * 86400)
+        self.assertEqual(seen, 1, "the arm instant is inside the window, not outside")
+
     def test_a_brain_with_no_such_commit_reports_no_window(self):
         """A fresh or shallow clone has no commit for the hook. The honest answer is
         None, so the caller prints the count without a verdict it cannot support."""
@@ -535,14 +548,37 @@ class TestEachNoWindowRoadNamesItself(DenyCoverageCase):
         return why
 
     def test_an_answer_that_is_neither_true_nor_false_says_so(self):
-        """The one road no fixture can reach through git itself, and the reason it
-        exists. `git rev-parse --is-shallow-repository` prints exactly `true` or
-        `false`, and a git too old to know the flag EXITS NON-ZERO, which is the road
-        above. So the branch guards a future git, a wrapper on PATH, or a shim, and a
-        guard nothing exercises is prose. Stubbed at `doctor.run`, narrowly: only the
-        is-shallow call is answered, everything else goes to the real one, or the
-        stub would also be answering the `git log` this road never reaches.
+        """A current `git rev-parse --is-shallow-repository` prints exactly `true` or
+        `false`, so this road needs a git that answers something else. It is reachable
+        for real, and the reason first written here was measurably wrong: it said a git
+        too old to know the flag exits non-zero. It does not. `rev-parse` ECHOES an
+        unknown `--` argument back and exits 0, measured on git 2.43 inside a real
+        repo:
+
+            $ git rev-parse --is-shallow-repositoryx
+            --is-shallow-repositoryx
+            rc=0
+
+        So a git predating the flag lands here with the flag itself as the answer,
+        which is neither true nor false, and the branch is a real road rather than a
+        guard for a hypothetical wrapper. The wrong reason is the same defect class
+        this PR is about, in prose instead of code. Stubbed at `doctor.run`, narrowly:
+        only the is-shallow call is answered, everything else goes to the real one, or
+        the stub would also be answering the `git log` this road never reaches.
         """
+        # MEASURED, not asserted in prose. The reason this branch exists was wrong in
+        # this very docstring for a cycle, so the claim behind it is checked against
+        # the git on this machine rather than restated: an unknown `--` flag comes
+        # back on stdout with rc 0, which is what puts a git predating the flag here.
+        echoed = doctor.run(["git", "rev-parse", "--is-shallow-repositoryx"],
+                            cwd=self.brain)
+        self.assertEqual(echoed.returncode, 0,
+                         "git exited non-zero on an unknown rev-parse flag, so the "
+                         "reason given for this road no longer holds on this git")
+        self.assertEqual((echoed.stdout or "").strip(), "--is-shallow-repositoryx",
+                         "an unknown flag is echoed back, and that echo is the answer "
+                         "that is neither true nor false")
+
         real_run = doctor.run
 
         def fake(args, cwd=None):
@@ -558,6 +594,80 @@ class TestEachNoWindowRoadNamesItself(DenyCoverageCase):
         self.assertNotIn("grafted history", why,
                          "an unknown answer is not a shallow clone, which is the "
                          "mislabelling this road was split out of")
+
+    def test_the_dubious_ownership_cause_is_the_fatal_line_not_the_remedy(self):
+        """The git-failed road named a COMMAND where the cause belongs.
+
+        `because = detail[-1]` took the last stderr line, and git writes the
+        diagnosis first and the remedy last. Measured end to end here, with
+        `GIT_TEST_ASSUME_DIFFERENT_OWNER=1`, which is how git's own suite forces the
+        ownership check without needing a second uid. Before the fix the sentence
+        read:
+
+            git itself failed on this checkout (git config --global --add
+            safe.directory <path>)
+
+        A remedy printed as a cause is the exact defect this PR argues against, on a
+        road this PR added. `test_every_road_gives_its_own_cause` could not see it:
+        it reaches this road through a directory that is no repository at all, whose
+        stderr is ONE line, so the first and the last are the same and only the road
+        token was asserted. Hence a case with a multi-line stderr, asserting the
+        CAUSE and refusing the remedy.
+        """
+        notarepo = self.tmp / "dubious"
+        (notarepo / "scripts").mkdir(parents=True)
+        env = dict(os.environ)
+        for k in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX",
+                  "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE"):
+            env.pop(k, None)
+        subprocess.run(["git", "-C", str(notarepo), "init", "-q"], check=True,
+                       capture_output=True, env=env)
+        saved = os.environ.get("GIT_TEST_ASSUME_DIFFERENT_OWNER")
+        os.environ["GIT_TEST_ASSUME_DIFFERENT_OWNER"] = "1"
+        self.addCleanup(lambda: os.environ.__setitem__(
+            "GIT_TEST_ASSUME_DIFFERENT_OWNER", saved) if saved is not None
+            else os.environ.pop("GIT_TEST_ASSUME_DIFFERENT_OWNER", None))
+        probe = doctor.run(["git", "rev-parse", "--is-shallow-repository"], cwd=notarepo)
+        if "dubious ownership" not in (probe.stderr or ""):
+            self.skipTest("this git does not honour GIT_TEST_ASSUME_DIFFERENT_OWNER; "
+                          "the recorded-stderr sibling still covers the selection")
+        doctor.CLAUDE_DIR = notarepo
+        why = self._why()
+        self.assertIn("git itself failed", why, "still the git-failed road")
+        self.assertIn("dubious ownership", why,
+                      "the reader gets git's own diagnosis")
+        self.assertNotIn("safe.directory", why,
+                         "a remedy printed where the cause belongs is the wrong-cause "
+                         "defect this whole check is about")
+
+    def test_the_recorded_git_stderr_picks_the_diagnosis_over_the_last_line(self):
+        """The same selection, off a RECORDED stderr, so it is asserted on every
+        machine including one whose git ignores GIT_TEST_ASSUME_DIFFERENT_OWNER.
+
+        `scripts/tests/fixtures/git-dubious-ownership.stderr` is verbatim git output,
+        captured from `git rev-parse --is-shallow-repository` on git 2.43 in a repo
+        with that variable set. Not hand-typed: the shape under test has to be the
+        shape git writes, which is the drift QA cycle 13 found in the transcript
+        fixture one class over.
+        """
+        recorded = (BRAIN / "scripts" / "tests" / "fixtures"
+                    / "git-dubious-ownership.stderr").read_text(encoding="utf-8")
+        self.assertGreater(len(recorded.strip().splitlines()), 1,
+                           "a one-line stderr cannot tell first from last")
+        because = doctor.git_failure_cause(recorded, 128)
+        self.assertTrue(because.startswith("fatal:"), because)
+        self.assertIn("dubious ownership", because)
+        self.assertNotIn("safe.directory", because)
+
+    def test_a_git_that_says_neither_fatal_nor_error_still_names_something(self):
+        """The fallback, which is what keeps every road named. A wrapper on PATH, a
+        shim, or a localised message this does not recognise gets the last non-empty
+        line rather than an empty parenthesis, and a git that said nothing at all
+        gets its exit code."""
+        self.assertEqual(doctor.git_failure_cause("something odd\nand a last word\n", 3),
+                         "and a last word")
+        self.assertEqual(doctor.git_failure_cause("", 129), "exit 129")
+        self.assertEqual(doctor.git_failure_cause("   \n\n", 129), "exit 129")
 
     def test_every_road_gives_its_own_cause(self):
         causes = {}
@@ -1071,6 +1181,158 @@ class TestTheJournalScanActuallyRuns(unittest.TestCase):
         self.assertIn("2 deny(s) in 7 days", result.message)
         self.assertIn("1 of them from the reflex", result.message)
         self.assertIn("12 harness refusal(s)", result.message)
+
+    def test_the_doctors_rule_id_is_the_one_the_reflex_writes(self):
+        """Nothing bound `doctor.HARNESS_DENY_RULE` to the reflex's own `RULE_ID`, so
+        the two could drift silently, which is precisely what the id choice exists to
+        make loud. Imported from the reflex module rather than retyped: a constant
+        copied into a test is a third place to drift.
+
+        `source` is bound the same way. It is read off the line the reflex actually
+        writes, not off a literal, so renaming the field in the reflex turns this red
+        instead of quietly emptying the coverage count.
+        """
+        sys.path.insert(0, str(BRAIN / "scripts"))
+        spec = importlib.util.spec_from_file_location(
+            "reflex_permission_denied",
+            BRAIN / "scripts" / "r__permission-denied__journal.py")
+        reflex = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(reflex)
+        self.assertEqual(doctor.HARNESS_DENY_RULE, reflex.RULE_ID,
+                         "the doctor counts an id the reflex no longer stamps")
+        # the reflex's own `source`, read off a line it produced
+        payload = {"session_id": "bind-check", "tool_name": "Bash",
+                   "tool_use_id": "toolu_bind", "reason": "denied"}
+        self.assertEqual(reflex.denial_fields(payload).get("reason"), "denied")
+        jdir = self.sandbox()
+        saved_stdin = sys.stdin
+        sys.stdin = io.StringIO(json.dumps(payload))
+        try:
+            reflex.main()
+        finally:
+            sys.stdin = saved_stdin
+        written = [ln for ln in self.kernel_proc.read_journal("bind-check")
+                   if isinstance(ln, dict) and ln.get("kind") == "deny"]
+        self.assertEqual(len(written), 1, "the reflex has to have written a deny line")
+        self.assertEqual(written[0].get("rule"), doctor.HARNESS_DENY_RULE)
+        self.assertEqual(written[0].get("source"), doctor.HARNESS_DENY_SOURCE,
+                         "the doctor filters on a `source` the reflex does not write")
+        self.assertTrue(str(jdir).endswith("journal"))
+
+    def test_the_reflexs_rule_id_from_another_writer_is_not_coverage(self):
+        """Rule id AND source, which is where the first draft's argument only held
+        half. `rule` alone fails loud on the day the id moves ONLY where automode
+        refusals exist after arming, and on this brain that is 0 of 571, so an id
+        move presents as the same WARN the row already shows. Requiring `source`
+        too costs nothing on live data, since the reflex writes it on every line,
+        and closes the hole rule-only leaves: a DIFFERENT writer stamping this id
+        would otherwise be counted as coverage for a reflex that recorded nothing.
+        """
+        jdir = self.sandbox()
+        self.harness_refused(4)
+        now = time.time()
+        self.seed(jdir, "impostor-agent",
+                  [self.start(now),
+                   {"kind": "deny", "ts": now, "rule": doctor.HARNESS_DENY_RULE,
+                    "reason": "some other writer, this reflex's id, no source"}])
+        result = doctor.check_kernel_replay(False)
+        self.assertEqual(result.status, doctor.FAIL, result.message)
+        self.assertIn("recorded none", result.message)
+
+    def test_a_reflex_deny_exactly_at_the_arm_date_is_coverage(self):
+        """The journal side of the boundary its sibling pins on the harness side. The
+        harness loop skips `ts < armed_at`, so the arm instant counts there; flipping
+        this `>=` to `>` left every test green, and the two sides would then disagree
+        about one record at the seam. Asserted with the reflex line landing exactly at
+        the arm date, which is what a refusal in the same second as the arming commit
+        looks like.
+
+        A WHOLE second, deliberately. `kernel_proc.append` stores `round(ts, 6)`, so a
+        boundary set at sub-microsecond precision round-trips to a value that can land
+        on either side and the test would flake by rounding rather than assert the
+        comparison. In production the arm date comes from git's `%at`/`%ct`, which are
+        whole seconds, so this is the real shape as well as the stable one.
+        """
+        jdir = self.sandbox()
+        armed = float(int(time.time()) - 120)
+        self.harness_refused(1, armed=armed)
+        self.seed(jdir, "boundary-agent",
+                  [self.start(armed),
+                   {"kind": "deny", "ts": armed, "rule": doctor.HARNESS_DENY_RULE,
+                    "source": doctor.HARNESS_DENY_SOURCE,
+                    "reason": "refused in the same second the hook was armed"}])
+        result = doctor.check_kernel_replay(False)
+        self.assertEqual(result.status, doctor.PASS, result.message)
+        self.assertIn("1 of them from the reflex", result.message)
+
+    def test_a_deny_line_with_no_rule_is_reported_as_unnamed(self):
+        """A deny with no `rule`, or an empty one, is in no registry row either, and
+        `rule or "(unnamed)"` is what keeps it from printing as an empty name. No test
+        reached that branch: every orphan case named a rule. An anonymous refusal is
+        the worst orphan of the class, so it has to reach the reader as something."""
+        jdir = self.sandbox()
+        now = time.time()
+        self.seed(jdir, "anonymous-agent",
+                  [self.start(now),
+                   {"kind": "deny", "ts": now, "reason": "refused, by nothing named"}])
+        result = doctor.check_kernel_replay(False)
+        self.assertEqual(result.status, doctor.FAIL, result.message)
+        self.assertIn("(unnamed)", result.message,
+                      "an unnamed refusal has to be visible as unnamed")
+        self.assertIn("in no registry row", result.message)
+
+    def test_a_malformed_ts_is_a_named_failure_not_a_traceback(self):
+        """`float(line.get("ts"))` on a `ts` that is not a number raised straight out
+        of the check, and `run_all` turned it into `FAIL check crashed: could not
+        convert string to float`. Fail-closed already, and tamper-only:
+        `kernel_proc.append` computes `float(ts)` itself and refuses to write such a
+        line, which is why this is seeded past the writer. What was missing was the
+        SENTENCE, and a traceback where a cause belongs is this PR's whole subject.
+
+        The tampered journal is the SIXTH, by mtime. `journals[:5]` is what gets
+        replayed, and `replay --verify` rejects the edited line first, so a tampered
+        journal inside the newest five never reaches this code at all. The deny scan
+        walks EVERY journal in the 7-day window, which is wider than the five, and
+        that gap is exactly where the crash lived.
+        """
+        jdir = self.sandbox()
+        now = time.time()
+        for i in range(5):
+            fresh = self.seed(jdir, f"fresh-{i}",
+                              [self.start(now),
+                               {"kind": "tool", "ts": now, "tool_name": "Read",
+                                "tool_use_id": f"t{i}"}])
+            os.utime(fresh, (now - i, now - i))
+        path = self.seed(jdir, "tampered-agent",
+                         [self.start(now),
+                          {"kind": "deny", "ts": now, "rule": self.other_rule(),
+                           "reason": "seeded"}])
+        with self.assertRaises(ValueError):
+            self.kernel_proc.append("tampered-agent",
+                                    {"kind": "deny", "ts": "not-a-number"})
+        lines = path.read_text(encoding="utf-8").splitlines()
+        last = json.loads(lines[-1])
+        last["ts"] = "yesterday"
+        lines[-1] = json.dumps(last, separators=(",", ":"))
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        older = now - 600
+        os.utime(path, (older, older))
+        # Through `run_all`, because that is the hop that rendered the ValueError as
+        # "check crashed"; calling the check directly would prove it returns rather
+        # than raises and say nothing about the sentence a reader gets. Only this
+        # check is in CHECKS for the call, so the assertion is about this row.
+        real_checks = doctor.CHECKS
+        doctor.CHECKS = [("kernel-replay", doctor.check_kernel_replay)]
+        try:
+            results = doctor.run_all(False)
+        finally:
+            doctor.CHECKS = real_checks
+        row = next(r for r in results if r.key == "kernel-replay")
+        self.assertEqual(row.status, doctor.FAIL, row.message)
+        self.assertNotIn("check crashed", row.message,
+                         "the reader gets a cause, not a traceback")
+        self.assertIn("tampered-agent", row.message, "and the journal by name")
+        self.assertIn("not a number", row.message)
 
     def test_a_reflex_deny_from_before_the_arm_date_is_not_coverage(self):
         """The two counts have to describe the SAME window. The harness side counts
