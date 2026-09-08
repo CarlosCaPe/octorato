@@ -19,6 +19,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -61,9 +62,13 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
-# Enough of the Apache 2.0 header that only its real text carries: the title LINE, the
-# version LINE and the terms LINE. The fixture this replaces was the single phrase
-# "Apache License, Version 2.0", which is also what a sentence DENYING the license says.
+# The Apache 2.0 HEADER: its title line, version line and first section heading, and
+# nothing else. It used to be this module's stand-in for the Apache license, and the
+# recognizer answered it with a clean SPDX id. It is not the license: it is the first
+# eight lines of it, and a package stamped Apache-2.0 from those eight lines was named
+# after a document nobody had read to the end. It is a NEGATIVE fixture now, and the
+# real text (verbatim, and shipped in this repo as a real skill's license) is the
+# positive one.
 APACHE_HEAD_TEXT = """\
                                  Apache License
                            Version 2.0, January 2004
@@ -74,6 +79,33 @@ APACHE_HEAD_TEXT = """\
    1. Definitions.
 """
 MIT_FILE_TEXT = "MIT License\n\nCopyright (c) 2026 Someone Else, Inc.\n\n" + MIT_BODY_TEXT
+APACHE_FULL_TEXT = (BRAIN / "skills" / "cloudflare" / "LICENSE").read_text(encoding="utf-8")
+
+
+def mutate(text: str, old: str, new: str) -> str:
+    """Replace `old` with `new`, and REFUSE a no-op.
+
+    Three fixtures in this module were edits that never landed: the phrase they meant
+    to change is wrapped across two lines in the fixture, `str.replace` matched nothing,
+    and the test then asserted that verbatim MIT is MIT. It passed against the code it
+    was written to catch. A mutation that does not mutate is not a fixture.
+    """
+    if old not in text:
+        raise AssertionError(f"fixture does not contain {old!r}, so this edit is a no-op")
+    return text.replace(old, new)
+
+
+def one_line(text: str) -> str:
+    """The same license with each PARAGRAPH unwrapped onto one line.
+
+    Wrapping is not terms, so this is the same document to the recognizer, and it lets
+    a test edit one phrase without having to know where the fixture happens to break
+    its lines. Paragraph breaks are kept: collapsing the whole file onto a single line
+    would put the title, the copyright notice and the license body in one line, which
+    is not a shape any license ships in and is not what these fixtures are testing.
+    """
+    return "\n\n".join(" ".join(block.split())
+                       for block in re.split(r"\n\s*\n", text) if block.strip())
 
 octo_pkg = _load("octo_pkg_under_test", SCRIPTS / "octo_pkg.py")
 gen = _load("gen_skill_manifests_under_test", SCRIPTS / "gen_skill_manifests.py")
@@ -949,7 +981,7 @@ class TestGenerator(unittest.TestCase):
 
     def test_per_skill_license_beats_the_repo_default(self):
         d = self._skill("zeta", "---\nname: zeta\ndescription: d\n---\n")
-        (d / "LICENSE.txt").write_text(APACHE_HEAD_TEXT, encoding="utf-8")
+        (d / "LICENSE.txt").write_text(APACHE_FULL_TEXT, encoding="utf-8")
         gen.main(["--root", str(self.root), "--write", "--default-license", "MIT"])
         man = json.loads((d / "skill.json").read_text(encoding="utf-8"))
         self.assertEqual(man["license"], "Apache-2.0")
@@ -1071,14 +1103,15 @@ class TestTheRecognizerRefusesMitLookalikes(unittest.TestCase):
                 + MIT_BODY_TEXT.split("subject to the following conditions:", 1)[1].lstrip())
         ident, why = gen.license_terms(eula)
         self.assertIsNone(ident, "a proprietary EULA was recognized as MIT")
-        self.assertIn("grant sentence is not MIT's", why)
+        # The cause is the word that differs, quoted with the line it sits on.
+        self.assertIn("differs from the license text", why)
 
     def test_a_commons_clause_after_mit_is_not_mit(self):
         text = MIT_FILE_TEXT + ("\nCommons Clause: the Licensor grants no right to Sell "
                                 "the Software.\n")
         ident, why = gen.license_terms(text)
         self.assertIsNone(ident, "MIT plus a no-sale rider was recognized as MIT")
-        self.assertIn("continues past the end of the MIT text", why)
+        self.assertIn("plus terms MIT does not carry", why)
 
     def test_a_non_commercial_restriction_spliced_into_the_grant_is_not_mit(self):
         text = MIT_FILE_TEXT.replace("without restriction,",
@@ -1113,7 +1146,7 @@ class TestTheRecognizerRefusesMitLookalikes(unittest.TestCase):
         # file unrecognized.
         ident, why = gen.license_terms("Skill bundle terms\n\n" + MIT_BODY_TEXT)
         self.assertIsNone(ident)
-        self.assertIn("above the MIT grant", why)
+        self.assertIn("above it", why)
         self.assertNotIn("does not recognize", why)
 
 
@@ -1125,8 +1158,15 @@ class TestTheRecognizerReadsLicenseTextNotMentions(unittest.TestCase):
         self.assertIsNone(gen.license_terms(text)[0],
                           "a sentence denying Apache was read as granting it")
 
-    def test_the_real_apache_header_still_resolves(self):
-        self.assertEqual(gen.license_terms(APACHE_HEAD_TEXT)[0], "Apache-2.0")
+    def test_the_full_apache_text_resolves(self):
+        self.assertEqual(gen.license_terms(APACHE_FULL_TEXT)[0], "Apache-2.0")
+
+    def test_an_apache_header_alone_is_not_the_apache_license(self):
+        # Eight lines of a two-hundred-line license. Recognizing it named a package
+        # after a document that was never read past its first section heading.
+        ident, why = gen.license_terms(APACHE_HEAD_TEXT)
+        self.assertIsNone(ident)
+        self.assertIn("Apache-2.0", why)
 
     def test_a_dual_license_expression_is_refused_not_halved(self):
         ident, why = gen.license_terms("SPDX-License-Identifier: Apache-2.0 OR MIT\n")
@@ -1200,7 +1240,7 @@ class TestLicenseFileBlindSpots(unittest.TestCase):
     def test_two_recognized_licenses_that_disagree_say_so(self):
         d = self._dir("disagree")
         (d / "LICENSE").write_text(MIT_FILE_TEXT, encoding="utf-8")
-        (d / "LICENSE-APACHE").write_text(APACHE_HEAD_TEXT, encoding="utf-8")
+        (d / "LICENSE-APACHE").write_text(APACHE_FULL_TEXT, encoding="utf-8")
         ident, why = gen.resolve_license(d)
         self.assertIsNone(ident)
         self.assertIn("disagree", why)
@@ -1343,9 +1383,15 @@ class TestInRepoManifestLicenses(unittest.TestCase):
                     offenders.append(f"{manifest.parent.name} claims {declared} while "
                                      f"{problem}")
             elif derived is None:
-                if declared != default:
+                # No license file. The skill's own front matter may still declare one,
+                # and a declaration is a claim to honour rather than to overwrite: a
+                # skill saying `license: Apache-2.0` handed the repo default in silence
+                # is the exact defect this cycle closed.
+                own = gen.declared_license(manifest.parent)[0]
+                if declared != (own or default):
                     offenders.append(f"{manifest.parent.name} declares {declared} with "
-                                     f"no license file, so it should carry {default}")
+                                     f"no license file, so it should carry "
+                                     f"{own or default}")
             elif declared != derived:
                 offenders.append(f"{manifest.parent.name} declares {declared}, its "
                                  f"license file says {derived}")
@@ -1366,6 +1412,674 @@ class TestInRepoManifestLicenses(unittest.TestCase):
             d = BRAIN / "skills" / name
             self.assertIsNotNone(gen.upstream_source(d))
             self.assertEqual(gen.license_entries(d), [])
+
+
+
+# --- QA cycle 3: the recognizer half -------------------------------------------
+SAMPLES = BRAIN / "scripts" / "tests" / "license-samples"
+GPL3_TEXT = (SAMPLES / "GPL-3.0.txt").read_text(encoding="utf-8")
+MPL2_TEXT = (SAMPLES / "MPL-2.0.txt").read_text(encoding="utf-8")
+AGPL3_TEXT = (SAMPLES / "AGPL-3.0.txt").read_text(encoding="utf-8")
+BSD3_TEXT = """Copyright (c) 2026 Example Holder
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its contributors
+   may be used to endorse or promote products derived from this software
+   without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+"""
+COMMONS_CLAUSE = """
+
+"Commons Clause" License Condition v1.0
+
+Without limiting other conditions in the License, the grant of rights under the
+License will not include, and the License does not grant to you, the right to
+Sell the Software.
+"""
+
+
+class TestTypographyIsNotTerms(unittest.TestCase):
+    """A quote glyph is not a term, and a refusal that says otherwise is wrong twice.
+
+    Comparing raw text refused real MIT files over a glyph and told them a cause that
+    was not the difference: a family of packages that writes 'Software' with apostrophes
+    was told its "grant sentence is not MIT's". Measured over the 17,841 license-named
+    files under $HOME, /usr/lib/python3 and /usr/share/doc on this machine, 84% of the
+    9,245 carrying MIT's opening sentence resolve to MIT. Each case below is a real
+    shape found on disk.
+    """
+
+    def _mit(self, body):
+        ident, why = gen.license_terms(body)
+        self.assertEqual(ident, "MIT", f"refused real MIT: {why}")
+
+    def test_single_quoted_software_is_the_jshttp_family(self):
+        self._mit(mutate(mutate(MIT_FILE_TEXT, '"Software"', "'Software'"),
+                         '"AS IS"', "'AS IS'"))
+
+    def test_emphasis_markers_around_as_is(self):
+        self._mit(mutate(MIT_FILE_TEXT, '"AS IS"', "*AS IS*"))
+
+    def test_curly_quotes(self):
+        self._mit(mutate(mutate(MIT_FILE_TEXT, '"Software"', "\u201cSoftware\u201d"),
+                         '"AS IS"', "\u201cAS IS\u201d"))
+
+    def test_noninfringement_spelled_with_the_hyphen(self):
+        self._mit(mutate(MIT_FILE_TEXT, "NONINFRINGEMENT", "NON-INFRINGEMENT"))
+
+    def test_the_holder_named_inside_the_disclaimer(self):
+        # The SPDX MIT template marks the holder as a variable exactly here.
+        self._mit(mutate(one_line(MIT_FILE_TEXT),
+                         "THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE",
+                         "ACME CORPORATION BE LIABLE"))
+
+    def test_wrapped_onto_the_word_copyright(self):
+        # "COPYRIGHT HOLDERS BE LIABLE ..." opens a line with the same word a notice
+        # does. Treating it as a preamble deleted a clause out of the disclaimer and
+        # then refused the file for not carrying the clause that had been deleted.
+        wrapped = mutate(one_line(MIT_FILE_TEXT),
+                         "IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE",
+                         "IN NO EVENT SHALL THE AUTHORS OR\nCOPYRIGHT HOLDERS BE LIABLE")
+        self._mit(wrapped)
+
+    def test_the_whole_license_inside_a_c_comment(self):
+        body = "/*\n" + "\n".join(" * " + ln for ln in MIT_FILE_TEXT.splitlines()) + "\n */\n"
+        self._mit(body)
+
+    def test_a_hash_comment_wrapper(self):
+        self._mit("\n".join("# " + ln for ln in MIT_FILE_TEXT.splitlines()))
+
+    def test_a_markdown_license_heading(self):
+        self._mit("# License\n\n" + MIT_FILE_TEXT)
+
+    def test_the_parenthesised_title(self):
+        self._mit("(The MIT License)\n\n" + MIT_FILE_TEXT)
+
+    def test_the_expat_title(self):
+        self._mit("Expat License\n\n" + MIT_FILE_TEXT)
+
+    def test_an_rst_underline_under_the_title(self):
+        self._mit("License\n=======\n\n" + MIT_FILE_TEXT)
+
+    def test_a_copyright_sign_with_no_keyword(self):
+        self._mit("\u00a9 2024 Example Holder\n\n" + MIT_FILE_TEXT)
+
+    def test_a_parenthesised_c_with_no_keyword(self):
+        self._mit("(c) 2024 Example Holder\n\n" + MIT_FILE_TEXT)
+
+    def test_a_copyright_line_with_no_year(self):
+        self._mit("Copyright Steven Loria and contributors\n\n" + MIT_FILE_TEXT)
+
+    def test_a_copyright_keyword_inside_a_sentence(self):
+        self._mit("Shellfloat is copyright (c) 2020 by Michael Wood.\n\n" + MIT_FILE_TEXT)
+
+    def test_a_holder_continuation_line(self):
+        self._mit("Copyright (c) 1998-2000 Thai Open Source Software Center Ltd\n"
+                  "and Clark Cooper\n\n" + MIT_FILE_TEXT)
+
+    def test_an_indented_holder_list(self):
+        self._mit("Copyright (c) 2011-2014\n"
+                  "    Alice Smith <alice@example.com>\n"
+                  "    Bob Jones <bob@example.com>\n\n" + MIT_FILE_TEXT)
+
+    def test_an_spdx_footer(self):
+        self._mit(MIT_FILE_TEXT + "\n\nSPDX-License-Identifier: MIT\n")
+
+    def test_a_signature_block(self):
+        self._mit(MIT_FILE_TEXT + "\n\nAlice Smith <alice@example.com>\n")
+
+    def test_a_trailing_horizontal_rule(self):
+        self._mit(MIT_FILE_TEXT + "\n\n---\n")
+
+    def test_a_bare_url_line(self):
+        self._mit(MIT_FILE_TEXT + "\n\nhttps://example.com/license\n")
+
+
+class TestARefusalNamesTheActualDifference(unittest.TestCase):
+    """"Carries its cause" was this cycle's promise, and a misdiagnosis breaks it.
+
+    The refusal quotes the word the license has, the word the file has, and the line
+    they sit on, so whoever fixes it reads the sentence that differs rather than the
+    whole file.
+    """
+
+    def _why(self, body):
+        ident, why = gen.license_terms(body)
+        self.assertIsNone(ident)
+        return why
+
+    def test_a_changed_verb_is_named_word_for_word(self):
+        # "to deal WITH the Software" is a real MIT-lookalike family on disk.
+        why = self._why(mutate(one_line(MIT_FILE_TEXT), "to deal in the Software",
+                              "to deal with the Software"))
+        self.assertIn("'in'", why)
+        self.assertIn("'with'", why)
+
+    def test_a_dropped_sublicense_right_is_named(self):
+        # The openssh/ISC-style variant grants no sublicense right. That IS a different
+        # grant, and the refusal has to say which word carries the difference.
+        why = self._why(mutate(one_line(MIT_FILE_TEXT),
+                        "distribute, sublicense, and/or sell", "distribute, and/or sell"))
+        self.assertIn("'sublicense'", why)
+
+    def test_the_refusal_quotes_the_line_it_found(self):
+        why = self._why(mutate(MIT_FILE_TEXT, "MERCHANTABILITY", "SALEABILITY"))
+        self.assertIn("'merchantability'", why)
+        self.assertIn("'saleability'", why)
+
+    def test_a_slot_does_not_swallow_a_later_difference(self):
+        # The holder slot used to answer "names no copyright holder" for any failure
+        # downstream of it, which is what 400 verbatim-MIT files were told. The
+        # DEEPEST failure is the true one.
+        why = self._why(mutate(one_line(MIT_FILE_TEXT),
+                        "OTHER DEALINGS IN THE SOFTWARE", "OTHER DEALINGS IN THE PRODUCT"))
+        self.assertNotIn("names no copyright holder", why)
+        self.assertIn("'product'", why)
+
+    def test_a_slot_may_not_carry_terms(self):
+        # A variable-width hole in a template is a way to smuggle a restriction into
+        # the middle of a license, so a slot admits names and numbering, never terms.
+        why = self._why(mutate(one_line(MIT_FILE_TEXT), "IN NO EVENT SHALL THE AUTHORS",
+                        "IN NO EVENT SHALL, EXCEPT WHERE COMMERCIAL USE IS PROHIBITED, "
+                        "THE AUTHORS"))
+        self.assertTrue(why)
+
+
+class TestEveryRecognizerIsWholeDocument(unittest.TestCase):
+    """"A license is recognized whole, or it is not recognized" was true for MIT only.
+
+    The other five keyed on markers found anywhere in the file, so a Commons Clause
+    appended to Apache-2.0, a negation written above it, an advertising clause added to
+    BSD-3-Clause and a notices file holding several licenses at once all came back with
+    one clean SPDX id. Each case below is one edit from a control that must still pass.
+    """
+
+    def _refused(self, body, must_mention=""):
+        ident, why = gen.license_terms(body)
+        self.assertIsNone(ident, f"recognized as {ident}")
+        if must_mention:
+            self.assertIn(must_mention, why)
+        return why
+
+    def test_the_controls_still_resolve(self):
+        self.assertEqual(gen.license_terms(APACHE_FULL_TEXT)[0], "Apache-2.0")
+        self.assertEqual(gen.license_terms(GPL3_TEXT)[0], "GPL-3.0-only")
+        self.assertEqual(gen.license_terms(AGPL3_TEXT)[0], "AGPL-3.0-only")
+        self.assertEqual(gen.license_terms(MPL2_TEXT)[0], "MPL-2.0")
+        self.assertEqual(gen.license_terms(BSD3_TEXT)[0], "BSD-3-Clause")
+        self.assertEqual(gen.license_terms(MIT_FILE_TEXT)[0], "MIT")
+
+    def test_apache_with_a_commons_clause_appended(self):
+        self._refused(APACHE_FULL_TEXT + COMMONS_CLAUSE, "Apache-2.0")
+
+    def test_apache_with_additional_terms_appended(self):
+        self._refused(APACHE_FULL_TEXT + "\n\nADDITIONAL TERMS: redistribution prohibited.\n")
+
+    def test_a_negation_written_above_apache(self):
+        self._refused("This software is NOT licensed under the terms below.\n\n"
+                      + APACHE_FULL_TEXT)
+
+    def test_gpl_with_an_appended_commercial_restriction(self):
+        self._refused(GPL3_TEXT + "\n\nCommercial use requires a paid license from "
+                                  "the author.\n")
+
+    def test_mpl_with_an_appended_restriction(self):
+        self._refused(MPL2_TEXT + "\n\nYou may not redistribute this file.\n")
+
+    def test_agpl_with_an_appended_restriction(self):
+        # AGPL-3.0 was the sixth recognizer and the only one with no fixture: the
+        # sentence "all six read a license whole" was proven for five and asserted for
+        # the sixth. Five closed members do not close a class of six.
+        self._refused(AGPL3_TEXT + "\n\nADDITIONAL TERMS: no commercial use.\n")
+
+    def test_a_negation_written_above_agpl(self):
+        self._refused("This program is NOT under the license below.\n\n" + AGPL3_TEXT)
+
+    def test_agpl_missing_one_of_its_sections_is_not_agpl(self):
+        cut = mutate(AGPL3_TEXT, "  2. Basic Permissions.", "  2x. Basic Permissions.")
+        self._refused(cut)
+
+    def test_bsd_four_clause_is_not_bsd_three_clause(self):
+        bsd4 = mutate(
+            BSD3_TEXT,
+            "3. Neither the name",
+            "3. All advertising materials mentioning features or use of this software\n"
+            "   must display the following acknowledgement: This product includes\n"
+            "   software developed by the copyright holder.\n\n"
+            "4. Neither the name")
+        self._refused(bsd4)
+
+    def test_bsd_three_clause_clear_is_not_bsd_three_clause(self):
+        clear = mutate(
+            BSD3_TEXT,
+            "THIS SOFTWARE IS PROVIDED BY",
+            "NO EXPRESS OR IMPLIED LICENSES TO ANY PARTY'S PATENT RIGHTS ARE GRANTED\n"
+            "BY THIS LICENSE.\n\nTHIS SOFTWARE IS PROVIDED BY")
+        self._refused(clear)
+
+    def test_mit_followed_by_apache_is_neither(self):
+        self._refused(MIT_FILE_TEXT + "\n\n" + APACHE_FULL_TEXT)
+
+    def test_a_multi_license_notices_file_is_not_one_license(self):
+        self._refused("libjpeg-turbo Licenses\n\n" + MIT_FILE_TEXT + "\n\n" + BSD3_TEXT)
+
+    def test_a_friendly_lead_in_is_refused_too_and_that_is_the_price(self):
+        # Real files on this machine: archy says "This software is released under the
+        # MIT license:", Node.js says "Node.js is licensed for use as follows:", LLVM
+        # says "The LLVM Project is under the Apache License v2.0 with LLVM Exceptions".
+        # Two of those three are harmless and the third changes the terms, and the text
+        # does not say which. Admitting lead-in sentences to stop refusing the first two
+        # is the same edit that lets "This software is NOT licensed under the terms
+        # below" through, so the refusal stands and a human reads it.
+        for lead in ("This software is released under the MIT license:",
+                     "Node.js is licensed for use as follows:"):
+            self._refused(f"{lead}\n\n{MIT_FILE_TEXT}")
+        self._refused("The LLVM Project is under the Apache License v2.0 with LLVM "
+                      "Exceptions\n\n" + APACHE_FULL_TEXT)
+
+    def test_apache_that_stops_at_clause_nine_is_still_apache(self):
+        # requests, and everything that vendored it, ships this form: no
+        # "END OF TERMS AND CONDITIONS" and no appendix. It is a whole license.
+        cut = APACHE_FULL_TEXT.split("END OF TERMS AND CONDITIONS")[0]
+        self.assertEqual(gen.license_terms(cut)[0], "Apache-2.0")
+
+
+class TestTheFilenameEnumerationDecidesAbsent(unittest.TestCase):
+    """The list of names IS the definition of "this skill has no license".
+
+    A name that is not on it is not "no license here", it is "not looked for", and both
+    used to be written into the manifest as this repo's own terms.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="test-licnames-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def test_the_names_that_hold_terms_are_read(self):
+        for name in ("UNLICENSE", "COPYRIGHT", "LICENSE.Apache", "LICENSE.APACHE2",
+                     "LICENSE.BSD", "LICENSE.GPL", "LICENSE_APACHE", "APACHE-LICENSE",
+                     "GPL-LICENSE.txt", "COPYING.LESSER", "LICENSE.html",
+                     "LICENSE.markdown", "LICENSE.adoc"):
+            self.assertTrue(gen._is_license_name(name), f"{name} would be read as absent")
+
+    def test_a_notices_file_is_not_this_package_s_license(self):
+        # The mirror of the bug above: a file that lists what OTHER people's code is
+        # under, read as the skill's own terms.
+        for name in ("LICENSE-3RD-PARTY.txt", "THIRD-PARTY-LICENSES",
+                     "LICENSE-THIRD-PARTY.txt", "NOTICES-THIRD-PARTY.md"):
+            self.assertFalse(gen._is_license_name(name), f"{name} read as own terms")
+
+    def test_a_file_that_is_not_a_license_document_is_left_alone(self):
+        for name in ("license.py", "LICENSE.png", "licenses.json", "readme.md"):
+            self.assertFalse(gen._is_license_name(name))
+
+    def test_a_spdx_suffixed_license_is_opened_not_defaulted(self):
+        # sniffio ships exactly LICENSE.APACHE2. It used to be absent, and absent is
+        # the repo default.
+        (self.tmp / "LICENSE.APACHE2").write_text(APACHE_FULL_TEXT, encoding="utf-8")
+        self.assertEqual(gen.resolve_license(self.tmp), ("Apache-2.0", ""))
+
+    def test_the_reuse_licenses_directory_is_read(self):
+        d = self.tmp / "LICENSES"
+        d.mkdir()
+        (d / "Apache-2.0.txt").write_text(APACHE_FULL_TEXT, encoding="utf-8")
+        self.assertEqual(gen.resolve_license(self.tmp), ("Apache-2.0", ""))
+
+    def test_a_notices_file_beside_a_license_does_not_decide(self):
+        (self.tmp / "LICENSE").write_text(MIT_FILE_TEXT, encoding="utf-8")
+        (self.tmp / "LICENSE-3RD-PARTY.txt").write_text(APACHE_FULL_TEXT, encoding="utf-8")
+        self.assertEqual(gen.resolve_license(self.tmp), ("MIT", ""))
+
+    def test_the_gnu_and_plural_shapes_the_extension_allow_list_missed(self):
+        # Measured on a developer's disk (`find $HOME /usr/lib/python3 /usr/share/doc
+        # -xdev`): COPYING.LIB is 195 copies, four times the COPYING.LESSER the
+        # previous revision did cover. Closing one member of a class and calling the
+        # class closed leaves the COMMONER member open, every time.
+        for name in ("COPYING.LIB", "COPYINGv2", "COPYINGv3", "COPYING3",
+                     "COPYING.LESSERv2", "COPYING.LESSERv3", "COPYING.LGPLv2.1",
+                     "LICENSES-en.txt", "license.terms", "License.rtf",
+                     "LicenseRef-KDE-Accepted-LGPL.txt"):
+            self.assertTrue(gen._is_license_name(name),
+                            f"{name} would be read as absent, and absent is the default")
+
+    def test_the_extension_test_only_excludes_it_never_admits(self):
+        # The polarity IS the fix. An extension nobody enumerated has to fail toward
+        # being READ (and then recognized or refused), because failing toward absent is
+        # a silent legal claim while failing toward read is a human being asked.
+        self.assertTrue(gen._is_license_name("LICENSE.zzz"))
+        self.assertTrue(gen._is_license_name("COPYING.some-new-convention"))
+        self.assertFalse(gen._is_license_name("license.py"))
+        self.assertFalse(gen._is_license_name("LICENSE.woff2"))
+
+    def test_a_gnu_copying_lib_holding_terms_is_opened_not_defaulted(self):
+        (self.tmp / "COPYING.LIB").write_text(APACHE_FULL_TEXT, encoding="utf-8")
+        self.assertEqual(gen.resolve_license(self.tmp), ("Apache-2.0", ""))
+
+    def test_the_reuse_directory_itself_is_not_a_document(self):
+        # `LICENSES` became a recognizable NAME when the plural stem was added, and a
+        # directory holds no terms, so the whole REUSE layout answered with the refusal
+        # meant for a `LICENSE` that is a directory. The container is not the document.
+        d = self.tmp / "LICENSES"
+        d.mkdir()
+        (d / "Apache-2.0.txt").write_text(APACHE_FULL_TEXT, encoding="utf-8")
+        self.assertEqual(gen.resolve_license(self.tmp), ("Apache-2.0", ""))
+
+    def test_a_license_that_is_a_directory_is_still_a_refusal(self):
+        # The other side of the same edit: `LICENSE` singular promises one document.
+        (self.tmp / "LICENSE").mkdir()
+        ident, problem = gen.resolve_license(self.tmp)
+        self.assertIsNone(ident)
+        self.assertIn("directory", problem)
+
+
+class TestSpdxTagsCarryWhatOnlyTheyCanCarry(unittest.TestCase):
+    """GPL-3.0-or-later and GPL-3.0-only sit over IDENTICAL text. The tag is the only
+    carrier of the difference, and refusing it for "contradicting" the body threw away
+    the one fact the file had to give."""
+
+    def test_or_later_over_gpl3_text_is_kept(self):
+        self.assertEqual(
+            gen.license_terms("SPDX-License-Identifier: GPL-3.0-or-later\n" + GPL3_TEXT),
+            ("GPL-3.0-or-later", ""))
+
+    def test_a_deprecated_id_is_answered_with_its_replacement(self):
+        self.assertEqual(
+            gen.license_terms("SPDX-License-Identifier: GPL-3.0\n" + GPL3_TEXT)[0],
+            "GPL-3.0-only")
+
+    def test_spdx_ids_are_case_insensitive(self):
+        self.assertEqual(
+            gen.license_terms("SPDX-License-Identifier: mit\n" + MIT_FILE_TEXT)[0], "MIT")
+
+    def test_a_tag_from_another_family_is_still_refused(self):
+        ident, why = gen.license_terms("SPDX-License-Identifier: MIT\n" + APACHE_FULL_TEXT)
+        self.assertIsNone(ident)
+        self.assertIn("Apache-2.0", why)
+
+
+class TestFrontMatterLicenseIsRead(unittest.TestCase):
+    """Eight skills WROTE `license:` and nothing READ it, so a skill declaring
+    Apache-2.0 with no license file was handed the repo default, MIT, in silence."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="test-fmlic-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.root = self.tmp / "skills"
+        self.root.mkdir()
+
+    def _skill(self, name, fm_extra="", license_text=None):
+        d = self.root / name
+        d.mkdir()
+        (d / "SKILL.md").write_text(f"---\nname: {name}\ndescription: d\n{fm_extra}---\n",
+                                    encoding="utf-8")
+        if license_text is not None:
+            (d / "LICENSE").write_text(license_text, encoding="utf-8")
+        return d
+
+    def _run(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = gen.main(["--root", str(self.root), "--write", "--default-license", "MIT"])
+        return rc, buf.getvalue()
+
+    def test_a_declared_license_with_no_file_is_honoured_not_overwritten(self):
+        self._skill("borrowed", "license: Apache-2.0\n")
+        rc, out = self._run()
+        self.assertEqual(rc, 0, out)
+        got = json.loads((self.root / "borrowed" / "skill.json").read_text(encoding="utf-8"))
+        self.assertEqual(got["license"], "Apache-2.0",
+                         "the declaration was overwritten with the repo default")
+
+    def test_a_declaration_that_contradicts_the_license_file_is_refused(self):
+        self._skill("liar", "license: Apache-2.0\n", MIT_FILE_TEXT)
+        rc, out = self._run()
+        self.assertEqual(rc, 1)
+        self.assertIn("declares Apache-2.0 while its license file says MIT", out)
+        self.assertFalse((self.root / "liar" / "skill.json").exists())
+
+    def test_a_declaration_that_agrees_is_written(self):
+        self._skill("honest", "license: Apache-2.0\n", APACHE_FULL_TEXT)
+        rc, out = self._run()
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(json.loads((self.root / "honest" / "skill.json")
+                                    .read_text(encoding="utf-8"))["license"], "Apache-2.0")
+
+    def test_a_declaration_that_is_a_sentence_is_a_question_not_a_parse(self):
+        self._skill("prose", 'license: "MIT (author: A. N. Other, preserve attribution)"\n')
+        rc, out = self._run()
+        self.assertEqual(rc, 1)
+        self.assertIn("not a bare SPDX identifier", out)
+
+    def test_metadata_license_counts_too(self):
+        self._skill("nested", "metadata:\n  license: Apache-2.0\n")
+        self.assertEqual(gen.declared_license(self.root / "nested")[0], "Apache-2.0")
+
+    def test_no_declaration_and_no_file_is_the_only_road_to_the_default(self):
+        self._skill("ours")
+        rc, out = self._run()
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(json.loads((self.root / "ours" / "skill.json")
+                                    .read_text(encoding="utf-8"))["license"], "MIT")
+
+    def test_noassertion_is_reported_on_every_run(self):
+        self._skill("unresolved", "license: NOASSERTION\n")
+        rc, out = self._run()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("[NOASSERTION] unresolved", out)
+        self.assertEqual(json.loads((self.root / "unresolved" / "skill.json")
+                                    .read_text(encoding="utf-8"))["license"], "NOASSERTION")
+
+
+class TestProvenanceMarkersAreWide(unittest.TestCase):
+    """Eight manifests claiming this repo's MIT over Cloudflare-authored material were
+    invisible to the report whose whole job was to see them, because every one of them
+    says where it came from under a `## Retrieval Sources` heading and the detector
+    looked for a `Source:` line."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="test-prov-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def _skill(self, body, readme=None):
+        d = self.tmp / "s"
+        if d.exists():
+            shutil.rmtree(d)
+        d.mkdir()
+        (d / "SKILL.md").write_text(body, encoding="utf-8")
+        if readme:
+            (d / "README.md").write_text(readme, encoding="utf-8")
+        return d
+
+    def _found(self, body, readme=None):
+        return gen.upstream_source(self._skill(body, readme))
+
+    def test_the_prose_conventions_that_were_missed(self):
+        for line in ("Ported from upstream/project.", "Forked from upstream/project.",
+                     "Inspired by upstream/project.", "Vendored from upstream/project.",
+                     "Original: upstream/project", "Credits: upstream/project",
+                     "Sources: upstream/project", "Adapted from upstream/project",
+                     "Based on upstream/project"):
+            self.assertIsNotNone(self._found(f"---\nname: s\ndescription: d\n---\n\n{line}\n"),
+                                 f"missed: {line}")
+
+    def test_a_retrieval_sources_heading_with_a_url(self):
+        body = ("---\nname: s\ndescription: d\n---\n\n# S\n\n## Retrieval Sources\n\n"
+                "| Source | How to retrieve |\n|---|---|\n"
+                "| Docs | https://developers.example.com/agents/ |\n")
+        found = self._found(body)
+        self.assertIsNotNone(found, "the eight Cloudflare skills say it exactly this way")
+        self.assertIn("https://developers.example.com/agents/", found)
+
+    def test_a_source_column_under_an_unrelated_heading_is_not_provenance(self):
+        # A skill that triages an inbox tabulates its RUNTIME sources. Reporting those
+        # as upstream material buries the report that has to stay readable to be read.
+        body = ("---\nname: s\ndescription: d\n---\n\n# S\n\n## Pipeline\n\n"
+                "| Source | Fetch endpoint |\n|---|---|\n| Gmail | messages.list |\n")
+        self.assertIsNone(self._found(body))
+
+    def test_provenance_in_a_sibling_readme(self):
+        self.assertIsNotNone(self._found(
+            "---\nname: s\ndescription: d\n---\n\n# S\n",
+            readme="# S\n\nAdapted from upstream/project.\n"))
+
+    def test_an_author_line_plus_a_third_party_copyright(self):
+        self.assertIsNotNone(self._found(
+            "---\nname: s\ndescription: d\n---\n\n# S\n\n"
+            "Author: A. N. Other\n\nCopyright (c) 2026 Other Corp\n"))
+
+    def test_a_block_scalar_origin_is_parsed_not_grepped(self):
+        # The prose regex ran over raw YAML, so `origin: >-` would hand back ">-" as the
+        # source and a list "- https://...". The 27 skills that declare one of these keys
+        # all write a plain scalar, so the regex was right by luck, not by reading.
+        found = self._found("---\nname: s\ndescription: d\nmetadata:\n"
+                            "  origin: >-\n    https://example.com/upstream\n---\n")
+        self.assertEqual(found, "https://example.com/upstream")
+
+    def test_a_list_origin_is_parsed(self):
+        found = self._found("---\nname: s\ndescription: d\nmetadata:\n"
+                            "  origin:\n    - https://example.com/a\n"
+                            "    - https://example.com/b\n---\n")
+        self.assertIn("https://example.com/a", found)
+        self.assertNotIn("- https", found)
+
+    def test_a_source_line_inside_a_code_fence_is_a_template_not_a_claim(self):
+        body = ("---\nname: s\ndescription: d\n---\n\n# S\n\n```bash\n"
+                "# Source: /etc/profile\nsource /etc/profile\n```\n")
+        self.assertIsNone(self._found(body))
+
+    def test_a_cross_reference_is_not_a_source(self):
+        body = ("---\nname: s\ndescription: d\n---\n\n# S\n\n"
+                "Based on Section 2.7.2 (445 active SPs observed in 1 hour):\n")
+        self.assertIsNone(self._found(body))
+
+    def test_a_repo_key_line_is_the_header_a_tool_skill_writes(self):
+        # Three skills in this repo carry this and nothing else: a `**Repo**:` line
+        # under the title with that tool's own license beside it. `agent-browser` says
+        # Apache 2.0 in its prose while its manifest says MIT, and nothing saw it.
+        for line in ("**Repo**: https://github.com/upstream/project",
+                     "Repo: https://github.com/upstream/project · MIT",
+                     "Repository: https://github.com/upstream/project"):
+            found = self._found(f"---\nname: s\ndescription: d\n---\n\n# S\n\n{line}\n")
+            self.assertIsNotNone(found, f"missed: {line}")
+            self.assertIn("upstream/project", found)
+
+    def test_a_repo_line_with_no_external_url_is_not_a_claim(self):
+        # Without the URL this marker matches every example command and every local
+        # path that happens to say "repo", and it buries the report.
+        for line in ("Repo: the arm's own checkout", "**Repo**: ./vendor/thing"):
+            self.assertIsNone(self._found(
+                f"---\nname: s\ndescription: d\n---\n\n# S\n\n{line}\n"), f"fired on: {line}")
+
+
+class TestTheShippedManifestsMatchWhatTheGeneratorDerives(unittest.TestCase):
+    """The corpus itself. Every shipped manifest must be the one the generator would
+    write today, and where the generator refuses, the value standing there may be
+    anything a human decided EXCEPT the repo default."""
+
+    def test_every_manifest_agrees_with_the_generator(self):
+        default = gen.repo_default_license(BRAIN)
+        self.assertIsNotNone(default, "the repo's own license could not be established, "
+                                      "so every comparison below is against nothing")
+        offenders = []
+        for manifest in sorted((BRAIN / "skills").glob("*/skill.json")):
+            shipped = json.loads(manifest.read_text(encoding="utf-8"))["license"]
+            derived, problem = gen.describe(manifest.parent, default)
+            if derived is None:
+                if shipped == default:
+                    offenders.append(f"{manifest.parent.name} claims the repo default "
+                                     f"{shipped} while {problem}")
+            elif derived["license"] != shipped:
+                offenders.append(f"{manifest.parent.name} ships {shipped}, the generator "
+                                 f"derives {derived['license']}")
+        self.assertEqual(offenders, [])
+
+    def test_the_third_party_skills_this_repo_decided_no_longer_claim_its_terms(self):
+        # The thirteen this cycle answered, plus the seven gsap skills. Each carries
+        # its upstream's own license id, and where the upstream ships a license file
+        # that file travels with the material as that license requires.
+        expected = {
+            **{n: "Apache-2.0" for n in ("agents-sdk", "cloudflare",
+                                         "cloudflare-email-service", "durable-objects",
+                                         "web-perf", "workers-best-practices",
+                                         "wrangler")},
+            **{n: "MIT" for n in ("gsap-core", "gsap-frameworks", "gsap-performance",
+                                  "gsap-plugins", "gsap-scrolltrigger", "gsap-timeline",
+                                  "gsap-utils")},
+            **{n: "proprietary" for n in ("figma", "figma-implement-design",
+                                          "figma-use")},
+            **{n: "NOASSERTION" for n in ("sandbox-sdk", "orchestrated-planning",
+                                          "progressive-code-exploration",
+                                          "knowledge-corpus", "project-timeline-report",
+                                          "session-memory-search")},
+        }
+        wrong = []
+        for name, want in sorted(expected.items()):
+            mf = BRAIN / "skills" / name / "skill.json"
+            got = json.loads(mf.read_text(encoding="utf-8"))["license"]
+            if got != want:
+                wrong.append(f"{name} ships {got}, should ship {want}")
+        self.assertEqual(wrong, [])
+
+    def test_the_licenses_those_skills_must_carry_are_actually_there(self):
+        # Apache-2.0 and MIT both condition the grant on the license text travelling
+        # with the material. A manifest field saying "Apache-2.0" with no license file
+        # beside it is a claim, not compliance.
+        missing = []
+        for name in ("agents-sdk", "cloudflare", "cloudflare-email-service",
+                     "durable-objects", "web-perf", "workers-best-practices", "wrangler",
+                     "gsap-core", "gsap-frameworks", "gsap-performance", "gsap-plugins",
+                     "gsap-scrolltrigger", "gsap-timeline", "gsap-utils"):
+            d = BRAIN / "skills" / name
+            derived, problem = gen.resolve_license(d)
+            shipped = json.loads((d / "skill.json").read_text(encoding="utf-8"))["license"]
+            if derived != shipped:
+                missing.append(f"{name}: manifest says {shipped}, its own license file "
+                               f"says {derived or problem}")
+            if not gen.upstream_source(d):
+                missing.append(f"{name}: no provenance line names where it came from")
+        self.assertEqual(missing, [])
+
+    def test_every_skill_that_names_an_external_upstream_is_visible_in_the_report(self):
+        # Not a verdict on any of them. The generator prints this class on every run
+        # precisely because whether this repo's terms may speak for someone else's
+        # material is a human's call; what may NOT happen is the question going unasked.
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            gen.main(["--root", str(BRAIN / "skills")])
+        out = buf.getvalue()
+        unlisted = []
+        for d in sorted((BRAIN / "skills").iterdir()):
+            if not d.is_dir() or not (d / "SKILL.md").is_file():
+                continue
+            src = gen.upstream_source(d)
+            if not src or gen.license_entries(d):
+                continue
+            if not re.search(r"https?://", src):
+                continue
+            if f"] {d.name}:" not in out:
+                unlisted.append(d.name)
+        self.assertEqual(unlisted, [], "an external upstream that no report names is "
+                                       "the invisibility this exists to end")
 
 
 if __name__ == "__main__":

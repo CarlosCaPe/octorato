@@ -52,6 +52,95 @@ vendor dir); this script only knows the paths it was handed.
 validators do not enforce, and where it is enforced `javascript:alert(1)` is a well-formed
 URI that passes it.
 
+## How `license` is decided, and the three ways it used to be wrong
+
+A skill's license comes from four places, in this order, and only the last of them is a
+default:
+
+1. the skill's own license file, when its terms are recognized;
+2. its front-matter `license:`, when it declares one and ships no license file;
+3. nothing at all, reported by name, when the two disagree or the file cannot be read;
+4. the repo default, and only when the skill declares nothing and carries no license
+   file under any name this generator looks for.
+
+Three roads to a silent false claim ran through that list. Two are closed and one is a
+standing residual, stated here rather than left to be found:
+
+* **Front-matter `license:` was written and never read.** Eight skills declared one;
+  the generator ignored the field and wrote the repo default. A skill saying
+  `license: Apache-2.0` therefore published MIT, under this repo's copyright, over
+  someone else's material. CLOSED: the declaration is compared against the license file
+  and a disagreement is a refusal, and with no license file the declaration is honoured
+  instead of overwritten.
+* **Only MIT was a whole-document match.** The commit that introduced whole-document
+  matching said "a license is recognized whole, or it is not recognized", and that was
+  true of one recognizer out of six. Apache-2.0 with a Commons Clause appended,
+  Apache-2.0 under the heading "This software is NOT licensed under the terms below",
+  GPL-3 with a commercial restriction added, BSD-4-Clause, BSD-3-Clause-Clear and a
+  multi-license notices file were each answered with a single clean SPDX id. CLOSED for
+  prepended, appended and clause-count changes: every recognizer now anchors at both
+  ends of the document and refuses text carrying terms outside them.
+  **RESIDUAL:** only MIT and BSD-3-Clause are matched word for word. Apache-2.0,
+  GPL-3.0, AGPL-3.0 and MPL-2.0 are checked section by section between their anchors, so
+  a clause rewritten in the middle of a 200-line license with the section headings left
+  in place is not detected.
+* **The filename test decides "absent", and absent decides the default.** A name it
+  does not recognize is not "no license here", it is "not looked for", and both are
+  written into the manifest as this repo's own terms.
+
+  The extension half used to be an allow-list, and that is the wrong polarity for this
+  decision: missing a member costs a silent false legal claim, including one costs a
+  refusal, and a refusal is a human being asked. It is a deny-list now (source code,
+  structured data, images, archives, binaries), so a name whose words say license is
+  read unless its bytes are code. `LICENSE.pdf` is deliberately NOT excluded: it holds
+  terms nobody here can read, and the honest answer to that is the refusal the reader
+  already raises, not silent absence. CLOSED, with the measured enumeration of real
+  names on a developer machine written above `_LICENSE_STEMS` in the generator, counts
+  included, so the claim can be checked without reading the code. The previous revision
+  covered `COPYING.LESSER` (44 copies) and missed `COPYING.LIB` (195), which is the
+  same failure one layer down: closing one member of a class and calling it closed.
+
+  **RESIDUAL:** the STEM half is still a list (`license`, `licence`, `copying`,
+  `unlicense`, `copyright`, `licenseref`, plurals and version suffixes of each). A
+  license named `TERMS.md`, `EULA.txt` or `Artistic` carries none of those words and is
+  still read as absent. Notices files (`LICENSE-3RD-PARTY`) are excluded on purpose:
+  they list what OTHER people's code is under, and reading one as the package's own
+  terms is the mirror of the same bug.
+
+### What a refusal says
+
+A refusal names the word that differs, quoted with the line it sits on, because a
+refusal that misdiagnoses sends whoever fixes it to read the wrong sentence. The
+recognizer was run over every license-named file this machine carries under `$HOME`,
+`/usr/lib/python3` and `/usr/share/doc` (17,841 files): 7,848 resolve to MIT, 1,699 to
+Apache-2.0, 859 to BSD-3-Clause, 211 to GPL-3.0, 99 to MPL-2.0, 5 to AGPL-3.0. Of the
+9,245 files carrying MIT's opening sentence, 84% resolve to MIT; what does not is
+dominated by documents that genuinely are not one plain MIT license (Debian `copyright`
+manifests, the X11 and Unicode variants, which differ in the grant rather than in the
+typography, and files carrying two licenses at once).
+
+Before the comparison ran over words, a curled quote was enough to refuse a file AND to
+misname the cause: a family of packages that writes `'Software'` with apostrophes was
+told its "grant sentence is not MIT's". Two other shapes the same run measures: 190
+BSD-3-Clause files carry a `BSD 3-Clause License` title line above their text, and 117
+Apache-2.0 files stop at the end of clause 9 with no `END OF TERMS AND CONDITIONS`.
+Both are whole licenses, and an anchor that did not allow for them would refuse 307
+correct files.
+
+Typography is not terms. The comparison runs over words, so quote glyphs, emphasis
+markers, comment fences, line wrapping, rst underlines and intra-word hyphens cannot
+decide whether a license is recognized. What may sit AROUND a license (a title, a
+copyright notice and its holder continuations, an SPDX tag, a signature block, a bare
+URL, a horizontal rule) is judged only once the license body has been located; nothing
+inside that body is ever dropped.
+
+### `NOASSERTION`
+
+Where the evidence names two licenses and settles on neither, the manifest carries
+SPDX's own `NOASSERTION` and the generator prints every skill that does, on every run.
+It is not a license and it is not a default: it is the absence of a claim, kept visible
+so the open question keeps being asked.
+
 ## Nothing reads `license` yet
 
 No code in this repo consumes the `license` field. `octo_pkg` never mentions it (`grep -in

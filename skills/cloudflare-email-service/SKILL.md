@@ -1,6 +1,9 @@
 ---
 name: cloudflare-email-service
 description: "Send and receive transactional email with Cloudflare Email Service (Sending plus Routing), through a Workers binding or REST. Covers deliverability, SPF, DKIM, DMARC and wrangler setup."
+license: Apache-2.0
+metadata:
+  origin: "https://github.com/cloudflare/skills (Apache-2.0). Installed by wrangler on first run and committed here as 6c78520 on 2026-05-23; upstream ships no NOTICE file, and its LICENSE appendix carries the unfilled \"[name of copyright owner]\" placeholder, so no copyright holder string is asserted here that was not read from a file."
 ---
 
 # Cloudflare Email Service

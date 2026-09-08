@@ -8,11 +8,13 @@ manifest so `octo pkg` can reason about identity, vintage and terms, and hand-wr
 What it derives:
   name         front-matter `name`, else the directory slug
   version      1.0.0 (the first manifest of an existing skill is its 1.0.0)
-  license      the skill's own LICENSE when its terms are recognized, else the repo
-               default when the skill has NO license file at all. Anything else that
-               is present is reported and never defaulted: unrecognized terms, terms
-               the bytes will not decode as, a name that holds no readable regular
-               file, and two license files that disagree.
+  license      the skill's own LICENSE when its terms are recognized; else the
+               skill's own front-matter `license:` when it declares one; else the repo
+               default, and ONLY when the skill declares nothing and carries no license
+               file at all. Anything else present is reported and never defaulted:
+               unrecognized terms, terms the bytes will not decode as, a name that
+               holds no readable regular file, two license files that disagree, and a
+               front-matter declaration that contradicts the license file.
   description  front-matter `description`, else `metadata.short-description`,
                else the first markdown heading
   kind         skill
@@ -30,9 +32,31 @@ describe one of them writes NONE and exits 1. Writing inside the loop left the m
 the run had already reached on disk while the report said nothing was written.
 
 It also prints a report, never a refusal, for every skill that names an upstream source
-and carries no license file. Those take the repo default and the corpus check has no
-license file to compare against, so the class is invisible unless something names it.
-Whether this repo's terms may speak for someone else's material is a human's call.
+and carries no license file, and for every skill that asserts no license at all
+(SPDX NOASSERTION). Those are the classes the corpus check cannot see, because there is
+no license file to compare against; whether this repo's terms may speak for someone
+else's material is a human's call, and the report exists so the question is asked.
+
+Three ways a wrong license used to be written in silence, and where each stands now:
+
+  * The license-name test DECIDES "absent", and absent decides the repo default. A name
+    it does not recognize is not "no license here", it is "not looked for", and both
+    were written into the manifest as this repo's own terms. The EXTENSION half is no
+    longer an allow-list: a name whose words say license is read unless its extension
+    says the bytes are code or a binary, so a shape nobody enumerated ends in a refusal
+    rather than in a silent default. The STEM half is still a list, and that is the
+    RESIDUAL: a license named `TERMS.md` or `EULA.txt` is still read as absent. The
+    measured enumeration of the class, with real counts, sits above `_LICENSE_STEMS`.
+  * Only MIT and BSD-3-Clause are matched WORD FOR WORD. Apache-2.0, GPL-3.0,
+    AGPL-3.0 and MPL-2.0 are anchored at both ends and checked section by section, so
+    text spliced in the middle of a 200-line license with the section headings intact
+    is not detected. RESIDUAL, and measured: an inserted clause between two intact
+    Apache section headings still resolves to Apache-2.0. Prepended, appended and
+    clause-count changes are caught for all six, each against a verbatim published text.
+  * Front-matter `license:` was WRITTEN by eight skills and READ by nothing. Closed: it
+    is compared against the license file and a disagreement is refused, and where there
+    is no license file the declaration is honoured instead of being overwritten with
+    the repo default.
 
     python3 scripts/gen_skill_manifests.py --root skills --dry-run
     python3 scripts/gen_skill_manifests.py --root skills --write
@@ -58,166 +82,652 @@ BRAIN = Path(__file__).resolve().parent.parent
 SKIP_DIRS = {"vendor", "learned"}
 
 # --- license recognition -----------------------------------------------------
-# LICENSE file names we look for. Matched case-insensitively (`LICENSE.TXT` is the
-# same document as `LICENSE.txt`, and a case-sensitive lookup that silently misses it
-# reads exactly like "this skill has no LICENSE"), and by STEM rather than by an exact
-# list, so `COPYING` (the GNU convention) and `LICENSE-MIT` (the dual-licensed
-# convention) are seen. A name that says license and is not read is the same blind
-# spot as a name that is never looked for.
-_LICENSE_STEMS = {"license", "licence", "copying"}
-_LICENSE_EXTS = {"", "txt", "md", "rst"}
+# THE NAME TEST DECIDES "ABSENT", AND ABSENT DECIDES THE REPO DEFAULT. A name this
+# function does not recognize is not "no license found", it is "not looked for", and
+# both were written into the manifest as the same thing: this repo's own terms over
+# somebody else's material.
+#
+# It used to be two allow-lists, a stem list AND an extension list, and an allow-list
+# on the EXTENSION is the wrong polarity for that decision. Missing a member costs a
+# silent false legal claim; including one costs a refusal, which is a human being
+# asked. The two are not comparable, so the extension is a DENY-list now: a name whose
+# words say license holds terms unless its extension says the bytes are code or a
+# binary. The stems are still an allow-list (that is the residual, named below), but
+# they are matched per word part with a trailing version token stripped, so `COPYING`,
+# `COPYINGv3`, `COPYING3` and `LICENSES-en` are one shape rather than four entries
+# somebody has to think of.
+#
+# ENUMERATION OF THE CLASS, so the next reader can check the claim without reading the
+# code. Every license-ish name on this developer's disk with more than 40 copies
+# (`find $HOME /usr/lib/python3 /usr/share/doc -xdev`), and what happens to each:
+#
+#   8803 LICENSE          2087 COPYING        2041 copyright     1649 LICENSE.txt
+#   1284 licenses/        1099 license         777 LICENSE-MIT     723 LICENSE-APACHE
+#    609 LICENSE.md        270 LICENSE-MPL-2.0 241 LICENSE.TXT     195 COPYING.LIB
+#    187 LICENSE.BSD       178 LICENSE.APACHE  145 COPYRIGHT       113 LICENSES/
+#     64 COPYING.LGPL       63 COPYINGv2        63 COPYING.LESSERv3 58 LICENSES-en.txt
+#     58 COPYINGv3          53 COPYING.LESSERv2 44 COPYING.LESSER   44 COPYING.GPL
+#     41 license.terms
+#
+# All of them are recognized. The previous revision missed the last seven shapes
+# (`COPYING.LIB` at 195 copies, the GNU name for the LGPL, is four times commoner than
+# the `COPYING.LESSER` it did cover), which is the failure this file exists to stop:
+# closing one member of a class and calling the class closed, where the member left
+# open is the more common one.
+#
+# NOT license files, and each one measured against this test: `LICENSE-3RD-PARTY.txt`,
+# `THIRD-PARTY-NOTICES.txt`, `ThirdPartyNotices.txt` (they list OTHER people's terms),
+# `NOTICE` (Apache attribution, not a grant), `license.py`, `license.png`,
+# `licenseRule.json`, `licensing.md`.
+#
+# RESIDUAL, and it is the stem list: a license under a name carrying none of these
+# words (`TERMS.md`, `EULA.txt`, or `/usr/share/common-licenses/Artistic`, which is
+# named after its license and nothing else) is still read as absent and still takes
+# the repo default. Nothing here detects that; only reading every file in the
+# directory would, and this generator does not.
+_LICENSE_STEMS = {"license", "licence", "licenses", "licences", "licenseref",
+                  "licenceref", "copying", "unlicense", "unlicence", "copyright"}
+# A trailing version token on a stem: `COPYINGv3`, `COPYING3`, `LESSERv2`. It is
+# numbering, not a different document, so it is stripped before the stem is matched.
+_VERSION_TAIL = re.compile(r"v?\d+(?:[._]\d+)*$")
+# Extensions whose bytes are NOT a license document: source code, structured data,
+# images, archives and binaries. Deliberately absent: `.pdf`, `.rtf`, `.doc` and every
+# other unreadable DOCUMENT format, because a `LICENSE.pdf` holds terms nobody here can
+# read, and the honest answer to that is the refusal `read_license` already raises, not
+# the silent absence that an extension allow-list produced.
+_NON_DOCUMENT_EXTS = {
+    "py", "pyc", "pyi", "pyx", "js", "mjs", "cjs", "jsx", "ts", "tsx", "coffee",
+    "c", "h", "cc", "cpp", "cxx", "hpp", "cs", "go", "rs", "rb", "java", "kt", "kts",
+    "swift", "php", "pl", "pm", "lua", "sh", "bash", "zsh", "fish", "ps1", "psm1",
+    "bat", "cmd", "vb", "scala", "clj", "ex", "exs", "erl", "hs", "ml", "dart", "sql",
+    "json", "jsonc", "json5", "yaml", "yml", "toml", "ini", "cfg", "conf", "properties",
+    "xml", "xsd", "xsl", "plist", "lock", "csv", "tsv", "proto", "graphql", "mk",
+    "cmake", "gradle", "gemspec", "podspec", "cabal", "nix", "tf", "tfvars", "bzl",
+    "png", "jpg", "jpeg", "gif", "svg", "ico", "webp", "bmp", "tiff", "psd",
+    "zip", "gz", "bz2", "xz", "zst", "tar", "tgz", "7z", "rar", "whl", "deb", "rpm",
+    "exe", "dll", "so", "dylib", "o", "a", "bin", "wasm", "class", "jar", "pyd",
+    "woff", "woff2", "ttf", "otf", "eot", "mp3", "mp4", "wav", "ogg", "webm", "mov",
+}
+# Directories whose CONTENTS are license documents (the REUSE layout ships every
+# license the project uses under `LICENSES/`). A directory named `LICENSE` singular is
+# still an error: it is one document's name holding no document.
+_LICENSE_DIRS = {"licenses", "licences"}
+# Names that say license and are NOT this package's own terms. A notices file lists
+# what OTHER people's code in the tree is under; reading it as the skill's license is
+# the mirror of the bug above -- it stamps the package with a third party's id.
+_NOTICES_TOKENS = {"3rd", "third", "thirdparty", "3rdparty", "party", "parties",
+                   "notices", "vendor", "vendored", "bundled", "deps", "dependencies",
+                   "exceptions", "aggregate"}
 # Preference order only decides which file is REPORTED first. It never decides which
 # license governs: two license files that disagree are a question for a human.
 _LICENSE_ORDER = ("license.txt", "license", "license.md")
 
+_NAME_SPLIT = re.compile(r"[._\-\s]+")
+
+
+def _is_notices_name(name: str) -> bool:
+    """True for a file that lists OTHER people's terms rather than this package's."""
+    parts = set(_NAME_SPLIT.split(name.lower()))
+    return bool(parts & _NOTICES_TOKENS)
+
 
 def _is_license_name(name: str) -> bool:
+    """True when this file NAME claims to hold license terms for this package.
+
+    Matched on the name's word parts rather than on a stem prefix, so `LICENSE_APACHE`
+    and `APACHE-LICENSE` are seen as readily as `LICENSE-MIT`; the trailing version
+    token is stripped, so `COPYINGv3` is `COPYING`; and the extension only EXCLUDES,
+    so a shape nobody enumerated fails toward being read and refused rather than
+    toward being silently absent.
+    """
     low = name.lower()
-    stem, dot, ext = low.rpartition(".")
-    if not dot:
-        stem, ext = low, ""
-    return stem.split("-", 1)[0] in _LICENSE_STEMS and ext in _LICENSE_EXTS
+    if _is_notices_name(low):
+        return False
+    ext = low.rpartition(".")[2] if "." in low else ""
+    if ext in _NON_DOCUMENT_EXTS:
+        return False
+    return any(_VERSION_TAIL.sub("", part) in _LICENSE_STEMS
+               for part in _NAME_SPLIT.split(low))
 
 
-def _sentence_rx(text: str) -> str:
-    """Regex source for one literal license sentence: the exact words in the exact
-    order, indifferent to how the file wraps them and to the quote glyph an editor
-    may have curled."""
-    rx = r"\s+".join(re.escape(w) for w in text.split())
-    return rx.replace('"', "[\"“”]?")
+# --- words, not typography ----------------------------------------------------
+# A license is a sequence of WORDS. Everything else on the page -- the quote glyph an
+# editor curled, `*AS IS*` in emphasis markers, `'Software'` in single quotes,
+# `NON-INFRINGEMENT` with the hyphen, an rst underline, a C comment fence, where the
+# lines happen to wrap -- is typography, and typography is not terms. Comparing raw
+# text made this recognizer refuse real MIT files over a curled quote and, worse, name a
+# cause that was not the difference: a family of packages that writes `'Software'` with
+# apostrophes was told its "grant sentence is not MIT's". Over the 9,245 files on this
+# machine carrying MIT's opening sentence, 84% resolve to MIT once words rather than
+# glyphs are compared. A refusal that misdiagnoses sends whoever fixes it to read the
+# wrong sentence, so the comparison runs over words and the refusal names the word that
+# actually differs.
+_TRANSLATE = str.maketrans({
+    "‘": "'", "’": "'", "‚": "'", "‛": "'",
+    "“": '"', "”": '"', "„": '"', "‟": '"',
+    "«": '"', "»": '"', "′": "'", "″": '"',
+    " ": " ", " ": " ", " ": " ", "﻿": "",
+    "­": "", "‐": "-", "‑": "-", "‒": "-", "–": "-",
+    "—": "-", "―": "-", "−": "-",
+})
+# A comment fence at the edge of a line. A license shipped inside a source file (`//`,
+# `#`, ` * `, `<!-- -->`, a Python docstring) is the same license.
+_FENCE_HEAD = re.compile(r"^[ \t]*(?:/\*+|\*+/|//+|<!--|-->|\"\"\"|'''|;+|%+|--(?=\s)|\#+|\*(?!\S))[ \t]*")
+_FENCE_TAIL = re.compile(r"[ \t]*(?:\*/|-->|\"\"\"|''')[ \t]*$")
+_WORD = re.compile(r"[0-9]+|[a-z]+")
+_INTRA_HYPHEN = re.compile(r"(?<=[a-z])-(?=[a-z])")
 
 
-# The MIT license, in full. The recognizer is a WHOLE-DOCUMENT match, not three
-# prefix probes: a grant sentence anchored only through "obtaining a copy" accepts a
-# proprietary evaluation EULA that opens with those words, and an as-is clause matched
-# by prefix accepts an indemnity appended after it. Both of those ARE the false claim
-# this generator exists to refuse, so the document must be MIT from its first word to
-# its last, and any text spliced in or appended is a reason to report, not to relabel.
-_MIT_GRANT_TEXT = (
+def _unfence(line: str) -> str:
+    """One line with its comment/markup fence removed."""
+    prev = None
+    out = line.translate(_TRANSLATE)
+    while out != prev:
+        prev = out
+        out = _FENCE_TAIL.sub("", _FENCE_HEAD.sub("", out))
+    return out
+
+
+def words(s: str) -> list[str]:
+    """The words of a fragment: lowercased, punctuation dropped, intra-word hyphens
+    closed up so NON-INFRINGEMENT and NONINFRINGEMENT are the same word."""
+    return _WORD.findall(_INTRA_HYPHEN.sub("", s.translate(_TRANSLATE).lower()))
+
+
+# --- ornament: what may sit around a license without changing it ---------------
+# A title, a copyright line and its holder continuations, an SPDX tag, a horizontal
+# rule, an rst underline, a bare URL. None of these grants, restricts or disclaims
+# anything. Everything else around the text is text this generator will not vouch for
+# and reports by the line it found.
+# A line that is nothing but a license's NAME. Checked only OUTSIDE a located license
+# body, for the same reason copyright notices are: `Apache License` is this recognizer's
+# own start anchor for Apache-2.0, and `TERMS AND CONDITIONS` is a heading inside it, so
+# a title dropped unconditionally would delete the anchor it was meant to skip past.
+# The MIT-only version of this list refused the 190 BSD-3-Clause files on this machine
+# that carry a "BSD 3-Clause License" title above their text.
+_TITLE_WORDS = frozenset({
+    "the", "license", "licence", "licenses", "licensing", "agreement", "terms",
+    "conditions", "and", "or", "notice", "information", "text", "copyright",
+    "mit", "expat", "bsd", "clause", "apache", "gnu", "general", "public", "affero",
+    "lesser", "library", "mozilla", "isc", "zlib", "boost", "artistic", "unlicense",
+    "eclipse", "common", "creative", "commons", "python", "openssl", "software",
+    "free", "open", "source", "version", "v", "modified", "new", "simplified",
+    "revised", "clear", "0", "1", "2", "3", "4", "5", "10", "11", "20", "21", "30",
+})
+
+
+def _is_title_line(ws: list[str]) -> bool:
+    return bool(ws) and len(ws) <= 8 and all(w in _TITLE_WORDS for w in ws)
+
+
+_COPYRIGHT_LINE = re.compile(r"^\s*(?:copyright\b|\(c\)|©|&copy;)", re.I)
+_COPYRIGHT_EVIDENCE = re.compile(r"\(c\)|©|&copy;|\b(?:19|20)\d{2}\b|@|https?://", re.I)
+_COPYRIGHT_KEYWORD = re.compile(r"\bcopyright\b|\(c\)|©|&copy;", re.I)
+_ALL_RIGHTS = re.compile(r"^\s*all\s+rights\s+reserved\.?\s*$", re.I)
+_ALL_RIGHTS_TAIL = re.compile(r"\ball\s+rights\s+reserved\b\.?", re.I)
+_SPDX_LINE = re.compile(r"^\s*spdx-(?:license-identifier|filecopyrighttext)\s*:", re.I)
+_BARE_URL_LINE = re.compile(r"^\s*[<(\[]?\s*(?:https?://|www\.)\S+?\s*[>)\]]?\s*[.,]?\s*$", re.I)
+_ATTRIB_SIGNAL = re.compile(r"@|https?://|www\.|<[^>]*>|\b(?:19|20)\d{2}\b")
+_PARTICLES = frozenset({"van", "von", "de", "del", "der", "den", "di", "da", "dos",
+                        "du", "la", "le", "el", "of", "and", "the", "for", "inc",
+                        "llc", "ltd", "gmbh", "co", "corp", "et", "al", "bv", "ab"})
+# Words that mean the line is saying something about TERMS. Any line carrying one of
+# these is never ornament, however name-shaped it otherwise looks: "NON-COMMERCIAL USE
+# ONLY" is three capitalised words and it is not a holder.
+_TERMS_VOCAB = frozenset({
+    "license", "licensed", "licence", "licensing", "permission", "permitted",
+    "permit", "granted", "grant", "grants", "restriction", "restrictions",
+    "restricted", "prohibited", "prohibit", "forbidden", "warranty", "warranties",
+    "liability", "liable", "shall", "must", "may", "not", "no", "only", "use",
+    "using", "redistribution", "redistribute", "redistributed", "commercial",
+    "noncommercial", "modify", "modified", "copy", "copies", "distribute",
+    "distributed", "distribution", "sublicense", "sell", "terms", "conditions",
+    "condition", "agreement", "rights", "reserved", "patent", "patents",
+    "trademark", "trademarks", "disclaimer", "provided", "subject", "except",
+    "evaluation", "confidential", "proprietary", "additional", "clause",
+    "obligations", "royalty", "fee", "fees", "attribution", "notwithstanding",
+})
+
+
+def _name_like(raw: str, ws: list[str]) -> bool:
+    """A holder continuation, an indented holder list entry, a signature block.
+
+    Tight on purpose. It is vetoed outright by any word that talks about terms, and it
+    needs either an attribution signal (an email, a URL, an angle bracket, a year) or a
+    line made only of capitalised name words. "Redistribution prohibited." carries a
+    terms word; "  Alice Smith <a@example.com>" does not.
+    """
+    if not ws or len(ws) > 10:
+        return False
+    if any(w in _TERMS_VOCAB for w in ws):
+        return False
+    if _ATTRIB_SIGNAL.search(raw):
+        return True
+    alpha = re.findall(r"[A-Za-z][A-Za-z'’.-]*", raw)
+    return bool(alpha) and all(a[0].isupper() or a.lower() in _PARTICLES for a in alpha)
+
+
+def _is_copyright_notice(raw: str, ws: list[str]) -> bool:
+    """A copyright NOTICE: the keyword, no terms, short.
+
+    "Copyright Steven Loria and contributors" carries no year and is one. "Shellfloat
+    is copyright (c) 2020 by Michael Wood." puts the keyword mid-sentence and is one.
+    "Neither the name of the copyright holders, nor those of its contributors" is NOT
+    one: it is clause three of BSD-3-Clause, and it says "copyright" only in passing.
+    Which is why this test never runs on a line inside a license body -- see _Doc.
+    """
+    # The length cap is generous because the terms vocabulary is what actually does
+    # the work here, and because real notices are long: "Copyright (c) 1998-2000 Thai
+    # Open Source Software Center Ltd and Clark Cooper" is thirteen words and is the
+    # first line of expat's MIT file.
+    if not _COPYRIGHT_KEYWORD.search(raw) or len(ws) > 25:
+        return False
+    body = _ALL_RIGHTS_TAIL.sub("", raw)      # "All rights reserved" ends a notice
+    return not any(w in _TERMS_VOCAB for w in words(body))
+
+
+def _is_ornament(raw: str, ws: list[str]) -> bool:
+    """True when this line CANNOT carry terms, wherever it sits: blank, a rule, an rst
+    underline, a bare license title, "All rights reserved", an SPDX tag, a bare URL.
+
+    Every test here is anchored to the WHOLE line, and that is the point. A test that
+    merely looked for a keyword inside the line deleted clause three of BSD-3-Clause
+    from 285 files (it contains the word "copyright") and deleted the wrapped
+    "COPYRIGHT HOLDERS BE LIABLE ..." line out of the middle of MIT's own disclaimer,
+    and each time the file was then refused for not carrying the clause this function
+    had just removed. Nothing that could be terms is dropped from the document. What
+    may sit AROUND a license -- a copyright notice, a holder list, a signature -- is
+    judged separately, and only once the license body has been located: _Doc.
+    """
+    if not ws:                                   # blank, ---, ===, ***, an rst underline
+        return True
+    if _SPDX_LINE.match(raw.strip()) or _BARE_URL_LINE.match(raw):
+        return True
+    return bool(_ALL_RIGHTS.match(raw))
+
+
+class _Doc:
+    """A license document as a word stream that remembers where each word came from.
+
+    Ornament lines contribute no words, so a title, a copyright block or a trailing
+    rule cannot decide whether a license is recognized; every other line contributes
+    its words AND its line number, so a refusal can quote the line that broke it.
+    """
+
+    def __init__(self, text: str):
+        self.lines = [_unfence(ln) for ln in text.splitlines()]
+        self.words: list[str] = []
+        self.at: list[int] = []          # parallel: source line index per word
+        self.ornament: list[bool] = []   # per source line
+        for i, ln in enumerate(self.lines):
+            ws = words(ln)
+            orn = _is_ornament(ln, ws)
+            self.ornament.append(orn)
+            if orn:
+                continue
+            self.words.extend(ws)
+            self.at.extend([i] * len(ws))
+
+    def line_of(self, w_index: int) -> str:
+        if not 0 <= w_index < len(self.at):
+            return ""
+        return self.lines[self.at[w_index]].strip()
+
+    def outside_is_ornament(self, lo: int, hi: int) -> tuple[bool, str]:
+        """Is every line contributing a word outside [lo, hi) harmless?
+
+        This is where a copyright notice, a holder list and a signature block are
+        allowed, and it runs ONLY here: outside the located license body. Inside it,
+        every line is terms and none of them is ever dropped. (True, "") when the text
+        around the license says nothing about the terms; otherwise the offending line,
+        so the refusal can quote it back.
+
+        THE COST, measured and deliberate: a friendly lead-in is refused too. Sampling
+        real refusals on this machine, `archy` ("This software is released under the MIT
+        license:"), Node.js ("Node.js is licensed for use as follows:") and LLVM ("The
+        LLVM Project is under the Apache License v2.0 with LLVM Exceptions") are all
+        refused for a sentence above the license. Two of those three are harmless and
+        the third is a real exception that changes the terms, and NOTHING in the text
+        tells them apart from "This software is NOT licensed under the terms below".
+        So the answer is a refusal a human reads, not a rule that guesses. Widening this
+        to admit lead-in sentences reopens the negation hole; do not.
+        """
+        for i in list(range(0, lo)) + list(range(hi, len(self.words))):
+            raw = self.lines[self.at[i]]
+            ws = words(raw)
+            if not (_is_title_line(ws) or _is_copyright_notice(raw, ws)
+                    or _name_like(raw, ws)):
+                return False, f"{'above' if i < lo else 'after'} it, the line " \
+                              f"{raw.strip()[:70]!r}"
+        return True, ""
+
+
+class _Slot:
+    """A variable run of words inside a license template: the copyright holder, which
+    the SPDX MIT template marks as a variable in the disclaimer ("IN NO EVENT SHALL
+    <copyright holders> BE LIABLE") and which real files fill with a company name; or
+    the clause enumerator, which real BSD files write as `1.`, as `*`, or not at all.
+
+    A slot absorbs NAMES AND NUMBERING, never terms. Any word in the terms vocabulary
+    inside a slot is refused, so a variable-width hole in a template cannot be used to
+    smuggle a restriction into the middle of a license this generator then calls clean.
+    """
+
+    def __init__(self, lo: int, hi: int, what: str):
+        self.lo, self.hi, self.what = lo, hi, what
+
+    def admits(self, ws: list[str]) -> bool:
+        return not any(w in _TERMS_VOCAB for w in ws)
+
+
+def _template(*parts) -> list:
+    """A license template: literal word runs with variable slots between them."""
+    out = []
+    for part in parts:
+        out.append(part if isinstance(part, _Slot) else words(part))
+    return out
+
+
+def _match_template(doc: "_Doc", start: int, tmpl: list) -> tuple[int, str]:
+    """Match tmpl against doc.words from `start`.
+
+    Returns (end_index, "") on a match, or (-1, why) naming the FIRST word that
+    differs, in the license's words and in the file's, with the line it sits on.
+    """
+    # The FURTHEST the match ever got, and why it stopped there. A slot that simply
+    # said "no copyright holder here" hid every divergence downstream of it, so files
+    # were refused for a missing holder they plainly carried while the real difference
+    # sat later in the sentence and the slot ate the message. The deepest failure is
+    # the true one, so it is the one reported.
+    best = [-1, ""]
+
+    def fail(at: int, why: str) -> tuple[int, str]:
+        if at > best[0]:
+            best[0], best[1] = at, why
+        return -1, why
+
+    def walk(i: int, k: int) -> tuple[int, str]:
+        if k == len(tmpl):
+            return i, ""
+        part = tmpl[k]
+        if isinstance(part, _Slot):
+            for n in range(part.lo, part.hi + 1):
+                if i + n > len(doc.words):
+                    break
+                if not part.admits(doc.words[i:i + n]):
+                    return fail(i + n - 1,
+                                f"puts {' '.join(doc.words[i:i + n])[:60]!r} where the "
+                                f"license names only a {part.what}, so it states terms "
+                                f"the license does not")
+                end, why = walk(i + n, k + 1)
+                if end >= 0:
+                    return end, why
+            return fail(i, f"names no {part.what} where the license has one")
+        for j, w in enumerate(part):
+            if i + j >= len(doc.words):
+                return fail(i + j, f"stops after {len(doc.words) - start} words, before "
+                                   f"the license ends; the next word should be {w!r}")
+            if doc.words[i + j] != w:
+                got = doc.words[i + j]
+                where = doc.line_of(i + j)
+                return fail(i + j,
+                            f"differs from the license text: it should read {w!r} and "
+                            f"this file reads {got!r}, on the line {where[:70]!r}")
+        return walk(i + len(part), k + 1)
+
+    end, why = walk(start, 0)
+    return (end, "") if end >= 0 else (-1, best[1] or why)
+
+
+def _find(doc: "_Doc", seq: list[str], start: int = 0) -> int:
+    """Index of the first occurrence of a word sequence, or -1."""
+    n, m = len(doc.words), len(seq)
+    if not m:
+        return start
+    for i in range(start, n - m + 1):
+        if doc.words[i:i + m] == seq:
+            return i
+    return -1
+
+
+# --- MIT, word for word --------------------------------------------------------
+_MIT_TMPL = _template(
     'Permission is hereby granted, free of charge, to any person obtaining a copy '
     'of this software and associated documentation files (the "Software"), to deal '
     'in the Software without restriction, including without limitation the rights '
     'to use, copy, modify, merge, publish, distribute, sublicense, and/or sell '
     'copies of the Software, and to permit persons to whom the Software is '
-    'furnished to do so, subject to the following conditions:')
-_MIT_NOTICE_TEXT = (
+    'furnished to do so, subject to the following conditions: '
     'The above copyright notice and this permission notice shall be included in all '
-    'copies or substantial portions of the Software.')
-_MIT_DISCLAIMER_TEXT = (
+    'copies or substantial portions of the Software. '
     'THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR '
     'IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, '
-    'FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE '
-    'AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER '
+    'FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL',
+    _Slot(1, 12, "copyright holder"),
+    'BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER '
     'LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, '
     'OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE '
     'SOFTWARE.')
-
-_MIT_GRANT = re.compile(_sentence_rx(_MIT_GRANT_TEXT), re.I)
-_MIT_NOTICE = re.compile(_sentence_rx(_MIT_NOTICE_TEXT), re.I)
-_MIT_DISCLAIMER = re.compile(
-    _sentence_rx(_MIT_DISCLAIMER_TEXT).replace(
-        r"AUTHORS\s+OR\s+COPYRIGHT\s+HOLDERS", r"AUTHORS?\s+OR\s+COPYRIGHT\s+HOLDERS?"),
-    re.I)
-# The first six words of the grant. Present without the rest, they mean the document
-# borrows MIT's opening and then says something else, which is worth a different
-# message than "unrecognized": it tells whoever fixes it where to look.
-_MIT_OPENING = re.compile(r"Permission is hereby granted, free of charge", re.I)
-
-# Lines that may sit ABOVE the license body without changing what it says: a title,
-# a markdown heading, an SPDX tag line, a copyright line, a reservation-of-rights
-# line. Everything else above the grant is text this generator will not vouch for.
-_MIT_PREAMBLE = re.compile(
-    r"^\s*#*\s*(?:the\s+)?mit\s+license(?:\s*\(mit\))?\s*$"
-    r"|^\s*\W{0,4}\s*spdx-license-identifier:\s*[\w.+-]+\s*$"
-    r"|^\s*copyright\b"
-    r"|^\s*all rights reserved\.?\s*$", re.I)
-
-_SPDX_DECL = re.compile(r"^\s*\W{0,4}\s*SPDX-License-Identifier:\s*(.+?)\s*$", re.M | re.I)
-_BARE_SPDX = re.compile(r"[A-Za-z0-9.+-]+")
-
-_WS = re.compile(r"\s+")
-
-
-def _line(text: str) -> re.Pattern:
-    """A line that is nothing but this text. A `search` for a license title matches
-    'This software is NOT licensed under the Apache License, Version 2.0' and hands
-    back Apache-2.0; a line anchor does not."""
-    return re.compile(r"^[ \t]*" + _sentence_rx(text) + r"[ \t]*$", re.M | re.I)
-
-
-def _phrase(text: str) -> re.Pattern:
-    return re.compile(_sentence_rx(text), re.I)
-
-
-# A license is recognized by markers that only its real, whole text carries: the title
-# LINE plus something from deep inside the terms. A grant NOTICE that merely names a
-# license ("GNU GENERAL PUBLIC LICENSE Version 3 or any later version") is not that
-# license's text, and answering it with a single SPDX id both invents the text and
-# drops the "or later" the notice actually granted.
-_SPDX_TEXTS = [
-    ("AGPL-3.0-only", [_line("GNU AFFERO GENERAL PUBLIC LICENSE"),
-                       _line("Version 3, 19 November 2007"),
-                       _line("TERMS AND CONDITIONS")]),
-    ("GPL-3.0-only", [_line("GNU GENERAL PUBLIC LICENSE"),
-                      _line("Version 3, 29 June 2007"),
-                      _line("TERMS AND CONDITIONS")]),
-    ("Apache-2.0", [_line("Apache License"),
-                    _line("Version 2.0, January 2004"),
-                    _line("TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION")]),
-    ("MPL-2.0", [_line("Mozilla Public License Version 2.0"),
-                 _line("1. Definitions")]),
-    ("BSD-3-Clause", [_phrase("Redistribution and use in source and binary forms"),
-                      _phrase("Neither the name of"),
-                      _phrase("THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS")]),
-]
-
-
-def mit_body(text: str) -> str:
-    """The document with its title/SPDX/copyright preamble removed and its whitespace
-    normalized, so line wrapping cannot decide whether a license is recognized."""
-    lines = text.lstrip("\ufeff").splitlines()
-    i = 0
-    while i < len(lines) and (not lines[i].strip() or _MIT_PREAMBLE.match(lines[i])):
-        i += 1
-    return _WS.sub(" ", "\n".join(lines[i:])).strip()
+_MIT_OPENING = words("Permission is hereby granted, free of charge")
 
 
 def mit_diagnosis(text: str) -> tuple[bool, str]:
     """(is_verbatim_mit, why-not).
 
-    The reason is the point. A document that borrows MIT's opening and then reserves
-    every right is not "unrecognized terms": it is MIT plus something, and saying so
-    sends the reader to the sentence that differs instead of to the whole file.
+    The reason is the point, and it has to be the REAL reason. MIT is matched word for
+    word from its first word to its last: a spliced restriction, a Commons Clause, an
+    appended indemnity and a proprietary EULA that borrows MIT's opening are each
+    refused by the word where they diverge, quoted back with the line they sit on.
     An empty reason means the document has no MIT grant at all.
     """
-    body = mit_body(text)
-    m = _MIT_GRANT.match(body)
-    if not m:
-        if _MIT_GRANT.search(body):
-            return False, ("carries text above the MIT grant, so it is MIT with terms "
-                           "stacked on top of it, not MIT")
-        if _MIT_OPENING.search(body):
-            return False, ("opens with MIT's first words and then grants something "
-                           "else; its grant sentence is not MIT's")
+    doc = _Doc(text)
+    start = _find(doc, _MIT_OPENING)
+    if start < 0:
         return False, ""
-    rest = body[m.end():].lstrip()
-    m = _MIT_NOTICE.match(rest)
-    if not m:
-        return False, "has an MIT grant but not MIT's permission-notice clause"
-    rest = rest[m.end():].lstrip()
-    m = _MIT_DISCLAIMER.match(rest)
-    if not m:
-        return False, "has an MIT grant but not MIT's warranty disclaimer"
-    tail = rest[m.end():].strip()
-    if tail:
-        return False, (f"continues past the end of the MIT text with {tail[:60]!r}, so it "
-                       f"adds terms MIT does not carry")
+    end, why = _match_template(doc, start, _MIT_TMPL)
+    if end < 0:
+        return False, f"opens with MIT's first words but {why}"
+    clean, offender = doc.outside_is_ornament(start, end)
+    if not clean:
+        return False, (f"carries the MIT text and, {offender}, so it is MIT plus terms "
+                       f"MIT does not carry")
     return True, ""
 
 
 def is_verbatim_mit(text: str) -> bool:
     """True when the document IS the MIT license, header line or not, end to end."""
     return mit_diagnosis(text)[0]
+
+
+# --- the other recognizers, anchored the same way -------------------------------
+# MIT and BSD-3-Clause are short enough to hold word for word. The four long licenses
+# are anchored at BOTH ENDS instead: the document must OPEN with the license's own
+# title and END with its own last sentence, every numbered section must appear in
+# order, and any line carrying terms outside those anchors is a refusal. That is what
+# catches the appended Commons Clause, the appended ADDITIONAL TERMS block, the
+# "This software is NOT licensed under the terms below" heading and a notices file
+# holding several licenses at once -- every one of which the previous `search`-based
+# matchers answered with a clean SPDX id.
+#
+# RESIDUAL, stated because it is the honest half: BETWEEN those anchors the four long
+# licenses are checked by section markers, not word for word. A clause rewritten in
+# the middle of a 200-line Apache text with every section heading left in place is not
+# detected. MIT and BSD-3-Clause carry no such residual.
+class _Anchored:
+    """A long license: its title, the sections that must appear in order, and every
+    form its LAST line legitimately takes.
+
+    `ends` is a LIST because one license has several published shipping forms and a
+    single end phrase makes the other forms unrecognized: 117 Apache-2.0 files on this
+    machine (requests, and everything that vendored it) stop at the end of clause 9,
+    with no "END OF TERMS AND CONDITIONS" and no appendix, and they are whole copies of
+    the license. The LAST end form that occurs is the document's end; whatever follows
+    it has to be ornament.
+    """
+
+    def __init__(self, spdx: str, title: str, interior: list[str], ends: list[str]):
+        self.spdx = spdx
+        self.title = words(title)
+        self.interior = [words(s) for s in interior]
+        self.ends = [words(e) for e in ends]
+
+
+_BSD3_TMPL = _template(
+    'Redistribution and use in source and binary forms, with or without modification, '
+    'are permitted provided that the following conditions are met:',
+    _Slot(0, 2, "clause number"),
+    'Redistributions of source code must retain the above copyright notice, this '
+    'list of conditions and the following disclaimer.',
+    _Slot(0, 2, "clause number"),
+    'Redistributions in binary form must reproduce the above copyright notice, '
+    'this list of conditions and the following disclaimer in the documentation and/or '
+    'other materials provided with the distribution.',
+    _Slot(0, 2, "clause number"),
+    'Neither the name of',
+    _Slot(1, 20, "copyright holder"),
+    'may be used to endorse or promote products '
+    'derived from this software without specific prior written permission.'
+    ' THIS SOFTWARE IS PROVIDED BY',
+    _Slot(1, 14, "copyright holder"),
+    'AS IS AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE '
+    'IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE '
+    'DISCLAIMED. IN NO EVENT SHALL',
+    _Slot(1, 14, "copyright holder"),
+    'BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR '
+    'CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE '
+    'GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) '
+    'HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT '
+    'LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF '
+    'THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.')
+_BSD3_OPENING = words("Redistribution and use in source and binary forms")
+
+_ANCHORED = [
+    _Anchored("AGPL-3.0-only", "GNU AFFERO GENERAL PUBLIC LICENSE Version 3, 19 November 2007",
+              ["TERMS AND CONDITIONS", "0. Definitions.", "2. Basic Permissions.",
+               "13. Remote Network Interaction; Use with the GNU General Public License.",
+               "15. Disclaimer of Warranty.",
+               "17. Interpretation of Sections 15 and 16."],
+              ["END OF TERMS AND CONDITIONS",
+               "how to apply and follow the GNU AGPL, see"]),
+    _Anchored("GPL-3.0-only", "GNU GENERAL PUBLIC LICENSE Version 3, 29 June 2007",
+              ["TERMS AND CONDITIONS", "0. Definitions.", "2. Basic Permissions.",
+               "15. Disclaimer of Warranty.",
+               "17. Interpretation of Sections 15 and 16."],
+              ["END OF TERMS AND CONDITIONS",
+               "use the GNU Lesser General Public License instead of this License. "
+               "But first, please read"]),
+    _Anchored("Apache-2.0", "Apache License Version 2.0, January 2004",
+              ["TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION",
+               "1. Definitions.", "2. Grant of Copyright License.",
+               "3. Grant of Patent License.", "4. Redistribution.",
+               "5. Submission of Contributions.", "6. Trademarks.",
+               "7. Disclaimer of Warranty.", "8. Limitation of Liability.",
+               "9. Accepting Warranty or Additional Liability."],
+              ["of your accepting any such warranty or additional liability.",
+               "END OF TERMS AND CONDITIONS",
+               "See the License for the specific language governing permissions and "
+               "limitations under the License."]),
+    _Anchored("MPL-2.0", "Mozilla Public License Version 2.0",
+              ["1. Definitions", "2. License Grants and Conditions",
+               "3. Responsibilities", "6. Disclaimer of Warranty",
+               "10. Versions of the License"],
+              ["Exhibit A - Source Code Form License Notice",
+               "This Source Code Form is subject to the terms of the Mozilla Public "
+               "License, v. 2.0.",
+               "Incompatible With Secondary Licenses, as defined by the Mozilla Public "
+               "License, v. 2.0."]),
+]
+
+
+def _anchored_terms(doc: "_Doc") -> tuple[str | None, str]:
+    """(SPDX id, why-not) for the four long licenses and BSD-3-Clause."""
+    start = _find(doc, _BSD3_OPENING)
+    if start >= 0:
+        end, why = _match_template(doc, start, _BSD3_TMPL)
+        if end < 0:
+            return None, (f"opens with the BSD redistribution clause but {why}")
+        clean, offender = doc.outside_is_ornament(start, end)
+        if not clean:
+            return None, (f"carries the BSD-3-Clause text and, {offender}, so it is "
+                          f"BSD-3-Clause plus other terms")
+        return "BSD-3-Clause", ""
+
+    for spec in _ANCHORED:
+        title_at = _find(doc, spec.title)
+        if title_at < 0:
+            continue
+        lead_ok, lead_offender = doc.outside_is_ornament(title_at, len(doc.words))
+        if not lead_ok:
+            return None, (f"names the {spec.spdx} title and, {lead_offender}, so "
+                          f"something is said about these terms outside them")
+        cur = title_at + len(spec.title)
+        for marker in spec.interior:
+            nxt = _find(doc, marker, cur)
+            if nxt < 0:
+                return None, (f"opens as {spec.spdx} but does not carry "
+                              f"{' '.join(marker)[:60]!r} where that license does")
+            cur = nxt + len(marker)
+        end = -1
+        for form in spec.ends:
+            at = _find(doc, form, cur - len(spec.interior[-1]))
+            while at >= 0:                      # the LAST occurrence of this form
+                end = max(end, at + len(form))
+                at = _find(doc, form, at + 1)
+        if end < 0:
+            return None, (f"opens as {spec.spdx} but does not end the way any published "
+                          f"form of {spec.spdx} ends")
+        clean, offender = doc.outside_is_ornament(title_at, end)
+        if not clean:
+            return None, (f"carries the {spec.spdx} text and, {offender}, so it is "
+                          f"{spec.spdx} plus terms {spec.spdx} does not carry")
+        return spec.spdx, ""
+    return None, ""
+
+
+# --- SPDX tags -----------------------------------------------------------------
+# SPDX identifiers are CASE-INSENSITIVE by the spec, so `mit` is `MIT`. The `-only` /
+# `-or-later` suffix is not decoration either: GPL-3.0-or-later and GPL-3.0-only sit
+# over IDENTICAL text, and the tag is the ONLY carrier of the difference. Refusing
+# `GPL-3.0-or-later` for "contradicting" a GPL-3 body threw away the one fact the file
+# had to give. So the tag and the body are compared by FAMILY, and where they agree
+# the TAG wins, because it is the more specific of the two.
+_SPDX_CANON = {}
+for _id in ("MIT", "Apache-2.0", "BSD-3-Clause", "BSD-2-Clause", "ISC", "MPL-2.0",
+            "GPL-2.0-only", "GPL-2.0-or-later", "GPL-3.0-only", "GPL-3.0-or-later",
+            "LGPL-2.1-only", "LGPL-2.1-or-later", "LGPL-3.0-only", "LGPL-3.0-or-later",
+            "AGPL-3.0-only", "AGPL-3.0-or-later", "Unlicense", "CC0-1.0", "Zlib",
+            "BSL-1.0", "EPL-2.0", "PSF-2.0", "OFL-1.1", "Artistic-2.0"):
+    _SPDX_CANON[_id.lower()] = _id
+# Deprecated ids and their SPDX replacements. `GPL-3.0` was withdrawn precisely
+# because it did not say whether "or later" was granted; it is read as the `-only`
+# form its replacement names, never invented into `-or-later`.
+_SPDX_DEPRECATED = {
+    "gpl-2.0": "GPL-2.0-only", "gpl-3.0": "GPL-3.0-only", "agpl-3.0": "AGPL-3.0-only",
+    "lgpl-2.1": "LGPL-2.1-only", "lgpl-3.0": "LGPL-3.0-only",
+    "gpl-2.0+": "GPL-2.0-or-later", "gpl-3.0+": "GPL-3.0-or-later",
+    "agpl-3.0+": "AGPL-3.0-or-later", "lgpl-2.1+": "LGPL-2.1-or-later",
+    "lgpl-3.0+": "LGPL-3.0-or-later",
+}
+_SPDX_DECL = re.compile(r"^\s*\W{0,4}\s*SPDX-License-Identifier:\s*(.+?)\s*$", re.M | re.I)
+_BARE_SPDX = re.compile(r"[A-Za-z0-9.+-]+")
+
+
+def spdx_canon(expr: str) -> str:
+    """An SPDX id in its canonical spelling. Case is not information; a deprecated id
+    is answered with its published replacement."""
+    low = expr.strip().lower()
+    low = _SPDX_DEPRECATED.get(low, low)
+    return _SPDX_CANON.get(low.lower(), expr.strip())
+
+
+def spdx_family(ident: str) -> str:
+    """The license behind an id, without the `-only` / `-or-later` choice. Two ids in
+    one family sit over the same document text."""
+    low = spdx_canon(ident).lower()
+    for suffix in ("-or-later", "-only", "+"):
+        if low.endswith(suffix):
+            return low[: -len(suffix)]
+    return low
 
 
 def license_terms(text: str) -> tuple[str | None, str]:
@@ -227,15 +737,14 @@ def license_terms(text: str) -> tuple[str | None, str]:
     does not recognize is reported, never guessed, because a wrong license on a
     distributable package is a legal claim about someone else's work.
     """
-    ident = None
-    for candidate, markers in _SPDX_TEXTS:
-        if all(rx.search(text) for rx in markers):
-            ident = candidate
-            break
+    doc = _Doc(text)
+    ident, why = _anchored_terms(doc)
     if ident is None:
-        is_mit, why = mit_diagnosis(text)
+        is_mit, mit_why = mit_diagnosis(text)
         if is_mit:
             ident = "MIT"
+        elif mit_why:
+            return None, mit_why
         elif why:
             return None, why
 
@@ -246,11 +755,14 @@ def license_terms(text: str) -> tuple[str | None, str]:
             return None, (f"declares the license expression {expr!r}; a manifest carries "
                           f"ONE identifier, and choosing a side of an expression drops "
                           f"the option its author granted")
+        canon = spdx_canon(expr)
         if ident is None:
             return None, (f"declares SPDX {expr!r} but does not carry that license's "
                           f"text, so nothing here can be checked against the claim")
-        if expr != ident:
-            return None, (f"declares SPDX {expr!r} while its text is {ident}")
+        if spdx_family(canon) != spdx_family(ident):
+            return None, (f"declares SPDX {canon} while its text is {ident}")
+        # The tag is the more specific of the two: it is what carries "or later".
+        return canon, ""
     if ident is None:
         return None, "carries terms this generator does not recognize"
     return ident, ""
@@ -303,7 +815,8 @@ def read_license(p: Path) -> str:
 
 
 def license_entries(skill_dir: Path) -> list[Path]:
-    """Every entry whose NAME says license, regular file or not.
+    """Every entry whose NAME says license, regular file or not, plus the contents of
+    a REUSE `LICENSES/` directory.
 
     Not filtered by is_file(): a dangling symlink, a directory or a socket named
     LICENSE is a file that EXISTS and holds no readable terms. Dropping it here is how
@@ -313,11 +826,25 @@ def license_entries(skill_dir: Path) -> list[Path]:
         entries = list(skill_dir.iterdir())
     except OSError:
         return []
+    # `LICENSES/` is a container of license documents, not a document, and it is read
+    # by the loop below. It has to be dropped HERE or the plural stem that makes the
+    # name recognizable also makes the directory itself an entry holding no terms,
+    # which turns the whole REUSE layout into a refusal. A directory named `LICENSE`
+    # singular is still that refusal: that name promises one document and holds none.
+    found = [p for p in entries if _is_license_name(p.name)
+             and not (p.is_dir() and p.name.lower() in _LICENSE_DIRS)]
+    for d in entries:
+        if d.is_dir() and d.name.lower() in _LICENSE_DIRS:
+            try:
+                found.extend(p for p in d.iterdir() if not _is_notices_name(p.name))
+            except OSError:
+                continue
+
     def rank(p: Path) -> tuple[int, str]:
         low = p.name.lower()
         return (_LICENSE_ORDER.index(low) if low in _LICENSE_ORDER else len(_LICENSE_ORDER),
-                p.name)
-    return sorted((p for p in entries if _is_license_name(p.name)), key=rank)
+                str(p))
+    return sorted(found, key=rank)
 
 
 def license_file(skill_dir: Path) -> Path | None:
@@ -397,32 +924,184 @@ def slugify(name: str) -> str:
     return re.sub(r"-{2,}", "-", s)
 
 
-# Markers a skill uses to say its material came from somewhere else. Front matter
-# first (`metadata.source`), then the prose conventions ("Source: <url>", "Adapted
-# from <project>"). None of these is a license, which is exactly the point: a skill
-# that names an upstream and ships no LICENSE takes the repo default, and the corpus
-# check that compares declared-vs-derived has nothing to compare.
+# --- what a skill says about where it came from --------------------------------
+# Provenance markers. Front matter is PARSED AS YAML, not grepped: the old prose regex
+# ran over the raw front-matter text, so a block scalar `origin: >-` handed back the
+# source ">-" and a list handed back "- https://...". 27 skills in this repo declare one
+# of these keys and every one of them writes a plain scalar today, so the regex was
+# reading them correctly BY LUCK: the first author to reach for `>-` would have had the
+# YAML punctuation reported as their origin. A parser reads what the author wrote.
+_FM_SOURCE_KEYS = ("origin", "source", "sources", "upstream", "originally-from",
+                   "adapted-from", "ported-from", "forked-from", "vendored-from",
+                   "derived-from", "based-on", "credits", "attribution", "author",
+                   "authors", "original")
+# Prose conventions. The first pass looked for three of these and missed eight, which
+# is how manifests claiming this repo's MIT over Cloudflare-authored material were
+# invisible to a report whose whole job was to see them.
 _UPSTREAM_LINE = re.compile(
-    r"^[>\s*_-]*(?:source|upstream|origin)\s*:\s*(\S.*)$"
-    r"|^[>\s*_-]*(adapted from\s+\S.*)$"
-    r"|^[>\s*_-]*(?:based on|derived from)\s+(\S.*)$", re.I | re.M)
+    r"^[>\s*_#|-]*(?P<lead1>(?:sources?|upstream|origin|original|credits?|attribution)"
+    r"\s*:\s*)(?P<t1>\S.*)$"
+    r"|^[>\s*_#-]*(?P<lead2>(?:adapted|ported|forked|vendored|copied|taken|borrowed"
+    r"|derived)\s+from\s+)(?P<t2>\S.*)$"
+    r"|^[>\s*_#-]*(?P<lead3>(?:based on|inspired by|courtesy of|originally from)\s+)"
+    r"(?P<t3>\S.*)$", re.I | re.M)
+# `Repo: <url>` / `**Repo**: <url>`, the header a skill written ABOUT a third-party
+# tool puts under its title, usually with that tool's own license on the next line.
+# It is the one provenance convention in this corpus that no other marker sees: three
+# skills carry it and nothing else (`agent-browser` names Apache 2.0 in its prose while
+# its manifest says MIT), and adding it fires on those three and on no other skill of
+# the 233. An EXTERNAL URL is required in the target, which is what keeps the ten other
+# skills that mention a GitHub URL out: theirs are placeholders (`github.com/user/repo`
+# in a `render-deploy` example), catalogues the skill installs FROM, or a link list,
+# and none of them writes the URL as the value of a `Repo:` key.
+_REPO_LINE = re.compile(r"^[>\s*_#|-]*\*{0,2}(?P<lead>repo(?:sitory)?)\*{0,2}"
+                        r"\s*:\s*(?P<t>\S.*)$", re.I | re.M)
+# A `## Retrieval Sources` heading with external URLs under it is a provenance claim.
+# A `| Source |` COLUMN is not, and this is measured rather than assumed: all eight
+# `| Source |` rows in this repo are the HEADER row of a multi-column runtime table
+# (`| Source | How to retrieve | Use for |`), not one skill's key-and-value provenance
+# row. Reading them as upstream material would report `web.dev` as the origin of
+# `web-perf`, which is false, and would bury a report that has to stay readable to be
+# read. The heading is what separates the two, and it is what the Cloudflare skills
+# carry: `_source_section` finds them there, not in the table.
+_SOURCE_HEADING = re.compile(
+    r"^\s{0,3}#{1,6}\s*(?:retrieval\s+sources?|sources?|credits?|attribution|"
+    r"provenance|upstream|origin|acknowledge?ments?)\s*:?\s*$", re.I)
+_ANY_HEADING = re.compile(r"^\s{0,3}#{1,6}\s+\S")
+_EXTERNAL_URL = re.compile(r"https?://[^\s|)\]>,]+")
+# A cross-reference is not a provenance claim. "Based on Section 2.7.2 (445 active SPs
+# observed in 1 hour)" points at a paragraph of this same document, and reporting it as
+# an upstream source is noise in exactly the report that has to stay readable to be read.
+_NOT_A_SOURCE = re.compile(
+    r"^(?:section|chapter|table|figure|step|item|appendix|paragraph|line|"
+    r"the\s+above|the\s+below|this|that|these|those|it|them|which|what|our|my)\b",
+    re.I)
+_FENCE_LINE = re.compile(r"^\s*(?:```|~~~)")
+
+
+def _prose(text: str) -> str:
+    """The document with its front matter and its fenced code blocks removed.
+
+    A fence is a template, not a claim. `# Source: <recording webUrl>` inside a shell
+    block is an instruction to whoever runs it, and `Source: /etc/profile` is a path;
+    reading either as this skill's upstream invents provenance out of sample code.
+    """
+    lines = text.splitlines()
+    if lines and lines[0].startswith("---"):
+        for i in range(1, len(lines)):
+            if lines[i].startswith("---"):
+                lines = lines[i + 1:]
+                break
+    out, fenced = [], False
+    for ln in lines:
+        if _FENCE_LINE.match(ln):
+            fenced = not fenced
+            continue
+        out.append("" if fenced else ln)
+    return "\n".join(out)
+
+
+def _flatten(value) -> str:
+    """A front-matter value as one line, whatever YAML shape the author used."""
+    if isinstance(value, str):
+        return re.sub(r"\s+", " ", value.strip())
+    if isinstance(value, (list, tuple)):
+        return "; ".join(x for x in (_flatten(v) for v in value) if x)
+    if isinstance(value, dict):
+        return "; ".join(f"{k}: {_flatten(v)}" for k, v in value.items() if _flatten(v))
+    return "" if value is None else re.sub(r"\s+", " ", str(value).strip())
+
+
+def _source_section(body: str) -> str | None:
+    """The first external URL under a heading that says these are this skill's
+    sources. Returns None when the section names no URL outside this repo."""
+    lines = body.splitlines()
+    for i, ln in enumerate(lines):
+        if not _SOURCE_HEADING.match(ln):
+            continue
+        for nxt in lines[i + 1:]:
+            if _ANY_HEADING.match(nxt):
+                break
+            url = _EXTERNAL_URL.search(nxt)
+            if url:
+                return f"{ln.strip('# ').strip()}: {url.group(0)}"
+    return None
 
 
 def upstream_source(skill_dir: Path) -> str | None:
-    """What this skill says its material came from, or None."""
+    """What this skill says its material came from, or None.
+
+    Front matter (parsed), then prose outside code fences, then a provenance line in a
+    sibling README. A skill that borrowed its material almost always says so somewhere;
+    what it had stopped doing is saying so in the three places this function looked.
+    """
     text = _read(skill_dir / "SKILL.md")
     if not text:
         return None
     fm = frontmatter(text)
     meta = fm.get("metadata") if isinstance(fm.get("metadata"), dict) else {}
-    for value in (meta.get("source"), meta.get("upstream"), fm.get("source")):
-        if isinstance(value, str) and value.strip():
-            return re.sub(r"\s+", " ", value.strip())[:200]
-    m = _UPSTREAM_LINE.search(text)
-    if m:
-        found = next(g for g in m.groups() if g)
-        return re.sub(r"\s+", " ", found.strip())[:200]
+    for key in _FM_SOURCE_KEYS:
+        for holder in (meta, fm):
+            flat = _flatten(holder.get(key))
+            if flat:
+                return flat[:200]
+    for body in (_prose(text), _prose(_read(skill_dir / "README.md"))):
+        for m in _UPSTREAM_LINE.finditer(body):
+            g = m.groupdict()
+            lead = next((g[k] for k in ("lead1", "lead2", "lead3") if g.get(k)), "")
+            target = next((g[k] for k in ("t1", "t2", "t3") if g.get(k)), "")
+            target = re.sub(r"\s+", " ", target.strip()).strip("|").strip()
+            # The target, not the connector, decides. "Based on Section 2.7.2 (445
+            # active SPs observed in 1 hour)" points at a paragraph of this same
+            # document, and testing the whole phrase let "Based" answer for "Section".
+            if target and not _NOT_A_SOURCE.match(target):
+                return re.sub(r"\s+", " ", f"{lead}{target}").strip()[:200]
+        # `Repo: <external url>`. The URL is required: without it this marker matches
+        # every example command and every placeholder path that happens to say "repo".
+        for m in _REPO_LINE.finditer(body):
+            target = re.sub(r"\s+", " ", m.group("t").strip()).strip("|").strip()
+            if _EXTERNAL_URL.search(target):
+                return f"{m.group('lead')}: {target}"[:200]
+        found = _source_section(body)
+        if found:
+            return found[:200]
+    # An Author line plus a copyright naming someone else is a provenance claim too,
+    # written the way a vendored file writes it.
+    for body in (text, _read(skill_dir / "README.md")):
+        author = re.search(r"^[>\s*_#-]*authors?\s*:\s*(\S.*)$", _prose(body), re.I | re.M)
+        third = re.search(r"^[>\s*_#-]*(copyright\b.*)$", _prose(body), re.I | re.M)
+        if author and third:
+            return re.sub(r"\s+", " ", f"{author.group(1).strip()} / "
+                                        f"{third.group(1).strip()}")[:200]
     return None
+
+
+# --- what a skill says its own license is --------------------------------------
+def declared_license(skill_dir: Path) -> tuple[str | None, str | None]:
+    """(canonical SPDX id, raw value) from the skill's own front matter.
+
+    Eight skills WRITE this field (seven at the top level, one under `metadata`) and
+    nothing read it. All eight happen to declare MIT, which is also the repo default,
+    so nothing visibly diverged: the manifests were right by coincidence, not by
+    mechanism. The same code would have written MIT over a `license: Apache-2.0`
+    declaration, silently, over someone else's material, in a public repo. It is read
+    now. `(None, raw)` means the skill declared something that is not a bare SPDX id,
+    which is a claim that must be answered by a human rather than parsed into one.
+    """
+    text = _read(skill_dir / "SKILL.md")
+    if not text:
+        return None, None
+    fm = frontmatter(text)
+    meta = fm.get("metadata") if isinstance(fm.get("metadata"), dict) else {}
+    raw = None
+    for holder in (fm, meta):
+        value = holder.get("license") or holder.get("licence")
+        if isinstance(value, str) and value.strip():
+            raw = value.strip()
+            break
+    if raw is None:
+        return None, None
+    return (spdx_canon(raw) if _BARE_SPDX.fullmatch(raw) else None), raw
 
 
 def describe(skill_dir: Path, default_license: str) -> tuple[dict | None, str]:
@@ -452,6 +1131,19 @@ def describe(skill_dir: Path, default_license: str) -> tuple[dict | None, str]:
     lic, problem = resolve_license(skill_dir)
     if problem:
         return None, problem
+    declared, raw = declared_license(skill_dir)
+    if raw is not None and declared is None:
+        return None, (f"its front matter declares the license {raw!r}, which is not a "
+                      f"bare SPDX identifier, so what the manifest should carry is a "
+                      f"reading of that sentence and not a parse of it; {_HAND}")
+    if declared and lic and spdx_family(declared) != spdx_family(lic):
+        return None, (f"its front matter declares {declared} while its license file "
+                      f"says {lic}; a skill that contradicts its own license file is "
+                      f"not resolved by preferring one of them, {_HAND}")
+    # No license file and a declaration: the declaration is the claim, and it stands.
+    # Overwriting it with the repo default is how `license: Apache-2.0` became a
+    # published MIT claim over someone else's material without anyone deciding to.
+    lic = lic or declared
     manifest = {
         "kind": "skill",
         "name": name,
@@ -499,7 +1191,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     only = set(args.only or [])
     planned: list[tuple[Path, dict]] = []
-    skipped, problems, upstream = [], [], []
+    skipped, problems, upstream, unasserted = [], [], [], []
 
     # Two passes on purpose. Writing inside the loop made a failing run leave the
     # manifests it had already reached on disk, so the run reported "nothing was
@@ -515,6 +1207,8 @@ def main(argv: list[str] | None = None) -> int:
         src = upstream_source(skill_dir)
         if src and not license_entries(skill_dir):
             upstream.append((skill_dir.name, src))
+        if (declared_license(skill_dir)[0] or "").upper() == "NOASSERTION":
+            unasserted.append((skill_dir.name, src or "no source recorded"))
         target = skill_dir / "skill.json"
         if target.exists() and not args.force:
             skipped.append(skill_dir.name)
@@ -555,6 +1249,17 @@ def main(argv: list[str] | None = None) -> int:
               f"Nothing here is wrong by construction and nothing here was checked:")
         for name, src in upstream:
             print(f"  [upstream, no LICENSE] {name}: {src}")
+
+    # NOASSERTION is SPDX's own token for "the preparer has made no assertion", and it
+    # is the only honest value where the evidence names two licenses and settles on
+    # neither. It is printed on every run so it cannot quietly become the answer: an
+    # unanswered question that nothing repeats is an answered one.
+    if unasserted:
+        print(f"\n{len(unasserted)} skill(s) assert NO license (SPDX NOASSERTION). Each "
+              f"is third-party material whose terms this repo could not establish, and "
+              f"each is a question still open for a human:")
+        for name, src in unasserted:
+            print(f"  [NOASSERTION] {name}: {src}")
 
     return 1 if problems else 0
 

@@ -1,6 +1,9 @@
 ---
 name: sandbox-sdk
 description: Build sandboxed applications for secure code execution. Load when building AI code execution, code interpreters, CI/CD systems, interactive dev environments, or executing untrusted code. Covers Sandbox SDK lifecycle, commands, files, code interpreter, and preview URLs. Biases towards retrieval from Cloudflare docs over pre-trained knowledge.
+license: NOASSERTION
+metadata:
+  origin: "Cloudflare-authored, installed by wrangler in the same bundle committed as 6c78520 on 2026-05-23. This name is NOT present in https://github.com/cloudflare/skills, and GitHub reports NOASSERTION for https://github.com/cloudflare/sandbox-sdk, so which terms govern it is unestablished and nothing is claimed."
 ---
 
 # Cloudflare Sandbox SDK

@@ -2,6 +2,6 @@
   "kind": "skill",
   "name": "cloudflare-email-service",
   "version": "1.0.0",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "description": "Send and receive transactional email with Cloudflare Email Service (Sending plus Routing), through a Workers binding or REST. Covers deliverability, SPF, DKIM, DMARC and wrangler setup."
 }

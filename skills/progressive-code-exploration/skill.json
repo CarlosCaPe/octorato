@@ -2,6 +2,6 @@
   "kind": "skill",
   "name": "progressive-code-exploration",
   "version": "1.0.0",
-  "license": "MIT",
+  "license": "NOASSERTION",
   "description": "Token-optimized code exploration using index-first, fetch-on-demand principle. Reduces token consumption 4-8x vs reading full files. Use when exploring large codebases, navigating files over 100 lines, or when token budget matters."
 }

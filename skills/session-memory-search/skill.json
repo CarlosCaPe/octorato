@@ -2,6 +2,6 @@
   "kind": "skill",
   "name": "session-memory-search",
   "version": "1.0.0",
-  "license": "MIT",
+  "license": "NOASSERTION",
   "description": "Search past work across sessions using native tools (git log, grep, Lessons Learned). Use when user asks \"did we already solve this?\", \"how did we do X last time?\", \"what happened last week?\", or needs to recall work from previous sessions. No external dependencies required."
 }

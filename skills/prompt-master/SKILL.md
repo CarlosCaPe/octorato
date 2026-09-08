@@ -6,7 +6,8 @@ metadata:
   source: https://github.com/nidhinjs/prompt-master
   adopted: 2026-05-28
   origin: repo-deep-learn — 8.5K-star MIT skill; 13 templates A-M + 37 anti-patterns + tool-specific routing for Claude/GPT/o3/Cursor/Midjourney
-  license: "MIT (author: Nidhin J S — preserve attribution; do not strip)"
+  license: MIT
+  attribution: "Nidhin J S. MIT requires the copyright notice to travel with the material, so this attribution is preserved and not stripped."
   complementary_to: llm-system-prompt-engineering (shared PRIMACY/RECENCY insight; prompt-master = USER prompt generation, llm-system-prompt-engineering = SYSTEM prompt design for production chatbots)
 ---
 
