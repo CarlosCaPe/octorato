@@ -3001,6 +3001,66 @@ class TestQaCycle14(ArmFixture):
         self.assertIn("0.5", outcome["refused"], "and it says what it waited for")
         self.assertLess(waited, 5, f"asked for 0.5s, waited {waited:.1f}s")
 
+    @unittest.skipUnless(_fcntl_ok(), "no fcntl: the POSIX branch is not the one that runs here")
+    def test_lock_held_measures_its_bound_on_a_clock_that_cannot_step_back(self):
+        """A wall clock is not a stopwatch, and this waits with one.
+
+        Both branches computed the deadline with `time.time()`. An NTP correction
+        landing mid-wait steps it BACKWARDS, and then the poll compares against a
+        deadline an hour away: the caller that asked for 0.5s waits until the holder
+        lets go, and cmd_sync's whole-run budget is defeated by a clock rather than by
+        contention. The shim here is the real time module with one method replaced, so
+        the sleep and the monotonic clock under it are genuine, and the attempt runs in
+        a daemon thread for the same reason as the test above: a revert FAILS in ten
+        seconds instead of hanging the suite. Restoring the module in the cleanup is
+        also what lets a leaked thread finish, because its next poll then reads a real
+        clock that is already past a real deadline.
+        """
+        import fcntl, threading, time
+        self.brain.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        guard = self.brain.lock_path.with_name(self.brain.lock_path.name + ".lock")
+        holder = open(guard, "a+")
+        self.addCleanup(holder.close)
+        fcntl.flock(holder.fileno(), fcntl.LOCK_EX)
+
+        class ClockStepsBack:
+            """time, except that time() jumps an hour back after the first read."""
+            def __init__(self):
+                self.reads = 0
+
+            def time(self_):
+                self_.reads += 1
+                return time.time() - (3600 if self_.reads > 1 else 0)
+
+            def __getattr__(self_, k):
+                return getattr(time, k)      # monotonic and sleep stay real
+
+        shim = ClockStepsBack()
+        octo_pkg.time = shim
+        self.addCleanup(lambda: setattr(octo_pkg, "time", time))
+
+        outcome = {}
+
+        def attempt():
+            try:
+                with self.brain.lock_held(timeout=0.5):
+                    outcome["acquired"] = True
+            except octo_pkg.PkgError as e:
+                outcome["refused"] = str(e)
+
+        started = time.monotonic()
+        t = threading.Thread(target=attempt, daemon=True)
+        t.start()
+        t.join(10)
+        waited = time.monotonic() - started
+        self.assertFalse(t.is_alive(),
+                         "the clock stepped back an hour and lock_held(timeout=0.5) is "
+                         "still waiting: its bound is measured on a wall clock, so an "
+                         "NTP correction suspends it")
+        self.assertNotIn("acquired", outcome, "the lock was held by another fd")
+        self.assertIn("refused", outcome)
+        self.assertLess(waited, 5, f"asked for 0.5s, waited {waited:.1f}s")
+
 
 class TestQaCycle15(ArmFixture):
     """cmd_sync's two pre-fetch guards, and the run-level bound the lock never had.
@@ -3193,12 +3253,90 @@ class TestQaCycle15(ArmFixture):
         self.assertEqual(said.count("could not acquire"), 3)
         self.assertIn("0 restored", said)
 
+    @unittest.skipUnless(_fcntl_ok(), "no fcntl: the POSIX branch is not the one that runs here")
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_sync_spends_its_budget_on_waiting_and_not_on_fetching(self):
+        """The fifteenth instance of the pattern, inside the edit that fixed the
+        fourteenth.
+
+        The run bound was first written as an absolute deadline taken before the loop,
+        so EVERYTHING in the loop consumed it and the network fetches consume nearly
+        all of it, while the docstring promised three times over that "what is bounded
+        is the WAITING and only the waiting". QA cycle 16 measured it with NOTHING
+        holding the lock and a 1.5s fetch against a 2.0s budget: the acquires were
+        handed [0.484, 0.0, 0.0]. A run that waited for nothing arrived at a bare
+        non-blocking probe, and at the shipped 30s a fresh clone spends the whole
+        budget cloning and then refuses a package to any session holding the lock for
+        50ms, where the per-acquire shape would have waited and restored it.
+
+        The contended leg above cannot see this and neither reading is wrong there: it
+        holds the lock throughout, so the budget goes to waiting under BOTH semantics
+        and `asked[1:] == [0.0, 0.0]` is satisfied by both. This leg is the one where
+        they disagree, and it is the uncontended one. Nothing holds the lock and one
+        fetch alone outlasts the whole budget: waiting-only hands every acquire the
+        full budget and restores all three, an elapsed-time deadline hands out 0.0
+        from the first acquire on.
+        """
+        import contextlib, time
+        budget = 0.4
+        names = []
+        for i in range(3):
+            name, _ = self._install_signed("slow%d" % i)
+            self._edit_row(name, source=str(self.tmp / ("src-slow%d" % i)))
+            self._detach(name)
+            names.append(name)
+
+        real_fetch = octo_pkg.fetch_source
+
+        def slow_fetch(*a, **kw):
+            time.sleep(budget + 0.2)   # one fetch alone outlasts the whole budget
+            return real_fetch(*a, **kw)
+
+        octo_pkg.fetch_source = slow_fetch
+        self.addCleanup(lambda: setattr(octo_pkg, "fetch_source", real_fetch))
+
+        asked = []
+        real = octo_pkg.Brain.lock_held
+
+        @contextlib.contextmanager
+        def recording(self_, timeout=30.0):
+            asked.append(timeout)
+            with real(self_, timeout):
+                yield
+
+        octo_pkg.Brain.lock_held = recording
+        self.addCleanup(lambda: setattr(octo_pkg.Brain, "lock_held", real))
+        prior = octo_pkg.SYNC_LOCK_BUDGET
+        octo_pkg.SYNC_LOCK_BUDGET = budget
+        self.addCleanup(lambda: setattr(octo_pkg, "SYNC_LOCK_BUDGET", prior))
+
+        rc, said = self._sync()
+
+        self.assertEqual(len(asked), 3, "one acquire per absent package")
+        self.assertGreater(
+            min(asked), 0.9 * budget,
+            f"nothing held the lock, so this run waited for nothing, and its acquires "
+            f"were handed {asked} out of a {budget}s budget: the bound is over elapsed "
+            f"time and the fetches are spending it, not over the waiting the docstring "
+            f"says it bounds")
+        for name in names:
+            self.assertTrue(self.brain.vendor_path(name).exists(),
+                            "nothing held the lock: every package is restorable")
+        self.assertIn("3 restored", said)
+
     def test_the_identity_labels_are_in_the_order_the_identity_returns(self):
         """Using IDENTITY_FIELDS removed the LENGTH half of the drift risk, not the
         order half. cmd_lock's WARN zips the constant against the tuple, so reordering
-        the constant mis-names every field that moved and no test failed. Each field's
-        name is its own value here, so the identity of a row built from the constant
-        IS the constant when, and only when, the two agree in order.
+        the constant mis-names every field that moved. Each field's name is its own
+        value here, so the identity of a row built from the constant IS the constant
+        when, and only when, the two agree in order.
+
+        "and no test failed" is what this test was first written against, and QA cycle
+        16 measured that it is not true of EVERY reordering, so the claim is narrowed
+        to what was measured. Swapping `installed_at` with `tree_sha256` kills three
+        tests, two of which already failed at the parent commit for their own reasons.
+        The reordering that nothing caught is `kind` with `source`: it survives all 151
+        tests at the parent commit and dies only here.
         """
         self.assertEqual(
             octo_pkg.entry_identity({f: f for f in octo_pkg.IDENTITY_FIELDS}),

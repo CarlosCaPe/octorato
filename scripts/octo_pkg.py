@@ -326,6 +326,15 @@ class Brain:
         names. A caller that takes this lock in a LOOP has to carry its own deadline
         and hand each acquire what is left of it; cmd_sync now does, and its docstring
         carries the run-level number it measured.
+
+        The deadline is MONOTONIC. Both branches computed it with `time.time()`, which
+        an NTP correction can step backwards: a step back of an hour mid-wait leaves
+        the poll comparing against a wall-clock deadline that does not arrive for an
+        hour, so a caller that asked for 30s waits until the holder lets go and
+        cmd_sync's run budget is defeated from underneath by a clock rather than by
+        contention. QA cycle 16 raised it as a post-merge watch item and it is four
+        lines, so it is here instead. `time.monotonic()` cannot step, and the test
+        drives this with a clock that does.
         """
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
         guard = self.lock_path.with_name(self.lock_path.name + ".lock")
@@ -337,14 +346,14 @@ class Brain:
                 # No fcntl (Windows): fall back to an O_EXCL sentinel with a timeout,
                 # so the contract degrades in speed, never in correctness.
                 sentinel = Path(str(guard) + ".excl")
-                deadline = time.time() + timeout
+                deadline = time.monotonic() + timeout
                 while True:
                     try:
                         fd = os.open(str(sentinel), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
                         os.close(fd)
                         break
                     except FileExistsError:
-                        if time.time() > deadline:
+                        if time.monotonic() > deadline:
                             raise PkgError(f"could not acquire {sentinel} within {timeout}s")
                         time.sleep(0.05)
                 try:
@@ -352,7 +361,7 @@ class Brain:
                 finally:
                     sentinel.unlink(missing_ok=True)
                 return
-            deadline = time.time() + timeout
+            deadline = time.monotonic() + timeout
             while True:
                 try:
                     fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -360,7 +369,7 @@ class Brain:
                 except BlockingIOError:
                     # flock is per open-file-description, so this is contention with
                     # another RUN, not with this one: nothing in here nests lock_held.
-                    if time.time() > deadline:
+                    if time.monotonic() > deadline:
                         raise PkgError(f"could not acquire {guard} within {timeout}s; "
                                        f"another octo pkg run is holding it")
                     time.sleep(0.05)
@@ -2220,15 +2229,30 @@ def cmd_sync(brain: Brain) -> int:
     holding the lock for a clone") was a claim at a scope nothing imposed: QA measured
     three absent packages against a lock held throughout at 90.5s, and the 234 rows in
     this brain would be ~117 minutes of sequential 30-second waits on a fresh clone.
-    One deadline is computed before the loop now and every acquire is handed what is
-    left of it, so the bound is SYNC_LOCK_BUDGET seconds of WAITING for the lock per
-    RUN, whatever is holding it and however many packages are absent. Measured with a
-    second process holding a real flock: three absent packages against a lock held
-    throughout take 30.1s where the per-acquire shape took 90.5s, and the same fixture
-    with nothing holding the lock is 0.5s and three restores, because an acquire late
-    in a run that has spent nothing waiting is still handed the whole budget. The
-    fetches are the unbounded part and they are outside this, and outside the lock, so
-    what is bounded is the WAITING and only the waiting.
+    One budget is carried across the loop now and every acquire is handed what is left
+    of it, so the bound is SYNC_LOCK_BUDGET seconds of WAITING for the lock per RUN,
+    whatever is holding it and however many packages are absent. Measured with a second
+    process holding a real flock: three absent packages against a lock held throughout
+    take 30.1s where the per-acquire shape took 90.5s.
+
+    It is a BUDGET and not a DEADLINE, and that distinction is the whole of QA cycle
+    16's finding against the first version of this paragraph. That version was a
+    `time.monotonic() + SYNC_LOCK_BUDGET` computed before the loop, which is absolute
+    wall time from loop start, so everything in the loop spent it and the network
+    fetches spent nearly all of it while these sentences claimed three times over that
+    only the waiting was bounded. Measured with NOTHING holding the lock, three absent
+    packages, a 1.5s fetch and a 2.0s budget: the acquires were handed
+    [0.481, 0.0, 0.0] under the deadline and [2.0, 2.0, 1.999] under the budget. At
+    the shipped 30s that was a fresh clone spending its whole allowance on the first
+    minute of cloning and then meeting real contention with a bare non-blocking probe,
+    which is the case the timeout exists for, in a brain whose own session-isolation
+    rule makes a concurrent holder the designed state. Measured again with a session
+    holding the lock across the first acquire, same fixture: 2 restored and 1 skipped
+    under the deadline against 3 restored under the budget, for 0.5s more wall time.
+    What is charged is the interval between asking for the lock and holding it: the
+    copytree under it is not waiting, the fetches above it are not waiting, and with a
+    lock held throughout the run still ends at 30.1s (measured, 40s holder, shipped
+    budget) because there the whole budget IS waiting.
 
     What the bound costs, stated rather than left to be found: a run that spends its
     budget REFUSES the packages after it, where a per-acquire timeout would have
@@ -2246,9 +2270,33 @@ def cmd_sync(brain: Brain) -> int:
         print("packages: empty lock, nothing to sync")
         return 0
     restored, warned = 0, []
-    # ONE deadline for the whole run, handed out as the REMAINING budget below. See
-    # the paragraph on the run-level bound above for what this costs and why.
-    lock_deadline = time.monotonic() + SYNC_LOCK_BUDGET
+    # ONE budget for the whole run, and it is spent by WAITING only. See the paragraph
+    # on the run-level bound above for what this costs and why it is not a deadline.
+    lock_budget_left = SYNC_LOCK_BUDGET
+
+    @contextlib.contextmanager
+    def bounded_lock():
+        """lock_held, handed what is left of the run's WAIT budget, charging the wait.
+
+        A `time.monotonic() + SYNC_LOCK_BUDGET` deadline computed before the loop was
+        the first shape of this and it bounded the wrong thing, which is the finding
+        and the numbers in cmd_sync's docstring above. The charge lands at the moment
+        the lock is ACQUIRED, so the copytree under it is not waiting either; on a
+        refusal the whole elapsed time was waiting, and `acquired` is what keeps the
+        two from being charged twice.
+        """
+        nonlocal lock_budget_left
+        started = time.monotonic()
+        acquired = False
+        try:
+            with brain.lock_held(timeout=max(0.0, lock_budget_left)):
+                acquired = True
+                lock_budget_left -= time.monotonic() - started
+                yield
+        finally:
+            if not acquired:
+                lock_budget_left -= time.monotonic() - started
+
     for entry in list(lock["packages"]):
         name = str(entry.get("name") or "?")
         if lock_kind(entry) != "skill":
@@ -2290,7 +2338,7 @@ def cmd_sync(brain: Brain) -> int:
                 if manifest.get("name") != name:
                     warned.append(f"{name}: source now publishes {manifest.get('name')!r}; not installed")
                     continue
-                with brain.lock_held(timeout=max(0.0, lock_deadline - time.monotonic())):
+                with bounded_lock():
                     row = next((p for p in brain.load_lock()["packages"]
                                 if p.get("name") == name), None)
                     if row is None:
