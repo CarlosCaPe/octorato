@@ -93,6 +93,9 @@ except ImportError:  # Windows: no flock. O_APPEND still gives per-write atomici
 TTL = 900               # seconds; session-isolation-hook.py:48 uses the same window
 FUTURE_SKEW = 120       # an mtime this far ahead of now is clock skew, not liveness
 MAX_LINE = 4096         # POSIX atomic-append bound; the newline is counted below
+MAX_JOURNAL_SCAN = 8 * 1024 * 1024   # bytes `_journal_age` will read; see there
+MAX_JOURNAL_LINES = 20000            # and lines: cost tracks lines, not bytes
+SCAN_BUDGET = 1.5       # seconds of journal parsing one FAN-OUT may spend
 PRUNE_AFTER = 7 * 24 * 3600
 PID_MAX = 128
 MAX_LANES = 512          # a lane list is a working set, not a history
@@ -828,7 +831,7 @@ def fault_resolved(carrier, table=None) -> bool:
     if kind == FAULT_ZERO_ROWS:
         now = time.time()
         for pid in pids:
-            if _own_fresh(pid, now, TTL) and not has_exit(pid):
+            if _own_fresh(pid, now, TTL) and not has_exit(pid, table):
                 return False
         return True
     return False
@@ -1071,6 +1074,7 @@ def live_journal_pids(now: float = None, limit: int = 8, ignore=None) -> list:
         # reaches here. QA cycle 4 F3 is why the order matters: the deletion
         # guard's evidence lives in the directory the attacker is deleting.
         return []
+    reset_scan_budget()         # ONE fan-out over the journal directory
     out = []
     for name in sorted(names):
         if not name.endswith(".jsonl"):
@@ -1082,7 +1086,12 @@ def live_journal_pids(now: float = None, limit: int = 8, ignore=None) -> list:
         # exit check reads a 16 KB tail, so it only ever runs on a fresh one.
         if not _own_fresh(pid, now, TTL):
             continue
-        if has_exit(pid):
+        if has_exit_line(pid):
+            # The JOURNAL half only: this function's whole contract is to read
+            # the journals without the process table (an absent or unreadable
+            # table is exactly when it is called), so it cannot ask the row.
+            # Skipping is the permissive direction here, which is why the line
+            # at least has to be one this kernel could have written.
             continue
         if not has_work_trace(pid) and _registration_in_flight(pid, now):
             # C3, and it uses this file's own doctrine (`has_trace`: a trace has
@@ -1769,30 +1778,6 @@ def _mtime(path: str):
         return None
 
 
-def _tail_window(path: str) -> tuple:
-    """(raw lines in the last 8 KiB, oldest first; whether the FIRST of them is
-    known whole). ([], True) when the file is absent or empty.
-
-    `_tail_line` takes the last element of this and never has to care, because
-    only the first element can be a fragment the window cut in half. A reader
-    that wants the line BEFORE the last one does have to care, so the boundary
-    is reported instead of guessed.
-    """
-    try:
-        with open(path, "rb") as fh:
-            fh.seek(0, os.SEEK_END)
-            size = fh.tell()
-            if size == 0:
-                return [], True
-            window = min(size, 8192)
-            fh.seek(size - window, os.SEEK_SET)
-            chunk = fh.read(window)
-    except FileNotFoundError:
-        return [], True
-    parts = [p for p in chunk.split(b"\n") if p]
-    return parts, size <= window
-
-
 def _kernel_line(raw):
     """The parsed record when `raw` is a line THIS KERNEL COULD HAVE WRITTEN,
     else None. Shape only: it never claims the line is authentic.
@@ -1828,66 +1813,225 @@ def _num(val):
     return val
 
 
-def _record_ts(pid):
-    """The `ts` of the last record in this pid's journal, or None when there is
-    no `ts` here that this kernel could have written.
+_scan_until = None      # monotonic deadline for the current fan-out, or None
 
-    C-A, AND THE HONEST VERSION OF THE CLAIM THIS FUNCTION USED TO MAKE. It said
-    the field "sits inside the hash chain", which is true of how the kernel
-    writes it and false as a defence: nothing on this path calls `verify()`, so
-    the old reader took `float(rec.get("ts"))` off whatever the last line
-    happened to be. QA measured four appends that walked straight through it and
-    freed a live holder's lane once the mtime was backdated: `not-json`, `[]`
-    and `{"ts":null}` returned None and the caller then fell back to the raw
-    mtime, and `{"ts":1}` was worse, because it PARSED - a number saying 1970,
-    read as a process that went quiet 56 years ago.
 
-    Three questions now, and every one of them answers None (UNKNOWN) on
-    failure, never a fallback:
-      SHAPE     `_kernel_line`: the core keys are all there and `ts` does not
-                predate the line's own `start_ts`. Kills `{"ts":1}`, which
-                carries neither `start_ts` nor anything else.
-      ANCHOR    the tail's `start_ts` equals line 0's. `append` copies that
-                field forward unchanged, so the two agree in every file this
-                kernel wrote, and a forger who backdates the tail to escape the
-                shape check has to contradict the head to do it.
-      DIRECTION `ts` never goes backwards. This is the one that costs an
-                attacker the file. With shape and anchor alone, appending one
-                line with `ts` equal to the real `start_ts` reads as death for
-                any process that registered more than TTL ago, which is most of
-                them. Monotonic means the appended line has to be at least as
-                new as the last real one, and to fake death the whole tail has
-                to be rewritten rather than extended.
+def reset_scan_budget(seconds: float = None) -> None:
+    """Open a new journal-parsing budget for ONE fan-out over many pids.
 
-    None of this makes the journal unforgeable, and the price is what changed:
-    from ONE appended line to rewriting a file whose head, whose ordering and
-    whose chain all have to agree. Where the window cannot show the previous
-    line whole, the direction check is skipped and says so rather than guessing
-    - that is a window artifact, not a property of the file, and MAX_LINE is
-    4096 so an 8 KiB window holds two whole lines except at the very top of a
-    barely-started journal.
+    QA cycle 9, second half. `MAX_JOURNAL_SCAN` and `MAX_JOURNAL_LINES` bound
+    what ONE journal costs, and the attack simply used more journals: with both
+    per-file caps in place, twelve capped stale rows took `prune` 4.79 s against
+    the register hook's own 5 s SessionStart budget, measured. A per-file cap
+    bounds a file; nothing bounded the SUM, and the sum is what the deadline
+    sees.
+
+    So the three callers that fan out over pids - `prune`, `lane_owner` and
+    `live_journal_pids` - open a budget first, and `_journal_age` refuses to
+    start (or to continue) a pass once it is spent, answering UNKNOWN, which
+    HOLDS. The budget is TIME and not a line count on purpose: it is the
+    deadline that is being protected, and a cap sized on a quiet machine is not
+    a cap. QA measured a pristine selftest swinging 1.34 s to 9.27 s under load,
+    so a fixed line count that fits in 5 s today does not fit in 5 s on a busy
+    box, while a clock does.
+
+    Reset per fan-out rather than per process, and that is what keeps it honest
+    in both directions: a hook invocation is one fan-out, so production gets the
+    budget it should, and a test process that makes thousands of calls does not
+    accumulate its way into spurious UNKNOWNs. `None` means unbudgeted, which is
+    what a direct call to `_quiet_for` outside any fan-out gets.
     """
+    global _scan_until
+    _scan_until = time.monotonic() + (SCAN_BUDGET if seconds is None else seconds)
+
+
+def _scan_exhausted() -> bool:
+    return _scan_until is not None and time.monotonic() > _scan_until
+
+
+def _journal_age(pid, now: float):
+    """The freshest CREDIBLE activity age in this pid's WHOLE journal, or
+    UNKNOWN when any line in it is not a line this kernel could have written.
+
+    C-A AGAIN, AND THE ROOT THIS TIME RATHER THAN THE SHAPE. The predecessor
+    (`_record_ts`) read the LAST record in an 8 KiB tail window and checked it
+    against the two lines around it, and QA cycle 7 walked through all three of
+    its guards with two APPENDED lines: copy line 0's `start_ts` onto both and
+    set `ts` equal to it, so SHAPE holds (`ts` does not predate its own
+    `start_ts`), ANCHOR holds (the `start_ts` IS line 0's), and DIRECTION holds
+    because it compared the last two lines and BOTH OF THEM WERE THE
+    ATTACKER'S. One `os.utime` then made the mtime agree and a holder that had
+    worked 0 s ago read as quiet for 1200 s. Both gates allowed. The lane
+    transferred; the commit that shipped the predecessor claimed it could not.
+
+    THE ROOT IS THE FRAME, NOT THE THREE GUARDS. Every one of them asked "is
+    this last line well-formed", so every one of them could be satisfied by
+    writing a well-formed last line, and appending is the cheapest write there
+    is. Two more measurements say the same thing about the next two guards
+    anyone would reach for:
+
+      * The CHAIN does not close it. `prev` is an unkeyed sha256 of the
+        previous raw line, so an attacker recomputes it in the same
+        `python3 -c`. Measured: with the chain recomputed, `verify()` returns
+        0 - the journal verifies - and the lane still transfers. Calling
+        `verify()` here would have killed the journal QA happened to build (it
+        copied `prev` verbatim), not the class.
+      * The WINDOW does not close it. Three appended lines of 3900 bytes evict
+        every real record from the 8 KiB tail, so any guard that reads a window
+        reads only what the attacker put there. Measured: `_quiet_for` answered
+        1200 s with a chain that verified.
+
+    So the question changes. Not "is the last record well-formed" but WHAT CAN
+    AN APPEND DO TO THE ANSWER. The kernel's own writers only ever append; they
+    never remove and never rewrite. Evidence of activity is therefore
+    ACCUMULATED, and an answer computed as the FRESHEST evidence in the file is
+    monotone under append: adding a line can only introduce another candidate,
+    and another candidate can only make the answer NEWER. There is no line an
+    attacker can append that makes this function say "older". To move the
+    answer toward death at all, the bytes that already say otherwise have to go
+    - which is deletion or rewriting, not appending, and deletion of the record
+    is the primitive `lane_owner` already refuses to read as a dead process
+    (F4).
+
+    Freshest is taken over AGES, not over timestamps, and the direction is why:
+    `max(ts)` would hand the answer to a line dated into the future, and
+    `_skew_age` reads far-future as infinitely OLD, which is the permissive
+    end. `min(age)` puts a future-dated line at infinity where it loses, and
+    puts the real recent record where it wins. Fail-closed by construction.
+
+    Four guards, and every one of them now runs on EVERY line rather than on
+    the tail. Any failure is UNKNOWN, never a fallback and never a skip: a line
+    that cannot be read might be the freshest evidence in the file, so dropping
+    it can only make the answer older, and older is the permissive branch (THE
+    READER INVARIANT, part 3).
+      SHAPE     `_kernel_line`: the core keys are all there and `ts` does not
+                predate the line's own `start_ts`.
+      ANCHOR    every line's `start_ts` equals line 0's. `append` copies that
+                field forward unchanged, so they agree in every file this
+                kernel wrote.
+      DIRECTION `ts` never steps backwards from one line to the next, across
+                the whole file. This is the guard the two appended lines
+                defeated when it only looked at the last two, and it is the one
+                that catches them now: line 4 says `now`, line 5 says
+                `start_ts`, and no journal this kernel wrote does that.
+      FRESHEST  the answer is `min` over every line's age, so no later line can
+                move it backwards past an earlier one.
+      SIZE      a journal past `MAX_JOURNAL_SCAN` bytes is not read at all,
+                and one past `MAX_JOURNAL_LINES` stops being read. Two caps
+                because they bound different things: bytes answer in O(1) off
+                one `getsize`, and LINES are what the work actually tracks, so
+                a file of many short records costs far more per byte than the
+                padded one an attacker reaches for first. The guard is on the
+                WORK, not on the record: see the cost note below, where an
+                append-only size attack ran the gate past its own 5 s hook
+                timeout, and a killed gate emits no decision.
+
+    WHAT IT COSTS, MEASURED rather than implied. This reads the WHOLE journal
+    instead of 8 KiB, and it is reached only when the mtime already says the
+    process is stale (`_quiet_for` short-circuits above TTL-fresh), so the live
+    path is still one stat and the cold path is one streaming pass. On the
+    largest journal on the reference box (275 KB, 704 lines) that pass is
+    21 ms against 0.005 ms for the stat, and it is paid per STALE row: `prune`
+    at SessionStart is where a machine with many of them pays, never the
+    PreToolUse gate on a live holder.
+
+    AND THE SIZE GUARD IS AN ISOLATION GUARD, NOT A TIDINESS ONE. Reading the
+    whole file made the WORK an attacker-chosen quantity: the same interpreter
+    hole sets the size (append) and the staleness (`os.utime`) that makes this
+    function run at all. QA cycle 9 measured the cost as linear, ~18 ms/MB, and
+    every decision correct at every size - which is availability, right up to
+    the point where the harness is asked. `~/.claude/settings.json` gives these
+    gates `"timeout": 5`, and a killed hook writes no stdout, so it emits no
+    `permissionDecision`, which is the SAME "(none)" that every matrix in this
+    PR records as an ALLOW. Measured end to end on the real gate: 0 MB 0.27 s,
+    5 MB 0.25 s, 50 MB 1.96 s, 300 MB 8.01 s - past the budget, killed, no
+    decision, lane transferred. A slow reader is a permissive reader when
+    somebody else owns the clock, so the size is capped where the answer is
+    still free: one `getsize` before the read, and past `MAX_JOURNAL_SCAN` the
+    answer is UNKNOWN, which HOLDS. An attacker who pads the file now buys the
+    fail-closed branch instead of a timeout, and buys it in O(1) rather than by
+    making us read what they wrote.
+
+    THE CAPS ARE SIZED FROM THE MACHINE, not from taste, and BYTES ALONE WERE
+    THE WRONG BOUND. 476 journals on the reference box run to 275 KB and 704
+    lines at the largest, 28 KB at p95. The cost is 30 us per LINE, not per
+    byte: the largest real journal averages 390 bytes a line and reads in
+    21 ms, while a padded file of 3600-byte lines reads far faster per MB, so a
+    byte cap generous enough for real journals still admits an order of
+    magnitude more parsing when the lines are short. Hence both: 8 MiB (27x the
+    largest real journal) and 20000 lines (28x), whichever binds first. A
+    genuinely enormous journal reads UNKNOWN once it goes stale, so its row
+    expires on `registered_ts` at PRUNE_AFTER rather than on TTL - the same
+    availability cost a torn line already carries, and the same operator exit
+    (`lane_recovery`). The second
+    cost is real and is a widening: a torn line ANYWHERE in a journal now
+    answers UNKNOWN, where before only a torn TAIL did. UNKNOWN holds liveness,
+    so that pid's row stops expiring on TTL and expires on the ptable row's
+    `registered_ts` at PRUNE_AFTER instead - seven days of a held lane out of
+    one damaged record, freeable by the operator (`lane_recovery`). `append`
+    still terminates a torn fragment and `verify_detail` still names it by
+    index, so the damage stays locatable; it is liveness, not diagnosis, that
+    refuses to guess.
+
+    WHAT IT DOES NOT CLOSE, measured and not softened: an attacker who REWRITES
+    this file (one `open(p, "w")` from the same interpreter hole) still chooses
+    the answer, because every byte this function reads is a byte they wrote.
+    The interpreter hole in the Bash gate that makes such a write reachable is
+    the residual stated in `recovery()`.
+
+    AND THE SENTENCE IS ABOUT THIS FUNCTION, NOT ABOUT LIVENESS. The provable
+    claim is "no APPENDED line can move `_journal_age`'s answer toward death",
+    and cycle 8 is why the qualifier is load-bearing rather than pedantic: this
+    docstring shipped it unqualified, a reader took it as a property of the
+    liveness ANSWER, and one appended `exit` line freed a live holder's lane
+    without touching this function at all. `is_live` reads `has_exit` FIRST on
+    the subagent branch, so an ending short-circuits every guard here, and
+    appending an exit is monotone in exactly the wrong direction: absent to
+    present, and present is death. `has_exit` carries its own argument now.
+    Monotone-under-append is a property of a MINIMUM OVER AGES; it is not
+    inherited by every reader that consults this one.
+    """
+    path = journal_path(pid)
+    head = None
+    prev_ts = None
+    best = None
+    lines = 0
     try:
-        parts, first_whole = _tail_window(journal_path(pid))
+        if _scan_exhausted():
+            return UNKNOWN              # BUDGET: this fan-out is out of time
+        if os.path.getsize(path) > MAX_JOURNAL_SCAN:
+            return UNKNOWN              # SIZE: bigger than this reader will read
+        with open(path, "rb") as fh:
+            for raw in fh:
+                raw = raw.rstrip(b"\n")
+                if not raw:
+                    continue
+                rec = _kernel_line(raw)
+                if rec is None:
+                    return UNKNOWN              # SHAPE
+                ts, start = _num(rec.get("ts")), _num(rec.get("start_ts"))
+                if head is None:
+                    head = start
+                elif abs(start - head) > 1e-6:
+                    return UNKNOWN              # ANCHOR: contradicts line 0
+                if prev_ts is not None and ts < prev_ts - FUTURE_SKEW:
+                    return UNKNOWN              # DIRECTION: time went backwards
+                prev_ts = ts
+                age = _skew_age(now, ts)
+                if best is None or age < best:
+                    best = age                  # FRESHEST
+                lines += 1
+                if lines > MAX_JOURNAL_LINES:
+                    return UNKNOWN              # SIZE: more lines than we read
+                if not lines % 1000 and _scan_exhausted():
+                    return UNKNOWN              # BUDGET: checked DURING the pass
+                                                # too, since one file on a loaded
+                                                # box can outlast the whole budget
     except OSError:
-        return None
-    if not parts:
-        return None
-    rec = _kernel_line(parts[-1])
-    if rec is None:
-        return None
-    ts, start = _num(rec.get("ts")), _num(rec.get("start_ts"))
-    head = _first_start_ts(journal_path(pid))
-    if head is None or abs(head - start) > 1e-6:
-        return None                     # ANCHOR: the tail contradicts line 0
-    if len(parts) >= 2 and (first_whole or len(parts) >= 3):
-        prev = _kernel_line(parts[-2])
-        if prev is None:
-            return None                 # a line nobody can read is not an order
-        prev_ts = _num(prev.get("ts"))
-        if prev_ts is None or ts < prev_ts - FUTURE_SKEW:
-            return None                 # DIRECTION: time went backwards
-    return ts
+        return UNKNOWN
+    if best is None:
+        return UNKNOWN                          # no readable line at all
+    return best
 
 
 def _own_fresh(pid, now: float, ttl: int) -> bool:
@@ -1955,17 +2099,26 @@ def _quiet_for(pid, now: float):
     and `prune` each decide for themselves (F4): a removed record is not a dead
     process.
 
-    UNKNOWN IS THE THIRD ANSWER AND C-A IS WHY IT EXISTS. `_record_ts` returns
-    None for four different things - an unparseable tail, a tail that is not an
-    object, a missing `ts`, a `ts` that is not a number - and this function used
-    to fall back to the RAW MTIME on all of them, which answers "stale mtime
-    plus unreadable record" as DEATH. QA measured the transfer end to end: with
-    the existing chain untouched, `>> not-json` (or `{"ts":1}`, `{"ts":null}`,
-    `[]`) followed by a backdating `touch` freed a LIVE holder's lane on both
-    gates. `touch` alone already denied, which is exactly the shape of the
-    defect: the fix that closed the metadata half read the record, and then
-    treated "I could not read the record" as the same answer as "the record
-    says it is old".
+    UNKNOWN IS THE THIRD ANSWER AND C-A IS WHY IT EXISTS. `_journal_age`
+    answers UNKNOWN for every way a journal can fail to be readable - an
+    unparseable line, a line that is not an object, a missing `ts`, a `ts` that
+    is not a number, a `start_ts` that contradicts line 0, a `ts` that steps
+    backwards - and this function used to fall back to the RAW MTIME on all of
+    them, which answers "stale mtime plus unreadable record" as DEATH. QA
+    measured the transfer end to end: with the existing chain untouched,
+    `>> not-json` (or `{"ts":1}`, `{"ts":null}`, `[]`) followed by a backdating
+    `touch` freed a LIVE holder's lane on both gates. `touch` alone already
+    denied, which is exactly the shape of the defect: the fix that closed the
+    metadata half read the record, and then treated "I could not read the
+    record" as the same answer as "the record says it is old".
+
+    THE TWO CLOCKS ARE NOT A CROSS-CHECK AND MUST NOT BECOME ONE. Cycle 7 broke
+    the version that was: the record and the mtime corroborated each other, so
+    a writer who owned both won by making them agree. They are combined with
+    `min` - the FRESHER of the two wins - so each one is an independent reason
+    to call the process LIVE and neither can be used to talk the other into
+    calling it dead. Making the process look deader therefore requires making
+    BOTH say so, and `_journal_age` is the half an append can no longer move.
 
     So it is UNKNOWN, and THE READER INVARIANT at the top of this file decides
     the rest: liveness answers held (`_own_fresh` -> live), `process_age`
@@ -1982,10 +2135,10 @@ def _quiet_for(pid, now: float):
     age = _skew_age(now, mt)
     if age <= TTL:
         return age          # fresh by mtime: no second opinion is needed
-    ts = _record_ts(pid)
-    if ts is None:
+    rec_age = _journal_age(pid, now)
+    if rec_age is UNKNOWN:
         return UNKNOWN
-    return min(age, _skew_age(now, ts))
+    return min(age, rec_age)
 
 
 def has_trace(pid) -> bool:
@@ -2033,10 +2186,26 @@ def has_trace(pid) -> bool:
     return isinstance(row, dict)
 
 
-def has_exit(pid) -> bool:
-    """True when the journal's tail carries an `exit` line. Tail-scoped on
-    purpose: `exit` is written last, and a full read on every liveness probe
-    would put the whole journal on the hot path."""
+def has_exit_line(pid) -> bool:
+    """True when this pid's journal tail carries a line THIS KERNEL COULD HAVE
+    WRITTEN whose `kind` is `exit`. The journal half of an ending, and only the
+    journal half: `has_exit` is the one liveness asks.
+
+    Tail-scoped on purpose: `exit` is written last, and a full read on every
+    liveness probe would put the whole journal on the hot path. A line that will
+    not parse is skipped rather than answered UNKNOWN, and that is the
+    fail-closed direction HERE, the opposite of `_journal_age`: skipping a line
+    can only make this function say "no exit", and no exit means LIVE.
+
+    `_kernel_line` IS THE CHANGE, and cycle 8 is why. This read used to accept
+    any parseable object carrying `kind == "exit"`, so the 15 bytes
+    `{"kind":"exit"}` - no `seq`, no `ts`, no `start_ts`, no `pid`, no `prev` -
+    were a complete ending. That is `{"ts":1}` from cycle 6 wearing a different
+    key, and it is refused on the same grounds: a record missing every field
+    this kernel writes is not this kernel's record. It does not raise the floor
+    on its own, because a well-formed exit line costs one more `json.dumps`;
+    what raises the floor is the ptable half, in `has_exit`.
+    """
     path = journal_path(pid)
     try:
         with open(path, "rb") as fh:
@@ -2048,13 +2217,64 @@ def has_exit(pid) -> bool:
     except OSError:
         return False
     for raw in reversed([p for p in chunk.split(b"\n") if p]):
-        try:
-            rec = json.loads(raw.decode("utf-8", "replace"))
-        except ValueError:
-            continue
-        if isinstance(rec, dict) and rec.get("kind") == "exit":
+        rec = _kernel_line(raw)
+        if rec is not None and rec.get("kind") == "exit":
             return True
     return False
+
+
+def has_exit(pid, table: dict = None) -> bool:
+    """True when this process has ENDED: its journal carries an exit line AND
+    its ptable row says it exited. Both halves, and cycle 8 is the whole reason
+    this function has two of them.
+
+    THE BREAK. `is_live` reads this FIRST on the subagent branch, before
+    `_own_fresh` runs at all, so "exited" short-circuits every freshness guard
+    the reader has. QA appended one 15-byte line to a live holder's journal -
+    no `os.utime`, no timestamp forgery, no chain work - and both gates went
+    from `deny` to no decision at all while the intruder took the lane. It
+    predates cycle 7 and it BYPASSES rather than violates that cycle's
+    invariant: `_journal_age` correctly answered UNKNOWN for the torn file, and
+    UNKNOWN never got the chance to hold.
+
+    WHY VALIDATING THE LINE CANNOT BE THE FIX, said plainly because it is the
+    obvious move and it does not work. A real exit line and a forged one are
+    BYTE-IDENTICAL BY CONSTRUCTION: the exit hook writes it with `append`, so
+    any shape, anchor or direction rule it satisfies, a forger satisfies by
+    calling the same function. `_journal_age`'s argument does not transfer
+    either, because it rests on appending being unable to move a MINIMUM
+    backwards, and an exit is a flag: absent to present, and present is death.
+    Appending is monotone in exactly the wrong direction here.
+
+    SO THE ANSWER COMES FROM THE OTHER FILE. A real ending is TWO writes in two
+    files: `r__subagent-stop__proc-exit.py` appends the journal line and then
+    marks the ROW `exited` through `update_row`, under the ptable lock. This
+    reader now requires both, which does not add a boundary - it deletes a way
+    around the one that was already there. QA measured that emptying a row's
+    `lanes` frees the lane in one ptable edit, so the ptable was always the
+    floor; what an append-only forgery bought was a strictly CHEAPER bypass of
+    it. After this, faking an ending costs what breaking the ptable costs, and
+    the ptable is behind a lock, `sane_table`, the fault carrier and the
+    quarantine copy.
+
+    `is True`, not truthiness, and cycle 6's `"_faulted": null` is the anchor
+    for that: the hook writes the literal `True` and nothing else, so a value of
+    any other shape is a foreign writer's row and reads as NOT exited, which is
+    the direction that holds the lane.
+
+    ORDER AND ITS WINDOW, stated rather than left to be found. The hook appends
+    before it publishes, so between the two writes the journal says exited and
+    the row does not, and this reads LIVE for that instant - fail-closed, and it
+    closes on the same hook call. `update_row` returns False for a pid with no
+    row (a child whose register hook lost its race), and such a process reads
+    live until its journal goes quiet: TTL, not forever, and the same bound the
+    lane has had all along.
+    """
+    if not has_exit_line(pid):
+        return False
+    procs = (read_ptable() if table is None else table).get("processes") or {}
+    row = procs.get(safe_pid(pid))
+    return isinstance(row, dict) and row.get("exited") is True
 
 
 def has_work_trace(pid) -> bool:
@@ -2077,7 +2297,7 @@ def has_work_trace(pid) -> bool:
     registration this shape claims could still be happening. This one keeps
     saying only what it can see.
 
-    Tail-scoped like `has_exit`, and the two out-of-window cases both answer
+    Tail-scoped like `has_exit_line`, and the two out-of-window cases both answer
     TRUE, which is the fail-closed direction here (it keeps the fault): a
     journal bigger than the window has more in it than the registrations we can
     see, and a line that will not parse is not a line anyone can dismiss.
@@ -2122,8 +2342,9 @@ def is_live(pid, table: dict = None, now: float = None, ttl: int = TTL,
     entry = procs.get(pid) or {}
     ppid = entry.get("ppid")
     if ppid:
-        # subagent: no exit line AND own journal fresh AND parent live
-        if has_exit(pid):
+        # subagent: no ENDING (journal line AND row, `has_exit`) AND own journal
+        # fresh AND parent live
+        if has_exit(pid, table):
             return False
         if not _own_fresh(pid, now, ttl):
             return False
@@ -2239,14 +2460,39 @@ def lane_owner(path, table: dict = None, now: float = None, ignore=None,
         return None, None
     table = read_ptable() if table is None else table
     now = time.time() if now is None else now
+    reset_scan_budget()         # ONE fan-out over every colliding row
     skip = safe_pid(ignore) if ignore else None
+
+    # ORDERED, AND QA CYCLE 9 IS WHY IT IS NOT A DICT WALK ANY MORE. This looked
+    # at rows in registration order, so a genuinely live holder sitting late in
+    # the table was reached only after every earlier colliding row had been
+    # resolved - and resolving a STALE row costs a whole-journal scan against a
+    # budget the fan-out shares. On a machine at its own steady state (476 rows
+    # here) that spent the budget before the live holder was reached, and every
+    # row after the exhaustion reads UNKNOWN, which reads LIVE, so the FIRST of
+    # them was returned as the holder. Fail-closed, and wrong: the writer is
+    # told to wait for a process that ended an hour ago, which is the M2 defect
+    # this file already carries a fix for.
+    #
+    # So the probe order is the cheap answer first. An `_mtime` stat is 0.005 ms
+    # against a 21 ms scan, and it sorts the set into the two answers that need
+    # no scan at all - a MISSING journal (F4: the holder, immediately) and a
+    # FRESH one (`_quiet_for` short-circuits above TTL and never opens the file)
+    # - before any stale row is read. Freshest first inside that, because the
+    # row that actually holds the lane is the one that has just written. This
+    # changes no verdict on any single row; it changes which rows get resolved
+    # while there is budget left to resolve them.
+    colliding = []
     for pid, row in (table.get("processes") or {}).items():
         if pid == skip:
             continue
         if not any(paths_conflict(target, norm_path(l)) for l in lanes_of(row)):
             continue
-        if _mtime(journal_path(pid)) is None:
+        mt = _mtime(journal_path(pid))
+        if mt is None:
             return pid, row          # record removed, not process ended (F4)
+        colliding.append((mt, pid, row))
+    for _, pid, row in sorted(colliding, key=lambda c: c[0], reverse=True):
         if is_live(pid, table, now, ttl):
             return pid, row
     return None, None
@@ -2274,6 +2520,24 @@ def lane_recovery(pid) -> str:
                 "prune expires the row %ds after it registered."
                 % (journal_path(pid), journal_dir(), pid, ptable_path(),
                    PRUNE_AFTER))
+    if _scan_exhausted():
+        # M2 AGAIN, IN THE SHAPE CYCLE 9 CREATED. A fan-out that spends its
+        # SCAN_BUDGET answers UNKNOWN for every row it did not reach, UNKNOWN
+        # reads LIVE, and the first such row is returned as the holder - so a
+        # process that ended an hour ago is named, and the advice below tells
+        # the writer to wait for it to exit. Denied correctly and described
+        # wrongly, which for a fail-closed gate is most of the cost. This says
+        # what actually happened instead. It costs nothing to ask: an exhausted
+        # budget is exactly the state in which `_quiet_for` returns without
+        # opening a file.
+        return ("That holder was NOT confirmed live: this call ran out of its "
+                "journal-scan budget (%.1fs) before it could read %s's record, "
+                "and an unread record is held rather than freed. It may have "
+                "ended long ago. This is a machine with many stale rows, not an "
+                "attack: `octo ps` lists them, `octo ps --release %s` frees this "
+                "one from the operator's terminal, and the row expires on its "
+                "own %ds after it registered."
+                % (SCAN_BUDGET, pid, pid, PRUNE_AFTER))
     return ("Wait for that process to exit (its lane frees on its exit line, "
             "or after %ds of silence), work in your own worktree, or have the "
             "operator free it from a terminal: `octo ps --release %s` (Phase "
@@ -2462,6 +2726,7 @@ def prune(table: dict, now: float = None) -> int:
     and it did NOT work before) or because prune expired them here.
     """
     now = time.time() if now is None else now
+    reset_scan_budget()         # ONE fan-out over every row (QA cycle 9)
     procs = table.get("processes", {})
     dead, lost = [], []
     for pid, ent in procs.items():
@@ -2496,7 +2761,20 @@ def prune(table: dict, now: float = None) -> int:
             continue
         if quiet is None:
             registered = _row_ts(ent)
-            registered = 0.0 if registered is None else registered
+            if registered is None:
+                # THE SAME COLLAPSE ONE BRANCH OVER, and cycle 7 named it while
+                # the fix went to the UNKNOWN branch beside it. This read
+                # `0.0 if registered is None else registered`, and 0.0 on every
+                # clock in this file means 1970, which means infinitely old,
+                # which sent a row whose journal is ABSENT and whose
+                # registration time is UNREADABLE straight to `dead` - dropped
+                # with its lanes, no fault, nothing on any surface. A row with
+                # no clock is kept, exactly as the UNKNOWN branch above keeps
+                # one, and if it holds lanes it is FAULTED rather than trusted,
+                # exactly as a row with no journal beside it already is.
+                if lanes_of(ent):
+                    lost.append(pid)
+                continue
             if (now - registered) <= TTL:
                 continue  # young row, journal not written (or just removed) yet
             if lanes_of(ent) and (now - registered) <= PRUNE_AFTER:
@@ -2539,6 +2817,15 @@ def prune_files(table: dict, now: float = None) -> int:
     Errors are swallowed: cleanup that breaks a session is worse than a stale
     file.
     """
+    # ITS OWN FAN-OUT, and QA cycle 9 measured why inheriting is wrong:
+    # `prune` calls this at the END of its own walk, so on a machine big
+    # enough for that walk to spend the budget this ran with none left,
+    # every `is_live` here read UNKNOWN, UNKNOWN read live, and no file was
+    # swept. The sweep that bounds directory growth was disabled exactly on
+    # the machines whose directories are largest, and nothing shrinks a
+    # directory that is never swept. Every other caller that fans out over
+    # pids opens its own budget; this is the one that did not.
+    reset_scan_budget()
     now = time.time() if now is None else now
     # The repair ledger ages on the same beat and the same window: this is the
     # register-path sweep, and a bound that only ran when a NEW copy arrived
@@ -2917,12 +3204,15 @@ def backdate_journal(path: str, seconds: float) -> bool:
 
     EVERY line moves, `ts` and `start_ts` together, and the chain is recomputed
     over the new bytes. Backdating the LAST line alone is what the helpers used
-    to do, and cycle 6 made that stop meaning "expired": `_record_ts` now checks
-    the tail against its own file, so a last line whose `ts` predates its own
-    `start_ts`, contradicts line 0's `start_ts`, or is older than the line
-    before it is a record this kernel could not have written - which is exactly
-    what a one-line rewrite produces. A fixture in that state expresses
-    tampering, not silence, and the reader is right to hold the lane.
+    to do, and cycle 6 made that stop meaning "expired": `_journal_age` reads
+    every line of the file, so a line whose `ts` predates its own `start_ts`,
+    contradicts line 0's `start_ts`, or is older than the line before it is a
+    record this kernel could not have written - which is exactly what a
+    one-line rewrite produces. Cycle 7 widened that from the tail to the whole
+    file, so backdating any PREFIX of the lines is now the same forgery: the
+    lines left alone are still the freshest evidence in the file and the answer
+    is the freshest evidence. A fixture in either state expresses tampering,
+    not silence, and the reader is right to hold the lane.
 
     The file's mtime moves with it, because a process that went quiet is quiet
     on both halves. `os.utime` ALONE stays what it always was, the C4 attack,
@@ -2954,6 +3244,135 @@ def backdate_journal(path: str, seconds: float) -> bool:
         fh.write(b"\n".join(out) + (b"\n" if out else b""))
     when = time.time() - seconds
     os.utime(path, (when, when))
+    return True
+
+
+def forge_exit_line(path: str) -> bool:
+    """Append ONE well-formed `exit` line to the journal AT `path`, correctly
+    chained, changing nothing else. Fixture machinery for cycle 8's attack.
+
+    BY PATH, AND THAT IS THE WHOLE REASON THIS EXISTS. The first version of the
+    fixture called `append(pid, ...)`, which resolves the journal through
+    `journal_path` and therefore through `$HOME` - and `build_sandbox` rebinds
+    HOME for the hook SUBPROCESS, never for its own process. So the exit was
+    written into the real kernel directory and never into the sandbox, and the
+    violation fixtures BLOCKED for the wrong reason: nothing had been forged, so
+    the holder was simply alive. Two passing counts and no forgery, which is the
+    "a count that cannot move looks like a count that was checked" failure this
+    file already carries a lesson about; the cross-version harness caught it by
+    showing the same fixtures blocking under a reader that could not possibly
+    block them. Every other `_setup` block writes by path for this reason, and
+    so does this one.
+
+    The line is written with `_fit` and the real chain, so it is byte-identical
+    to what the exit hook writes. That is the point of the attack and the reason
+    validating it cannot be the defence (`has_exit`).
+    """
+    try:
+        with open(path, "rb") as fh:
+            raws = [ln for ln in fh.read().split(b"\n") if ln.strip()]
+        if not raws:
+            return False
+        prev = json.loads(raws[-1].decode("utf-8", "replace"))
+        if not isinstance(prev, dict):
+            return False
+        rec = {"seq": int(prev.get("seq", -1)) + 1,
+               "ts": round(time.time(), 6),
+               "start_ts": _num(prev.get("start_ts")),
+               "pid": prev.get("pid"), "kind": "exit",
+               "prev": hashlib.sha256(raws[-1]).hexdigest(), "status": "ok"}
+        if rec["start_ts"] is None or not rec["pid"]:
+            return False
+        with open(path, "ab") as fh:
+            fh.write(_fit(rec) + b"\n")
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def forge_journal(path: str, mode: str = "tail", span: float = None) -> bool:
+    """Rewrite `path` as a process that STARTED long ago and worked JUST NOW,
+    then apply one of the two cycle-7 forgeries to it and backdate the mtime.
+    Fixture machinery, shared by `build_sandbox` and the unit tests so the
+    gate-level fixture and the reader-level anchor cannot drift into two
+    different attacks.
+
+    The rewrite is not decoration. A seeded journal carries a fixed past `ts`
+    on every line with a microsecond between line 0 and the tail, and both
+    forgeries need the two ends far apart: a holder whose `start_ts` is hours
+    old and whose last real record is seconds old, which is what an agent that
+    has been working looks like and what QA measured the break against.
+
+    The mtime is backdated in both modes, because `_quiet_for` short-circuits
+    on a fresh mtime and never reads the record at all. That is not a detail of
+    the fixture, it is the second ingredient of the attack: QA cycle 7 measured
+    that neither the appended lines nor the `os.utime` does anything on its own,
+    and a test that applies only one of them measures nothing.
+
+    MODES, and each is a MEASURED attack rather than an invented one:
+      "tail"       two lines appended, each copying line 0's `start_ts` and
+                   setting `ts` EQUAL to it, chained correctly. This is the
+                   break: it satisfies shape (`ts` does not predate its own
+                   `start_ts`), anchor (that `start_ts` IS line 0's) and a
+                   pairwise direction check (the two lines it compares are BOTH
+                   the attacker's). One `os.utime` then transferred the lane.
+      "staircase"  lines appended stepping backwards by less than FUTURE_SKEW
+                   each, until the tail is older than TTL. Every step satisfies
+                   a pairwise direction check on its own, so under one the
+                   answer walks backwards as far as the attacker likes, one
+                   appended line at a time. It is the general form of "tail",
+                   and it is why the reader answers the FRESHEST age in the
+                   whole file rather than the last one.
+    """
+    span = float(TTL * 4 if span is None else span)
+    now = time.time()
+    try:
+        with open(path, "rb") as fh:
+            raws = [ln for ln in fh.read().split(b"\n") if ln.strip()]
+        recs = [json.loads(r.decode("utf-8", "replace")) for r in raws]
+    except (OSError, ValueError):
+        return False
+    if not recs or not all(isinstance(r, dict) for r in recs):
+        return False
+
+    start = round(now - span, 6)
+    out, prev_hash = [], None
+    for i, rec in enumerate(recs):
+        rec["start_ts"] = start
+        rec["ts"] = start if i == 0 else round(now, 6)
+        rec["prev"] = prev_hash
+        raw = _dumps(rec)
+        out.append(raw)
+        prev_hash = hashlib.sha256(raw).hexdigest()
+
+    forged = dict(recs[-1])
+    seq = int(recs[-1].get("seq", len(recs) - 1))
+    if mode == "staircase":
+        step = FUTURE_SKEW - 10
+        ts = round(now, 6)
+        while now - ts <= TTL + 300:
+            ts = round(ts - step, 6)
+            seq += 1
+            rec = dict(forged, seq=seq, ts=ts, start_ts=start, prev=prev_hash)
+            raw = _dumps(rec)
+            out.append(raw)
+            prev_hash = hashlib.sha256(raw).hexdigest()
+        stale = ts
+    else:
+        for _ in range(2):
+            seq += 1
+            rec = dict(forged, seq=seq, ts=start, start_ts=start, prev=prev_hash)
+            raw = _dumps(rec)
+            out.append(raw)
+            prev_hash = hashlib.sha256(raw).hexdigest()
+        stale = now - (TTL + 300)
+
+    try:
+        with open(path, "wb") as fh:
+            fh.write(b"\n".join(out) + b"\n")
+        os.utime(path, (stale, stale))
+    except OSError:
+        return False
     return True
 
 

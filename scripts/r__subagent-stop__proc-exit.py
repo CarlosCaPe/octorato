@@ -116,7 +116,11 @@ def main() -> int:
 
         import kernel_proc
         pid = str(payload.get("agent_id") or "")
-        if not pid or kernel_proc.has_exit(pid):
+        # `has_exit_line`, not `has_exit`: this is the WRITER's idempotence
+        # guard, and it must read the file it is about to append to. Asking
+        # the liveness reading would make a re-fired SubagentStop append a
+        # second exit line whenever `update_row` found no row to mark.
+        if not pid or kernel_proc.has_exit_line(pid):
             return 0
         # An ending cannot bring a process into existence. `append()` creates
         # the journal when it is absent, which is right for the hot-path gate

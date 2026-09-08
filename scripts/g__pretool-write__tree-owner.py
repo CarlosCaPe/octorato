@@ -399,6 +399,14 @@ def build_sandbox(fdir: str, sandbox: str, setup=None) -> None:
       `_setup.journal_dir`  "gone" or "file" to remove or replace the journal
                         directory, which is where the deletion guard's own
                         evidence lives (F3).
+      `_setup.forge_exit` [pid, ...] to append ONE well-formed `exit` line to
+                        that pid's journal and change nothing else (cycle 8).
+      `_setup.forge_journals` {pid: "tail"|"staircase"} to append the cycle-7
+                        forgeries to that pid's journal and backdate its mtime.
+                        "tail" is the measured break (two lines copying line 0's
+                        `start_ts` with `ts` equal to it); "staircase" is its
+                        general form (steps backwards smaller than FUTURE_SKEW,
+                        which a pairwise direction check accepts one at a time).
       `_setup.kernel_history` "seen" to leave `.ptable.lock` behind (a machine
                         hooks have run on) or "none" to strip every trace but
                         the table and the journals (a wiped cache). It is the
@@ -481,11 +489,12 @@ def build_sandbox(fdir: str, sandbox: str, setup=None) -> None:
         # the last record, because `touch` on a live holder's journal used to
         # free its lane with nothing deleted and the chain intact. That made the
         # seeded `ts` load-bearing, and cycle 6 made the seeded FILE
-        # load-bearing: `_record_ts` checks the tail against line 0's `start_ts`
-        # and against the line before it, so rewriting the last line alone now
-        # produces the signature of a forgery rather than of an expiry, and the
-        # reader correctly holds the lane. `backdate_journal` shifts every line
-        # and re-chains, so `age_pids` says one coherent thing again.
+        # load-bearing. Cycle 7 made the WHOLE file load-bearing: `_journal_age`
+        # reads every line and answers the freshest age in it, so rewriting the
+        # last line alone - or any prefix - now produces the signature of a
+        # forgery rather than of an expiry, and the reader correctly holds the
+        # lane. `backdate_journal` shifts every line and re-chains, so
+        # `age_pids` says one coherent thing again.
         if pid in (age_pids or ()):
             kernel_proc.backdate_journal(path, kernel_proc.TTL + 300)
         else:
@@ -562,6 +571,30 @@ def build_sandbox(fdir: str, sandbox: str, setup=None) -> None:
                 fh.write(b"not-json\n")
             stale = time.time() - (kernel_proc.TTL + 300)
             os.utime(path, (stale, stale))
+        except OSError:
+            pass
+    for pid in (setup.get("forge_exit") or ()):
+        # C-A cycle 8: the cheapest transfer in this PR's history. One appended
+        # exit line ends a subagent, because `is_live` reads the ending BEFORE
+        # any freshness guard. Written with `append`, so it is the WELL-FORMED
+        # forgery: byte-identical to a real exit line, which is why the reader
+        # asks the ptable row instead of asking the file harder. Nothing else is
+        # touched - no mtime, no timestamps, no chain.
+        # BY PATH. `append` would resolve the journal through $HOME, which is
+        # rebound for the hook subprocess and NOT for this process, so the exit
+        # landed in the real kernel directory and the fixture blocked because
+        # nothing had been forged. See `kernel_proc.forge_exit_line`.
+        kernel_proc.forge_exit_line(os.path.join(jdir, f"{pid}.jsonl"))
+    for pid, mode in (setup.get("forge_journals") or {}).items():
+        # C-A cycle 7: the two forgeries a TAIL-LOCAL reader cannot see. Both
+        # are pure APPENDS onto a correctly chained journal plus one `os.utime`,
+        # and both were measured freeing a live holder's lane through the real
+        # gate scripts before the reader started answering the freshest age in
+        # the WHOLE file. `kernel_proc.forge_journal` builds them, shared with
+        # the unit anchors so the gate-level fixture and the reader-level one
+        # cannot drift into two different attacks.
+        try:
+            kernel_proc.forge_journal(os.path.join(jdir, f"{pid}.jsonl"), mode)
         except OSError:
             pass
     for pid, age in (setup.get("truncate_journals") or {}).items():

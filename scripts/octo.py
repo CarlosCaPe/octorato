@@ -289,7 +289,7 @@ def _row_state(pid, row, table, now) -> str:
         return "live"
     if row.get("status"):
         return str(row["status"])
-    if kernel_proc.has_exit(pid):
+    if kernel_proc.has_exit(pid, table):
         return "exited"
     return "expired"
 

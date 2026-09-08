@@ -179,8 +179,15 @@ class ExpiredHolder(IsolationCase):
         self.assertFalse(self.denied(out))
 
     def test_an_exited_holder_holds_nothing(self):
+        """CYCLE 8 CHANGED THE SETUP, not the assertion. The ending used to be
+        one appended journal line, which QA then used as an attack: it freed
+        this very lane with 15 bytes and no other edit. An ending is both writes
+        the exit hook makes, so the test makes both; the forged half alone is
+        asserted to DENY in
+        `EndingNeedsBothHalvesTest.test_c8_a_well_formed_exit_line_alone_...`."""
         self.run_gate(WRITE_GATE, self.write_payload("agent-a", self.a_py))
         kernel_proc.append("agent-a", {"kind": "exit", "status": "ok"})
+        self.assertTrue(kernel_proc.update_row("agent-a", {"exited": True}))
         rc, out = self.run_gate(WRITE_GATE, self.write_payload("agent-b", self.a_py))
         self.assertFalse(self.denied(out))
 

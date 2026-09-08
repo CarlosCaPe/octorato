@@ -12,6 +12,7 @@ path runs and journals, never how fast.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -189,10 +190,21 @@ class LivenessTest(SandboxHome):
                          "a hung child releases what it holds after the TTL")
         self.assertTrue(kernel_proc.is_live("parent", table))
 
-    def test_a_child_with_an_exit_line_is_not_live(self):
+    def test_a_child_that_really_ended_is_not_live(self):
+        """RENAMED AND RE-SETUP IN CYCLE 8, and the change is the finding. This
+        was `..._with_an_exit_line_...` and it built the ending with `append`
+        alone, which is now the ATTACK rather than the state: one appended exit
+        line freed a live holder's lane on both gates. A real ending is both
+        writes `r__subagent-stop__proc-exit.py` makes, so the setup makes both.
+
+        What stopped being covered is "an exit LINE alone ends a process",
+        deliberately, and it is now covered in the opposite direction by
+        `EndingNeedsBothHalvesTest.test_c8_a_well_formed_exit_line_alone_is_not
+        _an_ending`."""
         kernel_proc.register("parent", {"kind": "main"})
         kernel_proc.register("child", {"kind": "subagent", "ppid": "parent"})
         kernel_proc.append("child", {"kind": "exit", "status": "ok"})
+        self.assertTrue(kernel_proc.update_row("child", {"exited": True}))
         self.assertFalse(kernel_proc.is_live("child", self.table()))
 
     def test_a_child_of_a_dead_parent_is_not_live(self):
@@ -2495,11 +2507,21 @@ class UnreadableRecordTest(SandboxHome):
         self.assertIs(kernel_proc._quiet_for("owner", time.time()),
                       kernel_proc.UNKNOWN)
 
-    def test_ca_a_tail_older_than_the_line_before_it_is_unknown(self):
-        """The DIRECTION check, and it is the one that costs an attacker the
-        FILE rather than one line. With shape and anchor alone, appending a line
-        whose `ts` equals the real `start_ts` reads as death for any process
-        that registered more than TTL ago, which is most of them."""
+    def test_ca_an_appended_line_dated_before_its_own_start_ts_is_unknown(self):
+        """RENAMED IN CYCLE 7, because the name was a claim this test never
+        measured. It was called `..._a_tail_older_than_the_line_before_it_...`
+        and presented as the DIRECTION check; the forged line copies line 0
+        (whose `start_ts` is seconds old) and then backdates `ts` past TTL, so
+        it fails SHAPE - `ts` predates its own `start_ts` - and never reaches a
+        direction check at all. QA proved the masking with a double mutant:
+        deleting SHAPE and DIRECTION together kills it, deleting DIRECTION alone
+        does not.
+
+        So it keeps the coverage it actually has, which is real (SHAPE at the
+        file level, through `_quiet_for`, rather than as a unit), and DIRECTION
+        is measured where it can be isolated:
+        `AppendMonotoneReaderTest.test_c7_two_appended_lines_plus_a_touch_...`,
+        which is the attack this one was believed to cover."""
         self.held_lane()
         path = kernel_proc.journal_path("owner")
         with open(path, encoding="utf-8") as fh:
@@ -2725,3 +2747,639 @@ class CarrierKindTest(SandboxHome):
         self.assertTrue(lifted, "the lift is recorded")
         self.assertEqual(lifted[0]["fault"], "lifted")
         self.assertEqual(lifted[0]["fault_kind"], kernel_proc.FAULT_ZERO_ROWS)
+
+
+class AppendMonotoneReaderTest(SandboxHome):
+    """QA cycle 7, and the fourth appearance of C-A wearing a fourth coat.
+
+    Cycle 6 shipped a reader that checked the LAST record in an 8 KiB tail
+    window against the two lines around it, and the commit claimed a forgery
+    now cost rewriting the file. QA walked through all three of its guards with
+    two APPENDED lines, each copying line 0's `start_ts` with `ts` set equal to
+    it, plus one `os.utime`: shape held, anchor held, and the pairwise
+    direction check compared two lines that were BOTH the attacker's. A holder
+    that had worked 0 s ago read as quiet for 1200 s and both gates allowed the
+    intruder onto its lane.
+
+    Two more measurements say why neither obvious patch was the fix. The CHAIN
+    does not close it: `prev` is an unkeyed sha256, so recomputing it is one
+    more expression in the same `python3 -c`, and with the chain recomputed
+    `verify()` returns 0 while the lane still transfers. The WINDOW does not
+    close it either: three appended lines of 3900 bytes evict every real record
+    from the 8 KiB tail, so a windowed guard reads only what the attacker put
+    there.
+
+    So the reader stopped asking "is the last record well-formed" and started
+    answering the FRESHEST credible age in the WHOLE file. The kernel's own
+    writers only append; appending can only add a candidate, and another
+    candidate can only make the answer NEWER. There is no line that can be
+    appended to make it say "older".
+
+    EVERY TEST BELOW ISOLATES ONE GUARD. Cycle 7 found six of twelve mutants
+    surviving a green suite because each existing fixture tripped several
+    guards at once, so each one died to a neighbour or to nothing. These are
+    built so that deleting the guard they name fails THIS test and deleting any
+    other guard does not.
+    """
+
+    def held_lane(self):
+        kernel_proc.register("owner", {"kind": "main", "type": "main"})
+        lane = os.path.join(self.home, "work", "tree", "a.py")
+        self.assertTrue(kernel_proc.claim_lane("owner", lane))
+        kernel_proc.append("owner", {"kind": "tool", "tool_name": "Write"})
+        return lane
+
+    def rewrite(self, pid, recs):
+        """Write `recs` as a correctly chained journal. The attacker computes
+        the chain too, so a test that leaves it broken measures the chain and
+        not the guard it names."""
+        path = kernel_proc.journal_path(pid)
+        out, prev = [], None
+        for rec in recs:
+            rec = dict(rec, prev=prev)
+            raw = json.dumps(rec, separators=(",", ":")).encode()
+            out.append(raw)
+            prev = hashlib.sha256(raw).hexdigest()
+        with open(path, "wb") as fh:
+            fh.write(b"\n".join(out) + b"\n")
+        return path
+
+    # ── DIRECTION ───────────────────────────────────────────────────────────
+
+    def test_c7_two_appended_lines_plus_a_touch_do_not_free_the_lane(self):
+        """THE MEASURED BREAK, verbatim, and the DIRECTION guard is the only
+        thing that catches it.
+
+        Both appended lines copy line 0's `start_ts` and set `ts` equal to it,
+        so SHAPE passes (`ts` does not predate its own `start_ts`) and ANCHOR
+        passes (that `start_ts` IS line 0's). Only the step backwards from the
+        real record at `now` to the forged record at `start_ts` is wrong, and
+        only a direction check that reaches past the attacker's own lines sees
+        it. The `os.utime` is not decoration: without a stale mtime `_quiet_for`
+        short-circuits and never reads the record at all, which is why QA's
+        matrix has five rows and neither ingredient does anything alone.
+        """
+        lane = self.held_lane()
+        path = kernel_proc.journal_path("owner")
+        self.assertTrue(kernel_proc.forge_journal(path, "tail"))
+        self.assertIs(kernel_proc._quiet_for("owner", time.time()),
+                      kernel_proc.UNKNOWN)
+        self.assertTrue(kernel_proc._own_fresh("owner", time.time(),
+                                               kernel_proc.TTL))
+        self.assertEqual(kernel_proc.lane_owner(lane, ignore="x")[0], "owner",
+                         "the holder keeps its lane; the intruder is denied")
+
+    def test_c7_the_chain_recomputed_does_not_buy_the_lane_either(self):
+        """`forge_journal` chains its forgeries correctly, so this states the
+        measurement rather than assuming it: the journal VERIFIES and is still
+        refused. A fix that called `verify()` here would have passed the shape
+        QA happened to build (it copied `prev` verbatim) and failed this one."""
+        self.held_lane()
+        path = kernel_proc.journal_path("owner")
+        self.assertTrue(kernel_proc.forge_journal(path, "tail"))
+        self.assertEqual(kernel_proc.verify("owner"), 0,
+                         "the forgery is chain-valid, which is why the chain "
+                         "is not the guard")
+
+    # ── FRESHEST ────────────────────────────────────────────────────────────
+
+    def test_c7_a_staircase_of_small_backwards_steps_does_not_age_the_holder(self):
+        """The FRESHEST guard, and the general form of the break above.
+
+        Every appended line steps back by less than FUTURE_SKEW, so every step
+        satisfies a direction check on its own and the tail walks past TTL one
+        legal-looking line at a time. A reader that answers the LAST line's age
+        is walked wherever the attacker wants; a reader that answers the
+        freshest age in the file cannot be, because the real record at `now` is
+        still in it. Deleting the direction guard does not fail this test, and
+        that is the point: this one names FRESHEST.
+        """
+        lane = self.held_lane()
+        path = kernel_proc.journal_path("owner")
+        self.assertTrue(kernel_proc.forge_journal(path, "staircase"))
+        quiet = kernel_proc._quiet_for("owner", time.time())
+        self.assertIsInstance(quiet, float)
+        self.assertLessEqual(quiet, kernel_proc.TTL,
+                             "the freshest record in the file is seconds old")
+        self.assertTrue(kernel_proc._own_fresh("owner", time.time(),
+                                               kernel_proc.TTL))
+        self.assertEqual(kernel_proc.lane_owner(lane, ignore="x")[0], "owner")
+
+    # ── ANCHOR ──────────────────────────────────────────────────────────────
+
+    def test_c7_a_line_whose_start_ts_contradicts_line_zero_is_unknown(self):
+        """The ANCHOR guard, isolated by keeping time moving FORWARDS.
+
+        `append` copies `start_ts` forward unchanged, so two lines that disagree
+        about it did not both come from this kernel. The forged line is dated
+        AFTER line 0 and after its own `start_ts`, so shape and direction are
+        both satisfied and the freshest age in the file is the forged one:
+        without the anchor the answer is a number past TTL and the lane frees.
+        """
+        lane = self.held_lane()
+        now = time.time()
+        start = round(now - 4000, 6)
+        path = self.rewrite("owner", [
+            {"seq": 0, "ts": start, "start_ts": start, "pid": "owner",
+             "kind": "start"},
+            {"seq": 1, "ts": round(now - (kernel_proc.TTL + 300), 6),
+             "start_ts": round(start + 7, 6), "pid": "owner", "kind": "tool"},
+        ])
+        stale = now - (kernel_proc.TTL + 300)
+        os.utime(path, (stale, stale))
+        self.assertIs(kernel_proc._quiet_for("owner", time.time()),
+                      kernel_proc.UNKNOWN)
+        self.assertEqual(kernel_proc.lane_owner(lane, ignore="x")[0], "owner")
+
+    def test_c7_the_exclusion_one_coherent_start_ts_still_expires(self):
+        """The half that keeps the anchor a measurement instead of an appetite
+        for denying: the SAME two lines with the SAME timestamps and one
+        `start_ts` throughout are a process that genuinely went quiet, and its
+        lane frees on schedule."""
+        lane = self.held_lane()
+        now = time.time()
+        start = round(now - 4000, 6)
+        path = self.rewrite("owner", [
+            {"seq": 0, "ts": start, "start_ts": start, "pid": "owner",
+             "kind": "start"},
+            {"seq": 1, "ts": round(now - (kernel_proc.TTL + 300), 6),
+             "start_ts": start, "pid": "owner", "kind": "tool"},
+        ])
+        stale = now - (kernel_proc.TTL + 300)
+        os.utime(path, (stale, stale))
+        self.assertIsInstance(kernel_proc._quiet_for("owner", time.time()), float)
+        self.assertIsNone(kernel_proc.lane_owner(lane, ignore="x")[0])
+
+    # ── SHAPE ───────────────────────────────────────────────────────────────
+
+    def test_c7_a_ts_that_predates_its_own_start_ts_is_not_a_kernel_line(self):
+        """The SHAPE guard's second clause, as a unit so nothing else can kill
+        it. `append` writes `ts` as `now` and copies `start_ts` forward, so `ts`
+        can never predate the line's own `start_ts` in a file this kernel
+        wrote."""
+        start = time.time()
+        good = {"seq": 1, "ts": start, "start_ts": start, "pid": "owner",
+                "kind": "tool", "prev": None}
+        self.assertIsNotNone(
+            kernel_proc._kernel_line(json.dumps(good).encode()),
+            "the benign half: this exact line, one field different, is read")
+        bad = dict(good, ts=start - 3600)
+        self.assertIsNone(kernel_proc._kernel_line(json.dumps(bad).encode()))
+
+    def test_c7_a_line_missing_a_core_key_is_not_a_kernel_line(self):
+        """The SHAPE guard's first clause. `append` writes every one of
+        `_CORE_KEYS` on every line and `_fit` never drops them, so a line
+        missing one is not this kernel's line however well-formed its
+        timestamps are. The old `{"ts":1}` fixture could not name this guard:
+        it died on `start_ts` being absent whether the key check ran or not."""
+        now = time.time()
+        good = {"seq": 1, "ts": now, "start_ts": now, "pid": "owner",
+                "kind": "tool", "prev": None}
+        self.assertIsNotNone(kernel_proc._kernel_line(json.dumps(good).encode()))
+        for key in kernel_proc._CORE_KEYS:
+            if key in ("ts", "start_ts"):
+                continue        # those two are the other clause's job
+            with self.subTest(missing=key):
+                bad = {k: v for k, v in good.items() if k != key}
+                self.assertIsNone(kernel_proc._kernel_line(json.dumps(bad).encode()))
+
+    # ── _num ────────────────────────────────────────────────────────────────
+
+    def test_c7_a_boolean_registered_ts_is_not_a_clock_and_keeps_the_row(self):
+        """`_num` excludes `bool` on purpose, and this is where the exclusion is
+        load-bearing rather than tidy: `True` is an `int` to `isinstance` and
+        `float(True)` is 1.0, which every clock in this file reads as 1970 and
+        therefore as infinitely old.
+
+        Reached through the ptable, because through the journal it cannot be
+        isolated: `ts` and `start_ts` both coerce to 1.0 and the ANCHOR guard
+        fires on the result whether `_num` sees the boolean or not. Here the
+        row's own clock is the only reader, and without the exclusion a torn
+        journal plus one boolean field expires the row and frees its lane at the
+        next SessionStart.
+        """
+        lane = self.held_lane()
+        path = kernel_proc.journal_path("owner")
+        with open(path, "ab") as fh:
+            fh.write(b"not-json\n")
+        stale = time.time() - (kernel_proc.TTL + 600)
+        os.utime(path, (stale, stale))
+        self.assertIs(kernel_proc._quiet_for("owner", time.time()),
+                      kernel_proc.UNKNOWN)
+
+        table = kernel_proc.read_ptable()
+        table["processes"]["owner"]["registered_ts"] = True
+        with open(kernel_proc.ptable_path(), "w", encoding="utf-8") as fh:
+            json.dump(table, fh)
+        self.assertIsNone(kernel_proc._row_ts(
+            kernel_proc.read_ptable()["processes"]["owner"]))
+
+        table = kernel_proc.read_ptable()
+        kernel_proc.prune(table)
+        self.assertIn("owner", table["processes"],
+                      "a boolean is not a registration time, so it is not a "
+                      "row that registered in 1970")
+        self.assertEqual(kernel_proc.lane_owner(lane, ignore="x")[0], "owner")
+
+
+class EndingNeedsBothHalvesTest(SandboxHome):
+    """QA cycle 8. The cheapest lane transfer in this PR's history: ONE appended
+    line, 15 bytes, no `os.utime`, no timestamp forgery, no chain work.
+
+    `is_live` reads `has_exit` FIRST on the subagent branch, before `_own_fresh`
+    runs at all, so an "exit" short-circuits every freshness guard cycle 7 put
+    in. The reader accepted any parseable object carrying `kind == "exit"`, so
+    `{"kind":"exit"}` was a complete ending, and both gates went from `deny` to
+    no decision at all while the intruder took the lane. It BYPASSES cycle 7's
+    invariant rather than violating it: `_journal_age` correctly answered
+    UNKNOWN for that torn file, and UNKNOWN never got the chance to hold.
+
+    Validating the line cannot be the fix and this class does not pretend it is:
+    a real exit line and a forged one are byte-identical by construction, since
+    the exit hook writes it with the same `append` a forger calls. So the
+    ENDING is defined as the two writes a real ending makes - the journal line
+    AND the ptable row - and the row is behind the lock, `sane_table`, the fault
+    carrier and the quarantine copy. That does not add a boundary; it removes a
+    cheaper way around the one that was already there.
+    """
+
+    def held_lane(self):
+        """A SUBAGENT holding a lane. `ppid` is what puts `is_live` on the
+        branch that reads the exit first, and a row keyed `parent` instead
+        misses it entirely - which is how a first reproduction of this attack
+        came back clean."""
+        kernel_proc.register("sess-parent", {"kind": "main", "type": "main"})
+        kernel_proc.append("sess-parent", {"kind": "tool", "tool_name": "Read"})
+        kernel_proc.register("owner", {"kind": "subagent", "type": "subagent",
+                                       "ppid": "sess-parent"})
+        lane = os.path.join(self.home, "work", "tree", "a.py")
+        self.assertTrue(kernel_proc.claim_lane("owner", lane))
+        kernel_proc.append("owner", {"kind": "tool", "tool_name": "Write"})
+        self.assertTrue(kernel_proc.is_live("owner"), "the control is live")
+        return lane
+
+    def test_c8_a_bare_exit_object_is_not_an_ending(self):
+        """THE MEASURED BREAK, verbatim. 15 bytes with no `seq`, no `ts`, no
+        `start_ts`, no `pid` and no `prev` used to end a process. That is
+        `{"ts":1}` from cycle 6 wearing a different key, and `_kernel_line`
+        refuses it on the same grounds."""
+        lane = self.held_lane()
+        with open(kernel_proc.journal_path("owner"), "ab") as fh:
+            fh.write(b'{"kind":"exit"}\n')
+        self.assertFalse(kernel_proc.has_exit_line("owner"))
+        self.assertFalse(kernel_proc.has_exit("owner"))
+        self.assertTrue(kernel_proc.is_live("owner"))
+        self.assertEqual(kernel_proc.lane_owner(lane, ignore="x")[0], "owner")
+
+    def test_c8_a_well_formed_exit_line_alone_is_not_an_ending(self):
+        """The half a shape check can never catch, isolated from it: this line
+        is written by `append` itself, so it satisfies every rule any reader
+        could impose on the file. Only the ptable row separates it from a real
+        ending, and the row is a second write in a second file."""
+        lane = self.held_lane()
+        kernel_proc.append("owner", {"kind": "exit", "status": "ok"})
+        self.assertTrue(kernel_proc.has_exit_line("owner"),
+                        "the journal half is genuinely there")
+        self.assertFalse(kernel_proc.has_exit("owner"),
+                         "and it is not an ending on its own")
+        self.assertTrue(kernel_proc.is_live("owner"))
+        self.assertEqual(kernel_proc.lane_owner(lane, ignore="x")[0], "owner")
+
+    def test_c8_an_exited_field_that_is_not_true_is_not_an_ending(self):
+        """`is True`, not truthiness, and cycle 6's `"_faulted": null` is the
+        anchor for it. The hook writes the literal `True`; any other shape is a
+        foreign writer's row, and reading it as an ending is the direction that
+        frees the lane."""
+        lane = self.held_lane()
+        kernel_proc.append("owner", {"kind": "exit", "status": "ok"})
+        for value in ("yes", 1, [1], {"a": 1}):
+            with self.subTest(exited=value):
+                self.assertTrue(kernel_proc.update_row("owner",
+                                                       {"exited": value}))
+                self.assertFalse(kernel_proc.has_exit("owner"))
+                self.assertEqual(kernel_proc.lane_owner(lane, ignore="x")[0],
+                                 "owner")
+
+    def test_c8_the_exclusion_a_real_ending_still_frees_the_lane(self):
+        """The half that keeps this a measurement and not an appetite for
+        denying. Both writes, in the order `r__subagent-stop__proc-exit.py`
+        makes them, and the lane frees. Without this, "no subagent ever exits"
+        would be the shipped rule and every lane would wait out its TTL."""
+        lane = self.held_lane()
+        kernel_proc.append("owner", {"kind": "exit", "status": "ok"})
+        self.assertTrue(kernel_proc.update_row("owner", {"exited": True}))
+        self.assertTrue(kernel_proc.has_exit("owner"))
+        self.assertFalse(kernel_proc.is_live("owner"))
+        self.assertIsNone(kernel_proc.lane_owner(lane, ignore="x")[0],
+                          "a process that really ended releases what it held")
+
+    def test_c8_the_writers_idempotence_guard_reads_the_journal_not_the_row(self):
+        """`r__subagent-stop__proc-exit.py` guards on `has_exit_line`, and the
+        two readings have to stay separable for it. `update_row` returns False
+        for a pid with no row, so a guard that asked the ENDING would append a
+        second exit line on every re-fired SubagentStop, forever."""
+        self.held_lane()
+        kernel_proc.append("owner", {"kind": "exit", "status": "ok"})
+        table = kernel_proc.read_ptable()
+        del table["processes"]["owner"]
+        with open(kernel_proc.ptable_path(), "w", encoding="utf-8") as fh:
+            json.dump(table, fh)
+        self.assertFalse(kernel_proc.update_row("owner", {"exited": True}),
+                         "no row to mark")
+        self.assertTrue(kernel_proc.has_exit_line("owner"),
+                        "the writer sees its own line and does not repeat it")
+        self.assertFalse(kernel_proc.has_exit("owner"),
+                         "while liveness has no corroboration and holds")
+
+
+class UnreadableRegistrationTimeTest(SandboxHome):
+    """QA cycle 7's leftover, closed in cycle 8. `prune` had the invariant on
+    one branch and its exact violation on the next: the UNKNOWN branch keeps a
+    row whose `registered_ts` cannot be read ("no clock at all"), while the
+    absent-journal branch substituted `0.0` for the same unreadable value. 0.0
+    is 1970 on every clock in this file, so the row read infinitely old and was
+    dropped outright - with its lanes, with no fault and with nothing on any
+    surface to say a holder had just been forgotten."""
+
+    def held_lane(self):
+        kernel_proc.register("owner", {"kind": "main", "type": "main"})
+        lane = os.path.join(self.home, "work", "tree", "a.py")
+        self.assertTrue(kernel_proc.claim_lane("owner", lane))
+        kernel_proc.append("owner", {"kind": "tool", "tool_name": "Write"})
+        return lane
+
+    def test_c8_no_journal_and_no_readable_clock_keeps_and_faults_the_row(self):
+        lane = self.held_lane()
+        os.unlink(kernel_proc.journal_path("owner"))
+        table = kernel_proc.read_ptable()
+        table["processes"]["owner"]["registered_ts"] = "not-a-time"
+        with open(kernel_proc.ptable_path(), "w", encoding="utf-8") as fh:
+            json.dump(table, fh)
+
+        table = kernel_proc.read_ptable()
+        self.assertIsNone(kernel_proc._row_ts(table["processes"]["owner"]))
+        kernel_proc.prune(table)
+        self.assertIn("owner", table["processes"],
+                      "a row with no clock is not a row that registered in 1970")
+        self.assertTrue(kernel_proc.carried_fault(table),
+                        "and holding lanes with no journal is a fault, not a "
+                        "quiet drop")
+        self.assertEqual(kernel_proc.lane_owner(lane, table=table,
+                                                ignore="x")[0], "owner")
+
+    def test_c8_the_exclusion_a_readable_clock_past_prune_after_still_expires(self):
+        """One field different, and the row expires on schedule. Without this
+        the rule would read "no row whose journal is missing ever expires"."""
+        self.held_lane()
+        os.unlink(kernel_proc.journal_path("owner"))
+        table = kernel_proc.read_ptable()
+        table["processes"]["owner"]["registered_ts"] = (
+            time.time() - (kernel_proc.PRUNE_AFTER + 600))
+        with open(kernel_proc.ptable_path(), "w", encoding="utf-8") as fh:
+            json.dump(table, fh)
+        table = kernel_proc.read_ptable()
+        kernel_proc.prune(table)
+        self.assertNotIn("owner", table["processes"])
+
+
+class OversizedJournalTest(SandboxHome):
+    """QA cycle 9, and it is an ISOLATION guard wearing a performance costume.
+
+    `_journal_age` reads the whole journal on the stale path, so the WORK became
+    a quantity the attacker chooses: the same interpreter hole sets the size
+    (append) and the staleness (`os.utime`) that makes the reader run at all.
+    Every decision stayed correct at every size measured, which is availability
+    right up to the moment the harness is asked - `~/.claude/settings.json`
+    gives these gates `"timeout": 5`, and a killed hook writes no stdout, so it
+    emits no `permissionDecision`, which is the same "(none)" every matrix in
+    this PR records as an ALLOW. Measured on the real gate before the cap:
+    0 MB 0.27 s, 5 MB 0.25 s, 50 MB 1.96 s, 300 MB 8.01 s, killed. After it:
+    0.11 s flat at every one of those sizes, still denying.
+
+    A slow reader is a permissive reader when somebody else owns the clock.
+    """
+
+    def held_lane(self):
+        kernel_proc.register("owner", {"kind": "main", "type": "main"})
+        lane = os.path.join(self.home, "work", "tree", "a.py")
+        self.assertTrue(kernel_proc.claim_lane("owner", lane))
+        kernel_proc.append("owner", {"kind": "tool", "tool_name": "Write"})
+        return lane
+
+    def stale(self, path):
+        old = time.time() - (kernel_proc.TTL + 600)
+        os.utime(path, (old, old))
+
+    def test_c9_a_journal_past_the_cap_is_unknown_and_keeps_its_lane(self):
+        """At the SHIPPED constant, not a patched one. The file is made sparse
+        (`os.truncate` extends with zeros and allocates nothing), which is the
+        whole point of the guard: the answer costs one `getsize` and the bytes
+        are never read, so a padded journal buys the fail-closed branch in O(1)
+        instead of buying a timeout."""
+        lane = self.held_lane()
+        path = kernel_proc.journal_path("owner")
+        os.truncate(path, kernel_proc.MAX_JOURNAL_SCAN + 1)
+        self.stale(path)
+        started = time.perf_counter()
+        self.assertIs(kernel_proc._quiet_for("owner", time.time()),
+                      kernel_proc.UNKNOWN)
+        self.assertLess(time.perf_counter() - started, 0.5,
+                        "answered without reading the file")
+        self.assertTrue(kernel_proc._own_fresh("owner", time.time(),
+                                               kernel_proc.TTL))
+        self.assertEqual(kernel_proc.lane_owner(lane, ignore="x")[0], "owner")
+
+    def test_c9_the_exclusion_the_boundary_answers_on_both_sides(self):
+        """One journal, one constant moved by a byte in each direction, so the
+        cap is measured as a BOUNDARY rather than as "big files deny". Without
+        this half the shipped rule could be "no journal ever expires" and every
+        count would look identical."""
+        lane = self.held_lane()
+        path = kernel_proc.journal_path("owner")
+        kernel_proc.backdate_journal(path, kernel_proc.TTL + 600)
+        size = os.path.getsize(path)
+        real = kernel_proc.MAX_JOURNAL_SCAN
+        self.addCleanup(setattr, kernel_proc, "MAX_JOURNAL_SCAN", real)
+
+        kernel_proc.MAX_JOURNAL_SCAN = size          # at the cap: read
+        quiet = kernel_proc._quiet_for("owner", time.time())
+        self.assertIsInstance(quiet, float)
+        self.assertIsNone(kernel_proc.lane_owner(lane, ignore="x")[0],
+                          "a coherently quiet journal under the cap expires")
+
+        kernel_proc.MAX_JOURNAL_SCAN = size - 1      # one byte over: unknown
+        self.assertIs(kernel_proc._quiet_for("owner", time.time()),
+                      kernel_proc.UNKNOWN)
+        self.assertEqual(kernel_proc.lane_owner(lane, ignore="x")[0], "owner")
+
+    def test_c9_the_line_cap_answers_on_both_sides_of_its_own_boundary(self):
+        """THE LINE CAP, isolated from the byte cap, and it needed its own test:
+        a mutation run found this guard SURVIVING a green suite, because the
+        boundary test above moves `MAX_JOURNAL_SCAN` and nothing moved
+        `MAX_JOURNAL_LINES`. Deleting the line cap changed no assertion, which
+        is the guard-masking this whole PR keeps correcting - found here by the
+        same method, on a guard added to fix the last finding.
+
+        The constant is moved rather than the file grown, because the two caps
+        bind in different places by design (20000 lines is about 2.4 MB of short
+        records, well under the 8 MiB byte cap) and the point is the BRANCH, not
+        the size. Both sides asserted, so the rule stays "past this many lines"
+        rather than "always UNKNOWN"."""
+        lane = self.held_lane()
+        path = kernel_proc.journal_path("owner")
+        kernel_proc.backdate_journal(path, kernel_proc.TTL + 600)
+        n = sum(1 for ln in open(path, "rb") if ln.strip())
+        real = kernel_proc.MAX_JOURNAL_LINES
+        self.addCleanup(setattr, kernel_proc, "MAX_JOURNAL_LINES", real)
+
+        kernel_proc.MAX_JOURNAL_LINES = n            # at the cap: read
+        self.assertIsInstance(kernel_proc._quiet_for("owner", time.time()), float)
+        self.assertIsNone(kernel_proc.lane_owner(lane, ignore="x")[0])
+
+        kernel_proc.MAX_JOURNAL_LINES = n - 1        # one line over: unknown
+        self.assertIs(kernel_proc._quiet_for("owner", time.time()),
+                      kernel_proc.UNKNOWN)
+        self.assertEqual(kernel_proc.lane_owner(lane, ignore="x")[0], "owner",
+                         "and UNKNOWN holds the lane, so padding buys the "
+                         "fail-closed branch rather than a timeout")
+
+    def test_c9_a_fan_out_over_many_rows_is_bounded_by_the_budget(self):
+        """The per-file caps bound a FILE and the attack answered with more
+        files: twelve capped stale rows took `prune` 4.79 s against the register
+        hook's 5 s SessionStart budget, measured. So the three callers that fan
+        out open a budget and `_journal_age` answers UNKNOWN once it is spent -
+        which HOLDS, so exhausting it keeps lanes held rather than freeing them.
+
+        The budget is squeezed to a millisecond here so the test is fast and
+        deterministic; the shipped value is measured in the docstring (4.79 s ->
+        1.52 s over 12 rows, and 1.51 s over 60, flat because the bound is the
+        budget and not the row count)."""
+        lane = self.held_lane()
+        path = kernel_proc.journal_path("owner")
+        kernel_proc.backdate_journal(path, kernel_proc.TTL + 600)
+        self.addCleanup(kernel_proc.reset_scan_budget, kernel_proc.SCAN_BUDGET)
+
+        kernel_proc.reset_scan_budget(-1.0)          # already spent
+        self.assertIs(kernel_proc._quiet_for("owner", time.time()),
+                      kernel_proc.UNKNOWN)
+
+        kernel_proc.reset_scan_budget(60.0)          # room to work
+        self.assertIsInstance(kernel_proc._quiet_for("owner", time.time()), float)
+
+        # and the fan-out opens its own, so an exhausted budget never leaks
+        # from one caller into the next
+        kernel_proc.reset_scan_budget(-1.0)
+        self.assertIsNone(kernel_proc.lane_owner(lane, ignore="x")[0],
+                          "lane_owner resets before it walks")
+
+    def test_c9_the_cap_clears_the_largest_journal_this_kernel_writes(self):
+        """The constant is sized from the machine, not from taste: 476 journals
+        on the reference box run to 275 KB at the largest and 28 KB at p95. If
+        a future change makes the kernel write journals near the cap, this fails
+        before an operator discovers it as a lane that will not free."""
+        self.assertGreaterEqual(kernel_proc.MAX_JOURNAL_SCAN, 20 * 275 * 1024,
+                                "at least 20x the largest journal measured")
+        self.assertGreaterEqual(kernel_proc.MAX_JOURNAL_LINES, 20 * 704,
+                                "at least 20x the most lines measured")
+
+
+class ScanBudgetFanOutTest(SandboxHome):
+    """QA cycle 9, second pass. The budget that bounded the attacker's cost is
+    reachable WITHOUT an attacker, because a machine's own steady state is a
+    fan-out: 476 rows is what the reference box carries, and resolving a stale
+    row costs a whole-journal scan against a budget the whole walk shares.
+
+    Measured on that distribution with no attacker anywhere: 476 quiet rows
+    resolved in 1.45 s here (correct, `lane_owner` None) and in 1.51 s on a
+    loaded box (exhausted, a dead row returned as holder). The steady state sits
+    ON the boundary, so the verdict depended on how busy the machine was, which
+    is worse to diagnose than a clean failure. The direction is fail-closed
+    throughout - it denies, it never transfers - so this is availability, and it
+    is fixed where it is cheap rather than by raising a number that only moves
+    the row count at which it breaks.
+    """
+
+    def rows(self, n, tree):
+        for i in range(n):
+            pid = "p%03d" % i
+            kernel_proc.register(pid, {"pid": pid, "type": "main"})
+            self.assertTrue(kernel_proc.claim_lane(pid,
+                                                   os.path.join(tree, "f%03d.py" % i), tree))
+            kernel_proc.append(pid, {"kind": "tool", "tool_name": "Write"})
+            kernel_proc.backdate_journal(kernel_proc.journal_path(pid),
+                                         kernel_proc.TTL + 600)
+
+    def test_c9_lane_owner_reaches_the_live_holder_before_spending_the_budget(self):
+        """PROBE CHEAP BEFORE EXPENSIVE. The live holder is registered LAST, so
+        under the old registration-order walk it was reached only after every
+        stale row had been scanned - and with the budget gone, the first stale
+        row read UNKNOWN, UNKNOWN read live, and a process that ended long ago
+        was named as the holder.
+
+        The budget is emptied outright here, which is the strongest form of the
+        test: freshest-first means the real holder is answered by ONE stat and
+        the budget is never consulted at all."""
+        tree = os.path.join(self.home, "work", "tree")
+        os.makedirs(tree, exist_ok=True)
+        self.rows(6, tree)
+        kernel_proc.register("holder", {"pid": "holder", "type": "main"})
+        lane = os.path.join(tree, "live.py")
+        self.assertTrue(kernel_proc.claim_lane("holder", lane, tree))
+        kernel_proc.append("holder", {"kind": "tool", "tool_name": "Write"})
+
+        self.addCleanup(kernel_proc.reset_scan_budget, kernel_proc.SCAN_BUDGET)
+        kernel_proc.reset_scan_budget(-1.0)          # nothing left to scan with
+        owner, _ = kernel_proc.lane_owner(tree, ignore="intruder")
+        self.assertEqual(owner, "holder",
+                         "the row that actually holds the lane, not the first "
+                         "stale row an exhausted budget could not read")
+
+    def test_c9_an_exhausted_budget_says_so_instead_of_wait_for_it_to_exit(self):
+        """M2 IN THE SHAPE CYCLE 9 CREATED. A holder named because the budget
+        ran out is denied correctly and described wrongly: "wait for that
+        process to exit" about a process that exited an hour ago is the exact
+        failure `lane_recovery` already exists to fix, and for a fail-closed
+        gate the description is most of the cost."""
+        tree = os.path.join(self.home, "work", "tree")
+        os.makedirs(tree, exist_ok=True)
+        self.rows(1, tree)
+        self.addCleanup(kernel_proc.reset_scan_budget, kernel_proc.SCAN_BUDGET)
+
+        kernel_proc.reset_scan_budget(60.0)
+        self.assertIn("of silence", kernel_proc.lane_recovery("p000"),
+                      "a holder we could read keeps the ordinary advice")
+
+        kernel_proc.reset_scan_budget(-1.0)
+        text = kernel_proc.lane_recovery("p000")
+        self.assertIn("scan budget", text)
+        self.assertIn("--release p000", text)
+        self.assertNotIn("Wait for that process to exit", text)
+
+    def test_c9_prune_files_opens_its_own_budget_instead_of_inheriting(self):
+        """`prune` calls `prune_files` at the END of its own fan-out, so on a
+        machine big enough to spend the budget the sweep ran with none left,
+        every `is_live` read UNKNOWN, UNKNOWN read live, and nothing was swept.
+        The sweep that bounds directory growth was disabled exactly on the
+        machines whose directories are largest, and nothing shrinks a directory
+        that is never swept."""
+        tree = os.path.join(self.home, "work", "tree")
+        os.makedirs(tree, exist_ok=True)
+        kernel_proc.register("gone", {"pid": "gone", "type": "main"})
+        path = kernel_proc.journal_path("gone")
+        kernel_proc.backdate_journal(path, kernel_proc.PRUNE_AFTER + 600)
+        # THE LOCK FILE COUNTS TOO. `prune_files` reads the mtime of every file
+        # it owns for that pid, so a backdated journal beside a fresh `.lock`
+        # never reaches the liveness question at all. The first version of this
+        # test left the lock alone and failed for that reason, which would have
+        # been reported as a broken sweep: an invalid fixture is not a finding.
+        old = time.time() - (kernel_proc.PRUNE_AFTER + 600)
+        os.utime(kernel_proc.lock_path("gone"), (old, old))
+        table = kernel_proc.read_ptable()
+        table["processes"].pop("gone", None)         # row already expired
+
+        self.addCleanup(kernel_proc.reset_scan_budget, kernel_proc.SCAN_BUDGET)
+        kernel_proc.reset_scan_budget(-1.0)          # as prune leaves it
+        self.assertEqual(kernel_proc.prune_files(table), 2,
+                         "journal and lock both swept: the sweep opens its own "
+                         "budget rather than inheriting a spent one")
+        self.assertFalse(os.path.exists(path))
