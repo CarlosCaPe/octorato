@@ -93,9 +93,10 @@
       "maxLength": 256
     },
     "homepage": {
-      "description": "Optional source/documentation URL.",
+      "description": "Optional source/documentation URL, http(s) only. The scheme allowlist is the pattern, not the format: 'format' is an annotation a validator only enforces when the optional format extras are installed, and even where they are, 'javascript:alert(1)' is a well-formed URI that would pass. The pattern is what keeps a manifest from carrying a link a reader can be handed.",
       "type": "string",
-      "format": "uri"
+      "format": "uri",
+      "pattern": "^https?://[^\\s]+$"
     }
   }
 }

@@ -2,6 +2,6 @@
   "kind": "skill",
   "name": "figma-use",
   "version": "1.0.0",
-  "license": "MIT",
+  "license": "proprietary",
   "description": "MANDATORY prerequisite: invoke it BEFORE every use_figma call, never call that tool without loading this first. Applies to creating or editing nodes, variables, components, auto-layout and fills."
 }

@@ -14,7 +14,9 @@ parses, and the manifest generator.
 """
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -851,6 +853,14 @@ class TestGenerator(unittest.TestCase):
         (d / "SKILL.md").write_text(body, encoding="utf-8")
         return d
 
+    def _gen(self, *extra: str) -> tuple[int, str]:
+        """Run the generator and return (exit code, what it printed). The report is
+        part of the contract: a refusal that names the wrong reason is a wrong answer."""
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = gen.main(["--root", str(self.root), "--write", *extra])
+        return rc, buf.getvalue()
+
     def test_dry_run_writes_nothing(self):
         d = self._skill("alpha", "---\nname: alpha\ndescription: does a thing\n---\n# Alpha\n")
         gen.main(["--root", str(self.root)])
@@ -910,6 +920,114 @@ class TestGenerator(unittest.TestCase):
         gen.main(["--root", str(self.root), "--write", "--default-license", "MIT"])
         man = json.loads((d / "skill.json").read_text(encoding="utf-8"))
         self.assertEqual(man["license"], "Apache-2.0")
+
+    # --- the four roads a license value can be reached by --------------------
+    # A LICENSE that is present says something. Absent is the only case a default
+    # may speak for, and the two failure roads (unrecognized, unreadable) must be
+    # reported rather than relabelled: a wrong license on a public package is a
+    # legal claim about someone else's work.
+
+    _MIT_BODY = ('Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction.\\n\\nThe above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.\\n\\nTHE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED.\\n')
+    _FOREIGN_TERMS = ('Use of these skills and related files ("Materials") is governed by the Vendor Developer Terms (available at https://vendor.example/legal/developer-terms/).\\n')
+
+    def test_no_license_falls_back_to_the_repo_default(self):
+        self._skill("eta", "---\nname: eta\ndescription: d\n---\n")
+        self.assertEqual(gen.main(["--root", str(self.root), "--write",
+                                   "--default-license", "MIT"]), 0)
+        man = json.loads((self.root / "eta" / "skill.json").read_text(encoding="utf-8"))
+        self.assertEqual(man["license"], "MIT")
+
+    def test_an_unrecognized_license_is_reported_not_defaulted(self):
+        d = self._skill("theta", "---\nname: theta\ndescription: d\n---\n")
+        (d / "LICENSE.txt").write_text(self._FOREIGN_TERMS, encoding="utf-8")
+        rc, out = self._gen("--default-license", "MIT")
+        self.assertEqual(rc, 1)
+        self.assertFalse((d / "skill.json").exists(),
+                         "a manifest was written claiming the repo default over foreign terms")
+        self.assertIn("does not recognize", out)
+
+    @unittest.skipIf(os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+                     "chmod 000 does not deny the owner on Windows or as root")
+    def test_an_unreadable_license_is_reported_not_defaulted(self):
+        d = self._skill("iota", "---\nname: iota\ndescription: d\n---\n")
+        lic = d / "LICENSE.txt"
+        lic.write_text(self._MIT_BODY, encoding="utf-8")
+        lic.chmod(0o000)
+        self.addCleanup(lic.chmod, 0o644)
+        rc, out = self._gen("--default-license", "MIT")
+        self.assertEqual(rc, 1)
+        self.assertFalse((d / "skill.json").exists(),
+                         "present-and-unreadable was collapsed into absent")
+        # The road matters, not just the refusal: an unreadable LICENSE and an
+        # unrecognized one both stop the write, and reporting the wrong one sends
+        # whoever fixes it to read terms nobody could open.
+        self.assertIn("unreadable", out)
+
+    def test_an_uppercase_license_extension_is_still_found(self):
+        d = self._skill("kappa", "---\nname: kappa\ndescription: d\n---\n")
+        (d / "LICENSE.TXT").write_text(self._FOREIGN_TERMS, encoding="utf-8")
+        self.assertEqual(gen.main(["--root", str(self.root), "--write",
+                                   "--default-license", "MIT"]), 1)
+        self.assertFalse((d / "skill.json").exists(),
+                         "LICENSE.TXT was never opened, so foreign terms read as no terms")
+
+    def test_verbatim_mit_without_a_header_line_is_recognized(self):
+        d = self._skill("lambda", "---\nname: lambda\ndescription: d\n---\n")
+        (d / "LICENSE.txt").write_text("Copyright 2025 Someone Else, Inc.\n\n" + self._MIT_BODY,
+                                       encoding="utf-8")
+        self.assertEqual(gen.main(["--root", str(self.root), "--write",
+                                   "--default-license", "Apache-2.0"]), 0)
+        man = json.loads((d / "skill.json").read_text(encoding="utf-8"))
+        self.assertEqual(man["license"], "MIT")
+
+    def test_prose_that_merely_quotes_mit_is_not_claimed_as_mit(self):
+        d = self._skill("mu", "---\nname: mu\ndescription: d\n---\n")
+        (d / "LICENSE.txt").write_text(
+            self._FOREIGN_TERMS
+            + "\nThese terms are not the MIT License. For reference, MIT reads:\n\n"
+            + self._MIT_BODY, encoding="utf-8")
+        self.assertEqual(gen.main(["--root", str(self.root), "--write",
+                                   "--default-license", "MIT"]), 1)
+        self.assertFalse((d / "skill.json").exists(),
+                         "a document that quotes the MIT grant was claimed as MIT")
+
+
+    def test_an_unreadable_repo_license_is_not_assumed_to_be_mit(self):
+        # The default speaks for 192 skills, so where IT comes from is the same
+        # question one level up: a repo whose own LICENSE cannot be read has no
+        # default to give, and the answer is a usage error, not a constant.
+        fake_brain = self.tmp / "brain"
+        fake_brain.mkdir()
+        (fake_brain / "LICENSE").write_text(self._FOREIGN_TERMS, encoding="utf-8")
+        self.assertIsNone(gen.repo_default_license(fake_brain))
+        real, gen.BRAIN = gen.BRAIN, fake_brain
+        self.addCleanup(setattr, gen, "BRAIN", real)
+        self._skill("nu", "---\nname: nu\ndescription: d\n---\n")
+        rc, _ = self._gen()
+        self.assertEqual(rc, 2)
+        self.assertFalse((self.root / "nu" / "skill.json").exists())
+
+
+class TestInRepoManifestLicenses(unittest.TestCase):
+    """The corpus itself, not a sandbox: no shipped manifest may claim the repo's own
+    license over a third party's terms."""
+
+    def test_no_manifest_claims_the_repo_default_over_foreign_terms(self):
+        default = gen.repo_default_license(BRAIN)
+        offenders = []
+        for manifest in sorted((BRAIN / "skills").glob("*/skill.json")):
+            lic_path = gen.license_file(manifest.parent)
+            if lic_path is None:
+                continue
+            derived = gen.spdx_of(gen.read_license(lic_path))
+            declared = json.loads(manifest.read_text(encoding="utf-8"))["license"]
+            if derived is None and declared == default:
+                offenders.append(f"{manifest.parent.name} claims {declared} over "
+                                 f"{lic_path.name}, whose terms are unrecognized")
+            elif derived is not None and declared != derived:
+                offenders.append(f"{manifest.parent.name} declares {declared}, "
+                                 f"{lic_path.name} says {derived}")
+        self.assertEqual(offenders, [])
 
 
 if __name__ == "__main__":
