@@ -17,6 +17,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -2349,12 +2350,17 @@ class QaCycle13(IsolationCase):
         writes an object store, not this disk."""
         self.hold()
         lane = self.a_py
+        # QA cycle 14 blocker 4: `apt-get install -y curl wget` and
+        # `pip install requests` were green with the `install` bound reverted,
+        # because neither names a lane and neither could have denied either way.
+        # Every input below now puts the LANE in the position the bound decides,
+        # so removing the bound flips the verdict.
         for command in (f"npm run rm -- {lane}",
                         f"cargo run rm {lane}",
                         f"docker run --rm alpine rm -f {lane}",
                         f"ssh buildhost rm -f {lane}",
-                        f"apt-get install -y curl wget",
-                        f"pip install requests",
+                        f"apt-get install -y {lane}",
+                        f"pip install -t {os.path.dirname(lane)} pkg",
                         f"aws s3 cp {lane} s3://bucket/a.py"):
             self.assertEqual(self.decide(command), "allow", command)
 
@@ -2368,8 +2374,40 @@ class QaCycle13(IsolationCase):
         past `;;`, `esac` and `done` into the next command entirely."""
         self.hold()
         lane = self.a_py
-        for command in (f"for ln in $(ls); do echo $ln; done",
-                        f"case x in pend) ;; *) break;; esac"):
+        # QA cycle 14 blocker 4: both inputs were lane-free, so the reserved
+        # word and the scan stop could be deleted with the test still green.
+        # The lane is now in the position each bound protects: after the
+        # reserved-word head, and past a `;;` the walk must not cross.
+        # The loop variable is `ln`, a real mutator, and the word after it is
+        # the LANE: without the reserved-word guard the head `for` is read as an
+        # unknown program, the search peels at `ln`, and `_copy_targets` reads
+        # `in <lane>` as a hardlink onto the lane. With the guard it is a `for`
+        # loop. Anything less than a lane in that position and the revert stays
+        # green, which is what QA cycle 14 blocker 4 measured.
+        for command in (f"for ln in {lane}; do echo $ln; done",
+                        f"case x in pend) ;; *) break;; esac\nls {lane}"):
+            self.assertEqual(self.decide(command), "allow", command)
+
+    def test_c13_the_walk_stops_where_the_command_does(self):
+        """The scan stop, separated from the reserved-word head because the two
+        were covering each other: `case …` is a reserved word, so the head guard
+        blocked the peel before the stop was ever consulted and deleting the
+        stop left the test green (QA cycle 14 blocker 4).
+
+        The head here is a program this file models nothing about, so the guard
+        does not fire, and the reserved word sits WHERE THE WALK REACHES IT. It
+        is the shape the corpus produced: `case "$ST" in … pend) ;; *) break;;
+        esac / done / aws s3 cp …` arrives as one segment from the borrowed
+        splitter, and a walk with no stop crosses `;;`, `esac` and `done` into
+        the next command."""
+        self.hold()
+        lane = self.a_py
+        # `;;` is NOT in this list on purpose: the borrowed splitter breaks a
+        # segment on `;`, so `mytool arg ;; rm -f <lane>` really is two commands
+        # and the second one really does delete the lane. It denies, correctly,
+        # and asserting otherwise would pin a bug.
+        for command in (f"mytool arg done rm -f {lane}",
+                        f"mytool arg esac rm -f {lane}"):
             self.assertEqual(self.decide(command), "allow", command)
 
     # ── C13-3 the `-c` channel in every spelling that eats the next word ────
@@ -2505,11 +2543,21 @@ class QaCycle13(IsolationCase):
 
     def test_c13_a_separator_only_word_names_no_path(self):
         """Measured over the real corpus: `> $T/g_$(echo $ref | tr '/' '_').py`
-        put a hit on `/` — the filesystem root, which prefix-matches every lane
-        there is — on 14 commands, out of the `'/'` argument of `tr`."""
-        self.hold()
+        put a hit on `/` on 14 commands, out of the `'/'` argument of `tr`."""
+        # QA cycle 14 blocker 4, and the correction matters more than the
+        # anchor. Cycle 13 justified this guard by saying the bare word
+        # "resolves to the filesystem ROOT, which prefix-matches every lane
+        # there is". That is FALSE: `kernel_proc.paths_conflict("/", <lane>)`
+        # is False by design, so a `/` hit can never change a verdict and no
+        # behavioural test could ever anchor this. What the guard actually buys
+        # is a junk hit removed, which costs an ownership lookup and puts a
+        # meaningless target in the deny report. So it is asserted on the HITS,
+        # the same way the null-sink filter is.
+        gate = _load(BASH_GATE, "bash_gate_separator_word")
         self.assertEqual(
-            self.decide("echo hi > /tmp/g_$(echo x | tr '/' '_').py"), "allow")
+            gate.scan("echo hi > $(echo x | tr 'q' '/')", self.tree),
+            [("path", kernel_proc.norm_path(os.path.join(self.tree, "__OCTOSUBST0__")),
+              ">")])
 
     # ── C13-9 characters are charged where they are WALKED ─────────────────
     def test_c13_the_opener_walk_is_charged_before_it_runs(self):
@@ -2553,10 +2601,40 @@ class QaCycle13(IsolationCase):
     def test_c13_the_substitution_count_is_charged(self):
         """M8. Each masked substitution is a COMMAND and spends a segment; the
         charge is taken up front because the masking has already happened and
-        the count is exact."""
+        the count is exact.
+
+        QA cycle 14 blocker 4: the first spelling of this test used `$(rm)`
+        bodies, and reverting the up-front charge left it GREEN because each
+        body was then scanned as its own segment and charged there — two
+        mechanisms covering each other, which is the shape that makes a revert
+        look anchored when it is not. The bodies here are EMPTY, so a
+        recursion into them charges nothing (`scan` fast-outs on a command with
+        no trigger before it spends a segment) and the up-front count is the
+        only thing that can raise."""
         gate = _load(BASH_GATE, "bash_gate_subst_charge")
+        empty = "echo rm " + "$()" * (gate._MAX_SEGMENTS + 50)
         with self.assertRaises(gate.ParseTooLarge):
-            gate.scan("echo " + "$(rm)" * (gate._MAX_SEGMENTS + 50), self.tree)
+            gate.scan(empty, self.tree)
+
+    def test_c14_the_caps_are_pinned_to_their_measurement(self):
+        """QA cycle 14 blocker 3 and 4: a `CAP_256K` mutant stayed green, so
+        nothing in the suite defended the number and it could drift back to a
+        value that fails open by clock. The numbers are asserted here with the
+        measurement that produced them, taken END TO END through the real hook
+        against a real held lane, which is what faces the harness `timeout: 5`:
+
+            95 KiB one long word        1.74 s sequential
+            95 KiB `rm -f x x x …`      6.63 s sequential, 9.85 s x3 concurrent
+            8192 tokens                 2.22 s sequential, 2.87 s x3 concurrent
+            47 KiB one long word        2.31 s sequential, 2.03 s x3 concurrent
+
+        Timing is never ASSERTED (v8-kernel.md section 3) because a clock under
+        load is not a fact about the code. The CONSTANTS are, and they are what
+        a mutant moves."""
+        gate = _load(BASH_GATE, "bash_gate_caps")
+        self.assertLessEqual(gate._MAX_PARSE_CHARS, 48 * 1024)
+        self.assertLessEqual(gate._MAX_PARSE_TOKENS, 8192)
+        self.assertLessEqual(gate._MAX_SEGMENTS, 2000)
 
     def test_c13_the_parse_cap_is_a_spend_not_a_test(self):
         """M9. The cap is cumulative across FRAMES, so text a recursion re-reads
@@ -2616,26 +2694,333 @@ class QaCycle13(IsolationCase):
         1. a wrapper whose PROGRAM is computed (`setsid $(echo rm) -f x`): the
            peel target is a marker, not a program, so the segment falls back to
            the token scan — the behaviour a computed verb has had since cycle 12;
-        2. a wrapper that hides its program past `_PEEL_SCAN` tokens, or behind
-           one that ends in `)` or `;`;
-        3. a python heredoc body that deletes a LANE (`os.remove('<lane>')`):
+        2. a python heredoc body that deletes a LANE (`os.remove('<lane>')`):
            an interpreter body is tested against the kernel floor as RAW TEXT
            and re-scanned as commands only for a shell, so a lane path inside
-           python is not a shell target. Unchanged by this cycle, and named
-           because cycle 13's own probe hit it.
+           python is not a shell target.
 
-        THE CLASS IS NOT CLOSED, and this is the honest statement the report
-        carries: the wrapper table is now a shape, but the shape has a stated
-        end (`_PEEL_SCAN`, the stop words, the four bounds) and a command can be
-        written past it."""
+        CYCLE 13'S RESIDUAL 2 IS GONE and its removal is the point: it said a
+        wrapper could hide its program "past `_PEEL_SCAN` tokens", and QA cycle
+        14 measured real traffic putting the program past that number, so the
+        cap was deleted rather than re-chosen and the shape is now covered.
+        This test is what noticed: it went RED on the deletion instead of
+        letting a stale residual survive in the report."""
         self.hold()
         lane = self.a_py
         for command in (f"setsid $(echo rm) -f {lane}",
-                        f"weird --a 1 --b 2 --c 3 x y z w rm -f {lane}",
                         f"python3 - <<'EOF'\nimport os\nos.remove('{lane}')\nEOF"):
             self.assertEqual(self.decide(command), "allow",
                              command + " is now covered: move it out of the "
                              "residual list and out of the PR report")
+
+
+class QaCycle14(IsolationCase):
+    """Cycle 13 inverted the wrapper and corrected one false row of cycle 12's
+    enumeration. Cycle 14 measured what was left and found the pattern had moved
+    again: the ALLOW-LISTS that stand in FRONT of the model. A read-only list
+    that could write, a trigger list that never let a modelled program run, and
+    a scan depth chosen against a shape real traffic exceeds.
+
+    Every test is measured against a REAL HELD LANE with `rm -f <lane>` as the
+    positive control, and each fails with its own fix reverted.
+    """
+
+    def hold(self):
+        self.run_gate(WRITE_GATE, self.write_payload("agent-a", self.a_py))
+
+    def decide(self, command, pid="agent-b"):
+        rc, out = self.run_gate(BASH_GATE, self.bash_payload(pid, command))
+        return "deny" if self.denied(out) else "allow"
+
+    def kdir(self):
+        return kernel_proc.kernel_dir()
+
+    def test_the_positive_control_denies(self):
+        self.hold()
+        self.assertEqual(self.decide(f"rm -f {self.a_py}"), "deny")
+
+    # ── B1 the read-only list was the hole ─────────────────────────────────
+    def test_c14_a_read_only_program_can_still_write(self):
+        """`_KSTATE_READONLY` carried `sort`, `uniq` and `less`, and the header
+        called it "the set of programs that provably cannot create, replace or
+        unlink a path". Measured on this host: `sort -o /tmp/f /etc/hostname`
+        and `uniq /etc/hostname /tmp/f` each wrote 11 bytes. The floor worked
+        for every program NOT on the list, so the list was the hole."""
+        self.hold()
+        k = self.kdir()
+        for command in (f"sort -o {k}/ptable.json /etc/hostname",
+                        f"uniq /etc/hostname {k}/ptable.json",
+                        f"cat /etc/hostname | less --log-file={k}/ptable.json",
+                        f"curl -so{k}/ptable.json http://x"):
+            self.assertEqual(self.decide(command), "deny", command)
+
+    def test_c14_a_read_only_operand_is_still_a_read(self):
+        """The bound, one edit away: the list exempts a program's OPERANDS, and
+        reading kernel state is how anyone debugs this machine. What it never
+        exempted, and now does not, is a path handed to a FLAG."""
+        self.hold()
+        k = self.kdir()
+        for command in (f"cat {k}/ptable.json",
+                        f"grep -c x {k}/ptable.json",
+                        f"head -n 5 {k}/ptable.json",
+                        f"wc -l {k}/ptable.json"):
+            self.assertEqual(self.decide(command), "allow", command)
+
+    def test_c14_no_readonly_member_takes_an_output_file(self):
+        """The screen that found `sort` and `less`, re-run so a member added
+        later without it fails. AND THE SCREEN CANNOT PROVE THE NEGATIVE: it
+        reads FLAGS out of `--help`, and `uniq`'s write is a POSITIONAL, which
+        is exactly the member it missed and a human found by running it. That
+        is why the header no longer claims the list is closed."""
+        gate = _load(BASH_GATE, "bash_gate_readonly_screen")
+        # flags whose name looks like output but whose value is not a file
+        # Each entry is a flag whose name looks like output and whose value is
+        # not a file: `ls -o` is a long format, `grep -o` (and its `egrep` /
+        # `fgrep` aliases) is only-matching, `od -o` is an octal format,
+        # `strings -o` is an offset, and the two `--output-*` are separators.
+        benign = {("ls", "-o"), ("grep", "-o"), ("egrep", "-o"),
+                  ("fgrep", "-o"), ("cut", "--output-delimiter"),
+                  ("od", "-o"), ("od", "--output-duplicates"),
+                  ("strings", "-o"), ("strings", "--output-separator")}
+        offenders = []
+        for prog in gate._KSTATE_READONLY:
+            try:
+                cp = subprocess.run([prog, "--help"], capture_output=True,
+                                    text=True, timeout=5)
+            except (OSError, subprocess.SubprocessError):
+                continue
+            text = cp.stdout + cp.stderr
+            for flag in ("-o", "-O", "--output", "--output-file", "--log-file"):
+                if re.search(r"(^|[\s,])" + re.escape(flag) + r"([\s,=]|$)",
+                             text, re.M) and (prog, flag) not in benign:
+                    offenders.append((prog, flag))
+        self.assertEqual(offenders, [], "a read-only member takes an output "
+                         "file: either prove it cannot write or drop it")
+
+    # ── B2 a wrapper chain ─────────────────────────────────────────────────
+    def test_c14_a_wrapper_hands_off_to_the_wrapper_table(self):
+        """`_peel_target` excluded `_WRAPPERS`, so an unmodeled head could not
+        hand off to the table, and an `env -u` chain then pushed the real
+        program past the scan depth. Every one of these was measured ALLOWING
+        against a held lane at e00fad7, and the first is the shape the hard
+        rules of every brief here mandate."""
+        self.hold()
+        lane = self.a_py
+        for command in (
+                f"setsid -w env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE"
+                f" -u GIT_PREFIX rm -f {lane}",
+                f"setsid -w nice -n 10 ionice -c 3 taskset -c 0 rm -f {lane}",
+                f"setsid -w env A=1 B=2 C=3 D=4 E=5 F=6 G=7 H=8 rm -f {lane}",
+                f"setsid -w env -u A -u B -u C -u D python3 - <<'EOF'\n"
+                f"open('{self.kdir()}/ptable.json','w')\nEOF"):
+            self.assertEqual(self.decide(command), "deny", command)
+
+    def test_c14_the_handoff_carries_the_working_directory(self):
+        """What the handoff is FOR, and the revert that showed the first
+        version of this claim was not anchored: with the scan unbounded, a flat
+        search reaches `rm` through an `env -u` chain either way, so the lane
+        denied with or without `_WRAPPERS` as a peel target. The difference is
+        the CWD. `env -C <dir>` moves the directory a relative target resolves
+        against, and only the wrapper TABLE knows that; a flat jump to `rm`
+        resolves `a.py` against the wrong directory and misses the lane."""
+        self.hold()
+        pkg = os.path.dirname(self.a_py)
+        self.assertEqual(self.decide(f"setsid -w env -C {pkg} rm -f a.py"), "deny")
+
+    def test_c14_a_read_only_head_still_has_its_flags_read(self):
+        """The other branch a revert found unanchored. Today no member of the
+        list takes an output file, so the read-only branch's flag test is
+        unreachable through a real program and a behavioural test cannot see
+        it. It is defence for the member added tomorrow, so it is asserted on
+        the FUNCTION: a path handed to a flag is a hit whatever the head is."""
+        gate = _load(BASH_GATE, "bash_gate_readonly_flags")
+        k = kernel_proc.kernel_dir()
+        self.assertEqual(
+            gate.flag_values_naming_kernel_state(
+                ["grep", "--output=%s/ptable.json" % k], self.tree, k),
+            [kernel_proc.norm_path(k + "/ptable.json")])
+        self.assertEqual(
+            gate.flag_values_naming_kernel_state(
+                ["grep", "--output=/tmp/elsewhere"], self.tree, k), [])
+        # and the CALL SITE, which a revert showed the assertion above cannot
+        # reach: with today's list no member takes an output file, so the
+        # read-only branch is unreachable through a real program. Putting a
+        # writer ON the list is the only way to exercise it, and that is
+        # exactly the future this branch is defence against.
+        gate._KSTATE_READONLY = gate._KSTATE_READONLY + ("curl",)
+        try:
+            hits = gate.scan("curl --output=%s/ptable.json http://x" % k, self.tree)
+        finally:
+            gate._KSTATE_READONLY = tuple(
+                x for x in gate._KSTATE_READONLY if x != "curl")
+        self.assertTrue(any(kind == "state" for kind, _t, _v in hits), hits)
+
+    def test_c14_the_order_that_already_worked_still_works(self):
+        """The control that named the cause: with the wrapper FIRST the table
+        peeled it and the chain denied, so the difference was the handoff and
+        not the chain."""
+        self.hold()
+        self.assertEqual(
+            self.decide(f"env -u GIT_DIR -u GIT_WORK_TREE setsid -w rm -f {self.a_py}"),
+            "deny")
+
+    # ── B5 members past the stated end ─────────────────────────────────────
+    def test_c14_a_pipe_into_a_shell_is_a_stdin_channel(self):
+        """The header listed heredoc, here-string and process substitution as
+        "the same channel in other syntax" and left out the PIPE, which is the
+        common one: 61 real commands on this machine pipe into a shell."""
+        self.hold()
+        lane = self.a_py
+        for command in (f'echo "rm -f {lane}" | bash',
+                        f"printf 'rm -f %s\\n' {lane} | sh",
+                        f'. <(echo "rm -f {lane}")'):
+            self.assertEqual(self.decide(command), "deny", command)
+
+    def test_c14_a_pipe_that_is_not_a_program_is_not_one(self):
+        """One edit: the same pipe into a program that does not run stdin as
+        its program is ordinary data, and text that no shell receives stays
+        text."""
+        self.hold()
+        lane = self.a_py
+        for command in (f'echo "rm -f {lane}" | wc -l',
+                        f'echo "rm -f {lane}" > /tmp/notes.txt'):
+            self.assertEqual(self.decide(command), "allow", command)
+
+    def test_c14_an_output_flag_is_a_write(self):
+        """595 real commands on this machine carry `-o`/`-O`. A lane has no
+        floor to catch them, so the only thing separating `curl -o <lane>` from
+        `grep -f <lane>` is knowing what the flag means. Enumerated, and the
+        source says it is an enumeration with an end."""
+        self.hold()
+        lane = self.a_py
+        for command in (f"curl -so {lane} http://x",
+                        f"wget -qO {lane} http://x",
+                        f"sort -o {lane} /etc/hostname",
+                        f"uniq /etc/hostname {lane}"):
+            self.assertEqual(self.decide(command), "deny", command)
+
+    def test_c14_a_program_that_consumes_its_input_is_a_write(self):
+        """`gzip <lane>` leaves `<lane>.gz` and no `<lane>`; `zip -qm` and
+        `tar --remove-files` delete what they packed. Measured deleting a real
+        file on this host."""
+        self.hold()
+        lane = self.a_py
+        for command in (f"gzip {lane}",
+                        f"tar -cf /tmp/x.tar --remove-files {lane}",
+                        f"zip -qm /tmp/x.zip {lane}"):
+            self.assertEqual(self.decide(command), "deny", command)
+
+    def test_c14_keeping_the_input_is_not_a_write(self):
+        """One edit from the violation above: the flag that turns the removal
+        off is read, so `gzip -k` is a copy and not a delete."""
+        self.hold()
+        self.assertEqual(self.decide(f"gzip -k {self.a_py}"), "allow")
+
+    def test_c14_a_command_string_argument_is_a_command(self):
+        """`env -S` is the sharpest: `-S` was already in env's VALUED option
+        table, so the command WAS the value and the peel dropped it whole.
+        `watch` takes its command as one string, and `--` does not hide the
+        operand a flag already claimed."""
+        self.hold()
+        lane = self.a_py
+        for command in (f'env -S "rm -f {lane}"',
+                        f'watch -n 0.1 "rm -f {lane}"',
+                        f'bash -c -- "rm -f {lane}"',
+                        f'env -u GIT_DIR bash -c -- "rm -f {lane}"',
+                        f'bash -ce "rm -f {lane}"',
+                        f"git -c alias.zap='!rm -f' zap {lane}"):
+            self.assertEqual(self.decide(command), "deny", command)
+
+    def test_c14_a_bundle_on_an_unmodeled_head_must_still_end_in_c(self):
+        """The bound on the widened bundle rule, and it is a regression this
+        cycle caused and caught: reading `c` ANYWHERE in a cluster is right for
+        a shell and wrong for everything else, because `tar -cf a.tar dir` and
+        `ps -ef` are not shells. Widening it unscoped stopped
+        `tar --remove-files` from reaching its own rule."""
+        self.hold()
+        lane = self.a_py
+        self.assertEqual(self.decide(f"tar -cf /tmp/x.tar --remove-files {lane}"),
+                         "deny")
+        self.assertEqual(self.decide(f"tar -cf /tmp/x.tar {os.path.dirname(lane)}"),
+                         "allow")
+
+    def test_c14_find_ok_runs_what_find_exec_runs(self):
+        """`-ok`/`-okdir` differ from `-exec`/`-execdir` by a confirmation
+        prompt, and a prompt is not a gate."""
+        self.hold()
+        pkg = os.path.dirname(self.a_py)
+        for command in (f"find {pkg} -name a.py -ok rm {{}} ;",
+                        f"find {pkg} -name a.py -okdir rm {{}} ;"):
+            self.assertEqual(self.decide(command), "deny", command)
+
+    def test_c14_a_substitution_that_runs_later_is_still_a_command(self):
+        """`x="a[\\$(rm -f <lane>; echo 0)]"; echo $((x))` deletes under bash.
+        The escape makes the substitution literal at assignment time and the
+        arithmetic runs it later. The residual this would fall into says
+        "unknowable without running the shell", and that is not true here: the
+        path is spelled out. So the rule is on the DEFERRING CONSTRUCT."""
+        self.hold()
+        lane = self.a_py
+        self.assertEqual(
+            self.decide(f'x="a[\\$(rm -f {lane}; echo 0)]"; echo $((x))'), "deny")
+
+    def test_c14_quoted_prose_without_an_evaluator_stays_prose(self):
+        """The bound: without a deferred evaluator in the command the same text
+        runs nothing, which is what keeps a quoted mention allowed."""
+        self.hold()
+        self.assertEqual(self.decide(f"echo 'x $(rm -f {self.a_py})'"), "allow")
+
+    def test_c14_a_null_device_is_not_a_target(self):
+        """`curl -o /dev/null` is the standard way to measure an HTTP status
+        and it produced 796 hits over 19403 real commands once output flags
+        were read. It accepts a write and stores nothing, so it is not a
+        target: the hit could never be anyone's lane and each one costs an
+        ownership lookup. Asserted on the HITS rather than the verdict, because
+        a `/dev/null` hit never changes a verdict and a behavioural test could
+        not tell the filter from its absence."""
+        gate = _load(BASH_GATE, "bash_gate_null_sink")
+        self.assertEqual(
+            gate.scan('curl -s -o /dev/null -w "%{http_code}" http://x', self.tree),
+            [])
+        self.assertEqual(
+            gate.scan("rm -f /dev/null", self.tree), [])
+        self.assertNotEqual(
+            gate.scan("curl -s -o /tmp/real.txt http://x", self.tree), [])
+
+    # ── the trigger was the last verb allow-list ───────────────────────────
+    def test_c14_every_dispatch_table_is_a_trigger(self):
+        """The fast path in front of the model was a hand-written verb list and
+        it had drifted: `curl -so <lane>` and `gzip <lane>` were parsed
+        correctly by their own helpers and `scan` returned [] before calling
+        either. It is derived now, and this asserts the derivation so a table
+        added later without it fails."""
+        gate = _load(BASH_GATE, "bash_gate_triggers")
+        for table in (gate._MUTATORS, gate._STATE_VERBS, gate._OUTPUT_FLAGS,
+                      gate._CONSUMING, gate._POSITIONAL_OUTPUT,
+                      gate._COMMAND_STRING):
+            for name in table:
+                self.assertIn(name, gate._TRIGGERS, name)
+
+    # ── the caps, and what the program answers above them ──────────────────
+    def test_c14_the_token_cost_is_charged_where_it_is_spent(self):
+        """Blocker 3. Cycle 13 measured one long word, which is
+        `shlex`-quadratic and looked like the ceiling. MANY SHORT TOKENS is
+        worse, because every token is resolved and every hit costs an ownership
+        lookup: 95 KiB of `rm -f x x x …` cost 6.63 s sequentially and 9.85 s
+        with three concurrent, against a `timeout: 5` whose kill writes nothing
+        and reads as ALLOW."""
+        gate = _load(BASH_GATE, "bash_gate_token_charge")
+        over = "rm -f " + " ".join(["x"] * (gate._MAX_PARSE_TOKENS + 200))
+        with self.assertRaises(gate.ParseTooLarge):
+            gate.scan(over, self.tree)
+
+    def test_c14_a_command_under_the_token_cap_is_untouched(self):
+        """The control: the cap must never punish a real command. The largest
+        of 19403 distinct real commands on this machine is 4429 tokens, and the
+        p999 is 1206."""
+        gate = _load(BASH_GATE, "bash_gate_token_control")
+        under = "rm -f " + " ".join(["x"] * 4429)
+        self.assertEqual(len(gate.scan(under, self.tree)), 4429)
 
 
 class SharedParserConvergence(unittest.TestCase):
