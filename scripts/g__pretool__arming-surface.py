@@ -2010,6 +2010,112 @@ def _chmod_targets(args: list, here: str) -> list:
     return out
 
 
+# ONE TABLE for the simple shapes, so the next member is a row and not a new
+# function. Every entry answers the same three questions: which flags take a
+# VALUE, where the target is (the positionals, or the value of a DEST flag), and
+# whether the program writes unconditionally or only with an opt-in flag.
+#
+# QA named seven of these; probing the same class found three more (`chown`,
+# `chgrp`, `split`), which is the point of the row shape: the twelfth member
+# cost a line instead of a function. Every one was measured ALLOW against a live
+# protected file before this table.
+#
+#   fallocate -z -l 4096 <settings>     zeroes the content in place
+#   ex -sc wq <settings> / ed -s / vim -c wq    scriptable editor rewrite
+#   openssl enc -out <settings> ...     writes its -out
+#   gpg -o <settings> ...               writes its -o
+#   unzip -o evil.zip -d <scripts>      overwrites gate bodies wholesale
+#   cpio -id -D <claude dir>            the same, other archiver
+#   setfacl -m u:nobody:0 <pre-push>    the chmod class, other syscall
+#   chown / chgrp <pre-push>            the same class again
+#   split -b1 /tmp/e <scripts>/qa-merge-gate.py   writes its output prefix
+#
+# EDITORS ARE OPT-IN, deliberately: a bare `vim <file>` is an interactive
+# session a hook has no business denying, so only a SCRIPTED one counts
+# (`-c`, `--cmd`, `-S`, `-s`, or a `+cmd` token). That is a residual with a
+# reason, not an omission.
+_SIMPLE_WRITERS = {
+    "fallocate": {"valued": ("-l", "--length", "-o", "--offset"), "dest": (),
+                  "require": (), "skip_first": 0, "last_only": False},
+    "ex":   {"valued": ("-c", "--cmd", "-S"), "dest": (), "require": "script",
+             "skip_first": 0, "last_only": False},
+    "ed":   {"valued": (), "dest": (), "require": "script",
+             "skip_first": 0, "last_only": False},
+    "vim":  {"valued": ("-c", "--cmd", "-S", "-s", "-u", "-i"), "dest": (),
+             "require": "script", "skip_first": 0, "last_only": False},
+    "vi":   {"valued": ("-c", "--cmd", "-S", "-s"), "dest": (),
+             "require": "script", "skip_first": 0, "last_only": False},
+    "nvim": {"valued": ("-c", "--cmd", "-S", "-s", "-u", "-i"), "dest": (),
+             "require": "script", "skip_first": 0, "last_only": False},
+    "openssl": {"valued": ("-in", "-kfile", "-k", "-K", "-iv", "-pass",
+                           "-md", "-S", "-p"),
+                "dest": ("-out", "-keyout"), "require": (), "skip_first": 0,
+                "last_only": False},
+    "gpg":  {"valued": ("-r", "--recipient", "-u", "--local-user",
+                        "--passphrase", "--homedir"),
+             "dest": ("-o", "--output"), "require": (), "skip_first": 0,
+             "last_only": False},
+    "unzip": {"valued": ("-P", "-x"), "dest": ("-d",), "require": (),
+              "skip_first": 0, "last_only": False},
+    "cpio": {"valued": ("-F", "--file", "-H", "--format", "-R", "--owner"),
+             "dest": ("-D", "--directory"), "require": (), "skip_first": 0,
+             "last_only": False},
+    "setfacl": {"valued": ("-m", "--modify", "-x", "--remove", "-M", "-X",
+                           "--set", "--set-file", "--restore"),
+                "dest": (), "require": (), "skip_first": 0, "last_only": False},
+    "chown": {"valued": ("--reference", "--from"), "dest": (), "require": (),
+              "skip_first": 1, "last_only": False},
+    "chgrp": {"valued": ("--reference",), "dest": (), "require": (),
+              "skip_first": 1, "last_only": False},
+    "split": {"valued": ("-b", "--bytes", "-l", "--lines", "-n",
+                         "--number", "-a", "--suffix-length",
+                         "--additional-suffix", "--filter"),
+              "dest": (), "require": (), "skip_first": 0, "last_only": True},
+}
+_EDITOR_SCRIPT_FLAGS = ("-c", "--cmd", "-S", "-s")
+
+
+def _is_scripted(args: list) -> bool:
+    for tok in args:
+        if tok.startswith("+"):
+            return True
+        name = tok.split("=", 1)[0]
+        if name in _EDITOR_SCRIPT_FLAGS:
+            return True
+        if tok.startswith("-") and not tok.startswith("--") and \
+                any(c in tok[1:] for c in "csS"):
+            return True          # a bundle such as `ex -sc`
+    return False
+
+
+def _simple_writer_targets(base: str, args: list, here: str) -> list:
+    spec = _SIMPLE_WRITERS.get(base)
+    if spec is None:
+        return []
+    if spec["require"] == "script" and not _is_scripted(args):
+        return []
+    if spec["dest"]:
+        val = _flag_value(args, spec["dest"])
+        return [_parser().resolve(val, here)] if val else []
+    out, i, seen = [], 0, 0
+    while i < len(args):
+        tok = args[i]
+        name = tok.split("=", 1)[0]
+        if name in spec["valued"]:
+            i += 1 if "=" in tok else 2
+            continue
+        if tok.startswith("-") and tok != "-":
+            i += 1
+            continue
+        seen += 1
+        if seen > spec["skip_first"]:
+            out.append(_parser().resolve(tok, here))
+        i += 1
+    if spec["last_only"]:
+        out = out[-1:]
+    return out
+
+
 _AWK_NAMES = ("awk", "gawk", "mawk", "busybox-awk")
 
 
@@ -2146,12 +2252,16 @@ def extra_put_hits(command: str, cwd: str) -> list:
         if base == "chmod":
             for target in _chmod_targets(tokens[1:], here):
                 out.append(("state", target, "chmod"))
+        for target in _simple_writer_targets(base, tokens[1:], here):
+            out.append(("state" if base in ("setfacl", "chown", "chgrp")
+                        else "path", target, base))
     return out
 
 
 _PUT_TRIGGERS = ("cp", "mv", "install", "ln", "rsync", "curl", "wget", "tar",
                  "patch", "awk", "&>", ">|", "gzip", "bzip2", "xz", "lzma",
-                 "compress", "zstd", "zip", "sort", "uniq", "chmod")
+                 "compress", "zstd", "zip", "sort", "uniq", "chmod") + \
+                tuple(_SIMPLE_WRITERS)
 
 
 # `find` IS NOT ALWAYS A REMOVING VERB, and the label said it was.
@@ -2630,21 +2740,44 @@ def branch_creation_only(command: str) -> bool:
     file` is not a thing, and `checkout -- <path>` is the file-restore shape the
     path layer owns), so it refuses the exemption too.
 
+    THE REDIRECT IS NOT AN ARGUMENT, and counting it as one made this deny the
+    command the operator types every day: `git checkout -b feat/x 2>&1` DENIED
+    while the bare form allowed, because `2>&1` was read as a start point. So
+    were `>/tmp/log`, a pipe stage and anything after `&&`. The corpus carries
+    seven real instances of exactly this on the live tree. It is the same
+    `2>&1`-is-not-a-positional bug that was found and fixed in `extra_git_hits`
+    one cycle earlier and not carried across: one member of a class closed, the
+    other left open. Positionals are counted over the checkout/switch STAGE
+    only now, with `redirect_targets` applied to it first. An over-fire here is
+    not a small cost, by this gate's own doctrine: a gate that blocks normal
+    work gets turned off, and branch creation is normal work.
+
     Still scoped to a command carrying exactly ONE such verb, unchanged and for
     the same reason: `git -C ~/.claude checkout -b tmp && git -C ~/.claude
     checkout evil` would otherwise be exempted by its harmless half."""
-    import shlex
-    try:
-        tokens = shlex.split(command)
-    except ValueError:
+    tokens = _lex(command)
+    if not tokens:
         return False
     seen = [i for i, t in enumerate(tokens) if t in _BRANCH_VERBS]
     if len(seen) != 1:
         return False
     i = seen[0]
     letter = "b" if tokens[i] == "checkout" else "c"
+    # THE STAGE, NOT THE COMMAND, and with its redirects removed. This counted
+    # positionals over the whole token list, so `2>&1` was read as a start point
+    # and `git checkout -b feat/x 2>&1` DENIED while the bare form allowed. It
+    # is the same `2>&1`-is-not-an-argument bug that was found and fixed in
+    # `extra_git_hits` one cycle earlier and not carried across to here: one
+    # member of the class closed, the other left open. The corpus carries seven
+    # real instances of this exact shape on the live tree, and a gate that
+    # denies the operator's normal branch creation is a gate he turns off.
+    end = _stage_end(tokens, i)
+    rest = tokens[i + 1:end]
+    try:
+        _redirs, rest = _parser().redirect_targets(rest)
+    except Exception:
+        pass
     creates, positionals = False, 0
-    rest = tokens[i + 1:]
     j = 0
     while j < len(rest):
         tok = rest[j]
@@ -2887,6 +3020,60 @@ def deny_parser(detail: str) -> None:
         f"Restore the file from a worktree, or run the restore in the "
         f"operator's own terminal, which is not hooked. {_ONLY_WRITER}"
     )
+
+
+# THE COVERAGE LIST IS DERIVED, NOT MAINTAINED, because a hand-kept one has now
+# been wrong two cycles running: six missing compressors, then twelve more
+# writers and editors. A prose list of what is covered drifts from the dispatch
+# tables the moment a row is added, and the reader has no way to tell.
+#
+# So the list is GENERATED from the tables themselves (`--verbs` prints it) and
+# `--selftest` asserts that the block in README-residuals.txt still equals it.
+# Add a row to any table without regenerating the block and the selftest fails,
+# which is the same shape as every other claim in this file: the assertion is
+# the mechanism, the prose is its output.
+#
+# It also fixes the honest framing of the residual list. This gate is a
+# DENY-LIST, so what is covered is ENUMERABLE and what is not is its COMPLEMENT,
+# which is unbounded. "Here are the residuals" was never a true sentence; "here
+# is every verb the gate recognises, and anything absent passes" is.
+def covered_verbs() -> dict:
+    """{table name: sorted programs} for every dispatch table that can produce
+    a target. Borrowed tables are read from the shared parser, not copied."""
+    out = {
+        "removing": sorted(_REMOVING_PROGRAMS),
+        "copy/move": sorted(_COPY_VERBS),
+        "flag-destination": sorted(n for n, _f, _r in _WRITER_FLAGS),
+        "consuming": sorted(_CONSUMING),
+        "archive-removing": ["tar", "zip"],
+        "overwriting": ["sort", "uniq"],
+        "in-place-edit": sorted(_AWK_NAMES) + ["chmod"],
+        "simple-writers": sorted(_SIMPLE_WRITERS),
+        "wrappers-local": sorted(_EXTRA_WRAPPERS),
+        "command-string-hosts": sorted(_CMD_STRING_HOSTS),
+        "interpreter-hosts": sorted(_C_HOSTS),
+    }
+    try:
+        mod = _parser()
+        out["shared-parser-mutators"] = sorted(mod._MUTATORS)
+        out["shared-parser-state"] = sorted(mod._STATE_VERBS)
+        out["shared-parser-exec"] = sorted(mod._EXEC_MUTATORS)
+        out["wrappers-shared"] = sorted(mod._WRAPPERS)
+    except Exception:
+        pass
+    return out
+
+
+_VERB_BLOCK_START = "=== COVERED VERBS (generated by --verbs) ==="
+_VERB_BLOCK_END = "=== END COVERED VERBS ==="
+
+
+def verb_block() -> str:
+    lines = [_VERB_BLOCK_START]
+    for name, verbs in covered_verbs().items():
+        lines.append(f"  {name}: " + " ".join(verbs))
+    lines.append(_VERB_BLOCK_END)
+    return "\n".join(lines)
 
 
 def deny_target_flood(count: int) -> None:
@@ -3231,7 +3418,8 @@ def _selftest(fdir: str = None) -> int:
 
     for assertion in (_assert_parser_load_denies,
                       _assert_own_import_denies,
-                      _assert_heredoc_reader_live):
+                      _assert_heredoc_reader_live,
+                      _assert_verb_block_current):
         ok, why = assertion()
         if not ok:
             failures.append(why)
@@ -3247,6 +3435,30 @@ def _selftest(fdir: str = None) -> int:
           f"and a gate that cannot import kernel_proc, cannot load its parser, or "
           f"cannot run its heredoc reader denies instead of allowing")
     return 0
+
+
+def _assert_verb_block_current() -> tuple:
+    """The generated coverage block in README-residuals must equal the tables.
+
+    This is the mechanism behind "the list is derived": add a program to any
+    dispatch table and forget to regenerate, and this fails. Without it the
+    prose is a claim, and it has been a wrong claim twice."""
+    readme = os.path.join(os.path.dirname(_HERE), "registry", "fixtures",
+                          RULE_ID, "README-residuals.txt")
+    try:
+        with open(readme, encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError as exc:
+        return False, f"cannot read README-residuals.txt: {exc}"
+    if _VERB_BLOCK_START not in text:
+        return False, ("README-residuals.txt carries no generated verb block; "
+                       "run `g__pretool__arming-surface.py --verbs`")
+    start = text.index(_VERB_BLOCK_START)
+    end = text.index(_VERB_BLOCK_END) + len(_VERB_BLOCK_END)
+    if text[start:end].strip() != verb_block().strip():
+        return False, ("the coverage block in README-residuals.txt is stale: a "
+                       "dispatch table changed. Regenerate with `--verbs`")
+    return True, ""
 
 
 def _assert_heredoc_reader_live() -> tuple:
@@ -3451,6 +3663,9 @@ def _touch(path: str, body: str) -> None:
 
 
 if __name__ == "__main__":
+    if "--verbs" in sys.argv:
+        print(verb_block())
+        sys.exit(0)
     if "--selftest" in sys.argv:
         _i = sys.argv.index("--selftest")
         sys.exit(_selftest(sys.argv[_i + 1] if len(sys.argv) > _i + 1 else None))

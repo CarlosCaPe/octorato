@@ -214,16 +214,27 @@ an exemption that looked only at the create flag reopened the whole-tree rewrite
 git receipt of a file reading `good` before and `EVIL` after. The exemption now needs exactly one positional after
 the verb, the new branch name.
 THE GATE HAS NO ALLOW-LIST. It is a DENY-LIST of recognised writer and remover verbs, so a program none of the
-tables name passes SILENTLY, which is why the residual list in the gate header is load-bearing rather than a
-footnote. Six such programs were found on this machine and are now covered: `gzip`/`bzip2`/`xz`/`lzma` (they
-delete their input with no flag at all), `zstd --rm`, `tar --remove-files`, `zip -m`, `sort -o` and `uniq`'s
-second operand.
+tables name passes SILENTLY. A hand-kept list of what is covered was wrong two cycles running (six missing
+compressors, then twelve more writers and editors), so the list is now DERIVED: `--verbs` generates it from the
+dispatch tables and `--selftest` asserts the block in `README-residuals.txt` still equals them, which turns the
+suite red when a row is added without regenerating. The honest sentence is "here is every verb the gate
+recognises, and anything absent passes", not "here are the residuals". Covered since: the compressors
+(`gzip`/`bzip2`/`xz`/`lzma` delete their input with no flag at all), `zstd --rm`, `tar --remove-files`, `zip -m`,
+`sort -o`, `uniq`, and `fallocate`, scripted editors (`ex`/`ed`/`vim` with `-c`/`-s`; an interactive `vim` is
+deliberately left alone), `openssl -out`, `gpg -o`, `unzip -d`, `cpio -D`, `setfacl`, `chown`, `chgrp`, `split`.
+THE BRANCH-CREATION EXEMPTION COUNTS THE STAGE, NOT THE COMMAND: `git checkout -b feat/x 2>&1` was DENIED while
+the bare form allowed, because `2>&1` was read as a start point, and the corpus carries seven real instances of
+the operator doing exactly that on the live tree. Same bug as the one fixed in the `config` reader a cycle
+earlier, one member of the class closed and the other left open. A gate that blocks normal work gets turned off,
+which is the failure this whole boundary was drawn around.
 COST IS BOUNDED ON TWO AXES, because the byte caps could only see one. The work in the target loop grows with
 TOKEN COUNT: `rm -f <65,512 short tokens> ~/.claude/settings.json` took 18.5 s against 1.8 s for the same byte
 count as one long word, and x8 concurrent on a loaded box that is 39-51 s against the harness's 60 s kill, where
 a killed hook writes no stdout and the silence reads as ALLOW. The invariants are now resolved once per process
 (`brain_root()` was called 131,023 times for one command) and `_MAX_TARGETS` (512, against a real-traffic maximum
-of 20 distinct targets) bounds the rest, with repeats free. Same shape after: 2.42 s.
+of 20 distinct targets) bounds the rest, with repeats free. Same shape after: 1.99 s alone, 8.85 s with eight at once on a loaded box, against the 60 s kill. Cost figures
+carry their measurement mode, because a single-run best-of-five and an x8-concurrent figure for the same shape
+differ by about 4x.
 A command over 64 KB is capped for the two INLINE readers only. It used to return before every layer, so one
 character of padding defeated every Bash deny (`rm -rf ~/.claude/scripts` denied at 65,536 bytes and allowed at
 65,537); it now falls through to the path and tree layers. The fall-through carries its own 128 KB PARSE ceiling,
@@ -286,7 +297,7 @@ variable, and a destination the shell has to expand first (`{a,b}`, `$VAR`, `$(c
 symlink created and used in one command). A LOCAL `git merge` in the live tree is allowed and lands unreviewed
 edits on every file in the set, because `qa-merge-gate` guards `gh pr merge` and nothing guards `git merge`; only
 a PULL brings the reviewed remote state. The fixture pair is
-`registry/fixtures/ARCHITECTURE.arming-surface` (190 block + 189 allow).
+`registry/fixtures/ARCHITECTURE.arming-surface` (205 block + 203 allow).
 
 ### ULTRA RULE — Do-it-today (no dejes para mañana lo que puedas hacer hoy)
 **Do-it-today.** Operator-canonical (2026-08-18, tras recordarlo a diario durante semanas): el trabajo que YO puedo ejecutar se ejecuta en el turno, no se reporta. La forma sutil del aplazamiento no es negarse, es **reportar un pendiente que yo mismo podía cerrar** y dejárselo al operador en la bandeja; a su volumen, eso convierte cada sesión en una lista que él tiene que administrar. Un pendiente solo es legítimo en dos casos, y en los dos viaja **con su comando exacto para pegar**: (1) es un paso irreducible suyo (un clic de consentimiento, una contraseña, un permiso que solo él concede), o (2) es un bloqueo MEDIDO, no supuesto (el clasificador lo negó, el remoto lo rechazó, la regla del repo lo impide). Esto NO contradice `do-it-right-not-fast`: empieza hoy, hazlo bien, no lo apures; lo prohibido es diferirlo. Mecanismo: `scripts/g__stop__defer-today.py` (Stop gate, bloquea una vez), que dispara cuando el cierre del turno aplaza trabajo propio en primera persona sin ninguna de las dos salidas. Es consciente de citas (repetir el "espero mañana me contestes" de un cliente no lo trippea) y de hechos con fecha; para mantener una línea marcada a propósito, ponle `defer-ok`. HOW completo en `skills/execution-bias/SKILL.md`.
