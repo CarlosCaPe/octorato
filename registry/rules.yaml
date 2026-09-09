@@ -1747,6 +1747,8 @@ rules:
     locator: scripts/g__pretool-mcp__outward-send.py --selftest registry/fixtures/COMMS.outward-send-gate
     expect: 0
   liveness_required: FIRES
+  covers_memory:
+  - feedback_no_direct_outbound_send.md
 - id: FLOW.qa-receipt
   title: 'QA receipt: a subagent verdict is recorded by the harness, re-read from its transcript'
   category: FLOW

@@ -990,6 +990,9 @@ def check_corpus_coverage(fix: bool) -> Result:
                       "fix registry/rules.yaml first")
     rules = reg.get("rules", []) if isinstance(reg, dict) else []
     rule_files = {(r.get("source") or {}).get("file", "") for r in rules}
+    # A rule may declare the memory directives its mechanism enforces (covers_memory);
+    # those count as covered by the rule itself, not only by the recall reflex.
+    rule_files |= {m for r in rules for m in (r.get("covers_memory") or [])}
     rule_anchors = [(r.get("source") or {}).get("anchor", "") for r in rules
                     if (r.get("source") or {}).get("anchor")]
 
@@ -1066,6 +1069,7 @@ def check_corpus_coverage(fix: bool) -> Result:
         mem_note = ""
         brain_uncov, arm_uncov = [], []
         brain_cov = brain_total = arm_cov = arm_total = 0
+        brain_direct = 0
         indexed_by_dir = {}
         for d in {mf.parent for mf in mem_files}:
             idx = set()
@@ -1093,6 +1097,7 @@ def check_corpus_coverage(fix: bool) -> Result:
                     arm_cov += 1
                 else:
                     brain_cov += 1
+                    brain_direct += int(direct)
                 continue
             label = mf.stem
             for ln in _rt(mf).splitlines()[:15]:
@@ -1115,7 +1120,7 @@ def check_corpus_coverage(fix: bool) -> Result:
         + " | "
         + (mem_note if mem_note else
            f"memory directives (brain) {brain_cov}/{brain_total} "
-           f"REFLEX (injected, obedience unproven)"
+           f"({brain_direct} rule-direct + {brain_cov - brain_direct} REFLEX, injected, obedience unproven)"
            + (f" (uncovered: {', '.join(brain_uncov[:10])})" if brain_uncov else "")
            + f"; {arm_total} arm-scoped (separate repo, not brain-gated)"
            + (f" [{len(arm_uncov)} not recall-indexed]" if arm_uncov else ""))
@@ -2054,7 +2059,7 @@ def check_fixture_seeds_tracked(fix: bool) -> Result:
     root = CLAUDE_DIR / "registry" / "fixtures"
     if not root.exists():
         return Result(key, WARN, "registry/fixtures absent", "")
-    on_disk = sorted(str(f.relative_to(CLAUDE_DIR)) for f in root.rglob("*") if f.is_file())
+    on_disk = sorted(f.relative_to(CLAUDE_DIR).as_posix() for f in root.rglob("*") if f.is_file())
     cp = git("ls-files", "--", "registry/fixtures")
     tracked = set(cp.stdout.split("\n")) if cp.returncode == 0 else set()
     untracked = [f for f in on_disk if f not in tracked]

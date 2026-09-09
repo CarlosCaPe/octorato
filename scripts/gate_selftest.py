@@ -199,6 +199,7 @@ def _run_leg(script: Path, payload: str, sandbox: Path,
     cp = subprocess.run(
         [sys.executable, str(script)],
         input=payload, capture_output=True, text=True,
+        encoding="utf-8", errors="replace",
         cwd=str(sandbox), env=env, timeout=30,
     )
     return cp.returncode, cp.stdout

@@ -29,8 +29,9 @@ An outward action is allowed only when the turn carries a **receipt bundle**:
 1. **Seek receipt.** For every claim of fact about the counterpart or the past (an amount, a date, an absence, a category), a lookup ran in this turn: memory seek, chat search, mail search, or the arm expediente. The receipt is the act of looking, never its result. A lookup that returns message bodies counts (messages, mail); a chat listing or a last-interaction stamp does not, because it cannot refute anything.
 2. **QA receipt.** For the merge of a PR, an independent verdict on the judgment tier, recorded by the harness, not asserted in prose. This one is enforced by `scripts/qa-merge-gate.py` at Bash PreToolUse on the merge command, not by the send gate.
 3. **Gate receipt.** Every fail-closed gate that watches this class of action has a green `--selftest` at HEAD, and no waiver covers it.
+4. **Ask receipt.** The operator's own prompt for the turn asks to send, with a non-negated send verb outside quotes (standing directive 2026-08-14: deliver by default, transmit per message on request). `send-ok` is the hatch.
 
-A send is denied at PreToolUse when the seek receipt or the gate receipt is missing, with the missing receipt named. A merge of a PR is denied when the QA receipt is missing, by its own gate. `absence-ok`-style hatches stay per line, never per turn.
+A send is denied at PreToolUse when the seek, gate or ask receipt is missing, with the missing receipt named. A merge of a PR is denied when the QA receipt is missing, by its own gate. `absence-ok`-style hatches stay per line, never per turn.
 
 ## The architecture
 
