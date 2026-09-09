@@ -2,7 +2,9 @@ name: Brain PR Checks
 
 # Pre-merge gate for the octorato brain repo.
 #
-# Two checks:
+# Checks:
+#   0. kernel-suite — the v8 unit suite on a POSIX and a Windows runner.
+#      It ran only in pre-push before, i.e. only on the author's machine.
 #   1. check-generic — verifies no client / arm tokens leaked into the
 #      staged diff or commit metadata. The brain is public on GitHub;
 #      any client-specific string must be caught BEFORE merge.
@@ -23,6 +25,71 @@ permissions:
   contents: read
 
 jobs:
+  kernel-suite:
+    # The v8 kernel suite ran ONLY in `.githooks/pre-push`, which means it ran only
+    # on the author's own box. Issue #300 is the consequence: 42 of 208 tests fail on
+    # Windows 11 against a clean master, and because pre-push is fail-closed, no push
+    # is possible from a Windows machine at all. Nobody saw it because CI never ran
+    # the suite on any platform, let alone a second one.
+    #
+    # The Windows leg is `continue-on-error` ON PURPOSE and it is not a soft-fail in
+    # disguise: it is red today by construction, so making it required now would block
+    # every PR on a defect this job exists to REPORT. It reports until #300 is closed;
+    # promoting it to required is the last step of that issue, not of this one, and the
+    # step below prints that promotion instruction on every red run so the temporary
+    # state cannot quietly become permanent.
+    name: kernel suite (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, windows-latest ]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run the kernel test suite
+        shell: bash
+        working-directory: scripts
+        run: |
+          set -o pipefail
+          # `discover`, not a list of module names. A hand-written roster is the
+          # thing that goes stale: a test file added without touching this file
+          # would simply never run, and the job would stay green having skipped it.
+          # Measured on this tree: discovery finds all 8 modules, 208 tests.
+          # The guard below is what makes discovery safe to trust, because a
+          # discovery that silently finds nothing also exits 0.
+          python -m unittest discover -s tests -p 'test_*.py' -v 2>&1 | tee ../suite.log
+        continue-on-error: true
+
+      - name: Report the tally, and fail the POSIX leg on any red
+        shell: bash
+        run: |
+          tail -n 3 suite.log
+          ran=$(grep -oE '^Ran [0-9]+ test' suite.log | grep -oE '[0-9]+' | tail -1)
+          if [ -z "$ran" ] || [ "$ran" -eq 0 ]; then
+            echo "::error::the suite reported no tests; a run of zero is not a pass"
+            exit 1
+          fi
+          if grep -qE '^(FAILED|ERROR)' suite.log; then
+            if [ "${{ matrix.os }}" = "windows-latest" ]; then
+              echo "::warning::Windows leg red — this is issue #300, reported not enforced."
+              echo "::warning::When it goes green, drop continue-on-error and make this check required."
+              exit 0
+            fi
+            echo "::error::suite red on ${{ matrix.os }}"
+            exit 1
+          fi
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            echo "::notice::Windows leg GREEN — close #300 by making this check required."
+          fi
+
   check-generic:
     name: No client / arm tokens leaked
     runs-on: ubuntu-latest
