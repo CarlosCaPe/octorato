@@ -11,7 +11,7 @@
 | Divisions | 13 |
 | Scripts: wired | 119 |
 | Scripts: orphan | 7 |
-| Rules | 78 |
+| Rules | 79 |
 | Hook entries | 51 |
 
 ## Skills (233)
@@ -617,7 +617,7 @@
 | wa-soporte.sh | Sends a WhatsApp through the SUPPORT channel, never through the operator's personal number. | wired |
 | watchdog.py | watchdog.py , observability surface 4 anomaly detector. Reads the JSONL trace files written by trace... | wired |
 
-## Rules (78)
+## Rules (79)
 
 ### ARCHITECTURE
 
@@ -719,6 +719,7 @@
 - META.pre-push-gate
 - META.querymaster
 - META.rule-1-wired-or-corrupt
+- META.skill-manifest-coverage
 
 ### SECURITY
 

@@ -81,10 +81,60 @@ an installed package in a throwaway brain with throwaway keys:
                                                          says <old>". The lock pins the
                                                          signer per entry.
   the same, plus rewriting that entry's `signer`      -> PASSES, exit 0, silent.
+                                                         TWO edits: one untracked
+                                                         (company/config/pkg-signers),
+                                                         one tracked and reviewable
+                                                         (packages.lock.json). Voids no
+                                                         v7 gate receipt: neither file
+                                                         is a GATE_SURFACES member.
+  append an attacker key to the TRACKED
+  registry/pkg-signers.pub under the principal name
+  the lock ALREADY pins, then INSTALL a new package
+  signed with it                                      -> PASSES, exit 0, on ONE hand edit
+                                                         and no hand edit to the lock.
+                                                         `-f` hands ssh-keygen the whole
+                                                         allowed-signers file and `-I` a
+                                                         name, and ssh-keygen accepts ANY
+                                                         line in that file carrying that
+                                                         name, so a second `octorato-release`
+                                                         line is a second release key. The
+                                                         first-wins note two rows up is
+                                                         about which FILE answers for a
+                                                         name, not about which LINE inside
+                                                         it, and it does not apply here:
+                                                         the append goes into the file that
+                                                         already wins. The lock entry the
+                                                         install writes pins `signer:
+                                                         octorato-release`, which is exactly
+                                                         what the attacker is now called.
+                                                         Measured: install refused before
+                                                         the append (rc 1, "signature does
+                                                         not verify for any known
+                                                         principal"), accepted after it
+                                                         (rc 0), `verify --all` green.
+  the same append, used to TAMPER an ALREADY
+  installed package rather than install a new one     -> FAILS, and this is the one place
+                                                         the cheap attack does not reach.
+                                                         The signature leg does pass (the
+                                                         "does not verify" clause leaves the
+                                                         message), but the lock still pins
+                                                         the tree hash from the original
+                                                         install: "tree changed since
+                                                         install (lock d3e9ad4e0d3b, disk
+                                                         bd5c8c5d8886)". Realigning it is a
+                                                         SECOND edit, to a tracked file.
+                                                         Retro-tampering costs two; owning
+                                                         the next install costs one.
 
-The last row is correct by design: adding yourself to an allowed-signers file IS
+The last two rows were added after a reviewer found the cheap one missing from a table
+that claimed to enumerate. They change no verdict below: the tracked file's rows are
+governed by the same sentence as the private file's, and their trace runs the OTHER way,
+which is the whole point of stating cost and trace separately. The cheapest complete
+attack here is also the loudest one, and the expensive one is the quiet one.
+
+Every row above is correct by design: adding yourself to an allowed-signers file IS
 becoming trusted, and no signature scheme says otherwise. What is NOT symmetric is the
-trace each half of it leaves. Adding a principal to `registry/pkg-signers.pub` is a diff
+trace each row leaves. Adding a principal to `registry/pkg-signers.pub` is a diff
 a reviewer sees AND a changed byte under `registry/`, which voids the v7 gate receipt
 (receipt_ledger.GATE_SURFACES = scripts, registry, hooks.json). Adding it to
 `company/config/pkg-signers` leaves no git trace and voids no receipt. Editing this
@@ -106,14 +156,22 @@ manifest, which the signature covers, is what says whether the package is a skil
 arm. A real arm, with no vendor tree, still PASSes on its lock row alone: arm isolation
 means verify never reaches into the arm's own repo.
 
-Selftest: `python3 scripts/octo_pkg.py --selftest registry/fixtures/META.kernel-package`
-runs every leg under a throwaway HOME with an ed25519 key generated at run time, so
-no private key ever lives in the repo.
+`manifests` answers the OTHER half of the PACKAGE claim: the verify ladder above is
+about the vendor trees this brain INSTALLED, and says nothing about the 233 skills the
+brain ships itself. See scan_skill_manifests for that ladder and for why its zero state
+is a WARN and its partial state a FAIL.
+
+Selftests, one fixture each, dispatched on the fixture's layout:
+  `--selftest registry/fixtures/META.kernel-package`          the install/verify legs
+  `--selftest registry/fixtures/META.skill-manifest-coverage` the coverage ladder
+Both run under a throwaway HOME with an ed25519 key generated at run time, so no
+private key ever lives in the repo.
 """
 from __future__ import annotations
 
 import argparse
 import contextlib
+import io
 import json
 import os
 import re
@@ -156,6 +214,14 @@ PRIVATE_SIGNERS_REL = "company/config/pkg-signers"
 ARMS_PATHS_REL = "company/config/arms-paths.json"
 ARMS_ROOT_REL = "company/config/arms-root"
 VENDOR_REL = "skills/vendor"
+SKILLS_REL = "skills"
+# Mirrors gen_skill_manifests.SKIP_DIRS, and the two must stay equal: the generator
+# that fills the coverage and the check that measures it have to agree on what a
+# skill directory IS, or the backfill can report done against a denominator the
+# check does not use. `vendor/` holds installed packages, answered by the verify
+# ladder above; `learned/` is gitignored draft scaffolding that is not a skill
+# until the operator promotes it. Pinned equal by a test.
+MANIFEST_SKIP_DIRS = {"vendor", "learned"}
 
 PASS, WARN, FAIL = "PASS", "WARN", "FAIL"
 
@@ -2239,6 +2305,136 @@ def cmd_list(brain: Brain, as_json: bool) -> int:
     return 0
 
 
+def scan_skill_manifests(brain: Brain) -> dict:
+    """Does every skill this brain SHIPS carry a `skill.json`?
+
+    v8-kernel.md section 4 promises "`skill.json` on every skill directory". That was a
+    claim about a STATE, and before this function nothing in the brain measured it: the
+    generator that mints the manifests (scripts/gen_skill_manifests.py) is a one-shot
+    invoked by no hook, no gate, no workflow and no runner, so the moment the backfill
+    landed the count could only decay. RULE #1 calls that rot, and it is the exact class
+    the rest of this module exists to kill for INSTALLED packages: `verify --all` above
+    answers for `skills/vendor/`, which is other people's code, and says nothing about
+    the 233 skills the brain ships itself.
+
+    The denominator is measured, never kept by hand: every directory directly under
+    `skills/` that contains a `SKILL.md` is a skill, which is the same set as
+    `find skills -maxdepth 2 -name SKILL.md` (233 today, the number v8-kernel.md:124
+    already cites). A hand-kept list would be a second thing to forget, and forgetting
+    it would read as coverage.
+
+    Symlinked directories are skipped: `skills/<name>` is a symlink when the package
+    manager installed it, so counting it here would ask the vendor ladder's question
+    twice and answer it in the wrong denominator (capability_manifest.py skips them for
+    the same reason).
+
+    Ladder, and the failure mode is the whole design decision, so it is argued from the
+    numbers rather than from caution:
+
+      total == 0            FAIL. A `skills/` tree with no SKILL.md at all is not an
+                            empty brain, it is a root that resolved wrong. This is the
+                            one place a zero denominator is allowed to mean something,
+                            and it means the measurement is broken, never "clean".
+      covered == 0          WARN, with both numbers printed. Today that is 0/233, so
+                            FAIL here would block EVERY push on EVERY branch until the
+                            mechanical backfill PR lands. A gate whose first act is to
+                            wall the repo does not get obeyed, it gets `--no-verify`d.
+                            The honest reading of 0/233 is "the backfill has not run",
+                            which is a known, dated, in-flight state and not a
+                            regression.
+      0 < covered < total   FAIL, naming the directories. This is the state that MUST
+                            block, and it is unreachable today: with zero manifests in
+                            the tree, no push can enter it by accident. It becomes
+                            reachable the instant the backfill lands, and then it means
+                            exactly one thing, that a skill was added to a brain that
+                            already mints manifests. The unlock is one command scoped to
+                            that skill.
+      covered == total      PASS n/n.
+
+    So the promotion needs no hand-kept threshold, no date and no second PR to remember:
+    the ladder promotes ITSELF from WARN to FAIL on the first manifest that lands. The
+    number that justifies it is 0 versus 233. At 0/233 the FAIL branch costs every push;
+    at 233/234 it costs exactly the author of the 234th skill, at the moment he can still
+    fix it in one command.
+
+    The residual, stated rather than left to be inferred: deleting ALL manifests at once
+    returns the tree to 0/N and reads as the pre-backfill WARN, the same shape as
+    `packages-verified`'s empty lock. What sees that is git, not this function: the
+    manifests are tracked files, so removing 233 of them is a diff on the way out. Every
+    PARTIAL removal, which is the accident that actually happens, is caught.
+    """
+    root = brain.root / SKILLS_REL
+    if not root.is_dir():
+        return {"status": FAIL, "total": 0, "covered": 0, "missing": [],
+                "detail": f"{SKILLS_REL}/ is not a directory under {brain.root}"}
+    total, missing = 0, []
+    for child in sorted(root.iterdir(), key=lambda c: c.name):
+        if child.name in MANIFEST_SKIP_DIRS or child.is_symlink() or not child.is_dir():
+            continue
+        if not (child / "SKILL.md").is_file():
+            continue
+        total += 1
+        if not (child / "skill.json").is_file():
+            missing.append(child.name)
+    covered = total - len(missing)
+    if total == 0:
+        return {"status": FAIL, "total": 0, "covered": 0, "missing": [],
+                "detail": f"no SKILL.md found under {root}: the denominator resolved "
+                          f"empty, so a green count here would mean nothing"}
+    if covered == 0:
+        return {"status": WARN, "total": total, "covered": 0, "missing": missing,
+                "detail": f"0/{total} skills carry a skill.json: the one-shot backfill "
+                          f"has not run on this tree"}
+    if missing:
+        return {"status": FAIL, "total": total, "covered": covered, "missing": missing,
+                "detail": f"{covered}/{total} skills carry a skill.json; "
+                          f"{len(missing)} do not: " + ", ".join(missing[:6])
+                          + (" ..." if len(missing) > 6 else "")}
+    return {"status": PASS, "total": total, "covered": covered, "missing": [],
+            "detail": f"{total}/{total} skill directories carry a skill.json"}
+
+
+# Above this many missing skills the unlock stops naming them. A `--only` list that is
+# TRUNCATED is worse than no list: it looks complete, the operator pastes it, the count
+# moves and the gate is still red. The generator leaves an existing manifest alone
+# without --force, so the unscoped form is idempotent and safe to hand over instead.
+_UNLOCK_NAME_CAP = 6
+
+
+def _manifest_unlock(res: dict) -> str:
+    """The command that closes the gap the caller is looking at, scoped when scoping
+    is honest and unscoped when it would have to truncate."""
+    if res["status"] == FAIL and res["total"] == 0:
+        return "check --brain: this is not a brain checkout"
+    missing = res["missing"]
+    if not missing:
+        return ""
+    base = "python3 scripts/gen_skill_manifests.py --root skills --write"
+    if res["status"] == WARN or len(missing) > _UNLOCK_NAME_CAP:
+        return base
+    return base + " --only " + " --only ".join(missing)
+
+
+def cmd_manifests(brain: Brain, as_json: bool) -> int:
+    """Exit 1 on the FAIL tier only, so pre-push can run this the way it runs
+    `verify --all`: a WARN must never stop an unrelated push."""
+    res = scan_skill_manifests(brain)
+    fix = _manifest_unlock(res)
+    if as_json:
+        # `missing` is CAPPED in the payload. Uncapped it is 233 names on the WARN
+        # tier today, which is a doctor line nobody reads and a JSON blob every
+        # consumer has to trim anyway. The counts are the answer; the names are the
+        # lead, so the payload carries the counts in full and enough names to start.
+        payload = {**res, "missing": res["missing"][:20],
+                   "missing_total": len(res["missing"]), "fix": fix}
+        print(json.dumps(payload))   # see cmd_verify: NOT ensure_ascii=False
+    else:
+        print(f"[{res['status']}] {res['detail']}")
+        if fix:
+            print(f"  fix: {fix}")
+    return 1 if res["status"] == FAIL else 0
+
+
 def cmd_hash(brain: Brain, target: str, write: bool) -> int:
     """Print the tree hash of a package directory, and optionally embed it.
 
@@ -2697,12 +2893,121 @@ def _sign(key: Path, mpath: Path) -> None:
                        + (cp.stderr or b"").decode("utf-8", "replace"))
 
 
+def selftest_manifests(fixture: Path, real: Brain) -> int:
+    """Prove the coverage ladder in BOTH directions, on fixture trees, not on the
+    live brain (whose count is a moving target and would make this selftest report
+    on whichever PR landed last).
+
+    The fixture is a violation/benign PAIR, and benign is the violation minus exactly
+    one edit: `benign/skills/covered-two/skill.json` is the only file that differs.
+    So a run that goes red proves the ladder discriminates on the manifest and on
+    nothing else. The two ends of the ladder that no pair can express, the empty
+    denominator and the pre-backfill zero, are derived HERE from the fixtures by
+    deleting files, so the fixture stays a pair and the ladder stays fully covered.
+    """
+    if not fixture.is_dir():
+        print(f"selftest: fixture dir not found: {fixture}", file=sys.stderr)
+        return 2
+    failures: list[str] = []
+
+    def check(label: str, cond: bool) -> None:
+        print(f"  {'ok  ' if cond else 'FAIL'} {label}")
+        if not cond:
+            failures.append(label)
+
+    def rc_of(brain: Brain) -> int:
+        """cmd_manifests' EXIT CODE is the contract pre-push consumes, so it is what
+        gets asserted; its JSON goes to a sink because 4 payloads interleaved with 14
+        ok/FAIL lines is a selftest nobody reads."""
+        with contextlib.redirect_stdout(io.StringIO()):
+            return cmd_manifests(brain, True)
+
+    tmp = Path(tempfile.mkdtemp(prefix="octo-pkg-manifests-"))
+    try:
+        for leg in ("violation", "benign"):
+            shutil.copytree(fixture / leg, tmp / leg)
+
+        v = scan_skill_manifests(Brain(tmp / "violation"))
+        b = scan_skill_manifests(Brain(tmp / "benign"))
+        check("violation: a skill without a manifest is caught (FAIL)", v["status"] == FAIL)
+        check("violation: the ladder names the uncovered skill, not a count alone",
+              v["missing"] == ["covered-two"])
+        check("violation: the denominator is measured, not hand-kept (2 SKILL.md)",
+              v["total"] == 2 and v["covered"] == 1)
+        check("violation: the unlock is scoped to the skill that is missing one",
+              "--only covered-two" in _manifest_unlock(v))
+        check("benign: a fully covered tree passes (PASS)", b["status"] == PASS)
+        check("benign: n/n, same denominator as the violation",
+              b["total"] == 2 and b["covered"] == 2)
+        check("benign carries no unlock", _manifest_unlock(b) == "")
+        check("the pair differs by exactly one file",
+              _tree_diff(tmp / "violation", tmp / "benign") == ["skills/covered-two/skill.json"])
+
+        # exit codes are the contract pre-push consumes: only FAIL may stop a push
+        check("violation exits 1", rc_of(Brain(tmp / "violation")) == 1)
+        check("benign exits 0", rc_of(Brain(tmp / "benign")) == 0)
+
+        # derived end 1: the pre-backfill zero is a WARN, never a wall. This is the
+        # state the live brain is in today (0/233) and the reason the ladder is not
+        # simply "anything short of n/n FAILs".
+        zero = tmp / "benign"
+        for d in ("covered-one", "covered-two"):
+            (zero / "skills" / d / "skill.json").unlink()
+        z = scan_skill_manifests(Brain(zero))
+        check("zero coverage is WARN, not FAIL (0/N must not wall the repo)",
+              z["status"] == WARN and z["covered"] == 0 and z["total"] == 2)
+        check("zero coverage exits 0", rc_of(Brain(zero)) == 0)
+        check("the zero unlock backfills the whole tree, unscoped",
+              _manifest_unlock(z).endswith("--root skills --write"))
+
+        # derived end 2: an empty denominator is FAIL, not a silent green. This is the
+        # 0/0 shape that `packages-verified` cannot distinguish from "nothing installed";
+        # here it can be distinguished, because a brain with no skills is a broken root.
+        empty = tmp / "empty"
+        (empty / "skills").mkdir(parents=True)
+        e = scan_skill_manifests(Brain(empty))
+        check("an empty denominator is FAIL, never a green 0/0", e["status"] == FAIL)
+        check("empty denominator exits 1", rc_of(Brain(empty)) == 1)
+        noskills = tmp / "noskills"
+        noskills.mkdir()
+        check("a missing skills/ dir is FAIL, not a crash",
+              scan_skill_manifests(Brain(noskills))["status"] == FAIL)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    print(f"selftest(manifests): {len(failures)} failure(s)")
+    return 1 if failures else 0
+
+
+def _tree_diff(a: Path, b: Path) -> list[str]:
+    """Relative paths present in b but not a, plus any whose bytes differ. Used to
+    ASSERT the fixture pair is one edit apart rather than to assume it: a pair that
+    drifts to two edits stops proving which edit the ladder reacted to."""
+    def rel(root: Path) -> dict:
+        return {str(f.relative_to(root)).replace(os.sep, "/"): f.read_bytes()
+                for f in sorted(root.rglob("*")) if f.is_file()}
+    ra, rb = rel(a), rel(b)
+    return sorted(set(rb) - set(ra)) + sorted(k for k in set(ra) & set(rb) if ra[k] != rb[k])
+
+
 def selftest(fixture: Path, real: Brain) -> int:
     """Every leg of the PACKAGE contract, under a throwaway HOME and a key minted at
     run time. No private key ever lives in the repo (push-policy.txt blocks key
-    blocks, and a committed key would be a real one)."""
+    blocks, and a committed key would be a real one).
+
+    Dispatches on the fixture's LAYOUT, not on its name: a `violation/` sibling means
+    the coverage pair, a `signed/` sibling means the install legs. Layout because a
+    fixture directory can be renamed and a name test would then silently run the wrong
+    legs and pass."""
     if not fixture.is_dir():
         print(f"selftest: fixture dir not found: {fixture}", file=sys.stderr)
+        return 2
+    if (fixture / "violation").is_dir() and (fixture / "benign").is_dir():
+        return selftest_manifests(fixture, real)
+    if not (fixture / "signed").is_dir():
+        print(f"selftest: {fixture} matches no known fixture layout "
+              f"(expected signed/ + unsigned/ + tampered/, or violation/ + benign/)",
+              file=sys.stderr)
         return 2
     if not ssh_keygen_y_supported():
         print("selftest: ssh-keygen -Y unsupported here; cannot prove the signature leg",
@@ -3091,6 +3396,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("dir")
     p.add_argument("--write", action="store_true", help="embed it into the manifest")
 
+    p = sub.add_parser("manifests",
+                       help="report skill.json coverage over the brain's own skills")
+    p.add_argument("--json", action="store_true")
+
     sub.add_parser("lock", help="recompute tree hash and signer for installed packages")
     sub.add_parser("sync", help="install from the lock what is missing, then verify")
     return ap
@@ -3129,6 +3438,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_uninstall(brain, args.name)
         if args.cmd == "list":
             return cmd_list(brain, args.json)
+        if args.cmd == "manifests":
+            return cmd_manifests(brain, args.json)
         if args.cmd == "hash":
             return cmd_hash(brain, args.dir, args.write)
         if args.cmd == "lock":

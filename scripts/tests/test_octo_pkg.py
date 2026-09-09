@@ -4907,3 +4907,273 @@ class TestNoChildWaitsForAHuman(SandboxCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestManifestCoverage(unittest.TestCase):
+    """The in-repo half of PACKAGE: `skill.json` on every skill directory.
+
+    The claim existed in docs/architecture/v8-kernel.md section 4 with NO live
+    mechanism behind it. `gen_skill_manifests.py` is a one-shot that no hook, gate,
+    workflow or runner calls, so once the backfill landed the count could only decay:
+    the 234th skill would ship with no manifest and pre-push would exit 0. These tests
+    pin the ladder that replaced the state, in both directions and at both ends.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="test-cover-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def _brain(self, spec: dict, name: str = "b"):
+        """spec: {skill_name: has_manifest}. Returns a Brain over a throwaway tree."""
+        root = self.tmp / name
+        (root / "skills").mkdir(parents=True)
+        for skill, has_manifest in spec.items():
+            d = root / "skills" / skill
+            d.mkdir()
+            (d / "SKILL.md").write_text(f"---\nname: {skill}\n---\n", encoding="utf-8")
+            if has_manifest:
+                (d / "skill.json").write_text(
+                    json.dumps({"name": skill, "version": "1.0.0", "kind": "skill"}),
+                    encoding="utf-8")
+        return octo_pkg.Brain(root)
+
+    # ---- the two directions the report has to show ----------------------
+
+    def test_a_skill_without_a_manifest_is_caught(self):
+        res = octo_pkg.scan_skill_manifests(self._brain({"a": True, "b": False}))
+        self.assertEqual(res["status"], octo_pkg.FAIL)
+        self.assertEqual(res["missing"], ["b"])
+        self.assertEqual((res["covered"], res["total"]), (1, 2))
+
+    def test_a_fully_covered_tree_passes(self):
+        res = octo_pkg.scan_skill_manifests(self._brain({"a": True, "b": True}))
+        self.assertEqual(res["status"], octo_pkg.PASS)
+        self.assertEqual((res["covered"], res["total"]), (2, 2))
+        self.assertEqual(res["missing"], [])
+
+    # ---- the failure mode, which is the design decision -----------------
+
+    def test_zero_coverage_warns_and_does_not_wall_the_repo(self):
+        """0/N is the pre-backfill state the live brain is in (0/233 today). FAIL here
+        would block every push on every branch until the mechanical PR lands, which is
+        a gate that gets --no-verify'd rather than obeyed."""
+        brain = self._brain({"a": False, "b": False})
+        res = octo_pkg.scan_skill_manifests(brain)
+        self.assertEqual(res["status"], octo_pkg.WARN)
+        self.assertEqual((res["covered"], res["total"]), (0, 2))
+        self.assertEqual(octo_pkg.cmd_manifests(brain, True), 0, "a WARN must exit 0")
+
+    def test_a_partial_count_fails_and_that_is_the_regression_state(self):
+        """Manifests existing means the backfill ran, so a bare directory is a skill
+        added after it. This is the branch that must block, and the ladder arms itself
+        into it with no hand-kept threshold and no date."""
+        brain = self._brain({"a": True, "b": False})
+        self.assertEqual(octo_pkg.cmd_manifests(brain, True), 1)
+
+    def test_an_empty_denominator_fails_rather_than_reading_as_clean(self):
+        """The 0/0 shape `packages-verified` cannot tell from 'nothing installed'. Here
+        it can be told apart: a brain with no skills is a root that resolved wrong."""
+        root = self.tmp / "empty"
+        (root / "skills").mkdir(parents=True)
+        res = octo_pkg.scan_skill_manifests(octo_pkg.Brain(root))
+        self.assertEqual(res["status"], octo_pkg.FAIL)
+        self.assertEqual(res["total"], 0)
+        self.assertEqual(octo_pkg.cmd_manifests(octo_pkg.Brain(root), True), 1)
+
+    def test_a_missing_skills_dir_fails_instead_of_crashing(self):
+        root = self.tmp / "noskills"
+        root.mkdir()
+        self.assertEqual(octo_pkg.scan_skill_manifests(octo_pkg.Brain(root))["status"],
+                         octo_pkg.FAIL)
+
+    # ---- what counts as a skill -----------------------------------------
+
+    def test_the_denominator_is_measured_not_hand_kept(self):
+        """A directory with no SKILL.md is not a skill and must not enter the count;
+        a hand-kept list would be a second thing to forget, and forgetting it reads as
+        coverage."""
+        brain = self._brain({"a": True})
+        (brain.root / "skills" / "notaskill").mkdir()
+        (brain.root / "skills" / "notaskill" / "README.md").write_text("x", encoding="utf-8")
+        self.assertEqual(octo_pkg.scan_skill_manifests(brain)["total"], 1)
+
+    def test_vendor_and_learned_are_skipped_exactly_as_the_generator_skips_them(self):
+        """Pins the two SKIP sets equal. The generator that FILLS the coverage and the
+        check that MEASURES it must agree on what a skill directory is, or the backfill
+        can report done against a denominator the check does not use."""
+        self.assertEqual(octo_pkg.MANIFEST_SKIP_DIRS, gen.SKIP_DIRS)
+        brain = self._brain({"a": True})
+        for skipped in sorted(octo_pkg.MANIFEST_SKIP_DIRS):
+            d = brain.root / "skills" / skipped
+            d.mkdir()
+            (d / "SKILL.md").write_text("---\nname: x\n---\n", encoding="utf-8")
+        res = octo_pkg.scan_skill_manifests(brain)
+        self.assertEqual(res["status"], octo_pkg.PASS)
+        self.assertEqual(res["total"], 1)
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlinks unavailable")
+    def test_a_symlinked_skill_dir_is_the_vendor_ladder_s_question_not_this_one(self):
+        """`skills/<name>` is a symlink when the package manager installed it. Counting
+        it here would ask verify's question twice, in the wrong denominator."""
+        brain = self._brain({"a": True})
+        vendor = brain.root / "skills" / "vendor" / "installed"
+        vendor.mkdir(parents=True)
+        (vendor / "SKILL.md").write_text("---\nname: installed\n---\n", encoding="utf-8")
+        try:
+            (brain.root / "skills" / "installed").symlink_to(vendor, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest("symlink not permitted here")
+        res = octo_pkg.scan_skill_manifests(brain)
+        self.assertEqual(res["total"], 1, "the symlinked package must not be counted")
+        self.assertEqual(res["status"], octo_pkg.PASS)
+
+    # ---- the contract its consumers read --------------------------------
+
+    def test_the_unlock_is_scoped_to_what_is_actually_missing(self):
+        partial = octo_pkg.scan_skill_manifests(self._brain({"a": True, "b": False}, "p"))
+        self.assertIn("--only b", octo_pkg._manifest_unlock(partial))
+        # A TRUNCATED --only list is worse than none: it looks complete, the operator
+        # pastes it, the count moves and the gate stays red. Past the cap the unlock
+        # drops the names rather than shortening them.
+        spec = {"ok": True}
+        spec.update({f"m{i}": False for i in range(octo_pkg._UNLOCK_NAME_CAP + 1)})
+        many = octo_pkg.scan_skill_manifests(self._brain(spec, "many"))
+        self.assertEqual(many["status"], octo_pkg.FAIL)
+        self.assertNotIn("--only", octo_pkg._manifest_unlock(many))
+        zero = octo_pkg.scan_skill_manifests(self._brain({"a": False}, "z"))
+        self.assertTrue(octo_pkg._manifest_unlock(zero).endswith("--root skills --write"))
+        full = octo_pkg.scan_skill_manifests(self._brain({"a": True}, "f"))
+        self.assertEqual(octo_pkg._manifest_unlock(full), "")
+
+    def test_the_json_payload_caps_missing_but_never_the_counts(self):
+        """brain_doctor parses this. Uncapped, `missing` is 233 names on the WARN tier,
+        which is a doctor line nobody reads; the counts are the answer."""
+        brain = self._brain({f"s{i:03d}": False for i in range(30)})
+        cp = _sp([sys.executable, str(SCRIPTS / "octo_pkg.py"), "--brain", str(brain.root),
+                  "manifests", "--json"], capture_output=True, text=True)
+        data = json.loads(cp.stdout.strip().splitlines()[-1])
+        self.assertEqual(cp.returncode, 0)
+        self.assertEqual((data["total"], data["covered"], data["missing_total"]), (30, 0, 30))
+        self.assertEqual(len(data["missing"]), 20)
+
+    @unittest.skipIf(os.name == "nt", "non-UTF-8 filenames are not reachable on Windows")
+    def test_a_non_utf8_skill_dir_name_is_reported_not_vanished(self):
+        """This module's recurring defect class (QA cycles 10 and 11): a name that is
+        not valid UTF-8 reaches a print, the encode raises, and the REPORT disappears
+        while the exit code stays 0. The scan walks skills/ by name, so it is on that
+        path too. Both renderings must survive: the JSON escapes the lone surrogate
+        (ensure_ascii=True) so json.loads hands the consumer the name back intact, and
+        the human line rides the errors="replace" stream flag."""
+        root = self.tmp / "badname"
+        (root / "skills").mkdir(parents=True)
+        bad = os.fsdecode(b"bad\xffname")
+        try:
+            d = root / "skills" / bad
+            d.mkdir()
+        except (OSError, UnicodeError):
+            self.skipTest("this filesystem rejects non-UTF-8 names")
+        (d / "SKILL.md").write_text("---\nname: x\n---\n", encoding="utf-8")
+        self.assertEqual(octo_pkg.scan_skill_manifests(octo_pkg.Brain(root))["total"], 1)
+        for args, parse in ((["manifests", "--json"], True), (["manifests"], False)):
+            cp = _sp([sys.executable, str(SCRIPTS / "octo_pkg.py"), "--brain", str(root),
+                      *args], capture_output=True, text=True)
+            self.assertEqual(cp.returncode, 0, cp.stderr)
+            self.assertTrue(cp.stdout.strip(), f"the report vanished for {args}")
+            if parse:
+                data = json.loads(cp.stdout.strip().splitlines()[-1])
+                self.assertEqual(data["missing"], [bad])
+
+    def test_the_live_brain_denominator_matches_the_documented_count(self):
+        """The doc cites 233 from `find skills -maxdepth 2 -name SKILL.md`. If this
+        check counts a different set, its ratio is about a corpus nobody described."""
+        res = octo_pkg.scan_skill_manifests(octo_pkg.Brain(BRAIN))
+        expected = sum(1 for d in (BRAIN / "skills").iterdir()
+                       if d.is_dir() and not d.is_symlink()
+                       and d.name not in octo_pkg.MANIFEST_SKIP_DIRS
+                       and (d / "SKILL.md").is_file())
+        self.assertEqual(res["total"], expected)
+        self.assertGreater(res["total"], 200)
+
+
+class TestManifestCoverageWiring(unittest.TestCase):
+    """RULE #1: the ladder above is only a rule if something live runs it."""
+
+    def test_the_selftest_passes_as_a_subprocess(self):
+        """The exact invocation the registry proof and gate-liveness use."""
+        cp = _sp([sys.executable, str(SCRIPTS / "octo_pkg.py"), "--selftest",
+                  "registry/fixtures/META.skill-manifest-coverage"],
+                 cwd=str(BRAIN), capture_output=True, text=True)
+        self.assertEqual(cp.returncode, 0, cp.stdout + cp.stderr)
+        self.assertIn("0 failure(s)", cp.stdout)
+
+    def test_the_fixture_pair_is_exactly_one_edit_apart(self):
+        """A pair that drifts to two edits stops proving which edit the ladder reacted
+        to. Asserted here as well as inside the selftest, because this is the file a
+        reviewer changes the fixture from."""
+        f = BRAIN / "registry" / "fixtures" / "META.skill-manifest-coverage"
+        self.assertEqual(octo_pkg._tree_diff(f / "violation", f / "benign"),
+                         ["skills/covered-two/skill.json"])
+
+    def test_selftest_dispatch_is_by_layout_so_a_rename_cannot_run_the_wrong_legs(self):
+        tmp = Path(tempfile.mkdtemp(prefix="test-dispatch-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        (tmp / "neither").mkdir()
+        cp = _sp([sys.executable, str(SCRIPTS / "octo_pkg.py"), "--selftest",
+                  str(tmp / "neither")], cwd=str(BRAIN), capture_output=True, text=True)
+        self.assertEqual(cp.returncode, 2)
+        self.assertIn("matches no known fixture layout", cp.stderr)
+
+    def test_pre_push_gates_on_manifests_rather_than_merely_mentioning_it(self):
+        """The registry carries a grep proof for this, but the proof runner only ever
+        EXECUTES locators containing --selftest, so that proof is inert text. This is
+        where the claim is checked, and brain_doctor checks it with the same regex.
+
+        The seven shapes below are not decoration. The first version of this check had
+        only the command-word test, and reverting the whole pre-push stanza to
+        `if false; then` left it GREEN: the error-reporting invocation inside the failing
+        branch is the same command word. A wiring check that survives the deletion of the
+        thing it checks is not a check, so the tail condition (no pipe, or a `||`) is the
+        half that carries the proof."""
+        bd = _load("brain_doctor_under_test", SCRIPTS / "brain_doctor.py")
+        self.assertTrue(bd._pre_push_invokes("manifests"))
+        self.assertTrue(bd._pre_push_invokes("verify --all"))
+        self.assertFalse(bd._pre_push_invokes("no-such-verb"))
+        rx = re.compile(bd._PREPUSH_CMD % re.escape("manifests"))
+        gate = '  if ! "$PYTHON" "$REPO_ROOT/scripts/octo_pkg.py" --brain "$R" manifests >/dev/null 2>&1; then'
+        or_idiom = '  "$PYTHON" "$R/scripts/octo_pkg.py" manifests || { echo x; exit 1; }'
+        report = '      "$PYTHON" "$R/scripts/octo_pkg.py" manifests 2>&1 | sed \'s/^/  /\''
+        for legal in (gate, or_idiom):
+            self.assertTrue(rx.search(legal), legal)
+        for refused in (report,
+                        '  echo "hint: scripts/octo_pkg.py manifests"',
+                        "  printf '%s' \"run scripts/octo_pkg.py manifests\"",
+                        "# scripts/octo_pkg.py manifests",
+                        "  if false; then"):
+            self.assertFalse(rx.search(refused), refused)
+
+    def test_the_registry_row_is_wired_to_the_fixture_that_exists(self):
+        import yaml
+        rules = yaml.safe_load((BRAIN / "registry" / "rules.yaml")
+                               .read_text(encoding="utf-8"))["rules"]
+        row = next(r for r in rules if r["id"] == "META.skill-manifest-coverage")
+        self.assertEqual(row["strength"], "GATE")
+        self.assertTrue(row["gateable"])
+        self.assertEqual(row["enforcement"], "fail-closed")
+        locators = [p["locator"] for p in row["proof"] if p["method"] == "EXIT_CODE"]
+        selftests = [l for l in locators if "--selftest" in l]
+        self.assertEqual(len(selftests), 1, "gate-liveness runs exactly the --selftest proofs")
+        self.assertTrue((BRAIN / selftests[0].split()[-1]).is_dir())
+        anchor = row["source"]["anchor"]
+        self.assertIn(anchor, (BRAIN / "CLAUDE.md").read_text(encoding="utf-8"))
+
+    def test_the_tmp_ignore_rule_no_longer_shadows_fixture_seeds(self):
+        """The pattern this branch added was a repo-wide `*.tmp`, which also matched
+        registry/fixtures/*.tmp. `fixture-seeds-tracked` FAILs on exactly that shape:
+        a fixture ignored by a generic rule ships on no other checkout."""
+        for path in ("docs/foo.tmp", "scripts/bar.tmp", "registry/fixtures/x.tmp"):
+            cp = _sp(["git", "check-ignore", "-q", "--no-index", path],
+                     cwd=str(BRAIN), capture_output=True)
+            self.assertEqual(cp.returncode, 1, f"{path} must not be ignored")
+        cp = _sp(["git", "check-ignore", "-q", "--no-index", "packages.lock.json.42.tmp"],
+                 cwd=str(BRAIN), capture_output=True)
+        self.assertEqual(cp.returncode, 0, "the lockfile's own temp file must stay ignored")

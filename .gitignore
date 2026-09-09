@@ -63,6 +63,8 @@ knowledge/
 #   mv skills/learned/<slug> skills/<slug>
 # Drafts are unreviewed scaffolds; pushing them would pollute the public connectome
 # with provisional content. This rule is the canonical companion of skills/learned/
+# (see skills/session-learn-extractor/SKILL.md).
+skills/learned/
 
 # Installed packages (v8 PACKAGE). A vendored skill is a third party's code living
 # in the always-on discovery path; it belongs to packages.lock.json (tracked), not to
@@ -72,12 +74,19 @@ knowledge/
 skills/vendor/
 agents/vendor/
 # packages.lock.json.<pid>.tmp (atomic replace) and packages.lock.json.lock
-# (the advisory guard octo_pkg holds around load-modify-save). Both are
-# per-process scratch beside a tracked file; neither is ever committed.
-*.tmp
-packages.lock.json.lock
-# (see skills/session-learn-extractor/SKILL.md).
-skills/learned/
+# (the advisory guard octo_pkg holds around load-modify-save). Both are per-process
+# scratch beside a tracked file at the repo ROOT; neither is ever committed.
+#
+# ANCHORED and NAMED, not `*.tmp`. A bare `*.tmp` is repo-wide and matches at any
+# depth: `git check-ignore -v --no-index` confirmed it swallowed docs/foo.tmp,
+# scripts/bar.tmp and registry/fixtures/x.tmp as well. Zero tracked files matched, so
+# nothing was shadowed yet, but registry/fixtures/ is where every gate fixture lives
+# and `fixture-seeds-tracked` FAILs precisely on a fixture file "ignored by a generic
+# rule": a pattern this wide was one .tmp fixture away from turning a gate's proof
+# into a file that ships on no other checkout. The leading slash pins it to the root,
+# where the lockfile is.
+/packages.lock.json.*.tmp
+/packages.lock.json.lock
 
 # Nested project memories (per-arm .claude/ dirs)
 .claude/

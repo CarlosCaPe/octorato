@@ -363,6 +363,23 @@ if [ -f "$REPO_ROOT/scripts/octo_pkg.py" ]; then
     } >&2
     exit 1
   fi
+  # The OTHER half of the PACKAGE claim: v8-kernel.md section 4 promises "skill.json on
+  # every skill directory". `verify --all` above answers only for skills/vendor, which is
+  # other people's code, so without this line the promise is a state nothing keeps true:
+  # the generator is a one-shot no hook calls, and the 234th skill would ship with no
+  # manifest at exit 0. Same ladder discipline as above -- only the FAIL tier blocks.
+  # Today the tree is at 0/233 and this exits 0 with a WARN, so it walls nothing; it arms
+  # itself the moment the mechanical backfill lands and a PARTIAL count becomes possible.
+  if ! "$PYTHON" "$REPO_ROOT/scripts/octo_pkg.py" --brain "$REPO_ROOT" manifests >/dev/null 2>&1; then
+    {
+      echo ""
+      echo "✗ pre-push: a skill directory ships without its skill.json."
+      "$PYTHON" "$REPO_ROOT/scripts/octo_pkg.py" --brain "$REPO_ROOT" manifests 2>&1 | sed 's/^/  /'
+      echo ""
+      echo "  Mint the manifest with the command above, commit it, and re-push."
+    } >&2
+    exit 1
+  fi
 fi
 
 exit 0
