@@ -418,8 +418,38 @@ GATE_SURFACES = ("scripts", "registry", "hooks.json")
 
 
 def scrubbed_env() -> dict:
+    """Drop every GIT_* the parent exported, keeping only the access vars.
+
+    The nine-name list above is a RECORD of what was found, not the rule, and this
+    is the copy that mattered. `brain_doctor` imports this module IN-PROCESS for
+    `--gate-receipt`, which is the call `.githooks/pre-push` makes, so these four
+    read-only git calls ran under the doctor's own unscrubbed environment.
+    Measured, with one untracked file under a gate surface:
+
+        baseline dirty: ['?? scripts/<probe>.py']
+        GIT_CONFIG_PARAMETERS="'status.showUntrackedFiles'='no'"  ->  dirty = []
+
+    `git -c status.showUntrackedFiles=no push` therefore made `gate_surfaces_dirty`
+    answer clean and a gate receipt got written for a tree whose gate surfaces were
+    not the committed ones, which is the exact thing the receipt exists to refuse.
+    `GIT_CONFIG_COUNT` with `GIT_CONFIG_KEY_<n>` is the same route under an
+    unbounded set of names, so the rule is a prefix scrub and not a longer list.
+
+    Stated rather than imported: `scripts/brain_doctor.py` carries the canonical
+    version of this rule with its full receipt. This module is imported by
+    PostToolUse hooks on the hot path and importing the doctor there would pay for a
+    3000-line module on every tool call, so the rule is restated in four lines
+    instead. `scripts/gate_selftest.py:147` keeps the nine-name list and is left
+    alone deliberately: `_run_selftest_locator` reaches it through `run(...)`, so
+    every leg's `dict(os.environ)` already starts from the scrubbed env, and
+    changing it would alter what all 33 gate legs see for no closed hole.
+    """
+    keep = ("GIT_SSH", "GIT_SSH_COMMAND", "GIT_SSH_VARIANT", "GIT_ASKPASS",
+            "GIT_PROXY_COMMAND", "GIT_TEXTDOMAINDIR")
     env = dict(os.environ)
-    for k in GIT_HOOK_ENV:
+    for k in [k for k in env
+              if k.startswith("GIT_") and not k.startswith("GIT_TEST_")
+              and k not in keep]:
         env.pop(k, None)
     return env
 

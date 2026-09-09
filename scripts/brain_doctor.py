@@ -92,8 +92,15 @@ GIT_HOOK_ENV = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX",
 #               exported to a hook, and the only way to reproduce a dubious-ownership
 #               or a translated git without a second uid and a system locale. Keeping
 #               them costs a hostile parent the ability to make our git FAIL, which
-#               it already has through PATH, and buys back two live tests that would
-#               otherwise become fixture-only.
+#               it already has through PATH, and buys back two live tests.
+#
+# Scrubbing them was tried and the damage is worth recording in full, because only
+# half of it was visible. `test_a_localised_git_still_names_the_diagnosis` went RED,
+# which is the half that gets noticed. `test_the_dubious_ownership_cause_...` went
+# SILENT instead: with the knob stripped its probe git succeeded, so the test took
+# its own skip branch and reported "no dubious ownership diagnosis came back ... git
+# said: '' (rc=0)". One failure announces itself, the other reads as coverage, and
+# the second is the dangerous one.
 #
 # IMPACT RADIUS, not fixed here and not silently left either. The same nine-name
 # list is copy-pasted in two more places and both have the same hole:
@@ -389,11 +396,25 @@ def run(args: list[str], cwd: Path | None = None,
         # `selftest_cause`, which reads the first MARKED line and falls back to the
         # last, gives the child's own verdict when it marked one and the timeout
         # sentence when it did not.
+        # Polled BEFORE the kill, because it is the one moment that can still tell
+        # the two timeouts apart. `communicate` waits for EOF on the pipes, not for
+        # the child, and the write end is inherited: a child that exits immediately
+        # while a background descendant holds fd 1 open produces a full-length
+        # timeout with nothing wrong with the child. Measured with a 2s ceiling,
+        # `sh -c '<child> & exit 0'` gave rc 124 in 2.04s while sh itself had
+        # answered 0 in about no time, and the row said `sh: no answer in 2s`. A
+        # wrong cause, in the row this branch rewrote, about the process the reader
+        # would go and look at first.
+        child_rc = proc.poll() if proc is not None else None
         reaped = _kill_process_group(proc)
         out, err = _drain_after_kill(proc, exc)
-        note = (f"{args[0]}: no answer in {limit}s, killed "
-                + ("(process group reaped)" if reaped else
-                   "(child only; a descendant in another group may survive)"))
+        group = ("process group reaped" if reaped else
+                 "a descendant in another group may survive")
+        if child_rc is not None:
+            note = (f"{args[0]}: exited {child_rc} within {limit}s but its output "
+                    f"stayed open that long, held by a descendant ({group})")
+        else:
+            note = f"{args[0]}: no answer in {limit}s, killed ({group})"
         return subprocess.CompletedProcess(
             args, 124, out, f"{err.rstrip()}\n{note}" if err.strip() else note)
     except OSError as exc:
@@ -2535,7 +2556,11 @@ def git_failure_cause(stderr: str, returncode: int) -> str:
 # Reach was measured by running all 33 `--selftest` scripts from `registry/rules.yaml`
 # into a forced failure and reading the streams the doctor actually gets:
 #
-#   "selftest FAIL"  25 of the 33, on STDERR, via gate_selftest.py:212's joined summary
+#   "selftest FAIL"  28 of the 33, on STDERR: 23 through gate_selftest.py:212's joined
+#                    summary, plus 5 that print the same prefix themselves
+#                    (canon-heal-hook, commit_msg_language_gate, impact-radius-hook,
+#                    merge-hooks, octo). An earlier draft said 25, which matched
+#                    neither count and was a number nobody had run.
 #   "X "             r__pretool-write__base-freshness.py, on STDOUT, verbatim with its
 #                    violation leg forced: `X violation fixture did NOT warn (stale
 #                    base undetected)`, which `selftest_cause` then selected over the
@@ -2585,7 +2610,8 @@ def selftest_cause(cp: subprocess.CompletedProcess, empty: str | None = None) ->
     markers, stderr before stdout, then stdout for the printers that write their
     verdict there. The stream ORDER is not a preference, it is where the summary
     lives: `gate_selftest.py:212` writes its joined `selftest FAIL: a; b` to stderr,
-    and that one printer speaks for 23 of the 33, so reading stdout first would let
+    and that one printer speaks for 23 of the 33, with 5 more printing the same
+    prefix to stderr themselves for 28 in all, so reading stdout first would let
     a helper's incidental chatter outrank the verdict of the majority. A diagnosis
     that ENDS in a colon carries its next line, for the reason the sibling gives,
     which is how `commit_msg_language_gate.py` now names its first failure instead

@@ -1527,11 +1527,20 @@ class TestEachNoWindowRoadNamesItself(DenyCoverageCase):
         fx = BRAIN / "scripts" / "tests" / "fixtures"
         bf_out = (fx / "base-freshness-failed.stdout").read_text(encoding="utf-8")
         bf_err = (fx / "base-freshness-failed.stderr").read_text(encoding="utf-8")
-        gs_err = (fx / "gate-selftest-failed.stderr").read_text(encoding="utf-8")
 
-        # "selftest FAIL": stderr, gate_selftest.py:212, speaking for 25 of the 33.
-        cp = subprocess.CompletedProcess(["helper"], 1, "", gs_err)
-        self.assertTrue(doctor.selftest_cause(cp).startswith("selftest FAIL:"))
+        # "selftest FAIL": run gate_selftest for real rather than replaying it. The
+        # missing-fixture road exits immediately, so a LIVE emission costs nothing
+        # here and cannot drift from the printer the way a recording can.
+        live = doctor.run([sys.executable, str(BRAIN / "scripts" / "gate_selftest.py"),
+                           str(BRAIN / "scripts" / "g__pretool-bash__prod-write.py"),
+                           str(BRAIN / "registry" / "fixtures" / "__no_such_fixture__")],
+                          cwd=BRAIN, timeout=60)
+        self.assertEqual(live.returncode, 1)
+        self.assertTrue(doctor.selftest_cause(live).startswith("selftest FAIL:"),
+                        f"gate_selftest's summary no longer reaches the selector: "
+                        f"{doctor.selftest_cause(live)!r}")
+        self.assertTrue((live.stderr or "").splitlines()[0].startswith("selftest FAIL:"),
+                        "the summary moved off the first stderr line or off stderr")
 
         # "X ": stdout, base-freshness with its violation leg forced. The whole
         # reason this function selects by marker: the X line is chosen over the
@@ -1547,11 +1556,52 @@ class TestEachNoWindowRoadNamesItself(DenyCoverageCase):
         self.assertEqual(doctor.selftest_cause(only_fail),
                          "FAIL base-freshness selftest")
 
-        # The fixtures must not drift away from the printers they were captured
-        # from, or this test slowly becomes the presence check it replaced.
-        bf = (BRAIN / "scripts" / "r__pretool-write__base-freshness.py").read_text(encoding="utf-8")
-        self.assertIn("X violation fixture did NOT warn", bf)
-        self.assertIn("FAIL base-freshness selftest", bf)
+        # The drift guard, and the first version of it could be defeated by the
+        # drift it exists to catch. It asserted the substring was PRESENT in the
+        # printer's source, so changing `print("  X violation …")` to
+        # `print("  [bf] X violation …")` kept the substring, kept this test green,
+        # and lost the named cause in production: `selftest_cause` fell through to
+        # the generic `FAIL base-freshness selftest`. Presence in source is not
+        # position in the line, which is the same mistake as presence-not-reach one
+        # level down.
+        #
+        # So the literals are parsed and their POSITION is asserted: every print()
+        # in the printer that carries a verdict must start, after stripping, with a
+        # marker this selector knows.
+        import ast
+        bf_path = BRAIN / "scripts" / "r__pretool-write__base-freshness.py"
+        tree = ast.parse(bf_path.read_text(encoding="utf-8"))
+        verdict_words = ("violation fixture did NOT warn", "base-freshness selftest",
+                         "benign fixture warned", "TTL not honoured")
+        literals = []
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name) and node.func.id == "print"
+                    and node.args):
+                continue
+            first = node.args[0]
+            if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                head = first.value
+            elif isinstance(first, ast.JoinedStr) and first.values and isinstance(
+                    first.values[0], ast.Constant):
+                head = first.values[0].value
+            else:
+                continue
+            if any(w in head for w in verdict_words):
+                literals.append(head)
+        self.assertTrue(literals, "no verdict print() found; the printer moved")
+        for head in literals:
+            with self.subTest(line=head[:50]):
+                self.assertTrue(
+                    head.strip().startswith(doctor.SELFTEST_FAILURE_MARKERS),
+                    f"{head.strip()[:60]!r} does not START with a marker, so "
+                    f"`selftest_cause` will skip it and name a later line instead")
+
+        # And the recordings are verbatim, leading whitespace included, because a
+        # hand-typed fixture is that same drift wearing the guard's clothes.
+        self.assertEqual(bf_out.splitlines()[0],
+                         "  X violation fixture did NOT warn (stale base undetected)")
+        self.assertEqual(bf_out.splitlines()[1], "  FAIL base-freshness selftest")
         self.assertIn('print("selftest FAIL: " + "; ".join(failures), file=sys.stderr)',
                       (BRAIN / "scripts" / "gate_selftest.py").read_text(encoding="utf-8"))
 
@@ -1608,8 +1658,35 @@ class TestEachNoWindowRoadNamesItself(DenyCoverageCase):
                       "the reader cannot tell a complete kill from a partial one "
                       "unless the sentence says which happened")
 
-        # The guard: we are still here. An unguarded killpg SIGKILLs the runner.
-        self.assertTrue(True, "reached, so the reaper did not kill its own group")
+        # The guard, anchored by CONTAINMENT rather than asserted into the air. The
+        # previous line here was `assertTrue(True)`, which is decoration: removing
+        # the guard alone changes nothing observable, because `start_new_session`
+        # already puts the child in another group. The guard only bites when BOTH
+        # are gone, and in-process that mutant would SIGKILL this test runner, which
+        # is why it has to run in its own session and be watched from outside.
+        probe = (
+            "import importlib.util, subprocess, sys, os\n"
+            f"spec = importlib.util.spec_from_file_location('d', {str(DOCTOR)!r})\n"
+            "src = open(spec.origin, encoding='utf-8').read()\n"
+            "src = src.replace('            start_new_session=True,\\n', '')\n"
+            "src = src.replace('        if pgid == os.getpgid(0):\\n"
+            "            return False\\n', '')\n"
+            "ns = {'__name__': 'd_mut', '__file__': spec.origin}\n"
+            "exec(compile(src, spec.origin, 'exec'), ns)\n"
+            "ns['RUN_TIMEOUT'] = 2\n"
+            "ns['run']([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
+            "print('RUNNER SURVIVED')\n"
+        )
+        contained = subprocess.run(
+            ["setsid", "-w", sys.executable, "-c", probe],
+            capture_output=True, text=True, timeout=120)
+        self.assertNotIn("RUNNER SURVIVED", contained.stdout,
+                         "with BOTH the new session and the guard removed the "
+                         "killpg should come home; if the runner survives, the "
+                         "guard is guarding nothing and this anchor is wrong")
+        self.assertEqual(contained.returncode, -9,
+                         f"expected death by SIGKILL, got rc={contained.returncode} "
+                         f"stderr={contained.stderr.strip()[:160]!r}")
 
         # And the honest limit: a descendant that calls setsid ITSELF has left the
         # group before the kill lands, so the sentence must not claim the tree.
@@ -1634,6 +1711,92 @@ class TestEachNoWindowRoadNamesItself(DenyCoverageCase):
                             "ever passes, the claim in the docstring is now too "
                             "modest and should be re-measured")
         self.assertNotIn("nothing survived", deep.stderr)
+
+    def test_the_gate_receipt_cannot_be_told_the_tree_is_clean(self):
+        """The copy of the scrub that mattered, and the disclosure that missed it.
+
+        Two files carried the nine-name list and the same reason was attached to
+        both. Only one is on a live path: `check_gate_liveness` imports
+        `receipt_ledger` IN-PROCESS for `--gate-receipt`, which is the call
+        `.githooks/pre-push` makes, so its four read-only git calls ran under the
+        doctor's own unscrubbed environment. `gate_selftest.py:147` is reached
+        through `run(...)`, so its legs already start from a scrubbed env and the
+        list there is dormant.
+
+        Measured on this tree with one untracked file under a gate surface:
+
+            baseline dirty: ['?? scripts/<probe>.py']
+            GIT_CONFIG_PARAMETERS="'status.showUntrackedFiles'='no'"  ->  []
+
+        A clean answer there means a gate receipt gets written for a tree whose gate
+        surfaces are not the committed ones, which is precisely what the receipt
+        exists to refuse. `git -c status.showUntrackedFiles=no push` is the whole
+        exploit.
+        """
+        sys.path.insert(0, str(BRAIN / "scripts"))
+        self.addCleanup(lambda: sys.path.remove(str(BRAIN / "scripts")))
+        import receipt_ledger
+
+        saved = os.environ.get("GIT_CONFIG_PARAMETERS")
+        self.addCleanup(lambda: os.environ.__setitem__("GIT_CONFIG_PARAMETERS", saved)
+                        if saved is not None
+                        else os.environ.pop("GIT_CONFIG_PARAMETERS", None))
+        os.environ["GIT_CONFIG_PARAMETERS"] = "'status.showUntrackedFiles'='no'"
+
+        self.assertNotIn("GIT_CONFIG_PARAMETERS", receipt_ledger.scrubbed_env(),
+                         "the copy the doctor executes in its own process still "
+                         "passes a parent's `git -c` down to the receipt's git")
+        self.assertNotIn("GIT_CONFIG_PARAMETERS", doctor.scrubbed_env())
+        # the unbounded sibling route, through the same live copy
+        os.environ["GIT_CONFIG_COUNT"] = "1"
+        os.environ["GIT_CONFIG_KEY_0"] = "status.showUntrackedFiles"
+        self.addCleanup(lambda: [os.environ.pop(k, None)
+                                 for k in ("GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0")])
+        for k in ("GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0"):
+            self.assertNotIn(k, receipt_ledger.scrubbed_env())
+        # and the access vars still ride, or a machine loses its remote
+        os.environ["GIT_SSH_COMMAND"] = "ssh -i /dev/null"
+        self.addCleanup(lambda: os.environ.pop("GIT_SSH_COMMAND", None))
+        self.assertIn("GIT_SSH_COMMAND", receipt_ledger.scrubbed_env())
+
+    def test_a_child_that_answered_is_not_a_child_that_hung(self):
+        """`communicate` waits on the PIPES, not on the child, and the row blamed
+        the child.
+
+        The write end is inherited, so a child that exits immediately while a
+        background descendant holds fd 1 open produces a full-length timeout with
+        nothing wrong with the child. Measured with a 2s ceiling:
+
+            rc=124 in 2.04s   stderr='sh: no answer in 2s, killed (process group reaped)'
+
+        while `sh` had answered 0 in about no time. A wrong cause about the very
+        process a reader would open first, in the row this branch rewrote.
+        """
+        saved = doctor.RUN_TIMEOUT
+        self.addCleanup(lambda: setattr(doctor, "RUN_TIMEOUT", saved))
+        doctor.RUN_TIMEOUT = 2
+        mark = f"octorato-pipe-probe-{os.getpid()}"
+        child = f"import time,sys;sys.argv.append({mark!r});time.sleep(300)"
+        self.addCleanup(lambda: subprocess.run(["pkill", "-f", mark],
+                                               capture_output=True))
+
+        started = time.time()
+        cp = doctor.run(["sh", "-c",
+                         f'{sys.executable} -c "{child}" & exit 0'])
+        elapsed = time.time() - started
+        self.assertEqual(cp.returncode, 124, "the call did time out")
+        self.assertGreaterEqual(elapsed, 1.5, "and it took the full leash")
+        self.assertNotIn("no answer in", cp.stderr,
+                         "sh answered 0 immediately; saying it never answered "
+                         "sends the reader to the wrong process")
+        self.assertIn("exited 0", cp.stderr)
+        self.assertIn("held by a descendant", cp.stderr)
+
+        # The genuine hang keeps its own sentence, so this is a discriminator.
+        quiet = doctor.run([sys.executable, "-c", "import time; time.sleep(30)"])
+        self.assertEqual(quiet.returncode, 124)
+        self.assertIn("no answer in 2s, killed", quiet.stderr)
+        self.assertNotIn("exited", quiet.stderr)
 
     def test_the_env_scrub_is_a_rule_and_not_a_list(self):
         """`GIT_CONFIG_PARAMETERS` and `GIT_EXEC_PATH` reach a hook and were not in

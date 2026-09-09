@@ -1,2 +1,2 @@
-X violation fixture did NOT warn (stale base undetected)
+  X violation fixture did NOT warn (stale base undetected)
   FAIL base-freshness selftest
