@@ -612,3 +612,111 @@ own header carries the same list; this file carries the commands.
        positional for `mv`, so the destination was already among them. The
        fixture stays as a control on that behaviour; it is not evidence for the
        `-t` fix, and the header no longer claims it is.
+
+23. THE WORST CASE IS TOKEN COUNT, NOT BYTE COUNT, and the number in this file
+   was the cheap shape. Both commands a few bytes under the 128 KB cap, both
+   ending in the same protected path, measured through main():
+     rm -f <one 131 KB word> ~/.claude/settings.json        1.8 s
+     rm -f <65,512 short tokens> ~/.claude/settings.json    18.5 s
+   The header quoted the first as "the worst case still PARSED". QA measured the
+   second x8 concurrent on a loaded box at 38.8-50.9 s against the harness's
+   60 s default; a killed hook writes empty stdout and empty stdout is ALLOW, so
+   the command that gets killed is a real disarm.
+   The cause is not shlex, which is why no byte cap could fix it. Profiled:
+   65,512 passes through hit -> classify -> realpath, one per target, plus
+   131,023 calls to `brain_root()`, 65,511 to `scripts_dir()` and 982,672
+   `os.path.join`s rebuilding the `_EXACT` table, none of which depend on the
+   target. 25.7 M function calls, 98 s under cProfile.
+   Two fixes on the two axes that were growing: the invariants are resolved once
+   per process, and `_MAX_TARGETS` (512) bounds DISTINCT targets with `hit`
+   memoised so repeats are free. Overflow DENIES, same reason as the parse
+   ceiling. Measured after, best of five through main():
+     65,512 identical short tokens        2.42 s   (was 18.5 s)
+     18,717 distinct short tokens         2.15 s
+     511 distinct DEEP paths              0.59 s   worst shape still PROCESSED
+     511 distinct shallow paths           0.37 s
+     ls -la                               0.14 s
+     rm on a protected path               0.23 s
+   512 is measured, not picked: over the corpus the largest real command names
+   20 distinct targets, p99.9 is 12, the median is 1. The budget is 25x the
+   largest thing this machine has run.
+     rm -f <600 distinct junk targets>                  -> denied
+     rm -f <600 distinct junk> ~/.claude/settings.json  -> denied
+     rm -f <400 distinct junk targets>                  -> allowed
+     rm -f <900 REPEATED targets> /tmp/other            -> allowed (repeats free)
+   WHAT NO FIXTURE CAN SEE: the `hit` memo changes cost, never a verdict,
+   because the budget already counts DISTINCT targets. An anchor for it was
+   written and then REMOVED rather than left passing on another mechanism's
+   behalf; it is verified by the timing above instead.
+
+24. THE CAP VALUES ARE PINNED NOW, both of them. Reverting `_MAX_PARSED` from
+   128 KB to 256 KB used to leave the whole suite green: the number claim 23
+   rests on had zero coverage, which is the same finding QA made on a sibling
+   PR's cap.
+     rm -rf /tmp/x + 200 KB of padding  -> denied ONLY because the ceiling
+       refuses to parse it; raise the ceiling and it is parsed, found harmless
+       and ALLOWED. That is violation_parse_ceiling_value.json.
+     rm -rf /tmp/x + 100 KB of padding  -> allowed, the benign side of the pair.
+   `_MAX_TARGETS` is pinned from BOTH sides: raising it to 65,536 turns the two
+   flood fixtures red, lowering it to 128 turns the under-budget fixture red.
+   `_MAX_SCANNED` (64 KB) was already pinned by violation_oversize_interp.json.
+
+25. THE PUSH DISARM WAS ONE FLAG WIDE AND THE CLAIM WAS THE WHOLE SURFACE.
+   `push --no-verify` was denied; every other route to skipping
+   .githooks/pre-push was ALLOWED while the header said the surface was covered:
+     git -C ~/.claude -c core.hooksPath=/dev/null push origin HEAD
+     git -C ~/.claude -ccore.hooksPath=/tmp/none push                (fused)
+     GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath \
+       GIT_CONFIG_VALUE_0=/tmp git -C ~/.claude push
+     GIT_CONFIG_PARAMETERS="'core.hooksPath=/tmp'" git -C ~/.claude push
+     GIT_DIR=~/.claude/.git git push --no-verify
+     chmod -x ~/.claude/.githooks/pre-push
+   All six deny now. `chmod 000` and `chmod a-x` were ALREADY denied (their mode
+   is a positional, so the shared parser sees it); `chmod -x` and `chmod -R -x`
+   are what the local reader adds, and the fixtures are split accordingly so
+   each proves the mechanism it names.
+   Still allowed and named: an unrelated `GIT_CONFIG_COUNT` push, a plain push,
+   and any of these aimed at a worktree.
+   A branch that denied on the bare presence of `GIT_CONFIG_COUNT` was written
+   and REMOVED: it was redundant with the per-key scan and its only distinct
+   effect was a false deny. A reverted-fix anchor surfaced it by refusing to
+   turn any fixture red.
+
+26. SIX DIRECT WRITERS AND REMOVERS THAT WERE IN NO LIST. The polarity first,
+   because it is the point: this gate has NO ALLOW-LIST. It is a DENY-LIST of
+   recognised verbs, so anything unrecognised passes SILENTLY, and the residual
+   list is the only thing between a reader and a false sense of coverage. These
+   exist on this machine and were ALLOWED against a live protected file:
+     gzip ~/.claude/settings.json                      deletes its input
+     bzip2 / xz / lzma ~/.claude/settings.json         the same, no flag needed
+     zstd --rm ~/.claude/settings.json                 the same, opt-in
+     tar --remove-files -cf /tmp/x.tar <file>          the same, opt-in
+     zip -qm /tmp/x.zip <file>                         the same, opt-in
+     sort -o <file> /tmp/evil                          writes its target
+     uniq /tmp/evil <file>                             writes its second operand
+   The compressors are the sharp ones: no flag at all, and the command reads as
+   housekeeping. Each has a benign twin one edit away that still allows
+   (`gzip -k`, `gzip -c`, `zstd` without `--rm`, `tar` without `--remove-files`,
+   `zip` without `-m`, `sort` with no `-o`, `uniq` with one operand).
+
+27. THREE SMALLER ONES.
+     python3 -c "open('~/.claude/scripts/../settings.json','w')"   was ALLOWED.
+       `_normalize_paths` folded `/./` and `//` and not `/../`, so this was a
+       clean literal bypass with no variable and no unusual idiom, which put it
+       OUTSIDE the stated variable-expansion residual. The up-level fold now
+       runs to a fixed point.
+     git -C ~/.claude checkout with a bare dash was ALLOWED while the `@{-1}`
+       spelling denied, and they are the same whole-tree rewrite.
+     strace -f rm, ltrace rm, systemd-run --wait rm, flock -c 'rm ...' and
+       script -c 'rm ...' were ALLOWED. The first three are wrapper rows; the
+       last two hand a shell COMMAND LINE to `-c` and are read separately,
+       because `_host_of` walks back to the first non-flag token and flock puts
+       its LOCK FILE there, so the host it finds is a path.
+
+28. THE CORPUS FIGURES ARE DATED, not timeless. Measured 2026-09-08: 19,171
+   Bash calls, 18,154 distinct, largest 32,359 bytes, p99 5,145. QA recounted
+   recursively on 2026-09-09 and got 20,714 / 19,562 / 33,098 / 5,817, higher
+   and directionally consistent with a corpus that keeps growing. The
+   load-bearing part is unchanged: the largest real command is 33,098 bytes
+   against a 128 KB ceiling, and the largest names 20 distinct targets against a
+   512 budget.

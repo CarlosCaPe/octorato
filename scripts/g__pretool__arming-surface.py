@@ -206,10 +206,16 @@ THE FILE SET, and why each one is an arming surface.
       properly over 18,154 distinct real Bash calls it cost ELEVEN, and every one
       was this brain's own fixture maintenance: `git checkout -- registry/
       fixtures/<rule>/home/...` putting back state a selftest had mutated, an
-      `rm -rf` of a fixture home, a `cp -r` out of one. `git checkout --` restores
-      the COMMITTED bytes, which are the ones review approved, and a missing
-      fixture makes `--selftest` fail LOUDLY rather than silently. So those two
-      verbs pass and every write is denied. Measured cost after: THREE, one of
+      `rm -rf` of a fixture home, a `cp -r` out of one. A SAME-BRANCH `git checkout --` with no ref
+      restores the COMMITTED bytes, which are the ones review approved. A
+      restore that NAMES A REF does not, and the sentence used to say "a restore
+      puts back the reviewed bytes" without that qualifier: `checkout <ref> --
+      <fixture>`, `checkout HEAD~40 -- <fixture>` and `restore --source=<ref>
+      <fixture>` all put UNREVIEWED bytes into a violation fixture, which is
+      exactly the doctored-fixture-into-green-gate-liveness threat this
+      narrowing exists to stop. All three were measured ALLOW and all three now
+      deny. A missing fixture makes `--selftest` fail LOUDLY rather than
+      silently, so a removal still passes. Measured cost after: THREE, one of
       them the rule working (a heredoc writing fixture files in the live tree)
       and two over-fires of classes already named here, a `mv` OUT of the
       directory (the parser reports both ends of a move under one verb, so
@@ -344,6 +350,15 @@ the kind of thing an agent would write into the settings.json `env` block this
 gate exists to protect. Same stance and same words as the kernel's own state
 floor, which denies every hooked process including itself: the operator's
 terminal is not hooked and stays the only writer.
+
+THE POLARITY, because it decides how every list below should be read: this gate
+has NO ALLOW-LIST. It is a DENY-LIST of recognised writer and remover verbs, so
+a program neither the shared parser nor the tables here recognise passes
+SILENTLY. The residual list is therefore not a footnote; it is the only thing
+between a reader and a false sense of coverage, and it was missing six members
+that exist on this machine (the compressors, `tar --remove-files`, `zip -m`,
+`sort -o`, `uniq`), all now covered and all found by QA rather than by this
+list. Read what follows as "what is known to pass", never as "what can pass".
 
 NAMED RESIDUALS, measured, deliberately not covered:
   - An INTERPRETED write. `python3 scripts/merge-hooks.py` legitimately writes
@@ -513,10 +528,41 @@ hook, not the sum. Measured again with everything in place, best of
 three to five per shape, whole process including interpreter start: `ls -la`
 0.10 s, `pytest -q` 0.11 s, an `rm` on a protected path 0.14 s, a 63 KB `-c`
 body (the worst case still SCANNED) 0.41 s, a 70 KB one 0.10 s because it is
-refused instead of read, a `find -exec rm` 0.25 s, a `find | xargs rm` 0.27 s,
-and 127 KB, the worst case still PARSED, 1.79 s. Past 128 KB nothing is parsed:
-300 KB and 1 MB both answer in 0.1-0.2 s, denied when a mutation token is
-present and allowed when there is none.
+refused instead of read, a `find -exec rm` 0.25 s and a `find | xargs rm`
+0.27 s.
+
+THE WORST CASE IS NOT THE LONGEST COMMAND, and quoting it as if it were is the
+mistake this paragraph used to make. "127 KB, the worst case still PARSED,
+1.79 s" was ONE LONG WORD, which is shlex-quadratic and cheap. The expensive
+shape at the same byte count is MANY SHORT TOKENS, because the work in the
+target loop grows with TOKEN COUNT and the byte caps cannot see that axis:
+
+    rm -f <one 131 KB word> ~/.claude/settings.json        1.8 s
+    rm -f <65,512 short tokens> ~/.claude/settings.json    18.5 s   (before)
+
+Profiled, the 18.5 s is not shlex: it is 65,512 passes through
+`hit` -> `classify` -> `realpath`, one per target. QA measured that shape x8
+concurrent on a loaded box at 38.8-50.9 s against the harness's 60 s default,
+and a killed hook writes empty stdout, which is ALLOW. The command that would
+be killed and therefore allowed is a real disarm.
+
+Two fixes, on the two axes that were actually growing: the invariants are
+computed once per process instead of once per target (`brain_root` was called
+131,023 times, `scripts_dir` 65,511, and `classify` rebuilt the `_EXACT` table
+every time), and `_MAX_TARGETS` bounds the number of DISTINCT targets with
+`hit` memoised so repeats are free. Measured after, through main(), best of
+five:
+
+    65,512 identical short tokens        2.42 s   (was 18.5 s)
+    18,717 distinct short tokens         2.15 s
+    511 distinct DEEP paths              0.59 s   the worst shape still
+                                                  PROCESSED end to end
+    511 distinct shallow paths           0.37 s
+    ls -la                               0.14 s
+    rm on a protected path               0.23 s
+
+Past 128 KB nothing is parsed: 300 KB and 1 MB both answer in 0.1-0.2 s, denied
+when a mutation token is present and allowed when there is none.
 Everything except a real hit fails OPEN, with TWO exceptions,
 both of them silent holes before this: the borrowed parser failing to LOAD now
 denies, and so does this gate failing to import its OWN `kernel_proc`. The second
@@ -608,8 +654,17 @@ WRITE_TOOLS = ("Write", "Edit", "NotebookEdit", "MultiEdit")
 # denying a write to a path that does not exist costs nothing. That is the
 # cheaper side of the trade, and it is the whole reason this is a fold and not a
 # platform test.
+_FOLD_CACHE = {}
+
+
 def _fold(text: str) -> str:
-    return (text or "").casefold()
+    text = text or ""
+    got = _FOLD_CACHE.get(text)
+    if got is None:
+        if len(_FOLD_CACHE) > 4096:
+            _FOLD_CACHE.clear()      # bounded: a hostile command cannot grow it
+        got = _FOLD_CACHE[text] = text.casefold()
+    return got
 
 
 def _conflict(a: str, b: str) -> bool:
@@ -853,6 +908,35 @@ _MAX_SCANNED = 64 * 1024
 # token), which puts the worst case back near 2 s idle. A cap whose cost is not
 # re-measured when a reader is added is a cap that expires quietly.
 _MAX_PARSED = 128 * 1024
+
+# THE SECOND AXIS, and the one the byte caps above cannot see.
+#
+# Both caps measure LENGTH. The work in the target loop grows with TOKEN COUNT,
+# and a byte budget buys very different amounts of it depending on shape.
+# Measured through main() on this machine, both commands a few bytes under the
+# 128 KB cap and both ending in the same protected path:
+#
+#     rm -f <one 131 KB word> ~/.claude/settings.json        1.8 s
+#     rm -f <65,512 short tokens> ~/.claude/settings.json    18.5 s
+#
+# The header used to quote the first number as "the worst case still PARSED".
+# It is the cheap shape. Profiled, the expensive one is not shlex at all: it is
+# 65,512 passes through `hit` -> `classify` -> `realpath`, one per target, each
+# walking lstat calls. A byte cap cannot bound that, so this one counts the
+# thing that grows: DISTINCT resolvable targets.
+#
+# Overflow denies, for the same reason the parse ceiling denies: the alternative
+# is a hook that runs past the harness's 60 s default, gets killed, writes empty
+# stdout, and is read as ALLOW. QA measured that concurrently at x8 on a loaded
+# box: 38.8 to 50.9 s for a single command, against a 60 s kill, on a machine
+# that idles at load 20 on 4 cores. The command that gets killed and therefore
+# allowed is a real disarm (`rm -f <junk> ~/.claude/settings.json`).
+#
+# 512, measured against real traffic rather than picked: see the corpus figure
+# in the header. Repeats are free (`hit` is memoised), so this is a ceiling on
+# how many DIFFERENT paths one command may name, not on how many arguments it
+# carries.
+_MAX_TARGETS = 512
 _LOCAL_TRIGGERS = ("&>", ">|", "config", "--no-verify")
 
 
@@ -875,12 +959,41 @@ def journal_deny(pid, fields: dict) -> None:
         pass
 
 
+# THE INVARIANTS ARE COMPUTED ONCE PER PROCESS, and that is a correctness fix
+# dressed as a performance one. `brain_root()` walks `kernel_proc.brain_dir()`
+# plus `norm_path` (expanduser + abspath + normpath) and it was called TWICE PER
+# TARGET; `scripts_dir()` once more; `classify` rebuilt the whole `_EXACT` table
+# with `os.path.join` for every target. Profiled on the shape that QA measured
+# (`rm -f <65,512 junk targets> ~/.claude/settings.json`, 131 KB): 131,023 calls
+# to brain_root, 65,511 to scripts_dir, 982,672 joins, 25.7 M function calls and
+# 98 s under cProfile. None of it depends on the target. HOME cannot change
+# inside a hook process, so all of it is resolved once.
+_CACHE = {}
+
+
 def brain_root() -> str:
-    return kernel_proc.norm_path(kernel_proc.brain_dir())
+    got = _CACHE.get("brain")
+    if got is None:
+        got = _CACHE["brain"] = kernel_proc.norm_path(kernel_proc.brain_dir())
+    return got
 
 
 def scripts_dir() -> str:
-    return os.path.join(brain_root(), "scripts")
+    got = _CACHE.get("scripts")
+    if got is None:
+        got = _CACHE["scripts"] = os.path.join(brain_root(), "scripts")
+    return got
+
+
+def exact_live() -> list:
+    """[(live path, why)] for `_EXACT`, joined once instead of per target."""
+    got = _CACHE.get("exact")
+    if got is None:
+        brain = brain_root()
+        got = _CACHE["exact"] = [
+            (rel, os.path.join(brain, *rel.split("/")), why)
+            for rel, why in _EXACT.items()]
+    return got
 
 
 def user_config_path(brain: str) -> str:
@@ -1003,7 +1116,9 @@ def _holds_settings(directory: str, removing: bool) -> bool:
 # BLOCKS but tests nothing leaves gate-liveness green while the gate guards
 # nothing. That needs new content. It cannot be done by
 #   - a RESTORE (`git checkout -- <fixture>` puts back the committed bytes, which
-#     are the ones review approved), nor by
+#     are the ones review approved, but only with NO REF named; a
+#     `checkout <ref> --` or `restore --source=<ref>` is relabelled and denied),
+#     nor by
 #   - a REMOVAL (a missing fixture makes `--selftest` fail LOUDLY: the run reports
 #     "did NOT block" or "fixture dir missing" and the doctor goes red).
 # So those two verbs pass and every write is denied.
@@ -1017,10 +1132,13 @@ _RESTORE_VERBS = ("git checkout", "git restore")
 
 
 def _fixture_write(verb: str) -> bool:
-    """True when *verb* puts NEW content into a fixture."""
+    """True when *verb* puts NEW content into a fixture.
+
+    Matched EXACTLY, not by prefix: main() relabels a restore that names a ref
+    as `git checkout <ref>`, and a prefix test would have exempted it."""
     if verb in _REMOVING_VERBS:
         return False
-    return not verb.startswith(_RESTORE_VERBS)
+    return verb not in _RESTORE_VERBS
 
 
 def classify(target: str, removing: bool = False, verb: str = "") -> tuple:
@@ -1035,8 +1153,7 @@ def classify(target: str, removing: bool = False, verb: str = "") -> tuple:
         return cfg, _USER_CONFIG_WHY           # the one member outside the root
     if not _conflict(target, brain):
         return None, None                      # fast out: not in the brain
-    for rel, why in _EXACT.items():
-        live = os.path.join(brain, *rel.split("/"))
+    for rel, live, why in exact_live():
         if _conflict(target, live):
             if rel == "registry/fixtures" and not _fixture_write(verb):
                 continue          # a restore or a removal is not a doctored fixture
@@ -1071,12 +1188,36 @@ def candidates(target: str) -> list:
     return out
 
 
+_HIT_CACHE = {}
+
+
 def hit(target: str, removing: bool = False, verb: str = "") -> tuple:
+    """Memoised on the exact question asked.
+
+    The same target appears many times in one command far more often than it
+    appears once (`rm -f a a a … `, a glob the shell already expanded, a loop
+    body), and each miss costs a `realpath`, which is a walk of lstat calls.
+    The key carries `removing` and `verb` because both change the answer.
+
+    WHAT NO FIXTURE CAN SEE: this changes cost, never a verdict, because the
+    target budget in main() already counts DISTINCT targets. A reverted-fix
+    anchor for it was written and then removed rather than left passing on
+    another mechanism's behalf: it is verified by measurement instead (65,512
+    identical targets, 18.5 s before and 2.42 s after)."""
+    key = (target, removing, verb)
+    got = _HIT_CACHE.get(key)
+    if got is not None:
+        return got
+    out = (None, None)
     for cand in candidates(target):
         live, why = classify(cand, removing, verb)
         if live:
-            return live, why
-    return None, None
+            out = (live, why)
+            break
+    if len(_HIT_CACHE) > 8192:
+        _HIT_CACHE.clear()
+    _HIT_CACHE[key] = out
+    return out
 
 
 # ── Bash side: one parser for the whole brain, borrowed not copied ───────────
@@ -1149,7 +1290,33 @@ _EXTRA_WRAPPERS = {
                  "cd": (), "arg": 0},
     "busybox": {"valued": (), "cd": (), "arg": 0},
     "toybox": {"valued": (), "cd": (), "arg": 0},
+    "strace": {"valued": ("-o", "-e", "-p", "-s", "-E", "-u", "-P", "-a", "-b",
+                          "-I", "-O", "-S"), "cd": (), "arg": 0},
+    "ltrace": {"valued": ("-o", "-e", "-p", "-s", "-l", "-u", "-a", "-n"),
+               "cd": (), "arg": 0},
+    "systemd-run": {"valued": ("--unit", "-u", "--property", "-p", "--slice",
+                               "--description", "--on-calendar", "--uid",
+                               "--gid", "--setenv", "-E", "-M", "--machine",
+                               "--working-directory", "-d"),
+                    "cd": ("--working-directory",), "arg": 0},
 }
+
+# `flock <lockfile> -c '<cmd>'` and `script -c '<cmd>' <file>` hand a SHELL
+# COMMAND LINE to `-c`, exactly as `sh -c` does, and both were measured ALLOW
+# against `rm -rf ~/.claude/scripts`. They are read here rather than added to
+# `_C_HOSTS` because `_host_of` walks back from the `-c` to the first non-flag
+# token, and flock puts its LOCK FILE there, so the host it finds is a path.
+_CMD_STRING_HOSTS = ("flock", "script")
+
+
+def _cmd_string_bodies(stage: list) -> list:
+    if not stage or os.path.basename(stage[0]) not in _CMD_STRING_HOSTS:
+        return []
+    out = []
+    for i, tok in enumerate(stage):
+        if tok == "-c" and i + 1 < len(stage):
+            out.append(stage[i + 1])
+    return out
 
 
 def _add_wrapper_rows(mod) -> None:
@@ -1164,10 +1331,24 @@ def _add_wrapper_rows(mod) -> None:
 # body is normalized once before any needle is looked for. It runs over the
 # BODY, not the command, so it never changes what the shared parser sees.
 _PATH_NOISE = re.compile(r"/(?:\.?/)+")
+_PATH_UP = re.compile(r"/[^/]+/\.\./")
 
 
 def _normalize_paths(text: str) -> str:
-    return _PATH_NOISE.sub("/", text or "")
+    """Collapse the spellings that name the same file without a variable.
+
+    `/./` and `//` were folded; `/../` was NOT, so
+    `open('~/.claude/scripts/../settings.json','w')` was a literal bypass of
+    every needle with no variable and no unusual idiom in it, which put it
+    outside the stated variable-expansion residual. The up-level pass runs to a
+    fixed point (bounded), because `a/b/../../c` needs two rounds."""
+    text = _PATH_NOISE.sub("/", text or "")
+    for _ in range(8):
+        folded = _PATH_UP.sub("/", text)
+        if folded == text:
+            break
+        text = folded
+    return text
 
 
 def _needles() -> list:
@@ -1387,6 +1568,13 @@ def heredoc_split(command: str) -> tuple:
 
 
 def _protected_pairs(brain: str) -> list:
+    got = _CACHE.get("pairs")
+    if got is None:
+        got = _CACHE["pairs"] = _protected_pairs_uncached(brain)
+    return got
+
+
+def _protected_pairs_uncached(brain: str) -> list:
     """(path, why) for every CONCRETE protected file, for tests that need a
     path instead of a shape (the glob test below). The project-scope pair is
     named at the one root that is always there, the brain root itself, exactly
@@ -1475,6 +1663,21 @@ def _extra_tree_verb(sub: str, rest: list):
     return None
 
 
+# `git checkout -` is `@{-1}`, the previous branch, and it rewrites the working
+# tree exactly as a named branch does. Measured: `checkout @{-1}` denied and
+# `checkout -` allowed, because the shared parser's branch test does not read a
+# bare dash as a ref.
+def _dash_checkout(sub_cmd: str, rest: list) -> bool:
+    if sub_cmd not in ("checkout", "switch"):
+        return False
+    for tok in rest:
+        if tok == "--":
+            return False
+        if tok == "-":
+            return True
+    return False
+
+
 _EXTRA_TREE_NAMES = ("read-tree", "checkout-index")
 
 
@@ -1484,7 +1687,8 @@ def extra_tree_hits(command: str, cwd: str) -> list:
     A substring test comes first so this costs nothing on the hot path: without
     it every Bash command would pay a second shlex pass for two rare verbs."""
     import shlex
-    if not any(name in command for name in _EXTRA_TREE_NAMES):
+    if not any(name in command for name in _EXTRA_TREE_NAMES) and \
+            not any(v in command for v in _BRANCH_VERBS):
         return []
     mod = _parser()
     out = []
@@ -1510,6 +1714,8 @@ def extra_tree_hits(command: str, cwd: str) -> list:
             continue
         repo, sub, rest = parsed
         verb = _extra_tree_verb(sub, rest)
+        if not verb and _dash_checkout(sub, rest):
+            verb = f"git {sub} -"
         if not verb:
             continue
         base_dir = mod.resolve(repo, here) if repo else here
@@ -1654,6 +1860,156 @@ _WRITER_FLAGS = (
     ("tar", ("-C", "--directory"), ("x", "extract", "get")),
     ("patch", ("-o", "--output", "-d", "--directory"), None),
 )
+# THE POLARITY, stated because it decides how to read every list in this file:
+# this gate has NO ALLOW-LIST. It is a DENY-LIST of recognised writer and remover
+# verbs, so anything the shared parser and these tables do not recognise passes
+# SILENTLY. The residuals list is therefore not a footnote, it is the only thing
+# standing between a reader and a false sense of coverage, and it was missing
+# these six, every one of them present on this machine and measured as ALLOW
+# against a live protected file:
+#
+#   gzip ~/.claude/settings.json                 deletes its input
+#   bzip2 / xz / lzma ~/.claude/settings.json    the same
+#   zstd --rm ~/.claude/settings.json            the same, opt-in
+#   tar --remove-files -cf /tmp/x.tar <file>     the same, opt-in
+#   zip -qm /tmp/x.zip <file>                    the same, opt-in
+#   sort -o <file> /tmp/evil                     writes its target
+#   uniq /tmp/evil <file>                        writes its second positional
+#
+# The compressors are the sharp ones: they need no flag at all. `gzip
+# ~/.claude/settings.json` leaves a `.gz` and removes the original, which is a
+# removal of an arming surface spelled as a housekeeping command.
+_CONSUMING = {
+    # program: (flags that KEEP the input, whether removal is opt-in)
+    "gzip": (("-c", "--stdout", "--to-stdout", "-k", "--keep", "-l", "--list",
+              "-t", "--test", "-d", "--decompress"), False),
+    "bzip2": (("-c", "--stdout", "-k", "--keep", "-t", "--test",
+               "-d", "--decompress"), False),
+    "xz": (("-c", "--stdout", "-k", "--keep", "-l", "--list", "-t", "--test",
+            "-d", "--decompress"), False),
+    "lzma": (("-c", "--stdout", "-k", "--keep", "-d", "--decompress"), False),
+    "compress": (("-c", "--stdout"), False),
+    "zstd": (("--rm",), True),
+}
+_CONSUMING_VALUED = ("-S", "--suffix", "-b", "--blocksize", "-T", "--threads",
+                     "-o", "--output", "-M", "--memory")
+
+
+def _consuming_targets(base: str, args: list, here: str) -> list:
+    spec = _CONSUMING.get(base)
+    if spec is None:
+        return []
+    keep_flags, opt_in = spec
+    flags = {a.split("=", 1)[0] for a in args if a.startswith("-")}
+    short = "".join(a[1:] for a in args
+                    if a.startswith("-") and not a.startswith("--"))
+    def present(f):
+        return f in flags or (len(f) == 2 and f.startswith("-") and f[1] in short)
+    if opt_in:
+        if not any(present(f) for f in keep_flags):
+            return []
+    elif any(present(f) for f in keep_flags):
+        return []
+    out = []
+    i = 0
+    while i < len(args):
+        tok = args[i]
+        if tok.split("=", 1)[0] in _CONSUMING_VALUED:
+            i += 2 if "=" not in tok else 1
+            continue
+        if tok.startswith("-"):
+            i += 1
+            continue
+        out.append(_parser().resolve(tok, here))
+        i += 1
+    return out
+
+
+# `tar --remove-files` and `zip -m` delete what they archived; `sort -o` and
+# `uniq <in> <out>` overwrite their target.
+_ARCHIVE_VALUED = ("-f", "--file", "-C", "--directory", "-b", "--blocking-factor",
+                   "-T", "--files-from", "-X", "--exclude-from")
+
+
+def _archive_removes(base: str, args: list, here: str) -> list:
+    if base == "tar":
+        if not any(a == "--remove-files" for a in args):
+            return []
+        skip_first = False
+    elif base == "zip":
+        short = "".join(a[1:] for a in args
+                        if a.startswith("-") and not a.startswith("--"))
+        if "m" not in short and "--move" not in args:
+            return []
+        skip_first = True            # the first positional is the archive
+    else:
+        return []
+    out, i, seen = [], 0, 0
+    while i < len(args):
+        tok = args[i]
+        if tok.split("=", 1)[0] in _ARCHIVE_VALUED:
+            i += 2 if "=" not in tok else 1
+            continue
+        if tok.startswith("-"):
+            i += 1
+            continue
+        seen += 1
+        if not (skip_first and seen == 1):
+            out.append(_parser().resolve(tok, here))
+        i += 1
+    return out
+
+
+def _overwriting_targets(base: str, args: list, here: str) -> list:
+    if base == "sort":
+        val = _flag_value(args, ("-o", "--output"))
+        return [_parser().resolve(val, here)] if val else []
+    if base == "uniq":
+        val = _flag_value(args, ("-o", "--output"))   # some builds accept it
+        if val:
+            return [_parser().resolve(val, here)]
+        pos = [a for a in args if not a.startswith("-")]
+        # `uniq [INPUT [OUTPUT]]`: the SECOND positional is written
+        return [_parser().resolve(pos[1], here)] if len(pos) >= 2 else []
+    return []
+
+
+# `chmod -x <file>` clears the execute bit, which is enough for git to skip a
+# hook: it is a one-command kill of .githooks/pre-push. The shared parser reads
+# `chmod`'s MODE as the first positional and drops it (`positional[1:]`), so a
+# symbolic mode that starts with `-` was consumed as a FLAG and the file became
+# the mode. Measured, and the split matters because it is what the fixtures can
+# prove: `chmod 000 <pre-push>` and `chmod a-x <pre-push>` were ALREADY denied
+# (their mode is a positional, so the shared parser handles them); `chmod -x`
+# and `chmod -R -x` were ALLOWED and are what this reader adds.
+_CHMOD_MODE = re.compile(r"^[-+=][rwxXstugoa]+$|^[ugoa]*[-+=][rwxXstugoa]*$")
+_CHMOD_FLAGS = ("-R", "--recursive", "-v", "--verbose", "-c", "--changes",
+                "-f", "--silent", "--quiet", "--no-preserve-root",
+                "--preserve-root", "-H", "-L", "-P")
+
+
+def _chmod_targets(args: list, here: str) -> list:
+    out, mode_seen = [], False
+    i = 0
+    while i < len(args):
+        tok = args[i]
+        i += 1
+        if tok.split("=", 1)[0] == "--reference":
+            if "=" not in tok:
+                i += 1
+            mode_seen = True
+            continue
+        if tok in _CHMOD_FLAGS:
+            continue
+        if not mode_seen and (_CHMOD_MODE.match(tok) or tok.isdigit()):
+            mode_seen = True
+            continue
+        if tok.startswith("-"):
+            continue
+        out.append(_parser().resolve(tok, here))
+    return out
+
+
 _AWK_NAMES = ("awk", "gawk", "mawk", "busybox-awk")
 
 
@@ -1781,11 +2137,21 @@ def extra_put_hits(command: str, cwd: str) -> list:
             continue
         for target in _writer_destinations(base, tokens[1:], here):
             out.append(("path", target, base))
+        for target in _consuming_targets(base, tokens[1:], here):
+            out.append(("path", target, base))       # removes what it reads
+        for target in _archive_removes(base, tokens[1:], here):
+            out.append(("path", target, base))
+        for target in _overwriting_targets(base, tokens[1:], here):
+            out.append(("path", target, base))
+        if base == "chmod":
+            for target in _chmod_targets(tokens[1:], here):
+                out.append(("state", target, "chmod"))
     return out
 
 
 _PUT_TRIGGERS = ("cp", "mv", "install", "ln", "rsync", "curl", "wget", "tar",
-                 "patch", "awk", "&>", ">|")
+                 "patch", "awk", "&>", ">|", "gzip", "bzip2", "xz", "lzma",
+                 "compress", "zstd", "zip", "sort", "uniq", "chmod")
 
 
 # `find` IS NOT ALWAYS A REMOVING VERB, and the label said it was.
@@ -1956,7 +2322,8 @@ def indirect_removal_hits(command: str, cwd: str) -> list:
 
     A substring fast-out keeps it off the hot path."""
     if "find" not in command and "|" not in command and \
-            not _C_CHANNEL.search(command):
+            not _C_CHANNEL.search(command) and \
+            not any(h in command for h in _CMD_STRING_HOSTS):
         return []
     tokens = _lex(command)
     if not tokens:
@@ -1983,11 +2350,13 @@ def indirect_removal_hits(command: str, cwd: str) -> list:
         # fixed for its own fast-out, so it reuses that reader (`_c_bodies`,
         # host-checked) rather than growing a second one, and it fires only
         # where the parser is blind: a bundle with no literal `-c` beside it.
-        if "-c" not in stage:
-            for body in _c_bodies(stage):
+        bodies = _cmd_string_bodies(stage)
+        if not bodies and "-c" not in stage:
+            bodies = _c_bodies(stage)
+        if bodies:
+            for body in bodies:
                 out.extend(bash_targets(body, here))
-            if _c_bodies(stage):
-                continue
+            continue
         # a stage whose program REMOVES and whose paths come from stdin
         if start == 0 or tokens[start - 1] not in ("|", "|&"):
             continue
@@ -2041,6 +2410,115 @@ def indirect_removal_hits(command: str, cwd: str) -> list:
 # Bash calls, the "one positional is a set" version denied two commands, both of
 # them `git config core.hooksPath` READING the key to check it is still
 # `.githooks`, which is the diagnostic this very rule exists to protect.
+# EVERY ROUTE TO THE SAME DISARM, not just the flag. `git push --no-verify`
+# skips .githooks/pre-push, and so does each of these, all measured as ALLOW
+# against the live tree while the header claimed the surface was covered:
+#
+#   git -C ~/.claude -c core.hooksPath=/dev/null push origin HEAD
+#   git -C ~/.claude -ccore.hooksPath=/tmp/none push            (fused)
+#   GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath \
+#     GIT_CONFIG_VALUE_0=/tmp git -C ~/.claude push             (env config)
+#
+# The numbered block is caught by scanning every `GIT_CONFIG_KEY_n` /
+# `GIT_CONFIG_VALUE_n` for the key, whatever `n` is. A branch that denied on the
+# bare presence of `GIT_CONFIG_COUNT` was written first and removed: it was
+# redundant with that scan and its only distinct effect was to deny a legitimate
+# env-config push. A reverted-fix anchor is what surfaced it, by refusing to
+# turn any fixture red.
+#   GIT_CONFIG_PARAMETERS="'core.hooksPath=/tmp'" git -C ~/.claude push
+#   GIT_DIR=~/.claude/.git git push --no-verify                 (repo from env)
+#
+# The first two are git's own per-invocation config; the next two are the env
+# spellings of the same thing; the last one names the repo without `-C`, which
+# is why the segment's env assignments are read for `GIT_DIR` before they are
+# peeled away. `-n` is still NOT included: for `push` that means `--dry-run`.
+_HOOKS_PATH_KEY = "hookspath"
+_GIT_CONFIG_ENV = ("GIT_CONFIG_PARAMETERS", "GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")
+
+
+def _env_assignments(tokens: list) -> tuple:
+    """({NAME: value}, the tokens after them). `peel_env` drops the values."""
+    env, i = {}, 0
+    while i < len(tokens):
+        tok = tokens[i]
+        name, eq, val = tok.partition("=")
+        if not eq or not name or not name.replace("_", "").isalnum() or \
+                not (name[0].isalpha() or name[0] == "_"):
+            break
+        env[name] = val
+        i += 1
+    return env, tokens[i:]
+
+
+def _disables_hooks(rest: list, env: dict) -> bool:
+    """True when this git invocation turns `core.hooksPath` into something
+    other than the repo's own hooks, by flag or by environment."""
+    for tok in rest:
+        low = _fold(tok)
+        if low == "--no-verify":
+            return True
+    for name, val in env.items():
+        if name.startswith(_GIT_CONFIG_ENV) or name in _GIT_CONFIG_ENV:
+            if _HOOKS_PATH_KEY in _fold(val) or _HOOKS_PATH_KEY in _fold(name):
+                return True
+    return False
+
+
+def _global_sets_hookspath(tokens: list) -> bool:
+    """`git -c core.hooksPath=X` and its fused `-cX` spelling, before the
+    subcommand. `git_parse` skips `-c` as a valued global, which is right for
+    finding the subcommand and blind for this."""
+    for i, tok in enumerate(tokens):
+        if tok == "-c" and i + 1 < len(tokens):
+            if _HOOKS_PATH_KEY in _fold(tokens[i + 1]):
+                return True
+        elif tok.startswith("-c") and len(tok) > 2 and not tok.startswith("--"):
+            if _HOOKS_PATH_KEY in _fold(tok[2:]):
+                return True
+        elif tok.startswith("--config-env"):
+            if _HOOKS_PATH_KEY in _fold(tok):
+                return True
+    return False
+
+
+# A RESTORE THAT NAMES A REF IS NOT A RESTORE OF THE REVIEWED BYTES, which is
+# the sentence the fixtures narrowing rested on and it was true only of a
+# same-branch `checkout --`. Measured as ALLOW before this:
+#   git -C ~/.claude checkout evil -- <fixture>
+#   git -C ~/.claude checkout HEAD~40 -- <fixture>
+#   git -C ~/.claude restore --source=evil <fixture>
+# Each puts UNREVIEWED bytes into a violation fixture, which is exactly the
+# doctored-fixture-into-green-gate-liveness threat the narrowing exists to stop.
+def restore_names_ref(command: str) -> bool:
+    """True when a checkout/restore in this command restores from a named ref
+    rather than from the index of the current branch."""
+    tokens = _lex(command)
+    if not tokens:
+        return False
+    for start in _command_starts(tokens):
+        stage = tokens[start:_stage_end(tokens, start)]
+        _env, stage = _env_assignments(stage)
+        if not stage or os.path.basename(stage[0]) != "git":
+            continue
+        parsed = _parser().git_parse(stage)
+        if not parsed:
+            continue
+        _repo, sub_cmd, rest = parsed
+        if sub_cmd == "restore":
+            if any(a == "-s" or a.split("=", 1)[0] in ("--source",) for a in rest):
+                return True
+            continue
+        if sub_cmd != "checkout":
+            continue
+        # anything before `--` that is not a flag is a ref
+        for tok in rest:
+            if tok == "--":
+                break
+            if not tok.startswith("-"):
+                return True
+    return False
+
+
 _CONFIG_READS = ("--get", "--get-all", "--get-regexp", "--get-urlmatch",
                  "--list", "-l", "--get-color", "--get-colorbool")
 _CONFIG_WRITES = ("--unset", "--unset-all", "--add", "--replace-all", "--edit",
@@ -2052,7 +2530,8 @@ def extra_git_hits(command: str, cwd: str) -> list:
     import shlex
     if "git" not in command:
         return []
-    if "config" not in command and "--no-verify" not in command:
+    if not any(t in command for t in
+               ("config", "--no-verify", "hooksPath", "hookspath", "GIT_DIR")):
         return []
     mod = _parser()
     try:
@@ -2074,12 +2553,17 @@ def extra_git_hits(command: str, cwd: str) -> list:
         if tokens[0] in ("cd", "pushd") and len(tokens) > 1:
             here = mod.resolve(tokens[1], here)
             continue
-        if os.path.basename(tokens[0]) != "git":
+        env, tokens = _env_assignments(tokens)
+        if not tokens or os.path.basename(tokens[0]) != "git":
             continue
         parsed = mod.git_parse(tokens)
         if not parsed:
             continue
         repo, sub_cmd, rest = parsed
+        # GIT_DIR names the repo when `-C` does not: `GIT_DIR=~/.claude/.git
+        # git push --no-verify` carries no `-C` and reaches the live tree.
+        if not repo and env.get("GIT_DIR"):
+            repo = os.path.dirname(mod.resolve(env["GIT_DIR"], here)) or None
         base_dir = mod.resolve(repo, here) if repo else here
         root = kernel_proc.enclosing_worktree_root(base_dir) or base_dir
         if sub_cmd == "config":
@@ -2091,9 +2575,9 @@ def extra_git_hits(command: str, cwd: str) -> list:
                 continue                       # a read, not a set
             out.append(("path", os.path.join(root, ".git", "config"),
                         "git config"))
-        elif sub_cmd == "push" and any(
-                a.split("=", 1)[0] == "--no-verify" for a in rest):
-            out.append(("push", root, "git push --no-verify"))
+        elif sub_cmd == "push" and (
+                _disables_hooks(rest, env) or _global_sets_hookspath(tokens)):
+            out.append(("push", root, "git push with the hook disabled"))
     return out
 
 
@@ -2405,6 +2889,23 @@ def deny_parser(detail: str) -> None:
     )
 
 
+def deny_target_flood(count: int) -> None:
+    deny(
+        f"ARMING SURFACE: this command names more than {_MAX_TARGETS} DISTINCT "
+        f"paths, so this gate cannot finish testing them inside the time the "
+        f"harness allows. Each distinct target costs a `realpath`, which is a "
+        f"walk of lstat calls, and the cost grows with the NUMBER of targets, "
+        f"not with the length of the command: measured, `rm -f <65,512 short "
+        f"tokens> ~/.claude/settings.json` takes 18.5 s against 1.8 s for the "
+        f"same byte count as one long word, and x8 concurrent on a loaded box "
+        f"it runs 39-51 s against a 60 s kill. A killed hook writes no stdout "
+        f"and empty stdout reads as ALLOW, so the ambiguity is resolved closed "
+        f"instead. Repeats are free, so this is a ceiling on how many DIFFERENT "
+        f"paths one command may name. Split the command, or run it against a "
+        f"directory instead of listing its files."
+    )
+
+
 def deny_unparsed(size: int) -> None:
     deny(
         f"ARMING SURFACE: this command is {size} bytes, past the {_MAX_PARSED} "
@@ -2571,7 +3072,16 @@ def main() -> int:
         deny_parser(str(exc))
         return 0
 
+    ref_restore = restore_names_ref(command)
+    tested = set()
     for kind, target, verb in hits:
+        if kind in ("path", "state", "glob", "iglob") and target not in tested:
+            if len(tested) >= _MAX_TARGETS:
+                journal_deny(pid, {"why": "target-flood", "targets": len(hits),
+                                   "command": command[:200]})
+                deny_target_flood(len(tested))
+                return 0
+            tested.add(target)
         if kind == "push":
             if target and _fold(kernel_proc.norm_path(target)) == _fold(brain):
                 journal_deny(pid, {"root": target, "verb": verb,
@@ -2597,7 +3107,10 @@ def main() -> int:
                 deny_parser(str(exc))
                 return 0
         elif kind in ("path", "state"):
-            live, why = hit(target, removing=verb in _REMOVING_VERBS, verb=verb)
+            v = verb
+            if ref_restore and v in _RESTORE_VERBS:
+                v = v + " <ref>"     # not a restore of THIS branch's bytes
+            live, why = hit(target, removing=verb in _REMOVING_VERBS, verb=v)
         else:
             continue                      # 'stage' stages, it does not rewrite
         if live:
@@ -2670,6 +3183,14 @@ def _selftest(fdir: str = None) -> int:
             # and a literal payload would be a 64 KB file in the repo for every
             # leg that needs one.
             body = body.replace("{{PAD}}", "x" * int(setup.get("pad_bytes") or 0))
+            # {{TARGETS}} expands to N DISTINCT paths. The budget this pins
+            # counts distinct targets, not bytes, so a run of one repeated
+            # character cannot express it: `{{PAD}}` would be one target.
+            count = int(setup.get("target_count") or 0)
+            if count:
+                body = body.replace(
+                    "{{TARGETS}}",
+                    " ".join(f"/tmp/t{i}" for i in range(count)))
             env = dict(os.environ)
             for k in ("OCTO_MERGE_APPROVE", "OCTO_QA_OK", "OCTO_ALLOW_FORCE",
                       "OCTO_LANE_OVERRIDE", "OCTO_GRAFO_OVERRIDE",
