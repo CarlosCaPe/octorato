@@ -15,6 +15,11 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-09-09]: v7.7.2
+### Other
+- fix(scripts)+feat(comms): windows-proof gate selftests; outward-send gate requires an explicit send ask (#277)
+- docs(changelog): backfill v7.7.1 (#298)
+
 ## [2026-09-07]: v7.7.1
 - fix(kernel): an ending must not be able to create a process (#294)
 

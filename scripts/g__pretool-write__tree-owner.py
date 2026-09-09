@@ -356,6 +356,20 @@ def fixture_dir(fdir: str = None) -> str:
     return fdir if os.path.isabs(fdir) else os.path.join(root, fdir)
 
 
+def _sandbox_in_json(sandbox: str) -> str:
+    """The sandbox path as it must appear INSIDE a JSON string literal.
+
+    On Windows the path carries backslashes, and substituting them raw into
+    already-serialized JSON yields `"C:\\Users\\..."`, where `\\U` is an invalid
+    escape. The payload then does not parse: the gate reads nothing, fails open
+    by design, and EVERY violation fixture passes while the harness still calls
+    the gate green. That is worse than a broken test, it is a fail-closed rule
+    reporting itself alive while it is inert. `json.dumps` escapes the path the
+    way the format requires, and on POSIX it is a no-op.
+    """
+    return json.dumps(sandbox)[1:-1]
+
+
 def build_sandbox(fdir: str, sandbox: str, setup=None) -> None:
     """Materialize the fixture world in a throwaway HOME.
 
@@ -439,8 +453,12 @@ def build_sandbox(fdir: str, sandbox: str, setup=None) -> None:
             except (OSError, UnicodeDecodeError):
                 continue
             if SANDBOX_TOKEN in text:
+                # Every seeded file here is JSON or JSONL (ptable, journals,
+                # arms config), so the path goes in escaped for that format.
+                fill = (_sandbox_in_json(sandbox)
+                        if name.endswith((".json", ".jsonl")) else sandbox)
                 with open(path, "w", encoding="utf-8") as fh:
-                    fh.write(text.replace(SANDBOX_TOKEN, sandbox))
+                    fh.write(text.replace(SANDBOX_TOKEN, fill))
 
     # Per-fixture kernel state, applied AFTER the {{SANDBOX}} rewrite so an
     # override is never itself rewritten, and before the mtime stamping below
@@ -701,7 +719,8 @@ def run_isolation_selftest(script: str, fdir: str, my_tools, label: str) -> int:
         sandbox = tempfile.mkdtemp(prefix="kernel-iso-selftest-")
         try:
             build_sandbox(fdir, sandbox, setup)
-            body = json.dumps(payload).replace(SANDBOX_TOKEN, sandbox)
+            body = json.dumps(payload).replace(SANDBOX_TOKEN,
+                                               _sandbox_in_json(sandbox))
             env = dict(os.environ)
             for k in ("OCTO_MERGE_APPROVE", "OCTO_QA_OK", "OCTO_ALLOW_FORCE",
                       "OCTO_LANE_OVERRIDE", "OCTO_GRAFO_OVERRIDE", "OCTO_KERNEL_OPEN",

@@ -86,8 +86,17 @@ import time
 try:
     import fcntl as _fcntl
     _HAS_FCNTL = True
-except ImportError:  # Windows: no flock. O_APPEND still gives per-write atomicity.
+    _HAS_MSVCRT = False
+except ImportError:  # Windows has no fcntl; msvcrt locks the same lock file.
     _HAS_FCNTL = False
+    try:
+        import msvcrt as _msvcrt
+        _HAS_MSVCRT = True
+    except ImportError:
+        _HAS_MSVCRT = False
+
+# 0 on POSIX, where every open is already binary.
+_O_BINARY = getattr(os, "O_BINARY", 0)
 
 # ── constants ────────────────────────────────────────────────────────────────
 
@@ -443,14 +452,38 @@ def _kernel_open(path: str, mode: str = "rb", encoding: str = None):
 # ── locking ─────────────────────────────────────────────────────────────────
 
 def _flock(fh) -> None:
+    """Exclusive lock on the dedicated lock file every caller opens.
+
+    On Windows this used to be a no-op, justified as "O_APPEND still gives
+    per-write atomicity". It does not hold here: `append()` READS the tail to
+    chain the hash and only then writes, so two processes interleave inside that
+    read-modify-write and one line lands on top of another's sequence. Measured
+    on this box before the fix: 686 of 800 concurrent appends survived, in the
+    file that IS the audit trail. `msvcrt.locking` gives the same mutual
+    exclusion over byte 0 of the same lock file, so both platforms serialize the
+    same critical section.
+
+    `LK_LOCK` retries for about ten seconds and then raises OSError. Letting it
+    raise is deliberate: the caller treats an unwritable journal as a deny, and
+    a deny under extreme contention beats a silently lost line.
+    """
     if _HAS_FCNTL:
         _fcntl.flock(fh, _fcntl.LOCK_EX)
+    elif _HAS_MSVCRT:
+        fh.seek(0)
+        _msvcrt.locking(fh.fileno(), _msvcrt.LK_LOCK, 1)
 
 
 def _funlock(fh) -> None:
     if _HAS_FCNTL:
         try:
             _fcntl.flock(fh, _fcntl.LOCK_UN)
+        except OSError:
+            pass
+    elif _HAS_MSVCRT:
+        try:
+            fh.seek(0)
+            _msvcrt.locking(fh.fileno(), _msvcrt.LK_UNLCK, 1)
         except OSError:
             pass
 
@@ -625,7 +658,15 @@ def append(pid, record: dict) -> bytes:
         # the chain continues from its bytes like any other line. One damaged
         # record, locatable, never a silent break.
         payload = (b"" if on_boundary else b"\n") + line + b"\n"
-        fd = _kernel_fd(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND)
+        # BOTH sides of this merge are load-bearing and neither survives alone.
+        # `_kernel_fd` is cycle 9 F1: it refuses a fifo or a foreign-owned file, so
+        # a `mkfifo` on a holder's journal cannot wedge the gate inside `open` past
+        # the harness kill, which every matrix reads as ALLOW. `_O_BINARY` is the
+        # Windows half: `os.open` defaults to TEXT mode there and rewrites every
+        # `\n` as `\r\n`, and this journal is a byte-exact hash chain, so a
+        # translated newline changes the bytes the next line chains from and makes
+        # a Windows journal unreadable to the POSIX reader.
+        fd = _kernel_fd(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | _O_BINARY)
         try:
             _write_all(fd, payload)
         finally:
@@ -3179,14 +3220,12 @@ def prune_files(table: dict, now: float = None) -> int:
         try:
             fh = _kernel_open(lock_path(pid), "a")
             _flock(fh)
-            # journal first; the lock file is the last thing to go, and it goes
-            # while this process still holds it, so nothing re-creates it after.
-            for key in ("jsonl", "lock"):
-                path = files.get(key)
-                if not path:
-                    continue
+            # The journal goes while the lock is held, so no writer can be
+            # mid-append on it.
+            jpath = files.get("jsonl")
+            if jpath:
                 try:
-                    os.unlink(path)
+                    os.unlink(jpath)
                     removed += 1
                 except OSError:
                     pass
@@ -3197,6 +3236,19 @@ def prune_files(table: dict, now: float = None) -> int:
                 _funlock(fh)
                 try:
                     fh.close()
+                except OSError:
+                    pass
+            # The lock file goes LAST and only after this handle is closed:
+            # Windows refuses to unlink an open file, so deleting it while held
+            # (correct and deliberate on POSIX) silently left every `.lock`
+            # behind there and the sweep never reclaimed anything. Nothing in
+            # this loop reopens the path afterwards, which was the reason the
+            # unlink sat inside the held block.
+            lpath = files.get("lock")
+            if lpath:
+                try:
+                    os.unlink(lpath)
+                    removed += 1
                 except OSError:
                     pass
     return removed
