@@ -1700,6 +1700,46 @@ def _run_selftest_locator(locator: str) -> subprocess.CompletedProcess:
     return run([PYTHON or "python3", *toks], cwd=CLAUDE_DIR)
 
 
+def gate_surface_warn(key: str, n_proofs: int, dirty: list) -> Result:
+    """The WARN that refuses a gate receipt, worded from what was MEASURED.
+
+    `dirty` carries two kinds of finding and both refuse the receipt: a gate
+    surface that DIFFERS from HEAD, and a reading git could not answer at all
+    (those lines start with `? `). Unreadable is not clean, so both block.
+
+    They are not the same message, and QA cycle 4 caught this one asserting a
+    cause it had not measured. The old text said "file(s) differ from HEAD
+    (uncommitted, or hidden by assume-unchanged/skip-worktree)" unconditionally
+    and led its hint with "commit or discard the changes". On a tree where
+    NOTHING differs and only a reading failed -- the exact tree the refusal knob
+    produces, three `? ` lines and no others -- that sent the operator hunting a
+    diff that does not exist. Split out here so the branch is one function a test
+    can call without running 37 gate selftests first."""
+    unread = [d for d in dirty if d.startswith("? ")]
+    differ = len(dirty) - len(unread)
+    if not differ:
+        what = (f"{len(unread)} git reading(s) failed, so the gate surfaces could not be "
+                f"read at all; nothing was measured to differ from HEAD (unreadable is "
+                f"not clean)")
+        hint = ("do not hunt a diff, there may be none: run from the brain checkout with "
+                "git able to answer (no GIT_* knob in the environment, HEAD resolvable, "
+                "index readable), then re-run --gate-receipt")
+    else:
+        what = (f"{differ} gate surface finding(s) differ from HEAD (uncommitted, "
+                f"untracked, or hidden by assume-unchanged/skip-worktree)"
+                + (f", and {len(unread)} git reading(s) failed" if unread else ""))
+        hint = ("commit or discard the changes under scripts/, registry/, hooks.json"
+                + ("; separately, a reading failed: run without a GIT_* knob in the "
+                   "environment" if unread else "")
+                + ", then re-run")
+    return Result(key, WARN,
+                  f"all {n_proofs} selftests pass but {len(dirty)} gate surface finding(s): "
+                  + what
+                  + "; no gate receipt written (it would vouch for gates that are not the "
+                    "committed ones)",
+                  hint)
+
+
 def check_gate_liveness(fix: bool) -> Result:
     """Prove every fail-closed gate BLOCKS, not just that it exists on disk.
 
@@ -1743,19 +1783,7 @@ def check_gate_liveness(fix: bool) -> Result:
             receipt_ledger.append_global({"kind": "gate-liveness", "ok": True, "head": head,
                                           "gates": gates, "selftests": len(proofs)})
         elif dirty:
-            # `dirty` carries two kinds of finding and both refuse the receipt: a
-            # gate surface that DIFFERS from HEAD, and a reading that git could not
-            # answer at all (those lines start with `? `). Unreadable is not clean.
-            unread = [d for d in dirty if d.startswith("? ")]
-            return Result(key, WARN,
-                          f"all {len(proofs)} selftests pass but {len(dirty)} gate surface finding(s): "
-                          f"file(s) differ from HEAD (uncommitted, or hidden by "
-                          f"assume-unchanged/skip-worktree)"
-                          + (f", and {len(unread)} git reading(s) failed" if unread else "")
-                          + "; no gate receipt written (it would vouch for gates that are not the "
-                            "committed ones)",
-                          "commit or discard the changes under scripts/, registry/, hooks.json; if a "
-                          "reading failed, run without a GIT_* knob in the environment, then re-run")
+            return gate_surface_warn(key, len(proofs), dirty)
         else:
             return Result(key, FAIL,
                           f"all {len(proofs)} selftests pass but the brain's HEAD or gate tree could not be "

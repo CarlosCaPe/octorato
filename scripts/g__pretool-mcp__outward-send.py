@@ -295,10 +295,14 @@ def check(data: dict) -> str:
                     f"({len(unread)} lectura(s) fallida(s) de {len(dirty)} hallazgo(s)); ilegible no es "
                     "limpio. Revisa que no haya un GIT_* raro en el entorno ni un git roto, corre "
                     "brain_doctor y reintenta el envío.")
-        return ("🧾 GATES SIN COMMIT: hay cambios sin confirmar (o escondidos con assume-unchanged) "
-                f"bajo scripts/, registry/ o hooks.json del brain ({len(dirty)} archivo(s)); un gate "
-                "editado y no probado es un gate muerto. Confirma o descarta esos cambios, corre "
-                "brain_doctor y reintenta el envío.")
+        # Desde la lectura 4 un hallazgo también puede ser un archivo SIN TRACKEAR
+        # bajo una superficie de gates (líneas `U `), no solo uno modificado: un
+        # script de gate que nadie commiteó es igual de invisible que uno editado.
+        return ("🧾 GATES SIN COMMIT: hay cambios sin confirmar, archivos sin trackear, o cambios "
+                f"escondidos con assume-unchanged bajo scripts/, registry/ o hooks.json del brain "
+                f"({len(dirty)} hallazgo(s)); un gate editado o no commiteado y no probado es un "
+                "gate muerto. Confirma o descarta esos cambios, corre brain_doctor y reintenta "
+                "el envío.")
     if not receipt_ledger.gate_receipt_ok(gates):
         return ("🧾 SIN RECIBO DE GATES: ningún brain_doctor ha probado los gates en este "
                 "estado del brain. Corre `python3 ~/.claude/scripts/brain_doctor.py --gate-receipt` "

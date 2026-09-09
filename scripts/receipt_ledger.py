@@ -437,6 +437,30 @@ def scrubbed_env() -> dict:
     `GIT_CONFIG_COUNT` with `GIT_CONFIG_KEY_<n>` is the same route under an
     unbounded set of names, so the rule is a prefix scrub and not a longer list.
 
+    WHAT THE SCRUB DOES AND DOES NOT CLOSE (corrected QA cycle 4, 2026-09-09). The
+    paragraph above used to present this prefix scrub as THE fix for
+    `status.showUntrackedFiles=no`. That is wrong as written, and the correction is
+    the point of this note. The scrub closes exactly ONE channel, the ENVIRONMENT:
+    no `GIT_CONFIG_PARAMETERS`, no `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_<n>`, no
+    `GIT_DIR` pointed elsewhere. The SAME config key reaches git through four more
+    channels, none of them a `GIT_*` name, and two of them need no environment at
+    all. Measured in a throwaway repo carrying one untracked
+    `scripts/probe_untracked.py`, each route alone, positive control first
+    (`git status --porcelain -- scripts` -> `?? scripts/probe_untracked.py`):
+
+        .git/config  status.showUntrackedFiles=no          -> []   one line, no env
+        .git/info/exclude  lists the path                  -> []   one line, no env
+        XDG_CONFIG_HOME -> git/config  carrying the key    -> []
+        HOME -> .gitconfig  carrying the key               -> []
+        HOME -> .gitconfig  core.excludesFile -> the path  -> []
+
+    Scrubbing an environment cannot reach any of them: the first two are files
+    inside `.git/`, and the last three ride non-`GIT_` variables this function
+    deliberately keeps. They are closed one level up instead, in
+    `gate_surfaces_dirty`: `_git_pins` pins the two config keys on the command
+    line, where a `-c` outranks every config file, and reading 4 asks a question
+    that no config file answers. See those two.
+
     Stated rather than imported: `scripts/brain_doctor.py` carries the canonical
     version of this rule with its full receipt. This module is imported by
     PostToolUse hooks on the hot path and importing the doctor there would pay for a
@@ -466,6 +490,28 @@ def scrubbed_env() -> dict:
     return env
 
 
+def _git_pins() -> tuple:
+    """`-c` overrides pinned onto every read-only git call this module makes.
+
+    A `-c` on the command line outranks `.git/config`, `$XDG_CONFIG_HOME/git/config`
+    and `$HOME/.gitconfig`, so neither key below can be chosen any more by whoever
+    controls a config file. `status.showUntrackedFiles` is the key that silenced
+    reading 1 through three separate config channels; `core.excludesFile` is the
+    GLOBAL exclude list that silenced it through a fourth.
+
+    What a pin CANNOT reach: `.git/info/exclude`. It is per-repo, unversioned and
+    not a config key at all, so no `-c` value overrides it and
+    `core.excludesFile=<devnull>` does not touch it (measured; see
+    `gate_surfaces_dirty`). Reading 4 exists for that one.
+
+    `os.devnull` rather than a literal `/dev/null` so the pin is the null device on
+    Windows too, and rather than an empty value, which git reads as "unset" and
+    which would fall back to the XDG default path.
+    """
+    return ("-c", "status.showUntrackedFiles=normal",
+            "-c", f"core.excludesFile={os.devnull}")
+
+
 def _git_read(brain_dir: Path, *args, inp: str | None = None) -> tuple[bool, str]:
     """Run a read-only git command. Returns (git answered, stdout).
 
@@ -492,7 +538,7 @@ def _git_read(brain_dir: Path, *args, inp: str | None = None) -> tuple[bool, str
     receipt, and the outward-send gate's integrity check was skipped.
     """
     try:
-        cp = subprocess.run(["git", "-C", str(brain_dir), *args], input=inp,
+        cp = subprocess.run(["git", "-C", str(brain_dir), *_git_pins(), *args], input=inp,
                             capture_output=True, text=True, timeout=20, env=scrubbed_env())
     except (OSError, subprocess.SubprocessError):
         return (False, "")
@@ -530,19 +576,87 @@ def gate_surfaces_dirty(brain_dir: Path) -> list:
     not be read. An empty list means clean and fully read. It never means "git
     refused". That was the previous behaviour and it inverted the check.
 
-    Three readings, because `git status` alone is silenced by
-    `update-index --assume-unchanged` / `--skip-worktree` (QA cycle 2):
-      1. porcelain status (modified, added, untracked)
+    FOUR readings, because every one of them can be silenced on its own:
+      1. porcelain status (modified, added, untracked) -- PINNED, see `_git_pins`
       2. ls-files -v flags h (assume-unchanged) / S (skip-worktree)
       3. every tracked file's live blob id vs its HEAD blob id
+      4. ls-files --others, filtered by the COMMITTED .gitignore and nothing else
 
-    The three do not cover for each other, so a failed reading is a FINDING and
-    not a clean line. Readings 1 and 2 both read the index and share one failure
-    mode: they die together. Reading 3 compares HEAD blobs, so it is
-    structurally blind to an UNTRACKED file. With reading 1 dead, an untracked
-    gate script is invisible to all three, which is exactly the tree QA
-    measured `[]` for (see `_git_read` for the env and the four exit codes)."""
+    They do not cover for each other, so a failed reading is a FINDING and not a
+    clean line. Readings 1 and 2 both read the index and share one failure mode:
+    they die together. Reading 3 compares HEAD blobs, so it is structurally blind
+    to an UNTRACKED file. Which means: with 1 and 2 dead, reading 4 is the ENTIRE
+    defense against an uncommitted gate script.
+
+    WHY READING 4 EXISTS (QA cycle 4). `_git_read` returning (ok, stdout) closed
+    the sub-class where git REFUSES. It does not touch the sub-class where git
+    LIES: on every route below git exits 0 on all four calls and simply answers
+    that the tree is clean. Measured in a throwaway repo carrying one untracked
+    `scripts/probe_untracked.py`, each route alone, positive control first
+    (`git status --porcelain -- scripts` -> `?? scripts/probe_untracked.py`):
+
+        .git/config  status.showUntrackedFiles=no          -> []   one line, no env
+        .git/info/exclude  lists the path                  -> []   one line, no env
+        XDG_CONFIG_HOME -> git/config  carrying the key    -> []
+        HOME -> .gitconfig  carrying the key               -> []
+        HOME -> .gitconfig  core.excludesFile -> the path  -> []
+
+    `_git_pins` kills routes 1, 3, 4 and 5 for reading 1: a command-line `-c`
+    outranks every config file. Route 2 survives every pin, because
+    `.git/info/exclude` is a file and not a config key.
+
+    A sixth candidate was measured and is NOT a route: `core.sparseCheckout` with
+    `sparse-checkout set --no-cone registry` leaves the untracked probe visible to
+    both readings 1 and 4, and makes reading 2 report the `S` skip-worktree flags
+    it sets on the tracked files as well. It fails noisy, not silent.
+
+    TWO READINGS THAT LOOK LIKE THE ANSWER AND ARE NOT. Both measured with
+    `.git/info/exclude` listing the path:
+
+        git -c core.excludesFile=<devnull> status --porcelain  -> []
+        git ls-files --others --exclude-standard               -> []
+        git ls-files --others                                  -> scripts/probe_untracked.py
+
+    `core.excludesFile` is the GLOBAL exclude list and overriding it does not
+    touch the per-repo `.git/info/exclude`; `--exclude-standard` is DEFINED as the
+    union that includes that file, so it inherits the hole. Only `--others` with
+    no standard excludes at all sees through both.
+
+    THE NOISE, AND THE FILTER CHOSEN FOR IT. `--others` with no excludes lists
+    every ignored artifact under the gate surfaces: 70 paths on the live brain
+    (`__pycache__`, `*.pyc`, generated fixture `*.db`), 36 on a feature worktree.
+    A finding that fires on all of those is a finding nobody reads, which fails
+    the same way as no finding at all. So reading 4 filters by exactly one thing:
+    the `.gitignore` blob AT HEAD, read with `cat-file` and handed to
+    `--exclude-from`. Measured: 70 raw -> 0 findings on the live brain, 36 -> 0 on
+    the worktree, with all five routes above still visible.
+
+    Deliberately NOT the working tree's `.gitignore` and NOT
+    `--exclude-per-directory=.gitignore`. Measured against a self-hiding
+    `scripts/.gitignore` holding `scripts/probe_untracked.py` and `.gitignore`:
+
+        --exclude-per-directory=.gitignore  -> []                        blinded
+        --exclude-from=<HEAD:.gitignore>    -> scripts/.gitignore,
+                                               scripts/probe_untracked.py
+
+    The trade-off, stated: a filter is still a filter, and this one is not
+    absent, it is RELOCATED into content git addresses by hash. An untracked or
+    edited ignore file cannot widen it, because the bytes come out of a commit.
+    RESIDUAL: a COMMITTED `.gitignore` line can still hide a path, and
+    `.gitignore` sits outside GATE_SURFACES, so reading 3 does not watch it and
+    the receipt's `gate_tree_hash` does not change when it changes. That is a
+    reviewable diff in a public history, which is the same trust the receipt
+    already places in committed content; the channels this closes are the ones
+    that leave no diff at all.
+    """
     out = []
+    # A `? ` line is not cosmetic and must never be downgraded to a warning or
+    # filtered out of `dirty` as "not substantive". Readings 1 and 2 die together
+    # (one index), reading 3 is structurally blind to untracked files, so once a
+    # `? ` appears for reading 1, reading 4 is the whole defense; drop or soften
+    # either line and the uncommitted-gate-script exploit is open again. The same
+    # note is repeated at every `if not ok` below on purpose.
+    untracked_seen = set()
     ok, txt = _git_read(brain_dir, "status", "--porcelain", "--", *GATE_SURFACES)
     if not ok:
         out.append("? git status --porcelain failed; the gate surfaces could not be read "
@@ -550,6 +664,10 @@ def gate_surfaces_dirty(brain_dir: Path) -> list:
     for ln in txt.splitlines():
         if ln.strip():
             out.append(ln)
+            if ln.startswith("?? "):
+                untracked_seen.add(ln[3:])
+    # `? ` is load-bearing: see the note above. With this reading dead, only
+    # reading 4 can still see an uncommitted gate script.
     ok, txt = _git_read(brain_dir, "ls-files", "-v", "--", *GATE_SURFACES)
     if not ok:
         out.append("? git ls-files -v failed; index flags could not be read "
@@ -558,6 +676,8 @@ def gate_surfaces_dirty(brain_dir: Path) -> list:
         if ln[:1] in ("h", "S"):
             out.append(f"{ln[:1]} {ln[2:]} (index flag hides changes)")
     head_blobs = {}
+    # `? ` is load-bearing: see the note above. This reading compares HEAD blobs
+    # and never sees an untracked file, so it cannot stand in for 1 or 4.
     ok, txt = _git_read(brain_dir, "ls-tree", "-r", "HEAD", "--", *GATE_SURFACES)
     if not ok:
         out.append("? git ls-tree -r HEAD failed; HEAD blob ids could not be read "
@@ -574,6 +694,7 @@ def gate_surfaces_dirty(brain_dir: Path) -> list:
                             inp="\n".join(paths) + "\n")
         live = txt.splitlines()
         if not ok:
+            # `? ` is load-bearing: see the note above.
             out.append("? git hash-object failed; live blob ids could not be read "
                        "(unreadable is not clean)")
         elif len(live) == len(paths):
@@ -582,6 +703,64 @@ def gate_surfaces_dirty(brain_dir: Path) -> list:
                     out.append(f"M {path} (blob differs from HEAD)")
         else:
             out.append("? hash-object could not read every tracked gate file")
+    out.extend(_untracked_under_gate_surfaces(brain_dir, untracked_seen))
+    return out
+
+
+def _untracked_under_gate_surfaces(brain_dir: Path, already: set) -> list:
+    """Reading 4: the one an ignore rule cannot steer. See `gate_surfaces_dirty`.
+
+    `already` is the set of paths reading 1 reported as `??`, so a normally-dirty
+    tree reports each untracked file once and the finding COUNT stays honest. When
+    reading 1 was silenced or failed that set is empty and every path is reported
+    here, which is the whole point. The dedupe is a string match and `git status`
+    quotes a path carrying a space or a non-ASCII byte while `-z` does not, so such
+    a path is reported TWICE rather than dropped: the failure direction is a
+    duplicate finding, never a missing one.
+
+    `status.showUntrackedFiles=normal` (the pin, and git's default) collapses an
+    untracked DIRECTORY into one `?? dir/` line while this reading lists its files
+    one by one, which is the other way the two can disagree, and again in the noisy
+    direction.
+
+    A failed `cat-file` is not a finding: it is also what a repo with no
+    `.gitignore` at HEAD looks like, and the fallback is the UNFILTERED list,
+    which is noisier and never quieter. A failed `ls-files --others` IS a finding,
+    for the reason repeated at every `if not ok` above.
+    """
+    ig_ok, ig_txt = _git_read(brain_dir, "cat-file", "blob", "HEAD:.gitignore")
+    args = ["ls-files", "--others", "-z"]
+    tmp_ignore = None
+    if ig_ok and ig_txt:
+        import tempfile  # lazy: hot-path hooks import this module on every tool call
+        fh = tempfile.NamedTemporaryFile("w", prefix="octo-gate-ignore-", suffix=".txt",
+                                         delete=False, encoding="utf-8")
+        try:
+            fh.write(ig_txt + "\n")
+        finally:
+            fh.close()
+        tmp_ignore = fh.name
+        args.append(f"--exclude-from={tmp_ignore}")
+    try:
+        ok, txt = _git_read(brain_dir, *args, "--", *GATE_SURFACES)
+    finally:
+        if tmp_ignore:
+            try:
+                os.unlink(tmp_ignore)
+            except OSError:
+                pass
+    out = []
+    if not ok:
+        # `? ` is load-bearing: this is the ONLY reading that survives both a
+        # silenced `git status` and a `.git/info/exclude` line. Softening it, or
+        # filtering it out of `dirty`, reopens the original exploit.
+        out.append("? git ls-files --others failed; untracked files under the gate "
+                   "surfaces could not be read (unreadable is not clean)")
+    for path in txt.split("\0"):
+        path = path.strip()
+        if path and path not in already:
+            out.append(f"U {path} (untracked under a gate surface; only the "
+                       f"committed .gitignore filters this reading)")
     return out
 
 

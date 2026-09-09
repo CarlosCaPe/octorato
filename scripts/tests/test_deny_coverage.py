@@ -1776,6 +1776,44 @@ class TestEachNoWindowRoadNamesItself(DenyCoverageCase):
         self.addCleanup(lambda: os.environ.pop("GIT_SSH_COMMAND", None))
         self.assertIn("GIT_SSH_COMMAND", git_names(receipt_ledger.scrubbed_env()))
 
+    def test_the_dirty_warn_never_asserts_a_diff_it_did_not_measure(self):
+        """The WARN told the operator to hunt a diff that did not exist.
+
+        `dirty` carries two kinds of finding: a surface that DIFFERS from HEAD,
+        and a reading git could not answer (`? ` lines). The message emitted
+        "file(s) differ from HEAD (uncommitted, or hidden by
+        assume-unchanged/skip-worktree)" in the `elif dirty:` branch
+        UNCONDITIONALLY, and the hint led with "commit or discard the changes".
+        The refusal knob produces exactly the tree that makes that false: three
+        `? ` lines, nothing measured to differ, and an operator sent looking for
+        an uncommitted edit that is not there.
+
+        The two fixtures below differ by ONE element, so the branch and not the
+        wording is what is anchored.
+        """
+        unread_only = ["? git status --porcelain failed; the gate surfaces could not "
+                       "be read (unreadable is not clean)",
+                       "? git ls-files -v failed; index flags could not be read "
+                       "(unreadable is not clean)"]
+        r = doctor.gate_surface_warn("gate-liveness", 37, unread_only)
+        self.assertEqual(r.status, doctor.WARN)
+        self.assertIn("nothing was measured to differ", r.message,
+                      "a tree where only readings failed must say so")
+        self.assertIn("2 git reading(s) failed", r.message)
+        self.assertNotIn("commit or discard", r.hint,
+                         "there is no change to commit or discard; the hint must not "
+                         "send the operator hunting one")
+        self.assertIn("do not hunt a diff", r.hint)
+
+        # one element more, and only that: a real diff. The other branch must fire.
+        mixed = unread_only + ["M scripts/g__stop__draft-promise.py (blob differs from HEAD)"]
+        r2 = doctor.gate_surface_warn("gate-liveness", 37, mixed)
+        self.assertIn("1 gate surface finding(s) differ from HEAD", r2.message)
+        self.assertIn("2 git reading(s) failed", r2.message,
+                      "the unread findings must still be named alongside the diff")
+        self.assertIn("commit or discard", r2.hint)
+        self.assertNotIn("nothing was measured to differ", r2.message)
+
     def test_a_child_that_answered_is_not_a_child_that_hung(self):
         """`communicate` waits on the PIPES, not on the child, and the row blamed
         the child.

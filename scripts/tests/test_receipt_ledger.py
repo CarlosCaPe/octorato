@@ -206,11 +206,202 @@ class ReceiptLedgerAnchors(unittest.TestCase):
                         "`git ls-tree` must still answer, or the failure is not selective")
         self.assertNotEqual(rl.brain_head(repo), "", "`git rev-parse HEAD` must still answer")
 
+        self.assertFalse(rl._git_read(repo, "ls-files", "--others", "--", "scripts")[0],
+                         "the knob must make reading 4 fail too; it reads the index as well")
+
         found = rl.gate_surfaces_dirty(repo)
         self.assertGreater(len(found), 0,
                            "a git that refuses must never read as a clean tree")
-        self.assertEqual(sum(1 for f in found if f.startswith("? ")), 2,
-                         "both failed readings must be reported as findings")
+        self.assertEqual(sum(1 for f in found if f.startswith("? ")), 3,
+                         "every failed reading is a finding: status, ls-files -v, and "
+                         "reading 4 (ls-files --others), which the knob kills as well")
+        self.assertEqual(len(found), 3,
+                         "and NOTHING was measured to differ: this is the tree whose WARN "
+                         "used to claim a diff (see brain_doctor.gate_surface_warn)")
+
+
+def _mkrepo(root: Path, gitignore: str | None = None) -> Path:
+    """A throwaway brain-shaped repo: one commit, the three gate surfaces.
+
+    Never the live worktree and never ~/.claude: every mutation in these tests
+    happens inside a tempdir the test owns.
+    """
+    (root / "scripts").mkdir(parents=True)
+    (root / "registry").mkdir()
+    (root / "scripts" / "g.py").write_text("print(1)\n")
+    (root / "registry" / "r.yaml").write_text("a: 1\n")
+    (root / "hooks.json").write_text("{}\n")
+    if gitignore is not None:
+        (root / ".gitignore").write_text(gitignore)
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env.update(GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
+               GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+    subprocess.run(["git", "init", "-q", str(root)], check=True, env=env)
+    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True, env=env)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "one"], check=True, env=env)
+    return root
+
+
+class GitThatLiesTest(unittest.TestCase):
+    """The sub-class `_git_read` did NOT close: git exits 0 and answers wrong.
+
+    QA cycle 3 fixed the case where git REFUSES (rc != 0), and that was real. It
+    left open the case where git LIES: on every route below git exits 0 on all
+    four calls, `head` and `gates` both resolve, `gate_surfaces_dirty` answers
+    `[]`, and `check_gate_liveness` writes a receipt for a tree carrying an
+    uncommitted gate script. Two of the routes need no environment variable at
+    all, only one line written into `.git/`.
+
+    Nothing here asserts against a container that could hold an environment: the
+    subTest label is a literal string, and every assertion compares finding
+    counts and path substrings. A failure message renders those and nothing else.
+    """
+
+    PROBE = "scripts/probe_untracked.py"
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(self.tmp, ignore_errors=True))
+
+    def _env(self, **kw):
+        """Set env keys for the duration of the test and restore them exactly.
+
+        os.environ is process-wide; a HOME left behind breaks the rest of the
+        suite (the 2026-09-07 leak class), so every key is restored by name.
+        """
+        prior = {k: os.environ.get(k) for k in kw}
+
+        def restore():
+            for k, v in prior.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+        self.addCleanup(restore)
+        for k, v in kw.items():
+            os.environ[k] = v
+
+    # --- the five routes, each armed alone, each with its own clean control ---
+    def _route_repo_config(self, repo):
+        subprocess.run(["git", "-C", str(repo), "config",
+                        "status.showUntrackedFiles", "no"], check=True)
+
+    def _route_info_exclude(self, repo):
+        (repo / ".git" / "info").mkdir(exist_ok=True)
+        (repo / ".git" / "info" / "exclude").write_text(self.PROBE + "\n")
+
+    def _route_xdg(self, repo):
+        d = Path(self.tmp) / (repo.name + "-xdg")
+        (d / "git").mkdir(parents=True)
+        (d / "git" / "config").write_text("[status]\n\tshowUntrackedFiles = no\n")
+        self._env(XDG_CONFIG_HOME=str(d))
+
+    def _route_home_status(self, repo):
+        d = Path(self.tmp) / (repo.name + "-home")
+        d.mkdir(parents=True)
+        (d / ".gitconfig").write_text("[status]\n\tshowUntrackedFiles = no\n")
+        self._env(HOME=str(d), XDG_CONFIG_HOME=str(d / "xdg"))
+
+    def _route_home_excludes(self, repo):
+        d = Path(self.tmp) / (repo.name + "-home2")
+        d.mkdir(parents=True)
+        (d / "ignore").write_text(self.PROBE + "\n")
+        (d / ".gitconfig").write_text("[core]\n\texcludesFile = %s\n" % (d / "ignore"))
+        self._env(HOME=str(d), XDG_CONFIG_HOME=str(d / "xdg"))
+
+    ROUTES = ("repo .git/config", ".git/info/exclude", "XDG_CONFIG_HOME",
+              "HOME .gitconfig status key", "HOME .gitconfig core.excludesFile")
+
+    def _arm(self, label, repo):
+        {"repo .git/config": self._route_repo_config,
+         ".git/info/exclude": self._route_info_exclude,
+         "XDG_CONFIG_HOME": self._route_xdg,
+         "HOME .gitconfig status key": self._route_home_status,
+         "HOME .gitconfig core.excludesFile": self._route_home_excludes}[label](repo)
+
+    # Which reading is expected to catch each route. This is set equality, not a
+    # count: the `-c` pins (`_git_pins`) are what keep reading 1 honest under the
+    # four CONFIG routes, and reading 4 is the only thing that survives the one
+    # route no pin can reach (`.git/info/exclude` is a file, not a config key).
+    # Assert only "a finding exists" and both mechanisms could carry each other,
+    # and reverting either would stay green.
+    CAUGHT_BY = {"repo .git/config": "?? ",
+                 "XDG_CONFIG_HOME": "?? ",
+                 "HOME .gitconfig status key": "?? ",
+                 "HOME .gitconfig core.excludesFile": "?? ",
+                 ".git/info/exclude": "U "}
+
+    def test_no_config_or_ignore_route_can_hide_an_uncommitted_gate_script(self):
+        # positive control FIRST: the file is visible when nothing is armed
+        control = _mkrepo(Path(self.tmp) / "control", gitignore="*.pyc\n")
+        (control / self.PROBE).write_text("print(2)\n")
+        self.assertTrue(any(self.PROBE in f for f in rl.gate_surfaces_dirty(control)),
+                        "positive control: an untracked gate script must be visible "
+                        "before any route is armed, or the routes prove nothing")
+
+        for i, label in enumerate(self.ROUTES):
+            with self.subTest(route=label, tree="dirty"):
+                repo = _mkrepo(Path(self.tmp) / ("d%d" % i), gitignore="*.pyc\n")
+                (repo / self.PROBE).write_text("print(2)\n")
+                self._arm(label, repo)
+                found = [f for f in rl.gate_surfaces_dirty(repo) if self.PROBE in f]
+                self.assertTrue(found,
+                                "route hid an uncommitted gate script")
+                self.assertTrue(any(f.startswith(self.CAUGHT_BY[label]) for f in found),
+                                "the route must be caught by the reading that is supposed "
+                                "to catch it (%r), not incidentally by the other one"
+                                % self.CAUGHT_BY[label])
+            with self.subTest(route=label, tree="clean"):
+                # the SAME route on a genuinely clean tree must stay silent, or the
+                # finding is noise and gets waived instead of read
+                repo = _mkrepo(Path(self.tmp) / ("c%d" % i), gitignore="*.pyc\n")
+                self._arm(label, repo)
+                self.assertEqual(rl.gate_surfaces_dirty(repo), [],
+                                 "clean control must yield no finding under this route")
+
+    def test_reading_four_suppresses_noise_only_by_committed_rules(self):
+        """The noise trade-off, and its number.
+
+        `ls-files --others` with no excludes lists every ignored artifact under the
+        gate surfaces: 70 paths on the live brain (`__pycache__`, `*.pyc`,
+        generated fixture `*.db`), 36 on a feature worktree. A finding that always
+        fires is a finding nobody reads, which fails the same way as no finding at
+        all. The filter is the `.gitignore` blob AT HEAD, handed to
+        `--exclude-from`, and it takes both numbers to 0 while leaving all five
+        routes visible. Drop the filter and this test goes red on noise alone.
+        """
+        repo = _mkrepo(Path(self.tmp) / "noise", gitignore="*.pyc\n__pycache__/\n")
+        (repo / "scripts" / "__pycache__").mkdir()
+        (repo / "scripts" / "__pycache__" / "g.cpython-312.pyc").write_bytes(b"\x00")
+        self.assertEqual(rl.gate_surfaces_dirty(repo), [],
+                         "generated artifacts the COMMITTED .gitignore covers are not "
+                         "findings, or the check is noise and gets waived")
+
+    def test_reading_four_ignores_working_tree_ignore_files(self):
+        """The filter is a commit, so an uncommitted file cannot widen it.
+
+        `--exclude-per-directory=.gitignore` was measured and rejected here: a
+        self-hiding `scripts/.gitignore` holding the probe AND `.gitignore` blinds
+        it completely, and it needs no environment and no config key. Reading
+        HEAD's blob instead sees both the probe and the ignore file that tried to
+        hide it.
+        """
+        repo = _mkrepo(Path(self.tmp) / "selfhide", gitignore="*.pyc\n__pycache__/\n")
+        (repo / "scripts" / "__pycache__").mkdir()
+        (repo / "scripts" / "__pycache__" / "g.cpython-312.pyc").write_bytes(b"\x00")
+        (repo / self.PROBE).write_text("print(2)\n")
+        # both ignore files an attacker can write without a commit, armed together,
+        # each hiding itself as well as the probe
+        (repo / ".gitignore").write_text("*.pyc\n__pycache__/\n%s\n.gitignore\n" % self.PROBE)
+        (repo / "scripts" / ".gitignore").write_text("probe_untracked.py\n.gitignore\n")
+        found = rl.gate_surfaces_dirty(repo)
+        self.assertTrue(any(self.PROBE in f for f in found),
+                        "an edited working-tree .gitignore must not widen the filter")
+        self.assertTrue(any("scripts/.gitignore" in f for f in found),
+                        "and the self-hiding ignore file must be a finding itself")
+        # the generated-noise assertion deliberately lives in the sibling test, not
+        # here: two mechanisms (the filter's EXISTENCE, and the filter's SOURCE)
+        # should be revertible one at a time and turn exactly one test red each.
 
 
 if __name__ == "__main__":
