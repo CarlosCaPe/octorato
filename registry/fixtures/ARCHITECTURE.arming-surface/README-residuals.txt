@@ -113,14 +113,28 @@ own header carries the same list; this file carries the commands.
 3. THE SHARED PARSER'S OWN RESIDUALS, INHERITED NOT RE-SOLVED.
      rsync --delete ... ~/.claude/scripts/
      ln -sf /dev/null ~/.claude/hooks.json
-     perl -pi -e 's/a/b/' ~/.claude/scripts/qa-merge-gate.py
      cat list | xargs rm            (targets never appear in the command)
      rm -rf {pkg,x}                 (brace expansion, unknowable pre-shell)
      rm -rf $UNSET/pkg              (a variable NOBODY here can read; a DEFINED
                                      one now resolves, see entries 36 and 37)
+     eval "rm -f ~/.claude/settings.json"
+     { { { { rm -f ~/.claude/settings.json; } } } }   (depth-3 brace grouping)
    g__pretool-bash__tree-owner.py names these in its own header. This gate
    borrows that parser rather than growing a second one, so it inherits the
    list; closing them means fixing the one parser, which fixes both gates.
+   TWO CHANGES TO THIS LIST, in opposite directions, both measured.
+   `perl -pi -e` LEFT it: it was conceded here while the coverage block printed
+   `perl` as covered, which is two verdicts for one program inside one PR. It is
+   now dispatched (entry 41) and the concession would be false.
+   `eval` and the depth-3 brace grouping JOINED it, and both were measured on
+   BOTH tips so neither is something this branch introduced:
+     eval "rm -f <live settings>"          ALLOW on HEAD and ALLOW here
+     bash -c "rm -f <live settings>"       DENY  on both (the control)
+   `scan` descends into a `-c` body and into a subshell; it does not descend
+   into `eval`, and the shell-source heredoc reader of entry 39 inherits that
+   the moment a body is handed back to the same parser. The brace case was
+   found by QA at g__pretool-bash__tree-owner.py:625. Both are the one parser's
+   to close, for both gates at once.
 
 4. THE OPERATOR'S TERMINAL.  PASSES, BY DESIGN.
    No hook fires there. It is the intended and only writer of the live copies,
@@ -926,9 +940,19 @@ own header carries the same list; this file carries the commands.
    names_literal_repo) expand for themselves so they cannot disagree with it.
    NO LIST OF VARIABLE NAMES, anywhere: a list of knowable variables is the same
    hand-kept-list disease entry 32 cured one level up. os.environ IS the list.
-   `$SOMEDIR`, `$(cmd)`, a backtick, `${VAR:-x}` and `$1` still abstain, so the
-   over-fire entry 33 was added for (`cd "$SP/demo" && git checkout -q master`)
-   stays allowed.
+   `$SOMEDIR`, `$(cmd)`, a backtick and `$1` still abstain, so the over-fire
+   entry 33 was added for (`cd "$SP/demo" && git checkout -q master`) stays
+   allowed.
+   THE ABSTAINING FAMILY IS WIDER THAN THE ONE MEMBER NAMED HERE, and naming one
+   member read as naming the class. `_ENV_VAR` matches `$NAME` and `${NAME}` and
+   nothing else, so EVERY parameter expansion that carries an operator inside
+   the braces is left verbatim and abstains. Measured, all ALLOW against the
+   live settings with `rm -f $HOME/.claude/settings.json` denying as the
+   control: `${HOME:-x}`, `${HOME%/}`, `${HOME#zz}`, `${HOME/zz/yy}`,
+   `${HOME:0:99}`, `${!VAR}`. That is the class: `${VAR<op>...}`, not
+   `${VAR:-x}` alone. It is a fail-OPEN and it is stated rather than rounded
+   away; closing it means implementing shell parameter expansion, which is the
+   one parser's job and not a second copy here.
    All eight verdicts above flip to DENY except the two that were already right,
    and `rm -f $SOMEDIR/settings.json` stays ALLOW.
 
@@ -962,6 +986,13 @@ own header carries the same list; this file carries the commands.
      before   54 deny / 21,187 allow
      after    53 deny / 21,188 allow
      ALLOW -> DENY   1     DENY -> ALLOW   2
+   THOSE FOUR NUMBERS CARRY NO DATE AND THEREFORE CANNOT BE RERUN, which is the
+   defect entry 44 corrects. The corpus is this machine's transcript directory,
+   and it GROWS: a rerun three days later reads a different corpus and gets
+   different numbers, so a reader who reruns them concludes the claim was false
+   when only the input moved. Read them as "taken on the corpus of the day the
+   entry was written"; the reproducible pair is in entry 44, with its scope, its
+   date range and its selection rule stated.
    The one gain is a real disarm that used to pass, not an over-fire:
    `R=/home/<user>/.claude; ... cp -v $W/scripts/g__stop__goal-anchor.py
    $R/scripts/` copies gate BODIES into the live tree through a variable the
@@ -1004,6 +1035,263 @@ own header carries the same list; this file carries the commands.
    re-measured.
    COST, best-of-five, one process per run: `rm -rf ~/.claude/scripts` 0.13 s
    and its `$HOME` spelling 0.14 s, against 0.09 s for a plain `ls -la`.
+
+38. EVERY INLINE-BODY LAYER READ WRITES AND WAS BLIND TO REMOVAL.
+   On a gate whose stated threat is "disarm the gates", a file that is GONE
+   arms the next session exactly as a rewritten one does, and an emptied
+   settings.json is a settings.json with no `permissions.deny`. Nothing read
+   that. Measured against a sandbox live tree with two controls green in the
+   same batch:
+     rm -f <settings>                                      DENY  (control)
+     python3 -c "open('<settings>','w')"                    DENY  (control)
+     python3 -c "import os; os.remove('<gate body>')"       ALLOW
+     python3 -c "import shutil; shutil.rmtree('<scripts>')" ALLOW
+     python3 -c "import os; os.truncate('<settings>',0)"    ALLOW
+     python3 -c "import pathlib; Path('<settings>').unlink()" ALLOW
+     python3 -c "import os; os.system('rm -f <settings>')"  ALLOW
+     python3 -c "subprocess.run(['rm','-f','<settings>'])"  ALLOW
+     node -e "require('fs').unlinkSync('<settings>')"       ALLOW
+     node -e "require('fs').rmSync('<scripts>',{recursive:true})" ALLOW
+     perl -e "unlink('<settings>')"                         ALLOW
+     php -r "unlink('<settings>');"                         ALLOW
+     ruby -e "File.delete('<settings>')"                    ALLOW
+     python3 - <<PY / os.remove('<settings>') / PY          ALLOW
+   All of them now DENY, with the two controls unchanged. WORSE THAN THE HOLE:
+   the gate header enumerated its residuals meticulously and never said removal
+   was unread, so a careful reader finished it believing the opposite. The
+   header now states the class before the list.
+   THE CLASS, not the members that came to mind: a MUTATION of a protected path
+   is create, overwrite, truncate, remove, or handing the path to a program that
+   does one of those. Three channels, three answers, because the channels ask
+   different questions and always have:
+     * the `-c` marker channel (shells and python) gained eight members, each
+       with its own violation/benign pair and each proven by deletion:
+       `.remove(`, `unlink(`, `rmdir(`, `.rmtree(`, `.truncate(`, `os.system(`,
+       `.popen(`, `subprocess.`
+     * `_DIRECT_REMOVE`, the narrow direct-operand half of `_DIRECT_WRITE`, read
+       by the heredoc and program-argument channels: python `os.*`/`shutil`,
+       pathlib `.unlink`/`.rmdir`, node `*Sync`, perl/php `unlink`, ruby
+       `File.delete`, and a SPAWN naming a mutating program
+     * a heredoc a shell EXECUTES goes back through the path layers (entry 39)
+   THE SPAWN ENTRY IS DELIBERATELY NARROWER than the others and says why: the
+   operand of `os.system` is a whole command line, so the pattern requires a
+   MUTATING program name inside the same call. Measured both ways:
+   `subprocess.run(['cat', <lit>])` allows, `subprocess.run(['rm','-f',<lit>])`
+   denies. A deleter invoked by a path outside `_MUTATING_PROGRAM` still passes,
+   and that is the residual.
+   THE `-c` MARKER CHANNEL CANNOT SEE A DIRECTORY, so `shutil.rmtree` there
+   matched a marker and no needle: `_needles` lists FILES by construction,
+   because naming `<live>` in a channel that fires on "needle plus marker
+   anywhere" would deny a body that merely lists the tree. Both halves ship:
+   `_dir_needles` names the directories and is read ONLY by the direct-operand
+   patterns, and `interpreter_write` now runs that narrow test after its loose
+   one. The over-fire control is pinned:
+   `python3 -c "print(os.listdir('<live>')); open('/tmp/o','w').write(x)"`
+   allows, `python3 -c "import shutil; shutil.rmtree('<live>/scripts')"` denies.
+
+39. A HEREDOC FED TO A SHELL IS SOURCE, NOT A DOCUMENT.
+     bash <<'EOF' / rm -f <settings> / EOF        ALLOW, and it deleted the file
+     sh <<EOF, bash -s <<EOF, cat <<'EOF' | bash  the same
+   Two correct decisions produced the hole between them. `heredoc_write` reads a
+   body for a WRITE idiom, and a shell removal carries none. The path layers
+   never saw the body at all, because entry 33 fixed this gate denying its own
+   documentation by feeding those the SHELL half only. Both fixes are right; the
+   thing that separates the two cases is the CONSUMER, not the body. `cat`,
+   `tee`, `python3 -` and `psql` take a body as DATA; a shell reading stdin
+   EXECUTES it. So bodies whose opener line hands them to a shell go back
+   through the ordinary path and tree layers, and every other body stays data.
+   THE DOCUMENTATION OVER-FIRE CANNOT COME BACK THROUGH THIS DOOR, and the
+   fixtures that pin entry 33 prove it: `cat > /tmp/notes.txt <<'EOF'`,
+   `cat <<'PY' | python3` and `python3 - <<PY` naming no shell all still allow,
+   and all four survive unchanged. A shell handed a SCRIPT FILE is data again
+   (`bash run.sh <<'EOF' / rm -f <settings> / EOF` allows, pinned by
+   benign_heredoc_shell_script_file.json), because the heredoc is that script's
+   stdin. What the body inherits, it inherits whole: `eval` inside a
+   shell-source body still passes, because the shared parser does not descend
+   into `eval` on any tip (entry 3).
+
+40. "FAIL-CLOSED BY DESIGN" WAS TRUE OF TWO MODES OUT OF THREE.
+   The selftest PRINTED "a gate that cannot import kernel_proc, cannot load its
+   parser, or cannot run its heredoc reader denies instead of allowing". The
+   first two have explicit deny handlers. The third did not: the module ends in
+     try: sys.exit(main())
+     except Exception: sys.exit(0)   # fail-open
+   so a raising `heredoc_write` WITH A HEREDOC PRESENT allowed. Reproduced by
+   injecting the fault rather than reasoned about, and the shape is the worst
+   one: silent, total for that channel, every fixture still green.
+     faulted heredoc reader, heredoc present, benign body        ALLOW
+     faulted heredoc reader, python3 - <<PY / open(<settings>,'w') / PY  ALLOW
+     no heredoc, rm -f <settings>                                DENY (control)
+   `_assert_heredoc_reader_live` drives the function directly and its own
+   docstring says it is a selftest-time check, which is a different promise from
+   a runtime one.
+   THE PROMISE IS NOW MADE WHERE IT IS KEPT. All three inline readers deny on a
+   raise at their call site, and each is GATED ON ITS OWN CHANNEL being present,
+   which is what keeps "fail closed" narrower than "deny everything": the first
+   version of the loop called all three unconditionally and a faulted heredoc
+   reader denied `echo hello`. The benign leg of the new assertion caught that
+   in the same run that proved the deny.
+   `_assert_reader_fault_denies` drives the REAL main() three times, once per
+   reader replaced by a raise, each with an attack carrying THAT reader's
+   channel (a first version used the heredoc attack for all three and was
+   reading another mechanism's red), and requires: the attack denies, the deny
+   NAMES the broken reader, and `echo hello` still allows.
+   The module-level blanket stays and is now honest about what is left: a crash
+   OUTSIDE those three, where denying every tool call in the session with no env
+   unlock would be worse than the gate that crashed.
+
+41. AN EXEMPTION DEFEATED THE ASSERTION THAT WOULD HAVE CAUGHT `perl`.
+   `_assert_covered_verbs_deny` turns the coverage block from a claim into a
+   measurement, and `_UNPROBED_CATEGORIES` told it not to look at four
+   categories on the reasoning that wrappers are proven through what they wrap
+   and the shared-parser tables repeat names probed elsewhere. Measured, that
+   reasoning was false for both halves: `program-argument-hosts` was the ONLY
+   home of perl, php, ruby, node, nodejs and sed, and
+   `shared-parser-{mutators,state,exec}` the only home of chattr, dd, tee, touch
+   and truncate. ELEVEN entries in `_VERB_PROBES` never ran once. The live
+   consequence was `shred` again, one level up: the block printed
+   `program-argument-hosts: ... perl php ruby ...` while this very file conceded
+   `perl -pi -e` as an uncovered residual. Two verdicts for one program inside
+   one PR.
+   Dropping the four exemptions cost NO new probes (all eleven were already
+   written) and turned exactly two red, naming them:
+     perl -e "open(F,'>',<settings>)"        ALLOW -> DENY
+     php -r "file_put_contents(<settings>)"  ALLOW -> DENY
+   and the in-place spelling this file conceded, now dispatched:
+     perl -pi -e 's/a/b/' <gate body>        ALLOW -> DENY
+     perl -i -pe 's/a/b/' <settings>         ALLOW -> DENY
+     perl -i.bak -pe ... <settings>          ALLOW -> DENY
+     ruby -i -pe ... <settings>              ALLOW -> DENY
+   THE IN-PLACE SWITCH CANNOT BE FOUND BY LOOKING FOR THE LETTER `i`. Both
+   languages bundle single-letter switches and some EAT the rest of the token:
+   `-MList::Util` is a module name and `-Ilib` an include path, both carrying a
+   lowercase `i`. `_inplace_switch` walks the cluster and stops at the first
+   eater, so `-pi`, `-i` and `-i.bak` are in-place and those two are not, pinned
+   by benign_inplace_cluster_eater.json and benign_inplace_include_path.json.
+   TWO PATTERNS WERE WRITTEN AND THEN DELETED, measured rather than kept: php's
+   `fopen(<lit>,'w')` and ruby's `File.open(<lit>,'w')` were already DENIED by
+   the tip they were added to, because `_DIRECT_WRITE`'s first entry matches
+   `open(` as a substring. An entry another entry already answers for is a
+   second NAME, not a second guard, which this file learned once about `python3`
+   in `_C_HOSTS`. Their fixtures went with them.
+   THE DERIVATION ASSERTION HAD THE SAME BLIND SPOT ONE LEVEL DOWN.
+   `_assert_no_undeclared_dispatch` collected string literals compared against
+   `base`, and every existing table is spelled `if base in _SOME_TABLE`, which
+   is a Name and not a literal, so a new dispatch table was invisible to the
+   mechanism that exists to notice new dispatch. It now resolves the Name
+   against this module's globals and requires the members in the block, which
+   forces a new table into `covered_verbs()` and from there into the probe
+   assertion, where it has to actually deny.
+
+42. `$PWD` RESOLVED FROM THE HOOK'S ENVIRONMENT, NOT FROM THE PAYLOAD CWD.
+   Entry 36 expanded every `$VAR` this process can read. Two names it can read
+   are ones the SHELL maintains from its own working directory, and for those
+   `os.environ` is not a stale copy of the answer, it is a different question: a
+   hook process holds whichever `PWD` the terminal that launched the harness
+   had, while the Bash tool runs in the payload's cwd. Measured, same command,
+   same payload cwd (the live root), only the hook's environment changed:
+     hook PWD = <brain parent>   rm -f $PWD/.claude/settings.json   DENY
+     hook PWD = /tmp             rm -f $PWD/.claude/settings.json   ALLOW
+   A false deny and a false allow from one variable, both introduced by the
+   expansion this branch added. `resolve()` already holds the right answer as
+   its `here` argument, rebound on every `cd` and `pushd`, so `PWD` resolves
+   from it and `OLDPWD` is marked UNKNOWABLE (nobody here knows where the shell
+   was before). `kernel_proc.expand_env` grew an `overrides` layer, consulted
+   after the command's own assignments and before the environment, so this is
+   one call at the one funnel and not a special case for the string "PWD".
+   After: both spellings DENY whatever the hook's environment holds, the
+   worktree cwd twin ALLOWs, and `$OLDPWD` abstains and is listed as a residual.
+
+43. THE PROTECTED SET NAMED FILES WHERE THE MECHANISM NAMES A SHAPE.
+   Measured, all ALLOW to both Write and `rm` while `.githooks/pre-push` and
+   `receipt_ledger.py` denied as controls: `.githooks/commit-msg`,
+   `.githooks/push-policy.txt`, `scripts/commit_msg_language_gate.py`,
+   `scripts/check-generic.py`, `scripts/r__subagent-stop__qa-receipt.py`,
+   `scripts/r__posttool__receipt-seek.py`, `scripts/r__session__proc-register.py`,
+   `.cache/receipts/`, `.cache/kernel/ptable.json`, `registry/kernel.yaml`.
+   Each joined on the set's OWN criterion rather than on a new one:
+     * `.githooks` is now the DIRECTORY, because `core.hooksPath` names the
+       directory and every file in it is a git-time gate or the policy one
+       reads. A set named by filename also cannot cover a file that is not there
+       yet, and `pre-commit` does not exist on this branch, so a Write there
+       INSTALLS a hook rather than editing one. COST, stated: `.githooks/
+       README.md` denies too. That is the price of a shape over a list, and a
+       filename exception would be the list coming back.
+     * `r__*.py` is a glob for the same reason `g__pretool*.py` is one. v7 made
+       these the WRITERS of the evidence the fail-closed gates read: the seek
+       receipt the outward-send gate demands, the QA verdict `qa-merge-gate`
+       demands, and the ptable and journal every isolation gate reads.
+       Protecting `receipt_ledger.py`, which only READS that evidence, while its
+       writers stayed open protected the reader of a file anyone could forge.
+     * `.cache/receipts` and `.cache/kernel` are the STORES themselves,
+       gitignored, so there is no development copy and every write is a write to
+       the evidence. `.cache/heartbeat` stays writable and pins that this is not
+       "all of .cache".
+     * `registry/kernel.yaml` carries the quota policy, the same standing as
+       `registry/rules.yaml`.
+   TWO THINGS QA NAMED AND THIS SET STILL DOES NOT TAKE, with the reason:
+     * CLAUDE.md. RULE #1's whole point is that prose is not a rule; a rule is
+       its registered, live mechanism. Editing CLAUDE.md cannot disarm a gate,
+       and `brain_doctor` reconciles anchors against it, so a deletion is
+       reported rather than silently effective. It stays out.
+     * `d__*.py`, the detectors. A detector warns; nothing fail-closed consumes
+       its output as a receipt, which is the criterion that puts the recorders
+       in. `benign_surface_detector_not_a_recorder.json` pins it, one prefix
+       character away from the `r__*.py` glob.
+
+44. THE OVER-FIRE NUMBER WAS UNDATED, SO A RERUN CONTRADICTED IT.
+   QA replayed this branch and got 78 deny before / 66 after with 12 DENY ->
+   ALLOW, against entry 37's 54 -> 53 with 1 and 2. Neither run is wrong; the
+   CLAIM was, because it names a corpus that grows and never says which day it
+   was taken. It also said nothing about the corpus being contaminated by the
+   feature's own QA traffic, which on a gate whose QA consists of typing disarm
+   probes into Bash is not a detail: those probes ARE denies.
+   RE-MEASURED, WITH THE SCOPE AND THE DATE STATED SO THE RUN CAN BE REPEATED.
+     corpus      every Bash tool_use in ~/.claude/projects/**/*.jsonl
+     files       958 transcripts
+     rows        24,200 raw, 22,788 distinct (command, cwd) pairs
+     dates       2026-07-22 .. 2026-09-09
+     replayed    HEAD (dbe7737) vs this tip, same fixture-free driver, real HOME
+     result      53 deny before, 60 after
+                 ALLOW -> DENY 7      DENY -> ALLOW 0
+   THE SELECTION RULE MATTERS AND IS STATED: rows are deduplicated on (command,
+   cwd). QA's larger number is consistent with counting raw rows, where one
+   repeated denied command counts once per occurrence.
+   NOTHING THAT WAS DENIED BECAME ALLOWED. `DENY -> ALLOW 0` is the number that
+   matters for a gate: no coverage was traded away for the seven gains.
+   SPLIT BY DATE, WHICH IS WHAT ANSWERS THE CONTAMINATION QUESTION:
+     9,620 rows dated before 2026-09-07 (the branch's first commit)
+           ALLOW -> DENY 0      DENY -> ALLOW 0
+     13,168 rows dated 2026-09-07 or later
+           ALLOW -> DENY 7      DENY -> ALLOW 0
+   On every row of traffic that predates this feature, this tip and HEAD return
+   the SAME verdict. All seven changes are inside the window in which this gate
+   was being built, and they are named rather than counted:
+     4  `rm -f ~/.claude/.cache/kernel/journal/*.jsonl` and its `cd` spelling.
+        The `.cache/kernel` entry of entry 43 firing on a real action. It is a
+        TRUE deny by this rule's own criterion (the journal is the evidence an
+        isolation gate reads) and it has a real cost: an agent can no longer
+        clear a stuck journal file, and the operator's own terminal, which is
+        not hooked, becomes the way. Stated rather than rounded into "gains".
+     3  this gate's own QA harnesses: one `python3 - <<PYEOF` and one
+        `python3 -c` whose bodies carry `~/.claude/settings.json` next to a
+        write or removal idiom because they are TEST CASES for it, and one
+        probe driver of the same shape. That is the residual the header already
+        names ("a command writing a TEST HARNESS whose text carries the attack
+        literal, which no text scan separates from the attack itself"), one
+        class wider now that removal idioms are read.
+   COST, best-of-five per command, one process per run, both tips, taken while
+   the anchor table was running so the absolute numbers are loaded rather than
+   idle: `ls -la` 0.34 s -> 0.24 s, `rm -rf ~/.claude/scripts` 0.32 s -> 0.23 s,
+   `rm -f $HOME/.claude/settings.json` 0.18 s -> 0.25 s, 512 distinct targets
+   0.33 s -> 0.36 s, a `-c` read 0.23 s -> 0.25 s, a heredoc document 0.24 s ->
+   0.28 s, a shell-source heredoc 0.25 s -> 0.24 s. Every delta is inside the
+   run-to-run spread of a loaded box, in both directions, so the honest reading
+   is "no measurable change", not "faster". Two costs the restructure DID add
+   were found by reading rather than by timing and removed before they shipped:
+   `restore_names_ref` and `cwd_unknowable` were being asked once per HIT inside
+   the target loop, each lexing the whole command, and `_needles` /
+   `_dir_needles` were rebuilt per inline body. Both are answered once now.
 
 
 === COVERED VERBS (generated by --verbs) ===

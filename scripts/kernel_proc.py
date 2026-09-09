@@ -687,19 +687,34 @@ def set_command_assignments(mapping) -> None:
         _CMD_ASSIGNED.update(mapping)
 
 
-def _value_of(name: str):
-    """The value the SHELL will use for *name*, or None when nobody knows."""
+def _value_of(name: str, overrides=None):
+    """The value the SHELL will use for *name*, or None when nobody knows.
+
+    Three layers, narrowest first. The command's own assignments win, because
+    the shell has already run them. Then the CALLER's overrides, which exist for
+    one class the environment answers WRONGLY rather than not at all: a variable
+    the SHELL maintains from its own working directory (`PWD`, `OLDPWD`). A hook
+    process inherits whatever `PWD` the terminal that launched the harness had,
+    while the tool call runs somewhere else entirely, so `os.environ` is not a
+    stale copy of the answer, it is a different question. A name PRESENT in the
+    overrides with a None value is "nobody here knows", exactly like an
+    unevaluable assignment, and it must NOT fall through to the environment."""
     if name in _CMD_ASSIGNED:
         return _CMD_ASSIGNED[name]          # may be None: assigned, unknowable
+    if overrides and name in overrides:
+        return overrides[name]              # may be None: caller says unknowable
     return os.environ.get(name)
 
 
-def expand_env(text: str, limit: int = _EXPAND_MAX) -> str:
+def expand_env(text: str, limit: int = _EXPAND_MAX, overrides=None) -> str:
     """*text* with every `$VAR` / `${VAR}` this process can resolve replaced.
 
     An undefined name is left verbatim. A value is substituted once and never
     rescanned, exactly as the shell does, so a value that itself contains `$`
-    cannot expand a second time."""
+    cannot expand a second time.
+
+    `overrides` is consulted between the command's assignments and the
+    environment; see `_value_of` for the one class it exists for."""
     if not text or "$" not in text:
         return text
     parts = []
@@ -707,7 +722,7 @@ def expand_env(text: str, limit: int = _EXPAND_MAX) -> str:
     size = 0
     for m in _ENV_VAR.finditer(text):
         name = m.group(1) or m.group(2)
-        val = _value_of(name)
+        val = _value_of(name, overrides)
         if val is None:
             continue      # undefined, or assigned from something unevaluable
         parts.append(text[pos:m.start()])

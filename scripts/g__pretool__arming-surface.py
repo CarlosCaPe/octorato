@@ -360,6 +360,24 @@ that exist on this machine (the compressors, `tar --remove-files`, `zip -m`,
 `sort -o`, `uniq`), all now covered and all found by QA rather than by this
 list. Read what follows as "what is known to pass", never as "what can pass".
 
+WHAT THE INLINE LAYERS READ, AND WHAT THEY DID NOT UNTIL NOW. This block used
+to enumerate residuals meticulously and never once say that REMOVAL was unread,
+so a careful reader finished it believing the opposite. It was unread, on a gate
+whose stated threat is "disarm the gates", and every spelling of it passed.
+Measured, with `rm -f <live settings>` and `python3 -c "open(<settings>,'w')"`
+denying as the two controls: `os.remove`, `os.unlink`, `os.rmdir`, `os.truncate`,
+`shutil.rmtree`, `pathlib.Path(...).unlink()`, `os.system('rm -f ...')`,
+`subprocess.run(['rm',...])`, `fs.unlinkSync`, `fs.rmSync(...,{recursive:true})`,
+`perl -e "unlink(...)"`, `php -r "unlink(...)"`, `ruby -e "File.delete(...)"`,
+and every heredoc a SHELL executes (`bash <<'EOF' / rm -f <settings> / EOF`,
+`sh <<EOF`, `bash -s <<EOF`, `python3 - <<PY / os.remove(...) / PY`) all ALLOWED,
+and all of them ran. A file that is GONE arms the next session exactly as a
+rewritten one does, and an emptied settings.json is a settings.json with no
+`permissions.deny`. The class is now stated as a MUTATION, not a write: create,
+overwrite, truncate, remove, or hand the path to a program that does one of
+those; `_WRITE_MARKERS`, `_DIRECT_REMOVE` and the shell-source heredoc reader
+are the three answers, one per channel, each with its own fixture pair.
+
 NAMED RESIDUALS, measured, deliberately not covered:
   - An INTERPRETED write. `python3 scripts/merge-hooks.py` legitimately writes
     settings.json, and a hook never sees inside a subprocess. Only Write/Edit
@@ -394,7 +412,31 @@ NAMED RESIDUALS, measured, deliberately not covered:
     unlisted write idiom passes on both channels. Both genuine live writes in
     the corpus were the variable shape, which is the honest price of the narrow
     heredoc test and is stated rather than hidden.
+      * a heredoc body a SHELL executes is not read by either of those two. It
+        is shell SOURCE, so it goes back through the ordinary path and tree
+        layers, and only a body whose consumer is a shell does (`_feeds_a_shell`
+        per opener line). A shell handed a script FILE is not that: the body is
+        that script's stdin, which is data again.
+    WHAT IS STILL UNREAD, named as a class rather than as the members that came
+    to mind: a removal spelled through an idiom none of `_DIRECT_REMOVE`'s
+    patterns carry (a language whose delete verb is not `remove`, `unlink`,
+    `rmdir`, `rmtree`, `truncate`, `delete` or a node `*Sync`), and a SPAWN that
+    removes through a program outside `_MUTATING_PROGRAM` (measured: the spawn
+    pattern requires a mutating program name inside the same call, so
+    `subprocess.run(['cat', <lit>])` stays allowed and
+    `subprocess.run(['rm','-f',<lit>])` denies; a hand-rolled deleter invoked by
+    path would pass). An `eval` inside any of these passes too, because the
+    shared parser does not descend into `eval`; that one is inherited and is
+    listed with the parser's other residuals.
     Reproduction: see registry/fixtures/…/README-residuals.txt.
+  - A READ SPELLED AS A SPAWN, the same trade one class wider. With
+    `os.system(`, `.popen(` and `subprocess.` in the marker list, a `-c` body
+    that only READS a protected path through a subprocess denies. The marker
+    channel cannot see which side of a call the needle is on, which is the same
+    reason the next entry exists, and the trade is taken for the same reason: a
+    spawn naming a protected path is not a shape legitimate work produces often.
+    The narrow channels are unaffected, because there the path has to BE the
+    operand.
   - A READ SPELLED AS A COPY. `python3 -c "shutil.copy(<live settings>, /tmp/x)"`
     DENIES, although it only reads. `shutil.copy` is a real write idiom and the
     literal scan cannot see which side of the call the needle is on, so the
@@ -719,8 +761,32 @@ _EXACT = {
     "registry/rules.yaml":
         "the Registry that RULE #1 loads: a rule deleted here stops being "
         "asserted at all",
-    ".githooks/pre-push":
-        "the push-time gate that runs brain_doctor's wiring assertion",
+    ".githooks":
+        "the directory `core.hooksPath` NAMES (measured on the live tree: "
+        "core.hooksPath=.githooks), so every file in it is a git-time gate or "
+        "the policy one reads. The entry used to be `.githooks/pre-push` alone, "
+        "which was a LIST where the mechanism is a SHAPE: `commit-msg` and "
+        "`push-policy.txt` were measured writable and removable, and "
+        "`pre-commit` does not exist on this branch at all, so a Write there "
+        "INSTALLS a hook rather than editing one. A set named by filename "
+        "cannot cover a file that is not there yet; the directory can",
+    "registry/kernel.yaml":
+        "the kernel's quota policy: `max_tool_calls`, `max_minutes` and the QA "
+        "multiplier are read from here, so a rewrite lifts every cap for the "
+        "next process. Same standing as registry/rules.yaml, which is already "
+        "in this set: a policy file whose LIVE copy is what the mechanism reads",
+    ".cache/receipts":
+        "the receipt ledger v7 requires before an outward send or a merge: the "
+        "gate receipt, the seek receipts and the QA verdicts. GITIGNORED, so "
+        "there is no development copy and every write here is a write to the "
+        "evidence a fail-closed gate consumes. Protecting receipt_ledger.py "
+        "(already in this set) while its STORE stays writable protects the "
+        "reader of a file anyone can forge",
+    ".cache/kernel":
+        "the kernel's own state: ptable.json, which every isolation gate reads "
+        "to decide who owns a tree, and the append-only hash-chained journal a "
+        "run is replayed from. GITIGNORED, same as the receipts, and a rewrite "
+        "here is how a process claims a lane it never held",
     ".git/config":
         "the repo config the live tree reads, and `core.hooksPath` inside it "
         "NAMES the directory the push-time gate is run from (measured on the "
@@ -743,12 +809,30 @@ _EXACT = {
 # is an argument for protecting the program, not for leaving it writable: edit
 # it and the next legitimate run of it writes whatever you put there. By this
 # gate's own criterion (the surfaces that arm the next session) it is one.
-_SCRIPT_PATTERNS = ("g__pretool*.py", "g__stop__*.py", "qa-merge-gate.py",
+#
+# `r__*.py` joined on the set's OWN criterion rather than on a new one. A gate
+# is only as good as the evidence it reads, and v7 made three of these the
+# WRITERS of that evidence: `r__posttool__receipt-seek.py` records the seek
+# receipt the outward-send gate demands, `r__subagent-stop__qa-receipt.py`
+# records the QA verdict `qa-merge-gate` demands, and the three proc-register /
+# proc-exit recorders write the ptable and the journal every isolation gate and
+# the quota read. Measured before this: all seven ALLOWED to Write and to `rm`
+# while `receipt_ledger.py`, which only READS what they write, was denied. A
+# glob, not the three names, for the same reason `g__pretool*.py` is a glob: a
+# recorder added to the live tree is covered the moment it exists.
+#
+# `d__*.py` is deliberately NOT here. A detector warns; nothing fail-closed
+# consumes its output as a receipt, so it is out of the set by the same
+# criterion that puts the recorders in.
+_SCRIPT_PATTERNS = ("g__pretool*.py", "g__stop__*.py", "r__*.py",
+                    "qa-merge-gate.py",
                     "gate_selftest.py", "brain_doctor.py", "receipt_ledger.py",
                     "kernel_proc.py", "dimension-awareness-hook.py",
-                    "merge-hooks.py")
-_SCRIPT_WHY = ("the body of a fail-closed gate (or the harness and libraries "
-               "every gate is proven and read by)")
+                    "merge-hooks.py", "check-generic.py",
+                    "commit_msg_language_gate.py")
+_SCRIPT_WHY = ("the body of a fail-closed gate, a RECORDER whose output a "
+               "fail-closed gate consumes as a receipt, or the harness and "
+               "libraries every gate is proven and read by")
 
 # PROJECT-scope settings, which outrank the user-scope pair above. A session
 # whose cwd is a project root loads `<root>/.claude/settings.json` and
@@ -860,10 +944,46 @@ _C_HOSTS = ("bash", "sh", "zsh", "dash", "python", "py")
 # read it and allowed it. It is a write handle by definition (the `+`), and the
 # read spelling one edit away (`'r'`) still passes, which is the pair every
 # entry here is proven by.
+#
+# REMOVAL IS A MUTATION AND THIS LIST READ ONLY WRITES, which is the hole QA
+# reproduced on a gate whose stated threat is "disarm the gates". Measured on
+# this branch, with `rm -f <settings>` and `python3 -c "open(<settings>,'w')"`
+# both DENYING as controls, all of these ALLOWED and all of them ran:
+#
+#   python3 -c "import os; os.remove('<gate body>')"
+#   python3 -c "import shutil; shutil.rmtree('<live>/scripts')"
+#   python3 -c "import os; os.truncate('<settings>',0)"
+#   python3 -c "import pathlib; pathlib.Path('<settings>').unlink()"
+#   python3 -c "import os; os.system('rm -f <settings>')"
+#   python3 -c "import subprocess; subprocess.run(['rm','-f','<settings>'])"
+#
+# A file that is GONE arms the next session exactly as a rewritten one does, and
+# an emptied settings.json is a settings.json with no `permissions.deny`. So the
+# class this channel reads is a MUTATION, not a write: create, overwrite,
+# truncate, remove, or hand the path to a program that does one of those. The
+# members below are the SPELLINGS of that class in the two languages this
+# channel can host (`_C_HOSTS` is shells and python; every other interpreter
+# reaches a body through `program_arg_write` or `heredoc_write`, which ask the
+# narrow direct-operand question instead).
+#
+# `unlink(` and `rmdir(` are written WITHOUT a leading dot on purpose, so one
+# member answers for `os.unlink(`, `Path(p).unlink(` and a bare `unlink(`; the
+# dotted ones (`.remove(`, `.rmtree(`, `.truncate(`) need the dot or they match
+# ordinary English inside a body.
+#
+# THE SHELL-OUT MEMBERS ARE THE HONEST PRICE, stated rather than hidden: with
+# `os.system(`, `.popen(` and `subprocess.` in the list, a `-c` body that only
+# READS a protected path through a subprocess (`subprocess.run(['cat', <lit>])`)
+# now denies. That is the same trade `shutil.copy` already carries three
+# residuals down, and it is taken for the same reason: this channel cannot see
+# which side of a call the needle is on, and a spawn that names a protected path
+# is not a shape legitimate work produces often.
 _WRITE_MARKERS = ("'w'", '"w"', "'w+'", '"w+"', "'a'", '"a"',
                   "'r+'", '"r+"',
                   "write_text", ".write(", "writelines", "json.dump(",
-                  "writeFileSync", "appendFileSync", "os.replace(", "shutil.copy")
+                  "writeFileSync", "appendFileSync", "os.replace(", "shutil.copy",
+                  ".remove(", "unlink(", "rmdir(", ".rmtree(", ".truncate(",
+                  "os.system(", ".popen(", "subprocess.")
 
 # The length at which a command stops being SCANNED and starts being DENIED.
 #
@@ -1464,6 +1584,9 @@ def _needles() -> list:
     inside the live tree is covered by the classifier for Write/Edit and shell
     mutations, and stays a named residual for these best-effort literal layers.
     """
+    got = _CACHE.get("needles")
+    if got is not None:
+        return got
     brain = brain_root()
     out = []
     for path, _why in _protected_pairs(brain):
@@ -1472,7 +1595,42 @@ def _needles() -> list:
             rel = os.path.relpath(path, brain).replace(os.sep, "/")
             out.append("~/.claude/" + rel)
     out.append("~/" + _USER_CONFIG_NAME)
+    _CACHE["needles"] = out
     return out
+
+
+def _dir_needles() -> list:
+    """Literal spellings of a protected DIRECTORY, for the removal half only.
+
+    A removal takes a directory as readily as a file, and `_needles` lists only
+    files, so `shutil.rmtree('<live>/scripts')` and
+    `fs.rmSync('<live>/scripts',{recursive:true})` were measured ALLOW while
+    every per-file spelling denied. Both take every gate body at once, which is
+    the same threat one level coarser.
+
+    Kept OUT of `_needles` on purpose, because the two channels ask different
+    questions. The `-c` channel fires on a needle plus a marker ANYWHERE in the
+    body, so `<live>` as a needle there would deny
+    `python3 -c "print(os.listdir('~/.claude')); open('/tmp/o','w').write(x)"`,
+    which writes nothing protected. The direct-operand patterns require the
+    literal to BE the operand of the removal, so a directory is safe to name
+    there and nowhere else."""
+    got = _CACHE.get("dir_needles")
+    if got is not None:
+        return got
+    brain = brain_root()
+    out = [brain, scripts_dir(), os.path.join(brain, _PROJECT_DIRNAME)]
+    for rel, live, _why in exact_live():
+        if os.path.isdir(live) or "." not in os.path.basename(rel):
+            out.append(live)
+    spelled = []
+    for path in out:
+        if _fold(path).startswith(_fold(brain) + os.sep):
+            rel = os.path.relpath(path, brain).replace(os.sep, "/")
+            spelled.append("~/.claude/" + rel)
+    spelled.append("~/.claude")
+    _CACHE["dir_needles"] = out + spelled
+    return _CACHE["dir_needles"]
 
 
 def _needle_marker(body: str, needles: list):
@@ -1582,6 +1740,16 @@ def interpreter_write(command: str):
         found = _needle_marker(body, needles)
         if found:
             return found
+        # AND the narrow direct-operand test, because the loose one cannot see a
+        # protected DIRECTORY. Its needles are files by construction (naming
+        # `<live>` there would deny a body that merely lists the tree), so
+        # `python3 -c "import shutil; shutil.rmtree('<live>/scripts')"` carried
+        # the `.rmtree(` marker, matched no needle, and took every gate body at
+        # once. The direct-operand patterns require the path to BE the operand,
+        # which is what makes a directory safe to name.
+        found = _direct_hit(body, needles)
+        if found:
+            return found
     return None
 
 
@@ -1628,8 +1796,13 @@ def heredoc_bodies(command: str) -> list:
     return heredoc_split(command)[1]
 
 
-def heredoc_split(command: str) -> tuple:
-    """(the SHELL text, the heredoc bodies).
+def heredoc_split(command: str, spans: bool = False) -> tuple:
+    """(the SHELL text, the heredoc bodies), or with `spans=True` the bodies as
+    (opener line, body) pairs.
+
+    The opener is carried because WHO CONSUMES a body decides whether it is data
+    or source; see `_feeds_a_shell`. It is the same walk either way, so there is
+    one splitter and not two that can disagree about where a body ends.
 
     The two halves are separated because they answer different questions and
     mixing them cost a measured false positive. The shell text is what the
@@ -1655,12 +1828,12 @@ def heredoc_split(command: str) -> tuple:
         for _quote, term in _HEREDOC_RE.findall(line):
             end = next((j for j in at.get(term, ()) if j >= i), None)
             if end is None:
-                bodies.append("\n".join(lines[i:]))    # bash: runs to EOF
+                bodies.append((line, "\n".join(lines[i:])))   # bash: runs to EOF
                 i = len(lines)
                 break
-            bodies.append("\n".join(lines[i:end]))
+            bodies.append((line, "\n".join(lines[i:end])))
             i = end + 1
-    return "\n".join(shell), bodies
+    return "\n".join(shell), (bodies if spans else [b for _o, b in bodies])
 
 
 def _protected_pairs(brain: str) -> list:
@@ -2298,7 +2471,61 @@ def _tar_extracts(args: list) -> bool:
 _CWD_EXTRACTORS = {"tar": None, "unzip": None, "cpio": None, "patch": None}
 
 
+# AN INTERPRETER THAT EDITS ITS ARGUMENT FILES IN PLACE. `awk -i inplace` was
+# read and `perl -pi -e` was not, which is how one program ended up with two
+# verdicts inside one PR: the coverage block printed `perl` as a covered
+# program-argument host while README-residuals conceded `perl -pi -e` as an
+# uncovered residual. Measured, both spellings ALLOWED against a live gate body:
+# `perl -i -pe 's/a/b/' <gate>` and `perl -pi -e 's/a/b/' <gate>`.
+#
+# THE SWITCH CANNOT BE FOUND BY LOOKING FOR THE LETTER `i`, which is why this is
+# a cluster walk and not an `in` test. Both languages let one leading `-` carry
+# several single-letter switches, and some of those EAT the rest of the token as
+# their own argument: `-MList::Util` is a module named `List::Util`, not `-M`
+# plus an in-place edit, and `-Ilib` is an include path. So the walk stops at
+# the first eater and only an `i` reached before one counts. `-i.bak` is an
+# in-place edit with a backup suffix and reads correctly: `i` comes first, and
+# what follows is its argument.
+_INPLACE_INTERPRETERS = ("perl", "ruby")
+# Letters that consume the remainder of their cluster in perl and in ruby.
+_CLUSTER_EATERS = "eEMmIiFxDK0rCST"
+# Switches that take the NEXT token as their value, so that token is not a file.
+_INPLACE_VALUED = ("-e", "-E", "-I", "-M", "-m", "-r", "-C", "-F", "-K", "-S",
+                   "-0", "-T", "-c")
+
+
+def _inplace_switch(tok: str) -> bool:
+    if not tok.startswith("-") or tok.startswith("--") or tok == "-":
+        return False
+    for ch in tok[1:]:
+        if ch == "i":
+            return True
+        if ch in _CLUSTER_EATERS:
+            return False          # this letter eats the rest of the cluster
+    return False
+
+
+def _inplace_targets(args: list, here: str) -> list:
+    """The files an in-place interpreter rewrites, or [] when it edits none."""
+    if not any(_inplace_switch(a) for a in args):
+        return []
+    out, i = [], 0
+    while i < len(args):
+        tok = args[i]
+        if tok in _INPLACE_VALUED:
+            i += 2
+            continue
+        if tok.startswith("-") and tok != "-":
+            i += 1
+            continue
+        out.append(_parser().resolve(tok, here))
+        i += 1
+    return out
+
+
 def _writer_destinations(base: str, args: list, here: str) -> list:
+    if base in _INPLACE_INTERPRETERS:
+        return _inplace_targets(args, here)
     for name, flags, needs in _WRITER_FLAGS:
         if base != name:
             continue
@@ -2442,6 +2669,7 @@ _PUT_TRIGGERS = tuple(sorted(set(
     + tuple(_CONSUMING)
     + tuple(_SIMPLE_WRITERS)
     + _AWK_NAMES
+    + _INPLACE_INTERPRETERS
     + ("tar", "zip", "sort", "uniq", "chmod", "&>", ">|")
 )))
 
@@ -3064,12 +3292,109 @@ _DIRECT_WRITE = (
     r""">>?\s*['"]?{q}""",
     r"""(?:os\.replace|os\.rename|shutil\.copy2?|shutil\.copyfile|shutil\.move)"""
     r"""\s*\([^)]*,\s*""" + _PRE + r"""['"]{q}['"]""",
+    # perl's THREE-argument open: open(FH, '>', <lit>) / open(my $fh, '>>', <lit>).
+    # The two-argument spelling (`open(F, ">/path")`) needs no entry: the `>`
+    # redirect pattern above already matches it, checked rather than assumed.
+    r"""open\s*\([^;)]{0,160}?['"]\s*\+?>>?\s*['"]\s*,\s*""" + _PRE +
+    r"""['"]{q}['"]""",
+    # php: file_put_contents(<lit>, …)
+    r"""file_put_contents\s*\(\s*""" + _PRE + r"""['"]{q}['"]""",
+    # ruby: File.write(<lit>, …)
+    r"""File\s*\.\s*write\s*\(\s*['"]{q}['"]""",
+    # NOT HERE, and measured rather than assumed: php's `fopen(<lit>,'w')` and
+    # ruby's `File.open(<lit>,'w')` were written as two more entries and both
+    # were already DENIED by the tip they were added to, because the first entry
+    # in this tuple matches `open(` as a SUBSTRING and both spellings carry it.
+    # An entry another entry already answers for is not a second guard, it is a
+    # second name, and this file learned that once already about `python3` in
+    # `_C_HOSTS`. Their fixtures went with them.
+    # node: a write STREAM is a write handle the same way `open(…, 'w')` is
+    r"""createWriteStream\s*\(\s*['"`]{q}['"`]""",
+)
+
+# THE OTHER HALF OF THE SAME QUESTION, and the one that was missing entirely.
+# `_DIRECT_WRITE` asks "is the protected path the destination of a write?"; this
+# asks "is it the operand of a REMOVAL?", which on a gate whose threat model is
+# "disarm the gates" is the same threat and was read by nothing. Every pattern
+# here holds the literal as the DIRECT operand, exactly like the write half, so
+# a body that merely quotes the path in a document still passes.
+#
+# The last entry is different in kind and says so: an inline body can also hand
+# the path to a SUBPROCESS, and then the operand is a whole command line rather
+# than a path. It fires only when a MUTATING program is named inside the same
+# call, so `subprocess.run(['cat', <lit>])` stays allowed while
+# `subprocess.run(['rm','-f',<lit>])` and `os.system('rm -f <lit>')` deny. The
+# program list is `_REMOVING_PROGRAMS` plus the in-place mutators, and a spawn
+# that removes through a program outside it is a named residual.
+_SPAWN = (r"""(?:os\.system|os\.popen|subprocess\.\w+|Kernel\.system|"""
+          r"""shell_exec|passthru|execSync|spawnSync|execFileSync|"""
+          r"""child_process)""")
+_MUTATING_PROGRAM = (r"""\b(?:rm|unlink|shred|mv|cp|install|ln|tee|truncate|dd|"""
+                     r"""sed|chmod|chown|chgrp|touch)\b""")
+_DIRECT_REMOVE = (
+    # python: os.remove / os.unlink / os.rmdir / os.removedirs / os.truncate /
+    # shutil.rmtree, with the literal as the first operand
+    r"""(?:os\s*\.\s*(?:remove|unlink|rmdir|removedirs|truncate)|"""
+    r"""shutil\s*\.\s*rmtree)\s*\(\s*"""
+    r"""(?:(?:os\.path\.)?expanduser\s*\(\s*)?""" + _PRE + r"""['"]{q}['"]""",
+    # pathlib: Path(<lit>)[.expanduser()].unlink() / .rmdir()
+    r"""(?:pathlib\.)?Path\s*\(\s*""" + _PRE + r"""['"]{q}['"]\s*\)"""
+    r"""(?:\s*\.\s*(?:expanduser|resolve|absolute)\s*\(\s*\))*\s*\."""
+    r"""(?:unlink|rmdir)\s*\(""",
+    # node: fs.unlinkSync / rmSync / rmdirSync / truncateSync, and renameSync
+    # whose FIRST operand is the file that goes away
+    r"""(?:unlinkSync|rmSync|rmdirSync|truncateSync|renameSync)"""
+    r"""\s*\(\s*['"`]{q}['"`]""",
+    # perl and php: unlink '<lit>' / unlink("<lit>") / rmdir <lit>
+    r"""(?:unlink|rmdir)\s*\(?\s*""" + _PRE + r"""['"]{q}['"]""",
+    # ruby: File.delete / File.unlink / File.truncate
+    r"""File\s*\.\s*(?:delete|unlink|truncate)\s*\(\s*['"]{q}['"]""",
+    # an inline body that SHELLS OUT to a mutating program naming the literal
+    _SPAWN + r"""\s*\(?[^)]{0,400}?""" + _MUTATING_PROGRAM +
+    r"""[^)]{0,400}?{q}""",
 )
 
 
+def _direct_hit(body: str, needles: list, extra=(), dirs=None):
+    """(literal, label) when a protected path is the DIRECT operand of a write
+    or a removal inside *body*.
+
+    One reader for both halves of the question, so a caller cannot cover one and
+    forget the other; that asymmetry is exactly what let every removal spelling
+    through while every write spelling denied."""
+    flat = _normalize_paths(body)
+    dirs = _dir_needles() if dirs is None else dirs
+    # longest first, so a hit reports `<live>/scripts` rather than `<live>`.
+    # Both inputs are module-cached lists, so the merged order is computed once;
+    # without that this sort ran per inline body, per command.
+    key = (id(needles), id(dirs))
+    order = _CACHE.get(("needle_order", key))
+    if order is None:
+        order = sorted(set(list(needles) + list(dirs)), key=len, reverse=True)
+        _CACHE[("needle_order", key)] = order
+    for needle in order:
+        if needle not in flat:
+            continue              # cheap string test before any regex compile
+        quoted = re.escape(needle)
+        is_dir_only = needle not in needles
+        for pats, label in ((() if is_dir_only else _DIRECT_WRITE, "direct write"),
+                            (_DIRECT_REMOVE, "direct removal"),
+                            (() if is_dir_only else extra, "direct write")):
+            for pat in pats:
+                # `.replace`, never `.format`: these patterns carry regex
+                # repetition braces (`{0,2}`), and str.format read one as a
+                # field name, raised KeyError, and the module-level fail-open
+                # swallowed it. A whole layer was silently off. The selftest
+                # compiles every pattern against a sample needle so a brace
+                # cannot do that again.
+                if re.search(pat.replace("{q}", quoted), flat):
+                    return needle, label
+    return None
+
+
 def heredoc_write(command: str):
-    """(literal, "direct write") when a heredoc body writes a protected path as
-    the direct operand of a write call or a shell redirect.
+    """(literal, label) when a heredoc body writes OR REMOVES a protected path
+    as the direct operand of a call or a shell redirect.
 
     The host is looked for in the SHELL half only; see `heredoc_split` for the
     measurement that put it there."""
@@ -3078,21 +3403,76 @@ def heredoc_write(command: str):
         return None
     needles = _needles()
     for body in bodies:
-        flat = _normalize_paths(body)
-        for needle in needles:
-            if needle not in flat:
-                continue          # cheap string test before any regex compile
-            quoted = re.escape(needle)
-            for pat in _DIRECT_WRITE:
-                # `.replace`, never `.format`: these patterns carry regex
-                # repetition braces (`{0,2}`), and str.format read one as a
-                # field name, raised KeyError, and the module-level fail-open
-                # swallowed it. A whole layer was silently off. The selftest
-                # compiles every pattern against a sample needle so a brace
-                # cannot do that again.
-                if re.search(pat.replace("{q}", quoted), flat):
-                    return needle, "direct write"
+        found = _direct_hit(body, needles)
+        if found:
+            return found
     return None
+
+
+# A HEREDOC FED TO A SHELL IS NOT A DOCUMENT, IT IS SOURCE, and reading it as
+# data was a one-line bypass of every path layer in this file. Measured, with
+# `rm -f <settings>` denying as the control:
+#
+#     bash <<'EOF'                 sh <<EOF                bash -s <<EOF
+#     rm -f <settings>             rm -f <settings>        rm -f <settings>
+#     EOF                          EOF                     EOF
+#
+# all three ALLOWED, and all three deleted the file. `heredoc_write` could not
+# see them because a shell removal carries no `open(`, no `write_text` and no
+# redirect; the path layers could not see them because main() deliberately feeds
+# those the SHELL HALF ONLY, which is the fix that stopped this gate denying its
+# own documentation (`cat > README <<'EOF' … EOF`).
+#
+# Both are right, and the thing that separates them is the CONSUMER, not the
+# body. `cat`, `tee`, `python3 -`, `psql` take a body as data; a shell reading
+# stdin EXECUTES it. So the bodies a shell consumes go back through the ordinary
+# path layers and every other body stays data. The documentation over-fire
+# cannot come back through this door: no document is written by handing it to
+# `bash`, and the three benign fixtures that pin that class (`cat >` to a file,
+# `cat <<'PY' | python3`, a `python3 - <<PY` writing a doc) name no shell.
+_SHELL_HOSTS = ("bash", "sh", "zsh", "dash", "ksh", "ash", "busybox")
+
+
+def _feeds_a_shell(opener: str) -> bool:
+    """True when the heredocs opened on this line are read BY a shell.
+
+    A shell given a script FILE reads the file and the heredoc is that script's
+    stdin, which is data again; a shell given only flags (`bash`, `bash -s`,
+    `sh`) reads stdin, and then the body is the program. A lone `-` is the
+    explicit spelling of "read stdin", not an operand."""
+    line = _HEREDOC_RE.sub(" ", opener)
+    tokens = _lex(line)
+    if not tokens:
+        return False
+    mod = _parser()
+    for start in _command_starts(tokens):
+        stage = tokens[start:_stage_end(tokens, start)]
+        if not stage:
+            continue
+        # PEEL THE WRAPPERS FIRST, with the brain's own table rather than a
+        # second one here. `env bash <<EOF`, `sudo sh <<EOF` and
+        # `busybox sh <<EOF` are all a shell reading stdin, and the last of
+        # those was the tell: `busybox` had to be in the shell list AND its
+        # `sh` looked like a script-file operand, so the naive test answered
+        # "not a shell" twice over for the same command.
+        try:
+            stage = mod.peel_wrappers(mod.peel_env(list(stage)), "")[0]
+        except Exception:
+            pass
+        if not stage:
+            continue
+        if os.path.basename(stage[0]) not in _SHELL_HOSTS:
+            continue
+        if any(not a.startswith("-") and a != "-" for a in stage[1:]):
+            continue          # a script file: the body is that script's stdin
+        return True
+    return False
+
+
+def shell_source_heredocs(command: str) -> list:
+    """Every heredoc body in *command* that a shell will EXECUTE."""
+    return [body for opener, body in heredoc_split(command, spans=True)[1]
+            if _feeds_a_shell(opener)]
 
 
 # THREE MORE INLINE BODIES, none of them a `-c` and none of them a heredoc.
@@ -3140,16 +3520,11 @@ def program_arg_write(command: str):
     needles = _needles()
     # sed's own write command is `w <path>`, which carries no `>` and no
     # `open(`, so the shared direct-write patterns cannot see it.
-    pats = _DIRECT_WRITE + (r"""(?:^|[;\s{}])[wW]\s+{q}""",)
+    extra = (r"""(?:^|[;\s{}])[wW]\s+{q}""",)
     for body in bodies:
-        flat = _normalize_paths(body)
-        for needle in needles:
-            if needle not in flat:
-                continue
-            quoted = re.escape(needle)
-            for pat in pats:
-                if re.search(pat.replace("{q}", quoted), flat):
-                    return needle, "program argument"
+        found = _direct_hit(body, needles, extra)
+        if found:
+            return found[0], "program argument"
     return None
 
 
@@ -3410,6 +3785,23 @@ def deny_heredoc(literal: str, _marker: str) -> None:
     )
 
 
+def deny_reader(name: str, detail: str) -> None:
+    deny(
+        f"ARMING SURFACE: this gate's inline body reader `{name}` raised "
+        f"({detail}), so it could not answer whether this command writes or "
+        f"removes a protected path. That is a BUG in the gate, not a property "
+        f"of the command: these readers are text passes over a command already "
+        f"bounded by the size cap, so nothing an agent can type makes one fail. "
+        f"It has happened, silently: `_DIRECT_WRITE` carries regex repetition "
+        f"braces, they were once substituted with str.format, `{{0,2}}` read as "
+        f"a format field, KeyError rose out of the heredoc reader and the "
+        f"module-level fail-open turned the whole layer off with every fixture "
+        f"still green. A floor that cannot read denies instead. Run "
+        f"`g__pretool__arming-surface.py --selftest` from a worktree to see "
+        f"which leg is broken. {_ONLY_WRITER}"
+    )
+
+
 def deny_interp(literal: str, marker: str) -> None:
     deny(
         f"ARMING SURFACE: this interpreter body writes {literal} (write marker "
@@ -3537,38 +3929,63 @@ def main() -> int:
     # direct operand of a write?), and that test covers the `> <literal>` case
     # the shell parser used to catch by accident.
     shell_only = heredoc_split(command)[0]
-    # BEFORE ANY PATH IS READ, and off the SHELL half only. Every layer below
-    # resolves `$VAR` from this process's environment, and a command that sets
-    # the variable itself makes that environment stale for that one name (see
-    # kernel_proc._CMD_ASSIGNED). Reading the whole command instead would let a
-    # `FOO=bar` sitting inside a heredoc DOCUMENT shadow a real variable, which
-    # is the same mistake the body/shell split was made to end.
-    try:
-        kernel_proc.set_command_assignments(
-            _parser().command_assignments(shell_only))
-    except ParserUnavailable as exc:
-        journal_deny(pid, {"why": "parser-unavailable", "detail": str(exc),
-                           "command": command[:200]})
-        deny_parser(str(exc))
-        return 0
-    try:
-        hits = bash_targets(shell_only, str(payload.get("cwd") or ""))
-        for root, verb in extra_tree_hits(shell_only, here):
-            hits.append(("tree", root, verb))
-        hits.extend(extra_git_hits(shell_only, here))
-        hits.extend(extra_put_hits(shell_only, here))
-        hits.extend(exotic_redirect_hits(shell_only, here))
-        hits.extend(indirect_removal_hits(shell_only, here))
-    except ParserUnavailable as exc:
-        journal_deny(pid, {"why": "parser-unavailable", "detail": str(exc),
-                           "command": command[:200]})
-        deny_parser(str(exc))
-        return 0
+    # THE SHELL HALF, PLUS EVERY HEREDOC BODY A SHELL WILL EXECUTE. The split
+    # exists because a body handed to `cat` or to `python3 -` is DATA, and
+    # feeding those to the shell parser denied this gate's own documentation. A
+    # body handed to `bash` is not data, it is the program, and reading it as
+    # data allowed `bash <<'EOF' / rm -f <settings> / EOF` to delete the file.
+    # `_feeds_a_shell` is what separates the two, per opener line.
+    texts = [shell_only] + shell_source_heredocs(command)
 
-    ref_restore = restore_names_ref(shell_only)
-    blind_cwd = cwd_unknowable(shell_only) and not names_literal_repo(shell_only)
+    hits = []
+    outer = {}
+    for idx, text in enumerate(texts):
+        # BEFORE ANY PATH IS READ. Every layer below resolves `$VAR` from this
+        # process's environment, and a command that sets the variable itself
+        # makes that environment stale for that one name (see
+        # kernel_proc._CMD_ASSIGNED). Reading the WHOLE command instead would
+        # let a `FOO=bar` sitting inside a heredoc DOCUMENT shadow a real
+        # variable, which is the same mistake the body/shell split was made to
+        # end; a body a shell EXECUTES is not a document, and it inherits the
+        # outer assignments the way a subshell does, so the two are merged.
+        try:
+            own = _parser().command_assignments(text)
+        except ParserUnavailable as exc:
+            journal_deny(pid, {"why": "parser-unavailable", "detail": str(exc),
+                               "command": command[:200]})
+            deny_parser(str(exc))
+            return 0
+        if idx == 0:
+            outer = dict(own or {})
+            merged = outer
+        else:
+            merged = dict(outer)
+            merged.update(own or {})
+        kernel_proc.set_command_assignments(merged)
+        try:
+            found = bash_targets(text, str(payload.get("cwd") or ""))
+            for root, verb in extra_tree_hits(text, here):
+                found.append(("tree", root, verb))
+            found.extend(extra_git_hits(text, here))
+            found.extend(extra_put_hits(text, here))
+            found.extend(exotic_redirect_hits(text, here))
+            found.extend(indirect_removal_hits(text, here))
+        except ParserUnavailable as exc:
+            journal_deny(pid, {"why": "parser-unavailable", "detail": str(exc),
+                               "command": command[:200]})
+            deny_parser(str(exc))
+            return 0
+        # PER TEXT, NEVER PER HIT. Both readers lex the whole command, and one
+        # command may carry up to `_MAX_TARGETS` hits, so asking them inside the
+        # target loop multiplied a shlex pass by the number of targets. They are
+        # answered once per text and carried on the hit.
+        ref_restore = restore_names_ref(text)
+        blind_cwd = cwd_unknowable(text) and not names_literal_repo(text)
+        hits.extend((k, tgt, v, text, ref_restore, blind_cwd)
+                    for k, tgt, v in found)
+
     tested = set()
-    for kind, target, verb in hits:
+    for kind, target, verb, text, ref_restore, blind_cwd in hits:
         if kind in ("path", "state", "glob", "iglob") and target not in tested:
             if len(tested) >= _MAX_TARGETS:
                 journal_deny(pid, {"why": "target-flood", "targets": len(hits),
@@ -3589,7 +4006,7 @@ def main() -> int:
             if blind_cwd:
                 continue          # nobody knows which tree this ran in
             if verb.startswith(("git checkout", "git switch")) and \
-                    branch_creation_only(shell_only):
+                    branch_creation_only(text):
                 continue                  # a new branch at HEAD rewrites nothing
             if target and _fold(kernel_proc.norm_path(target)) == _fold(brain):
                 journal_deny(pid, {"root": target, "verb": verb, "why": "live-tree"})
@@ -3618,25 +4035,64 @@ def main() -> int:
     if oversize:
         return 0        # the two inline readers are what the cap actually bounds
 
-    found = interpreter_write(shell_only)
-    if found:
-        journal_deny(pid, {"literal": found[0], "marker": found[1],
-                           "why": "interpreter-write", "command": command[:200]})
-        deny_interp(found[0], found[1])
-        return 0
-
-    found = program_arg_write(shell_only)
-    if found:
-        journal_deny(pid, {"literal": found[0], "marker": found[1],
-                           "why": "program-arg-write", "command": command[:200]})
-        deny_heredoc(found[0], found[1])
-        return 0
-
-    found = heredoc_write(command)
-    if found:
-        journal_deny(pid, {"literal": found[0], "marker": found[1],
-                           "why": "heredoc-write", "command": command[:200]})
-        deny_heredoc(found[0], found[1])
+    # THE THREE INLINE READERS, EACH FAIL-CLOSED AT ITS CALL SITE. The module
+    # ends in `except Exception: sys.exit(0)`, and the selftest printed "a gate
+    # that … cannot run its heredoc reader denies instead of allowing" while
+    # that blanket made the sentence FALSE: with `heredoc_write` raising and a
+    # heredoc present, the canonical attack
+    # (`python3 - <<PY / open(<settings>,'w') / PY`) came back ALLOW, silently,
+    # and so did every other body. `_assert_heredoc_reader_live` is a
+    # selftest-time check and its own docstring says so, which is a different
+    # promise from a runtime one.
+    #
+    # So the promise is made where it is kept. These three are pure text passes
+    # over a command already bounded by `_MAX_SCANNED`: they have no
+    # input-dependent failure mode, unlike the shared parser, whose "cannot read
+    # THIS command" case still returns [] on purpose (see `bash_targets`) so a
+    # single unparseable command cannot DoS the session. A raise here is a BUG
+    # in this file, structural exactly like a failed import, and it is answered
+    # the same way.
+    #
+    # The blanket stays, and stays honest, because it now catches only what is
+    # left: a crash outside these three, where denying every tool call in the
+    # session with no unlock would be worse than the gate that crashed.
+    # The NAME is a literal, not `reader.__name__`: the readers are looked up as
+    # module globals when this tuple is built, so a replaced one reports the
+    # replacement's name and the deny would name the wrong slot. The selftest's
+    # fault injection is exactly that shape, and it caught it.
+    # EACH READER IS GATED ON ITS OWN CHANNEL BEING PRESENT, and that is what
+    # makes "fail closed" mean something narrower than "deny everything". The
+    # first version of this loop called all three unconditionally, so a raising
+    # `heredoc_write` denied `echo hello`; the selftest's benign leg caught it
+    # in the same run that proved the deny. The channel test is the fast-out
+    # each reader already carries as its first statement, lifted to the call
+    # site so a reader that cannot RUN at all still cannot decide about a
+    # command that was never its business.
+    for name, reader, arg, present, why, denier in (
+            ("interpreter_write", interpreter_write, shell_only,
+             bool(_C_CHANNEL.search(shell_only)),
+             "interpreter-write", deny_interp),
+            ("program_arg_write", program_arg_write, shell_only,
+             any(h in shell_only for h in _PROGRAM_ARG_HOSTS),
+             "program-arg-write", deny_heredoc),
+            ("heredoc_write", heredoc_write, command,
+             "<<" in command and bool(heredoc_split(command)[1]),
+             "heredoc-write", deny_heredoc)):
+        if not present:
+            continue
+        try:
+            found = reader(arg)
+        except Exception as exc:                  # noqa: BLE001 - fail CLOSED
+            journal_deny(pid, {"why": "inline-reader-raised", "reader": name,
+                               "detail": f"{type(exc).__name__}: {exc}",
+                               "command": command[:200]})
+            deny_reader(name, f"{type(exc).__name__}: {exc}")
+            return 0
+        if found:
+            journal_deny(pid, {"literal": found[0], "marker": found[1],
+                               "why": why, "command": command[:200]})
+            denier(found[0], found[1])
+            return 0
     return 0
 
 
@@ -3743,6 +4199,7 @@ def _selftest(fdir: str = None) -> int:
     for assertion in (_assert_parser_load_denies,
                       _assert_own_import_denies,
                       _assert_heredoc_reader_live,
+                      _assert_reader_fault_denies,
                       _assert_verb_block_current,
                       _assert_no_undeclared_dispatch,
                       _assert_covered_verbs_deny):
@@ -3758,8 +4215,10 @@ def _selftest(fdir: str = None) -> int:
     print(f"selftest PASS: {blocked} block + {allowed} allow "
           f"(g__pretool__arming-surface.py vs {os.path.basename(fdir)}); "
           f"every deny names its live file, the same edit in a worktree allows, "
-          f"and a gate that cannot import kernel_proc, cannot load its parser, or "
-          f"cannot run its heredoc reader denies instead of allowing")
+          f"and a gate that cannot import kernel_proc, cannot load its parser, "
+          f"or cannot run ANY of its three inline body readers denies instead "
+          f"of allowing, proven by driving the real main() with each reader "
+          f"replaced by a raise")
     return 0
 
 
@@ -3805,14 +4264,28 @@ _VERB_PROBES = {
     "dd": "dd of={P} if=/dev/null", "touch": "touch {P}",
     "chattr": "chattr +i {P}",
 }
-# Categories that are NOT writers on their own: a wrapper or an interpreter host
-# is proven through the verb it wraps, and the shared-parser tables repeat names
-# already probed above.
+# Categories that are NOT writers on their own: a wrapper (`sudo`, `env`,
+# `timeout`, `xargs`) and a command-string host (`flock -c`) are proven through
+# the verb they wrap, an interpreter host is proven through the write inside its
+# body, and every `cwd-extractor` (tar, unzip, cpio, patch) is already probed by
+# name in its own writer category.
+#
+# FOUR CATEGORIES USED TO BE HERE AND WERE NOT THAT, which is the exemption that
+# defeated the assertion below. The comment claimed the shared-parser tables
+# "repeat names already probed above" and that a program-argument host is proven
+# through what it wraps; measured, both were false. `program-argument-hosts` was
+# the only home of `perl`, `php`, `ruby`, `node`, `nodejs` and `sed`, and
+# `shared-parser-{mutators,state,exec}` the only home of `chattr`, `dd`, `tee`,
+# `touch` and `truncate`, so ELEVEN entries in `_VERB_PROBES` never ran once.
+# That is exactly the `shred` shape one level up: a program printed in the block
+# as covered, dispatched by nothing, allowed in practice, and the assertion
+# whose job was to catch it exempted from looking. Dropping the four cost no new
+# probes at all (every one of the eleven was already written) and turned two
+# real allows red: `perl -pi -e` and `php -r file_put_contents`, both of which
+# the block claimed and README-residuals conceded as residuals in the same PR.
 _UNPROBED_CATEGORIES = ("wrappers-local", "wrappers-shared",
                         "command-string-hosts", "interpreter-hosts",
-                        "cwd-extractors", "program-argument-hosts",
-                        "shared-parser-mutators", "shared-parser-state",
-                        "shared-parser-exec")
+                        "cwd-extractors")
 
 
 def _assert_covered_verbs_deny() -> tuple:
@@ -3900,6 +4373,21 @@ def _assert_no_undeclared_dispatch() -> tuple:
                     if isinstance(elt, _ast.Constant) and \
                             isinstance(elt.value, str):
                         names.add(elt.value)
+            elif isinstance(comp, _ast.Name):
+                # `if base in _SOME_TABLE`. QA measured this as the ONE
+                # syntactic form both assertions were blind to, and it is the
+                # form every existing table uses, so a new dispatch table added
+                # the ordinary way was invisible to the mechanism that exists to
+                # notice new dispatch. The name is resolved against THIS
+                # module's globals, so the members are the real ones and not a
+                # second list; a table the block does not carry turns this red,
+                # which forces it into `covered_verbs()` and from there into
+                # `_assert_covered_verbs_deny`, where it has to actually deny.
+                table = globals().get(comp.id)
+                if isinstance(table, (tuple, list, set, frozenset, dict)):
+                    for elt in table:
+                        if isinstance(elt, str):
+                            names.add(elt)
     try:
         block = verb_block()
     except ParserUnavailable as exc:
@@ -3964,6 +4452,90 @@ def _assert_heredoc_reader_live() -> tuple:
         return False, "heredoc_write missed the canonical direct write"
     if miss:
         return False, "heredoc_write fired on a read through the same heredoc"
+    return True, ""
+
+
+def _assert_reader_fault_denies() -> tuple:
+    """A BROKEN inline reader must deny at RUNTIME, not just be asserted about.
+
+    `_assert_heredoc_reader_live` above drives `heredoc_write` directly and its
+    own docstring says it is a selftest-time check. That is a different promise
+    from the one the selftest PRINTS ("a gate that … cannot run its heredoc
+    reader denies instead of allowing"), and the print was false: with the
+    reader raising and a heredoc present, the canonical attack came back ALLOW
+    through the module-level `except Exception: sys.exit(0)`. Measured, not
+    reasoned about, and reproduced before the fix.
+
+    So this drives the REAL main() with one reader replaced by a raise, once per
+    reader, in a sandbox HOME, and requires a deny that names the broken reader.
+    A benign command with nothing protected in it is run against the same
+    faulted gate in the same batch: it must still ALLOW, or "fail closed" would
+    just mean "deny everything"."""
+    import shutil
+    import subprocess
+    import tempfile
+    import gate_selftest
+    gate = os.path.abspath(__file__)
+    # ONE ATTACK PER READER, each carrying THAT reader's channel, or the leg
+    # proves nothing: the heredoc attack has no `-c` in it, so with
+    # `interpreter_write` faulted the deny came from the heredoc reader and the
+    # assertion was reading another mechanism's red. The benign leg is the same
+    # in all three: a command with no inline channel at all, which must stay
+    # allowed however broken the readers are.
+    shapes = {
+        "heredoc_write": "python3 - <<PY\nopen(%r,'w').write('x')\nPY",
+        "interpreter_write": "python3 -c \"open(%r,'w').write('x')\"",
+        "program_arg_write":
+            "node -e \"require('fs').writeFileSync(%r,'x')\"",
+    }
+    for reader in ("heredoc_write", "interpreter_write", "program_arg_write"):
+        sandbox = tempfile.mkdtemp(prefix="arming-readerfault-")
+        try:
+            _build_sandbox(sandbox, {})
+            prot = os.path.join(sandbox, ".claude", "settings.json")
+            attack = shapes[reader] % prot
+            benign = "echo hello"
+            driver = (
+                "import importlib.util, json, sys\n"
+                "spec = importlib.util.spec_from_file_location('g', %r)\n"
+                "m = importlib.util.module_from_spec(spec)\n"
+                "sys.modules['g'] = m\n"
+                "sys.path.insert(0, %r)\n"
+                "spec.loader.exec_module(m)\n"
+                "def boom(*a, **k):\n"
+                "    raise RuntimeError('injected: reader broken')\n"
+                "setattr(m, %r, boom)\n"
+                "sys.exit(m.main())\n"
+            ) % (gate, os.path.dirname(gate), reader)
+            env = dict(os.environ)
+            env["HOME"] = sandbox
+            env["USERPROFILE"] = sandbox
+            env["CLAUDE_SESSION_ID"] = "__selftest__"
+            for k in ("OCTO_MERGE_APPROVE", "OCTO_QA_OK", "GIT_DIR",
+                      "GIT_WORK_TREE", "GIT_INDEX_FILE"):
+                env.pop(k, None)
+            seen = {}
+            for leg, cmd in (("violation", attack), ("benign", benign)):
+                payload = json.dumps({"tool_name": "Bash", "cwd": sandbox,
+                                      "tool_input": {"command": cmd}})
+                cp = subprocess.run([sys.executable, "-c", driver],
+                                    input=payload, capture_output=True,
+                                    text=True, cwd=sandbox, env=env, timeout=60)
+                seen[leg] = (gate_selftest.emits_block(cp.returncode, cp.stdout),
+                             cp.stdout or "")
+        finally:
+            shutil.rmtree(sandbox, ignore_errors=True)
+        blocked, out = seen["violation"]
+        if not blocked:
+            return False, (f"a raising `{reader}` did NOT block the canonical "
+                           f"attack (fail-open): {out[:160]!r}")
+        if reader not in out:
+            return False, (f"the deny for a raising `{reader}` does not name "
+                           f"the reader that broke")
+        if seen["benign"][0]:
+            return False, (f"a raising `{reader}` blocked `echo hello` too; "
+                           f"fail-closed must mean the reader's own question, "
+                           f"not every command")
     return True, ""
 
 
@@ -4096,11 +4668,33 @@ def _build_sandbox(sandbox: str, setup: dict) -> None:
     # resolves that ambiguity CLOSED, and nothing proved it until now.
     os.makedirs(os.path.join(live, "sealed-ref", ".claude"), exist_ok=True)
     _touch(os.path.join(live, "registry", "rules.yaml"), "rules: []\n")
+    _touch(os.path.join(live, "registry", "kernel.yaml"), "max_tool_calls: 0\n")
     _touch(os.path.join(live, ".githooks", "pre-push"), "#!/bin/sh\n")
+    # the rest of the hooksPath directory: a SECOND hook, the policy file the
+    # push hook reads, and its README. The README is the neighbour that proves
+    # the entry is the directory and not a taste in filenames.
+    _touch(os.path.join(live, ".githooks", "commit-msg"), "#!/bin/sh\n")
+    _touch(os.path.join(live, ".githooks", "push-policy.txt"), "# policy\n")
+    _touch(os.path.join(live, ".githooks", "README.md"), "# hooks\n")
+    # the gitignored evidence stores: the receipts a fail-closed gate reads and
+    # the kernel state every isolation gate reads.
+    _touch(os.path.join(live, ".cache", "receipts", "gate.json"), "{}\n")
+    _touch(os.path.join(live, ".cache", "kernel", "ptable.json"), "{}\n")
+    _touch(os.path.join(live, ".cache", "kernel", "journal", "p.jsonl"), "\n")
+    # a NEIGHBOUR cache that is not evidence and must stay writable, or the two
+    # entries above would read as "all of .cache".
+    _touch(os.path.join(live, ".cache", "heartbeat", "last.json"), "{}\n")
     for name in ("qa-merge-gate.py", "g__pretool__kernel.py",
                  "g__stop__goal-anchor.py", "gate_selftest.py",
                  "receipt_ledger.py", "kernel_proc.py", "brain_doctor.py",
-                 "dimension-awareness-hook.py", "merge-hooks.py", "README.md"):
+                 "dimension-awareness-hook.py", "merge-hooks.py", "README.md",
+                 "r__posttool__receipt-seek.py",
+                 "r__subagent-stop__qa-receipt.py",
+                 "r__session__proc-register.py", "check-generic.py",
+                 "commit_msg_language_gate.py",
+                 # a DETECTOR, deliberately out of the set: the over-fire
+                 # control for the `r__*.py` glob.
+                 "d__stop__wa-guardia.py"):
         _touch(os.path.join(live, "scripts", name), "# stub\n")
     wt = os.path.join(sandbox, "wt", "state-gate")
     for rel in ("scripts", "registry", ".githooks"):
@@ -4112,10 +4706,17 @@ def _build_sandbox(sandbox: str, setup: dict) -> None:
     _touch(os.path.join(wt, ".claude", "settings.json"), "{}\n")
     _touch(os.path.join(wt, ".claude.json"), "{}\n")
     _touch(os.path.join(wt, "registry", "rules.yaml"), "rules: []\n")
+    _touch(os.path.join(wt, "registry", "kernel.yaml"), "max_tool_calls: 0\n")
     _touch(os.path.join(wt, ".githooks", "pre-push"), "#!/bin/sh\n")
+    _touch(os.path.join(wt, ".githooks", "commit-msg"), "#!/bin/sh\n")
+    _touch(os.path.join(wt, ".githooks", "push-policy.txt"), "# policy\n")
     for name in ("qa-merge-gate.py", "g__pretool__kernel.py",
                  "g__stop__goal-anchor.py", "gate_selftest.py",
-                 "receipt_ledger.py", "kernel_proc.py"):
+                 "receipt_ledger.py", "kernel_proc.py",
+                 "r__posttool__receipt-seek.py",
+                 "r__subagent-stop__qa-receipt.py",
+                 "r__session__proc-register.py", "check-generic.py",
+                 "commit_msg_language_gate.py"):
         _touch(os.path.join(wt, "scripts", name), "# stub\n")
     for rel, mode in (setup.get("chmod") or []):
         try:

@@ -250,8 +250,24 @@ def resolve(path: str, here: str) -> str:
     first, then the variable, which is the order the shell itself uses.
     `kernel_proc.expand_env` resolves only names this process can actually read
     and leaves the rest verbatim, so an undefined `$SOMEDIR` still reaches the
-    callers carrying its `$` and keeps the unknowable reading it had."""
-    path = kernel_proc.expand_env(os.path.expanduser(path))
+    callers carrying its `$` and keeps the unknowable reading it had.
+
+    TWO NAMES THE ENVIRONMENT ANSWERS WRONGLY, and they arrived with the
+    expansion above. `PWD` and `OLDPWD` are maintained by the SHELL from its own
+    working directory; a hook process holds whichever pair the terminal that
+    launched the harness happened to have, while the tool call runs in the
+    payload's cwd. Measured on this branch, same command, same payload cwd, the
+    verdict flipped with the hook's environment: `rm -f $PWD/.claude/
+    settings.json` DENIED when the hook's PWD was the brain and ALLOWED when it
+    was /tmp, so the same expansion produced a false deny and a false allow from
+    one variable. `here` is the answer for `PWD`: it is the cwd this segment
+    actually runs in, `cd` included, since the caller rebinds it on every `cd`
+    and `pushd`. `OLDPWD` has no answer here at all (nobody knows where the
+    shell was BEFORE), so it is marked unknowable rather than read from the
+    environment, and a target spelled with it keeps its `$` and the abstention
+    that goes with it."""
+    path = kernel_proc.expand_env(os.path.expanduser(path),
+                                  overrides={"PWD": here, "OLDPWD": None})
     return kernel_proc.norm_path(path if os.path.isabs(path) else os.path.join(here, path))
 
 
