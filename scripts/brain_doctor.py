@@ -11,12 +11,15 @@ Cross-platform: pure pathlib + subprocess with explicit args, no bash-isms.
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 CLAUDE_DIR = Path(__file__).resolve().parent.parent
@@ -52,15 +55,184 @@ GIT_HOOK_ENV = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX",
                 "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE",
                 "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_QUARANTINE_PATH")
 
+# The nine above are a RECORD of what was found, not the rule. The rule is below,
+# and it is a prefix scrub, because the enumeration was measured incomplete for the
+# third time on this file and this family CANNOT be enumerated. Dumping GIT_* from a
+# real git 2.43 pre-commit hook, invoked as `git -c user.signingkey=INJECTED -c
+# core.hooksPath=…`:
+#
+#     GIT_AUTHOR_DATE=@1788922676 +0200
+#     GIT_AUTHOR_EMAIL=a@b
+#     GIT_AUTHOR_NAME=a
+#     GIT_CONFIG_PARAMETERS='user.signingkey'='INJECTED' 'core.hooksPath'='.git/hooks'
+#     GIT_EDITOR=:
+#     GIT_EXEC_PATH=/usr/lib/git-core
+#     GIT_INDEX_FILE=.git/index
+#     GIT_PREFIX=
+#
+# and a grandchild `git config --get user.signingkey` inside that hook answered
+# `INJECTED`. Six of those eight were NOT in the tuple, and `GIT_CONFIG_PARAMETERS`
+# carries `core.hooksPath`, which is the same class as the GIT_DIR incident: a
+# parent's git silently steering a child's git. Worse for enumeration,
+# `GIT_CONFIG_COUNT` with `GIT_CONFIG_KEY_<n>` / `GIT_CONFIG_VALUE_<n>` is an
+# UNBOUNDED family of names, so no list can ever be complete and a longer list is
+# only a later miss.
+#
+# So: drop every GIT_*, and keep by exception. The line between the two is not
+# "whatever the tests need", it is what git ITSELF exports. Everything in the dump
+# above is dropped, author identity and editor included, because a selftest that
+# commits must not inherit the operator's in-flight author date — that is the
+# 2026-09-05 incident seen from the other side. Two families are kept, and neither
+# appears in that dump, so nothing a parent git hands down survives either way:
+#
+#   ACCESS      GIT_SSH*, GIT_ASKPASS, GIT_PROXY_COMMAND. Only a person sets these,
+#               and dropping them stops a machine that reaches origin through a
+#               custom ssh command from reaching it: a regression dressed as a fix.
+#   TEST KNOBS  GIT_TEST_* and GIT_TEXTDOMAINDIR. git's own suite variables, never
+#               exported to a hook, and the only way to reproduce a dubious-ownership
+#               or a translated git without a second uid and a system locale. Keeping
+#               them costs a hostile parent the ability to make our git FAIL, which
+#               it already has through PATH, and buys back two live tests.
+#
+# Scrubbing them was tried and the damage is worth recording in full, because only
+# half of it was visible. `test_a_localised_git_still_names_the_diagnosis` went RED,
+# which is the half that gets noticed. `test_the_dubious_ownership_cause_...` went
+# SILENT instead: with the knob stripped its probe git succeeded, so the test took
+# its own skip branch and reported "no dubious ownership diagnosis came back ... git
+# said: '' (rc=0)". One failure announces itself, the other reads as coverage, and
+# the second is the dangerous one.
+#
+# IMPACT RADIUS, not fixed here and not silently left either. The same nine-name
+# list is copy-pasted in two more places and both have the same hole:
+# `scripts/gate_selftest.py:147` (inline, stripping the nine before every gate leg)
+# and `scripts/receipt_ledger.py:82`. Fixing them from here would change what all
+# 33 gate legs see, which needs its own liveness run, so they are named rather than
+# touched. Three copies of one list is the reason the list drifted from the truth in
+# the first place: the fix for THAT is one rule imported once, not a fourth copy.
+GIT_ENV_KEEP = ("GIT_SSH", "GIT_SSH_COMMAND", "GIT_SSH_VARIANT", "GIT_ASKPASS",
+                "GIT_PROXY_COMMAND", "GIT_TEXTDOMAINDIR")
+
+
+def _is_scrubbed_git_var(name: str) -> bool:
+    return (name.startswith("GIT_")
+            and not name.startswith("GIT_TEST_")
+            and name not in GIT_ENV_KEEP)
+
+# Default ceiling for every subprocess this file runs. A caller that wants a
+# SHORTER leash passes `timeout=` to `run`; nothing passes a longer one. See `run`
+# for why it exists and why the default is this generous.
+RUN_TIMEOUT = 300
+
 
 def scrubbed_env(base=None) -> dict:
+    """Drop every GIT_* the parent exported, keeping only the access vars."""
     env = dict(os.environ if base is None else base)
-    for k in GIT_HOOK_ENV:
+    for k in [k for k in env if _is_scrubbed_git_var(k)]:
         env.pop(k, None)
     return env
 
 
-def run(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess:
+def _as_text(raw) -> str:
+    """Decode what a killed child had already written.
+
+    `TimeoutExpired` carries the partial output, and on POSIX it carries it as
+    BYTES no matter what `encoding=`/`text=` said: those kwargs configure the
+    decode `communicate()` does on the way OUT, and the timeout path raises before
+    that runs. So `exc.stdout` reached `selftest_cause`, which does
+    `line.startswith("FAIL")`, and a helper that printed one line and THEN hung came
+    back through `run_all` as
+
+        kernel-replay FAIL | check crashed: a bytes-like object is required, not 'str'
+
+    a traceback where a cause belongs, produced by the function written to abolish
+    tracebacks, on the COMMON member of the class: a hang that had already spoken.
+    Windows can hand back str on the same attribute, so both are accepted rather
+    than the one this machine happens to produce.
+    """
+    if raw is None:
+        return ""
+    if isinstance(raw, (bytes, bytearray)):
+        return bytes(raw).decode("utf-8", "replace")
+    return raw
+
+
+def _kill_process_group(proc) -> bool:
+    """SIGKILL the timed-out child's whole process group. True only if it was ITS own.
+
+    `subprocess.run` kills the direct child and nothing else, so a `git` that had
+    already spawned `ssh` left the ssh behind. Measured on this machine with a 2s
+    ceiling: `sh -c '<child> & exec <child>'` came back rc 124 with a survivor
+    reparented to PID 1, and so did a `setsid` descendant. Through
+    `.githooks/pre-push` that means a push that times out on a host-key prompt can
+    leave an ssh holding the operator's terminal.
+
+    The guard is the whole point and is not optional. WITHOUT `start_new_session`
+    the child shares this runner's process group (measured: child pgid == runner
+    pgid), so an unguarded `killpg` SIGKILLs the doctor itself. So the group is
+    compared against our own and the kill is refused when they match, and the caller
+    is told which of the two happened rather than being left to assume.
+
+    What this still cannot do, stated because the stderr has to be honest about it:
+    a descendant that calls `setsid` ITSELF leaves the group before the kill lands,
+    and no group kill reaches it. That is why the sentence says "reaped" only for
+    the group, never "nothing survived".
+    """
+    if proc is None or not hasattr(os, "killpg"):
+        return False
+    try:
+        pgid = os.getpgid(proc.pid)
+        if pgid == os.getpgid(0):
+            return False
+        os.killpg(pgid, signal.SIGKILL)
+        return True
+    except OSError:
+        return False
+
+
+def _drain_after_kill(proc, exc) -> tuple[str, str]:
+    """Whatever the child wrote before it was killed, as str, from the better source.
+
+    Two sources and they do not agree in type. `TimeoutExpired.stdout` is BYTES on
+    POSIX; a second `communicate()` after the kill returns the same content already
+    decoded by the text-mode reader. The second is preferred and the first is the
+    fallback for the case where the drain itself fails, with `_as_text` covering
+    either.
+    """
+    out, err = _as_text(exc.stdout), _as_text(exc.stderr)
+    if proc is None:
+        return out, err
+    try:
+        proc.kill()
+    except OSError:
+        pass
+    try:
+        # 5s, not "until EOF". The write end of these pipes is inherited, so a
+        # descendant that outlived the group kill still holds it and the EOF this
+        # waits for is never coming. Measured: the setsid shape stalled here and
+        # left `ResourceWarning: subprocess ... is still running` behind it, which
+        # is a hang introduced by the code that removes hangs.
+        d_out, d_err = proc.communicate(timeout=5)
+        out, err = _as_text(d_out) or out, _as_text(d_err) or err
+    except Exception:
+        pass
+    finally:
+        # Closed by hand for the same reason: `communicate` closes them only when
+        # it completes, and the escapee case is exactly when it does not.
+        for stream in (proc.stdout, proc.stderr):
+            try:
+                if stream is not None:
+                    stream.close()
+            except Exception:
+                pass
+        try:
+            proc.wait(timeout=1)
+        except Exception:
+            pass
+    return out, err
+
+
+def run(args: list[str], cwd: Path | None = None,
+        timeout: float | None = None) -> subprocess.CompletedProcess:
     """Run a subprocess with explicit args; never raises on non-zero.
 
     encoding/errors are NOT decoration. Bare text=True decodes with the ambient
@@ -71,16 +243,207 @@ def run(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess
     cp.stdout.strip() crash with a NoneType error that points at the caller and
     hides the real drift the subprocess was reporting. Decoding as UTF-8 with
     replacement keeps stdout a str on every platform and every call site.
+
+    LC_ALL=C for git is the same class of defect one layer out. git TRANSLATES
+    its own diagnosis prefixes, so `git_failure_cause` — which selects on
+    `fatal:` / `error:` — matches nothing under a localised git and falls back to
+    the last line, which is the REMEDY. Measured on git 2.43 with a compiled `de`
+    catalog and GIT_TEXTDOMAINDIR pointed at it, the row printed exactly the
+    sentence that selection exists to abolish:
+
+        git itself failed on this checkout (git config --global --add
+        safe.directory <path>)
+
+    git's own po files carry those prefixes: de gives `Schwerwiegend: `, fr gives
+    `fatal : ` with a space before the colon, es leaves `fatal: ` unchanged. The
+    parser cannot be taught every translation, so the OUTPUT is pinned instead.
+    Here and not at the call site, because a call site wrapped as
+    `env LC_ALL=C git …` changes argv, and every caller and stub that reads
+    `args[:2] == ["git", …]` breaks with it. LANGUAGE is not cleared: glibc
+    ignores it once the locale is C, measured on this machine as
+    `LANGUAGE=de LC_ALL=C`, which printed English.
+
+    Reach today is small and worth saying rather than hiding: this distro's git
+    package ships zero `.mo` files, and this machine's `LC_MESSAGES` is
+    `en_US.UTF-8` anyway — only LC_NUMERIC / LC_TIME / LC_MONETARY and the other
+    non-message categories are `es_ES.UTF-8`, and git's prefixes are chosen by
+    LC_MESSAGES. It is real on any distro that ships git localisation.
+
+    The pin is keyed on the BASENAME, so `/usr/bin/git` is pinned and a wrapper on
+    PATH under another name (`mygit`) is not. That is by design and not a hole:
+    nothing in this doctor calls git under another name, and a name-blind pin would
+    put LC_ALL=C on every helper this file runs, several of which print Spanish.
+
+    A call that never answers has no cause at all, which is the same reader-facing
+    failure one step further out. THREE call sites reach the NETWORK, not one:
+    `git ls-remote --tags origin` in the changelog check, `gh pr list` and
+    `git ls-remote --heads origin` in the stale-branch audit. Over ssh with no agent
+    git waits on a passphrase, over https it waits on a username, and a host that
+    silently drops the packets waits on the TCP stack: each one hangs the doctor
+    and, through `.githooks/pre-push`, the push behind it, with no row and no exit
+    code. Three guards, cheapest first.
+
+    FOUR guards, covering four DIFFERENT channels, and none substitutes for another.
+    That is the correction to an earlier version of this paragraph, which claimed
+    stdin=/dev/null meant "nothing can read from the operator's terminal" when it
+    covers only one of the four.
+
+    stdin is /dev/null. That covers fd 0: a child that reads its standard input
+    reads EOF, so it cannot eat the ref list `pre-push` feeds this process. On its
+    own it does NOT cover a reader that opens /dev/tty, measured twice under a pty:
+    `sh -c 'read x </dev/tty'` blocked the full 3s, and `git ls-remote` against an
+    https remote answering 401 printed `Username for 'https://github.com': ` and
+    hung 8s.
+
+    start_new_session covers /dev/tty, and it is here for the reaper below rather
+    than for this, so the coverage is a second gain and worth writing down. A child
+    in a fresh session has NO controlling terminal, so opening /dev/tty fails
+    outright: the same pty measurement, re-run through this runner, returned in
+    0.05s with `sh: 1: cannot open /dev/tty: No such device or address` where it had
+    blocked for 3s.
+
+    DEVNULL rather than `input=b""`, which would also give the child an empty stdin.
+    They are mutually exclusive in subprocess (`ValueError: stdin and input arguments
+    may not both be used.`), and they differ where it matters for a child that
+    WRITES to fd 0: under `input=b""` fd 0 is the read end of a pipe, so
+    `os.write(0, b'x')` raises `OSError 9 Bad file descriptor`, while under DEVNULL
+    it succeeds and is discarded. DEVNULL also costs one fd instead of a pipe pair
+    per call, and it leaves `input=` free for any caller that ever needs it.
+
+    GIT_TERMINAL_PROMPT=0 covers git's own prompt, and it earns its place even now
+    that the session guard exists, because it changes the ANSWER and not just the
+    timing: git checks the variable before it ever reaches for a terminal, so the
+    same 401 remote comes back rc 128 in 1.28s with `fatal: could not read Username
+    for 'https://github.com': terminal prompts disabled` — a named cause — instead
+    of an ENXIO about a device file, which is a true sentence about the wrong
+    subject. It is git's variable and only git's, so it says nothing about ssh's
+    passphrase reader, which honours SSH_ASKPASS and BatchMode instead.
+
+    RUN_TIMEOUT is the backstop for what none of the three can name: a host that
+    drops packets, a helper that wedges on something else entirely. Answered as
+    rc 124, the `timeout(1)`
+    convention, so a hang reads like every other rc and the partial output the child
+    managed to write survives into the row. 300s is deliberately generous: the
+    slowest thing through here is a gate selftest that clones repos, and a doctor
+    that FAILs a healthy slow machine would be printing a wrong cause, which is the
+    defect this file exists to remove. A caller with a cheaper question passes
+    `timeout=` for a shorter leash.
+
+    What is measured and NOT a hang source, recorded because it was written here as
+    one: a repo mid-`git gc` does not wait. On git 2.43 with `index.lock` and
+    `packed-refs.lock` both present, `ls-remote` answered in 0.014s rc 0, and
+    `add`/`pack-refs` failed in 9ms and 1.2s with `fatal: Unable to create
+    '...lock': File exists.` git fails on a held lock, it does not queue behind it.
+
+    The timeout IS a reaper now, and the previous version of this docstring argued
+    it should not be. That argument was wrong on its own terms: it said a stray ssh
+    is "the operator's to notice", but this runs from `.githooks/pre-push`, so the
+    thing the operator would notice is an ssh holding their terminal after a push
+    that already returned. Measured with a 2s ceiling before the change: both
+    `sh -c '<child> & exec <child>'` and a `setsid` descendant came back rc 124 with
+    a survivor reparented to PID 1, and the stderr said nothing about it.
+
+    So the timeout path kills the child's process GROUP, guarded, and the stderr
+    says which of two things happened: `(process group reaped)` or `(child only; a
+    descendant in another group may survive)`. The reader can tell a complete kill
+    from a partial one, which is the half of the problem a silent sentence left
+    open. `_kill_process_group` carries the guard and its measurement.
+
+    Still not caught, and the sentence is worded so as not to claim otherwise: a
+    descendant that calls `setsid` ITSELF has left the group before the kill lands.
+    Measured after the change: shape one leaves no survivor where it used to leave
+    one, shape two still leaves its setsid child alive. "Group reaped" is a claim
+    about the group, never about the whole tree.
+
+    A child killed by a SIGNAL is a fourth road and it is not a hang: `returncode`
+    comes back NEGATIVE (measured: -9 for SIGKILL, -11 for SIGSEGV) with both
+    streams usually empty, so there is nothing for either selector to read. Rather
+    than print `exit -9` at a reader, the selectors name the signal, because the two
+    that actually arrive here say something: SIGKILL is how the OOM killer arrives
+    on a machine that ran out of memory, and SIGSEGV is a broken binary.
     """
-    return subprocess.run(
-        args,
-        cwd=str(cwd) if cwd else None,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        env=scrubbed_env(),
-    )
+    env = scrubbed_env()
+    if args and Path(str(args[0])).name in ("git", "git.exe"):
+        env["LC_ALL"] = "C"
+        env["GIT_TERMINAL_PROMPT"] = "0"
+    limit = RUN_TIMEOUT if timeout is None else timeout
+    proc = None
+    try:
+        # Popen, not subprocess.run, for exactly one reason: `run` throws the Popen
+        # away, and the pid is what a group kill needs. Everything else here is what
+        # `run(capture_output=True, text=True, ...)` does internally.
+        proc = subprocess.Popen(
+            args,
+            cwd=str(cwd) if cwd else None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        out, err = proc.communicate(timeout=limit)
+        return subprocess.CompletedProcess(args, proc.returncode, out, err)
+    except subprocess.TimeoutExpired as exc:
+        # Both streams decoded, for the reason `_as_text` records. And the partial
+        # STDERR is KEPT rather than thrown away: it was replaced wholesale by the
+        # synthesised sentence, which discarded the only words the child got out
+        # before it stopped answering — for a git waiting on a passphrase, or a
+        # gate whose selftest printed its first failure and then wedged, those
+        # words ARE the diagnosis. The synthesised line goes LAST so that
+        # `selftest_cause`, which reads the first MARKED line and falls back to the
+        # last, gives the child's own verdict when it marked one and the timeout
+        # sentence when it did not.
+        # Polled BEFORE the kill, because it is the one moment that can still tell
+        # the two timeouts apart. `communicate` waits for EOF on the pipes, not for
+        # the child, and the write end is inherited: a child that exits immediately
+        # while a background descendant holds fd 1 open produces a full-length
+        # timeout with nothing wrong with the child. Measured with a 2s ceiling,
+        # `sh -c '<child> & exit 0'` gave rc 124 in 2.04s while sh itself had
+        # answered 0 in about no time, and the row said `sh: no answer in 2s`. A
+        # wrong cause, in the row this branch rewrote, about the process the reader
+        # would go and look at first.
+        child_rc = proc.poll() if proc is not None else None
+        reaped = _kill_process_group(proc)
+        out, err = _drain_after_kill(proc, exc)
+        group = ("process group reaped" if reaped else
+                 "a descendant in another group may survive")
+        if child_rc is not None:
+            note = (f"{args[0]}: exited {child_rc} within {limit}s but its output "
+                    f"stayed open that long, held by a descendant ({group})")
+        else:
+            note = f"{args[0]}: no answer in {limit}s, killed ({group})"
+        return subprocess.CompletedProcess(
+            args, 124, out, f"{err.rstrip()}\n{note}" if err.strip() else note)
+    except OSError as exc:
+        # A binary that is missing, not executable, or shadowed by a file where a
+        # directory belongs is NOT a non-zero exit: subprocess raises before any
+        # child exists, so the promise above was kept and the caller got a
+        # traceback anyway. Through run_all that surfaced as `FAIL check crashed:
+        # [Errno 2] No such file or directory: 'git'` — a traceback where a cause
+        # belongs, which is the defect this file is being cleaned of, arriving by
+        # the one road that never reaches the parser. Answer it as a cause, with
+        # the shell's own conventional codes (127 not found, 126 not executable),
+        # so `git_failure_cause` names it like every other failure.
+        #
+        # The class, not three of its members. FileNotFoundError, PermissionError
+        # and NotADirectoryError were named one by one and ENOEXEC (a git wrapper
+        # saved without a shebang, a wrong-arch binary on a shared mount) is a
+        # plain OSError (errno 8, measured), so it still handed the caller the
+        # traceback this clause says it removed; ELOOP and E2BIG likewise. Every
+        # one of them means the same thing: exec failed before a child existed.
+        #
+        # And the name in the sentence is the one the OS blamed, not args[0]. With
+        # a cwd that does not exist the exec fails with ENOENT on the DIRECTORY
+        # (measured: filename='/no/such/dir') and `args[0]` printed `git: No such
+        # file or directory` about a git that is installed and fine, a wrong cause
+        # inside the fix for wrong causes. Reach is nil today, every `cwd=` here is
+        # CLAUDE_DIR, and the sentence is wrong anyway.
+        rc = 127 if exc.errno == errno.ENOENT else 126
+        return subprocess.CompletedProcess(
+            args, rc, "", f"{exc.filename or args[0]}: {exc.strerror or exc}")
 
 
 def git(*args: str) -> subprocess.CompletedProcess:
@@ -633,10 +996,9 @@ def check_release_drift(fix: bool) -> Result:
                                   f"drift repaired locally: {len(added)} entr"
                                   f"{'y' if len(added) == 1 else 'ies'} added by "
                                   f"changelog-sync; commit via normal PR flow")
-                detail = (cp.stderr or cp.stdout or "").strip().splitlines()
                 return Result(key, WARN,
                               f"changelog-sync --apply did not repair the drift "
-                              f"({detail[-1] if detail else 'no output'})",
+                              f"({selftest_cause(cp, 'no output')})",
                               "run `python3 scripts/changelog-sync.py --apply` and inspect")
             return Result(key, WARN,
                           f"newest tag {newest} ahead of CHANGELOG top v{top_version} — "
@@ -648,17 +1010,40 @@ def check_release_drift(fix: bool) -> Result:
     # A fresh clone may not have fetched tags. "Released" = the remote tag / GH release
     # exists, not whether this working copy happened to pull it — so fall back to the
     # remote before declaring drift, or the check false-positives on every un-fetched clone.
-    try:
-        ls = subprocess.run(
-            ["git", "ls-remote", "--tags", "origin", f"v{top_version}"],
-            cwd=str(CLAUDE_DIR), capture_output=True, text=True, timeout=10,
-        )
-        if ls.returncode == 0 and f"refs/tags/v{top_version}" in ls.stdout:
-            return Result(key, PASS,
-                          f"CHANGELOG top v{top_version} released (remote tag exists; "
-                          f"not fetched locally — `git fetch --tags` to sync)")
-    except (subprocess.TimeoutExpired, OSError):
-        pass  # offline — fall through to the local-only verdict below
+    # Through `run`, not a bare `subprocess.run`. This is the one call site that
+    # bypassed the runner, and it bypassed all five of its guarantees at once: no
+    # `scrubbed_env`, so a `GIT_DIR` exported by `.githooks/pre-push` would have
+    # pointed this ls-remote at whatever repo invoked the hook (the 2026-09-05
+    # incident, one call away from repeating); no LC_ALL=C; no
+    # GIT_TERMINAL_PROMPT=0, so a private origin over https could sit here asking
+    # a pre-push for a username; and no stdin=/dev/null, so it could have eaten
+    # the ref list on fd 0. The 10s leash is the one thing worth keeping — the
+    # question is cheap and the answer is optional — so it is passed as `timeout=`
+    # rather than dropped for the 300s default.
+    #
+    # No try/except: `run` answers a timeout as rc 124 and a missing git as rc 127
+    # instead of raising, so the rc check below covers every road the except
+    # clause used to.
+    ls = run(["git", "ls-remote", "--tags", "origin", f"v{top_version}"],
+             cwd=CLAUDE_DIR, timeout=10)
+    if ls.returncode == 0 and f"refs/tags/v{top_version}" in ls.stdout:
+        return Result(key, PASS,
+                      f"CHANGELOG top v{top_version} released (remote tag exists; "
+                      f"not fetched locally — `git fetch --tags` to sync)")
+    if ls.returncode != 0:
+        # A remote that was never ANSWERED is not a remote without the tag, and the
+        # row said it was: rc 124, 127 and 128 all fell through to `(local or
+        # remote)` below, so a laptop on a plane, a git that is not installed and a
+        # timed-out origin were all reported as "the release was never cut". That
+        # is the wrong-cause defect this whole branch is about, sitting inside the
+        # one call it rerouted, and the comment one line up already knew the three
+        # roads apart while the sentence did not.
+        return Result(key, WARN,
+                      f"CHANGELOG declares v{top_version} and no local tag has it; "
+                      f"the remote could not be asked ({git_failure_cause(ls.stderr, ls.returncode)})",
+                      f"re-run with the network up, or `git fetch --tags` and read "
+                      f"the local answer")
+    # The remote answered and does not have it: the release really was never cut.
     return Result(key, WARN,
                   f"CHANGELOG declares v{top_version} but no git tag v{top_version} (local or remote) — "
                   f"release & news never cut (news = top-of-funnel marketing; a major bump with no news = lost reach)",
@@ -1306,8 +1691,8 @@ def check_gate_liveness(fix: bool) -> Result:
     for r, loc in proofs:
         cp = _run_selftest_locator(loc)
         if cp.returncode != 0:
-            detail = (cp.stderr or cp.stdout or "").strip().splitlines()
-            failed.append(f"{r.get('id', '?')}: {detail[-1] if detail else 'selftest exit '+str(cp.returncode)}")
+            failed.append(f"{r.get('id', '?')}: "
+                          f"{selftest_cause(cp, 'selftest exit ' + str(cp.returncode))}")
     if failed:
         return Result(key, FAIL,
                       f"{len(failed)}/{len(proofs)} gate selftest(s) do NOT block+allow correctly: "
@@ -1476,10 +1861,8 @@ def check_kernel_quota_live(fix: bool) -> Result:
                       "restore the kernel hot-path gate")
     cp = _run_selftest_locator(loc)
     if cp.returncode != 0:
-        detail = (cp.stderr or cp.stdout or "").strip().splitlines()
         return Result(key, FAIL,
-                      "quota selftest failed: "
-                      + (detail[-1] if detail else f"exit {cp.returncode}"),
+                      "quota selftest failed: " + selftest_cause(cp),
                       "the quota gate no longer refuses a process over its cap; "
                       "fix the gate or the fixture")
 
@@ -1587,10 +1970,9 @@ def check_kernel_process_live(fix: bool) -> Result:
             return Result(key, FAIL, f"{script} is missing", "restore the kernel hook")
         cp = _run_selftest_locator(loc)
         if cp.returncode != 0:
-            detail = (cp.stderr or cp.stdout or "").strip().splitlines()
             return Result(key, FAIL,
                           f"{Path(script).name} selftest failed: "
-                          + (detail[-1] if detail else f"exit {cp.returncode}"),
+                          + selftest_cause(cp),
                           "the register/exit reflexes no longer prove themselves; fix the hook or the fixture")
     sys.path.insert(0, str(CLAUDE_DIR / "scripts"))
     try:
@@ -1639,12 +2021,19 @@ def check_kernel_process_live(fix: bool) -> Result:
             except OSError:
                 continue
     journals.sort(reverse=True)
+    # The SAME defect the sibling check just had, four functions up and in this same
+    # file: the sentence below printed `min(len(journals), 5)`, a bound read off the
+    # list instead of off the loop, so narrowing the slice left the row claiming five
+    # chains verified while one had. Fixed here too rather than left as the twin of a
+    # bug this file now says it abolished.
+    verified = 0
     for _, pid in journals[:5]:
         code, why = kernel_proc.verify_detail(pid)
         if code != 0:
             return Result(key, FAIL, f"journal chain broken for pid {pid}: {why}",
                           "the journal is append-only and hash-chained; a broken chain is tamper "
                           "evidence, read it before deleting the file")
+        verified += 1
     opened = 0
     cutoff = now - 7 * 24 * 3600
     for mtime, pid in journals:
@@ -1686,7 +2075,7 @@ def check_kernel_process_live(fix: bool) -> Result:
         bench_note = "hot path could not be measured"
 
     msg = (f"3 selftests pass; {len(procs)} process row(s), {len(live)} live, all journaled; "
-           f"{min(len(journals), 5)} newest chain(s) verify; {opened} call(s) ran unjournaled "
+           f"{verified} newest chain(s) verify; {opened} call(s) ran unjournaled "
            f"in 7 days; golden replay matches; {bench_note}")
     hint = ("the hot path is slower than the budget; it is a WARN by design, "
             "compare `octo bench` on an idle box before acting"
@@ -1725,10 +2114,8 @@ def check_kernel_isolation_gate(fix: bool) -> Result:
                           "restore the isolation gate")
         cp = _run_selftest_locator(f"scripts/{script} --selftest {fixtures}")
         if cp.returncode != 0:
-            detail = (cp.stderr or cp.stdout or "").strip().splitlines()
             return Result(key, FAIL,
-                          f"{script} selftest failed: "
-                          + (detail[-1] if detail else f"exit {cp.returncode}"),
+                          f"{script} selftest failed: " + selftest_cause(cp),
                           "one writer per tree and per lane is not enforced; fix the gate or the fixture")
     idx = _hooks_index()
     unwired = [f"{script} at PreToolUse|{matcher}" for script, matcher in wanted
@@ -1741,6 +2128,31 @@ def check_kernel_isolation_gate(fix: bool) -> Result:
                   "both isolation gates prove themselves and are wired "
                   "(Write|Edit|NotebookEdit|MultiEdit, Bash, and Agent for the delegate "
                   "release); hook order not asserted, same-event hooks run in parallel")
+
+
+# The rule id `scripts/r__permission-denied__journal.py` stamps on every line it
+# writes. A line counts as the reflex's own coverage only when it carries this id
+# AND `source == "harness"`, which is `HARNESS_DENY_SOURCE` below.
+#
+# BOTH, not either. The first draft argued rule-over-source and the argument held
+# only half. Counting by `source` alone is FAIL-OPEN in the obvious direction: a
+# future writer recording a harness refusal under a different rule id keeps the row
+# green while THIS reflex is dead, the exact silence the check exists to break. But
+# the rule id alone is not the loud choice it was sold as. It fails loud on the day
+# the id moves ONLY where automode refusals exist after arming, and on this brain
+# that is 0 of 571, so an id move presents as the same WARN the row already shows
+# rather than as a FAIL. Requiring both costs nothing on live data (the reflex
+# writes `source` on every line, r__permission-denied__journal.py:80, and its
+# selftest asserts it) and closes the hole rule-only leaves open: a DIFFERENT writer
+# stamping this same id would otherwise be counted as coverage for a reflex that
+# recorded nothing. Two conditions is strictly more fail-closed than either alone.
+#
+# Both fields are also bound to their writer by the suite rather than by prose:
+# `test_the_doctors_rule_id_is_the_one_the_reflex_writes` imports the reflex module
+# and compares, so the pair cannot drift silently, which is what the id choice
+# exists to make loud in the first place.
+HARNESS_DENY_RULE = "HARNESS.permission-denied"
+HARNESS_DENY_SOURCE = "harness"
 
 
 def check_kernel_replay(fix: bool) -> Result:
@@ -1760,6 +2172,11 @@ def check_kernel_replay(fix: bool) -> Result:
        attributed to a rule the registry does not carry is an orphan mechanism,
        and it is a FAIL, not a WARN, because the alternative is a gate that
        refuses work under a name nobody can look up.
+    4. The PermissionDenied reflex's OWN deny lines, since the hook was armed, are
+       compared against the harness's own record of what it refused. That count is
+       `HARNESS_DENY_RULE` only, never assertion 3's total: the total is every
+       gate's refusals, and comparing it to a harness record made the row read PASS
+       on a brain whose reflex had recorded nothing at all.
 
     Never writes. Passes on a fresh install with no journals at all: zero
     journals is zero orphans, and saying so is honest where inventing a WARN
@@ -1787,10 +2204,9 @@ def check_kernel_replay(fix: bool) -> Result:
     cp = run([py, str(CLAUDE_DIR / "scripts" / "r__permission-denied__journal.py"),
               "--selftest", "registry/fixtures/FLOW.kernel-journal"], cwd=CLAUDE_DIR)
     if cp.returncode != 0:
-        detail = (cp.stderr or cp.stdout or "").strip().splitlines()
         return Result(key, FAIL,
                       "the PermissionDenied reflex selftest failed: "
-                      + (detail[-1] if detail else f"exit {cp.returncode}"),
+                      + selftest_cause(cp),
                       "a harness denial would go unrecorded; fix the reflex or the fixture")
 
     sys.path.insert(0, str(CLAUDE_DIR / "scripts"))
@@ -1813,12 +2229,19 @@ def check_kernel_replay(fix: bool) -> Result:
             except OSError:
                 continue
     journals.sort(reverse=True)
+    # COUNTED, not restated. The PASS sentence used to print `min(len(journals), 5)`,
+    # a bound computed from the list rather than from the loop, so narrowing the
+    # slice to `[:1]` left the row claiming five journals replayed while one had
+    # (QA cycle 13). A bound stated in prose that the mechanism does not impose is
+    # the same defect this whole check exists to abolish, one level down.
+    replayed = 0
     for _, pid in journals[:5]:
         cp = run([py, str(octo), "replay", pid, "--verify"], cwd=CLAUDE_DIR)
         if cp.returncode != 0:
             return Result(key, FAIL, f"replay --verify failed for pid {pid}",
                           "a real journal does not replay or its chain is broken; "
                           f"run `octo replay {pid} --verify` and read it before deleting")
+        replayed += 1
 
     try:
         registered = {r.id for r in Registry.load(REGISTRY_PATH).rules}
@@ -1827,17 +2250,48 @@ def check_kernel_replay(fix: bool) -> Result:
                       "fix rules.yaml, then re-run")
     now = time.time()
     cutoff = now - 7 * 24 * 3600
-    denies, orphans = 0, {}
+    denies, orphans, reflex_ts = 0, {}, []
     for mtime, pid in journals:
         if mtime < cutoff:
             continue
         for line in kernel_proc.read_journal(pid):
             if not isinstance(line, dict) or line.get("kind") != "deny":
                 continue
-            if float(line.get("ts") or 0) < cutoff:
+            # NAMED, not raised. `float()` on a `ts` that is not a number threw
+            # ValueError straight out of the check, and `run_all` rendered it as
+            # "FAIL check crashed: could not convert string to float", a traceback
+            # where a cause belongs. The direction was already fail-closed and the
+            # shape is tamper-only (`kernel_proc.append` computes `float(ts)` itself
+            # and refuses to write such a line), so what was missing was never the
+            # verdict, only the sentence.
+            try:
+                ts = float(line.get("ts") or 0)
+            except (TypeError, ValueError):
+                return Result(key, FAIL,
+                              f"a deny line in journal {pid} carries a ts that is not a "
+                              f"number ({line.get('ts')!r})",
+                              "append() cannot write that line, so the journal was edited "
+                              f"after the fact: read `octo replay {pid}` before trusting "
+                              "any count from it")
+            if ts < cutoff:
                 continue
             denies += 1
             rule = str(line.get("rule") or "")
+            # TWO counts, because they answer two questions. `denies` is every
+            # gate's refusal and it is what the orphan-rule assertion below is
+            # about. `reflex_ts` is only the lines the PermissionDenied reflex
+            # wrote, and it is the only number the coverage comparison may use:
+            # thirteen other gates journal `kind: deny` under their own rule ids,
+            # so on this brain the total was 571 while the reflex's own count was
+            # 0, and feeding the total to `deny_coverage` made a dead reflex read
+            # PASS against a live harness refusal (QA cycle 13).
+            #
+            # Rule id AND source, for the reason spelled out at HARNESS_DENY_RULE:
+            # the id alone would count a line some OTHER writer stamped with it as
+            # coverage for a reflex that recorded nothing.
+            if (rule == HARNESS_DENY_RULE
+                    and str(line.get("source") or "") == HARNESS_DENY_SOURCE):
+                reflex_ts.append(ts)
             if rule not in registered:
                 orphans.setdefault(rule or "(unnamed)", []).append(pid)
     if orphans:
@@ -1846,9 +2300,602 @@ def check_kernel_replay(fix: bool) -> Result:
                       f"{len(orphans)} deny rule id(s) in 7 days are in no registry row: {named}",
                       "a refusal under a name the registry does not carry is an orphan "
                       "mechanism (RULE #1): register the rule, or fix the id the gate journals")
+    armed_at, harness_denies, other_denies, why = _harness_refusals_since_hook(cutoff)
+    # The harness side counts refusals since the hook was armed, so the journal
+    # side has to start at the same instant or the two numbers describe different
+    # windows. `armed_at` is never earlier than `cutoff`, so this only ever
+    # narrows.
+    reflex_denies = (len(reflex_ts) if armed_at is None
+                     else sum(1 for t in reflex_ts if t >= armed_at))
+    status, coverage, hint = deny_coverage(reflex_denies, armed_at, harness_denies,
+                                           other_denies, why, denies)
+    if status in (FAIL, WARN):
+        # WARN was being collapsed into the PASS line below, which threw away both
+        # the status and the hint: the one new verdict this check introduced was
+        # invisible at the surface and its guidance was dropped on the floor (QA
+        # cycle 2). A status the caller does not carry is a status that does not
+        # exist.
+        return Result(key, status, coverage, hint)
     return Result(key, PASS,
-                  f"golden replay verifies byte for byte; {min(len(journals), 5)} real "
-                  f"journal(s) replay; {denies} deny(s) in 7 days, all naming a registered rule")
+                  f"golden replay verifies byte for byte; {replayed} real "
+                  f"journal(s) replay; {coverage}")
+
+
+def deny_coverage(reflex_denies: int, armed_at: float | None, harness_denies: int,
+                  other_denies: int = 0, why: str = "",
+                  total_denies: int | None = None) -> tuple[str, str, str]:
+    """Turn the counts into (status, sentence, hint). Pure, so it is testable.
+
+    Three states used to print one sentence. A journal with no denies is healthy when
+    nothing was refused and broken when everything was, and `0 deny(s) in 7 days`
+    said both. Separating them is the whole change; keeping the decision out of the
+    check that gathers the numbers is what makes all three reachable in a test
+    instead of only the one the machine happens to be in.
+
+    TWO deny counts, and only one of them decides anything. `reflex_denies` is the
+    lines the PermissionDenied reflex itself wrote, in the same window as
+    `harness_denies`, and it is what every branch below tests. `total_denies` is
+    every gate's refusals and appears in the sentence only because that is what the
+    orphan-rule assertion above ranged over; comparing it to the harness record was
+    comparing the qa-merge-gate's 495 refusals against a reflex that had written
+    none, which returned PASS on a brain whose reflex had never fired (QA cycle 13).
+    It defaults to `reflex_denies` so a caller that has only one number cannot
+    accidentally claim a second.
+    """
+    total = reflex_denies if total_denies is None else total_denies
+    base = f"{total} deny(s) in 7 days, all naming a registered rule"
+    if armed_at is None:
+        # No window. SEVEN roads reach here and `why` is the only thing that tells
+        # them apart; they are enumerated in `_harness_refusals_since_hook`.
+        # Claiming nothing is right, and SAYING nothing is not: this
+        # used to print the same PASS line as a comparison that ran and came back
+        # clean, which is cycle 1's own thesis reappearing one level up, inside the
+        # function that fixed it. Three roads reach here now and one of them is a
+        # directory that merely vanishes mid-walk, with no attacker involved, so a
+        # reader has to be able to tell "compared and clean" from "never compared".
+        # "could not be read" was false on the shallow-clone road, where this returns
+        # before touching the transcripts at all: the record was fine, the WINDOW
+        # could not be established (QA cycle 5).
+        # The cause rides in the SENTENCE, not the hint. Measured: this branch
+        # returns PASS, the caller forwards a hint only for FAIL and WARN, and the
+        # printer prints one only for FAIL and WARN, so the cause was invisible
+        # twice over while the commit message claimed a reader learned it. One
+        # sentence with a short parenthetical beats four branches of prose and,
+        # unlike the hint, it arrives (QA cycle 6).
+        cause = f" ({why})" if why else ""
+        return PASS, (f"{base}; the comparison window could not be established"
+                      f"{cause}, so the reflex was NOT compared against the "
+                      f"harness record"), ""
+    if harness_denies == 0:
+        if other_denies:
+            if reflex_denies == 0:
+                # The automode family is the only one this harness was measured to
+                # fire PermissionDenied for, and that measurement has never been
+                # confirmed against a post-arm refusal, because there has not been
+                # one. Counting only automode is therefore the FAIL-OPEN choice: if
+                # the runtime does fire for another class, or starts to, a wired and
+                # dead reflex would read PASS. So the classes outside the family are
+                # counted separately and reported as a WARN, which asks a human to
+                # look without blocking a push on a claim the data does not support
+                # either way (QA cycle 1).
+                return WARN, (f"{base}; {other_denies} refusal(s) of other classes since "
+                              f"the hook went live and none reached the journal; if this "
+                              f"harness fires PermissionDenied for them, the reflex is "
+                              f"dead rather than unexercised"), (
+                    "confirm which toolDenialKind classes reach the hook on this runtime, "
+                    "then either widen the count in _harness_refusals_since_hook or "
+                    "record the measurement in its docstring")
+            # Refusals happened, just not of the family the hook fires for, and the
+            # reflex has lines of its own. "The harness refused nothing" was printed
+            # here too and it was simply false: nine refusals had happened. A
+            # sentence that survives only because nobody counts is the defect this
+            # check is about (QA cycle 13).
+            return PASS, (f"{base}, {reflex_denies} of them from the reflex; the hook's "
+                          f"own family refused nothing since it went live, though "
+                          f"{other_denies} refusal(s) of other classes did"), ""
+        return PASS, (f"{base}; the harness refused nothing since the hook went live, "
+                      f"so the reflex is unexercised rather than proven"), ""
+    if reflex_denies == 0:
+        return FAIL, (f"the harness refused {harness_denies} call(s) since the "
+                      f"PermissionDenied hook went live and the journal recorded none"), (
+            "the reflex is wired and not firing: check hooks.json still carries "
+            "PermissionDenied, then run `scripts/r__permission-denied__journal.py "
+            "--selftest registry/fixtures/FLOW.kernel-journal`")
+    return PASS, (f"{base}, {reflex_denies} of them from the reflex, against "
+                  f"{harness_denies} harness refusal(s) in the same window"), ""
+
+
+GIT_DIAGNOSIS_PREFIXES = ("fatal:", "error:", "BUG:", "git: ")
+
+
+def _drop_usage_block(raw_lines: list[str]) -> list[str]:
+    """Everything except git's usage block, which is a remedy and never a cause.
+
+    Takes UNSTRIPPED lines because the block is delimited by indentation: git prints
+    `usage: <synopsis>` and continues it on lines that are indented or blank
+    (parse-options.c and the dispatcher's own usage in git.c both do this). The
+    first line that is neither ends the block.
+    """
+    out, in_usage = [], False
+    for ln in raw_lines:
+        if ln.strip().startswith("usage: "):
+            in_usage = True
+            continue
+        if in_usage:
+            if not ln.strip() or ln[:1] in (" ", "\t"):
+                continue
+            in_usage = False
+        out.append(ln)
+    return out
+
+
+def _exit_cause(returncode) -> str:
+    """The cause of a process that said nothing at all.
+
+    `exit -9` is a code, not a cause, and it is what both selectors printed for the
+    one class that reliably arrives silent. A negative returncode is POSIX's way of
+    reporting death by SIGNAL (measured through `run`: -9 for SIGKILL, -11 for
+    SIGSEGV, both with empty stdout and stderr), and the two that arrive here mean
+    something a reader can act on: SIGKILL is how the OOM killer ends a gate
+    selftest on a machine that ran out of memory, SIGSEGV is a broken binary. rc 124
+    is NOT one of these — `run` synthesises it with a sentence, so a hang keeps its
+    own words.
+    """
+    if isinstance(returncode, int) and returncode < 0:
+        try:
+            return f"killed by {signal.Signals(-returncode).name} (signal {-returncode})"
+        except ValueError:
+            return f"killed by signal {-returncode}"
+    return f"exit {returncode}"
+
+
+def git_failure_cause(stderr: str, returncode: int) -> str:
+    """The line of git's stderr that says WHY, not the one that says what to type.
+
+    `detail[-1]` was the whole selection, and on the case this function's caller
+    names first it picks the wrong line. Measured on git 2.43, inside a repo with
+    `GIT_TEST_ASSUME_DIFFERENT_OWNER=1`:
+
+        fatal: detected dubious ownership in repository at '<path>'
+        To add an exception for this directory, call:
+
+            git config --global --add safe.directory <path>
+
+    git puts the diagnosis FIRST and the remedy LAST, so the last line handed the
+    reader a command where the cause belongs, and the row read "git itself failed
+    on this checkout (git config --global --add safe.directory ...)". A remedy
+    printed as a cause is the wrong-cause defect this whole check is built to
+    abolish, arriving inside the check itself.
+
+    So: the first `fatal:` or `error:` line, which is git's own convention for the
+    diagnosis, and the last non-empty line only when git said neither (a wrapper on
+    PATH, a shim, a message this does not recognise). Falling back rather than
+    returning nothing keeps every road named, which is the property the caller
+    depends on.
+
+    The prefixes are matched literally and that is only safe because `run` pins
+    LC_ALL=C on every git call. Under a localised git they are translated
+    (`Schwerwiegend: `, `fatal : `), nothing matches, and the fallback hands back
+    the remedy again — the defect above, reappearing one layer out. The pin lives
+    in `run` and the reason lives there with it.
+
+    A diagnosis that ENDS in a colon is continued on the next line, and the noun is
+    the part the reader needs. Measured on git 2.43 in a repo with
+    `core.repositoryformatversion=1` and an unknown `extensions.bogus`:
+
+        fatal: unknown repository extension found:
+        \tbogus
+
+    so the unjoined cause named a class of failure without naming the thing that
+    caused it. One continuation line is taken, not all of them: git lists one
+    extension per line and a row is a sentence, not a dump.
+
+    Translation was one way for a diagnosis to go unrecognised and it is not the
+    only one. `fatal:` and `error:` are what a SUBCOMMAND writes; git the dispatcher
+    has prefixes of its own, and the fallback turned one of them into the same
+    remedy-as-cause. Verbatim git 2.43, for a subcommand this git does not have
+    (the day this doctor calls one newer than the installed git):
+
+        git: 'revparse' is not a git command. See 'git --help'.
+
+        The most similar command is
+        <tab>rev-parse
+
+    and the row read `rev-parse` - the suggestion, offered as the reason. `BUG:` is
+    git's own internal-assert prefix (usage.c), unrecognised for the same reason and
+    landing correctly today only by the luck of sitting on the first line. Both are
+    in the tuple. `git: ` is also the shape `run` synthesises when exec fails, so a
+    binary that is not there is named by the same road as every other failure.
+
+    THE TUPLE IS NOT THE CLASS, and saying it was is how this function shipped a
+    wrong cause a second time. git the dispatcher writes diagnoses with NO prefix at
+    all. Verbatim git 2.43:
+
+        unknown option: --bogus-global
+        usage: git [-v | --version] [-h | --help] [-C <path>] [-c <name>=<value>]
+                   ...
+                   [--config-env=<name>=<envvar>] <command> [<args>]
+
+    nothing matched, `[-1]` took the last line, and the row read
+    `[--config-env=<name>=<envvar>] <command> [<args>]`: a usage fragment offered as
+    the reason. Adding `unknown option:` to the tuple would fix that one row and
+    leave the next unprefixed diagnosis to be found by the next reviewer, which is
+    the enumerate-the-members habit this brain has now measured seven times in a day.
+
+    So the fix is on the FALLBACK, where the whole shape lives. What broke every one
+    of these rows is not the missing prefix, it is that `usage:` and its indented
+    continuation are the last thing git prints and they are a REMEDY, the same
+    remedy-as-cause defect this function opens with. The fallback drops git's usage
+    block and takes the last line that survives, so `unknown option:` is named
+    without being named, and so is whatever git prints unprefixed next. A stderr
+    that is nothing BUT a usage block falls through to the exit code, which is a
+    thin cause and an honest one.
+
+    The limit, written down rather than widened. This function has exactly ONE
+    caller, `git rev-parse --is-shallow-repository`, and two known misses are
+    outside what that caller can produce: an ssh failure whose first marked line is
+    generic (`fatal: Could not read from remote repository.`) while the diagnosis is
+    the unmarked line above it, and a signal that lands on STDOUT, which this
+    function is never handed. `rev-parse --is-shallow-repository` touches no remote
+    and writes its answer to stdout on success only. Widening for a caller that does
+    not exist would be inventing a corpus; if a second caller ever reaches a remote,
+    the ssh shape is the first thing to measure.
+    """
+    raw = (stderr or "").splitlines()
+    detail = [ln.strip() for ln in raw if ln.strip()]
+    for i, line in enumerate(detail):
+        if line.startswith(GIT_DIAGNOSIS_PREFIXES):
+            if line.endswith(":") and i + 1 < len(detail):
+                return f"{line} {detail[i + 1]}"
+            return line
+    fallback = [ln.strip() for ln in _drop_usage_block(raw) if ln.strip()]
+    return fallback[-1] if fallback else _exit_cause(returncode)
+
+
+# Every member is kept because output carrying it REACHES this selector, which is a
+# stronger claim than the one the previous version of this comment made. That
+# version named an emitter per marker and stopped there, and two of the four named
+# emitters cannot reach: presence in a source file is not reach, and the difference
+# is the whole defect this function exists to fix.
+#
+# Reach was measured by running all 33 `--selftest` scripts from `registry/rules.yaml`
+# into a forced failure and reading the streams the doctor actually gets:
+#
+#   "selftest FAIL"  28 of the 33, on STDERR: 23 through gate_selftest.py:212's joined
+#                    summary, plus 5 that print the same prefix themselves
+#                    (canon-heal-hook, commit_msg_language_gate, impact-radius-hook,
+#                    merge-hooks, octo). An earlier draft said 25, which matched
+#                    neither count and was a number nobody had run.
+#   "X "             r__pretool-write__base-freshness.py, on STDOUT, verbatim with its
+#                    violation leg forced: `X violation fixture did NOT warn (stale
+#                    base undetected)`, which `selftest_cause` then selected over the
+#                    `warning: You appear to have cloned an empty repository.` that
+#                    the same run put on stderr — the case this function was built for
+#   "FAIL"           the SAME run's next stdout line, `  FAIL base-freshness selftest`
+#
+# `FAIL`'s previously named emitter, `capability_manifest.py:464`, is real and does
+# not reach: `check_capability_manifest` reads it through the RETURN CODE and never
+# calls `selftest_cause`. The marker survives on the base-freshness receipt above,
+# not on that one.
+#
+# `✗` is DELETED. Its named emitters, `g__pretool-bash__prod-write.py:951` and
+# `qa-merge-gate.py:544`, write the live DENY message, and `gate_selftest.run_gate`
+# captures that as the CHILD's stdout to decide whether the leg blocked. It never
+# reaches a stream this selector reads, which the 33-script sweep confirms: zero
+# reaching emitters. `✘` went earlier for less, having no emitter at all.
+SELFTEST_FAILURE_MARKERS = ("selftest FAIL", "FAIL", "X ")
+
+
+def selftest_cause(cp: subprocess.CompletedProcess, empty: str | None = None) -> str:
+    """The first MARKED failure line of a failed helper, across stderr then stdout.
+
+    The sibling of `git_failure_cause`, and it was built on the same unguarded
+    assumption: `detail[-1]`, the LAST line, chosen because that is where
+    `gate_selftest.py` and `r__permission-denied__journal.py` put their joined
+    `selftest FAIL: a; b` summary. Twenty-three of the thirty-three `--selftest`
+    scripts in `registry/rules.yaml` go through `gate_selftest.py` and hold (counted,
+    not remembered: 33 distinct scripts, 23 of them importing or invoking
+    `gate_selftest`). Several do not, and they are reachable.
+    `r__pretool-write__base-freshness.py` writes its verdict to STDOUT,
+    and the `git clone` of an empty bare origin that its selftest builds lets git's
+    own setup warning through to STDERR. Measured, with its violation leg forced to
+    fail, `[-1]` on `stderr or stdout` produced:
+
+        GIT.version-control: 'warning: You appear to have cloned an empty repository.'
+
+    a FAIL row, one a reader acts on, naming a clone warning as the cause. Three
+    smaller members of the same class: `commit_msg_language_gate.py` writes
+    `selftest FAIL:` and then its items on the lines below, so the last line was one
+    item and the first of two was hidden; `querymaster-security-detector.py` prints
+    one missing needle per line; `dimension-awareness-hook.py` prints two
+    independent FAIL lines.
+
+    So the selection is by CONVENTION, the way `git_failure_cause` selects on
+    `fatal:`, not by position: the first line carrying one of this brain's failure
+    markers, stderr before stdout, then stdout for the printers that write their
+    verdict there. The stream ORDER is not a preference, it is where the summary
+    lives: `gate_selftest.py:212` writes its joined `selftest FAIL: a; b` to stderr,
+    and that one printer speaks for 23 of the 33, with 5 more printing the same
+    prefix to stderr themselves for 28 in all, so reading stdout first would let
+    a helper's incidental chatter outrank the verdict of the majority. A diagnosis
+    that ENDS in a colon carries its next line, for the reason the sibling gives,
+    which is how `commit_msg_language_gate.py` now names its first failure instead
+    of its last.
+
+    The setup noise is NOT a defect in `base-freshness`, and that is the point of
+    fixing this end. Its selftest builds a real repo with real git, and git warning
+    about an empty clone is git telling the truth about the setup; a helper's stderr
+    carries its grandchildren's output and always will. Teaching thirty-three
+    printers to be quiet is the symptom in thirty-three places. Reading by marker is
+    the cause in one.
+
+    `[-1]` survives as the FALLBACK, for a helper that failed with no marker at all:
+    `changelog-sync.py --apply`, the one caller here that is not a selftest, and
+    `querymaster-security-detector.py`, whose lines are all failures and none of them
+    marked, so the reader gets the last of N rather than all N. That is a real cause,
+    not a wrong one, and it is recorded here rather than grown into a third fixture.
+
+    A helper that HUNG is read by the same two rules and needs no clause of its own,
+    which is the point of `run` keeping the partial output instead of discarding it:
+    a gate that printed `selftest FAIL: ...` and then wedged is named by its own
+    verdict, and one that wedged silently falls back to the last stderr line, which
+    is the `no answer in Ns, killed` sentence `run` appended. Reading either used to
+    raise, because `TimeoutExpired` hands its partial output back as bytes; that is
+    `_as_text`'s job now and the reason it exists.
+
+    `empty` lets a caller name the silence in its own words; the default says what
+    the reader needs when a helper failed without a word: the exit code, or the
+    SIGNAL when a signal is what ended it.
+    """
+    for stream in (cp.stderr, cp.stdout):
+        detail = [ln.strip() for ln in (stream or "").splitlines() if ln.strip()]
+        for i, line in enumerate(detail):
+            if line.startswith(SELFTEST_FAILURE_MARKERS):
+                if line.endswith(":") and i + 1 < len(detail):
+                    return f"{line} {detail[i + 1]}"
+                return line
+    detail = (cp.stderr or cp.stdout or "").strip().splitlines()
+    if detail:
+        return detail[-1].strip()
+    return empty if empty is not None else _exit_cause(cp.returncode)
+
+
+def _harness_refusals_since_hook(cutoff: float) -> tuple[float | None, int, int, str]:
+    """(arm date, refusals the hook fires for, every other class, why there is no window).
+
+    The fourth element is not decoration. SEVEN roads reach a None arm date and they
+    are not equally alarming: a shallow clone is permanent for that checkout, a git
+    that will not answer at all is a broken environment, a future-dated arm commit is
+    a clock, a missing projects dir is a config mismatch, an unreadable subtree or an
+    unreadable FILE is transient or hostile. Rendering them as one non-event is a
+    smaller copy of the collapse this check exists to undo, so each road names itself
+    and the caller puts the name in the SENTENCE. Three of the seven were added after
+    QA found them answering under another road's name or not answering at all: git
+    exiting non-zero was reported as a shallow clone, an unreadable file was reported
+    as nothing, and a future arm date was reported as an unexercised reflex. It was in the hint for one cycle, where measurement showed it never
+    reached a reader: the caller forwards a hint only for FAIL and WARN, and the
+    printer prints one only for FAIL and WARN, so a PASS hint is invisible twice over
+    (QA cycle 6). A cause the reader cannot see is a cause that does not exist.
+
+    The journal's deny count means nothing on its own. Zero reads as healthy whether
+    nothing was refused or every refusal was lost, and those are opposite states. The
+    other side of the comparison is the harness's own record: it stamps a refused tool
+    call with `toolDenialKind` in the session transcript, which no hook writes and the
+    model does not own.
+
+    The window starts when the hook could first have fired, not 7 days ago, because
+    refusals from before it existed are nobody's fault. git is the authority on that
+    date: the commit that added the script to the brain. A brain with no such commit
+    (a fresh clone, a shallow one) returns None, and the caller reports the count
+    without the comparison rather than inventing a verdict.
+
+    Only the `automode-` classes count toward the FAILING comparison. That is the
+    only family the PermissionDenied event was observed to fire for, so counting a
+    `permission-rule` or `user-rejected` refusal would manufacture a failure out of
+    a refusal the reflex was never offered. But the observation comes from the
+    runtime's documented behaviour, not from a post-arm refusal in this data, and
+    excluding a class is the FAIL-OPEN direction, so the others are counted too and
+    reported as a WARN rather than dropped on the floor.
+
+    What this is NOT: tamper-anchored. The transcripts are ordinary files under
+    $HOME and the model can reach them with Bash, so deleting the day's
+    `toolDenialKind` lines removes the failing branch from play and leaves no mark
+    in this check. The mtime skip in the scan below belongs INSIDE this residual and
+    not outside it: it exists to avoid reading files that cannot hold a record in
+    the window, and under honest conditions deleting it changes only how long the
+    scan takes, but `touch -d` on a transcript is a CHEAPER deflation than editing
+    it, since one timestamp takes the whole file out of the count and no line has to
+    be removed. Inflating the count only harms the inflater; deflating it is the
+    direction that matters, and it is possible by either road. What the check buys is
+    that the two sides have different AUTHORS, so a reflex that silently stops firing
+    is caught, which is the failure it was built for. Same residual v7 already states
+    for the QA receipt, said here rather than implied.
+
+    Note on reach: `.githooks/pre-push` runs brain_doctor with `--registry` and
+    `--gate-receipt`, and neither calls run_all, so this check never blocks a push.
+    It is advisory, visible on a full doctor run.
+    """
+    # A SHALLOW clone answers this query, and answers it wrong. git treats the
+    # grafted tip as introducing every file, so `log -1` returns the tip's date:
+    # the newest possible, hence the narrowest possible window, hence quiet on a
+    # broken brain. No history is a reason to claim nothing, not to claim a date.
+    shallow = run(["git", "rev-parse", "--is-shallow-repository"], cwd=CLAUDE_DIR)
+    answer = (shallow.stdout or "").strip()
+    if shallow.returncode != 0:
+        # Not a shallow clone. git ANSWERS NON-ZERO here for its own reasons: not
+        # a repository, `detected dubious ownership`, or no git on PATH at all —
+        # and that last one is not an exit, it is a FileNotFoundError out of
+        # subprocess that `run` converts into rc 127, because a traceback is not a
+        # cause. Every one of these leaves stdout empty, and `!= "false"` then read them all as a
+        # grafted history, so the row named a cause that had not happened while the
+        # real one went unsaid. A wrong cause is worse than no cause, which is the
+        # argument this whole check is built on (QA cycle 13).
+        because = git_failure_cause(shallow.stderr, shallow.returncode)
+        return None, 0, 0, f"git itself failed on this checkout ({because})"
+    if answer == "true":
+        return None, 0, 0, "a shallow clone, whose grafted history cannot say when the hook arrived"
+    if answer != "false":
+        return None, 0, 0, (f"git answered {answer!r} to is-shallow-repository, which is "
+                            f"neither true nor false")
+    # --diff-filter=A --follow, not a bare log -1: the bare form answers with the
+    # LAST commit that touched the file, so the day anyone fixes a typo in the hook
+    # the window collapses to that moment and the check goes quiet for good. The
+    # question is when the reflex could FIRST have fired, which is when it was added.
+    # BOTH dates, and the EARLIER wins. %ct is reset forward by any rebase, squash
+    # or filter-repo, and %at survives a rebase but not a squash, so neither alone
+    # is reliable and both fail in the same direction: toward now, which narrows the
+    # window, which is quiet on a broken brain. That is the shallow-clone shape
+    # arriving by another road (QA cycle 5). Taking the earlier of the two errs
+    # wide, which can only make the check louder, never quieter.
+    cp = run(["git", "log", "--diff-filter=A", "--follow", "-1", "--format=%at %ct",
+              "--", "scripts/r__permission-denied__journal.py"], cwd=CLAUDE_DIR)
+    line = (cp.stdout or "").strip().splitlines()
+    stamps = [s for s in (line[0].split() if line else []) if s.isdigit()]
+    if cp.returncode != 0 or not stamps:
+        return None, 0, 0, "no commit adding the hook to this checkout"
+    added_at = min(float(s) for s in stamps)
+    if added_at > time.time():
+        # A clock skew, a rebase with a forged date, an import from a machine set
+        # ahead: the arm date lands after every transcript, every record is skipped,
+        # the count comes back 0 and the row says "unexercised". That is a real
+        # sentence produced by reading nothing, which is the disease, not a state.
+        #
+        # Tested on the COMMIT STAMP, not on the clamped `armed_at`. Clamping is
+        # what makes both sides count over the same seven days, and a caller is
+        # entitled to hand in any cutoff it likes; blaming the commit for a window
+        # the CALLER opened in the future would be this check's other disease, a
+        # cause that did not happen (`test_the_window_is_clamped_to_the_cutoff`
+        # passes 4_000_000_000.0 for exactly that reason). In production `cutoff` is
+        # always now minus seven days, so the two can only diverge in a test.
+        return None, 0, 0, ("the commit that added the hook is dated in the future, "
+                            "so the window has not opened yet")
+    armed_at = max(added_at, cutoff)
+    projects = harness_projects_dir()
+    if projects is None:
+        # The evidence is not where this can read it. Reporting zero here would be
+        # the check's own disease: a reassuring sentence produced by reading nothing.
+        # QA found it doing exactly that from a worktree, which is the NORMAL setup
+        # under this brain's own session-isolation rule.
+        return None, 0, 0, "no projects directory where the harness writes transcripts"
+    seen, other = 0, 0
+    transcripts, walk_failed = [], []
+    for dirpath, _dirnames, filenames in os.walk(projects, onerror=walk_failed.append):
+        transcripts.extend(Path(dirpath) / n for n in filenames if n.endswith(".jsonl"))
+    if walk_failed:
+        # glob swallows a PermissionError inside pathlib, so probing only the ROOT
+        # left the silent zero one directory down: a real arm date next to a count
+        # produced by reading nothing, which is the sentence this check exists to
+        # abolish. os.walk with onerror is what makes the failure visible. Same
+        # blind spot, same remedy, as the tree walk in the packages work the same
+        # day: a call that fails without raising is its own class (QA cycle 3).
+        return None, 0, 0, "a subtree under projects that the walk could not read"
+    for path in transcripts:
+        try:
+            if path.stat().st_mtime < armed_at:
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            # `continue` here was the directory road's silent zero one level down:
+            # os.walk lists a file the process cannot open (mode 000, a vanished
+            # session, a full-disk read error) and the loop moved on, so a count
+            # produced without reading the file that might hold the refusals came
+            # back as a confident "refused nothing". The DIRECTORY road named
+            # itself and the FILE road did not, which is why deleting this
+            # `continue` altogether changed no test (QA cycle 13). Same failure,
+            # same remedy: no window, and say which road.
+            return None, 0, 0, (f"a transcript file under projects that could not be "
+                                f"read ({type(exc).__name__})")
+        if "toolDenialKind" not in text:
+            continue
+        for line in text.splitlines():
+            if "toolDenialKind" not in line:
+                continue
+            try:
+                rec = json.loads(line)
+            except Exception:
+                # Exception, not ValueError: deep nesting raises RecursionError,
+                # which is neither. A corrupt transcript is not this check's
+                # business and must never be its crash.
+                continue
+            if not isinstance(rec, dict):
+                continue
+            ts = _iso_to_epoch(str(rec.get("timestamp") or ""))
+            if ts is None or ts < armed_at:
+                continue
+            kind = _denial_kind(rec)
+            if kind is None:
+                continue
+            if kind.startswith("automode-"):
+                seen += 1
+            else:
+                other += 1
+    return armed_at, seen, other, ""
+
+
+def harness_projects_dir() -> Path | None:
+    """Where the HARNESS writes transcripts, or None.
+
+    Not `CLAUDE_DIR / "projects"`. CLAUDE_DIR follows the checkout this file lives
+    in, so from a worktree it points at a directory that does not exist, and the
+    scan then read nothing and reported a healthy zero. This brain's own rule puts
+    every parallel session in a worktree, so that was the normal case rather than
+    the exotic one. The transcripts live next to the harness, which is the home
+    config dir, overridable the way the harness overrides it.
+    """
+    env = os.environ.get("CLAUDE_CONFIG_DIR")
+    base = Path(env) if env else Path(os.path.expanduser("~")) / ".claude"
+    projects = base / "projects"
+    try:
+        if not projects.is_dir():
+            return None
+    except OSError:
+        return None
+    return projects
+    # NO listing probe here any more. Cycle 2 added one because is_dir succeeds on a
+    # directory this cannot list and glob then swallowed the PermissionError. Cycle 3
+    # replaced the glob with an error-aware walk, which catches the unreadable root
+    # as well as every subtree, so the probe stopped being what protects the
+    # behaviour while its comment still claimed it was, and its test stayed green
+    # with the probe deleted. A guard whose rationale no longer describes what guards
+    # the behaviour is worse than no guard: it tells the next reader to stop looking.
+
+
+def _denial_kind(node) -> str | None:
+    """The `toolDenialKind` this transcript record carries, or None.
+
+    Walked rather than path-indexed: the key sits at different depths depending on the
+    record shape, and a fixed path would silently stop matching when the harness moves
+    it, which is the failure mode this whole check exists to catch. Returns the class
+    rather than a boolean so the caller can separate the family the hook fires for
+    from the ones it does not, instead of dropping the others on the floor.
+    """
+    stack = [node]
+    while stack:
+        x = stack.pop()
+        if isinstance(x, dict):
+            kind = x.get("toolDenialKind")
+            if isinstance(kind, str) and kind:
+                return kind
+            stack.extend(x.values())
+        elif isinstance(x, list):
+            stack.extend(x)
+    return None
+
+
+def _carries_automode_denial(node) -> bool:
+    """Kept as the named predicate the tests pin; one reading of _denial_kind."""
+    kind = _denial_kind(node)
+    return bool(kind and kind.startswith("automode-"))
+
+
+def _iso_to_epoch(value: str) -> float | None:
+    if not value:
+        return None
+    try:
+        from datetime import datetime
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
 
 
 def check_querymaster_security_detector(fix: bool) -> Result:
