@@ -9,7 +9,7 @@
 | Skills | 233 |
 | Agents | 167 |
 | Divisions | 13 |
-| Scripts: wired | 118 |
+| Scripts: wired | 119 |
 | Scripts: orphan | 7 |
 | Rules | 78 |
 | Hook entries | 51 |
@@ -486,7 +486,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (125)
+## Scripts (126)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -584,6 +584,7 @@
 | octo.py | octo.py: the terminal view of the v8 kernel (docs/architecture/v8-kernel.md). | wired |
 | octo_pkg.py | octo_pkg.py: the PACKAGE primitive of the v8 kernel. | wired |
 | octorato-isomorphism.py | octorato-isomorphism , compute the invariant shared by the three Octorato anchors. | wired |
+| proc_group.py | Kill a child's process group without ever killing our own. | wired |
 | publish-wiki.py | publish-wiki.py - publish docs/wiki/ to the public GitHub wiki. | wired |
 | qa-merge-gate.py | PreToolUse Bash hook , QA gate (FAIL-CLOSED for merge actions). | wired |
 | query_connectome.py | query_connectome.py , Octopus Ventosas (Sucker Neural Interface) Each sucker is an independent senso... | wired |
