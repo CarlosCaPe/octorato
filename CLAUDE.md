@@ -214,11 +214,16 @@ an exemption that looked only at the create flag reopened the whole-tree rewrite
 git receipt of a file reading `good` before and `EVIL` after. The exemption now needs exactly one positional after
 the verb, the new branch name.
 THE GATE HAS NO ALLOW-LIST. It is a DENY-LIST of recognised writer and remover verbs, so a program none of the
-tables name passes SILENTLY. A hand-kept list of what is covered was wrong two cycles running (six missing
-compressors, then twelve more writers and editors), so the list is now DERIVED: `--verbs` generates it from the
-dispatch tables and `--selftest` asserts the block in `README-residuals.txt` still equals them, which turns the
-suite red when a row is added without regenerating. The honest sentence is "here is every verb the gate
-recognises, and anything absent passes", not "here are the residuals". Covered since: the compressors
+tables name passes SILENTLY. A hand-kept list of what is covered was wrong three cycles
+running, and the first attempt at a DERIVATION was itself a hand-kept list of lists: three of its entries mirrored
+`if base == …` conditions, so a recogniser added there changed nothing, and it OVER-reported (`shred` was printed
+as covered while nothing dispatched it and the command allowed). Two assertions hold it down now, one per
+direction and neither a list: `_assert_no_undeclared_dispatch` parses this module's own source for every string
+compared against `base`/`sub_cmd` and requires it in the block, and `_assert_covered_verbs_deny` RUNS every
+claimed writer through the real gate against a protected path and requires a deny, reporting any writer with no
+probe. The claim is narrowed to what that supports: the block enumerates PROGRAM NAMES, and what it cannot
+enumerate (git subcommands, find predicates, redirect spellings, inline write markers, path shapes) is printed
+inside the block itself. Covered since: the compressors
 (`gzip`/`bzip2`/`xz`/`lzma` delete their input with no flag at all), `zstd --rm`, `tar --remove-files`, `zip -m`,
 `sort -o`, `uniq`, and `fallocate`, scripted editors (`ex`/`ed`/`vim` with `-c`/`-s`; an interactive `vim` is
 deliberately left alone), `openssl -out`, `gpg -o`, `unzip -d`, `cpio -D`, `setfacl`, `chown`, `chgrp`, `split`.
@@ -226,7 +231,25 @@ THE BRANCH-CREATION EXEMPTION COUNTS THE STAGE, NOT THE COMMAND: `git checkout -
 the bare form allowed, because `2>&1` was read as a start point, and the corpus carries seven real instances of
 the operator doing exactly that on the live tree. Same bug as the one fixed in the `config` reader a cycle
 earlier, one member of the class closed and the other left open. A gate that blocks normal work gets turned off,
-which is the failure this whole boundary was drawn around.
+which is the failure this whole boundary was drawn around, and the same failure was firing on the people
+DOCUMENTING this gate: the borrowed parser read every heredoc BODY line as a sub-command, so writing a document
+that quotes a dangerous command denied. About 25 of 78 denies in a 21,653-row sweep were that. Every path layer
+sees the SHELL half of a command now; bodies reach only the narrow heredoc reader. A `$VAR` gets ONE reading in both
+directions, and the reading is whether THIS PROCESS CAN READ IT. `$HOME` was treated as unknowable while `~` was
+already expanded, so the two spellings of one file disagreed and `rm -f $HOME/.claude/settings.json`, its
+`${HOME}` twin, `cd $HOME/.claude && rm -f settings.json`, `cp /tmp/x $HOME/.claude/hooks.json`, a `>` redirect
+into it and `git -C $HOME/.claude checkout` were all measured ALLOW against a literal and a tilde that both
+denied. `kernel_proc.expand_env` resolves any variable the hook's own `os.environ` holds and leaves every other
+one verbatim, called from the shared parser's `resolve` BEFORE the isabs test, which is the only place it fits:
+after the join the leading `/` is gone. There is no list of variable names, because a list of knowable variables
+is the same hand-kept-list disease one level up; `os.environ` is the list, and it is the one the shell will use.
+`$SOMEDIR`, `$(cmd)`, a backtick and `${VAR:-x}` still abstain, so `cd "$SP/demo" && git checkout -q master`
+stays allowed. A variable THE COMMAND ITSELF assigns wins over the environment, last assignment first, because
+`export HOME=<sandbox> && cp hooks.json $HOME/.claude/` is a real rehearsal and resolving it from the hook aimed
+it back at the brain (one false deny in a 21,241-row replay). A PREFIX assignment is not a statement and does not
+shadow: bash expands `$HOME` before `HOME=/x rm -f $HOME/...` takes effect, so reading the two alike would have
+been a one-space disarm. Replayed over the whole corpus the change is 1 ALLOW to DENY (a real disarm: gate bodies
+copied into the live tree through `$R`) and 2 DENY to ALLOW (both false denies on a `cd "$SP/base"` into /tmp).
 COST IS BOUNDED ON TWO AXES, because the byte caps could only see one. The work in the target loop grows with
 TOKEN COUNT: `rm -f <65,512 short tokens> ~/.claude/settings.json` took 18.5 s against 1.8 s for the same byte
 count as one long word, and x8 concurrent on a loaded box that is 39-51 s against the harness's 60 s kill, where
@@ -259,8 +282,8 @@ The wrapper prefixes `setsid`, `flock`, `ionice`, `chrt`, `taskset -c`, `doas`, 
 bundled `bash -ec` / `sh -lc` were all measured walking straight through with a plain `rm -rf ~/.claude/scripts`
 and are closed; the wrapper rows are ADDED to the shared parser's own table with `setdefault`, never copied into a
 second one. Still open and named in the gate header rather than left silent: `eval`, backticks, `$(…)`, brace
-expansion, `$VAR`, `find -exec sh -c`, `find -exec dd`, `xargs -a <file>`, `taskset` with a bare mask, and the
-shared parser's own `shred` / `perl -pi` residuals. The set is a path shape, and it
+expansion, a variable NOBODY can read (`$UNSET`, `export HOME=$OTHER`), `find -exec sh -c`, `find -exec dd`,
+`xargs -a <file>`, `taskset` with a bare mask, and the shared parser's own `shred` / `perl -pi` residuals. The set is a path shape, and it
 covers the `.claude` DIRECTORY for every verb that writes: "what does it hold?" is only a question for a verb that
 TAKES. Asking it of everything left two doors open, an absent destination (`mv <staged dir> <live>/x/.claude`, two
 allowed steps to a project-scope settings file carrying a forged approval) and an existing empty one (`cp
@@ -293,11 +316,11 @@ import sat at module scope, so a missing copy of a file the gate PROTECTS raised
 empty stdout read as ALLOW. Residuals, each with its reproduction, live in the gate's own header:
 enterprise policy outside `$HOME` (root-owned, the OS is the gate there), another repo's project settings, an
 ancestor directory of a deep project root in both directions, and an inline write that reaches the path through a
-variable, and a destination the shell has to expand first (`{a,b}`, `$VAR`, `$(cmd)`, `eval`, a shell function, a
-symlink created and used in one command). A LOCAL `git merge` in the live tree is allowed and lands unreviewed
+variable, and a destination the shell has to expand first (`{a,b}`, `$(cmd)`, `${VAR:-x}`, an
+UNREADABLE variable, `eval`, a shell function, a symlink created and used in one command). A LOCAL `git merge` in the live tree is allowed and lands unreviewed
 edits on every file in the set, because `qa-merge-gate` guards `gh pr merge` and nothing guards `git merge`; only
 a PULL brings the reviewed remote state. The fixture pair is
-`registry/fixtures/ARCHITECTURE.arming-surface` (205 block + 203 allow).
+`registry/fixtures/ARCHITECTURE.arming-surface` (229 block + 227 allow).
 
 ### ULTRA RULE — Do-it-today (no dejes para mañana lo que puedas hacer hoy)
 **Do-it-today.** Operator-canonical (2026-08-18, tras recordarlo a diario durante semanas): el trabajo que YO puedo ejecutar se ejecuta en el turno, no se reporta. La forma sutil del aplazamiento no es negarse, es **reportar un pendiente que yo mismo podía cerrar** y dejárselo al operador en la bandeja; a su volumen, eso convierte cada sesión en una lista que él tiene que administrar. Un pendiente solo es legítimo en dos casos, y en los dos viaja **con su comando exacto para pegar**: (1) es un paso irreducible suyo (un clic de consentimiento, una contraseña, un permiso que solo él concede), o (2) es un bloqueo MEDIDO, no supuesto (el clasificador lo negó, el remoto lo rechazó, la regla del repo lo impide). Esto NO contradice `do-it-right-not-fast`: empieza hoy, hazlo bien, no lo apures; lo prohibido es diferirlo. Mecanismo: `scripts/g__stop__defer-today.py` (Stop gate, bloquea una vez), que dispara cuando el cierre del turno aplaza trabajo propio en primera persona sin ninguna de las dos salidas. Es consciente de citas (repetir el "espero mañana me contestes" de un cliente no lo trippea) y de hechos con fecha; para mantener una línea marcada a propósito, ponle `defer-ok`. HOW completo en `skills/execution-bias/SKILL.md`.

@@ -449,16 +449,25 @@ NAMED RESIDUALS, measured, deliberately not covered:
     avoid. Registering on the `*` matcher is what makes closing it later a
     one-line change here rather than a new registration.
   - A DESTINATION THAT ONLY EXISTS AFTER THE SHELL EXPANDS SOMETHING. Brace
-    expansion (`rm -rf ~/.claude/{scripts,hooks.json}`), `$VAR`, `$(cmd)`,
-    `$'…'`, `eval`, a shell function, and a symlink created and USED in the same
+    expansion (`rm -rf ~/.claude/{scripts,hooks.json}`), `$(cmd)`, a backtick,
+    `${VAR:-x}` and every other parameter-expansion operator, `$1`, `$'…'`,
+    `eval`, a shell function, and a symlink created and USED in the same
     command. Each needs a shell, not a table, and a table that guessed at them
     would be a second parser with its own drift. Reproduction: every one of
-    those spellings is allowed today. `$HOME` expansion and `$(…)` are being
-    closed in the SHARED parser on another branch, which is where they belong.
+    those spellings is allowed today.
+    A BARE `$VAR` IS NO LONGER ON THIS LIST, and leaving it here was the
+    over-broad half of the claim. `$HOME` is not unknowable: this process holds
+    it, it names the very tree being protected, and `~` was already expanded, so
+    the two spellings of one file disagreed. `kernel_proc.expand_env` resolves
+    every variable this process can READ, called from the SHARED parser's
+    `resolve` where it belongs, so both gates got it at once. What stays open is
+    a variable NOBODY here can read: absent from `os.environ` and not assigned
+    by the command from anything evaluable (`export HOME=$OTHER && rm -rf
+    $HOME/.claude`). See residual entries 36 and 37.
   - Everything the shared parser already names as its own residual (rsync
-    --delete, shred, ln -sf, perl -pi, variable expansion, a `-c` body nested
-    deeper than 3, xargs fed from stdin). This gate inherits that list rather
-    than growing a second parser.
+    --delete, shred, ln -sf, perl -pi, brace expansion, an unreadable variable,
+    a `-c` body nested deeper than 3, xargs fed from stdin). This gate inherits
+    that list rather than growing a second parser.
   - A COMMAND OVER 64 KB IS NOT READ BY THE TWO INLINE LAYERS, and that is the
     ONLY thing the cap skips. It used to skip everything: `main()` returned at
     the cap when the command carried no `-c` and no heredoc, so
@@ -550,16 +559,35 @@ Two fixes, on the two axes that were actually growing: the invariants are
 computed once per process instead of once per target (`brain_root` was called
 131,023 times, `scripts_dir` 65,511, and `classify` rebuilt the `_EXACT` table
 every time), and `_MAX_TARGETS` bounds the number of DISTINCT targets with
-`hit` memoised so repeats are free. Measured after, through main(), best of
-five:
+`hit` memoised so repeats are free.
 
-    65,512 identical short tokens        2.42 s   (was 18.5 s)
-    18,717 distinct short tokens         2.15 s
-    511 distinct DEEP paths              0.59 s   the worst shape still
-                                                  PROCESSED end to end
-    511 distinct shallow paths           0.37 s
-    ls -la                               0.14 s
-    rm on a protected path               0.23 s
+MEASURED AFTER, AND LABELLED, because a single-run best-of-five and a figure
+taken under concurrency differ by about 4x for the same shape, and quoting only
+the first costs a reader their calibration. Left column is best of five runs
+alone; the two right ones are eight of the same command at once on a box idling
+near load 20 on 4 cores.
+
+    shape                            best5     x8 worst   x8 mean   verdict
+    65,512 identical short tokens     1.99 s     8.85 s    7.50 s    deny
+    distinct short tokens             1.45 s     5.56 s    4.20 s    deny
+    511 distinct DEEP paths           0.47 s     1.86 s    1.51 s    deny
+    131 KB grep, fully parsed         1.11 s     4.30 s    3.81 s    ALLOW
+    131 KB echo, no trigger           1.08 s     4.22 s    3.34 s    ALLOW
+    over the parse ceiling            0.25 s     1.06 s    0.74 s    deny
+    ls -la                            0.12 s     0.67 s    0.50 s    ALLOW
+    2,427 `find … -delete;` segments  1.44 s     4.39 s    3.67 s    ALLOW
+      in 64 KB                                             (was 4.94 / 13.55)
+
+THE SEGMENT SHAPE IS A THIRD AXIS, and neither byte cap nor the target budget
+could see it: 2,427 segments whose glob is the SAME string deduped to ONE entry
+in the target budget while the cost stayed per HIT, and each hit walked every
+protected pair. That pair count is a LIVE quantity, 31 on this tree today, and
+it grows with every gate script added under `scripts/`, so the shape gets more
+expensive on its own over time. `glob_hit` is memoised on (pattern, icase) now,
+which is the difference between the two numbers in the last row.
+
+The worst measured anything is 8.85 s against the harness's 60 s default, so no
+input in this table reaches the kill-to-allow window.
 
 Past 128 KB nothing is parsed: 300 KB and 1 MB both answer in 0.1-0.2 s, denied
 when a mutation token is present and allowed when there is none.
@@ -1141,7 +1169,74 @@ def _fixture_write(verb: str) -> bool:
     return verb not in _RESTORE_VERBS
 
 
+# A PATH THE SHELL HAS TO EXPAND IS UNKNOWABLE, and it has to read that way in
+# BOTH directions or it is not a rule, it is a coin flip. The residual list has
+# always said `$VAR` is unknowable, and that was honoured for the BYPASS
+# (`rm -rf "$HOME/.claude/scripts"` allows, because the token resolves to
+# `<cwd>/$HOME/...` and matches nothing) and NOT for the over-fire: the same
+# unexpanded token resolved against a live cwd produced a deny, so
+# `cd "$SP/demo" && git checkout -q master` was denied inside ~/.claude. Six
+# false denies in a 21,653-row sweep came from exactly that. One reading was
+# imposed: a resolved path still carrying a `$` was never a real path, so it is
+# not a hit.
+#
+# THAT ONE READING CLOSED THE WRONG MEMBER OF THE CLASS, and the member it left
+# open is the most common one. `$HOME` is not unknowable: it is defined in this
+# hook's own `os.environ`, it names the very tree this gate protects, and `~` is
+# ALREADY expanded on the way to a path, so the two spellings of one file
+# disagreed. Measured on the live gate, `rm -f ~/.claude/settings.json` denied
+# and all four of `rm -f $HOME/.claude/settings.json`,
+# `rm -f ${HOME}/.claude/settings.json`, `cd $HOME/.claude && rm -f
+# settings.json` and `cp /tmp/x $HOME/.claude/hooks.json` allowed. `$HOME/...`
+# is how a person or an agent writes that path in a script.
+#
+# So the resolution moved one layer down, to `kernel_proc.expand_env`, which
+# every path layer here already reaches through the shared parser's `resolve`:
+# a variable this process can READ resolves, a variable it cannot keeps its `$`
+# and keeps the unknowable reading below. No list of variable names, anywhere:
+# `os.environ` is the list, and it is the same one the shell will use.
+# `$SOMEDIR`, `$(cmd)` and a backtick still abstain, which is why the over-fire
+# this test was added for (`cd "$SP/demo" && git checkout -q master`) stays
+# allowed. The two readers below take raw TOKENS, never resolved paths, so they
+# expand for themselves before asking.
+_UNEXPANDED = ("$", "`")
+
+
+def cwd_unknowable(command: str) -> bool:
+    """True when the command `cd`s somewhere the shell has to expand.
+
+    The path test above is not enough for the TREE layer, and the reason is
+    worth stating: `cd "$SP/demo"` resolves to `<live>/$SP/demo`, whose
+    components do not exist, so `enclosing_worktree_root` CLIMBS OUT of them and
+    reports the live root. The command was then judged as a whole-tree verb
+    inside ~/.claude when nobody knows where it ran. An explicit literal `-C` or
+    `--git-dir` still names the repo, so those keep deciding."""
+    tokens = _lex(command)
+    for i, tok in enumerate(tokens):
+        if tok in ("cd", "pushd") and i + 1 < len(tokens):
+            # the same expansion `resolve` does, so this reader and the path
+            # readers cannot disagree about whether the destination is known
+            if any(ch in kernel_proc.expand_env(tokens[i + 1])
+                   for ch in _UNEXPANDED):
+                return True
+    return False
+
+
+def names_literal_repo(command: str) -> bool:
+    tokens = _lex(command)
+    for i, tok in enumerate(tokens):
+        name, eq, val = tok.partition("=")
+        if name in ("-C", "--git-dir", "--work-tree"):
+            val = val if eq else (tokens[i + 1] if i + 1 < len(tokens) else "")
+            val = kernel_proc.expand_env(val)
+            if val and not any(ch in val for ch in _UNEXPANDED):
+                return True
+    return False
+
+
 def classify(target: str, removing: bool = False, verb: str = "") -> tuple:
+    if target and any(ch in target for ch in _UNEXPANDED):
+        return None, None
     """(live_path, why) when `target` reaches a live arming surface, else
     (None, None). Containment counts in BOTH directions: `rm -rf
     ~/.claude/scripts` never names a gate and takes every one of them."""
@@ -1189,6 +1284,7 @@ def candidates(target: str) -> list:
 
 
 _HIT_CACHE = {}
+_GLOB_CACHE = {}
 
 
 def hit(target: str, removing: bool = False, verb: str = "") -> tuple:
@@ -1614,18 +1710,33 @@ def glob_hit(pattern: str, icase: bool) -> tuple:
     same helper the lane rule uses for the same question."""
     if not pattern:
         return None, None
+    # MEMOISED, for the shape QA found that neither byte cap nor the target
+    # budget could see: 64 KB of `find /tmp -name x -delete;` is 2,427 SEGMENTS
+    # whose glob is the SAME string, and the budget counts distinct TARGETS, so
+    # it deduped to one while the cost stayed per HIT. Each hit walked all 31
+    # protected pairs, and that pair count is a LIVE quantity: it grows with
+    # every gate script added under scripts/.
+    key = (pattern, icase)
+    got = _GLOB_CACHE.get(key)
+    if got is not None:
+        return got
     try:
         hits = _parser().glob_hits
     except ParserUnavailable:
         raise
     brain = brain_root()
+    out = (None, None)
     for path, why in _protected_pairs(brain):
         try:
             if hits(pattern, path, icase):
-                return path, why
+                out = (path, why)
+                break
         except Exception:
             continue
-    return None, None
+    if len(_GLOB_CACHE) > 4096:
+        _GLOB_CACHE.clear()
+    _GLOB_CACHE[key] = out
+    return out
 
 
 # Two whole-tree rewrites the shared parser does not name, both reproduced here
@@ -1678,7 +1789,12 @@ def _dash_checkout(sub_cmd: str, rest: list) -> bool:
     return False
 
 
-_EXTRA_TREE_NAMES = ("read-tree", "checkout-index")
+# `git apply` was named as a residual and `am`, `cherry-pick` and `revert` were
+# not, although all four write the working tree from content that is not in it.
+_APPLYING_VERBS = ("am", "cherry-pick", "revert")
+
+_EXTRA_TREE_NAMES = ("read-tree", "checkout-index", "am", "cherry-pick",
+                     "revert")
 
 
 def extra_tree_hits(command: str, cwd: str) -> list:
@@ -1714,6 +1830,8 @@ def extra_tree_hits(command: str, cwd: str) -> list:
             continue
         repo, sub, rest = parsed
         verb = _extra_tree_verb(sub, rest)
+        if not verb and sub in _APPLYING_VERBS:
+            verb = f"git {sub}"
         if not verb and _dash_checkout(sub, rest):
             verb = f"git {sub} -"
         if not verb:
@@ -1859,6 +1977,8 @@ _WRITER_FLAGS = (
     ("wget", ("-O", "--output-document", "-P", "--directory-prefix"), None),
     ("tar", ("-C", "--directory"), ("x", "extract", "get")),
     ("patch", ("-o", "--output", "-d", "--directory"), None),
+    ("unzip", ("-d",), None),
+    ("cpio", ("-D", "--directory"), None),
 )
 # THE POLARITY, stated because it decides how to read every list in this file:
 # this gate has NO ALLOW-LIST. It is a DENY-LIST of recognised writer and remover
@@ -1931,7 +2051,19 @@ _ARCHIVE_VALUED = ("-f", "--file", "-C", "--directory", "-b", "--blocking-factor
                    "-T", "--files-from", "-X", "--exclude-from")
 
 
+_ARCHIVE_REMOVERS = ("tar", "zip", "rsync")
+_OVERWRITERS = ("sort", "uniq")
+_PERMISSION_VERBS = ("chmod", "setfacl", "chown", "chgrp")
+
+
 def _archive_removes(base: str, args: list, here: str) -> list:
+    if base not in _ARCHIVE_REMOVERS:
+        return []
+    if base == "rsync":
+        if not any(a == "--remove-source-files" for a in args):
+            return []
+        pos = _put_positional("rsync", args)
+        return [_parser().resolve(a, here) for a in pos[:-1]]
     if base == "tar":
         if not any(a == "--remove-files" for a in args):
             return []
@@ -1961,6 +2093,8 @@ def _archive_removes(base: str, args: list, here: str) -> list:
 
 
 def _overwriting_targets(base: str, args: list, here: str) -> list:
+    if base not in _OVERWRITERS:
+        return []
     if base == "sort":
         val = _flag_value(args, ("-o", "--output"))
         return [_parser().resolve(val, here)] if val else []
@@ -2037,16 +2171,23 @@ def _chmod_targets(args: list, here: str) -> list:
 _SIMPLE_WRITERS = {
     "fallocate": {"valued": ("-l", "--length", "-o", "--offset"), "dest": (),
                   "require": (), "skip_first": 0, "last_only": False},
-    "ex":   {"valued": ("-c", "--cmd", "-S"), "dest": (), "require": "script",
+    # EDITORS ARE ALWAYS WRITERS NOW, a reversal recorded rather than quietly
+    # made. The opt-in ("only a SCRIPTED editor counts, an interactive session is
+    # not a hook's business") left `ed <file> < script.ed` open, because the
+    # script arrives on STDIN with no flag to see. The reasoning behind the
+    # opt-in was also weak on its own terms: a PreToolUse hook only ever sees an
+    # AGENT's tool call, never the operator's terminal, so there is no
+    # interactive session to protect here, exactly as with `~/.claude.json`.
+    "ex":   {"valued": ("-c", "--cmd", "-S"), "dest": (), "require": (),
              "skip_first": 0, "last_only": False},
-    "ed":   {"valued": (), "dest": (), "require": "script",
+    "ed":   {"valued": (), "dest": (), "require": (),
              "skip_first": 0, "last_only": False},
     "vim":  {"valued": ("-c", "--cmd", "-S", "-s", "-u", "-i"), "dest": (),
-             "require": "script", "skip_first": 0, "last_only": False},
+             "require": (), "skip_first": 0, "last_only": False},
     "vi":   {"valued": ("-c", "--cmd", "-S", "-s"), "dest": (),
-             "require": "script", "skip_first": 0, "last_only": False},
+             "require": (), "skip_first": 0, "last_only": False},
     "nvim": {"valued": ("-c", "--cmd", "-S", "-s", "-u", "-i"), "dest": (),
-             "require": "script", "skip_first": 0, "last_only": False},
+             "require": (), "skip_first": 0, "last_only": False},
     "openssl": {"valued": ("-in", "-kfile", "-k", "-K", "-iv", "-pass",
                            "-md", "-S", "-p"),
                 "dest": ("-out", "-keyout"), "require": (), "skip_first": 0,
@@ -2055,6 +2196,8 @@ _SIMPLE_WRITERS = {
                         "--passphrase", "--homedir"),
              "dest": ("-o", "--output"), "require": (), "skip_first": 0,
              "last_only": False},
+    # `unzip` and `cpio` keep their dest flag here AND fall back to the CWD in
+    # `_writer_destinations`, so both spellings are read.
     "unzip": {"valued": ("-P", "-x"), "dest": ("-d",), "require": (),
               "skip_first": 0, "last_only": False},
     "cpio": {"valued": ("-F", "--file", "-H", "--format", "-R", "--owner"),
@@ -2067,6 +2210,20 @@ _SIMPLE_WRITERS = {
               "skip_first": 1, "last_only": False},
     "chgrp": {"valued": ("--reference",), "dest": (), "require": (),
               "skip_first": 1, "last_only": False},
+    # `shred` was IN `_REMOVING_PROGRAMS`, which the coverage block reads, and
+    # NOTHING dispatched it: the shared parser's `_TRIGGERS` has no `shred` so
+    # `scan` fast-outs, and no local reader named it. A verb PRESENT in the
+    # block passed silently, which made the block's own sentence false in the
+    # dangerous direction. That is the finding that turned the block from a
+    # claim into a measured one; see `_assert_covered_verbs_deny`.
+    "shred": {"valued": ("-n", "--iterations", "-s", "--size", "--random-source"),
+              "dest": (), "require": (), "skip_first": 0, "last_only": False},
+    "scp": {"valued": ("-P", "-i", "-o", "-l", "-c", "-F", "-S", "-J"),
+            "dest": (), "require": (), "skip_first": 0, "last_only": True},
+    "rename.ul": {"valued": (), "dest": (), "require": (), "skip_first": 2,
+                  "last_only": False},
+    "rename": {"valued": (), "dest": (), "require": (), "skip_first": 2,
+               "last_only": False},
     "split": {"valued": ("-b", "--bytes", "-l", "--lines", "-n",
                          "--number", "-a", "--suffix-length",
                          "--additional-suffix", "--filter"),
@@ -2134,6 +2291,13 @@ def _tar_extracts(args: list) -> bool:
     return False
 
 
+# An extractor with NO destination flag writes into the CWD, and only the
+# explicit form was read: `cd ~/.claude && tar xf /tmp/e.tar` allowed while
+# `tar -x -C ~/.claude` denied. Same for `unzip -o` without `-d`, `cpio -id`
+# without `-D` and `patch -p0` without `-d`.
+_CWD_EXTRACTORS = {"tar": None, "unzip": None, "cpio": None, "patch": None}
+
+
 def _writer_destinations(base: str, args: list, here: str) -> list:
     for name, flags, needs in _WRITER_FLAGS:
         if base != name:
@@ -2141,7 +2305,9 @@ def _writer_destinations(base: str, args: list, here: str) -> list:
         if name == "tar" and not _tar_extracts(args):
             return []
         val = _flag_value(args, flags)
-        return [_parser().resolve(val, here)] if val else []
+        if val:
+            return [_parser().resolve(val, here)]
+        return [_parser().resolve(".", here)] if name in _CWD_EXTRACTORS else []
     if base in _AWK_NAMES:
         inplace = any(
             (a == "-i" and i + 1 < len(args) and args[i + 1] == "inplace") or
@@ -2240,6 +2406,11 @@ def extra_put_hits(command: str, cwd: str) -> list:
         if base in _COPY_VERBS:
             for target in _copy_destinations(base, tokens[1:], here):
                 out.append(("path", target, base))
+            # `rsync --remove-source-files` REMOVES what it sent, so the
+            # destination rule alone missed it: the program was in a table and
+            # the flag was unread.
+            for target in _archive_removes(base, tokens[1:], here):
+                out.append(("path", target, base))
             continue
         for target in _writer_destinations(base, tokens[1:], here):
             out.append(("path", target, base))
@@ -2258,10 +2429,21 @@ def extra_put_hits(command: str, cwd: str) -> list:
     return out
 
 
-_PUT_TRIGGERS = ("cp", "mv", "install", "ln", "rsync", "curl", "wget", "tar",
-                 "patch", "awk", "&>", ">|", "gzip", "bzip2", "xz", "lzma",
-                 "compress", "zstd", "zip", "sort", "uniq", "chmod") + \
-                tuple(_SIMPLE_WRITERS)
+# THE TRIGGER LIST IS DERIVED FROM THE TABLES IT GATES, because a second
+# hand-kept list decided whether the reader ran at all. Measured: adding a row
+# to `_CONSUMING` and regenerating the coverage block left the block assertion
+# GREEN while the verb still ALLOWED, because `_PUT_TRIGGERS` never learned the
+# name. A row could be covered by the block, pass the assertion, and never reach
+# its reader. Now every table that `extra_put_hits` dispatches contributes its
+# own keys, so a new row gates itself in.
+_PUT_TRIGGERS = tuple(sorted(set(
+    _COPY_VERBS
+    + tuple(n for n, _f, _r in _WRITER_FLAGS)
+    + tuple(_CONSUMING)
+    + tuple(_SIMPLE_WRITERS)
+    + _AWK_NAMES
+    + ("tar", "zip", "sort", "uniq", "chmod", "&>", ">|")
+)))
 
 
 # `find` IS NOT ALWAYS A REMOVING VERB, and the label said it was.
@@ -2913,6 +3095,64 @@ def heredoc_write(command: str):
     return None
 
 
+# THREE MORE INLINE BODIES, none of them a `-c` and none of them a heredoc.
+# `sed -n 'w <path>'`, `awk '{print > "<path>"}'` and `node -e "<js>"` each
+# carry a PROGRAM as an ordinary argument, and each was measured ALLOW against
+# a live protected file. They are read with the SAME narrow direct-write test
+# the heredoc reader uses (`_DIRECT_WRITE`), not with a second one: the question
+# is identical, is a protected path the direct operand of a write.
+_PROGRAM_ARG_HOSTS = {
+    "sed": None,          # every non-flag argument may be the script
+    "awk": None,
+    "gawk": None,
+    "mawk": None,
+    "node": ("-e", "--eval", "-p", "--print"),
+    "nodejs": ("-e", "--eval", "-p", "--print"),
+    "perl": ("-e", "-E"),
+    "ruby": ("-e",),
+    "php": ("-r",),
+}
+
+
+def program_arg_write(command: str):
+    """(literal, "program argument") when an inline program argument writes a
+    protected path as the direct operand of a write."""
+    if not any(h in command for h in _PROGRAM_ARG_HOSTS):
+        return None
+    tokens = _lex(command)
+    if not tokens:
+        return None
+    bodies = []
+    for start in _command_starts(tokens):
+        stage = tokens[start:_stage_end(tokens, start)]
+        if not stage:
+            continue
+        base = os.path.basename(stage[0])
+        if base not in _PROGRAM_ARG_HOSTS:
+            continue
+        flags = _PROGRAM_ARG_HOSTS[base]
+        if flags is None:
+            bodies.extend(t for t in stage[1:] if not t.startswith("-"))
+        else:
+            for i, tok in enumerate(stage):
+                if tok in flags and i + 1 < len(stage):
+                    bodies.append(stage[i + 1])
+    needles = _needles()
+    # sed's own write command is `w <path>`, which carries no `>` and no
+    # `open(`, so the shared direct-write patterns cannot see it.
+    pats = _DIRECT_WRITE + (r"""(?:^|[;\s{}])[wW]\s+{q}""",)
+    for body in bodies:
+        flat = _normalize_paths(body)
+        for needle in needles:
+            if needle not in flat:
+                continue
+            quoted = re.escape(needle)
+            for pat in pats:
+                if re.search(pat.replace("{q}", quoted), flat):
+                    return needle, "program argument"
+    return None
+
+
 def bash_targets(command: str, cwd: str) -> list:
     """(kind, target, verb) triples worth testing, from the shared parser.
 
@@ -3022,47 +3262,74 @@ def deny_parser(detail: str) -> None:
     )
 
 
-# THE COVERAGE LIST IS DERIVED, NOT MAINTAINED, because a hand-kept one has now
-# been wrong two cycles running: six missing compressors, then twelve more
-# writers and editors. A prose list of what is covered drifts from the dispatch
-# tables the moment a row is added, and the reader has no way to tell.
+# THE COVERAGE BLOCK IS A MEASUREMENT, NOT A LIST, and the version before this
+# was neither. It was a dict literal naming the tables I remembered, three of
+# whose entries were LITERALS mirroring `if base == …` conditions in code
+# ("archive-removing", "overwriting", the `chmod` in "in-place-edit"), so a
+# recogniser added next to them changed nothing: QA added `elif base == "7z"`
+# to `_archive_removes` and `--verbs` reported the block UNCHANGED. A derivation
+# that reads a hand-kept list of lists is the same hole one level up.
 #
-# So the list is GENERATED from the tables themselves (`--verbs` prints it) and
-# `--selftest` asserts that the block in README-residuals.txt still equals it.
-# Add a row to any table without regenerating the block and the selftest fails,
-# which is the same shape as every other claim in this file: the assertion is
-# the mechanism, the prose is its output.
+# It also OVER-REPORTED, which is the dangerous direction: the block said
+# `removing: rm shred unlink` while `shred ~/.claude/settings.json` ALLOWED,
+# because `shred` sat in `_REMOVING_PROGRAMS` (which the block read) and nothing
+# DISPATCHED it. A verb present in the block passed silently, which makes the
+# sentence "anything absent passes" false in the worst way.
 #
-# It also fixes the honest framing of the residual list. This gate is a
-# DENY-LIST, so what is covered is ENUMERABLE and what is not is its COMPLEMENT,
-# which is unbounded. "Here are the residuals" was never a true sentence; "here
-# is every verb the gate recognises, and anything absent passes" is.
+# Two assertions now hold the block down, one per direction, and neither is a
+# list:
+#   * `_assert_no_undeclared_dispatch` parses THIS MODULE'S SOURCE and collects
+#     every string literal compared against `base` or `sub_cmd`. Each one must
+#     appear in the block, so `elif base == "7z"` turns the selftest red.
+#   * `_assert_covered_verbs_deny` RUNS each claimed writer through the real
+#     gate against a protected path in a sandbox and requires a deny. A verb
+#     with no probe is reported as unproven and fails. That is what makes the
+#     block a measurement; it is what would have caught `shred` on the day it
+#     was written.
+#
+# THE CLAIM IS NARROWED TO WHAT THE MECHANISM CAN SUPPORT, because the block
+# enumerates PROGRAM NAMES and the gate recognises more than program names. What
+# it CANNOT enumerate is listed in the block itself, by name, so a reader is
+# never told it is complete: git subcommands, `find`'s predicates, redirect
+# spellings, the inline write markers, the protected path SHAPES, and the
+# version-suffixed interpreter spellings.
 def covered_verbs() -> dict:
-    """{table name: sorted programs} for every dispatch table that can produce
-    a target. Borrowed tables are read from the shared parser, not copied."""
-    out = {
+    """{category: sorted programs}. Raises ParserUnavailable if the shared
+    parser cannot be read, because a SHORTER block generated from a broken
+    checkout used to pass the assertion in silence."""
+    mod = _parser()          # deliberately NOT wrapped: fail loud, not short
+    return {
         "removing": sorted(_REMOVING_PROGRAMS),
         "copy/move": sorted(_COPY_VERBS),
         "flag-destination": sorted(n for n, _f, _r in _WRITER_FLAGS),
         "consuming": sorted(_CONSUMING),
-        "archive-removing": ["tar", "zip"],
-        "overwriting": ["sort", "uniq"],
-        "in-place-edit": sorted(_AWK_NAMES) + ["chmod"],
+        "archive-removing": sorted(_ARCHIVE_REMOVERS),
+        "overwriting": sorted(_OVERWRITERS),
+        "in-place-edit": sorted(set(_AWK_NAMES) | set(_PERMISSION_VERBS)),
         "simple-writers": sorted(_SIMPLE_WRITERS),
+        "program-argument-hosts": sorted(_PROGRAM_ARG_HOSTS),
+        "cwd-extractors": sorted(_CWD_EXTRACTORS),
         "wrappers-local": sorted(_EXTRA_WRAPPERS),
         "command-string-hosts": sorted(_CMD_STRING_HOSTS),
         "interpreter-hosts": sorted(_C_HOSTS),
+        "shared-parser-mutators": sorted(mod._MUTATORS),
+        "shared-parser-state": sorted(mod._STATE_VERBS),
+        "shared-parser-exec": sorted(mod._EXEC_MUTATORS),
+        "wrappers-shared": sorted(mod._WRAPPERS),
     }
-    try:
-        mod = _parser()
-        out["shared-parser-mutators"] = sorted(mod._MUTATORS)
-        out["shared-parser-state"] = sorted(mod._STATE_VERBS)
-        out["shared-parser-exec"] = sorted(mod._EXEC_MUTATORS)
-        out["wrappers-shared"] = sorted(mod._WRAPPERS)
-    except Exception:
-        pass
-    return out
 
+
+# What the block CANNOT enumerate, stated inside the block so the reader gets it
+# with the list rather than three files away.
+_NOT_ENUMERATED = (
+    "git subcommands (checkout, switch, restore, rm, reset, stash, clean, "
+    "read-tree, checkout-index, config, push, am, cherry-pick, revert)",
+    "find predicates (-delete, -exec, -execdir, -ok, -okdir)",
+    "redirect spellings (>, >>, &>, &>>, >|)",
+    "inline write markers and the direct-write patterns",
+    "protected path SHAPES (<dir>/.claude/settings*.json, scripts/g__*.py)",
+    "version-suffixed interpreter spellings (python3.12 reduces to python)",
+)
 
 _VERB_BLOCK_START = "=== COVERED VERBS (generated by --verbs) ==="
 _VERB_BLOCK_END = "=== END COVERED VERBS ==="
@@ -3072,6 +3339,10 @@ def verb_block() -> str:
     lines = [_VERB_BLOCK_START]
     for name, verbs in covered_verbs().items():
         lines.append(f"  {name}: " + " ".join(verbs))
+    lines.append("  NOT ENUMERATED BY THIS BLOCK (recognised, but not by "
+                 "program name):")
+    for item in _NOT_ENUMERATED:
+        lines.append(f"    - {item}")
     lines.append(_VERB_BLOCK_END)
     return "\n".join(lines)
 
@@ -3245,21 +3516,57 @@ def main() -> int:
         deny_unparsed(len(command))
         return 0
 
+    # ONLY `heredoc_write` MAY READ A HEREDOC BODY. The borrowed `scan` splits
+    # on newlines and reads every body line as a sub-command, so writing a
+    # DOCUMENT that quotes a dangerous command was denied:
+    #
+    #     cat > /tmp/notes.txt <<'EOF'
+    #     rm ~/.claude/settings.json
+    #     EOF
+    #
+    # A sweep of 21,653 real tool_use rows found 78 denies and about 25 of them
+    # were this, all of them people DOCUMENTING this gate: the sections appended
+    # to README-residuals and QA's own matrices. The header claimed this class
+    # was fixed; only the HOST half was (which body counts as a program), never
+    # the half that hands bodies to the shell parser. By this file's own
+    # doctrine that is the failure that gets a gate turned off, and it was
+    # firing on the people writing the gate down.
+    #
+    # So every path layer now sees the SHELL half only. The bodies still reach
+    # `heredoc_write`, which asks the narrow question (is a protected path the
+    # direct operand of a write?), and that test covers the `> <literal>` case
+    # the shell parser used to catch by accident.
+    shell_only = heredoc_split(command)[0]
+    # BEFORE ANY PATH IS READ, and off the SHELL half only. Every layer below
+    # resolves `$VAR` from this process's environment, and a command that sets
+    # the variable itself makes that environment stale for that one name (see
+    # kernel_proc._CMD_ASSIGNED). Reading the whole command instead would let a
+    # `FOO=bar` sitting inside a heredoc DOCUMENT shadow a real variable, which
+    # is the same mistake the body/shell split was made to end.
     try:
-        hits = bash_targets(command, str(payload.get("cwd") or ""))
-        for root, verb in extra_tree_hits(command, here):
+        kernel_proc.set_command_assignments(
+            _parser().command_assignments(shell_only))
+    except ParserUnavailable as exc:
+        journal_deny(pid, {"why": "parser-unavailable", "detail": str(exc),
+                           "command": command[:200]})
+        deny_parser(str(exc))
+        return 0
+    try:
+        hits = bash_targets(shell_only, str(payload.get("cwd") or ""))
+        for root, verb in extra_tree_hits(shell_only, here):
             hits.append(("tree", root, verb))
-        hits.extend(extra_git_hits(command, here))
-        hits.extend(extra_put_hits(command, here))
-        hits.extend(exotic_redirect_hits(command, here))
-        hits.extend(indirect_removal_hits(command, here))
+        hits.extend(extra_git_hits(shell_only, here))
+        hits.extend(extra_put_hits(shell_only, here))
+        hits.extend(exotic_redirect_hits(shell_only, here))
+        hits.extend(indirect_removal_hits(shell_only, here))
     except ParserUnavailable as exc:
         journal_deny(pid, {"why": "parser-unavailable", "detail": str(exc),
                            "command": command[:200]})
         deny_parser(str(exc))
         return 0
 
-    ref_restore = restore_names_ref(command)
+    ref_restore = restore_names_ref(shell_only)
+    blind_cwd = cwd_unknowable(shell_only) and not names_literal_repo(shell_only)
     tested = set()
     for kind, target, verb in hits:
         if kind in ("path", "state", "glob", "iglob") and target not in tested:
@@ -3279,8 +3586,10 @@ def main() -> int:
         if kind in _TREE_KINDS:
             if verb in _TREE_EXEMPT:
                 continue
+            if blind_cwd:
+                continue          # nobody knows which tree this ran in
             if verb.startswith(("git checkout", "git switch")) and \
-                    branch_creation_only(command):
+                    branch_creation_only(shell_only):
                 continue                  # a new branch at HEAD rewrites nothing
             if target and _fold(kernel_proc.norm_path(target)) == _fold(brain):
                 journal_deny(pid, {"root": target, "verb": verb, "why": "live-tree"})
@@ -3309,11 +3618,18 @@ def main() -> int:
     if oversize:
         return 0        # the two inline readers are what the cap actually bounds
 
-    found = interpreter_write(command)
+    found = interpreter_write(shell_only)
     if found:
         journal_deny(pid, {"literal": found[0], "marker": found[1],
                            "why": "interpreter-write", "command": command[:200]})
         deny_interp(found[0], found[1])
+        return 0
+
+    found = program_arg_write(shell_only)
+    if found:
+        journal_deny(pid, {"literal": found[0], "marker": found[1],
+                           "why": "program-arg-write", "command": command[:200]})
+        deny_heredoc(found[0], found[1])
         return 0
 
     found = heredoc_write(command)
@@ -3384,7 +3700,15 @@ def _selftest(fdir: str = None) -> int:
                       "OCTO_KERNEL_OPEN", "GIT_DIR", "GIT_WORK_TREE",
                       "GIT_INDEX_FILE", "GIT_PREFIX", "GIT_COMMON_DIR",
                       "GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE",
-                      "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_QUARANTINE_PATH"):
+                      "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_QUARANTINE_PATH",
+                      # THE ONE RESERVED NAME. Since a DEFINED variable now
+                      # resolves, a benign fixture that means "this variable is
+                      # unknowable" is only benign while the name really is
+                      # undefined, and the operator's own shell decides that.
+                      # The corpus uses exactly this name for that, and the leg
+                      # unsets it, so the premise is the leg's and not the
+                      # shell's. One name, not a list of them.
+                      "OCTO_FIXTURE_UNDEFINED"):
                 env.pop(k, None)
             env["HOME"] = sandbox
             env["USERPROFILE"] = sandbox
@@ -3419,7 +3743,9 @@ def _selftest(fdir: str = None) -> int:
     for assertion in (_assert_parser_load_denies,
                       _assert_own_import_denies,
                       _assert_heredoc_reader_live,
-                      _assert_verb_block_current):
+                      _assert_verb_block_current,
+                      _assert_no_undeclared_dispatch,
+                      _assert_covered_verbs_deny):
         ok, why = assertion()
         if not ok:
             failures.append(why)
@@ -3435,6 +3761,157 @@ def _selftest(fdir: str = None) -> int:
           f"and a gate that cannot import kernel_proc, cannot load its parser, or "
           f"cannot run its heredoc reader denies instead of allowing")
     return 0
+
+
+# Probes. `{P}` is a protected FILE in the sandbox, `{D}` a protected DIRECTORY.
+# A writer with no probe here is REPORTED, not skipped, which is the difference
+# between a list and a measurement.
+_VERB_PROBES = {
+    "rm": "rm -f {P}", "unlink": "unlink {P}", "shred": "shred -u {P}",
+    "cp": "cp /tmp/e {P}", "mv": "mv /tmp/e {P}",
+    "install": "install /tmp/e {P}", "ln": "ln -f /tmp/e {P}",
+    "rsync": "rsync -a --remove-source-files {D}/ /tmp/x/",
+    "curl": "curl -o {P} https://example.invalid/x",
+    "wget": "wget -O {P} https://example.invalid/x",
+    "tar": "tar -x -C {D} -f /tmp/a.tar",
+    "patch": "patch -o {P} /tmp/a.diff",
+    "unzip": "unzip -o /tmp/e.zip -d {D}",
+    "cpio": "cpio -id -D {D}",
+    "gzip": "gzip {P}", "bzip2": "bzip2 {P}", "xz": "xz {P}",
+    "lzma": "lzma {P}", "compress": "compress {P}", "zstd": "zstd --rm {P}",
+    "zip": "zip -qm /tmp/x.zip {P}",
+    "sort": "sort -o {P} /tmp/e", "uniq": "uniq /tmp/e {P}",
+    "awk": "awk -i inplace '{{print}}' {P}",
+    "gawk": "gawk -i inplace '{{print}}' {P}",
+    "mawk": "mawk -i inplace '{{print}}' {P}",
+    "busybox-awk": None,          # not a real program name on this host
+    "chmod": "chmod -x {P}", "setfacl": "setfacl -m u:nobody:0 {P}",
+    "chown": "chown nobody {P}", "chgrp": "chgrp nogroup {P}",
+    "fallocate": "fallocate -z -l 4096 {P}",
+    "ex": "ex -sc wq {P}", "ed": "ed -s {P}", "vim": "vim -c wq {P}",
+    "vi": "vi -c wq {P}", "nvim": "nvim -c wq {P}",
+    "openssl": "openssl enc -in /tmp/e -out {P}",
+    "gpg": "gpg -o {P} -d /tmp/e.gpg",
+    "split": "split -b1 /tmp/e {P}",
+    "scp": "scp /tmp/e {P}", "rename.ul": "rename.ul a b {P}",
+    "rename": "rename a b {P}",
+    "sed": "sed -n 'w {P}' /tmp/in",
+    "node": "node -e \"require('fs').writeFileSync('{P}','x')\"",
+    "nodejs": "nodejs -e \"require('fs').writeFileSync('{P}','x')\"",
+    "perl": "perl -e \"open(F,'>','{P}')\"",
+    "ruby": "ruby -e \"open('{P}','w')\"",
+    "php": "php -r \"file_put_contents('{P}','x');\"",
+    "truncate": "truncate -s0 {P}", "tee": "echo x | tee {P}",
+    "dd": "dd of={P} if=/dev/null", "touch": "touch {P}",
+    "chattr": "chattr +i {P}",
+}
+# Categories that are NOT writers on their own: a wrapper or an interpreter host
+# is proven through the verb it wraps, and the shared-parser tables repeat names
+# already probed above.
+_UNPROBED_CATEGORIES = ("wrappers-local", "wrappers-shared",
+                        "command-string-hosts", "interpreter-hosts",
+                        "cwd-extractors", "program-argument-hosts",
+                        "shared-parser-mutators", "shared-parser-state",
+                        "shared-parser-exec")
+
+
+def _assert_covered_verbs_deny() -> tuple:
+    """Every program the block claims as a writer must actually DENY.
+
+    This is what turns the block from a claim into a measurement, and it is the
+    assertion that would have caught `shred`: present in `_REMOVING_PROGRAMS`,
+    printed in the block, dispatched by nothing, allowed in practice."""
+    import shutil
+    import subprocess
+    import tempfile
+    try:
+        cats = covered_verbs()
+    except ParserUnavailable as exc:
+        return False, f"covered_verbs could not read the shared parser: {exc}"
+    claimed = set()
+    for name, verbs in cats.items():
+        if name in _UNPROBED_CATEGORIES:
+            continue
+        claimed.update(verbs)
+    missing = sorted(v for v in claimed
+                     if v not in _VERB_PROBES)
+    if missing:
+        return False, ("no probe for claimed writer(s): " + ", ".join(missing) +
+                       " (add one to _VERB_PROBES or drop the verb)")
+    sandbox = tempfile.mkdtemp(prefix="arming-probe-")
+    failed = []
+    try:
+        _build_sandbox(sandbox, {})
+        prot = os.path.join(sandbox, ".claude", "settings.json")
+        pdir = os.path.join(sandbox, ".claude", "scripts")
+        env = dict(os.environ)
+        env["HOME"] = sandbox
+        env["USERPROFILE"] = sandbox
+        env["CLAUDE_SESSION_ID"] = "__selftest__"
+        for k in ("OCTO_MERGE_APPROVE", "OCTO_QA_OK", "GIT_DIR",
+                  "GIT_WORK_TREE", "GIT_INDEX_FILE"):
+            env.pop(k, None)
+        import gate_selftest
+        for verb in sorted(claimed):
+            tmpl = _VERB_PROBES[verb]
+            if tmpl is None:
+                continue
+            cmd = tmpl.replace("{P}", prot).replace("{D}", pdir)
+            payload = json.dumps({"tool_name": "Bash", "cwd": sandbox,
+                                  "tool_input": {"command": cmd}})
+            cp = subprocess.run([sys.executable, os.path.abspath(__file__)],
+                                input=payload, capture_output=True, text=True,
+                                cwd=sandbox, env=env, timeout=60)
+            if not gate_selftest.emits_block(cp.returncode, cp.stdout):
+                failed.append(f"{verb} ({cmd[:60]})")
+    finally:
+        shutil.rmtree(sandbox, ignore_errors=True)
+    if failed:
+        return False, ("the block CLAIMS these and the gate ALLOWS them: " +
+                       "; ".join(failed))
+    return True, ""
+
+
+def _assert_no_undeclared_dispatch() -> tuple:
+    """Every literal this module dispatches on must appear in the block.
+
+    Parses THIS FILE and collects every string compared against `base` or
+    `sub_cmd`, whether by `==`, `!=` or `in`. QA's mutant (`elif base == "7z"`
+    inside `_archive_removes`) turns this red, which the previous dict literal
+    could not do because it MIRRORED those conditions instead of reading them."""
+    import ast as _ast
+    try:
+        with open(os.path.abspath(__file__), encoding="utf-8") as fh:
+            tree = _ast.parse(fh.read())
+    except Exception as exc:
+        return False, f"cannot parse own source: {exc}"
+    names = set()
+    for node in _ast.walk(tree):
+        if not isinstance(node, _ast.Compare):
+            continue
+        left = node.left
+        if not (isinstance(left, _ast.Name) and left.id in ("base", "sub_cmd")):
+            continue
+        for comp in node.comparators:
+            if isinstance(comp, _ast.Constant) and isinstance(comp.value, str):
+                names.add(comp.value)
+            elif isinstance(comp, (_ast.Tuple, _ast.List, _ast.Set)):
+                for elt in comp.elts:
+                    if isinstance(elt, _ast.Constant) and \
+                            isinstance(elt.value, str):
+                        names.add(elt.value)
+    try:
+        block = verb_block()
+    except ParserUnavailable as exc:
+        return False, f"covered_verbs could not read the shared parser: {exc}"
+    undeclared = sorted(n for n in names
+                        if n and f" {n}" not in block and
+                        not block.endswith(" " + n))
+    if undeclared:
+        return False, ("this module dispatches on names the coverage block does "
+                       "not carry: " + ", ".join(undeclared) +
+                       " (regenerate with --verbs, or add the table)")
+    return True, ""
 
 
 def _assert_verb_block_current() -> tuple:
@@ -3664,7 +4141,14 @@ def _touch(path: str, body: str) -> None:
 
 if __name__ == "__main__":
     if "--verbs" in sys.argv:
-        print(verb_block())
+        try:
+            print(verb_block())
+        except ParserUnavailable as exc:
+            # A SHORTER block generated from a broken checkout used to pass the
+            # assertion in silence. Coverage that fails quiet is the thing this
+            # mechanism exists to end.
+            print(f"cannot generate: {exc}", file=sys.stderr)
+            sys.exit(2)
         sys.exit(0)
     if "--selftest" in sys.argv:
         _i = sys.argv.index("--selftest")

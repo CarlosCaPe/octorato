@@ -112,11 +112,12 @@ own header carries the same list; this file carries the commands.
 
 3. THE SHARED PARSER'S OWN RESIDUALS, INHERITED NOT RE-SOLVED.
      rsync --delete ... ~/.claude/scripts/
-     shred ~/.claude/settings.json
      ln -sf /dev/null ~/.claude/hooks.json
      perl -pi -e 's/a/b/' ~/.claude/scripts/qa-merge-gate.py
      cat list | xargs rm            (targets never appear in the command)
-     rm -rf $DIR                    (variable expansion, unknowable pre-shell)
+     rm -rf {pkg,x}                 (brace expansion, unknowable pre-shell)
+     rm -rf $UNSET/pkg              (a variable NOBODY here can read; a DEFINED
+                                     one now resolves, see entries 36 and 37)
    g__pretool-bash__tree-owner.py names these in its own header. This gate
    borrows that parser rather than growing a second one, so it inherits the
    list; closing them means fixing the one parser, which fixes both gates.
@@ -536,8 +537,16 @@ own header carries the same list; this file carries the commands.
      xargs -a /tmp/list rm                            targets live in a FILE
      cat /tmp/list | xargs rm
      taskset 0x3 rm -rf ~/.claude/scripts             the bare-mask form
-     shred ~/.claude/settings.json                    the shared parser's own
-     perl -pi -e ... ~/.claude/scripts/...            named residuals
+     perl -pi -e ... ~/.claude/scripts/...            the shared parser's own
+                                                      named residual
+   `shred` USED TO BE LISTED HERE AND IN THE COVERAGE BLOCK AT THE SAME TIME,
+   stating both verdicts for the same command. It was in `_REMOVING_PROGRAMS`,
+   which the block read, and nothing DISPATCHED it: the shared parser's
+   `_TRIGGERS` has no `shred` so `scan` fast-outs, and no local reader named it.
+   A verb PRESENT in the block passed silently, which is the block's own
+   sentence false in the dangerous direction. It now has a dispatch row and a
+   probe, and `_assert_covered_verbs_deny` runs that probe on every claimed
+   writer, so the next one cannot be claimed without being measured.
    Each open member is either an evaluator (needs a shell, not a table) or a row
    that belongs in the shared parser rather than in a second list here.
 
@@ -788,15 +797,226 @@ own header carries the same list; this file carries the commands.
    The worst measured anything is 8.85 s against a 60 s kill, so no input here
    reaches the kill-to-allow window.
 
+32. THE DERIVATION WAS NOT DERIVED, and the block over-reported.
+   `covered_verbs()` was a dict literal naming the tables I remembered, and
+   three of its entries were LITERALS MIRRORING `if base == ...` conditions in
+   code. QA proved it: adding `elif base == "7z"` to `_archive_removes` left
+   `--verbs` reporting the block UNCHANGED. A derivation that reads a hand-kept
+   list of lists is the same hole one level up.
+   Worse, it over-reported, which is the dangerous direction. The block said
+   `removing: rm shred unlink` while:
+     shred -u ~/.claude/settings.json    ALLOWED
+     shred ~/.claude/settings.json       ALLOWED
+     unlink ~/.claude/settings.json      denied
+   `shred` sat in `_REMOVING_PROGRAMS`, which the block read, and NOTHING
+   dispatched it (the shared parser's `_TRIGGERS` has no `shred`, so `scan`
+   fast-outs, and no local reader named it). A verb PRESENT in the block passed
+   silently, and this file stated both verdicts for the same command.
+   TWO ASSERTIONS NOW HOLD IT DOWN, one per direction, and neither is a list:
+     _assert_no_undeclared_dispatch parses THIS MODULE'S SOURCE and collects
+       every string compared against `base` or `sub_cmd`; each must appear in
+       the block. QA's `elif base == "7z"` mutant turns it red.
+     _assert_covered_verbs_deny RUNS every claimed writer through the real gate
+       against a protected path in a sandbox and requires a deny. A writer with
+       no probe is REPORTED, not skipped. Removing shred's dispatch row turns it
+       red naming shred and the exact command.
+   A THIRD hand-kept list was gating the reader itself: `_PUT_TRIGGERS` decided
+   whether `extra_put_hits` ran at all, so a row could be covered by the block,
+   pass the assertion, and never reach its reader (QA proved it with a `foo`
+   row). It is derived from the tables it dispatches now.
+   AND THE DERIVATION FAILED SILENT: `covered_verbs` wrapped the parser read in
+   `except Exception: pass`, so a broken checkout printed a SHORTER block, exit
+   0, and the assertion accepted it. It raises now, and `--verbs` exits 2.
+   THE CLAIM IS NARROWED TO WHAT THE MECHANISM SUPPORTS. The block enumerates
+   PROGRAM NAMES; the gate recognises more than program names. What it cannot
+   enumerate is printed inside the block itself: git subcommands, find
+   predicates, redirect spellings, the inline write markers, the protected path
+   shapes, and the version-suffixed interpreter spellings.
+
+33. THE GATE WAS DENYING ITS OWN DOCUMENTATION.
+   A sweep of 21,653 real tool_use rows found 78 denies, and about 25 were this:
+     cat > /tmp/notes.txt <<EOF
+     rm ~/.claude/settings.json
+     EOF
+   The borrowed scan splits on newlines and reads each heredoc BODY line as a
+   sub-command, so writing a DOCUMENT that quotes a dangerous command denied. I
+   hit it appending sections 23 and 26 to this file; the previous QA hit it
+   writing its matrices. The header claimed this class was fixed and only the
+   HOST half was (which body counts as a program), never the half that hands
+   bodies to the shell parser. By this file's own doctrine that is the failure
+   that gets a gate turned off, and it was firing on the people writing the gate
+   down.
+   Every path layer sees the SHELL half only now. Bodies still reach
+   heredoc_write, whose narrow test covers the redirect case the shell parser
+   used to catch by accident, and a heredoc body that really redirects into
+   settings.json still denies.
+   SIX MORE false denies were the mirror of a bypass: a cd into an unexpanded
+   path followed by a checkout denied, because the unexpanded path resolves under
+   the live root and enclosing_worktree_root CLIMBS OUT of its non-existent
+   components back to ~/.claude, while the same variable used absolutely
+   (rm -rf "$HOME/.claude/scripts") allowed. $VAR was unknowable for a deny and
+   a literal directory for an over-fire. One reading now: a resolved path still
+   carrying $ or a backtick is not a hit, and a cd into one makes the TREE layer
+   abstain unless a literal -C names the repo. This closes nothing that was
+   open, since the bypass direction already allowed.
+
+34. ELEVEN MORE WRITERS, and a reversal.
+     shred <settings>                        was in the block and dispatched by
+                                             nothing (section 32)
+     rsync --remove-source-files <scripts>/  program in a table, flag unread
+     scp /tmp/evil <settings>                local scp is a copy
+     rename.ul a b <settings>
+     git am / cherry-pick / revert           apply was named, these were not
+     cd ~/.claude && tar xf                  the destination is the CWD, and
+     cd <scripts> && unzip -o                only the explicit -C / -d / -D
+     cd ~/.claude && cpio -id                form was read
+     cd ~/.claude && patch -p0
+     ed <settings> < script.ed               the script arrives on STDIN
+     sed -n w <settings>                     sed's own write command
+     awk print-redirect into <settings>
+     node -e writeFileSync into <settings>
+   The last three are PROGRAM ARGUMENTS, a third kind of inline body after the
+   -c and the heredoc, read with the SAME narrow direct-write test rather than
+   a new one (plus one pattern for sed's w, which carries no redirect and no
+   open call).
+   THE REVERSAL: editors are always writers now. The opt-in ("only a SCRIPTED
+   editor counts, an interactive session is not a hook's business") left the
+   stdin form open, and its reasoning was weak on its own terms: a PreToolUse
+   hook only ever sees an AGENT's tool call, never the operator's terminal, so
+   there is no interactive session here to protect, exactly as with
+   ~/.claude.json. benign_write_vim_interactive.json became a violation.
+
+35. COST, THE THIRD AXIS. QA found a shape absent from the table: 64 KB of
+   find-delete SEGMENTS, 2,427 of them, at 4.94 s best-of-five and 13.55 s at
+   x8. Neither byte cap nor the target budget could see it, because the segments
+   share ONE glob string (so the budget deduped them to a single target) while
+   the cost stayed per HIT, and every hit walked all the protected pairs.
+   THE PAIR COUNT IS A LIVE QUANTITY: 31 on this tree today, and it grows with
+   every gate script added under scripts/, so the shape gets more expensive on
+   its own over time. glob_hit is memoised on (pattern, icase) now: 1.44 s
+   best-of-five and 4.39 s at x8.
+   The full labelled table lives in the gate header. Worst measured anything is
+   8.85 s against a 60 s kill.
+
+36. $HOME WAS UNKNOWABLE AND `~` WAS NOT, SO ONE PATH HAD TWO ANSWERS.
+   Entry 33 gave an unexpanded `$VAR` ONE reading in both directions and called
+   the class closed. It closed the wrong member. Measured against the live gate:
+     rm -f /home/<user>/.claude/settings.json     DENY   (literal control)
+     rm -f ~/.claude/settings.json                DENY   (tilde control)
+     rm -f $HOME/.claude/settings.json            ALLOW
+     rm -f ${HOME}/.claude/settings.json          ALLOW
+     cd $HOME/.claude && rm -f settings.json      ALLOW
+     cp /tmp/x $HOME/.claude/hooks.json           ALLOW
+     echo x > ${HOME}/.claude/settings.json       ALLOW
+     git -C $HOME/.claude checkout main           ALLOW
+     rm -rf "$HOME/.claude/scripts"               ALLOW
+   `$HOME` is not unknowable. It is defined in the hook's own os.environ, it
+   names the very tree this gate protects, and `~` was ALREADY expanded on the
+   way to a path, so the two spellings of one file disagreed. `$HOME/...` is
+   also how a person or an agent writes that path in a script, so the abstain
+   was covering the most common spelling of the whole protected set.
+   THE FIX IS ONE FUNCTION AT THE ONE FUNNEL, not a special case for the string
+   "HOME": kernel_proc.expand_env resolves any `$VAR` / `${VAR}` this process
+   can READ and leaves every other one verbatim, and the shared parser's
+   `resolve` calls it BEFORE the isabs test, which is the only place it can go
+   (after the join the leading `/` is gone and no later reader can put it back).
+   Every path layer in this gate already reaches paths through that one call,
+   so the target reader, the cd tracker and the redirect reader are all covered
+   by it; the two readers that take raw TOKENS (cwd_unknowable,
+   names_literal_repo) expand for themselves so they cannot disagree with it.
+   NO LIST OF VARIABLE NAMES, anywhere: a list of knowable variables is the same
+   hand-kept-list disease entry 32 cured one level up. os.environ IS the list.
+   `$SOMEDIR`, `$(cmd)`, a backtick, `${VAR:-x}` and `$1` still abstain, so the
+   over-fire entry 33 was added for (`cd "$SP/demo" && git checkout -q master`)
+   stays allowed.
+   All eight verdicts above flip to DENY except the two that were already right,
+   and `rm -f $SOMEDIR/settings.json` stays ALLOW.
+
+37. AND THE FIRST VERSION OF IT PRODUCED A FALSE DENY, measured, not guessed.
+   The whole 21,241-row real-command corpus was replayed through the gate before
+   and after. One command changed the wrong way:
+     export HOME=<sandbox> && mkdir -p $HOME/.claude && cp hooks.json $HOME/.claude/
+   a rehearsal that deliberately points HOME AWAY from the live tree. Resolving
+   `$HOME` from the hook's environment aimed all three steps back at the brain.
+   A variable the command itself assigns is not the variable this process holds,
+   so the command is read for its own assignments first and they win
+   (g__pretool-bash__tree-owner.command_assignments ->
+   kernel_proc.set_command_assignments). LAST assignment wins, which is a
+   security property and not a detail: taking the first would read
+   `HOME=/tmp/x; HOME=<live>; rm -f $HOME/.claude/settings.json` as a sandbox
+   while the shell aims at the brain. A value this process cannot evaluate
+   (`export HOME=$REAL`) maps to unknowable rather than to a guess.
+   THE PREFIX FORM IS NOT THE STATEMENT FORM, and reading them alike was a
+   fail-OPEN this PR introduced and then closed. Measured in bash, not assumed:
+     HOME=/tmp/x printf '%s' "$HOME"     -> /home/<user>   (prefix)
+     HOME=/tmp/x; printf '%s' "$HOME"    -> /tmp/x         (statement)
+   A prefix assignment lands in the environment of the command it prefixes,
+   whose own words the shell has ALREADY expanded, so one space in front of `rm`
+   would otherwise have disarmed the gate. A segment holding anything but
+   assignments now contributes nothing. Boundaries come from the brain's one
+   splitter, borrowed not copied, because a raw-text scan matches `HOME=/tmp`
+   inside `git commit -m "HOME=/tmp"` and shadows the real variable from inside
+   a quoted argument.
+   CORPUS COST, both directions, 21,241 unique (command, cwd) rows from 932
+   transcripts, replayed against the live brain root:
+     before   54 deny / 21,187 allow
+     after    53 deny / 21,188 allow
+     ALLOW -> DENY   1     DENY -> ALLOW   2
+   The one gain is a real disarm that used to pass, not an over-fire:
+   `R=/home/<user>/.claude; ... cp -v $W/scripts/g__stop__goal-anchor.py
+   $R/scripts/` copies gate BODIES into the live tree through a variable the
+   command defines itself. That is the shape this gate exists to deny, and it
+   shows the fix reaches any variable, not just $HOME. It also means hand-
+   installing scripts into the live brain now denies: the sanctioned path is a
+   worktree, a PR and ai-sync, which is what the deny copy already says.
+   Both losses are false denies removed. Both are
+   `... SP=/tmp/...; cd "$SP/base" && git init -q && git config user.email ...`
+   run from a cwd of ~/.claude: the cd was unknowable, so the tree layer
+   abstained while `git config` still resolved against the LIVE cwd and denied
+   ~/.claude/.git/config. The command configures a throwaway repo in /tmp and
+   never touches the brain.
+   FIXTURE CONSEQUENCE: benign_unexpanded_rm_absolute.json asserted
+   `rm -rf "$HOME/.claude/scripts"` must ALLOW. Inside a selftest leg HOME is
+   the sandbox, so that IS the protected tree; the fixture encoded the rule this
+   entry corrects and became violation_defined_var_rm_absolute.json. Its benign
+   twin is that file minus exactly one edit, the variable name.
+   ONE RESERVED NAME, $OCTO_FIXTURE_UNDEFINED: a benign fixture meaning "this
+   variable is unknowable" is only benign while the name really is undefined,
+   and the operator's shell decides that, so every leg unsets exactly that name.
+   benign_unexpanded_cd_then_checkout.json used $SP, whose premise depended on
+   the shell, and now uses the reserved name; the shape is unchanged.
+   THE EXPANSION CARRIES A CAP AND THE ANSWER ABOVE IT IS EXACT, not a
+   truncation and not a timeout: expand_env returns its INPUT unchanged past
+   4096 characters (PATH_MAX), so the caller sees a string still carrying `$`
+   and applies the unknowable reading it already had. A string longer than
+   PATH_MAX cannot be opened, removed or written by any verb these gates read,
+   so that is the right answer and not a shortcut. The bound also caps MEMORY on
+   the hot path, which is the real reason it is a cap: one long variable
+   repeated across a 64 KB body could otherwise expand into hundreds of
+   megabytes and get the hook killed, and a killed hook writes no stdout while
+   empty stdout reads as ALLOW.
+   MEASURED RESIDUAL: with a >4096-character variable already in the hook
+   process's environment, `rm -f $BIG/../.claude/settings.json` allows (4,220
+   characters, measured). Reaching it needs that variable in the HARNESS
+   process's environment, which is the same boundary the merge gate's
+   OCTO_MERGE_APPROVE already rests on: a Bash tool call gets a fresh shell and
+   its exports never reach the next hook. That boundary is inherited here, not
+   re-measured.
+   COST, best-of-five, one process per run: `rm -rf ~/.claude/scripts` 0.13 s
+   and its `$HOME` spelling 0.14 s, against 0.09 s for a plain `ls -la`.
+
+
 === COVERED VERBS (generated by --verbs) ===
   removing: rm shred unlink
   copy/move: cp install ln mv rsync
-  flag-destination: curl patch tar wget
+  flag-destination: cpio curl patch tar unzip wget
   consuming: bzip2 compress gzip lzma xz zstd
-  archive-removing: tar zip
+  archive-removing: rsync tar zip
   overwriting: sort uniq
-  in-place-edit: awk busybox-awk gawk mawk chmod
-  simple-writers: chgrp chown cpio ed ex fallocate gpg nvim openssl setfacl split unzip vi vim
+  in-place-edit: awk busybox-awk chgrp chmod chown gawk mawk setfacl
+  simple-writers: chgrp chown cpio ed ex fallocate gpg nvim openssl rename rename.ul scp setfacl shred split unzip vi vim
+  program-argument-hosts: awk gawk mawk node nodejs perl php ruby sed
+  cwd-extractors: cpio patch tar unzip
   wrappers-local: busybox chrt doas flock ionice ltrace parallel setsid strace systemd-run taskset toybox
   command-string-hosts: flock script
   interpreter-hosts: bash dash py python sh zsh
@@ -804,4 +1024,11 @@ own header carries the same list; this file carries the commands.
   shared-parser-state: chattr chmod dd touch
   shared-parser-exec: cp mv rm sed shred tee truncate unlink
   wrappers-shared: busybox chrt command doas env exec flock ionice ltrace nice nohup parallel setsid stdbuf strace sudo systemd-run taskset time timeout toybox xargs
+  NOT ENUMERATED BY THIS BLOCK (recognised, but not by program name):
+    - git subcommands (checkout, switch, restore, rm, reset, stash, clean, read-tree, checkout-index, config, push, am, cherry-pick, revert)
+    - find predicates (-delete, -exec, -execdir, -ok, -okdir)
+    - redirect spellings (>, >>, &>, &>>, >|)
+    - inline write markers and the direct-write patterns
+    - protected path SHAPES (<dir>/.claude/settings*.json, scripts/g__*.py)
+    - version-suffixed interpreter spellings (python3.12 reduces to python)
 === END COVERED VERBS ===

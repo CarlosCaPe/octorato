@@ -43,6 +43,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sys
 import time
 
@@ -567,6 +568,121 @@ def update_row(pid, fields: dict) -> bool:
 # exactly the hole Phase 2 closes). Matching is equality or path prefix in
 # EITHER direction, so `rm -rf <dir>` collides with a lane sitting under <dir>
 # and a write to <dir>/x collides with a lane on <dir>.
+
+
+# A DEFINED VARIABLE IS NOT UNKNOWABLE. `~` has always been expanded on the way
+# to a path and `$VAR` never was, so the two spellings of ONE path disagreed:
+# `~/.claude/settings.json` resolved to the live file and
+# `$HOME/.claude/settings.json` resolved to `<cwd>/$HOME/.claude/settings.json`,
+# a path that exists nowhere, and every gate reading it abstained. The abstain
+# was defended as "the shell has to expand it, so nobody knows what it is", and
+# that is true of `$SOMEDIR` and false of `$HOME`: the hook runs in the same
+# process tree as the shell that will execute the command, so `os.environ`
+# already holds the value that shell will use. `$HOME/...` is also how a person
+# or an agent actually writes that path in a script, so the abstain was covering
+# the MOST COMMON spelling of the paths these gates exist to protect.
+#
+# So: a variable this process can READ is resolved, a variable it cannot is left
+# exactly as written and keeps the old unknowable reading. There is no list of
+# variable names here on purpose. A list of knowable variables is a hand-kept
+# list, which is the disease, not the cure: `os.environ` IS the list, and it is
+# the same one the shell will use.
+#
+# NOT EXPANDED, deliberately, because the shell's answer is not knowable from
+# the environment alone: `$(cmd)` and backticks (a command, not a value),
+# `${VAR:-x}` and every other parameter-expansion operator (the regex only
+# matches a bare name), and `$1`/`$@` (positional, and this process has none).
+# All of them keep their `$`, which is what the callers' unknowable test reads.
+_ENV_VAR = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
+
+# ABOVE THE CAP THE ANSWER IS EXACT AND CHEAP, not a truncation and not a
+# timeout: `expand_env` returns its INPUT UNCHANGED, so the caller sees a string
+# that still carries `$` and applies the unknowable reading it already had. That
+# is the correct answer rather than a shortcut, because the cap is PATH_MAX: a
+# path layer asks this question only about something it is going to compare
+# against a file, and a string longer than PATH_MAX cannot be opened, removed or
+# written by any verb these gates read. The bound also caps MEMORY on the hot
+# path: the builder stops the moment it crosses the limit, so one long variable
+# repeated across a 64 KB body cannot expand into hundreds of megabytes and get
+# the hook killed. A killed hook writes no stdout and empty stdout reads as
+# ALLOW, so "slow" and "approve" are the same output here; that is why this is a
+# cap and not a best effort. Callers reading a whole interpreter BODY pass their
+# own larger limit, because there the string is not a single path.
+_EXPAND_MAX = 4096
+
+
+# A VARIABLE THE COMMAND ITSELF ASSIGNS IS NOT THE ONE THIS PROCESS HOLDS, and
+# reading it from `os.environ` anyway is how a correct rule produces a FALSE
+# DENY. Measured, one in 21,241 real commands, and it is a shape people write on
+# purpose: `export HOME=<sandbox> && mkdir -p $HOME/.claude && cp hooks.json
+# $HOME/.claude/` is a rehearsal that deliberately points HOME away from the
+# live tree, and resolving `$HOME` from the hook's environment aimed all three
+# steps back at the brain and denied them.
+#
+# So a caller that owns a whole command hands the assignments in here FIRST and
+# they win over the environment. The PARSING is not here: deciding which
+# `NAME=value` in a command line is a real assignment needs the brain's one
+# boundary-aware splitter (g__pretool-bash__tree-owner.command_assignments),
+# and a naive scan of the raw text is a FAIL-OPEN, not a rough edge:
+# `git commit -m "HOME=/tmp" && rm -f $HOME/.claude/settings.json` would shadow
+# the real HOME from inside a quoted argument. This module only holds the
+# answer, so nothing that can only be decided by a parser is decided here.
+#
+# NOT SETTING IT IS THE SAFE FAILURE: with no shadow, `$HOME` resolves from the
+# environment and a real disarm still denies. The shadow only ever WIDENS what
+# a name may resolve to, which is why the parser is the one allowed to fill it.
+#
+# The shadow is PER PROCESS because a hook process reads exactly one command,
+# and the setter REPLACES, so a long-running caller (a corpus sweep) cannot
+# carry one command's assignments into the next.
+_CMD_ASSIGNED = {}
+
+
+def set_command_assignments(mapping) -> None:
+    """Adopt the variables the command being read assigns to itself.
+
+    A name mapped to None is one the command assigns from something nobody can
+    evaluate here (`HOME=$REAL`): it stays unexpanded and keeps the unknowable
+    reading every `$VAR` had before."""
+    _CMD_ASSIGNED.clear()
+    if mapping:
+        _CMD_ASSIGNED.update(mapping)
+
+
+def _value_of(name: str):
+    """The value the SHELL will use for *name*, or None when nobody knows."""
+    if name in _CMD_ASSIGNED:
+        return _CMD_ASSIGNED[name]          # may be None: assigned, unknowable
+    return os.environ.get(name)
+
+
+def expand_env(text: str, limit: int = _EXPAND_MAX) -> str:
+    """*text* with every `$VAR` / `${VAR}` this process can resolve replaced.
+
+    An undefined name is left verbatim. A value is substituted once and never
+    rescanned, exactly as the shell does, so a value that itself contains `$`
+    cannot expand a second time."""
+    if not text or "$" not in text:
+        return text
+    parts = []
+    pos = 0
+    size = 0
+    for m in _ENV_VAR.finditer(text):
+        name = m.group(1) or m.group(2)
+        val = _value_of(name)
+        if val is None:
+            continue      # undefined, or assigned from something unevaluable
+        parts.append(text[pos:m.start()])
+        parts.append(val)
+        size += (m.start() - pos) + len(val)
+        pos = m.end()
+        if size > limit:
+            return text
+    if pos == 0:
+        return text                     # nothing resolvable: `$(cmd)`, `$1`, …
+    parts.append(text[pos:])
+    out = "".join(parts)
+    return out if len(out) <= limit else text
 
 
 def norm_path(path) -> str:

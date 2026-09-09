@@ -56,8 +56,9 @@ NAMED RESIDUALS, measured as passing and deliberately not covered here. The list
 is pinned by a test, so it stays equal to what the gate actually does:
 `rsync --delete`, `shred`, `ln -sf`, `perl -pi`; a `python -c` body (only
 best-effort, scanned as shell text) including one aimed at the state dir;
-`git apply|rebase|merge|pull|cherry-pick|revert`; variable and brace expansion
-(`rm -rf $DIR`, `rm -rf {pkg,x}`, unknowable without running the shell); a `-c` body nested deeper
+`git apply|rebase|merge|pull|cherry-pick|revert`; brace expansion
+(`rm -rf {pkg,x}`, unknowable without running the shell) and a variable NOBODY here can read
+(`rm -rf $UNSET`, `export DIR=$OTHER && rm -rf $DIR`); a `-c` body nested deeper
 than 3; and xargs fed from STDIN (`cat list | xargs rm`, `xargs rm < list`),
 where the targets never appear in the command at all. Each is a distinct verb
 table or an evaluator, not a gap in this one, and none is the weekend shape.
@@ -184,8 +185,73 @@ def peel_env(tokens: list) -> list:
     return tokens[i:]
 
 
+# WHICH `NAME=value` IN A COMMAND LINE ACTUALLY CHANGES A LATER EXPANSION. Two
+# spellings look identical and behave oppositely, and getting it wrong is a
+# FAIL-OPEN in one direction, so the difference is the whole function:
+#
+#   HOME=/tmp/x; rm -f $HOME/.claude/settings.json    -> /tmp/x/... (a statement)
+#   HOME=/tmp/x  rm -f $HOME/.claude/settings.json    -> the LIVE file (a prefix)
+#
+# A PREFIX assignment is put in the environment of the command it prefixes, and
+# the shell has already expanded that command's own words by then, so `$HOME`
+# on that line is still the old one. Reading a prefix as a statement would let
+# one space in front of `rm` disarm the gate, so a segment holding anything
+# other than assignments contributes NOTHING.
+#
+# Boundaries come from the brain's one splitter, borrowed not copied, for the
+# same reason every other reader here borrows it: a raw-text scan matches
+# `HOME=/tmp` inside `git commit -m "HOME=/tmp"` and shadows the real variable
+# from inside a quoted argument. `shlex` then removes the quotes, so
+# `export HOME="/tmp/a b"` keeps its space.
+#
+# A VALUE THIS PROCESS CANNOT EVALUATE (`$`, a backtick, a glob) maps to None,
+# which means unknowable, not "use the environment": `export HOME=$REAL && rm
+# -rf $HOME/.claude` abstains exactly as every unexpanded variable did before.
+# LAST ASSIGNMENT WINS, and that ordering is a security property: taking the
+# first would read `HOME=/tmp/x; HOME=<live>; rm -f $HOME/.claude/settings.json`
+# as a sandbox while the shell aims at the brain.
+_ASSIGN_HOSTS = ("export", "declare", "typeset", "readonly", "local")
+_UNEVALUABLE = ("$", "`", "*", "?")
+
+
+def command_assignments(command: str) -> dict:
+    """{name: value or None} for the variables *command* sets for LATER words."""
+    import shlex
+    split_subcmds, _broad = _dim_helpers()
+    out = {}
+    for seg in split_subcmds(command or ""):
+        try:
+            toks = shlex.split(seg.strip().rstrip(";").strip())
+        except ValueError:
+            continue                      # unparseable: shadow nothing, deny wins
+        if not toks:
+            continue
+        i = 1 if toks[0] in _ASSIGN_HOSTS else 0
+        found = {}
+        while i < len(toks) and is_env_assign(toks[i]):
+            name, _eq, val = toks[i].partition("=")
+            found[name] = None if any(c in val for c in _UNEVALUABLE) else val
+            i += 1
+        if i < len(toks) and toks[0] not in _ASSIGN_HOSTS:
+            continue                      # a PREFIX: scoped to that one command
+        out.update(found)                 # later segments overwrite earlier ones
+    return out
+
+
 def resolve(path: str, here: str) -> str:
-    path = os.path.expanduser(path)
+    """One token, absolute. THE single place a written path becomes a real one.
+
+    `~` is expanded and `$VAR` was not, and the order below is why that mattered
+    more than it looks: the ABSOLUTENESS test runs after expansion, so
+    `$HOME/.claude/x` was judged relative and joined onto the live cwd, landing
+    on `<cwd>/$HOME/.claude/x` — a path that exists nowhere and matches nothing.
+    Expanding here, before `isabs`, is the only place that can fix it: after the
+    join the leading `/` is gone and no later reader can put it back. Tilde
+    first, then the variable, which is the order the shell itself uses.
+    `kernel_proc.expand_env` resolves only names this process can actually read
+    and leaves the rest verbatim, so an undefined `$SOMEDIR` still reaches the
+    callers carrying its `$` and keeps the unknowable reading it had."""
+    path = kernel_proc.expand_env(os.path.expanduser(path))
     return kernel_proc.norm_path(path if os.path.isabs(path) else os.path.join(here, path))
 
 
@@ -559,6 +625,12 @@ def scan(command: str, cwd: str, depth: int = 0) -> list:
 
     if not any(t in command for t in _TRIGGERS):
         return []
+    if depth == 0:
+        # `resolve` below expands `$VAR` from this process's environment, which
+        # is stale for any name THIS command assigns. Read those first, at the
+        # top level only: a `-c` body or a subshell inherits the outer
+        # assignments and must not clear them.
+        kernel_proc.set_command_assignments(command_assignments(command))
     split_subcmds, broad_git_verb = _dim_helpers()
     shell_c = _shell_c() if depth < _MAX_DEPTH else None
     here = kernel_proc.norm_path(cwd or os.getcwd())
