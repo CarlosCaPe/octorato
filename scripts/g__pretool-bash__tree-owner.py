@@ -95,8 +95,15 @@ DIRECTORY they are denied, see below);
 `git apply|rebase|merge|pull|cherry-pick|revert`; variable and brace expansion
 OTHER than HOME (`rm -rf $DIR`, `rm -rf {pkg,x}`, unknowable without running the
 shell); a `-c` body nested deeper
-than 3; xargs fed from STDIN (`cat list | xargs rm`, `xargs rm < list`),
-where the targets never appear in the command at all;
+than 3; xargs fed from STDIN BY ANOTHER PROGRAM OR A FILE
+(`cat list | xargs rm`, `xargs rm < list`), where the
+targets never appear in the command at all. `find … | xargs rm` is NOT one of
+them: `find`'s root argument is itself a path, so it is handed to the receiver
+and the deny lands on the directory being searched. QA cycle 15 narrowed this sentence:
+it used to be read as covering `echo <path> | xargs rm` too, and that one is a
+BYPASS rather than a residual, because the target IS echo's argument, right
+there in the line. It is covered now, and the residual is only the half where
+the text is genuinely produced by something this gate cannot read;
 and a heredoc fed to `ssh` or a container `exec`, whose body is a command on
 ANOTHER machine, where this machine's kernel directory is not the one being
 named. Each is a distinct verb
@@ -175,17 +182,33 @@ are pinned by `QaCycle13.test_named_residuals_of_cycle_13`: a wrapper whose
 program is COMPUTED (`setsid $(echo rm) -f x`), a wrapper that hides its program
 past the scan depth or behind a token ending in `)`/`;`, and a python heredoc
 body that deletes a LANE (an interpreter body is tested against the kernel floor
-as raw text and re-scanned as commands only for a shell). Over-fire is measured
-rather than assumed, and QA cycle 14 could not reproduce cycle 13's numbers, so
-they are restated from a run that can be named: over 19403 DISTINCT real Bash
-commands from this machine's transcripts (cycle 13 counted occurrences, not
-distinct commands, which is where 19191 came from), 638 gain a hit they did not
-have. 58 of those name a path in a directory where lanes can exist, and every
-one of the 58 is a `$VAR` this parser does not expand, which is the
-variable-expansion residual already stated above and not a new class. In the
-other direction 4031 hits go away, all of them `/dev/null` and its siblings:
-a device that accepts a write and stores nothing is not a target, and reading
-it as one cost an ownership lookup per hit.
+as raw text and re-scanned as commands only for a shell). Over-fire is measured rather
+than assumed, and TWO OF CYCLE 14'S OWN SENTENCES DID NOT SURVIVE THE RECOUNT,
+which is worth more than the numbers they carried. "58 lane-directory gains, all
+of them unexpanded `$VAR`" was wrong in the direction that flatters: cycle 15
+measured 54 at hit level of which 52 are LITERAL paths and only 2 carry a
+`$VAR`, the inverse of the claim. And "`curl -o /dev/null` is 796 of them"
+attached a GAINED-set hit count to the LOST set, where every verb is `>` and a
+`curl` hit cannot appear at all, because the older code never modelled
+`curl -o`. A number carried forward across a rewrite is a claim about code that
+no longer exists.
+
+RESTATED FROM A RUN AGAINST THIS TIP, against 9452b86 over 19403 distinct real
+commands: 69 gain a hit and 4 lose one. 41 gained hits land in a directory where
+lanes can exist, of which 18 carry an unexpanded `$VAR`, so the majority are
+LITERAL — which is what cycle 15 measured and what cycle 14 had backwards. The
+gains sit exactly where the new tables are: `curl` 22, `sqlite3` 18, `ffmpeg`
+13, `aws` 7, `gzip` 7. The 4 losses are all OVER-FIRE going away, not coverage:
+83 of them are `sed` hits on ONE command whose targets were fragments of python
+source (`["echo`, `'s`, `list(mine.split_command_substitutions(...))`) read as
+sed operands.
+
+Two over-fires in that set were mine and are gone, both found by the corpus and
+not by a test: `2>&1;` read the trailing `;` as part of a filename, and a
+`gh issue comment --body "… a > 30 && b …"` in backticks was read as a deferred
+command because the body held backticks and the command held `[[`. The deferred
+scan is now bounded to the VALUE OF AN ASSIGNMENT, which is the mechanism it
+models, because documentation is not an assignment.
 
 Three residuals belong specifically to the hardlink rule and are stated rather
 than discovered: a SYMBOLIC link over a lane's path is denied (it is a write to
@@ -226,6 +249,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -324,6 +348,104 @@ def describe(pid: str, row: dict) -> str:
             else "never journaled" if age < 0
             else f"last active {int(age)}s ago")
     return f"pid {pid} ({kind}, {when})"
+
+
+# ── THE OWNERSHIP LOOP IS O(HITS x ROWS), AND ONLY ONE WAS BOUNDED ──────────
+#
+# QA cycle 15 blocker 1, and it is cycle 14's lesson on a new axis: cycle 14
+# said the budget was measured on the wrong COMMAND shape, and cycle 15 found it
+# measured on the wrong TABLE shape. The 1.88 s at 8000 tokens was taken against
+# a 3-row fixture ptable. THIS MACHINE RUNS 146 ROWS AND 110 LANES, and
+# `lane_owner` walks every row for every hit, so the cost is per-hit TIMES rows.
+# Measured end to end with the table seeded to the live shape, on the input QA
+# names, `"rm -f " + " ".join(["x"]*k)`, which is 2k+5 bytes and under every
+# character cap:
+#
+#     2000 tokens 1.95 s      6000 tokens KILLED rc124, empty stdout
+#     4000 tokens 4.83 s      8000 tokens KILLED rc124, empty stdout
+#                             8200 tokens DENY in 0.24 s (the cap works above it)
+#
+# AFTER, at the same live shape and measured the same way. TWO RUNS ARE QUOTED,
+# not one, because the first pair of numbers this comment carried came from a
+# quiet moment and a second run under load contradicted them by 5x — which is
+# the error this whole chain has been about, a number measured under one load
+# stated as a property of the code:
+#
+#                     run A (load 9)          run B (load ~20)
+#     same path       0.25 / 0.24 / 0.33 s    1.61 / 1.22 / 1.30 s
+#     distinct paths  0.24 / 0.29 / 0.46 s    0.48 / 1.72 / 2.35 s
+#     under a lane    0.17 / 0.14 / 0.15 s    0.31 / 0.40 / 0.41 s  (DENY, early exit)
+#                     (2000 / 4000 / 8000 tokens)
+#
+# THE CLAIM IS THE WORST OBSERVED, 2.35 s against the 5 s kill, and every shape
+# returns a VERDICT in both runs — which is the property that was missing, since
+# before this the same band returned rc 124 and empty stdout. At 500 rows it is
+# faster still, because the row count left the inner loop.
+#
+# A killed hook writes no stdout and empty stdout is ALLOW, so the band under
+# the cap was fail-open by clock on the real machine while every fixture-shaped
+# measurement said it was fine.
+#
+# THE FIX IS NOT ANOTHER NUMBER, because the product is what is unbounded, and
+# a cap on one factor cannot bound a product. Three changes, none of which moves
+# the AUTHORITY away from `kernel_proc.lane_owner`:
+#
+#   1. the hits are DEDUPED before the loop. `rm -f x x x …` is one target
+#      repeated k times, and the old loop asked the same question k times;
+#   2. a NEGATIVE PREFILTER answers "this path cannot collide with any lane" in
+#      O(depth + log n) out of an index built once. It may only ever say NO or
+#      MAYBE; every MAYBE still goes to `lane_owner`, which keeps liveness,
+#      row ordering, the scan budget and the journalling exactly where they are.
+#      `test_c15_the_prefilter_never_hides_a_real_owner` asserts it has no false
+#      negatives against `lane_owner` itself;
+#   3. a MEMO per distinct target inside one call, because the loop can still
+#      see the same path through two different verbs.
+#
+# What is deliberately NOT done here is a second implementation of the ownership
+# rule. This file has been burned three times by a second copy of a shared rule
+# drifting from the first, so the prefilter is allowed to be wrong in exactly
+# one direction and a test pins that direction.
+def _lane_prefilter(table: dict):
+    """A callable answering "could this path collide with ANY lane" cheaply.
+
+    Returns True for MAYBE and False for DEFINITELY NOT. Building it walks the
+    table once; each query is a set lookup per path component plus one bisect.
+    On any error it returns a function that always says MAYBE, so a prefilter
+    that cannot be built costs speed and never coverage."""
+    try:
+        import bisect
+        lanes = []
+        for row in (table or {}).get("processes", {}).values():
+            if not isinstance(row, dict):
+                return lambda target: True      # an unreadable row hides lanes
+            for lane in (kernel_proc.lanes_of(row) or []):
+                norm = kernel_proc.norm_path(lane)
+                if norm:
+                    lanes.append(norm)
+        exact = set(lanes)
+        ordered = sorted(exact)
+
+        def maybe(target: str) -> bool:
+            if not target:
+                return False
+            if target in exact:
+                return True
+            # an ANCESTOR of the target is somebody's lane
+            node = target
+            while True:
+                parent = os.path.dirname(node)
+                if not parent or parent == node:
+                    break
+                if parent in exact:
+                    return True
+                node = parent
+            # a lane lives UNDER the target
+            below = target.rstrip(os.sep) + os.sep
+            i = bisect.bisect_left(ordered, below)
+            return i < len(ordered) and ordered[i].startswith(below)
+        return maybe
+    except Exception:
+        return lambda target: True
 
 
 def glob_owner(pattern: str, table: dict, pid, icase: bool = False) -> tuple:
@@ -526,6 +648,7 @@ _SCRIPT_RUNNERS = ("npm", "yarn", "pnpm", "cargo", "make", "just", "task",
 # remote too and are NOT here, because nothing they spell collides with a
 # program in these tables and adding them would be padding.
 _REMOTE_RUNNERS = ("docker", "podman", "nerdctl", "kubectl", "oc", "ssh",
+                   "scp", "rsync",
                    "lxc", "machinectl", "distrobox", "toolbox", "flatpak",
                    "apptainer", "singularity", "vagrant",
                    "aws", "gcloud", "az", "gsutil", "rclone", "mc", "s3cmd",
@@ -743,21 +866,74 @@ def peel_wrappers(tokens: list, here: str) -> tuple:
         tokens = tokens[i:]
 
 
+def _is_descriptor(operand: str) -> bool:
+    """True when a redirect operand names a DESCRIPTOR rather than a file.
+    Trailing shell punctuation is stripped first: this parser is not the shell,
+    so `2>&1;` reaches it with the `;` still attached."""
+    core = (operand or "").rstrip(";&|)}")
+    return not core or core.isdigit() or core == "-"
+
+
 def redirect_targets(tokens: list) -> tuple:
     """(files this segment writes by redirection, the remaining tokens).
 
-    `2>&1` writes no file (its operand names a descriptor, not a path) and an
-    input redirect writes nothing at all, so both drop out here rather than
-    becoming phantom targets."""
+    `2>&1` writes no file (its operand names a descriptor, not a path) and a
+    plain input redirect writes nothing at all, so both drop out here rather
+    than becoming phantom targets.
+
+    QA CYCLE 15 BLOCKER 2c: the old reader stripped digits and then required the
+    core to start with `>`, which is three spellings short. `&>file` and
+    `&>>file` (stdout AND stderr, the common one) start with `&`; `>&file` is
+    the same redirection written the other way round and is NOT `>&1`, which
+    names a descriptor; `{fd}>file` opens a file and binds a new descriptor to
+    it; and `1<>file` opens for READING AND WRITING, so it is a write whatever
+    the `<` suggests. All four reached the kernel directory."""
     targets, rest, i = [], [], 0
     while i < len(tokens):
         tok = tokens[i]
         core = tok.lstrip("0123456789")
+        # `{fd}>file` / `{fd}>>file`: bash's named-descriptor form
+        if core.startswith("{") and "}" in core:
+            core = core[core.index("}") + 1:]
+        # `&>file`, `&>>file`: stdout and stderr to one FILE
+        if core.startswith("&>"):
+            after = core[2:].lstrip(">")
+            if after:
+                targets.append(after)
+            elif i + 1 < len(tokens):
+                targets.append(tokens[i + 1])
+                i += 1
+            i += 1
+            continue
+        # `<>file`: opened for reading AND writing, so it is a write
+        if core.startswith("<>"):
+            after = core[2:]
+            if after:
+                targets.append(after)
+            elif i + 1 < len(tokens):
+                targets.append(tokens[i + 1])
+                i += 1
+            i += 1
+            continue
         if core.startswith(">"):
             after = core.lstrip(">")
-            if after:
-                if not after.startswith("&"):
-                    targets.append(after)
+            if after.startswith("&"):
+                # `>&1` names a DESCRIPTOR; `>&file` names a FILE. The operand
+                # may arrive with shell punctuation still attached, because the
+                # tokenizer is not the shell: `2>&1;` and `2>&1)` are the same
+                # descriptor as `2>&1`, and reading the trailing `;` as part of
+                # a filename put junk targets on real commands (measured over
+                # the corpus, which is what caught it).
+                operand = after[1:]
+                if operand and not _is_descriptor(operand):
+                    targets.append(operand)
+                elif not operand and i + 1 < len(tokens):
+                    nxt = tokens[i + 1]
+                    if not _is_descriptor(nxt):
+                        targets.append(nxt)
+                    i += 1
+            elif after:
+                targets.append(after)
             elif i + 1 < len(tokens):
                 if not tokens[i + 1].startswith("&"):
                     targets.append(tokens[i + 1])
@@ -887,33 +1063,42 @@ _OUTPUT_FLAGS = {
     "sort": ("-o", "--output"),
     "less": ("--log-file", "--LOG-FILE", "-o", "-O"),
     "tar": ("-f", "--file"),
-    "zip": ("-O", "--out"),
-    "ffmpeg": (), "convert": (),
     "openssl": ("-out",),
     "gpg": ("-o", "--output"),
     "tee": ("-a", "--append"),
-    "split": (),
     "csplit": ("-f", "--prefix"),
-    "jq": (),
     "pandoc": ("-o", "--output"),
-    "wkhtmltopdf": (),
-    "sqlite3": (),
     "psql": ("-o", "--output", "-L", "--log-file"),
-    "mysql": (),
-    "git": (),
-    "patch": ("-o", "--output", "-r", "--reject-file", "-b"),
-    "diff": (),
-    "objcopy": (), "strip": ("-o",),
+    "patch": ("-o", "--output", "-r", "--reject-file"),
+    "strip": ("-o",),
     "gcc": ("-o",), "g++": ("-o",), "cc": ("-o",), "clang": ("-o",),
     "go": ("-o",), "rustc": ("-o",),
-    "dd": (),
 }
-# Programs whose LAST POSITIONAL is an output rather than an input. `uniq` is
-# the member a `--help` screen for output FLAGS cannot see, and it is why the
+# AN EMPTY ROW IS THE `uniq` SHAPE, ONE CYCLE LATER (QA cycle 15 blocker 3).
+# The version this replaces carried `ffmpeg`, `convert`, `sqlite3`,
+# `wkhtmltopdf`, `mysql`, `split`, `jq`, `diff` and `dd` with EMPTY flag tuples.
+# They armed the trigger, they read as modelled, and they covered nothing,
+# because every one of those programs writes a POSITIONAL. That is exactly the
+# member `uniq` was — a write a flag screen cannot see — reintroduced by the
+# commit that named it. The empty rows are gone; the ones whose output position
+# can actually be stated moved to `_POSITIONAL_OUTPUT`, and the rest
+# (`wkhtmltopdf`, `mysql`, `jq`, `diff`) left the file, because a row that
+# covers nothing is worse than no row: it makes the table look finished.
+# `test_c15_no_output_flag_row_is_empty` makes the shape impossible to add back.
+# `dd` left this table too: its `of=` was already read by `mutation_targets`.
+
+# Programs whose output is a POSITIONAL, with WHICH positional stated. `uniq`
+# is the member a `--help` screen for output FLAGS cannot see, and it is why the
 # header no longer claims a flag probe proves anything.
-_POSITIONAL_OUTPUT = ("uniq",)
-# Programs that REMOVE or REPLACE their input as their normal operation, each
-# with the flag that turns it off. Measured deleting a real file on this host.
+_POSITIONAL_OUTPUT = {
+    "uniq": "last",         # `uniq IN OUT`
+    "ffmpeg": "last",       # `ffmpeg -i IN … OUT`
+    "convert": "last", "magick": "last",
+    "zip": "first",         # `zip ARCHIVE files…`
+    "objcopy": "last",      # `objcopy IN OUT`, and IN-PLACE with one operand
+    "sqlite3": "first",     # `sqlite3 DB "SQL"` writes the database
+    "split": "last",        # the PREFIX its pieces are written under
+}
 _CONSUMING = {
     "gzip": ("-k", "--keep"), "bzip2": ("-k", "--keep"),
     "xz": ("-k", "--keep"), "lzma": ("-k", "--keep"),
@@ -968,28 +1153,106 @@ _COMMAND_STRING_VALUED = {
 # reach, and its body is scanned. Without one of those constructs the same text
 # is quoted prose and stays untouched, which is what keeps
 # `echo 'x $(rm -f k)'` allowed.
-_DEFERRED_EVAL = ("$((", "eval", "let ", "declare -i", "typeset -i", "$[")
+# Constructs that can evaluate text held in a variable. QA cycle 15 blocker 2b:
+# the first four were the whole list, and `(( x ))`, `[[ $x -eq 0 ]]`,
+# `${y:x}` and `arr[x]=1` are all arithmetic or expansion contexts outside it.
+_DEFERRED_EVAL = ("$((", "$[", "((", "[[", "${", "eval", "let ",
+                  "declare -i", "typeset -i")
+# `name[expr]=` — an array subscript is an arithmetic context too
+_ARRAY_SUBSCRIPT = re.compile(r"\w+\[[^]]+\]\s*=")
+# `NAME=`, `NAME="`, `export NAME='` … immediately before the region, with no
+# whitespace between: the value of an assignment and not an argument to a
+# command.
+_ASSIGNED_VALUE = re.compile(r"(?:^|[\s;&|(])\w+=[\"']?[^\s\"']*$")
 
 
 def deferred_substitution_bodies(text: str) -> list:
     """Bodies of substitutions written so they do NOT run now, in a command that
     carries something able to run them later."""
-    if not any(m in text for m in _DEFERRED_EVAL):
+    if not (any(m in text for m in _DEFERRED_EVAL)
+            or _ARRAY_SUBSCRIPT.search(text)):
         return []
     out, i, n = [], 0, len(text)
-    while i < n - 2:
-        if text.startswith("\\$(", i) or text.startswith("'$(", i):
+
+    def stored(at: int) -> bool:
+        """True when the region starting at *at* is the VALUE OF AN ASSIGNMENT.
+
+        The whole class is "text put in a variable now and evaluated later", so
+        the assignment is not decoration, it is the mechanism. Requiring it is
+        what keeps PROSE out: measured over the corpus, a `gh issue comment
+        --body "… \\`tool_calls_per_min > 30 && …\\` …"` was read as a deferred
+        command because the body happened to contain backticks and the command
+        happened to contain `[[`, and the `> 30` inside it became a redirect
+        target. Documentation is not an assignment."""
+        return bool(_ASSIGNED_VALUE.search(text[:at]))
+
+    while i < n:
+        # an ESCAPED substitution: literal now, a command when re-evaluated
+        if text.startswith("\\$(", i) and stored(i):
             j = _match_paren(text, i + 2)
             body = text[i + 3:j - 1] if text[j - 1:j] == ")" else text[i + 3:]
             if body:
                 out.append(body)
             i = j
             continue
+        if text.startswith("\\`", i) and stored(i):
+            j = text.find("`", i + 2)
+            if j < 0:
+                break
+            out.append(text[i + 2:j])
+            i = j + 1
+            continue
+        # a SINGLE-QUOTED REGION is literal now and a command when re-evaluated,
+        # and the substitution may sit ANYWHERE inside it. The old reader
+        # matched only `'$(`, so one character between the quote and the `$(`
+        # walked, and the backtick spelling walked in every position.
+        if text[i] == "'" and stored(i):
+            close = text.find("'", i + 1)
+            region = text[i + 1:close if close >= 0 else n]
+            k = 0
+            while k < len(region):
+                if region.startswith("$(", k):
+                    j = _match_paren(region, k + 1)
+                    body = (region[k + 2:j - 1] if region[j - 1:j] == ")"
+                            else region[k + 2:])
+                    if body:
+                        out.append(body)
+                    k = j
+                    continue
+                if region[k] == "`":
+                    j = region.find("`", k + 1)
+                    if j < 0:
+                        break
+                    out.append(region[k + 1:j])
+                    k = j + 1
+                    continue
+                k += 1
+            i = (close + 1) if close >= 0 else n
+            continue
+        # a backtick inside DOUBLE quotes, escaped so it does not run now
+        if text[i] == "`":
+            j = text.find("`", i + 1)
+            if j < 0:
+                break
+            i = j + 1
+            continue
         i += 1
     return out
 
 
-_LITERAL_EMITTERS = ("echo", "printf")
+# Programs whose non-flag arguments are the TEXT (or the PATHS) they emit on
+# stdout. `ls` and `find` are here because the thing they print is derived from
+# an argument that is itself a path, so handing that argument to the receiver is
+# conservative in the right direction.
+_LITERAL_EMITTERS = ("echo", "printf", "ls", "find")
+# Programs that read stdin as ARGUMENTS for another command rather than as a
+# program. QA cycle 15 blocker 2a: `echo <path> | xargs rm -f` deleted the file
+# and allowed, while `echo 'rm -f <path>' | bash` denied beside it — the pipe
+# rule cycle 14 added only covered stdin-as-a-PROGRAM. The residual sentence did
+# not cover it either: it says xargs-from-stdin is the case "where the targets
+# never appear in the command at all", and here the target IS echo's argument,
+# spelled out in the line.
+_ARGUMENT_CONSUMERS = ("xargs",)
 
 
 def literal_text_of(tokens: list) -> str:
@@ -1002,6 +1265,84 @@ def literal_text_of(tokens: list) -> str:
         return ""
     words = [t for t in tokens[1:] if not t.startswith("-")]
     return " ".join(words)
+
+
+# ── THE COVERAGE BLOCK IS GENERATED, NOT MAINTAINED ─────────────────────────
+#
+# These lists have grown every cycle for three cycles, and every cycle the
+# PROSE that described them drifted from the tables themselves: cycle 14's
+# header said the read-only list held programs that "provably cannot write"
+# while three of them could, and cycle 15 found nine rows that armed the trigger
+# and covered nothing. Both are the same failure — a human-maintained
+# description of a machine-maintained set — and the fix is the one the sibling
+# gate made this session: stop writing the description and DERIVE it, then
+# assert the documented block still equals the derivation, so adding a row
+# without regenerating turns the suite red instead of leaving a sentence that
+# used to be true.
+#
+# `coverage_manifest()` is the derivation. `--coverage` prints it,
+# `test_c15_the_documented_coverage_equals_the_derivation` asserts the block
+# below matches it, and `_COVERAGE_BLOCK` is that block. Regenerate with:
+#
+#     python3 scripts/g__pretool-bash__tree-owner.py --coverage
+#
+# BEGIN GENERATED COVERAGE
+_COVERAGE_BLOCK = """\
+argument-consumer: xargs
+command-string: entr env flock hyperfine parallel script su watch xargs
+consuming: bzip2 compress gzip lzma xz zstd
+literal-emitter: echo find ls printf
+mutator: cp dd install ln mv rm sed tee truncate unlink
+output-flag: cc clang csplit curl g++ gcc go gpg less openssl pandoc patch \\
+psql rustc sort strip tar tee wget
+positional-output: convert ffmpeg magick objcopy split sqlite3 uniq zip
+read-only: b2sum base64 basename cat cd cksum cmp cut date df diff dirname \\
+du echo egrep false fgrep file grep head jq ls md5sum od popd printf pushd \\
+pwd readlink realpath rg sha1sum sha256sum stat strings tail test true \\
+wait wc which
+remote-runner: apptainer aws az b2 distrobox docker flatpak gcloud gsutil \\
+kubectl lxc machinectl mc nerdctl oc podman pulumi rclone rsync s3cmd scp \\
+singularity ssh terraform tofu toolbox vagrant wrangler
+state-verb: chattr chmod touch
+wrapper: busybox command env exec nice nohup stdbuf sudo time timeout \\
+toybox xargs
+"""
+# END GENERATED COVERAGE
+
+
+def coverage_manifest() -> str:
+    """Every program this file models, by the table that models it.
+
+    The single source of truth for what the gate covers. Derived from the
+    dispatch tables themselves, so it cannot drift from them: a row added
+    without regenerating the block above fails the suite."""
+    groups = {
+        "argument-consumer": _ARGUMENT_CONSUMERS,
+        "command-string": _COMMAND_STRING,
+        "consuming": _CONSUMING,
+        "literal-emitter": _LITERAL_EMITTERS,
+        "mutator": _MUTATORS,
+        "output-flag": _OUTPUT_FLAGS,
+        "positional-output": _POSITIONAL_OUTPUT,
+        "read-only": _KSTATE_READONLY,
+        "remote-runner": _REMOTE_RUNNERS,
+        "state-verb": _STATE_VERBS,
+        "wrapper": _WRAPPERS,
+    }
+    lines = []
+    for label in sorted(groups):
+        names = sorted(set(groups[label]))
+        body, line = [], label + ":"
+        for name in names:
+            if len(line) + 1 + len(name) > 74:
+                body.append(line + " \\")
+                line = ""
+            line += (" " if line and not line.endswith(":") else
+                     ("" if line.endswith(":") else "")) + (" " if line else "") + name
+            line = line.replace("  ", " ")
+        body.append(line)
+        lines.extend(body)
+    return "\n".join(lines) + "\n"
 
 
 def _build_triggers() -> tuple:
@@ -1017,6 +1358,8 @@ def _build_triggers() -> tuple:
     words.update(_CONSUMING)
     words.update(_POSITIONAL_OUTPUT)
     words.update(_COMMAND_STRING)
+    words.update(_REMOTE_COPY_VERBS)
+    words.update(("scp", "rsync"))
     return tuple(sorted(words))
 
 
@@ -1088,6 +1431,41 @@ def output_flag_targets(base: str, args: list) -> list:
                     out.append(args[i + 1])
                     break
     return [t for t in out if t]
+
+
+# ── A REMOTE RUNNER COPIES BOTH WAYS (QA cycle 15 blocker 3) ────────────────
+#
+# `_REMOTE_RUNNERS` is trusted as "not this filesystem", and that is true of the
+# UPLOAD direction only. Measured writing a real lane: `aws s3 cp s3://b/k
+# <lane>`, `docker cp c1:/etc/passwd <lane>`, `rclone copyto remote:x <lane>`
+# and `scp host:/etc/passwd <lane>` — and `scp` was not even on the list.
+#
+# The rule is the DIRECTION, not the tool: when one operand names something
+# remote (a `scheme://`, or a `host:`/`container:` prefix) and the LAST operand
+# does not, the last one is a local destination. That reads `aws s3 cp <lane>
+# s3://b/k` as the upload it is and leaves it alone.
+_REMOTE_COPY_VERBS = ("cp", "copy", "copyto", "sync", "get", "download",
+                      "fetch", "pull", "mv", "move")
+# `scheme://…`, or `host:path` / `container:path`. Anchored and built from
+# `[\w.-]`, which contains no separator, so an ordinary absolute or relative
+# path can never match: `/tmp/x:y` fails at the leading `/` and `dir/f:x` at the
+# `/` before the colon.
+_REMOTE_MARK = re.compile(r"^(?:[a-zA-Z][\w+.-]*://|[\w.-]+:)")
+
+
+def remote_copy_targets(base: str, args: list) -> list:
+    """The LOCAL path a remote copy writes, or []. Empty for an upload."""
+    if base not in ("scp", "rsync") and not any(
+            a in _REMOTE_COPY_VERBS for a in args[:3]):
+        return []
+    positional = [a for a in args if not a.startswith("-")]
+    positional = [a for a in positional if a not in _REMOTE_COPY_VERBS]
+    if len(positional) < 2:
+        return []
+    if not any(_REMOTE_MARK.match(a) for a in positional[:-1]):
+        return []                      # nothing remote: not this rule's shape
+    last = positional[-1]
+    return [] if _REMOTE_MARK.match(last) else [last]
 
 
 def consuming_targets(base: str, args: list) -> list:
@@ -1352,11 +1730,16 @@ def glob_hits(pattern: str, lane: str, icase: bool = False) -> bool:
 # equality so a future table added without this line fails.
 _ALWAYS_TRIGGER = (">", "octo", "git", "find", "delete", "xargs", "source")
 _C_HOSTS = ("bash", "sh", "zsh", "dash", "python", "python3", "py")
-_MUTATORS = ("rm", "mv", "cp", "sed", "tee", "unlink", "truncate", "install", "ln")
+_MUTATORS = ("rm", "mv", "cp", "sed", "tee", "unlink", "truncate", "install",
+             "ln", "dd")
 # Verbs that can damage the kernel's ledger without being a lane write. They are
 # tested against the state floor ONLY, never against a lane: `touch`/`chmod` on
 # a sibling's file is not the collision this rule is about.
-_STATE_VERBS = ("touch", "chmod", "chattr", "dd")
+# QA cycle 15 blocker 3: `dd` was here on the reasoning that these verbs never
+# write a LANE. `touch` and `chmod` do not destroy content; `dd if=/dev/zero
+# of=<lane>` does, so `dd` moved to `_MUTATORS` and this list holds only the
+# three the reasoning is actually true of.
+_STATE_VERBS = ("touch", "chmod", "chattr")
 
 # ── the kernel floor is a NAMED-PATH floor, not a verb list ──────────────────
 #
@@ -1703,7 +2086,16 @@ def code_names_kernel_state(seg: str, kdir: str) -> bool:
 # `SharedParserConvergence.test_the_substitution_rule_has_one_authority` asserts
 # that equality over a corpus, SKIPPING with a named reason on a base where the
 # provider does not carry the function yet and arming itself the moment it does.
-# 14/14 agreement measured against e0f9444. This gate takes no runtime import of
+#
+# IT SKIPS ON THIS BASE, and that has to be said out loud because it is easy to
+# read the wrong way (QA cycle 15). Every "convergence N/N" figure in this PR's
+# reports is a HARNESS number: it was measured by loading the provider out of
+# the sibling branch by hand. The assertion is NOT exercised where it ships, so
+# the honest reading of a green suite here is "this one did not run".
+# `qa-merge-gate.py` gains `_command_substitution_texts` on
+# `fix/qa-gate-blanket-override`, which has now been through its own cycle 10
+# and carries the function; this test arms itself when that merges.
+# 18/18 agreement measured by hand against e0f9444. This gate takes no runtime import of
 # an unmerged branch: an import that silently fails open would disable C1 until
 # the sibling merged, which is the worst of both.
 #
@@ -2758,6 +3150,17 @@ def scan(command: str, cwd: str, depth: int = 0, budget: list = None,
                 and stdin_program_fd(tokens) is not None
                 and _interp_base(os.path.basename(tokens[0])) in _C_HOSTS):
             hits.extend(scan(prior, here, depth + 1, budget, subs))
+        # …and the OTHER half of the same channel: an argument consumer runs a
+        # command whose arguments arrive on stdin, so the literal text is not a
+        # program, it is the operand list. `xargs` is peeled by the wrapper
+        # table, so the command it runs is already in `tokens`; the text is
+        # appended to it and the pair is scanned as one command.
+        if (prior and depth < _MAX_DEPTH and pre_peel
+                and os.path.basename(pre_peel[0]) in _ARGUMENT_CONSUMERS
+                and tokens):
+            import shlex as _sh
+            hits.extend(scan(" ".join(_sh.quote(t) for t in tokens) + " " + prior,
+                             here, depth + 1, budget, subs))
         # `source <(echo "rm -f <lane>")` and `. <(…)`: the substitution's own
         # body is already scanned as a command by `stdin_channel_hits`, and that
         # is not the whole claim — `source` executes the OUTPUT of that body, so
@@ -2775,8 +3178,22 @@ def scan(command: str, cwd: str, depth: int = 0, budget: list = None,
                     hits.extend(scan(text, here, depth + 1, budget, subs))
         if not tokens:
             continue
-        if tokens[0] in ("cd", "pushd") and len(tokens) > 1:
-            here = resolve(tokens[1], here)
+        if tokens[0] in ("cd", "pushd", "popd") and len(tokens) > 1:
+            # QA CYCLE 15 BLOCKER 2d: this read `tokens[1]` as the directory, so
+            # `cd -- <kdir> && rm -f ptable.json` moved the cwd to `<cwd>/--`
+            # and the relative `rm` resolved somewhere harmless. `cd <kdir>`
+            # denied beside it, which is the tell. `-P`, `-L`, `-e`, `-@` and
+            # `pushd -n` are the same shape.
+            target = ""
+            for tok in tokens[1:]:
+                if tok == "--":
+                    continue
+                if tok.startswith("-") and tok != "-":
+                    continue
+                target = tok
+                break
+            if target:
+                here = resolve(target, here)
             continue
         if is_release(tokens):
             hits.append(("release", None, "octo --release"))
@@ -2793,13 +3210,21 @@ def scan(command: str, cwd: str, depth: int = 0, budget: list = None,
         # missed, in every spelling that consumes the next word: the exact flag
         # on a modeled shell, a short-option BUNDLE ending in `c` on one, and
         # the same two on a head this file models nothing about (QA cycle 13).
+        # A HEAD THIS FILE MODELS AS A WRITER KEEPS ITS OWN FLAGS (QA cycle 15
+        # blocker 3). The unmodeled-head `-c` rule matched an exact `-c` on any
+        # head, read the next token as a command and `continue`d, so
+        # `wget -c -O <lane>` and `curl -c /tmp/jar -o <lane>` never reached
+        # their own output-flag rule. `-c` is continue and cookie-jar there.
+        write_modelled = (base in _OUTPUT_FLAGS or base in _CONSUMING
+                          or base in _POSITIONAL_OUTPUT)
         c_host = _interp_base(base) in _C_HOSTS
         # A REMOTE runner is excluded here for the same reason it is excluded
         # from the peel: `docker run alpine sh -c '…'` and `ssh host -c <cipher>`
         # do not run that text on this file system, and `-c` is not even a
         # command flag for the second one.
         if depth < _MAX_DEPTH and (c_host or (not _modeled_program(base)
-                                              and base not in _REMOTE_RUNNERS)):
+                                              and base not in _REMOTE_RUNNERS
+                                              and not write_modelled)):
             i = _c_flag_index(tokens, c_host)
             # `bash -c -- "rm -f <lane>"`: `--` ends OPTION parsing, it does not
             # consume the argument the flag already claimed, so the program is
@@ -2859,6 +3284,37 @@ def scan(command: str, cwd: str, depth: int = 0, budget: list = None,
                 else:
                     hits.append(("path", resolve(root, here), "find -delete"))
             continue
+        # THE WRITE TABLES RUN BEFORE ANY BRANCH THAT CAN `continue` (QA cycle
+        # 15 blocker 3). They used to sit after the unmodeled-head `-c` rule,
+        # which matches an exact `-c` on ANY unmodeled head, reads the next
+        # token as a command and `continue`s — so `wget -c -O <lane>` and
+        # `curl -c /tmp/jar -o <lane>` skipped their own output-flag rule
+        # entirely, while `curl -so <lane>` denied beside them. `-c` means
+        # continue and cookie-jar there, not command.
+        for target in output_flag_targets(base, tokens[1:]):
+            if is_null_sink(target):
+                continue
+            kind, value = spec_target(target, here)
+            hits.append((kind, value, base))
+        for target in consuming_targets(base, tokens[1:]):
+            kind, value = spec_target(target, here)
+            hits.append((kind, value, base))
+        for target in remote_copy_targets(base, tokens[1:]):
+            kind, value = spec_target(target, here)
+            hits.append((kind, value, base))
+        if base in _POSITIONAL_OUTPUT:
+            positional = _positional(base, tokens[1:])
+            where = _POSITIONAL_OUTPUT[base]
+            picked = []
+            if where == "first" and positional:
+                picked = positional[:1]
+            elif where == "last" and len(positional) >= 2:
+                picked = positional[-1:]
+            elif where == "last" and len(positional) == 1 and base == "objcopy":
+                picked = positional          # one operand: rewritten in place
+            for target in picked:
+                kind, value = spec_target(target, here)
+                hits.append((kind, value, base))
         # A PROGRAM WHOSE ARGUMENT IS A COMMAND STRING (QA cycle 14 blocker 5).
         # `env -S "rm -f <lane>"` puts the whole command in a flag VALUE that
         # env's option table was dropping as noise; `watch -n 0.1 "rm -f
@@ -2869,19 +3325,6 @@ def scan(command: str, cwd: str, depth: int = 0, budget: list = None,
         if depth < _MAX_DEPTH and base in _COMMAND_STRING:
             for text in command_string_args(base, tokens[1:]):
                 hits.extend(scan(text, here, depth + 1, budget, subs))
-        for target in output_flag_targets(base, tokens[1:]):
-            if is_null_sink(target):
-                continue
-            kind, value = spec_target(target, here)
-            hits.append((kind, value, base))
-        for target in consuming_targets(base, tokens[1:]):
-            kind, value = spec_target(target, here)
-            hits.append((kind, value, base))
-        if base in _POSITIONAL_OUTPUT:
-            positional = _positional(base, tokens[1:])
-            if len(positional) >= 2:
-                kind, value = spec_target(positional[-1], here)
-                hits.append((kind, value, base))
         if base in _MUTATORS:
             for target in mutation_targets(base, tokens[1:]):
                 if is_null_sink(target):
@@ -3060,7 +3503,29 @@ def main() -> int:
             return 0
 
     kdir = kernel_proc.norm_path(kernel_proc.kernel_dir())
+    # THE FILESYSTEM ROOT IS AN ANCESTOR OF EVERYTHING AND CONFLICTS WITH
+    # NOTHING (QA cycle 15 blocker 2e). `kernel_proc.paths_conflict("/", x)` is
+    # False on purpose — cycle 14 corrected a claim of mine that said otherwise,
+    # and that correction is right: a junk `/` hit must not deny the machine.
+    # But the header two screens up says an ANCESTOR of the kernel directory is
+    # denied, and `/` is the ancestor of every path there is, so
+    # `rm -rf --no-preserve-root /`, `find / -delete`, `find / -exec rm` and
+    # `chmod -R 000 /` all walked while `rm -rf /*` and `rm -rf ~` denied beside
+    # them. The gap was the DESIGN of `paths_conflict`, not a bug in it, so it
+    # is closed here where the destructive intent is known rather than there
+    # where every caller would inherit it.
     for kind, target, verb in hits:
+        if kind in ("path", "state") and target == os.sep:
+            journal_deny(pid, {"target": target, "verb": verb, "why": "root"})
+            deny(
+                f"KERNEL ISOLATION: `{verb}` targets the filesystem root, which "
+                "contains every lane on this machine and the kernel's own state "
+                f"({kdir}) with them. A path test cannot express this — `/` is a "
+                "prefix of everything, so treating it as a collision would deny "
+                "the machine on any junk hit — so it is denied here, once, by "
+                "name. Name what you actually mean to remove."
+            )
+            return 0
         if kind in ("path", "state") and kernel_proc.paths_conflict(target, kdir):
             journal_deny(pid, {"target": target, "verb": verb, "why": "kernel-state"})
             deny(
@@ -3175,13 +3640,23 @@ def main() -> int:
             f"{kernel_proc.recovery(kernel_proc.fault_kind(table))}"
         )
         return 0
-    for kind, target, verb in hits:
+    # DEDUPED, PREFILTERED AND MEMOISED (QA cycle 15 blocker 1). `dict.fromkeys`
+    # keeps the first occurrence of each hit in order, so the deny still names
+    # the first colliding target the command mentions.
+    maybe_collides = _lane_prefilter(table)
+    owner_memo = {}
+    for kind, target, verb in dict.fromkeys(hits):
         if kind == "state":
             continue          # floor-only: already tested above
         if kind in ("glob", "iglob"):
             owner, row = glob_owner(target, table, pid, kind == "iglob")
+        elif not maybe_collides(target):
+            continue          # no lane can be at, above or below it
+        elif target in owner_memo:
+            owner, row = owner_memo[target]
         else:
             owner, row = kernel_proc.lane_owner(target, table, ignore=pid)
+            owner_memo[target] = (owner, row)
         if not owner:
             continue
         journal_deny(pid, {"target": target, "owner": owner, "verb": verb,
@@ -3233,6 +3708,9 @@ def _selftest(fdir: str = None) -> int:
 
 
 if __name__ == "__main__":
+    if "--coverage" in sys.argv:
+        sys.stdout.write(coverage_manifest())
+        sys.exit(0)
     if "--selftest" in sys.argv:
         _i = sys.argv.index("--selftest")
         sys.exit(_selftest(sys.argv[_i + 1] if len(sys.argv) > _i + 1 else None))
