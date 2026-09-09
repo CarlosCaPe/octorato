@@ -504,7 +504,11 @@ def spec_target(spec: str, base_dir: str) -> tuple:
     if not _is_glob(spec):
         return "path", resolve(spec, base_dir)
     keep = []
-    for part in spec.split(os.sep):
+    # A shell path uses `/` on every platform, and on Windows `os.sep` is `\`,
+    # so splitting on os.sep alone leaves `pkg/*.py` as ONE part: the whole
+    # spec then reads as a glob with no literal directory to reduce to, and the
+    # prefix test that should have named `pkg` never runs.
+    for part in spec.replace("/", os.sep).split(os.sep):
         if _is_glob(part):
             break
         keep.append(part)
@@ -521,6 +525,11 @@ def glob_hits(pattern: str, lane: str, icase: bool = False) -> bool:
     lives in. `icase` is `find -iname/-ipath`: the filter that matched a.py
     while the command said A.PY."""
     import fnmatch
+    # The pattern comes from a shell command and separates with `/`; the lane
+    # comes from the process table, already normalized to `os.sep`. Match them
+    # in one alphabet or a Windows lane never matches a `*/a.py` pattern.
+    if os.sep != "/":
+        pattern = pattern.replace("/", os.sep)
     if icase:
         pattern, lane = pattern.lower(), lane.lower()
     if fnmatch.fnmatchcase(lane, pattern):
@@ -550,13 +559,34 @@ _BROAD_ADD = ("-u", "--update", "./", ":/", ":(top)")
 _MAX_DEPTH = 3
 
 
+def _split_words(text: str):
+    """`shlex.split`, with Windows path separators surviving the split.
+
+    POSIX shlex reads a backslash as an escape, so `rm -rf C:\\work\\tree`
+    tokenizes to `C:worktree`: every separator is eaten, the target resolves to
+    a path that exists nowhere, and it matches no lane. The gate then denies
+    nothing, which is how a rule labelled fail-closed goes silently inert on
+    Windows while the doctor still reports it wired. Doubling the backslashes
+    first restores them verbatim and changes no other POSIX rule (quoting, word
+    splitting, comments), so one command parses the same on both platforms.
+
+    A backslash that genuinely was an escape (`a\\ b`) survives as a literal
+    backslash inside the token. That token only ever reaches path matching,
+    where a literal backslash matches no lane either, so nothing loosens.
+
+    Raises ValueError exactly as `shlex.split` does, so each call site keeps the
+    fallback it already chose.
+    """
+    import shlex
+
+    return shlex.split(text.replace("\\", "\\\\") if os.name == "nt" else text)
+
+
 def scan(command: str, cwd: str, depth: int = 0) -> list:
     """Every collision candidate in one command, as (kind, path, verb) where
     kind is 'release', 'tree', 'stage' or 'path'. Pure parsing: no process
     table, no liveness, no I/O beyond the existence probe a bare
     `git checkout <arg>` needs to tell a branch from a file."""
-    import shlex
-
     if not any(t in command for t in _TRIGGERS):
         return []
     split_subcmds, broad_git_verb = _dim_helpers()
@@ -576,14 +606,14 @@ def scan(command: str, cwd: str, depth: int = 0) -> list:
             m = shell_c.match(seg)
             if m:
                 try:
-                    body = shlex.split(m.group(1))
+                    body = _split_words(m.group(1))
                 except ValueError:
                     body = []
                 if body:
                     hits.extend(scan(body[0], here, depth + 1))
                     continue
         try:
-            tokens = shlex.split(seg)
+            tokens = _split_words(seg)
         except ValueError:
             tokens = seg.split()
         redirects, tokens = redirect_targets(tokens)

@@ -894,6 +894,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    # The CLI prints the brain's own glyphs (⚓, ✓, ☠). A Windows console
+    # defaults to cp1252, where writing one of them raises UnicodeEncodeError
+    # and the command dies mid-output: `octo replay --verify` crashed instead of
+    # reporting a chain, and the doctor read the crash as a broken journal.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.selftest is not None:
