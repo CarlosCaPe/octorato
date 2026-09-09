@@ -441,10 +441,20 @@ def scrubbed_env() -> dict:
     version of this rule with its full receipt. This module is imported by
     PostToolUse hooks on the hot path and importing the doctor there would pay for a
     3000-line module on every tool call, so the rule is restated in four lines
-    instead. `scripts/gate_selftest.py:147` keeps the nine-name list and is left
-    alone deliberately: `_run_selftest_locator` reaches it through `run(...)`, so
-    every leg's `dict(os.environ)` already starts from the scrubbed env, and
-    changing it would alter what all 33 gate legs see for no closed hole.
+    instead.
+
+    `scripts/gate_selftest.py:148-150` still keeps the nine-name list and it is a
+    HOLE, not a dormant copy. An earlier version of this docstring called it safe
+    because `_run_selftest_locator` reaches it through `run(...)`; four callers do
+    not (`gate_selftest.py:220-225`, `scripts/tests/test_deny_coverage.py:2154`,
+    `scripts/tests/test_octo_replay.py:385,392`, and `.githooks/pre-push:277-280`,
+    which is a fourth copy of the same nine names). Measured through the CLI path, a
+    probe leg saw GIT_CONFIG_PARAMETERS, GIT_CONFIG_COUNT, GIT_AUTHOR_NAME and
+    GIT_EDITOR, none of which survive the scrub above. It is left uncorrected for the
+    reason `brain_doctor` gives, not for the reason this docstring used to give:
+    changing it alters what all 37 gate legs see and needs its own liveness run, and
+    the real fix is one rule imported once rather than a fifth copy. Bounded today
+    only because `_run_leg` hands every leg a sandbox HOME and cwd that is not a repo.
     """
     keep = ("GIT_SSH", "GIT_SSH_COMMAND", "GIT_SSH_VARIANT", "GIT_ASKPASS",
             "GIT_PROXY_COMMAND", "GIT_TEXTDOMAINDIR")
@@ -456,13 +466,50 @@ def scrubbed_env() -> dict:
     return env
 
 
-def _git(brain_dir: Path, *args, inp: str | None = None) -> str:
+def _git_read(brain_dir: Path, *args, inp: str | None = None) -> tuple[bool, str]:
+    """Run a read-only git command. Returns (git answered, stdout).
+
+    The two are kept apart on purpose, because collapsing them is what the
+    previous version of `_git` did and it was the whole hole. A SUCCESSFUL git
+    with empty stdout means "nothing to report". A FAILED git means "unknown",
+    and a caller that reads the second as the first hands anyone who can make
+    git FAIL the power to choose its answer.
+
+    Measured 2026-09-09, cwd = the brain checkout, tree carrying one untracked
+    file under `scripts/`, parent env exporting `GIT_TEST_INDEX_THREADS=true`
+    (git parses that knob as an int and rejects it; the name survives
+    `scrubbed_env` above by its deliberate `GIT_TEST_*` exception):
+
+        git status --porcelain -- scripts   rc=128  fatal: failed to parse ...
+        git ls-files -v -- scripts          rc=128  fatal: failed to parse ...
+        git ls-tree -r HEAD -- scripts      rc=0
+        git rev-parse HEAD                  rc=0
+
+    The two index-reading calls die together and the two object-reading ones
+    live, so the failure is SELECTIVE: `gate_surfaces_dirty` answered `[]` for a
+    tree with an untracked gate script in it, `brain_head` and `gate_tree_hash`
+    still answered, `brain_doctor` took its clean branch and wrote a gate
+    receipt, and the outward-send gate's integrity check was skipped.
+    """
     try:
         cp = subprocess.run(["git", "-C", str(brain_dir), *args], input=inp,
                             capture_output=True, text=True, timeout=20, env=scrubbed_env())
-        return cp.stdout.strip() if cp.returncode == 0 else ""
     except (OSError, subprocess.SubprocessError):
-        return ""
+        return (False, "")
+    return (cp.returncode == 0, cp.stdout.strip())
+
+
+def _git(brain_dir: Path, *args, inp: str | None = None) -> str:
+    """Stdout of a read-only git command, or "" when git could not answer.
+
+    Only for callers where the CONSUMER treats empty and failed alike:
+    `brain_head` and `gate_tree_hash` both feed checks that refuse on an empty
+    value, so a failed git denies there. `gate_surfaces_dirty` must NOT use
+    this: empty means CLEAN there, so it reads every command through
+    `_git_read` and turns a failed reading into a finding.
+    """
+    ok, out = _git_read(brain_dir, *args, inp=inp)
+    return out if ok else ""
 
 
 def brain_head(brain_dir: Path) -> str:
@@ -479,22 +526,43 @@ def gate_tree_hash(brain_dir: Path) -> str:
 
 
 def gate_surfaces_dirty(brain_dir: Path) -> list:
-    """Anything under the gate surfaces that differs from HEAD, by three
-    independent readings, because `git status` alone is silenced by
+    """Findings about the gate surfaces: what differs from HEAD, AND what could
+    not be read. An empty list means clean and fully read. It never means "git
+    refused". That was the previous behaviour and it inverted the check.
+
+    Three readings, because `git status` alone is silenced by
     `update-index --assume-unchanged` / `--skip-worktree` (QA cycle 2):
       1. porcelain status (modified, added, untracked)
       2. ls-files -v flags h (assume-unchanged) / S (skip-worktree)
       3. every tracked file's live blob id vs its HEAD blob id
-    Returns one line per finding; empty means clean."""
+
+    The three do not cover for each other, so a failed reading is a FINDING and
+    not a clean line. Readings 1 and 2 both read the index and share one failure
+    mode: they die together. Reading 3 compares HEAD blobs, so it is
+    structurally blind to an UNTRACKED file. With reading 1 dead, an untracked
+    gate script is invisible to all three, which is exactly the tree QA
+    measured `[]` for (see `_git_read` for the env and the four exit codes)."""
     out = []
-    for ln in _git(brain_dir, "status", "--porcelain", "--", *GATE_SURFACES).splitlines():
+    ok, txt = _git_read(brain_dir, "status", "--porcelain", "--", *GATE_SURFACES)
+    if not ok:
+        out.append("? git status --porcelain failed; the gate surfaces could not be read "
+                   "(unreadable is not clean)")
+    for ln in txt.splitlines():
         if ln.strip():
             out.append(ln)
-    for ln in _git(brain_dir, "ls-files", "-v", "--", *GATE_SURFACES).splitlines():
+    ok, txt = _git_read(brain_dir, "ls-files", "-v", "--", *GATE_SURFACES)
+    if not ok:
+        out.append("? git ls-files -v failed; index flags could not be read "
+                   "(unreadable is not clean)")
+    for ln in txt.splitlines():
         if ln[:1] in ("h", "S"):
             out.append(f"{ln[:1]} {ln[2:]} (index flag hides changes)")
     head_blobs = {}
-    for ln in _git(brain_dir, "ls-tree", "-r", "HEAD", "--", *GATE_SURFACES).splitlines():
+    ok, txt = _git_read(brain_dir, "ls-tree", "-r", "HEAD", "--", *GATE_SURFACES)
+    if not ok:
+        out.append("? git ls-tree -r HEAD failed; HEAD blob ids could not be read "
+                   "(unreadable is not clean)")
+    for ln in txt.splitlines():
         try:
             meta, path = ln.split("\t", 1)
             head_blobs[path] = meta.split()[2]
@@ -502,8 +570,13 @@ def gate_surfaces_dirty(brain_dir: Path) -> list:
             continue
     if head_blobs:
         paths = sorted(head_blobs)
-        live = _git(brain_dir, "hash-object", "--stdin-paths", inp="\n".join(paths) + "\n").splitlines()
-        if len(live) == len(paths):
+        ok, txt = _git_read(brain_dir, "hash-object", "--stdin-paths",
+                            inp="\n".join(paths) + "\n")
+        live = txt.splitlines()
+        if not ok:
+            out.append("? git hash-object failed; live blob ids could not be read "
+                       "(unreadable is not clean)")
+        elif len(live) == len(paths):
             for path, blob in zip(paths, live):
                 if blob != head_blobs[path]:
                     out.append(f"M {path} (blob differs from HEAD)")

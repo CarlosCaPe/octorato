@@ -103,12 +103,37 @@ GIT_HOOK_ENV = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX",
 # the second is the dangerous one.
 #
 # IMPACT RADIUS, not fixed here and not silently left either. The same nine-name
-# list is copy-pasted in two more places and both have the same hole:
-# `scripts/gate_selftest.py:147` (inline, stripping the nine before every gate leg)
-# and `scripts/receipt_ledger.py:82`. Fixing them from here would change what all
-# 33 gate legs see, which needs its own liveness run, so they are named rather than
-# touched. Three copies of one list is the reason the list drifted from the truth in
-# the first place: the fix for THAT is one rule imported once, not a fourth copy.
+# list is copy-pasted in three more places and all of them have the same hole:
+# `scripts/gate_selftest.py:148-150` (inline, stripping the nine before every gate
+# leg), `scripts/receipt_ledger.py` (its own `scrubbed_env`, now prefix-based), and
+# `.githooks/pre-push:277-280`, which runs the whole unit-test suite under
+# `OCTO_NOGIT`, a FOURTH copy of the same nine names.
+#
+# The `gate_selftest.py` copy is NOT dormant, and an earlier draft of this file and
+# of `receipt_ledger` both claimed it was, on the grounds that
+# `_run_selftest_locator` reaches it through `run(...)`. Four callers do not go
+# through `run(...)`: the module's own CLI (`gate_selftest.py:220-225`),
+# `scripts/tests/test_deny_coverage.py:2154` (spawns it with no `env=` at all),
+# `scripts/tests/test_octo_replay.py:385,392` (overrides only HOME/USERPROFILE), and
+# the pre-push suite above. Measured 2026-09-09 through the CLI path, cwd = the brain
+# checkout, parent exporting GIT_CONFIG_PARAMETERS, GIT_CONFIG_COUNT,
+# GIT_TEST_INDEX_THREADS, GIT_DIR and GIT_AUTHOR_NAME, with a probe leg reporting the
+# GIT_* KEY NAMES it could see (names only, never values):
+#
+#   via the CLI          GIT_AUTHOR_NAME, GIT_CONFIG_COUNT, GIT_CONFIG_PARAMETERS,
+#                        GIT_EDITOR, GIT_TEST_INDEX_THREADS
+#   via this file's run  GIT_TEST_INDEX_THREADS
+#
+# So four names this file drops reach a leg on those paths, `GIT_CONFIG_PARAMETERS`
+# among them. Bounded, not zero: `_run_leg` gives every leg a fresh sandbox as HOME
+# and cwd, and that sandbox is not a git repo, so a leg's own git has nothing to
+# steer. That is what keeps this a reasoning defect today rather than a live exploit,
+# and it is a property of the sandbox, not of the list.
+#
+# Fixing it from here would change what all 37 gate legs see, which needs its own
+# liveness run, so it is named as a HOLE rather than touched. Four copies of one list
+# is the reason the list drifted from the truth in the first place: the fix for THAT
+# is one rule imported once, not a fifth copy.
 GIT_ENV_KEEP = ("GIT_SSH", "GIT_SSH_COMMAND", "GIT_SSH_VARIANT", "GIT_ASKPASS",
                 "GIT_PROXY_COMMAND", "GIT_TEXTDOMAINDIR")
 
@@ -121,6 +146,11 @@ def _is_scrubbed_git_var(name: str) -> bool:
 # Default ceiling for every subprocess this file runs. A caller that wants a
 # SHORTER leash passes `timeout=` to `run`; nothing passes a longer one. See `run`
 # for why it exists and why the default is this generous.
+#
+# It is the ceiling on the CHILD, not on the call. On a timeout `run` still drains
+# what the child wrote, and `_drain_after_kill` bounds that drain at 5s, so the
+# effective wall-clock ceiling is `timeout + 5` whenever a survivor still holds the
+# pipe. Measured: a 2s leash on a pipe-holding descendant returned in 7.04s.
 RUN_TIMEOUT = 300
 
 
@@ -327,7 +357,10 @@ def run(args: list[str], cwd: Path | None = None,
     slowest thing through here is a gate selftest that clones repos, and a doctor
     that FAILs a healthy slow machine would be printing a wrong cause, which is the
     defect this file exists to remove. A caller with a cheaper question passes
-    `timeout=` for a shorter leash.
+    `timeout=` for a shorter leash. `timeout` bounds the CHILD, not this call: the
+    drain that follows the kill is bounded at 5s of its own, so the wall-clock
+    ceiling is `timeout + 5` when a survivor still holds the pipe (measured: a 2s
+    leash returned in 7.04s).
 
     What is measured and NOT a hang source, recorded because it was written here as
     one: a repo mid-`git gc` does not wait. On git 2.43 with `index.lock` and
@@ -1710,11 +1743,19 @@ def check_gate_liveness(fix: bool) -> Result:
             receipt_ledger.append_global({"kind": "gate-liveness", "ok": True, "head": head,
                                           "gates": gates, "selftests": len(proofs)})
         elif dirty:
+            # `dirty` carries two kinds of finding and both refuse the receipt: a
+            # gate surface that DIFFERS from HEAD, and a reading that git could not
+            # answer at all (those lines start with `? `). Unreadable is not clean.
+            unread = [d for d in dirty if d.startswith("? ")]
             return Result(key, WARN,
-                          f"all {len(proofs)} selftests pass but {len(dirty)} gate surface file(s) differ "
-                          f"from HEAD (uncommitted, or hidden by assume-unchanged/skip-worktree); no gate "
-                          f"receipt written (it would vouch for gates that are not the committed ones)",
-                          "commit or discard the changes under scripts/, registry/, hooks.json, then re-run")
+                          f"all {len(proofs)} selftests pass but {len(dirty)} gate surface finding(s): "
+                          f"file(s) differ from HEAD (uncommitted, or hidden by "
+                          f"assume-unchanged/skip-worktree)"
+                          + (f", and {len(unread)} git reading(s) failed" if unread else "")
+                          + "; no gate receipt written (it would vouch for gates that are not the "
+                            "committed ones)",
+                          "commit or discard the changes under scripts/, registry/, hooks.json; if a "
+                          "reading failed, run without a GIT_* knob in the environment, then re-run")
         else:
             return Result(key, FAIL,
                           f"all {len(proofs)} selftests pass but the brain's HEAD or gate tree could not be "
@@ -2558,14 +2599,35 @@ def git_failure_cause(stderr: str, returncode: int) -> str:
 # emitters cannot reach: presence in a source file is not reach, and the difference
 # is the whole defect this function exists to fix.
 #
-# Reach was measured by running all 33 `--selftest` scripts from `registry/rules.yaml`
-# into a forced failure and reading the streams the doctor actually gets:
+# TWO UNITS, and an earlier draft of this comment mixed them. `registry/rules.yaml`
+# carries 37 `--selftest` locators across 33 DISTINCT scripts (4 scripts are
+# registered twice: cadence-stop-hook, secrets-grep-guard, dimension-awareness-hook,
+# g__pretool__kernel). `check_gate_liveness` runs LOCATORS, so its PASS line says 37;
+# every count below is per SCRIPT and says so. Re-measured 2026-09-09 from a run, not
+# from memory: `grep -c -- --selftest registry/rules.yaml` = 37, `_selftest_proofs`
+# returns 37, distinct scripts = 33.
+#
+# Reach per SCRIPT, counted over the 33 by what each one's source can put on a stream
+# the doctor reads:
 #
 #   "selftest FAIL"  28 of the 33, on STDERR: 23 through gate_selftest.py:212's joined
 #                    summary, plus 5 that print the same prefix themselves
 #                    (canon-heal-hook, commit_msg_language_gate, impact-radius-hook,
 #                    merge-hooks, octo). An earlier draft said 25, which matched
-#                    neither count and was a number nobody had run.
+#                    neither count and was a number nobody had run. 23 + 5 = 28
+#                    reproduces exactly; what did not reproduce is the DENOMINATOR
+#                    when the same sentence described the sweep as "running all 33",
+#                    because the sweep the doctor performs is 37 legs.
+#
+#                    A forced-failure re-run (2026-09-09, every locator re-pointed at
+#                    a synthetic fixture dir whose violation.json is a payload every
+#                    gate allows, cwd = CLAUDE_DIR) reached 27 of the 37 LEGS, all on
+#                    stderr. It is a LOWER BOUND, not a replication: 8 legs carry a
+#                    self-contained `--selftest` that ignores a fixture argument and
+#                    passed instead of failing, and 2 more failed with a different
+#                    prefix. The forcing method of the original sweep was never
+#                    recorded, so its per-run numbers cannot be re-derived; the
+#                    per-script counts above can, and are.
 #   "X "             r__pretool-write__base-freshness.py, on STDOUT, verbatim with its
 #                    violation leg forced: `X violation fixture did NOT warn (stale
 #                    base undetected)`, which `selftest_cause` then selected over the
@@ -2582,7 +2644,8 @@ def git_failure_cause(stderr: str, returncode: int) -> str:
 # `qa-merge-gate.py:544`, write the live DENY message, and `gate_selftest.run_gate`
 # captures that as the CHILD's stdout to decide whether the leg blocked. It never
 # reaches a stream this selector reads, which the 33-script sweep confirms: zero
-# reaching emitters. `✘` went earlier for less, having no emitter at all.
+# reaching emitters (33 scripts, 37 legs; see the unit note above). `✘` went
+# earlier for less, having no emitter at all.
 SELFTEST_FAILURE_MARKERS = ("selftest FAIL", "FAIL", "X ")
 
 
@@ -2592,10 +2655,11 @@ def selftest_cause(cp: subprocess.CompletedProcess, empty: str | None = None) ->
     The sibling of `git_failure_cause`, and it was built on the same unguarded
     assumption: `detail[-1]`, the LAST line, chosen because that is where
     `gate_selftest.py` and `r__permission-denied__journal.py` put their joined
-    `selftest FAIL: a; b` summary. Twenty-three of the thirty-three `--selftest`
-    scripts in `registry/rules.yaml` go through `gate_selftest.py` and hold (counted,
-    not remembered: 33 distinct scripts, 23 of them importing or invoking
-    `gate_selftest`). Several do not, and they are reachable.
+    `selftest FAIL: a; b` summary. Twenty-three of the thirty-three DISTINCT
+    `--selftest` scripts in `registry/rules.yaml` go through `gate_selftest.py` and
+    hold (counted, not remembered, and re-counted 2026-09-09: 37 locators across 33
+    distinct scripts, 23 of them importing or invoking `gate_selftest`; the doctor
+    RUNS the 37 and its PASS line says 37). Several do not, and they are reachable.
     `r__pretool-write__base-freshness.py` writes its verdict to STDOUT,
     and the `git clone` of an empty bare origin that its selftest builds lets git's
     own setup warning through to STDERR. Measured, with its violation leg forced to
@@ -2615,8 +2679,9 @@ def selftest_cause(cp: subprocess.CompletedProcess, empty: str | None = None) ->
     markers, stderr before stdout, then stdout for the printers that write their
     verdict there. The stream ORDER is not a preference, it is where the summary
     lives: `gate_selftest.py:212` writes its joined `selftest FAIL: a; b` to stderr,
-    and that one printer speaks for 23 of the 33, with 5 more printing the same
-    prefix to stderr themselves for 28 in all, so reading stdout first would let
+    and that one printer speaks for 23 of the 33 distinct scripts, with 5 more
+    printing the same prefix to stderr themselves for 28 in all, so reading stdout
+    first would let
     a helper's incidental chatter outrank the verdict of the majority. A diagnosis
     that ENDS in a colon carries its next line, for the reason the sibling gives,
     which is how `commit_msg_language_gate.py` now names its first failure instead

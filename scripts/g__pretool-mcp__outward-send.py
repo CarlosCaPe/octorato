@@ -286,6 +286,15 @@ def check(data: dict) -> str:
         gates = receipt_ledger.gate_tree_hash(brain)
         dirty = receipt_ledger.gate_surfaces_dirty(brain)
     if dirty:
+        # Dos clases de hallazgo, las dos niegan: un archivo que DIFIERE de HEAD, y
+        # una lectura que git no pudo contestar (líneas que empiezan con `? `). Que
+        # git falle no es que el árbol esté limpio.
+        unread = [d for d in dirty if str(d).startswith("? ")]
+        if unread:
+            return ("🧾 GATES ILEGIBLES: git no pudo leer las superficies de gates del brain "
+                    f"({len(unread)} lectura(s) fallida(s) de {len(dirty)} hallazgo(s)); ilegible no es "
+                    "limpio. Revisa que no haya un GIT_* raro en el entorno ni un git roto, corre "
+                    "brain_doctor y reintenta el envío.")
         return ("🧾 GATES SIN COMMIT: hay cambios sin confirmar (o escondidos con assume-unchanged) "
                 f"bajo scripts/, registry/ o hooks.json del brain ({len(dirty)} archivo(s)); un gate "
                 "editado y no probado es un gate muerto. Confirma o descarta esos cambios, corre "

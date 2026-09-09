@@ -1486,8 +1486,9 @@ class TestEachNoWindowRoadNamesItself(DenyCoverageCase):
         the whole module.
 
         `gate_selftest.py:212` writes the joined `selftest FAIL: a; b` summary to
-        STDERR, and that one printer speaks for 23 of the 33 `--selftest` scripts in
-        the registry. Reading stdout first would let a helper's incidental chatter
+        STDERR, and that one printer speaks for 23 of the 33 DISTINCT `--selftest`
+        scripts in the registry (which registers 37 locators over those 33 scripts;
+        the doctor runs the 37). Reading stdout first would let a helper's incidental chatter
         outrank the verdict of the majority, which is the same wrong-cause defect as
         the clone warning, arriving from the other side.
         """
@@ -1719,9 +1720,16 @@ class TestEachNoWindowRoadNamesItself(DenyCoverageCase):
         both. Only one is on a live path: `check_gate_liveness` imports
         `receipt_ledger` IN-PROCESS for `--gate-receipt`, which is the call
         `.githooks/pre-push` makes, so its four read-only git calls ran under the
-        doctor's own unscrubbed environment. `gate_selftest.py:147` is reached
-        through `run(...)`, so its legs already start from a scrubbed env and the
-        list there is dormant.
+        doctor's own unscrubbed environment.
+
+        `gate_selftest.py:148-150` is NOT dormant, and saying it was is the reasoning
+        defect QA cycle 3 caught. `_run_selftest_locator` reaches it through
+        `run(...)`, but four callers do not: `gate_selftest.py:220-225` (its own CLI),
+        line 2154 of THIS file (spawned with no `env=`), `test_octo_replay.py:385,392`
+        (HOME/USERPROFILE only), and `.githooks/pre-push:277-280` (a fourth copy of
+        the same nine names). Measured through the CLI path, a probe leg saw four
+        GIT_* names the doctor drops. What bounds it is the sandbox `_run_leg` gives
+        every leg, not the list.
 
         Measured on this tree with one untracked file under a gate surface:
 
@@ -1743,21 +1751,30 @@ class TestEachNoWindowRoadNamesItself(DenyCoverageCase):
                         else os.environ.pop("GIT_CONFIG_PARAMETERS", None))
         os.environ["GIT_CONFIG_PARAMETERS"] = "'status.showUntrackedFiles'='no'"
 
-        self.assertNotIn("GIT_CONFIG_PARAMETERS", receipt_ledger.scrubbed_env(),
+        # NAMES, never the mapping. `assertNotIn(key, env_dict)` renders the whole
+        # container in its failure message, and this process's environment carries
+        # the operator's live tokens. `.githooks/pre-push` runs this suite on every
+        # push, so one red assertion here would print every secret in the shell to
+        # the terminal and to any CI log. A test guarding a hostile environment must
+        # not publish that environment to fail.
+        def git_names(env):
+            return sorted(k for k in env if k.startswith("GIT_"))
+
+        self.assertNotIn("GIT_CONFIG_PARAMETERS", git_names(receipt_ledger.scrubbed_env()),
                          "the copy the doctor executes in its own process still "
                          "passes a parent's `git -c` down to the receipt's git")
-        self.assertNotIn("GIT_CONFIG_PARAMETERS", doctor.scrubbed_env())
+        self.assertNotIn("GIT_CONFIG_PARAMETERS", git_names(doctor.scrubbed_env()))
         # the unbounded sibling route, through the same live copy
         os.environ["GIT_CONFIG_COUNT"] = "1"
         os.environ["GIT_CONFIG_KEY_0"] = "status.showUntrackedFiles"
         self.addCleanup(lambda: [os.environ.pop(k, None)
                                  for k in ("GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0")])
         for k in ("GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0"):
-            self.assertNotIn(k, receipt_ledger.scrubbed_env())
+            self.assertNotIn(k, git_names(receipt_ledger.scrubbed_env()))
         # and the access vars still ride, or a machine loses its remote
         os.environ["GIT_SSH_COMMAND"] = "ssh -i /dev/null"
         self.addCleanup(lambda: os.environ.pop("GIT_SSH_COMMAND", None))
-        self.assertIn("GIT_SSH_COMMAND", receipt_ledger.scrubbed_env())
+        self.assertIn("GIT_SSH_COMMAND", git_names(receipt_ledger.scrubbed_env()))
 
     def test_a_child_that_answered_is_not_a_child_that_hung(self):
         """`communicate` waits on the PIPES, not on the child, and the row blamed
