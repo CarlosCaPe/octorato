@@ -3,7 +3,7 @@ name: graphify-code-graph
 description: "Deterministic, queryable knowledge graph over a codebase with graphify (tree-sitter, 25+ languages, no LLM cost). Use it for code-level impact analysis inside a client repo, where grep answers poorly."
 metadata:
   type: tool-skill
-  source: https://github.com/Graphify-Labs/graphify (MIT)
+  source: "https://github.com/Graphify-Labs/graphify, MIT at the time this skill was written. Upstream relicensed to Apache-2.0 on 2026-07-22 (ba7f9ea9), six days AFTER this entered the repo on 2026-07-16 (a14b67c), so the GitHub listing now reports Apache-2.0 and this line is not stale. Do not 'correct' it against the current listing: a listing answers about today and this is a question about a date."
   deep-learn: knowledge/repo-deep-learn/graphify/2026-07-16.md
 ---
 

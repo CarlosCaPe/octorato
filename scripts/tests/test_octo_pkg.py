@@ -1114,8 +1114,8 @@ class TestTheRecognizerRefusesMitLookalikes(unittest.TestCase):
         self.assertIn("plus terms MIT does not carry", why)
 
     def test_a_non_commercial_restriction_spliced_into_the_grant_is_not_mit(self):
-        text = MIT_FILE_TEXT.replace("without restriction,",
-                                     "without restriction for non-commercial purposes only,")
+        text = mutate(MIT_FILE_TEXT, "without restriction,",
+                      "without restriction for non-commercial purposes only,")
         self.assertIsNone(gen.license_terms(text)[0])
 
     def test_an_indemnity_appended_to_the_disclaimer_is_not_mit(self):
@@ -1266,12 +1266,68 @@ class TestLicenseFileBlindSpots(unittest.TestCase):
         self.assertIn("not valid UTF-8", why)
 
     def test_a_crlf_license_is_the_same_document(self):
+        """The end-to-end shape, and it anchors NOTHING on its own.
+
+        `read_license` normalizes CRLF, and `_Doc` splits with `str.splitlines`, which
+        already treats \r\n, \r and \n alike. Reverting the normalization leaves this
+        assertion GREEN because the second mechanism covers for the first, so the
+        contract is asserted at the function boundary below, where only one mechanism
+        can answer.
+        """
         d = self._dir("crlf")
-        (d / "LICENSE").write_bytes(MIT_FILE_TEXT.replace("\n", "\r\n").encode("utf-8"))
+        (d / "LICENSE").write_bytes(mutate(MIT_FILE_TEXT, "\n", "\r\n").encode("utf-8"))
         self.assertEqual(gen.resolve_license(d), ("MIT", ""))
+
+    def test_read_license_returns_lf_only(self):
+        # The contract `read_license` actually promises: bytes in, LF-normalized text
+        # out. Every consumer downstream is free to assume it, and a future one that
+        # does not go through splitlines (a regex with a `$` anchor, a byte offset in a
+        # refusal message) would be the first to notice it was gone.
+        d = self._dir("crlf-contract")
+        for name, raw in (("LICENSE", b"a\r\nb\r\nc"), ("LICENSE.txt", b"a\rb\rc")):
+            (d / name).write_bytes(raw)
+            text = gen.read_license(d / name)
+            self.assertNotIn("\r", text, f"{name}: read_license leaked a CR")
+            self.assertEqual(text, "a\nb\nc")
 
     def test_no_license_file_at_all_is_the_only_road_to_a_default(self):
         self.assertEqual(gen.resolve_license(self._dir("bare")), (None, ""))
+
+
+class TestEveryFixtureEditGoesThroughMutate(unittest.TestCase):
+    """`mutate()` exists because three fixture edits in this module matched nothing and
+    the tests then asserted that verbatim MIT is MIT, passing against the code they were
+    written to catch. Routing the two survivors through it fixes today; this test fixes
+    tomorrow, because the next bare `.replace` on a fixture is written by someone who
+    never read that story.
+
+    Vacuity is invisible by construction: a no-op edit leaves a valid license, and a
+    valid license passes. So the guard cannot be another assertion about behaviour, it
+    has to read the source.
+    """
+
+    FIXTURES = {"MIT_FILE_TEXT", "MIT_BODY_TEXT", "APACHE_FULL_TEXT", "APACHE_HEAD_TEXT",
+                "GPL3_TEXT", "MPL2_TEXT", "AGPL3_TEXT", "BSD3_TEXT"}
+
+    def test_no_bare_replace_on_a_license_fixture(self):
+        import ast
+        src = Path(__file__).read_text(encoding="utf-8")
+        offenders = []
+        for node in ast.walk(ast.parse(src)):
+            if not isinstance(node, ast.Call):
+                continue
+            fn = node.func
+            if not (isinstance(fn, ast.Attribute) and fn.attr == "replace"):
+                continue
+            base = fn.value
+            while isinstance(base, ast.Call):      # chained .replace(...).replace(...)
+                base = base.func.value if isinstance(base.func, ast.Attribute) else base
+            if isinstance(base, ast.Name) and base.id in self.FIXTURES:
+                offenders.append(f"line {node.lineno}: {base.id}.replace(...)")
+        self.assertEqual(offenders, [], "a fixture edited with a bare str.replace is a "
+                                        "no-op the moment the fixture re-wraps; use "
+                                        "mutate(), which raises on a no-op: "
+                                        + "; ".join(offenders))
 
 
 class TestPartialOutput(unittest.TestCase):
@@ -1463,10 +1519,11 @@ class TestTypographyIsNotTerms(unittest.TestCase):
 
     Comparing raw text refused real MIT files over a glyph and told them a cause that
     was not the difference: a family of packages that writes 'Software' with apostrophes
-    was told its "grant sentence is not MIT's". Measured over the 17,841 license-named
-    files under $HOME, /usr/lib/python3 and /usr/share/doc on this machine, 84% of the
-    9,245 carrying MIT's opening sentence resolve to MIT. Each case below is a real
-    shape found on disk.
+    was told its "grant sentence is not MIT's". Each case below is a real shape found on
+    a developer disk, and each one is its own control: the fixture is verbatim MIT with
+    one typographic edit, so a case that fails says the edit changed the terms.
+    Deliberately no corpus percentage: the denominator is a live disk, it moved between
+    two runs of the same selection, and a number nobody can re-derive is not evidence.
     """
 
     def _mit(self, body):
@@ -1792,6 +1849,139 @@ class TestTheFilenameEnumerationDecidesAbsent(unittest.TestCase):
         self.assertIn("directory", problem)
 
 
+class TestEveryExclusionIsARoadBackToTheDefault(unittest.TestCase):
+    """Whatever the name test declines, `resolve_license` used to answer for with the
+    same `(None, "")` it uses for an empty directory, and `(None, "")` is the only road
+    to the repo default. Five shapes reached MIT in silence that way, each measured.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="test-setaside-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def _skill(self, files, dirs=()):
+        d = self.tmp / f"s{len(list(self.tmp.iterdir()))}"
+        d.mkdir()
+        (d / "SKILL.md").write_text("---\nname: probe\ndescription: d\n---\n# P\n",
+                                    encoding="utf-8")
+        for x in dirs:
+            (d / x).mkdir(parents=True, exist_ok=True)
+        for n, c in files.items():
+            f = d / n
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(c, encoding="utf-8")
+        return d
+
+    def _refuses(self, files, dirs=()):
+        manifest, problem = gen.describe(self._skill(files, dirs), "MIT")
+        self.assertIsNone(manifest, "took the repo default over unread license material")
+        return problem
+
+    def test_an_empty_reuse_directory_is_not_an_absent_license(self):
+        self.assertIn("LICENSES/", self._refuses({}, dirs=["LICENSES"]))
+
+    def test_a_reuse_directory_holding_only_notices(self):
+        self.assertIn("LICENSES/", self._refuses({"LICENSES/THIRD-PARTY.txt": APACHE_FULL_TEXT}))
+
+    def test_a_notices_file_as_the_ONLY_license_named_entry(self):
+        # Excluding a notices file BESIDE a real license is right. Excluding the only
+        # one in the directory answers the question by not asking it.
+        for name in ("LICENSE-EXCEPTIONS", "LICENSE.vendor", "THIRD-PARTY-LICENSE"):
+            self.assertIn(name, self._refuses({name: APACHE_FULL_TEXT}))
+
+    def test_a_license_under_a_denied_extension(self):
+        for name in ("LICENSE.json", "LICENSE.xml", "license.yml"):
+            self.assertIn(name, self._refuses({name: APACHE_FULL_TEXT}))
+
+    def test_a_license_one_directory_down(self):
+        self.assertIn("docs/LICENSE.txt", self._refuses({"docs/LICENSE.txt": APACHE_FULL_TEXT}))
+
+    def test_the_controls_still_reach_the_default_or_their_own_terms(self):
+        d = self._skill({"notes.md": "nothing license-shaped here"})
+        self.assertEqual(gen.describe(d, "MIT")[0]["license"], "MIT")
+        d = self._skill({"LICENSE": MIT_FILE_TEXT, "LICENSE-3RD-PARTY.txt": APACHE_FULL_TEXT})
+        self.assertEqual(gen.describe(d, "MIT")[0]["license"], "MIT")
+        d = self._skill({"LICENSE": MIT_FILE_TEXT, "references/LICENSE.txt": APACHE_FULL_TEXT})
+        self.assertEqual(gen.describe(d, "MIT")[0]["license"], "MIT")
+        d = self._skill({"LICENSES/Apache-2.0.txt": APACHE_FULL_TEXT})
+        self.assertEqual(gen.describe(d, "MIT")[0]["license"], "Apache-2.0")
+
+
+class TestATimeLimitIsTerms(unittest.TestCase):
+    """`_name_like` and `_is_copyright_notice` veto a line by VOCABULARY, and a
+    vocabulary is an allow-list: a year is an attribution signal, so any short line
+    carrying one and no listed word came through as a holder. Every case here was
+    measured resolving its document to plain MIT.
+    """
+
+    def _refused(self, body):
+        ident, why = gen.license_terms(body)
+        self.assertIsNone(ident, f"recognized as {ident}")
+        return why
+
+    def _mit(self, body):
+        ident, why = gen.license_terms(body)
+        self.assertEqual(ident, "MIT", f"refused a real holder: {why}")
+
+    def test_a_dated_restriction_floating_over_the_license(self):
+        for line in ("Valid until 2026", "Trial ends 2026", "Void After 2026",
+                     "Academic Purposes 2024"):
+            self._refused(f"{line}\n\n{MIT_FILE_TEXT}")
+        self._refused(MIT_FILE_TEXT + "\nExpires 2027-01-01\n")
+
+    def test_a_second_sentence_on_the_copyright_line(self):
+        for holder in ("Copyright 2020 Foo. Educational purposes.",
+                       "Copyright 2020 Foo. Revoked 2026.",
+                       "Copyright 2020 Foo, exclusively for Acme Inc."):
+            self._refused(mutate(MIT_FILE_TEXT, "Copyright (c) 2026 Someone Else, Inc.",
+                                 holder))
+
+    def test_a_title_that_says_the_terms_were_changed(self):
+        # "Modified BSD License" is a published NAME. "Modified MIT License" is a
+        # warning, and it sat over verbatim MIT text resolving to plain MIT.
+        self._refused(mutate(MIT_FILE_TEXT, "MIT License", "Modified MIT License"))
+
+    def test_real_holders_that_this_must_not_refuse(self):
+        # Each was measured being refused by a stricter draft of the same rule (one that
+        # required every lower-case word in the notice to be a particle or a corporate
+        # form). It cost 139 refusals in 1,183 real files and was dropped for these.
+        for holder in ("Copyright (c) 2017-present, Jon Schlinkert.",
+                       "Copyright (c) 2014, Nathan LaFreniere and other contributors",
+                       "Copyright (c) 2012-2018 Aseem Kishore, and [others].",
+                       "Copyright 2007, 2008 The Python Markdown Project (v. 1.7 and later)",
+                       "Copyright (c) 2026 Alice Smith <alice@example.com>",
+                       "Copyright (c) 2026 Alice B. Smith",
+                       "Copyright (c) 2026 Acme Inc. and Beta Ltd.",
+                       "Copyright (c) 1998-2000 Thai Open Source Software Center Ltd "
+                       "and Clark Cooper"):
+            self._mit(mutate(MIT_FILE_TEXT, "Copyright (c) 2026 Someone Else, Inc.", holder))
+
+    def test_a_holder_list_under_its_notice_is_still_a_holder_list(self):
+        self._mit(mutate(MIT_FILE_TEXT, "Copyright (c) 2026 Someone Else, Inc.",
+                         "Copyright (c) 2026 Someone Else, Inc.\n    Acme Inc.\n    Beta Ltd."))
+
+    def test_a_markdown_link_definition_is_a_link_not_terms(self):
+        self._mit(MIT_FILE_TEXT + "\n[others]: https://example.com/contributors\n")
+
+    # The two tests below use words that are DELIBERATELY absent from _TERMS_VOCAB
+    # ("superseded", "lapses"), because the vocabulary is the mechanism they are not
+    # testing. Reverting the vocabulary leaves them green and reverting the structural
+    # rule turns them red, which is the only way to tell the two apart: with a listed
+    # word, either mechanism answers and neither is proven.
+
+    def test_an_UNLISTED_restriction_floating_over_the_license(self):
+        # What the adjacency rule is FOR. Short, capitalised, carrying a year, using a
+        # word nobody put in the vocabulary: a holder to every test except "does this
+        # line continue a copyright notice".
+        for line in ("Lapses 2027", "Superseded 2026"):
+            self._refused(f"{line}\n\n{MIT_FILE_TEXT}")
+
+    def test_an_UNLISTED_second_sentence_on_the_copyright_line(self):
+        # What the sentence-break rule is FOR, for the same reason.
+        self._refused(mutate(MIT_FILE_TEXT, "Copyright (c) 2026 Someone Else, Inc.",
+                             "Copyright 2020 Foo. Superseded by v2."))
+
+
 class TestSpdxTagsCarryWhatOnlyTheyCanCarry(unittest.TestCase):
     """GPL-3.0-or-later and GPL-3.0-only sit over IDENTICAL text. The tag is the only
     carrier of the difference, and refusing it for "contradicting" the body threw away
@@ -1949,7 +2139,7 @@ class TestProvenanceMarkersAreWide(unittest.TestCase):
 
     def test_a_block_scalar_origin_is_parsed_not_grepped(self):
         # The prose regex ran over raw YAML, so `origin: >-` would hand back ">-" as the
-        # source and a list "- https://...". The 27 skills that declare one of these keys
+        # source and a list "- https://...". The 48 skills that declare one of these keys
         # all write a plain scalar, so the regex was right by luck, not by reading.
         found = self._found("---\nname: s\ndescription: d\nmetadata:\n"
                             "  origin: >-\n    https://example.com/upstream\n---\n")
@@ -2020,14 +2210,21 @@ class TestTheShippedManifestsMatchWhatTheGeneratorDerives(unittest.TestCase):
         expected = {
             **{n: "Apache-2.0" for n in ("agents-sdk", "cloudflare",
                                          "cloudflare-email-service", "durable-objects",
-                                         "web-perf", "workers-best-practices",
-                                         "wrangler")},
+                                         "sandbox-sdk", "web-perf",
+                                         "workers-best-practices", "wrangler")},
             **{n: "MIT" for n in ("gsap-core", "gsap-frameworks", "gsap-performance",
                                   "gsap-plugins", "gsap-scrolltrigger", "gsap-timeline",
                                   "gsap-utils")},
             **{n: "proprietary" for n in ("figma", "figma-implement-design",
                                           "figma-use")},
-            **{n: "NOASSERTION" for n in ("sandbox-sdk", "orchestrated-planning",
+            # `sandbox-sdk` was NOASSERTION here on the sentence "this name is NOT
+            # present in cloudflare/skills". It is absent from the CURRENT listing
+            # because upstream renamed the skill on 2026-08-07 (f96bff75), months after
+            # the 2026-05-23 bundle. The tree at 60147cbb, the last upstream commit
+            # before that bundle, carries skills/sandbox-sdk/SKILL.md, and our copy
+            # differs from it only by a locally appended "## See also". Provenance is a
+            # question about a date; a listing only ever answers about today.
+            **{n: "NOASSERTION" for n in ("orchestrated-planning",
                                           "progressive-code-exploration",
                                           "knowledge-corpus", "project-timeline-report",
                                           "session-memory-search")},
@@ -2045,7 +2242,7 @@ class TestTheShippedManifestsMatchWhatTheGeneratorDerives(unittest.TestCase):
         # with the material. A manifest field saying "Apache-2.0" with no license file
         # beside it is a claim, not compliance.
         missing = []
-        for name in ("agents-sdk", "cloudflare", "cloudflare-email-service",
+        for name in ("agents-sdk", "cloudflare", "cloudflare-email-service", "sandbox-sdk",
                      "durable-objects", "web-perf", "workers-best-practices", "wrangler",
                      "gsap-core", "gsap-frameworks", "gsap-performance", "gsap-plugins",
                      "gsap-scrolltrigger", "gsap-timeline", "gsap-utils"):

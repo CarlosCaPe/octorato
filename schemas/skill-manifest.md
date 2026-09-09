@@ -110,22 +110,25 @@ standing residual, stated here rather than left to be found:
 ### What a refusal says
 
 A refusal names the word that differs, quoted with the line it sits on, because a
-refusal that misdiagnoses sends whoever fixes it to read the wrong sentence. The
-recognizer was run over every license-named file this machine carries under `$HOME`,
-`/usr/lib/python3` and `/usr/share/doc` (17,841 files): 7,848 resolve to MIT, 1,699 to
-Apache-2.0, 859 to BSD-3-Clause, 211 to GPL-3.0, 99 to MPL-2.0, 5 to AGPL-3.0. Of the
-9,245 files carrying MIT's opening sentence, 84% resolve to MIT; what does not is
-dominated by documents that genuinely are not one plain MIT license (Debian `copyright`
-manifests, the X11 and Unicode variants, which differ in the grant rather than in the
-typography, and files carrying two licenses at once).
+refusal that misdiagnoses sends whoever fixes it to read the wrong sentence.
 
-Before the comparison ran over words, a curled quote was enough to refuse a file AND to
-misname the cause: a family of packages that writes `'Software'` with apostrophes was
-told its "grant sentence is not MIT's". Two other shapes the same run measures: 190
-BSD-3-Clause files carry a `BSD 3-Clause License` title line above their text, and 117
-Apache-2.0 files stop at the end of clause 9 with no `END OF TERMS AND CONDITIONS`.
-Both are whole licenses, and an anchor that did not allow for them would refuse 307
-correct files.
+**No corpus percentage is published here, on purpose.** An earlier draft of this file
+carried one. It was measured by running the recognizer over every license-named file on
+one developer's disk, and it is not reproducible by anyone, including the machine that
+produced it: two runs of the same selection days apart returned different denominators,
+because `$HOME` is a live tree where package installs add and remove license files
+between runs. A number that moves under its own author is decoration, not evidence, and
+this document should not carry the one kind of claim the recognizer exists to refuse.
+
+What the sweep is good for is finding SHAPES, and those are reproducible because each
+one becomes a fixture. Three came out of it and all three are pinned by tests: a curled
+or straight quote around `"Software"` is typography and must not decide (before the
+comparison ran over words, a family of packages that writes `'Software'` with
+apostrophes was told its "grant sentence is not MIT's"); a `BSD 3-Clause License` title
+line above the text is a title, not terms; and an Apache-2.0 copy that stops at the end
+of clause 9 with no `END OF TERMS AND CONDITIONS` is a whole license, which is why
+`_Anchored.ends` is a list of forms rather than one phrase. Anyone re-running such a
+sweep should expect different counts and the same shapes.
 
 Typography is not terms. The comparison runs over words, so quote glyphs, emphasis
 markers, comment fences, line wrapping, rst underlines and intra-word hyphens cannot
@@ -151,10 +154,12 @@ field is a published assertion about someone else's terms, which is why the gene
 reports rather than defaults. Anything that says the field is "acted on at publish time"
 is describing an intention, not this HEAD.
 
-`description` mirrors the skill's front matter as written. In 43 of the shipped manifests
-that front-matter description IS the skill's title, so the manifest carries a title rather
-than a summary. Faithful to the source, and not a summary; changing it means editing the
-skills, not the manifests.
+`description` mirrors the skill's front matter as written. In 48 of the 233 shipped
+manifests that description is byte-equal to the skill's first markdown heading, so the
+manifest carries a title rather than a summary (46 are six words or fewer, a looser test
+that catches two more short titles and misses four long headings; every skill has a
+front-matter description, so none of the 233 falls back to the heading). Faithful to the
+source, and not a summary; changing it means editing the skills, not the manifests.
 
 ## What the coverage claim covers
 

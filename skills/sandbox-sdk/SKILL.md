@@ -1,9 +1,9 @@
 ---
 name: sandbox-sdk
 description: Build sandboxed applications for secure code execution. Load when building AI code execution, code interpreters, CI/CD systems, interactive dev environments, or executing untrusted code. Covers Sandbox SDK lifecycle, commands, files, code interpreter, and preview URLs. Biases towards retrieval from Cloudflare docs over pre-trained knowledge.
-license: NOASSERTION
+license: Apache-2.0
 metadata:
-  origin: "Cloudflare-authored, installed by wrangler in the same bundle committed as 6c78520 on 2026-05-23. This name is NOT present in https://github.com/cloudflare/skills, and GitHub reports NOASSERTION for https://github.com/cloudflare/sandbox-sdk, so which terms govern it is unestablished and nothing is claimed."
+  origin: "https://github.com/cloudflare/skills (Apache-2.0). Installed by wrangler on first run and committed here as 6c78520 on 2026-05-23; upstream ships no NOTICE file, and its LICENSE appendix carries the unfilled \"[name of copyright owner]\" placeholder, so no copyright holder string is asserted here that was not read from a file. The skill was renamed upstream on 2026-08-07 (f96bff75), so the present-day listing no longer shows this name; the tree at 60147cbb, the last commit before this bundle, carries skills/sandbox-sdk/SKILL.md, and our copy differs from it only by a locally appended See also section."
 ---
 
 # Cloudflare Sandbox SDK
