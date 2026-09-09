@@ -630,6 +630,13 @@ class TestEachNoWindowRoadNamesItself(DenyCoverageCase):
             "GIT_TEST_ASSUME_DIFFERENT_OWNER", saved) if saved is not None
             else os.environ.pop("GIT_TEST_ASSUME_DIFFERENT_OWNER", None))
         probe = doctor.run(["git", "rev-parse", "--is-shallow-repository"], cwd=notarepo)
+        # rc 124 is a HANG, and the skip below would have absorbed it as "this git
+        # did not run the ownership check" — a wrong reason for a skip, inside the
+        # test against wrong reasons, and the same blindness as a test that only
+        # asserts the child came back.
+        self.assertNotEqual(probe.returncode, 124,
+                            "the probe git never answered; that is a hang, not a "
+                            "git that skipped the ownership check")
         if "dubious ownership" not in (probe.stderr or ""):
             # The skip reason names what was MEASURED, not a diagnosis nobody
             # checked. The first one asserted that this git ignores
@@ -1003,11 +1010,17 @@ class TestEachNoWindowRoadNamesItself(DenyCoverageCase):
     def test_a_call_that_never_answers_is_a_named_cause_too(self):
         """No cause at all is the same reader-facing failure, one step further out.
 
-        `git ls-remote --heads origin` reaches the NETWORK. Over ssh with no agent it
-        waits on a passphrase, over https on a username, and a repo mid-`git gc` waits
-        on a lock: each one hangs the doctor and, through `.githooks/pre-push`, the
-        push behind it, with no row and no exit code. Three guards, and each is
-        asserted here rather than described.
+        Three call sites reach the NETWORK (`ls-remote --tags`, `gh pr list`,
+        `ls-remote --heads`). Over ssh with no agent git waits on a passphrase, over
+        https on a username, and a host that drops the packets waits on the TCP
+        stack: each one hangs the doctor and, through `.githooks/pre-push`, the push
+        behind it, with no row and no exit code. Three guards, and each is asserted
+        here rather than described.
+
+        Not asserted, because it was measured FALSE and used to be claimed here: a
+        repo mid-`git gc` does not wait. git 2.43 with `index.lock` and
+        `packed-refs.lock` present answered `ls-remote` in 0.014s rc 0 and failed
+        `add` in 9ms with `fatal: Unable to create ...: File exists.`
         """
         saved = doctor.RUN_TIMEOUT
         self.addCleanup(lambda: setattr(doctor, "RUN_TIMEOUT", saved))
@@ -1025,13 +1038,19 @@ class TestEachNoWindowRoadNamesItself(DenyCoverageCase):
         self.assertIn("no answer in 1s", cp.stderr)
         doctor.RUN_TIMEOUT = saved
 
-        # The cheapest of the three guards, and the one that stops the hang instead
-        # of timing it out: nothing this doctor spawns can read from the operator's
-        # terminal, or from the ref list `pre-push` feeds this process on stdin.
+        # The cheapest of the three guards, and a PARTIAL one: nothing this doctor
+        # spawns inherits fd 0, so it cannot eat the ref list `pre-push` feeds this
+        # process. It does NOT close /dev/tty, which is how ssh reads a passphrase:
+        # measured under a pty, `sh -c 'read x </dev/tty'` with stdin=/dev/null
+        # blocked the full 3s. That is why the timeout above is the guard that
+        # actually ends an ssh wait, and why this one is asserted for what it does.
         if not Path("/proc/self/fd/0").exists():
             self.skipTest("no /proc on this platform, so fd 0 cannot be named")
         fd0 = doctor.run([sys.executable, "-c",
                           "import os;print(os.readlink('/proc/self/fd/0'))"])
+        self.assertEqual(fd0.returncode, 0,
+                         "rc 124 here is a hang, and its partial stdout would be "
+                         "read as if the probe had answered")
         self.assertEqual((fd0.stdout or "").strip(), "/dev/null",
                          "a child inherited this process's stdin: a git that decides "
                          "to ask for a password will get an answer from whatever is "
@@ -1042,7 +1061,351 @@ class TestEachNoWindowRoadNamesItself(DenyCoverageCase):
         prompt = doctor.run(["git", "-c",
                              'alias.showprompt=!printf "%s\n" "${GIT_TERMINAL_PROMPT-unset}"',
                              "showprompt"], cwd=self.brain)
+        self.assertEqual(prompt.returncode, 0, prompt.stderr)
         self.assertEqual((prompt.stdout or "").strip(), "0", prompt.stderr)
+
+    def test_a_hang_that_had_already_spoken_is_read_not_raised(self):
+        """The sibling above passes only because its child prints NOTHING.
+
+        `TimeoutExpired.stdout` and `.stderr` are BYTES on POSIX no matter what
+        `encoding=`/`text=` said, because those kwargs configure the decode that
+        `communicate()` does on the way out and the timeout path raises before it
+        runs. So a helper that printed one line and THEN hung handed `selftest_cause`
+        bytes, `line.startswith("FAIL")` raised, and through the real check it came
+        back as
+
+            kernel-replay FAIL | check crashed: a bytes-like object is required, not 'str'
+
+        a traceback where a cause belongs, produced by the function written to
+        abolish tracebacks, on the COMMON member of the class: a hang that had
+        already said something. Reproduced end to end before the fix by replacing
+        `r__permission-denied__journal.py` with a print-then-sleep script and running
+        the real `check_kernel_replay` with RUN_TIMEOUT=1.
+
+        And the partial STDERR was thrown away entirely, which is the surviving
+        mutant M25: the synthesised `no answer in Ns` sentence REPLACED whatever the
+        child managed to say. For a git waiting on a passphrase those words are the
+        diagnosis, so they are kept and the sentence goes after them.
+        """
+        saved = doctor.RUN_TIMEOUT
+        self.addCleanup(lambda: setattr(doctor, "RUN_TIMEOUT", saved))
+        doctor.RUN_TIMEOUT = 1
+        speaks_then_hangs = (
+            "import sys, time\n"
+            "print('selftest FAIL: the violation fixture did not block')\n"
+            "sys.stdout.flush()\n"
+            "sys.stderr.write('warning: You appear to have cloned an empty repository.\\n')\n"
+            "sys.stderr.flush()\n"
+            "time.sleep(30)\n"
+        )
+        cp = doctor.run([sys.executable, "-c", speaks_then_hangs])
+        self.assertEqual(cp.returncode, 124)
+        self.assertIsInstance(cp.stdout, str,
+                              "the partial output comes back as bytes from "
+                              "TimeoutExpired; a caller that reads it with str "
+                              "methods raises TypeError")
+        self.assertIsInstance(cp.stderr, str)
+
+        # The crash itself, at the call site that produced it.
+        try:
+            cause = doctor.selftest_cause(cp)
+        except TypeError as e:  # pragma: no cover - the bug this test exists for
+            self.fail(f"selftest_cause raised instead of naming a cause: {e}")
+        self.assertEqual(cause, "selftest FAIL: the violation fixture did not block",
+                         "a helper that marked its own failure before wedging is "
+                         "named by its own verdict, not by the timeout sentence")
+
+        # M25: the partial stderr survives instead of being replaced.
+        self.assertIn("warning: You appear to have cloned an empty repository.",
+                      cp.stderr,
+                      "the only words the child got out before it was killed were "
+                      "discarded; for a git waiting on a passphrase that is the "
+                      "whole diagnosis")
+        self.assertIn("no answer in 1s, killed", cp.stderr)
+        self.assertLess(cp.stderr.index("cloned an empty repository"),
+                        cp.stderr.index("no answer in 1s"),
+                        "the synthesised sentence goes LAST so the `[-1]` fallback "
+                        "lands on it only when the child marked nothing")
+
+        # And the silent hang still falls back to the sentence, unchanged.
+        quiet = doctor.run([sys.executable, "-c", "import time; time.sleep(30)"])
+        self.assertEqual(quiet.returncode, 124)
+        self.assertIn("no answer in 1s, killed", doctor.selftest_cause(quiet))
+
+    def test_the_empty_stdin_is_devnull_and_not_an_empty_pipe(self):
+        """`input=b""` also hands a child an empty stdin, and it is not the same
+        thing.
+
+        They are mutually exclusive in subprocess, so this is a real fork in the
+        road and not a style choice, and they differ for a child that WRITES to
+        fd 0. Measured: under `input=b""` fd 0 is the read end of a pipe, so
+        `os.write(0, b'x')` raises `OSError 9 Bad file descriptor`; under DEVNULL it
+        succeeds and the bytes are discarded. Several helpers this doctor runs are
+        hooks that were written to talk back on whatever fd they were given, and a
+        doctor that made them crash would be manufacturing the failures it reports.
+        """
+        writer = ("import os\n"
+                  "try:\n"
+                  "  os.write(0, b'x'); print('wrote')\n"
+                  "except OSError as e:\n"
+                  "  print('OSError %d' % e.errno)\n")
+        started = time.time()
+        cp = doctor.run([sys.executable, "-c", writer])
+        # rc 0 EXPLICITLY, not "it came back". A child that hangs comes back too,
+        # as rc 124 with the output it managed, and an assertion that only reads
+        # stdout cannot tell the two apart.
+        self.assertEqual(cp.returncode, 0,
+                         f"rc {cp.returncode}: 124 here would be a hang wearing a "
+                         f"result's clothes")
+        self.assertLess(time.time() - started, 30,
+                        "the child answered on its own, not because a ceiling fired")
+        self.assertEqual((cp.stdout or "").strip(), "wrote",
+                         "a child that writes to fd 0 got a pipe read end, not "
+                         "/dev/null: under input=b'' this is OSError 9")
+
+        # the other half of the fork, so the assertion above is a discriminator and
+        # not a coincidence
+        pipe_end = subprocess.run([sys.executable, "-c", writer],
+                                  capture_output=True, input=b"")
+        self.assertEqual(pipe_end.stdout.decode().strip(), "OSError 9")
+        with self.assertRaises(ValueError):
+            subprocess.run([sys.executable, "-c", "pass"], capture_output=True,
+                           stdin=subprocess.DEVNULL, input=b"")
+
+    def test_the_terminal_prompt_is_ended_by_the_env_not_by_the_empty_stdin(self):
+        """The guard that actually ends git's username prompt is the env var.
+
+        An https remote that answers 401 makes git ask on /dev/tty, which stdin on
+        /dev/null does not touch. Measured under a pty with GIT_TERMINAL_PROMPT
+        unset and stdin=DEVNULL: git printed `Username for 'https://github.com': `
+        and hung the full 8s. Through `run`, which sets the variable: rc 128 in
+        1.05s with a sentence instead of a wait.
+
+        Network-guarded, because the point is what a REAL remote does. It is the one
+        test here that needs one, and it says so rather than passing quietly offline.
+        """
+        if not shutil.which("git"):
+            self.skipTest("no git on PATH")
+        url = "https://github.com/CarlosCaPe/octorato-private-probe-does-not-exist.git"
+        started = time.time()
+        cp = doctor.run(["git", "-c", "credential.helper=", "ls-remote", url],
+                        timeout=25)
+        elapsed = time.time() - started
+        # A timeout is NOT a skip here. rc 124 is the exact failure this guard
+        # exists to prevent, so it FAILS loudly; only a genuinely absent network
+        # skips, and it has to say so in git's own words.
+        if any(s in cp.stderr for s in ("Could not resolve host",
+                                        "Temporary failure in name resolution")):
+            self.skipTest(f"no DNS for the remote: {cp.stderr.strip()[:80]}")
+        self.assertNotEqual(cp.returncode, 124,
+                            f"git hung for {elapsed:.1f}s and only the ceiling "
+                            f"ended it; that is the wedged pre-push this guard is "
+                            f"for, not a passing test")
+        self.assertLess(elapsed, 20,
+                        "git answered only because the ceiling was near, which "
+                        "reads the same as answering promptly unless timed")
+        self.assertEqual(cp.returncode, 128)
+        self.assertIn("terminal prompts disabled", cp.stderr,
+                      "git asked instead of answering; without "
+                      "GIT_TERMINAL_PROMPT=0 this call hangs on /dev/tty and takes "
+                      "the pre-push that spawned it down with it")
+        self.assertIn("could not read Username", cp.stderr)
+
+    def test_a_shorter_leash_is_the_callers_to_ask_for(self):
+        """`run` grew a `timeout=` because one call site needed a cheaper question
+        answered fast, not because 300s was wrong for the rest. The synthesised
+        sentence has to name the leash that actually fired, or the reader is told the
+        wrong number.
+
+        Timed, not just coded. If `timeout=` were ignored the child would run its
+        full 30s and come back rc 0, which the rc assertion catches; if the leash
+        fired but at the wrong length the rc would still be 124 and only the clock
+        would say so."""
+        started = time.time()
+        cp = doctor.run([sys.executable, "-c", "import time; time.sleep(30)"], timeout=1)
+        elapsed = time.time() - started
+        self.assertEqual(cp.returncode, 124)
+        self.assertLess(elapsed, 15,
+                        f"took {elapsed:.1f}s: the 1s leash was not the one that "
+                        f"fired")
+        self.assertIn("no answer in 1s, killed", cp.stderr)
+        self.assertEqual(doctor.RUN_TIMEOUT, 300,
+                         "the default is untouched; a per-call leash is per-call")
+
+        # The discriminator: the same runner with no leash lets the same shape of
+        # child finish, so rc 124 above is the leash and not a broken runner.
+        quick = doctor.run([sys.executable, "-c", "import time; time.sleep(0.2)"])
+        self.assertEqual(quick.returncode, 0)
+
+    def test_no_call_site_bypasses_the_runner(self):
+        """`run` is the only place that scrubs `GIT_DIR`, pins LC_ALL=C, disables the
+        terminal prompt and closes fd 0, so a call site that goes around it gets none
+        of them.
+
+        One did. `check_changelog_freshness` called `subprocess.run` directly for
+        `git ls-remote --tags origin`: a NETWORK call, from a process that
+        `.githooks/pre-push` invokes with `GIT_DIR` exported, which is the exact
+        shape of the 2026-09-05 incident where a child git operated on the live repo
+        instead of the intended one.
+
+        Asserted structurally rather than on that one line, because the next bypass
+        will be somewhere else: inside `brain_doctor.py`, `subprocess.run(` appears
+        only in the body of `run` itself.
+        """
+        src = DOCTOR.read_text(encoding="utf-8")
+        # the runner's own call, the one legitimate occurrence
+        body = src.split("def run(", 1)[1].split("\ndef ", 1)[0]
+        self.assertEqual(body.count("subprocess.run("), 1,
+                         "run() should call subprocess.run exactly once")
+        self.assertEqual(src.count("subprocess.run("), 1,
+                         "a call site outside run() bypasses env scrubbing, the "
+                         "locale pin, GIT_TERMINAL_PROMPT=0 and stdin=/dev/null; "
+                         "route it through run(cwd=..., timeout=...) instead")
+
+    def test_a_child_killed_by_a_signal_is_named_not_numbered(self):
+        """`exit -9` is a code, not a cause, and it was what both selectors printed
+        for the one class that reliably arrives with empty streams.
+
+        A negative returncode is POSIX reporting death by signal. Measured through
+        `run`: -9 for SIGKILL, -11 for SIGSEGV, nothing on either stream. The two
+        that arrive here say something a reader can act on, since SIGKILL is how the
+        OOM killer ends a gate selftest on a machine that ran out of memory.
+        """
+        killed = doctor.run([sys.executable, "-c",
+                             "import os, signal; os.kill(os.getpid(), signal.SIGKILL)"])
+        self.assertEqual(killed.returncode, -9)
+        self.assertEqual(killed.stderr, "", "the premise: nothing to read")
+        self.assertEqual(doctor.selftest_cause(killed), "killed by SIGKILL (signal 9)")
+        self.assertEqual(doctor.git_failure_cause(killed.stderr, killed.returncode),
+                         "killed by SIGKILL (signal 9)")
+
+        segv = doctor.run([sys.executable, "-c", "import ctypes; ctypes.string_at(0)"])
+        self.assertEqual(segv.returncode, -11)
+        self.assertEqual(doctor.selftest_cause(segv), "killed by SIGSEGV (signal 11)")
+
+        # rc 124 is NOT signal death: `run` synthesises it with a sentence, and a
+        # reader who is told "killed by SIGKILL" for a timeout is told the wrong
+        # thing about a machine that is merely slow.
+        self.assertEqual(doctor._exit_cause(124), "exit 124")
+        self.assertEqual(doctor._exit_cause(1), "exit 1")
+
+    def test_stderr_outranks_stdout_when_both_carry_a_marker(self):
+        """The stream order is load-bearing and was untested: swapping it survived
+        the whole module.
+
+        `gate_selftest.py:212` writes the joined `selftest FAIL: a; b` summary to
+        STDERR, and that one printer speaks for 23 of the 33 `--selftest` scripts in
+        the registry. Reading stdout first would let a helper's incidental chatter
+        outrank the verdict of the majority, which is the same wrong-cause defect as
+        the clone warning, arriving from the other side.
+        """
+        cp = subprocess.CompletedProcess(
+            ["helper"], 1,
+            "FAIL: a line the helper happened to print first\n",
+            "selftest FAIL: the real verdict\n")
+        self.assertEqual(doctor.selftest_cause(cp), "selftest FAIL: the real verdict")
+
+        # and stdout is still read when stderr carries no marker at all, which is the
+        # base-freshness case this function was written for
+        stdout_only = subprocess.CompletedProcess(
+            ["helper"], 1,
+            "  X violation fixture did NOT warn (stale base undetected)\n",
+            "warning: You appear to have cloned an empty repository.\n")
+        self.assertEqual(doctor.selftest_cause(stdout_only),
+                         "X violation fixture did NOT warn (stale base undetected)")
+
+    def test_every_failure_marker_has_a_printer_that_writes_it(self):
+        """A marker no printer emits and no test defends is decoration that reads
+        like coverage. Four of the five survived a mutation run that deleted them one
+        at a time, so each is asserted here against a line taken VERBATIM from the
+        printer that writes it.
+
+        `✘` was the fifth. Nothing under `scripts/` writes it; the only occurrence in
+        the tree was the tuple naming itself, so it is deleted rather than tested.
+        """
+        emitters = {
+            # marker: (emitting script, a verbatim line from it)
+            "selftest FAIL": ("gate_selftest.py",
+                              "selftest FAIL: violation.json did not block"),
+            "FAIL": ("capability_manifest.py",
+                     "FAIL: docs/CAPABILITIES.md is stale. Run: python3 scripts/capability_manifest.py"),
+            "X ": ("r__pretool-write__base-freshness.py",
+                   "  X benign fixture warned (on default branch)"),
+            "✗": ("qa-merge-gate.py",
+                  "✗ QA GATE (fail-closed): merge of PR #296 needs operator approval."),
+        }
+        self.assertEqual(set(doctor.SELFTEST_FAILURE_MARKERS), set(emitters),
+                         "a marker was added or removed without its emitter")
+        for marker, (script, line) in emitters.items():
+            with self.subTest(marker=marker):
+                path = BRAIN / "scripts" / script
+                self.assertTrue(path.exists(), f"{script} is the named emitter")
+                self.assertIn(marker.strip(), path.read_text(encoding="utf-8"),
+                              f"{script} no longer writes {marker!r}: either the "
+                              f"marker moved or it is now decoration")
+                cp = subprocess.CompletedProcess(["helper"], 1, "", line + "\n")
+                self.assertEqual(doctor.selftest_cause(cp), line.strip(),
+                                 f"a real {script} failure line is not selected")
+
+        self.assertNotIn("✘", doctor.SELFTEST_FAILURE_MARKERS)
+        # The two files that DISCUSS the deletion are excluded, or this check
+        # matches its own explanation and reports a printer that does not exist.
+        # (The first draft of this assertion did exactly that: it failed on
+        # brain_doctor.py and on this file, both of which only name the glyph.)
+        talkers = {DOCTOR.resolve(), Path(__file__).resolve()}
+        writers = sorted(
+            str(p) for p in (BRAIN / "scripts").rglob("*")
+            if p.is_file() and p.suffix in (".py", ".sh", "")
+            and "__pycache__" not in p.parts
+            and p.resolve() not in talkers
+            and "✘" in p.read_text(encoding="utf-8", errors="replace"))
+        self.assertEqual(writers, [],
+                         "something started writing ✘; give it back its marker "
+                         "instead of leaving the failure unmarked")
+
+    def test_the_dispatcher_diagnosis_outlives_its_usage_block(self):
+        """git the dispatcher writes diagnoses with NO prefix, and the fallback
+        turned one into a usage fragment offered as the reason. Verbatim git 2.43:
+
+            unknown option: --bogus-global
+            usage: git [-v | --version] [-h | --help] [-C <path>] [-c <name>=<value>]
+                       ...
+                       [--config-env=<name>=<envvar>] <command> [<args>]
+
+        and the row read `[--config-env=<name>=<envvar>] <command> [<args>]`.
+
+        The fix is NOT `unknown option:` in the prefix tuple. That closes one member
+        and leaves the class open for the next reviewer, which is the habit this
+        brain has now measured seven times in a day. What actually broke the row is
+        that git's `usage:` block is a REMEDY and it is printed LAST, the same
+        remedy-as-cause shape this whole function opens with, so the fallback drops
+        it and takes the last line that survives.
+
+        Live git, not a fixture: the point is what git 2.43 actually prints.
+        """
+        if not shutil.which("git"):
+            self.skipTest("no git on PATH")
+        cp = doctor.run(["git", "--bogus-global", "status"], cwd=BRAIN)
+        self.assertNotEqual(cp.returncode, 0)
+        self.assertIn("usage: git", cp.stderr, "git no longer prints a usage block "
+                                               "here; re-measure before trusting this")
+        cause = doctor.git_failure_cause(cp.stderr, cp.returncode)
+        self.assertEqual(cause, "unknown option: --bogus-global")
+        self.assertNotIn("<command>", cause,
+                         "a usage fragment where the cause belongs")
+
+        # The prefixed sibling keeps working: a SUBCOMMAND marks its diagnosis, so
+        # the marked line wins and the usage block below it is never consulted.
+        sub = doctor.run(["git", "status", "--bogus-sub"], cwd=BRAIN)
+        self.assertEqual(sub.returncode, 129,
+                         "git's usage exit; 124 would be a hang read as a diagnosis")
+        self.assertEqual(doctor.git_failure_cause(sub.stderr, sub.returncode),
+                         "error: unknown option `bogus-sub'")
+
+        # A stderr that is nothing BUT a usage block has no cause in it, and the exit
+        # code is a thin answer that is at least not a wrong one.
+        only_usage = "usage: git [-v | --version]\n           [--bare]\n"
+        self.assertEqual(doctor.git_failure_cause(only_usage, 129), "exit 129")
 
     def test_a_subcommand_this_git_does_not_have_names_the_diagnosis(self):
         """Translation was one way for a diagnosis to go unrecognised. It is not the

@@ -16,6 +16,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -54,8 +55,9 @@ GIT_HOOK_ENV = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX",
                 "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE",
                 "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_QUARANTINE_PATH")
 
-# Ceiling for every subprocess this file runs. See `run` for why it exists and why
-# it is this generous.
+# Default ceiling for every subprocess this file runs. A caller that wants a
+# SHORTER leash passes `timeout=` to `run`; nothing passes a longer one. See `run`
+# for why it exists and why the default is this generous.
 RUN_TIMEOUT = 300
 
 
@@ -66,7 +68,32 @@ def scrubbed_env(base=None) -> dict:
     return env
 
 
-def run(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess:
+def _as_text(raw) -> str:
+    """Decode what a killed child had already written.
+
+    `TimeoutExpired` carries the partial output, and on POSIX it carries it as
+    BYTES no matter what `encoding=`/`text=` said: those kwargs configure the
+    decode `communicate()` does on the way OUT, and the timeout path raises before
+    that runs. So `exc.stdout` reached `selftest_cause`, which does
+    `line.startswith("FAIL")`, and a helper that printed one line and THEN hung came
+    back through `run_all` as
+
+        kernel-replay FAIL | check crashed: a bytes-like object is required, not 'str'
+
+    a traceback where a cause belongs, produced by the function written to abolish
+    tracebacks, on the COMMON member of the class: a hang that had already spoken.
+    Windows can hand back str on the same attribute, so both are accepted rather
+    than the one this machine happens to produce.
+    """
+    if raw is None:
+        return ""
+    if isinstance(raw, (bytes, bytearray)):
+        return bytes(raw).decode("utf-8", "replace")
+    return raw
+
+
+def run(args: list[str], cwd: Path | None = None,
+        timeout: float | None = None) -> subprocess.CompletedProcess:
     """Run a subprocess with explicit args; never raises on non-zero.
 
     encoding/errors are NOT decoration. Bare text=True decodes with the ambient
@@ -98,8 +125,10 @@ def run(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess
     `LANGUAGE=de LC_ALL=C`, which printed English.
 
     Reach today is small and worth saying rather than hiding: this distro's git
-    package ships zero `.mo` files and the operator's locale is Spanish, whose
-    prefix is unchanged. It is real on any distro that ships git localisation.
+    package ships zero `.mo` files, and this machine's `LC_MESSAGES` is
+    `en_US.UTF-8` anyway — only LC_NUMERIC / LC_TIME / LC_MONETARY and the other
+    non-message categories are `es_ES.UTF-8`, and git's prefixes are chosen by
+    LC_MESSAGES. It is real on any distro that ships git localisation.
 
     The pin is keyed on the BASENAME, so `/usr/bin/git` is pinned and a wrapper on
     PATH under another name (`mygit`) is not. That is by design and not a hole:
@@ -107,29 +136,75 @@ def run(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess
     put LC_ALL=C on every helper this file runs, several of which print Spanish.
 
     A call that never answers has no cause at all, which is the same reader-facing
-    failure one step further out. `git ls-remote --heads origin` below reaches the
-    NETWORK: over ssh with no agent it waits on a passphrase, over https it waits on
-    a username, and a repo mid-`git gc` waits on a lock, each one hanging the doctor
+    failure one step further out. THREE call sites reach the NETWORK, not one:
+    `git ls-remote --tags origin` in the changelog check, `gh pr list` and
+    `git ls-remote --heads origin` in the stale-branch audit. Over ssh with no agent
+    git waits on a passphrase, over https it waits on a username, and a host that
+    silently drops the packets waits on the TCP stack: each one hangs the doctor
     and, through `.githooks/pre-push`, the push behind it, with no row and no exit
-    code. Three guards, cheapest first: stdin is /dev/null so nothing can read from
-    the operator's terminal or from the ref list pre-push feeds this process;
-    GIT_TERMINAL_PROMPT=0 makes git say `could not read Username for ...` instead of
-    asking; and RUN_TIMEOUT is the backstop for the rest, answered as rc 124, the
-    `timeout(1)` convention, so a hang arrives as a named cause like every other
-    failure. 300s is deliberately generous: the slowest thing through here is a gate
-    selftest that clones repos, and a doctor that FAILs a healthy slow machine would
-    be printing a wrong cause, which is the defect this file exists to remove.
+    code. Three guards, cheapest first.
+
+    They cover three DIFFERENT channels and none of them substitutes for another,
+    which is the mistake the earlier version of this paragraph made when it said
+    stdin=/dev/null meant "nothing can read from the operator's terminal".
+
+    stdin is /dev/null. That covers fd 0: a child that reads its standard input
+    reads EOF, so it cannot eat the ref list `pre-push` feeds this process. It does
+    NOT cover a reader that opens /dev/tty. Measured twice, two ways: under a pty,
+    `sh -c 'read x </dev/tty'` with stdin=/dev/null blocked the full 3s, and
+    `git ls-remote` against an https remote that answers 401 printed
+    `Username for 'https://github.com': ` and hung the full 8s with stdin on
+    /dev/null and GIT_TERMINAL_PROMPT unset.
+
+    DEVNULL rather than `input=b""`, which would also give the child an empty stdin.
+    They are mutually exclusive in subprocess (`ValueError: stdin and input arguments
+    may not both be used.`), and they differ where it matters for a child that
+    WRITES to fd 0: under `input=b""` fd 0 is the read end of a pipe, so
+    `os.write(0, b'x')` raises `OSError 9 Bad file descriptor`, while under DEVNULL
+    it succeeds and is discarded. DEVNULL also costs one fd instead of a pipe pair
+    per call, and it leaves `input=` free for any caller that ever needs it.
+
+    GIT_TERMINAL_PROMPT=0 covers git's OWN terminal prompt, the /dev/tty channel the
+    guard above cannot reach. Same 401 remote, through this runner: rc 128 in 1.05s
+    with `fatal: could not read Username for 'https://github.com': terminal prompts
+    disabled`. A hang became a sentence. It is git's variable and only git's, so it
+    says nothing about ssh's passphrase reader, which honours SSH_ASKPASS and
+    BatchMode instead.
+
+    RUN_TIMEOUT is the backstop for the channel neither of the other two can name:
+    ssh's passphrase prompt, a host that drops packets, a helper that wedges on
+    something else entirely. Answered as rc 124, the `timeout(1)`
+    convention, so a hang reads like every other rc and the partial output the child
+    managed to write survives into the row. 300s is deliberately generous: the
+    slowest thing through here is a gate selftest that clones repos, and a doctor
+    that FAILs a healthy slow machine would be printing a wrong cause, which is the
+    defect this file exists to remove. A caller with a cheaper question passes
+    `timeout=` for a shorter leash.
+
+    What is measured and NOT a hang source, recorded because it was written here as
+    one: a repo mid-`git gc` does not wait. On git 2.43 with `index.lock` and
+    `packed-refs.lock` both present, `ls-remote` answered in 0.014s rc 0, and
+    `add`/`pack-refs` failed in 9ms and 1.2s with `fatal: Unable to create
+    '...lock': File exists.` git fails on a held lock, it does not queue behind it.
 
     What the timeout is NOT: a reaper. `subprocess.run` kills the direct child, so a
     git that had already spawned ssh leaves the grandchild behind. The doctor gets
     its row and its exit code, which is what a reader and `pre-push` need; a stray
     ssh is the operator's to notice, and a process group would be a bigger change
     than the failure justifies.
+
+    A child killed by a SIGNAL is a fourth road and it is not a hang: `returncode`
+    comes back NEGATIVE (measured: -9 for SIGKILL, -11 for SIGSEGV) with both
+    streams usually empty, so there is nothing for either selector to read. Rather
+    than print `exit -9` at a reader, the selectors name the signal, because the two
+    that actually arrive here say something: SIGKILL is how the OOM killer arrives
+    on a machine that ran out of memory, and SIGSEGV is a broken binary.
     """
     env = scrubbed_env()
     if args and Path(str(args[0])).name in ("git", "git.exe"):
         env["LC_ALL"] = "C"
         env["GIT_TERMINAL_PROMPT"] = "0"
+    limit = RUN_TIMEOUT if timeout is None else timeout
     try:
         return subprocess.run(
             args,
@@ -140,12 +215,23 @@ def run(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess
             errors="replace",
             env=env,
             stdin=subprocess.DEVNULL,
-            timeout=RUN_TIMEOUT,
+            timeout=limit,
         )
     except subprocess.TimeoutExpired as exc:
+        # Both streams decoded, for the reason `_as_text` records. And the partial
+        # STDERR is KEPT rather than thrown away: it was replaced wholesale by the
+        # synthesised sentence, which discarded the only words the child got out
+        # before it stopped answering — for a git waiting on a passphrase, or a
+        # gate whose selftest printed its first failure and then wedged, those
+        # words ARE the diagnosis. The synthesised line goes LAST so that
+        # `selftest_cause`, which reads the first MARKED line and falls back to the
+        # last, gives the child's own verdict when it marked one and the timeout
+        # sentence when it did not.
+        note = f"{args[0]}: no answer in {limit}s, killed"
+        partial_err = _as_text(exc.stderr)
         return subprocess.CompletedProcess(
-            args, 124, exc.stdout or "",
-            f"{args[0]}: no answer in {RUN_TIMEOUT}s, killed")
+            args, 124, _as_text(exc.stdout),
+            f"{partial_err.rstrip()}\n{note}" if partial_err.strip() else note)
     except OSError as exc:
         # A binary that is missing, not executable, or shadowed by a file where a
         # directory belongs is NOT a non-zero exit: subprocess raises before any
@@ -739,17 +825,27 @@ def check_release_drift(fix: bool) -> Result:
     # A fresh clone may not have fetched tags. "Released" = the remote tag / GH release
     # exists, not whether this working copy happened to pull it — so fall back to the
     # remote before declaring drift, or the check false-positives on every un-fetched clone.
-    try:
-        ls = subprocess.run(
-            ["git", "ls-remote", "--tags", "origin", f"v{top_version}"],
-            cwd=str(CLAUDE_DIR), capture_output=True, text=True, timeout=10,
-        )
-        if ls.returncode == 0 and f"refs/tags/v{top_version}" in ls.stdout:
-            return Result(key, PASS,
-                          f"CHANGELOG top v{top_version} released (remote tag exists; "
-                          f"not fetched locally — `git fetch --tags` to sync)")
-    except (subprocess.TimeoutExpired, OSError):
-        pass  # offline — fall through to the local-only verdict below
+    # Through `run`, not a bare `subprocess.run`. This is the one call site that
+    # bypassed the runner, and it bypassed all five of its guarantees at once: no
+    # `scrubbed_env`, so a `GIT_DIR` exported by `.githooks/pre-push` would have
+    # pointed this ls-remote at whatever repo invoked the hook (the 2026-09-05
+    # incident, one call away from repeating); no LC_ALL=C; no
+    # GIT_TERMINAL_PROMPT=0, so a private origin over https could sit here asking
+    # a pre-push for a username; and no stdin=/dev/null, so it could have eaten
+    # the ref list on fd 0. The 10s leash is the one thing worth keeping — the
+    # question is cheap and the answer is optional — so it is passed as `timeout=`
+    # rather than dropped for the 300s default.
+    #
+    # No try/except: `run` answers a timeout as rc 124 and a missing git as rc 127
+    # instead of raising, so the rc check below covers every road the except
+    # clause used to.
+    ls = run(["git", "ls-remote", "--tags", "origin", f"v{top_version}"],
+             cwd=CLAUDE_DIR, timeout=10)
+    if ls.returncode == 0 and f"refs/tags/v{top_version}" in ls.stdout:
+        return Result(key, PASS,
+                      f"CHANGELOG top v{top_version} released (remote tag exists; "
+                      f"not fetched locally — `git fetch --tags` to sync)")
+    # offline, timed out, or no git — fall through to the local-only verdict below
     return Result(key, WARN,
                   f"CHANGELOG declares v{top_version} but no git tag v{top_version} (local or remote) — "
                   f"release & news never cut (news = top-of-funnel marketing; a major bump with no news = lost reach)",
@@ -2106,6 +2202,50 @@ def deny_coverage(reflex_denies: int, armed_at: float | None, harness_denies: in
                   f"{harness_denies} harness refusal(s) in the same window"), ""
 
 
+GIT_DIAGNOSIS_PREFIXES = ("fatal:", "error:", "BUG:", "git: ")
+
+
+def _drop_usage_block(raw_lines: list[str]) -> list[str]:
+    """Everything except git's usage block, which is a remedy and never a cause.
+
+    Takes UNSTRIPPED lines because the block is delimited by indentation: git prints
+    `usage: <synopsis>` and continues it on lines that are indented or blank
+    (parse-options.c and the dispatcher's own usage in git.c both do this). The
+    first line that is neither ends the block.
+    """
+    out, in_usage = [], False
+    for ln in raw_lines:
+        if ln.strip().startswith("usage: "):
+            in_usage = True
+            continue
+        if in_usage:
+            if not ln.strip() or ln[:1] in (" ", "\t"):
+                continue
+            in_usage = False
+        out.append(ln)
+    return out
+
+
+def _exit_cause(returncode) -> str:
+    """The cause of a process that said nothing at all.
+
+    `exit -9` is a code, not a cause, and it is what both selectors printed for the
+    one class that reliably arrives silent. A negative returncode is POSIX's way of
+    reporting death by SIGNAL (measured through `run`: -9 for SIGKILL, -11 for
+    SIGSEGV, both with empty stdout and stderr), and the two that arrive here mean
+    something a reader can act on: SIGKILL is how the OOM killer ends a gate
+    selftest on a machine that ran out of memory, SIGSEGV is a broken binary. rc 124
+    is NOT one of these — `run` synthesises it with a sentence, so a hang keeps its
+    own words.
+    """
+    if isinstance(returncode, int) and returncode < 0:
+        try:
+            return f"killed by {signal.Signals(-returncode).name} (signal {-returncode})"
+        except ValueError:
+            return f"killed by signal {-returncode}"
+    return f"exit {returncode}"
+
+
 def git_failure_cause(stderr: str, returncode: int) -> str:
     """The line of git's stderr that says WHY, not the one that says what to type.
 
@@ -2160,20 +2300,64 @@ def git_failure_cause(stderr: str, returncode: int) -> str:
 
     and the row read `rev-parse` - the suggestion, offered as the reason. `BUG:` is
     git's own internal-assert prefix (usage.c), unrecognised for the same reason and
-    landing correctly today only by the luck of sitting on the first line. Both join
-    the tuple. `git: ` is also the shape `run` synthesises when exec fails, so a
+    landing correctly today only by the luck of sitting on the first line. Both are
+    in the tuple. `git: ` is also the shape `run` synthesises when exec fails, so a
     binary that is not there is named by the same road as every other failure.
+
+    THE TUPLE IS NOT THE CLASS, and saying it was is how this function shipped a
+    wrong cause a second time. git the dispatcher writes diagnoses with NO prefix at
+    all. Verbatim git 2.43:
+
+        unknown option: --bogus-global
+        usage: git [-v | --version] [-h | --help] [-C <path>] [-c <name>=<value>]
+                   ...
+                   [--config-env=<name>=<envvar>] <command> [<args>]
+
+    nothing matched, `[-1]` took the last line, and the row read
+    `[--config-env=<name>=<envvar>] <command> [<args>]`: a usage fragment offered as
+    the reason. Adding `unknown option:` to the tuple would fix that one row and
+    leave the next unprefixed diagnosis to be found by the next reviewer, which is
+    the enumerate-the-members habit this brain has now measured seven times in a day.
+
+    So the fix is on the FALLBACK, where the whole shape lives. What broke every one
+    of these rows is not the missing prefix, it is that `usage:` and its indented
+    continuation are the last thing git prints and they are a REMEDY, the same
+    remedy-as-cause defect this function opens with. The fallback drops git's usage
+    block and takes the last line that survives, so `unknown option:` is named
+    without being named, and so is whatever git prints unprefixed next. A stderr
+    that is nothing BUT a usage block falls through to the exit code, which is a
+    thin cause and an honest one.
+
+    The limit, written down rather than widened. This function has exactly ONE
+    caller, `git rev-parse --is-shallow-repository`, and two known misses are
+    outside what that caller can produce: an ssh failure whose first marked line is
+    generic (`fatal: Could not read from remote repository.`) while the diagnosis is
+    the unmarked line above it, and a signal that lands on STDOUT, which this
+    function is never handed. `rev-parse --is-shallow-repository` touches no remote
+    and writes its answer to stdout on success only. Widening for a caller that does
+    not exist would be inventing a corpus; if a second caller ever reaches a remote,
+    the ssh shape is the first thing to measure.
     """
-    detail = [ln.strip() for ln in (stderr or "").strip().splitlines() if ln.strip()]
+    raw = (stderr or "").splitlines()
+    detail = [ln.strip() for ln in raw if ln.strip()]
     for i, line in enumerate(detail):
-        if line.startswith(("fatal:", "error:", "BUG:", "git: ")):
+        if line.startswith(GIT_DIAGNOSIS_PREFIXES):
             if line.endswith(":") and i + 1 < len(detail):
                 return f"{line} {detail[i + 1]}"
             return line
-    return detail[-1] if detail else f"exit {returncode}"
+    fallback = [ln.strip() for ln in _drop_usage_block(raw) if ln.strip()]
+    return fallback[-1] if fallback else _exit_cause(returncode)
 
 
-SELFTEST_FAILURE_MARKERS = ("selftest FAIL", "FAIL", "X ", "✗", "✘")
+# Every member has a named emitter in this brain, measured, because a marker no
+# printer writes and no test defends is decoration that reads like coverage:
+#   "selftest FAIL"  gate_selftest.py:212 and 12 others  (the joined summary)
+#   "FAIL"           capability_manifest.py:464          (`FAIL: docs/... is stale`)
+#   "X "             r__pretool-write__base-freshness.py:221 (`  X benign fixture warned`)
+#   "✗"              g__pretool-bash__prod-write.py:951, qa-merge-gate.py:544
+# `✘` was here and NOTHING in scripts/ writes it — the only occurrence in the tree
+# was this tuple naming itself — so it is gone.
+SELFTEST_FAILURE_MARKERS = ("selftest FAIL", "FAIL", "X ", "✗")
 
 
 def selftest_cause(cp: subprocess.CompletedProcess, empty: str | None = None) -> str:
@@ -2182,9 +2366,11 @@ def selftest_cause(cp: subprocess.CompletedProcess, empty: str | None = None) ->
     The sibling of `git_failure_cause`, and it was built on the same unguarded
     assumption: `detail[-1]`, the LAST line, chosen because that is where
     `gate_selftest.py` and `r__permission-denied__journal.py` put their joined
-    `selftest FAIL: a; b` summary. Twenty of the thirty-three scripts behind these
-    six call sites go through `gate_selftest.py` and hold. One does not, and it is
-    reachable. `r__pretool-write__base-freshness.py` writes its verdict to STDOUT,
+    `selftest FAIL: a; b` summary. Twenty-three of the thirty-three `--selftest`
+    scripts in `registry/rules.yaml` go through `gate_selftest.py` and hold (counted,
+    not remembered: 33 distinct scripts, 23 of them importing or invoking
+    `gate_selftest`). Several do not, and they are reachable.
+    `r__pretool-write__base-freshness.py` writes its verdict to STDOUT,
     and the `git clone` of an empty bare origin that its selftest builds lets git's
     own setup warning through to STDERR. Measured, with its violation leg forced to
     fail, `[-1]` on `stderr or stdout` produced:
@@ -2200,10 +2386,14 @@ def selftest_cause(cp: subprocess.CompletedProcess, empty: str | None = None) ->
 
     So the selection is by CONVENTION, the way `git_failure_cause` selects on
     `fatal:`, not by position: the first line carrying one of this brain's failure
-    markers, stderr first because that is where most printers write, then stdout for
-    the ones that do not. A diagnosis that ENDS in a colon carries its next line, for
-    the reason the sibling gives, which is how `commit_msg_language_gate.py` now
-    names its first failure instead of its last.
+    markers, stderr before stdout, then stdout for the printers that write their
+    verdict there. The stream ORDER is not a preference, it is where the summary
+    lives: `gate_selftest.py:212` writes its joined `selftest FAIL: a; b` to stderr,
+    and that one printer speaks for 23 of the 33, so reading stdout first would let
+    a helper's incidental chatter outrank the verdict of the majority. A diagnosis
+    that ENDS in a colon carries its next line, for the reason the sibling gives,
+    which is how `commit_msg_language_gate.py` now names its first failure instead
+    of its last.
 
     The setup noise is NOT a defect in `base-freshness`, and that is the point of
     fixing this end. Its selftest builds a real repo with real git, and git warning
@@ -2218,8 +2408,17 @@ def selftest_cause(cp: subprocess.CompletedProcess, empty: str | None = None) ->
     marked, so the reader gets the last of N rather than all N. That is a real cause,
     not a wrong one, and it is recorded here rather than grown into a third fixture.
 
+    A helper that HUNG is read by the same two rules and needs no clause of its own,
+    which is the point of `run` keeping the partial output instead of discarding it:
+    a gate that printed `selftest FAIL: ...` and then wedged is named by its own
+    verdict, and one that wedged silently falls back to the last stderr line, which
+    is the `no answer in Ns, killed` sentence `run` appended. Reading either used to
+    raise, because `TimeoutExpired` hands its partial output back as bytes; that is
+    `_as_text`'s job now and the reason it exists.
+
     `empty` lets a caller name the silence in its own words; the default says what
-    the reader needs when a helper failed without a word: the exit code.
+    the reader needs when a helper failed without a word: the exit code, or the
+    SIGNAL when a signal is what ended it.
     """
     for stream in (cp.stderr, cp.stdout):
         detail = [ln.strip() for ln in (stream or "").splitlines() if ln.strip()]
@@ -2231,7 +2430,7 @@ def selftest_cause(cp: subprocess.CompletedProcess, empty: str | None = None) ->
     detail = (cp.stderr or cp.stdout or "").strip().splitlines()
     if detail:
         return detail[-1].strip()
-    return empty if empty is not None else f"exit {cp.returncode}"
+    return empty if empty is not None else _exit_cause(cp.returncode)
 
 
 def _harness_refusals_since_hook(cutoff: float) -> tuple[float | None, int, int, str]:
