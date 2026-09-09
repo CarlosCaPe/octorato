@@ -305,7 +305,11 @@ def section_kernel(now: datetime, days: int = 1) -> dict:
         if not lines:
             continue
         seen += 1
-        by_type[str((procs.get(pid) or {}).get("type") or "main")] += 1
+        # Same rule as `octo top`: this loop walks the journal FILES, so a pid
+        # with no ptable row lands here, and calling it `main` would count a
+        # process the kernel never registered as a main loop.
+        by_type[str((procs.get(pid) or {}).get("type")
+                    or kernel_proc.UNKNOWN_TYPE)] += 1
         for ln in lines:
             if float(ln.get("ts") or 0) < cutoff:
                 continue

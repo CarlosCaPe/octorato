@@ -201,6 +201,23 @@ def _counts(mapping: dict, empty: str = "(none)") -> str:
 
 # ── ps ──────────────────────────────────────────────────────────────────────
 
+UNKNOWN_TYPE = kernel_proc.UNKNOWN_TYPE
+
+
+def _row_type(row) -> str:
+    """The process type, or `?` when the kernel does not know it.
+
+    `top` unions the ptable with the journal files on disk, so it can reach a
+    pid that has no row. `or "main"` printed those as main loops, which is two
+    claims the kernel cannot make: that the process is a main loop, and that it
+    is a process the register hooks ever saw. A `?` says only what is known.
+    `ps` reads the ptable alone and every row carries a type, so this changes
+    nothing there; it is written once so the two readers cannot drift apart,
+    the way they already share `_row_state`.
+    """
+    return str(row.get("type") or UNKNOWN_TYPE)
+
+
 def _row_state(pid, row, table, now) -> str:
     if kernel_proc.is_live(pid, table, now):
         return "live"
@@ -228,7 +245,7 @@ def cmd_ps(args) -> int:
         started = row.get("registered_ts") or st["start_ts"]
         age = (now - float(started)) if started else None
         rows.append((0 if state == "live" else 1, -(started or 0), [
-            pid, row.get("ppid") or "-", row.get("type") or "main",
+            pid, row.get("ppid") or "-", _row_type(row),
             st["tools"], state, _age(age), row.get("worktree") or "-",
         ]))
     if not rows:
@@ -311,7 +328,7 @@ def cmd_top(args) -> int:
         # while `ps` called the same process "expired": two words for one state,
         # and the two commands disagreeing about a process is exactly the kind
         # of drift a replay surface cannot afford.
-        rows.append([pid, row.get("type") or "main", st["tools"], st["denies"],
+        rows.append([pid, _row_type(row), st["tools"], st["denies"],
                      st["tokens"] if st["has_tokens"] else "-",
                      _row_state(pid, row, table, now)])
     if not rows:
@@ -337,6 +354,18 @@ def cmd_top(args) -> int:
     print(f"\n{len(rows)} process(es), {tools} tool call(s), {denies} deny(s)"
           + (f", {tokens} token(s)" if any_tokens else "")
           + " (live plus the last 24 h)")
+    # Counted off the ptable, never off the rendered `?` cells: a row that
+    # exists but carries no type also renders `?`, and the number the reader
+    # needs is how many of these pids the process table does not know at all.
+    unknown = sum(1 for r in rows if r[0] not in procs)
+    if unknown:
+        # Shown, never hidden: a journal with no row is either a process whose
+        # register hook lost its race (real work, worth reading) or a leftover,
+        # and the reader is the one who can tell. What is NOT printed is a type
+        # the kernel never learned. `ps` reads the ptable, so it lists 0 of
+        # these; the difference between the two counts is the point.
+        print(f"{unknown} of them have a journal but no ptable row, so their "
+              f"type reads `{UNKNOWN_TYPE}` (not shown by `octo ps`)")
     if by_rule:
         # WHICH rules are refusing is the number that changes behaviour; a bare
         # deny total says only that something did.
@@ -382,7 +411,11 @@ def replay_text(pid: str, lines: list, table: dict = None,
             denies.setdefault(str(rec["tool_use_id"]), rec)
 
     out = [f"process {pid}"]
-    out.append(f"  type      {st['type'] or 'main'}")
+    # UNKNOWN_TYPE, not "main": `replay` reads a journal, so like `top` it can be
+    # handed a pid with no row, and saying `main` there would make `octo top` and
+    # `octo replay` disagree about the same process. That is the drift this
+    # constant exists to prevent, and QA caught it here after it was fixed in top.
+    out.append(f"  type      {st['type'] or UNKNOWN_TYPE}")
     out.append(f"  worktree  {st['worktree'] or '-'}")
     out.append(f"  lines     {len(lines)}")
     out.append(f"  tools     {st['tools']} ({st['refused']} refused)")
@@ -472,7 +505,7 @@ def replay_text(pid: str, lines: list, table: dict = None,
 
     out.append("")
     out.append("children")
-    out.extend([f"  {child}  {row.get('type') or 'main'}  "
+    out.extend([f"  {child}  {_row_type(row)}  "
                 f"{row.get('status') or 'no exit recorded'}"
                 for child, row in kids] or ["  (none)"])
 

@@ -388,6 +388,39 @@ class FileCleanupTest(SandboxHome):
         self.assertEqual(kernel_proc.prune_files({"processes": {}}), 1)
         self.assertFalse(os.path.exists(kernel_proc.lock_path("orphan")))
 
+    def test_an_orphan_journal_is_kept_until_the_retention_window_then_swept(self):
+        """A journal with no ptable row is swept by the SAME retention rule as
+        any other, and not one second earlier.
+
+        The sweep enumerates the journal directory, never the ptable, so an
+        orphan is already covered: `is_live` reads a pid with no row as a main
+        process, and a main process with a stale journal and no children is not
+        live. That is the right answer to "should an orphan be pruned sooner":
+        no. The journal IS the audit trail, and a shorter window for exactly
+        the files that record an anomaly would delete the evidence of it.
+        """
+        kernel_proc.register("orphaned", {"kind": "main"})
+        kernel_proc.append("orphaned", {"kind": "tool", "tool_name": "Bash",
+                                        "tool_use_id": "t0"})
+        table = kernel_proc.read_ptable()
+        table["processes"].pop("orphaned")      # journal on disk, no row: an orphan
+        kernel_proc._write_ptable(table)
+        table = kernel_proc.read_ptable()
+
+        inside = time.time() - (kernel_proc.PRUNE_AFTER - 3600)
+        for path in (kernel_proc.journal_path("orphaned"), kernel_proc.lock_path("orphaned")):
+            os.utime(path, (inside, inside))
+        self.assertEqual(kernel_proc.prune_files(table), 0,
+                         "inside the window the audit trail stays")
+        self.assertTrue(os.path.exists(kernel_proc.journal_path("orphaned")))
+
+        past = time.time() - (kernel_proc.PRUNE_AFTER + 3600)
+        for path in (kernel_proc.journal_path("orphaned"), kernel_proc.lock_path("orphaned")):
+            os.utime(path, (past, past))
+        self.assertEqual(kernel_proc.prune_files(table), 2)
+        self.assertFalse(os.path.exists(kernel_proc.journal_path("orphaned")))
+        self.assertFalse(os.path.exists(kernel_proc.lock_path("orphaned")))
+
     def test_an_old_file_of_a_LIVE_pid_is_kept(self):
         kernel_proc.register("busy", {"kind": "main"})
         old = time.time() - (kernel_proc.PRUNE_AFTER + 3600)
@@ -572,6 +605,97 @@ class ExitHookTest(SandboxHome):
             self.run_stop(self.payload())
         self.assertEqual(len(self.exits()), 1)
         self.assertEqual(kernel_proc.verify("c1"), 0)
+
+    def test_an_exit_for_a_pid_the_kernel_never_saw_creates_nothing(self):
+        """The phantom-exit defect, measured live: 52 journals in one afternoon
+        whose first and only line was an `exit` at seq 0, no row, no parent, no
+        tool, each naming an agent transcript that did not exist on disk.
+
+        The harness fires SubagentStop for agent ids that never registered and
+        never ran a tool, and `append()` creates the journal it writes to, so
+        the ending was materialising the process. An exit is an ENDING: it must
+        never be the thing that brings a process into being.
+        """
+        self.child()                       # a real, unrelated process exists
+        cp = self.run_stop(self.payload(agent_id="never-existed"))
+        self.assertEqual(cp.returncode, 0, "a reflex never blocks")
+        self.assertEqual(cp.stdout.strip(), "")
+        self.assertFalse(os.path.exists(kernel_proc.journal_path("never-existed")),
+                         "an exit alone must not create a journal")
+        self.assertFalse(os.path.exists(kernel_proc.lock_path("never-existed")),
+                         "nor the lock file that opening one leaves behind")
+        self.assertNotIn("never-existed", kernel_proc.read_ptable()["processes"])
+        self.assertEqual(self.exits("never-existed"), [])
+        self.assertEqual(len(self.exits("c1")), 0, "the real process is untouched")
+
+    def test_a_zero_byte_journal_is_not_a_trace(self):
+        """QA cycle 1: an empty file is a name, not work. It is reachable only
+        from a crash between the create and the first write, and treating it as
+        a trace let an ending write the same phantom shape into it."""
+        path = kernel_proc.journal_path("half-open")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        open(path, "wb").close()
+        self.assertEqual(os.path.getsize(path), 0)
+        cp = self.run_stop(self.payload(agent_id="half-open"))
+        self.assertEqual(cp.returncode, 0)
+        self.assertEqual(os.path.getsize(path), 0, "no exit written into an empty journal")
+        self.assertEqual(self.exits("half-open"), [])
+
+    def test_a_row_that_is_not_an_object_is_not_a_trace(self):
+        """`pid in procs` tests the KEY, so a corrupt table whose value is a
+        string or null answered yes and let the ending through. The row has to
+        be a row."""
+        self.child()                        # so a real table exists to corrupt
+        for junk in ("not-a-row", None, 42, ["c1"]):
+            with self.subTest(row=junk):
+                pid = "junk-%s" % type(junk).__name__
+                table = kernel_proc.read_ptable()
+                table.setdefault("processes", {})[pid] = junk
+                path = kernel_proc.ptable_path()
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "w", encoding="utf-8") as fh:
+                    json.dump(table, fh)
+                cp = self.run_stop(self.payload(agent_id=pid))
+                self.assertEqual(cp.returncode, 0)
+                self.assertFalse(os.path.exists(kernel_proc.journal_path(pid)),
+                                 "a malformed row is not evidence the process ran")
+
+    def test_a_journal_opened_by_the_hot_path_gate_still_gets_its_exit(self):
+        """The legitimate no-`start` process. Same-event hooks run in parallel,
+        so a child's first tool call can beat its own SubagentStart: the gate
+        opens the journal on the spot and the first line is a `tool`, never a
+        `start`. That process ran, so its ending is recorded like any other.
+        This is the case the phantom guard must not weaken."""
+        kernel_proc.register("s1", {"kind": "main", "worktree": self.home})
+        gate = subprocess.run(
+            [sys.executable, str(SCRIPTS / "g__pretool__kernel.py")],
+            input=json.dumps({"session_id": "s1", "agent_id": "racer",
+                              "tool_name": "Bash", "tool_use_id": "toolu_race",
+                              "tool_input": {"command": "true"}, "cwd": self.home}),
+            capture_output=True, text=True, env={**os.environ, "HOME": self.home,
+                                                 "USERPROFILE": self.home},
+            cwd=self.home, timeout=60)
+        self.assertEqual(gate.returncode, 0)
+        kinds = [l.get("kind") for l in kernel_proc.read_journal("racer")]
+        self.assertEqual(kinds, ["tool"], "the gate opens the journal with a tool line")
+        self.assertNotIn("racer", kernel_proc.read_ptable()["processes"],
+                         "the register hook lost the race, so there is no row")
+
+        self.run_stop(self.payload(agent_id="racer"))
+        (e,) = self.exits("racer")
+        self.assertEqual(e["status"], "ok")
+        self.assertEqual(e["tool_count"], 1)
+        self.assertEqual(kernel_proc.verify("racer"), 0)
+
+    def test_a_row_with_no_journal_still_gets_its_exit(self):
+        """The other half of the trace test. `register()` writes the journal
+        first, so this is rare, but a journal deleted underneath a live process
+        must not turn its ending into a no-op."""
+        self.child()
+        os.unlink(kernel_proc.journal_path("c1"))
+        self.assertTrue(kernel_proc.has_trace("c1"), "the ptable row is a trace")
+        self.run_stop(self.payload())
+        self.assertEqual(len(self.exits("c1")), 1)
 
     def test_a_payload_without_an_agent_id_is_ignored(self):
         self.child()
