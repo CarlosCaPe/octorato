@@ -7,6 +7,7 @@ import argparse
 from dataclasses import dataclass
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -105,27 +106,53 @@ def _download_repo_zip(owner: str, repo: str, ref: str, dest_dir: str) -> str:
 # headroom: a ceiling that cuts a slow but correct fetch would be worse than no ceiling.
 _GIT_TIMEOUT = 600.0
 
+# Grace for reaping a group that was just SIGKILLed. A task that does not go in this
+# long is in uninterruptible sleep and cannot be killed from user space at all; the
+# reap is abandoned rather than waited on, so this function cannot itself hang.
+_REAP_GRACE = 10.0
+
 
 def _run_git(args: list[str]) -> None:
-    # An unattended installer must never leave a child waiting for a human, and the
-    # channels a child can wait on are not one thing. Measured: a git credential prompt
-    # for a repo that answers 401 goes to /dev/tty, so it hangs even with stdin closed
-    # and only GIT_TERMINAL_PROMPT=0 stops it; a prompt that reads stdin (ssh-keygen's
-    # overwrite question, in the sibling module) is stopped by DEVNULL and not by the
-    # env. Neither covers the channel this comment cannot name yet, which is what the
-    # timeout is for: this function clones over https AND ssh, and only the https half
-    # is measured here.
+    """Run one git command with no way to wait on a human, and no way to outlive us.
+
+    Three channels, measured separately, because closing one does nothing for the
+    others: a credential prompt for a repo that answers 401 goes to /dev/tty, so it
+    hangs with stdin closed and needs GIT_TERMINAL_PROMPT=0; a prompt that reads stdin
+    is stopped by DEVNULL and not by the env; and ssh's host-key question ("Are you sure
+    you want to continue connecting?") hangs through BOTH, because ssh opens /dev/tty
+    itself, and is ended by start_new_session, which leaves the child no controlling
+    terminal to open. That third one matters here specifically: this function clones
+    over ssh as well as https.
+
+    start_new_session also makes the kill below a GROUP kill, which is the difference
+    between reporting a timeout and actually ending one. `git clone` over ssh runs ssh
+    as a grandchild, and killing only the direct child leaves that grandchild alive on
+    the prompt: measured, rc 124 returned while ssh was still running and still holding
+    the terminal.
+    """
     env = dict(os.environ)
     env["GIT_TERMINAL_PROMPT"] = "0"
+    proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            stdin=subprocess.DEVNULL, text=True, env=env,
+                            start_new_session=True)
     try:
-        result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                stdin=subprocess.DEVNULL, text=True, env=env,
-                                timeout=_GIT_TIMEOUT)
+        _out, err = proc.communicate(timeout=_GIT_TIMEOUT)
     except subprocess.TimeoutExpired:
+        if hasattr(os, "killpg"):
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                proc.kill()
+        else:
+            proc.kill()
+        try:
+            proc.communicate(timeout=_REAP_GRACE)
+        except subprocess.TimeoutExpired:
+            pass
         raise InstallError(f"git took longer than {_GIT_TIMEOUT:.0f}s and was killed: "
                            + " ".join(args[:3]))
-    if result.returncode != 0:
-        raise InstallError(result.stderr.strip() or "Git command failed.")
+    if proc.returncode != 0:
+        raise InstallError((err or "").strip() or "Git command failed.")
 
 
 def _safe_extract_zip(zip_file: zipfile.ZipFile, dest_dir: str) -> None:

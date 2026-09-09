@@ -19,6 +19,7 @@ import importlib.util
 import json
 import os
 import shutil
+import signal as signal_module
 import socketserver
 import subprocess
 import sys
@@ -3863,29 +3864,38 @@ class TestGenerator(unittest.TestCase):
 
 
 class TestNoChildWaitsForAHuman(SandboxCase):
-    """One class of defect: a child of this codebase asks a question nobody answers.
+    """One class of defect: a child of this codebase asks a question nobody answers,
+    or outlives the call that gave up on it.
 
-    Two channels, and closing one does nothing for the other:
+    Four mechanisms, and each closes something the others do not. Measured, each with
+    the other three in place:
 
-      ssh-keygen "Overwrite (y/n)?"   read from STDIN     closed by stdin=DEVNULL
-      git "Username for ..."          read from /dev/TTY  closed by GIT_TERMINAL_PROMPT=0
+      stdin=DEVNULL          ssh-keygen's "Overwrite (y/n)?" is read from STDIN
+      GIT_TERMINAL_PROMPT=0  git's "Username for ..." is read from /dev/TTY, so a
+                             closed stdin does nothing for it
+      start_new_session      no controlling terminal at all, which is what ends ssh's
+                             host-key question (it opens /dev/tty itself, through both
+                             of the above), and what makes the kill below a GROUP kill
+      the deadline           the channel none of the above names, and the only one
+                             that does not depend on having enumerated correctly
 
-    A closed stdin was measured NOT to stop the git prompt, which is why that one has
-    its own test rather than a shared assumption. And the channel is not the whole
-    class either: separate functions spawn these commands and each has to be closed on
-    its own, so the same prompt is tested against every spawner this change touches
-    instead of against the first one found.
+    Two spawners, because a fix in one is not a fix in the other:
 
       octo_pkg._run                        ssh-keygen, git clone, the sync child
-      install-skill-from-github._run_git   every clone of a GitHub skill
+      install-skill-from-github._run_git   every clone of a GitHub skill, https and ssh
 
-    That enumeration is not the repo's full list. brain_doctor.run was measured with
-    the same defect, on the pre-push path where the prompt wedges a push with no output
-    at all, and it is not covered here because it is not this change's file.
+    A third, brain_doctor.run, was measured with the same defect on the pre-push path
+    where the prompt wedges a push with no output at all. It is not covered here
+    because it is not this change's file.
 
-    Every test below was measured RED with its own fix reverted, in exactly the way it
-    asserts, and every child here is bounded: the defect is a hang, so an unbounded
-    wait would wedge the suite that is proving it gone.
+    What "measured RED" means for this class, stated so the next reader can re-run it:
+    twelve mutants, each reverting ONE mechanism in ONE spawner, against a no-op
+    control that stayed green, and every one of them is killed by a test below. Two
+    findings came out of that battery rather than out of review: the grandchild test
+    was passing while the grandchild was alive (its marker was in the shell's command
+    line, not the survivor's argv), and removing start_new_session did not fail the
+    suite, it killed the runner, because the group kill then names the runner's own
+    group. Both are fixed and both are pinned.
     """
 
     TTL = 45          # a child of this class that is still alive is a failed child
@@ -3954,14 +3964,20 @@ class TestNoChildWaitsForAHuman(SandboxCase):
             f" m.SIG_NAMESPACE, {str(pub / 'skill.json')!r}])\n"
             "print('RETURNED', cp.returncode)\n")
         out = self._finish(proc, "_run over an existing signature")
-        # Not just "it came back": rc 0 is a signature that was actually written,
-        # rc 124 is the deadline rescuing a child that hung on the prompt. Asserting
-        # only that it returned lets the deadline stand in for the dead stdin, and
-        # then this test stays green while every child waits out the full ceiling.
+        # Not just "it came back". The two return codes are the two stdin states, and
+        # neither of them is a signature: measured, rc 0 here is ssh-keygen reading EOF
+        # and DECLINING the overwrite, leaving the old .sig in place over bytes it no
+        # longer covers, which is the quiet half of this very bug. rc 124 is a live
+        # stdin, the child sitting on the prompt until the deadline killed it. So 0
+        # proves the stdin was dead and nothing more; that the decline is also repaired
+        # is what test_publishing_the_same_package_twice asserts, and it is the only
+        # test that does. Asserting merely that the child returned would let the
+        # deadline stand in for the dead stdin and this test would pass on a tree where
+        # every child waits out the full ceiling.
         self.assertIn("RETURNED 0", out,
-                      "the child came back, but not by signing: a 124 here means it "
-                      "sat on the overwrite prompt until the deadline killed it, so "
-                      "stdin was live and only the ceiling ended it")
+                      "the child came back, but not through a dead stdin: a 124 here "
+                      "means it sat on the overwrite prompt until the deadline killed "
+                      "it, so stdin was live and only the ceiling ended it")
 
     @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
     def test_publishing_the_same_package_twice_signs_the_manifest_both_times(self):
@@ -4028,6 +4044,132 @@ class TestNoChildWaitsForAHuman(SandboxCase):
         self.assertEqual(cp.returncode, 0, (cp.stderr or b"").decode())
         self.assertIn(b"done", cp.stdout or b"")
 
+    def test_the_deadline_ends_the_whole_tree_not_just_the_child(self):
+        """A timeout that reports a kill it did not perform is worse than no timeout:
+        the caller believes the wedge is over and the process is still on the prompt.
+
+        Measured before the group kill existed: this exact command returned rc 124 in
+        2.0 s with the backgrounded grandchild still alive. The real shape is `git
+        clone` over ssh, where the grandchild is `ssh` and it is the one holding the
+        terminal; `sh -c` reproduces it with no network and no keys.
+        """
+        # The marker has to be in the GRANDCHILD's own argv, not in the shell's command
+        # line: with `sh -c "sleep 300 & exec sleep 300 # marker"` the survivor is a
+        # bare `sleep 300` and pgrep finds nothing, so this test passed while the
+        # grandchild was alive. It is a python child precisely because a trailing
+        # argument survives into its cmdline, where pgrep can see it.
+        marker = f"octo-pkg-grandchild-{os.getpid()}"
+        sleeper = f"{sys.executable} -c 'import time; time.sleep(300)' {marker}"
+        cp = octo_pkg._run(["sh", "-c", f"{sleeper} & exec {sleeper}"], timeout=2)
+        self.assertEqual(cp.returncode, 124, (cp.stderr or b"").decode())
+        found = subprocess.run(["pgrep", "-f", marker], capture_output=True, text=True,
+                               stdin=subprocess.DEVNULL, timeout=30)
+        survivors = [pid for pid in found.stdout.split() if pid]
+        for pid in survivors:                      # never leave the box dirtier
+            try:
+                os.kill(int(pid), signal_module.SIGKILL)
+            except (ProcessLookupError, ValueError):
+                pass
+        self.assertEqual(survivors, [],
+                         "_run reported 124 while a grandchild was still running: the "
+                         "deadline killed the direct child and left its tree behind")
+
+    def test_a_call_that_names_no_timeout_still_has_the_ceiling(self):
+        """The production shape. Every _run call in this module except the tests calls
+        it with no timeout argument at all, so a ceiling that only exists when a caller
+        passes one is not a ceiling. Two mutants survived the suite on exactly this gap:
+        a default of None, and the module constant set to None."""
+        self.assertIsInstance(octo_pkg._RUN_TIMEOUT, (int, float),
+                              "the module ceiling is not a number, so no default call "
+                              "is bounded")
+        self.assertGreater(octo_pkg._RUN_TIMEOUT, 0)
+        original = octo_pkg._RUN_TIMEOUT
+        octo_pkg._RUN_TIMEOUT = 1.5
+        self.addCleanup(setattr, octo_pkg, "_RUN_TIMEOUT", original)
+        started = time.monotonic()
+        cp = octo_pkg._run([sys.executable, "-c", "import time; time.sleep(30)"])
+        self.assertEqual(cp.returncode, 124,
+                         "a call with no timeout argument ran unbounded: the constant "
+                         "is not what the default resolves to")
+        self.assertLess(time.monotonic() - started, 15)
+
+    # ---------------------------------------------------------------- the installer
+
+    def test_the_installers_git_helper_gets_a_dead_stdin(self):
+        """The installer's own stdin discipline, which had no test of its own.
+
+        `git hash-object --stdin` reads standard input and nothing else, so it is the
+        cheapest honest probe: with fd 0 dead it hashes the empty object and exits, and
+        with fd 0 a live pipe it blocks forever. No network, no remote, no keys.
+        """
+        gh = octo_pkg._github_module()
+        proc = self._live_stdin_child(
+            "import importlib.util as u, sys\n"
+            f"s2 = u.spec_from_file_location('gh', {str(BRAIN / 'skills' / 'skill-installer' / 'scripts' / 'install-skill-from-github.py')!r})\n"
+            "gh = u.module_from_spec(s2); sys.modules['gh'] = gh\n"
+            "sys.path.insert(0, %r)\n" % str(BRAIN / "skills" / "skill-installer" / "scripts") +
+            "s2.loader.exec_module(gh)\n"
+            "gh._run_git(['git', 'hash-object', '--stdin'])\n"
+            "print('RETURNED 0')\n")
+        out = self._finish(proc, "install-skill-from-github._run_git reading stdin")
+        self.assertIn("RETURNED 0", out)
+        self.assertTrue(hasattr(gh, "_GIT_TIMEOUT"))
+
+    def test_neither_spawner_gives_its_child_a_controlling_terminal(self):
+        """What start_new_session buys, tested as the property and not as a side effect.
+
+        A child with no controlling terminal cannot open /dev/tty, and that is the only
+        thing that ends a prompt written straight to the terminal: ssh's host-key
+        question ("Are you sure you want to continue connecting?") was measured hanging
+        with stdin already DEVNULL and GIT_TERMINAL_PROMPT already set, and finishing
+        rc 128 once the child ran in its own session. The installer clones over ssh, so
+        this is its channel, and it had no test of its own.
+
+        The probe OPENS the device: `exec 3</dev/tty`, and rc 0 means a terminal was
+        there, which is the failure. It cannot be `test -r /dev/tty`, which only stats
+        the path: the device node exists and is mode-readable for everyone, so that
+        version returns 0 even from a session with no terminal at all. Measured, and it
+        is why this test failed against correct code on its first run. Under a pty
+        because a child with no terminal ANYWHERE would pass this by accident.
+        """
+        gh = octo_pkg._github_module()
+        open_tty = "exec 3</dev/tty"
+
+        def probe(report):
+            cp = octo_pkg._run(["sh", "-c", open_tty])
+            lines = [f"_run={cp.returncode}"]
+            try:
+                gh._run_git(["sh", "-c", open_tty])
+                lines.append("_run_git=0")
+            except gh.InstallError:
+                lines.append("_run_git=refused")
+            report.write_text(" ".join(lines), encoding="utf-8")
+
+        seen = self._under_a_controlling_terminal(
+            probe, "a child of either spawner opening /dev/tty")
+        self.assertEqual(len(seen.split()), 2, f"the probe reported {seen!r}")
+        self.assertNotEqual(seen.split()[0], "_run=0",
+                            "octo_pkg._run gave its child a controlling terminal: a "
+                            "prompt written to /dev/tty would still wait for a human")
+        self.assertEqual(seen.split()[1], "_run_git=refused",
+                         "install-skill-from-github._run_git gave its child a "
+                         "controlling terminal, which is the ssh host-key channel")
+
+    def test_the_installers_git_helper_has_its_own_ceiling(self):
+        """Its timeout had no test either, and a mutant that removed it survived."""
+        gh = octo_pkg._github_module()
+        self.assertIsInstance(gh._GIT_TIMEOUT, (int, float))
+        self.assertGreater(gh._GIT_TIMEOUT, 0)
+        original = gh._GIT_TIMEOUT
+        gh._GIT_TIMEOUT = 1.5
+        self.addCleanup(setattr, gh, "_GIT_TIMEOUT", original)
+        started = time.monotonic()
+        with self.assertRaises(gh.InstallError) as caught:
+            gh._run_git([sys.executable, "-c", "import time; time.sleep(30)"])
+        self.assertIn("was killed", str(caught.exception))
+        self.assertLess(time.monotonic() - started, 15,
+                        "the installer ran its child unbounded")
+
     # ---------------------------------------------------------------- /dev/tty
 
     def _http_401(self) -> str:
@@ -4051,20 +4193,28 @@ class TestNoChildWaitsForAHuman(SandboxCase):
         self.addCleanup(srv.shutdown)
         return "http://127.0.0.1:%d/owner/repo.git" % srv.server_address[1]
 
-    def _under_a_controlling_terminal(self, fn, what: str):
-        """Run `fn` in a child that OWNS a terminal, and fail if it does not finish.
+    def _under_a_controlling_terminal(self, fn, what: str) -> str:
+        """Run `fn(report_path)` in a child that OWNS a terminal, fail if it does not
+        finish, and return whatever the child wrote to that path.
 
         pty.fork, not a pipe: git's credential prompt is read from /dev/tty, so a child
         with no controlling terminal never reaches the code path under test. This is
         the harness that separates the /dev/tty channel from the stdin one.
+
+        The child reports through a FILE, not through its exit status, because the
+        thing under test stopped being "did it finish". Once the spawner runs its
+        children in their own session they have no /dev/tty to read and they finish
+        either way; what separates the two mechanisms is WHY git gave up, and only the
+        message says that.
         """
         import pty
         import signal
 
+        report = self.tmp / f"report-{abs(hash(what)) % 10**8}"
         pid, fd = pty.fork()
         if pid == 0:                                   # pragma: no cover - child
             try:
-                fn()
+                fn(report)
                 os._exit(0)
             except BaseException:
                 os._exit(1)
@@ -4073,7 +4223,9 @@ class TestNoChildWaitsForAHuman(SandboxCase):
             while time.monotonic() < deadline:
                 done, status = os.waitpid(pid, os.WNOHANG)
                 if done:
-                    return os.WEXITSTATUS(status)
+                    self.assertEqual(os.WEXITSTATUS(status), 0,
+                                     f"{what}: the child raised instead of returning")
+                    return report.read_text(encoding="utf-8") if report.exists() else ""
                 time.sleep(0.05)
             os.kill(pid, signal.SIGKILL)
             os.waitpid(pid, 0)
@@ -4092,11 +4244,24 @@ class TestNoChildWaitsForAHuman(SandboxCase):
         sets it and why this test exists next to the stdin one instead of trusting it.
         """
         url, dest = self._http_401(), self.tmp / "clone-run"
-        rc = self._under_a_controlling_terminal(
-            lambda: octo_pkg._run(["git", "-c", "credential.helper=", "clone",
-                                   url, str(dest)]),
-            "octo_pkg._run(git clone) against a remote that asks for a password")
-        self.assertEqual(rc, 0, "the child raised instead of returning a failed clone")
+
+        def clone(report):
+            cp = octo_pkg._run(["git", "-c", "credential.helper=", "clone",
+                                url, str(dest)])
+            report.write_text((cp.stderr or b"").decode("utf-8", "replace"),
+                              encoding="utf-8")
+
+        err = self._under_a_controlling_terminal(
+            clone, "octo_pkg._run(git clone) against a remote that asks for a password")
+        # The message, not the exit code, and this is why: running the child in its own
+        # session ALSO ends this prompt, measured, because git then has no /dev/tty to
+        # open and fails "No such device or address". Two mechanisms reaching the same
+        # member is fine; two mechanisms where only one is ever tested is how a fix
+        # rots. "terminal prompts disabled" is git saying it never asked, which only
+        # GIT_TERMINAL_PROMPT=0 produces.
+        self.assertIn("terminal prompts disabled", err,
+                      "git was stopped by something other than GIT_TERMINAL_PROMPT=0; "
+                      f"it said: {err.strip()[-160:]!r}")
         self.assertFalse(dest.exists(), "a 401 must not leave a checkout behind")
 
     @unittest.skipUnless(_pty_ok(), "no pty/SIGKILL on this platform")
@@ -4112,15 +4277,18 @@ class TestNoChildWaitsForAHuman(SandboxCase):
         gh = octo_pkg._github_module()
         url, dest = self._http_401(), self.tmp / "clone-gh"
 
-        def clone():
+        def clone(report):
             try:
                 gh._run_git(["git", "-c", "credential.helper=", "clone", url, str(dest)])
-            except gh.InstallError:
-                return                                 # a refusal is the right ending
+                report.write_text("no refusal at all", encoding="utf-8")
+            except gh.InstallError as refused:         # a refusal is the right ending
+                report.write_text(str(refused), encoding="utf-8")
 
-        rc = self._under_a_controlling_terminal(
+        err = self._under_a_controlling_terminal(
             clone, "install-skill-from-github._run_git against the same remote")
-        self.assertEqual(rc, 0, "the helper raised something other than InstallError")
+        self.assertIn("terminal prompts disabled", err,
+                      "the installer's git was stopped by something other than "
+                      f"GIT_TERMINAL_PROMPT=0; it said: {err.strip()[-160:]!r}")
         self.assertFalse(dest.exists(), "a 401 must not leave a checkout behind")
 
 

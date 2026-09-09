@@ -79,6 +79,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -160,73 +161,134 @@ class PkgError(Exception):
 # process helpers
 # --------------------------------------------------------------------------
 
-# The ceiling on any child of this module. Nothing spawned here is interactive: the
-# heaviest job is cloning one package or one arm repo. A child still running after
-# this has most likely stopped working and started waiting, and a wedge is worse than
-# a loud failure, so it is killed and reported as one.
-#
-# 600 is a CHOSEN value, and the reference it was chosen against is this: a full clone
-# of this repository, 29 MB and the heaviest shape any call below takes, ran in 7.4 s
-# on a 4-core box at load 18. The ceiling sits about 80x over that. It has NOT been
-# measured against a much larger arm repo, a throttled link, or the ai_sync child at
-# the end of an arm install, so it is headroom by argument, not by measurement. A
-# ceiling that fires on a slow but correct run would be its own outage, and the moment
-# it would fire is the moment the machine is busiest; err high.
-_RUN_TIMEOUT = 600.0
-
-
 def _env() -> dict:
     e = dict(os.environ)
     for k in _GIT_HOOK_ENV:
         e.pop(k, None)
     # Git asks for a username on /dev/tty, NOT on stdin, so the stdin discipline in
     # _run does not reach it: `git clone` against a host that answers 401 was measured
-    # hanging with stdin=DEVNULL and finishing rc 128 with this variable set. Every
-    # git child of this module is unattended, so a credential prompt is never an
-    # answerable question here, only a wedge.
+    # hanging with stdin=DEVNULL, and set, git fails with "terminal prompts disabled"
+    # instead of asking. Every git child of this module is unattended, so a credential
+    # prompt is never an answerable question here, only a wedge.
     e["GIT_TERMINAL_PROMPT"] = "0"
     return e
 
 
-def _run(args: list[str], cwd: Path | None = None, stdin_bytes: bytes | None = None,
-         timeout: float | None = _RUN_TIMEOUT):
-    """Run a child with a dead stdin and a deadline.
+# The ceiling on any child of this module. Nothing spawned here is interactive: the
+# heaviest job is cloning one package or one arm repo. A child still running after
+# this has most likely stopped working and started waiting, and a wedge is worse than
+# a loud failure, so its whole process group is killed and the call reported as failed.
+#
+# 600 is a CHOSEN value, and the reference it was chosen against is this: a full clone
+# of this repository, 29 MB and the heaviest shape any call below takes, ran in 7.4 s
+# on a 4-core box at load 18, and the ai_sync child at the end of an arm install ran in
+# 0.56 s. The ceiling sits about 80x over the slower of the two. It has NOT been
+# measured against a much larger arm repo or a throttled link, so beyond that it is
+# headroom by argument. A ceiling that fires on a slow but correct run would be its own
+# outage, and the moment it would fire is the moment the machine is busiest; err high.
+_RUN_TIMEOUT = 600.0
 
-    A child that inherits this process's stdin can ask a question and wait for an
-    answer that never comes. Measured on `ssh-keygen -Y sign` over an existing .sig:
-    it asks "Overwrite (y/n)?" and reads STDIN, so with a terminal inherited it hangs
-    forever, and on EOF it declines, keeps the OLD signature and still exits 0.
+# Read at CALL time, not bound at def time. The difference is testable: with the
+# constant as the default value, a test cannot reach the production ceiling at all, and
+# a mutant that sets the constant to None survives every test in the suite. That mutant
+# did survive, which is how this sentinel got here.
+_CEILING = object()
 
-    stdin=DEVNULL, not input=b"": the two are mutually exclusive in subprocess (input
-    forces a pipe), and only stdin_bytes callers need that pipe. Both give a reading
-    child EOF, which is the property that matters here. They differ on a WRITING child,
-    measured: fd 0 from input=b"" is the read end of a pipe and a write to it fails
-    EBADF, while DEVNULL is a normal handle and the write is discarded. A child that
-    writes to fd 0 is unusual but it is not this module's business to break it, so
-    DEVNULL, which is also one fd instead of a pipe pair per call.
+# Grace for reaping a group that has just been killed. SIGKILL is delivered instantly,
+# so a process that has not gone in this long is not slow, it is unkillable: a task in
+# uninterruptible sleep (D state, typically blocked in a driver or on a dead mount)
+# does not take signals and its wait() never returns. That case is NOT handled, because
+# it cannot be from user space. It is bounded instead: the reap is abandoned, the call
+# still returns 124, and the stderr note says the group could not be reaped so an
+# operator looking at a leftover process knows this code saw it and gave up.
+_REAP_GRACE = 10.0
 
-    The timeout is the part that is not an enumeration. Closing stdin closes the
-    members that read stdin, and git's credential prompt was measured NOT to be one of
-    them (it opens /dev/tty and needs GIT_TERMINAL_PROMPT=0 instead), so the list of
-    channels a child can wait on is longer than this docstring can promise to know. A
-    deadline does not need to name them: rc 124, the shape coreutils `timeout` uses, so
-    every existing `cp.returncode != 0` path already handles it.
+
+def _kill_group(proc) -> bool:
+    """SIGKILL the child's whole process group. True when the group call was the one
+    that landed, False when it fell back to the direct child.
+
+    The group, not the child, because the child is often a shell or a porcelain command
+    that has forked its own worker: `git clone` over ssh runs `ssh` as a grandchild, and
+    that grandchild is the one holding the terminal. Killing only the child leaves it
+    running, still attached to the prompt, which is the exact wedge this module is
+    trying to end. Measured before this existed: `sh -c 'sleep 300 & exec sleep 300'`
+    came back rc 124 with the backgrounded grandchild still alive.
     """
-    stdin_kw = {"input": stdin_bytes} if stdin_bytes is not None else {"stdin": subprocess.DEVNULL}
+    if hasattr(os, "killpg"):
+        try:
+            group = os.getpgid(proc.pid)
+            # Only if it is the child's OWN group. A group kill is safe exactly because
+            # start_new_session put the child in a group of its own; if that ever comes
+            # off, the child shares OUR group and this line SIGKILLs the caller, the
+            # test runner, and every sibling. Measured the hard way: the mutant that
+            # removed start_new_session did not fail the suite, it killed it, exit 137.
+            # The two mechanisms are coupled, so the coupling is checked here, not
+            # assumed one function away.
+            if group != os.getpgid(0):
+                os.killpg(group, signal.SIGKILL)
+                return True
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+    proc.kill()          # Windows, a group already gone, or a child sharing our own
+    return False
+
+
+def _run(args: list[str], cwd: Path | None = None, stdin_bytes: bytes | None = None,
+         timeout=_CEILING):
+    """Run a child with a dead stdin, no controlling terminal, and a deadline.
+
+    Four mechanisms, and each closes a channel the others do not. Measured, each one
+    with the other three in place:
+
+      stdin=DEVNULL          `ssh-keygen -Y sign` over an existing .sig asks
+                             "Overwrite (y/n)?" and reads STDIN. Inherited, it waits
+                             for a human forever.
+      GIT_TERMINAL_PROMPT=0  git asks for a username on /dev/tty, so a closed stdin
+                             does nothing. Set, git fails "terminal prompts disabled".
+      start_new_session      no controlling terminal, so a child that opens /dev/tty
+                             directly finds nothing. ssh's host-key question ("Are you
+                             sure you want to continue connecting?") hangs with stdin
+                             already closed and the env already set, and this is what
+                             ends it. It is also what makes the kill below a group kill.
+      timeout                the channel none of the above names. The list of ways a
+                             child can wait is longer than this docstring can promise
+                             to know, and a deadline does not need to name them.
+
+    stdin=DEVNULL, not input=b"": both give a reading child EOF, which is the property
+    that matters. They differ on a WRITING child, measured: fd 0 from a closed pipe
+    fails EBADF, while DEVNULL is a normal handle and the write is discarded.
+
+    On timeout the call returns rc 124, the shape coreutils `timeout` uses, so it reads
+    as an ordinary failure. Not every caller in this module branches on the return code
+    (the arm-install sync child does not, and neither do three selftest calls), so 124
+    is not universally acted on here; that is pre-existing and not made worse by this.
+    """
+    if timeout is _CEILING:
+        timeout = _RUN_TIMEOUT
+    proc = subprocess.Popen(
+        args,
+        cwd=str(cwd) if cwd else None,
+        stdin=subprocess.PIPE if stdin_bytes is not None else subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=_env(),
+        start_new_session=True,
+    )
     try:
-        return subprocess.run(
-            args,
-            cwd=str(cwd) if cwd else None,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=_env(),
-            timeout=timeout,
-            **stdin_kw,
-        )
-    except subprocess.TimeoutExpired as e:
-        # subprocess.run has already killed the child and reaped it.
-        note = f"\noct-pkg: killed after {timeout}s: {' '.join(args[:3])}".encode()
-        return subprocess.CompletedProcess(args, 124, e.stdout or b"", (e.stderr or b"") + note)
+        out, err = proc.communicate(input=stdin_bytes, timeout=timeout)
+        return subprocess.CompletedProcess(args, proc.returncode, out, err)
+    except subprocess.TimeoutExpired as expired:
+        whole_group = _kill_group(proc)
+        try:
+            out, err = proc.communicate(timeout=_REAP_GRACE)
+        except subprocess.TimeoutExpired:
+            out, err = expired.stdout or b"", expired.stderr or b""
+            whole_group = False
+        note = f"\noct-pkg: killed after {timeout}s: {' '.join(args[:3])}"
+        if not whole_group:
+            note += " (process group not confirmed dead; check for leftovers)"
+        return subprocess.CompletedProcess(args, 124, out or b"", (err or b"") + note.encode())
 
 
 def ssh_keygen_y_supported() -> bool:
@@ -2570,7 +2632,13 @@ def _sign(key: Path, mpath: Path) -> None:
     # tree, and copytree carries the source's .sig along. A re-publish over the same
     # destination is the same shape one run later. Unlinking is what makes both
     # idempotent -- letting the prompt decide is not, because declining keeps a
-    # signature over bytes that may have changed.
+    # signature over bytes that may have changed, at rc 0, silently.
+    #
+    # This CHANGES behaviour on the failure path, deliberately: unlinking first means a
+    # sign that then fails (a bad key, a missing key) leaves the package with NO
+    # signature where before it kept the previous one. That is the better of the two.
+    # A package with no signature is refused by install; a package carrying a signature
+    # over bytes nobody has is accepted and is a lie.
     sig = mpath.with_name(mpath.name + ".sig")
     if sig.exists():
         sig.unlink()
