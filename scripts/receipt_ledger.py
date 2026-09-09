@@ -355,7 +355,9 @@ def _turn_entries(transcript_path: str) -> tuple:
                 continue
             # The turn boundary is the last human prompt whatever its shape; a
             # hatch is read from it only when it is a harness-written entry.
-            human = entry if harness_entry(entry) else None
+            # A sidechain entry is a subagent's prompt, written by the parent
+            # model: it is never the operator's own turn (hatches, send asks).
+            human = entry if harness_entry(entry) and not entry.get("isSidechain") else None
             break
         if entry.get("type") == "assistant" and harness_entry(entry):
             entries.append(entry)

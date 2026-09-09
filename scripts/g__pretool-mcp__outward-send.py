@@ -31,6 +31,11 @@ WHAT IT REQUIRES (docs/architecture/v7-nothing-ships-unverified.md)
      first-person promise: those are already blocks at Stop; here they block
      before the send, reusing the exact detectors of the Stop gates so the
      vocabulary lives in one place per class.
+  4. Explicit send ask (operator directive 2026-08-14: deliver by default,
+     transmit only the message that was asked for). A non-negated send verb
+     must stand in the operator's own prompt for the turn, outside quotes and
+     code spans; `send-ok` is the standing hatch. Checked last, so every
+     earlier deny keeps its own name.
 
 The Stop gates are not replaced. They still catch drafts and prose; this gate
 is the choke point for what actually leaves, and it imports their detectors so
@@ -41,7 +46,9 @@ receipt named. Hatches (absence-ok, attribute-ok, draft-promise-ok, send-ok)
 count only in the operator's own prompt for the turn, never in the body: a
 token in the body would ship to the recipient and be self-serve. Fail-open on any error EXCEPT after a send was positively
 identified and a receipt check itself crashed, which denies (same stance as
-qa-merge-gate).
+qa-merge-gate). Requirement 4 is fail-closed by construction: no readable
+operator turn (missing transcript, forged or sidechain human entry) means no
+ask, so the send is denied.
 
 Selftest: CLAUDE_SESSION_ID=__selftest__ (set by gate_selftest, never reachable
 from the model's inline env) makes the gate accept HEAD and gates "SELFTEST" in
@@ -95,6 +102,77 @@ _QUOTE_SPAN = re.compile(r"\"[^\"\n]*\"|(?<!\w)'[^'\n]*'(?!\w)|`[^`\n]*`|«[^»]
 
 def hatches(prompt: str) -> set:
     return set(_HATCH.findall(_QUOTE_SPAN.sub(" ", prompt or "")))
+
+
+# 4. A send ask is a send verb in the operator's prompt inside a clause that
+# carries no negation, deferral or opinion token, with no later clause carrying
+# a negation or deferral. Clauses split on . ; : ! ? newline, comma, and the
+# connectors pero/but/y/and/aunque/though. ES imperatives count anywhere in the
+# clause (mándalo, envíaselo; "me"/"nos" clitics excluded, "mándame el texto" is
+# the paste-ready ask that must NOT transmit); ES infinitives only at clause
+# start or after an ask frame (puedes enviarlo, favor de mandarlo), never as a
+# noun phrase (falta mandarlo, prohibido enviarlo, "TODO: mandarlo"); ES subjunctives only inside a
+# "que ..." frame (quiero que lo mandes). EN verbs at clause start or after a
+# frame token, followed by an object or the clause end ("reply came in" and
+# "the release notes" do not count). Two blocker lists: _PRE_BLOCK tokens only
+# count before the verb (sin enviar, ni lo mandes, ¿conviene mandarlo?, falta
+# enviarlo) so "mándalo sin asunto" still asks; _ANY_BLOCK tokens count anywhere
+# in the ask clause and in every later clause (mándalo pero no ahora, mándalo
+# mañana, mandarlo sería un error, "mándalo. bueno, no"). Fail-closed by design:
+# on a false deny the operator repeats the verb alone or uses send-ok.
+_CLITIC = r"(?:lo|la|los|las|le|les|se|selo|sela|selos|selas)?"
+_ES_IMP = (r"(?<![\w-])(?:m[aá]nda|m[aá]nde|env[ií]a|env[ií]e|resp[oó]nde|responda|cont[eé]sta|conteste"
+           r"|reenv[ií]a|reenv[ií]e|publ[ií]ca|publique|despliega|despliegue|lanza|lance)" + _CLITIC + r"(?![\w-])")
+_ES_INF = (r"(?:^|(?<![\w-])(?:puedes|podr[ií]as|puede|podr[ií]a|favor de|por favor|hay que|toca|procede"
+           r"|ok|okay|s[ií]|yes|please|just|y|e|and)\s+)"
+           r"(?:mandar|enviar|responder|contestar|reenviar|publicar|desplegar|lanzar)" + _CLITIC + r"(?![\w-])")
+_ES_SUBJ = (r"(?<![\w-])que\s+(?:(?:me|te|se|lo|la|los|las|le|les)\s+){0,2}"
+            r"(?:mandes|env[ií]es|respondas|contestes|reenv[ií]es|publiques|despliegues|lances)(?![\w-])")
+_EN_ASK = (r"(?:^|(?<![\w-])(?:please|just|ok|okay|go ahead and|can you|could you|would you|you can"
+           r"|now|then|yes|yeah|sure|dale|s[ií]|and|y)\s+)"
+           r"(?:send|reply|respond|forward|publish|deploy|release|ship)"
+           r"(?=\s+(?:it|that|this|them|him|her|the|those|these|now|off|out|again|to|in|a|an|my|our|your"
+           r"|el|la|lo|ese|esa|eso)(?![\w-])|\s*$)")
+_SEND_ASK = re.compile("|".join((_ES_IMP, _ES_INF, _ES_SUBJ, _EN_ASK)), re.IGNORECASE)
+_CLAUSE = re.compile(r"[.;:!?\n,]+|\s+(?:pero|but|y|and|aunque|though)\s+", re.IGNORECASE)
+_PRE_BLOCK = re.compile(
+    r"(?<!\w)(?:sin|without|ni|evita\w*|abst[eé]nte|desaconsejo|dudo|falta|pendiente|salvo|excepto|except"
+    r"|conviene|convendr[ií]a|vale la pena|tiene sentido|buena idea|good idea|wise|ok to|debes|deber[ií]as?|debe"
+    r"|debo|should|shall|quieres|quiere|quieren|want me|do you want)(?!\w)", re.IGNORECASE)
+_ANY_BLOCK = re.compile(
+    r"(?<!\w)(?:no+|not|nunca|jam[aá]s|never|nel|nope|na|nah|nop|negativo|nothing|don'?t|do not"
+    r"|todav[ií]a|a[uú]n|aun|despu[eé]s|luego|ma[ñn]ana|later|tomorrow|cuando|when|hasta|until"
+    r"|s[oó]lo si|only if|espera\w*|esp[eé]rate|aguanta|wait|hold|cancel\w*|cancela\w*|olv[ií]dalo|forget"
+    r"|ser[ií]a|would be|mu[eé]strame\w*|show me|broma|kidding|descartado|prohibido|jaja\w*|jeje\w*|lol"
+    r"|🚫|❌|🙅)(?!\w)", re.IGNORECASE)
+# A later clause withdraws the ask on any blocker of either list plus the
+# sequencing words that are fine INSIDE the ask clause ("mándalo antes de las 5")
+# but read as a deferral after a comma ("mándalo, antes revísalo tú").
+_LATER_BLOCK = re.compile(_ANY_BLOCK.pattern + r"|" + _PRE_BLOCK.pattern
+                          + r"|(?<!\w)(?:antes|before|primero|first|ojo)(?!\w)", re.IGNORECASE)
+
+
+def explicit_send_ask(prompt: str) -> bool:
+    """True when the operator's prompt for the turn asks to send and nothing in
+    that clause or after it negates, defers or withdraws the ask."""
+    text = _QUOTE_SPAN.sub(" ", prompt or "")
+    asked = False
+    for idx, clause in enumerate(c.strip() for c in _CLAUSE.split(text) if c.strip()):
+        if asked:
+            if _LATER_BLOCK.search(clause):
+                return False
+            continue
+        if _ANY_BLOCK.search(clause):
+            continue
+        m = _SEND_ASK.search(clause)
+        if m and not _PRE_BLOCK.search(clause[:m.start()]):
+            # A bare infinitive opening any clause but the first ("pendiente:
+            # mandarlo", "TODO: mandarlo", "1. mandarlo") is a noun, not an ask.
+            labelled = idx > 0 and m.start() == 0 and m.group(0).lower().startswith(
+                ("mandar", "enviar", "responder", "contestar", "reenviar", "publicar", "desplegar", "lanzar"))
+            if not labelled:
+                asked = True
+    return asked
 
 
 def _load(name: str):
@@ -177,6 +255,16 @@ def is_send(tool_name: str, tool_input: dict) -> bool:
     return bool(_SEND_TOOL.search(tool_name))
 
 
+def _ask_deny(human: str) -> str:
+    """Requirement 4 as a deny reason, or "" when the operator asked for this send."""
+    if explicit_send_ask(human):
+        return ""
+    return ("📬 ENVÍO SIN PEDIDO: el mensaje del operador en este turno no pide mandar "
+            "nada (directiva 2026-08-14: entregar paste-ready y transmitir solo a pedido "
+            "explícito, por mensaje). Entrega el texto en el chat y espera el 'mándalo'; "
+            "'send-ok' en SU mensaje lo exime.")
+
+
 def check(data: dict) -> str:
     """Return the deny reason, or "" to allow. Raises only on internal errors."""
     import receipt_ledger
@@ -222,13 +310,16 @@ def check(data: dict) -> str:
     # Stop gates treat them; a hatch token counts only in the operator's own
     # prompt for this turn, never inside the body (that would ship to the
     # recipient and be self-serve).
-    ok = hatches(receipt_ledger.turn_last_human_text(transcript)) if transcript else set()
+    human = receipt_ledger.turn_last_human_text(transcript) if transcript else ""
+    ok = hatches(human)
     if "send-ok" in ok:
         return ""
     body = "\n".join(ln for ln in "\n".join(found).splitlines()
                      if not ln.lstrip().startswith(">"))
     if not body.strip():
-        return ""
+        # Nothing to read for the phrase checks, but a file or an audio still
+        # leaves: requirement 4 applies to it exactly as to a text body.
+        return _ask_deny(human)
     # A send is the model's own text: a quotation inside it is the model
     # quoting itself, and a claim split across lines is still one claim.
     flat = re.sub(r"\s+", " ", body)
@@ -274,7 +365,11 @@ def check(data: dict) -> str:
         return (f"✍ PROMESA en el envío ({listing}): lo que sale no lleva compromisos a "
                 f"futuro en primera persona; ejecuta o refuta primero y manda el recibo. "
                 f"'draft-promise-ok' en la línea lo exime.")
-    return ""
+
+    # 4. Explicit send ask: operator directive 2026-08-14, deliver by default and
+    #    transmit only the message that was asked for, per message. send-ok is the
+    #    standing hatch (returned above). Last, so earlier denies keep their name.
+    return _ask_deny(human)
 
 
 def main() -> int:
