@@ -15,6 +15,9 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-09-09]: v7.7.3
+- fix(kernel): make the v8 isolation gates and the journal work on Windows (#302)
+
 ## [2026-09-09]: v7.7.2
 ### Other
 - fix(scripts)+feat(comms): windows-proof gate selftests; outward-send gate requires an explicit send ask (#277)
