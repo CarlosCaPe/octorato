@@ -132,6 +132,12 @@ def _run_git(args: list[str]) -> None:
     as a grandchild, and killing only the direct child leaves that grandchild alive on
     the prompt: measured, rc 124 returned while ssh was still running and still holding
     the terminal.
+
+    What the kill reaches is the process GROUP, not the process tree: a descendant that
+    moves itself into another session survives and is not visible to the check below
+    either, so the refusal will call it killed. That is the same limit octo_pkg._run
+    carries, stated here too because a reader of this function should not have to find
+    it in the other one.
     """
     env = dict(os.environ)
     env["GIT_TERMINAL_PROMPT"] = "0"
@@ -145,13 +151,29 @@ def _run_git(args: list[str]) -> None:
         # here called killpg with no guard: when a mutant removed the start_new_session
         # above, the child shared this process's group and the call SIGKILLed the test
         # runner instead of failing a test.
-        proc_group.kill_group(proc)
+        # Read before the reap, not before the kill: getpgid still answers for a
+        # zombie. Once communicate() has reaped it, group_of returns None and the
+        # check below can only ever say "nothing to warn about".
+        group = proc_group.group_of(proc)
+        landed = proc_group.kill_group(proc)
         try:
             proc.communicate(timeout=_REAP_GRACE)
         except subprocess.TimeoutExpired:
-            pass
+            # A descendant that left the group still holds the pipe, so this expires
+            # with the child dead and unreaped. An unreaped child is a zombie, a zombie
+            # is still in the group, and the check below would then call a clean kill
+            # "not confirmed dead". Same line, same reason, as octo_pkg._run.
+            try:
+                proc.wait(timeout=_REAP_GRACE)
+            except subprocess.TimeoutExpired:
+                pass
+        # Say whether the kill actually emptied the group. Without this the message
+        # reads "was killed" while a survivor is still running, which is the same
+        # wrong-cause sentence this whole function exists to stop.
+        left = "" if (landed and proc_group.group_gone(proc, group)) else \
+            " (process group not confirmed dead; check for leftovers)"
         raise InstallError(f"git took longer than {_GIT_TIMEOUT:.0f}s and was killed: "
-                           + " ".join(args[:3]))
+                           + " ".join(args[:3]) + left)
     if proc.returncode != 0:
         raise InstallError((err or "").strip() or "Git command failed.")
 

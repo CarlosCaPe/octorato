@@ -263,12 +263,28 @@ def _run(args: list[str], cwd: Path | None = None, stdin_bytes: bytes | None = N
         out, err = proc.communicate(input=stdin_bytes, timeout=timeout)
         return subprocess.CompletedProcess(args, proc.returncode, out, err)
     except subprocess.TimeoutExpired as expired:
-        group = proc_group.group_of(proc)          # read BEFORE the kill; pid is reaped after
+        # Read before communicate(), which is the boundary that matters. Measured:
+        # getpgid still answers for a ZOMBIE, so reading it after the kill is fine and
+        # a comment claiming otherwise sends the next reader to the wrong line. It is
+        # reaping that destroys the pid, and after that group_of returns None and the
+        # check below can only ever say "nothing to warn about".
+        group = proc_group.group_of(proc)
         killed_group = proc_group.kill_group(proc)
         try:
             out, err = proc.communicate(timeout=_REAP_GRACE)
         except subprocess.TimeoutExpired:
             out, err = expired.stdout or b"", expired.stderr or b""
+            # communicate() waits for EOF on the pipes, and a descendant that took
+            # itself out of the group still holds the write end, so this wait expires
+            # with our own child already SIGKILLed and never reaped. An unreaped child
+            # is a ZOMBIE, a zombie stays in its process group, and killpg(group, 0)
+            # succeeds on one: measured, every escaper came back with "check for
+            # leftovers" naming a process that was already dead. The reap window in
+            # group_gone cannot help, because nothing was ever going to call waitpid.
+            try:
+                proc.wait(timeout=_REAP_GRACE)
+            except subprocess.TimeoutExpired:      # not dead: the warning is then true
+                pass
         note = f"\noct-pkg: killed after {timeout}s: {' '.join(args[:3])}"
         # Asked, not inferred. This used to warn when the output pipe was still held,
         # which is a different question: a survivor that closed its pipe came back as a

@@ -17,16 +17,24 @@ exact wedge the deadline exists to end.
 
 WHAT THIS CANNOT REACH, measured, and load-bearing for anyone reading a clean timeout:
 a descendant that puts ITSELF in a new session or process group (setsid, setpgid) is no
-longer in the group being killed and survives. `group_gone` will not see it either, so
-such a survivor is reported as an ordinary timeout with no warning at all. A double-fork
-daemon that stays in the group does die. The reach of this module is the group, not the
-process tree, and nothing here should be read as promising otherwise.
+longer in the group being killed and survives. `group_gone` cannot see it either, so
+such a survivor is reported as an ordinary timeout with no warning. That sentence was
+a promise with nothing behind it until it had a test, and when it got one it was FALSE:
+an escaper still holds the caller's output pipe, so the caller's post-kill communicate()
+expires with its own child dead and never reaped, and an unreaped child is a zombie that
+stays in the group and answers killpg(group, 0). Every escaper therefore warned, naming
+a process that was already dead. Both spawners now reap the child on that path, and the
+test `test_a_descendant_that_leaves_the_group_survives_and_is_not_reported` fails if
+either the reap or the silence goes away. A double-fork daemon that stays in the group
+does die. The reach of this module is the group, not the process tree, and nothing here
+should be read as promising otherwise.
 """
 
 from __future__ import annotations
 
 import os
 import signal
+import time
 
 # SIGKILL, not SIGTERM, because the thing being killed has already ignored a deadline
 # and may be a shell that would pass a catchable signal to nobody. A child that traps
@@ -57,26 +65,47 @@ def kill_group(proc) -> bool:
     return False
 
 
+# How long group_gone waits for a killed group to actually empty. A SIGKILLed process
+# becomes a ZOMBIE until its parent reaps it, and killpg(group, 0) succeeds on a zombie
+# because the pid still exists, so asking the instant after the kill answers "still
+# there" for a group that is already dead. Measured before this wait existed: 11 of 20
+# CLEAN group kills printed "check for leftovers", including a control with no survivor
+# at all. Tens of milliseconds is the whole window; a quarter of a second is slack.
+_REAP_POLL_SECONDS = 0.25
+_REAP_POLL_STEP = 0.005
+
+
 def group_gone(proc, group: int | None) -> bool:
-    """Whether the killed group still has members.
+    """Whether the killed group still has a live member, after waiting out the reap.
 
-    Asked directly with signal 0, which tests for existence and delivers nothing. The
-    previous version inferred this from whether the output pipe was still held, which
-    answered a different question: a survivor that closed its pipe came back as a clean
-    timeout with no warning. Silence is not an answer.
+    Asked directly with signal 0, which tests for existence and delivers nothing. It
+    replaced an inference from whether the output pipe was still held, which answered a
+    different question: a survivor that had closed its pipe came back as a clean
+    timeout with nothing said.
 
-    True when there is nothing left to warn about, which includes the case where we
-    never learned the group id.
+    Returns True when the group is empty, which is the "nothing to warn about" case,
+    and also True when the answer cannot be obtained (no group id, no killpg, or a
+    permission error): an unanswerable question must not become a warning, because a
+    warning nobody can act on trains people to ignore the ones they can.
+
+    What it CANNOT see: a descendant that moved itself into another session or group is
+    no longer in `group`, so an empty group here does not mean an empty process tree.
+    The reach of this module is the group. A survivor of that kind returns True and the
+    caller stays silent about it, by design and not by accident.
     """
     if group is None or not hasattr(os, "killpg"):
         return True
-    try:
-        os.killpg(group, 0)
-    except ProcessLookupError:
-        return True
-    except (PermissionError, OSError):
-        return True      # cannot tell; do not cry wolf
-    return False
+    deadline = time.monotonic() + _REAP_POLL_SECONDS
+    while True:
+        try:
+            os.killpg(group, 0)
+        except ProcessLookupError:
+            return True
+        except (PermissionError, OSError):
+            return True      # cannot tell; do not cry wolf
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(_REAP_POLL_STEP)
 
 
 def group_of(proc) -> int | None:

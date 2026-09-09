@@ -18,6 +18,8 @@ import http.server
 import importlib.util
 import json
 import os
+import re
+import shlex
 import shutil
 import signal as signal_module
 import socketserver
@@ -4072,8 +4074,12 @@ class TestNoChildWaitsForAHuman(SandboxCase):
         """
         marker = f"octo-pkg-grandchild-{os.getpid()}"
         sleeper = self._sleeper(marker)
+        started = time.monotonic()
         cp = octo_pkg._run(["sh", "-c", f"{sleeper} & exec {sleeper}"], timeout=2)
+        elapsed = time.monotonic() - started
         self.assertEqual(cp.returncode, 124, (cp.stderr or b"").decode())
+        self.assertLess(elapsed, 15, "the deadline did not fire; _run waited out the "
+                                     "child instead of killing it")
         self.assertEqual(self._survivors(marker), [],
                          "_run reported 124 while a grandchild was still running: the "
                          "deadline killed the direct child and left its tree behind")
@@ -4127,12 +4133,25 @@ class TestNoChildWaitsForAHuman(SandboxCase):
         nothing, so the test passed while the grandchild was alive. A trailing argument
         to `python -c` lands in sys.argv and therefore in the cmdline.
         """
-        return f"{sys.executable} -c 'import time; time.sleep(300)' {marker}"
+        # 20 s, not 300. These tests call _run IN PROCESS, so the class TTL does not
+        # bound them: with the deadline mutated away, a 300 s sleeper ran to completion
+        # and the mutant reported NOTHING inside a normal budget (rc -9 at 420 s, no
+        # summary). 20 s is long enough to still be running when the 2 s deadline fires
+        # and short enough that a missing deadline comes back as a FAILED assertion.
+        return f"{sys.executable} -c 'import time; time.sleep(20)' {marker}"
 
-    def _survivors(self, marker: str) -> list:
+    @staticmethod
+    def _alive(marker: str) -> list:
+        """Read only. Split from _survivors because that one kills what it finds, and a
+        test that wants to INSPECT a survivor (its session, say) must look before the
+        cleanup destroys the thing it was about to measure. Never pkill -f: that matches
+        this process's own command line and reaches other sessions on the box."""
         found = subprocess.run(["pgrep", "-f", marker], capture_output=True, text=True,
                                stdin=subprocess.DEVNULL, timeout=30)
-        alive = [pid for pid in found.stdout.split() if pid]
+        return [pid for pid in found.stdout.split() if pid]
+
+    def _survivors(self, marker: str) -> list:
+        alive = self._alive(marker)
         for pid in alive:                          # never leave the box dirtier
             try:
                 os.kill(int(pid), signal_module.SIGKILL)
@@ -4150,8 +4169,11 @@ class TestNoChildWaitsForAHuman(SandboxCase):
         self.addCleanup(setattr, gh, "_GIT_TIMEOUT", original)
         marker = f"octo-ins-grandchild-{os.getpid()}"
         sleeper = self._sleeper(marker)
+        started = time.monotonic()
         with self.assertRaises(gh.InstallError):
             gh._run_git(["sh", "-c", f"{sleeper} & exec {sleeper}"])
+        self.assertLess(time.monotonic() - started, 15,
+                        "the installer's deadline did not fire")
         self.assertEqual(self._survivors(marker), [],
                          "the installer reported a timeout while a grandchild was "
                          "still running: it killed the direct child and left its tree")
@@ -4161,9 +4183,11 @@ class TestNoChildWaitsForAHuman(SandboxCase):
         call still reports a kill. Pinned with a child that traps exactly that."""
         marker = f"octo-pkg-trapper-{os.getpid()}"
         sleeper = self._sleeper(marker)
+        started = time.monotonic()
         cp = octo_pkg._run(["sh", "-c", f"trap '' TERM; {sleeper} & exec {sleeper}"],
                            timeout=2)
         self.assertEqual(cp.returncode, 124)
+        self.assertLess(time.monotonic() - started, 15, "the deadline did not fire")
         self.assertEqual(self._survivors(marker), [],
                          "a child that ignores SIGTERM survived the deadline: the "
                          "signal is catchable and the kill is advisory")
@@ -4218,56 +4242,162 @@ class TestNoChildWaitsForAHuman(SandboxCase):
                          f"the killed clone left {target} behind, so every retry now "
                          f"dies on 'destination already exists' instead of the reason")
 
-    def test_the_group_kill_refuses_to_kill_its_own_group(self):
-        """The guard, tested where it actually fires.
+    _GUARD_PROBE = (
+        "import os, subprocess, sys\n"
+        "sys.path.insert(0, {scripts!r})\n"
+        "import proc_group\n"
+        "kid = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'],\n"
+        "                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,\n"
+        "                       stderr=subprocess.DEVNULL)\n"
+        "shared = os.getpgid(kid.pid) == os.getpgid(0)\n"
+        "landed = proc_group.kill_group(kid)\n"
+        "kid.wait(timeout=10)\n"
+        # PROBE-SURVIVED is the sentinel, and it exists because a missing guard does
+        # not make this program print a WRONG answer, it makes the program stop. So the
+        # pass condition has to be a line only a living probe can emit: rc -9 with no
+        # sentinel is the failure, rc 124 with no sentinel is a hang, and "no output"
+        # is neither a pass nor a fail until one of those two says which.
+        "print('LEADER', os.getpid() == os.getpgid(0), 'SHARED', shared,\n"
+        "      'GROUPKILL', landed, 'PROBE-SURVIVED', flush=True)\n")
 
-        In normal operation it never fires: the spawner passes start_new_session, so the
-        child always leads its own group and the comparison is always false. That is
-        why removing the guard survived every other test in this class. It matters in
-        exactly one case, and that case is a REGRESSION in the spawner rather than a
-        runtime input, which is the case worth pinning: a child spawned WITHOUT its own
-        session shares ours, and an unguarded killpg then SIGKILLs the caller, its
-        runner and every sibling. Measured that way twice before the guard existed:
-        the mutant did not fail the suite, it killed it, exit -9, no summary printed.
+    def _run_guard_probe(self, as_leader: bool) -> str:
+        """Drive kill_group on a child that shares OUR group, from a sacrificial process.
 
-        The probe is sacrificial and sealed in its own session, so a missing guard kills
-        the probe instead of this test process, and its death by signal is the failure
-        signal rather than a dead runner. Without that containment this test cannot
-        report anything, because the reporter would be dead.
+        Sealed in its own session so a missing guard kills the probe rather than this
+        test process; the probe's death by signal is then the failure signal, because a
+        dead reporter reports nothing.
+
+        `as_leader` is the whole point of having two. A process spawned straight into a
+        new session is a group leader, and for a leader os.getpgid(0) == os.getpid(),
+        so a guard comparing against the WRONG one of those is still correct there. The
+        non-leader is the ordinary shape (anything under a shell, a git hook, the sync
+        child) and it is the state that separates the two.
         """
-        prog = (
-            "import os, subprocess, sys\n"
-            f"sys.path.insert(0, {str(SCRIPTS)!r})\n"
-            "import proc_group\n"
-            # a child in the PROBE's own group: exactly the shape the guard is for
-            "kid = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'],\n"
-            "                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,\n"
-            "                       stderr=subprocess.DEVNULL)\n"
-            "same = os.getpgid(kid.pid) == os.getpgid(0)\n"
-            "landed = proc_group.kill_group(kid)\n"
-            "kid.wait(timeout=10)\n"
-            "print('SHARED', same, 'GROUPKILL', landed, flush=True)\n")
-        proc = subprocess.Popen([sys.executable, "-c", prog], stdin=subprocess.DEVNULL,
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                start_new_session=True)
+        prog = self._GUARD_PROBE.format(scripts=str(SCRIPTS))
+        # shlex.quote, not !r: a python repr escapes the newlines as backslash-n and
+        # sh does not expand those inside single quotes, so the probe arrived at python
+        # as one broken line and printed nothing at all.
+        argv = ([sys.executable, "-c", prog] if as_leader
+                else ["sh", "-c", f"{shlex.quote(sys.executable)} -c {shlex.quote(prog)}"])
+        proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, start_new_session=True)
         try:
             out, err = proc.communicate(timeout=self.TTL)
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.communicate(timeout=self.TTL)
-            self.fail("the guard probe never returned")
+            self.fail(f"the guard probe (leader={as_leader}) never returned")
+        state = "leader" if as_leader else "non-leader"
+        text = out.decode("utf-8", "replace")
         self.assertGreaterEqual(
             proc.returncode, 0,
-            "the probe was killed by signal %d: kill_group fired on a group it shares "
-            "with the caller, which in production is the caller's own group"
-            % -proc.returncode)
-        text = out.decode("utf-8", "replace")
-        self.assertIn("SHARED True", text,
-                      f"the probe never reproduced the shared-group case: {text!r} "
-                      f"{err.decode('utf-8', 'replace')[-200:]!r}")
-        self.assertIn("GROUPKILL False", text,
-                      "kill_group reported a GROUP kill on the caller's own group; it "
-                      "must fall back to killing the direct child only")
+            f"the {state} probe was killed by signal {-proc.returncode}: kill_group "
+            f"fired on a group it shares with the caller, which in production is the "
+            f"caller's own group. stderr: {err.decode('utf-8', 'replace')[-200:]!r}")
+        self.assertIn(
+            "PROBE-SURVIVED", text,
+            f"the {state} probe exited {proc.returncode} without reaching its own last "
+            f"line, so it reported nothing rather than reporting a pass. stdout "
+            f"{text!r}, stderr {err.decode('utf-8', 'replace')[-200:]!r}")
+        return text
+
+    def test_the_group_kill_refuses_to_kill_its_own_group(self):
+        """The guard, tested from BOTH process states, because one of them cannot see it.
+
+        In normal operation the guard never fires: the spawner passes start_new_session,
+        the child leads its own group, and the comparison is always false. It matters in
+        one case, a regression in the spawner, and that case is worth pinning: a child
+        without its own session shares ours, and an unguarded killpg then SIGKILLs the
+        caller, its runner and every sibling. Measured that way twice before the guard
+        existed: the mutant did not fail the suite, it killed it, exit -9, no summary.
+
+        Testing it only from a session leader was a hole of the same shape. A leader has
+        os.getpgid(0) == os.getpid(), so a guard comparing against os.getpid() by
+        mistake passes there, and the probe was a leader. Measured: with that mutation,
+        the leader probe returns False and survives while the non-leader probe kills its
+        caller with SIGKILL. Both states are asserted below for that reason.
+        """
+        seen = {}
+        for as_leader in (True, False):
+            text = self._run_guard_probe(as_leader)
+            self.assertIn("SHARED True", text,
+                          f"the probe (leader={as_leader}) never reproduced the "
+                          f"shared-group case: {text!r}")
+            self.assertIn("GROUPKILL False", text,
+                          f"kill_group reported a GROUP kill on the caller's own group "
+                          f"(leader={as_leader}); it must fall back to the direct child")
+            seen[as_leader] = "LEADER True" in text
+        self.assertEqual(seen, {True: True, False: False},
+                         "the two probes did not actually run in different process "
+                         "states, so the pair proves no more than one of them would")
+
+    def test_a_clean_kill_says_nothing_about_leftovers(self):
+        """A warning that fires on correct behaviour is worse than none, because it
+        trains the reader to skip it.
+
+        Measured before the reap wait existed: 11 of 20 CLEAN group kills printed
+        "check for leftovers", including a control with no survivor at all. Cause: a
+        SIGKILLed process is a zombie until reaped and killpg(group, 0) succeeds on a
+        zombie, so the check answered "still there" for a group already dead.
+
+        This one watches the CONSEQUENCE and its rate depends on machine load: the same
+        defect that warned 11 times in 20 under load warned 0 times in 8 on a quiet box,
+        so on its own it is a coin flip and it let the zero-window mutant through. The
+        deterministic pin is the wait itself, in the group_gone test above. Both are
+        kept because they fail for different reasons and this is the one that speaks in
+        the units an operator sees.
+        """
+        marker = f"octo-pkg-clean-{os.getpid()}"
+        sleeper = self._sleeper(marker)
+        noisy = 0
+        for _ in range(8):
+            cp = octo_pkg._run(["sh", "-c", f"{sleeper} & exec {sleeper}"], timeout=0.4)
+            self.assertEqual(cp.returncode, 124)
+            if b"not confirmed dead" in (cp.stderr or b""):
+                noisy += 1
+        self.assertEqual(self._survivors(marker), [])
+        self.assertEqual(noisy, 0,
+                         f"{noisy} of 8 clean kills warned about leftovers; the check "
+                         f"is answering before the group has been reaped")
+
+    def test_the_leftover_warning_is_wired_to_the_check_and_reads_it_in_order(self):
+        """The consumer of group_gone, which nothing anchored.
+
+        Two mutations passed without this: removing the note's condition outright, and
+        reading the process group after the pid has been REAPED. The second is the
+        subtle one and it is silent: group_of then returns None, group_gone is handed
+        None, and the answer is an unconditional "nothing to warn about". So this
+        asserts the group id is real at the moment the check is asked, and that a False
+        answer actually reaches the caller's stderr.
+
+        The reap is the boundary, not the kill. Measured: moving the read to just after
+        kill_group and before communicate() leaves this test and its 21 siblings green,
+        because getpgid still answers for a zombie. Moving it past communicate() turns
+        this test, and only this test, red. An earlier draft of this docstring named the
+        kill as the boundary and would have sent the next reader to the wrong line.
+        """
+        seen = {}
+        real_gone = octo_pkg.proc_group.group_gone
+
+        def recording_gone(proc, group):
+            seen["group"] = group
+            return False                      # force the warning path
+
+        octo_pkg.proc_group.group_gone = recording_gone
+        self.addCleanup(setattr, octo_pkg.proc_group, "group_gone", real_gone)
+        marker = f"octo-pkg-order-{os.getpid()}"
+        sleeper = self._sleeper(marker)
+        cp = octo_pkg._run(["sh", "-c", f"{sleeper} & exec {sleeper}"], timeout=0.4)
+        self._survivors(marker)
+        self.assertEqual(cp.returncode, 124)
+        self.assertIn("group", seen, "the timeout path never consulted group_gone")
+        self.assertIsNotNone(
+            seen["group"],
+            "group_gone was handed None: the process group was read AFTER the kill, by "
+            "which time the pid is reaped, so the check can never answer anything")
+        self.assertIn(b"not confirmed dead", cp.stderr or b"",
+                      "group_gone said the group was still alive and the caller said "
+                      "nothing about it")
 
     def test_a_group_with_a_live_member_is_not_reported_as_gone(self):
         """The survivor check, which decides whether a timeout warns or stays quiet.
@@ -4283,34 +4413,238 @@ class TestNoChildWaitsForAHuman(SandboxCase):
         self.addCleanup(proc.kill)
         group = proc_group_mod.group_of(proc)
         self.assertIsNotNone(group)
+        started = time.monotonic()
         self.assertFalse(proc_group_mod.group_gone(proc, group),
                          "a group whose member is still running was reported gone, so "
                          "a survivor would come back as a clean timeout")
+        waited = time.monotonic() - started
+        # The WAIT, not its statistical consequence. A SIGKILLed process is a zombie
+        # until reaped and killpg(group, 0) succeeds on a zombie, so answering
+        # instantly warns on kills that were perfectly clean: 11 of 20, measured. The
+        # rate depends on machine load, which makes a count-the-warnings test a coin
+        # flip on a quiet box; that a populated group costs the full window to declare
+        # dead does not depend on load at all.
+        self.assertGreater(proc_group_mod._REAP_POLL_SECONDS, 0,
+                           "the reap window is zero, so the check answers before a "
+                           "killed group can have been reaped")
+        self.assertGreaterEqual(
+            waited, proc_group_mod._REAP_POLL_SECONDS * 0.5,
+            f"group_gone answered in {waited:.3f}s for a group that still had a live "
+            f"member; it is not waiting out the reap window at all")
         proc_group_mod.kill_group(proc)
         proc.wait(timeout=self.TTL)
         self.assertTrue(proc_group_mod.group_gone(proc, group),
                         "the group was reported alive after everything in it was "
                         "killed, which would warn on every single timeout")
 
+    @staticmethod
+    def _session_of(pid: int) -> int | None:
+        """The session id of a live pid, read from /proc. Used to SHOW that a probe
+        produced the state it claims, instead of trusting that setsid ran."""
+        try:
+            stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+        except OSError:
+            return None
+        # comm sits in parentheses and may contain spaces, so split on the LAST ')'.
+        fields = stat.rsplit(")", 1)[1].split()
+        return int(fields[3])          # state, ppid, pgrp, session
+
+    def test_a_descendant_that_leaves_the_group_survives_and_is_not_reported(self):
+        """The limit the module docstring states, pinned instead of asserted in prose.
+
+        proc_group reaches a process GROUP, not a process tree. A descendant that calls
+        setsid is no longer in the group, so the kill misses it AND group_gone cannot
+        see it, and the caller reports an ordinary clean timeout while the escaper is
+        still running. That sentence was a promise with nothing behind it: every other
+        test in this class spawns descendants that STAY in the group, so none of them
+        would notice if the sentence stopped being true in either direction.
+
+        Both halves are asserted, because either one alone is satisfied by the wrong
+        thing: that the escaper is still alive (or the kill did reach it and the note is
+        obsolete) and that stderr stays silent (or the note's second clause is wrong and
+        it does warn). The escaper's session id is read from /proc and compared to its
+        own pid, so a setsid that quietly did nothing fails here instead of passing as
+        an escape that never happened.
+        """
+        if shutil.which("setsid") is None:
+            self.skipTest("setsid is not installed, so the escaper cannot be produced")
+        escaped_marker = f"octo-pkg-escaper-{os.getpid()}"
+        stayed_marker = f"octo-pkg-stayed-{os.getpid()}"
+        self.addCleanup(self._survivors, escaped_marker)
+        self.addCleanup(self._survivors, stayed_marker)
+        cp = octo_pkg._run(
+            ["sh", "-c", f"setsid {self._sleeper(escaped_marker)} & "
+                         f"exec {self._sleeper(stayed_marker)}"], timeout=2)
+        self.assertEqual(cp.returncode, 124, (cp.stderr or b"").decode())
+        # Look before cleaning up: _survivors kills what it finds, and /proc goes away
+        # with the process, so reading the session afterwards measured None once.
+        escapers = self._alive(escaped_marker)
+        sessions = {int(pid): self._session_of(int(pid)) for pid in escapers}
+        self._survivors(escaped_marker)
+        stayed = self._survivors(stayed_marker)
+        self.assertEqual(
+            len(escapers), 1,
+            f"the escaper was not there to be missed ({escapers!r}), so this test "
+            f"measured nothing: with no survivor a silent stderr proves nothing")
+        pid = int(escapers[0])
+        self.assertEqual(
+            sessions[pid], pid,
+            f"the survivor (session {sessions[pid]}) was not in a session of its own, "
+            f"so it did not escape the group; something else kept it alive and the "
+            f"limit is unmeasured here")
+        self.assertEqual(stayed, [],
+                         "the descendant that stayed IN the group survived the kill, "
+                         "which is not this limit but a broken group kill")
+        self.assertNotIn(
+            b"not confirmed dead", cp.stderr or b"",
+            "the escaper produced a warning: the docstring says such a survivor comes "
+            "back as an ordinary timeout with nothing said, and it no longer does")
+
+    def test_an_unanswerable_group_check_does_not_become_a_warning(self):
+        """The "do not cry wolf" clause of group_gone, which nothing anchored.
+
+        group_gone answers True, meaning nothing to warn about, when it CANNOT answer:
+        no group id to ask about, or a kernel that refuses the question. That is the
+        same defect as the zombie window arriving by another door. A warning the reader
+        can do nothing with is what teaches the reader to skip the warning that matters,
+        and the reap-window test only covers the zombie door.
+
+        The live group is asked again AFTER the refusal is lifted and must come back
+        False. Without that line, a True from an empty group and a True from an
+        unanswerable question are the same value and this test would pass on either.
+
+        NOT covered: the no-killpg branch, which is Windows. Deleting killpg from the os
+        module would assert something about a platform this run is not on.
+        """
+        proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(20)"],
+                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, start_new_session=True)
+        self.addCleanup(proc.wait)
+        self.addCleanup(proc.kill)
+        group = proc_group_mod.group_of(proc)
+        self.assertIsNotNone(group)
+        self.assertTrue(
+            proc_group_mod.group_gone(proc, None),
+            "a missing group id was reported as a live group, so every timeout on a "
+            "platform without getpgid would warn about leftovers it never looked for")
+        real_killpg = proc_group_mod.os.killpg
+
+        def refuses(*_args):
+            raise PermissionError("EPERM, as a kernel that will not answer")
+
+        proc_group_mod.os.killpg = refuses
+        try:
+            unanswerable = proc_group_mod.group_gone(proc, group)
+        finally:
+            proc_group_mod.os.killpg = real_killpg     # process-wide; restore or leak
+        self.assertTrue(
+            unanswerable,
+            "a group the kernel refused to answer about became a warning; nobody can "
+            "act on it and it costs the warnings that are real their credibility")
+        self.assertFalse(
+            proc_group_mod.group_gone(proc, group),
+            "the live group answered 'gone' once the refusal was lifted, so the True "
+            "above came from the group being empty and not from the refusal at all")
+
+    # Spellings of "signal a whole process group" that a person writes by hand. The
+    # first is the obvious one; the second is the one that made the token count a lie,
+    # because os.kill with a NEGATIVE pid is a group kill and contains no "killpg" at
+    # all. A third spelling, getattr(os, "kill" + "pg"), also passes and always will:
+    # no static check catches a name assembled at runtime. This is a tripwire for the
+    # copy someone writes by hand, which is how the first one got here, and it is not
+    # and cannot be a sandbox against a determined author.
+    _GROUP_KILL_SPELLINGS = (
+        re.compile(r"\bkillpg\b"),
+        re.compile(r"\bos\.kill\s*\(\s*-"),
+    )
+
+    @classmethod
+    def _scan_group_kills(cls, roots, exclude=()):
+        """Return (offenders, files_read). One scan, two callers, on purpose.
+
+        Split out so the SAME code that reports on the real tree can be pointed at a
+        planted violation and shown to fire. An empty offenders list has two causes and
+        only one of them is good news: the tree is clean, or the scan read nothing. The
+        second is what a broken glob, a renamed directory or a too-eager skip produces,
+        and it is indistinguishable from the first unless the files read come back too.
+        """
+        offenders, read = [], []
+        skip = {Path(x).resolve() for x in exclude}
+        for root in roots:
+            root = Path(root)
+            if not root.is_dir():
+                continue
+            for path in sorted(root.rglob("*.py")):
+                if path.name == "proc_group.py" or ".git" in path.parts:
+                    continue
+                if path.resolve() in skip:
+                    continue
+                read.append(path.resolve())
+                for number, line in enumerate(
+                        path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+                    bare = line.strip()
+                    if bare.startswith("#") or not bare:
+                        continue
+                    if any(rx.search(bare) for rx in cls._GROUP_KILL_SPELLINGS):
+                        offenders.append(f"{path}:{number}: {bare[:70]}")
+        return offenders, read
+
     def test_there_is_exactly_one_group_kill_in_the_tree(self):
-        """The second copy is the defect, so the count is the test.
+        """The second copy is the defect, so finding one is the test.
 
         This started as two implementations that disagreed about one line, the guard,
         and the one without it SIGKILLed the runner when a mutant removed the flag it
-        silently depended on. Fixing the copy is not the same as preventing the next
-        one: a reviewer has to notice a new `killpg` to stop it, and nobody noticed the
-        first. Counting is mechanical, so it is done here.
+        silently depended on. Fixing that copy does not stop the next one: a reviewer
+        has to notice a new group kill, and nobody noticed the first.
+
+        Asserting `offenders == []` alone was not this test. That value is satisfied by
+        a clean tree and equally by a scan that read no files at all, so a broken root
+        list would have reported the same green as a repository with no second copy.
+        Three assertions, in the order that makes the last one mean something:
+
+        1. the detector FIRES, on a planted tree holding one file per spelling plus a
+           benign `os.kill(pid, ...)` that must NOT be flagged, because a matcher that
+           flagged everything would also pass step 3 by never being wrong about a real
+           file that does not exist;
+        2. the scan REACHES named real files whose paths exercise each root and each
+           depth, and does not reach the one module allowed to hold the primitive;
+        3. and only then, that it found nothing.
+
+        Scope is every .py under the roots below except proc_group.py, deliberately
+        including brain_doctor.py and the hook scripts. It is not the whole checkout: an
+        unrelated .py in the working tree is not this repo's code, and scanning one
+        turned a mutation control red on a harness file.
         """
-        offenders = []
-        for path in sorted(list(BRAIN.glob("scripts/*.py"))
-                           + list(BRAIN.glob("skills/*/scripts/*.py"))):
-            if path.name == "proc_group.py":
-                continue
-            for number, line in enumerate(
-                    path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
-                bare = line.strip()
-                if "killpg" in bare and not bare.startswith("#"):
-                    offenders.append(f"{path.relative_to(BRAIN)}:{number}: {bare[:70]}")
+        planted = self.tmp / "planted" / "pkg"
+        planted.mkdir(parents=True)
+        (planted / "obvious.py").write_text(
+            "import os\nos.killpg(group, 9)\n", encoding="utf-8")
+        (planted / "sneaky.py").write_text(
+            "import os\nos.kill(-group, 9)\n", encoding="utf-8")
+        (planted / "benign.py").write_text(
+            "import os\nos.kill(pid, 9)\n", encoding="utf-8")
+        hits, planted_read = self._scan_group_kills([planted.parent])
+        self.assertEqual(
+            sorted(Path(h.split(":")[0]).name for h in hits), ["obvious.py", "sneaky.py"],
+            f"the scan did not flag both hand-written spellings, or flagged the plain "
+            f"per-pid kill that is not a group kill: {hits!r}")
+        self.assertEqual(len(planted_read), 3, planted_read)
+
+        roots = [BRAIN / "scripts", BRAIN / "skills", BRAIN / "templates"]
+        offenders, read = self._scan_group_kills(
+            roots, exclude=[Path(__file__)])       # this file names the spellings
+        for must in (SCRIPTS / "octo_pkg.py",              # root of the first root
+                     SCRIPTS / "brain_doctor.py",
+                     SCRIPTS / "tests" / "test_kernel_proc.py",     # a nested dir
+                     BRAIN / "skills" / "skill-installer" / "scripts"
+                     / "install-skill-from-github.py",     # the second root, nested
+                     BRAIN / "templates" / "cotizacion" / "cotizacion_engine.py"):
+            self.assertIn(must.resolve(), read,
+                          f"the scan never read {must}, so its green says nothing "
+                          f"about that file; the roots or the glob are wrong")
+        self.assertNotIn((SCRIPTS / "proc_group.py").resolve(), read,
+                         "the module that owns the primitive was scanned, so the only "
+                         "legitimate group kill would be reported as an offender")
         self.assertEqual(offenders, [],
                          "a second group kill has appeared outside proc_group.py, "
                          "which is where the one guarded implementation lives:\n"
