@@ -3733,3 +3733,184 @@ class ClocklessRowExpiryTest(SandboxHome):
                       kernel_proc.UNKNOWN)
         kernel_proc.prune(table, time.time() + 70 * 24 * 3600)
         self.assertNotIn("torn", table["processes"])
+
+
+class NormalisationClassTest(SandboxHome):
+    """The spelling class `norm_path` folds (QA cycle 16, issue #300).
+
+    Every path rule in this brain compares strings that came out of
+    `norm_path`, so a spelling it does not fold is a second name for one file
+    and `paths_conflict` reads it as a different file. That is one class, and
+    the members are enumerated in the function's own header. Each is pinned
+    here twice: the fold itself, and the OVER-correction that would make two
+    genuinely different files collide.
+
+    WHAT THESE TESTS CANNOT DO: there is no Windows host here. Members 2, 3 and
+    5 are exercised by INJECTING the platform facts, which tests the LOGIC and
+    not the real Windows result, and the tests say so one by one. Issue #300 is
+    not closed by this file; a `windows-latest` CI job is what closes it.
+    """
+
+    def inject(self, **facts):
+        """Run the rest of the test on a stated platform. Restored on the way
+        out: `_PATH_FACTS` is process state, and a module that leaves it set
+        hands the next test a platform it never asked for."""
+        saved = kernel_proc._PATH_FACTS
+        self.addCleanup(setattr, kernel_proc, "_PATH_FACTS", saved)
+        base = {"sep": "\\", "altsep": "/", "unc": True, "case_fold": True}
+        base.update(facts)
+        kernel_proc._PATH_FACTS = base
+        return base
+
+    # ── the facts themselves ───────────────────────────────────────────────
+    def test_the_facts_are_asked_of_the_platform_not_of_its_name(self):
+        """`os.name == 'nt'` is a branch nothing on this machine runs, and an
+        unexercised branch is a claim with no measurement behind it. Each fact
+        has to come from something that ANSWERS on the host it runs on."""
+        import ast
+        import inspect
+        import textwrap
+        facts = kernel_proc.path_facts(refresh=True)
+        self.assertEqual(facts["sep"], os.sep)
+        self.assertIs(facts["altsep"], os.altsep)
+        self.assertEqual(
+            facts["unc"],
+            bool(os.path.splitdrive(os.sep * 2 + "server" + os.sep + "share")[0]))
+        # Read as CODE, not as text: the header of `_measure_case_fold` argues
+        # AGAINST `os.name` in prose, and a substring search over the source
+        # would match that sentence and call the argument the defect.
+        banned = ("os.name", "sys.platform", "platform.system", "platform.uname")
+        for func in (kernel_proc.norm_path, kernel_proc.path_facts,
+                     kernel_proc._measure_case_fold):
+            tree = ast.parse(textwrap.dedent(inspect.getsource(func)))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+                    self.assertNotIn(node.value.id + "." + node.attr, banned,
+                                     func.__name__)
+
+    def test_the_case_fact_agrees_with_the_filesystem_it_reports_on(self):
+        """The control the fact has to survive: spell a file the other way and
+        look. Skipped, not guessed, when the probe would land on a DIFFERENT
+        filesystem from the one the fact reports on, because one probe answers
+        for one filesystem and pretending otherwise is the residual the
+        function's docstring already states."""
+        probe_dir = tempfile.mkdtemp(prefix="case-probe-")
+        self.addCleanup(shutil.rmtree, probe_dir, True)
+        library = os.path.abspath(kernel_proc.__file__)
+        if os.stat(probe_dir).st_dev != os.stat(library).st_dev:
+            self.skipTest("the probe directory is on another filesystem")
+        upper = os.path.join(probe_dir, "CaseProbe.tmp")
+        with open(upper, "w") as fh:
+            fh.write("x")
+        folds = os.path.exists(os.path.join(probe_dir, "caseprobe.tmp"))
+        self.assertEqual(kernel_proc._measure_case_fold(), folds)
+
+    # ── member 1: a leading `//` ───────────────────────────────────────────
+    def test_member_1_the_two_spellings_are_one_file_and_normalize_equal(self):
+        """Measured before it is asserted: the kernel opens `//x` and `/x` as
+        the same inode, so the two spellings are one file and the gates have to
+        read them as one path."""
+        target = os.path.join(self.home, "a.py")
+        with open(target, "w") as fh:
+            fh.write("x")
+        self.assertEqual(os.stat("/" + target).st_ino, os.stat(target).st_ino)
+        self.assertEqual(kernel_proc.norm_path("/" + target),
+                         kernel_proc.norm_path(target))
+        self.assertTrue(kernel_proc.paths_conflict(
+            kernel_proc.norm_path("/" + target), kernel_proc.norm_path(target)))
+
+    def test_member_1_is_off_where_a_double_separator_is_a_NAMESPACE(self):
+        """The over-correction. On a platform whose `splitdrive` reports a drive
+        for `\\\\server\\share`, that leading pair is a UNC share and NOT the
+        local root, so collapsing it would rewrite the path to another machine
+        into a path on this one. INJECTED: no Windows host here."""
+        self.inject()
+        self.assertTrue(kernel_proc.norm_path("\\\\srv\\share\\f").endswith(
+            "\\\\srv\\share\\f"))
+
+    # ── member 2: mixed separators ─────────────────────────────────────────
+    def test_member_2_mixed_separators_fold_where_altsep_is_a_separator(self):
+        """`C:\\work\\tree/pkg` and `C:\\work\\tree\\pkg` are one path wherever
+        `os.altsep` is a separator. This is the spelling issue #300 reports the
+        tree-owner gate letting through. INJECTED, so it proves the fold and
+        not the Windows result."""
+        self.inject()
+        self.assertEqual(kernel_proc.norm_path("C:\\work\\tree/pkg"),
+                         kernel_proc.norm_path("C:\\work\\tree\\pkg"))
+
+    def test_member_2_is_off_where_a_backslash_is_a_FILENAME(self):
+        """The over-correction, on the real platform this suite runs on:
+        `os.altsep` is None here, `a\\b` is a legal POSIX filename, and folding
+        it would make two different files collide."""
+        kernel_proc.path_facts(refresh=True)
+        self.assertIn("\\", kernel_proc.norm_path("/tmp/a\\b"))
+        self.assertNotEqual(kernel_proc.norm_path("/tmp/a\\b"),
+                            kernel_proc.norm_path("/tmp/a/b"))
+
+    # ── member 3: case ─────────────────────────────────────────────────────
+    def test_member_3_case_folds_where_the_filesystem_folds(self):
+        """INJECTED. One fact separates this from the test below."""
+        self.inject(case_fold=True)
+        self.assertEqual(kernel_proc.norm_path("C:\\Work\\PKG"),
+                         kernel_proc.norm_path("c:\\work\\pkg"))
+
+    def test_member_3_does_not_fold_where_the_filesystem_distinguishes(self):
+        """The benign fixture, one edit from the violation above: the same
+        paths on a filesystem that reports case-SENSITIVE stay two files.
+        Lowercasing unconditionally is the obvious over-correction, and on this
+        machine `/A` and `/a` really are different files."""
+        self.inject(case_fold=False)
+        self.assertNotEqual(kernel_proc.norm_path("C:\\Work\\PKG"),
+                            kernel_proc.norm_path("c:\\work\\pkg"))
+
+    def test_member_3_leaves_this_filesystem_alone(self):
+        """And on the measured facts of the host actually running this, where
+        the probe reports case-sensitive, the two spellings stay apart."""
+        facts = kernel_proc.path_facts(refresh=True)
+        if facts["case_fold"]:
+            self.skipTest("this filesystem folds case; the fold is the fact")
+        self.assertNotEqual(kernel_proc.norm_path("/A"), kernel_proc.norm_path("/a"))
+
+    # ── member 4: a trailing separator ─────────────────────────────────────
+    def test_member_4_a_trailing_separator_is_folded(self):
+        """Native, and injected. `normpath` folds this for the separator IT
+        knows; the fold is done in `norm_path` so it holds for the separator
+        the FACTS name."""
+        self.assertEqual(kernel_proc.norm_path("/tmp/x/"), kernel_proc.norm_path("/tmp/x"))
+        self.inject()
+        self.assertEqual(kernel_proc.norm_path("C:\\work\\pkg\\"),
+                         kernel_proc.norm_path("C:\\work\\pkg"))
+
+    def test_member_4_keeps_the_separator_a_ROOT_needs(self):
+        """The over-correction: `/` is not the empty string, and `C:\\` is not
+        `C:`, which is a drive-RELATIVE path and a different file."""
+        self.assertEqual(kernel_proc.norm_path("/"), os.sep)
+        self.inject(case_fold=False)
+        self.assertTrue(kernel_proc.norm_path("C:\\").endswith("C:\\"))
+
+    # ── member 5: a verbatim / device prefix ───────────────────────────────
+    def test_member_5_a_verbatim_or_device_prefix_reaches_the_same_file(self):
+        """INJECTED. `\\\\?\\C:\\x` and `\\\\.\\C:\\x` open `C:\\x`, and
+        `\\\\?\\UNC\\srv\\share` is the share itself, so it folds back to the
+        double-separator spelling rather than to a local path."""
+        self.inject()
+        plain = kernel_proc.norm_path("C:\\work\\pkg")
+        self.assertEqual(kernel_proc.norm_path("\\\\?\\C:\\work\\pkg"), plain)
+        # ALL BACKSLASHES on purpose. The first draft spelled this one
+        # `\\.\C:\work/pkg`, and reverting the mixed-separator fold reddened
+        # this test too: an anchor that answers for two mechanisms says nothing
+        # about either (QA cycle 15 found three of its own pinned that way).
+        self.assertEqual(kernel_proc.norm_path("\\\\.\\C:\\work\\pkg"), plain)
+        self.assertEqual(kernel_proc.norm_path("\\\\?\\UNC\\srv\\share\\f"),
+                         kernel_proc.norm_path("\\\\srv\\share\\f"))
+
+    def test_the_fold_is_one_funnel_and_the_gates_read_it(self):
+        """The reason all of this lives in `norm_path`: `paths_conflict` is
+        what every path rule asks, and it compares what this function returned.
+        A per-caller fix would be a list of the callers someone remembered."""
+        lane = kernel_proc.norm_path(os.path.join(self.home, "work", "a.py"))
+        for spelling in ("/" + os.path.join(self.home, "work", "a.py"),
+                         os.path.join(self.home, "work", "") + "/a.py",
+                         os.path.join(self.home, "work", ".", "a.py")):
+            self.assertTrue(kernel_proc.paths_conflict(
+                kernel_proc.norm_path(spelling), lane), spelling)

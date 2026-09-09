@@ -1280,6 +1280,27 @@ def literal_text_of(tokens: list) -> str:
 # without regenerating turns the suite red instead of leaving a sentence that
 # used to be true.
 #
+# QA CYCLE 16 FOUND THE SAME FAILURE ONE LEVEL UP. `coverage_manifest()` did
+# derive its members from the dispatch tables, and the DICT NAMING WHICH TABLES
+# to derive from was hand-written — a human-maintained description of a
+# machine-maintained set, again, just moved up a layer where the test could not
+# see it. It named 11 of the 24 tables that hold program and verb names, so the
+# block under-reported 56 modelled programs against a docstring that claimed
+# "every program this file models": every interpreter in `_CODE_HOSTS` (bash,
+# node, perl, python, deno …), every head in `_SCRIPT_RUNNERS` (make, npm,
+# cargo, mvn …), `_REMOTE_COPY_VERBS`, `_C_HOSTS`, `_STDIN_FLAGS`, and `shred`,
+# which `_EXEC_MUTATORS` models as a mutator and which appeared on no line.
+#
+# So the ROSTER is asserted too, and it is asserted against the FILE rather than
+# against a list. `_ROSTER` says which tables fill which line;
+# `_ROSTER_EXCLUSIONS` names every other `_`-prefixed table in this module with
+# the reason it holds no program or verb name; `roster_partition()` reads this
+# module's own source for the set of tables that exist. A table in neither is
+# UNCLASSIFIED and a name in either that no longer exists is STALE, and both
+# `--coverage` and the suite fail naming it. A roster nobody can forget to
+# update is the point: forgetting is now a red test rather than a quiet
+# under-report.
+#
 # `coverage_manifest()` is the derivation. `--coverage` prints it,
 # `test_c15_the_documented_coverage_equals_the_derivation` asserts the block
 # below matches it, and `_COVERAGE_BLOCK` is that block. Regenerate with:
@@ -1289,59 +1310,179 @@ def literal_text_of(tokens: list) -> str:
 # BEGIN GENERATED COVERAGE
 _COVERAGE_BLOCK = """\
 argument-consumer: xargs
+code-host: Rscript awk bash bun dash deno gawk ksh lua mawk node perl php \\
+py python python3 ruby sed sh tclsh zsh
 command-string: entr env flock hyperfine parallel script su watch xargs
 consuming: bzip2 compress gzip lzma xz zstd
+git-pathspec-verb: checkout mv restore rm
 literal-emitter: echo find ls printf
-mutator: cp dd install ln mv rm sed tee truncate unlink
+mutator: cp dd install ln mv rm sed shred tee truncate unlink
 output-flag: cc clang csplit curl g++ gcc go gpg less openssl pandoc patch \\
 psql rustc sort strip tar tee wget
+parsed-head: git octo
 positional-output: convert ffmpeg magick objcopy split sqlite3 uniq zip
 read-only: b2sum base64 basename cat cd cksum cmp cut date df diff dirname \\
 du echo egrep false fgrep file grep head jq ls md5sum od popd printf pushd \\
 pwd readlink realpath rg sha1sum sha256sum stat strings tail test true \\
 wait wc which
+remote-copy-verb: copy copyto cp download fetch get move mv pull sync
 remote-runner: apptainer aws az b2 distrobox docker flatpak gcloud gsutil \\
 kubectl lxc machinectl mc nerdctl oc podman pulumi rclone rsync s3cmd scp \\
 singularity ssh terraform tofu toolbox vagrant wrangler
+run-verb: exec run x
+script-runner: bundle cargo composer dotnet go gradle just make mvn npm nx \\
+pnpm rake task turbo yarn
 state-verb: chattr chmod touch
 wrapper: busybox command env exec nice nohup stdbuf sudo time timeout \\
 toybox xargs
 """
 # END GENERATED COVERAGE
 
+# Which tables fill which line of the manifest. Held as NAMES, resolved through
+# `globals()` when the manifest is built, because most of these tables are
+# defined below this point and the roster is not a second copy of them.
+_ROSTER = {
+    "argument-consumer": ("_ARGUMENT_CONSUMERS",),
+    "code-host": ("_CODE_HOSTS", "_C_HOSTS", "_PROGRAM_FLAGS_BY_HOST",
+                  "_VALUED_HOST_OPTS", "_STDIN_FLAGS"),
+    "command-string": ("_COMMAND_STRING", "_COMMAND_STRING_VALUED"),
+    "consuming": ("_CONSUMING",),
+    "git-pathspec-verb": ("_PATHSPEC_VERBS",),
+    "literal-emitter": ("_LITERAL_EMITTERS",),
+    "mutator": ("_MUTATORS", "_EXEC_MUTATORS", "_VALUED_MUTATOR_OPTS"),
+    "output-flag": ("_OUTPUT_FLAGS",),
+    "parsed-head": ("_PARSED_HEADS",),
+    "positional-output": ("_POSITIONAL_OUTPUT",),
+    "read-only": ("_KSTATE_READONLY",),
+    "remote-copy-verb": ("_REMOTE_COPY_VERBS",),
+    "remote-runner": ("_REMOTE_RUNNERS",),
+    "run-verb": ("_RUN_VERBS",),
+    "script-runner": ("_SCRIPT_RUNNERS",),
+    "state-verb": ("_STATE_VERBS",),
+    "wrapper": ("_WRAPPERS",),
+}
+# The other side of the partition. Every entry is a table of STRINGS that names
+# no program and no verb, with the reason stated per entry, because "it is not a
+# program" asserted without saying what it IS is how the last three descriptions
+# drifted.
+_ROSTER_EXCLUSIONS = {
+    "_ALWAYS_TRIGGER": "the parse-arming word list: shell tokens (`>`, "
+                       "`delete`, `source`) beside program names that reach "
+                       "the roster through the table that models them",
+    "_BROAD_ADD": "git-add flags and pathspecs (`-u`, `./`, `:/`)",
+    "_CONTROL_TOKENS": "shell operators that END a command (`;`, `&&`, `|`)",
+    "_DEFERRED_EVAL": "shell constructs that evaluate text later (`$((`, "
+                      "`eval`, `declare -i`)",
+    "_FD_DIRS": "directories that hold file descriptors, not programs",
+    "_FIND_FILTERS": "find's own name/path predicates",
+    "_GIT_EQ_ONLY": "a git global option that only ever arrives attached",
+    "_GIT_VALUED": "git's global options that consume a value",
+    "_GROUP_OPENERS": "tokens that open a compound command",
+    "_KDIR_SPELLINGS": "spellings of ONE directory, the kernel's own",
+    "_NULL_SINKS": "character devices that accept a write and store nothing",
+    "_PROGRAM_FLAGS": "the fallback flag whose argument is a program, not the "
+                      "program",
+    "_RESET_FLAGS": "the modes of `git reset`",
+    "_ROSTER": "this partition's own left half",
+    "_ROSTER_EXCLUSIONS": "this partition's own right half",
+    "_SHELL_KEYWORDS": "reserved words and builtins: `printf` and `read` here "
+                       "are the shell's, not the programs of the same name",
+    "_STDIN_OPERANDS": "operands that name stdin (`-`, `/dev/stdin`)",
+    "_STOP_WORDS": "reserved words that close or separate a command",
+    "_SUBST_OPENERS": "the two process-substitution openers",
+    "_TOP_PATHSPECS": "git pathspec magic that means the repository root",
+    "_TRIGGERS": "DERIVED: the union of the tables above, built by "
+                 "`_build_triggers`",
+    "_WHOLE_TREE_SPECS": "pathspecs that mean the whole tree",
+}
+
+
+def _module_name_tables() -> dict:
+    """Every `_`-prefixed module-level table of strings in THIS FILE, by name.
+
+    The set of names comes from the module's own source and the value of each
+    from the loaded module, which is what makes forgetting one impossible: a
+    table added anywhere below is seen whether or not anybody remembered it, a
+    DERIVED table (`_TRIGGERS`) is seen because its value is read rather than
+    its literal, and a runtime cache that holds no strings is not seen at all.
+    `ast` is imported here and not at module scope: this gate runs on every Bash
+    call and only `--coverage` and the suite ever reach this function."""
+    import ast
+    with open(os.path.abspath(__file__), encoding="utf-8") as fh:
+        tree = ast.parse(fh.read())
+    names = []
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        else:
+            continue
+        for target in targets:
+            if (isinstance(target, ast.Name) and target.id.startswith("_")
+                    and not target.id.startswith("__")):
+                names.append(target.id)
+    out, here = {}, globals()
+    for name in names:
+        members = _table_members(here.get(name))
+        if members is not None:
+            out[name] = members
+    return out
+
+
+def _table_members(value):
+    """The strings a table holds, or None when it is not a table of strings.
+    A dict contributes its KEYS: every dict in the roster is keyed by the
+    program it models."""
+    if isinstance(value, (str, bytes)) or not isinstance(
+            value, (tuple, list, set, frozenset, dict)):
+        return None
+    members = list(value.keys()) if isinstance(value, dict) else list(value)
+    if not members or not all(isinstance(m, str) for m in members):
+        return None
+    return members
+
+
+def roster_partition() -> tuple:
+    """(unclassified, stale) — both empty is the only passing state.
+
+    UNCLASSIFIED: a table of strings this file defines that neither `_ROSTER`
+    nor `_ROSTER_EXCLUSIONS` mentions, so the manifest under-reports it in
+    silence. STALE: a name either one mentions that this file no longer
+    defines, which is a reason left standing for a table that is gone."""
+    tables = _module_name_tables()
+    named = set(_ROSTER_EXCLUSIONS)
+    for group in _ROSTER.values():
+        named.update(group)
+    return sorted(set(tables) - named), sorted(named - set(tables))
+
 
 def coverage_manifest() -> str:
-    """Every program this file models, by the table that models it.
+    """Every program and verb this file models, by the table that models it.
 
     The single source of truth for what the gate covers. Derived from the
-    dispatch tables themselves, so it cannot drift from them: a row added
-    without regenerating the block above fails the suite."""
-    groups = {
-        "argument-consumer": _ARGUMENT_CONSUMERS,
-        "command-string": _COMMAND_STRING,
-        "consuming": _CONSUMING,
-        "literal-emitter": _LITERAL_EMITTERS,
-        "mutator": _MUTATORS,
-        "output-flag": _OUTPUT_FLAGS,
-        "positional-output": _POSITIONAL_OUTPUT,
-        "read-only": _KSTATE_READONLY,
-        "remote-runner": _REMOTE_RUNNERS,
-        "state-verb": _STATE_VERBS,
-        "wrapper": _WRAPPERS,
-    }
-    lines = []
-    for label in sorted(groups):
-        names = sorted(set(groups[label]))
-        body, line = [], label + ":"
+    dispatch tables themselves AND from the set of tables this module defines,
+    so it cannot drift from either: a row added without regenerating the block
+    above fails the suite, and a TABLE added without classifying it fails
+    here."""
+    unclassified, stale = roster_partition()
+    if unclassified or stale:
+        raise AssertionError(
+            "the coverage roster does not partition this module's tables. "
+            "Unclassified (add to _ROSTER or _ROSTER_EXCLUSIONS with a stated "
+            "reason): " + (", ".join(unclassified) or "none") + ". Stale "
+            "(named but no longer defined): " + (", ".join(stale) or "none"))
+    here, lines = globals(), []
+    for label in sorted(_ROSTER):
+        names = sorted({name for table in _ROSTER[label]
+                        for name in (_table_members(here[table]) or [])})
+        line = label + ":"
         for name in names:
             if len(line) + 1 + len(name) > 74:
-                body.append(line + " \\")
+                lines.append(line + " \\")
                 line = ""
-            line += (" " if line and not line.endswith(":") else
-                     ("" if line.endswith(":") else "")) + (" " if line else "") + name
-            line = line.replace("  ", " ")
-        body.append(line)
-        lines.extend(body)
+            line += (" " if line else "") + name
+        lines.append(line)
     return "\n".join(lines) + "\n"
 
 
@@ -1728,7 +1869,11 @@ def glob_hits(pattern: str, lane: str, icase: bool = False) -> bool:
 # adding a program to `_OUTPUT_FLAGS` or `_CONSUMING` arms the trigger for it in
 # the same edit. `test_c14_every_dispatch_table_is_a_trigger` asserts the
 # equality so a future table added without this line fails.
-_ALWAYS_TRIGGER = (">", "octo", "git", "find", "delete", "xargs", "source")
+# Heads with a HAND-WRITTEN parser instead of a name table: `git_parse` reads
+# one and the `--release` rule reads the other. They are modelled, so the
+# roster reports them, and they arm the trigger through `_ALWAYS_TRIGGER`.
+_PARSED_HEADS = ("git", "octo")
+_ALWAYS_TRIGGER = (">", "find", "delete", "xargs", "source") + _PARSED_HEADS
 _C_HOSTS = ("bash", "sh", "zsh", "dash", "python", "python3", "py")
 _MUTATORS = ("rm", "mv", "cp", "sed", "tee", "unlink", "truncate", "install",
              "ln", "dd")

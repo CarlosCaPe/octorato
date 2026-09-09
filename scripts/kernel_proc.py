@@ -2563,13 +2563,151 @@ def update_row(pid, fields: dict) -> bool:
 # and a write to <dir>/x collides with a lane on <dir>.
 
 
+# ── THE NORMALISATION CLASS, AND WHY IT IS ONE FUNNEL ─────────────────────
+#
+# Every path rule in this brain — both isolation gates, the kernel floor, the
+# arms boundary, the lane prefilter — compares STRINGS that came out of
+# `norm_path`. So a spelling this function does not fold is not a cosmetic
+# difference: it is a second name for a file that `paths_conflict` reads as a
+# different file, and one extra character walks past every one of those rules
+# at once. That is one CLASS of defect, not a list of incidents, and it is
+# closed here rather than at each call site, because a per-caller fix is a list
+# of the callers someone remembered.
+#
+# THE MEMBERS, ENUMERATED. A member is a pair of spellings the operating system
+# opens as ONE file and this function must therefore return equal:
+#
+#   1. a leading `//`      POSIX reserves exactly two leading slashes for the
+#                          implementation, so `os.path.normpath` PRESERVES them
+#                          while collapsing three or more (`//a/b` -> `//a/b`,
+#                          `///a/b` -> `/a/b`). Linux gives them no special
+#                          meaning and opens the same file, verified by inode.
+#                          Measured before the fold: `rm -rf <kdir>` denied and
+#                          `rm -rf //<kdir>` ALLOWED; same for `echo x > //<ptable>`.
+#   2. mixed separators    `C:\work\tree/pkg` and `C:\work\tree\pkg` are one path
+#                          wherever `os.altsep` is a separator, and two distinct
+#                          filenames where it is not (`a\b` is a legal POSIX
+#                          filename). Folded only where the platform says the
+#                          altsep IS a separator.
+#   3. case                `C:\Work` and `c:\work` are one file on NTFS and two
+#                          on ext4. Folded only where the FILESYSTEM says so,
+#                          measured; the over-correction to avoid is lowercasing
+#                          on POSIX, where `/A` and `/a` are different files.
+#   4. a trailing separator  `/a/b/` and `/a/b`. `normpath` already folds this;
+#                          it is enumerated and pinned so a future rewrite of
+#                          this function cannot drop it silently.
+#   5. a verbatim / device prefix   `\\?\C:\x` and `\\.\C:\x` reach the same file
+#                          as `C:\x` on Windows. Stripped only where a leading
+#                          double separator is a real namespace, which is the
+#                          same fact that keeps member 1 off a UNC share:
+#                          `\\server\share` is NOT `\server\share`.
+#
+# WHAT THIS FILE CANNOT PROVE: there is no Windows host in this repository's
+# test environment. Members 2, 3 and 5 are exercised by INJECTING the platform
+# facts below and asserting the two spellings normalize equal, which tests the
+# LOGIC and not the real Windows result. Issue #300 stays open; the claim here
+# is bounded to "the normalisation class is closed on the logic this suite can
+# reach", and a `windows-latest` CI job is what would close the rest.
+
+_PATH_FACTS = None
+
+
+def _measure_case_fold() -> bool:
+    """Does the filesystem this file lives on distinguish `A` from `a`?
+
+    ASKED, not assumed. `os.name == 'nt'` is a branch nothing on a Linux box
+    ever runs, and an unexercised branch is a claim with no measurement behind
+    it. This spells an existing file the other way and looks: if the flipped
+    spelling opens the SAME inode, the filesystem folds case.
+
+    Fails toward False — "behave the way this function always has" — because
+    the wrong True on a case-sensitive filesystem collapses `/A` into `/a` for
+    every rule downstream. When it is wrong the error direction is toward MORE
+    denials, never fewer, which is the direction a gate is allowed to be wrong
+    in; failing toward True on an unmeasurable platform would make that the
+    default rather than the exception.
+
+    Residual, stated: one probe answers for ONE filesystem (this file's). A
+    case-insensitive mount inside a case-sensitive host, or the reverse, is not
+    covered, and covering it would cost a probe per path on the hot path.
+    """
+    try:
+        probe = os.path.abspath(__file__)
+        head, tail = os.path.split(probe)
+        flipped = tail.swapcase()
+        if flipped == tail or not os.path.exists(probe):
+            return False
+        other = os.path.join(head, flipped)
+        return os.path.exists(other) and os.path.samefile(other, probe)
+    except Exception:
+        return False
+
+
+def path_facts(refresh: bool = False) -> dict:
+    """What THIS platform actually does with the spellings `norm_path` folds.
+
+    Every key is a QUESTION ABOUT BEHAVIOUR answered by the running interpreter
+    or the running filesystem, never by a platform name:
+
+      sep, altsep   the platform's own separators. `os.altsep` being `/` on
+                    Windows and None on POSIX IS the statement "a `\\` and a
+                    `/` name the same separator here".
+      unc           does a LEADING double separator open a different namespace?
+                    Asked of `os.path.splitdrive`, which reports a drive for
+                    `\\\\server\\share` on Windows and never on POSIX.
+      case_fold     does the filesystem distinguish case? See `_measure_case_fold`.
+
+    Cached: measured once per process, off the hot path. Tests inject a
+    platform by assigning the cache; `refresh=True` re-measures.
+    """
+    global _PATH_FACTS
+    if _PATH_FACTS is None or refresh:
+        sep = os.sep
+        _PATH_FACTS = {
+            "sep": sep,
+            "altsep": os.altsep,
+            "unc": bool(os.path.splitdrive(sep + sep + "server" + sep + "share")[0]),
+            "case_fold": _measure_case_fold(),
+        }
+    return _PATH_FACTS
+
+
 def norm_path(path) -> str:
-    """Absolute, normalized, `~` expanded. No resolve(): symlink resolution
-    costs a stat per component on the hot path, and both sides of every
-    comparison come through here, so they normalize the same way."""
+    """Absolute, normalized, `~` expanded, and folded across the spelling class
+    documented above. No resolve(): symlink resolution costs a stat per
+    component on the hot path, and both sides of every comparison come through
+    here, so they normalize the same way."""
     if not path:
         return ""
-    return os.path.normpath(os.path.abspath(os.path.expanduser(str(path))))
+    facts = _PATH_FACTS if _PATH_FACTS is not None else path_facts()
+    sep, altsep = facts["sep"], facts["altsep"]
+    out = os.path.expanduser(str(path))
+    if facts["unc"]:
+        # member 5: a verbatim (`\\?\`) or device (`\\.\`) prefix reaches the
+        # same file. `\\?\UNC\server\share` is the share itself, so it folds back
+        # to the plain double-separator spelling rather than to a bare path.
+        for mark in (sep * 2 + "?" + sep, sep * 2 + "." + sep):
+            if out.startswith(mark):
+                out = out[len(mark):]
+                if out[:4].upper() == "UNC" + sep:
+                    out = sep * 2 + out[4:]
+                break
+    if altsep:
+        out = out.replace(altsep, sep)      # member 2
+    out = os.path.normpath(os.path.abspath(out))    # `.` and `..`
+    if not facts["unc"] and out[:2] == sep * 2:
+        out = sep + out.lstrip(sep)         # member 1
+    # member 4. `normpath` already folds a trailing separator, but only for the
+    # separator IT knows: under injected facts (and on any host whose `os.path`
+    # is not the one being modelled) it leaves `...\pkg\` standing, so the fold
+    # is done here where the facts decide it. A ROOT keeps its separator: `/`
+    # is not `` and `C:\` is not `C:`, which is a drive-RELATIVE path and a
+    # different file.
+    if len(out) > 1 and out.endswith(sep):
+        trimmed = out.rstrip(sep)
+        if trimmed and not trimmed.endswith(":"):
+            out = trimmed
+    return out.lower() if facts["case_fold"] else out    # member 3
 
 
 def paths_conflict(a: str, b: str) -> bool:

@@ -3113,20 +3113,54 @@ class QaCycle15(IsolationCase):
         say MAYBE when there is no owner, never NO when there is one. That is
         the whole reason it is safe to put in front of `kernel_proc.lane_owner`
         rather than replacing it, and it is what this asserts, over every
-        relationship a path can have to a lane."""
+        relationship a path can have to a lane.
+
+        QA CYCLE 16 MEASURED THE CLAIM AND IT WAS TWO-THIRDS EMPTY. The body was
+        nine bare paths and an `if owner:`, so a case that stopped having an
+        owner stopped being tested and said nothing about it; and one
+        relationship was missing outright, a path whose live-owned ANCESTOR is a
+        lane, which is the only shape the prefilter's ancestor walk decides.
+        Measured: deleting that walk reddened `test_c13_a_computed_write_target_
+        reaches_a_lane_too` and NOT this test.
+
+        Both halves are closed here. Each case STATES whether a live process
+        owns it, so a case going silent is a failure and not a skip, and a lane
+        on a DIRECTORY creates the ancestor relationship the loop never had.
+        `claim_lane` writes that lane the same way the write gate does.
+        """
         self.hold()
+        held_dir = os.path.join(self.tree, "sub")
+        os.makedirs(os.path.join(held_dir, "deep"))
+        self.assertTrue(kernel_proc.claim_lane("agent-a", held_dir, tree=self.tree))
         gate = _load(BASH_GATE, "bash_gate_prefilter")
         table = kernel_proc.read_ptable()
         maybe = gate._lane_prefilter(table)
         lane = kernel_proc.norm_path(self.a_py)
-        for path in (lane,                                   # the lane itself
-                     os.path.dirname(lane),                  # its directory
-                     os.path.dirname(os.path.dirname(lane)),  # an ancestor
-                     self.tree,                              # the whole tree
-                     os.path.join(self.tree, "pkg", "other.py"),  # a sibling
-                     os.path.join(self.tree, "unrelated"),
-                     "/tmp", "/", os.path.join(self.home, "elsewhere")):
+        # (what the path IS to the lane, the path, is it owned by a live process)
+        cases = (
+            ("the lane itself", lane, True),
+            ("the lane's directory", os.path.dirname(lane), True),
+            ("an ancestor of the lane", os.path.dirname(os.path.dirname(lane)), True),
+            ("the whole tree", self.tree, True),
+            ("the directory the fixture lives in", os.path.dirname(self.home), True),
+            # THE RELATIONSHIP THE LOOP WAS MISSING: the prefilter's exact set
+            # misses it and its bisect finds no lane below it, so only the
+            # ancestor walk can answer MAYBE here.
+            ("under a lane that is a DIRECTORY",
+             os.path.join(held_dir, "deep", "x.py"), True),
+            ("a sibling file", os.path.join(self.tree, "pkg", "other.py"), False),
+            ("an unrelated path in the tree",
+             os.path.join(self.tree, "unrelated"), False),
+            ("a path outside every lane", os.path.join(self.home, "elsewhere"), False),
+            # `/` is owned by NOBODY, and that is `paths_conflict`, not this
+            # prefilter: containment is tested as `b.startswith(a + os.sep)`, so
+            # the root's prefix is `//` and matches no absolute path. Pinned
+            # rather than skipped, because the old `if owner:` hid it.
+            ("the filesystem root", os.sep, False),
+        )
+        for what, path, owned in cases:
             owner, _row = kernel_proc.lane_owner(path, table, ignore="agent-b")
+            self.assertEqual(bool(owner), owned, what + ": " + path)
             if owner:
                 self.assertTrue(maybe(path),
                                 "prefilter hid a real owner of " + path)
@@ -3365,6 +3399,95 @@ class QaCycle15(IsolationCase):
         for command in (f"flock /tmp/octo-c15.lock -c 'rm -f {lane}'",
                         f"script -qc 'rm -f {lane}' /dev/null"):
             self.assertEqual(self.decide(command), "deny", command)
+
+
+class QaCycle16(unittest.TestCase):
+    """The roster one level above the coverage block.
+
+    Cycle 15 made the coverage BLOCK a derivation and asserted it. Cycle 16
+    measured the derivation's input and found the same disease there: the dict
+    naming WHICH tables to derive from was hand-written, so it named 11 of the
+    24 tables that hold program and verb names and the manifest under-reported
+    50 distinct programs behind a docstring that said "every program this file
+    models". These pin the partition itself: every table of strings this module
+    defines is either on a roster line or on the exclusion list with a reason,
+    and a table that is on neither fails the manifest by name."""
+
+    def gate(self, name="bash_gate_roster"):
+        return _load(BASH_GATE, name)
+
+    def variant(self, extra: str, name: str):
+        """The gate, byte for byte, plus `extra` appended at module level.
+
+        A copy rather than an edit in place, because the assertion is about
+        what the FILE says and the file under test has to stay the shipped
+        one."""
+        directory = tempfile.mkdtemp(prefix="roster-variant-")
+        self.addCleanup(shutil.rmtree, directory, True)
+        target = Path(directory) / "variant_gate.py"
+        target.write_text(BASH_GATE.read_text(encoding="utf-8") + extra,
+                          encoding="utf-8")
+        return _load(target, name)
+
+    def test_c16_the_roster_partitions_every_name_table(self):
+        """Nothing unclassified, nothing stale. This is the whole mechanism: a
+        table this module defines that the roster does not mention is a program
+        set reported by nobody, and an entry naming a table that no longer
+        exists is a reason left standing for something that is gone."""
+        unclassified, stale = self.gate().roster_partition()
+        self.assertEqual((unclassified, stale), ([], []))
+
+    def test_c16_the_benign_variant_still_passes(self):
+        """The control for the two fixtures below, and it is the SAME file plus
+        a line that is not a table: a comment. One edit separates it from each
+        violation, so a red there is about the table and not about the copy."""
+        gate = self.variant("\n# a line that classifies nothing\n", "roster_benign")
+        self.assertEqual(gate.roster_partition(), ([], []))
+        self.assertEqual(gate._COVERAGE_BLOCK, gate.coverage_manifest())
+
+    def test_c16_an_unclassified_table_fails_the_manifest(self):
+        """The violation. A new table of program names, classified nowhere,
+        must not print a manifest that quietly omits it."""
+        gate = self.variant('\n_C16_PROBE = ("zzprobe",)\n', "roster_unclassified")
+        self.assertEqual(gate.roster_partition(), (["_C16_PROBE"], []))
+        with self.assertRaises(AssertionError) as caught:
+            gate.coverage_manifest()
+        self.assertIn("_C16_PROBE", str(caught.exception))
+
+    def test_c16_a_stale_roster_entry_fails_the_manifest(self):
+        """The other direction, one edit from the same control: a reason on the
+        exclusion list for a table nobody defines any more."""
+        gate = self.variant('\n_ROSTER_EXCLUSIONS["_C16_GONE"] = "a table that left"\n',
+                            "roster_stale")
+        self.assertEqual(gate.roster_partition(), ([], ["_C16_GONE"]))
+        with self.assertRaises(AssertionError) as caught:
+            gate.coverage_manifest()
+        self.assertIn("_C16_GONE", str(caught.exception))
+
+    def test_c16_every_rostered_table_reaches_the_block(self):
+        """The property the roster exists for: every member of every table on a
+        roster line is printed. Asserted against the generated block, so a
+        table dropped from `_ROSTER` fails here as well as at the partition."""
+        gate = self.gate("bash_gate_roster_members")
+        printed = set()
+        for line in gate._COVERAGE_BLOCK.replace("\\\n", " ").splitlines():
+            printed.update(line.split(":", 1)[-1].split())
+        for label, tables in gate._ROSTER.items():
+            for table in tables:
+                for member in gate._table_members(getattr(gate, table)):
+                    self.assertIn(member, printed, table + " -> " + member)
+
+    def test_c16_the_six_tables_the_manifest_used_to_omit(self):
+        """The regression itself, named. Each of these is a program the
+        dispatch models and the block did not mention: `shred` is an
+        `_EXEC_MUTATORS` mutator, the interpreters are `_CODE_HOSTS` and
+        `_C_HOSTS`, `make`/`npm` are `_SCRIPT_RUNNERS`, `copyto` is a
+        `_REMOTE_COPY_VERBS` verb and `ksh` is a `_STDIN_FLAGS` host."""
+        gate = self.gate("bash_gate_roster_regression")
+        for program in ("shred", "bash", "node", "perl", "python3", "deno",
+                        "make", "npm", "cargo", "mvn", "copyto", "download",
+                        "ksh"):
+            self.assertIn(program, gate._COVERAGE_BLOCK, program)
 
 
 class SharedParserConvergence(unittest.TestCase):
