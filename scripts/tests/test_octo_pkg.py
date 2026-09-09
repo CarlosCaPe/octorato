@@ -61,6 +61,7 @@ def _sp(args, **kw):
 
 
 octo_pkg = _load("octo_pkg_under_test", SCRIPTS / "octo_pkg.py")
+proc_group_mod = _load("proc_group_under_test", SCRIPTS / "proc_group.py")
 gen = _load("gen_skill_manifests_under_test", SCRIPTS / "gen_skill_manifests.py")
 
 
@@ -3875,7 +3876,7 @@ class TestNoChildWaitsForAHuman(SandboxCase):
                              closed stdin does nothing for it
       start_new_session      no controlling terminal at all, which is what ends ssh's
                              host-key question (it opens /dev/tty itself, through both
-                             of the above), and what makes the kill below a GROUP kill
+                             of the above), and what makes the kill a GROUP kill
       the deadline           the channel none of the above names, and the only one
                              that does not depend on having enumerated correctly
 
@@ -3884,18 +3885,34 @@ class TestNoChildWaitsForAHuman(SandboxCase):
       octo_pkg._run                        ssh-keygen, git clone, the sync child
       install-skill-from-github._run_git   every clone of a GitHub skill, https and ssh
 
-    A third, brain_doctor.run, was measured with the same defect on the pre-push path
-    where the prompt wedges a push with no output at all. It is not covered here
-    because it is not this change's file.
+    ONE group kill, in scripts/proc_group.py, imported by both. Not a shared helper for
+    tidiness: the copy that used to live in the installer called killpg with no guard,
+    and when a mutant removed the start_new_session two lines above it, the call did not
+    fail a test, it SIGKILLed the test runner. A kill that can reach the caller is not
+    something to implement twice.
 
-    What "measured RED" means for this class, stated so the next reader can re-run it:
-    twelve mutants, each reverting ONE mechanism in ONE spawner, against a no-op
-    control that stayed green, and every one of them is killed by a test below. Two
-    findings came out of that battery rather than out of review: the grandchild test
-    was passing while the grandchild was alive (its marker was in the shell's command
-    line, not the survivor's argv), and removing start_new_session did not fail the
-    suite, it killed the runner, because the group kill then names the runner's own
-    group. Both are fixed and both are pinned.
+    A third spawner, brain_doctor.run, was measured with the same defect on the pre-push
+    path. It is not covered here because it is not this change's file.
+
+    WHAT "measured RED" MEANS HERE, enumerated so the claim can be re-run rather than
+    believed. Seventeen mutants, each reverting ONE mechanism, against a control that
+    was green at both ends of the run:
+
+      pkg-stdin-live            pkg-no-setsid           pkg-kill-child-only
+      pkg-no-deadline           pkg-ceiling-none        pkg-no-git-prompt
+      pkg-no-unlink             pkg-no-clone-cleanup
+      ins-stdin-live            ins-no-setsid           ins-no-killpg
+      ins-no-timeout            ins-no-git-prompt
+      shared-no-guard           shared-sigterm          shared-group-gone-blind
+
+    Every one is killed by a test in this class. Four of them were found SURVIVING
+    first, which is the only reason the tests they now fail exist: the installer had no
+    grandchild test at all, the guard fired in no test because production never shares a
+    group, the survivor check was never asked, and the signal choice was pinned by
+    nothing. Two more findings came from the battery rather than from review: the
+    grandchild test was passing while the grandchild was alive (its marker was in the
+    shell's command line, not the survivor's argv), and `test -r /dev/tty` only stats a
+    path every process can stat, so the terminal probe has to open the device.
     """
 
     TTL = 45          # a child of this class that is still alive is a failed child
@@ -4053,24 +4070,11 @@ class TestNoChildWaitsForAHuman(SandboxCase):
         clone` over ssh, where the grandchild is `ssh` and it is the one holding the
         terminal; `sh -c` reproduces it with no network and no keys.
         """
-        # The marker has to be in the GRANDCHILD's own argv, not in the shell's command
-        # line: with `sh -c "sleep 300 & exec sleep 300 # marker"` the survivor is a
-        # bare `sleep 300` and pgrep finds nothing, so this test passed while the
-        # grandchild was alive. It is a python child precisely because a trailing
-        # argument survives into its cmdline, where pgrep can see it.
         marker = f"octo-pkg-grandchild-{os.getpid()}"
-        sleeper = f"{sys.executable} -c 'import time; time.sleep(300)' {marker}"
+        sleeper = self._sleeper(marker)
         cp = octo_pkg._run(["sh", "-c", f"{sleeper} & exec {sleeper}"], timeout=2)
         self.assertEqual(cp.returncode, 124, (cp.stderr or b"").decode())
-        found = subprocess.run(["pgrep", "-f", marker], capture_output=True, text=True,
-                               stdin=subprocess.DEVNULL, timeout=30)
-        survivors = [pid for pid in found.stdout.split() if pid]
-        for pid in survivors:                      # never leave the box dirtier
-            try:
-                os.kill(int(pid), signal_module.SIGKILL)
-            except (ProcessLookupError, ValueError):
-                pass
-        self.assertEqual(survivors, [],
+        self.assertEqual(self._survivors(marker), [],
                          "_run reported 124 while a grandchild was still running: the "
                          "deadline killed the direct child and left its tree behind")
 
@@ -4114,6 +4118,203 @@ class TestNoChildWaitsForAHuman(SandboxCase):
         out = self._finish(proc, "install-skill-from-github._run_git reading stdin")
         self.assertIn("RETURNED 0", out)
         self.assertTrue(hasattr(gh, "_GIT_TIMEOUT"))
+
+    def _sleeper(self, marker: str) -> str:
+        """A command whose MARKER survives into the grandchild's own argv.
+
+        It has to be a python child, not `sleep`: with `sh -c "sleep 300 & exec sleep
+        300 # marker"` the survivor's cmdline is a bare `sleep 300` and pgrep finds
+        nothing, so the test passed while the grandchild was alive. A trailing argument
+        to `python -c` lands in sys.argv and therefore in the cmdline.
+        """
+        return f"{sys.executable} -c 'import time; time.sleep(300)' {marker}"
+
+    def _survivors(self, marker: str) -> list:
+        found = subprocess.run(["pgrep", "-f", marker], capture_output=True, text=True,
+                               stdin=subprocess.DEVNULL, timeout=30)
+        alive = [pid for pid in found.stdout.split() if pid]
+        for pid in alive:                          # never leave the box dirtier
+            try:
+                os.kill(int(pid), signal_module.SIGKILL)
+            except (ProcessLookupError, ValueError):
+                pass
+        return alive
+
+    def test_the_installers_deadline_ends_the_whole_tree_too(self):
+        """The installer is the spawner that clones over ssh, so it is the one where an
+        orphaned grandchild matters most, and it had no grandchild test at all: the
+        mutant that removed its group kill survived the whole suite."""
+        gh = octo_pkg._github_module()
+        original = gh._GIT_TIMEOUT
+        gh._GIT_TIMEOUT = 2.0
+        self.addCleanup(setattr, gh, "_GIT_TIMEOUT", original)
+        marker = f"octo-ins-grandchild-{os.getpid()}"
+        sleeper = self._sleeper(marker)
+        with self.assertRaises(gh.InstallError):
+            gh._run_git(["sh", "-c", f"{sleeper} & exec {sleeper}"])
+        self.assertEqual(self._survivors(marker), [],
+                         "the installer reported a timeout while a grandchild was "
+                         "still running: it killed the direct child and left its tree")
+
+    def test_the_kill_is_a_signal_a_child_cannot_ignore(self):
+        """Which signal is not a detail: a shell that traps TERM outlives it and the
+        call still reports a kill. Pinned with a child that traps exactly that."""
+        marker = f"octo-pkg-trapper-{os.getpid()}"
+        sleeper = self._sleeper(marker)
+        cp = octo_pkg._run(["sh", "-c", f"trap '' TERM; {sleeper} & exec {sleeper}"],
+                           timeout=2)
+        self.assertEqual(cp.returncode, 124)
+        self.assertEqual(self._survivors(marker), [],
+                         "a child that ignores SIGTERM survived the deadline: the "
+                         "signal is catchable and the kill is advisory")
+
+    def test_an_explicit_none_timeout_is_documented_as_unbounded(self):
+        """`timeout=None` means NO ceiling. That is a real escape hatch and no caller in
+        this module uses it, which is exactly why it is pinned: the next person who
+        types it should find a test saying what it does, not discover an unbounded
+        child in production."""
+        original = octo_pkg._RUN_TIMEOUT
+        octo_pkg._RUN_TIMEOUT = 0.5
+        self.addCleanup(setattr, octo_pkg, "_RUN_TIMEOUT", original)
+        sleeps_two = [sys.executable, "-c", "import time; time.sleep(2)"]
+        self.assertEqual(octo_pkg._run(sleeps_two).returncode, 124,
+                         "the default ceiling did not apply")
+        self.assertEqual(octo_pkg._run(sleeps_two, timeout=None).returncode, 0,
+                         "timeout=None is documented as unbounded; it now bounds")
+
+    def test_a_killed_clone_does_not_poison_the_retry(self):
+        """install_arm refuses a destination that exists, and a KILLED git leaves a
+        partial one, so without a cleanup the first timeout makes every later attempt
+        die on "destination already exists" instead of on the real reason.
+
+        The premise is measured, not assumed: a real clone killed by this module's own
+        deadline left the destination behind holding a .git at every ceiling tried
+        (0.02 s, 0.05 s, 0.15 s). The opposite is also measured and is why the seam is
+        driven here rather than with a bad URL: a git that fails GRACEFULLY removes its
+        own destination (no such repo, source not a repo, source is a file, all three
+        leave nothing), so a test built on one of those passes with the cleanup deleted.
+
+        _run is replaced for one call to reproduce the measured post-kill state exactly.
+        What is under test is install_arm's contract, not git's behaviour.
+        """
+        target = self.tmp / "arm-dest"
+        real_run = octo_pkg._run
+
+        def killed_mid_clone(args, **kwargs):
+            if args[:2] == ["git", "clone"]:
+                Path(args[-1]).mkdir(parents=True, exist_ok=True)
+                (Path(args[-1]) / ".git").mkdir(exist_ok=True)   # what git leaves
+                return subprocess.CompletedProcess(
+                    args, 124, b"", b"oct-pkg: killed after 600.0s: git clone")
+            return real_run(args, **kwargs)
+
+        octo_pkg._run = killed_mid_clone
+        self.addCleanup(setattr, octo_pkg, "_run", real_run)
+        with self.assertRaises(octo_pkg.PkgError) as failed:
+            octo_pkg.install_arm(self.brain, "https://example.invalid/arm.git",
+                                 dest=str(target))
+        self.assertIn("clone failed", str(failed.exception))
+        self.assertFalse(target.exists(),
+                         f"the killed clone left {target} behind, so every retry now "
+                         f"dies on 'destination already exists' instead of the reason")
+
+    def test_the_group_kill_refuses_to_kill_its_own_group(self):
+        """The guard, tested where it actually fires.
+
+        In normal operation it never fires: the spawner passes start_new_session, so the
+        child always leads its own group and the comparison is always false. That is
+        why removing the guard survived every other test in this class. It matters in
+        exactly one case, and that case is a REGRESSION in the spawner rather than a
+        runtime input, which is the case worth pinning: a child spawned WITHOUT its own
+        session shares ours, and an unguarded killpg then SIGKILLs the caller, its
+        runner and every sibling. Measured that way twice before the guard existed:
+        the mutant did not fail the suite, it killed it, exit -9, no summary printed.
+
+        The probe is sacrificial and sealed in its own session, so a missing guard kills
+        the probe instead of this test process, and its death by signal is the failure
+        signal rather than a dead runner. Without that containment this test cannot
+        report anything, because the reporter would be dead.
+        """
+        prog = (
+            "import os, subprocess, sys\n"
+            f"sys.path.insert(0, {str(SCRIPTS)!r})\n"
+            "import proc_group\n"
+            # a child in the PROBE's own group: exactly the shape the guard is for
+            "kid = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'],\n"
+            "                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,\n"
+            "                       stderr=subprocess.DEVNULL)\n"
+            "same = os.getpgid(kid.pid) == os.getpgid(0)\n"
+            "landed = proc_group.kill_group(kid)\n"
+            "kid.wait(timeout=10)\n"
+            "print('SHARED', same, 'GROUPKILL', landed, flush=True)\n")
+        proc = subprocess.Popen([sys.executable, "-c", prog], stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                start_new_session=True)
+        try:
+            out, err = proc.communicate(timeout=self.TTL)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.communicate(timeout=self.TTL)
+            self.fail("the guard probe never returned")
+        self.assertGreaterEqual(
+            proc.returncode, 0,
+            "the probe was killed by signal %d: kill_group fired on a group it shares "
+            "with the caller, which in production is the caller's own group"
+            % -proc.returncode)
+        text = out.decode("utf-8", "replace")
+        self.assertIn("SHARED True", text,
+                      f"the probe never reproduced the shared-group case: {text!r} "
+                      f"{err.decode('utf-8', 'replace')[-200:]!r}")
+        self.assertIn("GROUPKILL False", text,
+                      "kill_group reported a GROUP kill on the caller's own group; it "
+                      "must fall back to killing the direct child only")
+
+    def test_a_group_with_a_live_member_is_not_reported_as_gone(self):
+        """The survivor check, which decides whether a timeout warns or stays quiet.
+
+        It replaced an inference from whether the output pipe was still held, and that
+        inference answered a different question: a survivor that had closed its pipe
+        came back as a clean 124 with nothing said. A check nobody tests is the same
+        silence one layer down, so this asks it both ways round the kill.
+        """
+        proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"],
+                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, start_new_session=True)
+        self.addCleanup(proc.kill)
+        group = proc_group_mod.group_of(proc)
+        self.assertIsNotNone(group)
+        self.assertFalse(proc_group_mod.group_gone(proc, group),
+                         "a group whose member is still running was reported gone, so "
+                         "a survivor would come back as a clean timeout")
+        proc_group_mod.kill_group(proc)
+        proc.wait(timeout=self.TTL)
+        self.assertTrue(proc_group_mod.group_gone(proc, group),
+                        "the group was reported alive after everything in it was "
+                        "killed, which would warn on every single timeout")
+
+    def test_there_is_exactly_one_group_kill_in_the_tree(self):
+        """The second copy is the defect, so the count is the test.
+
+        This started as two implementations that disagreed about one line, the guard,
+        and the one without it SIGKILLed the runner when a mutant removed the flag it
+        silently depended on. Fixing the copy is not the same as preventing the next
+        one: a reviewer has to notice a new `killpg` to stop it, and nobody noticed the
+        first. Counting is mechanical, so it is done here.
+        """
+        offenders = []
+        for path in sorted(list(BRAIN.glob("scripts/*.py"))
+                           + list(BRAIN.glob("skills/*/scripts/*.py"))):
+            if path.name == "proc_group.py":
+                continue
+            for number, line in enumerate(
+                    path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+                bare = line.strip()
+                if "killpg" in bare and not bare.startswith("#"):
+                    offenders.append(f"{path.relative_to(BRAIN)}:{number}: {bare[:70]}")
+        self.assertEqual(offenders, [],
+                         "a second group kill has appeared outside proc_group.py, "
+                         "which is where the one guarded implementation lives:\n"
+                         + "\n".join(offenders))
 
     def test_neither_spawner_gives_its_child_a_controlling_terminal(self):
         """What start_new_session buys, tested as the property and not as a side effect.

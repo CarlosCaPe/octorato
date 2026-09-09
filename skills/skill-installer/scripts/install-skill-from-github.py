@@ -7,7 +7,6 @@ import argparse
 from dataclasses import dataclass
 import os
 import shutil
-import signal
 import subprocess
 import sys
 import tempfile
@@ -15,6 +14,10 @@ import urllib.error
 import urllib.parse
 import zipfile
 
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "scripts"))
+
+import proc_group  # noqa: E402  (the single group-kill implementation)
 from github_utils import github_request
 DEFAULT_REF = "main"
 
@@ -138,13 +141,11 @@ def _run_git(args: list[str]) -> None:
     try:
         _out, err = proc.communicate(timeout=_GIT_TIMEOUT)
     except subprocess.TimeoutExpired:
-        if hasattr(os, "killpg"):
-            try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            except (ProcessLookupError, PermissionError, OSError):
-                proc.kill()
-        else:
-            proc.kill()
+        # Through the shared primitive, never a second copy. The copy that used to live
+        # here called killpg with no guard: when a mutant removed the start_new_session
+        # above, the child shared this process's group and the call SIGKILLed the test
+        # runner instead of failing a test.
+        proc_group.kill_group(proc)
         try:
             proc.communicate(timeout=_REAP_GRACE)
         except subprocess.TimeoutExpired:

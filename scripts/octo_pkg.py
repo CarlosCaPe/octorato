@@ -88,6 +88,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import proc_group  # noqa: E402  (sibling leaf; see scripts/proc_group.py)
+
 # Force UTF-8 on stdout/stderr so the check glyphs survive on Windows shells that
 # start in cp1252. Same preamble as the rest of the brain's scripts.
 #
@@ -204,36 +208,6 @@ _CEILING = object()
 _REAP_GRACE = 10.0
 
 
-def _kill_group(proc) -> bool:
-    """SIGKILL the child's whole process group. True when the group call was the one
-    that landed, False when it fell back to the direct child.
-
-    The group, not the child, because the child is often a shell or a porcelain command
-    that has forked its own worker: `git clone` over ssh runs `ssh` as a grandchild, and
-    that grandchild is the one holding the terminal. Killing only the child leaves it
-    running, still attached to the prompt, which is the exact wedge this module is
-    trying to end. Measured before this existed: `sh -c 'sleep 300 & exec sleep 300'`
-    came back rc 124 with the backgrounded grandchild still alive.
-    """
-    if hasattr(os, "killpg"):
-        try:
-            group = os.getpgid(proc.pid)
-            # Only if it is the child's OWN group. A group kill is safe exactly because
-            # start_new_session put the child in a group of its own; if that ever comes
-            # off, the child shares OUR group and this line SIGKILLs the caller, the
-            # test runner, and every sibling. Measured the hard way: the mutant that
-            # removed start_new_session did not fail the suite, it killed it, exit 137.
-            # The two mechanisms are coupled, so the coupling is checked here, not
-            # assumed one function away.
-            if group != os.getpgid(0):
-                os.killpg(group, signal.SIGKILL)
-                return True
-        except (ProcessLookupError, PermissionError, OSError):
-            pass
-    proc.kill()          # Windows, a group already gone, or a child sharing our own
-    return False
-
-
 def _run(args: list[str], cwd: Path | None = None, stdin_bytes: bytes | None = None,
          timeout=_CEILING):
     """Run a child with a dead stdin, no controlling terminal, and a deadline.
@@ -261,8 +235,18 @@ def _run(args: list[str], cwd: Path | None = None, stdin_bytes: bytes | None = N
 
     On timeout the call returns rc 124, the shape coreutils `timeout` uses, so it reads
     as an ordinary failure. Not every caller in this module branches on the return code
-    (the arm-install sync child does not, and neither do three selftest calls), so 124
-    is not universally acted on here; that is pre-existing and not made worse by this.
+    (the arm-install sync child at the end of install_arm does not, and neither do three
+    selftest calls), so 124 is not universally acted on here; that is pre-existing and
+    not made worse by this.
+
+    `timeout=None` is a real escape hatch and means NO ceiling. No caller in this module
+    passes it. It is spelled out here and pinned by a test because the next person who
+    types it should find out from the docs rather than from an unbounded child.
+
+    What the kill reaches is the process GROUP, which is not the process tree: a
+    descendant that moves itself into a new session or group survives and is reported as
+    an ordinary 124. See scripts/proc_group.py, which owns the one implementation and
+    the one guard; there is deliberately no second copy of this in the installer.
     """
     if timeout is _CEILING:
         timeout = _RUN_TIMEOUT
@@ -279,14 +263,18 @@ def _run(args: list[str], cwd: Path | None = None, stdin_bytes: bytes | None = N
         out, err = proc.communicate(input=stdin_bytes, timeout=timeout)
         return subprocess.CompletedProcess(args, proc.returncode, out, err)
     except subprocess.TimeoutExpired as expired:
-        whole_group = _kill_group(proc)
+        group = proc_group.group_of(proc)          # read BEFORE the kill; pid is reaped after
+        killed_group = proc_group.kill_group(proc)
         try:
             out, err = proc.communicate(timeout=_REAP_GRACE)
         except subprocess.TimeoutExpired:
             out, err = expired.stdout or b"", expired.stderr or b""
-            whole_group = False
         note = f"\noct-pkg: killed after {timeout}s: {' '.join(args[:3])}"
-        if not whole_group:
+        # Asked, not inferred. This used to warn when the output pipe was still held,
+        # which is a different question: a survivor that closed its pipe came back as a
+        # clean 124 with nothing said. Note the reach: a descendant that moved itself
+        # into another session is not in this group and is invisible here too.
+        if not killed_group or not proc_group.group_gone(proc, group):
             note += " (process group not confirmed dead; check for leftovers)"
         return subprocess.CompletedProcess(args, 124, out or b"", (err or b"") + note.encode())
 
@@ -1389,6 +1377,12 @@ def install_arm(brain: Brain, source: str, dest: str | None) -> int:
     else:
         cp = _run(["git", "clone", source, str(target)])
     if cp.returncode != 0:
+        # git leaves the partial checkout behind when it is killed, and this function
+        # refuses a destination that exists, so without this a timed-out clone poisons
+        # every retry with "destination path already exists". Measured on the kill path
+        # (rc 124): the target survived holding a .git. The manifest branch below has
+        # always cleaned up after itself; this one had not.
+        shutil.rmtree(target, ignore_errors=True)
         raise PkgError("clone failed: " + (cp.stderr or b"").decode("utf-8", "replace").strip())
 
     try:
