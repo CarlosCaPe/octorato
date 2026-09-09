@@ -14,6 +14,10 @@ import urllib.error
 import urllib.parse
 import zipfile
 
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "scripts"))
+
+import proc_group  # noqa: E402  (the single group-kill implementation)
 from github_utils import github_request
 DEFAULT_REF = "main"
 
@@ -96,10 +100,82 @@ def _download_repo_zip(owner: str, repo: str, ref: str, dest_dir: str) -> str:
     return os.path.join(dest_dir, next(iter(top_levels)))
 
 
+# Ceiling on a git child. The clones here are shallow and blob-filtered, so a child
+# still alive after this has stopped fetching and started waiting.
+#
+# Chosen, not derived. Measured reference: the exact clone shape below, against a 29 MB
+# repository on a 4-core box at load 18, took 3.7 s. The ceiling is ~160x that. It has
+# not been measured against a large repository or a throttled link, so it is deliberate
+# headroom: a ceiling that cuts a slow but correct fetch would be worse than no ceiling.
+_GIT_TIMEOUT = 600.0
+
+# Grace for reaping a group that was just SIGKILLed. A task that does not go in this
+# long is in uninterruptible sleep and cannot be killed from user space at all; the
+# reap is abandoned rather than waited on, so this function cannot itself hang.
+_REAP_GRACE = 10.0
+
+
 def _run_git(args: list[str]) -> None:
-    result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    if result.returncode != 0:
-        raise InstallError(result.stderr.strip() or "Git command failed.")
+    """Run one git command with no way to wait on a human, and no way to outlive us.
+
+    Three channels, measured separately, because closing one does nothing for the
+    others: a credential prompt for a repo that answers 401 goes to /dev/tty, so it
+    hangs with stdin closed and needs GIT_TERMINAL_PROMPT=0; a prompt that reads stdin
+    is stopped by DEVNULL and not by the env; and ssh's host-key question ("Are you sure
+    you want to continue connecting?") hangs through BOTH, because ssh opens /dev/tty
+    itself, and is ended by start_new_session, which leaves the child no controlling
+    terminal to open. That third one matters here specifically: this function clones
+    over ssh as well as https.
+
+    start_new_session also makes the kill below a GROUP kill, which is the difference
+    between reporting a timeout and actually ending one. `git clone` over ssh runs ssh
+    as a grandchild, and killing only the direct child leaves that grandchild alive on
+    the prompt: measured, rc 124 returned while ssh was still running and still holding
+    the terminal.
+
+    What the kill reaches is the process GROUP, not the process tree: a descendant that
+    moves itself into another session survives and is not visible to the check below
+    either, so the refusal will call it killed. That is the same limit octo_pkg._run
+    carries, stated here too because a reader of this function should not have to find
+    it in the other one.
+    """
+    env = dict(os.environ)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            stdin=subprocess.DEVNULL, text=True, env=env,
+                            start_new_session=True)
+    try:
+        _out, err = proc.communicate(timeout=_GIT_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        # Through the shared primitive, never a second copy. The copy that used to live
+        # here called killpg with no guard: when a mutant removed the start_new_session
+        # above, the child shared this process's group and the call SIGKILLed the test
+        # runner instead of failing a test.
+        # Read before the reap, not before the kill: getpgid still answers for a
+        # zombie. Once communicate() has reaped it, group_of returns None and the
+        # check below can only ever say "nothing to warn about".
+        group = proc_group.group_of(proc)
+        landed = proc_group.kill_group(proc)
+        try:
+            proc.communicate(timeout=_REAP_GRACE)
+        except subprocess.TimeoutExpired:
+            # A descendant that left the group still holds the pipe, so this expires
+            # with the child dead and unreaped. An unreaped child is a zombie, a zombie
+            # is still in the group, and the check below would then call a clean kill
+            # "not confirmed dead". Same line, same reason, as octo_pkg._run.
+            try:
+                proc.wait(timeout=_REAP_GRACE)
+            except subprocess.TimeoutExpired:
+                pass
+        # Say whether the kill actually emptied the group. Without this the message
+        # reads "was killed" while a survivor is still running, which is the same
+        # wrong-cause sentence this whole function exists to stop.
+        left = "" if (landed and proc_group.group_gone(proc, group)) else \
+            " (process group not confirmed dead; check for leftovers)"
+        raise InstallError(f"git took longer than {_GIT_TIMEOUT:.0f}s and was killed: "
+                           + " ".join(args[:3]) + left)
+    if proc.returncode != 0:
+        raise InstallError((err or "").strip() or "Git command failed.")
 
 
 def _safe_extract_zip(zip_file: zipfile.ZipFile, dest_dir: str) -> None:
@@ -126,7 +202,13 @@ def _validate_skill_name(name: str) -> None:
 
 
 def _git_sparse_checkout(repo_url: str, ref: str, paths: list[str], dest_dir: str) -> str:
-    repo_dir = os.path.join(dest_dir, "repo")
+    # A FRESH directory per attempt. git clone refuses a non-empty destination, and
+    # this function is called more than once against the same dest_dir: the caller
+    # retries https then ssh, and the branch clone below retries without --branch. With
+    # a shared "repo" path every retry died with "destination path already exists",
+    # which masked the real failure (auth, missing ref) behind a filesystem message.
+    repo_dir = tempfile.mkdtemp(prefix="clone-", dir=dest_dir)
+    os.rmdir(repo_dir)
     clone_cmd = [
         "git",
         "clone",
@@ -143,6 +225,9 @@ def _git_sparse_checkout(repo_url: str, ref: str, paths: list[str], dest_dir: st
     try:
         _run_git(clone_cmd)
     except InstallError:
+        # Second attempt (repo default branch): its own empty directory, same reason.
+        if os.path.exists(repo_dir):
+            shutil.rmtree(repo_dir, ignore_errors=True)
         _run_git(
             [
                 "git",

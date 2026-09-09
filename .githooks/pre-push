@@ -333,4 +333,36 @@ if ! "$PYTHON" "$REPO_ROOT/scripts/capability_manifest.py" --check >/dev/null 2>
   exit 1
 fi
 
+# OCTORATO-PACKAGE-GATE: RULE #1 extended to installed code (v8 PACKAGE).
+# `octo pkg verify --all` asserts every entry in packages.lock.json is still what was
+# signed: tree hash, ssh-keygen -Y signature and symlink. A skill lives in the
+# always-on discovery path, so a package that drifted from its signature is code the
+# brain runs on every prompt without anyone having approved those bytes.
+# Called through the script, never through the `octo` thunk: the thunk is a per-machine
+# file that install-runners.py writes, and a gate may not depend on one. --brain pins the
+# checkout being pushed: without it a CLAUDE_DIR in the environment repoints the gate at
+# another brain, and it would verify someone else's lock while this one goes out.
+# Only the FAIL tier blocks (exit 1): an entry merely absent on disk is a WARN and
+# exits 0, so a second machine that pulled the lock offline can still push an
+# unrelated change.
+if [ -f "$REPO_ROOT/scripts/octo_pkg.py" ]; then
+  if [ -z "$PYTHON" ]; then
+    {
+      echo ""
+      echo "✗ pre-push: no working Python found; the package gate requires Python."
+    } >&2
+    exit 1
+  fi
+  if ! "$PYTHON" "$REPO_ROOT/scripts/octo_pkg.py" --brain "$REPO_ROOT" verify --all >/dev/null 2>&1; then
+    {
+      echo ""
+      echo "✗ pre-push: an installed package is NOT what was signed."
+      "$PYTHON" "$REPO_ROOT/scripts/octo_pkg.py" --brain "$REPO_ROOT" verify --all 2>&1 | sed 's/^/  /'
+      echo ""
+      echo "  Inspect it, then reinstall from the lock, and re-push."
+    } >&2
+    exit 1
+  fi
+fi
+
 exit 0

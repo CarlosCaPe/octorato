@@ -63,6 +63,19 @@ knowledge/
 #   mv skills/learned/<slug> skills/<slug>
 # Drafts are unreviewed scaffolds; pushing them would pollute the public connectome
 # with provisional content. This rule is the canonical companion of skills/learned/
+
+# Installed packages (v8 PACKAGE). A vendored skill is a third party's code living
+# in the always-on discovery path; it belongs to packages.lock.json (tracked), not to
+# this repo's tree. `octo pkg sync` restores it from the lock on every machine, so
+# committing the bytes would fork the package from its signature. The symlink at
+# skills/<name> is excluded per machine in .git/info/exclude by the installer.
+skills/vendor/
+agents/vendor/
+# packages.lock.json.<pid>.tmp (atomic replace) and packages.lock.json.lock
+# (the advisory guard octo_pkg holds around load-modify-save). Both are
+# per-process scratch beside a tracked file; neither is ever committed.
+*.tmp
+packages.lock.json.lock
 # (see skills/session-learn-extractor/SKILL.md).
 skills/learned/
 

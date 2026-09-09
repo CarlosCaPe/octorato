@@ -1,0 +1,9 @@
+{
+  "kind": "arm",
+  "name": "{{ARM_SLUG}}",
+  "version": "1.0.0",
+  "license": "proprietary",
+  "description": "{{ONE_LINE_DESCRIPTION}}",
+  "dependencies": {},
+  "homepage": "{{ARM_REPO_URL}}"
+}

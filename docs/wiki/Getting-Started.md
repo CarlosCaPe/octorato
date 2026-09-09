@@ -222,6 +222,84 @@ python3 ~/.claude/scripts/query_connectome.py query "deploy a Svelte app to Clou
 
 That ranks every agent and skill by similarity to your task — the same lookup the agent runs internally.
 
+### How to install a skill someone else wrote
+
+Skills you install run on every prompt, so the brain treats one as a package, not as a
+copied folder. Run these from your brain checkout (`cd ~/.claude`):
+
+```bash
+python3 scripts/octo_pkg.py list
+python3 scripts/octo_pkg.py verify --all
+```
+
+`list` shows what is installed, `verify --all` re-checks every entry. Installing takes a
+source in any of four spellings: a GitHub URL like
+`https://github.com/<owner>/<repo>/tree/<ref>/skills/<name>` paired with
+`--path skills/<name>`, an `<owner>/<repo>` pair with `--path`, a git repository (a
+remote URL or a local path), or a plain directory holding the package. There is nothing
+to install yet from a public source, because a package has to be signed by a principal
+you trust before it is allowed in; the next section builds and installs one end to end,
+which is also the fastest way to see the checks fire.
+
+Before a single byte is copied, the installer validates the package's `skill.json`,
+recomputes a hash over every file in the tree and compares it to the one the manifest
+claims, then checks the detached signature with `ssh-keygen -Y verify` against the
+principals in `registry/pkg-signers.pub`. Anything that does not line up is refused and
+nothing is written, so an unsigned or drifted package never reaches your skills
+directory. What lands is `skills/vendor/<name>` plus a `skills/<name>` symlink, both kept
+out of git, and a row in the tracked `packages.lock.json`.
+
+That row is what makes a second machine reproducible: `ai-pull` runs `octo pkg sync`,
+which reinstalls from the lock and verifies. `brain_doctor` reports the same ladder as
+`packages-verified`, and pre-push refuses to publish while an installed package has
+drifted from what was signed. `verify` also sweeps `skills/vendor` on disk, so a tree
+sitting there with no row in the lock is a failure and not a silence: deleting the row
+does not delete the check.
+
+### How to publish a skill of your own
+
+Four steps, and every line below runs as written from the brain checkout. It uses a
+throwaway key and a copy of the sample package under `/tmp`, so nothing in your repo is
+touched.
+
+```bash
+cp -r registry/fixtures/META.kernel-package/signed /tmp/my-skill
+python3 scripts/octo_pkg.py hash /tmp/my-skill --write
+ssh-keygen -t ed25519 -N "" -C my-release -f /tmp/my-release-key
+ssh-keygen -Y sign -f /tmp/my-release-key -n octorato-pkg /tmp/my-skill/skill.json
+```
+
+`hash --write` computes the tree hash with the same function the installer will use and
+embeds it as `tree_sha256`; computing it any other way guarantees a refusal nobody can
+read. It also deletes any `skill.json.sig` sitting there, and that deletion matters more
+than it looks: `ssh-keygen -Y sign` asks before overwriting an existing `.sig`, and with
+no terminal to answer (a script, a CI step, a heredoc) it declines, keeps the OLD
+signature and still exits 0. Re-signing an edited package would silently ship a
+signature made over a manifest nobody has. So always re-run `hash --write` before
+signing again, never `ssh-keygen -Y sign` on its own.
+
+`ssh-keygen -Y sign` needs `-f <your private key>` and the `octorato-pkg` namespace, and
+writes the detached `skill.json.sig` beside the manifest. Ship both.
+
+To install what you just signed, your principal has to be trusted. Add its public line
+to the gitignored `company/config/pkg-signers` (one line, `<principal> <keytype>
+<base64>`, no email and no hostname), then install from the directory:
+
+```bash
+mkdir -p company/config
+awk '{print "my-release " $1 " " $2}' /tmp/my-release-key.pub >> company/config/pkg-signers
+python3 scripts/octo_pkg.py install /tmp/my-skill
+python3 scripts/octo_pkg.py verify --all
+python3 scripts/octo_pkg.py uninstall sample-package
+```
+
+Start a real package from `templates/skill/skill.json.template`. The `octorato-release`
+principal in `registry/pkg-signers.pub` is the project's own; adopters add their own
+principals in that private file rather than editing the tracked one.
+
+An unsigned third-party skill is still installable, on the Codex `--dest` path of the
+`skill-installer` skill, outside the lock and without any claim that it was verified.
+
 ### How to activate an agent
 
 Agents are specialist personas (the neurons). Activate one by name:
