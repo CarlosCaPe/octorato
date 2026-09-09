@@ -242,19 +242,40 @@ _TRANSLATE = str.maketrans({
 })
 # A comment fence at the edge of a line. A license shipped inside a source file (`//`,
 # `#`, ` * `, `<!-- -->`, a Python docstring) is the same license.
-_FENCE_HEAD = re.compile(r"^[ \t]*(?:/\*+|\*+/|//+|<!--|-->|\"\"\"|'''|;+|%+|--(?=\s)|\#+|\*(?!\S))[ \t]*")
+_FENCE_HEAD = re.compile(
+    r"^(?:[ \t]*(?:/\*+|\*+/|//+|<!--|-->|\"\"\"|'''|;+|%+|--(?=\s)|\#+|\*(?!\S)))+[ \t]*")
 _FENCE_TAIL = re.compile(r"[ \t]*(?:\*/|-->|\"\"\"|''')[ \t]*$")
 _WORD = re.compile(r"[0-9]+|[a-z]+")
+# Any letter in ANY script, which is how a line is told from a rule or a blank.
+_ANY_LETTER = re.compile(r"[^\W\d_]", re.UNICODE)
 _INTRA_HYPHEN = re.compile(r"(?<=[a-z])-(?=[a-z])")
 
 
 def _unfence(line: str) -> str:
-    """One line with its comment/markup fence removed."""
-    prev = None
+    """One line with its comment/markup fence removed.
+
+    QUADRATIC ONCE, AND MEASURED: `_FENCE_HEAD` stripped ONE glyph run per pass and
+    the loop re-scanned the whole line each time, so a line of `"* " * n` cost
+    O(n^2): 1.8s at n=4000 and 8.8s at n=8000 on this machine, and a 64 KB
+    single-line LICENSE did not finish. A list of bullets is not an attack, it is a
+    markdown file, so that was unbounded work reachable from ordinary input.
+
+    TWO changes, and MEASURED AS REDUNDANT rather than complementary, which is not
+    what the first draft of this comment claimed. `_FENCE_HEAD` matches a RUN of
+    fence glyphs, so one pass removes what the loop used to remove one at a time;
+    and the loop is capped instead of running to a fixpoint. Reverting either one
+    alone leaves it linear (0.014s and 0.010s at n=4000); reverting BOTH restores the
+    4.9s. Both are kept on purpose, because the cap bounds a head pattern nobody has
+    written yet and the run-matching head keeps the cap from ever being reached, but
+    no single-revert test can go red here and saying otherwise would be the
+    unanchored-test class applied to a fix for the unanchored-test class.
+    """
     out = line.translate(_TRANSLATE)
-    while out != prev:
-        prev = out
-        out = _FENCE_TAIL.sub("", _FENCE_HEAD.sub("", out))
+    for _ in range(8):
+        stripped = _FENCE_TAIL.sub("", _FENCE_HEAD.sub("", out))
+        if stripped == out:
+            break
+        out = stripped
     return out
 
 
@@ -307,6 +328,11 @@ _TITLE_FAMILIES = {
     "bsd": "bsd", "clause": "bsd",
     "apache": "apache", "asl": "apache",
     "affero": "agpl", "lesser": "lgpl", "library": "lgpl", "gpl": "gpl",
+    # `gnu` was REMOVED from this map on the reasoning that it names three licenses and
+    # cannot contradict any of them alone. That let "GNU General Public License" sit over
+    # a verbatim MIT body and resolve to MIT. It names three, so it contradicts everything
+    # that is not one of the three: `_GNU_FAMILIES` below is how a set-valued name is
+    # compared, rather than dropping the word and losing the contradiction entirely.
     "mozilla": "mpl", "mpl": "mpl",
     "isc": "isc", "zlib": "zlib", "boost": "bsl", "artistic": "artistic",
     "eclipse": "epl", "unlicense": "unlicense", "python": "psf", "openssl": "openssl",
@@ -318,8 +344,20 @@ _COARSE_ORDER = ("agpl", "lgpl", "gpl", "bsd", "apache", "mpl", "mit", "isc", "z
                  "bsl", "artistic", "epl", "unlicense", "psf", "openssl", "cc")
 
 
+# A word that names a FAMILY OF FAMILIES. "GNU" is any of three, and "general public
+# license" without "gnu" is still the GPL name every reader knows.
+_GNU_FAMILIES = frozenset({"gpl", "lgpl", "agpl"})
+_SET_VALUED_TITLES = {"gnu": _GNU_FAMILIES, "general": _GNU_FAMILIES,
+                      "public": _GNU_FAMILIES, "affero": frozenset({"agpl"})}
+
+
 def _title_families(ws: list[str]) -> set[str]:
-    return {_TITLE_FAMILIES[w] for w in ws if w in _TITLE_FAMILIES}
+    """Every family this title could be naming. Empty means it names none."""
+    named = {_TITLE_FAMILIES[w] for w in ws if w in _TITLE_FAMILIES}
+    for w in ws:
+        if w in _SET_VALUED_TITLES:
+            named |= set(_SET_VALUED_TITLES[w])
+    return named
 
 
 def _coarse_family(spdx: str) -> str:
@@ -341,6 +379,12 @@ def _is_title_line(ws: list[str], spdx: str | None = None) -> bool:
     if not ws or len(ws) > 8 or not all(w in _TITLE_WORDS for w in ws):
         return False
     if (set(ws) & _TITLE_QUALIFIERS) and "bsd" not in ws:
+        return False
+    # Two CONCRETE names in one title is a dual-license claim, not a title, and the
+    # manifest carries one identifier: "MIT or Apache License" over a MIT body
+    # resolved to plain MIT and dropped the option its author granted.
+    concrete = {_TITLE_FAMILIES[w] for w in ws if w in _TITLE_FAMILIES}
+    if len(concrete) > 1:
         return False
     if spdx:
         named = _title_families(ws)
@@ -421,6 +465,11 @@ _TERMS_VOCAB = frozenset({
     "territory", "territories", "customers", "customer",
     "scope", "scoped", "superseded", "supersedes", "lapses", "lapse", "withdrawn",
     "rescinded", "sunset", "sunsets",
+    # Measured in cycle 6, each resolving a verbatim MIT body to plain MIT.
+    # "through" was tried and REJECTED: it is an ordinary preposition and it is in
+    # holder lines. The list is still a list; that is stated above and stays true.
+    "solely", "expiring", "limited", "ceasing", "cease", "ceases", "resale",
+    "banned", "barred", "unlicensed", "unsellable", "nonsalable",
 })
 
 
@@ -446,6 +495,13 @@ def _name_like(raw: str, ws: list[str]) -> bool:
     if not ws or len(ws) > 10:
         return False
     if any(w in _TERMS_VOCAB for w in ws):
+        return False
+    # And again with the path split, because a contact signal is usually a URL and
+    # `words()` fuses `no-commercial-use-permitted` into one token. Without this the
+    # veto two lines up is unreachable for exactly the lines a URL can carry, which
+    # is why turning the `_BARE_URL_LINE` veto on changed nothing on its own: the
+    # line simply arrived here instead and was admitted as a signature.
+    if _CONTACT_SIGNAL.search(raw) and any(w in _URL_TERMS for w in _url_words(raw)):
         return False
     if _ATTRIB_SIGNAL.search(raw):
         return True
@@ -476,8 +532,9 @@ def _is_copyright_notice(raw: str, ws: list[str]) -> bool:
     # 2026.", both measured resolving their document to plain MIT. A second SENTENCE is
     # structural and catches those without anyone having to think of the word they used.
     # What was tried and REJECTED: requiring every lower-case word to be a particle or a
-    # corporate form. It reads well and it refused more than a tenth of the real license
-    # files in a disk sweep, because "Copyright (c) 2017-present, Jon Schlinkert." and
+    # corporate form. It reads well and it refused a large fraction of the real license
+    # files in a disk sweep, an unreproducible proportion of one machine's $HOME and
+    # recorded as a direction rather than a figure, because "Copyright (c) 2017-present, Jon Schlinkert." and
     # "Copyright (c) 2014, Nathan LaFreniere and other contributors" are holders and
     # neither "present" nor "other" belongs on any list somebody would write. A rule that
     # expensive is not a rule, and the residual it would have covered is named in
@@ -492,21 +549,55 @@ def _is_copyright_notice(raw: str, ws: list[str]) -> bool:
     return not _SENTENCE_BREAK.search(rest)
 
 
+# The vocabulary a URL PATH is read against, and it is deliberately not _TERMS_VOCAB.
+# A path is full of generic words: `gnu.org/licenses/why-not-lgpl.html` segments to
+# `why not lgpl html`, and "not" is a terms word, so the full vocabulary refused the
+# GPL's own trailing link. These are words a path carries only to state a
+# restriction, so a legitimate license URL scores zero and a scoped one scores.
+_URL_TERMS = frozenset({
+    "commercial", "noncommercial", "nonprofit", "prohibited", "banned", "barred",
+    "restricted", "forbidden", "proprietary", "evaluation", "trial", "expires",
+    "expired", "expiring", "expiry", "revoked", "nontransferable", "resale",
+    "redistribution", "sublicense", "royalty", "confidential", "exclusively",
+    "academic", "educational", "students", "internal", "eula", "unlicensed",
+})
+
+
+def _url_words(raw: str) -> list[str]:
+    """The words of a URL, split at the separators a PATH uses.
+
+    `words()` closes intra-word hyphens up, which is right for NON-INFRINGEMENT and
+    wrong for a path: `non-commercial-only-expires-2026` became one token no
+    vocabulary could match, so turning the veto on caught nothing here. A path is
+    segmented by `/`, `-`, `_` and `.`, so it is read that way. `licenses` stays
+    plural and out of the vocabulary, which is why apache.org and gnu.org still pass.
+    """
+    return _WORD.findall(re.sub(r"[/\-_.]+", " ", raw.lower()))
+
+
 def _is_ornament(raw: str, ws: list[str]) -> bool:
     """True when this line CANNOT carry terms, wherever it sits: blank, a rule, an rst
     underline, a bare license title, "All rights reserved", an SPDX tag, a bare URL.
 
     Every test here is anchored to the WHOLE line, and that is the point. A test that
     merely looked for a keyword inside the line deleted clause three of BSD-3-Clause
-    from 285 files (it contains the word "copyright") and deleted the wrapped
+    wherever it appeared (it contains the word "copyright") and deleted the wrapped
     "COPYRIGHT HOLDERS BE LIABLE ..." line out of the middle of MIT's own disclaimer,
     and each time the file was then refused for not carrying the clause this function
     had just removed. Nothing that could be terms is dropped from the document. What
     may sit AROUND a license -- a copyright notice, a holder list, a signature -- is
     judged separately, and only once the license body has been located: _Doc.
     """
-    if not ws:                                   # blank, ---, ===, ***, an rst underline
-        return True
+    if not ws:
+        # blank, ---, ===, ***, an rst underline. AND, until this was measured, every
+        # line written in an alphabet `_WORD` does not cover: it is `[0-9]+|[a-z]+`,
+        # so "Απαγορεύεται η εμπορική χρήση." and the fullwidth and mathematical-bold
+        # spellings of NON-COMMERCIAL USE ONLY produced an empty word list and were
+        # dropped as blank. A third ornament shape, and this one is a whole alphabet:
+        # the module cannot read those scripts, so it must not pretend they say
+        # nothing. A line carrying any letter at all is text, and text outside the
+        # located body is a question for a human.
+        return not _ANY_LETTER.search(raw)
     # A SHAPE IS NOT A LICENCE TO SKIP THE CONTENT. These three rules used to drop a
     # line on its shape alone, and `_Doc` drops an ornament line before any recognizer
     # runs, so whatever they matched was never read by anything. An entire Commons
@@ -520,15 +611,20 @@ def _is_ornament(raw: str, ws: list[str]) -> bool:
     # and `[others]: https://example.com/contributors` carries none either.
     if _SPDX_LINE.match(raw.strip()) or _LINK_DEF_LINE.match(raw):
         return not any(w in _TERMS_VOCAB for w in ws)
-    # A URL is a POINTER, and this is the residual. `_INTRA_HYPHEN` fuses a path into
-    # single tokens, so `.../non-commercial-only-expires-2026` reads as one word and no
-    # vocabulary test can see it; and a real check would have to follow the link, which
-    # this module does not do. A URL line is skipped on its shape, and terms parked at
-    # the other end of one, or spelled into its path, are outside what this module can
-    # see. Applying the vocabulary test here is not the fix: it would refuse the
-    # `http://www.apache.org/licenses/` line that Apache-2.0 itself ships.
+    # A URL LINE IS READ TOO, and the reason it was not is a correction. This hole
+    # shipped on the claim that the vocabulary test "would refuse the
+    # `http://www.apache.org/licenses/` line that Apache-2.0 itself ships". That was
+    # never measured and it is FALSE: the plural `licenses` is not in _TERMS_VOCAB,
+    # so that line scores no hit, and Apache-2.0, GPL-3.0, MPL-2.0, AGPL-3.0, MIT and
+    # BSD-3-Clause all still resolve with the veto on. A residual justified by an
+    # unmeasured sentence is not a residual, it is the thing this module refuses to
+    # do about licenses, done about itself.
+    #
+    # WHAT REMAINS is narrower and real: `_INTRA_HYPHEN` fuses a path, so
+    # `.../non-commercial-only-expires-2026` reads as one word no vocabulary can
+    # match, and following the link is not something this module does.
     if _BARE_URL_LINE.match(raw):
-        return True
+        return not any(w in _URL_TERMS for w in _url_words(raw))
     return bool(_ALL_RIGHTS.match(raw))
 
 
@@ -545,11 +641,20 @@ class _Doc:
         self.words: list[str] = []
         self.at: list[int] = []          # parallel: source line index per word
         self.ornament: list[bool] = []   # per source line
+        # A line that is neither ornament nor readable. `_WORD` is `[0-9]+|[a-z]+`, so a
+        # line in Greek, Cyrillic, Chinese, fullwidth or mathematical-bold letters
+        # contributes NOTHING to the word stream, and `outside_is_ornament` walks that
+        # stream, so such a line was unreachable by every check even after
+        # `_is_ornament` stopped calling it blank. It is recorded by LINE here.
+        self.unreadable: list[int] = []
         for i, ln in enumerate(self.lines):
             ws = words(ln)
             orn = _is_ornament(ln, ws)
             self.ornament.append(orn)
             if orn:
+                continue
+            if not ws:
+                self.unreadable.append(i)
                 continue
             self.words.extend(ws)
             self.at.extend([i] * len(ws))
@@ -579,6 +684,14 @@ class _Doc:
         So the answer is a refusal a human reads, not a rule that guesses. Widening this
         to admit lead-in sentences reopens the negation hole; do not.
         """
+        # A script this module cannot read is not a script that says nothing. It is
+        # refused wherever it sits, inside the body or outside it, because "I did not
+        # read this line" and "this line is harmless" are the two facts this whole
+        # module exists to keep apart.
+        if self.unreadable:
+            bad = self.lines[self.unreadable[0]].strip()[:70]
+            return False, (f"it carries the line {bad!r}, which is written in letters "
+                           f"this generator cannot read")
         for i in list(range(0, lo)) + list(range(hi, len(self.words))):
             at = self.at[i]
             raw = self.lines[at]
@@ -675,24 +788,16 @@ def _match_template(doc: "_Doc", start: int, tmpl: list) -> tuple[int, str]:
             best[0], best[1] = at, why
         return -1, why
 
-    # MEMOISED on (position, template part). Six slots in the BSD template, each with
-    # its own width range, multiply: a document that fails late made `walk` re-derive
-    # the same prefix once per surviving combination, which is exponential in the number
-    # of slots and needs no adversary to reach, only an ordinary edit near the end of a
-    # one-line copy. 800 systematic mutants of the MIT and BSD fixtures did not measure
-    # a case over 0.25s, so this is the class removed rather than an incident repaired.
-    # Memoising failures is safe: `best` records the DEEPEST failure and a repeat of the
-    # same (i, k) can only re-derive the same depth.
-    seen: dict[tuple[int, int], tuple[int, str]] = {}
-
+    # NO MEMOISATION HERE, and that is a correction. A cache keyed on (position,
+    # template part) was added believing the slots multiplied combinatorially. They
+    # do not: every slot is followed by a literal run, so a failed width is rejected
+    # at the next word and the walk never revisits a state. Instrumented over 592
+    # real license files it took 3,986 lookups and scored ZERO hits, and that one IS
+    # reproducible: it is a property of the templates, not of any disk. It was also
+    # aimed at the wrong thing: the real unbounded work was `_unfence` re-scanning a
+    # line per fence glyph, which is quadratic and now fixed. A cache that never hits
+    # is not free, it implies a bound it is not providing.
     def walk(i: int, k: int) -> tuple[int, str]:
-        key = (i, k)
-        if key in seen:
-            return seen[key]
-        seen[key] = out = _walk(i, k)
-        return out
-
-    def _walk(i: int, k: int) -> tuple[int, str]:
         if k == len(tmpl):
             return i, ""
         part = tmpl[k]
@@ -924,11 +1029,14 @@ def _anchored_terms(doc: "_Doc") -> tuple[str | None, str]:
         # Requiring the span between the first end form and the last to hold nothing but
         # end forms was tried and MEASURED: it refuses plain Apache-2.0, GPL-3.0,
         # MPL-2.0 and AGPL-3.0, because each really does carry prose between its end
-        # forms, the Apache APPENDIX being the clearest case. Closing it needs each
-        # license's appendix modelled as part of the document, which is exactly the
-        # word-for-word transcription the section-marker design exists to avoid. So it
-        # stays open, in the same class as the mid-body splice: a document that already
-        # ends correctly can have terms hidden in the fold between two of its endings.
+        # forms, the Apache APPENDIX being the clearest case: 154 words between end
+        # forms for Apache-2.0, 420 for GPL-3 and 89 for MPL-2.0. Closing it means
+        # modelling three or four fixed appendices, about 800 words, through the
+        # `interior` machinery that is already here. That is work, not an obstacle,
+        # and calling it "every appendix transcribed" overstated it. It stays open in
+        # the same class as the mid-body splice, and the honest reason is priority:
+        # a document that already ends correctly can hide terms in the fold between
+        # two of its endings, and nothing in this repo does.
         end = -1
         for form in spec.ends:
             at = _find(doc, form, cur - len(spec.interior[-1]))
@@ -970,6 +1078,9 @@ _SPDX_DEPRECATED = {
     "agpl-3.0+": "AGPL-3.0-or-later", "lgpl-2.1+": "LGPL-2.1-or-later",
     "lgpl-3.0+": "LGPL-3.0-or-later",
 }
+# The two values the schema allows that are not SPDX ids: SPDX's own "no claim is
+# made" token, and the schema's escape hatch for terms with no identifier at all.
+_NON_SPDX_VALUES = frozenset({"NOASSERTION", "PROPRIETARY"})
 _SPDX_DECL = re.compile(r"^\s*\W{0,4}\s*SPDX-License-Identifier:\s*(.+?)\s*$", re.M | re.I)
 _BARE_SPDX = re.compile(r"[A-Za-z0-9.+-]+")
 
@@ -1158,6 +1269,17 @@ def license_setaside(skill_dir: Path) -> list[str]:
     A set-aside is never adopted as the package's terms: a nested LICENSE usually
     belongs to a bundled sample, and a notices file belongs to somebody else. It only
     stops the default, and only when nothing readable was found beside it.
+
+    ELEVEN MORE ROADS ARE OPEN, enumerated because an unnamed road is the one that
+    ships. Each still ends in the repo default and none is detected: a `## License`
+    section in a README or in SKILL.md itself; `.reuse/dep5`; `REUSE.toml`;
+    `plugin.json`; `.claude-plugin/plugin.json`; `manifest.json`; `setup.py`;
+    `package.json` with a `licenses[]` array rather than a `license` string;
+    `skill.yaml`; a nested `docs/NOTICE.txt`; and an `SPDX-License-Identifier` line
+    inside a README. The three closed here (a package manifest's `license` key, a
+    lone NOTICE, a backup copy) were closed because they were measured on this tree.
+    The rest are a list of names, which is the shape this file keeps warning about,
+    so they are written down rather than half-covered.
     """
     out: list[str] = []
     try:
@@ -1325,7 +1447,17 @@ _SOURCE_HEADING = re.compile(
     r"^\s{0,3}#{1,6}\s*(?:retrieval\s+sources?|sources?|credits?|attribution|"
     r"provenance|upstream|origin|acknowledge?ments?)\s*:?\s*$", re.I)
 _ANY_HEADING = re.compile(r"^\s{0,3}#{1,6}\s+\S")
-_EXTERNAL_URL = re.compile(r"https?://[^\s|)\]>,]+")
+# A SCHEME IS NOT WHAT MAKES A URL A SOURCE. This required `https?://` and eight skills
+# write their upstream in backticks without one (`github.com/thedotmack/claude-mem`), so
+# `upstream_source` returned None for every one of them and the report whose whole job is
+# to surface unlicensed third-party material could not see them. One of the eight shipped
+# a MIT manifest over a body asserting AGPL-3.0 and giving copyleft advice, about an
+# upstream that had been Apache-2.0 for ten days before that skill entered. Seven were
+# harmless by luck, because their upstreams happen to be MIT or Apache.
+_EXTERNAL_URL = re.compile(
+    r"https?://[^\s|)\]>,`]+"
+    r"|(?:www\.|(?:github|gitlab|bitbucket|codeberg)\.com/|npmjs\.com/|pypi\.org/|"
+    r"crates\.io/)[^\s|)\]>,`]+")
 # A cross-reference is not a provenance claim. "Based on Section 2.7.2 (445 active SPs
 # observed in 1 hour)" points at a paragraph of this same document, and reporting it as
 # an upstream source is noise in exactly the report that has to stay readable to be read.
@@ -1459,10 +1591,14 @@ def declared_license(skill_dir: Path) -> tuple[str | None, str | None]:
     for where, holder in (("front matter", fm), ("metadata", meta)):
         if not isinstance(holder, dict):
             continue
-        for key in ("license", "licence"):
-            if key in holder:
-                found.append((where, holder[key]))
-                break
+        # EVERY spelling in the holder, not the first. Breaking at the first meant
+        # `license: MIT` beside `licence: Apache-2.0` published MIT and never compared
+        # them, which is the contradiction this function refuses one level out. And the
+        # key is matched case-insensitively, because `License:` used to be invisible and
+        # invisible is the silent default again.
+        for key, value in holder.items():
+            if isinstance(key, str) and key.strip().lower() in ("license", "licence"):
+                found.append((f"{where} `{key}`", value))
     if not found:
         return None, None
     # A DECLARATION THAT EXISTS AND IS NOT A STRING IS NOT AN ABSENT DECLARATION. YAML
@@ -1480,7 +1616,16 @@ def declared_license(skill_dir: Path) -> tuple[str | None, str | None]:
         pairs = "; ".join(f"{w} says {v.strip()}" for w, v in found)
         return None, f"two different license declarations ({pairs})"
     raw = found[0][1].strip()
-    return (spdx_canon(raw) if _BARE_SPDX.fullmatch(raw) else None), raw
+    if not _BARE_SPDX.fullmatch(raw):
+        return None, raw
+    canon = spdx_canon(raw)
+    # A bare token is not an identifier. `license: foo-bar` matched the shape, so
+    # `spdx_canon` handed it back unchanged and "foo-bar" was written into a public
+    # manifest as a license, which the schema calls valid because it only checks the
+    # string is short. An id this generator cannot place is a claim it cannot make.
+    if canon.lower() not in _SPDX_CANON and canon.upper() not in _NON_SPDX_VALUES:
+        return None, f"{raw!r}, which is not an SPDX identifier this generator knows"
+    return canon, raw
 
 
 def describe(skill_dir: Path, default_license: str) -> tuple[dict | None, str]:

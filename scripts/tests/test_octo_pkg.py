@@ -24,6 +24,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -1646,7 +1647,10 @@ class TestTypographyIsNotTerms(unittest.TestCase):
     a developer disk, and each one is its own control: the fixture is verbatim MIT with
     one typographic edit, so a case that fails says the edit changed the terms.
     Deliberately no corpus percentage: the denominator is a live disk, it moved between
-    two runs of the same selection, and a number nobody can re-derive is not evidence.
+    runs of the same selection, and a number nobody can re-derive is not evidence.
+    Every count that survives anywhere in this repo is either a property of the code
+    (template shapes, memo hits) or a git fact (a commit, a date, a file list at a
+    ref), which are the two kinds a reader can check.
     """
 
     def _mit(self, body):
@@ -2010,14 +2014,92 @@ class TestAShapeIsNotALicenceToSkipTheContent(unittest.TestCase):
         self._ok(MIT_FILE_TEXT + "\n[others]: https://example.com/contributors\n", "MIT")
         self._ok(APACHE_FULL_TEXT, "Apache-2.0")   # ships its own bare URL line
 
-    def test_a_url_is_a_pointer_and_that_is_the_residual(self):
-        # STATED, not fixed: `_INTRA_HYPHEN` fuses a path into single tokens, so
-        # `.../non-commercial-only` reads as one word, and a real check would have to
-        # follow the link. Applying the vocabulary test here refuses the
-        # `http://www.apache.org/licenses/` line Apache-2.0 itself ships.
-        self._ok(MIT_FILE_TEXT +
-                 "\nhttps://acme.example/license-terms/non-commercial-only-expires-2026\n",
-                 "MIT")
+    def test_a_url_line_is_read_like_every_other_line(self):
+        """This hole shipped on an UNMEASURED sentence: that vetoing a URL line
+        "would refuse the `http://www.apache.org/licenses/` line Apache-2.0 itself
+        ships". The plural `licenses` is not in the vocabulary, so it scores nothing,
+        and all six licenses resolve with the veto on. A residual justified by a
+        sentence nobody checked is this module's own failure mode, applied to itself.
+        """
+        for path in ("no-commercial-use-permitted",
+                     "license-terms/non-commercial-only-expires-2026",
+                     "terms/redistribution-prohibited"):
+            ident, _ = gen.license_terms(f"{MIT_FILE_TEXT}\nhttps://acme.example/{path}\n")
+            self.assertIsNone(ident, f"terms spelled into a URL path resolved: {path}")
+
+    def test_the_url_lines_real_licenses_ship(self):
+        # A path is read against a NARROW vocabulary, not the full one: segmenting
+        # `gnu.org/licenses/why-not-lgpl.html` yields "not", which is a terms word,
+        # and the full vocabulary refused the GPL's own trailing link.
+        for url in ("http://www.apache.org/licenses/", "https://www.gnu.org/licenses/",
+                    "https://opensource.org/licenses/MIT",
+                    "https://www.gnu.org/licenses/why-not-lgpl.html"):
+            self._ok(f"{MIT_FILE_TEXT}\n{url}\n", "MIT")
+        for text, want in ((APACHE_FULL_TEXT, "Apache-2.0"), (GPL3_TEXT, "GPL-3.0-only"),
+                           (MPL2_TEXT, "MPL-2.0"), (AGPL3_TEXT, "AGPL-3.0-only"),
+                           (BSD3_TEXT, "BSD-3-Clause")):
+            self._ok(text, want)
+
+    def test_what_actually_remains_is_following_the_link(self):
+        # STATED: the module does not fetch, so terms living at the other end of an
+        # ordinary-looking URL are outside what it can see.
+        self._ok(f"{MIT_FILE_TEXT}\nhttps://acme.example/terms.html\n", "MIT")
+
+    def test_a_line_in_letters_this_module_cannot_read(self):
+        """`_WORD` is `[0-9]+|[a-z]+`, so a line in Greek, Cyrillic, Chinese,
+        fullwidth or mathematical-bold letters contributed NO words, and
+        `outside_is_ornament` walks the word stream, so it was unreachable by every
+        check. A third ornament shape, and this one is a whole alphabet."""
+        for line in ("\u0391\u03c0\u03b1\u03b3\u03bf\u03c1\u03b5\u03cd\u03b5\u03c4\u03b1\u03b9 \u03b7 "
+                     "\u03b5\u03bc\u03c0\u03bf\u03c1\u03b9\u03ba\u03ae \u03c7\u03c1\u03ae\u03c3\u03b7.",
+                     "\uff2e\uff2f\uff2e\uff0d\uff23\uff2f\uff2d\uff2d\uff25\uff32\uff23\uff29\uff21\uff2c",
+                     "\u4ec5\u9650\u975e\u5546\u4e1a\u4f7f\u7528",
+                     "\u0422\u043e\u043b\u044c\u043a\u043e \u043d\u0435\u043a\u043e\u043c\u043c\u0435\u0440\u0447\u0435\u0441\u043a\u043e\u0435"):
+            ident, why = gen.license_terms(f"{MIT_FILE_TEXT}\n{line}\n")
+            self.assertIsNone(ident, f"unreadable script resolved: {line[:20]}")
+            self.assertIn("cannot read", why)
+
+    def test_rules_and_blanks_are_still_ornament(self):
+        self._ok(f"{MIT_FILE_TEXT}\n---\n\n===\n\n***\n", "MIT")
+
+
+class TestUnfenceIsLinear(unittest.TestCase):
+    """`_unfence` stripped ONE fence glyph per pass and re-scanned the whole line, so
+    a line of `"* " * n` cost O(n^2): 4.9s at n=4000 and a 64 KB single-line LICENSE
+    that did not finish in ten minutes. A list of bullets is not an attack, it is a
+    markdown file, so that was unbounded work reachable from ordinary input.
+
+    Two mechanisms answer and each is sufficient on its own, so this asserts BOTH
+    directly rather than pretending a single revert can be caught by a timing test.
+    """
+
+    def test_the_head_pattern_consumes_a_whole_run_in_one_match(self):
+        # Mechanism one, asserted as a property of the pattern rather than a clock.
+        self.assertEqual(gen._FENCE_HEAD.match("* " * 50).end(), 100)
+        self.assertEqual(gen._FENCE_HEAD.match("// " * 30).end(), 90)
+
+    def test_the_loop_is_capped(self):
+        # Mechanism two. A fixpoint loop over a shrinking string terminates, so the
+        # cap is not about termination: it bounds the WORK when a future head pattern
+        # stops matching runs.
+        import inspect
+        src = inspect.getsource(gen._unfence)
+        self.assertIn("for _ in range(", src, "the unfence loop lost its cap")
+        self.assertNotIn("while out != prev", src)
+
+    def test_a_pathological_line_is_handled_in_bounded_time(self):
+        # The end-to-end fact, which goes red only if BOTH mechanisms are reverted.
+        started = time.monotonic()
+        gen._unfence("* " * 8000)
+        gen.license_terms("* " * 8000 + "\n" + MIT_FILE_TEXT)
+        self.assertLess(time.monotonic() - started, 5.0,
+                        "a 16k-glyph fence line took seconds; _unfence is quadratic again")
+
+    def test_fences_are_still_stripped(self):
+        self.assertEqual(gen._unfence(" * Copyright 2020 Acme"), "Copyright 2020 Acme")
+        self.assertEqual(gen._unfence("/* MIT */"), "MIT")
+        self.assertEqual(gen._unfence("// hello"), "hello")
+        self.assertEqual(gen._unfence("<!-- x -->"), "x")
 
 
 class TestATitleIsANameNotAWarning(unittest.TestCase):
@@ -2034,6 +2116,22 @@ class TestATitleIsANameNotAWarning(unittest.TestCase):
                       "Simplified MIT License", "Clear MIT License",
                       "MIT Licence (Revised)", "MIT License Version 2", "MIT License v3"):
             self._refused(title)
+
+    def test_a_gnu_title_names_three_licenses_and_contradicts_the_rest(self):
+        # `gnu` was REMOVED from the family map on the reasoning that it names three
+        # licenses and so cannot contradict any of them. That let "GNU General Public
+        # License" sit over a verbatim MIT body and resolve to MIT. It names three, so
+        # it contradicts everything that is not one of the three.
+        for title in ("GNU General Public License", "General Public License",
+                      "GNU License", "Public License"):
+            self._refused(title)
+        self.assertEqual(gen.license_terms(GPL3_TEXT)[0], "GPL-3.0-only")
+        self.assertEqual(gen.license_terms(AGPL3_TEXT)[0], "AGPL-3.0-only")
+
+    def test_two_concrete_names_are_a_dual_license_claim(self):
+        # The manifest carries ONE identifier, so a title offering a choice is not a
+        # title: picking a side drops the option its author granted.
+        self._refused("MIT or Apache License")
 
     def test_a_title_naming_another_license_contradicts_the_body(self):
         for title in ("Modified BSD License", "Apache License", "Mozilla Public License"):
@@ -2077,6 +2175,33 @@ class TestADeclarationThatExistsIsNotAnAbsentOne(unittest.TestCase):
             manifest, problem = gen.describe(self._skill(decl), "MIT")
             self.assertIsNone(manifest, f"{decl!r} took the repo default")
             self.assertIn("not a bare SPDX identifier", problem)
+
+    def test_the_sibling_spelling_in_the_same_holder_is_compared(self):
+        # The loop broke at the first spelling, so `license: MIT` beside
+        # `licence: Apache-2.0` published MIT and never compared them. Same class as
+        # two holders, one level in.
+        manifest, problem = gen.describe(
+            self._skill("license: MIT\nlicence: Apache-2.0"), "MIT")
+        self.assertIsNone(manifest)
+        self.assertIn("two different license declarations", problem)
+
+    def test_a_capitalised_key_is_not_an_absent_declaration(self):
+        self.assertEqual(
+            gen.describe(self._skill("License: Apache-2.0"), "MIT")[0]["license"],
+            "Apache-2.0")
+
+    def test_an_identifier_this_generator_cannot_place_is_refused(self):
+        # `license: foo-bar` matched the bare-token shape, so it was written into a
+        # public manifest as a license and the schema called it valid, because the
+        # schema only checks the string is short.
+        for decl in ("license: foo-bar", "license: MMIT", "license: Apache-9.9"):
+            manifest, problem = gen.describe(self._skill(decl), "MIT")
+            self.assertIsNone(manifest, f"{decl!r} was written into a manifest")
+            self.assertIn("not an SPDX identifier", problem)
+        for decl, want in (("license: NOASSERTION", "NOASSERTION"),
+                           ("license: proprietary", "proprietary"),
+                           ("license: GPL-3.0", "GPL-3.0-only")):
+            self.assertEqual(gen.describe(self._skill(decl), "MIT")[0]["license"], want)
 
     def test_two_holders_that_disagree_are_compared(self):
         manifest, problem = gen.describe(
@@ -2201,6 +2326,40 @@ class TestATimeLimitIsTerms(unittest.TestCase):
             self._refused(f"{line}\n\n{MIT_FILE_TEXT}")
         self._refused(MIT_FILE_TEXT + "\nExpires 2027-01-01\n")
 
+    def test_the_scope_and_term_phrasings_measured_in_cycle_six(self):
+        for holder in ("Copyright 2020 Foo, solely for Acme Inc.",
+                       "Copyright 2020 Foo; Expiring 2027",
+                       "Copyright 2020 Foo, limited to Acme Inc.",
+                       "Copyright 2020 Foo; Ceasing 2027",
+                       "Copyright 2020 Foo; Resale Banned",
+                       "Copyright 2020 Foo; Resale Barred",
+                       "Copyright 2020 Foo; Unsellable",
+                       "Copyright 2020 Foo; Unlicensed"):
+            self._refused(mutate(MIT_FILE_TEXT, "Copyright (c) 2026 Someone Else, Inc.",
+                                 holder))
+
+    def test_a_contact_does_not_buy_a_scoping_line_its_way_in(self):
+        # ANY capitalised line of ten words or fewer plus a contact was ornament
+        # anywhere, so a restriction bought admission with an address.
+        self._refused("Resale Banned <legal@acme.example>\n\n" + MIT_FILE_TEXT)
+        self._refused("Enterprise Customers Of Acme <legal@acme.example>\n\n"
+                      + MIT_FILE_TEXT)
+        self._mit(MIT_FILE_TEXT + "\n\nAlice Smith <alice@example.com>\n")
+
+    def test_a_contact_line_is_read_by_its_PATH_and_not_only_its_words(self):
+        """Isolates the contact-path veto, which the tests above cannot see.
+
+        `words()` fuses intra-word hyphens, so `eula-restricted-build` becomes one
+        token and the ordinary vocabulary check on a contact-bearing line is
+        unreachable for exactly the text a URL can carry. "eula" is the one word in
+        `_URL_TERMS` and NOT in `_TERMS_VOCAB`, so only the path split can answer
+        here: reverting it leaves every other test green and flips this one.
+        """
+        self._refused(MIT_FILE_TEXT +
+                      "\nDocs <https://acme.example/eula-restricted-build>\n")
+        # And the control: the same shape with nothing restrictive in the path.
+        self._mit(MIT_FILE_TEXT + "\nDocs <https://acme.example/getting-started>\n")
+
     def test_a_second_sentence_on_the_copyright_line(self):
         for holder in ("Copyright 2020 Foo. Educational purposes.",
                        "Copyright 2020 Foo. Revoked 2026.",
@@ -2216,7 +2375,8 @@ class TestATimeLimitIsTerms(unittest.TestCase):
     def test_real_holders_that_this_must_not_refuse(self):
         # Each was measured being refused by a stricter draft of the same rule (one that
         # required every lower-case word in the notice to be a particle or a corporate
-        # form). It refused more than a tenth of a disk sweep and was dropped for these.
+        # form). It refused a large fraction of a disk sweep, a proportion of one
+        # machine's $HOME that does not reproduce, and was dropped for these.
         for holder in ("Copyright (c) 2017-present, Jon Schlinkert.",
                        "Copyright (c) 2014, Nathan LaFreniere and other contributors",
                        "Copyright (c) 2012-2018 Aseem Kishore, and [others].",

@@ -6,6 +6,7 @@ metadata:
   source: https://github.com/anthropics/claude-plugins-official
   discovered_on: 2026-05-24
   via: github-trending-curation (auto-promoted)
+  provenance: "https://github.com/anthropics/claude-plugins-official had NO LICENSE FILE at entry on 2026-05-24; Apache-2.0 landed four days later on 2026-05-28 (e9b54375). This skill DECLARES no license and its manifest carries the repo default over ORIGINAL text (measured against the upstream README at the entry ref 1b527e2e: ratio 0.0282, longest shared run 8 characters). Nothing upstream was relied on, which is why the absence at entry does not make this NOASSERTION."
 ---
 
 # claude-plugins-official
