@@ -25,7 +25,7 @@
     },
     "kind": {
       "type": "string",
-      "enum": ["start", "tool", "exit", "deny", "receipt", "quota", "open", "release"],
+      "enum": ["start", "tool", "exit", "deny", "receipt", "quota", "open", "release", "fault"],
       "description": "start: the process was registered. tool: a tool call passed the hot-path gate. exit: the process ended (Phase 1a-2). deny: a fail-closed gate, or the harness itself, refused a call (Phase 4). receipt: a v7 receipt mirrored by id (Phase 4). quota: a quota was breached (Phase 3). open: N calls ran unjournaled under OCTO_KERNEL_OPEN, backfilled once the journal was writable. release: an operator freed this process's lanes with `octo ps --release` (Phase 1b)."
     },
     "prev": {

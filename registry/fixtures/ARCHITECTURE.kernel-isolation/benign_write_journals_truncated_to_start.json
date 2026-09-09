@@ -1,0 +1,23 @@
+{
+  "session_id": "sess-parent",
+  "tool_name": "Write",
+  "tool_use_id": "toolu_iso",
+  "tool_input": {
+    "file_path": "{{SANDBOX}}/work/solo/a.py",
+    "content": "print(1)\n"
+  },
+  "cwd": "{{SANDBOX}}/work/tree",
+  "agent_id": "agent-b",
+  "_setup": {
+    "ptable": {
+      "version": 1,
+      "processes": {}
+    },
+    "truncate_journals": {
+      "agent-a": "fresh",
+      "agent-b": "fresh",
+      "agent-arm": "fresh",
+      "sess-parent": "fresh"
+    }
+  }
+}

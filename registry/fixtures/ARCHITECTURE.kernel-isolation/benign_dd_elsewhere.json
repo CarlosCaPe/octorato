@@ -1,0 +1,11 @@
+{
+  "session_id": "sess-parent",
+  "tool_name": "Bash",
+  "tool_use_id": "toolu_iso",
+  "tool_input": {
+    "command": "dd if=/dev/zero of=/tmp/octo-c15.bin bs=1M count=1"
+  },
+  "cwd": "{{SANDBOX}}/work/tree",
+  "agent_id": "agent-b",
+  "_setup": {}
+}

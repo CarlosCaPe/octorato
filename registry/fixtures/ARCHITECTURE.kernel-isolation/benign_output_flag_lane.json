@@ -1,0 +1,11 @@
+{
+  "session_id": "sess-parent",
+  "tool_name": "Bash",
+  "tool_use_id": "toolu_iso",
+  "tool_input": {
+    "command": "curl -so /tmp/octo-c14c.txt http://example.invalid"
+  },
+  "cwd": "{{SANDBOX}}/work/tree",
+  "agent_id": "agent-b",
+  "_setup": {}
+}

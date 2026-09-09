@@ -218,12 +218,78 @@ def _row_type(row) -> str:
     return str(row.get("type") or UNKNOWN_TYPE)
 
 
+def _print_repair(dropped, fault="", table=None) -> None:
+    """Say what the read repaired, at whichever level it repaired it, or say nothing.
+
+    `read_ptable_detail` drops a ptable value that is not an object so one
+    corrupt row cannot take `ps`, `top`, `replay`, the doctor and both register
+    hooks down with it. Dropping it silently would trade a loud failure for a
+    quiet one: the reader would see a shorter table and no reason for it. So the
+    pids are named here, and the fix is named too, because a row that only
+    disappears on the next write is not obviously gone.
+
+    The FAULT line is louder than the row line on purpose. A row-level drop
+    costs n named rows and leaves a table you can still read; a table-level
+    fault costs an unknown number of unnamed ones, and it is the state in which
+    the isolation gates stop being able to tell whether anybody holds a lane. It
+    prints before the table rather than after, because it is a statement about
+    everything under it.
+    """
+    if fault:
+        # The middle line is picked from the fault KIND, not from a substring of
+        # its text, and cycle 5 C1 is why that had to change. Two of the five
+        # kinds leave every row in place and readable, and this printed the
+        # table-level boilerplate ("Every row on this machine is missing from
+        # this listing") directly under a listing that showed both rows. A
+        # reader that contradicts the table above it is the exact failure this
+        # whole seam cites as its own evidence.
+        kind = kernel_proc.fault_kind(table if table is not None else {})
+        why = {
+            kernel_proc.FAULT_ZERO_ROWS: (
+                "The rows are gone, and the journals beside the table say this "
+                "machine is not idle: the record of who holds what was removed "
+                "under running processes."),
+            kernel_proc.FAULT_LOST_LANES: (
+                "The rows below are intact; what is missing is the JOURNAL of "
+                "the ones the fault names, so their lanes cannot be released "
+                "by anything that reads them."),
+            kernel_proc.FAULT_JOURNAL_EVIDENCE: (
+                "The rows below are intact; what is missing is the directory "
+                "every liveness answer comes out of, so who is still running "
+                "is unknowable."),
+        }.get(kind,
+              "Every row on this machine is missing from this listing, and "
+              "the count is unknown: nothing in a value that is not an object "
+              "maps back to a pid. The kernel publishes this file with "
+              "os.replace, so it writes neither a half-written nor an oddly "
+              "shaped one; a writer that is not the kernel touched it.")
+        sticky = ("the fault is CARRIED FORWARD by every writer, so registering "
+                  "again does not clear it"
+                  if kind in ("", kernel_proc.FAULT_LATCHED) else
+                  "the fault is RE-DERIVED on every read, so it clears itself "
+                  "as soon as the condition below is gone")
+        print(f"x THE PROCESS TABLE IS UNREADABLE: {fault}.\n"
+              f"  {why}\n"
+              f"  The isolation gates are DENYING writes while it reads this "
+              f"way, which is the fail-closed half of one writer per tree, and "
+              f"{sticky}.\n"
+              f"  {kernel_proc.recovery(kind)}")
+    if not dropped:
+        return
+    shown = ", ".join(sorted(dropped)[:5])
+    more = f" (+{len(dropped) - 5} more)" if len(dropped) > 5 else ""
+    print(f"{len(dropped)} unreadable row(s) dropped on read: {shown}{more}. "
+          f"A ptable value that is not an object is not a process; the next "
+          f"register hook rewrites the table without them, keeping a copy of "
+          f"the original beside it.")
+
+
 def _row_state(pid, row, table, now) -> str:
     if kernel_proc.is_live(pid, table, now):
         return "live"
     if row.get("status"):
         return str(row["status"])
-    if kernel_proc.has_exit(pid):
+    if kernel_proc.has_exit(pid, table):
         return "exited"
     return "expired"
 
@@ -231,8 +297,18 @@ def _row_state(pid, row, table, now) -> str:
 def cmd_ps(args) -> int:
     if args.release:
         return _release(args.release)
+    # READ BEFORE THE PRUNE, and keep what that read repaired. `prune_locked`
+    # is a WRITER, and on any table carrying an old dead row (the steady state,
+    # not an exotic one) it republishes the file. The republished file no longer
+    # holds the corrupt row, so reading afterwards measured `dropped == []` on a
+    # table that had just lost one: `ps` was the process that erased the
+    # corruption AND the only one in a position to report it. Now the prune
+    # sits between two reads and the footer names what either of them found.
+    _, dropped, fault = kernel_proc.read_ptable_detail()
     kernel_proc.prune_locked()
-    table = kernel_proc.read_ptable()
+    table, still_bad, fault_now = kernel_proc.read_ptable_detail()
+    dropped = sorted(set(dropped) | set(still_bad))
+    fault = fault or fault_now
     procs = table.get("processes", {})
     now = time.time()
     rows, live_n = [], 0
@@ -249,13 +325,20 @@ def cmd_ps(args) -> int:
             st["tools"], state, _age(age), row.get("worktree") or "-",
         ]))
     if not rows:
-        print("no processes: the kernel has registered nothing on this machine yet")
+        # "nothing registered yet" is a claim about a machine, and it is only
+        # true when the file is ABSENT. A file that exists and yielded zero rows
+        # is a machine whose table somebody else made unreadable, which is the
+        # opposite of the truth to print here.
+        if not fault:
+            print("no processes: the kernel has registered nothing on this machine yet")
+        _print_repair(dropped, fault, table)
         return 0
     rows.sort(key=lambda r: (r[0], r[1]))
     print(_table(["PID", "PPID", "TYPE", "TOOLS", "EXIT", "AGE", "WORKTREE"],
                  [r[2] for r in rows]))
     print(f"\n{len(rows)} process(es), {live_n} live "
           f"(liveness: TTL {kernel_proc.TTL}s, v8-kernel.md section 2)")
+    _print_repair(dropped, fault, table)
     return 0
 
 
@@ -299,7 +382,7 @@ def _release(pid: str) -> int:
 # ── top ─────────────────────────────────────────────────────────────────────
 
 def cmd_top(args) -> int:
-    table = kernel_proc.read_ptable()
+    table, dropped, fault = kernel_proc.read_ptable_detail()
     procs = table.get("processes", {})
     now = time.time()
     cutoff = now - DAY
@@ -332,7 +415,9 @@ def cmd_top(args) -> int:
                      st["tokens"] if st["has_tokens"] else "-",
                      _row_state(pid, row, table, now)])
     if not rows:
-        print("no activity in the last 24 h and nothing live")
+        if not fault:
+            print("no activity in the last 24 h and nothing live")
+        _print_repair(dropped, fault, table)
         return 0
     rows.sort(key=lambda r: (-int(r[2]), r[0]))
     tools = sum(int(r[2]) for r in rows)
@@ -366,6 +451,7 @@ def cmd_top(args) -> int:
         # these; the difference between the two counts is the point.
         print(f"{unknown} of them have a journal but no ptable row, so their "
               f"type reads `{UNKNOWN_TYPE}` (not shown by `octo ps`)")
+    _print_repair(dropped, fault, table)
     if by_rule:
         # WHICH rules are refusing is the number that changes behaviour; a bare
         # deny total says only that something did.
@@ -544,7 +630,9 @@ def _fixture_table(fdir: str) -> dict:
     try:
         with open(os.path.join(fdir, "ptable.json"), encoding="utf-8") as fh:
             data = json.load(fh)
-        return data if isinstance(data, dict) else {"processes": {}}
+        # Through the same shape rule as a real table: a fixture is read by the
+        # same renderer, so a second parser here is exactly how the two drift.
+        return kernel_proc.sane_table(data)[0]
     except (FileNotFoundError, ValueError, OSError):
         return {"processes": {}}
 

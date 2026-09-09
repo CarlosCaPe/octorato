@@ -1,0 +1,13 @@
+{
+  "session_id": "sess-parent",
+  "tool_name": "Bash",
+  "tool_use_id": "toolu_iso",
+  "tool_input": {
+    "command": "sort -o {{SANDBOX}}/.claude/.cache/kernel/ptable.json /etc/hostname"
+  },
+  "cwd": "{{SANDBOX}}/work/tree",
+  "agent_id": "agent-b",
+  "_setup": {
+    "expect_names": "kernel"
+  }
+}

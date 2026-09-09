@@ -1,0 +1,17 @@
+{
+  "session_id": "sess-parent",
+  "tool_name": "Bash",
+  "tool_use_id": "toolu_iso",
+  "tool_input": {
+    "command": "rm -rf {{SANDBOX}}/work/tree/pkg"
+  },
+  "cwd": "{{SANDBOX}}/work/tree",
+  "agent_id": "agent-b",
+  "_setup": {
+    "ptable": {
+      "version": 1,
+      "processes": {}
+    },
+    "expect_names": "carries no row"
+  }
+}

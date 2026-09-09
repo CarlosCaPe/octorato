@@ -1,0 +1,10 @@
+{
+  "session_id": "sess-parent",
+  "tool_name": "Bash",
+  "tool_use_id": "toolu_iso",
+  "tool_input": {
+    "command": "ln -s {{SANDBOX}}/work/tree/pkg/a.py {{SANDBOX}}/work/tree/alias.py"
+  },
+  "cwd": "{{SANDBOX}}/work/tree",
+  "agent_id": "agent-b"
+}

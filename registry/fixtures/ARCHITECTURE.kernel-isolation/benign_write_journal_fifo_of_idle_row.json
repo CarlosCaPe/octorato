@@ -1,0 +1,14 @@
+{
+  "session_id": "sess-parent",
+  "tool_name": "Write",
+  "tool_use_id": "toolu_iso",
+  "tool_input": {
+    "file_path": "{{SANDBOX}}/work/solo/x.py",
+    "content": "x"
+  },
+  "cwd": "{{SANDBOX}}/work/tree",
+  "agent_id": "agent-b",
+  "_setup": {
+    "journal_fifo": ["agent-arm"]
+  }
+}

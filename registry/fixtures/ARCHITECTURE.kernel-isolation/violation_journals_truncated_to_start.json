@@ -1,0 +1,23 @@
+{
+  "session_id": "sess-parent",
+  "tool_name": "Bash",
+  "tool_use_id": "toolu_iso",
+  "tool_input": {
+    "command": "rm -rf {{SANDBOX}}/work/tree/pkg"
+  },
+  "cwd": "{{SANDBOX}}/work/tree",
+  "agent_id": "agent-b",
+  "_setup": {
+    "ptable": {
+      "version": 1,
+      "processes": {}
+    },
+    "truncate_journals": {
+      "agent-a": "stale",
+      "agent-b": "stale",
+      "agent-arm": "stale",
+      "sess-parent": "stale"
+    },
+    "expect_names": "read live"
+  }
+}

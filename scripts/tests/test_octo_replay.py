@@ -503,7 +503,11 @@ class TopTest(ReplayCase):
         kernel_proc.register("sess-old", {"kind": "main", "worktree": "/w"})
         path = kernel_proc.journal_path("sess-old")
         old = time.time() - (kernel_proc.TTL + 600)
-        os.utime(path, (old, old))
+        # THE WHOLE FILE, since cycle 5 C4 and cycle 6 C-A: liveness re-checks a
+        # stale mtime against the last record, and that record is checked
+        # against its own file, so neither `os.utime` alone nor a one-line
+        # rewrite says "this process went quiet" any more.
+        kernel_proc.backdate_journal(path, kernel_proc.TTL + 600)
         _, ps_out, _ = self.run_octo(["ps"])
         _, top_out, _ = self.run_octo(["top"])
         ps_row = [l for l in ps_out.splitlines() if l.startswith("sess-old")][0]
