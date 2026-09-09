@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "procedure-rebuild-pg-get-functiondef",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Procedure Rebuild via pg_get_functiondef"
+}

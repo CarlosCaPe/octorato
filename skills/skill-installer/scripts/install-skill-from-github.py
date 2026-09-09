@@ -126,7 +126,13 @@ def _validate_skill_name(name: str) -> None:
 
 
 def _git_sparse_checkout(repo_url: str, ref: str, paths: list[str], dest_dir: str) -> str:
-    repo_dir = os.path.join(dest_dir, "repo")
+    # A FRESH directory per attempt. git clone refuses a non-empty destination, and
+    # this function is called more than once against the same dest_dir: the caller
+    # retries https then ssh, and the branch clone below retries without --branch. With
+    # a shared "repo" path every retry died with "destination path already exists",
+    # which masked the real failure (auth, missing ref) behind a filesystem message.
+    repo_dir = tempfile.mkdtemp(prefix="clone-", dir=dest_dir)
+    os.rmdir(repo_dir)
     clone_cmd = [
         "git",
         "clone",
@@ -143,6 +149,9 @@ def _git_sparse_checkout(repo_url: str, ref: str, paths: list[str], dest_dir: st
     try:
         _run_git(clone_cmd)
     except InstallError:
+        # Second attempt (repo default branch): its own empty directory, same reason.
+        if os.path.exists(repo_dir):
+            shutil.rmtree(repo_dir, ignore_errors=True)
         _run_git(
             [
                 "git",

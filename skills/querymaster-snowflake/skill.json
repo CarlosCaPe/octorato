@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "querymaster-snowflake",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Child skill of querymaster for Snowflake: connection via Browser SSO, OAuth and service user/password, REST SQL API and warehouse best practices. Activates when the resolved engine is Snowflake."
+}

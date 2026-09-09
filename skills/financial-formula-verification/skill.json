@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "financial-formula-verification",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Financial Formula Verification for Cloud Cost Documents"
+}

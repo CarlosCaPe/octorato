@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "tsql-to-plpgsql-conversion",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "AI-Assisted T-SQL to PL/pgSQL Stored Procedure Conversion"
+}

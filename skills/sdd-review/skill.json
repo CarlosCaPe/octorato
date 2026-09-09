@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "sdd-review",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "SDD step 5. Reviews the implemented feature code against language and framework best practices, checks for code duplication, security vulnerabilities, performance issues, test coverage, and alignment with feature.md acceptance criteria. Use after /sdd-implement or on any existing feature implementation."
+}

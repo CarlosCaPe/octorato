@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "autovacuum-bloat-management",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Autovacuum & Table Bloat Management"
+}

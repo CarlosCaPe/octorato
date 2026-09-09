@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "querymaster-postgresql",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Child skill of querymaster for PostgreSQL (standard, Azure Database, Aurora): psycopg2 and Node connection patterns, read-only session and query best practices. Activates when the resolved engine is PostgreSQL."
+}

@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "primary-key-coverage-identity",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Primary Key Coverage & Identity Columns"
+}

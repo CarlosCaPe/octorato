@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "stripe-payments",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Pick and implement the right Stripe tier (Payment Link, Checkout, Elements, Connect, Billing), with MCP registration, local CLI and key hygiene. Use it when adding donate, checkout or subscription, or when comparing against PayPal."
+}

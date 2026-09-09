@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "knowledge-corpus",
+  "version": "1.0.0",
+  "license": "NOASSERTION",
+  "description": "Build and query focused knowledge corpora from brain skills, git history, and workspace files. Use when users want to compile expertise on a specific topic, ask \"what do we know about X?\", build a domain briefing, or synthesize knowledge from multiple sources into an actionable summary. No external dependencies."
+}

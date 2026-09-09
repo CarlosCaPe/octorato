@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "ask-with-recommendation",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Every multiple-choice question to the operator carries an explicit marked recommendation plus its reason (impact, scope, time, risk of waiting). Applies to every AskUserQuestion and to every 'quieres X o Y?' written in prose."
+}

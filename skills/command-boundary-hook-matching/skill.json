@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "command-boundary-hook-matching",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Pattern-match what a Bash command actually does in a PreToolUse hook without false-firing on mentions inside quoted args, commit messages, or echo strings. Use when building any hook that decides based on command semantics."
+}

@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "ownership-by-authorship",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Determine code/file ownership by git authorship (log/blame), never by which repo it lives in. Load before assigning work, escalating a fix to \"another team\", or routing a problem by repo location — the author may be on your own team. Repo location is not ownership."
+}

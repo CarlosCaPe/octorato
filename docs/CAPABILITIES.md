@@ -9,9 +9,9 @@
 | Skills | 233 |
 | Agents | 167 |
 | Divisions | 13 |
-| Scripts: wired | 116 |
+| Scripts: wired | 118 |
 | Scripts: orphan | 7 |
-| Rules | 77 |
+| Rules | 78 |
 | Hook entries | 51 |
 
 ## Skills (233)
@@ -486,7 +486,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (123)
+## Scripts (125)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -554,6 +554,7 @@
 | gap-capture.py | gap-capture.py , capture 2D-Delegate SELF misses as a gap backlog. When the delegate gate finds no a... | wired |
 | gate-check | gate-check , 4D Gate Enforcement Validator for the Octopus brain. Validates that the 4D paradigm pha... | wired |
 | gate_selftest.py | gate_selftest.py: shared fixture-driven liveness harness for fail-closed gates. | wired |
+| gen_skill_manifests.py | gen_skill_manifests.py: mint a `skill.json` per skill from its SKILL.md front matter. | wired |
 | generate-octorato-wiki.py | Regenerate the octorato wiki catalog pages from the live brain. | wired |
 | generate_memory_map.py | Memory Map Generator , TF-IDF + cosine index over the brain's life-memories. WHY THIS EXISTS The con... | wired |
 | generate_neural_map.py | generate_neural_map.py , Octopus Connectome Generator Builds a deep neural connectivity map inspired... | wired |
@@ -581,6 +582,7 @@
 | no-pause-suggestion.py | Stop hook , block "let's pause / leave for tomorrow / take a break" framing. The operator has flagge... | wired |
 | octo-dim.py | octo-dim.py , 4D session dimension manager. | wired |
 | octo.py | octo.py: the terminal view of the v8 kernel (docs/architecture/v8-kernel.md). | wired |
+| octo_pkg.py | octo_pkg.py: the PACKAGE primitive of the v8 kernel. | wired |
 | octorato-isomorphism.py | octorato-isomorphism , compute the invariant shared by the three Octorato anchors. | wired |
 | publish-wiki.py | publish-wiki.py - publish docs/wiki/ to the public GitHub wiki. | wired |
 | qa-merge-gate.py | PreToolUse Bash hook , QA gate (FAIL-CLOSED for merge actions). | wired |
@@ -614,7 +616,7 @@
 | wa-soporte.sh | Sends a WhatsApp through the SUPPORT channel, never through the operator's personal number. | wired |
 | watchdog.py | watchdog.py , observability surface 4 anomaly detector. Reads the JSONL trace files written by trace... | wired |
 
-## Rules (77)
+## Rules (78)
 
 ### ARCHITECTURE
 
@@ -711,6 +713,7 @@
 ### META
 
 - META.ai-sync-canonical
+- META.kernel-package
 - META.multi-machine-sync
 - META.pre-push-gate
 - META.querymaster

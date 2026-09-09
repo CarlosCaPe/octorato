@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "infinite-monitor",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Builds AI dashboards on Infinite Monitor, an open-source Next.js app where you describe the widget in natural language and an agent writes and deploys it on an infinite canvas. Triggers on 'crea un dashboard para'."
+}

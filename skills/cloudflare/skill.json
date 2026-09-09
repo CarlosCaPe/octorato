@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "cloudflare",
+  "version": "1.0.0",
+  "license": "Apache-2.0",
+  "description": "Comprehensive Cloudflare platform skill covering Workers, Pages, storage (KV, D1, R2), AI (Workers AI, Vectorize, Agents SDK), feature flags (Flagship), networking (Tunnel, Spectrum), security (WAF, DDoS), and infrastructure-as-code (Terraform, Pulumi). Use for any Cloudflare development task. Biases towards retrieval from Cloudflare docs over pre-trained knowledge."
+}

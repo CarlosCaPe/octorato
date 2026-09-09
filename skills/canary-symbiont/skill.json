@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "canary-symbiont",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Cross-plane sentinel: a watcher on plane B detects the SILENT death of plane A's scheduler (billing block, cron load-shedding) and alerts by email. Fail-open. Includes the mandatory live test."
+}

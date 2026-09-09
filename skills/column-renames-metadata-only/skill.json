@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "column-renames-metadata-only",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Column Renames (Metadata-Only)"
+}

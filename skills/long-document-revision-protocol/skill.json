@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "long-document-revision-protocol",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Long Document Revision Protocol"
+}

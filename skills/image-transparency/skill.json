@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "image-transparency",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Use when the user asks to remove a white/grey background from an image, logo, or signature to make it transparent, using NumPy and Pillow."
+}

@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "fb-page-dual-id",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "A Facebook Page has TWO different identifiers: the URL ID seen in `profile.php?id=N` (and in the page's vanity URL) and the Graph API ID returned by `me/accounts` / used in API calls. They are NOT interchangeable. Worse, the New Pages Experience reuses the `profile.php?id=N` URL shape for Pages too, so the URL no longer tells you whether a target is a Page or a personal Profile. Store and match on the Graph API ID."
+}

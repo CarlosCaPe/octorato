@@ -1956,3 +1956,35 @@ rules:
     locator: scripts/g__pretool__kernel.py --selftest registry/fixtures/FLOW.kernel-quota
     expect: 0
   liveness_required: FIRES
+- id: META.kernel-package
+  title: 'PACKAGE: an installed skill is verified against its signature at doctor and
+    push time'
+  category: META
+  source:
+    file: CLAUDE.md
+    anchor: 'Kernel: packages'
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - cli
+  - git-hook
+  mechanism:
+  - kind: Gate
+    canonical_name: octo_pkg.py
+    firing_event: PrePush
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: scripts/octo_pkg.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/octo_pkg.py --selftest registry/fixtures/META.kernel-package
+    expect: 0
+  - method: EXIT_CODE
+    locator: grep -q "octo pkg verify" .githooks/pre-push
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: 'Kernel: packages'
+    expect: present
+  liveness_required: FIRES
