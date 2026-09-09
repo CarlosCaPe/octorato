@@ -48,6 +48,26 @@ class QuotaBase(unittest.TestCase):
     def setUp(self) -> None:
         self.home = Path(tempfile.mkdtemp(prefix="kernel-quota-test-"))
         self.addCleanup(shutil.rmtree, self.home, ignore_errors=True)
+        self._saved_home = (os.environ.get("HOME"), os.environ.get("USERPROFILE"))
+        self.addCleanup(self._restore_home)
+
+    def _restore_home(self) -> None:
+        for key, value in zip(("HOME", "USERPROFILE"), self._saved_home):
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    def use_home(self) -> None:
+        """Point the process at the sandbox HOME.
+
+        Both variables, always: the brain resolves its root with
+        `os.path.expanduser("~")`, and on Windows that reads USERPROFILE first.
+        Setting HOME alone leaves every lookup pointed at the real profile, so
+        the seeded occupant is never found, the policy falls back to defaults
+        and the test reads a green gate that never saw its own fixture.
+        """
+        os.environ["HOME"] = os.environ["USERPROFILE"] = str(self.home)
 
     def write_occupant(self, text) -> None:
         cfg = self.home / ".claude" / "company" / "config"
@@ -93,7 +113,7 @@ class QuotaBase(unittest.TestCase):
                      ptype: str = "") -> None:
         """A journal with `lines` tool lines whose start_ts is `age_seconds` ago."""
         import time
-        env_home = os.environ.get("HOME")
+        env_home = (os.environ.get("HOME"), os.environ.get("USERPROFILE"))
         os.environ["HOME"] = str(self.home)
         os.environ["USERPROFILE"] = str(self.home)
         try:
@@ -107,8 +127,9 @@ class QuotaBase(unittest.TestCase):
                 kernel_proc.append(pid, {"kind": "tool", "ts": ts + 0.001 * i,
                                          "tool_name": "Read", "tool_use_id": f"s{i}"})
         finally:
-            if env_home is not None:
-                os.environ["HOME"] = env_home
+            for key, value in zip(("HOME", "USERPROFILE"), env_home):
+                if value is not None:
+                    os.environ[key] = value
 
 
 class TestDefaultsUnlimited(QuotaBase):
@@ -201,7 +222,7 @@ class TestQaMultiplier(QuotaBase):
 class TestOccupantOverridesSlot(QuotaBase):
     def test_occupant_wins_key_by_key(self):
         self.write_occupant({"subagent": {"max_tool_calls": 7}})
-        os.environ["HOME"] = str(self.home)
+        self.use_home()
         policy, notes = gate.load_policy()
         self.assertEqual(notes, [])
         self.assertEqual(policy["subagent"]["max_tool_calls"], 7)
@@ -221,7 +242,7 @@ class TestOccupantOverridesSlot(QuotaBase):
 class TestMalformedNeverDenies(QuotaBase):
     def test_unparseable_occupant_falls_back_with_a_note(self):
         self.write_occupant("{ this is not json")
-        os.environ["HOME"] = str(self.home)
+        self.use_home()
         policy, notes = gate.load_policy()
         self.assertTrue(notes, "a malformed occupant must produce a note")
         self.assertEqual(policy["subagent"]["max_tool_calls"], 0)
@@ -229,7 +250,7 @@ class TestMalformedNeverDenies(QuotaBase):
 
     def test_bad_cap_value_keeps_the_default_and_notes_the_key(self):
         self.write_occupant({"subagent": {"max_tool_calls": "lots"}})
-        os.environ["HOME"] = str(self.home)
+        self.use_home()
         policy, notes = gate.load_policy()
         self.assertEqual(policy["subagent"]["max_tool_calls"], 0)
         self.assertTrue(any("max_tool_calls" in n for n in notes))
@@ -240,7 +261,7 @@ class TestMalformedNeverDenies(QuotaBase):
         of every process while the doctor calls the same file malformed. The
         widest gap between what the docs promise and what the gate does."""
         self.write_occupant({"subagent": {"max_tool_calls": True}})
-        os.environ["HOME"] = str(self.home)
+        self.use_home()
         policy, notes = gate.load_policy()
         self.assertEqual(policy["subagent"]["max_tool_calls"], 0)
         self.assertTrue(any("max_tool_calls" in n for n in notes))
@@ -248,7 +269,7 @@ class TestMalformedNeverDenies(QuotaBase):
 
     def test_a_numeric_string_is_not_a_cap(self):
         self.write_occupant({"subagent": {"max_tool_calls": "5"}})
-        os.environ["HOME"] = str(self.home)
+        self.use_home()
         policy, notes = gate.load_policy()
         self.assertEqual(policy["subagent"]["max_tool_calls"], 0)
         self.assertTrue(any("max_tool_calls" in n for n in notes))
@@ -257,14 +278,14 @@ class TestMalformedNeverDenies(QuotaBase):
     def test_a_float_is_not_a_cap(self):
         """int(5.9) is 5: silently a cap the operator never wrote."""
         self.write_occupant({"subagent": {"max_minutes": 5.9}})
-        os.environ["HOME"] = str(self.home)
+        self.use_home()
         policy, notes = gate.load_policy()
         self.assertEqual(policy["subagent"]["max_minutes"], 0)
         self.assertTrue(any("max_minutes" in n for n in notes))
 
     def test_a_bool_multiplier_is_not_a_multiplier(self):
         self.write_occupant({"subagent": {"max_tool_calls": 5}, "qa_multiplier": True})
-        os.environ["HOME"] = str(self.home)
+        self.use_home()
         policy, notes = gate.load_policy()
         self.assertEqual(policy["qa_multiplier"], gate.DEFAULTS["qa_multiplier"])
         self.assertTrue(any("qa_multiplier" in n for n in notes))
@@ -277,7 +298,7 @@ class TestMalformedNeverDenies(QuotaBase):
             with self.subTest(value=bad):
                 data = {"subagent": {"max_tool_calls": bad}}
                 self.write_occupant(data)
-                os.environ["HOME"] = str(self.home)
+                self.use_home()
                 _, notes = gate.load_policy()
                 problems = doctor._kernel_policy_problems(data, "occupant")
                 self.assertEqual(bool(notes), bool(problems),
@@ -287,7 +308,7 @@ class TestMalformedNeverDenies(QuotaBase):
         """Clamping -5 to 0 would accept a file the doctor calls malformed, and
         the operator would never learn the cap they wrote is not running."""
         self.write_occupant({"subagent": {"max_tool_calls": -5}})
-        os.environ["HOME"] = str(self.home)
+        self.use_home()
         policy, notes = gate.load_policy()
         self.assertEqual(policy["subagent"]["max_tool_calls"], 0)
         self.assertTrue(any("max_tool_calls" in n for n in notes))
