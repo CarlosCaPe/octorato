@@ -92,7 +92,29 @@ def mutate(text: str, old: str, new: str) -> str:
     """
     if old not in text:
         raise AssertionError(f"fixture does not contain {old!r}, so this edit is a no-op")
+    if old == new:
+        raise AssertionError(f"the edit replaces {old!r} with itself, so it is a no-op")
     return text.replace(old, new)
+
+
+def cut_before(text: str, marker: str) -> str:
+    """Everything before `marker`, and REFUSE when the marker is absent.
+
+    `text.split(marker)[0]` returns the WHOLE text when the marker is not there, so a
+    fixture edit that silently stopped cutting would assert that verbatim Apache is
+    Apache. That is `mutate`'s no-op class wearing a different verb, and it was in this
+    module, in the test that proves a clause-9 copy is still a whole license.
+    """
+    if marker not in text:
+        raise AssertionError(f"fixture does not contain {marker!r}, so this cut is a no-op")
+    return text.split(marker)[0]
+
+
+def cut_after(text: str, marker: str) -> str:
+    """Everything after `marker`, and REFUSE when the marker is absent."""
+    if marker not in text:
+        raise AssertionError(f"fixture does not contain {marker!r}, so this cut is a no-op")
+    return text.split(marker, 1)[1]
 
 
 def one_line(text: str) -> str:
@@ -1100,7 +1122,7 @@ class TestTheRecognizerRefusesMitLookalikes(unittest.TestCase):
                 "Permission is hereby granted, free of charge, to any person obtaining "
                 "a copy of this software to EVALUATE the Software for thirty (30) days. "
                 "No other right is granted. Redistribution is prohibited.\n\n"
-                + MIT_BODY_TEXT.split("subject to the following conditions:", 1)[1].lstrip())
+                + cut_after(MIT_BODY_TEXT, "subject to the following conditions:").lstrip())
         ident, why = gen.license_terms(eula)
         self.assertIsNone(ident, "a proprietary EULA was recognized as MIT")
         # The cause is the word that differs, quoted with the line it sits on.
@@ -1278,6 +1300,30 @@ class TestLicenseFileBlindSpots(unittest.TestCase):
         (d / "LICENSE").write_bytes(mutate(MIT_FILE_TEXT, "\n", "\r\n").encode("utf-8"))
         self.assertEqual(gen.resolve_license(d), ("MIT", ""))
 
+    def test_read_license_strips_a_utf8_bom(self):
+        # The same shape as the CRLF defect: `utf-8-sig` is belt-and-braces because
+        # U+FEFF is in `_TRANSLATE` and the recognizer answers MIT either way, so an
+        # end-to-end test cannot see it. Measured: decoding the same bytes as plain
+        # utf-8 also yields MIT. The contract is asserted where only one mechanism can
+        # answer, exactly as for CRLF.
+        d = self._dir("bom")
+        (d / "LICENSE").write_bytes(b"\xef\xbb\xbf" + MIT_FILE_TEXT.encode("utf-8"))
+        text = gen.read_license(d / "LICENSE")
+        self.assertFalse(text.startswith("\ufeff"), "read_license leaked a BOM")
+        self.assertTrue(text.startswith("MIT License"))
+
+    def test_the_nul_check_names_utf16_rather_than_unrecognized_terms(self):
+        # UTF-16LE with no BOM decodes as neither utf-8 nor text, and the CAUSE has to
+        # say so: "does not recognize the terms" would send a reader to study a document
+        # nobody could decode. Reverting the NUL check leaves a refusal, so the refusal
+        # is not what this anchors; the sentence is.
+        d = self._dir("utf16")
+        (d / "LICENSE").write_bytes(MIT_FILE_TEXT.encode("utf-16-le"))
+        with self.assertRaises(gen.LicenseUndecodable) as caught:
+            gen.read_license(d / "LICENSE")
+        self.assertIn("NUL", str(caught.exception))
+        self.assertIn("UTF-16", str(caught.exception))
+
     def test_read_license_returns_lf_only(self):
         # The contract `read_license` actually promises: bytes in, LF-normalized text
         # out. Every consumer downstream is free to assume it, and a future one that
@@ -1297,37 +1343,114 @@ class TestLicenseFileBlindSpots(unittest.TestCase):
 class TestEveryFixtureEditGoesThroughMutate(unittest.TestCase):
     """`mutate()` exists because three fixture edits in this module matched nothing and
     the tests then asserted that verbatim MIT is MIT, passing against the code they were
-    written to catch. Routing the two survivors through it fixes today; this test fixes
-    tomorrow, because the next bare `.replace` on a fixture is written by someone who
-    never read that story.
+    written to catch. Vacuity is invisible by construction, a no-op edit leaves a valid
+    license and a valid license passes, so the guard cannot be another assertion about
+    behaviour: it reads the source.
 
-    Vacuity is invisible by construction: a no-op edit leaves a valid license, and a
-    valid license passes. So the guard cannot be another assertion about behaviour, it
-    has to read the source.
+    THE POLARITY IS THE POINT. The first version listed the bad routes (a bare
+    `.replace`, a chained one) and a reviewer immediately named ten more it missed: an
+    alias, `str.replace(FIXTURE, ...)`, `re.sub`, a helper, a slice, an f-string, a
+    split/join, `mod.FIXTURE`, a walrus, `getattr`. Enumerating evasions is the exact
+    failure this whole module is a repair for. So it is an ALLOW-LIST now: a license
+    fixture may be passed to a sanctioned transform, concatenated, or handed to the code
+    under test, and ANY other use of it is flagged. A route nobody thought of fails
+    CLOSED, which is a test author reading one sentence, not a silent no-op.
     """
 
     FIXTURES = {"MIT_FILE_TEXT", "MIT_BODY_TEXT", "APACHE_FULL_TEXT", "APACHE_HEAD_TEXT",
                 "GPL3_TEXT", "MPL2_TEXT", "AGPL3_TEXT", "BSD3_TEXT"}
+    # Transforms that either refuse a no-op or cannot silently produce one.
+    SANCTIONED = {"mutate", "cut_before", "cut_after", "one_line"}
+    # Methods that READ a fixture rather than edit it. A no-op is not expressible here:
+    # `.encode()` changes the type, `.splitlines()` and `.rstrip()` cannot quietly
+    # return an unedited document where an edited one was meant, because no marker is
+    # being matched. `replace`, `sub`, `format`, `join` and slicing are NOT here, and
+    # neither is `split`, which is the vacuous cut that `cut_before`/`cut_after` exist
+    # to refuse.
+    READ_ONLY_METHODS = {"encode", "splitlines", "rstrip", "lstrip", "strip", "count",
+                         "startswith", "endswith", "find", "index", "upper", "lower"}
 
-    def test_no_bare_replace_on_a_license_fixture(self):
+    def test_a_license_fixture_is_only_ever_edited_through_a_sanctioned_transform(self):
         import ast
-        src = Path(__file__).read_text(encoding="utf-8")
+        tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+        parent = {}
+        for node in ast.walk(tree):
+            for child in ast.iter_child_nodes(node):
+                parent[child] = node
+        # An alias is the fixture. `ALIAS = MIT_FILE_TEXT` then `ALIAS.replace(...)` was
+        # the first route past this guard, so a name bound directly to a fixture becomes
+        # one, to a fixpoint.
+        tainted = set(self.FIXTURES)
+        for _ in range(8):
+            grew = False
+            for node in ast.walk(tree):
+                if (isinstance(node, ast.Assign) and isinstance(node.value, ast.Name)
+                        and node.value.id in tainted):
+                    for tgt in node.targets:
+                        if isinstance(tgt, ast.Name) and tgt.id not in tainted:
+                            tainted.add(tgt.id)
+                            grew = True
+            if not grew:
+                break
         offenders = []
-        for node in ast.walk(ast.parse(src)):
-            if not isinstance(node, ast.Call):
+        for node in ast.walk(tree):
+            # `mod.MIT_FILE_TEXT` reaches the same string through an attribute, so the
+            # attribute name counts as much as the bare name.
+            if (isinstance(node, ast.Attribute) and node.attr in tainted
+                    and isinstance(node.ctx, ast.Load)):
+                up_attr = parent.get(node)
+                if isinstance(up_attr, ast.Attribute) and up_attr.attr not in self.READ_ONLY_METHODS:
+                    offenders.append(f"line {node.lineno}: reached through "
+                                     f"an attribute, then .{up_attr.attr}(...)")
                 continue
-            fn = node.func
-            if not (isinstance(fn, ast.Attribute) and fn.attr == "replace"):
+            if not (isinstance(node, ast.Name) and node.id in tainted
+                    and isinstance(node.ctx, ast.Load)):
                 continue
-            base = fn.value
-            while isinstance(base, ast.Call):      # chained .replace(...).replace(...)
-                base = base.func.value if isinstance(base.func, ast.Attribute) else base
-            if isinstance(base, ast.Name) and base.id in self.FIXTURES:
-                offenders.append(f"line {node.lineno}: {base.id}.replace(...)")
-        self.assertEqual(offenders, [], "a fixture edited with a bare str.replace is a "
-                                        "no-op the moment the fixture re-wraps; use "
-                                        "mutate(), which raises on a no-op: "
-                                        + "; ".join(offenders))
+            up = parent.get(node)
+            if isinstance(up, ast.Call) and up.func is node:
+                continue                                   # not a string use
+            if isinstance(up, ast.Call) and node in up.args:
+                fn = up.func
+                name = (fn.id if isinstance(fn, ast.Name)
+                        else fn.attr if isinstance(fn, ast.Attribute) else "")
+                # A sanctioned transform, an assertion, or the code under test.
+                # A helper ON THIS CLASS is not an escape: it lives in the file this
+                # test parses, so whatever it does to the fixture is flagged at its own
+                # line. Listing helper names one by one was the enumeration treadmill in
+                # miniature, and `_ok` was the member that proved it.
+                if isinstance(fn, ast.Attribute) and isinstance(fn.value, ast.Name) \
+                        and fn.value.id == "self":
+                    continue
+                if name in self.SANCTIONED or name.startswith("assert") or name in {
+                        "license_terms", "mit_diagnosis", "is_verbatim_mit", "spdx_of",
+                        "read_license", "write_text", "write_bytes", "encode", "len",
+                        "describe", "resolve_license", "dumps"}:
+                    continue
+                offenders.append(f"line {node.lineno}: passed to {name or '?'}()")
+                continue
+            if isinstance(up, ast.Attribute):
+                if up.attr in self.READ_ONLY_METHODS:
+                    continue
+                offenders.append(f"line {node.lineno}: {node.id}.{up.attr}(...)")
+                continue
+            if isinstance(up, ast.Subscript):
+                offenders.append(f"line {node.lineno}: {node.id}[...] slice")
+                continue
+            if isinstance(up, (ast.JoinedStr, ast.FormattedValue)):
+                continue                                   # embedding, same as `+`
+            if isinstance(up, (ast.BinOp, ast.keyword, ast.Assign, ast.Compare,
+                               ast.Tuple, ast.List, ast.Dict, ast.Return, ast.Expr,
+                               ast.Starred, ast.IfExp)):
+                continue                                   # concatenation and plumbing
+            offenders.append(f"line {node.lineno}: used as {type(up).__name__}")
+        # STILL EVADABLE, and said so rather than implied: this reads the source, so
+        # `globals()["MIT_FILE_TEXT"]` or a string built at runtime reaches the fixture
+        # without a name the parser can follow. It raises the cost of an accidental
+        # no-op, which is the failure that actually happened here, not of a determined
+        # one, which has not.
+        self.assertEqual(offenders, [], "a license fixture reached a transform that can "
+                                        "silently produce a no-op; route it through "
+                                        "mutate() or cut_before(): " + "; ".join(offenders))
 
 
 class TestPartialOutput(unittest.TestCase):
@@ -1757,7 +1880,7 @@ class TestEveryRecognizerIsWholeDocument(unittest.TestCase):
     def test_apache_that_stops_at_clause_nine_is_still_apache(self):
         # requests, and everything that vendored it, ships this form: no
         # "END OF TERMS AND CONDITIONS" and no appendix. It is a whole license.
-        cut = APACHE_FULL_TEXT.split("END OF TERMS AND CONDITIONS")[0]
+        cut = cut_before(APACHE_FULL_TEXT, "END OF TERMS AND CONDITIONS")
         self.assertEqual(gen.license_terms(cut)[0], "Apache-2.0")
 
 
@@ -1849,6 +1972,126 @@ class TestTheFilenameEnumerationDecidesAbsent(unittest.TestCase):
         self.assertIn("directory", problem)
 
 
+COMMONS_CLAUSE_BODY = (
+    "The Software is provided to you by the Licensor under the License, as defined "
+    "below, subject to the following condition. Without limiting other conditions in "
+    "the License, the grant of rights under the License will not include, and the "
+    "License does not grant to you, the right to Sell the Software.")
+
+
+class TestAShapeIsNotALicenceToSkipTheContent(unittest.TestCase):
+    """`_LINK_DEF_LINE`, `_SPDX_LINE` and `_BARE_URL_LINE` dropped a line on its SHAPE,
+    and `_Doc` drops an ornament line before any recognizer runs, so their content was
+    never read by anything. A whole Commons Clause pasted into a link label or after an
+    `SPDX-FileCopyrightText:` key was invisible to all six recognizers while the SAME
+    TEXT unwrapped was refused. The control is what makes it a finding.
+    """
+
+    def _refused(self, body):
+        ident, why = gen.license_terms(body)
+        self.assertIsNone(ident, f"recognized as {ident}")
+
+    def _ok(self, body, want):
+        self.assertEqual(gen.license_terms(body)[0], want)
+
+    def test_the_control_the_same_text_unwrapped(self):
+        self._refused(MIT_FILE_TEXT + "\n" + COMMONS_CLAUSE_BODY + "\n")
+
+    def test_terms_hidden_in_a_markdown_link_label(self):
+        self._refused(MIT_FILE_TEXT + f"\n[{COMMONS_CLAUSE_BODY}]: https://acme.example/cc\n")
+        self._refused(APACHE_FULL_TEXT + f"\n[{COMMONS_CLAUSE_BODY}]: https://acme.example/cc\n")
+
+    def test_terms_hidden_after_an_spdx_key(self):
+        self._refused(MIT_FILE_TEXT + f"\nSPDX-FileCopyrightText: {COMMONS_CLAUSE_BODY}\n")
+
+    def test_the_legitimate_forms_still_pass(self):
+        self._ok("SPDX-License-Identifier: MIT\n\n" + MIT_FILE_TEXT, "MIT")
+        self._ok("SPDX-FileCopyrightText: Copyright 2020 Acme\n\n" + MIT_FILE_TEXT, "MIT")
+        self._ok(MIT_FILE_TEXT + "\n[others]: https://example.com/contributors\n", "MIT")
+        self._ok(APACHE_FULL_TEXT, "Apache-2.0")   # ships its own bare URL line
+
+    def test_a_url_is_a_pointer_and_that_is_the_residual(self):
+        # STATED, not fixed: `_INTRA_HYPHEN` fuses a path into single tokens, so
+        # `.../non-commercial-only` reads as one word, and a real check would have to
+        # follow the link. Applying the vocabulary test here refuses the
+        # `http://www.apache.org/licenses/` line Apache-2.0 itself ships.
+        self._ok(MIT_FILE_TEXT +
+                 "\nhttps://acme.example/license-terms/non-commercial-only-expires-2026\n",
+                 "MIT")
+
+
+class TestATitleIsANameNotAWarning(unittest.TestCase):
+    """`modified` was made conditional on `bsd` and its seven siblings were left alone,
+    which is the same list-shaped failure one member in. Each of these resolved a
+    verbatim MIT body to plain MIT."""
+
+    def _refused(self, title):
+        ident, _ = gen.license_terms(mutate(MIT_FILE_TEXT, "MIT License", title))
+        self.assertIsNone(ident, f"{title!r} resolved to {ident}")
+
+    def test_every_qualifier_that_only_names_a_bsd_variant(self):
+        for title in ("Modified MIT License", "Revised MIT License", "New MIT License",
+                      "Simplified MIT License", "Clear MIT License",
+                      "MIT Licence (Revised)", "MIT License Version 2", "MIT License v3"):
+            self._refused(title)
+
+    def test_a_title_naming_another_license_contradicts_the_body(self):
+        for title in ("Modified BSD License", "Apache License", "Mozilla Public License"):
+            self._refused(title)
+
+    def test_the_published_bsd_names_still_resolve(self):
+        for title in ("BSD 3-Clause License", "Modified BSD License", "New BSD License",
+                      "Revised BSD License"):
+            self.assertEqual(gen.license_terms(f"{title}\n\n{BSD3_TEXT}")[0],
+                             "BSD-3-Clause", title)
+
+    def test_the_other_five_still_resolve_under_their_own_titles(self):
+        self.assertEqual(gen.license_terms(MIT_FILE_TEXT)[0], "MIT")
+        self.assertEqual(gen.license_terms(APACHE_FULL_TEXT)[0], "Apache-2.0")
+        self.assertEqual(gen.license_terms(GPL3_TEXT)[0], "GPL-3.0-only")
+        self.assertEqual(gen.license_terms(AGPL3_TEXT)[0], "AGPL-3.0-only")
+        self.assertEqual(gen.license_terms(MPL2_TEXT)[0], "MPL-2.0")
+
+
+class TestADeclarationThatExistsIsNotAnAbsentOne(unittest.TestCase):
+    """YAML types the value. `license: [MIT]` is a list, `license: 2.0` a float, and
+    `license: no` the boolean False because YAML 1.1 reads `no` as a bool. Each was
+    measured as "declared nothing", which took the repo default over a field the author
+    had filled in: the silent-default class this module closes for files, one level up.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="test-decl-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def _skill(self, decl):
+        d = self.tmp / f"s{len(list(self.tmp.iterdir()))}"
+        d.mkdir()
+        (d / "SKILL.md").write_text(f"---\nname: probe\ndescription: d\n{decl}\n---\n# P\n",
+                                    encoding="utf-8")
+        return d
+
+    def test_a_typed_declaration_is_refused_not_defaulted(self):
+        for decl in ("license: [MIT]", "license: no", "license: 2.0", "license: {}",
+                     'license: ""'):
+            manifest, problem = gen.describe(self._skill(decl), "MIT")
+            self.assertIsNone(manifest, f"{decl!r} took the repo default")
+            self.assertIn("not a bare SPDX identifier", problem)
+
+    def test_two_holders_that_disagree_are_compared(self):
+        manifest, problem = gen.describe(
+            self._skill("license: MIT\nmetadata:\n  license: Apache-2.0"), "MIT")
+        self.assertIsNone(manifest)
+        self.assertIn("two different license declarations", problem)
+
+    def test_the_controls(self):
+        self.assertEqual(gen.describe(self._skill("license: Apache-2.0"), "MIT")[0]["license"],
+                         "Apache-2.0")
+        self.assertEqual(gen.describe(self._skill("license: MIT\nmetadata:\n  license: MIT"),
+                                      "MIT")[0]["license"], "MIT")
+        self.assertEqual(gen.describe(self._skill("# nothing"), "MIT")[0]["license"], "MIT")
+
+
 class TestEveryExclusionIsARoadBackToTheDefault(unittest.TestCase):
     """Whatever the name test declines, `resolve_license` used to answer for with the
     same `(None, "")` it uses for an empty directory, and `(None, "")` is the only road
@@ -1895,6 +2138,35 @@ class TestEveryExclusionIsARoadBackToTheDefault(unittest.TestCase):
 
     def test_a_license_one_directory_down(self):
         self.assertIn("docs/LICENSE.txt", self._refuses({"docs/LICENSE.txt": APACHE_FULL_TEXT}))
+
+    def test_a_backup_copy_is_never_adopted_as_the_terms(self):
+        # Worse than a silent default, which is what these used to be measured doing:
+        # an editor or patch backup holds what the terms USED to be, and adopting one
+        # publishes a superseded license as the current claim.
+        for name in ("LICENSE.txt~", "LICENSE.orig", "LICENSE.txt.bak", "LICENSE.old",
+                     "LICENSE.rej", "LICENSE.txt.tmp"):
+            self.assertIn(name, self._refuses({name: APACHE_FULL_TEXT}))
+
+    def test_a_package_manifest_that_declares_terms_nothing_reads(self):
+        for name, body in (("package.json", '{"name":"x","license":"AGPL-3.0"}'),
+                           ("pyproject.toml", '[project]\nlicense = "MIT"\n')):
+            self.assertIn(name, self._refuses({name: body}))
+
+    def test_a_lone_notice_file(self):
+        self.assertIn("NOTICE.txt", self._refuses({"NOTICE.txt": APACHE_FULL_TEXT}))
+
+    def test_provenance_files_are_a_report_and_not_a_refusal(self):
+        # `UPSTREAM.md` was measured reaching the default with nothing even reporting
+        # it, because only SKILL.md and README.md were read. It is read now, and it is
+        # a REPORT: refusing on provenance would turn every attributed skill into a
+        # hand-written manifest.
+        d = self._skill({"UPSTREAM.md": "Vendored from https://github.com/foo/bar (AGPL-3.0)\n"})
+        self.assertEqual(gen.describe(d, "MIT")[0]["license"], "MIT")
+        self.assertIn("github.com/foo/bar", gen.upstream_source(d))
+
+    def test_a_backup_beside_a_real_license_does_not_disturb_it(self):
+        d = self._skill({"LICENSE": MIT_FILE_TEXT, "LICENSE.orig": APACHE_FULL_TEXT})
+        self.assertEqual(gen.describe(d, "MIT")[0]["license"], "MIT")
 
     def test_the_controls_still_reach_the_default_or_their_own_terms(self):
         d = self._skill({"notes.md": "nothing license-shaped here"})
@@ -1944,7 +2216,7 @@ class TestATimeLimitIsTerms(unittest.TestCase):
     def test_real_holders_that_this_must_not_refuse(self):
         # Each was measured being refused by a stricter draft of the same rule (one that
         # required every lower-case word in the notice to be a particle or a corporate
-        # form). It cost 139 refusals in 1,183 real files and was dropped for these.
+        # form). It refused more than a tenth of a disk sweep and was dropped for these.
         for holder in ("Copyright (c) 2017-present, Jon Schlinkert.",
                        "Copyright (c) 2014, Nathan LaFreniere and other contributors",
                        "Copyright (c) 2012-2018 Aseem Kishore, and [others].",
@@ -2219,7 +2491,7 @@ class TestTheShippedManifestsMatchWhatTheGeneratorDerives(unittest.TestCase):
                                           "figma-use")},
             # `sandbox-sdk` was NOASSERTION here on the sentence "this name is NOT
             # present in cloudflare/skills". It is absent from the CURRENT listing
-            # because upstream renamed the skill on 2026-08-07 (f96bff75), months after
+            # because upstream dropped that name on 2026-08-07 (f96bff75), months after
             # the 2026-05-23 bundle. The tree at 60147cbb, the last upstream commit
             # before that bundle, carries skills/sandbox-sdk/SKILL.md, and our copy
             # differs from it only by a locally appended "## See also". Provenance is a

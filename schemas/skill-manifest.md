@@ -144,7 +144,15 @@ SPDX's own `NOASSERTION` and the generator prints every skill that does, on ever
 It is not a license and it is not a default: it is the absence of a claim, kept visible
 so the open question keeps being asked.
 
-## Nothing reads `license` yet
+## Nothing INTERPRETS `license`, and everything protects it
+
+Both halves are true and they read as a contradiction in the wrong order, so take them
+together. `octo_pkg.py` hashes, signs, verifies and installs the manifest AS A WHOLE, so
+the license field travels inside what the tree hash protects and a value changed after
+signing fails verification. It never reads the field: `grep -in licen scripts/octo_pkg.py`
+is empty. Integrity, not interpretation. That is why a wrong value matters for what it
+CLAIMS in public rather than for a code path it would break, and why the generator
+reports rather than defaults.
 
 No code in this repo consumes the `license` field. `octo_pkg` never mentions it (`grep -in
 licen scripts/octo_pkg.py` returns nothing), and a lock entry carries name, kind, version,

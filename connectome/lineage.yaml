@@ -579,7 +579,11 @@ edges:
       - scripts/gen_skill_manifests.py                        # writes the license field; recognizes or REFUSES, never defaults in silence
       - schemas/skill-manifest.md                             # the contract that field answers to, and its stated residuals
       - schemas/skill-manifest.schema.json                    # the validator every generated manifest passes
-      - scripts/octo_pkg.py                                   # acts on the manifest at install and verify time
+      - scripts/validate-skill-manifest.py                    # the CLI that enforces the schema on a manifest
+      - schemas/tests/skill-manifest-samples/negative-cases.json  # 47 license mentions, incl. root-required-license-missing
+      - scripts/tests/test_octo_pkg.py                        # the fixtures and the shipped-manifest expectations
+      - registry/fixtures/META.kernel-package/signed/skill.json   # the signed fixture the selftest installs
+      - scripts/octo_pkg.py                                   # installs and verifies the manifest as a WHOLE; reads no license field
       - CLAUDE.md                                             # Kernel: packages (an installed skill is a signed package)
     kind: appears_in
     note: >-
@@ -596,3 +600,11 @@ edges:
       question about a DATE: query the tree at the commit the material entered.
       Change the recognizer and the schema doc's residual list must move with
       it, because that list is what the next reader trusts instead of the code.
+      Two sentences about `octo_pkg.py` are both true and read as a contradiction
+      in the wrong order, so here is the one story: it hashes, signs, verifies
+      and installs the manifest AS A WHOLE, so the license field travels inside
+      what it protects and a tampered value fails the tree hash. It never reads
+      that field, and `grep -in licen scripts/octo_pkg.py` is empty, which is why
+      the schema doc says nothing consumes it. Integrity, not interpretation:
+      the value is protected and unread, and what makes a wrong one matter is
+      the public claim it makes, not a code path that would break.

@@ -173,7 +173,23 @@ _NOTICES_TOKENS = {"3rd", "third", "thirdparty", "3rdparty", "party", "parties",
 # license governs: two license files that disagree are a question for a human.
 _LICENSE_ORDER = ("license.txt", "license", "license.md")
 
+# An editor or patch backup. `LICENSE.orig` and `LICENSE.txt~` hold license text and
+# they are NOT the package's terms: they are what the terms used to be, and adopting one
+# publishes a superseded license as the current claim. Measured: each of these standing
+# alone was ADOPTED as Apache-2.0, which is worse than the silent default it replaced,
+# because a stale document became the legal claim rather than an unanswered question.
+_BACKUP_EXTS = {"bak", "backup", "orig", "old", "prev", "save", "swp", "swo", "tmp",
+                "rej", "dist", "in", "example", "sample", "template", "tpl"}
+_BACKUP_TAIL = re.compile(r"[~#]$")
+
 _NAME_SPLIT = re.compile(r"[._\-\s]+")
+
+
+def _is_backup_name(name: str) -> bool:
+    low = name.lower()
+    if _BACKUP_TAIL.search(low):
+        return True
+    return low.rpartition(".")[2] in _BACKUP_EXTS if "." in low else False
 
 
 def _is_notices_name(name: str) -> bool:
@@ -192,7 +208,7 @@ def _is_license_name(name: str) -> bool:
     toward being silently absent.
     """
     low = name.lower()
-    if _is_notices_name(low):
+    if _is_notices_name(low) or _is_backup_name(low):
         return False
     ext = low.rpartition(".")[2] if "." in low else ""
     if ext in _NON_DOCUMENT_EXTS:
@@ -270,18 +286,67 @@ _TITLE_WORDS = frozenset({
 })
 
 
-def _is_title_line(ws: list[str]) -> bool:
+# Words that only ever reach _TITLE_WORDS because a BSD variant is NAMED with them:
+# "Modified BSD License", "Revised BSD License", "New BSD License", "Simplified BSD
+# License", "BSD 3-Clause Clear License", "BSD License Version 2". Next to any other
+# license they stop being a name and become a WARNING that the terms were changed, and
+# every one of them was measured resolving a verbatim MIT body to plain MIT: "Revised
+# MIT License", "New MIT License", "Simplified MIT License", "Clear MIT License", "MIT
+# Licence (Revised)", "MIT License Version 2", "MIT License v3". Fixing "modified" and
+# leaving its seven siblings was closing one member of a class and calling it closed.
+_TITLE_QUALIFIERS = frozenset({"modified", "revised", "new", "simplified", "clear",
+                               "version", "v", "0", "1", "2", "3", "4", "5", "10",
+                               "11", "20", "21", "30"})
+# The family a title NAMES. A title is ornament because it repeats what the document
+# already is; one that names a different license contradicts the body instead, and
+# "Modified BSD License" over a verbatim MIT body resolved to plain MIT.
+# "gnu" is deliberately absent: it names three different licenses and cannot contradict
+# any of them on its own.
+_TITLE_FAMILIES = {
+    "mit": "mit", "expat": "mit",
+    "bsd": "bsd", "clause": "bsd",
+    "apache": "apache", "asl": "apache",
+    "affero": "agpl", "lesser": "lgpl", "library": "lgpl", "gpl": "gpl",
+    "mozilla": "mpl", "mpl": "mpl",
+    "isc": "isc", "zlib": "zlib", "boost": "bsl", "artistic": "artistic",
+    "eclipse": "epl", "unlicense": "unlicense", "python": "psf", "openssl": "openssl",
+    "creative": "cc", "commons": "cc",
+}
+# The coarse family of an SPDX id, in the same vocabulary the titles use. Longest first,
+# so AGPL and LGPL are not read as GPL.
+_COARSE_ORDER = ("agpl", "lgpl", "gpl", "bsd", "apache", "mpl", "mit", "isc", "zlib",
+                 "bsl", "artistic", "epl", "unlicense", "psf", "openssl", "cc")
+
+
+def _title_families(ws: list[str]) -> set[str]:
+    return {_TITLE_FAMILIES[w] for w in ws if w in _TITLE_FAMILIES}
+
+
+def _coarse_family(spdx: str) -> str:
+    low = spdx_family(spdx)
+    for fam in _COARSE_ORDER:
+        if low.startswith(fam):
+            return fam
+    return low
+
+
+def _is_title_line(ws: list[str], spdx: str | None = None) -> bool:
     """A line that is nothing but a license's NAME.
 
-    "modified" is in the vocabulary because "Modified BSD License" is a published name
-    for BSD-3-Clause. It is a name there and a WARNING anywhere else: "Modified MIT
-    License" over verbatim MIT text was measured resolving to plain MIT, and a title
-    saying the terms were changed is the one line in the document a reader must not
-    skip. So the word is a title word only where it names a license, next to bsd.
+    A qualifier ("modified", "revised", "new", ...) is part of a published BSD name and
+    is a warning anywhere else, so it is a title word only beside `bsd`. And when the
+    caller knows what the body IS, a title naming another license is not ornament: it
+    disagrees with the document under it, and that is a question for a human.
     """
     if not ws or len(ws) > 8 or not all(w in _TITLE_WORDS for w in ws):
         return False
-    return "modified" not in ws or "bsd" in ws
+    if (set(ws) & _TITLE_QUALIFIERS) and "bsd" not in ws:
+        return False
+    if spdx:
+        named = _title_families(ws)
+        if named and _coarse_family(spdx) not in named:
+            return False
+    return True
 
 
 _COPYRIGHT_LINE = re.compile(r"^\s*(?:copyright\b|\(c\)|©|&copy;)", re.I)
@@ -308,9 +373,14 @@ _ATTRIB_SIGNAL = re.compile(r"@|https?://|www\.|<[^>]*>|\b(?:19|20)\d{2}\b")
 # 2026." resolved to plain MIT because "Revoked" is capitalised and the lower-case test
 # above could not see it. Abbreviations are the exception a name really does carry, so a
 # single initial and the corporate forms below do not count as a break.
-_SENTENCE_BREAK = re.compile(
-    r"(?<!\b[A-Z])(?<!\bInc)(?<!\bLtd)(?<!\bCo)(?<!\bCorp)(?<!\bLLC)(?<!\bJr)"
-    r"(?<!\bSr)(?<!\bSt)(?<!\bDr)(?<!\bMr)(?<!\bMs)(?<!\bMrs)\.\s+[A-Z]")
+# The corporate lookbehinds are GONE, and they were the hider: "Copyright 2020 Foo Co.
+# Terminates 2026." was exempted by the "Co." this very rule listed as an abbreviation,
+# and the docstring's own safety case was the hole. They were also dead weight, which is
+# what made them removable: "Acme Inc. and Beta Ltd." is safe because "and" is lower
+# case and a sentence starts with a capital, so the capital-after rule already covers
+# every case they were carrying. Only the single-initial lookbehind survives, for
+# "Alice B. Smith", where the capital rule genuinely cannot tell a name from a sentence.
+_SENTENCE_BREAK = re.compile(r"(?<!\b[A-Z])\.\s+[A-Z]")
 _PARTICLES = frozenset({"van", "von", "de", "del", "der", "den", "di", "da", "dos",
                         "du", "la", "le", "el", "of", "and", "the", "for", "inc",
                         "llc", "ltd", "gmbh", "co", "corp", "et", "al", "bv", "ab"})
@@ -341,6 +411,16 @@ _TERMS_VOCAB = frozenset({
     "void", "revoked", "revoke", "revocation", "trial", "temporary", "academic",
     "educational", "exclusively", "exclusive", "internal", "personal", "purposes",
     "purpose", "nonprofit", "students", "student",
+    # Scope and term, added after each was measured resolving a verbatim MIT body to
+    # plain MIT past all three structural rules.
+    # "beta", "preview", "enterprise" and "seat" were tried here and REMOVED: they are
+    # ordinary company-name words, and "Copyright (c) 2026 Acme Inc. and Beta Ltd."
+    # started refusing. A vocabulary word has to be one a holder never carries.
+    "ends", "end", "terminates", "terminate", "terminated", "termination",
+    "nontransferable", "transferable", "revocable", "irrevocable",
+    "territory", "territories", "customers", "customer",
+    "scope", "scoped", "superseded", "supersedes", "lapses", "lapse", "withdrawn",
+    "rescinded", "sunset", "sunsets",
 })
 
 
@@ -396,11 +476,13 @@ def _is_copyright_notice(raw: str, ws: list[str]) -> bool:
     # 2026.", both measured resolving their document to plain MIT. A second SENTENCE is
     # structural and catches those without anyone having to think of the word they used.
     # What was tried and REJECTED: requiring every lower-case word to be a particle or a
-    # corporate form. It reads well and it refused 139 of 1183 real license files in one
-    # sweep, because "Copyright (c) 2017-present, Jon Schlinkert." and "Copyright (c)
-    # 2014, Nathan LaFreniere and other contributors" are holders and neither "present"
-    # nor "other" belongs on any list somebody would write. A rule that expensive is not
-    # a rule, and the residual it would have covered is named in _TERMS_VOCAB instead.
+    # corporate form. It reads well and it refused more than a tenth of the real license
+    # files in a disk sweep, because "Copyright (c) 2017-present, Jon Schlinkert." and
+    # "Copyright (c) 2014, Nathan LaFreniere and other contributors" are holders and
+    # neither "present" nor "other" belongs on any list somebody would write. A rule that
+    # expensive is not a rule, and the residual it would have covered is named in
+    # _TERMS_VOCAB instead. Both holders are fixtures below, which is where the evidence
+    # belongs: reproducible, unlike a proportion of one machine's $HOME.
     rest = _COPYRIGHT_KEYWORD.sub("", body, count=1)
     # An address is attribution, not prose: strip contact forms before reading words,
     # or `Alice Smith <alice@example.com>` is refused for the lower-case "example".
@@ -425,8 +507,27 @@ def _is_ornament(raw: str, ws: list[str]) -> bool:
     """
     if not ws:                                   # blank, ---, ===, ***, an rst underline
         return True
-    if (_SPDX_LINE.match(raw.strip()) or _BARE_URL_LINE.match(raw)
-            or _LINK_DEF_LINE.match(raw)):
+    # A SHAPE IS NOT A LICENCE TO SKIP THE CONTENT. These three rules used to drop a
+    # line on its shape alone, and `_Doc` drops an ornament line before any recognizer
+    # runs, so whatever they matched was never read by anything. An entire Commons
+    # Clause pasted into a link label, or after an `SPDX-FileCopyrightText:` key, was
+    # invisible to all six recognizers while the SAME TEXT unwrapped was refused. That
+    # is the silent-fallback bug in the module written to kill it: a container was
+    # trusted to describe what it holds. So the content is read first, and a line whose
+    # words state terms is not ornament however it is wrapped. The legitimate forms
+    # survive because none of them says anything about terms: `SPDX-License-Identifier:
+    # MIT` and `SPDX-FileCopyrightText: Copyright 2020 Acme` carry no vocabulary word,
+    # and `[others]: https://example.com/contributors` carries none either.
+    if _SPDX_LINE.match(raw.strip()) or _LINK_DEF_LINE.match(raw):
+        return not any(w in _TERMS_VOCAB for w in ws)
+    # A URL is a POINTER, and this is the residual. `_INTRA_HYPHEN` fuses a path into
+    # single tokens, so `.../non-commercial-only-expires-2026` reads as one word and no
+    # vocabulary test can see it; and a real check would have to follow the link, which
+    # this module does not do. A URL line is skipped on its shape, and terms parked at
+    # the other end of one, or spelled into its path, are outside what this module can
+    # see. Applying the vocabulary test here is not the fix: it would refuse the
+    # `http://www.apache.org/licenses/` line that Apache-2.0 itself ships.
+    if _BARE_URL_LINE.match(raw):
         return True
     return bool(_ALL_RIGHTS.match(raw))
 
@@ -458,7 +559,8 @@ class _Doc:
             return ""
         return self.lines[self.at[w_index]].strip()
 
-    def outside_is_ornament(self, lo: int, hi: int) -> tuple[bool, str]:
+    def outside_is_ornament(self, lo: int, hi: int,
+                            spdx: str | None = None) -> tuple[bool, str]:
         """Is every line contributing a word outside [lo, hi) harmless?
 
         This is where a copyright notice, a holder list and a signature block are
@@ -481,7 +583,7 @@ class _Doc:
             at = self.at[i]
             raw = self.lines[at]
             ws = words(raw)
-            if _is_title_line(ws) or _is_copyright_notice(raw, ws):
+            if _is_title_line(ws, spdx) or _is_copyright_notice(raw, ws):
                 continue
             # A NAME-LIKE LINE EARNS ITS PLACE TWO WAYS, and a year is neither. It
             # carries a contact, which identifies somebody and is what a trailing
@@ -501,13 +603,17 @@ class _Doc:
         continuation of one? Walks up through ornament, which is where the blank line
         between a notice and its indented holder list lives.
 
-        THE COST, measured: over 1,183 readable license files this rule flipped exactly
-        one from recognized to refused, `azure_cli_telemetry`, whose file opens with the
-        product name "Azure CLI" above the copyright block. A bare product-name header
-        and "Valid until 2026" are the same shape to any reader that has not been told
-        which words are restrictions, and being told is the mechanism this is replacing.
-        One refusal a human reads, against an open class of restrictions nobody listed,
-        is the trade taken here on purpose.
+        THE COST, without a number, because the denominator would be a live `$HOME`
+        and the refusal percentages were deleted from this repo for exactly that: a
+        second sweep of the same selection on the same machine returned different totals
+        and a different flip count, so any figure quoted here would be unreproducible by
+        its own author. What travels is the SHAPE of the cost: a file that opens with a
+        bare product-name header above its copyright block ("Azure CLI", "Little CMS",
+        "Extended Module Player") is refused, and those headers are harmless. They are
+        the same shape as "Valid until 2026" to any reader that has not been told which
+        words are restrictions, and being told is the mechanism this replaces. A
+        handful of refusals a human reads, against an open class of restrictions nobody
+        listed, is the trade taken here on purpose.
         """
         i = at - 1
         while i >= 0:
@@ -569,7 +675,24 @@ def _match_template(doc: "_Doc", start: int, tmpl: list) -> tuple[int, str]:
             best[0], best[1] = at, why
         return -1, why
 
+    # MEMOISED on (position, template part). Six slots in the BSD template, each with
+    # its own width range, multiply: a document that fails late made `walk` re-derive
+    # the same prefix once per surviving combination, which is exponential in the number
+    # of slots and needs no adversary to reach, only an ordinary edit near the end of a
+    # one-line copy. 800 systematic mutants of the MIT and BSD fixtures did not measure
+    # a case over 0.25s, so this is the class removed rather than an incident repaired.
+    # Memoising failures is safe: `best` records the DEEPEST failure and a repeat of the
+    # same (i, k) can only re-derive the same depth.
+    seen: dict[tuple[int, int], tuple[int, str]] = {}
+
     def walk(i: int, k: int) -> tuple[int, str]:
+        key = (i, k)
+        if key in seen:
+            return seen[key]
+        seen[key] = out = _walk(i, k)
+        return out
+
+    def _walk(i: int, k: int) -> tuple[int, str]:
         if k == len(tmpl):
             return i, ""
         part = tmpl[k]
@@ -650,7 +773,7 @@ def mit_diagnosis(text: str) -> tuple[bool, str]:
     end, why = _match_template(doc, start, _MIT_TMPL)
     if end < 0:
         return False, f"opens with MIT's first words but {why}"
-    clean, offender = doc.outside_is_ornament(start, end)
+    clean, offender = doc.outside_is_ornament(start, end, "MIT")
     if not clean:
         return False, (f"carries the MIT text and, {offender}, so it is MIT plus terms "
                        f"MIT does not carry")
@@ -768,7 +891,7 @@ def _anchored_terms(doc: "_Doc") -> tuple[str | None, str]:
         end, why = _match_template(doc, start, _BSD3_TMPL)
         if end < 0:
             return None, (f"opens with the BSD redistribution clause but {why}")
-        clean, offender = doc.outside_is_ornament(start, end)
+        clean, offender = doc.outside_is_ornament(start, end, "BSD-3-Clause")
         if not clean:
             return None, (f"carries the BSD-3-Clause text and, {offender}, so it is "
                           f"BSD-3-Clause plus other terms")
@@ -778,7 +901,8 @@ def _anchored_terms(doc: "_Doc") -> tuple[str | None, str]:
         title_at = _find(doc, spec.title)
         if title_at < 0:
             continue
-        lead_ok, lead_offender = doc.outside_is_ornament(title_at, len(doc.words))
+        lead_ok, lead_offender = doc.outside_is_ornament(title_at, len(doc.words),
+                                                         spec.spdx)
         if not lead_ok:
             return None, (f"names the {spec.spdx} title and, {lead_offender}, so "
                           f"something is said about these terms outside them")
@@ -789,6 +913,22 @@ def _anchored_terms(doc: "_Doc") -> tuple[str | None, str]:
                 return None, (f"opens as {spec.spdx} but does not carry "
                               f"{' '.join(marker)[:60]!r} where that license does")
             cur = nxt + len(marker)
+        # Every occurrence of every end form is a candidate, and the document ends at
+        # the LAST of them, because one license ships in several forms and the longest
+        # is the whole of it.
+        #
+        # MEASURED HOLE, OPEN, and named because a reader has to know it: text sitting
+        # BETWEEN two end forms is inside the located body and is never outside-checked.
+        # "Superseded 2027. NOT for commercial use." pasted before a trailing "See the
+        # License for the specific language..." line resolves to clean Apache-2.0.
+        # Requiring the span between the first end form and the last to hold nothing but
+        # end forms was tried and MEASURED: it refuses plain Apache-2.0, GPL-3.0,
+        # MPL-2.0 and AGPL-3.0, because each really does carry prose between its end
+        # forms, the Apache APPENDIX being the clearest case. Closing it needs each
+        # license's appendix modelled as part of the document, which is exactly the
+        # word-for-word transcription the section-marker design exists to avoid. So it
+        # stays open, in the same class as the mid-body splice: a document that already
+        # ends correctly can have terms hidden in the fold between two of its endings.
         end = -1
         for form in spec.ends:
             at = _find(doc, form, cur - len(spec.interior[-1]))
@@ -798,7 +938,7 @@ def _anchored_terms(doc: "_Doc") -> tuple[str | None, str]:
         if end < 0:
             return None, (f"opens as {spec.spdx} but does not end the way any published "
                           f"form of {spec.spdx} ends")
-        clean, offender = doc.outside_is_ornament(title_at, end)
+        clean, offender = doc.outside_is_ornament(title_at, end, spec.spdx)
         if not clean:
             return None, (f"carries the {spec.spdx} text and, {offender}, so it is "
                           f"{spec.spdx} plus terms {spec.spdx} does not carry")
@@ -975,6 +1115,27 @@ def _has_license_stem(name: str) -> bool:
                for part in _NAME_SPLIT.split(name.lower()))
 
 
+# Names that are ABOUT the terms without being a license document: an Apache NOTICE, a
+# package manifest with a `license` field, a vendoring note. None of them is this
+# package's terms, and each was measured reaching the repo default in silence because
+# nothing looked at it at all.
+# Only NOTICE-shaped names. `UPSTREAM.md` and `CREDITS` are PROVENANCE, and provenance
+# is a report rather than a refusal: `upstream_source` reads them now, which is what was
+# actually missing, and refusing on them would turn every attributed skill into a
+# hand-written manifest.
+_ADJACENT_NAMES = {"notice", "notices"}
+_MANIFEST_LICENSE_FILES = ("package.json", "pyproject.toml", "cargo.toml", "composer.json",
+                           "setup.cfg", "gemspec", "pubspec.yaml", "go.mod")
+# Not line-anchored: a package.json is often one line, and the whole point is that the
+# field EXISTS, wherever it sits.
+_MANIFEST_LICENSE_KEY = re.compile(r'"licen[cs]e"\s*:|^\s*licen[cs]e\s*[:=]', re.M | re.I)
+
+
+def _is_adjacent_name(name: str) -> bool:
+    stem = name.lower().rpartition(".")[0] if "." in name.lower() else name.lower()
+    return stem in _ADJACENT_NAMES or name.lower() in _ADJACENT_NAMES
+
+
 def license_setaside(skill_dir: Path) -> list[str]:
     """Entries this directory holds that say license and that nothing above will READ.
 
@@ -1013,8 +1174,11 @@ def license_setaside(skill_dir: Path) -> list[str]:
             if not any(k in accepted for k in kids):
                 out.append(f"{p.name}/ holds no license document this generator reads")
             continue
-        if p not in accepted and _has_license_stem(p.name):
+        if p not in accepted and (_has_license_stem(p.name) or _is_adjacent_name(p.name)):
             out.append(p.name)
+        elif (p.is_file() and p.name.lower() in _MANIFEST_LICENSE_FILES
+              and _MANIFEST_LICENSE_KEY.search(_read(p))):
+            out.append(f"{p.name} declares a license field")
     for p in skill_dir.rglob("*"):
         if p.is_file() and p.parent != skill_dir and _has_license_stem(p.name):
             out.append(str(p.relative_to(skill_dir)))
@@ -1110,7 +1274,7 @@ def slugify(name: str) -> str:
 # against the current tree. This is not theory: `sandbox-sdk` was published here as
 # NOASSERTION, in the license field of a public repo, on the sentence "this name is NOT
 # present in https://github.com/cloudflare/skills". The name is absent TODAY because
-# upstream renamed the skill on 2026-08-07 (f96bff75); the tree at 60147cbb, the last
+# upstream dropped the name on 2026-08-07 (f96bff75); the tree at 60147cbb, the last
 # commit before the 2026-05-23 bundle, carries `skills/sandbox-sdk/SKILL.md`, and our
 # copy differs from it by one locally appended section. Two API calls with a `ref` would
 # have said so, and the check that was run could not have: it asked the wrong question.
@@ -1238,7 +1402,8 @@ def upstream_source(skill_dir: Path) -> str | None:
             flat = _flatten(holder.get(key))
             if flat:
                 return flat[:200]
-    for body in (_prose(text), _prose(_read(skill_dir / "README.md"))):
+    for body in (_prose(text), _prose(_read(skill_dir / "README.md")),
+                 _prose(_read(skill_dir / "UPSTREAM.md"))):
         for m in _UPSTREAM_LINE.finditer(body):
             g = m.groupdict()
             lead = next((g[k] for k in ("lead1", "lead2", "lead3") if g.get(k)), "")
@@ -1260,7 +1425,7 @@ def upstream_source(skill_dir: Path) -> str | None:
             return found[:200]
     # An Author line plus a copyright naming someone else is a provenance claim too,
     # written the way a vendored file writes it.
-    for body in (text, _read(skill_dir / "README.md")):
+    for body in (text, _read(skill_dir / "README.md"), _read(skill_dir / "UPSTREAM.md")):
         author = re.search(r"^[>\s*_#-]*authors?\s*:\s*(\S.*)$", _prose(body), re.I | re.M)
         third = re.search(r"^[>\s*_#-]*(copyright\b.*)$", _prose(body), re.I | re.M)
         if author and third:
@@ -1273,12 +1438,13 @@ def upstream_source(skill_dir: Path) -> str | None:
 def declared_license(skill_dir: Path) -> tuple[str | None, str | None]:
     """(canonical SPDX id, raw value) from the skill's own front matter.
 
-    Eight skills WRITE this field (seven at the top level, one under `metadata`) and
-    nothing read it. All eight happen to declare MIT, which is also the repo default,
-    so nothing visibly diverged: the manifests were right by coincidence, not by
-    mechanism. The same code would have written MIT over a `license: Apache-2.0`
-    declaration, silently, over someone else's material, in a public repo. It is read
-    now. `(None, raw)` means the skill declared something that is not a bare SPDX id,
+    Eight skills wrote this field BEFORE this work and nothing read it. All eight
+    declared MIT, which is also the repo default, so nothing visibly diverged: the
+    manifests were right by coincidence, not by mechanism, and the same code would have
+    written MIT over a `license: Apache-2.0` declaration, silently, over someone else's
+    material, in a public repo. It is read now, and 24 skills declare it today (23 at
+    the top level and 1 under `metadata`: 8 Apache-2.0, 8 MIT, 5 NOASSERTION,
+    3 proprietary), so the field is load-bearing rather than decorative. `(None, raw)` means the skill declared something that is not a bare SPDX id,
     which is a claim that must be answered by a human rather than parsed into one.
     """
     text = _read(skill_dir / "SKILL.md")
@@ -1286,14 +1452,34 @@ def declared_license(skill_dir: Path) -> tuple[str | None, str | None]:
         return None, None
     fm = frontmatter(text)
     meta = fm.get("metadata") if isinstance(fm.get("metadata"), dict) else {}
-    raw = None
-    for holder in (fm, meta):
-        value = holder.get("license") or holder.get("licence")
-        if isinstance(value, str) and value.strip():
-            raw = value.strip()
-            break
-    if raw is None:
+    # Both holders, separately. Reading the first and stopping meant a top-level `MIT`
+    # beside a `metadata.license: Apache-2.0` published MIT and never compared the two,
+    # which is the contradiction this function exists to refuse, one level in.
+    found = []
+    for where, holder in (("front matter", fm), ("metadata", meta)):
+        if not isinstance(holder, dict):
+            continue
+        for key in ("license", "licence"):
+            if key in holder:
+                found.append((where, holder[key]))
+                break
+    if not found:
         return None, None
+    # A DECLARATION THAT EXISTS AND IS NOT A STRING IS NOT AN ABSENT DECLARATION. YAML
+    # types the value: `license: [MIT]` is a list, `license: 2.0` is a float, and
+    # `license: no` is the boolean False, because YAML 1.1 reads `no` as a bool (the
+    # Norway problem, where `NO` the country code becomes False). Each was measured
+    # here as "declared nothing", which took the repo default over a field the author
+    # had filled in: the same silent-default class this module closes for files.
+    for where, value in found:
+        if not isinstance(value, str) or not value.strip():
+            shown = "an empty value" if isinstance(value, str) else f"the YAML {type(value).__name__} {value!r}"
+            return None, f"{shown} in its {where} (a license identifier is a string)"
+    values = {v.strip() for _, v in found}
+    if len(values) > 1:
+        pairs = "; ".join(f"{w} says {v.strip()}" for w, v in found)
+        return None, f"two different license declarations ({pairs})"
+    raw = found[0][1].strip()
     return (spdx_canon(raw) if _BARE_SPDX.fullmatch(raw) else None), raw
 
 
