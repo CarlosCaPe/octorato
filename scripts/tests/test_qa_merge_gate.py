@@ -639,7 +639,8 @@ class TestSeparatorsAndHeadPositions(unittest.TestCase):
     def test_every_head_position_is_a_candidate(self):
         cands = gate._peel_candidates(f"git status & {GH_MERGE} 291")
         self.assertEqual(2, len(cands))
-        self.assertTrue(any(dec.startswith(GH_MERGE) for _raw, dec in cands), cands)
+        self.assertTrue(any(dec.startswith(GH_MERGE) for _raw, dec, _v in cands),
+                        cands)
 
     def test_a_trailing_ampersand_still_carries_the_pr_number(self):
         found = gate._find_publish_subcmds(f"{GH_MERGE} 291 &")
@@ -1154,9 +1155,13 @@ class TestOverFireRegressions(_GateRunner, unittest.TestCase):
                    "branch 'main'")
 
     def test_a_dry_run_that_is_a_flag_VALUE_is_not_a_rehearsal(self):
-        self.assertFalse(gate._git_push_is_dry_run(
-            'git push -o "--dry-run" origin main'))
-        self.assertTrue(gate._git_push_is_dry_run("git push --dry-run origin main"))
+        # walked from the index the push anchor leaves, so a `--dry-run` sitting
+        # inside a quoted flag VALUE is a value and not a rehearsal
+        def dry(cmd):
+            toks = gate._cmd_tokens(cmd)
+            return gate._git_push_is_dry_run(toks, gate._git_push_anchor(toks, 1))
+        self.assertFalse(dry('git push -o "--dry-run" origin main'))
+        self.assertTrue(dry("git push --dry-run origin main"))
 
     def test_a_hyphenated_subcommand_is_not_push(self):
         self._allow("git push-mirror origin main")
@@ -2077,3 +2082,207 @@ Sized against a LOADED box on purpose, not a quiet one, because that is
             "curl -X PUT https://api.github.com/repos/o/r/pulls/280/merge"))
         self.assertTrue(gate._find_publish_subcmds(
             "$TOOL -X PUT https://api.github.com/repos/o/r/pulls/280/merge"))
+
+
+class TestAnOptionValueEndsWhereTheToolSaysItEnds(unittest.TestCase):
+    r"""QA cycle 8, class 3 — the option enumeration was a regex whose value was
+    `\S+`, matched against a form built by joining decoded tokens with spaces.
+    A value that CONTAINS whitespace is one shell word; the join made it two,
+    the next word was neither a global nor the verb, and the anchor missed.
+    Each of these pushed for real to a local bare remote while the gate returned
+    0, and `git -c user.name=QA push origin main` — the same shape with no space
+    in the value — denied, which isolated the cause to the whitespace.
+    """
+
+    def test_a_global_value_with_a_space_does_not_hide_the_verb(self):
+        for cmd in ('git -c "user.name=Q A" push origin main',
+                    "git -c 'core.pager=less -F' push origin main",
+                    'git -C "/tmp/sp ace" push origin main',
+                    'git --git-dir="/tmp/sp ace/.git" push origin main',
+                    'git --work-tree="/tmp/sp ace" push origin main',
+                    'git --git-dir="/tmp/sp ace/.git" --work-tree="/tmp/sp ace"'
+                    ' push origin main',
+                    "git --namespace='a b' push origin master"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(["push"],
+                                 [f for _s, f in gate._find_publish_subcmds(cmd)])
+
+    def test_the_c_option_value_is_read_whole(self):
+        """The repo-scope read had the same `\\S+` shape: `/tmp/sp ace` came back
+        as `/tmp/sp`, a different directory and a different verdict."""
+        self.assertEqual("/tmp/sp ace",
+                         gate._git_c_option(gate._cmd_tokens(
+                             'git -C "/tmp/sp ace" push origin main')))
+        self.assertEqual("/tmp/x", gate._git_c_option(gate._cmd_tokens(
+            "git -c core.pager=less -C /tmp/x push origin main")))
+        # `-C` past the globals belongs to the SUBCOMMAND, not to git
+        self.assertIsNone(gate._git_c_option(gate._cmd_tokens("git log -C")))
+
+    def test_gits_grammar_is_gits_own(self):
+        # measured against git 2.43.0: the two shorthands read the NEXT argv and
+        # reject both attached spellings, so a value can never be glued to them.
+        toks = ["git", "-c", "a=b", "push"]
+        self.assertEqual(3, gate._git_globals_end(toks, 1))
+        self.assertEqual(1, gate._git_globals_end(["git", "-ca=b", "push"], 1))
+        self.assertEqual(1, gate._git_globals_end(["git", "-c=a=b", "push"], 1))
+        # long options take either spelling
+        self.assertEqual(2, gate._git_globals_end(["git", "--git-dir=x", "push"], 1))
+        self.assertEqual(3, gate._git_globals_end(["git", "--git-dir", "x", "push"], 1))
+
+    def test_a_spaced_value_still_resolves_the_alias(self):
+        """The old comment said a `-c` whose value contains spaces "defeats the
+        push anchor" and worked around it by DROPPING the option. With the value
+        read whole, the alias word behind it is found instead."""
+        with unittest.mock.patch.object(gate, "_git_aliases",
+                                        lambda: {"pm": "push origin main"}):
+            gate._TOKENS_CACHE.clear()
+            self.assertEqual(
+                ["push"],
+                [f for _s, f in gate._find_publish_subcmds(
+                    "git -c 'core.pager=less -F' pm")])
+
+
+class TestPflagAttachesAShorthandValue(unittest.TestCase):
+    """QA cycle 8, class 4 — pflag accepts `-Rvalue` glued together and the
+    enumeration accepted only `-R x` and `-R=x`. Measured on gh 2.88.1: the
+    glued form on `pr view` returns 288, and `pr merge 999999` reaches GitHub's
+    `repository.pullRequest` lookup, so the flag parsed and the merge verb ran.
+    """
+
+    def test_the_attached_value_does_not_hide_the_verb(self):
+        for cmd in ("gh -RCarlosCaPe/octorato pr merge 288",
+                    "gh pr -RCarlosCaPe/octorato merge 288",
+                    "gh -R=CarlosCaPe/octorato pr merge 288",
+                    "gh -R CarlosCaPe/octorato pr merge 288"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(["gh"],
+                                 [f for _s, f in gate._find_publish_subcmds(cmd)])
+                self.assertEqual("288", gate._extract_pr_id(cmd))
+
+    def test_the_repo_is_read_off_every_spelling(self):
+        for cmd, want in (("gh -Ro/r pr merge 288", "o/r"),
+                          ("gh -R=o/r pr merge 288", "o/r"),
+                          ("gh -R o/r pr merge 288", "o/r"),
+                          ("gh --repo=o/r pr merge 288", "o/r"),
+                          ("gh --repo o/r pr merge 288", "o/r")):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(want, gate._gh_repo_option(gate._cmd_tokens(cmd)))
+
+    def test_an_R_inside_a_flag_value_is_not_the_repo(self):
+        """Positional, not a search: reading a `-R` out of another flag's VALUE
+        would resolve the merge to somebody else's repository and ungate it.
+        The cluster case is the same mistake one letter tighter — pflag gives the
+        rest of `-tR` to `-t`, so that `R` is inside a value, not a flag.
+
+        Each assertion names the value it expects rather than only that the read
+        declined, because a bare `assertIsNone` here passes on two different
+        mechanisms: the walk skipping the value, and the letter guard. The third
+        line is the one that separates them — it makes the walk CONTINUE past a
+        consumed value and still find the real flag behind it, so a revert of
+        either mechanism has to show up as a wrong repo rather than as silence.
+        """
+        self.assertIsNone(gate._gh_repo_option(gate._cmd_tokens(
+            'gh pr merge -t "-R other/repo" 288')))
+        self.assertIsNone(gate._gh_repo_option(gate._cmd_tokens(
+            "gh pr merge -tR other/repo 288")))
+        self.assertEqual("real/repo", gate._gh_repo_option(gate._cmd_tokens(
+            'gh pr merge -t "-R other/repo" -R real/repo 288')))
+        self.assertIsNone(gate._gh_repo_option(gate._cmd_tokens("gh pr merge 288")))
+
+    def test_an_unknown_shorthand_does_not_swallow_the_verb(self):
+        # the skip stays enumerated: a crafted flag is NOT skipped, so it can
+        # never consume `pr` as its value.
+        self.assertEqual(1, gate._gh_globals_end(["gh", "-Z", "pr", "merge"], 1))
+
+
+class TestABashWordEndsAtItsFirstNul(unittest.TestCase):
+    r"""QA cycle 8, class 5 — the decoder's docstring claim ("cannot manufacture
+    a word bash would not produce") is TRUE, and its CONVERSE was never tested: a
+    word bash TRUNCATES and the decoder did not. A bash word is a C string, so an
+    embedded NUL ends the ANSI-C body. Measured on bash 5.2.21: `$'pr\x00xx'`
+    prints `[pr]`, `$'main\x00zz'` prints `[main]`, and `x$'a\x00b'y` prints
+    `[xay]`, so the BODY truncates and the concatenation continues.
+    """
+
+    def test_the_body_truncates_at_the_nul(self):
+        self.assertEqual(("pr", 11, True), gate._ansi_c_body(r"$'pr\x00xx'", 0))
+        self.assertEqual("main", gate._ansi_c_body(r"$'main\x00zz'", 0)[0])
+
+    def test_every_spelling_of_a_nul_truncates(self):
+        """The class, not one member: bash reaches a NUL through the hex, octal,
+        control and unicode escapes alike, and all five print `[pr]` on 5.2.21.
+        Closing only `\\x00` would leave the next member for the next cycle."""
+        for body in (r"$'pr\x00xx'", r"$'pr\x0xx'", r"$'pr\0xx'",
+                     r"$'pr\c@xx'", r"$'pr\U00000000xx'"):
+            with self.subTest(body=body):
+                self.assertEqual("pr", gate._ansi_c_body(body, 0)[0])
+
+    def test_the_word_continues_after_the_closing_quote(self):
+        toks = gate._tokenize(r"x$'a\x00b'y")
+        self.assertEqual(["xay"], [t for t, _s, _e in toks])
+
+    def test_a_truncated_verb_is_still_the_verb(self):
+        for cmd in (r"gh $'pr\x00xx' merge 288",
+                    r"gh $'pr\0xx' merge 288",
+                    r"$'gh\x00zz' pr merge 288",
+                    r"gh pr $'merge\x00zz' 288",
+                    r"echo $(gh $'pr\x00xx' merge 288)"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(["gh"],
+                                 [f for _s, f in gate._find_publish_subcmds(cmd)])
+        for cmd in (r"git $'push\x00x' origin main",
+                    r"git push origin $'main\x00zz'"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(["push"],
+                                 [f for _s, f in gate._find_publish_subcmds(cmd)])
+
+    def test_a_truncated_non_verb_is_still_not_one(self):
+        for cmd in (r"gh $'pr\x00xx' view 288",
+                    r"git push origin $'feature\x00zz'"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual([], gate._find_publish_subcmds(cmd))
+
+    def test_the_prefilter_is_widened_and_never_narrowed(self):
+        """`_ansi_c_expand` only ever widens a pre-filter, so it must NOT
+        truncate: a NUL in front of the verb would drop the word the filter
+        exists to find."""
+        self.assertIn("merge", gate._ansi_c_expand(r"$'\x00merge'"))
+        self.assertTrue(gate._may_publish(r"gh pr $'\x00merge' 288"))
+
+
+class TestTheTokenViewIsWhatCarriesTheBoundaries(unittest.TestCase):
+    """The decoded form is a RENDERING: tokens joined with single spaces, so a
+    token that contains whitespace is two words in it. Cycle 8's first attempt
+    re-quoted the join so it could be read back, and that broke the git
+    alias-DEFINITION patterns, which match `-c\\s+alias\\.` on that same string —
+    one class closed and another opened, the exact shape of the 1f0ca89
+    regression this branch already carries. The rendering is therefore left
+    byte-identical to what it always was, and every caller that needs the
+    boundaries takes the peel's own token view instead.
+    """
+
+    def test_the_rendering_still_loses_the_boundary(self):
+        _raw, dec, view = gate._normalize_full(
+            '''git -c "user.name=Q A" push origin main''')
+        self.assertEqual("git -c user.name=Q A push origin main", dec)
+        self.assertEqual(["git", "-c", "user.name=Q A", "push", "origin", "main"],
+                         view[1])
+
+    def test_the_view_is_what_the_form_reads(self):
+        raw = '''git -c "user.name=Q A" push origin main'''
+        _r, dec, view = gate._normalize_full(raw)
+        self.assertEqual("push", gate._is_publish_form(dec, view))
+
+    def test_the_alias_definition_still_reads_the_rendering(self):
+        """The regression the re-quoting caused, pinned: this form matches on
+        the decoded string, so a quote injected into it silently ungated it."""
+        self.assertEqual(
+            ["alias"],
+            [f for _s, f in gate._find_publish_subcmds(
+                "git -c alias.z='!gh pr merge 1' z")])
+
+    def test_the_carrier_reading_sees_the_spaced_value_too(self):
+        cmd = ("""printf %s "git -c 'core.pager=less -F' push origin main" """
+               "| bash")
+        self.assertEqual(["push"],
+                         [f for _s, f in gate._find_publish_subcmds(cmd)])

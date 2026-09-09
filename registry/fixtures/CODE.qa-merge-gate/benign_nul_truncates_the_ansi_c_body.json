@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "gh $'pr\\x00xx' view 291"
+  },
+  "cwd": "/nonexistent/repo"
+}

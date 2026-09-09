@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PreToolUse Bash hook — QA gate (FAIL-CLOSED for merge actions).
+r"""PreToolUse Bash hook — QA gate (FAIL-CLOSED for merge actions).
 
 NOTE on security boundary: the command-matching below IDENTIFIES the action; the
 AGENT-PROOF env channel (OCTO_MERGE_APPROVE, which an inline env cannot pass to
@@ -15,19 +15,30 @@ position it contains, on DECODED tokens. Decoding is what makes `gh "pr" merge`,
 `gh pr $'\x6derge'` and `gh pr $"merge"` the same command as `gh pr merge` — all
 four spellings of quoting (`'…'`, `"…"`, ANSI-C `$'…'`, locale `$"…"`, plus the
 backslash) are resolved by the SHELL before the program runs, so they are
-resolved here too. It cannot manufacture a verb out of a quoted MENTION
+resolved here too. Decoding also TRUNCATES where bash truncates: a bash word is
+a C string, so `$'pr\x00xx'` is the word `pr` (measured, bash 5.2.21), and
+keeping the bytes past that NUL let four spellings walk in cycle 8.
+It cannot manufacture a verb out of a quoted MENTION
 (`git commit -m "gh pr merge 96"`), because a whole-token quote is ONE token and
 one token can never supply the two words a verb needs after a head.
 Between the head and the verb, an ENUMERATED set of the tool's own GLOBAL
-options is skipped, each with its value consumed as a value: `-R`/`--repo` for
-gh (space and `=` spellings, before the `pr` group and before the verb — both
-positions measured accepted by the installed gh 2.88.1, which returns
-`{"number":288}` for `gh pr -R CarlosCaPe/octorato view 288 --json number`) and
-git's documented globals (`_GIT_GLOBALS`). "EVERY position" means
+options is skipped, on TOKENS, each with its value consumed the way that tool
+consumes it: `-R`/`--repo` for gh, attached, `=`-joined or in the next word,
+before the `pr` group and before the verb (every one of those positions measured
+accepted by the installed gh 2.88.1, which returns `{"number":288}` for
+`gh pr -R CarlosCaPe/octorato view 288 --json number`), and git's documented
+globals (`_git_globals_end`, `_gh_globals_end`). "EVERY position" means
 every position in that enumeration, never "any word starting with a dash" — a
 general dash-skip would hand the verb a place to hide behind a crafted flag.
+ON TOKENS is the cycle-8 correction. The skip used to be a REGEX whose value was
+`\S+`, matched against a form flattened by joining decoded tokens with spaces, so
+a value that CONTAINS a space became two words and the verb vanished behind them
+(`git -c 'core.pager=less -F' push origin main` measured pushing for real), and
+the same regex accepted only `-R x` and `-R=x` while pflag also glues the value
+on (`gh -Rowner/repo pr merge 288`, measured).
 Cycle 7 measured eight spellings walking the old adjacency requirement,
-`gh pr -R X merge N` (the spelling in gh's own docs) among them.
+`gh pr -R X merge N` (the spelling in gh's own docs) among them; cycle 8 measured
+six more walking the enumeration's own grammar.
 A head whose STRING ARGUMENT is itself a command (`bash -c`, `sh -lc`, `eval`,
 `ssh host`, `script -qc`, a shell reading a heredoc) has that argument
 re-identified; a head that does not re-parse (`git commit`, `echo`, `cat`,
@@ -118,6 +129,16 @@ stops being tracked. One number, four surfaces, reconciled 2026-09-08.
      word ALONE, because any other anchor re-opens the path-argument bypass this
      cycle just closed: ``flock /var/lock/grep -c "gh pr merge 291"`` and
      ``flock /var/lock/psql -c "…"`` both still DENY, and that is the trade.
+     The DENY-side enumeration is the same shape on the same dimension, and it
+     is named here because cycle 8 measured its cost. The global-option sets
+     (`_GIT_GLOBAL_BOOL` and its three valued siblings, `_GH_GLOBAL_LONG_VALUE`
+     and its shorthand pair) decide which words may sit between a head and its
+     verb, and a member nobody listed is a MISS, not the loud over-fire the
+     allow-side sets fail with. What cycle 8 replaced was not the lists but the
+     GRAMMAR they were applied with, so what remains exposed is a global option
+     that EXISTS and is unlisted, never another spelling of one that is listed:
+     the three whitespace-in-value spellings and the two attached-shorthand ones
+     it measured were all members of lists that already named their option.
   9. Parse TIME. `hooks.json` gives this gate 5 s; a hook killed at its budget
      writes no stdout, and the harness reads that as ALLOW, so a slow parse is a
      bypass with a stopwatch. Four superlinear paths were fixed this cycle, all
@@ -230,6 +251,13 @@ stops being tracked. One number, four surfaces, reconciled 2026-09-08.
      (measured — a `cd` in one call is still in effect in the next), so the
      command is written to that shell rather than passed as one `bash -c`
      argument. The ~128 KB single-argument limit bounds neither path.
+     Cycle 8 walked into this residual rather than only reading it: moving the
+     option grammar onto tokens made the git ALIAS expansion tokenize its own
+     candidate, and a candidate is a per-token SUFFIX, so 800 opaque tokens went
+     from 0.09 s to 14.4 s and 5000 from 1.0 s to 324 s — caught by the 5000-token
+     leg below, which is what that leg is for. The fix is the same one this
+     residual keeps making: the peel already holds the tokens, so it hands them
+     to every reader instead of letting each one rebuild them.
      One fixture backs the opaque-argument shape
      (benign_long_opaque_argument_list.json): the selftest harness kills a leg
      at 30 s, which is what turns time into a verdict a fixture can assert. The
@@ -260,7 +288,12 @@ PR (`-t $'x 280' 281` merges 281). The GLOBAL-OPTION spellings closed in cycle 7
 are NOT in this class and were checked for it: `gh pr -R owner/repo merge 288`
 and its five siblings all still read 288, because the option is skipped inside
 the same anchor that finds the verb, so the remainder the number is read from
-starts where it always did.
+starts where it always did. Cycle 8's spellings were checked the same way and
+are not in this class either: `gh -Rowner/repo pr merge 288` reads 288, and so
+does `git -c 'core.pager=less -F' push origin main` for its branch. The class is
+decided by a token's SPELLING, not by its position — `_gh_merge_pr_num` reads the
+number only when the head and both verb words occupy exactly their own decoded
+length, which is what a quote or an escape breaks.
 
 When a Bash command is detected as a merge action, this hook BLOCKS execution
 unless the operator's AGENT-PROOF env approval is present for EVERY merge
@@ -328,18 +361,157 @@ for _stream in (sys.stdout, sys.stderr):
 # Using ^\s* because after splitting we still want to tolerate leading spaces.
 # ---------------------------------------------------------------------------
 
-# gh pr merge <N> [flags]  — anchored at sub-command start.
+# GLOBAL-OPTION GRAMMAR — where a global option's VALUE ends.
 # ADJACENCY IS NOT THE COMMAND. `gh -R owner/repo pr merge 288`,
 # `gh --repo=owner/repo pr merge 288` and `gh pr -R owner/repo merge 288` all run
 # the same merge — the last of those is the spelling in gh's own `pr merge`
-# docs — and all three walked this anchor until cycle 7 measured them. gh parses
-# `--repo` as a persistent flag, so it is accepted at EVERY position between the
-# head and the verb, with the value attached (`=`) or in the next word. Only that
-# one flag is skipped, and its value is consumed AS a value: a general "skip any
-# word starting with a dash" would let a crafted flag hide the verb behind it.
-_GH_GLOBAL_OPT = r"(?:(?:-R|--repo)(?:=\S+|\s+\S+)\s+)*"
-_PAT_GH_MERGE = re.compile(
-    r"^\s*gh\s+" + _GH_GLOBAL_OPT + r"pr\s+" + _GH_GLOBAL_OPT + r"merge\b")
+# docs — and all three walked this anchor until cycle 7 measured them. So a run
+# of the tool's own global options is skipped between the head and the verb,
+# each one with its value consumed AS a value: a general "skip any word starting
+# with a dash" would let a crafted flag hide the verb behind it.
+# Cycle 7 wrote that skip as a REGEX whose value was `\S+`, matched against a
+# form built by joining decoded tokens with single spaces, and cycle 8 measured
+# what that costs. A value that CONTAINS whitespace is one shell word, the
+# flattening turns it into two, and the anchor loses the verb behind it:
+# `git -c 'core.pager=less -F' push origin main`, `git -c "user.name=Q A" push
+# origin main`, `git -C "/p/sp ace" push origin main` and the `--git-dir` /
+# `--work-tree` pair over the same path all pushed for real to a local bare
+# remote while this gate returned 0. `git -c user.name=QA push origin main` — the
+# same shape with no space in the value — denied, which is what isolated the
+# cause to the whitespace rather than to the option. `-c 'core.pager=less -F'` is
+# a spelling people type by hand.
+# The same regex missed gh's ATTACHED shorthand value: pflag accepts `-Rvalue`
+# glued together and `_GH_GLOBAL_OPT` accepted only `-R x` and `-R=x`, so
+# `gh -RCarlosCaPe/octorato pr merge 288` and `gh pr -RCarlosCaPe/octorato merge
+# 288` both walked (gh 2.88.1 measured accepting the glued form on `pr view`,
+# returning 288, and `pr merge 999999` measured reaching GitHub's
+# `repository.pullRequest` lookup, so the flag parsed and the verb ran).
+# So the skip below runs on TOKENS, and each tool gets the attach grammar it
+# actually implements. Both are FINITE and documented, which is why they are
+# written down once here instead of pattern-matched:
+#   git — hand-rolled in git.c, measured against the installed git 2.43.0: the
+#     two shorthands `-C`/`-c` read the NEXT argv and REJECT both `-cx` and
+#     `-c=x`; every long option takes `--opt=value` or `--opt value`;
+#     `--exec-path` is `=`-attached only, because bare `--exec-path` prints the
+#     path and runs no subcommand at all.
+#   gh — pflag, measured against the installed gh 2.88.1: a shorthand takes its
+#     value ATTACHED (`-Rowner/repo`), `=`-joined (`-R=owner/repo`) or as the
+#     next word (`-R owner/repo`); in a cluster the FIRST value-taking shorthand
+#     ends the token and swallows the rest of it as its value. The cluster rule
+#     is written as grammar rather than as spellings, and `_GH_GLOBAL_SHORT_BOOL`
+#     is EMPTY today because gh registers no boolean global shorthand (`gh --help`
+#     lists only `--help` and `--version`), so a future one is a set entry rather
+#     than a new parser.
+# An option omitted from either enumeration can only cost a MISS, never an
+# over-fire, so both err toward listing — see residual 8 on what that costs.
+_GIT_GLOBAL_SHORT_VALUE = frozenset({"-C", "-c"})
+_GIT_GLOBAL_LONG_VALUE = frozenset({
+    "--git-dir", "--work-tree", "--namespace", "--super-prefix",
+    "--attr-source", "--config-env",
+})
+_GIT_GLOBAL_ATTACHED_VALUE = frozenset({"--exec-path"})
+_GIT_GLOBAL_BOOL = frozenset({
+    "-p", "-P", "--paginate", "--no-pager", "--no-replace-objects",
+    "--no-lazy-fetch", "--no-optional-locks", "--no-advice", "--bare",
+    "--literal-pathspecs", "--glob-pathspecs", "--noglob-pathspecs",
+    "--icase-pathspecs",
+})
+# `--no-lazy-fetch`, `--no-advice` and `--super-prefix` are rejected by the
+# installed git 2.43.0 before a subcommand. They stay listed on purpose: a newer
+# git accepts them, and an option the local git refuses can only cost a deny on a
+# line that was never going to run.
+
+_GH_GLOBAL_LONG_VALUE = frozenset({"--repo"})
+_GH_GLOBAL_LONG_BOOL = frozenset({"--help", "--version"})
+_GH_GLOBAL_SHORT_VALUE = frozenset("R")
+_GH_GLOBAL_SHORT_BOOL = frozenset()
+
+
+def _git_global_step(toks: list[str], i: int) -> int:
+    """Index after the ONE git global option at *i*, or *i* when it is not one."""
+    t = toks[i]
+    if t in _GIT_GLOBAL_BOOL:
+        return i + 1
+    if t in _GIT_GLOBAL_SHORT_VALUE or t in _GIT_GLOBAL_LONG_VALUE:
+        return i + 2                       # git.c reads the next argv, always
+    name, sep, _v = t.partition("=")
+    if sep and (name in _GIT_GLOBAL_LONG_VALUE
+                or name in _GIT_GLOBAL_ATTACHED_VALUE):
+        return i + 1
+    return i
+
+
+def _git_globals_end(toks: list[str], i: int) -> int:
+    """Index of the first token after git's global options, starting at *i*."""
+    n = len(toks)
+    while i < n:
+        j = _git_global_step(toks, i)
+        if j == i:
+            break
+        i = j
+    return i
+
+
+def _gh_globals_end(toks: list[str], i: int) -> int:
+    """Index of the first token after gh's global options, starting at *i*."""
+    n = len(toks)
+    while i < n:
+        t = toks[i]
+        if t.startswith("--"):
+            name, sep, _v = t.partition("=")
+            if sep and name in _GH_GLOBAL_LONG_VALUE:
+                i += 1
+            elif t in _GH_GLOBAL_LONG_VALUE:
+                i += 2
+            elif t in _GH_GLOBAL_LONG_BOOL:
+                i += 1
+            else:
+                break
+            continue
+        if len(t) > 1 and t[0] == "-":
+            j, takes_next = 1, False
+            while j < len(t):
+                c = t[j]
+                if c in _GH_GLOBAL_SHORT_VALUE:
+                    takes_next = j + 1 == len(t)   # nothing attached: next word
+                    j = len(t)                     # the rest of the token IS it
+                    break
+                if c in _GH_GLOBAL_SHORT_BOOL:
+                    j += 1
+                    continue
+                break                              # unknown shorthand: not ours
+            if j < len(t):
+                break
+            i += 2 if takes_next else 1
+            continue
+        break
+    return i
+
+
+def _gh_merge_anchor(toks: list[str], base: int):
+    """(index of `pr`, index of `merge`) in `gh [globals] pr [globals] merge`.
+
+    None when *toks* from *base* is not that. Token EQUALITY, not a regex over a
+    joined string: both verbs are whole words to the shell, and a joined form
+    cannot tell one word containing a space from two words.
+    """
+    i = _gh_globals_end(toks, base)
+    if i >= len(toks) or toks[i] != "pr":
+        return None
+    pr_i = i
+    i = _gh_globals_end(toks, i + 1)
+    if i >= len(toks) or toks[i] != "merge":
+        return None
+    return pr_i, i
+
+
+def _git_push_anchor(toks: list[str], base: int):
+    """Index of the first ARGUMENT of `git [globals] push`, else None."""
+    i = _git_globals_end(toks, base)
+    if i >= len(toks) or toks[i] != "push":
+        return None
+    return i + 1
+
 
 # git [-C <path>] [-c key=val] push [opts] <remote> <ref>
 # Catches: git push origin main  /  git push origin "main"  /
@@ -348,43 +520,8 @@ _PAT_GH_MERGE = re.compile(
 # Does NOT catch: main-feature / feature/main-redesign / my-main /
 #                 git push-mirror / git push-all (hyphenated, not a subcommand) /
 #                 "push" appearing only inside a quoted arg of a different subcommand.
-# FIX 1+2: push must be the git SUBCOMMAND — only git's own documented GLOBAL
-# options are allowed between `git` and `push`.
-# `push(?=\s)` requires whitespace after push, so `push-mirror` is rejected.
-# Cycle 7: this admitted only `-C` and `-c` while `git --help` documents a dozen
-# more, so `git --no-pager push origin main`, `git --no-optional-locks push …`,
-# `git --work-tree=. push …` and `git --git-dir=.git push …` all walked — every
-# one of them a real push, and `git --no-pager --no-optional-locks status -s`
-# runs, so the positions are not hypothetical. The list is git's, ENUMERATED and
-# split by whether the option takes a value, because "any word starting with a
-# dash" would hand the verb a hiding place. A global omitted here can only cost
-# a MISS, never an over-fire, so it errs toward listing. Measured against the
-# installed git 2.43.0: every option below is accepted before a subcommand
-# except `--no-lazy-fetch`, `--no-advice` and `--super-prefix`, which that
-# version rejects. They stay listed on purpose — a newer git accepts them, and
-# an option the local git refuses can only cost a deny on a line that was never
-# going to run.
-_GIT_GLOBAL_VALUE_OPT = (
-    r"(?:-C|-c|--git-dir|--work-tree|--namespace|--super-prefix|--attr-source"
-    r"|--config-env)"
-)
-_GIT_GLOBAL_BOOL_OPT = (
-    r"(?:-p|-P|--paginate|--no-pager|--no-replace-objects|--no-lazy-fetch"
-    r"|--no-optional-locks|--no-advice|--bare|--literal-pathspecs"
-    r"|--glob-pathspecs|--noglob-pathspecs|--icase-pathspecs)"
-)
-_GIT_GLOBALS = (
-    r"(?:" + _GIT_GLOBAL_VALUE_OPT + r"(?:=\S+|\s+\S+)\s+"
-    r"|--exec-path=\S+\s+"
-    r"|" + _GIT_GLOBAL_BOOL_OPT + r"\s+)*"
-)
-_PAT_GIT_PUSH = re.compile(
-    r"^\s*git\s+"
-    + _GIT_GLOBALS +
-    r"push(?=\s)"
-    r"[^|&;]*?"
-    r'(?:[\s:/\'"+])(?:HEAD:)?\+?(main|master)(?=$|\s|[\'"])'
-)
+# `push` is the git SUBCOMMAND, matched as a whole token, so `push-mirror` is a
+# different word and is rejected.
 # NOTE on the trailing lookahead: `:` is deliberately NOT there. In a refspec
 # `<src>:<dst>` the branch that gets written is the DESTINATION, so
 # `git push origin main:refs/heads/feature-x` pushes local main INTO feature-x
@@ -393,14 +530,89 @@ _PAT_GIT_PUSH = re.compile(
 # still matches, because the destination spelling always leaves `main` at the
 # end of its token: `origin main`, `HEAD:main`, `:main`, `feature:refs/heads/main`,
 # `main:main` (the second one), `+main`.
+_PAT_GIT_PUSH_TAIL = re.compile(
+    r"^[^|&;]*?(?:[\s:/\'\"+])(?:HEAD:)?\+?(main|master)(?=$|\s|[\'\"])")
+
+
+def _git_push_branch(toks: list[str], start: int) -> str | None:
+    """'main' / 'master' when the push arguments from *start* publish to it.
+
+    The ARGUMENTS are still read as one joined string, because the refspec rules
+    above are about the shape of a token's tail, not about where tokens end. The
+    join is reached only once the token-level anchor above has already agreed
+    that this is a `git push`, so the whitespace-in-a-global-value class cannot
+    reach it.
+    """
+    m = _PAT_GIT_PUSH_TAIL.match(" " + " ".join(toks[start:]))
+    return m.group(1) if m else None
+
+
+def _gh_repo_option(toks: list[str], start: int = 1) -> str | None:
+    """The `-R`/`--repo` value of a gh line, read in FLAG position only.
+
+    A WRONG read here costs an ALLOW — it names the repository the merge is
+    scoped against — so the walk is positional and follows pflag's cluster rule
+    rather than searching for the letter. Two ways to get it wrong, both closed:
+    a `-R` sitting inside another flag's VALUE (`gh pr merge -t "-R x" 288`) is a
+    value, and in a cluster the FIRST value-taking shorthand swallows the rest of
+    the token, so the `R` of `-tR` belongs to `-t` and is not a flag at all.
+    """
+    i, flags_done = start, False
+    while i < len(toks):
+        tok = toks[i]
+        i += 1
+        if not flags_done and tok == "--":
+            flags_done = True
+            continue
+        if flags_done or not tok.startswith("-") or len(tok) == 1:
+            continue
+        if tok.startswith("--"):
+            name, sep, val = tok.partition("=")
+            if name == "--repo":
+                return val if sep else (toks[i] if i < len(toks) else None)
+            if not sep and name in _GH_VALUE_FLAGS:
+                i += 1                           # consume the value token
+            continue
+        k = 1
+        while k < len(tok) and tok[k] not in _GH_VALUE_SHORTS:
+            k += 1
+        if k >= len(tok):
+            continue                             # a cluster of booleans
+        letter, rest = tok[k], tok[k + 1:]
+        if rest.startswith("="):
+            rest = rest[1:]
+        if rest:
+            value = rest
+        else:
+            value = toks[i] if i < len(toks) else None
+            i += 1
+        if letter == "R":
+            return value
+    return None
+
+
+def _git_c_option(toks: list[str]) -> str | None:
+    """The value of git's `-C` global, walked with git's own option grammar.
+
+    Stops at the first word that is not a global, so a `-C` appearing later as a
+    SUBCOMMAND's own flag (`git log -C`) is never read as the repository.
+    """
+    i, n = 1, len(toks)
+    while i < n:
+        if toks[i] == "-C":
+            return toks[i + 1] if i + 1 < n else None
+        j = _git_global_step(toks, i)
+        if j == i:
+            return None
+        i = j
+    return None
+
 
 # Extracts the PR number from `gh pr merge [flags] <N> [flags]`. The number is NOT
 # always the first argument: `gh pr merge -R owner/repo 280` and the --repo spelling
 # are documented forms, and reading only the first token yielded "unknown",
 # which denied a correctly approved PR. So: take the first BARE all-digit token.
 # A flag and its value are skipped because neither is all digits.
-_GH_MERGE_HEAD = re.compile(
-    r"^\s*gh\s+" + _GH_GLOBAL_OPT + r"pr\s+" + _GH_GLOBAL_OPT + r"merge(?=\s|$)")
 _BARE_NUM = re.compile(r"^\d+$")
 
 # Flags of `gh pr merge` that CONSUME the next token (verbatim from `gh help pr
@@ -446,20 +658,36 @@ def _gh_merge_pr_num(sub: str) -> str | None:
 
     Flag values are skipped, so only a positional token can be the PR. `--flag=value`
     carries its value inside the token; a bare `--` ends flag parsing.
+
+    Read off the RAW sub-command, where a quoted flag value is still ONE token
+    (`-t "x 280" 281` merges 281, and flattening it approved 280). The tokens are
+    decoded, so a global option whose value contains a space stays one word and
+    the walk finds the verb behind it — which is what keeps the spellings closed
+    in cycles 7 and 8 OUT of the KNOWN COST class described at the top of this
+    file, the same check cycle 7 made for its own six.
     """
-    m = _GH_MERGE_HEAD.match(sub)
-    if not m:
-        return None
-    # A real tokenizer, not whitespace: a quoted flag value ("x 280") is ONE
-    # token, so a number inside it can never be read as the PR (QA cycle 3). An
-    # unclosed quote is unparseable and falls through to the sentinel, which
-    # denies.
-    toks = _arg_tokens(sub[m.end():])
+    toks = _tokens_with_offsets(sub)
     if toks is None:
+        return None                          # unclosed quote: sentinel, denies
+    parts = [t for t, _s, _e in toks]
+    if not parts or os.path.basename(parts[0].strip("\"'")) != "gh":
         return None
-    i, flags_done = 0, False
-    while i < len(toks):
-        tok = toks[i].strip("\"'")
+    pos = _gh_merge_anchor(parts, 1)
+    if pos is None:
+        return None
+    # KNOWN COST, kept deliberately rather than inherited by accident: the
+    # number is read only when the head and both verb words are spelled
+    # LITERALLY. A token whose source span is longer than its decoded text was
+    # quoted or escaped, which is exactly `gh "pr" merge 291` and
+    # `gh pr $'merge' 291` — identified as merges off the DECODED form and left
+    # on the unapprovable 'unknown' sentinel, as the header documents.
+    for k in (0,) + pos:
+        text, start, end = toks[k]
+        if end - start != len(text):
+            return None
+    i, flags_done = pos[1] + 1, False
+    while i < len(parts):
+        tok = parts[i].strip("\"'")
         i += 1
         if not flags_done and tok == "--":
             flags_done = True
@@ -477,22 +705,17 @@ def _gh_merge_pr_num(sub: str) -> str | None:
     return None
 
 
-def _gh_merge_is_help(sub: str) -> bool:
+def _gh_merge_is_help(toks: list[str], start: int) -> bool:
     """True when a gh-pr-merge line only ASKS FOR HELP and merges nothing.
 
     `gh pr merge --help` prints usage and exits; denying it was a false positive
-    that cost QA two read-only tool calls this session. The check walks tokens
-    with the SAME value-flag rules as _gh_merge_pr_num rather than searching the
-    string, because `gh pr merge -t "-h" 291` is a real merge whose `-h` is a
-    flag VALUE — a substring search there would turn a merge into an allow.
+    that cost QA two read-only tool calls this session. It walks the ARGUMENT
+    tokens from *start* — the index the anchor left just past `merge` — with the
+    same value-flag rules as _gh_merge_pr_num rather than searching a string,
+    because `gh pr merge -t "-h" 291` is a real merge whose `-h` is a flag
+    VALUE, and a substring search there would turn a merge into an allow.
     """
-    m = _GH_MERGE_HEAD.match(sub)
-    if not m:
-        return False
-    toks = _arg_tokens(sub[m.end():])
-    if toks is None:
-        return False
-    i, flags_done = 0, False
+    i, flags_done = start, False
     while i < len(toks):
         tok = toks[i]
         i += 1
@@ -512,7 +735,6 @@ def _gh_merge_is_help(sub: str) -> bool:
     return False
 
 
-_GIT_PUSH_HEAD = re.compile(r"^\s*git\s+" + _GIT_GLOBALS + r"push(?=\s|$)")
 # git-push flags that CONSUME the next token, so a `-n` sitting in a flag VALUE
 # is never read as `--dry-run`. Erring long here can only cost an extra deny.
 _GIT_PUSH_VALUE_FLAGS = frozenset({
@@ -520,23 +742,18 @@ _GIT_PUSH_VALUE_FLAGS = frozenset({
 })
 
 
-def _git_push_is_dry_run(sub: str) -> bool:
+def _git_push_is_dry_run(toks: list[str], start: int) -> bool:
     """True when a git-push line only REHEARSES the push and writes nothing.
 
     `git push --dry-run origin main` denied (measured 2026-09-08) — an over-fire
     on a command whose whole point is that it does not publish, and the kind that
-    teaches people to route around the gate. Walked as TOKENS, not searched as a
-    substring, for the same reason `_gh_merge_is_help` is: a `--dry-run` sitting
-    inside a quoted flag VALUE (`git push -o "--dry-run" origin main`) is a value,
-    not a flag, and a substring search there would turn a real push into an allow.
+    teaches people to route around the gate. Walked as TOKENS from *start*, the
+    index the anchor left just past `push`, not searched as a substring, for the
+    same reason `_gh_merge_is_help` is: a `--dry-run` sitting inside a quoted flag
+    VALUE (`git push -o "--dry-run" origin main`) is a value, not a flag, and a
+    substring search there would turn a real push into an allow.
     """
-    m = _GIT_PUSH_HEAD.match(sub)
-    if not m:
-        return False
-    toks = _arg_tokens(sub[m.end():])
-    if toks is None:
-        return False
-    i, flags_done = 0, False
+    i, flags_done = start, False
     while i < len(toks):
         tok = toks[i]
         i += 1
@@ -731,7 +948,7 @@ def _is_protected_target(cmd: str, matched_sub: str, session_cwd: str):
     # `gh "pr" merge 291` fell past the gh branch into the cwd branch and could
     # resolve to a repo it does not target.
     cfg_dir = _cfg_dir_for(cmd, matched_sub)
-    sub, dec = _normalize(matched_sub, cfg_dir)
+    sub, dec, view = _normalize_full(matched_sub, cfg_dir)
 
     # An alias DEFINITION has no repo: gh's config is per-user, so an alias that
     # expands to a merge arms every repo the agent can reach, protected ones
@@ -761,13 +978,13 @@ def _is_protected_target(cmd: str, matched_sub: str, session_cwd: str):
     # repo, resolve to that unrelated repo and UNGATE a merge of the protected
     # one. GH_HOST moves the whole request to another server, which this gate
     # cannot check against, so a non-github.com host is unresolvable, not safe.
-    if _PAT_GH_MERGE.match(dec):
+    if _gh_merge_form(view):
         line_env = _line_env(cmd, matched_sub)
         host = (line_env.get("GH_HOST") or "").strip().strip("\"'").lower()
         if host and host not in ("github.com", "api.github.com"):
             return None
-        m = re.search(r"(?:^|\s)(?:-R|--repo)[=\s]+(\S+)", sub)
-        raw = m.group(1) if m else (line_env.get("GH_REPO") or "").strip()
+        opt = _gh_repo_option(_cmd_tokens(sub))
+        raw = opt if opt else (line_env.get("GH_REPO") or "").strip()
         if raw:
             slug = _canon_slug(raw)
             known = [s for s in (_remote_slug(r) for r in _protected_roots()) if s]
@@ -782,7 +999,7 @@ def _is_protected_target(cmd: str, matched_sub: str, session_cwd: str):
     # Positive check only: a URL that names a protected repo gates; anything else
     # falls through, because `git push otherremote main` inside the brain is still
     # a push to the brain.
-    if _PAT_GIT_PUSH.match(dec):
+    if _git_push_form(view):
         known = {s for s in (_remote_slug(r) for r in _protected_roots()) if s}
         for m in _URL_SLUG_RE.finditer(dec):
             if (_canon_slug(m.group(1)) or "") in known:
@@ -792,11 +1009,14 @@ def _is_protected_target(cmd: str, matched_sub: str, session_cwd: str):
     # A relative -C is joined against the effective SESSION cwd, never the
     # hook's own cwd (QA finding 3: right answer, deterministic reason).
     target = None
-    m = re.match(r"^\s*git\s+((?:(?:-C|-c)\s+\S+\s+)*)", sub)
-    if m and m.group(1):
-        c = re.search(r"-C\s+(\S+)", m.group(1))
-        if c:
-            raw = os.path.expanduser(c.group(1).strip("'\""))
+    gtoks = _cmd_tokens(sub)
+    if _head_of(gtoks) == "git":
+        # Read with git's own grammar, not with `\S+`: `git -C "/p/sp ace" push
+        # origin main` resolved to `/p/sp`, which is a different directory and a
+        # different verdict about whether the target is protected.
+        cpath = _git_c_option(gtoks)
+        if cpath is not None:
+            raw = os.path.expanduser(cpath.strip("'\""))
             base = _effective_cwd(cmd, matched_sub, session_cwd)
             target = raw if os.path.isabs(raw) else os.path.join(base, raw)
     if target is None:
@@ -882,13 +1102,29 @@ _HEXDIGITS = frozenset("0123456789abcdefABCDEF")
 _OCTDIGITS = frozenset("01234567")
 
 
-def _ansi_c_body(s: str, i: int) -> tuple[str, int, bool]:
+def _ansi_c_body(s: str, i: int, nul_truncates: bool = True) -> tuple[str, int, bool]:
     r"""(decoded text, index past the closing quote, closed?) for the ANSI-C
     string opening at ``s[i:i+2] == "$'"``.
 
     Faithful to bash on the escape that is NOT recognized: `$'\z'` is `\z`, the
     backslash retained, so this can never manufacture a verb bash would not
-    produce. An unclosed opener is a shell syntax error and reports closed=False,
+    produce. That claim is TRUE and cycle 8 tested its CONVERSE, which nobody
+    had: a word bash TRUNCATES and this decoder did not. A bash word is a C
+    string, so an embedded NUL ends the body — measured on bash 5.2.21,
+    `$'pr\x00xx'` prints `[pr]` and `$'main\x00zz'` prints `[main]` — while this
+    reader kept the bytes after it, so the decoded word was `pr\x00xx`, which is
+    not the word any anchor is looking for. `gh $'pr\x00xx' merge 288`,
+    `$'gh\x00zz' pr merge 288`, `git $'push\x00x' origin main` and
+    `git push origin $'main\x00zz'` all walked this gate, and the last two pushed
+    for real to a local bare remote. Truncation is of the BODY only, not of the
+    word: `x$'a\x00b'y` measures `[xay]`, so the concatenation continues after
+    the closing quote.
+
+    *nul_truncates* is False for one caller, `_ansi_c_expand`, which only ever
+    WIDENS a pre-filter: truncating there could drop the very word the filter
+    exists to find.
+
+    An unclosed opener is a shell syntax error and reports closed=False,
     which the tokenizer treats exactly as it treats any other unclosed quote.
     """
     out: list[str] = []
@@ -942,9 +1178,14 @@ def _ansi_c_body(s: str, i: int) -> tuple[str, int, bool]:
         else:
             out.append("\\" + esc)
             j += 2
+    body = "".join(out)
+    if nul_truncates:
+        zero = body.find("\x00")
+        if zero >= 0:
+            body = body[:zero]
     if j < n and s[j] == "'":
-        return "".join(out), j + 1, True
-    return "".join(out), n, False
+        return body, j + 1, True
+    return body, n, False
 
 
 def _ansi_c_expand(text: str) -> str:
@@ -958,8 +1199,8 @@ def _ansi_c_expand(text: str) -> str:
     i, n = 0, len(text)
     while i < n:
         if text[i] == "$" and i + 1 < n and text[i + 1] == "'":
-            body, i, _closed = _ansi_c_body(text, i)
-            out.append(body)
+            body, i, _closed = _ansi_c_body(text, i, nul_truncates=False)
+            out.append(body.replace("\x00", ""))
         elif text[i] == "$" and i + 1 < n and text[i + 1] == '"':
             i += 1
         else:
@@ -1158,21 +1399,35 @@ def _ws_tokens(s: str):
 _OPAQUE_HEAD = re.compile(r"[$`]")
 
 
-def _peel_candidates(s: str) -> list[tuple[str, str]]:
-    """[(raw_form, decoded_form)] for EVERY command-head position in *s*.
+def _peel_candidates(s: str) -> list[tuple[str, str, tuple | None]]:
+    """[(raw_form, decoded_form, view)] for EVERY command-head position in *s*.
 
     raw_form     = the DECODED head plus the ORIGINAL remainder, quoting intact.
                    PR-number extraction reads this one, because a quoted flag
                    value must stay ONE token there (`-t "x 280" 281` merges 281).
     decoded_form = the decoded head plus every following token DECODED and joined
-                   by single spaces. VERB matching reads this one, because
-                   `gh "pr" merge 1`, `gh pr me\\rge 1` and `git "push" origin main`
-                   are the same command to the shell and were three total bypasses
-                   while the matcher looked at the raw remainder (QA cycle 4, A1).
+                   by single spaces. It is a RENDERING, not a parse: a token
+                   that contains whitespace is two words in it, which is why the
+                   view below and not this string is what verb matching reads.
+                   `_api_write_action` and `_alias_definition_form` do read it,
+                   and neither has an option grammar to lose.
+                   VERB matching reads the view, because `gh "pr" merge 1`,
+                   `gh pr me\\rge 1` and `git "push" origin main` are the same
+                   command to the shell and were three total bypasses while the
+                   matcher looked at the raw remainder (QA cycle 4, A1).
                    Decoding cannot manufacture a verb out of a quoted MENTION: a
                    whole-token quote (`git commit -m "gh pr merge 96"`) is ONE
                    token, and one token can never supply the two words a verb
                    needs after a head.
+    view         = (head, decoded tokens, base index, offset tuples, source) for
+                   every caller that reads the command's SHAPE: the verb anchors,
+                   the option readers and the alias expansion. The tokens already
+                   exist here, so handing them over costs a tuple, while
+                   re-deriving them per candidate is the O(tokens²) shape
+                   residual 9 keeps paying down — an alias expansion that
+                   re-tokenized its own candidate measured 14.4 s on 800 opaque
+                   tokens against a 5 s budget. None on the no-head fallback,
+                   which is one candidate for the whole string.
 
     EVERY position, not just the first (A2): the old peel stopped at the first
     head it recognized, so a benign head in front swallowed the merge behind it
@@ -1217,7 +1472,7 @@ def _peel_candidates(s: str) -> list[tuple[str, str]]:
     if "-" in flat:
         for _m in _API_WRITE.finditer(flat):
             last_write = _m.start()
-    out: list[tuple[str, str]] = []
+    out: list[tuple[str, str, tuple | None]] = []
     for i, (text, _start, end) in enumerate(toks):
         bare = text.strip("\"'")
         head = os.path.basename(bare)
@@ -1228,13 +1483,15 @@ def _peel_candidates(s: str) -> list[tuple[str, str]]:
         rest_dec = flat[at:] if i + 1 < len(flat_parts) else ""
         suffix = (" " + rest_dec) if rest_dec else ""
         if is_cmd:
-            out.append((head + s[end:], head + suffix))
+            out.append((head + s[end:], head + suffix,
+                        (head, flat_parts, i + 1, toks, s)))
         else:
             heads = ("gh", "git", "curl") if at <= last_write else ("gh", "git")
             for h in heads:
-                out.append((h + s[end:], h + suffix))
+                out.append((h + s[end:], h + suffix,
+                            (h, flat_parts, i + 1, toks, s)))
     if not out:
-        out.append((s, flat if toks else s))
+        out.append((s, flat if toks else s, ("", flat_parts, len(flat_parts), toks, s)))
     return out
 
 
@@ -1313,8 +1570,7 @@ def _expand_gh_alias(sub: str, cfg_dir: str | None = None) -> str:
 # `alias.pm` says, so the `push` anchor never sees it, and `git -c alias.p=...`
 # needs no config file at all — which is why RESOLUTION alone could never be
 # the fix and the DEFINITION is gated as well (see _alias_definition_form).
-_GIT_FIRST_WORD_RE = re.compile(
-    r"^git\s+(" + _GIT_GLOBALS + r")([A-Za-z][\w.-]*)(?=\s|$)")
+_GIT_ALIAS_WORD_RE = re.compile(r"^[A-Za-z][\w.-]*$")
 _GIT_C_ALIAS_RE = re.compile(r"-c\s+alias\.([\w.-]+)=(\S+|'[^']*'|\"[^\"]*\")")
 _GIT_ALIAS_SECTION_RE = re.compile(r"^\s*\[\s*alias\s*\]\s*$", re.IGNORECASE)
 _GIT_SECTION_RE = re.compile(r"^\s*\[")
@@ -1352,32 +1608,49 @@ def _git_aliases() -> dict:
     return found
 
 
-def _expand_git_alias(sub: str) -> str:
-    """`git [-c ...] <alias> args` rewritten to what git will actually run.
+def _expand_git_alias(sub: str, view: tuple | None = None) -> str:
+    """`git [globals] <alias> args` rewritten to what git will actually run.
 
     A same-line `-c alias.<n>=<body>` wins over the config file, exactly as git
     resolves it — and that is the spelling that needs no config file at all.
+
+    The globals are walked with `_git_globals_end`, the same grammar the push
+    anchor uses. The regex it replaced stopped its value at the first space, so
+    `git -c 'core.pager=less -F' pm` never found `pm`; the note below used to
+    call that "defeats the push anchor" and worked around it by dropping the
+    option instead of by reading it.
     """
-    m = _GIT_FIRST_WORD_RE.match(sub)
-    if not m:
+    if view is None:                       # direct call: parse what we were given
+        toks = _tokens_with_offsets(sub)
+        if toks is None:
+            return sub
+        parts = [t for t, _s, _e in toks]
+        head, base, src = _head_of(parts), 1, sub
+    else:
+        head, parts, base, toks, src = view
+    if head != "git" or base < 1 or base > len(toks):
         return sub
-    inline = {k: v.strip("'\"") for k, v in _GIT_C_ALIAS_RE.findall(m.group(1))}
-    exp = inline.get(m.group(2)) or _git_aliases().get(m.group(2))
+    i = _git_globals_end(parts, base)
+    if i >= len(parts) or not _GIT_ALIAS_WORD_RE.match(parts[i]):
+        return sub
+    globals_text = src[toks[base - 1][2]:toks[i][1]]
+    inline = {k: v.strip("'\"") for k, v in _GIT_C_ALIAS_RE.findall(globals_text)}
+    exp = inline.get(parts[i]) or _git_aliases().get(parts[i])
     if not exp:
         return sub
-    rest = sub[m.end(2):]
+    rest = src[toks[i][2]:]
     if exp.startswith("!"):          # shell alias: the expansion IS the line
         return exp[1:].lstrip() + rest
     # `-C <path>` is kept (it names the repo the command operates on), the
-    # `-c alias.*` entry is dropped: leaving a `-c` whose VALUE contains spaces
-    # between `git` and the expanded verb defeats the push anchor.
-    return "git " + _GIT_C_ALIAS_RE.sub("", m.group(1)) + exp + rest
+    # `-c alias.*` entry is dropped: it is the DEFINITION, not a selector.
+    kept = _GIT_C_ALIAS_RE.sub("", globals_text).strip()
+    return "git " + (kept + " " if kept else "") + exp + rest
 
 
-def _expand_alias(sub: str, cfg_dir: str | None = None) -> str:
+def _expand_alias(sub: str, cfg_dir: str | None = None, view: tuple | None = None) -> str:
     """Either alias vocabulary, whichever the head belongs to."""
     out = _expand_gh_alias(sub, cfg_dir)
-    return out if out != sub else _expand_git_alias(sub)
+    return out if out != sub else _expand_git_alias(sub, view)
 
 
 # Defining an alias is one ungated command away from an ungated merge, and it
@@ -1421,16 +1694,56 @@ def _alias_definition_form(sub: str) -> bool:
     return False
 
 
-def _is_publish_form(dec: str):
-    """Which publish pattern the DECODED normalized sub-command *dec* matches.
+def _cmd_tokens(s: str) -> list[str]:
+    """The decoded words of *s*, with the quote-blind fallback the peel uses."""
+    toks = _tokens_with_offsets(s)
+    if toks is None:
+        toks = _ws_tokens(s)
+    return [t for t, _s, _e in toks]
 
-    One place, so candidate selection in _normalize and the form label in
+
+def _head_of(toks: list[str]) -> str:
+    """The command word of *toks*: basename, quoting stripped, or ''."""
+    return os.path.basename(toks[0].strip("\"'")) if toks else ""
+
+
+def _gh_merge_form(view: tuple) -> bool:
+    """True when the candidate *view* is a `gh pr merge`."""
+    head, parts, base = view[0], view[1], view[2]
+    return head == "gh" and _gh_merge_anchor(parts, base) is not None
+
+
+def _git_push_form(view: tuple) -> str | None:
+    """'main'/'master' when the candidate *view* pushes there, else None."""
+    head, parts, base = view[0], view[1], view[2]
+    if head != "git":
+        return None
+    start = _git_push_anchor(parts, base)
+    return None if start is None else _git_push_branch(parts, start)
+
+
+def _is_publish_form(dec: str, view: tuple):
+    """Which publish pattern the normalized sub-command matches.
+
+    One place, so candidate selection in _normalize_full and the form label in
     _find_publish_subcmds can never disagree about what a merge is.
+
+    The VERB forms read *view* — (head, decoded tokens, base index, offsets,
+    source) as `_peel_candidates` built it — because the token boundaries are
+    the thing an option grammar needs and the decoded rendering does not carry
+    them. *dec* is what the two REGEX forms read, and neither of those has an
+    option grammar to lose. The view is required rather than optional so no
+    caller can quietly fall back to re-reading the rendering.
     """
-    if _PAT_GH_MERGE.match(dec):
-        return None if _gh_merge_is_help(dec) else "gh"
-    if _PAT_GIT_PUSH.match(dec):
-        return None if _git_push_is_dry_run(dec) else "push"
+    head, parts, base = view[0], view[1], view[2]
+    if head == "gh":
+        pos = _gh_merge_anchor(parts, base)
+        if pos is not None:
+            return None if _gh_merge_is_help(parts, pos[1] + 1) else "gh"
+    elif head == "git":
+        start = _git_push_anchor(parts, base)
+        if start is not None and _git_push_branch(parts, start):
+            return None if _git_push_is_dry_run(parts, start) else "push"
     if _api_write_action(dec) is not None:
         return "api"
     if _alias_definition_form(dec):
@@ -1438,24 +1751,30 @@ def _is_publish_form(dec: str):
     return None
 
 
-def _normalize(s: str, cfg_dir: str | None = None) -> tuple[str, str]:
-    """(raw_form, decoded_form) of *s*: wrappers peeled, aliases expanded.
+def _normalize_full(s: str, cfg_dir: str | None = None) -> tuple[str, str, tuple]:
+    """(raw_form, decoded_form, view) of *s*: wrappers peeled, aliases expanded.
 
     Of the candidate head positions, the one that IS a publish form wins; else
     the first. Expansion is repeated because a shell alias can expand back into
     a wrapper (`!time gh pr merge`), and bounded so it cannot loop.
+
+    The view travels with the two forms so the caller that asks for the form
+    label again does not have to re-derive the tokens the peel already built.
     """
     cur = s
-    fallback = (s, s)
+    # A view, never None: `_is_publish_form` indexes it, the peel always returns
+    # one, and a crash BEFORE identification fails open — which is the one
+    # direction this file never gets to fail in.
+    fallback = (s, s, ("", [], 0, [], s))
     for _ in range(5):
         cands = _peel_candidates(cur)
         fallback = cands[0]
-        for raw, dec in cands:
-            if _is_publish_form(dec):
-                return raw, dec
+        for raw, dec, view in cands:
+            if _is_publish_form(dec, view):
+                return raw, dec, view
         nxt = None
-        for raw, _dec in cands:
-            expanded = _expand_alias(raw, cfg_dir)
+        for raw, _dec, view in cands:
+            expanded = _expand_alias(raw, cfg_dir, view)
             if expanded != raw:
                 nxt = expanded
                 break
@@ -1465,15 +1784,15 @@ def _normalize(s: str, cfg_dir: str | None = None) -> tuple[str, str]:
     return fallback
 
 
+def _normalize(s: str, cfg_dir: str | None = None) -> tuple[str, str]:
+    """(raw_form, decoded_form) of *s* — `_normalize_full` without the view."""
+    return _normalize_full(s, cfg_dir)[:2]
+
+
 def _unwrap_sub(s: str, cfg_dir: str | None = None) -> str:
     """The RAW normalized form — quoting of the arguments preserved. Read by PR
     extraction, where a quoted flag value must stay one token."""
     return _normalize(s, cfg_dir)[0]
-
-
-def _unwrap_sub_match(s: str, cfg_dir: str | None = None) -> str:
-    """The DECODED normalized form — read by verb matching only."""
-    return _normalize(s, cfg_dir)[1]
 
 
 def _prefix_env(sub: str) -> dict:
@@ -2043,14 +2362,14 @@ def _publish_carriers(text: str, mentions: bool = True) -> list[str]:
     value has to parse as a whole command LINE, which that SQL statement does not.
     """
     out = [sub for sub in _split_subcmds(text)
-           if _is_publish_form(_unwrap_sub_match(sub))]
+           if _is_publish_form(*_normalize_full(sub)[1:])]
     if out or not mentions:
         return out
     toks = _tokens_with_offsets(text)
     if toks is None:
         toks = _ws_tokens(text)
     return [t for t, _s, _e in toks
-            if " " in t and _is_publish_form(_unwrap_sub_match(t))]
+            if " " in t and _is_publish_form(*_normalize_full(t)[1:])]
 
 
 def _stdin_channel_texts(raw_sub: str) -> list[str]:
@@ -2092,7 +2411,7 @@ def _stdin_channel_texts(raw_sub: str) -> list[str]:
 
 # Every publish pattern in this file needs one of these five substrings to be
 # present in the text, after quoting and backslash escapes are flattened:
-#   `_PAT_GH_MERGE` -> "merge"; `_PAT_GIT_PUSH` -> "push"; the alias-definition
+#   `_gh_merge_anchor` -> "merge"; `_git_push_anchor` -> "push"; the alias-definition
 #   forms -> "gh" or "git"; and every `_api_write_action` shape -> "merge"
 #   (/pulls/N/merge, /merges, mergePullRequest, enablePullRequestAutoMerge,
 #   mergeBranch) or "git" (/git/refs/heads/main). An OPAQUE head synthesizes
@@ -2477,7 +2796,8 @@ def _find_publish_subcmds(cmd: str, _depth: int = 0) -> list[tuple[str, str]]:
         # because that is the same merge read twice.
         if len(found) > before:
             continue
-        form = _is_publish_form(_unwrap_sub_match(raw_sub, _cfg_dir_for(cmd, raw_sub)))
+        _raw_n, dec_n, view_n = _normalize_full(raw_sub, _cfg_dir_for(cmd, raw_sub))
+        form = _is_publish_form(dec_n, view_n)
         if form:
             found.append((raw_sub, form))
     for opening, body in heredocs:
@@ -2505,13 +2825,13 @@ def _extract_pr_id(matched_sub: str, cfg_dir: str | None = None) -> str:
     cannot read falls through to the 'unknown' sentinel, which is unapprovable —
     fail-closed, not a guess.
     """
-    raw, dec = _normalize(matched_sub, cfg_dir)
+    raw, dec, view = _normalize_full(matched_sub, cfg_dir)
     num = _gh_merge_pr_num(raw)
     if num:
         return num
-    push_m = _PAT_GIT_PUSH.match(dec)
-    if push_m:
-        return push_m.group(1)
+    branch = _git_push_form(view)
+    if branch:
+        return branch
     api = _api_write_action(dec)
     if api is not None:
         return api
