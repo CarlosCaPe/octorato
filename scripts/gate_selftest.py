@@ -64,6 +64,9 @@ _OVERRIDE_ENV = (
     # stray export cannot poison every leg; the one fixture that needs it
     # declares it in its own "_env" and gets it back after this strip.
     "OCTO_GATE_CRASH_SELFTEST",
+    # the same, for the crash injected DURING identification (the path the
+    # crash guard cannot see, because the flag it reads is still unset there).
+    "OCTO_GATE_CRASH_IDENT",
 )
 
 

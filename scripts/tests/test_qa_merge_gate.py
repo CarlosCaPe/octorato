@@ -2075,6 +2075,46 @@ Sized against a LOADED box on purpose, not a quiet one, because that is
             f"{len(env)}-variable environment; the three-key env read keeps "
             f"this flat, a whole-process walk does not (measured 4.6-5.6s)")
 
+    def test_the_pr_index_early_out_keeps_the_anchor_flat(self):
+        """The REGRESSION contract for the `pr` index list, on CPU so it does not
+        straddle on load.
+
+        The cycle-9 revert audit found exactly one mechanism nothing pinned: the
+        early-out is a pure performance guard, so removing it changes no verdict
+        and every correctness test stays green while the anchor goes quadratic.
+        That is the shape the audit exists to find, and a fence is the answer.
+        The cobra walk runs per candidate and its frontier crosses an alternating
+        flag/positional run to the end of the line, so an opaque-token line with
+        no `pr` in it costs one walk per candidate without the index and one
+        bisect with it: measured on this box, 1500 `$a<n> -f` pairs cost 0.82 s of
+        CPU with the early-out and 2.27 s without, so the line sits at 1.6 s with
+        roughly 2x of margin on each side. Cost is one interpreter spawn."""
+        import subprocess
+        import textwrap
+        child = textwrap.dedent(
+            """
+            import importlib.util, sys, time
+            spec = importlib.util.spec_from_file_location("g", sys.argv[1])
+            m = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(m)
+            cmd = "git " + " ".join("$a%d -f" % i for i in range(1500))
+            t0 = time.process_time()
+            m._find_publish_subcmds(cmd)
+            print("%.3f" % (time.process_time() - t0))
+            """
+        )
+        env = {k: v for k, v in os.environ.items()
+               if k in ("PATH", "HOME", "LANG", "PYTHONPATH")}
+        cp = subprocess.run([sys.executable, "-c", child,
+                             str(SCRIPTS / "qa-merge-gate.py")],
+                            capture_output=True, text=True, env=env, timeout=300)
+        self.assertEqual(0, cp.returncode, cp.stderr)
+        cpu = float(cp.stdout.strip())
+        self.assertLess(
+            cpu, 1.6,
+            f"1500 opaque/write-marker pairs cost {cpu:.2f}s of CPU; the `pr` "
+            f"index list keeps this flat (measured 0.82s with it, 2.27s without)")
+
     def test_the_curl_candidate_bound_keeps_a_real_api_write(self):
         # the bound drops synthesized `curl` heads PAST the last write marker;
         # a real one, and an opaque head in front of one, must survive it.
@@ -2189,10 +2229,20 @@ class TestPflagAttachesAShorthandValue(unittest.TestCase):
             'gh pr merge -t "-R other/repo" -R real/repo 288')))
         self.assertIsNone(gate._gh_repo_option(gate._cmd_tokens("gh pr merge 288")))
 
-    def test_an_unknown_shorthand_does_not_swallow_the_verb(self):
-        # the skip stays enumerated: a crafted flag is NOT skipped, so it can
-        # never consume `pr` as its value.
-        self.assertEqual(1, gate._gh_globals_end(["gh", "-Z", "pr", "merge"], 1))
+    def test_an_unknown_shorthand_cannot_hide_the_verb_either(self):
+        """CORRECTED in cycle 9. This used to assert that an unrecognised
+        shorthand STOPS the walk, on the theory that an enumerated skip is safer
+        than a general one. It is the opposite: stopping there is what let
+        `gh pr --squash=true merge 288` through, because cobra keeps parsing and
+        dispatches the verb behind the flag. The walk now yields both the
+        consume-nothing and the consume-one position for every flag token, so an
+        unknown one cannot hide the verb in either direction."""
+        self.assertEqual(
+            ["gh"],
+            [f for _s, f in gate._find_publish_subcmds("gh -Z pr merge 288")])
+        self.assertEqual(
+            ["gh"],
+            [f for _s, f in gate._find_publish_subcmds("gh pr -Zvalue merge 288")])
 
 
 class TestABashWordEndsAtItsFirstNul(unittest.TestCase):
@@ -2286,3 +2336,217 @@ class TestTheTokenViewIsWhatCarriesTheBoundaries(unittest.TestCase):
                "| bash")
         self.assertEqual(["push"],
                          [f for _s, f in gate._find_publish_subcmds(cmd)])
+
+
+class TestCobraFindsTheVerbBehindASubcommandFlag(unittest.TestCase):
+    r"""QA cycle 9, bypass 1 — LIVE in production, not a branch regression: all
+    nine reported spellings return rc 0 from master, from `75bd1c5` and from the
+    installed `~/.claude/scripts/qa-merge-gate.py`.
+
+    The model covered each tool's GLOBAL options and stopped at the first
+    unrecognised `-` token. cobra does not: it finds a subcommand by stripping
+    flags and taking the first positional left, and at the `gh pr` level the
+    flags of `gh pr merge` are unknown to it, so they get stripped there too.
+    Read off the real gh 2.88.1 by the error it returns, not guessed: a spelling
+    that reaches `GraphQL: Could not resolve to a PullRequest ...
+    (repository.pullRequest)` dispatched to `pr merge` and RAN the merge verb,
+    while one rejected at the `pr` level (`Usage: gh pr <command>`) did not.
+    """
+
+    DISPATCHES = (
+        "gh pr --squash=true merge 999999", "gh pr --rebase=true merge 999999",
+        "gh pr --merge=true merge 999999", "gh pr --auto=true merge 999999",
+        "gh pr --delete-branch=true merge 999999", "gh pr -s=true merge 999999",
+        "gh pr -d=true merge 999999", "gh --auto=true pr merge 999999",
+        "gh --squash=true pr merge 999999", "gh pr -strue merge 999999",
+        # measured DISPATCHING and listed by nobody: the bare flag ate `x`, not
+        # the verb, so `merge` was still the first positional after `pr`
+        "gh pr --body x merge 999999",
+    )
+
+    def test_every_measured_dispatching_spelling_is_identified(self):
+        for cmd in self.DISPATCHES:
+            with self.subTest(cmd=cmd):
+                self.assertEqual(
+                    ["gh"], [f for _s, f in gate._find_publish_subcmds(cmd)])
+
+    def test_the_pr_number_still_reads_through_the_flag(self):
+        """A deny nobody can approve is a merge blocked forever, so the widened
+        anchor has to keep reading the PR rather than fall to the sentinel."""
+        self.assertEqual("288", gate._extract_pr_id("gh pr --squash=true merge 288"))
+        self.assertEqual("288", gate._extract_pr_id("gh pr -s=true merge 288"))
+        self.assertEqual("288", gate._extract_pr_id("gh pr --body x merge 288"))
+
+    def test_the_stated_over_fire_is_the_one_that_was_measured(self):
+        """`gh pr --squash merge 288` is DENIED here and gh refuses to run it
+        (`unknown flag: --squash`, usage `gh pr <command>`, because the bare flag
+        ate `merge`). Naming it as a test rather than as prose, so the trade is
+        checkable and does not quietly grow."""
+        self.assertEqual(
+            ["gh"],
+            [f for _s, f in gate._find_publish_subcmds("gh pr --squash merge 288")])
+
+    def test_a_flag_does_not_turn_a_read_into_a_merge(self):
+        for cmd in ("gh pr --squash=true view 288", "gh pr view 288 --json number",
+                    "gh pr --body x view 288", "gh pr list --limit 5",
+                    "gh pr checkout 288", "gh pr diff --name-only 288"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual([], gate._find_publish_subcmds(cmd))
+
+    def test_the_positional_walk_is_the_mechanism(self):
+        # `pr` is the only first positional; `merge` is reachable both by the
+        # flag consuming nothing and by it consuming one word
+        self.assertEqual([1], gate._cobra_positional_candidates(
+            gate._cmd_tokens("gh pr --body x merge 288"), 1))
+        self.assertEqual([3, 4], gate._cobra_positional_candidates(
+            gate._cmd_tokens("gh pr --body x merge 288"), 2))
+        # a positional ends its own path, so a plain read has exactly one
+        self.assertEqual([2], gate._cobra_positional_candidates(
+            gate._cmd_tokens("gh pr view 288"), 2))
+        # `--` ends flag parsing
+        self.assertEqual([3], gate._cobra_positional_candidates(
+            gate._cmd_tokens("gh pr -- merge 288"), 2))
+
+
+class TestTheControlFoldIsBashsOwn(unittest.TestCase):
+    r"""QA cycle 9 — `\c` folded with `toupper(x) ^ 0x40`, bash folds with
+    `x & 0x1f`. The two agree on every LETTER, which is why the cycle-8 spot
+    check passed them both, and they disagree on everything else. That is not
+    cosmetic: `x & 0x1f` reaches NUL for four characters and `toupper(x) ^ 0x40`
+    reaches it for one, so `$'pr\c xx'` is the word `pr` to bash (measured,
+    `printf '[%s]' $'pr\c xx'` prints `[pr]`) while the decoder produced
+    `pr\x60xx`. Three live members of the NUL class the previous commit claimed
+    to have closed, and the reason the class test now enumerates the CHARACTERS
+    that fold to NUL and not only the escape FORMS.
+    """
+
+    def test_the_fold_matches_bash_byte_for_byte(self):
+        # every pair measured against bash 5.2.21 at the byte level
+        for body, want in ((r"$'X\c{Y'", "X\x1bY"), (r"$'X\c}Y'", "X\x1dY"),
+                           (r"$'X\c|Y'", "X\x1cY"), (r"$'X\c~Y'", "X\x1eY"),
+                           (r"$'X\c1Y'", "X\x11Y"), (r"$'X\c9Y'", "X\x19Y"),
+                           (r"$'X\caY'", "X\x01Y"), (r"$'X\cAY'", "X\x01Y"),
+                           (r"$'X\c?Y'", "X\x7fY")):
+            with self.subTest(body=body):
+                self.assertEqual(want, gate._ansi_c_body(body, 0)[0])
+
+    def test_every_character_that_folds_to_nul_truncates(self):
+        r"""The CLASS, by the characters `x & 0x1f` sends to zero, not by the
+        escape forms. `@`, space and backtick were the three the form-only
+        enumeration missed."""
+        for body in (r"$'pr\c@xx'", r"$'pr\c xx'", r"$'pr\c`xx'"):
+            with self.subTest(body=body):
+                self.assertEqual("pr", gate._ansi_c_body(body, 0)[0])
+        for cmd in (r"gh $'pr\c xx' merge 288", r"gh $'pr\c`xx' merge 288"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(
+                    ["gh"], [f for _s, f in gate._find_publish_subcmds(cmd)])
+        for cmd in (r"git $'push\c xx' origin main",
+                    r"git push origin $'main\c zz'"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(
+                    ["push"], [f for _s, f in gate._find_publish_subcmds(cmd)])
+
+    def test_a_backslash_after_the_fold_eats_its_partner(self):
+        self.assertEqual("X\x1cY", gate._ansi_c_body(r"$'X\c\\Y'", 0)[0])
+
+    def test_a_trailing_fold_is_literal_and_leaves_the_quote_alone(self):
+        r"""bash's `$'AB\c'` is the four characters `AB\c` and the string is
+        CLOSED. The decoder folded the closing quote itself into `g` and reported
+        closed=False, which dropped the whole line to the quote-blind fallback."""
+        self.assertEqual(("AB\\c", 7, True), gate._ansi_c_body(r"$'AB\c'", 0))
+
+
+class TestTheCodepointRangeIsBashsOwn(unittest.TestCase):
+    r"""QA cycle 9, bypass 2 — a REGRESSION this branch shipped, not an inherited
+    residual. Master DENIES `gh pr merge 288 $'\U80000000'` with rc 2; the branch
+    allowed it with rc 0 and EMPTY stderr from the commit that introduced
+    `_ansi_c_body` onward. `chr()` raises OverflowError at 0x80000000, the `\u`
+    branch caught only ValueError, and the crash landed in identification, which
+    runs before the crash guard arms.
+    """
+
+    def test_the_three_ranges_are_the_measured_ones(self):
+        self.assertEqual("A", gate._codepoint(0x41))
+        self.assertEqual("\U0010ffff", gate._codepoint(0x10FFFF))
+        self.assertEqual("�", gate._codepoint(0x110000))
+        self.assertEqual("�", gate._codepoint(0x7FFFFFFF))
+        self.assertEqual("", gate._codepoint(0x80000000))
+        self.assertEqual("", gate._codepoint(0xFFFFFFFF))
+
+    def test_the_empty_range_splices_a_verb_and_is_identified(self):
+        r"""bash really joins the word: `printf %s merg$'\U80000000'e` is
+        `merge`, and a fake `gh` on PATH receives `[pr][merge][288]`. Emitting a
+        placeholder there would turn a real merge into an allow, which is the
+        direction the first attempt at this fix got wrong."""
+        self.assertEqual("", gate._ansi_c_body(r"$'\U80000000'", 0)[0])
+        self.assertEqual(["gh"], [f for _s, f in gate._find_publish_subcmds(
+            r"gh pr merg$'\U80000000'e 288")])
+
+    def test_the_non_empty_range_cannot_spell_a_verb(self):
+        self.assertEqual(["gh"], [f for _s, f in gate._find_publish_subcmds(
+            r"gh pr merge 288 $'\U00110000'")])
+        self.assertEqual([], gate._find_publish_subcmds(
+            r"gh pr merg$'\U00110000'e 288"))
+
+    def test_no_codepoint_escape_raises(self):
+        for v in ("0", "41", "d800", "10ffff", "110000", "7fffffff",
+                  "80000000", "ffffffff"):
+            with self.subTest(v=v):
+                gate._ansi_c_body(r"$'\U" + v.rjust(8, "0") + "'", 0)
+
+
+class TestAnUnreadableCommandIsNotASafeOne(_GateRunner, unittest.TestCase):
+    """QA cycle 9 — identification is the one path `_guarded_main` cannot cover,
+    because the flag it reads is still False while the gate is still deciding
+    whether this is a merge. A crash there exited 0 with EMPTY stderr, which is
+    indistinguishable from a legitimate allow."""
+
+    def test_a_crash_during_identification_denies_with_a_named_cause(self):
+        rc, err = self._run("git status -s", {
+            "CLAUDE_SESSION_ID": "__selftest__", "OCTO_GATE_CRASH_IDENT": "1"})
+        self.assertEqual(2, rc, err)
+        self.assertIn("could not PARSE this command line", err)
+        self.assertIn("RuntimeError", err)
+
+    def test_the_injection_needs_the_harness_marker(self):
+        """The fault injection is reachable only from the selftest harness, and
+        even there its only effect is a DENY, so it can never be a way through."""
+        rc, err = self._run("git status -s", {"OCTO_GATE_CRASH_IDENT": "1"})
+        self.assertEqual(0, rc, err)
+        self.assertNotIn("QA GATE (fail-closed)", err)
+
+    def test_the_overflow_token_denies_end_to_end(self):
+        """The shape master denies and this branch allowed: one token appended to
+        an ordinary merge line. Asserted on the REASON, so it cannot pass by
+        denying for some unrelated cause."""
+        self._deny(r"gh pr merge 288 $'\U80000000'", {},
+                   "needs operator approval", "PR #288")
+
+
+class TestTheScanCapRefusesInsteadOfAllowing(unittest.TestCase):
+    """cobra can reach a subcommand past any run of flags, so the anchor has to
+    try every position a `pr` could occupy, and an alternating `-f pr` line makes
+    that quadratic. The cap is not an allow: it is the same refusal the re-parse
+    cap makes, with its own reason, because a deny message that names the wrong
+    cause is a false sentence in front of the operator."""
+
+    def test_under_the_cap_still_resolves_normally(self):
+        self.assertEqual([], gate._find_publish_subcmds("gh" + " -f pr" * 10))
+
+    def test_over_the_cap_refuses_with_its_own_form(self):
+        self.assertEqual(["scan"], [f for _s, f in gate._find_publish_subcmds(
+            "gh" + " -f pr" * 70)])
+
+    def test_a_real_merge_behind_the_flags_is_still_found(self):
+        """The cap must not become a way THROUGH: a merge that is actually there
+        is still identified, and identified as a merge rather than as the cap."""
+        self.assertEqual(["gh"], [f for _s, f in gate._find_publish_subcmds(
+            "gh" + " -f pr" * 200 + " merge 288")])
+
+    def test_the_cap_is_bounded_in_time(self):
+        import time
+        t0 = time.perf_counter()
+        gate._find_publish_subcmds("gh" + " -f pr" * 4000)
+        spent = time.perf_counter() - t0
+        self.assertLess(spent, 5.0, f"the capped scan took {spent:.2f}s")

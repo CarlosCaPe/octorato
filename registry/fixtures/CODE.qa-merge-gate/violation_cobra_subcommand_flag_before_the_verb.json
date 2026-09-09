@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "gh pr --squash=true merge 291"
+  },
+  "cwd": "/nonexistent/repo"
+}

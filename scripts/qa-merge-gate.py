@@ -17,7 +17,13 @@ four spellings of quoting (`'…'`, `"…"`, ANSI-C `$'…'`, locale `$"…"`, p
 backslash) are resolved by the SHELL before the program runs, so they are
 resolved here too. Decoding also TRUNCATES where bash truncates: a bash word is
 a C string, so `$'pr\x00xx'` is the word `pr` (measured, bash 5.2.21), and
-keeping the bytes past that NUL let four spellings walk in cycle 8.
+keeping the bytes past that NUL let four spellings walk in cycle 8. Cycle 9
+found the class was still open one layer down, because cycle 8 had enumerated
+the escape FORMS and not the CHARACTERS: `\c` folds with `x & 0x1f`, which
+reaches NUL for `@`, space and backtick, and this decoder folded with
+`toupper(x) ^ 0x40`, which reaches it only for `@`. `$'pr\c xx'` really is the
+word `pr` to bash, so three more spellings walked. Decoding is measured against
+bash at the BYTE level now, not reasoned about.
 It cannot manufacture a verb out of a quoted MENTION
 (`git commit -m "gh pr merge 96"`), because a whole-token quote is ONE token and
 one token can never supply the two words a verb needs after a head.
@@ -27,9 +33,21 @@ consumes it: `-R`/`--repo` for gh, attached, `=`-joined or in the next word,
 before the `pr` group and before the verb (every one of those positions measured
 accepted by the installed gh 2.88.1, which returns `{"number":288}` for
 `gh pr -R CarlosCaPe/octorato view 288 --json number`), and git's documented
-globals (`_git_globals_end`, `_gh_globals_end`). "EVERY position" means
+globals (`_git_globals_end`) and, for gh, cobra's own positional
+rule (`_cobra_positional_candidates`). "EVERY position" means
 every position in that enumeration, never "any word starting with a dash" — a
 general dash-skip would hand the verb a place to hide behind a crafted flag.
+CYCLE 9 CORRECTED THE PREMISE for gh: the words that may sit between a head and
+its verb are not only the tool's GLOBAL options. cobra finds a subcommand by
+stripping flags and taking the first positional left, and at the `gh pr` level
+the flags of `gh pr merge` are unknown to it, so they are stripped there too —
+`gh pr --squash=true merge 999999` and eight siblings reached
+`repository.pullRequest` on gh 2.88.1, which only answers after the merge verb
+ran, and all nine returned 0 from this gate, from master and from the installed
+hook. So the gh side is no longer an enumeration at all: it is cobra's own
+positional rule (`_cobra_positional_candidates`), which needs no list of flags
+and therefore cannot lose to the next one gh adds. git keeps its enumeration
+because git's own parser is an enumeration.
 ON TOKENS is the cycle-8 correction. The skip used to be a REGEX whose value was
 `\S+`, matched against a form flattened by joining decoded tokens with spaces, so
 a value that CONTAINS a space became two words and the verb vanished behind them
@@ -130,9 +148,14 @@ stops being tracked. One number, four surfaces, reconciled 2026-09-08.
      cycle just closed: ``flock /var/lock/grep -c "gh pr merge 291"`` and
      ``flock /var/lock/psql -c "…"`` both still DENY, and that is the trade.
      The DENY-side enumeration is the same shape on the same dimension, and it
-     is named here because cycle 8 measured its cost. The global-option sets
-     (`_GIT_GLOBAL_BOOL` and its three valued siblings, `_GH_GLOBAL_LONG_VALUE`
-     and its shorthand pair) decide which words may sit between a head and its
+     is named here because cycle 8 measured its cost — and cycle 9 measured what
+     the shape costs when the enumeration is of the WRONG SET. gh's list was
+     complete for globals and empty for the subcommand's own flags, which cobra
+     also admits before the verb, so nine spellings walked a model that was
+     accurate about everything it enumerated. The gh half is now a parser rule
+     with no list; only git's half remains a list, because git's parser is one. The global-option sets
+     (`_GIT_GLOBAL_BOOL` and its three valued siblings; the gh half is no
+     longer a list at all, see cycle 9 below) decide which words may sit between a head and its
      verb, and a member nobody listed is a MISS, not the loud over-fire the
      allow-side sets fail with. What cycle 8 replaced was not the lists but the
      GRAMMAR they were applied with, so what remains exposed is a global option
@@ -251,6 +274,33 @@ stops being tracked. One number, four surfaces, reconciled 2026-09-08.
      (measured — a `cd` in one call is still in effect in the next), so the
      command is written to that shell rather than passed as one `bash -c`
      argument. The ~128 KB single-argument limit bounds neither path.
+     CYCLE 9 RE-MEASURED THE BOUNDED SHAPES UNDER REAL LOAD and the answer is
+     that the WALL fence is a property of the BOX, not of the gate, so the size
+     at which this gate stops being a gate is stated here as a number instead of
+     as a hedge. This 4-core box, load 22-25 with sibling agents running, min of
+     2-3 runs: 20000 benign words 0.21 s CPU / 0.34-1.83 s wall; 5000 opaque
+     tokens 0.18 s CPU; 2000 heredoc openers 0.06 s CPU; 3500 distinct `$(…)`
+     substitutions 1.21 s CPU / 2.71-4.85 s wall; 1500 opaque/write-marker pairs
+     0.82 s CPU / 2.19-3.30 s wall; 2500 pairs 2.25-2.33 s CPU / 4.24-8.24 s
+     wall; 3500 pairs 4.38 s CPU / 10.80 s wall; 5000 pairs 9.31 s CPU /
+     30.19 s wall. THE PAIRS SHAPE CROSSES THE 5 s
+     `hooks.json` BUDGET ON WALL BETWEEN 1500 AND 2500 PAIRS AT LOAD ~23, and on
+     CPU between 3500 and 5000. Past that the hook is killed, writes no stdout,
+     and the harness reads that as ALLOW: a crafted ~40 KB line of
+     `$a<n> -f` noise is a bypass with a stopwatch on a busy box. That is the
+     limit, named. It is why the CPU legs are the REGRESSION contract (load-free,
+     1.1x-1.3x spread) and the wall leg is the BUDGET contract (3x-5x spread), and
+     why the wall-fenced sizes sit below their own crossover rather than at it.
+     Cycle 9 also introduced a quadratic of its own and removed it, which is the
+     same lesson one layer up: the cobra positional walk ran per candidate and its
+     frontier crosses an alternating flag/positional run to the end of the line,
+     so 1500 pairs went from 2.27 s of CPU to 3.24 s of wall on a quiet box before
+     the fix and 0.82 s of CPU after it, once the anchor was handed the `pr` index
+     list computed once per token list. A second bound is the candidate scan
+     itself (`_COBRA_PR_CANDIDATE_CAP`): an alternating `-f pr` line offers a new
+     `pr` position per pair, and past 64 the anchor REFUSES with its own reason
+     rather than keep walking or fall through to an allow — 4000 alternations cost
+     0.81 s of CPU and deny.
      Cycle 8 walked into this residual rather than only reading it: moving the
      option grammar onto tokens made the git ALIAS expansion tokenize its own
      candidate, and a candidate is a per-token SUFFIX, so 800 opaque tokens went
@@ -332,8 +382,18 @@ receipt for the PR in the receipt ledger (~/.claude/.cache/receipts/global.jsonl
 written by the SubagentStop hook from a QA subagent's QA-VERDICT/QA-SCOPE lines
 and re-read from that agent's transcript. OCTO_QA_OK=1 is the explicit bypass of
 that receipt only, and only for the PR named in OCTO_MERGE_APPROVE.
-Fail-closed ONLY for positively-identified merge commands.
-Any parsing error on a non-merge command → exit 0 (fail-open).
+Fail-closed ONLY for positively-identified merge commands, PLUS the one path the
+crash policy cannot see: a crash during IDENTIFICATION itself. `_guarded_main`
+decides fail-open vs fail-closed by reading `_PUBLISH_IDENTIFIED`, and that flag
+is still False while the gate is deciding whether this is a merge, so an
+exception there exited 0 with EMPTY stderr — a total silent bypass for any
+command whose parse could be made to crash. Cycle 9 found one and it was a
+REGRESSION this branch shipped: `chr()` raises OverflowError at 0x80000000, the
+`\u` branch caught only ValueError, and one token appended to any merge line
+(`gh pr merge 288 $'\U80000000'`) turned rc 2 into rc 0 while master still
+returned rc 2. Identification now carries its own handler and DENIES with a
+named cause, because "I could not read this" is not "this is safe".
+Any parsing error on a non-merge command AFTER identification → exit 0 (fail-open).
 Design mirrors grafo-gate.py: same I/O protocol, same stdin JSON shape.
 
 Operator directive 2026-06-01: NO deploy without QA agent approval.
@@ -394,16 +454,17 @@ for _stream in (sys.stdout, sys.stderr):
 #     `-c=x`; every long option takes `--opt=value` or `--opt value`;
 #     `--exec-path` is `=`-attached only, because bare `--exec-path` prints the
 #     path and runs no subcommand at all.
-#   gh — pflag, measured against the installed gh 2.88.1: a shorthand takes its
-#     value ATTACHED (`-Rowner/repo`), `=`-joined (`-R=owner/repo`) or as the
-#     next word (`-R owner/repo`); in a cluster the FIRST value-taking shorthand
-#     ends the token and swallows the rest of it as its value. The cluster rule
-#     is written as grammar rather than as spellings, and `_GH_GLOBAL_SHORT_BOOL`
-#     is EMPTY today because gh registers no boolean global shorthand (`gh --help`
-#     lists only `--help` and `--version`), so a future one is a set entry rather
-#     than a new parser.
-# An option omitted from either enumeration can only cost a MISS, never an
-# over-fire, so both err toward listing — see residual 8 on what that costs.
+#   gh — no enumeration at all since cycle 9, because cobra's subcommand lookup
+#     is the thing that decides and it needs no flag list: see
+#     `_cobra_positional_candidates`. pflag's attachment rules still matter where
+#     a VALUE is read rather than skipped, and `_gh_repo_option` implements them
+#     as measured against gh 2.88.1 — a shorthand takes its value ATTACHED
+#     (`-Rowner/repo`), `=`-joined (`-R=owner/repo`) or as the next word
+#     (`-R owner/repo`), and in a cluster the FIRST value-taking shorthand ends
+#     the token and swallows the rest of it.
+# A git global omitted from the enumeration above can only cost a MISS, never an
+# over-fire, so it errs toward listing — see residual 8 on what that costs, and
+# on why the gh half stopped being a list.
 _GIT_GLOBAL_SHORT_VALUE = frozenset({"-C", "-c"})
 _GIT_GLOBAL_LONG_VALUE = frozenset({
     "--git-dir", "--work-tree", "--namespace", "--super-prefix",
@@ -420,12 +481,6 @@ _GIT_GLOBAL_BOOL = frozenset({
 # installed git 2.43.0 before a subcommand. They stay listed on purpose: a newer
 # git accepts them, and an option the local git refuses can only cost a deny on a
 # line that was never going to run.
-
-_GH_GLOBAL_LONG_VALUE = frozenset({"--repo"})
-_GH_GLOBAL_LONG_BOOL = frozenset({"--help", "--version"})
-_GH_GLOBAL_SHORT_VALUE = frozenset("R")
-_GH_GLOBAL_SHORT_BOOL = frozenset()
-
 
 def _git_global_step(toks: list[str], i: int) -> int:
     """Index after the ONE git global option at *i*, or *i* when it is not one."""
@@ -452,57 +507,105 @@ def _git_globals_end(toks: list[str], i: int) -> int:
     return i
 
 
-def _gh_globals_end(toks: list[str], i: int) -> int:
-    """Index of the first token after gh's global options, starting at *i*."""
-    n = len(toks)
-    while i < n:
-        t = toks[i]
-        if t.startswith("--"):
-            name, sep, _v = t.partition("=")
-            if sep and name in _GH_GLOBAL_LONG_VALUE:
-                i += 1
-            elif t in _GH_GLOBAL_LONG_VALUE:
-                i += 2
-            elif t in _GH_GLOBAL_LONG_BOOL:
-                i += 1
-            else:
-                break
-            continue
-        if len(t) > 1 and t[0] == "-":
-            j, takes_next = 1, False
-            while j < len(t):
-                c = t[j]
-                if c in _GH_GLOBAL_SHORT_VALUE:
-                    takes_next = j + 1 == len(t)   # nothing attached: next word
-                    j = len(t)                     # the rest of the token IS it
-                    break
-                if c in _GH_GLOBAL_SHORT_BOOL:
-                    j += 1
-                    continue
-                break                              # unknown shorthand: not ours
-            if j < len(t):
-                break
-            i += 2 if takes_next else 1
-            continue
-        break
-    return i
+_COBRA_SCAN_CAP = 20000
+# How many candidate `pr` positions one anchor will try. The walk below is O(rest
+# of the line) per candidate, so an alternating `pr -f $a -f …` line makes the
+# pair quadratic. Exceeding this is NOT an allow: the anchor says so, and the
+# caller refuses the line the same way it refuses a re-parse it could not finish,
+# because "I stopped looking" is not "there is nothing there". A real command
+# does not carry 64 literal `pr` words.
+_COBRA_PR_CANDIDATE_CAP = 64
 
 
-def _gh_merge_anchor(toks: list[str], base: int):
-    """(index of `pr`, index of `merge`) in `gh [globals] pr [globals] merge`.
+def _cobra_positional_candidates(toks: list[str], start: int) -> list[int]:
+    r"""Indices that can be cobra's NEXT POSITIONAL word, scanning from *start*.
 
-    None when *toks* from *base* is not that. Token EQUALITY, not a regex over a
-    joined string: both verbs are whole words to the shell, and a joined form
-    cannot tell one word containing a space from two words.
+    cobra finds a subcommand by STRIPPING flags and taking the first positional
+    left over, and what a flag strips is decided per token: `--name=value`,
+    `-xvalue` and `-x=value` carry their own value and consume nothing, while a
+    bare `--name` or `-x` consumes the NEXT word whenever cobra does not already
+    know that flag takes no value. At the `gh pr` level it does NOT know the
+    flags of `gh pr merge`, and that is the whole of QA cycle 9's first bypass:
+    the words that may sit between a head and its verb are not only the tool's
+    GLOBAL options, they include every flag the SUBCOMMAND registers.
+
+    Measured against gh 2.88.1, with the outcome read off the error rather than
+    guessed. `gh pr --squash=true merge 999999` and `gh pr -s=true merge 999999`
+    both reach `GraphQL: Could not resolve to a PullRequest ... (repository.pullRequest)`,
+    which only comes back after the parse dispatched to `pr merge` and the merge
+    verb ran; so do `-strue`, `-d=true`, `--rebase=true`, `--merge=true`,
+    `--auto=true`, `--delete-branch=true`, and both `gh --squash=true pr merge`
+    and `gh --auto=true pr merge`. `gh pr --squash merge 999999` does NOT: it is
+    rejected at the `pr` level because the bare flag ate `merge` as its value.
+    And `gh pr --body x merge 999999` DOES dispatch, because there the word it
+    ate was `x` — a spelling neither QA nor the first reading of this bug listed,
+    and the reason this models the parser instead of extending a list.
+
+    Both outcomes are kept: a flag token yields BOTH the consume-nothing and the
+    consume-one position, so no cobra-plausible parse can hide the verb behind a
+    flag. The cost is a DENY on `gh pr --squash merge 288`, which gh refuses to
+    run — an over-fire on a line that cannot merge, which is the direction this
+    file always errs in, and the alternative is to bet the gate on a third-party
+    parser continuing to treat unknown bare flags as value-taking.
+
+    Linear, not a branch explosion: the frontier only extends THROUGH flag
+    tokens, so the reachable set is the run of flags plus one, and a positional
+    ends its own path.
     """
-    i = _gh_globals_end(toks, base)
-    if i >= len(toks) or toks[i] != "pr":
+    n = min(len(toks), start + _COBRA_SCAN_CAP)
+    if start >= len(toks):
+        return []
+    reach = {start}
+    out: list[int] = []
+    i = start
+    while i < n and i in reach:
+        tok = toks[i]
+        if tok == "--":                    # everything after this is positional
+            if i + 1 < len(toks):
+                out.append(i + 1)
+            break
+        if len(tok) > 1 and tok[0] == "-":
+            reach.add(i + 1)
+            reach.add(i + 2)
+        else:
+            out.append(i)                  # a positional consumes nothing
+        i += 1
+    return out
+
+
+def _gh_merge_anchor(toks: list[str], base: int, pr_at: list[int] | None = None):
+    """(index of `pr`, index of `merge`) in a gh line that dispatches `pr merge`.
+
+    None when no cobra-plausible parse puts those two words in the first two
+    positional slots. Token EQUALITY, not a regex over a joined string: both
+    verbs are whole words to the shell, and a joined form cannot tell one word
+    containing a space from two words.
+
+    *pr_at* is the sorted list of indices holding the word `pr`, computed ONCE
+    per token list by `_peel_candidates` and handed to every candidate. Without
+    it this walk ran per candidate, and its frontier crosses an alternating
+    flag/positional run to the end of the line, so `git $a -f $a -f …` went
+    quadratic: 1500 pairs measured 1.11 s before this cycle and 3.24 s after,
+    against a 5 s hook budget and a fence that sits at exactly that size. A line
+    with no `pr` in it now costs one bisect per candidate instead of a walk, and
+    the check is EXACT rather than a heuristic: `pr` must be a token for any
+    parse to reach `pr merge`.
+    """
+    if pr_at is None:
+        pr_at = [i for i, w in enumerate(toks) if w == "pr"]
+    if not pr_at or pr_at[-1] < base:
         return None
-    pr_i = i
-    i = _gh_globals_end(toks, i + 1)
-    if i >= len(toks) or toks[i] != "merge":
-        return None
-    return pr_i, i
+    tried = 0
+    for pr_i in _cobra_positional_candidates(toks, base):
+        if toks[pr_i] != "pr":
+            continue
+        tried += 1
+        if tried > _COBRA_PR_CANDIDATE_CAP:
+            return "scan"                  # gave up looking: refuse, never allow
+        for merge_i in _cobra_positional_candidates(toks, pr_i + 1):
+            if toks[merge_i] == "merge":
+                return pr_i, merge_i
+    return None
 
 
 def _git_push_anchor(toks: list[str], base: int):
@@ -673,8 +776,8 @@ def _gh_merge_pr_num(sub: str) -> str | None:
     if not parts or os.path.basename(parts[0].strip("\"'")) != "gh":
         return None
     pos = _gh_merge_anchor(parts, 1)
-    if pos is None:
-        return None
+    if not isinstance(pos, tuple):
+        return None                        # None or "scan": both are the sentinel
     # KNOWN COST, kept deliberately rather than inherited by accident: the
     # number is read only when the head and both verb words are spelled
     # LITERALLY. A token whose source span is longer than its decoded text was
@@ -1102,6 +1205,40 @@ _HEXDIGITS = frozenset("0123456789abcdefABCDEF")
 _OCTDIGITS = frozenset("01234567")
 
 
+def _codepoint(v: int) -> str:
+    r"""The character bash's `\u`/`\U` produces for *v*, as far as a str can hold it.
+
+    Measured at the BYTE level against bash 5.2.21, and the boundaries are the
+    measurement, not a guess:
+      * up to U+10FFFF bash and Python agree exactly, lone surrogates included
+        (`$'\uD800'` is ed a0 80 in both);
+      * from 0x110000 to 0x7fffffff bash writes the extended-UTF-8 form of the
+        raw value (`$'\U00110000'` is f4 90 80 80, `$'\U7fffffff'` is
+        fd bf bf bf bf bf). A str has no code point for those, so they become one
+        U+FFFD: the word stays NON-EMPTY and still cannot spell a verb, a branch
+        or an API path, all of which are ASCII;
+      * from 0x80000000 up bash writes NOTHING at all (`$'X\U80000000Y'` is
+        58 59), so this returns the empty string. That is the direction that
+        matters and the first attempt at this fix got it backwards: bash really
+        splices the word, `printf %s merg$'\U80000000'e` is `merge`, and a fake
+        `gh` on PATH receives `[pr][merge][288]` for
+        `gh pr merg$'\U80000000'e 288`. Emitting a placeholder there would have
+        turned a real merge into an allow.
+
+    A value at or above 0x80000000 is also what crashed this decoder before:
+    `chr()` raises OverflowError there, not the ValueError the old guard caught.
+    The crash landed inside `_find_publish_subcmds`, which runs BEFORE `main()`
+    sets `_PUBLISH_IDENTIFIED`, so `_guarded_main` read an unset flag as
+    permission and exited 0 with EMPTY stderr. Master denies
+    `gh pr merge 288 $'\U80000000'` with rc 2; this branch allowed it from the
+    commit that introduced `_ansi_c_body` until this one, so it was a REGRESSION
+    this branch shipped, not an inherited residual.
+    """
+    if v <= 0x10FFFF:
+        return chr(v)
+    return "" if v >= 0x80000000 else "\ufffd"
+
+
 def _ansi_c_body(s: str, i: int, nul_truncates: bool = True) -> tuple[str, int, bool]:
     r"""(decoded text, index past the closing quote, closed?) for the ANSI-C
     string opening at ``s[i:i+2] == "$'"``.
@@ -1157,10 +1294,7 @@ def _ansi_c_body(s: str, i: int, nul_truncates: bool = True) -> tuple[str, int, 
                 digits += s[k]
                 k += 1
             if digits:
-                try:
-                    out.append(chr(int(digits, 16)))
-                except ValueError:
-                    pass
+                out.append(_codepoint(int(digits, 16)))
                 j = k
             else:
                 out.append("\\" + esc)
@@ -1172,9 +1306,31 @@ def _ansi_c_body(s: str, i: int, nul_truncates: bool = True) -> tuple[str, int, 
                 k += 1
             out.append(chr(int(digits, 8) & 0xFF))
             j = k
-        elif esc == "c" and j + 2 < n:
-            out.append(chr(ord(s[j + 2].upper()) ^ 0x40))
-            j += 3
+        elif esc == "c":
+            # bash folds the next character with `x & 0x1f`, NOT with
+            # `toupper(x) ^ 0x40`. The two agree on every letter, which is why a
+            # letter-only spot check passed them both, and they disagree on
+            # everything else: measured on bash 5.2.21, `$'X\c{Y'` is 58 1b 59
+            # and this decoder produced 58 3b 59, `$'X\c1Y'` is 58 11 59 against
+            # 58 71 59. That is not cosmetic, because `x & 0x1f` reaches NUL for
+            # four characters and `toupper(x) ^ 0x40` reaches it for one: bash
+            # prints `[pr]` for `$'pr\c xx'`, so `gh $'pr\c xx' merge 288`,
+            # `git $'push\c xx' origin main` and `git push origin $'main\c zz'`
+            # were three live members of the NUL class the commit before this one
+            # claimed to have closed. `?` is DEL rather than a control fold, and
+            # `\c\` eats a second backslash. A `\c` that ends the body is
+            # literal `\c` and does NOT swallow the closing quote — this decoder
+            # folded the quote itself, returned closed=False, and dropped the
+            # whole line to the quote-blind fallback.
+            if j + 2 >= n or s[j + 2] == "'":
+                out.append("\\c")
+                j += 2
+            else:
+                ctl = s[j + 2]
+                j += 3
+                if ctl == "\\" and j < n and s[j] == "\\":
+                    j += 1
+                out.append("\x7f" if ctl == "?" else chr(ord(ctl) & 0x1F))
         else:
             out.append("\\" + esc)
             j += 2
@@ -1419,7 +1575,8 @@ def _peel_candidates(s: str) -> list[tuple[str, str, tuple | None]]:
                    whole-token quote (`git commit -m "gh pr merge 96"`) is ONE
                    token, and one token can never supply the two words a verb
                    needs after a head.
-    view         = (head, decoded tokens, base index, offset tuples, source) for
+    view         = (head, decoded tokens, base index, offset tuples, source,
+                   `pr` indices) for
                    every caller that reads the command's SHAPE: the verb anchors,
                    the option readers and the alias expansion. The tokens already
                    exist here, so handing them over costs a tuple, while
@@ -1468,6 +1625,9 @@ def _peel_candidates(s: str) -> list[tuple[str, str, tuple | None]]:
     # 5000-token line, against a 5 s `hooks.json` budget. Exact, not a heuristic:
     # a match lying wholly inside a suffix that starts after the last match would
     # itself be a later match in `flat`.
+    # Computed once for the whole token list and handed to every candidate: see
+    # `_gh_merge_anchor` for the quadratic it removes.
+    pr_at = [i for i, w in enumerate(flat_parts) if w == "pr"]
     last_write = -1
     if "-" in flat:
         for _m in _API_WRITE.finditer(flat):
@@ -1484,14 +1644,15 @@ def _peel_candidates(s: str) -> list[tuple[str, str, tuple | None]]:
         suffix = (" " + rest_dec) if rest_dec else ""
         if is_cmd:
             out.append((head + s[end:], head + suffix,
-                        (head, flat_parts, i + 1, toks, s)))
+                        (head, flat_parts, i + 1, toks, s, pr_at)))
         else:
             heads = ("gh", "git", "curl") if at <= last_write else ("gh", "git")
             for h in heads:
                 out.append((h + s[end:], h + suffix,
-                            (h, flat_parts, i + 1, toks, s)))
+                            (h, flat_parts, i + 1, toks, s, pr_at)))
     if not out:
-        out.append((s, flat if toks else s, ("", flat_parts, len(flat_parts), toks, s)))
+        out.append((s, flat if toks else s,
+                    ("", flat_parts, len(flat_parts), toks, s, pr_at)))
     return out
 
 
@@ -1627,7 +1788,7 @@ def _expand_git_alias(sub: str, view: tuple | None = None) -> str:
         parts = [t for t, _s, _e in toks]
         head, base, src = _head_of(parts), 1, sub
     else:
-        head, parts, base, toks, src = view
+        head, parts, base, toks, src = view[0], view[1], view[2], view[3], view[4]
     if head != "git" or base < 1 or base > len(toks):
         return sub
     i = _git_globals_end(parts, base)
@@ -1737,7 +1898,9 @@ def _is_publish_form(dec: str, view: tuple):
     """
     head, parts, base = view[0], view[1], view[2]
     if head == "gh":
-        pos = _gh_merge_anchor(parts, base)
+        pos = _gh_merge_anchor(parts, base, view[5] if len(view) > 5 else None)
+        if pos == "scan":
+            return "scan"                  # unreadable, and unreadable denies
         if pos is not None:
             return None if _gh_merge_is_help(parts, pos[1] + 1) else "gh"
     elif head == "git":
@@ -1765,7 +1928,7 @@ def _normalize_full(s: str, cfg_dir: str | None = None) -> tuple[str, str, tuple
     # A view, never None: `_is_publish_form` indexes it, the peel always returns
     # one, and a crash BEFORE identification fails open — which is the one
     # direction this file never gets to fail in.
-    fallback = (s, s, ("", [], 0, [], s))
+    fallback = (s, s, ("", [], 0, [], s, []))
     for _ in range(5):
         cands = _peel_candidates(cur)
         fallback = cands[0]
@@ -2896,7 +3059,44 @@ def main() -> int:
         return 0
 
     # Fast path: no sub-command starts with a publish pattern → exit 0 silently.
-    matches = _find_publish_subcmds(cmd)
+    #
+    # IDENTIFICATION IS THE ONE PATH THE CRASH GUARD CANNOT COVER, so it carries
+    # its own. `_guarded_main` decides fail-open vs fail-closed by reading
+    # `_PUBLISH_IDENTIFIED`, and that flag is still False here, so an exception
+    # raised while deciding WHETHER this is a merge used to exit 0 with EMPTY
+    # stderr — indistinguishable from a legitimate allow, and a total silent
+    # bypass for any command whose parse could be made to crash. QA cycle 9
+    # found one: `$'\U80000000'` made `chr()` raise OverflowError, which the
+    # `\u` branch's `except ValueError` did not catch, and one token appended to
+    # any merge line turned rc 2 into rc 0.
+    # "I could not read this" is not "this is safe", so it denies with a named
+    # cause. The specific crash is fixed in `_codepoint` and 60000 fuzzed inputs
+    # across `_ansi_c_body`, `_tokenize` and `_ansi_c_expand` now raise nothing;
+    # this handler is here because that measurement bounds what I FOUND, not what
+    # exists, and the next unenumerable exception must not be an allow.
+    try:
+        # Fault injection for the identification-crash fixture, and for nothing
+        # else. Same two-key gate as the post-identification one: a harness-only
+        # session marker plus an OCTO_ override the fixture declares, and its
+        # only reachable effect is to make this gate DENY.
+        if (os.environ.get("CLAUDE_SESSION_ID") == "__selftest__"
+                and os.environ.get("OCTO_GATE_CRASH_IDENT") == "1"):
+            raise RuntimeError("selftest fault injected during identification")
+        matches = _find_publish_subcmds(cmd)
+    except Exception as exc:
+        _PUBLISH_IDENTIFIED = True
+        print(
+            f"✗ QA GATE (fail-closed): the gate could not PARSE this command line "
+            f"({type(exc).__name__}),\n  so it cannot say whether it merges — and "
+            f"'unreadable' is not 'safe'. Identification runs\n  before the crash "
+            f"guard arms, so this case used to exit 0 with empty stderr.\n"
+            f"  Operator: re-run the merge in a form the parser can read, with "
+            f"OCTO_MERGE_APPROVE=<pr>,\n  and report the command — a crash here is a "
+            f"gate bug, not a property of the command.",
+            file=sys.stderr,
+        )
+        _journal_deny(f"identification crashed ({type(exc).__name__}): blocked", data)
+        return 2
     if not matches:
         return 0
     matched_sub = matches[0][0]
@@ -2954,6 +3154,19 @@ def main() -> int:
             file=sys.stderr,
         )
         _journal_deny("alias definition expanding to a merge blocked", data)
+        return 2
+    if any(form == "scan" for _pid, form in targets):
+        print(
+            "✗ QA GATE (fail-closed): this line puts more candidate `pr` positions in "
+            f"front of its verb\n  than the gate will try ({_COBRA_PR_CANDIDATE_CAP}). "
+            "cobra can reach a subcommand past any run of\n  flags, so the gate has to "
+            "try each position a `pr` could occupy, and it stopped trying.\n  'I stopped "
+            "looking' is not 'there is nothing there', and no PR number is readable\n  "
+            "here, so no approval can scope it.\n  Operator: run the merge as "
+            "`gh pr merge <pr>` with OCTO_MERGE_APPROVE=<pr>.",
+            file=sys.stderr,
+        )
+        _journal_deny("cobra positional scan cap reached with the verb unresolved: blocked", data)
         return 2
     if any(form == "depth" for _pid, form in targets):
         print(

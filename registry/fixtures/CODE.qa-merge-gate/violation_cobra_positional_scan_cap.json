@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "gh -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr -f pr"
+  },
+  "cwd": "/nonexistent/repo"
+}
