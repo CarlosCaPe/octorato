@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "git -c core.sshCommand=\"gh pr view 291\" fetch origin"
+  },
+  "cwd": "/nonexistent/repo"
+}

@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "cat <<< 'hello world'"
+  },
+  "cwd": "/nonexistent/repo"
+}

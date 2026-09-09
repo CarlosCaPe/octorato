@@ -1,0 +1,4 @@
+[core]
+	repositoryformatversion = 0
+[remote "origin"]
+	url = https://github.com/CarlosCaPe/octorato.git

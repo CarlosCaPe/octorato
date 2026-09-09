@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "printf %s \"gh pr view 291\" | bash"
+  },
+  "cwd": "/nonexistent/repo"
+}

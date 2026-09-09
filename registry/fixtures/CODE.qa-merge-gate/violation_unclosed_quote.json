@@ -1,0 +1,11 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "gh pr merge \"280"
+  },
+  "cwd": "/nonexistent/repo",
+  "_env": {
+    "OCTO_QA_OK": "1",
+    "OCTO_MERGE_APPROVE": "280"
+  }
+}

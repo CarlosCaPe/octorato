@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "git --git-dir=/nonexistent/repo/.git push origin main"
+  },
+  "cwd": "/nonexistent/repo"
+}

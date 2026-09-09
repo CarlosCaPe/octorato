@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "env -S \"gh pr view 291\""
+  },
+  "cwd": "/nonexistent/repo"
+}

@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "su --command=\"gh pr view 291\" git"
+  },
+  "cwd": "/nonexistent/repo"
+}

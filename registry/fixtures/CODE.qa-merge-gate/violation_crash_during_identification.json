@@ -1,0 +1,10 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "git status -s"
+  },
+  "cwd": "/nonexistent/repo",
+  "_env": {
+    "OCTO_GATE_CRASH_IDENT": "1"
+  }
+}

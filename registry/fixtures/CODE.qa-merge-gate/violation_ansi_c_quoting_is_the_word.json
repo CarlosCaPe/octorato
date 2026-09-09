@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "$'\\x67\\x68' $'\\x70\\x72' $'\\x6d\\x65\\x72\\x67\\x65' 291"
+  },
+  "cwd": "/nonexistent/repo"
+}

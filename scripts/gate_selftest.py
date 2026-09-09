@@ -20,6 +20,13 @@ Fixture layout under registry/fixtures/<rule-id>/:
   home/                     optional seed copied into a throwaway HOME so a gate
                             that reads session/ledger state can be driven
 
+A payload may carry a top-level "_env" object (stripped before the payload reaches
+the gate) naming env vars to set for THAT leg only, after the override strip. Only
+OCTO_* keys are applied, and never HOME/USERPROFILE/PATH/CLAUDE_SESSION_ID, so a
+fixture can drive an operator override but can never escape the sandbox. It is
+how a fixture proves override semantics (e.g. an operator flag that must still
+deny when it is scoped to a different PR); it cannot leak into any other leg.
+
 Isolation: every leg runs under a fresh temp HOME and cwd, with the dangerous
 operator-override env vars stripped, so no leg can touch real brain state or leak
 an approval. The harness is used two ways: a gate script's `--selftest <dir>`
@@ -37,6 +44,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+# a fixture's "_env" may set these and only these: the operator override vars
+_ENV_ALLOWED = re.compile(r"^OCTO_[A-Z0-9_]+$")
+# belt and braces: never let a fixture touch the sandbox or the interpreter
+_ENV_NEVER = frozenset({"HOME", "USERPROFILE", "PATH", "CLAUDE_SESSION_ID",
+                        "PYTHONPATH", "PYTHONHOME"})
+
 # env vars that could turn a violation into an allow; stripped for every leg
 _OVERRIDE_ENV = (
     "OCTO_MERGE_APPROVE", "OCTO_QA_OK", "OCTO_ALLOW_FORCE",
@@ -47,6 +60,13 @@ _OVERRIDE_ENV = (
     # test, the violation fixture "does not block", and the doctor FAILs a
     # brain whose only sin is that the unlock worked.
     "OCTO_KERNEL_OPEN",
+    # qa-merge-gate's crash-handler fault injection. Stripped like the rest so a
+    # stray export cannot poison every leg; the one fixture that needs it
+    # declares it in its own "_env" and gets it back after this strip.
+    "OCTO_GATE_CRASH_SELFTEST",
+    # the same, for the crash injected DURING identification (the path the
+    # crash guard cannot see, because the flag it reads is still unset there).
+    "OCTO_GATE_CRASH_IDENT",
 )
 
 
@@ -81,8 +101,12 @@ SELFTEST_SESSION = "__selftest__"
 _KERNEL_RULE_RE = re.compile(r'^_KERNEL_RULE = "([^"]+)"', re.M)
 
 
-def _prep_payload(raw_path: Path, fixture_dir: Path, sandbox: Path) -> str:
-    """Load a fixture payload and rewrite a relative transcript_path to absolute."""
+def _prep_payload(raw_path: Path, fixture_dir: Path, sandbox: Path) -> tuple[str, dict]:
+    """Load a fixture payload; rewrite a relative transcript_path to absolute.
+
+    Returns (stdin_json, leg_env). "_env" is a harness key, not hook input, so it
+    is removed from the payload the gate reads.
+    """
     data = json.loads(raw_path.read_text(encoding="utf-8"))
     tp = data.get("transcript_path")
     if isinstance(tp, str) and tp and not os.path.isabs(tp):
@@ -94,7 +118,19 @@ def _prep_payload(raw_path: Path, fixture_dir: Path, sandbox: Path) -> str:
     # id the env already advertises is filled in when the fixture has none.
     if not data.get("session_id"):
         data["session_id"] = SELFTEST_SESSION
-    return json.dumps(data)
+    # "_env" is a harness key, not hook input: it is lifted out here so the gate
+    # never sees it in the payload it reads.
+    raw_env = data.pop("_env", None)
+    leg_env = {}
+    if isinstance(raw_env, dict):
+        for k, v in raw_env.items():
+            k = str(k)
+            # Allowlist: a fixture may drive the operator override vars and nothing
+            # else. Without this it could set HOME or PATH and break the sandbox
+            # the harness exists to provide, or shadow the interpreter under test.
+            if _ENV_ALLOWED.match(k) and k not in _ENV_NEVER:
+                leg_env[k] = str(v)
+    return json.dumps(data), leg_env
 
 
 def _kernel_rule_of(script: Path) -> str:
@@ -138,7 +174,8 @@ def _journaled_denies(sandbox: Path) -> list:
     return out
 
 
-def _run_leg(script: Path, payload: str, sandbox: Path) -> tuple[int, str]:
+def _run_leg(script: Path, payload: str, sandbox: Path,
+             leg_env: dict | None = None) -> tuple[int, str]:
     env = dict(os.environ)
     for k in _OVERRIDE_ENV:
         env.pop(k, None)
@@ -152,6 +189,13 @@ def _run_leg(script: Path, payload: str, sandbox: Path) -> tuple[int, str]:
     env["HOME"] = str(sandbox)
     env["USERPROFILE"] = str(sandbox)
     env["CLAUDE_SESSION_ID"] = "__selftest__"
+    # fixture-declared env, applied AFTER the strip so a leg can exercise an
+    # operator override deliberately; scoped to this subprocess only. Filtered
+    # here as well as in _prep_payload: this is the only place the value reaches
+    # a process, so the allowlist has to hold at THIS boundary, not upstream.
+    for k, v in (leg_env or {}).items():
+        if _ENV_ALLOWED.match(str(k)) and str(k) not in _ENV_NEVER:
+            env[str(k)] = str(v)
     cp = subprocess.run(
         [sys.executable, str(script)],
         input=payload, capture_output=True, text=True,
@@ -159,6 +203,23 @@ def _run_leg(script: Path, payload: str, sandbox: Path) -> tuple[int, str]:
         cwd=str(sandbox), env=env, timeout=30,
     )
     return cp.returncode, cp.stdout
+
+
+def _materialize_seed(sandbox: Path) -> None:
+    """Rename every `dotgit` directory the seed copied into a real `.git`.
+
+    A fixture cannot SHIP a `.git` directory: git refuses to record a tree entry
+    named `.git` at any depth, so a seed that needs a repository has to spell it
+    `dotgit` in the repo and be renamed here. Without this, a gate whose verdict
+    depends on which repository the command targets can only be fixture-proven on
+    an unresolvable target, which is the one case that denies for free.
+    """
+    for path in sorted(sandbox.rglob("dotgit"), key=lambda p: len(p.parts), reverse=True):
+        if path.is_dir():
+            try:
+                path.rename(path.with_name(".git"))
+            except OSError:
+                pass
 
 
 def run_gate_selftest(script_path, fixture_dir) -> int:
@@ -183,10 +244,12 @@ def run_gate_selftest(script_path, fixture_dir) -> int:
         seed = fdir / "home"
         if seed.is_dir():
             shutil.copytree(seed, sandbox, dirs_exist_ok=True)
+            _materialize_seed(sandbox)
         failures = []
         rule = _kernel_rule_of(script)
         for vf in violations:
-            rc, out = _run_leg(script, _prep_payload(vf, fdir, sandbox), sandbox)
+            payload, leg_env = _prep_payload(vf, fdir, sandbox)
+            rc, out = _run_leg(script, payload, sandbox, leg_env)
             if not emits_block(rc, out):
                 failures.append(f"{vf.name} did NOT block (rc={rc})")
         # v8 Phase 4: a gate that refuses must also RECORD the refusal. The
@@ -203,7 +266,8 @@ def run_gate_selftest(script_path, fixture_dir) -> int:
             elif rule not in journaled:
                 failures.append(f"journaled deny rule {journaled[0]!r} != {rule!r}")
         for bf in benigns:
-            rc, out = _run_leg(script, _prep_payload(bf, fdir, sandbox), sandbox)
+            payload, leg_env = _prep_payload(bf, fdir, sandbox)
+            rc, out = _run_leg(script, payload, sandbox, leg_env)
             if emits_block(rc, out):
                 failures.append(f"{bf.name} WAS blocked (must allow, rc={rc})")
     finally:

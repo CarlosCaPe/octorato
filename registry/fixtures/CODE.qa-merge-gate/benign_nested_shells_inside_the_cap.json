@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "bash -c \"bash -c 'gh pr view 291 --json state'\""
+  },
+  "cwd": "/nonexistent/repo"
+}

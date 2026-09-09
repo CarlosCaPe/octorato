@@ -66,18 +66,88 @@ The approved value must encode the **exact action**:
 
 A stale `OCTO_MERGE_APPROVE=95` cannot authorize PR 96. This prevents approval replay.
 
+## Identification and authorization fail differently
+
+The env channel is immune to **forgery**, not to **evasion**, and conflating the two is how this gate got bypassed. Authorization is only consulted *after* the command has been identified as a merge, so a command shape the matcher never identifies never reaches the env check at all. An evasion is a total bypass, not a degraded authorization. Two jobs, two failure modes:
+
+- Env channel for **authorization** (unforgeable: the agent's command-scoped env never becomes the hook's env).
+- Command parsing for **identification** (best-effort; every ambiguity fails closed).
+
+The identification half is therefore where the work is. Peel by **allowlist** and the wrapper you did not name is a total bypass: `env` and `command` were peeled, and `time gh pr merge 291`, `nice`, `nohup`, `timeout 30`, `stdbuf -o0`, `setsid`, `sudo -u x`, `exec`, `eval`, `xargs` and a leading `\gh` all walked through, each one actually invoking gh (measured 2026-09-08). Invert the default instead: drop leading tokens until one of them IS a command head you know how to read. An unrecognized leading token is suspicious, not trusted, and a wrapper's own value-taking options (`timeout N`, `nice -n 5`) need no special case because they are just more unrecognized tokens.
+
+Identification also has to cover the API call *behind* each CLI verb, not only the verb. `gh pr merge --auto` was denied while `gh api graphql -f query='mutation{enablePullRequestAutoMerge(...)}'`, the exact call it makes, was allowed. And the target has to be resolved the way the tool resolves it: `gh` reads `-R`, then `GH_REPO`, then the cwd repo, so a gate that reads only `-R` and cwd ungates `GH_REPO=<protected> gh pr merge <n>` fired from an unrelated directory.
+
+Match the verb words on **decoded** tokens, not on the raw string. One quote pair defeats a raw matcher completely: `gh "pr" merge 291`, `gh pr "merge" 291`, `git "push" origin main`, `git push origin ma"in"` and `gh api -X PUT .../pulls/291/me"rge"` all invoked the real tool while the anchor saw nothing (measured 2026-09-08). Decoding costs no over-fire, because a whole-token quoted *mention* is ONE token and one token can never supply the two words a verb needs after a head. Keep the raw form for reading argument VALUES (a PR number off `gh pr merge -t "x 280" 281` must still be 281) — the two needs are separable, and conflating them is what made the raw string look load-bearing.
+
+Try the anchor at **every** command-head position in a sub-command, not the first. A benign head in front otherwise swallows the merge behind it (`git status & gh pr merge 291`). And treat `&` as a separator: it backgrounds what precedes it and starts a new command.
+
+## The "forced trade" is not forced
+
+A gate that stops at string matching concludes it must choose between catching `bash -c "gh pr merge 96"` and not re-matching `git commit -m "gh pr merge 96"`. That is false, and the distinguishing property is not quoting. It is whether the head **re-parses its string argument as a command**:
+
+| Head | Re-parses? | Verdict |
+|---|---|---|
+| `bash -c`, `sh -lc`, `zsh -c`, `eval`, `ssh host`, `script -qc`, a shell reading a heredoc | yes | recurse into the argument, identify |
+| `git commit -m`, `echo`, `cat > f <<EOF`, `python3 -` | no | the argument is data, leave it alone |
+
+Recurse on the first set, never on the second, and you get both halves. The same rule fixes heredocs in the other direction: a heredoc BODY is data on stdin, so `cat > notes.md <<EOF ... EOF` must not match what the note SAYS, while `bash <<EOF ... EOF` must.
+
 ## Residual Risk
 
-Shell indirection can evade **string-based** command detection (the part that extracts the PR number from the command):
+**ELEVEN residuals**, the canonical list; `scripts/qa-merge-gate.py`'s own header carries it in full and this is the summary. Each was measured on 2026-09-08 by feeding the payload on stdin (deny = exit 2). Counting matters: three separate surfaces used to quote three different numbers, which is how a residual stops being tracked.
 
 ```bash
-bash -c "gh pr merge 96"          # hard to parse correctly
-eval "gh pr merge 96"             # same
+# 1  the VERB comes from an expansion, not from text
+X="pr merge"; gh $X 291 ; $(echo "gh pr merge 291") ; C="gh pr merge 291"; eval "$C"
+#    cycle 7: ANSI-C and locale QUOTING left this residual. `$'gh'` used to be
+#    listed here as closed and was closed only at the HEAD position; in every
+#    other position `gh pr $'merge' 288`, `gh pr $'\x6derge' 288` and
+#    `git push origin $'main'` walked. They are quoting, not expansion, and are
+#    decoded in the tokenizer now.
+# 2  the merge lives in a file the hook never reads
+./deploy.sh
+# 3  a non-shell runtime does the API call, or shells out from inside one
+python3 -c "...requests.put(...)"
+awk 'BEGIN{system("gh pr merge 291")}'      # measured executing; the argument is
+                                            # a PROGRAM, not a command line
+# 4  gh repo set-default, whose EFFECT on a later merge is unmeasured
+# 5  a REPO-LOCAL git alias (only the user-global config is read)
+# 6  GH_REPO / GH_HOST / GH_CONFIG_DIR arriving on a channel the hook cannot see
+# 7  the v7 boundary: receipt files live under $HOME and the model can append
+# 8  the two nested ALLOW-side enumerations, _NON_SHELL_C_HEADS < _INERT_ARG_HEADS:
+#    a program NAMED grep/psql/gcc/echo/awk on the HEAD is exempt from the
+#    unnamed-wrapper argument reading, and an unlisted counter reached through
+#    `xargs` still over-fires. Cycle 8 named the DENY-side twin here: the
+#    global-option sets decide which words may sit between a head and its verb,
+#    and an option nobody listed is a MISS, not a loud over-fire
+grep -c "gh pr merge 292" notes.md          # allowed, correctly
+xargs grep -c "gh pr merge 292"             # denies: over-fire, head-anchored
+find . -exec grep -c "…" {} \;               # cycle 7: re-measured ALLOW. This
+                                            # line used to claim a deny; the
+                                            # claim was stale, harmless in
+                                            # direction, and untrue.
+# 9  parse TIME: a crafted ~25 KB line of `$a -f` noise approaches the 5 s hook
+#    budget, and a killed hook writes no stdout, which the harness reads as ALLOW
+# 10 bash 5.3 funsubs ${ cmd; } / ${| cmd; }: unreachable on the installed bash
+#    5.2, so no fixture pair can run them here (they deny today only as a
+#    coincidence of the opaque-head reading, which is not coverage)
+# 11 a pipe whose consumer executes stdin only after ANOTHER hop
+echo "gh pr merge 291" | ssh host bash      # ssh itself executes nothing
 ```
 
-The env channel is immune to this because it doesn't depend on parsing the command — it only checks the env. If the action is truly critical, combine:
-- Env channel for authorization (unforgeable).
-- Command parsing for action identification (parse best-effort; fail-closed on ambiguity).
+Cycle 5 closed three classes and added residuals 10 and 11. Class A: `$(…)` and backticks are the SAME channel as the `<(…)` cycle 3 closed, and their contents were never re-matched — `cat <(gh pr merge 291)` denied while `echo $(gh pr merge 291)` allowed, both executing. Class B: the cycle-4 option walk skipped an option but not its VALUE, so `bash -c -o pipefail "…"` returned `pipefail` as the command. Class C is the architectural one: deny-by-default had been applied to bare-head peeling only, and the quoted-command path went back to an ENUMERATION OF CHANNELS, which lost to five new ones in a single cycle (`env -S`, `--split-string=`, `watch`, a bare `| bash`, `git -c core.sshCommand=`). The fence moved onto the HEAD — on a head that is neither a command head nor one whose arguments are DATA, every argument that parses as a whole publish command line is a command that wrapper runs — measured at 0 new denials on a 74-command read-only corpus and 0 on 400 real commands taken from this repo's own docs.
+
+Cycle 7 returned FAIL with 22 spellings that pass the gate and execute a real merge against a fake binary on PATH, in two classes plus one regression this branch had introduced itself. The regression: `1f0ca89` moved verb matching onto decoded tokens to close `gh "pr" merge`, its decoder turned `$'main'` into `$main`, and `git push origin $'main'` went DENY on the commit before it and ALLOW on it — one spelling closed and another opened in the same change. Class 1 is that family: `$'…'` and `$"…"` are QUOTING, resolved by the shell before the program runs, so twelve spellings of the verb, the head, the branch and the API path walked (`gh pr $'\x6derge' 288`, the all-hex `$'\x67\x68' $'\x70\x72' $'\x6d\x65\x72\x67\x65' 288`, `curl -X $'PUT' …`). The hex row also defeated `_may_publish`, whose "sound by construction" held only for the alphabet its flatten table knew. Class 2 is ADJACENCY: the gh anchor required `gh pr merge` with nothing between the words and the git one admitted only `-C`/`-c`, so `gh pr -R owner/repo merge 288` — the spelling in gh's own docs — and `git --no-pager push origin main` walked. Both are closed by decoding quoting in the tokenizer and by skipping an ENUMERATED set of each tool's own global options with their values, never "any word starting with a dash".
+
+Cycle 8 returned FAIL with three more, none of them a new spelling somebody dreamed up: all three came from reading the RULE the parser implements and noticing it is not the tool's rule. Class 3, the value-consumption grammar: cycle 7's skip was a regex whose value was `\S+`, matched against a form built by joining decoded tokens with spaces, so a value that CONTAINS whitespace became two words and the verb vanished behind them — `git -c 'core.pager=less -F' push origin main`, `git -c "user.name=Q A" push origin main` and the `-C` / `--git-dir` spellings over a spaced path all pushed for real to a local bare remote, while the same shape with no space in the value denied. Class 4, pflag's attached shorthand: `-Rvalue` is glued and the enumeration accepted only `-R x` and `-R=x`, so `gh -RCarlosCaPe/octorato pr merge 288` walked. Class 5, the converse of a claim that was TRUE: the ANSI-C decoder cannot manufacture a word bash would not produce, and nobody had tested a word bash TRUNCATES — a bash word is a C string, `$'pr\x00xx'` is the word `pr`, and keeping the bytes past the NUL let four spellings walk, two of them pushing for real. Fixed as grammar, not as spellings: both tools' global options are walked on TOKENS with the attach rules each one implements (git's two shorthands read the next argv and reject an attached value; pflag glues, `=`-joins or takes the next word, and in a cluster the first value-taking shorthand ends the token), and the decoder truncates its body at the first NUL exactly where bash does. The same `\S+` reading was fixed in the two places it also decided repo SCOPE (`-C` and `-R`) and in the git alias lookup, where a comment had worked around it by dropping the option instead of reading it. The first attempt re-quoted the decoded rendering so it could be read back as tokens and broke the git alias-DEFINITION patterns, which match on that same string: one class closed and another opened, this PR's signature pattern again, caught by the suite and replaced by handing the peel's own token view to every reader.
+
+Cycle 9 returned FAIL with two total bypasses and corrected the framing on one of them. The first was LIVE in production, not a branch regression: cobra parses flags interspersed with positionals, so the `pr merge` subcommand's OWN flags can sit between the head and the verb and still dispatch. `gh pr --squash=true merge 999999` and eight siblings returned 0 from master, from the branch and from the installed hook, and gh 2.88.1 answers them with `GraphQL: Could not resolve to a PullRequest ... (repository.pullRequest)`, which only comes back after the merge verb ran. The model was accurate about everything it enumerated and enumerated the wrong SET: global options, when cobra also admits the subcommand's flags there. A tenth spelling nobody listed fell straight out of modelling the parser instead of extending the list, `gh pr --body x merge 999999`, which dispatches because the word the bare flag ate was `x` and not the verb. The gh side is now cobra's own positional rule with no flag list at all; only git keeps an enumeration, because git's parser is one. The second bypass was called pre-existing because it reproduces at the branch's own earlier tip, and that tip already carried the decoder in question: against MASTER it does not exist. `chr()` raises OverflowError at 0x80000000, the `\u`/`\U` branch caught only ValueError, and the crash landed inside identification, which runs BEFORE the flag `_guarded_main` reads to decide fail-open versus fail-closed. Master denies `gh pr merge 288 $'\U80000000'` with rc 2; the branch allowed it with rc 0 and empty stderr. So it was a regression the branch shipped, and identification now carries its own handler that DENIES with a named cause, because "I could not read this" is not "this is safe". Reading the decoder against bash at the BYTE level, rather than by spot check, then found three more live members of the NUL class cycle 8 had claimed closed: `\c` folds with `x & 0x1f`, not `toupper(x) ^ 0x40`, and the two agree on every letter and disagree everywhere else, so `$'pr\c xx'` is the word `pr` to bash while the decoder produced `pr\x60xx`. Cycle 8 had enumerated the escape FORMS and not the CHARACTERS that fold to NUL.
+
+Residuals 8 and 9 arrived with the cycle-4 fixes, and both are stated rather than traded away. 8 is the price of ending an over-fire class that denied three ordinary read-only commands, and it is fenced to the HEAD word so a wrapper's path argument exempts nothing: `flock /var/lock/grep -c "gh pr merge 291"` still denies. 9 is bounded, not eliminated: the three quadratics measured this cycle went 39.7 s to 0.43 s (20000 benign words), 52.2 s to 0.7 s (8000 opaque tokens) and 9.2 s to 0.03 s (8000 heredoc openers) against a 5 s budget, while two shapes stay superlinear — a line alternating an opaque token with a write-marker flag (`git $a -f …`) sits near 3 s at 2500 pairs, and a 6000-line pasted script sits near 3 s because every line is its own sub-command.
+
+The opaque-HEAD half of that first family IS closable, and closing it costs nothing: when the head is unresolvable (`$(echo gh)`, `${PATH:0:0}gh`, `$'gh'`, `$G`) the REMAINDER still carries the verb, so try the remainder against every head you know and deny if it is a merge whoever the head turns out to be.
+
+Do not buy the rest by substituting same-line assignments everywhere: that also denies `docs='gh pr merge'; echo $docs`, which is a legitimate command. Over-fire is a security failure with extra steps — a gate people route around is off — so measure it against a corpus of real commands before and after every change, and write down what you did not close.
 
 See [[command-boundary-hook-matching]] for the parsing half.
 
@@ -99,7 +169,7 @@ Mechanism: `scripts/g__pretool-bash__prod-write.py` (Registry `SEC.prod-write-ga
 
 ## Reference Implementation
 
-`~/.claude/scripts/qa-merge-gate.py`: full gate with the agent-proof env channel (`OCTO_MERGE_APPROVE`), the discouraged legacy blanket (`OCTO_QA_OK`), and command-boundary PR-number extraction. The forgeable file channel was removed (see the lesson above).
+`~/.claude/scripts/qa-merge-gate.py`: full gate with the agent-proof env channel (`OCTO_MERGE_APPROVE`), the discouraged `OCTO_QA_OK`, which waives the QA receipt only, still requires `OCTO_MERGE_APPROVE` to name the same PR, and is scoped per COMMAND rather than "once" (nothing consumes it, so it keeps waiving while the shell keeps it exported), and command-boundary PR-number extraction. The forgeable file channel was removed (see the lesson above).
 
 `~/.claude/scripts/g__pretool-bash__prod-write.py` is the production-write sibling: per-destination scoping, payload inspection for SSM and ssh, a read-first allowlist that keeps false positives at zero, and a crash path that denies once a prod channel is identified.
 

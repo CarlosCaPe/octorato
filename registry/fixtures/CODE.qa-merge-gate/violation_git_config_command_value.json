@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "git -c core.sshCommand=\"gh pr merge 291\" fetch origin"
+  },
+  "cwd": "/nonexistent/repo"
+}

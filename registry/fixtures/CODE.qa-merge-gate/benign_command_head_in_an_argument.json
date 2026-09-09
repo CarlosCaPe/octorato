@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "flock /var/lock/git -c \"gh pr view 291\""
+  },
+  "cwd": "/nonexistent/repo"
+}

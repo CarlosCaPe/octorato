@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "bash -c -o pipefail \"gh pr merge 291\""
+  },
+  "cwd": "/nonexistent/repo"
+}

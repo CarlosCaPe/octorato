@@ -1,0 +1,6 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "cd otherrepo && gh pr merge 281 --squash"
+  }
+}
