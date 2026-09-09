@@ -402,10 +402,36 @@ to the hook. It never showed because the resolver was only ever called on one ru
 whose matcher happened to be pipe-free. `_split_hooks_locator` now splits on the
 first and last pipe and gives the middle back to the matcher.
 
-**Cost.** The doctor got FASTER. `gate-liveness` and `enforcement-floor` each ran the
-same selftests independently, so every run paid for them twice: 37 proofs × 2 = 74
-subprocess executions, with 3 `EXIT_CODE` proofs never executed at all. A per-locator
-memo shared by all consumers makes it 40 unique locators executed once, 0 skipped.
+**Two sweeps, two counts, never one number.** `gate-liveness` runs the fixture-driven
+liveness sweep FIRST, on the rules it loaded: every fail-closed gate's `--selftest`,
+violation must block and benign must allow. Only then does it run the general
+`EXIT_CODE` executor over that same rule set. The counts are reported separately, and
+that separation is load-bearing rather than cosmetic. Generalising the executor once
+ATE the sweep: the check kept loading the selftest proofs, used them only for a count,
+and never ran one, so it printed `all 41 EXIT_CODE proof(s) executed and hold, 1 of them
+fixture-driven selftests` over a gate whose benign leg was dead. A single number that
+conflates "N proofs executed" with "the liveness sweep passed" is exactly the confident
+green sentence over an unverified property that this whole document exists to kill.
+Two anchors hold it: `test_gate_liveness.py` fails the doctor on a broken gate AND
+requires the verdict to name that gate and the leg it failed (any FAIL is not enough,
+the check has unrelated FAIL branches), and `--selftest` asserts `check_gate_liveness`
+still calls `_selftest_proofs` and `_run_selftest_locator`.
+
+**A judge judges the rows it was handed.** `evaluate_proofs` takes `rules=` and
+`registry_path=`. Hardcoding `root/registry/rules.yaml` is what let the sweep vanish
+unnoticed: the check loaded `REGISTRY_PATH`, the executor silently read a different
+file, and the verdict described 41 healthy proofs out of a registry the caller had
+never seen.
+
+**Cost.** The doctor got FASTER, and restoring the sweep did not give any of it back.
+`gate-liveness` and `enforcement-floor` each ran the same selftests independently, so
+every run paid for them twice: measured on master, 37 + 37 = 74 subprocess executions,
+with 3 `EXIT_CODE` proofs never executed at all. A per-locator memo shared by all
+consumers makes it 40 unique locators executed once, 0 skipped. The restored sweep
+spawns nothing new because it runs the same locators through the same memo: measured
+on this branch's registry, 42 proof-locator spawns before the fix and 42 after,
+identical (40 registry locators + 2 comment-rot mutant re-runs), with
+`enforcement-floor` down from 38 spawns to 0.
 
 **The prover is proven.** `brain_doctor.py --selftest registry/fixtures/META.rule-1-proof-execution`
 drives the executor over a matrix of miniature brains: one `violation-*` case per proof

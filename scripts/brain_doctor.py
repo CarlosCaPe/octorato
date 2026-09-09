@@ -1325,9 +1325,15 @@ _EXIT_CODE_MEMO: dict = {}
 
 def _run_exit_code_locator(locator: str, root: Path | None = None) -> subprocess.CompletedProcess:
     """Run an EXIT_CODE proof locator. Strips a leading python/python3 token (some
-    locators carry it), resolves a repo-relative .py under `root` and runs it with
-    our interpreter; anything else (grep, a shell tool) runs as given. cwd=root so
-    relative fixture and file paths resolve."""
+    locators carry it), resolves a repo-relative .py under `root` and runs EVERY .py
+    under our interpreter; anything else (grep, a shell tool) runs as given. cwd=root
+    so relative fixture and file paths resolve.
+
+    The interpreter is prepended for an ABSOLUTE .py too. Gating that on a relative
+    path made an absolute locator exec the file directly, which raises PermissionError
+    on any .py that is not chmod +x, so a proof whose locator is absolute crashed the
+    doctor instead of running. Only the restored liveness sweep exposed it: every
+    locator in the tracked registry happens to be repo-relative."""
     root = root or CLAUDE_DIR
     key = (str(root), locator)
     if key in _EXIT_CODE_MEMO:
@@ -1335,8 +1341,9 @@ def _run_exit_code_locator(locator: str, root: Path | None = None) -> subprocess
     toks = shlex.split(locator)
     if toks and os.path.basename(toks[0]) in ("python", "python3", "py"):
         toks = toks[1:]
-    if toks and toks[0].endswith(".py") and not os.path.isabs(toks[0]):
-        toks = [PYTHON or "python3", str(root / toks[0]), *toks[1:]]
+    if toks and toks[0].endswith(".py"):
+        first = toks[0] if os.path.isabs(toks[0]) else str(root / toks[0])
+        toks = [PYTHON or "python3", first, *toks[1:]]
     cp = run(toks, cwd=root)
     _EXIT_CODE_MEMO[key] = cp
     return cp
@@ -1416,21 +1423,31 @@ def _comment_only_failure(rule_id: str, locator: str, expect, root: Path):
 CHEAP_PROOF_METHODS = ("FILE_EXISTS", "ANCHOR_PRESENT", "IN_HOOKS_JSON")
 
 
-def evaluate_proofs(root: Path, methods=CHEAP_PROOF_METHODS, comment_rot: bool = False) -> tuple:
+def evaluate_proofs(root: Path, methods=CHEAP_PROOF_METHODS, comment_rot: bool = False,
+                    rules: list = None, registry_path: Path = None) -> tuple:
     """Execute every registry proof whose method is in `methods`, against `root`.
 
     Returns (failures, evaluated, not_analyzed). RULE #1 says a rule is wired only
     when its registered mechanism is VERIFIABLY live; a proof nobody runs verifies
     nothing, so this evaluates all four implemented methods rather than the one
-    (EXIT_CODE --selftest) the doctor used to filter for."""
+    (EXIT_CODE --selftest) the doctor used to filter for.
+
+    `rules` lets a caller that ALREADY loaded a registry hand its rule list in, and
+    `registry_path` lets one point at a registry that is not `root/registry/rules.yaml`.
+    Re-reading that path unconditionally is what broke gate-liveness once: the check
+    loaded REGISTRY_PATH, the executor silently read a different file, and the verdict
+    came from a rule set the caller had never seen. A judge must judge the rows it was
+    handed."""
     failures, not_analyzed = [], []
     evaluated = 0
-    try:
-        import yaml
-        reg = yaml.safe_load((root / "registry" / "rules.yaml").read_text(encoding="utf-8")) or {}
-    except Exception as e:
-        return ([f"registry: cannot load rules.yaml: {e}"], 0, [])
-    rules = reg.get("rules", []) if isinstance(reg, dict) else []
+    if rules is None:
+        reg_path = registry_path or (root / "registry" / "rules.yaml")
+        try:
+            import yaml
+            reg = yaml.safe_load(reg_path.read_text(encoding="utf-8")) or {}
+        except Exception as e:
+            return ([f"registry: cannot load rules.yaml: {e}"], 0, [])
+        rules = reg.get("rules", []) if isinstance(reg, dict) else []
     hooks = _hooks_index_at(root)
     texts: dict = {}
 
@@ -1563,6 +1580,14 @@ def proof_execution_selftest(fixture_dir: str) -> int:
         print("  [MISS] check_gate_liveness no longer routes EXIT_CODE proofs through the executor")
         return 1
     print(f"  [ok ] {'wiring --gate-receipt':26s} routes EXIT_CODE through the executor (in-process)")
+    # Generalising the executor once ATE the sweep: check_gate_liveness kept loading
+    # the selftest proofs, used them only for a count, and never ran one. Assert both
+    # halves are still present, so the same deletion cannot pass this selftest again.
+    if "_selftest_proofs" not in gl_src or "_run_selftest_locator" not in gl_src:
+        print("  [MISS] check_gate_liveness no longer RUNS the fixture-driven selftest sweep "
+              "(a general proof count is not a liveness sweep)")
+        return 1
+    print(f"  [ok ] {'wiring liveness sweep':26s} check_gate_liveness still runs each --selftest proof")
     print(f"selftest PASS: {len(expected_red)} violation case(s) red, "
           f"{len(cases) - len(expected_red)} benign/control case(s) green, "
           f"executor reachable from both pre-push invocations")
@@ -1578,7 +1603,7 @@ def check_proof_execution(fix: bool) -> Result:
     takes. The EXIT_CODE class is executed in gate-liveness, which already pays for
     subprocesses, so no proof is run twice per push."""
     key = "proof-execution"
-    failures, evaluated, not_analyzed = evaluate_proofs(CLAUDE_DIR)
+    failures, evaluated, not_analyzed = evaluate_proofs(CLAUDE_DIR, registry_path=REGISTRY_PATH)
     if failures:
         return Result(key, FAIL,
                       f"{len(failures)}/{evaluated} registry proof(s) do NOT hold: "
@@ -1612,10 +1637,35 @@ def check_gate_liveness(fix: bool) -> Result:
     if not proofs:
         return Result(key, WARN, "no --selftest proofs registered",
                       "add EXIT_CODE --selftest proofs to fail-closed gates")
-    # Every EXIT_CODE proof, not only the --selftest ones: a locator registered as
+
+    # (1) The fixture-driven liveness sweep, asserted on its own over the rules THIS
+    # check loaded. This is the property gate-liveness is named for: every fail-closed
+    # gate's violation fixture must BLOCK and its benign fixture must ALLOW. Folding it
+    # into a general "execute every EXIT_CODE proof" pass once deleted it outright, and
+    # the check went on printing a confident green sentence while a gate that had
+    # stopped blocking was invisible: the exact failure class this feature exists to
+    # kill, inside the feature. Keep the two sweeps and their two counts separate.
+    live_failed = []
+    for r, loc in proofs:
+        cp = _run_selftest_locator(loc)
+        if cp.returncode != 0:
+            detail = (cp.stderr or cp.stdout or "").strip().splitlines()
+            live_failed.append(f"{r.get('id', '?')}: "
+                               f"{detail[-1] if detail else 'selftest exit ' + str(cp.returncode)}")
+    if live_failed:
+        return Result(key, FAIL,
+                      f"{len(live_failed)}/{len(proofs)} gate selftest(s) do NOT block+allow "
+                      "correctly: " + "; ".join(live_failed[:6]),
+                      "a labeled gate that fails its violation/benign fixtures is dead; "
+                      "fix the gate or the fixture")
+
+    # (2) Every EXIT_CODE proof, not only the --selftest ones: a locator registered as
     # proof and never executed proves nothing, and the comment-rot mutant runs here
     # because this is the check that already pays for subprocesses on the push path.
-    failed, evaluated, _na = evaluate_proofs(CLAUDE_DIR, methods=("EXIT_CODE",), comment_rot=True)
+    # Same rule set as the sweep above, and the shared memo means the selftests already
+    # run are not spawned a second time for this pass.
+    failed, evaluated, _na = evaluate_proofs(CLAUDE_DIR, methods=("EXIT_CODE",),
+                                             comment_rot=True, rules=rules)
     if failed:
         return Result(key, FAIL,
                       f"{len(failed)}/{evaluated} EXIT_CODE proof(s) do NOT hold: "
@@ -1648,10 +1698,12 @@ def check_gate_liveness(fix: bool) -> Result:
     except Exception as e:
         return Result(key, FAIL, f"gate receipt could not be written: {e}",
                       "the send gate denies without it; fix and re-run --gate-receipt")
+    # Two properties, two numbers, never one. A single count that conflated N executed
+    # proofs with the liveness sweep is what let the sweep disappear behind a green line.
     return Result(key, PASS,
-                  f"all {evaluated} EXIT_CODE proof(s) executed and hold, {len(proofs)} of them "
-                  f"fixture-driven selftests (gate: violation blocks + benign allows; detector: fires "
-                  f"on fixture); none satisfied by comment lines alone")
+                  f"{len(proofs)} fixture-driven selftest(s) proven live (gate: violation blocks "
+                  f"+ benign allows; detector: fires on fixture); separately, all {evaluated} "
+                  f"EXIT_CODE proof(s) executed and hold, none satisfied by comment lines alone")
 
 
 def check_enforcement_floor(fix: bool) -> Result:
