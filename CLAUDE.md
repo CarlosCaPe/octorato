@@ -193,10 +193,48 @@ and that file was writable while the user-scope one was denied), `hooks.json`,
 `mcpServers`, so a write there hands the next session a `command` to run at startup, and a PreToolUse hook never
 sees the harness write its own state file, only the agent's), `registry/rules.yaml`, `.githooks/pre-push`, any
 `scripts/g__pretool*.py` or `scripts/g__stop__*.py`,
-`qa-merge-gate.py`, `gate_selftest.py`, `brain_doctor.py`, `receipt_ledger.py`, `kernel_proc.py` or
-`dimension-awareness-hook.py` is DENIED, and so is a whole-tree `git checkout|switch|reset --hard|stash|clean -f|
-read-tree -u|checkout-index -a -f` at the live root, which would swap all of them in one move. A `checkout -b` or
-`switch -c` is NOT one of those: it makes a ref at HEAD and rewrites no file. The set is a path shape, and it
+`qa-merge-gate.py`, `gate_selftest.py`, `brain_doctor.py`, `receipt_ledger.py`, `kernel_proc.py`,
+`merge-hooks.py` (the sanctioned writer of settings.json: edit it and the next legitimate run writes what you put
+there) or `dimension-awareness-hook.py` is DENIED, and so is `.git/config` (it carries `core.hooksPath`, measured
+`.githooks` on the live tree, so one key repoints the very pre-push this gate protects) and `registry/fixtures` FOR A WRITE
+(a violation fixture rewritten so it still blocks but tests nothing leaves gate-liveness green while the gate
+guards nothing; a `git checkout --` restore puts back the reviewed bytes and a removal fails the selftest loudly,
+so both of those pass, after the first cost estimate for this entry turned out to be 1 when the real number was
+11 and all eleven were the brain's own fixture maintenance), and so is
+a whole-tree `git checkout|switch|reset --hard|stash|clean -f|read-tree -u|checkout-index -a -f` at the live root,
+which would swap all of them in one move, plus `git config <name> <value>` and `git push --no-verify` there (a
+skipped hook is the same disarm as a deleted one; the READ shapes `git config <name>` and `--get` stay allowed).
+A `checkout -b`/`-B` or `switch -c`/`-C` that names NO START POINT is NOT one of those: it makes a ref at HEAD and
+rewrites no file. The start point is part of the rule, not a detail: `checkout -b tmp evil` checks `evil` out, and
+an exemption that looked only at the create flag reopened the whole-tree rewrite it was carved out of, with a real
+git receipt of a file reading `good` before and `EVIL` after. The exemption now needs exactly one positional after
+the verb, the new branch name.
+A command over 64 KB is capped for the two INLINE readers only. It used to return before every layer, so one
+character of padding defeated every Bash deny (`rm -rf ~/.claude/scripts` denied at 65,536 bytes and allowed at
+65,537); it now falls through to the path and tree layers. The fall-through carries its own 128 KB PARSE ceiling,
+because the shared parser shlexes too and 1 MB measured 67 s, past the harness's 60 s kill, where a hook writes no
+stdout and the silence reads as ALLOW. Above that ceiling the answer is exact rather than heuristic: no mutation
+token means the parser would have returned nothing anyway, so allow; a token present means deny.
+Destinations are read where the command actually puts a file, not where the last positional sits: `cp -t`,
+`mv -t`, `install -t` and `--target-directory=` INVERT the order, a directory destination receives the source's
+basename (`cp -r /stage/.claude <live>/x/` plants a project-scope settings directory without naming one), and
+`install`, `ln -f`, `rsync`, `curl -o`, `wget -O`, `tar -x -C`, `patch -o|-d`, `awk -i inplace` and the `&>`,
+`&>>`, `>|` redirects are writers the shared parser never looked at. A `find` is only treated as REMOVING when it
+carries `-delete` or an `-exec rm`: labelled `find -delete` unconditionally, `find <dir>/.claude -exec cp
+settings.json {} +` read as a removal, answered "nothing to take" and planted the file. The same tuple was open
+in the OTHER direction, a real deleter with no `-delete` on the line, and the escaping is what hid it: the shared
+splitter cuts on `;` without honouring the backslash, so `find <live>/scripts -name '*.py' -exec rm {} \;` handed
+back a segment ending in a lone backslash, shlex raised, the whitespace fallback KEPT THE QUOTES, and the glob
+became `<live>/scripts/*'*.py'`, matching nothing. The gate denied the spelling that cannot run in a shell and
+allowed the one everyone types. A removal that reaches its paths through another program is now read off the RAW
+command: `-exec`/`-execdir`/`-ok`/`-okdir` running any of ONE list of removing programs with any terminator, and a
+pipe into a removing verb (`| xargs rm`, `-print0 | xargs -0`, `-I{}`, `| parallel rm`, `ls glob | xargs rm`).
+The wrapper prefixes `setsid`, `flock`, `ionice`, `chrt`, `taskset -c`, `doas`, `busybox`, `parallel` and a
+bundled `bash -ec` / `sh -lc` were all measured walking straight through with a plain `rm -rf ~/.claude/scripts`
+and are closed; the wrapper rows are ADDED to the shared parser's own table with `setdefault`, never copied into a
+second one. Still open and named in the gate header rather than left silent: `eval`, backticks, `$(…)`, brace
+expansion, `$VAR`, `find -exec sh -c`, `find -exec dd`, `xargs -a <file>`, `taskset` with a bare mask, and the
+shared parser's own `shred` / `perl -pi` residuals. The set is a path shape, and it
 covers the `.claude` DIRECTORY for every verb that writes: "what does it hold?" is only a question for a verb that
 TAKES. Asking it of everything left two doors open, an absent destination (`mv <staged dir> <live>/x/.claude`, two
 allowed steps to a project-scope settings file carrying a forged approval) and an existing empty one (`cp
@@ -215,7 +253,7 @@ allowed to denied. A symlink whose path looks like a worktree is caught (every c
 `realpath`), and so is `git -C ~/.claude` from anywhere. There is NO env unlock, deliberately: the variable that
 lifted this rule would be writable from the very file it protects. Same stance as the kernel's state floor, the
 operator's terminal is not hooked and stays the only writer. The protected set is a path SHAPE, not a list, so a
-new subdirectory does not reopen it, and the 14 interpreter write markers are proven one fixture each rather than
+new subdirectory does not reopen it, and the 16 interpreter write markers are proven one fixture each rather than
 claimed. Two INLINE channels are read, and they ask different questions because they are different things: a `-c`
 argument is matched on a write marker next to a protected literal, while a heredoc DOCUMENT is matched only when
 the literal is the write's own destination. Measured on 17,232 real Bash calls, the loose test on heredocs flipped
@@ -224,10 +262,16 @@ CLAUDE.md; the narrow one fires on 2 of 3,296, both a command writing a test har
 attack literal. Commands over 64 KB carrying an inline channel are DENIED rather
 than scanned, because shlex is quadratic in one token and a killed hook reads as allow (largest real command
 measured: 32,359 bytes). A parser that cannot LOAD denies too, after a blanket `except` was found turning the
-whole Bash half into a silent all-allow. Residuals, each with its reproduction, live in the gate's own header:
+whole Bash half into a silent all-allow, and so does this gate failing to import its OWN `kernel_proc`: that
+import sat at module scope, so a missing copy of a file the gate PROTECTS raised before `main()` existed and the
+empty stdout read as ALLOW. Residuals, each with its reproduction, live in the gate's own header:
 enterprise policy outside `$HOME` (root-owned, the OS is the gate there), another repo's project settings, an
 ancestor directory of a deep project root in both directions, and an inline write that reaches the path through a
-variable. The fixture pair is `registry/fixtures/ARCHITECTURE.arming-surface` (84 block + 92 allow).
+variable, and a destination the shell has to expand first (`{a,b}`, `$VAR`, `$(cmd)`, `eval`, a shell function, a
+symlink created and used in one command). A LOCAL `git merge` in the live tree is allowed and lands unreviewed
+edits on every file in the set, because `qa-merge-gate` guards `gh pr merge` and nothing guards `git merge`; only
+a PULL brings the reviewed remote state. The fixture pair is
+`registry/fixtures/ARCHITECTURE.arming-surface` (161 block + 165 allow).
 
 ### ULTRA RULE — Do-it-today (no dejes para mañana lo que puedas hacer hoy)
 **Do-it-today.** Operator-canonical (2026-08-18, tras recordarlo a diario durante semanas): el trabajo que YO puedo ejecutar se ejecuta en el turno, no se reporta. La forma sutil del aplazamiento no es negarse, es **reportar un pendiente que yo mismo podía cerrar** y dejárselo al operador en la bandeja; a su volumen, eso convierte cada sesión en una lista que él tiene que administrar. Un pendiente solo es legítimo en dos casos, y en los dos viaja **con su comando exacto para pegar**: (1) es un paso irreducible suyo (un clic de consentimiento, una contraseña, un permiso que solo él concede), o (2) es un bloqueo MEDIDO, no supuesto (el clasificador lo negó, el remoto lo rechazó, la regla del repo lo impide). Esto NO contradice `do-it-right-not-fast`: empieza hoy, hazlo bien, no lo apures; lo prohibido es diferirlo. Mecanismo: `scripts/g__stop__defer-today.py` (Stop gate, bloquea una vez), que dispara cuando el cierre del turno aplaza trabajo propio en primera persona sin ninguna de las dos salidas. Es consciente de citas (repetir el "espero mañana me contestes" de un cliente no lo trippea) y de hechos con fecha; para mantener una línea marcada a propósito, ponle `defer-ok`. HOW completo en `skills/execution-bias/SKILL.md`.

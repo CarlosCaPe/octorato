@@ -4,7 +4,7 @@
   "tool_name": "Bash",
   "tool_use_id": "toolu_arm",
   "tool_input": {
-    "command": "echo 'the docs say << EOF here' > /tmp/note.txt\necho 'it lives at {{SANDBOX}}/.claude/settings.json'"
+    "command": "git -C {{SANDBOX}}/.claude push"
   },
   "cwd": "{{SANDBOX}}/wt/state-gate"
 }

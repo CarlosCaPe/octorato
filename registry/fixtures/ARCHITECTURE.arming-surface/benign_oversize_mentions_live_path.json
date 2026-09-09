@@ -4,11 +4,10 @@
   "tool_name": "Bash",
   "tool_use_id": "toolu_arm",
   "tool_input": {
-    "command": "python3 -c \"{{PAD}}\""
+    "command": "echo \"the file lives at {{SANDBOX}}/.claude/settings.json\" #{{PAD}}"
   },
   "cwd": "{{SANDBOX}}/wt/state-gate",
   "_setup": {
-    "pad_bytes": 70000,
-    "expect_names": "bytes and carries"
+    "pad_bytes": 70000
   }
 }

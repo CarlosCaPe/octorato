@@ -4,11 +4,10 @@
   "tool_name": "Bash",
   "tool_use_id": "toolu_arm",
   "tool_input": {
-    "command": "python3 -c \"{{PAD}}\""
+    "command": "install -t {{SANDBOX}}/.claude/scripts /tmp/x.py"
   },
   "cwd": "{{SANDBOX}}/wt/state-gate",
   "_setup": {
-    "pad_bytes": 70000,
-    "expect_names": "bytes and carries"
+    "expect_names": "all of them at once"
   }
 }

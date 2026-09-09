@@ -46,9 +46,12 @@ checkout is a sibling directory holding SOURCE. So:
 This gate denies only the second. The PR path stays fully open, and so does the
 route by which a merged change reaches the live tree: `ai-sync` / `ai-pull` /
 `git pull` run the update inside a subprocess of a thunk, so no protected path
-is ever a Bash TARGET and nothing here fires. That is deliberate, not an
-oversight: a pull brings the REVIEWED remote state, which is the sanctioned way
-for the live tree to change.
+is ever a Bash TARGET and nothing here fires. That is deliberate for a PULL, which brings the
+remote state through the reviewed path. It is NOT a claim about `git merge`:
+`git -C ~/.claude merge <local-branch>` is allowed too and lands UNREVIEWED
+local edits on every file in this set, because `qa-merge-gate` guards
+`gh pr merge` and nothing guards `git merge`. Stated plainly rather than
+implied, and listed again in the residuals below.
 
 Two paths reach the live copy without naming a worktree, and both are covered:
 a symlink (every candidate is tested a second time through os.path.realpath),
@@ -179,7 +182,49 @@ THE FILE SET, and why each one is an arming surface.
       The Registry RULE #1 loads. A rule deleted here stops being asserted.
   .githooks/pre-push
       The push-time leak guard and the invoker of brain_doctor's fail-closed
-      wiring assertion.
+      wiring assertion. `git push --no-verify` at the live root is the same
+      disarm in one flag instead of one file, so the FLAG is denied too. `-n` is
+      not it: for `push` that means `--dry-run`.
+  .git/config
+      Measured on the live tree: `core.hooksPath=.githooks`. That one key NAMES
+      the directory the entry above is run from, so repointing it disarms
+      .githooks/pre-push without touching the hook. `git config <name> <value>`
+      and `git config --unset <name>` in the live root are denied as writes of
+      this file; `git config <name>` and `--get` are READS and stay allowed,
+      which is not a nicety: over 18,154 distinct real Bash calls, the version
+      that treated one positional as a set denied two commands, both of them
+      reading `core.hooksPath` to check it is still `.githooks`.
+  registry/fixtures, FOR A WRITE ONLY
+      The corpus every `--selftest` is judged against, and gate-liveness is what
+      brain_doctor reads to declare a gate live. A violation fixture rewritten so
+      it still BLOCKS but tests nothing leaves the gate green while it guards
+      nothing, the same rubber stamp as a doctored gate_selftest.py.
+      A RESTORE and a REMOVAL are not that, and the number that forced the
+      distinction was mine. This entry was reported last cycle as costing ONE
+      real command, from a replay that only exercised the put, redirect and
+      git-config layers and so never saw the route those commands use. Replayed
+      properly over 18,154 distinct real Bash calls it cost ELEVEN, and every one
+      was this brain's own fixture maintenance: `git checkout -- registry/
+      fixtures/<rule>/home/...` putting back state a selftest had mutated, an
+      `rm -rf` of a fixture home, a `cp -r` out of one. `git checkout --` restores
+      the COMMITTED bytes, which are the ones review approved, and a missing
+      fixture makes `--selftest` fail LOUDLY rather than silently. So those two
+      verbs pass and every write is denied. Measured cost after: THREE, one of
+      them the rule working (a heredoc writing fixture files in the live tree)
+      and two over-fires of classes already named here, a `mv` OUT of the
+      directory (the parser reports both ends of a move under one verb, so
+      source and destination cannot be told apart at this layer) and a `cp`
+      whose destination was an unexpanded variable.
+      The first "zero" for this narrowing was a HARNESS bug and is recorded
+      because it looked like evidence: the replay called `hit()` without the
+      `verb` argument the narrowing reads, so it measured the un-narrowed path
+      and reported eleven flips for code that no longer produced them.
+  scripts/merge-hooks.py
+      The SANCTIONED writer of settings.json, and that is the argument for
+      protecting it rather than against. The interpreter residual below concedes
+      that a hook never sees inside a subprocess, so `python3 scripts/
+      merge-hooks.py` writes the live settings and always will; edit the program
+      and the next legitimate run of it writes whatever you put there.
 
 Plus one WHOLE-TREE class: `git checkout <branch>`, `git switch`,
 `git reset --hard|--merge|--keep`, `git stash`, `git clean -f`,
@@ -191,11 +236,107 @@ parser, which carries the lane rule and is under edit elsewhere; the borrowed
 `git_parse` still resolves their `-C`, so this is a verb table and not a second
 parser. `git worktree remove` is deliberately NOT one of them: it deletes a
 sibling checkout and rewrites nothing here. Neither is a checkout or switch that
-CREATES a branch (`checkout -b`, `checkout -qb`, `switch -c`, `--orphan`): it
-makes a ref at HEAD and rewrites no file, the deny copy that fired on it said
-"rewrites the whole working tree" and that was simply false, and about ten of
-them appear in real traffic. The exemption needs the command to carry exactly
-ONE checkout/switch, so `checkout -b tmp && checkout evil` is judged as before.
+CREATES a branch AND NAMES NO START POINT (`checkout -b tmp`, `checkout -qb tmp`,
+`switch -c tmp`, `checkout -B tmp`, `--orphan tmp`): that makes a ref at HEAD and
+rewrites no file, the deny copy that fired on it said "rewrites the whole working
+tree" and that was simply false, and about ten of them appear in real traffic.
+THE START POINT IS PART OF THE EXEMPTION, not a detail: git takes an optional
+start point after the new name, and with one the command checks that commit out.
+The first version of the exemption looked only at the create FLAG, so
+`checkout -b tmp evil`, `switch -c tmp evil` and `checkout -B tmp evil` were all
+exempted by their harmless half, and QA took a real git receipt of a file reading
+`good` before and `EVIL` after. The exemption now requires the verb to be
+followed by exactly ONE positional, the new branch name, which also separates
+`-B tmp` (moves a ref to HEAD, touches nothing) from `-B tmp evil` (rewrites the
+tree) without a second rule. It still needs the command to carry exactly ONE
+checkout/switch, so `checkout -b tmp && checkout evil` is judged as before.
+
+Plus one PUT class, all of it measured as ALLOW before, and all of it about the
+same question: WHERE does this command leave a file?
+
+  `cp -t <dir> <src>` and `--target-directory=` INVERT the argument order, so
+  the shared parser's `positional[-1:]` handed back the SOURCE. That is the one
+  rule guarding `cp` reading the wrong end of the command, with a real bash
+  receipt of the file landing in the live tree. `install -t` and `ln -t` share
+  that rule and share the bug. `mv -t` does NOT, measured rather than assumed
+  when a reverted-fix anchor refused to turn its fixture red: the shared parser
+  returns EVERY positional for `mv`, so the destination was already among them
+  and `mv -t` was denied before this reader and after it. Its fixture stays as a
+  control on that behaviour, not as evidence for this fix.
+  A DIRECTORY DESTINATION RECEIVES THE SOURCE'S BASENAME.
+  `cp -r /stage/.claude <live>/knowledge-ref/` never spells a protected path and
+  creates a project-scope settings directory one command later. The residual
+  that called this "walking an arbitrary source tree" was wrong: it is
+  `os.path.join(dest, os.path.basename(src))`, a string, and the classifier
+  already answers that path.
+  SOME WRITERS ARE NOT MUTATION VERBS AT ALL: `install`, `ln -f`, `rsync`,
+  `curl -o`, `wget -O`, `tar -x -C`, `patch -o|-d` and `awk -i inplace`. The
+  traffic count below used to name `install` and `ln` as if they were covered.
+  They were not.
+  THREE REDIRECT SPELLINGS the shared parser cannot see, because it tests
+  `startswith(">")` after stripping digits: `&>`, `&>>` (they start with `&`)
+  and `>|` (it yields the literal `|file`). All three write the file.
+  `find` IS NOT ALWAYS A REMOVING VERB. The shared parser labels every find it
+  reports `find -delete`, but it also fires on `-exec <mutator>`, and a mutator
+  can PUT: `find <live>/…/.claude -maxdepth 0 -exec cp /tmp/settings.json {} +`
+  was read as removing, the empty listing answered "nothing to take", and the
+  settings landed in the drop box. The per-verb split was right; the LABEL lied,
+  and it is re-derived here from what the command actually carries.
+
+These live in a local table for the same reason the two extra git verbs do: the
+shared parser is under edit on another branch, where `_copy_targets` already
+carries the `-t` rule for `cp`/`install`/`ln`. Borrowing it today would mean
+borrowing a function the LIVE parser does not have. When that lands, this table
+goes.
+
+INDIRECTION: A PROGRAM THAT REACHES A PATH THROUGH ANOTHER PROGRAM. Every row
+below was run against the LIVE brain as cwd, with `rm -rf ~/.claude/scripts` as
+the positive control (denies) and `ls ~/.claude` as the benign one (allows).
+The list is here rather than in a commit message because an open member nobody
+named is what turns into the next failure.
+
+  CLOSED, each with a fixture pair:
+    find -exec / -execdir / -ok / -okdir running rm, unlink or shred, with any
+      terminator (an escaped `;`, a bare one, or `+`); a pipe into a removing verb, through xargs
+      (`-0`, `-n1`, `-I{}`) or parallel or bare; the wrapper prefixes setsid,
+      setsid -w, flock, ionice, chrt, taskset -c, doas, busybox, toybox,
+      parallel; and a BUNDLED `-c` on a shell host (`bash -ec`, `sh -lc`).
+    Already closed before this cycle and re-checked here: sh -c, bash -c, env,
+      nice, timeout, sudo.
+
+  OPEN, measured as ALLOW, and why each is left:
+    eval 'rm -rf ~/.claude/scripts'          the body is a string until the
+    echo `rm -rf ~/.claude/scripts`          shell runs; a table cannot read it
+    echo $(rm -rf ~/.claude/scripts)         (`$(…)` is being closed in the
+    rm -rf ~/.claude/{scripts,hooks.json}     SHARED parser on another branch)
+    D=~/.claude/scripts; rm -rf $D
+    find … -exec sh -c 'rm "$1"' _ {} +      indirection two levels deep: the
+                                             -exec program is a shell, and this
+                                             reader judges the program it is
+                                             handed, not the program that one
+                                             runs
+    find … -exec dd of={} …                  `dd` is not in the shared parser's
+                                             `_EXEC_MUTATORS`; that table is
+                                             where the row belongs
+    xargs -a /tmp/list rm                    the targets are in a FILE, the same
+    cat /tmp/list | xargs rm                 class the shared parser already
+                                             names, and neither command carries
+                                             a path to test
+    find <live> -name '.claude' -exec cp     a GLOB that reaches only a
+      /tmp/settings.json {} +                protected DIRECTORY: `glob_hit`
+                                             matches patterns against concrete
+                                             protected FILES, so a filter that
+                                             names a `.claude` directory hits
+                                             none of them. The direct spelling
+                                             (`cp /tmp/settings.json
+                                             <live>/x/.claude/`) is denied
+    taskset 0x3 rm -rf ~/.claude/scripts     the bare-mask form; see the wrapper
+                                             table for why `arg` cannot be both
+    shred ~/.claude/settings.json            `shred` and `perl -pi` are the
+    perl -pi -e … ~/.claude/scripts/…        shared parser's own named residuals
+                                             (`_MUTATORS` carries neither), and
+                                             this gate inherits that list rather
+                                             than growing a second one
 
 NO ENV UNLOCK, deliberately. Every other gate here prints one, and an env
 unlock for THIS rule would be self-serve: the variable that lifts it is exactly
@@ -212,8 +353,8 @@ NAMED RESIDUALS, measured, deliberately not covered:
       * a `-c` body is read for a protected literal next to a write marker
         (open(…,'w'), write_text, json.dump, writeFileSync); a read of the same
         file through the same `-c` passes, which is why the layer needs the
-        marker. Every one of the 14 markers is individually load-bearing, one
-        fixture each, all 14 deletions run. The host table is SIX, down from
+        marker. Every one of the 16 markers is individually load-bearing, one
+        fixture each, every deletion run. The host table is SIX, down from
         ten: `node -c` is not a thing and `perl -c` / `ruby -c` only check
         syntax, so those three could never reach a write, and `python3` was a
         second name for `python` once the version suffix is stripped. Each of
@@ -273,9 +414,14 @@ NAMED RESIDUALS, measured, deliberately not covered:
     and `mv /tmp/s ~/.claude/x` are allowed; `mv /tmp/s ~/.claude/x/.claude` is
     not.
   - `git merge`, `git pull`, `git rebase`, `git apply` in the live tree: the
-    shared parser classifies none of them as whole-tree, and they are the
-    sanctioned route by which reviewed work lands. Reproduction: `git -C
-    ~/.claude merge feat/anything` is allowed.
+    shared parser classifies none of them as whole-tree. A PULL brings the
+    remote state, which is the sanctioned route. A MERGE does not: `git -C
+    ~/.claude merge <local-branch>` is ALLOWED and lands unreviewed local edits
+    on every file in this set, because `qa-merge-gate` guards `gh pr merge` and
+    nothing guards `git merge`. That is the honest sentence, and it replaces
+    "a pull brings the REVIEWED remote state", which was true of pull and was
+    being read as if it covered all four. Reproduction: `git -C ~/.claude merge
+    feat/anything` is allowed.
   - A NON-Bash, NON-Write tool that writes a file. The gate reads targets from
     Write/Edit/NotebookEdit/MultiEdit and from Bash; an MCP tool that takes a
     path and writes it would pass. Measured against the servers registered on
@@ -287,48 +433,100 @@ NAMED RESIDUALS, measured, deliberately not covered:
     over-firing gate is the failure mode this whole boundary was drawn to
     avoid. Registering on the `*` matcher is what makes closing it later a
     one-line change here rather than a new registration.
+  - A DESTINATION THAT ONLY EXISTS AFTER THE SHELL EXPANDS SOMETHING. Brace
+    expansion (`rm -rf ~/.claude/{scripts,hooks.json}`), `$VAR`, `$(cmd)`,
+    `$'…'`, `eval`, a shell function, and a symlink created and USED in the same
+    command. Each needs a shell, not a table, and a table that guessed at them
+    would be a second parser with its own drift. Reproduction: every one of
+    those spellings is allowed today. `$HOME` expansion and `$(…)` are being
+    closed in the SHARED parser on another branch, which is where they belong.
   - Everything the shared parser already names as its own residual (rsync
     --delete, shred, ln -sf, perl -pi, variable expansion, a `-c` body nested
     deeper than 3, xargs fed from stdin). This gate inherits that list rather
     than growing a second parser.
-  - A COMMAND OVER 64 KB THAT CARRIES NEITHER `-c` NOR A HEREDOC. It is not
-    scanned by the inline layers and is not denied either, because nothing here
-    would have read it. The path and tree layers still run on it.
+  - A COMMAND OVER 64 KB IS NOT READ BY THE TWO INLINE LAYERS, and that is the
+    ONLY thing the cap skips. It used to skip everything: `main()` returned at
+    the cap when the command carried no `-c` and no heredoc, so
+    `rm -rf ~/.claude/scripts` DENIED at 65,536 bytes and ALLOWED at 65,537 with
+    a comment as the padding, and QA measured the same one-character bypass for
+    `git checkout evil`, a `>` redirect into hooks.json, `tee` on settings and
+    `sed -i` on a gate body. This text used to claim "the path and tree layers
+    still run on it", which was simply false. They run now: an oversize command
+    with no inline channel falls THROUGH to them and only the two readers that
+    are quadratic in one token are skipped. Nothing new is paid for in wall
+    clock, because the sibling Bash tree-owner gate already runs this same
+    parser on this same command with no cap at all, and same-event hooks run in
+    parallel.
 
-NET EFFECT ON REAL TRAFFIC, replayed rather than argued. 17,232 Bash tool calls
-from this machine's transcripts, this version against the previous one, verdict
-read from `permissionDecision` and never from an exit code:
+NET EFFECT ON REAL TRAFFIC, replayed rather than argued, and re-replayed for
+every layer this cycle added. 18,154 DISTINCT Bash commands from this machine's
+transcripts (19,171 calls), each layer run against the previous version of
+itself:
 
-    11 flipped DENY -> ALLOW   (over-fire removed)
-       7  `git checkout -b` / `-qb` / `switch -c` in the live tree
-       2  read-only `python3 -c` diagnostics that the glob collapse caught
-          because `[` in a Python subscript made a command look like a glob
-       2  `cat > /tmp/x.py <<EOF` read as an interpreter body it is not
-     2 flipped ALLOW -> DENY   (over-fire added)
-       2  one command each writing a TEST HARNESS whose text carries the attack
-          literal, from the adversarial lab rather than from the work
+    the two INLINE readers
+      heredoc_write      fires on 10, was 6.  4 newly denied, and all four are
+                         commands from THIS cycle's adversarial lab writing a
+                         probe script or a fixture generator whose TEXT carries
+                         the attack literal. That is the residual class already
+                         named, now with a number rather than a promise.
+      interpreter_write  fires on 1, was 1.   0 newly denied, although its
+                         needle list grew from four files to every protected
+                         file: no real command writes a gate body inline.
+    the three PATH layers added this cycle
+      put destinations   1 newly denied, and it is not the `-t` rule: a `cp`
+                         whose destination was an unexpanded `$SB` inside
+                         registry/fixtures/, denied because that DIRECTORY is
+                         now in the set.
+      exotic redirects   0 newly denied.
+      git config / push  0 newly denied, after two intermediate false denies
+                         were measured and fixed rather than shipped: treating
+                         one positional as a `config` SET denied
+                         `git config core.hooksPath` READING the key, and
+                         counting `2>&1` as a positional made a read look like a
+                         two-argument set.
 
-Net added over-fire: 2 in 17,232, and the 39 disarms the previous version
-denied are all still denied.
+Two over-fires this cycle were found by replay and removed before shipping, both
+worth naming because both were the gate denying its own maintenance: reading the
+heredoc host out of the whole command string (rather than the SHELL half) made
+`cat > README-residuals.txt <<'EOF'` deny, because that document quotes
+`open('~/.claude/settings.json','w')` as an example; and the `config` read above.
+The previous cycle's numbers stand for the layers it changed: 11 flipped
+DENY -> ALLOW (7 `checkout -b`, 2 glob-collapse diagnostics, 2 heredocs read as
+interpreter bodies they are not) and 2 flipped ALLOW -> DENY.
 
 Hot path: the size cap is tested on the raw string first, then one
 `paths_conflict` against the brain root rejects everything outside ~/.claude
 before any listing or realpath happens, and the shared parser's own trigger test
-returns [] before it loads anything, so an ordinary `ls` or `pytest` never
-reaches the expensive half. Measured warm on this
+returns [] before it PARSES anything. It does not return before it LOADS
+anything, which is what this used to say: QA straced a plain `ls` and the parser
+module is opened on every Bash call, because `bash_targets` reaches `_parser()`
+to get `scan` before `scan` gets to decide there is nothing to do. The timing
+numbers below are unaffected and were always measured through the whole process,
+import included; only the sentence was wrong. Measured warm on this
 machine: ~65 ms for `import kernel_proc` on every call (the same import
 g__pretool__kernel.py already pays on the same `*` matcher), ~1 ms for a
 command with no mutation token, and ~90-190 ms more for one that has a token
 (the shared parser loading dimension-awareness-hook.py, which the Bash
 tree-owner gate is already paying in parallel for the same command). Same-event
 hooks run in parallel, so the wall-clock addition is bounded by the slowest
-hook, not the sum. Measured again with everything in place, best of five per
-shape under CPU load, whole process including interpreter start: `ls -la`
-0.124 s, `pytest -q` 0.193 s, an `rm` carrying a mutation token 0.206 s, a Write
-into a worktree 0.164 s, a 63 KB `-c` body (the worst case still scanned)
-0.267 s, and a 70 KB one 0.119 s because it is refused instead of read.
-Everything except a real hit fails OPEN, with ONE exception
-that used to be a silent hole: the borrowed parser failing to LOAD now denies.
+hook, not the sum. Measured again with everything in place, best of
+three to five per shape, whole process including interpreter start: `ls -la`
+0.10 s, `pytest -q` 0.11 s, an `rm` on a protected path 0.14 s, a 63 KB `-c`
+body (the worst case still SCANNED) 0.41 s, a 70 KB one 0.10 s because it is
+refused instead of read, a `find -exec rm` 0.25 s, a `find | xargs rm` 0.27 s,
+and 127 KB, the worst case still PARSED, 1.79 s. Past 128 KB nothing is parsed:
+300 KB and 1 MB both answer in 0.1-0.2 s, denied when a mutation token is
+present and allowed when there is none.
+Everything except a real hit fails OPEN, with TWO exceptions,
+both of them silent holes before this: the borrowed parser failing to LOAD now
+denies, and so does this gate failing to import its OWN `kernel_proc`. The second
+was the one the first did not cover: that import sat at module scope with nothing
+around it, so a missing or broken copy raised BEFORE `main()` existed, the process
+exited rc=1 with empty stdout, and the harness read the silence as ALLOW. The
+`try/except` at the bottom of this file could never catch it. `kernel_proc.py` is
+inside the set this gate protects, so that was a gate whose own floor could be
+removed by removing one of the files it guards. Both legs (absent and
+syntactically broken) are asserted in `--selftest`.
 A blanket `except` around the import turned this into an all-ALLOW with no
 output whenever `receipt_ledger.py` or `kernel_proc.py` was missing, and both
 are inside the set this gate protects, so the failure was invisible at runtime
@@ -371,7 +569,26 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import kernel_proc  # noqa: E402  (stdlib-only, hot-path budgeted)
+# THE FIRST IMPORT IS ITSELF A FAIL-OPEN SURFACE, and it was the one hole the
+# borrowed-parser deny did not cover. `kernel_proc.py` is INSIDE the set this
+# gate protects, and it was imported at module scope with nothing around it: a
+# missing or syntactically broken copy raised before `main()` existed, so the
+# process exited rc=1 with empty stdout and the harness read that as ALLOW. Same
+# shape as the borrowed parser's silent all-ALLOW, one import earlier, and the
+# `try/except` at the bottom of this file could never see it because the failure
+# happens before `__main__` is reached.
+#
+# Answered the same way and for the same reason: a load failure is STRUCTURAL,
+# never provoked by any command an agent can write, so denying on it costs no
+# legitimate work. The deny copy is built from `os.environ` alone, because the
+# module that resolves the brain root is exactly the one that is missing.
+try:
+    import kernel_proc  # noqa: E402  (stdlib-only, hot-path budgeted)
+except Exception as _exc:               # pragma: no cover - asserted in selftest
+    kernel_proc = None
+    KERNEL_IMPORT_ERROR = f"{type(_exc).__name__}: {_exc}"
+else:
+    KERNEL_IMPORT_ERROR = ""
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 RULE_ID = "ARCHITECTURE.arming-surface"
@@ -421,13 +638,32 @@ _EXACT = {
         "asserted at all",
     ".githooks/pre-push":
         "the push-time gate that runs brain_doctor's wiring assertion",
+    ".git/config":
+        "the repo config the live tree reads, and `core.hooksPath` inside it "
+        "NAMES the directory the push-time gate is run from (measured on the "
+        "live tree: core.hooksPath=.githooks). Repointing that one key disarms "
+        ".githooks/pre-push without touching the hook",
+    "registry/fixtures":
+        "the fixture corpus every `--selftest` is judged against, which is what "
+        "brain_doctor's gate-liveness check reads to declare a gate live. A "
+        "violation fixture edited to stop violating leaves the gate green while "
+        "it guards nothing, the same rubber stamp as a doctored gate_selftest",
 }
 
 # Gate bodies under scripts/. Patterns, not a list, so a NEW g__pretool*.py
 # dropped into the live tree is covered the moment it is created.
+# `merge-hooks.py` is here for the reason the residual list already gave and
+# then did not act on: it is the SANCTIONED writer of settings.json, the one
+# program whose job is to project hooks.json into the file this gate protects.
+# The interpreter residual concedes that a hook never sees inside a subprocess,
+# so `python3 scripts/merge-hooks.py` writes settings.json and always will. That
+# is an argument for protecting the program, not for leaving it writable: edit
+# it and the next legitimate run of it writes whatever you put there. By this
+# gate's own criterion (the surfaces that arm the next session) it is one.
 _SCRIPT_PATTERNS = ("g__pretool*.py", "g__stop__*.py", "qa-merge-gate.py",
                     "gate_selftest.py", "brain_doctor.py", "receipt_ledger.py",
-                    "kernel_proc.py", "dimension-awareness-hook.py")
+                    "kernel_proc.py", "dimension-awareness-hook.py",
+                    "merge-hooks.py")
 _SCRIPT_WHY = ("the body of a fail-closed gate (or the harness and libraries "
                "every gate is proven and read by)")
 
@@ -508,7 +744,8 @@ _TREE_EXEMPT = ("git worktree remove",)
 # that reads the same file through the same idiom, and the violation's
 # expectation names the marker in the deny text, so a fixture cannot pass on
 # some other entry's behalf. Deleting any one marker turns exactly its own
-# fixture red; all 14 deletions were run.
+# fixture red; every deletion was run. There are 16 now, not 14: `'r+'` and
+# `"r+"` joined on a measurement, see the list itself.
 # `writeFileSync`/`appendFileSync` are Node idioms and node takes `-e`, not
 # `-c`, so their reachable shape is a nested one (`sh -c "node -e …"`) and that
 # is what their fixtures use.
@@ -535,7 +772,13 @@ _TREE_EXEMPT = ("git worktree remove",)
 # by deleting each one and watching exactly its own fixtures go red, with a
 # no-op control green in the same run.
 _C_HOSTS = ("bash", "sh", "zsh", "dash", "python", "py")
+# `'r+'` joined the list on a measurement, not a hunch: `open(<live settings>,
+# 'r+').truncate(0)` empties the file and carried NO marker, so the `-c` channel
+# read it and allowed it. It is a write handle by definition (the `+`), and the
+# read spelling one edit away (`'r'`) still passes, which is the pair every
+# entry here is proven by.
 _WRITE_MARKERS = ("'w'", '"w"', "'w+'", '"w+"', "'a'", '"a"',
+                  "'r+'", '"r+"',
                   "write_text", ".write(", "writelines", "json.dump(",
                   "writeFileSync", "appendFileSync", "os.replace(", "shutil.copy")
 
@@ -567,6 +810,50 @@ _WRITE_MARKERS = ("'w'", '"w"', "'w+'", '"w+"', "'a'", '"a"',
 # body is read) changes which commands reach the lexer, never what the lexer
 # costs once one does.
 _MAX_SCANNED = 64 * 1024
+
+# THE SECOND CEILING, and it exists because the first fix was half of one.
+#
+# Letting an oversize command fall through to the path and tree layers closed
+# the one-character bypass, and it handed the parser an unbounded string. The
+# shared parser shlexes too, and shlex is quadratic in one token there as well.
+# Measured on this machine, whole process, worst of the shapes, under load:
+#
+#     command size   this gate    the sibling Bash tree-owner gate
+#     400 KB          14.2 s        8.5 s
+#       1 MB          67.2 s      107.6 s
+#
+# Past the harness's 60 s default both are KILLED, a killed hook writes no
+# stdout, and empty stdout reads as ALLOW. That is the exact failure the first
+# cap was invented to remove, moved one layer down: a bigger payload, never a
+# different technique. (The sibling gate has the same exposure today and it is
+# not this branch's to fix; it is named so the number is not read as new.)
+#
+# So the parse is bounded too, and above the bound the answer is EXACT rather
+# than heuristic. The shared parser's first line is `if not any(t in command for
+# t in _TRIGGERS): return []`, and every local layer here has the same kind of
+# substring fast-out. So above the ceiling:
+#   - no trigger anywhere in the string -> every layer would have returned [],
+#     so ALLOW is what the parse would have said, computed in one pass;
+#   - a trigger present -> there MIGHT be a target and the string is too long to
+#     find out, and this gate resolves ambiguity closed, so DENY.
+# The trigger list is BORROWED from the parser rather than copied, so it cannot
+# drift away from the fast-out it is standing in for.
+#
+# 128 KB, picked against the same corpus as the first cap: 18,154 distinct real
+# Bash commands, largest 32,359 bytes, so the ceiling is four times the largest
+# thing this machine has ever run.
+#
+# It was 256 KB for one commit and the number had to MOVE when a layer was added
+# to the fall-through, which is the point of measuring it rather than picking it.
+# At 256 KB the worst case still parsed measured 3.65 s; adding the indirection
+# reader, which lexes the raw command a second time, took the same shape to
+# 8.91 s. Both are under the 60 s kill, but the earlier timings on a LOADED
+# machine ran 3-4x the idle ones, and 8.91 s idle is not a margin at that
+# multiple. Halving the ceiling quarters the cost (shlex is quadratic in one
+# token), which puts the worst case back near 2 s idle. A cap whose cost is not
+# re-measured when a reader is added is a cap that expires quietly.
+_MAX_PARSED = 128 * 1024
+_LOCAL_TRIGGERS = ("&>", ">|", "config", "--no-verify")
 
 
 def deny(reason: str) -> None:
@@ -629,10 +916,20 @@ def project_scope(target: str, brain: str, removing: bool) -> tuple:
     return None, None
 
 
+# ONE list of PROGRAMS that make a path go away, and every other place that
+# needs to know "does this remove?" is derived from it. There were two: this
+# tuple, and a second literal `("rm", "unlink", "shred")` inside the `find`
+# label check. Two lists of the same fact is one list too many, and it showed:
+# `shred` was in one and not the other, so a hit labelled `shred` and a
+# `find -exec shred` disagreed about the same program.
+_REMOVING_PROGRAMS = ("rm", "unlink", "shred")
+
 # Verbs that only ever make a path GO AWAY. Everything else names, at its
 # destination, the file that will EXIST once the command has run, which is the
-# distinction `_holds_settings` turns on below.
-_REMOVING_VERBS = ("rm", "unlink", "find -delete", "git rm")
+# distinction `_holds_settings` turns on below. The program names come from the
+# list above; `find -delete` and `git rm` are LABELS the parser emits for the
+# same effect, not programs, which is why they are added rather than listed.
+_REMOVING_VERBS = _REMOVING_PROGRAMS + ("find -delete", "git rm")
 
 
 def _holds_settings(directory: str, removing: bool) -> bool:
@@ -691,7 +988,42 @@ def _holds_settings(directory: str, removing: bool) -> bool:
     return any(fnmatch.fnmatchcase(_fold(n), _PROJECT_SETTINGS_GLOB) for n in names)
 
 
-def classify(target: str, removing: bool = False) -> tuple:
+# A FIXTURE IS PROTECTED FROM A WRITE, NOT FROM A RESTORE OR A REMOVAL, and the
+# number that forced the distinction was mine. Adding `registry/fixtures` to the
+# set was reported last cycle as costing ONE real command, from a replay that
+# only exercised the put, redirect and git-config layers and therefore never saw
+# the route those commands actually use. Replayed properly over 18,154 distinct
+# real Bash calls it costs ELEVEN, and every one of them is this brain's own
+# fixture maintenance: `cd ~/.claude && git checkout -- registry/fixtures/<rule>/
+# home/...` restoring fixture state that a selftest mutated, `rm -rf` of a
+# fixture's home directory, and a `cp -r` out of one. A gate that blocks its own
+# maintenance is the failure this whole boundary was drawn around.
+#
+# The threat is narrower than the file: a violation fixture rewritten so it still
+# BLOCKS but tests nothing leaves gate-liveness green while the gate guards
+# nothing. That needs new content. It cannot be done by
+#   - a RESTORE (`git checkout -- <fixture>` puts back the committed bytes, which
+#     are the ones review approved), nor by
+#   - a REMOVAL (a missing fixture makes `--selftest` fail LOUDLY: the run reports
+#     "did NOT block" or "fixture dir missing" and the doctor goes red).
+# So those two verbs pass and every write is denied.
+#
+# Residual, measured and named rather than left implied: `git checkout
+# <other-branch> -- registry/fixtures/<rule>/violation_x.json` restores from a
+# ref that is NOT the committed state of this branch and is allowed by this test.
+# Closing it means reading the ref out of the command, which is the shared
+# parser's job, not a second reader here.
+_RESTORE_VERBS = ("git checkout", "git restore")
+
+
+def _fixture_write(verb: str) -> bool:
+    """True when *verb* puts NEW content into a fixture."""
+    if verb in _REMOVING_VERBS:
+        return False
+    return not verb.startswith(_RESTORE_VERBS)
+
+
+def classify(target: str, removing: bool = False, verb: str = "") -> tuple:
     """(live_path, why) when `target` reaches a live arming surface, else
     (None, None). Containment counts in BOTH directions: `rm -rf
     ~/.claude/scripts` never names a gate and takes every one of them."""
@@ -706,6 +1038,8 @@ def classify(target: str, removing: bool = False) -> tuple:
     for rel, why in _EXACT.items():
         live = os.path.join(brain, *rel.split("/"))
         if _conflict(target, live):
+            if rel == "registry/fixtures" and not _fixture_write(verb):
+                continue          # a restore or a removal is not a doctored fixture
             return live, why
     live, why = project_scope(target, brain, removing)
     if live:
@@ -737,9 +1071,9 @@ def candidates(target: str) -> list:
     return out
 
 
-def hit(target: str, removing: bool = False) -> tuple:
+def hit(target: str, removing: bool = False, verb: str = "") -> tuple:
     for cand in candidates(target):
-        live, why = classify(cand, removing)
+        live, why = classify(cand, removing, verb)
         if live:
             return live, why
     return None, None
@@ -774,29 +1108,92 @@ def _parser():
             spec.loader.exec_module(mod)
         except Exception as exc:
             raise ParserUnavailable(f"{type(exc).__name__}: {exc}") from exc
+        _add_wrapper_rows(mod)
         _PARSER_MOD = mod
     return _PARSER_MOD
+
+
+# Prefixes that run another program without changing what it does to the file
+# system. The shared parser already owns THE list of them (`_WRAPPERS`) and
+# already peels env, sudo, nice, timeout, xargs and the rest; these are the rows
+# it does not carry yet, measured live against `rm -rf ~/.claude/scripts`:
+#
+#     env / nice / timeout / sudo / sh -c  -> already denied
+#     setsid, setsid -w, flock, ionice, chrt, taskset, doas, busybox, parallel
+#                                         -> ALLOWED, every one of them
+#
+# They are ADDED TO the shared dict with `setdefault`, not copied into a second
+# table here. That matters for the reason this whole file borrows the parser
+# instead of forking it: when the shared table grows its own row for `busybox`
+# (it already has on `fix/kernel-corrupt-row`), `setdefault` keeps the parser's
+# row and this one becomes a no-op, so the two can never drift into disagreeing.
+# The mutation is per PROCESS: every hook is its own interpreter, so nothing
+# else in the session sees it.
+#
+# A wrong spec here costs a MISS, never a false deny: peeling too little leaves
+# the wrapper name as the program, peeling too much leaves a path, and neither
+# is a mutation verb. `taskset 0x3 rm` is exactly that miss (the bare mask form
+# is a positional and `arg: 0` does not skip it), kept over `arg: 1` because
+# `taskset -c 0 rm` is the spelling that appears and the two cannot both work.
+_EXTRA_WRAPPERS = {
+    "setsid": {"valued": (), "cd": (), "arg": 0},
+    "ionice": {"valued": ("-c", "--class", "-n", "--classdata", "-p", "--pid"),
+               "cd": (), "arg": 0},
+    "flock": {"valued": ("-w", "--wait", "--timeout", "-E",
+                         "--conflict-exit-code"), "cd": (), "arg": 1},
+    "chrt": {"valued": ("-p", "--pid"), "cd": (), "arg": 1},
+    "taskset": {"valued": ("-c", "--cpu-list", "-p", "--pid"), "cd": (), "arg": 0},
+    "doas": {"valued": ("-u", "-C"), "cd": (), "arg": 0},
+    "parallel": {"valued": ("-j", "--jobs", "-N", "--delimiter", "-d",
+                            "--colsep", "-S", "--sshlogin", "-a", "--arg-file"),
+                 "cd": (), "arg": 0},
+    "busybox": {"valued": (), "cd": (), "arg": 0},
+    "toybox": {"valued": (), "cd": (), "arg": 0},
+}
+
+
+def _add_wrapper_rows(mod) -> None:
+    for name, spec in _EXTRA_WRAPPERS.items():
+        mod._WRAPPERS.setdefault(name, spec)
+
+
+# `~/.claude/./settings.json` is the same file as `~/.claude/settings.json` and
+# was a clean bypass of every literal test below, because a needle is a STRING
+# and that string is one character longer. `/./` and `//` are the only two
+# spellings that survive a shell verbatim and still name the same path, so the
+# body is normalized once before any needle is looked for. It runs over the
+# BODY, not the command, so it never changes what the shared parser sees.
+_PATH_NOISE = re.compile(r"/(?:\.?/)+")
+
+
+def _normalize_paths(text: str) -> str:
+    return _PATH_NOISE.sub("/", text or "")
 
 
 def _needles() -> list:
     """Literal spellings of a protected path an interpreter body could carry.
 
-    The project-scope pair is spelled out here rather than derived from the
-    path SHAPE the classifier uses, because a literal scan has nothing to match
-    a shape against: it needs the string. That names the one project root that
-    is always there (the brain root itself, the root `cd ~/.claude` opens); a
-    deeper project root inside the live tree is covered by the classifier for
-    Write/Edit and shell mutations, and is a named residual for this
-    best-effort `-c` layer only.
+    EVERY protected file, not four of them. This used to be built from `_EXACT`
+    plus the project-scope pair, which left the GATE BODIES out entirely: QA
+    measured `python3 -c "open('<live>/scripts/qa-merge-gate.py','w')"` and its
+    heredoc twin as ALLOW, and the same for `brain_doctor.py`. The
+    concrete-path list the glob test already uses (`_protected_pairs`) holds
+    every one of them, so the two layers now read the same set instead of two
+    different ones, and a gate script added to the live tree is a needle the
+    moment it exists.
+
+    The project-scope pair is named at the one root that is always there (the
+    brain root itself, the root `cd ~/.claude` opens); a deeper project root
+    inside the live tree is covered by the classifier for Write/Edit and shell
+    mutations, and stays a named residual for these best-effort literal layers.
     """
     brain = brain_root()
     out = []
-    rels = list(_EXACT) + [_PROJECT_DIRNAME + "/settings.json",
-                           _PROJECT_DIRNAME + "/settings.local.json"]
-    for rel in rels:
-        out.append(os.path.join(brain, *rel.split("/")))
-        out.append("~/.claude/" + rel)
-    out.append(user_config_path(brain))
+    for path, _why in _protected_pairs(brain):
+        out.append(path)
+        if _fold(path).startswith(_fold(brain) + os.sep):
+            rel = os.path.relpath(path, brain).replace(os.sep, "/")
+            out.append("~/.claude/" + rel)
     out.append("~/" + _USER_CONFIG_NAME)
     return out
 
@@ -810,8 +1207,9 @@ def _needle_marker(body: str, needles: list):
     marker = next((m for m in _WRITE_MARKERS if m in body), None)
     if not marker:
         return None
+    flat = _normalize_paths(body)
     for needle in needles:
-        if needle in body:
+        if needle in flat:
             return needle, marker
     return None
 
@@ -835,7 +1233,29 @@ def _host_of(tokens: list, i: int) -> str:
     return os.path.basename(tokens[j]) if j >= 0 else ""
 
 
+# TOKEN-level `-c`, used only once a token list exists.
 _BUNDLED_C = re.compile(r"-[A-Za-z]*c")
+
+# COMMAND-level "does this string carry an interpreter body at all?", which is a
+# different question and was being answered with the token regex above matched
+# anywhere in the string. Two costs, both measured by QA:
+#   * `grep -c foo file` over the size cap was DENIED as "carries an interpreter
+#     `-c` body". It carries a count flag.
+#   * any path in the command containing `-<letters>c` shifted the verdict, so a
+#     sandbox under `/tmp/x-carloscarrillo/...` answered differently from a
+#     clean one. A fixture whose verdict depends on where the sandbox lives is
+#     not a fixture.
+# The fast test now asks the same question `_c_bodies` asks precisely: is there
+# an INTERPRETER, then a run of its own flags, then a flag ending in `c`? That
+# mirrors `_host_of`, which walks back past flags and stops at the first
+# non-flag token, so the cheap test and the exact test cannot disagree about
+# which commands have a body. The flag run is BOUNDED (at most 8 of at most 20
+# characters) so the nested quantifier cannot backtrack quadratically on the
+# 64 KB strings this is deliberately run against.
+_C_CHANNEL = re.compile(
+    r"""(?:^|[\s;&|(`"'])(?:[\w./-]*/)?"""
+    r"""(?:bash|sh|zsh|dash|python[0-9.]*|py)"""
+    r"""(?:\s+-[A-Za-z-]{1,20}){0,8}\s+-[A-Za-z]*c""")
 
 
 def _c_bodies(tokens: list) -> list:
@@ -872,7 +1292,9 @@ def interpreter_write(command: str):
     import shlex
     # The fast-out has to know the bundle too: `sh -lc "…"` carries no literal
     # "-c", so the old substring test returned before the body was ever read.
-    if not _BUNDLED_C.search(command):
+    # It also has to know the HOST, or `grep -c` and any path spelled with a
+    # `-…c` enter the lexer and change verdicts; `_C_CHANNEL` asks both.
+    if not _C_CHANNEL.search(command):
         return None
     try:
         tokens = shlex.split(command)
@@ -908,27 +1330,60 @@ _HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
 def heredoc_bodies(command: str) -> list:
     """Every heredoc BODY in the command.
 
-    An opener whose terminator line never appears is NOT a heredoc, so a `<<`
-    inside ordinary prose (`echo "a << b"`) can never swallow the rest of the
-    command. Terminator positions are indexed once instead of rescanned per
-    opener, so a line carrying many openers with no terminator stays linear."""
+    AN UNTERMINATED OPENER RUNS TO END OF INPUT, which is what bash does and
+    what the previous version got backwards. It skipped such an opener entirely,
+    on the reasoning that "a `<<` inside ordinary prose can never swallow the
+    rest of the command". bash disagrees: it warns `here-document delimited by
+    end-of-file` and RUNS the body anyway, so omitting the terminator line was a
+    one-line way to hide a body from this reader while still executing it. The
+    claim also had no fixture that could tell the two apart, which is what
+    QA's surviving mutant M36 was pointing at: the benign fixture for it was a
+    single line with no body at all, so it passed whatever this function did.
+
+    The over-fire that reasoning was protecting against does not appear, because
+    the reader downstream is the NARROW one: a body only matters when a
+    protected path is the direct operand of a write in it. Prose that merely
+    mentions `<< EOF` yields a body of whatever followed it, and the write test
+    then finds nothing.
+
+    Terminator positions are indexed once instead of rescanned per opener, so a
+    line carrying many openers stays linear."""
+    return heredoc_split(command)[1]
+
+
+def heredoc_split(command: str) -> tuple:
+    """(the SHELL text, the heredoc bodies).
+
+    The two halves are separated because they answer different questions and
+    mixing them cost a measured false positive. The shell text is what the
+    machine RUNS: it is where an interpreter host counts. A body is DATA until
+    an interpreter is handed it, so a `python3` that appears only inside a
+    document proves nothing about the command. Measured on 18,154 distinct real
+    Bash calls: reading the host out of the whole string made
+    `cat > README-residuals.txt <<'EOF' … EOF` deny, because that document
+    quotes `open('~/.claude/settings.json','w')` as an EXAMPLE and mentions
+    `python3` in the same breath. That file is this gate's own residual list, so
+    the widened test denied the gate's own documentation."""
     if "<<" not in command:
-        return []
+        return command, []
     lines = command.split("\n")
     at = {}
     for j, ln in enumerate(lines):
         at.setdefault(ln.strip(), []).append(j)
-    bodies, i = [], 0
+    bodies, shell, i = [], [], 0
     while i < len(lines):
         line = lines[i]
+        shell.append(line)
         i += 1
         for _quote, term in _HEREDOC_RE.findall(line):
             end = next((j for j in at.get(term, ()) if j >= i), None)
             if end is None:
-                continue
+                bodies.append("\n".join(lines[i:]))    # bash: runs to EOF
+                i = len(lines)
+                break
             bodies.append("\n".join(lines[i:end]))
             i = end + 1
-    return bodies
+    return "\n".join(shell), bodies
 
 
 def _protected_pairs(brain: str) -> list:
@@ -1063,21 +1518,637 @@ def extra_tree_hits(command: str, cwd: str) -> list:
     return out
 
 
+# ── verbs that PUT a file where the last positional does not say ────────────
+#
+# MARKED FOR REMOVAL, exactly like `extra_tree_hits` above. The shared parser on
+# `fix/kernel-corrupt-row` already carries `_copy_targets`, which reads
+# `-t`/`--target-directory` for `cp`/`install`/`ln` under one destination rule.
+# That branch has not landed, and this gate loads the parser that is IN THE LIVE
+# TREE, so borrowing it today would mean borrowing a function that is not there.
+# When it lands, the `-t` half of this block goes and the basename half moves
+# with it; nothing else here depends on it.
+#
+# THREE THINGS THE DESTINATION RULE HAS TO KNOW, all three measured as ALLOW:
+#
+#   1. `-t` INVERTS the argument order. `cp -t <live> /tmp/settings.json` puts
+#      the file in `<live>`, and the shared parser's `positional[-1:]` hands
+#      back `/tmp/settings.json`, which is the SOURCE. So the one rule that
+#      guards `cp` was reading the wrong end of the command, and QA has a real
+#      bash receipt of the file landing in the live tree.
+#   2. A DIRECTORY DESTINATION RECEIVES THE SOURCE'S BASENAME.
+#      `cp -r /stage/.claude <live>/knowledge-ref/` never spells a protected
+#      path and creates `<live>/knowledge-ref/.claude`, a project-scope settings
+#      directory, one command later. The gate's own residual called covering
+#      this "walking an arbitrary source tree"; it is not. It is
+#      `os.path.join(dest, os.path.basename(src))`, a string, and the classifier
+#      already answers that path.
+#   3. SOME WRITERS ARE NOT MUTATION VERBS AT ALL. `install`, `ln -f`, `rsync`,
+#      `curl -o`, `wget -O`, `tar -x -C`, `patch -o/-d` and `awk -i inplace`
+#      each put a file somewhere the shared parser's `_MUTATORS` table never
+#      looks. The header's traffic count already listed `install` and `ln` as
+#      if they were covered; they were not, and now they are.
+#
+# ADDITIVE BY CONSTRUCTION. This yields EXTRA targets only; every path the
+# shared parser already returns is still returned by it, so no verdict that was
+# a deny becomes an allow here. What is newly denied is what the three cases
+# above describe.
+#
+# NOT COVERED, and named rather than half-covered: `rsync --delete` (the shared
+# parser's own residual), and any destination that only exists after the shell
+# expands something (`{a,b}`, `$VAR`, `$(cmd)`, `eval`, a shell function, `$'…'`
+# and a symlink created and used inside the same command). Those need a shell,
+# not a table, which is the same line this gate already draws at the interpreter
+# residual.
+_PUT_INTO = ("-t", "--target-directory")
+
+# Flags that take a SEPARATE value. Getting one wrong costs a MISS (a value read
+# as a path that is not protected), never a false deny, because every candidate
+# is still run through the classifier. Only `=`-form is assumed for flags whose
+# argument is optional (`--backup`, `--reflink`, `--sparse`), which the
+# `partition("=")` below already skips as a single token.
+_PUT_VALUED = {
+    "cp": ("-t", "--target-directory", "-S", "--suffix"),
+    "mv": ("-t", "--target-directory", "-S", "--suffix"),
+    "install": ("-t", "--target-directory", "-m", "--mode", "-o", "--owner",
+                "-g", "--group", "-S", "--suffix", "-Z", "--context",
+                "--strip-program"),
+    "ln": ("-t", "--target-directory", "-S", "--suffix"),
+    "awk": ("-i", "--include", "-f", "--file", "-v", "--assign",
+            "-F", "--field-separator"),
+    "rsync": ("-e", "--rsh", "--exclude", "--include", "--exclude-from",
+              "--include-from", "--files-from", "--filter", "-f", "--chmod",
+              "--chown", "--out-format", "--log-file", "--temp-dir", "-T",
+              "--partial-dir", "--compare-dest", "--copy-dest", "--link-dest",
+              "--backup-dir", "--suffix", "--port", "--timeout", "--bwlimit",
+              "--max-size", "--min-size", "--block-size", "-B", "--modify-window"),
+}
+_COPY_VERBS = ("cp", "mv", "install", "ln", "rsync")
+
+
+def _put_positional(base: str, args: list) -> list:
+    valued = _PUT_VALUED.get(base, ())
+    out, i = [], 0
+    while i < len(args):
+        tok = args[i]
+        name, eq, _val = tok.partition("=")
+        if name in valued:
+            i += 1 if eq else 2
+            continue
+        if tok.startswith("-") and tok != "-":
+            i += 1
+            continue
+        out.append(tok)
+        i += 1
+    return out
+
+
+def _flag_value(args: list, names: tuple):
+    """The value of the first of *names* present, in either `-x v` or
+    `--name=v` spelling."""
+    for i, tok in enumerate(args):
+        name, eq, val = tok.partition("=")
+        if name in names:
+            if eq:
+                return val
+            if i + 1 < len(args):
+                return args[i + 1]
+    return None
+
+
+def _copy_destinations(base: str, args: list, here: str) -> list:
+    """Every path this copy-shaped command WRITES, beyond the one the shared
+    parser already names."""
+    positional = _put_positional(base, args)
+    if base == "install" and any(
+            a == "--directory" or (a.startswith("-") and not a.startswith("--")
+                                   and "d" in a[1:]) for a in args):
+        # `install -d a b c` CREATES all three; none of them is a source
+        return [_parser().resolve(a, here) for a in positional]
+    into = _flag_value(args, _PUT_INTO)
+    if into:
+        dest, sources = into, positional
+    elif len(positional) >= 2:
+        dest, sources = positional[-1], positional[:-1]
+    else:
+        return []
+    dest_abs = _parser().resolve(dest, here)
+    out = [dest_abs]
+    # A destination is a DIRECTORY when the command says so (`-t`), when it is
+    # spelled with a trailing separator, when more than one source is being put
+    # there, or when it simply is one on disk.
+    is_dir = bool(into) or dest.endswith(("/", os.sep)) or len(sources) > 1 or \
+        os.path.isdir(dest_abs)
+    if is_dir:
+        for src in sources:
+            leaf = os.path.basename(src.rstrip("/").rstrip(os.sep))
+            if leaf and leaf not in (".", ".."):
+                out.append(os.path.join(dest_abs, leaf))
+    return out
+
+
+# One entry per verb: (name, the flags whose value is a destination, whether the
+# verb needs another flag present before it writes anywhere).
+_WRITER_FLAGS = (
+    ("curl", ("-o", "--output"), None),
+    ("wget", ("-O", "--output-document", "-P", "--directory-prefix"), None),
+    ("tar", ("-C", "--directory"), ("x", "extract", "get")),
+    ("patch", ("-o", "--output", "-d", "--directory"), None),
+)
+_AWK_NAMES = ("awk", "gawk", "mawk", "busybox-awk")
+
+
+def _tar_extracts(args: list) -> bool:
+    for tok in args:
+        if tok.startswith("--"):
+            if tok.split("=", 1)[0] in ("--extract", "--get"):
+                return True
+            continue
+        if tok.startswith("-") and "x" in tok[1:]:
+            return True
+        # tar's ancient flagless spelling: `tar xf a.tar -C dir`
+        if tok and not tok.startswith("-") and set(tok) <= set("xcrtuvfzjJavhpP") \
+                and "x" in tok:
+            return True
+    return False
+
+
+def _writer_destinations(base: str, args: list, here: str) -> list:
+    for name, flags, needs in _WRITER_FLAGS:
+        if base != name:
+            continue
+        if name == "tar" and not _tar_extracts(args):
+            return []
+        val = _flag_value(args, flags)
+        return [_parser().resolve(val, here)] if val else []
+    if base in _AWK_NAMES:
+        inplace = any(
+            (a == "-i" and i + 1 < len(args) and args[i + 1] == "inplace") or
+            a in ("-iinplace", "--include=inplace")
+            for i, a in enumerate(args))
+        if not inplace:
+            return []
+        positional = _put_positional("awk", args)
+        # the awk PROGRAM is the first positional unless it came from -f
+        scripted = any(a in ("-f", "--file") or a.startswith("--file=")
+                       for a in args)
+        files = positional if scripted else positional[1:]
+        return [_parser().resolve(f, here) for f in files]
+    return []
+
+
+# Redirect spellings the shared parser's `redirect_targets` does not read: it
+# tests `core.startswith(">")` after stripping leading digits, so `&>file`
+# (starts with `&`) is invisible and `>|file` yields the literal `|file`. Both
+# write the file. Reproduced as ALLOW against the live settings before this.
+_EXOTIC_REDIRECT = ("&>>", "&>", ">|")
+
+
+def exotic_redirect_hits(command: str, cwd: str) -> list:
+    """(kind, target, verb) for `&>`, `&>>` and `>|`.
+
+    Run over the WHOLE command rather than per segment, because the segment
+    splitter cuts on `|` and `>| path` arrives as two segments with the path
+    orphaned in the second one. shlex over the whole string is still
+    boundary-aware, which is the property that matters: `git commit -m "a >| b"`
+    is one token and never becomes a target. `cd` is tracked here too, so
+    `cd ~/.claude && echo x >| settings.json` resolves the same as the absolute
+    spelling."""
+    import shlex
+    if not any(op in command for op in _EXOTIC_REDIRECT):
+        return []
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return []
+    mod = _parser()
+    here, out, i = cwd, [], 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok in ("cd", "pushd") and i + 1 < len(tokens):
+            here = mod.resolve(tokens[i + 1], here)
+            i += 2
+            continue
+        for op in _EXOTIC_REDIRECT:
+            if tok == op:
+                if i + 1 < len(tokens) and not tokens[i + 1].startswith("&"):
+                    out.append(("path", mod.resolve(tokens[i + 1], here), op))
+                i += 1
+                break
+            if tok.startswith(op) and len(tok) > len(op):
+                out.append(("path", mod.resolve(tok[len(op):], here), op))
+                break
+        i += 1
+    return out
+
+
+def extra_put_hits(command: str, cwd: str) -> list:
+    """(kind, target, verb) for the destinations above.
+
+    A substring fast-out keeps this off the hot path: without it every Bash
+    command would pay a second shlex pass for verbs that are rare in the corpus.
+    """
+    import shlex
+    if not any(t in command for t in _PUT_TRIGGERS):
+        return []
+    mod = _parser()
+    try:
+        segments = mod._dim_helpers()[0](command or "")
+    except Exception:
+        segments = [command or ""]
+    here = cwd
+    out = []
+    for seg in segments:
+        try:
+            tokens = shlex.split(seg.strip().rstrip(";"))
+        except ValueError:
+            continue
+        _redirs, tokens = mod.redirect_targets(tokens)   # `cp a b > log`
+        if not tokens:
+            continue
+        try:
+            tokens, here = mod.peel_wrappers(mod.peel_env(tokens), here)
+        except Exception:
+            pass
+        if not tokens:
+            continue
+        if tokens[0] in ("cd", "pushd") and len(tokens) > 1:
+            here = mod.resolve(tokens[1], here)
+            continue
+        base = os.path.basename(tokens[0])
+        if base in _COPY_VERBS:
+            for target in _copy_destinations(base, tokens[1:], here):
+                out.append(("path", target, base))
+            continue
+        for target in _writer_destinations(base, tokens[1:], here):
+            out.append(("path", target, base))
+    return out
+
+
+_PUT_TRIGGERS = ("cp", "mv", "install", "ln", "rsync", "curl", "wget", "tar",
+                 "patch", "awk", "&>", ">|")
+
+
+# `find` IS NOT ALWAYS A REMOVING VERB, and the label said it was.
+#
+# The shared parser tags every find it reports as `find -delete`, because that
+# is the only reason it reports one. But its own `find_targets` also fires on
+# `-exec <mutator>`, and a mutator can PUT as easily as it can take:
+#
+#   find <live>/…/.claude -maxdepth 0 -exec cp /tmp/settings.json {} \;
+#
+# was read as removing, so `_holds_settings` listed the directory, found no
+# settings, answered "nothing to take" and ALLOWED. QA has the receipt: the
+# settings file lands in the drop box. The per-verb split is right; the label
+# was what lied. So the label is re-derived here from what the command actually
+# carries.
+# ── a program that reaches a path THROUGH another program ───────────────────
+#
+# Read the first two rows of what QA measured together, because they name the
+# bug better than any description of it:
+#
+#     find <live>/scripts -name '*.py' -exec rm {} \;    ALLOWED
+#     find <live>/scripts -name '*.py' -exec rm {} ;      denied
+#
+# `\;` is the form that RUNS in a shell; a bare `;` is a syntax error there. So
+# the gate denied the spelling that cannot execute and allowed the spelling
+# everyone types. Isolated rather than guessed, and it is not the terminator:
+#
+#     the shared splitter cuts sub-commands on `;` and does not honour the
+#     backslash, so the segment it hands back ENDS IN A LONE `\`. shlex then
+#     raises on the dangling escape, the parser falls back to `seg.split()`, and
+#     a whitespace split KEEPS THE QUOTES: `-name '*.py'` yields the pattern
+#     `'*.py'` with its literal quotes, so the glob becomes
+#     `<live>/scripts/*'*.py'`, which matches no file that exists. The `-exec rm`
+#     was recognised, the root was right, and the deny was lost to a corrupted
+#     PATTERN.
+#
+# That generalises past `find`: any segment whose lex fails produces quoted
+# tokens, and every path or glob derived from it is wrong. Both halves live in
+# files this branch does not own (the splitter in dimension-awareness-hook.py,
+# the fallback in the shared parser), so this reader does not depend on either:
+# it lexes the RAW command, where `\;` is an ordinary escaped `;` and shlex
+# reads it correctly.
+#
+# The other direction of the same tuple was open too. The F4 fix covered the
+# label OVER-claiming (a non-deleter wearing `find -delete`) and left it
+# UNDER-claiming: a real deleter with no `-delete` on the line. And `-ok` /
+# `-okdir` were in neither, because the shared `find_targets` only looks for
+# `-exec` / `-execdir`.
+#
+# WHAT THIS READER DOES NOT RE-IMPLEMENT: the roots, the `-name` filter and the
+# case flag all still come from the shared `find_targets`. `-ok` / `-okdir` are
+# NORMALISED to `-exec` / `-execdir` before it is called, which is why there is
+# no second copy of `_FIND_FILTERS` here. What is local is only the JUDGMENT:
+# which program the `-exec` runs, and therefore which verb label the hit carries.
+_CMD_BREAKS = (";", "&&", "||", "|", "&", "(", ")", "{", "}", "|&")
+_FIND_EXEC_FLAGS = {"-ok": "-exec", "-okdir": "-execdir"}
+
+
+def _lex(command: str) -> list:
+    """The WHOLE command as tokens, quote- and escape-aware.
+
+    Lexing the raw string is the point: the shared splitter cuts on a bare `;`
+    before anything sees the backslash that escapes it."""
+    import shlex
+    try:
+        return shlex.split(command)
+    except ValueError:
+        return []          # a command that cannot be read denies nothing
+
+
+def _command_starts(tokens: list) -> list:
+    """Index of every token that begins a command in the stream."""
+    starts = [0] if tokens else []
+    for i, tok in enumerate(tokens):
+        if tok in _CMD_BREAKS and i + 1 < len(tokens):
+            starts.append(i + 1)
+    return starts
+
+
+def _stage_end(tokens: list, start: int) -> int:
+    j = start
+    while j < len(tokens) and tokens[j] not in _CMD_BREAKS:
+        j += 1
+    return j
+
+
+def _exec_program(args: list):
+    """The program a find's `-exec` / `-execdir` runs, or None."""
+    for i, tok in enumerate(args):
+        if tok in ("-exec", "-execdir") and i + 1 < len(args):
+            return os.path.basename(args[i + 1])
+    return None
+
+
+def _find_hits(args: list, here: str, assume_delete: bool = False) -> list:
+    """(kind, target, verb) for ONE find invocation's arguments.
+
+    The verb is the PROGRAM that acts, so a removing one lands in
+    `_REMOVING_VERBS` and keeps the per-verb `.claude` rule intact: an empty
+    drop-box directory stays deletable, and a find that PUTS keeps being judged
+    as a put."""
+    args = [_FIND_EXEC_FLAGS.get(a, a) for a in args]
+    mod = _parser()
+    probe = args + ["-delete"] if assume_delete else args
+    # `assume_delete` is how the LEFT side of a pipe is read. The shared
+    # `find_targets` extracts roots and the `-name` filter only for a find it
+    # already believes deletes, and a find feeding `xargs rm` deletes nothing by
+    # itself: it PRINTS. The paths it prints are the paths it would delete, so
+    # the extraction is asked the question it can answer and the verb comes from
+    # the stage that actually removes.
+    try:
+        roots, pattern, icase = mod.find_targets(probe)
+    except Exception:
+        return []
+    if not roots:
+        return []
+    prog = _exec_program(args)
+    if prog in _REMOVING_PROGRAMS:
+        verb = prog
+    elif prog:
+        verb = f"find -exec {prog}"          # a put: judged as one
+    else:
+        verb = "find -delete"
+    out = []
+    for root in roots:
+        base = mod.resolve(root, here)
+        if pattern:
+            out.append(("iglob" if icase else "glob",
+                        os.path.join(base, "*" + pattern), verb))
+        else:
+            out.append(("path", base, verb))
+    return out
+
+
+def _stdin_source_hits(tokens: list, here: str, verb: str) -> list:
+    """(kind, target, verb) for the paths a pipeline stage FEEDS to the next one.
+
+    `find <live>/scripts -name '*.py' | xargs rm` reaches every file the find
+    matches, and the shared parser sees two segments: a `find` that deletes
+    nothing and an `xargs rm` whose target list is on stdin. Its own residual
+    calls that "xargs fed from STDIN, where the targets never appear in the
+    command", which is true of `cat list | xargs rm` and false here: the paths
+    are in the command, one stage to the left."""
+    if not tokens:
+        return []
+    mod = _parser()
+    base = os.path.basename(tokens[0])
+    if base == "find":
+        return [(kind, target, verb)
+                for kind, target, _v in _find_hits(tokens[1:], here,
+                                                   assume_delete=True)]
+    out = []
+    for tok in tokens[1:]:
+        if tok.startswith("-"):
+            continue
+        if "/" not in tok and "*" not in tok:
+            continue                    # a bare word is not a path we can test
+        target = mod.resolve(tok, here)
+        out.append(("glob" if any(c in tok for c in "*?[") else "path",
+                    target, verb))
+    return out
+
+
+def indirect_removal_hits(command: str, cwd: str) -> list:
+    """(kind, target, verb) for a removal that reaches its paths through
+    another program on the same line: `find -exec`, and a pipe into a removing
+    verb.
+
+    A substring fast-out keeps it off the hot path."""
+    if "find" not in command and "|" not in command and \
+            not _C_CHANNEL.search(command):
+        return []
+    tokens = _lex(command)
+    if not tokens:
+        return []
+    mod = _parser()
+    here = cwd
+    out = []
+    starts = _command_starts(tokens)
+    for n, start in enumerate(starts):
+        end = _stage_end(tokens, start)
+        stage = tokens[start:end]
+        if not stage:
+            continue
+        if stage[0] in ("cd", "pushd") and len(stage) > 1:
+            here = mod.resolve(stage[1], here)
+            continue
+        if os.path.basename(stage[0]) == "find":
+            out.extend(_find_hits(stage[1:], here))
+            continue
+        # A BUNDLED `-c` on a shell host. `sh -c 'rm -rf <live>/scripts'` and
+        # `bash -c` are denied by the shared parser, which recurses on a LITERAL
+        # `-c` token; `bash -ec` carries no such token and was measured ALLOW.
+        # This is the same blind spot the interpreter layer of this file already
+        # fixed for its own fast-out, so it reuses that reader (`_c_bodies`,
+        # host-checked) rather than growing a second one, and it fires only
+        # where the parser is blind: a bundle with no literal `-c` beside it.
+        if "-c" not in stage:
+            for body in _c_bodies(stage):
+                out.extend(bash_targets(body, here))
+            if _c_bodies(stage):
+                continue
+        # a stage whose program REMOVES and whose paths come from stdin
+        if start == 0 or tokens[start - 1] not in ("|", "|&"):
+            continue
+        try:
+            prog, _here = mod.peel_wrappers(mod.peel_env(list(stage)), here)
+        except Exception:
+            prog = stage
+        if not prog:
+            continue
+        verb = os.path.basename(prog[0])
+        if verb not in _REMOVING_PROGRAMS:
+            continue
+        prev_start = starts[n - 1] if n else 0
+        prev = tokens[prev_start:_stage_end(tokens, prev_start)]
+        out.extend(_stdin_source_hits(prev, here, verb))
+    return out
+
+
+# ONE PLACE DECIDES WHETHER A `find` REMOVES, and it is `_find_hits` above,
+# which labels every hit with the PROGRAM that acts. A second mechanism lived
+# here for one cycle: a helper that re-read the command and flipped the shared
+# parser's label at consumption time. It is gone rather than kept as a safety
+# net. Measured by reverting it: with the label correct at the source it no
+# longer changes any verdict, and the case it was written for
+# (`find <dir>/.claude -exec cp settings.json {} +`) still denies without it.
+# A redundant mechanism that never fires is the same trap as a second list of
+# what removes: it drifts, and nobody notices because nothing depends on it.
+
+
+# Two git verbs that reach an arming surface without naming a file, both
+# measured as ALLOW and both an arming surface by this gate's own criterion.
+#
+#   `git -C ~/.claude config core.hooksPath <dir>` writes `.git/config`, and
+#   that key names the directory `.githooks/pre-push` is run from. The live tree
+#   really carries `core.hooksPath=.githooks`, so one `config` call repoints the
+#   very push gate this file protects BY NAME. The deny covers every SET, not
+#   just that key: `.git/config` is now a protected file and a set is what
+#   writes it. Reads (`--get`, `--list`, `--get-all`, `--get-regexp`) stay
+#   allowed, which is the shape that appears in real traffic. The over-fire is
+#   stated rather than hidden: `git config user.email` inside the live root is
+#   denied too, and the development path is the same one every other deny here
+#   points at, a worktree or the operator's own terminal.
+#
+#   `git push --no-verify` skips `.githooks/pre-push` entirely, which is the
+#   push-time half of RULE #1's wiring assertion. It is not a file write, so it
+#   gets its own kind and its own copy. `-n` is NOT it: for `push`, `-n` means
+#   `--dry-run`, so only the long spelling is matched.
+# A SET is what writes `.git/config`, and `git config <name>` with ONE
+# positional is a READ that prints the value. Requiring a name AND a value (or
+# an explicit mutating flag) is not a nicety: measured over 18,154 distinct real
+# Bash calls, the "one positional is a set" version denied two commands, both of
+# them `git config core.hooksPath` READING the key to check it is still
+# `.githooks`, which is the diagnostic this very rule exists to protect.
+_CONFIG_READS = ("--get", "--get-all", "--get-regexp", "--get-urlmatch",
+                 "--list", "-l", "--get-color", "--get-colorbool")
+_CONFIG_WRITES = ("--unset", "--unset-all", "--add", "--replace-all", "--edit",
+                  "-e", "--rename-section", "--remove-section")
+
+
+def extra_git_hits(command: str, cwd: str) -> list:
+    """(kind, target, verb) for git verbs that disarm without naming a file."""
+    import shlex
+    if "git" not in command:
+        return []
+    if "config" not in command and "--no-verify" not in command:
+        return []
+    mod = _parser()
+    try:
+        segments = mod._dim_helpers()[0](command or "")
+    except Exception:
+        segments = [command or ""]
+    here, out = cwd, []
+    for seg in segments:
+        try:
+            tokens = shlex.split(seg.strip().rstrip(";"))
+        except ValueError:
+            continue
+        # `2>&1` is a redirect, not an argument, and counting it as one made
+        # `git -C <repo> config core.hooksPath 2>&1` look like a two-positional
+        # SET. Measured: that was the last false deny left in the corpus replay.
+        _redirs, tokens = mod.redirect_targets(tokens)
+        if not tokens:
+            continue
+        if tokens[0] in ("cd", "pushd") and len(tokens) > 1:
+            here = mod.resolve(tokens[1], here)
+            continue
+        if os.path.basename(tokens[0]) != "git":
+            continue
+        parsed = mod.git_parse(tokens)
+        if not parsed:
+            continue
+        repo, sub_cmd, rest = parsed
+        base_dir = mod.resolve(repo, here) if repo else here
+        root = kernel_proc.enclosing_worktree_root(base_dir) or base_dir
+        if sub_cmd == "config":
+            if any(a.split("=", 1)[0] in _CONFIG_READS for a in rest):
+                continue
+            positional = [a for a in rest if not a.startswith("-")]
+            writes = any(a.split("=", 1)[0] in _CONFIG_WRITES for a in rest)
+            if len(positional) < 2 and not writes:
+                continue                       # a read, not a set
+            out.append(("path", os.path.join(root, ".git", "config"),
+                        "git config"))
+        elif sub_cmd == "push" and any(
+                a.split("=", 1)[0] == "--no-verify" for a in rest):
+            out.append(("push", root, "git push --no-verify"))
+    return out
+
+
 _BRANCH_VERBS = ("checkout", "switch")
 
 
+# Flags of checkout/switch whose argument is definitely NOT a start point, kept
+# deliberately SHORT. `--track origin/x` is the counter-example that sets the
+# rule: its argument IS the commit checked out, so listing it here would exempt
+# `checkout -b tmp --track origin/x`, which rewrites the tree. Anything not
+# named here that carries a space-separated value has that value counted as a
+# positional, which REFUSES the exemption. Conservative is the right direction:
+# a missed exemption costs one deny on a legitimate command, a wrong one
+# reopens the whole-tree rewrite.
+_BRANCH_VALUED = ("--conflict", "--pathspec-from-file")
+
+
 def branch_creation_only(command: str) -> bool:
-    """True when the ONE checkout/switch in this command creates a branch.
+    """True when the ONE checkout/switch in this command creates a branch AT
+    HEAD and names no start point.
 
-    `git checkout -b`, `checkout -qb` and `switch -c` make a new ref AT HEAD and
-    rewrite no file, yet the shared parser labels them whole-tree (they NAME
-    something) and this gate then printed "rewrites the whole working tree",
-    which is false. About ten of them appear in real traffic.
+    THE START POINT IS THE WHOLE RULE, and leaving it out reopened exactly the
+    whole-tree rewrite this exemption was carved out of. `git checkout -b`,
+    `checkout -qb` and `switch -c` make a new ref at HEAD and rewrite no file,
+    which is why the deny copy that fired on them ("rewrites the whole working
+    tree") was false and why about ten of them appear in real traffic. But git
+    takes an OPTIONAL START POINT after the new name, and with one the command
+    checks that commit out: QA took a real git receipt, a file reading `good`
+    before `git checkout -b tmp evil` and `EVIL` after it. The first version of
+    this function returned True the moment it saw a flag carrying the create
+    letter and never looked at what followed, so all four of
 
-    The exemption is scoped to a command carrying exactly ONE such verb, on
-    purpose: `git -C ~/.claude checkout -b tmp && git -C ~/.claude checkout evil`
-    would otherwise be exempted by its harmless half. Two of them and the
-    command is judged as before."""
+        git -C <live> checkout -b tmp evil
+        git -C <live> switch   -c tmp evil
+        git -C <live> checkout -B tmp evil
+        git -C <live> checkout -C tmp evil
+
+    were exempted by their harmless half, one token before the harmful one.
+
+    So the test is POSITIONAL, not flag-shaped: exempt only when the create flag
+    is present AND the verb is followed by exactly ONE positional, the new
+    branch name. `-b tmp` exempts; `-b tmp <anything>` does not, whatever the
+    anything is (a branch, a tag, a SHA), because every spelling of a second
+    positional is a start point and every start point rewrites the tree. That
+    also answers the upper-case pair without a second rule: `-B tmp` and
+    `-C tmp` force-move a ref to HEAD and touch no file, `-B tmp evil` moves it
+    to `evil` and checks that out, and the positional count separates them.
+
+    A `--` pathspec separator is never a branch creation (`git checkout -b x --
+    file` is not a thing, and `checkout -- <path>` is the file-restore shape the
+    path layer owns), so it refuses the exemption too.
+
+    Still scoped to a command carrying exactly ONE such verb, unchanged and for
+    the same reason: `git -C ~/.claude checkout -b tmp && git -C ~/.claude
+    checkout evil` would otherwise be exempted by its harmless half."""
     import shlex
     try:
         tokens = shlex.split(command)
@@ -1088,15 +2159,29 @@ def branch_creation_only(command: str) -> bool:
         return False
     i = seen[0]
     letter = "b" if tokens[i] == "checkout" else "c"
-    for tok in tokens[i + 1:]:
-        if not tok.startswith("-"):
-            return False
-        if tok == "--orphan":
-            return True
-        if not tok.startswith("--") and \
-                (letter in tok[1:] or letter.upper() in tok[1:]):
-            return True
-    return False
+    creates, positionals = False, 0
+    rest = tokens[i + 1:]
+    j = 0
+    while j < len(rest):
+        tok = rest[j]
+        j += 1
+        if tok == "--":
+            return False                  # a pathspec, never a branch creation
+        if tok.startswith("-") and tok != "-":
+            name = tok.split("=", 1)[0]
+            if name in ("--orphan",):
+                creates = True
+                continue
+            if name in _BRANCH_VALUED:
+                if "=" not in tok:
+                    j += 1                # its value is not the start point
+                continue
+            if not tok.startswith("--") and \
+                    (letter in tok[1:] or letter.upper() in tok[1:]):
+                creates = True
+            continue
+        positionals += 1
+    return creates and positionals == 1
 
 
 # The heredoc reader is NOT the `-c` reader, and the difference is measured.
@@ -1125,8 +2210,29 @@ def branch_creation_only(command: str) -> bool:
 # through a VARIABLE escapes this reader, and both genuine live writes in the
 # corpus were that shape. It is the same residual the `-c` layer already names
 # ("a path built from a variable"), now true of both channels instead of one.
+# THE HOST DOES NOT HAVE TO PRECEDE THE `<<`, and requiring it on the same line
+# left the two most ordinary spellings uncovered, both measured as ALLOW:
+#
+#     cat <<'PY' | python3            <- the host is downstream of the heredoc
+#     node - <<JS                     <- `node` and `perl` were not hosts at all
+#
+# The second one is worse than a miss: with no `node` and no `perl` in the
+# table, the `writeFileSync` and `os.replace`/`shutil` entries of `_DIRECT_WRITE`
+# below were UNREACHABLE from a heredoc, so two of them were dead code that no
+# fixture could exercise (QA's surviving mutants M11 and M13). That is exactly
+# the dead-entry class this file killed in the host table one commit ago,
+# reappearing in the pattern table, and it is why the fix is to make the entries
+# reachable rather than to delete them.
+#
+# So the test is now "does this command run an interpreter at all", anywhere,
+# with the interpreter list widened to the ones whose write idioms are already
+# in `_DIRECT_WRITE`. That is safe HERE and would not be safe on the `-c`
+# channel, for the reason spelled out above: this reader asks the NARROW
+# question (is the protected path the direct operand of a write?), so a wider
+# entry admits more bodies to a test that still refuses prose.
 _HEREDOC_HOST = re.compile(
-    r"(?:^|[\s;&|(])(?:[\w./-]*/)?(?:bash|sh|zsh|dash|python[0-9.]*|py)\b[^\n]*<<")
+    r"""(?:^|[\s;&|(`"'])(?:[\w./-]*/)?"""
+    r"""(?:bash|sh|zsh|dash|python[0-9.]*|py|node|nodejs|deno|bun|perl|ruby|php)\b""")
 
 # A write whose DESTINATION is the literal itself. `{q}` is the escaped needle.
 #
@@ -1141,30 +2247,51 @@ _HEREDOC_HOST = re.compile(
 # denies with the entry and allows without it, which is what its fixture pins.
 # The accident that covers the plain form also goes away when the shared
 # `_split_heredocs` lands and bodies stop being sub-commands.
+# A WRITING MODE: anything starting w/a/x, plus `r+`, which truncates nothing on
+# open and is a write handle all the same (`open(p,'r+').truncate(0)` was
+# measured as ALLOW). `{p}` is the optional string PREFIX, so an f-string
+# literal (`open(f'~/.claude/settings.json','w')`) is the same pattern.
+_MODE = r"""['"](?:[waxWAX]|[rR]\+)"""
+_PRE = r"""[fFrRbBuU]{0,2}"""
 _DIRECT_WRITE = (
-    r"""open\s*\(\s*['"]{q}['"]\s*,\s*['"][waxWAX]""",
-    r"""(?:pathlib\.)?Path\s*\(\s*['"]{q}['"]\s*\)\s*\."""
-    r"""(?:write_text|write_bytes|open\s*\(\s*['"][wa])""",
+    # open(<lit>, 'w') / open(<lit>, mode='w') / open(os.path.expanduser(<lit>), 'w')
+    r"""open\s*\(\s*(?:(?:os\.path\.)?expanduser\s*\(\s*)?""" + _PRE +
+    r"""['"]{q}['"]\s*\)?\s*,\s*(?:[^)]*?,\s*)?(?:mode\s*=\s*)?""" + _MODE,
+    # Path(<lit>)[.expanduser()].write_text / .write_bytes / .open('w')
+    r"""(?:pathlib\.)?Path\s*\(\s*""" + _PRE + r"""['"]{q}['"]\s*\)"""
+    r"""(?:\s*\.\s*(?:expanduser|resolve|absolute)\s*\(\s*\))*\s*\."""
+    r"""(?:write_text|write_bytes|open\s*\(\s*""" + _PRE + _MODE + r""")""",
     r"""(?:writeFileSync|appendFileSync)\s*\(\s*['"`]{q}['"`]""",
     r""">>?\s*['"]?{q}""",
-    r"""(?:os\.replace|shutil\.copy2?|shutil\.move)\s*\([^)]*,\s*['"]{q}['"]""",
+    r"""(?:os\.replace|os\.rename|shutil\.copy2?|shutil\.copyfile|shutil\.move)"""
+    r"""\s*\([^)]*,\s*""" + _PRE + r"""['"]{q}['"]""",
 )
 
 
 def heredoc_write(command: str):
     """(literal, "direct write") when a heredoc body writes a protected path as
-    the direct operand of a write call or a shell redirect."""
-    if not _HEREDOC_HOST.search(command):
-        return None
-    bodies = heredoc_bodies(command)
-    if not bodies:
+    the direct operand of a write call or a shell redirect.
+
+    The host is looked for in the SHELL half only; see `heredoc_split` for the
+    measurement that put it there."""
+    shell, bodies = heredoc_split(command)
+    if not bodies or not _HEREDOC_HOST.search(shell):
         return None
     needles = _needles()
     for body in bodies:
+        flat = _normalize_paths(body)
         for needle in needles:
+            if needle not in flat:
+                continue          # cheap string test before any regex compile
             quoted = re.escape(needle)
             for pat in _DIRECT_WRITE:
-                if re.search(pat.format(q=quoted), body):
+                # `.replace`, never `.format`: these patterns carry regex
+                # repetition braces (`{0,2}`), and str.format read one as a
+                # field name, raised KeyError, and the module-level fail-open
+                # swallowed it. A whole layer was silently off. The selftest
+                # compiles every pattern against a sample needle so a brace
+                # cannot do that again.
+                if re.search(pat.replace("{q}", quoted), flat):
                     return needle, "direct write"
     return None
 
@@ -1238,6 +2365,33 @@ def deny_tree(verb: str, root: str) -> None:
     )
 
 
+def deny_push(root: str) -> None:
+    deny(
+        f"ARMING SURFACE: `git push --no-verify` at {root} skips "
+        f".githooks/pre-push, which is where RULE #1's wiring assertion runs "
+        f"(brain_doctor --gate-receipt) and where the leak guard scans every "
+        f"commit being pushed. Skipping the hook is the same disarm as deleting "
+        f"it, one flag instead of one file, and it is the LIVE brain tree. Push "
+        f"without the flag, or run the push in the operator's own terminal, "
+        f"which is not hooked. {_ONLY_WRITER}"
+    )
+
+
+def deny_own_import(detail: str) -> None:
+    deny(
+        f"ARMING SURFACE: this gate could not import its own `kernel_proc` "
+        f"({detail}), the module that resolves the live brain root, so it can "
+        f"decide nothing about any path. That module is INSIDE the set this gate "
+        f"protects, and the import sat at module scope with nothing around it: "
+        f"the process exited before `main()` existed, wrote no stdout, and the "
+        f"harness read the silence as ALLOW. Same silent all-ALLOW as a missing "
+        f"shared parser, one import earlier. A load failure is structural and no "
+        f"command can provoke it, so it denies. Restore scripts/kernel_proc.py "
+        f"from a worktree, or run the restore in the operator's own terminal, "
+        f"which is not hooked. {_ONLY_WRITER}"
+    )
+
+
 def deny_parser(detail: str) -> None:
     deny(
         f"ARMING SURFACE: the shared command parser could not be loaded "
@@ -1248,6 +2402,23 @@ def deny_parser(detail: str) -> None:
         f"and nothing was printed. A floor that cannot read denies instead. "
         f"Restore the file from a worktree, or run the restore in the "
         f"operator's own terminal, which is not hooked. {_ONLY_WRITER}"
+    )
+
+
+def deny_unparsed(size: int) -> None:
+    deny(
+        f"ARMING SURFACE: this command is {size} bytes, past the {_MAX_PARSED} "
+        f"byte parse ceiling, and it carries a mutation token, so this gate "
+        f"cannot tell whether it names a protected path without a parse that "
+        f"would outlast the hook. Measured on this machine: 400 KB takes 14 s "
+        f"through this gate and 1 MB takes 67 s, past the harness's 60 s "
+        f"default, and a KILLED hook writes no stdout, which reads as ALLOW. So "
+        f"the ambiguity is resolved closed rather than timed out. A command that "
+        f"carries no mutation token at all is still allowed at any size, because "
+        f"the parser's own first line would return nothing for it. The ceiling "
+        f"costs nothing real: of 18,154 distinct Bash commands in this machine's "
+        f"transcripts the largest is 32,359 bytes. Split the payload into a file "
+        f"and run that instead."
     )
 
 
@@ -1306,6 +2477,12 @@ def write_targets(tool_input: dict) -> list:
 
 
 def main() -> int:
+    if KERNEL_IMPORT_ERROR:
+        # Before anything is parsed: every test below goes through kernel_proc,
+        # and this gate is the floor, so it answers a broken floor with a deny
+        # instead of the silent exit the harness reads as ALLOW.
+        deny_own_import(KERNEL_IMPORT_ERROR)
+        return 0
     try:
         payload = json.loads(sys.stdin.read())
     except Exception:
@@ -1321,7 +2498,7 @@ def main() -> int:
     if tool in WRITE_TOOLS:
         for target in write_targets(tool_input):
             # a Write CREATES its target, so an absent `.claude` is protected
-            live, why = hit(target, removing=False)
+            live, why = hit(target, removing=False, verb=tool)
             if live:
                 journal_deny(pid, {"target": target, "live": live, "verb": tool})
                 deny_file(tool, kernel_proc.norm_path(target), live, why)
@@ -1341,8 +2518,9 @@ def main() -> int:
     # one long token. Denying here is also strictly safer than denying later: an
     # oversize command that ALSO names a protected path was going to be denied
     # anyway, so nothing legitimate is lost by answering earlier.
-    if len(command) > _MAX_SCANNED:
-        channel = "an interpreter `-c` body" if _BUNDLED_C.search(command) else ""
+    oversize = len(command) > _MAX_SCANNED
+    if oversize:
+        channel = "an interpreter `-c` body" if _C_CHANNEL.search(command) else ""
         if "<<" in command and heredoc_bodies(command):
             channel = (channel + " and a heredoc") if channel else "a heredoc body"
         if channel:
@@ -1350,12 +2528,43 @@ def main() -> int:
                                "channel": channel, "command": command[:200]})
             deny_oversize(len(command), channel)
             return 0
-        return 0                      # nothing here would have read it
+        # NO CHANNEL: fall THROUGH to the path and tree layers rather than
+        # returning. The previous version returned here, and the header claimed
+        # "the path and tree layers still run on it", which was simply false:
+        # `rm -rf ~/.claude/scripts` DENIED at 65,536 bytes and ALLOWED at
+        # 65,537 with a comment as the padding, and QA measured the same
+        # one-character bypass for `git checkout evil`, a `>` redirect into
+        # hooks.json, `tee` on settings and `sed -i` on a gate body. The cap
+        # exists to bound the INTERPRETER scan, which is quadratic in one token;
+        # the path and tree layers are the cheap ones and there was never a
+        # reason to skip them. The two inline readers are skipped below instead,
+        # which is what the cap was always about, and the sibling Bash
+        # tree-owner gate already runs this same parser on this same command
+        # with no cap at all, so nothing new is being paid for in wall clock.
+
+    if len(command) > _MAX_PARSED:
+        try:
+            triggers = tuple(_parser()._TRIGGERS) + _LOCAL_TRIGGERS
+        except ParserUnavailable as exc:
+            journal_deny(pid, {"why": "parser-unavailable", "detail": str(exc),
+                               "command": command[:200]})
+            deny_parser(str(exc))
+            return 0
+        if not any(t in command for t in triggers):
+            return 0          # the parse would have returned [] for this too
+        journal_deny(pid, {"why": "over-parse-ceiling", "bytes": len(command),
+                           "command": command[:200]})
+        deny_unparsed(len(command))
+        return 0
 
     try:
         hits = bash_targets(command, str(payload.get("cwd") or ""))
         for root, verb in extra_tree_hits(command, here):
             hits.append(("tree", root, verb))
+        hits.extend(extra_git_hits(command, here))
+        hits.extend(extra_put_hits(command, here))
+        hits.extend(exotic_redirect_hits(command, here))
+        hits.extend(indirect_removal_hits(command, here))
     except ParserUnavailable as exc:
         journal_deny(pid, {"why": "parser-unavailable", "detail": str(exc),
                            "command": command[:200]})
@@ -1363,6 +2572,13 @@ def main() -> int:
         return 0
 
     for kind, target, verb in hits:
+        if kind == "push":
+            if target and _fold(kernel_proc.norm_path(target)) == _fold(brain):
+                journal_deny(pid, {"root": target, "verb": verb,
+                                   "why": "push-no-verify"})
+                deny_push(brain)
+                return 0
+            continue
         if kind in _TREE_KINDS:
             if verb in _TREE_EXEMPT:
                 continue
@@ -1381,7 +2597,7 @@ def main() -> int:
                 deny_parser(str(exc))
                 return 0
         elif kind in ("path", "state"):
-            live, why = hit(target, removing=verb in _REMOVING_VERBS)
+            live, why = hit(target, removing=verb in _REMOVING_VERBS, verb=verb)
         else:
             continue                      # 'stage' stages, it does not rewrite
         if live:
@@ -1389,6 +2605,9 @@ def main() -> int:
                                "command": command[:200]})
             deny_file(verb, kernel_proc.norm_path(target), live, why)
             return 0
+
+    if oversize:
+        return 0        # the two inline readers are what the cap actually bounds
 
     found = interpreter_write(command)
     if found:
@@ -1489,11 +2708,14 @@ def _selftest(fdir: str = None) -> int:
                 continue
             allowed += 1
 
-    ok, why = _assert_parser_load_denies()
-    if not ok:
-        failures.append(why)
-    else:
-        blocked += 1
+    for assertion in (_assert_parser_load_denies,
+                      _assert_own_import_denies,
+                      _assert_heredoc_reader_live):
+        ok, why = assertion()
+        if not ok:
+            failures.append(why)
+        else:
+            blocked += 1
 
     if failures:
         print("selftest FAIL: " + "; ".join(failures), file=sys.stderr)
@@ -1501,8 +2723,87 @@ def _selftest(fdir: str = None) -> int:
     print(f"selftest PASS: {blocked} block + {allowed} allow "
           f"(g__pretool__arming-surface.py vs {os.path.basename(fdir)}); "
           f"every deny names its live file, the same edit in a worktree allows, "
-          f"and a gate that cannot load its parser denies instead of allowing")
+          f"and a gate that cannot import kernel_proc, cannot load its parser, or "
+          f"cannot run its heredoc reader denies instead of allowing")
     return 0
+
+
+def _assert_heredoc_reader_live() -> tuple:
+    """The heredoc reader must still ANSWER, driven through the real function.
+
+    Not decoration, and not a re-implementation on purpose. `_DIRECT_WRITE`
+    carries regex repetition braces (`{0,2}`); they were substituted with
+    `str.format` for one commit, `{0,2}` read as a format FIELD, KeyError rose
+    out of `heredoc_write`, and the module-level fail-open swallowed it. The
+    whole heredoc layer was off and every fixture stayed green, because an
+    exception allows. A check that re-did the substitution itself would have
+    stayed green too, which is why this one calls `heredoc_write` and asserts on
+    what it returns: the canonical attack must come back a hit, and the same
+    file READ through the same heredoc must come back None."""
+    target = os.path.join(brain_root(), "settings.json")
+    attack = f"python3 - <<PY\nopen('{target}','w').write('x')\nPY"
+    benign = f"python3 - <<PY\nprint(open('{target}').read())\nPY"
+    try:
+        hit_ = heredoc_write(attack)
+        miss = heredoc_write(benign)
+    except Exception as exc:
+        return False, (f"heredoc_write raised on the canonical shapes "
+                       f"({type(exc).__name__}: {exc}); the module-level "
+                       f"fail-open would turn that into an all-ALLOW")
+    if not hit_:
+        return False, "heredoc_write missed the canonical direct write"
+    if miss:
+        return False, "heredoc_write fired on a read through the same heredoc"
+    return True, ""
+
+
+def _assert_own_import_denies() -> tuple:
+    """The gate's OWN first import, asserted the same way as the borrowed one.
+
+    `kernel_proc.py` is inside the set this gate protects and was imported at
+    module scope with nothing around it. Missing or syntactically broken, the
+    process raised before `main()` existed: rc=1, empty stdout, which the
+    harness reads as ALLOW. The `try/except` at the bottom of this file could
+    never catch it, because the failure happens before `__main__` is reached.
+
+    Both legs are run, because they fail at different points of the import
+    machinery: a module that is NOT THERE (ModuleNotFoundError) and one that is
+    there and BROKEN (SyntaxError). The gate is copied into a directory holding
+    only itself, so `sys.path[0]` finds no kernel_proc; no payload and no env
+    can reach this, which is the point."""
+    import shutil
+    import subprocess
+    import tempfile
+    payload = json.dumps({"tool_name": "Bash", "cwd": "/tmp",
+                          "tool_input": {"command": "rm -rf ~/.claude/scripts"}})
+    for leg, body in (("absent", None), ("broken", "import nosuchmodule_zzz\n")):
+        sandbox = tempfile.mkdtemp(prefix="arming-ownimport-")
+        try:
+            copy = os.path.join(sandbox, "gate.py")
+            shutil.copyfile(os.path.abspath(__file__), copy)
+            if body is not None:
+                with open(os.path.join(sandbox, "kernel_proc.py"), "w",
+                          encoding="utf-8") as fh:
+                    fh.write(body)
+            env = dict(os.environ)
+            env["HOME"] = sandbox
+            env["USERPROFILE"] = sandbox
+            env["PYTHONPATH"] = ""
+            env["CLAUDE_SESSION_ID"] = "__selftest__"
+            cp = subprocess.run([sys.executable, copy], input=payload,
+                                capture_output=True, text=True, cwd=sandbox,
+                                env=env, timeout=30)
+        finally:
+            shutil.rmtree(sandbox, ignore_errors=True)
+        import gate_selftest
+        if not gate_selftest.emits_block(cp.returncode, cp.stdout):
+            return False, (f"own-import failure ({leg}) did NOT block "
+                           f"(fail-open): rc={cp.returncode} "
+                           f"out={(cp.stdout or '')[:120]!r}")
+        if "kernel_proc" not in (cp.stdout or ""):
+            return False, (f"own-import deny ({leg}) did not name the module it "
+                           f"could not import")
+    return True, ""
 
 
 def _assert_parser_load_denies() -> tuple:
