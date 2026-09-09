@@ -130,12 +130,40 @@ def _has_bare_force(sub: str) -> bool:
     return force
 
 
-def _deny(reason: str) -> None:
+# -- v8 kernel journal (Phase 4, v8-kernel.md) --------------------------------
+_KERNEL_RULE = "GIT.version-control"
+
+
+def _journal_deny(reason, payload=None, tool_use_id=None) -> None:
+    """Mirror this refusal into the refusing process's journal.
+
+    FAIL-OPEN by contract: every error is swallowed and the verdict this gate
+    just reached is unchanged. A journal that cannot be written must never turn
+    a deny into an allow. kernel_proc is loaded by PATH through importlib, not
+    by name, so nothing on sys.path can shadow it.
+    """
+    try:
+        import importlib.util
+        import os as _os
+        _path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "kernel_proc.py")
+        _spec = importlib.util.spec_from_file_location("_kernel_proc_journal", _path)
+        _kp = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_kp)
+        _payload = payload if isinstance(payload, dict) else {}
+        _kp.journal_deny(_KERNEL_RULE, reason,
+                         tool_use_id if tool_use_id is not None else _payload.get("tool_use_id"),
+                         _kp.resolve_pid(_payload))
+    except Exception:
+        pass
+
+
+def _deny(reason: str, payload: dict = None) -> None:
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PreToolUse",
         "permissionDecision": "deny",
         "permissionDecisionReason": reason,
     }}))
+    _journal_deny(reason, payload)
 
 
 def main() -> int:
@@ -155,7 +183,8 @@ def main() -> int:
                 _deny(
                     f"⛔ GIT discipline: '{os.path.basename(str(fp))}' uses a sequential-copy "
                     f"suffix (_old/_backup/_final/_copy). Git IS the version history. "
-                    f"Use the single canonical name and let git track it."
+                    f"Use the single canonical name and let git track it.",
+                    data,
                 )
                 return 0
             return 0
@@ -172,7 +201,8 @@ def main() -> int:
                         "⛔ GIT discipline: `git push --force` to main/master is denied. "
                         "Use --force-with-lease on a feature branch, or the operator can "
                         "set OCTO_ALLOW_FORCE=1 (agent-proof env) for the rare legit case. "
-                        "Never force-push a protected default branch."
+                        "Never force-push a protected default branch.",
+                        data,
                     )
                     return 0
     except Exception:

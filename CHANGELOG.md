@@ -15,6 +15,26 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-09-07]: v7.7.1
+- fix(kernel): an ending must not be able to create a process (#294)
+
+## [2026-09-07]: v7.7.0
+- feat(kernel): phase 3, per-process quotas in the hot-path gate (v8) (#291)
+
+## [2026-09-07]: v7.6.0
+- feat(kernel): phase 4, every refusal and every receipt in the journal, replay proven (v8) (#293)
+
+## [2026-09-07]: v7.5.0
+- feat(kernel): phase 2, one writer per tree and per lane, enforced (v8) (#292)
+
+## [2026-09-07]: v7.4.0
+- feat(kernel): phase 1b, the octo CLI (ps, top, replay, journal, bench) (v8) (#290)
+- docs(changelog): backfill v7.3.0 (#289)
+
+## [2026-09-07]: v7.3.0
+- feat(kernel): phase 1a, process table and hash-chained journal (v8) (#280)
+- docs(changelog): backfill v7.2.5 (#279)
+
 ## [2026-09-07]: v7.2.5
 - docs(architecture): v8 kernel plan, panel-reviewed (process, isolation, journal, package) (#278)
 - docs(changelog): backfill v7.2.4 (#276)

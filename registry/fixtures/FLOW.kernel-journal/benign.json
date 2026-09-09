@@ -1,0 +1,9 @@
+{
+  "hook_event_name": "PreToolUse",
+  "session_id": "kernel-selftest-session",
+  "agent_id": "kernel-selftest-agent",
+  "tool_name": "Read",
+  "tool_use_id": "toolu_kernel_benign",
+  "tool_input": {"file_path": "/home/agent/workspace/README.md"},
+  "cwd": "/home/agent/workspace"
+}

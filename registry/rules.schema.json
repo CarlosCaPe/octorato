@@ -124,7 +124,7 @@
         },
         "firing_event": {
           "type": ["string", "null"],
-          "enum": ["UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionStart", "SubagentStop", "PrePush", null]
+          "enum": ["UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionStart", "SubagentStart", "SubagentStop", "PermissionDenied", "PrePush", null]
         },
         "firing_matcher": { "type": ["string", "null"] }
       },

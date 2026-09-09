@@ -168,7 +168,7 @@ These are the **engineering invariants** the theory demands. Any hook addition, 
 
 3. **Gate/block hooks FAIL-CLOSED.** A gate that errors (file write check crashes, gate-check script missing) defaults to **block**. Rationale: the cost of a false block is a delayed write; the cost of a false pass is an unsafe or incoherent write to the brain or an arm.
 
-4. **On the same event, hooks compose as a Behavior Tree with explicit priority** (specified, not implemented: today it is the array order in `hooks.json`). Blocking gates form a Sequence (any gate failure aborts the action). Injectors form parallel children under a Fallback root. The specification asks for an integer priority field in the hook definition, so that ordering stops being implicit.
+4. **On the same event, hooks compose as a Behavior Tree with explicit priority** (specified, NOT implemented). The runtime fact it is specified against: hooks registered on one event run in PARALLEL, and a `PreToolUse` call is denied when ANY of them denies. Array order in `hooks.json` is not priority and no gate may assume it; the two v8 isolation gates and the dimension gate deny independently, and either deny wins. Blocking gates form a Sequence (any gate failure aborts the action). Injectors form parallel children under a Fallback root. The specification asks for an integer priority field in the hook definition, so that ordering stops being implicit.
 
 5. **A 4D phase advances only when its Behavior Tree returns `Success`.** This is the machine-verifiable exit condition for each phase. "Looks done" is not a Behavior Tree status.
 

@@ -1,0 +1,44 @@
+{
+  "processes": {
+    "agent-a": {
+      "lanes": [
+        "{{SANDBOX}}/work/tree/pkg/a.py"
+      ],
+      "pid": "agent-a",
+      "ppid": "sess-parent",
+      "registered_ts": 0,
+      "tree": "{{SANDBOX}}/work/tree",
+      "type": "Backend Architect",
+      "worktree": "{{SANDBOX}}/work/tree"
+    },
+    "agent-arm": {
+      "lanes": [],
+      "pid": "agent-arm",
+      "ppid": "sess-parent",
+      "registered_ts": 0,
+      "tree": "{{SANDBOX}}/arms/alpha",
+      "type": "Data Engineer",
+      "worktree": "{{SANDBOX}}/arms/alpha"
+    },
+    "agent-b": {
+      "lanes": [
+        "{{SANDBOX}}/work/tree/b.py"
+      ],
+      "pid": "agent-b",
+      "ppid": "sess-parent",
+      "registered_ts": 0,
+      "tree": "{{SANDBOX}}/work/tree",
+      "type": "Code Reviewer",
+      "worktree": "{{SANDBOX}}/work/tree"
+    },
+    "sess-parent": {
+      "lanes": [],
+      "pid": "sess-parent",
+      "registered_ts": 0,
+      "tree": "{{SANDBOX}}/work/tree",
+      "type": "main loop",
+      "worktree": "{{SANDBOX}}/work/tree"
+    }
+  },
+  "version": 1
+}

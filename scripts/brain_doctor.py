@@ -675,7 +675,8 @@ REGISTRY_SCHEMA = CLAUDE_DIR / "registry" / "rules.schema.json"
 NAMING_POLICY = CLAUDE_DIR / "registry" / "naming-policy.yaml"
 HOOKS_JSON = CLAUDE_DIR / "hooks.json"
 CLAUDE_MD = CLAUDE_DIR / "CLAUDE.md"
-CC_EVENTS = {"UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionStart", "SubagentStop"}
+CC_EVENTS = {"UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionStart",
+             "SubagentStart", "SubagentStop", "PermissionDenied"}
 
 
 def _rt(p: Path) -> str:
@@ -1402,6 +1403,454 @@ def check_enforcement_floor(fix: bool) -> Result:
     return Result(key, PASS, ledger)
 
 
+def _kernel_policy_problems(data, where: str) -> list:
+    """Validate one kernel policy layer against the inline schema.
+
+    Deliberately not a JSON-Schema file: the policy is four keys, and a schema
+    in another file is one more thing that can drift from the parser in
+    g__pretool__kernel.py. Reported per BAD KEY, because "your quota config is
+    invalid" sends an operator to read the whole file, while
+    "`subagent.max_minutes` is 'none', not a number" is the edit."""
+    problems = []
+    if not isinstance(data, dict):
+        return [f"{where} is not a mapping"]
+    for tier in ("subagent", "main"):
+        if tier not in data:
+            continue
+        sub = data[tier]
+        if not isinstance(sub, dict):
+            problems.append(f"{where}: `{tier}` is not a mapping")
+            continue
+        for cap in ("max_tool_calls", "max_minutes"):
+            if cap not in sub:
+                continue
+            val = sub[cap]
+            if isinstance(val, bool) or not isinstance(val, int) or val < 0:
+                problems.append(f"{where}: `{tier}.{cap}` is {val!r}, want a "
+                                "non-negative integer (0 = unlimited)")
+        for extra in sub:
+            if extra not in ("max_tool_calls", "max_minutes"):
+                problems.append(f"{where}: `{tier}.{extra}` is not a known cap")
+    if "qa_multiplier" in data:
+        val = data["qa_multiplier"]
+        if isinstance(val, bool) or not isinstance(val, int) or val < 1:
+            problems.append(f"{where}: `qa_multiplier` is {val!r}, want an integer >= 1")
+    if "qa_agent_types_regex" in data:
+        val = data["qa_agent_types_regex"]
+        if not isinstance(val, str) or not val:
+            problems.append(f"{where}: `qa_agent_types_regex` is {val!r}, want a regex string")
+        else:
+            try:
+                re.compile(val)
+            except re.error as exc:
+                problems.append(f"{where}: `qa_agent_types_regex` does not compile ({exc})")
+    for key in data:
+        if key in ("subagent", "main", "qa_multiplier", "qa_agent_types_regex"):
+            continue
+        if str(key).startswith("_"):
+            continue          # `_comment` in the template, and any future note key
+        problems.append(f"{where}: `{key}` is not a known policy key")
+    return problems
+
+
+def check_kernel_quota_live(fix: bool) -> Result:
+    """v8 Phase 3: prove the quota gate refuses, and that the policy it reads parses.
+
+    Three assertions, in the order they can fail on a real machine. The gate
+    still blocks its fixtures. The tracked slot `registry/kernel.yaml` parses
+    under a REAL yaml parser and validates, which is what stops the hot path's
+    12-line scalar reader from silently misreading a file nobody checked. And
+    the operator's occupant, `company/config/kernel.json`, validates when it
+    exists.
+
+    The occupant is a WARN, never a FAIL, and it is the same stance the gate
+    takes: a malformed occupant falls back to the tracked defaults and lets
+    calls run, so it degrades enforcement rather than stopping work. That is
+    worth naming loudly, and it is not worth failing a push over. The slot IS a
+    FAIL: it ships in the repo, so a broken one is broken for everybody."""
+    key = "kernel-quota-live"
+    loc = ("scripts/g__pretool__kernel.py --selftest "
+           "registry/fixtures/FLOW.kernel-quota")
+    if not (CLAUDE_DIR / "scripts" / "g__pretool__kernel.py").exists():
+        return Result(key, FAIL, "scripts/g__pretool__kernel.py is missing",
+                      "restore the kernel hot-path gate")
+    cp = _run_selftest_locator(loc)
+    if cp.returncode != 0:
+        detail = (cp.stderr or cp.stdout or "").strip().splitlines()
+        return Result(key, FAIL,
+                      "quota selftest failed: "
+                      + (detail[-1] if detail else f"exit {cp.returncode}"),
+                      "the quota gate no longer refuses a process over its cap; "
+                      "fix the gate or the fixture")
+
+    slot = CLAUDE_DIR / "registry" / "kernel.yaml"
+    if not slot.exists():
+        return Result(key, FAIL, "registry/kernel.yaml is missing",
+                      "restore the tracked quota policy slot; the gate falls back to "
+                      "unlimited without it, so caps stop being enforced silently")
+    try:
+        import yaml
+        policy = yaml.safe_load(slot.read_text(encoding="utf-8"))
+    except ImportError:
+        return Result(key, WARN, "quota selftest PASS; PyYAML absent, slot unvalidated",
+                      "pip install --user pyyaml to validate registry/kernel.yaml")
+    except Exception as exc:
+        return Result(key, FAIL, f"registry/kernel.yaml does not parse: {exc}",
+                      "fix the YAML; the hot path reads this file on every tool call")
+    problems = _kernel_policy_problems(policy, "registry/kernel.yaml")
+    if problems:
+        return Result(key, FAIL, "; ".join(problems[:4]),
+                      "fix the named key in registry/kernel.yaml")
+
+    caps = []
+    for tier in ("subagent", "main"):
+        row = (policy or {}).get(tier) or {}
+        caps.append(f"{tier} {row.get('max_tool_calls', 0)} calls/"
+                    f"{row.get('max_minutes', 0)} min")
+    # A non-zero cap in the TRACKED slot is a cap shipped to every clone, which
+    # is the one thing slot-not-occupant exists to prevent. It also makes the
+    # occupant line a lie: "nothing capped" would be printed while the slot caps
+    # everybody.
+    slot_capped = [f"{tier}.{cap}={row[cap]}"
+                   for tier in ("subagent", "main")
+                   for row in [(policy or {}).get(tier) or {}]
+                   for cap in ("max_tool_calls", "max_minutes")
+                   if isinstance(row.get(cap), int) and not isinstance(row.get(cap), bool)
+                   and row[cap] > 0]
+    occ = CLAUDE_DIR / "company" / "config" / "kernel.json"
+    detail = f"quota gate blocks; slot valid ({', '.join(caps)}, 0 = unlimited)"
+    if slot_capped:
+        detail += ("; the tracked slot carries a real cap (" + ", ".join(slot_capped)
+                   + "), and it ships to every clone")
+    if not occ.exists():
+        if slot_capped:
+            return Result(key, WARN, detail,
+                          "caps belong in the gitignored company/config/kernel.json; "
+                          "set registry/kernel.yaml back to 0 (unlimited)")
+        return Result(key, PASS, detail + "; no occupant, nothing capped on this machine")
+    try:
+        data = json.loads(occ.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return Result(key, WARN,
+                      detail + f"; company/config/kernel.json does not parse ({exc}), "
+                      "the gate is falling back to the unlimited defaults",
+                      "fix the JSON, or delete it if you meant to run uncapped")
+    bad = _kernel_policy_problems(data, "company/config/kernel.json")
+    if bad:
+        return Result(key, WARN, detail + "; " + "; ".join(bad[:3]),
+                      "fix the named key; until then that cap is not enforced")
+    ocaps = []
+    for tier in ("subagent", "main"):
+        row = data.get(tier) or {}
+        if row:
+            ocaps.append(f"{tier} {row.get('max_tool_calls', 0)} calls/"
+                         f"{row.get('max_minutes', 0)} min")
+    detail += "; occupant valid" + (" (" + ", ".join(ocaps) + ")" if ocaps else "")
+    if slot_capped:
+        return Result(key, WARN, detail,
+                      "caps belong in the gitignored company/config/kernel.json; "
+                      "set registry/kernel.yaml back to 0 (unlimited)")
+    return Result(key, PASS, detail)
+
+
+def check_kernel_process_live(fix: bool) -> Result:
+    """v8 Phase 1a-2: prove the kernel's PROCESS record is real on THIS machine.
+
+    A selftest proves the hooks work on fixtures; it says nothing about the
+    table those hooks have actually been writing. So this reads the real one,
+    read-only, and asserts the invariant the later phases lean on: a process the
+    liveness rule calls LIVE has a journal. A live row with no journal is a
+    phantom, and Phase 2 would deny writes on its behalf forever. The newest
+    five chains are verified (tamper evidence is worthless unverified), and the
+    `open` lines of the last week are counted, so calls that ran unjournaled
+    under OCTO_KERNEL_OPEN are a number, never a guess.
+
+    Phase 1b adds the reader's half. The golden replay is compared BYTE FOR
+    BYTE, because `octo replay` is the audit surface: a formatting drift that
+    nobody notices is a fixture that stopped proving anything. And the hot path
+    is timed, reported, and never failed on: timing is not a gate (v8-kernel.md
+    section 3), so a median over the budget is a WARN. It is also never skipped
+    "because the box is busy" - a number measured under load is still the
+    number this machine delivers, and hiding it would be the one way to lose
+    the trend.
+
+    Passes on a fresh install with no ptable at all, and never writes."""
+    key = "kernel-process-live"
+    for loc in ("scripts/r__subagent-start__proc-register.py --selftest "
+                "registry/fixtures/ARCHITECTURE.kernel-process",
+                "scripts/r__subagent-stop__proc-exit.py --selftest "
+                "registry/fixtures/ARCHITECTURE.kernel-process",
+                "scripts/octo.py --selftest "
+                "registry/fixtures/ARCHITECTURE.kernel-process"):
+        script = loc.split()[0]
+        if not (CLAUDE_DIR / script).exists():
+            return Result(key, FAIL, f"{script} is missing", "restore the kernel hook")
+        cp = _run_selftest_locator(loc)
+        if cp.returncode != 0:
+            detail = (cp.stderr or cp.stdout or "").strip().splitlines()
+            return Result(key, FAIL,
+                          f"{Path(script).name} selftest failed: "
+                          + (detail[-1] if detail else f"exit {cp.returncode}"),
+                          "the register/exit reflexes no longer prove themselves; fix the hook or the fixture")
+    sys.path.insert(0, str(CLAUDE_DIR / "scripts"))
+    try:
+        import time
+
+        import kernel_proc
+    except Exception as e:
+        return Result(key, FAIL, f"cannot import kernel_proc: {e}", "restore scripts/kernel_proc.py")
+
+    notes = []
+    if not (CLAUDE_DIR / "hooks.json").exists():
+        notes.append("hooks.json absent")
+    else:
+        try:
+            wired = json.loads((CLAUDE_DIR / "hooks.json").read_text(encoding="utf-8"))
+        except ValueError:
+            wired = {}
+        if not wired.get("SubagentStart"):
+            notes.append("runtime fallback: no SubagentStart hook, a child's start line "
+                         "waits for its first tool call (PreToolUse[Agent] + SubagentStop only)")
+
+    table = kernel_proc.read_ptable()
+    procs = table.get("processes", {})
+    now = time.time()
+    live, phantom = [], []
+    for pid in procs:
+        if kernel_proc.is_live(pid, table, now):
+            live.append(pid)
+            if not os.path.exists(kernel_proc.journal_path(pid)):
+                phantom.append(pid)
+    if phantom:
+        return Result(key, FAIL,
+                      f"{len(phantom)} live process(es) with no journal: " + ", ".join(phantom[:5]),
+                      "a live row with no journal holds lanes nothing can release; "
+                      "delete the row from ~/.claude/.cache/kernel/ptable.json")
+
+    jdir = kernel_proc.journal_dir()
+    journals = []
+    if os.path.isdir(jdir):
+        for name in os.listdir(jdir):
+            if not name.endswith(".jsonl"):
+                continue
+            path = os.path.join(jdir, name)
+            try:
+                journals.append((os.stat(path).st_mtime, name[:-6]))
+            except OSError:
+                continue
+    journals.sort(reverse=True)
+    for _, pid in journals[:5]:
+        code, why = kernel_proc.verify_detail(pid)
+        if code != 0:
+            return Result(key, FAIL, f"journal chain broken for pid {pid}: {why}",
+                          "the journal is append-only and hash-chained; a broken chain is tamper "
+                          "evidence, read it before deleting the file")
+    opened = 0
+    cutoff = now - 7 * 24 * 3600
+    for mtime, pid in journals:
+        if mtime < cutoff:
+            continue
+        for line in kernel_proc.read_journal(pid):
+            if isinstance(line, dict) and line.get("kind") == "open" \
+                    and float(line.get("ts") or 0) >= cutoff:
+                opened += int(line.get("count") or 0)
+    # the golden replay, byte for byte: `octo replay` is the audit surface
+    rdir = CLAUDE_DIR / "registry" / "fixtures" / "ARCHITECTURE.kernel-process" / "replay"
+    expected = rdir / "expected.txt"
+    if not expected.exists():
+        return Result(key, FAIL, "the golden replay fixture is missing",
+                      "restore registry/fixtures/ARCHITECTURE.kernel-process/replay/")
+    cp = run([PYTHON or "python3", str(CLAUDE_DIR / "scripts" / "octo.py"),
+              "replay", "--fixture", str(rdir)], cwd=CLAUDE_DIR)
+    if cp.returncode != 0:
+        return Result(key, FAIL, f"octo replay --fixture exited {cp.returncode}",
+                      "the replay reader is broken; run it by hand to see why")
+    if (cp.stdout or "") != expected.read_text(encoding="utf-8"):
+        return Result(key, FAIL, "the golden replay no longer matches expected.txt",
+                      "octo replay changed its output: re-read the diff before "
+                      "regenerating the golden, the fixture is the contract")
+
+    # the hot path, measured. Reported always, never a FAIL: timing is not a gate.
+    bench_note, status = "", PASS
+    cp = run([PYTHON or "python3", str(CLAUDE_DIR / "scripts" / "octo.py"),
+              "bench", "--json"], cwd=CLAUDE_DIR)
+    try:
+        data = json.loads(cp.stdout or "{}")
+        median, budget = float(data["median_ms"]), float(data.get("budget_ms") or 100.0)
+        bench_note = f"hot path median {median:.1f} ms over {data['runs']} run(s)"
+        if median > budget:
+            status = WARN
+            bench_note += f" (over the {budget:.0f} ms budget)"
+    except (ValueError, KeyError, TypeError):
+        status = WARN
+        bench_note = "hot path could not be measured"
+
+    msg = (f"3 selftests pass; {len(procs)} process row(s), {len(live)} live, all journaled; "
+           f"{min(len(journals), 5)} newest chain(s) verify; {opened} call(s) ran unjournaled "
+           f"in 7 days; golden replay matches; {bench_note}")
+    hint = ("the hot path is slower than the budget; it is a WARN by design, "
+            "compare `octo bench` on an idle box before acting"
+            if status == WARN else "")
+    return Result(key, status, msg + ("; " + "; ".join(notes) if notes else ""), hint)
+
+
+def check_kernel_isolation_gate(fix: bool) -> Result:
+    """v8 Phase 2: prove the two ISOLATION gates block AND are actually wired.
+
+    Two assertions, because either one alone lies. A selftest that passes on a
+    script nobody calls is a gate on paper; a hooks.json entry for a script that
+    no longer denies is a gate in name. So: run both `--selftest` proofs against
+    the shared fixture dir, then confirm each script sits in hooks.json at the
+    PreToolUse matcher it claims.
+
+    ORDER IS NEVER ASSERTED. Hooks on one event run in parallel and a PreToolUse
+    call is denied when ANY hook denies, so "after the dimension gate" would be a
+    claim about the runtime that the runtime does not make."""
+    key = "kernel-isolation-gate"
+    fixtures = "registry/fixtures/ARCHITECTURE.kernel-isolation"
+    # (script, matcher) pairs, not a script->matcher map: the write gate is wired
+    # twice, at its own tools and at Agent, where it releases the delegator's
+    # lanes instead of claiming one.
+    wanted = [
+        ("g__pretool-write__tree-owner.py", "Write|Edit|NotebookEdit|MultiEdit"),
+        ("g__pretool-write__tree-owner.py", "Agent"),
+        ("g__pretool-bash__tree-owner.py", "Bash"),
+    ]
+    if not (CLAUDE_DIR / fixtures).is_dir():
+        return Result(key, FAIL, f"{fixtures} is missing",
+                      "restore the isolation fixtures; without them neither gate proves itself")
+    for script in sorted({sc for sc, _m in wanted}):
+        if not (CLAUDE_DIR / "scripts" / script).exists():
+            return Result(key, FAIL, f"scripts/{script} is missing",
+                          "restore the isolation gate")
+        cp = _run_selftest_locator(f"scripts/{script} --selftest {fixtures}")
+        if cp.returncode != 0:
+            detail = (cp.stderr or cp.stdout or "").strip().splitlines()
+            return Result(key, FAIL,
+                          f"{script} selftest failed: "
+                          + (detail[-1] if detail else f"exit {cp.returncode}"),
+                          "one writer per tree and per lane is not enforced; fix the gate or the fixture")
+    idx = _hooks_index()
+    unwired = [f"{script} at PreToolUse|{matcher}" for script, matcher in wanted
+               if not any(e == "PreToolUse" and b == script and (mm == matcher or mm == "*")
+                          for (e, mm, b) in idx)]
+    if unwired:
+        return Result(key, FAIL, "not wired in hooks.json: " + "; ".join(unwired),
+                      "add the gate to hooks.json at its matcher, then run merge-hooks.py")
+    return Result(key, PASS,
+                  "both isolation gates prove themselves and are wired "
+                  "(Write|Edit|NotebookEdit|MultiEdit, Bash, and Agent for the delegate "
+                  "release); hook order not asserted, same-event hooks run in parallel")
+
+
+def check_kernel_replay(fix: bool) -> Result:
+    """v8 Phase 4: prove the JOURNAL is closed and replayable on THIS machine.
+
+    Three assertions, in rising cost:
+
+    1. The golden replay matches byte for byte, WITH `--verify`. It is the same
+       fixture `kernel-process-live` compares, run through the exit code that a
+       registry proof depends on, so a chain check that silently stopped
+       failing is caught here rather than at the next incident.
+    2. The 5 newest REAL journals replay and verify. A fixture proves the
+       reader; only a real journal proves the writers, and the writers are now
+       fifteen different scripts.
+    3. Every `deny` line in the last 7 days names a rule id that exists in
+       registry/rules.yaml. This is RULE #1 pointed at the journal: a refusal
+       attributed to a rule the registry does not carry is an orphan mechanism,
+       and it is a FAIL, not a WARN, because the alternative is a gate that
+       refuses work under a name nobody can look up.
+
+    Never writes. Passes on a fresh install with no journals at all: zero
+    journals is zero orphans, and saying so is honest where inventing a WARN
+    about an absent kernel would not be.
+    """
+    key = "kernel-replay"
+    rdir = CLAUDE_DIR / "registry" / "fixtures" / "ARCHITECTURE.kernel-process" / "replay"
+    expected = rdir / "expected.txt"
+    octo = CLAUDE_DIR / "scripts" / "octo.py"
+    if not octo.exists():
+        return Result(key, FAIL, "scripts/octo.py is missing", "restore the kernel CLI")
+    if not expected.exists():
+        return Result(key, FAIL, "the golden replay fixture is missing",
+                      "restore registry/fixtures/ARCHITECTURE.kernel-process/replay/")
+    py = PYTHON or "python3"
+    cp = run([py, str(octo), "replay", "--fixture", str(rdir), "--verify"], cwd=CLAUDE_DIR)
+    if cp.returncode != 0:
+        return Result(key, FAIL, f"golden replay --verify exited {cp.returncode}",
+                      "the golden chain no longer verifies; run the command by hand")
+    if (cp.stdout or "") != expected.read_text(encoding="utf-8"):
+        return Result(key, FAIL, "the golden replay no longer matches expected.txt",
+                      "octo replay changed its output: read the diff before regenerating "
+                      "the golden, the fixture is the contract")
+
+    cp = run([py, str(CLAUDE_DIR / "scripts" / "r__permission-denied__journal.py"),
+              "--selftest", "registry/fixtures/FLOW.kernel-journal"], cwd=CLAUDE_DIR)
+    if cp.returncode != 0:
+        detail = (cp.stderr or cp.stdout or "").strip().splitlines()
+        return Result(key, FAIL,
+                      "the PermissionDenied reflex selftest failed: "
+                      + (detail[-1] if detail else f"exit {cp.returncode}"),
+                      "a harness denial would go unrecorded; fix the reflex or the fixture")
+
+    sys.path.insert(0, str(CLAUDE_DIR / "scripts"))
+    try:
+        import time
+
+        import kernel_proc
+    except Exception as e:
+        return Result(key, FAIL, f"cannot import kernel_proc: {e}", "restore scripts/kernel_proc.py")
+
+    jdir = kernel_proc.journal_dir()
+    journals = []
+    if os.path.isdir(jdir):
+        for name in os.listdir(jdir):
+            if not name.endswith(".jsonl"):
+                continue
+            path = os.path.join(jdir, name)
+            try:
+                journals.append((os.stat(path).st_mtime, name[:-6]))
+            except OSError:
+                continue
+    journals.sort(reverse=True)
+    for _, pid in journals[:5]:
+        cp = run([py, str(octo), "replay", pid, "--verify"], cwd=CLAUDE_DIR)
+        if cp.returncode != 0:
+            return Result(key, FAIL, f"replay --verify failed for pid {pid}",
+                          "a real journal does not replay or its chain is broken; "
+                          f"run `octo replay {pid} --verify` and read it before deleting")
+
+    try:
+        registered = {r.id for r in Registry.load(REGISTRY_PATH).rules}
+    except Exception as e:
+        return Result(key, FAIL, f"cannot read registry/rules.yaml to check deny rule ids: {e}",
+                      "fix rules.yaml, then re-run")
+    now = time.time()
+    cutoff = now - 7 * 24 * 3600
+    denies, orphans = 0, {}
+    for mtime, pid in journals:
+        if mtime < cutoff:
+            continue
+        for line in kernel_proc.read_journal(pid):
+            if not isinstance(line, dict) or line.get("kind") != "deny":
+                continue
+            if float(line.get("ts") or 0) < cutoff:
+                continue
+            denies += 1
+            rule = str(line.get("rule") or "")
+            if rule not in registered:
+                orphans.setdefault(rule or "(unnamed)", []).append(pid)
+    if orphans:
+        named = ", ".join(f"{r} ({len(p)} journal(s))" for r, p in sorted(orphans.items())[:4])
+        return Result(key, FAIL,
+                      f"{len(orphans)} deny rule id(s) in 7 days are in no registry row: {named}",
+                      "a refusal under a name the registry does not carry is an orphan "
+                      "mechanism (RULE #1): register the rule, or fix the id the gate journals")
+    return Result(key, PASS,
+                  f"golden replay verifies byte for byte; {min(len(journals), 5)} real "
+                  f"journal(s) replay; {denies} deny(s) in 7 days, all naming a registered rule")
+
+
 def check_querymaster_security_detector(fix: bool) -> Result:
     """Actually RUN the querymaster security-canon detector so SECURITY.querymaster-rules
     is genuinely lived, not presence-with-extra-steps.
@@ -1712,6 +2161,10 @@ CHECKS = [
     ("waiver-age", check_waiver_age),
     ("incident-fixture-coverage", check_incident_fixture_coverage),
     ("reflex-triage", check_reflex_triage),
+    ("kernel-process-live", check_kernel_process_live),
+    ("kernel-isolation-gate", check_kernel_isolation_gate),
+    ("kernel-replay", check_kernel_replay),
+    ("kernel-quota-live", check_kernel_quota_live),
     ("querymaster-security-detector", check_querymaster_security_detector),
     ("rule-1-naming", check_naming),
     ("rule-1-orphans", check_orphan_hooks),

@@ -235,9 +235,13 @@ def scan_hooks() -> dict[str, list[str]]:
     with hooks_file.open(encoding="utf-8") as f:
         data = json.load(f)
 
-    events = ["PostToolUse", "PreToolUse", "SessionStart", "Stop", "UserPromptSubmit"]
+    # Derived from hooks.json itself, never a hardcoded list: a wired event the
+    # list did not name (SubagentStart, SubagentStop, PermissionDenied) rendered
+    # as if the brain had no hook on it, and the manifest is what the doctor and
+    # the docs read.
+    events = [k for k, v in data.items() if not k.startswith("$") and isinstance(v, list)]
     result: dict[str, list[str]] = {}
-    for event in events:
+    for event in sorted(events):
         entries = data.get(event, [])
         basenames: list[str] = []
         for entry in entries:
@@ -407,12 +411,11 @@ def render(
         lines.append("")
 
     # Hooks
-    events = ["PostToolUse", "PreToolUse", "SessionStart", "Stop", "UserPromptSubmit"]
     lines.append("## Hooks")
     lines.append("")
     lines.append("| Event | Wired Scripts |")
     lines.append("|---|---|")
-    for event in events:
+    for event in sorted(hooks):
         scripts_list = hooks.get(event, [])
         cell = ", ".join(scripts_list) if scripts_list else "(none)"
         lines.append(f"| {event} | {cell} |")

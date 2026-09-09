@@ -276,3 +276,8 @@ registry/fixtures/**/home/.wa-fixture/*.db
 # their seeds). Only the two directory rules are negated, nothing else.
 !registry/fixtures/**/.claude/
 !registry/fixtures/**/.cache/
+# Same reason for `company/`: the kernel quota gate reads its caps from
+# company/config/kernel.json, so its seed lives under a fixture `company/`
+# directory. This negates ONLY that directory under registry/fixtures; the
+# real /company/ at the brain root stays ignored by the rules at the top.
+!registry/fixtures/**/company/

@@ -1,0 +1,78 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/CarlosCaPe/octorato/schemas/kernel-journal.schema.json",
+  "title": "Octorato v8 kernel journal line",
+  "description": "One line of ~/.claude/.cache/kernel/journal/<pid>.jsonl. Append-only and hash-chained: `prev` is the sha256 of the previous raw line (null on the first), `seq` counts from 0, and `start_ts` is copied forward on every line so a reader never seeks to the head. Every line stays under 4096 bytes (the POSIX atomic-append bound, docs/architecture/trace-storage.md); a line that would exceed it is truncated field by field and marked `trunc`. Written by scripts/kernel_proc.py; see docs/architecture/v8-kernel.md.",
+  "type": "object",
+  "required": ["seq", "ts", "start_ts", "pid", "kind", "prev"],
+  "properties": {
+    "seq": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "0-based position in this process's journal; the chain verifier asserts it increments by one"
+    },
+    "ts": { "type": "number", "description": "unix seconds when the line was written" },
+    "start_ts": {
+      "type": "number",
+      "description": "unix seconds of this process's first line, copied forward so elapsed wall time is readable from any single line (Phase 3 quotas read it here)"
+    },
+    "pid": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._-]+$",
+      "description": "agent_id for a subagent, session_id for a main loop; sanitized to one path segment"
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["start", "tool", "exit", "deny", "receipt", "quota", "open", "release"],
+      "description": "start: the process was registered. tool: a tool call passed the hot-path gate. exit: the process ended (Phase 1a-2). deny: a fail-closed gate, or the harness itself, refused a call (Phase 4). receipt: a v7 receipt mirrored by id (Phase 4). quota: a quota was breached (Phase 3). open: N calls ran unjournaled under OCTO_KERNEL_OPEN, backfilled once the journal was writable. release: an operator freed this process's lanes with `octo ps --release` (Phase 1b)."
+    },
+    "prev": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "sha256 of the previous raw line; null on seq 0"
+    },
+    "trunc": {
+      "type": "boolean",
+      "description": "true when a payload field was shortened or dropped to stay under 4096 bytes; the core identity fields are never touched"
+    },
+    "ppid": { "type": "string", "description": "parent pid; start lines of a subagent" },
+    "type": { "type": "string", "description": "agent_type, or 'main' for a main loop" },
+    "worktree": { "type": "string", "description": "enclosing git worktree root of cwd" },
+    "dim_worktree": { "type": "string", "description": "per-session worktree from connectome/sessions.json, when session isolation recorded one" },
+    "cwd": { "type": "string" },
+    "source": { "type": "string", "description": "SessionStart source (startup, resume, clear)" },
+    "tool_name": { "type": "string" },
+    "tool_use_id": { "type": "string", "description": "harness-supplied id; Phase 4 pairs a tool line with its deny line by this" },
+    "input_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "sha256 of the tool input. The journal records the hash, never the content: the run stays verifiable, the payload stays in the harness transcript"
+    },
+    "agent_id": { "type": "string" },
+    "count": { "type": "integer", "minimum": 0, "description": "open lines: how many calls ran unjournaled" },
+    "first_ts": { "type": "number", "description": "open lines: first unjournaled call" },
+    "last_ts": { "type": "number", "description": "open lines: last unjournaled call" },
+    "ok": { "type": "boolean", "description": "exit lines: the subagent finished without an error" },
+    "status": { "type": "string", "description": "exit lines: ok | error | quota" },
+    "tool_count": { "type": "integer", "minimum": 0, "description": "exit lines: how many tool calls this process journaled" },
+    "seq_before": { "type": "integer", "description": "exit lines: seq of the last line written before this one, -1 when the exit line is the first" },
+    "duration": { "type": "number", "minimum": 0, "description": "exit lines: seconds between start_ts and the exit" },
+    "spawn_tool_use_id": { "type": "string", "description": "exit lines: the tool_use id of the Agent call that spawned this process, from the harness meta.json; named apart from tool_use_id because that one identifies the call a tool line describes" },
+    "spawn_depth": { "type": "integer", "minimum": 0, "description": "exit lines: spawnDepth from the harness meta.json, how deep in the spawn tree this process sat" },
+    "model": { "type": "string", "description": "exit lines: the engine the child actually ran on, from the harness meta.json" },
+    "agent_transcript_path": { "type": "string", "description": "exit lines: the harness-written transcript of this subagent, the pointer a consumer re-verifies against" },
+    "rule": { "type": "string", "description": "deny lines: the registry rule id that refused the call. `kernel-replay` FAILS on a rule id that is in no registry/rules.yaml row: an unregistered deny is an orphan mechanism (RULE #1)" },
+    "reason": { "type": "string", "description": "deny lines: the refusal text shown to the model" },
+    "source": { "type": "string", "description": "deny lines: who refused. Absent means an Octorato gate; 'harness' means the runtime itself denied (PermissionDenied, documented for auto-mode denials only)" },
+    "receipt_kind": { "type": "string", "description": "receipt lines: the v7 receipt's own kind (seek, qa, gate-liveness)" },
+    "receipt_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "receipt lines: sha256 of the ledger record. The journal mirrors a receipt's IDENTITY only, never its content: the receipt itself stays in ~/.claude/.cache/receipts, so the journal does not become a second copy of the ledger"
+    },
+    "receipt_ts": { "type": "string", "description": "receipt lines: the ledger record's own ISO timestamp, kept apart from `ts` (when the mirror was written)" }
+  },
+  "additionalProperties": true
+}

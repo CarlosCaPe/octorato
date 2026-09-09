@@ -40,7 +40,8 @@ SCHEMA_FILE = CLAUDE_DIR / "hooks.schema.json"
 POLICY_FILE = CLAUDE_DIR / ".githooks" / "push-policy.txt"
 
 KNOWN_EVENTS = {"UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop",
-                "SubagentStop", "Notification", "PreCompact", "SessionStart"}
+                "SubagentStart", "SubagentStop", "PermissionDenied",
+                "Notification", "PreCompact", "SessionStart"}
 # A hook command may only invoke a local interpreter on a ~/.claude script — no inline
 # curl/wget, no embedded tokens, no absolute home paths.
 SAFE_COMMAND_RE = re.compile(

@@ -452,6 +452,33 @@ def _extract_pr_id(matched_sub: str) -> str:
     return "unknown"
 
 
+# -- v8 kernel journal (Phase 4, v8-kernel.md) --------------------------------
+_KERNEL_RULE = "CODE.qa-merge-gate"
+
+
+def _journal_deny(reason, payload=None, tool_use_id=None) -> None:
+    """Mirror this refusal into the refusing process's journal.
+
+    FAIL-OPEN by contract: every error is swallowed and the verdict this gate
+    just reached is unchanged. A journal that cannot be written must never turn
+    a deny into an allow. kernel_proc is loaded by PATH through importlib, not
+    by name, so nothing on sys.path can shadow it.
+    """
+    try:
+        import importlib.util
+        import os as _os
+        _path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "kernel_proc.py")
+        _spec = importlib.util.spec_from_file_location("_kernel_proc_journal", _path)
+        _kp = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_kp)
+        _payload = payload if isinstance(payload, dict) else {}
+        _kp.journal_deny(_KERNEL_RULE, reason,
+                         tool_use_id if tool_use_id is not None else _payload.get("tool_use_id"),
+                         _kp.resolve_pid(_payload))
+    except Exception:
+        pass
+
+
 def _nudge(text: str) -> None:
     print(json.dumps({
         "hookSpecificOutput": {
@@ -521,6 +548,7 @@ def main() -> int:
                     f"agent transcript.\n  Explicit operator bypass: OCTO_QA_OK=1 (blanket, logged).",
                     file=sys.stderr,
                 )
+                _journal_deny(f"merge of PR #{pr_id} blocked: operator-approved but no QA receipt", data)
                 return 2
             _nudge(f"✓ QA gate: QA receipt for PR #{pr_id} ({qa.get('agent_type') or 'subagent'}, {qa.get('ts', '')}).")
         _nudge(
@@ -553,6 +581,7 @@ def main() -> int:
         f"  Operator directive 2026-06-01: the gate is the agent's approval, not just green CI.",
         file=sys.stderr,
     )
+    _journal_deny(f"merge of {label} blocked: no operator approval in OCTO_MERGE_APPROVE", data)
     return 2
 
 

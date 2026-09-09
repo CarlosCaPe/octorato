@@ -195,7 +195,34 @@ def _walk_strings(obj, out: list) -> None:
             _walk_strings(v, out)
 
 
-def _deny(reason: str) -> None:
+# -- v8 kernel journal (Phase 4, v8-kernel.md) --------------------------------
+_KERNEL_RULE = "COMMS.outward-send-gate"
+
+
+def _journal_deny(reason, payload=None, tool_use_id=None) -> None:
+    """Mirror this refusal into the refusing process's journal.
+
+    FAIL-OPEN by contract: every error is swallowed and the verdict this gate
+    just reached is unchanged. A journal that cannot be written must never turn
+    a deny into an allow. kernel_proc is loaded by PATH through importlib, not
+    by name, so nothing on sys.path can shadow it.
+    """
+    try:
+        import importlib.util
+        import os as _os
+        _path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "kernel_proc.py")
+        _spec = importlib.util.spec_from_file_location("_kernel_proc_journal", _path)
+        _kp = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_kp)
+        _payload = payload if isinstance(payload, dict) else {}
+        _kp.journal_deny(_KERNEL_RULE, reason,
+                         tool_use_id if tool_use_id is not None else _payload.get("tool_use_id"),
+                         _kp.resolve_pid(_payload))
+    except Exception:
+        pass
+
+
+def _deny(reason: str, payload: dict = None) -> None:
     print(json.dumps({
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
@@ -203,6 +230,7 @@ def _deny(reason: str) -> None:
             "permissionDecisionReason": reason,
         }
     }, ensure_ascii=False))
+    _journal_deny(reason, payload)
 
 
 def _bash_is_send(command: str) -> bool:
@@ -363,7 +391,7 @@ def main() -> int:
         reason = (f"🧾 GATE DE SALIDA falló al verificar recibos ({type(e).__name__}); "
                   f"se niega el envío en vez de abrirse. Revisa ~/.claude/.cache/receipts.")
     if reason:
-        _deny(reason)
+        _deny(reason, data)
     return 0
 
 

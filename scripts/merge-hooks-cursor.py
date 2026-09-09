@@ -31,6 +31,12 @@ Event map (Claude Code -> Cursor):
 Matcher tool map (Claude -> Cursor):  Bash->Shell, Write->Write, Edit->Write.
 Skill / Agent matchers have no Cursor equivalent and are DROPPED.
 
+Events Cursor cannot project (docs/architecture/multi-runtime.md:64): SubagentStart
+and PermissionDenied. Cursor has no subagent lifecycle event and no auto-mode
+denial event, so the v8 kernel's child-process record and its refusal journal do
+not exist there. They are dropped here by name rather than by falling through
+_target_event, so the gap is stated instead of inferred; the doctor names it too.
+
 Modes:
   (default)  write ~/.cursor/hooks.json (merge: manage our events, keep foreign ones)
   --check    compare only; exit 0 in-sync/absent, exit 1 drift; write nothing
@@ -62,6 +68,10 @@ MARKER = "_octorato_managed_events"
 # Claude tool-name -> Cursor tool-name (matcher tokens). None == drop the token.
 _TOOL_MAP = {"Bash": "Shell", "Write": "Write", "Edit": "Write",
              "Skill": None, "Agent": None}
+
+# Claude events with no Cursor counterpart. Dropped by name, with a note, so a
+# missing kernel reflex on Cursor reads as a known runtime gap and not as drift.
+_UNPROJECTABLE_EVENTS = {"SubagentStart", "PermissionDenied"}
 
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -133,6 +143,8 @@ def build_projection(hooks_data: dict) -> dict:
     for claude_event, entries in hooks_data.items():
         if claude_event.startswith("$") or not isinstance(entries, list):
             continue
+        if claude_event in _UNPROJECTABLE_EVENTS:
+            continue  # no Cursor equivalent; see the module docstring
         for entry in entries:
             matcher = entry.get("matcher")
             cursor_tokens, dropped_all = _map_matcher(matcher)

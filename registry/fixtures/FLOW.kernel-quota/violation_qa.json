@@ -1,0 +1,8 @@
+{
+  "_why": "`qamain` is typed Reality Checker, so its 1-minute cap becomes 3. It is over that too: the multiplier is headroom, never an exemption, and a worker the main loop names after a QA persona does not become uncapped.",
+  "session_id": "qamain",
+  "tool_name": "Read",
+  "tool_use_id": "toolu_quota_qa_over",
+  "tool_input": {"file_path": "/tmp/x"},
+  "cwd": "/tmp"
+}

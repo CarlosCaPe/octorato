@@ -1770,3 +1770,189 @@ rules:
     locator: SubagentStop|*|r__subagent-stop__qa-receipt.py
     expect: present
   liveness_required: FIRES
+- id: ARCHITECTURE.kernel-process
+  title: 'Kernel PROCESS: every main loop and every subagent has a pid, a parent and a worktree'
+  category: ARCHITECTURE
+  source:
+    file: CLAUDE.md
+    anchor: 'Kernel: process and journal'
+  strength: REFLEX
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Reflex
+    canonical_name: r__session__proc-register.py
+    firing_event: SessionStart
+    firing_matcher: '*'
+  - kind: Reflex
+    canonical_name: r__subagent-start__proc-register.py
+    firing_event: SubagentStart
+    firing_matcher: '*'
+  - kind: Reflex
+    canonical_name: r__subagent-stop__proc-exit.py
+    firing_event: SubagentStop
+    firing_matcher: '*'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: SessionStart|*|r__session__proc-register.py
+    expect: present
+  - method: IN_HOOKS_JSON
+    locator: SubagentStart|*|r__subagent-start__proc-register.py
+    expect: present
+  - method: IN_HOOKS_JSON
+    locator: SubagentStop|*|r__subagent-stop__proc-exit.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/r__subagent-start__proc-register.py --selftest registry/fixtures/ARCHITECTURE.kernel-process
+    expect: 0
+  - method: EXIT_CODE
+    locator: scripts/r__subagent-stop__proc-exit.py --selftest registry/fixtures/ARCHITECTURE.kernel-process
+    expect: 0
+  - method: EXIT_CODE
+    locator: scripts/octo.py --selftest registry/fixtures/ARCHITECTURE.kernel-process
+    expect: 0
+  liveness_required: FIRES
+- id: ARCHITECTURE.kernel-isolation
+  title: 'Kernel ISOLATION: one writer per tree and per lane, denied not advised'
+  category: ARCHITECTURE
+  source:
+    file: CLAUDE.md
+    anchor: Session/Instance Isolation
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Gate
+    canonical_name: g__pretool-write__tree-owner.py
+    firing_event: PreToolUse
+    firing_matcher: 'Write|Edit|NotebookEdit|MultiEdit'
+  - kind: Gate
+    canonical_name: g__pretool-bash__tree-owner.py
+    firing_event: PreToolUse
+    firing_matcher: Bash
+  - kind: Gate
+    canonical_name: g__pretool-write__tree-owner.py
+    firing_event: PreToolUse
+    firing_matcher: Agent
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: PreToolUse|Write|Edit|NotebookEdit|MultiEdit|g__pretool-write__tree-owner.py
+    expect: present
+  - method: IN_HOOKS_JSON
+    locator: PreToolUse|Bash|g__pretool-bash__tree-owner.py
+    expect: present
+  - method: IN_HOOKS_JSON
+    locator: PreToolUse|Agent|g__pretool-write__tree-owner.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/g__pretool-write__tree-owner.py --selftest registry/fixtures/ARCHITECTURE.kernel-isolation
+    expect: 0
+  - method: EXIT_CODE
+    locator: scripts/g__pretool-bash__tree-owner.py --selftest registry/fixtures/ARCHITECTURE.kernel-isolation
+    expect: 0
+  liveness_required: FIRES
+- id: FLOW.kernel-journal
+  title: 'Kernel JOURNAL: no tool call runs unjournaled (append-only, hash-chained, per process)'
+  category: FLOW
+  source:
+    file: CLAUDE.md
+    anchor: 'Kernel: process and journal'
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Gate
+    canonical_name: g__pretool__kernel.py
+    firing_event: PreToolUse
+    firing_matcher: '*'
+  # Phase 4 closes the journal: the gate records the calls that RAN, this reflex
+  # records the refusals the harness itself made, and the thirteen fail-closed
+  # gates journal the refusals Octorato made. A run is replayable only when all
+  # three land in the same file.
+  - kind: Reflex
+    canonical_name: r__permission-denied__journal.py
+    firing_event: PermissionDenied
+    firing_matcher: '*'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: PreToolUse|*|g__pretool__kernel.py
+    expect: present
+  - method: IN_HOOKS_JSON
+    locator: PermissionDenied|*|r__permission-denied__journal.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/g__pretool__kernel.py --selftest registry/fixtures/FLOW.kernel-journal
+    expect: 0
+  - method: EXIT_CODE
+    locator: scripts/octo.py replay --fixture registry/fixtures/ARCHITECTURE.kernel-process/replay
+      --verify
+    expect: 0
+  liveness_required: FIRES
+- id: HARNESS.permission-denied
+  title: 'Kernel JOURNAL: a harness auto-mode denial is recorded like any other refusal'
+  category: FLOW
+  source:
+    file: docs/architecture/v8-kernel.md
+    anchor: 'Phase 4: JOURNAL closure'
+  strength: REFLEX
+  firing_mode:
+  - hook
+  # REFLEX, not GATE, and the distinction is the honest one: the harness has
+  # already refused by the time this fires. The reflex observes and records; it
+  # never decides. The row exists because `kernel-replay` FAILS on a deny line
+  # whose rule id is in no registry row, and this reflex writes deny lines under
+  # exactly this id. An unregistered deny is an orphan mechanism (RULE #1).
+  #
+  # Scope, measured on runtime 2.1.261, not assumed: the event fires for the
+  # AUTO-MODE classifier only. A permission-rule denial and a user-rejected
+  # denial do NOT fire it, so neither is journaled and neither is claimed (the
+  # user rejection stays the residual v8-kernel.md section 6 names). The payload
+  # carries {tool_name, tool_input, tool_use_id, reason} and no denial-kind
+  # field: `toolDenialKind` lives on the transcript tool_result records, never
+  # on the hook payload, so the reflex records the runtime's own reason string.
+  #
+  # The id prefix names the SOURCE of the refusal (the harness, not Octorato),
+  # the way SEC.prod-write-gate names its own; the category stays inside the
+  # schema's enum, because a new category is a schema PR with zero enforcement
+  # gain (v8-kernel.md section 5, decision 1).
+  mechanism:
+  - kind: Reflex
+    canonical_name: r__permission-denied__journal.py
+    firing_event: PermissionDenied
+    firing_matcher: '*'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: PermissionDenied|*|r__permission-denied__journal.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/r__permission-denied__journal.py --selftest registry/fixtures/FLOW.kernel-journal
+    expect: 0
+  liveness_required: FIRES
+- id: FLOW.kernel-quota
+  title: 'Kernel QUOTA: a process cannot exceed the cap its policy gives it'
+  category: FLOW
+  source:
+    file: CLAUDE.md
+    anchor: 'Kernel: quotas'
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Gate
+    canonical_name: g__pretool__kernel.py
+    firing_event: PreToolUse
+    firing_matcher: '*'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: PreToolUse|*|g__pretool__kernel.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/g__pretool__kernel.py --selftest registry/fixtures/FLOW.kernel-quota
+    expect: 0
+  liveness_required: FIRES
