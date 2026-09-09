@@ -17,6 +17,7 @@ import importlib.util
 import io
 import json
 import os
+import pty
 import re
 import shutil
 import sys
@@ -1038,12 +1039,11 @@ class TestEachNoWindowRoadNamesItself(DenyCoverageCase):
         self.assertIn("no answer in 1s", cp.stderr)
         doctor.RUN_TIMEOUT = saved
 
-        # The cheapest of the three guards, and a PARTIAL one: nothing this doctor
-        # spawns inherits fd 0, so it cannot eat the ref list `pre-push` feeds this
-        # process. It does NOT close /dev/tty, which is how ssh reads a passphrase:
-        # measured under a pty, `sh -c 'read x </dev/tty'` with stdin=/dev/null
-        # blocked the full 3s. That is why the timeout above is the guard that
-        # actually ends an ssh wait, and why this one is asserted for what it does.
+        # The cheapest of the four guards, and a PARTIAL one on its own: nothing this
+        # doctor spawns inherits fd 0, so it cannot eat the ref list `pre-push`
+        # feeds this process. On its own it does NOT close /dev/tty (measured under
+        # a pty: `sh -c 'read x </dev/tty'` with stdin=/dev/null blocked the full
+        # 3s); `start_new_session` is what closes that, asserted separately below.
         if not Path("/proc/self/fd/0").exists():
             self.skipTest("no /proc on this platform, so fd 0 cannot be named")
         fd0 = doctor.run([sys.executable, "-c",
@@ -1172,6 +1172,57 @@ class TestEachNoWindowRoadNamesItself(DenyCoverageCase):
             subprocess.run([sys.executable, "-c", "pass"], capture_output=True,
                            stdin=subprocess.DEVNULL, input=b"")
 
+    def test_a_child_cannot_open_the_operators_terminal(self):
+        """The channel `stdin=/dev/null` cannot cover, now covered by the session.
+
+        `start_new_session=True` went in for the group kill, and it closes /dev/tty
+        as a second effect worth pinning: a child in a fresh session has no
+        controlling terminal, so the open fails outright. Measured under a pty, the
+        same `read x </dev/tty` that blocked the full 3s with only stdin on
+        /dev/null returned in 0.05s with `cannot open /dev/tty: No such device or
+        address`.
+
+        Needs a pty to be meaningful: with no controlling terminal anywhere in the
+        picture there is nothing for the child to have opened, and the test would
+        pass without proving a thing.
+        """
+        if not sys.platform.startswith("linux"):
+            self.skipTest("controlling-terminal semantics are POSIX-specific here")
+        probe = (
+            "import importlib.util, sys, time\n"
+            f"spec = importlib.util.spec_from_file_location('d', {str(DOCTOR)!r})\n"
+            "d = importlib.util.module_from_spec(spec); spec.loader.exec_module(d)\n"
+            "d.RUN_TIMEOUT = 3\n"
+            "t = time.time()\n"
+            "cp = d.run(['sh', '-c', 'read x </dev/tty; echo got'])\n"
+            "print('RC=%s ELAPSED=%.2f ERR=%s' % (cp.returncode, time.time()-t, "
+            "cp.stderr.strip()))\n"
+        )
+        pid, fd = pty.fork()
+        if pid == 0:                                   # pragma: no cover - child
+            os.chdir(str(BRAIN))
+            os.execv(sys.executable, [sys.executable, "-c", probe])
+        out = b""
+        while True:
+            try:
+                chunk = os.read(fd, 4096)
+            except OSError:
+                break
+            if not chunk:
+                break
+            out += chunk
+        os.waitpid(pid, 0)
+        text = out.decode(errors="replace")
+        self.assertIn("RC=", text, f"the pty probe said nothing: {text[:200]!r}")
+        self.assertNotIn("RC=124", text,
+                         "the child blocked on /dev/tty and only the ceiling ended "
+                         "it; that is the wedged pre-push this guard is for")
+        elapsed = float(re.search(r"ELAPSED=([\d.]+)", text).group(1))
+        self.assertLess(elapsed, 2.0,
+                        f"took {elapsed}s: the open did not fail, it waited")
+        self.assertIn("cannot open /dev/tty", text,
+                      "the child still had a controlling terminal to open")
+
     def test_the_terminal_prompt_is_ended_by_the_env_not_by_the_empty_stdin(self):
         """The guard that actually ends git's username prompt is the env var.
 
@@ -1194,9 +1245,21 @@ class TestEachNoWindowRoadNamesItself(DenyCoverageCase):
         # A timeout is NOT a skip here. rc 124 is the exact failure this guard
         # exists to prevent, so it FAILS loudly; only a genuinely absent network
         # skips, and it has to say so in git's own words.
-        if any(s in cp.stderr for s in ("Could not resolve host",
-                                        "Temporary failure in name resolution")):
-            self.skipTest(f"no DNS for the remote: {cp.stderr.strip()[:80]}")
+        # DNS resolving is not the same as the remote being reachable, and the
+        # first version of this skip only knew the DNS shape. With a route blocked
+        # (`-c http.proxy=http://127.0.0.1:9`) git answers rc 128 with `Failed to
+        # connect ... Couldn't connect to server`, which clears both rc asserts and
+        # then fails on the prompt string: a captive portal or a corporate firewall
+        # turns the suite RED instead of skipping. The skip is the CONNECT-failure
+        # class, not one member of it.
+        unreachable = ("Could not resolve host", "Temporary failure in name resolution",
+                       "Couldn't connect to server", "Failed to connect",
+                       "Connection refused", "Connection timed out",
+                       "Network is unreachable", "SSL_ERROR", "Proxy CONNECT aborted",
+                       "unable to access")
+        if any(s in cp.stderr for s in unreachable):
+            self.skipTest(f"the remote is not reachable from here: "
+                          f"{cp.stderr.strip()[:100]}")
         self.assertNotEqual(cp.returncode, 124,
                             f"git hung for {elapsed:.1f}s and only the ceiling "
                             f"ended it; that is the wedged pre-push this guard is "
@@ -1253,14 +1316,143 @@ class TestEachNoWindowRoadNamesItself(DenyCoverageCase):
         only in the body of `run` itself.
         """
         src = DOCTOR.read_text(encoding="utf-8")
-        # the runner's own call, the one legitimate occurrence
         body = src.split("def run(", 1)[1].split("\ndef ", 1)[0]
-        self.assertEqual(body.count("subprocess.run("), 1,
-                         "run() should call subprocess.run exactly once")
-        self.assertEqual(src.count("subprocess.run("), 1,
-                         "a call site outside run() bypasses env scrubbing, the "
-                         "locale pin, GIT_TERMINAL_PROMPT=0 and stdin=/dev/null; "
-                         "route it through run(cwd=..., timeout=...) instead")
+        # Every way to start a process, not just the one that was there when this
+        # test was written: it pinned `subprocess.run(` at a count of 1, and the
+        # group-kill rewrite moved the runner to Popen, which would have left the
+        # assertion green while naming a primitive the file no longer uses.
+        SPAWNS = ("subprocess.run(", "subprocess.Popen(", "subprocess.call(",
+                  "subprocess.check_call(", "subprocess.check_output(",
+                  "os.system(", "os.popen(", "os.spawn", "os.exec")
+        outside = src
+        for chunk in (body,):
+            outside = outside.replace(chunk, "")
+        for spawn in SPAWNS:
+            with self.subTest(spawn=spawn):
+                self.assertEqual(
+                    outside.count(spawn), 0,
+                    f"{spawn} appears outside run(): that call site bypasses the "
+                    f"env scrub, the locale pin, GIT_TERMINAL_PROMPT=0, "
+                    f"stdin=/dev/null, the new session and the group kill. Route "
+                    f"it through run(cwd=..., timeout=...) instead")
+        self.assertEqual(body.count("subprocess.Popen("), 1,
+                         "run() spawns exactly once")
+
+    def test_the_release_probe_keeps_its_own_short_leash(self):
+        """Routing the call through `run` and the leash surviving are TWO claims, and
+        only the first was defended.
+
+        The structural test next door counts spawn primitives, which proves the
+        routing and says nothing about `timeout=10`. A mutation batch changed that
+        10 and the suite stayed green: the value the commit body called "the one
+        thing worth keeping" was pinned by nothing, because it only matters when a
+        child is slow and no child in this suite is slow.
+
+        So this makes one slow on purpose. `run` is wrapped to keep the call site's
+        own kwargs and swap the argv for a sleeper, which measures the value the
+        call site actually passes rather than the value the source appears to
+        contain. Both directions fail: raise the leash to the 300s default and the
+        sleeper outlives the assertion window; drop the `timeout=` and the same.
+        """
+        brain = self.tmp / "leash"
+        (brain / "scripts").mkdir(parents=True)
+        (brain / "CHANGELOG.md").write_text(
+            "# Changelog\n\n## [2026-09-09] — v9.9.9\n\n- probe\n", encoding="utf-8")
+
+        real_run, real_git = doctor.run, doctor.git
+        saved_dir = doctor.CLAUDE_DIR
+        self.addCleanup(lambda: (setattr(doctor, "run", real_run),
+                                 setattr(doctor, "git", real_git),
+                                 setattr(doctor, "CLAUDE_DIR", saved_dir)))
+        doctor.CLAUDE_DIR = brain
+        # no local tags, so the check has to ask the remote
+        doctor.git = lambda *a: subprocess.CompletedProcess(["git", *a], 0, "", "")
+
+        seen = {}
+
+        def slow_run(args, cwd=None, timeout=None):
+            if args[:4] == ["git", "ls-remote", "--tags", "origin"]:
+                seen["timeout"] = timeout
+                started = time.time()
+                cp = real_run([sys.executable, "-c", "import time; time.sleep(40)"],
+                              cwd=cwd, timeout=timeout)
+                seen["elapsed"] = time.time() - started
+                seen["rc"] = cp.returncode
+                return cp
+            return real_run(args, cwd=cwd, timeout=timeout)
+
+        doctor.run = slow_run
+        doctor.check_release_drift(False)
+
+        self.assertIn("timeout", seen,
+                      "the remote probe was never reached; this test asserts "
+                      "nothing unless it runs")
+        self.assertEqual(seen["timeout"], 10,
+                         f"the call site passed timeout={seen['timeout']!r}: the "
+                         f"300s default on a network probe is what wedges a "
+                         f"pre-push behind an unreachable origin")
+        self.assertEqual(seen["rc"], 124,
+                         "the leash did not fire on a child that never answers")
+        self.assertGreaterEqual(seen["elapsed"], 8,
+                                "returned too fast to have been the 10s leash")
+        self.assertLess(seen["elapsed"], 25,
+                        f"took {seen['elapsed']:.1f}s: a leash longer than 10s is "
+                        f"in force at this call site")
+
+    def test_a_remote_that_never_answered_is_not_a_remote_without_the_tag(self):
+        """The wrong-cause defect, inside the call this branch rerouted.
+
+        rc 124 (timed out), 127 (no git) and 128 (offline) all fell past the rc
+        check into `CHANGELOG declares vX but no git tag vX (local or remote)`, so a
+        laptop on a plane was told its release was never cut. The comment one line
+        above already separated the three roads while the sentence did not, which is
+        the same gap between what the code knows and what the reader is told that
+        this whole PR is about.
+        """
+        brain = self.tmp / "unreached"
+        (brain / "scripts").mkdir(parents=True)
+        (brain / "CHANGELOG.md").write_text(
+            "# Changelog\n\n## [2026-09-09] — v9.9.9\n\n- probe\n", encoding="utf-8")
+        real_run, real_git = doctor.run, doctor.git
+        saved_dir = doctor.CLAUDE_DIR
+        self.addCleanup(lambda: (setattr(doctor, "run", real_run),
+                                 setattr(doctor, "git", real_git),
+                                 setattr(doctor, "CLAUDE_DIR", saved_dir)))
+        doctor.CLAUDE_DIR = brain
+        doctor.git = lambda *a: subprocess.CompletedProcess(["git", *a], 0, "", "")
+
+        roads = {
+            124: ("git: no answer in 10s, killed (process group reaped)",
+                  "no answer in 10s"),
+            127: ("git: No such file or directory", "No such file or directory"),
+            128: ("fatal: unable to access 'https://origin/': Could not resolve host",
+                  "Could not resolve host"),
+        }
+        for rc, (stderr, needle) in roads.items():
+            with self.subTest(rc=rc):
+                doctor.run = lambda args, cwd=None, timeout=None, _rc=rc, _e=stderr: (
+                    subprocess.CompletedProcess(args, _rc, "", _e)
+                    if args[:2] == ["git", "ls-remote"]
+                    else real_run(args, cwd=cwd, timeout=timeout))
+                res = doctor.check_release_drift(False)
+                self.assertEqual(res.status, doctor.WARN)
+                self.assertIn("could not be asked", res.message,
+                              f"rc {rc} was reported as a remote that answered and "
+                              f"did not have the tag")
+                self.assertIn(needle, res.message,
+                              "the row names which road, not just that one was taken")
+                self.assertNotIn("(local or remote)", res.message)
+
+        # And the remote that DID answer without the tag keeps the original verdict,
+        # so the new branch is a discriminator and not a blanket excuse.
+        doctor.run = lambda args, cwd=None, timeout=None: (
+            subprocess.CompletedProcess(args, 0, "", "")
+            if args[:2] == ["git", "ls-remote"]
+            else real_run(args, cwd=cwd, timeout=timeout))
+        answered = doctor.check_release_drift(False)
+        self.assertEqual(answered.status, doctor.WARN)
+        self.assertIn("(local or remote)", answered.message)
+        self.assertIn("never cut", answered.message)
 
     def test_a_child_killed_by_a_signal_is_named_not_numbered(self):
         """`exit -9` is a code, not a cause, and it was what both selectors printed
@@ -1314,38 +1506,194 @@ class TestEachNoWindowRoadNamesItself(DenyCoverageCase):
         self.assertEqual(doctor.selftest_cause(stdout_only),
                          "X violation fixture did NOT warn (stale base undetected)")
 
-    def test_every_failure_marker_has_a_printer_that_writes_it(self):
-        """A marker no printer emits and no test defends is decoration that reads
-        like coverage. Four of the five survived a mutation run that deleted them one
-        at a time, so each is asserted here against a line taken VERBATIM from the
-        printer that writes it.
+    def test_every_failure_marker_is_one_the_selector_can_actually_see(self):
+        """Presence in a source file is NOT reach, and the first version of this test
+        asserted presence.
 
-        `✘` was the fifth. Nothing under `scripts/` writes it; the only occurrence in
-        the tree was the tuple naming itself, so it is deleted rather than tested.
+        It named an emitter per marker and grepped for the glyph. Two of the four
+        named emitters cannot reach this selector at all: `capability_manifest.py`
+        is read through its RETURN CODE by `check_capability_manifest`, which never
+        calls `selftest_cause`; and `✗`'s emitters write the live DENY message,
+        which `gate_selftest.run_gate` captures as the CHILD's stdout to decide
+        whether the leg blocked, so it never lands on a stream the doctor reads. An
+        enumeration replaced by an argument, with the argument unchecked at the
+        level where it has to hold, which is the same shape as the prefix tuple next
+        door.
+
+        So the fixtures here are RECORDED STREAMS, captured by running the real
+        scripts into a forced failure, and each marker is pinned by what
+        `selftest_cause` picks out of them.
         """
-        emitters = {
-            # marker: (emitting script, a verbatim line from it)
-            "selftest FAIL": ("gate_selftest.py",
-                              "selftest FAIL: violation.json did not block"),
-            "FAIL": ("capability_manifest.py",
-                     "FAIL: docs/CAPABILITIES.md is stale. Run: python3 scripts/capability_manifest.py"),
-            "X ": ("r__pretool-write__base-freshness.py",
-                   "  X benign fixture warned (on default branch)"),
-            "✗": ("qa-merge-gate.py",
-                  "✗ QA GATE (fail-closed): merge of PR #296 needs operator approval."),
+        fx = BRAIN / "scripts" / "tests" / "fixtures"
+        bf_out = (fx / "base-freshness-failed.stdout").read_text(encoding="utf-8")
+        bf_err = (fx / "base-freshness-failed.stderr").read_text(encoding="utf-8")
+        gs_err = (fx / "gate-selftest-failed.stderr").read_text(encoding="utf-8")
+
+        # "selftest FAIL": stderr, gate_selftest.py:212, speaking for 25 of the 33.
+        cp = subprocess.CompletedProcess(["helper"], 1, "", gs_err)
+        self.assertTrue(doctor.selftest_cause(cp).startswith("selftest FAIL:"))
+
+        # "X ": stdout, base-freshness with its violation leg forced. The whole
+        # reason this function selects by marker: the X line is chosen over the
+        # clone warning that the SAME run put on stderr.
+        cp = subprocess.CompletedProcess(["helper"], 1, bf_out, bf_err)
+        self.assertEqual(doctor.selftest_cause(cp),
+                         "X violation fixture did NOT warn (stale base undetected)")
+
+        # "FAIL": the next line of that same real stdout.
+        self.assertIn("FAIL base-freshness selftest", bf_out)
+        only_fail = subprocess.CompletedProcess(
+            ["helper"], 1, "  FAIL base-freshness selftest\n", bf_err)
+        self.assertEqual(doctor.selftest_cause(only_fail),
+                         "FAIL base-freshness selftest")
+
+        # The fixtures must not drift away from the printers they were captured
+        # from, or this test slowly becomes the presence check it replaced.
+        bf = (BRAIN / "scripts" / "r__pretool-write__base-freshness.py").read_text(encoding="utf-8")
+        self.assertIn("X violation fixture did NOT warn", bf)
+        self.assertIn("FAIL base-freshness selftest", bf)
+        self.assertIn('print("selftest FAIL: " + "; ".join(failures), file=sys.stderr)',
+                      (BRAIN / "scripts" / "gate_selftest.py").read_text(encoding="utf-8"))
+
+        # And the two that cannot reach are gone.
+        for gone in ("✗", "✘"):
+            self.assertNotIn(gone, doctor.SELFTEST_FAILURE_MARKERS)
+        self.assertEqual(set(doctor.SELFTEST_FAILURE_MARKERS),
+                         {"selftest FAIL", "FAIL", "X "},
+                         "a marker was added without a recorded stream proving the "
+                         "selector can see it")
+
+        # The structural reason ✗ cannot reach, asserted rather than remembered: a
+        # gate's own output is the child's, and gate_selftest captures it.
+        gs = (BRAIN / "scripts" / "gate_selftest.py").read_text(encoding="utf-8")
+        self.assertIn("def emits_block(", gs)
+        self.assertIn("stdout", gs.split("def emits_block(", 1)[1][:400],
+                      "gate_selftest still decides on the CHILD's captured stdout, "
+                      "so a gate's ✗ deny text never reaches selftest_cause")
+
+    def test_a_timed_out_child_does_not_leave_its_group_behind(self):
+        """`subprocess.run` kills the direct child and nothing else.
+
+        Measured before the fix with a 2s ceiling: `sh -c '<child> & exec <child>'`
+        came back rc 124 with a survivor reparented to PID 1, and the stderr said
+        `no answer in 2s, killed` with no word about it. Through
+        `.githooks/pre-push` that is an ssh left holding the operator's terminal
+        after the push has already returned.
+
+        The guard is asserted too, because an unguarded `killpg` kills this test
+        runner: without `start_new_session` the child shares our process group
+        (measured: child pgid == runner pgid), and the kill would come home.
+        """
+        if not hasattr(os, "killpg"):
+            self.skipTest("no process groups on this platform")
+        saved = doctor.RUN_TIMEOUT
+        self.addCleanup(lambda: setattr(doctor, "RUN_TIMEOUT", saved))
+        doctor.RUN_TIMEOUT = 2
+        mark = f"octorato-reap-probe-{os.getpid()}"
+        child = f"import time,sys;sys.argv.append({mark!r});time.sleep(300)"
+        self.addCleanup(lambda: subprocess.run(["pkill", "-f", mark],
+                                               capture_output=True))
+
+        cp = doctor.run(["sh", "-c",
+                         f'{sys.executable} -c "{child}" & '
+                         f'exec {sys.executable} -c "{child}"'])
+        self.assertEqual(cp.returncode, 124)
+        time.sleep(0.5)
+        alive = subprocess.run(["pgrep", "-f", mark], capture_output=True,
+                               text=True).stdout.split()
+        self.assertEqual(alive, [],
+                         f"{len(alive)} descendant(s) outlived the timeout; before "
+                         f"the group kill this one was reparented to PID 1")
+        self.assertIn("process group reaped", cp.stderr,
+                      "the reader cannot tell a complete kill from a partial one "
+                      "unless the sentence says which happened")
+
+        # The guard: we are still here. An unguarded killpg SIGKILLs the runner.
+        self.assertTrue(True, "reached, so the reaper did not kill its own group")
+
+        # And the honest limit: a descendant that calls setsid ITSELF has left the
+        # group before the kill lands, so the sentence must not claim the tree.
+        started = time.time()
+        deep = doctor.run(["sh", "-c",
+                           f'setsid {sys.executable} -c "{child}" & '
+                           f'exec {sys.executable} -c "{child}"'])
+        deep_elapsed = time.time() - started
+        self.assertEqual(deep.returncode, 124)
+        # The escapee inherited the write end of our pipes, so the post-kill drain
+        # waits for an EOF that never comes. It is bounded at 5s on purpose: the
+        # first version waited 10s and left the process unreaped, which is a hang
+        # introduced by the code that removes hangs.
+        self.assertLess(deep_elapsed, 20,
+                        f"took {deep_elapsed:.1f}s: the drain after the kill is "
+                        f"waiting on a pipe a survivor still holds")
+        time.sleep(0.5)
+        escaped = subprocess.run(["pgrep", "-f", mark], capture_output=True,
+                                 text=True).stdout.split()
+        self.assertNotEqual(escaped, [],
+                            "a setsid descendant is expected to survive; if this "
+                            "ever passes, the claim in the docstring is now too "
+                            "modest and should be re-measured")
+        self.assertNotIn("nothing survived", deep.stderr)
+
+    def test_the_env_scrub_is_a_rule_and_not_a_list(self):
+        """`GIT_CONFIG_PARAMETERS` and `GIT_EXEC_PATH` reach a hook and were not in
+        the tuple, which is the third time an enumeration on this file was measured
+        incomplete.
+
+        Verbatim from a git 2.43 pre-commit hook invoked as
+        `git -c user.signingkey=INJECTED -c core.hooksPath=.git/hooks commit`:
+
+            GIT_CONFIG_PARAMETERS='user.signingkey'='INJECTED' 'core.hooksPath'='.git/hooks'
+
+        and a grandchild `git config --get user.signingkey` inside that hook
+        answered `INJECTED`. `core.hooksPath` through that route is the same class
+        as the GIT_DIR incident.
+
+        The fix cannot be a longer list: `GIT_CONFIG_COUNT` with
+        `GIT_CONFIG_KEY_<n>` is an unbounded family of names, so this asserts the
+        RULE (drop GIT_*, keep by exception) with a name no list would have had.
+        """
+        base = {
+            "PATH": "/usr/bin", "HOME": "/home/x", "LC_ALL": "es_ES.UTF-8",
+            "GIT_DIR": "/live/repo/.git",
+            "GIT_CONFIG_PARAMETERS": "'core.hooksPath'='/evil'",
+            "GIT_EXEC_PATH": "/usr/lib/git-core",
+            "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.hooksPath",
+            "GIT_CONFIG_VALUE_0": "/evil",
+            "GIT_AUTHOR_NAME": "someone else", "GIT_EDITOR": ":",
+            "GIT_SSH_COMMAND": "ssh -i /home/x/.ssh/id_ed25519",
         }
-        self.assertEqual(set(doctor.SELFTEST_FAILURE_MARKERS), set(emitters),
-                         "a marker was added or removed without its emitter")
-        for marker, (script, line) in emitters.items():
-            with self.subTest(marker=marker):
-                path = BRAIN / "scripts" / script
-                self.assertTrue(path.exists(), f"{script} is the named emitter")
-                self.assertIn(marker.strip(), path.read_text(encoding="utf-8"),
-                              f"{script} no longer writes {marker!r}: either the "
-                              f"marker moved or it is now decoration")
-                cp = subprocess.CompletedProcess(["helper"], 1, "", line + "\n")
-                self.assertEqual(doctor.selftest_cause(cp), line.strip(),
-                                 f"a real {script} failure line is not selected")
+        env = doctor.scrubbed_env(base)
+        leaked = sorted(k for k in env if doctor._is_scrubbed_git_var(k))
+        self.assertEqual(leaked, [],
+                         f"{leaked} survived the scrub; a parent's git config "
+                         f"steering a child's git is the GIT_DIR incident again")
+        self.assertEqual(env["GIT_SSH_COMMAND"], base["GIT_SSH_COMMAND"],
+                         "the access vars are kept, or a machine that reaches "
+                         "origin through a custom ssh command stops reaching it")
+        self.assertEqual(env["PATH"], "/usr/bin", "non-git env is untouched")
+        self.assertEqual(env["LC_ALL"], "es_ES.UTF-8",
+                         "scrubbing does not pin the locale; `run` does, and only "
+                         "for git")
+        # the unbounded family, which is the argument for the rule
+        self.assertNotIn("GIT_CONFIG_KEY_0", env)
+        self.assertNotIn("GIT_CONFIG_KEY_7", doctor.scrubbed_env(
+            dict(base, GIT_CONFIG_KEY_7="core.hooksPath")))
+
+        # The exception is drawn at what git EXPORTS, not at what the tests want.
+        # Every name in the measured pre-commit dump is dropped; GIT_TEST_* and
+        # GIT_TEXTDOMAINDIR are not in that dump and are the only way to reproduce
+        # a dubious-ownership or a translated git without a second uid, so they
+        # survive and two live tests keep working.
+        for exported in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_PREFIX", "GIT_EDITOR",
+                         "GIT_EXEC_PATH", "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL",
+                         "GIT_AUTHOR_DATE", "GIT_CONFIG_PARAMETERS"):
+            with self.subTest(exported=exported):
+                self.assertTrue(doctor._is_scrubbed_git_var(exported))
+        for kept in ("GIT_TEST_ASSUME_DIFFERENT_OWNER", "GIT_TEXTDOMAINDIR",
+                     "GIT_SSH_COMMAND"):
+            with self.subTest(kept=kept):
+                self.assertFalse(doctor._is_scrubbed_git_var(kept))
 
         self.assertNotIn("✘", doctor.SELFTEST_FAILURE_MARKERS)
         # The two files that DISCUSS the deletion are excluded, or this check
@@ -1396,9 +1744,16 @@ class TestEachNoWindowRoadNamesItself(DenyCoverageCase):
 
         # The prefixed sibling keeps working: a SUBCOMMAND marks its diagnosis, so
         # the marked line wins and the usage block below it is never consulted.
+        # 129 is git's usage exit, but OUTSIDE a repository git answers 128 before
+        # it parses options at all, so pinning 129 made this test depend on BRAIN
+        # being a checkout — true here, false in an exported tree, which is how it
+        # was found. What matters either way is that it is not 124.
         sub = doctor.run(["git", "status", "--bogus-sub"], cwd=BRAIN)
-        self.assertEqual(sub.returncode, 129,
-                         "git's usage exit; 124 would be a hang read as a diagnosis")
+        self.assertIn(sub.returncode, (128, 129),
+                      "124 would be a hang read as a diagnosis")
+        if sub.returncode == 128:
+            self.skipTest("not inside a git repository, so git answers before it "
+                          "parses the bogus option and there is no usage block")
         self.assertEqual(doctor.git_failure_cause(sub.stderr, sub.returncode),
                          "error: unknown option `bogus-sub'")
 

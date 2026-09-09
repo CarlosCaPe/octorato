@@ -55,6 +55,62 @@ GIT_HOOK_ENV = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX",
                 "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE",
                 "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_QUARANTINE_PATH")
 
+# The nine above are a RECORD of what was found, not the rule. The rule is below,
+# and it is a prefix scrub, because the enumeration was measured incomplete for the
+# third time on this file and this family CANNOT be enumerated. Dumping GIT_* from a
+# real git 2.43 pre-commit hook, invoked as `git -c user.signingkey=INJECTED -c
+# core.hooksPath=…`:
+#
+#     GIT_AUTHOR_DATE=@1788922676 +0200
+#     GIT_AUTHOR_EMAIL=a@b
+#     GIT_AUTHOR_NAME=a
+#     GIT_CONFIG_PARAMETERS='user.signingkey'='INJECTED' 'core.hooksPath'='.git/hooks'
+#     GIT_EDITOR=:
+#     GIT_EXEC_PATH=/usr/lib/git-core
+#     GIT_INDEX_FILE=.git/index
+#     GIT_PREFIX=
+#
+# and a grandchild `git config --get user.signingkey` inside that hook answered
+# `INJECTED`. Six of those eight were NOT in the tuple, and `GIT_CONFIG_PARAMETERS`
+# carries `core.hooksPath`, which is the same class as the GIT_DIR incident: a
+# parent's git silently steering a child's git. Worse for enumeration,
+# `GIT_CONFIG_COUNT` with `GIT_CONFIG_KEY_<n>` / `GIT_CONFIG_VALUE_<n>` is an
+# UNBOUNDED family of names, so no list can ever be complete and a longer list is
+# only a later miss.
+#
+# So: drop every GIT_*, and keep by exception. The line between the two is not
+# "whatever the tests need", it is what git ITSELF exports. Everything in the dump
+# above is dropped, author identity and editor included, because a selftest that
+# commits must not inherit the operator's in-flight author date — that is the
+# 2026-09-05 incident seen from the other side. Two families are kept, and neither
+# appears in that dump, so nothing a parent git hands down survives either way:
+#
+#   ACCESS      GIT_SSH*, GIT_ASKPASS, GIT_PROXY_COMMAND. Only a person sets these,
+#               and dropping them stops a machine that reaches origin through a
+#               custom ssh command from reaching it: a regression dressed as a fix.
+#   TEST KNOBS  GIT_TEST_* and GIT_TEXTDOMAINDIR. git's own suite variables, never
+#               exported to a hook, and the only way to reproduce a dubious-ownership
+#               or a translated git without a second uid and a system locale. Keeping
+#               them costs a hostile parent the ability to make our git FAIL, which
+#               it already has through PATH, and buys back two live tests that would
+#               otherwise become fixture-only.
+#
+# IMPACT RADIUS, not fixed here and not silently left either. The same nine-name
+# list is copy-pasted in two more places and both have the same hole:
+# `scripts/gate_selftest.py:147` (inline, stripping the nine before every gate leg)
+# and `scripts/receipt_ledger.py:82`. Fixing them from here would change what all
+# 33 gate legs see, which needs its own liveness run, so they are named rather than
+# touched. Three copies of one list is the reason the list drifted from the truth in
+# the first place: the fix for THAT is one rule imported once, not a fourth copy.
+GIT_ENV_KEEP = ("GIT_SSH", "GIT_SSH_COMMAND", "GIT_SSH_VARIANT", "GIT_ASKPASS",
+                "GIT_PROXY_COMMAND", "GIT_TEXTDOMAINDIR")
+
+
+def _is_scrubbed_git_var(name: str) -> bool:
+    return (name.startswith("GIT_")
+            and not name.startswith("GIT_TEST_")
+            and name not in GIT_ENV_KEEP)
+
 # Default ceiling for every subprocess this file runs. A caller that wants a
 # SHORTER leash passes `timeout=` to `run`; nothing passes a longer one. See `run`
 # for why it exists and why the default is this generous.
@@ -62,8 +118,9 @@ RUN_TIMEOUT = 300
 
 
 def scrubbed_env(base=None) -> dict:
+    """Drop every GIT_* the parent exported, keeping only the access vars."""
     env = dict(os.environ if base is None else base)
-    for k in GIT_HOOK_ENV:
+    for k in [k for k in env if _is_scrubbed_git_var(k)]:
         env.pop(k, None)
     return env
 
@@ -90,6 +147,81 @@ def _as_text(raw) -> str:
     if isinstance(raw, (bytes, bytearray)):
         return bytes(raw).decode("utf-8", "replace")
     return raw
+
+
+def _kill_process_group(proc) -> bool:
+    """SIGKILL the timed-out child's whole process group. True only if it was ITS own.
+
+    `subprocess.run` kills the direct child and nothing else, so a `git` that had
+    already spawned `ssh` left the ssh behind. Measured on this machine with a 2s
+    ceiling: `sh -c '<child> & exec <child>'` came back rc 124 with a survivor
+    reparented to PID 1, and so did a `setsid` descendant. Through
+    `.githooks/pre-push` that means a push that times out on a host-key prompt can
+    leave an ssh holding the operator's terminal.
+
+    The guard is the whole point and is not optional. WITHOUT `start_new_session`
+    the child shares this runner's process group (measured: child pgid == runner
+    pgid), so an unguarded `killpg` SIGKILLs the doctor itself. So the group is
+    compared against our own and the kill is refused when they match, and the caller
+    is told which of the two happened rather than being left to assume.
+
+    What this still cannot do, stated because the stderr has to be honest about it:
+    a descendant that calls `setsid` ITSELF leaves the group before the kill lands,
+    and no group kill reaches it. That is why the sentence says "reaped" only for
+    the group, never "nothing survived".
+    """
+    if proc is None or not hasattr(os, "killpg"):
+        return False
+    try:
+        pgid = os.getpgid(proc.pid)
+        if pgid == os.getpgid(0):
+            return False
+        os.killpg(pgid, signal.SIGKILL)
+        return True
+    except OSError:
+        return False
+
+
+def _drain_after_kill(proc, exc) -> tuple[str, str]:
+    """Whatever the child wrote before it was killed, as str, from the better source.
+
+    Two sources and they do not agree in type. `TimeoutExpired.stdout` is BYTES on
+    POSIX; a second `communicate()` after the kill returns the same content already
+    decoded by the text-mode reader. The second is preferred and the first is the
+    fallback for the case where the drain itself fails, with `_as_text` covering
+    either.
+    """
+    out, err = _as_text(exc.stdout), _as_text(exc.stderr)
+    if proc is None:
+        return out, err
+    try:
+        proc.kill()
+    except OSError:
+        pass
+    try:
+        # 5s, not "until EOF". The write end of these pipes is inherited, so a
+        # descendant that outlived the group kill still holds it and the EOF this
+        # waits for is never coming. Measured: the setsid shape stalled here and
+        # left `ResourceWarning: subprocess ... is still running` behind it, which
+        # is a hang introduced by the code that removes hangs.
+        d_out, d_err = proc.communicate(timeout=5)
+        out, err = _as_text(d_out) or out, _as_text(d_err) or err
+    except Exception:
+        pass
+    finally:
+        # Closed by hand for the same reason: `communicate` closes them only when
+        # it completes, and the escapee case is exactly when it does not.
+        for stream in (proc.stdout, proc.stderr):
+            try:
+                if stream is not None:
+                    stream.close()
+            except Exception:
+                pass
+        try:
+            proc.wait(timeout=1)
+        except Exception:
+            pass
+    return out, err
 
 
 def run(args: list[str], cwd: Path | None = None,
@@ -144,17 +276,24 @@ def run(args: list[str], cwd: Path | None = None,
     and, through `.githooks/pre-push`, the push behind it, with no row and no exit
     code. Three guards, cheapest first.
 
-    They cover three DIFFERENT channels and none of them substitutes for another,
-    which is the mistake the earlier version of this paragraph made when it said
-    stdin=/dev/null meant "nothing can read from the operator's terminal".
+    FOUR guards, covering four DIFFERENT channels, and none substitutes for another.
+    That is the correction to an earlier version of this paragraph, which claimed
+    stdin=/dev/null meant "nothing can read from the operator's terminal" when it
+    covers only one of the four.
 
     stdin is /dev/null. That covers fd 0: a child that reads its standard input
-    reads EOF, so it cannot eat the ref list `pre-push` feeds this process. It does
-    NOT cover a reader that opens /dev/tty. Measured twice, two ways: under a pty,
-    `sh -c 'read x </dev/tty'` with stdin=/dev/null blocked the full 3s, and
-    `git ls-remote` against an https remote that answers 401 printed
-    `Username for 'https://github.com': ` and hung the full 8s with stdin on
-    /dev/null and GIT_TERMINAL_PROMPT unset.
+    reads EOF, so it cannot eat the ref list `pre-push` feeds this process. On its
+    own it does NOT cover a reader that opens /dev/tty, measured twice under a pty:
+    `sh -c 'read x </dev/tty'` blocked the full 3s, and `git ls-remote` against an
+    https remote answering 401 printed `Username for 'https://github.com': ` and
+    hung 8s.
+
+    start_new_session covers /dev/tty, and it is here for the reaper below rather
+    than for this, so the coverage is a second gain and worth writing down. A child
+    in a fresh session has NO controlling terminal, so opening /dev/tty fails
+    outright: the same pty measurement, re-run through this runner, returned in
+    0.05s with `sh: 1: cannot open /dev/tty: No such device or address` where it had
+    blocked for 3s.
 
     DEVNULL rather than `input=b""`, which would also give the child an empty stdin.
     They are mutually exclusive in subprocess (`ValueError: stdin and input arguments
@@ -164,16 +303,18 @@ def run(args: list[str], cwd: Path | None = None,
     it succeeds and is discarded. DEVNULL also costs one fd instead of a pipe pair
     per call, and it leaves `input=` free for any caller that ever needs it.
 
-    GIT_TERMINAL_PROMPT=0 covers git's OWN terminal prompt, the /dev/tty channel the
-    guard above cannot reach. Same 401 remote, through this runner: rc 128 in 1.05s
-    with `fatal: could not read Username for 'https://github.com': terminal prompts
-    disabled`. A hang became a sentence. It is git's variable and only git's, so it
-    says nothing about ssh's passphrase reader, which honours SSH_ASKPASS and
-    BatchMode instead.
+    GIT_TERMINAL_PROMPT=0 covers git's own prompt, and it earns its place even now
+    that the session guard exists, because it changes the ANSWER and not just the
+    timing: git checks the variable before it ever reaches for a terminal, so the
+    same 401 remote comes back rc 128 in 1.28s with `fatal: could not read Username
+    for 'https://github.com': terminal prompts disabled` — a named cause — instead
+    of an ENXIO about a device file, which is a true sentence about the wrong
+    subject. It is git's variable and only git's, so it says nothing about ssh's
+    passphrase reader, which honours SSH_ASKPASS and BatchMode instead.
 
-    RUN_TIMEOUT is the backstop for the channel neither of the other two can name:
-    ssh's passphrase prompt, a host that drops packets, a helper that wedges on
-    something else entirely. Answered as rc 124, the `timeout(1)`
+    RUN_TIMEOUT is the backstop for what none of the three can name: a host that
+    drops packets, a helper that wedges on something else entirely. Answered as
+    rc 124, the `timeout(1)`
     convention, so a hang reads like every other rc and the partial output the child
     managed to write survives into the row. 300s is deliberately generous: the
     slowest thing through here is a gate selftest that clones repos, and a doctor
@@ -187,11 +328,25 @@ def run(args: list[str], cwd: Path | None = None,
     `add`/`pack-refs` failed in 9ms and 1.2s with `fatal: Unable to create
     '...lock': File exists.` git fails on a held lock, it does not queue behind it.
 
-    What the timeout is NOT: a reaper. `subprocess.run` kills the direct child, so a
-    git that had already spawned ssh leaves the grandchild behind. The doctor gets
-    its row and its exit code, which is what a reader and `pre-push` need; a stray
-    ssh is the operator's to notice, and a process group would be a bigger change
-    than the failure justifies.
+    The timeout IS a reaper now, and the previous version of this docstring argued
+    it should not be. That argument was wrong on its own terms: it said a stray ssh
+    is "the operator's to notice", but this runs from `.githooks/pre-push`, so the
+    thing the operator would notice is an ssh holding their terminal after a push
+    that already returned. Measured with a 2s ceiling before the change: both
+    `sh -c '<child> & exec <child>'` and a `setsid` descendant came back rc 124 with
+    a survivor reparented to PID 1, and the stderr said nothing about it.
+
+    So the timeout path kills the child's process GROUP, guarded, and the stderr
+    says which of two things happened: `(process group reaped)` or `(child only; a
+    descendant in another group may survive)`. The reader can tell a complete kill
+    from a partial one, which is the half of the problem a silent sentence left
+    open. `_kill_process_group` carries the guard and its measurement.
+
+    Still not caught, and the sentence is worded so as not to claim otherwise: a
+    descendant that calls `setsid` ITSELF has left the group before the kill lands.
+    Measured after the change: shape one leaves no survivor where it used to leave
+    one, shape two still leaves its setsid child alive. "Group reaped" is a claim
+    about the group, never about the whole tree.
 
     A child killed by a SIGNAL is a fourth road and it is not a hang: `returncode`
     comes back NEGATIVE (measured: -9 for SIGKILL, -11 for SIGSEGV) with both
@@ -205,18 +360,25 @@ def run(args: list[str], cwd: Path | None = None,
         env["LC_ALL"] = "C"
         env["GIT_TERMINAL_PROMPT"] = "0"
     limit = RUN_TIMEOUT if timeout is None else timeout
+    proc = None
     try:
-        return subprocess.run(
+        # Popen, not subprocess.run, for exactly one reason: `run` throws the Popen
+        # away, and the pid is what a group kill needs. Everything else here is what
+        # `run(capture_output=True, text=True, ...)` does internally.
+        proc = subprocess.Popen(
             args,
             cwd=str(cwd) if cwd else None,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
             errors="replace",
             env=env,
             stdin=subprocess.DEVNULL,
-            timeout=limit,
+            start_new_session=True,
         )
+        out, err = proc.communicate(timeout=limit)
+        return subprocess.CompletedProcess(args, proc.returncode, out, err)
     except subprocess.TimeoutExpired as exc:
         # Both streams decoded, for the reason `_as_text` records. And the partial
         # STDERR is KEPT rather than thrown away: it was replaced wholesale by the
@@ -227,11 +389,13 @@ def run(args: list[str], cwd: Path | None = None,
         # `selftest_cause`, which reads the first MARKED line and falls back to the
         # last, gives the child's own verdict when it marked one and the timeout
         # sentence when it did not.
-        note = f"{args[0]}: no answer in {limit}s, killed"
-        partial_err = _as_text(exc.stderr)
+        reaped = _kill_process_group(proc)
+        out, err = _drain_after_kill(proc, exc)
+        note = (f"{args[0]}: no answer in {limit}s, killed "
+                + ("(process group reaped)" if reaped else
+                   "(child only; a descendant in another group may survive)"))
         return subprocess.CompletedProcess(
-            args, 124, _as_text(exc.stdout),
-            f"{partial_err.rstrip()}\n{note}" if partial_err.strip() else note)
+            args, 124, out, f"{err.rstrip()}\n{note}" if err.strip() else note)
     except OSError as exc:
         # A binary that is missing, not executable, or shadowed by a file where a
         # directory belongs is NOT a non-zero exit: subprocess raises before any
@@ -845,7 +1009,20 @@ def check_release_drift(fix: bool) -> Result:
         return Result(key, PASS,
                       f"CHANGELOG top v{top_version} released (remote tag exists; "
                       f"not fetched locally — `git fetch --tags` to sync)")
-    # offline, timed out, or no git — fall through to the local-only verdict below
+    if ls.returncode != 0:
+        # A remote that was never ANSWERED is not a remote without the tag, and the
+        # row said it was: rc 124, 127 and 128 all fell through to `(local or
+        # remote)` below, so a laptop on a plane, a git that is not installed and a
+        # timed-out origin were all reported as "the release was never cut". That
+        # is the wrong-cause defect this whole branch is about, sitting inside the
+        # one call it rerouted, and the comment one line up already knew the three
+        # roads apart while the sentence did not.
+        return Result(key, WARN,
+                      f"CHANGELOG declares v{top_version} and no local tag has it; "
+                      f"the remote could not be asked ({git_failure_cause(ls.stderr, ls.returncode)})",
+                      f"re-run with the network up, or `git fetch --tags` and read "
+                      f"the local answer")
+    # The remote answered and does not have it: the release really was never cut.
     return Result(key, WARN,
                   f"CHANGELOG declares v{top_version} but no git tag v{top_version} (local or remote) — "
                   f"release & news never cut (news = top-of-funnel marketing; a major bump with no news = lost reach)",
@@ -2349,15 +2526,34 @@ def git_failure_cause(stderr: str, returncode: int) -> str:
     return fallback[-1] if fallback else _exit_cause(returncode)
 
 
-# Every member has a named emitter in this brain, measured, because a marker no
-# printer writes and no test defends is decoration that reads like coverage:
-#   "selftest FAIL"  gate_selftest.py:212 and 12 others  (the joined summary)
-#   "FAIL"           capability_manifest.py:464          (`FAIL: docs/... is stale`)
-#   "X "             r__pretool-write__base-freshness.py:221 (`  X benign fixture warned`)
-#   "✗"              g__pretool-bash__prod-write.py:951, qa-merge-gate.py:544
-# `✘` was here and NOTHING in scripts/ writes it — the only occurrence in the tree
-# was this tuple naming itself — so it is gone.
-SELFTEST_FAILURE_MARKERS = ("selftest FAIL", "FAIL", "X ", "✗")
+# Every member is kept because output carrying it REACHES this selector, which is a
+# stronger claim than the one the previous version of this comment made. That
+# version named an emitter per marker and stopped there, and two of the four named
+# emitters cannot reach: presence in a source file is not reach, and the difference
+# is the whole defect this function exists to fix.
+#
+# Reach was measured by running all 33 `--selftest` scripts from `registry/rules.yaml`
+# into a forced failure and reading the streams the doctor actually gets:
+#
+#   "selftest FAIL"  25 of the 33, on STDERR, via gate_selftest.py:212's joined summary
+#   "X "             r__pretool-write__base-freshness.py, on STDOUT, verbatim with its
+#                    violation leg forced: `X violation fixture did NOT warn (stale
+#                    base undetected)`, which `selftest_cause` then selected over the
+#                    `warning: You appear to have cloned an empty repository.` that
+#                    the same run put on stderr — the case this function was built for
+#   "FAIL"           the SAME run's next stdout line, `  FAIL base-freshness selftest`
+#
+# `FAIL`'s previously named emitter, `capability_manifest.py:464`, is real and does
+# not reach: `check_capability_manifest` reads it through the RETURN CODE and never
+# calls `selftest_cause`. The marker survives on the base-freshness receipt above,
+# not on that one.
+#
+# `✗` is DELETED. Its named emitters, `g__pretool-bash__prod-write.py:951` and
+# `qa-merge-gate.py:544`, write the live DENY message, and `gate_selftest.run_gate`
+# captures that as the CHILD's stdout to decide whether the leg blocked. It never
+# reaches a stream this selector reads, which the 33-script sweep confirms: zero
+# reaching emitters. `✘` went earlier for less, having no emitter at all.
+SELFTEST_FAILURE_MARKERS = ("selftest FAIL", "FAIL", "X ")
 
 
 def selftest_cause(cp: subprocess.CompletedProcess, empty: str | None = None) -> str:

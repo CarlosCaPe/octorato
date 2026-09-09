@@ -1,0 +1,1 @@
+selftest FAIL: violation.json did not block; benign.json WAS blocked (must allow, rc=2)
