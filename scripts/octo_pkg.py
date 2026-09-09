@@ -59,6 +59,45 @@ Verify ladder (`verify --all` exits 1 only on the FAIL tier):
         kind disagrees with the installed (signed) manifest, or a vendored tree with
         no lock entry at all
 
+THE TWO TRUST ROOTS ARE NOT EQUALLY PROTECTED, and this is a residual, not a bug.
+Step 4 accepts a principal from either `registry/pkg-signers.pub` or the gitignored
+`company/config/pkg-signers`. What the ladder stops, and what it does not, measured on
+an installed package in a throwaway brain with throwaway keys:
+
+  tamper a file and realign the tree hash into BOTH the manifest and the lock,
+  keeping the original signature                      -> FAIL, "signature does not
+                                                         verify for any known
+                                                         principal". The signature
+                                                         covers the manifest, so
+                                                         rewriting the hash breaks it.
+  append an attacker key under an EXISTING principal
+  name to company/config/pkg-signers, re-sign         -> FAIL. known_principals is
+                                                         first-wins, public before
+                                                         private, so a name already in
+                                                         the tracked file keeps its
+                                                         tracked key and the private
+                                                         one is never consulted.
+  append it under a NEW principal name, re-sign       -> FAIL, "signed by <new>, lock
+                                                         says <old>". The lock pins the
+                                                         signer per entry.
+  the same, plus rewriting that entry's `signer`      -> PASSES, exit 0, silent.
+
+The last row is correct by design: adding yourself to an allowed-signers file IS
+becoming trusted, and no signature scheme says otherwise. What is NOT symmetric is the
+trace each half of it leaves. Adding a principal to `registry/pkg-signers.pub` is a diff
+a reviewer sees AND a changed byte under `registry/`, which voids the v7 gate receipt
+(receipt_ledger.GATE_SURFACES = scripts, registry, hooks.json). Adding it to
+`company/config/pkg-signers` leaves no git trace and voids no receipt. Editing this
+file, `octo_pkg.py`, would void it; editing that one would not. The lock edit the
+completed attack also needs is tracked, so a reviewer does see an entry's `signer`
+change, but the lock is not a gate surface either, so that half voids no receipt, and
+what the reviewer sees is a NAME whose key he cannot look up: the key sits in the file
+git cannot show him. This is the brain's own recurring lesson arriving through the
+package door: gitignored data that a gate trusts turns the gate off, and it has already
+materialised once as a real leak. The fix is NOT to track the private file, which would
+publish the operator's signer list. What is written here is the measurement, so a reader
+of this ladder meets the asymmetry where the ladder is described instead of finding it.
+
 `verify --all` is disk-driven as well as lock-driven. The lock is unsigned and tracked,
 so it is an input, never the authority: deleting an entry, or editing its `kind`, must
 not be able to switch the ladder off for a tree that is still loading on every prompt.

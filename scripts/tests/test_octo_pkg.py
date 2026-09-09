@@ -4178,6 +4178,72 @@ class TestNoChildWaitsForAHuman(SandboxCase):
                          "the installer reported a timeout while a grandchild was "
                          "still running: it killed the direct child and left its tree")
 
+    def test_the_installers_reap_keeps_an_escaper_from_faking_a_leftover(self):
+        """The installer's REAP, which had no anchor of its own.
+
+        `_run_git` mirrors octo_pkg._run line for line on the timeout branch, and the
+        reap was measured on one side only. QA deleted the installer's `proc.wait()`
+        and the whole suite stayed green: the two tests that touch this branch cannot
+        see it. test_the_installers_deadline_ends_the_whole_tree_too never reads the
+        exception message, and test_the_installers_git_helper_has_its_own_ceiling
+        asserts the substring "was killed", which the appended " (process group not
+        confirmed dead)" leaves intact. A suffix that only ever ADDS to the message is
+        invisible to any test that matches a prefix of it.
+
+        So this drives the one shape that separates them, the same shape
+        test_a_descendant_that_leaves_the_group_survives_and_is_not_reported drives
+        against octo_pkg: a real `setsid` escaper that holds the output pipe. The
+        escaper keeps the write end open, so the post-kill communicate() expires with
+        our own child SIGKILLed and never reaped; an unreaped child is a zombie, a
+        zombie stays in its process group, and killpg(group, 0) succeeds on one. Take
+        the reap away and every escaper comes back "not confirmed dead", naming a
+        process that is already gone.
+
+        Three assertions, because each alone is satisfied by the wrong thing: that the
+        escaper is really in a session of its own (read from /proc, so a setsid that
+        quietly did nothing fails here rather than passing as an escape), that the
+        descendant which STAYED in the group did die (otherwise this measures a broken
+        group kill and not the reap), and only then that the message stays silent.
+        """
+        if shutil.which("setsid") is None:
+            self.skipTest("setsid is not installed, so the escaper cannot be produced")
+        gh = octo_pkg._github_module()
+        original = gh._GIT_TIMEOUT
+        gh._GIT_TIMEOUT = 2.0
+        self.addCleanup(setattr, gh, "_GIT_TIMEOUT", original)
+        escaped_marker = f"octo-ins-escaper-{os.getpid()}"
+        stayed_marker = f"octo-ins-stayed-{os.getpid()}"
+        self.addCleanup(self._survivors, escaped_marker)
+        self.addCleanup(self._survivors, stayed_marker)
+        with self.assertRaises(gh.InstallError) as failed:
+            gh._run_git(["sh", "-c", f"setsid {self._sleeper(escaped_marker)} & "
+                                     f"exec {self._sleeper(stayed_marker)}"])
+        message = str(failed.exception)
+        # Look before cleaning up: _survivors kills what it finds and /proc goes with
+        # the process, so the session has to be read while the escaper is still there.
+        escapers = self._alive(escaped_marker)
+        sessions = {int(pid): self._session_of(int(pid)) for pid in escapers}
+        self._survivors(escaped_marker)
+        stayed = self._survivors(stayed_marker)
+        self.assertEqual(
+            len(escapers), 1,
+            f"the escaper was not there to be missed ({escapers!r}), so this test "
+            f"measured nothing: with no survivor holding the pipe the post-kill "
+            f"communicate() never expires and the reap is never reached")
+        pid = int(escapers[0])
+        self.assertEqual(
+            sessions[pid], pid,
+            f"the survivor (session {sessions[pid]}) was not in a session of its own, "
+            f"so it did not escape the group and the reap branch is unmeasured here")
+        self.assertEqual(stayed, [],
+                         "the descendant that stayed IN the group survived the kill, "
+                         "which is a broken group kill and not this test's subject")
+        self.assertNotIn(
+            "not confirmed dead", message,
+            "the installer warned about leftovers after a kill that worked: its own "
+            "child was SIGKILLed and left unreaped, and a zombie still answers "
+            f"killpg(group, 0). Message was {message!r}")
+
     def test_the_kill_is_a_signal_a_child_cannot_ignore(self):
         """Which signal is not a detail: a shell that traps TERM outlives it and the
         call still reports a kill. Pinned with a child that traps exactly that."""
@@ -4316,6 +4382,18 @@ class TestNoChildWaitsForAHuman(SandboxCase):
         mistake passes there, and the probe was a leader. Measured: with that mutation,
         the leader probe returns False and survives while the non-leader probe kills its
         caller with SIGKILL. Both states are asserted below for that reason.
+
+        What the probe actually prints, because a pushed commit body of this branch
+        says it "prints its pid, pgid, sid and the child's group" and it does not: the
+        line is `LEADER <bool> SHARED <bool> GROUPKILL <bool> PROBE-SURVIVED` and it
+        carries no raw ids at all. That is not a weaker anchor, it is a different one.
+        The discriminating information travels as DERIVED booleans computed inside the
+        probe, where the comparison is made: `LEADER` is os.getpid() == os.getpgid(0)
+        and `SHARED` is the child's group == the probe's own. The equality asserted at
+        the end of this test, seen == {True: True, False: False}, is what proves the
+        two iterations really ran in different process states, which is the claim the
+        raw ids would have been printed to support. Read the ids as never having been
+        there rather than as having gone missing.
         """
         seen = {}
         for as_leader in (True, False):

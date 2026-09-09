@@ -2164,6 +2164,21 @@ def check_packages_verified(fix: bool) -> Result:
             with no lock entry at all (verify sweeps skills/vendor on disk, not only
             the lock, because deleting an entry must not delete the check).
 
+    What this check CANNOT tell apart, measured and stated here rather than left for a
+    reader to infer from the tiers above: "nothing was ever installed" and "the store
+    was emptied". With the lock's `packages` list cleared and the vendor tree and the
+    symlink removed, `verify --all` returns `{"pass": 0, "total": 0}` exit 0 and this
+    check PASSes, byte for byte identical to a brain that never installed anything.
+    Every HALF-emptied state is still caught, which is what makes the design
+    defensible: a vendored tree with no lock entry is FAIL, a lock entry whose signer
+    is in no allowed-signers file is FAIL, and a `skills/<name>` link left pointing at
+    an absent `skills/vendor/<name>` is WARN with the `octo pkg uninstall` unlock. Only
+    the COMPLETE removal is silent, and it is silent because it is genuinely the same
+    state: there is nothing left on disk to check. What sees it is git, not this check.
+    `packages.lock.json` is tracked, so clearing it is a diff on the way out, the same
+    protection `registry/pkg-signers.pub` has and `company/config/pkg-signers` does not
+    (see the trust-root asymmetry in the octo_pkg module docstring).
+
     Before any of that, a capability probe: `ssh-keygen -Y` is absent on old Windows
     OpenSSH. A verify that cannot check a signature has not checked it, so the probe
     failing is FAIL with the unlock, never a silent skip (v8 risk 4).

@@ -1980,7 +1980,7 @@ rules:
     locator: scripts/octo_pkg.py --selftest registry/fixtures/META.kernel-package
     expect: 0
   - method: EXIT_CODE
-    locator: grep -q "octo pkg verify" .githooks/pre-push
+    locator: grep -qE '^[^#]*octo_pkg\.py.*verify --all' .githooks/pre-push
     expect: 0
   - method: ANCHOR_PRESENT
     locator: 'Kernel: packages'
