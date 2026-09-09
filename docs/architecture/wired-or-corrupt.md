@@ -343,6 +343,79 @@ FORCED = fail-closed AND, when it carries a `--selftest` proof, that selftest pa
 
 **Deferred to a follow-up (telemetry week first).** D1 injection-scan (fetched content that DISCUSSES injection would false-positive) and D2 the machine-register greeting/closing detector carry real false-positive risk and stay deferred behind warn-mode telemetry. D5 the no-pause proposal detector SHIPPED as a detector, not a gate: `scripts/no-pause-suggestion.py` runs at Stop in `hooks.json` under rule `COMMS.no-pause`, recorded as detector by design (`v7_decision`) because a hard block measured false positives on legitimate clarifying questions.
 
+## 10. v8: EVERY PROOF IS EXECUTED (the unrun-proof class)
+
+**The defect.** RULE #1 says a rule is wired only when its registered mechanism is
+VERIFIABLY live, and names `brain_doctor` as the mechanism of that rule. The doctor
+filtered proofs down to one class before running anything:
+
+```python
+if p.get("method") == "EXIT_CODE" and "--selftest" in loc:
+```
+
+Measured on the registry at that point: **165 proofs, 38 evaluated, 127 never run.**
+62 `IN_HOOKS_JSON` (exactly one was resolved, for the corpus-coverage ledger), 45
+`ANCHOR_PRESENT` (covered incidentally by `registry-anchors`, never as proofs), 18
+`FILE_EXISTS` (the string did not appear in a single `.py` file in the repo), and 3
+`EXIT_CODE` locators without `--selftest`. A proof nobody runs is a declaration.
+
+**The consequence, reproduced.** Two of those three unrun `EXIT_CODE` locators were
+sentinel greps: `grep -q OCTORATO-WIRE-GATE .githooks/pre-push` and
+`grep -q OCTORATO-COMMIT-MSG-LANG-GATE .githooks/commit-msg`. In both hooks the
+sentinel appears exactly once, inside a banner **comment**. Deleting every
+`brain_doctor` invocation from a copy of `pre-push` while leaving the comments intact
+left both proofs exiting 0. `META.pre-push-gate`, the row that makes the
+constitutional rule enforceable, declared itself wired over a hook that no longer
+ran the doctor. The doctor's own D0 bootstrap test (`"OCTORATO-WIRE-GATE" in
+_rt(pp)`) had the identical shape, so it agreed.
+
+**The fix, in two halves.**
+
+1. **Execute everything.** `evaluate_proofs(root, methods, comment_rot)` runs all four
+   implemented methods against a given brain root and returns one failure line per
+   proof that does not hold. The cheap, deterministic three (`FILE_EXISTS`,
+   `ANCHOR_PRESENT`, `IN_HOOKS_JSON`) run in `check_proof_execution`, which is on the
+   `--registry` path the pre-push hook already takes; `EXIT_CODE` runs in
+   `gate-liveness`, which is the check that already pays for subprocesses. Each proof
+   is therefore executed exactly once per push, and none is skipped.
+
+2. **Executing a comment-satisfiable proof faithfully still proves nothing**, so the
+   executor carries a mutant test rather than a pattern heuristic. For an `EXIT_CODE`
+   proof that is a pure text search over a file, re-run the same search against a copy
+   of that file with every comment line removed. A proof that flips from hold to fail
+   had no live-line evidence: it proves the intent was written down, not that the
+   mechanism runs. That is the check that catches the NEXT rotted proof, not just the
+   two known ones.
+
+**Blast radius, measured before arming.** With the locator bug below fixed, **all 165
+proofs hold on master: 0 failures.** There was no red inventory to buy a transition
+period for, so both checks are FAIL, not WARN. The comment-rot mutant found exactly
+2 of 40 `EXIT_CODE` proofs and no false positives; both locators were rewritten to
+assert the invocation on a non-comment line (`grep -qE '^[^#]*brain_doctor\.py'`),
+and the doctor's D0 bootstrap now requires the same.
+
+**A latent bug the lift surfaced.** The one live `IN_HOOKS_JSON` resolver split the
+locator on every `|` and required exactly 3 fields. A Claude Code matcher is a regex
+ALTERNATION, so it carries its own pipes (`Write|Edit`, or a 7-way `mcp__` list):
+**9 of the 62** locators have 4+ fields and resolved to False for a reason unrelated
+to the hook. It never showed because the resolver was only ever called on one rule
+whose matcher happened to be pipe-free. `_split_hooks_locator` now splits on the
+first and last pipe and gives the middle back to the matcher.
+
+**Cost.** The doctor got FASTER. `gate-liveness` and `enforcement-floor` each ran the
+same selftests independently, so every run paid for them twice: 37 proofs × 2 = 74
+subprocess executions, with 3 `EXIT_CODE` proofs never executed at all. A per-locator
+memo shared by all consumers makes it 40 unique locators executed once, 0 skipped.
+
+**The prover is proven.** `brain_doctor.py --selftest registry/fixtures/META.rule-1-proof-execution`
+drives the executor over a matrix of miniature brains: one `violation-*` case per proof
+method with that proof rotted (each must go red), the comment-rot case, plus `benign`
+and a `control-noop` that must both stay green in the same batch. The assertion is set
+equality, so a checker that reddens on everything fails it exactly like one that reddens
+on nothing. `META.rule-1-wired-or-corrupt`, which until now carried only `FILE_EXISTS`
+and `ANCHOR_PRESENT`, two proofs nobody ran, now carries that selftest as an
+`EXIT_CODE` proof.
+
 ---
 
 **Decision record:** approved and shipped. Phase 0 landed in v4.0.0 (registry, doctor D0-D3, pre-push gate, phantom-script kill); the create-to-register loop landed in v4.2.0; the fail-closed meta-gate + gateable classification landed in v5.3.0 (#180); the waivers that armed it landed in v5.4.0; the v5.5.0 wave hardened the teeth: waiver `expires` is enforced (expired = unwaived = FAIL), release-drift is checked in both directions, anchor ambiguity is detected instead of first-match-wins, the corpus-coverage denominator counts skills canon plus memory directives, and the pre-push gate's own inputs are fail-closed (missing registry, doctor, or Python blocks the push, never a silent skip). The final wave closed corpus-coverage to an honest 100% and armed its teeth: skills canon is carried by 6 registry PRESENCE/DETECTOR rows, memory directives by a class row wired to the brain-memory-recall hook plus the MEMORY.md index, the denominator was pruned of echoes (83 raw entries down to 43 real rules), and the ledger flips from WARN to FAIL on any uncovered rule so a new un-wired rule blocks the push; enforcement strength prints per row (REFLEX/PRESENCE) so coverage is never misread as force.

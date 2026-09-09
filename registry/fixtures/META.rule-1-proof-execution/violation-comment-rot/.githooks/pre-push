@@ -1,0 +1,4 @@
+#!/bin/sh
+# OCTORATO-DEMO-GATE - banner comment naming the gate
+# demo_gate.py is described here, in a comment
+echo 'the invocation was deleted; only the comments remain'
