@@ -335,25 +335,47 @@ _TITLE_FAMILIES = {
     # compared, rather than dropping the word and losing the contradiction entirely.
     "mozilla": "mpl", "mpl": "mpl",
     "isc": "isc", "zlib": "zlib", "boost": "bsl", "artistic": "artistic",
-    "eclipse": "epl", "unlicense": "unlicense", "python": "psf", "openssl": "openssl",
+    "common": "cpl", "eclipse": "epl", "unlicense": "unlicense", "python": "psf", "openssl": "openssl",
     "creative": "cc", "commons": "cc",
 }
 # The coarse family of an SPDX id, in the same vocabulary the titles use. Longest first,
 # so AGPL and LGPL are not read as GPL.
 _COARSE_ORDER = ("agpl", "lgpl", "gpl", "bsd", "apache", "mpl", "mit", "isc", "zlib",
-                 "bsl", "artistic", "epl", "unlicense", "psf", "openssl", "cc")
+                 "bsl", "artistic", "cpl", "epl", "unlicense", "psf", "openssl", "cc")
 
 
 # A word that names a FAMILY OF FAMILIES. "GNU" is any of three, and "general public
 # license" without "gnu" is still the GPL name every reader knows.
 _GNU_FAMILIES = frozenset({"gpl", "lgpl", "agpl"})
+# `affero` is deliberately NOT here: it is in `_TITLE_FAMILIES`, so the early
+# return above fires first and an entry here could never be reached.
 _SET_VALUED_TITLES = {"gnu": _GNU_FAMILIES, "general": _GNU_FAMILIES,
-                      "public": _GNU_FAMILIES, "affero": frozenset({"agpl"})}
+                      "public": _GNU_FAMILIES}
 
 
 def _title_families(ws: list[str]) -> set[str]:
     """Every family this title could be naming. Empty means it names none."""
     named = {_TITLE_FAMILIES[w] for w in ws if w in _TITLE_FAMILIES}
+    if named:
+        # A CONCRETE name wins outright. Unioning the set-valued words into a concrete
+        # one inverts the rule: naming a SPECIFIC license would WIDEN what the title
+        # accepts. Measured against the real bodies in `tests/license-samples/`, every
+        # one silent, before this line existed:
+        #     GNU Affero General Public License  over GPL-3.0   -> GPL-3.0-only
+        #     GNU Lesser General Public License  over GPL-3.0   -> GPL-3.0-only
+        #     GNU Lesser General Public License  over AGPL-3.0  -> AGPL-3.0-only
+        #     Mozilla Public License             over GPL-3.0   -> GPL-3.0-only
+        #     Eclipse Public License             over GPL-3.0   -> GPL-3.0-only
+        # An AGPL title over a GPL body is a materially different grant: the network
+        # clause is the reason AGPL exists.
+        #
+        # STILL OPEN, measured, and named here because this module records its
+        # residuals at the code: a title naming a license this map does not carry is
+        # ornament over any body. `common` (CPL-1.0) leaks while its own successor
+        # `eclipse` is caught, and a title with NO identity word at all
+        # ("Open Software License") is unconditional ornament. Both are bounded by
+        # `_TITLE_QUALIFIERS`: the published forms carry a version number and refuse.
+        return named
     for w in ws:
         if w in _SET_VALUED_TITLES:
             named |= set(_SET_VALUED_TITLES[w])

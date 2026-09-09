@@ -2137,6 +2137,38 @@ class TestATitleIsANameNotAWarning(unittest.TestCase):
         for title in ("Modified BSD License", "Apache License", "Mozilla Public License"):
             self._refused(title)
 
+    def test_a_concrete_name_is_not_widened_by_the_set_valued_words(self):
+        # The sibling test above closed ONE member: a title naming only the family of
+        # families over a body outside it. The union direction stayed open, and it runs
+        # the wrong way: naming a SPECIFIC license widened what the title would accept.
+        # `affero` and `lesser` were dragged back up into the whole GNU set, and `public`
+        # dragged that set into any title carrying the word, so an MPL or EPL title sat
+        # over a GPL body with no problem raised. Measured against the real sample bodies,
+        # all five silent:
+        #     GNU Affero General Public License over GPL-3.0  -> GPL-3.0-only
+        #     GNU Lesser General Public License over GPL-3.0  -> GPL-3.0-only
+        #     GNU Lesser General Public License over AGPL-3.0 -> AGPL-3.0-only
+        #     Mozilla Public License            over GPL-3.0  -> GPL-3.0-only
+        #     Eclipse Public License            over GPL-3.0  -> GPL-3.0-only
+        # An AGPL title over a GPL body is a materially different grant; the network
+        # clause is the reason AGPL exists.
+        for title, body, name in (
+                ("GNU Affero General Public License", GPL3_TEXT, "agpl title, gpl body"),
+                ("GNU Lesser General Public License", GPL3_TEXT, "lgpl title, gpl body"),
+                ("GNU Lesser General Public License", AGPL3_TEXT, "lgpl title, agpl body"),
+                ("Mozilla Public License", GPL3_TEXT, "mpl title, gpl body"),
+                ("Eclipse Public License", GPL3_TEXT, "epl title, gpl body")):
+            spdx, problem = gen.license_terms(f"{title}\n\n{body}")
+            self.assertIsNone(spdx, f"{name} resolved to {spdx} instead of refusing")
+            self.assertTrue(problem, f"{name} refused with no stated problem")
+        # and the legitimate resolves the narrowing could have broken
+        self.assertEqual(gen.license_terms(f"GNU General Public License\n\n{GPL3_TEXT}")[0],
+                         "GPL-3.0-only")
+        self.assertEqual(gen.license_terms(f"GNU General Public License\n\n{AGPL3_TEXT}")[0],
+                         "AGPL-3.0-only")
+        self.assertEqual(gen.license_terms(f"Mozilla Public License Version 2.0\n\n{MPL2_TEXT}")[0],
+                         "MPL-2.0")
+
     def test_the_published_bsd_names_still_resolve(self):
         for title in ("BSD 3-Clause License", "Modified BSD License", "New BSD License",
                       "Revised BSD License"):
