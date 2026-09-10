@@ -11,12 +11,15 @@ Cross-platform: pure pathlib + subprocess with explicit args, no bash-isms.
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 CLAUDE_DIR = Path(__file__).resolve().parent.parent
@@ -686,11 +689,12 @@ def _rt(p: Path) -> str:
         return ""
 
 
-def _hooks_index() -> set:
-    """(event, matcher, script_basename) tuples from tracked hooks.json."""
+def _hooks_index_at(root: Path) -> set:
+    """(event, matcher, script_basename) tuples from the hooks.json under `root`.
+    Root-parameterized so the proof executor can be pointed at a fixture brain."""
     idx = set()
     try:
-        data = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))
+        data = json.loads((root / "hooks.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return idx
     for ev, arr in data.items():
@@ -703,6 +707,37 @@ def _hooks_index() -> set:
                     if tok.endswith(".py"):
                         idx.add((ev, matcher, os.path.basename(tok)))
     return idx
+
+
+def _hooks_index() -> set:
+    """(event, matcher, script_basename) tuples from this brain's tracked hooks.json."""
+    return _hooks_index_at(CLAUDE_DIR)
+
+
+def _split_hooks_locator(locator: str):
+    """`event|matcher|script.py` -> (event, matcher, basename), or None if malformed.
+
+    The matcher is a Claude Code matcher, which is a regex ALTERNATION and therefore
+    contains its own pipes ("Write|Edit", or a 7-way mcp__ list). Splitting on every
+    pipe and demanding exactly 3 parts silently mis-reads 9 of the 62 IN_HOOKS_JSON
+    locators in the registry as malformed, so their proofs resolve to False for a
+    reason that has nothing to do with the hook. Event names never contain a pipe and
+    the script is always the last field, so split on the FIRST and LAST pipe and give
+    the whole middle back to the matcher."""
+    parts = locator.split("|")
+    if len(parts) < 3:
+        return None
+    return parts[0], "|".join(parts[1:-1]), parts[-1]
+
+
+def _proof_in_hooks(locator: str, hooks: set) -> bool:
+    """Does `event|matcher|script.py` name a hook that is actually registered?"""
+    split = _split_hooks_locator(locator)
+    if not split:
+        return False
+    ev, mt, base = split
+    return any(e == ev and b == base and (mm == mt or mt == "*" or mm == "*")
+               for (e, mm, b) in hooks)
 
 
 def _resolve_script(name: str) -> Path:
@@ -829,8 +864,14 @@ def check_registry(fix: bool) -> list:
     out = []
 
     # D0 bootstrap: pre-push gate present (WARN in Phase 0 until commit lands)
+    # Third instance of the comment-satisfiable class, in the doctor's own code: the
+    # sentinel OCTORATO-WIRE-GATE lives only in the hook's banner comment, so this
+    # test passed on a pre-push with every brain_doctor invocation deleted. Require a
+    # live (non-commented) invocation line, which is what "the gate is wired" means.
     pp = CLAUDE_DIR / ".githooks" / "pre-push"
-    sentinel = pp.exists() and "OCTORATO-WIRE-GATE" in _rt(pp)
+    sentinel = pp.exists() and any(
+        "brain_doctor.py" in ln and not ln.lstrip().startswith("#")
+        for ln in _rt(pp).splitlines())
     out.append(Result("registry-bootstrap", PASS if sentinel else WARN,
                       f"rules.yaml loads ({len(rules)} rules); pre-push gate "
                       f"{'present' if sentinel else 'NOT wired yet'}",
@@ -1047,18 +1088,10 @@ def check_corpus_coverage(fix: bool) -> Result:
     class_row = next((r for r in rules if r.get("id") == "MEMORY.feedback-directive-corpus"), None)
     hooks = _hooks_index()
 
-    def _in_hooks(locator: str) -> bool:
-        parts = locator.split("|")
-        if len(parts) != 3:
-            return False
-        ev, mt, base = parts
-        return any(e == ev and b == base and (mm == mt or mt == "*" or mm == "*")
-                   for (e, mm, b) in hooks)
-
     class_proofs = [p for p in (class_row or {}).get("proof", [])
                     if p.get("method") == "IN_HOOKS_JSON"]
     class_live = bool(class_row) and bool(class_proofs) and all(
-        _in_hooks(p.get("locator", "")) for p in class_proofs)
+        _proof_in_hooks(p.get("locator", ""), hooks) for p in class_proofs)
 
     mem_files = sorted(CLAUDE_DIR.glob("projects/*/memory/feedback_*.md"))
     if not mem_files:
@@ -1270,16 +1303,318 @@ def _selftest_proofs(rules: list) -> list:
     return out
 
 
-def _run_selftest_locator(locator: str) -> subprocess.CompletedProcess:
-    """Run a `<script> --selftest [dir]` locator. Strips a leading python/python3
-    token (some locators carry it), resolves a repo-relative script, and runs it
-    under our interpreter with cwd=CLAUDE_DIR so fixture paths resolve."""
-    toks = locator.split()
+def _exit_code_proofs(rules: list) -> list:
+    """(rule, locator, expect) for EVERY EXIT_CODE proof, selftest or not.
+
+    The selftest-only filter this function replaces meant a non-selftest EXIT_CODE
+    locator was registered as proof and then never run: three of them shipped that
+    way, two of which a comment alone could satisfy."""
+    out = []
+    for r in rules:
+        for p in (r.get("proof") or []):
+            if p.get("method") == "EXIT_CODE":
+                out.append((r, str(p.get("locator") or ""), p.get("expect")))
+    return out
+
+
+# One locator, one execution per process. gate-liveness and enforcement-floor each
+# used to run the SAME 37 selftests, so every doctor run paid for them twice; adding
+# a third consumer without this memo would have paid a third time.
+_EXIT_CODE_MEMO: dict = {}
+
+
+def _run_exit_code_locator(locator: str, root: Path | None = None) -> subprocess.CompletedProcess:
+    """Run an EXIT_CODE proof locator. Strips a leading python/python3 token (some
+    locators carry it), resolves a repo-relative .py under `root` and runs EVERY .py
+    under our interpreter; anything else (grep, a shell tool) runs as given. cwd=root
+    so relative fixture and file paths resolve.
+
+    The interpreter is prepended for an ABSOLUTE .py too. Gating that on a relative
+    path made an absolute locator exec the file directly, which raises PermissionError
+    on any .py that is not chmod +x, so a proof whose locator is absolute crashed the
+    doctor instead of running. Only the restored liveness sweep exposed it: every
+    locator in the tracked registry happens to be repo-relative."""
+    root = root or CLAUDE_DIR
+    key = (str(root), locator)
+    if key in _EXIT_CODE_MEMO:
+        return _EXIT_CODE_MEMO[key]
+    toks = shlex.split(locator)
     if toks and os.path.basename(toks[0]) in ("python", "python3", "py"):
         toks = toks[1:]
-    if toks and toks[0].endswith((".py",)) and not os.path.isabs(toks[0]):
-        toks[0] = str(CLAUDE_DIR / toks[0])
-    return run([PYTHON or "python3", *toks], cwd=CLAUDE_DIR)
+    if toks and toks[0].endswith(".py"):
+        first = toks[0] if os.path.isabs(toks[0]) else str(root / toks[0])
+        toks = [PYTHON or "python3", first, *toks[1:]]
+    cp = run(toks, cwd=root)
+    _EXIT_CODE_MEMO[key] = cp
+    return cp
+
+
+def _run_selftest_locator(locator: str) -> subprocess.CompletedProcess:
+    """Back-compat alias: a --selftest locator is just an EXIT_CODE locator."""
+    return _run_exit_code_locator(locator)
+
+
+# --- comment-rot detector -------------------------------------------------------
+# A proof of the form `grep -q SENTINEL <file>` is satisfied by the sentinel wherever
+# it appears, INCLUDING inside a comment. That makes it a proof that the intent was
+# written down, never that the mechanism runs: delete every real invocation from the
+# hook, leave the comment banner, and the proof still exits 0. The rule then declares
+# itself wired over a hook that does nothing. Detect the class by mutating instead of
+# by pattern-matching the locator: re-run the same search against a copy of the target
+# with every comment line removed. A proof that flips from hold to fail had no
+# live-line evidence at all.
+_SEARCH_CMDS = {"grep", "egrep", "fgrep", "rg", "ggrep"}
+# Deliberately narrow: '#' (sh, python, yaml) and '//' (js, jsonc). SQL '--' and shell
+# '--' collide, and a markdown '*' is a bullet, i.e. real content, so stripping either
+# would invent failures. A proof over a file whose comments use another syntax is
+# reported as NOT ANALYZED rather than silently passed.
+_COMMENT_PREFIXES = ("#", "//")
+
+
+def _strip_comment_lines(text: str) -> str:
+    return "".join(ln for ln in text.splitlines(keepends=True)
+                   if not ln.lstrip().startswith(_COMMENT_PREFIXES))
+
+
+def _text_search_target(locator: str, root: Path):
+    """(token_index, path) of the file a text-search locator reads, or None when the
+    locator is not a text search or its target cannot be resolved."""
+    try:
+        toks = shlex.split(locator)
+    except ValueError:
+        return None
+    if not toks or os.path.basename(toks[0]) not in _SEARCH_CMDS:
+        return None
+    for i in range(len(toks) - 1, 0, -1):
+        cand = root / toks[i]
+        if cand.is_file():
+            return i, cand
+    return None
+
+
+def _comment_only_failure(rule_id: str, locator: str, expect, root: Path):
+    """Failure line when this proof holds ONLY because of comment lines, else None."""
+    target = _text_search_target(locator, root)
+    if not target:
+        return None
+    idx, path = target
+    body = _rt(path)
+    stripped = _strip_comment_lines(body)
+    if stripped == body:
+        return None  # no comments to lose; the proof already reads live lines
+    with tempfile.TemporaryDirectory() as td:
+        mutant = Path(td) / path.name
+        mutant.write_text(stripped, encoding="utf-8")
+        toks = shlex.split(locator)
+        toks[idx] = str(mutant)
+        cp = run(toks, cwd=root)
+    try:
+        want = int(expect)
+    except (TypeError, ValueError):
+        want = 0
+    if cp.returncode == want:
+        return None  # still holds without comments: there is live-line evidence
+    return (f"{rule_id}: proof `{locator}` is satisfied ONLY by comment lines in "
+            f"{path.relative_to(root).as_posix() if path.is_relative_to(root) else path.name} "
+            f"(it proves the intent is written down, not that the mechanism runs)")
+
+
+# --- the proof executor ----------------------------------------------------------
+CHEAP_PROOF_METHODS = ("FILE_EXISTS", "ANCHOR_PRESENT", "IN_HOOKS_JSON")
+
+
+def evaluate_proofs(root: Path, methods=CHEAP_PROOF_METHODS, comment_rot: bool = False,
+                    rules: list = None, registry_path: Path = None) -> tuple:
+    """Execute every registry proof whose method is in `methods`, against `root`.
+
+    Returns (failures, evaluated, not_analyzed). RULE #1 says a rule is wired only
+    when its registered mechanism is VERIFIABLY live; a proof nobody runs verifies
+    nothing, so this evaluates all four implemented methods rather than the one
+    (EXIT_CODE --selftest) the doctor used to filter for.
+
+    `rules` lets a caller that ALREADY loaded a registry hand its rule list in, and
+    `registry_path` lets one point at a registry that is not `root/registry/rules.yaml`.
+    Re-reading that path unconditionally is what broke gate-liveness once: the check
+    loaded REGISTRY_PATH, the executor silently read a different file, and the verdict
+    came from a rule set the caller had never seen. A judge must judge the rows it was
+    handed."""
+    failures, not_analyzed = [], []
+    evaluated = 0
+    if rules is None:
+        reg_path = registry_path or (root / "registry" / "rules.yaml")
+        try:
+            import yaml
+            reg = yaml.safe_load(reg_path.read_text(encoding="utf-8")) or {}
+        except Exception as e:
+            return ([f"registry: cannot load rules.yaml: {e}"], 0, [])
+        rules = reg.get("rules", []) if isinstance(reg, dict) else []
+    hooks = _hooks_index_at(root)
+    texts: dict = {}
+
+    def body_of(rel: str) -> str:
+        if rel not in texts:
+            texts[rel] = _rt(root / rel)
+        return texts[rel]
+
+    for r in rules:
+        rid = r.get("id", "?")
+        sfile = (r.get("source") or {}).get("file", "CLAUDE.md")
+        for pr in (r.get("proof") or []):
+            method = pr.get("method")
+            if method not in methods:
+                continue
+            loc, exp = str(pr.get("locator") or ""), pr.get("expect")
+            evaluated += 1
+            if method == "FILE_EXISTS":
+                present = (root / loc).exists()
+                if present is not (exp != "absent"):
+                    failures.append(f"{rid}: FILE_EXISTS {loc} "
+                                    f"{'exists' if present else 'MISSING on disk'}, expect={exp}")
+            elif method == "ANCHOR_PRESENT":
+                body = body_of(sfile)
+                if not body:
+                    failures.append(f"{rid}: ANCHOR_PRESENT source file '{sfile}' missing or unreadable")
+                    continue
+                present = loc in body
+                if present is not (exp != "absent"):
+                    failures.append(f"{rid}: ANCHOR_PRESENT anchor {loc!r} "
+                                    f"{'present' if present else 'ABSENT'} in {sfile}, expect={exp}")
+            elif method == "IN_HOOKS_JSON":
+                if _split_hooks_locator(loc) is None:
+                    failures.append(f"{rid}: IN_HOOKS_JSON malformed locator {loc!r} "
+                                    f"(want event|matcher|script.py)")
+                    continue
+                present = _proof_in_hooks(loc, hooks)
+                if present is not (exp != "absent"):
+                    ev, mt, base = _split_hooks_locator(loc)
+                    failures.append(f"{rid}: IN_HOOKS_JSON {base} "
+                                    f"{'is' if present else 'NOT'} in hooks.json at {ev}|{mt}, expect={exp}")
+            elif method == "EXIT_CODE":
+                try:
+                    want = int(exp)
+                except (TypeError, ValueError):
+                    failures.append(f"{rid}: EXIT_CODE expect={exp!r} is not an exit status")
+                    continue
+                cp = _run_exit_code_locator(loc, root)
+                if cp.returncode != want:
+                    tail = (cp.stderr or cp.stdout or "").strip().splitlines()
+                    failures.append(f"{rid}: EXIT_CODE `{loc}` exited {cp.returncode}, expect {want}"
+                                    + (f" :: {tail[-1][:120]}" if tail else ""))
+                elif comment_rot:
+                    rot = _comment_only_failure(rid, loc, exp, root)
+                    if rot:
+                        failures.append(rot)
+            else:
+                not_analyzed.append(f"{rid}: method {method} has no executor")
+    return failures, evaluated, not_analyzed
+
+
+ALL_PROOF_METHODS = CHEAP_PROOF_METHODS + ("EXIT_CODE",)
+
+
+def proof_execution_selftest(fixture_dir: str) -> int:
+    """Fixture-driven liveness proof for the proof executor itself.
+
+    A fixture case is a miniature brain (CLAUDE.md + hooks.json + registry/rules.yaml
+    + .githooks/pre-push) carrying one rule whose four proofs exercise all four
+    methods. `benign` and `control-noop` must come back with ZERO failures; every
+    `violation-*` case must come back RED, and only those. Set equality is the
+    assertion: a check that reddens on everything is as dead as one that reddens on
+    nothing, and a no-op edit in the same batch must not move any verdict."""
+    root = Path(fixture_dir)
+    if not root.is_absolute():
+        root = CLAUDE_DIR / root
+    if not root.is_dir():
+        print(f"selftest: fixture dir not found: {root}")
+        return 1
+    cases = sorted(d for d in root.iterdir() if d.is_dir())
+    if not cases:
+        print(f"selftest: no fixture cases under {root}")
+        return 1
+    expected_red = {d.name for d in cases if d.name.startswith("violation-")}
+    actual_red, detail = set(), {}
+    for d in cases:
+        failures, evaluated, _na = evaluate_proofs(d, methods=ALL_PROOF_METHODS, comment_rot=True)
+        if evaluated == 0:
+            print(f"selftest: case {d.name} evaluated 0 proofs (fixture is inert, not green)")
+            return 1
+        if failures:
+            actual_red.add(d.name)
+            detail[d.name] = failures[0]
+    ok = actual_red == expected_red
+    for d in cases:
+        n = d.name
+        want = "RED" if n in expected_red else "green"
+        got = "RED" if n in actual_red else "green"
+        mark = "ok " if want == got else "MISS"
+        print(f"  [{mark}] {n:26s} want {want:5s} got {got:5s}"
+              + (f"  :: {detail[n][:100]}" if n in detail else ""))
+    if not ok:
+        print(f"selftest FAIL: expected red {sorted(expected_red)}, got red {sorted(actual_red)}")
+        return 1
+    # The fixture matrix proves the evaluator reddens correctly. It does NOT prove the
+    # evaluator is REACHABLE from the hook that blocks a push, and an unreachable
+    # checker is the same defect one level up, so assert both push paths as well.
+    #
+    # --registry is spawned for real: it is cheap and runs no EXIT_CODE proof, so it
+    # cannot re-enter here. --gate-receipt is asserted IN-PROCESS instead. It must not
+    # be spawned: gate-liveness runs this selftest as one of its own EXIT_CODE proofs,
+    # so spawning it from inside would recurse without a base case (measured: it forks
+    # until the machine is out of processes).
+    cp = run([PYTHON or "python3", str(CLAUDE_DIR / "scripts" / "brain_doctor.py"),
+              "--registry", "--json"], cwd=CLAUDE_DIR)
+    try:
+        keys = {c.get("key") for c in json.loads(cp.stdout or "{}").get("checks", [])}
+    except json.JSONDecodeError:
+        keys = set()
+    if "proof-execution" not in keys:
+        print("  [MISS] --registry does not run 'proof-execution': "
+              "the executor is not on the pre-push path")
+        return 1
+    print(f"  [ok ] {'wiring --registry':26s} runs 'proof-execution' (spawned)")
+    if ("gate-liveness", check_gate_liveness) not in CHECKS:
+        print("  [MISS] check_gate_liveness is not registered in CHECKS")
+        return 1
+    gl_src = inspect.getsource(check_gate_liveness)
+    if "evaluate_proofs" not in gl_src or '"EXIT_CODE"' not in gl_src:
+        print("  [MISS] check_gate_liveness no longer routes EXIT_CODE proofs through the executor")
+        return 1
+    print(f"  [ok ] {'wiring --gate-receipt':26s} routes EXIT_CODE through the executor (in-process)")
+    # Generalising the executor once ATE the sweep: check_gate_liveness kept loading
+    # the selftest proofs, used them only for a count, and never ran one. Assert both
+    # halves are still present, so the same deletion cannot pass this selftest again.
+    if "_selftest_proofs" not in gl_src or "_run_selftest_locator" not in gl_src:
+        print("  [MISS] check_gate_liveness no longer RUNS the fixture-driven selftest sweep "
+              "(a general proof count is not a liveness sweep)")
+        return 1
+    print(f"  [ok ] {'wiring liveness sweep':26s} check_gate_liveness still runs each --selftest proof")
+    print(f"selftest PASS: {len(expected_red)} violation case(s) red, "
+          f"{len(cases) - len(expected_red)} benign/control case(s) green, "
+          f"executor reachable from both pre-push invocations")
+    return 0
+
+
+def check_proof_execution(fix: bool) -> Result:
+    """RULE #1 teeth: EXECUTE every cheap registry proof, do not merely store it.
+
+    The doctor used to run exactly one class of proof (EXIT_CODE with --selftest);
+    the other 127 rows were declarations. These three methods are deterministic and
+    cost no subprocess, so they run here, on the --registry path the pre-push hook
+    takes. The EXIT_CODE class is executed in gate-liveness, which already pays for
+    subprocesses, so no proof is run twice per push."""
+    key = "proof-execution"
+    failures, evaluated, not_analyzed = evaluate_proofs(CLAUDE_DIR, registry_path=REGISTRY_PATH)
+    if failures:
+        return Result(key, FAIL,
+                      f"{len(failures)}/{evaluated} registry proof(s) do NOT hold: "
+                      + "; ".join(failures[:5]),
+                      "a registered proof that does not hold is an unwired rule (RULE #1); "
+                      "fix the mechanism, or fix the locator if it points at the wrong thing")
+    msg = f"all {evaluated} disk/anchor/hooks proof(s) executed and hold"
+    if not_analyzed:
+        msg += f"; {len(not_analyzed)} proof(s) carry a method with no executor: " + "; ".join(not_analyzed[:3])
+    return Result(key, PASS if not not_analyzed else WARN, msg,
+                  "" if not not_analyzed else "implement an executor for these methods or drop them from the schema")
 
 
 def check_gate_liveness(fix: bool) -> Result:
@@ -1302,17 +1637,41 @@ def check_gate_liveness(fix: bool) -> Result:
     if not proofs:
         return Result(key, WARN, "no --selftest proofs registered",
                       "add EXIT_CODE --selftest proofs to fail-closed gates")
-    failed = []
+
+    # (1) The fixture-driven liveness sweep, asserted on its own over the rules THIS
+    # check loaded. This is the property gate-liveness is named for: every fail-closed
+    # gate's violation fixture must BLOCK and its benign fixture must ALLOW. Folding it
+    # into a general "execute every EXIT_CODE proof" pass once deleted it outright, and
+    # the check went on printing a confident green sentence while a gate that had
+    # stopped blocking was invisible: the exact failure class this feature exists to
+    # kill, inside the feature. Keep the two sweeps and their two counts separate.
+    live_failed = []
     for r, loc in proofs:
         cp = _run_selftest_locator(loc)
         if cp.returncode != 0:
             detail = (cp.stderr or cp.stdout or "").strip().splitlines()
-            failed.append(f"{r.get('id', '?')}: {detail[-1] if detail else 'selftest exit '+str(cp.returncode)}")
+            live_failed.append(f"{r.get('id', '?')}: "
+                               f"{detail[-1] if detail else 'selftest exit ' + str(cp.returncode)}")
+    if live_failed:
+        return Result(key, FAIL,
+                      f"{len(live_failed)}/{len(proofs)} gate selftest(s) do NOT block+allow "
+                      "correctly: " + "; ".join(live_failed[:6]),
+                      "a labeled gate that fails its violation/benign fixtures is dead; "
+                      "fix the gate or the fixture")
+
+    # (2) Every EXIT_CODE proof, not only the --selftest ones: a locator registered as
+    # proof and never executed proves nothing, and the comment-rot mutant runs here
+    # because this is the check that already pays for subprocesses on the push path.
+    # Same rule set as the sweep above, and the shared memo means the selftests already
+    # run are not spawned a second time for this pass.
+    failed, evaluated, _na = evaluate_proofs(CLAUDE_DIR, methods=("EXIT_CODE",),
+                                             comment_rot=True, rules=rules)
     if failed:
         return Result(key, FAIL,
-                      f"{len(failed)}/{len(proofs)} gate selftest(s) do NOT block+allow correctly: "
+                      f"{len(failed)}/{evaluated} EXIT_CODE proof(s) do NOT hold: "
                       + "; ".join(failed[:6]),
-                      "a labeled gate that fails its violation/benign fixtures is dead; fix the gate or the fixture")
+                      "a labeled gate that fails its violation/benign fixtures is dead, and a proof a "
+                      "comment alone satisfies was never a proof; fix the gate, the fixture or the locator")
     # v7 gate receipt: the outward-send gate refuses to ship while no doctor has
     # proven the gates on THIS tree. Written here, in the doctor's process, never
     # by the model; the consumer compares the recorded HEAD to the live one.
@@ -1339,9 +1698,12 @@ def check_gate_liveness(fix: bool) -> Result:
     except Exception as e:
         return Result(key, FAIL, f"gate receipt could not be written: {e}",
                       "the send gate denies without it; fix and re-run --gate-receipt")
+    # Two properties, two numbers, never one. A single count that conflated N executed
+    # proofs with the liveness sweep is what let the sweep disappear behind a green line.
     return Result(key, PASS,
-                  f"all {len(proofs)} gate/detector selftest(s) proven live "
-                  f"(gate: violation blocks + benign allows; detector: fires on fixture)")
+                  f"{len(proofs)} fixture-driven selftest(s) proven live (gate: violation blocks "
+                  f"+ benign allows; detector: fires on fixture); separately, all {evaluated} "
+                  f"EXIT_CODE proof(s) executed and hold, none satisfied by comment lines alone")
 
 
 def check_enforcement_floor(fix: bool) -> Result:
@@ -2154,6 +2516,7 @@ def check_stale_merged_branches(fix: bool) -> Result:
 CHECKS = [
     ("repo-identity", check_repo_identity),
     ("rule-1-registry", check_registry),
+    ("proof-execution", check_proof_execution),
     ("corpus-coverage", check_corpus_coverage),
     ("fixture-seeds-tracked", check_fixture_seeds_tracked),
     ("gate-liveness", check_gate_liveness),
@@ -2236,7 +2599,13 @@ def main() -> int:
                     help="run ONLY the RULE #1 registry checks (for .githooks/pre-push)")
     ap.add_argument("--gate-receipt", action="store_true",
                     help="run ONLY gate-liveness and write the v7 gate receipt (pre-push, ai-pull)")
+    ap.add_argument("--selftest", metavar="FIXTURE_DIR", nargs="?",
+                    const="registry/fixtures/META.rule-1-proof-execution",
+                    help="prove the proof executor reddens on rotted proofs and stays green otherwise")
     args = ap.parse_args()
+
+    if args.selftest:
+        return proof_execution_selftest(args.selftest)
 
     if args.gate_receipt:
         try:
@@ -2245,7 +2614,8 @@ def main() -> int:
             results = [Result("gate-liveness", FAIL, f"gate-liveness crashed: {e}", "report this bug")]
     elif args.registry:
         try:
-            results = check_registry(args.fix) + check_naming(args.fix) + check_orphan_hooks(args.fix)
+            results = (check_registry(args.fix) + [check_proof_execution(args.fix)]
+                       + check_naming(args.fix) + check_orphan_hooks(args.fix))
         except Exception as e:
             results = [Result("rule-1-registry", FAIL, f"registry check crashed: {e}",
                               "fix registry/rules.yaml so it loads and validates")]

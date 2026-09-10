@@ -24,6 +24,14 @@ rules:
   - method: ANCHOR_PRESENT
     locator: 'RULE #1'
     expect: present
+  # Until this row carried an EXECUTED proof, the constitutional keystone was backed
+  # by two declarations nobody ran. The selftest drives brain_doctor over a matrix of
+  # miniature brains: one case per proof method with that proof rotted (each must go
+  # red), plus a benign case and a no-op control (both must stay green). Set equality
+  # is the assertion, so a checker that reddens on everything fails it too.
+  - method: EXIT_CODE
+    locator: scripts/brain_doctor.py --selftest registry/fixtures/META.rule-1-proof-execution
+    expect: 0
   liveness_required: PRESENT
 - id: META.pre-push-gate
   title: brain_doctor is invoked from the tracked pre-push hook
@@ -46,7 +54,11 @@ rules:
     locator: .githooks/pre-push
     expect: present
   - method: EXIT_CODE
-    locator: grep -q OCTORATO-WIRE-GATE .githooks/pre-push
+    # The sentinel-only form of this proof lived at .githooks/pre-push:230, inside a
+    # COMMENT: deleting every brain_doctor invocation from the hook left the proof
+    # exiting 0, so RULE #1 declared itself wired over a hook that no longer ran the
+    # doctor. Assert the INVOCATION on a line that is not commented out instead.
+    locator: "grep -qE '^[^#]*brain_doctor\\.py' .githooks/pre-push"
     expect: 0
   liveness_required: PRESENT
 - id: COMMS.human-cadence
@@ -1690,7 +1702,9 @@ rules:
     locator: .githooks/commit-msg
     expect: present
   - method: EXIT_CODE
-    locator: grep -q OCTORATO-COMMIT-MSG-LANG-GATE .githooks/commit-msg
+    # Same comment-satisfiable shape as META.pre-push-gate: the sentinel only ever
+    # appeared in the header comment. Assert the gate is actually invoked.
+    locator: "grep -qE '^[^#]*commit_msg_language_gate\\.py' .githooks/commit-msg"
     expect: 0
   - method: EXIT_CODE
     locator: scripts/commit_msg_language_gate.py --selftest registry/fixtures/GENERIC.commit-msg-english-only
