@@ -1,0 +1,10 @@
+{
+  "session_id": "sess-arming",
+  "agent_id": "agent-a",
+  "tool_name": "Bash",
+  "tool_use_id": "toolu_arm",
+  "tool_input": {
+    "command": "python3 - <<PY\nimport os\nprint(open(os.path.expanduser('~/.claude/settings.json')).read())\nPY"
+  },
+  "cwd": "{{SANDBOX}}/wt/state-gate"
+}

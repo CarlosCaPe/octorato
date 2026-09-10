@@ -1,0 +1,11 @@
+{
+  "session_id": "sess-arming",
+  "agent_id": "agent-a",
+  "tool_name": "Write",
+  "tool_use_id": "toolu_arm",
+  "tool_input": {
+    "file_path": "{{SANDBOX}}/.claude/scripts/d__stop__wa-guardia.py",
+    "content": "x"
+  },
+  "cwd": "{{SANDBOX}}/wt/state-gate"
+}

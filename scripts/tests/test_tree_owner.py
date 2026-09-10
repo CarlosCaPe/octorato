@@ -550,9 +550,27 @@ class QaCycle1(IsolationCase):
                         f"unlink {self.a_py}", f"truncate -s 0 {self.a_py}",
                         f"find {self.tree}/pkg -name '*.py' -delete",
                         f"find {self.tree}/pkg -exec rm {{}} ;",
-                        f"xargs rm -f {self.a_py}"):
+                        f"xargs rm -f {self.a_py}",
+                        # a variable THE COMMAND ITSELF assigns is knowable, and
+                        # this one moved OUT of the residual list below when
+                        # `resolve` started expanding what this process can read
+                        f"DIR={self.tree}/pkg && rm -rf $DIR",
+                        f"export DIR={self.tree}/pkg && rm -rf ${{DIR}}"):
             rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", command))
             self.assertTrue(self.denied(out), command)
+
+    def test_a_prefix_assignment_is_not_a_statement(self):
+        """`DIR=x rm -rf $DIR` is not `DIR=x; rm -rf $DIR`. Bash puts a PREFIX
+        assignment in the environment of the command it prefixes, whose words it
+        has ALREADY expanded, so `$DIR` on that line is still the outer one.
+        Measured in bash, not assumed. Reading the two alike would make one
+        space in front of `rm` a disarm, so the prefix form must still resolve
+        `$DIR` from the environment and, finding nothing, abstain."""
+        self.hold()
+        rc, out = self.run_gate(BASH_GATE, self.bash_payload(
+            "agent-b", f"DIR={self.tree}/pkg rm -rf $DIR"))
+        self.assertFalse(self.denied(out),
+                         "a prefix assignment must not shadow the same line")
 
     def test_named_residuals_are_honestly_uncovered(self):
         """These evade by design (a distinct verb table or an evaluator), and
@@ -575,8 +593,10 @@ class QaCycle1(IsolationCase):
                 # git verbs that rewrite the tree through a different door
                 "git apply /tmp/p.diff", "git rebase main", "git merge main",
                 "git pull", "git cherry-pick HEAD~1", "git revert HEAD",
-                # the shell would expand these; this gate does not run the shell
-                f"DIR={self.tree}/pkg && rm -rf $DIR",
+                # a variable NOBODY here can read: not in os.environ and not
+                # assigned by the command from anything evaluable
+                "rm -rf $OCTO_NO_SUCH_DIR/pkg",
+                f"export DIR=$OCTO_NO_SUCH_DIR && rm -rf $DIR",
                 # brace expansion is the shell's job too
                 f"rm -rf {self.tree}/{{pkg,x}}",
                 # xargs fed from stdin: the target never appears in the command

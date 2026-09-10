@@ -1,0 +1,19 @@
+{
+  "session_id": "sess-arming",
+  "agent_id": "agent-a",
+  "tool_name": "MultiEdit",
+  "tool_use_id": "toolu_arm",
+  "tool_input": {
+    "file_path": "{{SANDBOX}}/wt/state-gate/scripts/x.py",
+    "edits": [
+      {
+        "file_path": "{{SANDBOX}}/.claude/settings.json",
+        "old_string": "a",
+        "new_string": "b"
+      }
+    ]
+  },
+  "_setup": {
+    "expect_names": "settings.json"
+  }
+}

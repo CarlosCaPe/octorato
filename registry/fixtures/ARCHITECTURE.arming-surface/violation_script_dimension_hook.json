@@ -1,0 +1,14 @@
+{
+  "session_id": "sess-arming",
+  "agent_id": "agent-a",
+  "tool_name": "Write",
+  "tool_use_id": "toolu_arm",
+  "tool_input": {
+    "file_path": "{{SANDBOX}}/.claude/scripts/dimension-awareness-hook.py",
+    "content": "{}\n"
+  },
+  "cwd": "{{SANDBOX}}/wt/state-gate",
+  "_setup": {
+    "expect_names": "dimension-awareness-hook.py"
+  }
+}
