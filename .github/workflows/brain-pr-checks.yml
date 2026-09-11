@@ -26,21 +26,12 @@ permissions:
 
 jobs:
   kernel-suite:
-    # The v8 kernel suite ran ONLY in `.githooks/pre-push`, which means it ran only
-    # on the author's own box. Issue #300 is the consequence: 42 of 208 tests fail on
-    # Windows 11 against a clean master, and because pre-push is fail-closed, no push
-    # is possible from a Windows machine at all. Nobody saw it because CI never ran
-    # the suite on any platform, let alone a second one.
-    #
-    # The Windows leg is `continue-on-error` ON PURPOSE and it is not a soft-fail in
-    # disguise: it is red today by construction, so making it required now would block
-    # every PR on a defect this job exists to REPORT. It reports until #300 is closed;
-    # promoting it to required is the last step of that issue, not of this one, and the
-    # step below prints that promotion instruction on every red run so the temporary
-    # state cannot quietly become permanent.
+    # The v8 kernel suite ran ONLY in `.githooks/pre-push`, so it ran on the author's
+    # own box and on whichever platform that author happened to use. Both legs are
+    # required: a suite that passes on one operating system and is never run on the
+    # other proves half of what it claims.
     name: kernel suite (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.os == 'windows-latest' }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -76,7 +67,7 @@ jobs:
           python -m unittest discover -s tests -p 'test_*.py' -v 2>&1 | tee ../suite.log
         continue-on-error: true
 
-      - name: Report the tally, and fail the POSIX leg on any red
+      - name: Report the tally, and fail on any red
         shell: bash
         run: |
           tail -n 3 suite.log
@@ -86,16 +77,8 @@ jobs:
             exit 1
           fi
           if grep -qE '^(FAILED|ERROR)' suite.log; then
-            if [ "${{ matrix.os }}" = "windows-latest" ]; then
-              echo "::warning::Windows leg red — this is issue #300, reported not enforced."
-              echo "::warning::When it goes green, drop continue-on-error and make this check required."
-              exit 0
-            fi
             echo "::error::suite red on ${{ matrix.os }}"
             exit 1
-          fi
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            echo "::notice::Windows leg GREEN — close #300 by making this check required."
           fi
 
   check-generic:
