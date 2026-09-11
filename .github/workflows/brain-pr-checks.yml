@@ -54,6 +54,14 @@ jobs:
         with:
           python-version: '3.12'
 
+      # The suite reads registry/*.yaml, so PyYAML is a test dependency, not an
+      # optional one. A runner without it turns test_octo_replay's orphan-rule check
+      # into an ERROR rather than a failure, which reads as an environment problem
+      # and hides the check that was supposed to run.
+      - name: Install the suite's dependencies
+        shell: bash
+        run: python -m pip install --quiet pyyaml
+
       - name: Run the kernel test suite
         shell: bash
         working-directory: scripts
