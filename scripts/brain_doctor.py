@@ -11,6 +11,7 @@ Cross-platform: pure pathlib + subprocess with explicit args, no bash-isms.
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import os
 import re
@@ -188,6 +189,44 @@ def check_interpreter(fix: bool) -> Result:
                   "install Python 3.8+ and ensure it is on PATH")
 
 
+# A distribution is not always importable under its own name. Probing `import pyyaml`
+# fails on a machine where PyYAML is installed, so the check needs the real module name.
+DIST_TO_MODULE = {"pyyaml": "yaml", "pillow": "PIL", "beautifulsoup4": "bs4",
+                  "python-dateutil": "dateutil", "pyjwt": "jwt"}
+
+# Modules the interpreter ships. Anything imported by a script and not in here and not
+# declared is a third-party dependency nobody wrote down.
+def _undeclared_imports(declared_modules: set) -> dict:
+    """{module: [scripts that import it]} for third-party imports nobody declared.
+
+    Parsed with ast, never with a regex: a line like "from the Registry" inside a
+    docstring matches an import pattern and would report a package called `the`.
+    """
+    scripts_dir = CLAUDE_DIR / "scripts"
+    # Every .py in the repo, not only this directory: a script legitimately imports a
+    # module shipped under skills/<name>/scripts/, and that is first-party code.
+    siblings = {p.stem for p in CLAUDE_DIR.rglob("*.py") if ".git" not in p.parts}
+    found: dict = {}
+    for path in sorted(scripts_dir.glob("*.py")):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError):
+            continue
+        mods = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                mods.update(a.name.split(".")[0] for a in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                mods.add(node.module.split(".")[0])
+        for mod in mods:
+            if mod in declared_modules or mod in sys.stdlib_module_names:
+                continue
+            if mod in siblings:
+                continue          # a sibling script, not a dependency
+            found.setdefault(mod, []).append(path.name)
+    return found
+
+
 def check_python_deps(fix: bool) -> Result:
     key = "python-deps"
     req_file = CLAUDE_DIR / "requirements.txt"
@@ -204,9 +243,22 @@ def check_python_deps(fix: bool) -> Result:
             required.append(name)
     missing = []
     for pkg in required:
-        probe = run([PYTHON or "python3", "-c", f"import {pkg}"])
+        module = DIST_TO_MODULE.get(pkg.lower(), pkg)
+        probe = run([PYTHON or "python3", "-c", f"import {module}"])
         if probe.returncode != 0:
             missing.append(pkg)
+    # Declared-against-installed only ever proves half of it. An import nobody declared
+    # is invisible to that half, and it is the half that cost nine checks on a fresh
+    # clone: yaml was imported by eight scripts, declared by none, and this check still
+    # said PASS.
+    declared_modules = {DIST_TO_MODULE.get(p.lower(), p) for p in required}
+    undeclared = _undeclared_imports(declared_modules)
+    if undeclared and not missing:
+        detail = "; ".join(f"{m} ({len(s)} script{'s' if len(s) > 1 else ''})"
+                           for m, s in sorted(undeclared.items()))
+        return Result(key, FAIL,
+                      f"imported but not declared: {detail}",
+                      f"add them to {req_file}, or the next fresh clone loses them silently")
     if not missing:
         return Result(key, PASS, f"all declared deps importable ({', '.join(required)})")
     if fix:

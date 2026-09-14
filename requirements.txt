@@ -5,8 +5,13 @@
 #
 # Or run `python3 scripts/brain_doctor.py --fix` to install automatically.
 #
-# Keep this list minimal — every entry is a real import in scripts/*.py.
+# Keep this list minimal, and keep it COMPLETE: every entry is a real import in
+# scripts/*.py, and every third-party import in scripts/*.py is an entry here. The second
+# half is the one that was broken: yaml was imported by eight scripts and declared by
+# none, so a fresh clone lost nine doctor checks at once while python-deps reported PASS,
+# because it compares declared against installed and never imported against declared.
 
 networkx>=3.0   # scripts/query_connectome.py — graph traversal for the connectome
 pyvis>=0.3      # scripts/query_connectome.py — HTML visualization of the connectome
 jsonschema>=4.0 # scripts/brain_doctor.py (registry-schema) + check-hooks-drift.py — JSON Schema validation
+pyyaml>=6.0     # brain_doctor.py, lineage-doctor.py, impact-radius.py and five more — the Registry and the lineage graph are YAML

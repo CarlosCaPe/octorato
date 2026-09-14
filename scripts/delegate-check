@@ -115,7 +115,7 @@ def parse_registry() -> list[dict]:
         sys.exit(2)
 
     agents = []
-    lines = REGISTRY_PATH.read_text().splitlines()
+    lines = REGISTRY_PATH.read_text(encoding="utf-8").splitlines()
     current_division = ""
     in_xref = False
 
