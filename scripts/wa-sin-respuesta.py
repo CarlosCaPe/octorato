@@ -543,8 +543,8 @@ def credenciales_gmail(secretos=None, lector=None):
     publico.
     """
     if not secretos:
-        return (json.loads(GMAIL_CRED.read_text()),
-                json.loads(GMAIL_KEYS.read_text()))
+        return (json.loads(GMAIL_CRED.read_text(encoding="utf-8")),
+                json.loads(GMAIL_KEYS.read_text(encoding="utf-8")))
     lector = lector or secreto_aws
     region = secretos["region"]
     return (lector(secretos["credenciales"], region),
@@ -786,7 +786,7 @@ def lee_estado():
     borre la memoria y vuelva a gritar todo lo ya avisado.
     """
     try:
-        d = json.loads(ESTADO.read_text())
+        d = json.loads(ESTADO.read_text(encoding="utf-8"))
     except Exception:
         return {"avisados": [], "pulso": None}
     if isinstance(d, list):
@@ -2011,7 +2011,7 @@ def main():
         sys.exit(selftest())
 
     canal = canal_activo()
-    cfg = json.loads(CONFIG.read_text())
+    cfg = json.loads(CONFIG.read_text(encoding="utf-8"))
     ahora = datetime.now(timezone.utc)
     cobertura, estados = [], []
     silencios = (revisa(cfg, ahora, estados, cobertura)
