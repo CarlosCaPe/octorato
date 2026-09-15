@@ -1,0 +1,1 @@
+{"tool_name": "Bash", "tool_input": {"command": "sudo -u carlos nohup gh pr merge 287 --squash"}, "cwd": "/nonexistent/repo"}

@@ -337,13 +337,89 @@ _W_ENVARG = re.compile(r"^(?:-\S+|[A-Za-z_]\w*=\S*)\s+")
 _W_COMMAND = re.compile(r"^command\s+")
 
 
+# Wrapper programs that take a COMMAND as their argument, peeled for exactly the
+# reason `env` and `command` already were: every pattern below anchors at the
+# START of a sub-command, so a prefix left in place is a prefix that disarms the
+# gate. Measured on this machine 2026-09-15, and it was not theoretical:
+#
+#   gh pr merge 307 --squash --delete-branch            -> rc=2, BLOCKED
+#   timeout 300 gh pr merge 307 --squash --delete-branch -> rc=0, ALLOWED
+#
+# and the second form merged the PR without the operator's env approval. Six
+# characters of prefix turned a fail-closed gate into a decorative one.
+#
+# Kept LOCAL rather than imported from the shared parser: this runs on EVERY
+# Bash call and that module is a heavy import. `test_qa_merge_gate_wrappers.py`
+# pins this table to COVER the shared parser's `_WRAPPERS`, so the two cannot
+# drift apart silently; covering more than it is allowed, covering less is not,
+# because more peeling can only over-gate and never under-gate.
+#
+# The value is how many POSITIONAL arguments the wrapper eats before the command
+# starts: `timeout 300 cmd` and `flock /tmp/x cmd` eat one, the rest eat none.
+_WRAPPER_ARGC = {
+    "sudo": 0, "nohup": 0, "setsid": 0, "exec": 0, "time": 0, "nice": 0,
+    "ionice": 0, "stdbuf": 0, "xargs": 0, "doas": 0, "chrt": 0,
+    "timeout": 1, "flock": 1,
+}
+# Flags of those wrappers that consume the NEXT token, so the token after them
+# is an option value and never the command.
+_WRAPPER_VALUED = {
+    "-u", "--user", "-g", "--group", "-p", "--prompt", "-C", "--close-from",
+    "-h", "--host", "-R", "--chroot", "-U", "--other-user", "-T",
+    "--command-timeout", "-r", "--role", "-t", "--type", "-D", "--chdir",
+    "-a", "-f", "--format", "-o", "--output", "-n", "--adjustment", "-s",
+    "--signal", "-k", "--kill-after", "-i", "-e", "--input", "--error",
+    "-I", "-P", "-d", "-E", "-L", "--max-args", "--replace", "--max-procs",
+    "--delimiter", "--arg-file", "--max-lines", "-c", "--class",
+}
+_WRAPPER_HEAD = re.compile(r"^([^\s;&|]+)(\s+)")
+_WRAPPER_TOKEN = re.compile(r"^(\S+)(\s*)")
+
+
+def _peel_wrapper(s: str):
+    """*s* with ONE leading wrapper (and its flags and positional) removed, or
+    None when it does not start with one. Basename-matched, so `/usr/bin/timeout`
+    peels exactly as `timeout` does."""
+    head = _WRAPPER_HEAD.match(s)
+    if not head:
+        return None
+    name = os.path.basename(head.group(1))
+    if name not in _WRAPPER_ARGC:
+        return None
+    rest = s[head.end():]
+    eat = _WRAPPER_ARGC[name]
+    while rest:
+        tok = _WRAPPER_TOKEN.match(rest)
+        if not tok:
+            break
+        word = tok.group(1)
+        if word.startswith("-"):
+            rest = rest[tok.end():]
+            if word in _WRAPPER_VALUED:
+                nxt = _WRAPPER_TOKEN.match(rest)
+                if nxt:
+                    rest = rest[nxt.end():]
+            continue
+        if eat:
+            eat -= 1
+            rest = rest[tok.end():]
+            continue
+        break
+    return rest
+
+
 def _strip_leading(s: str) -> str:
     """Return *s* with leading grouping / env-assignments / redirections / the
-    `env` wrapper (and its flags+assigns) / the `command` builtin removed."""
+    `env` wrapper (and its flags+assigns) / the `command` builtin / any
+    command-taking wrapper (`timeout`, `sudo`, `nohup`, ...) removed."""
     s = s.lstrip()
     prev = None
     while s != prev:
         prev = s
+        peeled = _peel_wrapper(s)
+        if peeled is not None:
+            s = peeled
+            continue
         for pat in (_W_GROUP, _W_ASSIGN, _W_REDIR, _W_COMMAND):
             m = pat.match(s)
             if m:
