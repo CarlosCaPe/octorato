@@ -569,7 +569,7 @@ def check_finops_enforcement(fix: bool) -> Result:
         return Result(key, WARN,
                       "budgets.yaml absent — per-arm budget caps are NOT enforced (FinOps off)",
                       "cp budgets.yaml.example budgets.yaml, then set monthly_usd_cap per arm")
-    n = cfg.read_text(errors="ignore").count("monthly_usd_cap")
+    n = cfg.read_text(encoding="utf-8", errors="ignore").count("monthly_usd_cap")
     return Result(key, PASS, f"FinOps enforcement ON — budgets.yaml present ({n} cap line(s))")
 
 

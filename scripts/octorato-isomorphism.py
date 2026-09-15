@@ -47,7 +47,7 @@ def build_canonicalizer(groups):
 
 
 def compute():
-    data = yaml.safe_load(ANCHORS.read_text())
+    data = yaml.safe_load(ANCHORS.read_text(encoding="utf-8"))
     anchors = data["anchors"]
     canonicalize = build_canonicalizer(data.get("synonyms", []))
     skill_map = data.get("skill_map", {})
