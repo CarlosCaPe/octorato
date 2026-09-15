@@ -53,7 +53,7 @@ def load_config():
     if not CONFIG.exists():
         return None
     try:
-        cfg = json.loads(CONFIG.read_text()).get("brain_memory")
+        cfg = json.loads(CONFIG.read_text(encoding="utf-8")).get("brain_memory")
     except (json.JSONDecodeError, OSError) as e:
         print(f"memory_sync: cannot parse {CONFIG.relative_to(BRAIN_DIR)}: {e}", file=sys.stderr)
         return None

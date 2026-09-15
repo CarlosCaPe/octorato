@@ -203,7 +203,8 @@ def _selftest() -> int:
         # whose git dir is not under the temp dir, in case a new variable appears.
         gd = subprocess.run(["git", "-C", str(clone), "rev-parse", "--absolute-git-dir"],
                             capture_output=True, text=True, env=env).stdout.strip()
-        if not gd.startswith(str(t.resolve())):
+        # Path-object compare: on Windows git prints C:/... while resolve() gives C:\...
+        if not gd or not Path(gd).resolve().is_relative_to(t.resolve()):
             print(f"  X selftest clone resolves outside its temp dir ({gd}); refusing to mutate")
             return 1
         f = clone / "a.txt"

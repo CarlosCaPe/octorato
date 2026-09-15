@@ -11,3 +11,9 @@
 
 # Vendored external repos cloned for deep-learning are not our source.
 knowledge/repo-deep-learn/** linguist-vendored
+
+# Byte-exact fixtures. The gate selftests and the golden replay compare these
+# files BYTE for byte, so git must never translate their line endings: with
+# core.autocrlf=true an LF fixture checks out as CRLF on Windows and every
+# comparison fails while the code under test is correct.
+registry/fixtures/** text eol=lf

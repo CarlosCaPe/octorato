@@ -59,12 +59,19 @@ def R(tid):
 class ReceiptLedgerAnchors(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="receipts-")
-        self._home = os.environ.get("HOME")
-        os.environ["HOME"] = self.tmp
+        # Both variables: the brain resolves its root with expanduser("~"),
+        # which reads USERPROFILE first on Windows, so HOME alone leaves every
+        # lookup pointed at the real profile.
+        self._home = (os.environ.get("HOME"), os.environ.get("USERPROFILE"))
+        os.environ["HOME"] = os.environ["USERPROFILE"] = self.tmp
         (Path(self.tmp) / ".claude" / "projects" / "p").mkdir(parents=True)
 
     def tearDown(self):
-        os.environ["HOME"] = self._home
+        for key, value in zip(("HOME", "USERPROFILE"), self._home):
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
     # ---- seek anchoring ----
     def test_seek_receipt_must_name_a_real_seek_tool_use(self):
