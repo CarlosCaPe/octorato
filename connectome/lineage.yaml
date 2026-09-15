@@ -573,6 +573,26 @@ edges:
       (it asks for a manual reconcile that is trivially satisfiable), not a
       claim that they are missing.
 
+  - id: enforcement-trio
+    concept: "the three mandatory 2D/4D enforcement scripts"
+    appears_in:
+      - CLAUDE.md
+      - scripts/query_connectome.py
+      - scripts/delegate-check
+      - scripts/gate-check
+      - skills/4d-paradigm-protocol/SKILL.md
+    kind: appears_in
+    single_source: "CLAUDE.md section 'Enforcement Scripts (Mandatory)' — the table naming the three commands"
+    note: >-
+      The table names three commands by path, and the 4D skill repeats them.
+      A rename, a signature change or a script that stops running on one
+      platform breaks the prose while the table still reads true.
+      delegate-check is the case that lit this edge: it had never run on a
+      Windows brain, and the seek for it came back UNLIT, so the surface had
+      to be found by grep. appears_in rather than claim_maps_to on purpose:
+      _matches() in impact-radius.py fires on from / concept / appears_in and
+      never on to, so a script listed only as a target stays unlit when seeked
+      by its own path.
   - id: skill-license-provenance
     concept: "skill license field / manifest license / third-party skill terms / where a skill came from / provenance of vendored material"
     appears_in:

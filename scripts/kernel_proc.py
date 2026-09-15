@@ -43,14 +43,24 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sys
 import time
 
 try:
     import fcntl as _fcntl
     _HAS_FCNTL = True
-except ImportError:  # Windows: no flock. O_APPEND still gives per-write atomicity.
+    _HAS_MSVCRT = False
+except ImportError:  # Windows has no fcntl; msvcrt locks the same lock file.
     _HAS_FCNTL = False
+    try:
+        import msvcrt as _msvcrt
+        _HAS_MSVCRT = True
+    except ImportError:
+        _HAS_MSVCRT = False
+
+# 0 on POSIX, where every open is already binary.
+_O_BINARY = getattr(os, "O_BINARY", 0)
 
 # ── constants ────────────────────────────────────────────────────────────────
 
@@ -119,14 +129,38 @@ def pending_path() -> str:
 # ── locking ─────────────────────────────────────────────────────────────────
 
 def _flock(fh) -> None:
+    """Exclusive lock on the dedicated lock file every caller opens.
+
+    On Windows this used to be a no-op, justified as "O_APPEND still gives
+    per-write atomicity". It does not hold here: `append()` READS the tail to
+    chain the hash and only then writes, so two processes interleave inside that
+    read-modify-write and one line lands on top of another's sequence. Measured
+    on this box before the fix: 686 of 800 concurrent appends survived, in the
+    file that IS the audit trail. `msvcrt.locking` gives the same mutual
+    exclusion over byte 0 of the same lock file, so both platforms serialize the
+    same critical section.
+
+    `LK_LOCK` retries for about ten seconds and then raises OSError. Letting it
+    raise is deliberate: the caller treats an unwritable journal as a deny, and
+    a deny under extreme contention beats a silently lost line.
+    """
     if _HAS_FCNTL:
         _fcntl.flock(fh, _fcntl.LOCK_EX)
+    elif _HAS_MSVCRT:
+        fh.seek(0)
+        _msvcrt.locking(fh.fileno(), _msvcrt.LK_LOCK, 1)
 
 
 def _funlock(fh) -> None:
     if _HAS_FCNTL:
         try:
             _fcntl.flock(fh, _fcntl.LOCK_UN)
+        except OSError:
+            pass
+    elif _HAS_MSVCRT:
+        try:
+            fh.seek(0)
+            _msvcrt.locking(fh.fileno(), _msvcrt.LK_UNLCK, 1)
         except OSError:
             pass
 
@@ -301,7 +335,12 @@ def append(pid, record: dict) -> bytes:
         # the chain continues from its bytes like any other line. One damaged
         # record, locatable, never a silent break.
         payload = (b"" if on_boundary else b"\n") + line + b"\n"
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        # O_BINARY (Windows only, 0 elsewhere): os.open defaults to TEXT mode
+        # there, which rewrites every `\n` in the payload as `\r\n`. The journal
+        # is a byte-exact hash chain and a JSONL file the schema defines with
+        # `\n`, so a translated newline changes the bytes the next line chains
+        # from and makes a Windows journal unreadable to the POSIX reader.
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | _O_BINARY, 0o600)
         try:
             _write_all(fd, payload)
         finally:
@@ -569,6 +608,136 @@ def update_row(pid, fields: dict) -> bool:
 # and a write to <dir>/x collides with a lane on <dir>.
 
 
+# A DEFINED VARIABLE IS NOT UNKNOWABLE. `~` has always been expanded on the way
+# to a path and `$VAR` never was, so the two spellings of ONE path disagreed:
+# `~/.claude/settings.json` resolved to the live file and
+# `$HOME/.claude/settings.json` resolved to `<cwd>/$HOME/.claude/settings.json`,
+# a path that exists nowhere, and every gate reading it abstained. The abstain
+# was defended as "the shell has to expand it, so nobody knows what it is", and
+# that is true of `$SOMEDIR` and false of `$HOME`: the hook runs in the same
+# process tree as the shell that will execute the command, so `os.environ`
+# already holds the value that shell will use. `$HOME/...` is also how a person
+# or an agent actually writes that path in a script, so the abstain was covering
+# the MOST COMMON spelling of the paths these gates exist to protect.
+#
+# So: a variable this process can READ is resolved, a variable it cannot is left
+# exactly as written and keeps the old unknowable reading. There is no list of
+# variable names here on purpose. A list of knowable variables is a hand-kept
+# list, which is the disease, not the cure: `os.environ` IS the list, and it is
+# the same one the shell will use.
+#
+# NOT EXPANDED, deliberately, because the shell's answer is not knowable from
+# the environment alone: `$(cmd)` and backticks (a command, not a value),
+# `${VAR:-x}` and every other parameter-expansion operator (the regex only
+# matches a bare name), and `$1`/`$@` (positional, and this process has none).
+# All of them keep their `$`, which is what the callers' unknowable test reads.
+_ENV_VAR = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
+
+# ABOVE THE CAP THE ANSWER IS EXACT AND CHEAP, not a truncation and not a
+# timeout: `expand_env` returns its INPUT UNCHANGED, so the caller sees a string
+# that still carries `$` and applies the unknowable reading it already had. That
+# is the correct answer rather than a shortcut, because the cap is PATH_MAX: a
+# path layer asks this question only about something it is going to compare
+# against a file, and a string longer than PATH_MAX cannot be opened, removed or
+# written by any verb these gates read. The bound also caps MEMORY on the hot
+# path: the builder stops the moment it crosses the limit, so one long variable
+# repeated across a 64 KB body cannot expand into hundreds of megabytes and get
+# the hook killed. A killed hook writes no stdout and empty stdout reads as
+# ALLOW, so "slow" and "approve" are the same output here; that is why this is a
+# cap and not a best effort. Callers reading a whole interpreter BODY pass their
+# own larger limit, because there the string is not a single path.
+_EXPAND_MAX = 4096
+
+
+# A VARIABLE THE COMMAND ITSELF ASSIGNS IS NOT THE ONE THIS PROCESS HOLDS, and
+# reading it from `os.environ` anyway is how a correct rule produces a FALSE
+# DENY. Measured, one in 21,241 real commands, and it is a shape people write on
+# purpose: `export HOME=<sandbox> && mkdir -p $HOME/.claude && cp hooks.json
+# $HOME/.claude/` is a rehearsal that deliberately points HOME away from the
+# live tree, and resolving `$HOME` from the hook's environment aimed all three
+# steps back at the brain and denied them.
+#
+# So a caller that owns a whole command hands the assignments in here FIRST and
+# they win over the environment. The PARSING is not here: deciding which
+# `NAME=value` in a command line is a real assignment needs the brain's one
+# boundary-aware splitter (g__pretool-bash__tree-owner.command_assignments),
+# and a naive scan of the raw text is a FAIL-OPEN, not a rough edge:
+# `git commit -m "HOME=/tmp" && rm -f $HOME/.claude/settings.json` would shadow
+# the real HOME from inside a quoted argument. This module only holds the
+# answer, so nothing that can only be decided by a parser is decided here.
+#
+# NOT SETTING IT IS THE SAFE FAILURE: with no shadow, `$HOME` resolves from the
+# environment and a real disarm still denies. The shadow only ever WIDENS what
+# a name may resolve to, which is why the parser is the one allowed to fill it.
+#
+# The shadow is PER PROCESS because a hook process reads exactly one command,
+# and the setter REPLACES, so a long-running caller (a corpus sweep) cannot
+# carry one command's assignments into the next.
+_CMD_ASSIGNED = {}
+
+
+def set_command_assignments(mapping) -> None:
+    """Adopt the variables the command being read assigns to itself.
+
+    A name mapped to None is one the command assigns from something nobody can
+    evaluate here (`HOME=$REAL`): it stays unexpanded and keeps the unknowable
+    reading every `$VAR` had before."""
+    _CMD_ASSIGNED.clear()
+    if mapping:
+        _CMD_ASSIGNED.update(mapping)
+
+
+def _value_of(name: str, overrides=None):
+    """The value the SHELL will use for *name*, or None when nobody knows.
+
+    Three layers, narrowest first. The command's own assignments win, because
+    the shell has already run them. Then the CALLER's overrides, which exist for
+    one class the environment answers WRONGLY rather than not at all: a variable
+    the SHELL maintains from its own working directory (`PWD`, `OLDPWD`). A hook
+    process inherits whatever `PWD` the terminal that launched the harness had,
+    while the tool call runs somewhere else entirely, so `os.environ` is not a
+    stale copy of the answer, it is a different question. A name PRESENT in the
+    overrides with a None value is "nobody here knows", exactly like an
+    unevaluable assignment, and it must NOT fall through to the environment."""
+    if name in _CMD_ASSIGNED:
+        return _CMD_ASSIGNED[name]          # may be None: assigned, unknowable
+    if overrides and name in overrides:
+        return overrides[name]              # may be None: caller says unknowable
+    return os.environ.get(name)
+
+
+def expand_env(text: str, limit: int = _EXPAND_MAX, overrides=None) -> str:
+    """*text* with every `$VAR` / `${VAR}` this process can resolve replaced.
+
+    An undefined name is left verbatim. A value is substituted once and never
+    rescanned, exactly as the shell does, so a value that itself contains `$`
+    cannot expand a second time.
+
+    `overrides` is consulted between the command's assignments and the
+    environment; see `_value_of` for the one class it exists for."""
+    if not text or "$" not in text:
+        return text
+    parts = []
+    pos = 0
+    size = 0
+    for m in _ENV_VAR.finditer(text):
+        name = m.group(1) or m.group(2)
+        val = _value_of(name, overrides)
+        if val is None:
+            continue      # undefined, or assigned from something unevaluable
+        parts.append(text[pos:m.start()])
+        parts.append(val)
+        size += (m.start() - pos) + len(val)
+        pos = m.end()
+        if size > limit:
+            return text
+    if pos == 0:
+        return text                     # nothing resolvable: `$(cmd)`, `$1`, …
+    parts.append(text[pos:])
+    out = "".join(parts)
+    return out if len(out) <= limit else text
+
+
 def norm_path(path) -> str:
     """Absolute, normalized, `~` expanded. No resolve(): symlink resolution
     costs a stat per component on the hot path, and both sides of every
@@ -812,14 +981,12 @@ def prune_files(table: dict, now: float = None) -> int:
         try:
             fh = open(lock_path(pid), "a")
             _flock(fh)
-            # journal first; the lock file is the last thing to go, and it goes
-            # while this process still holds it, so nothing re-creates it after.
-            for key in ("jsonl", "lock"):
-                path = files.get(key)
-                if not path:
-                    continue
+            # The journal goes while the lock is held, so no writer can be
+            # mid-append on it.
+            jpath = files.get("jsonl")
+            if jpath:
                 try:
-                    os.unlink(path)
+                    os.unlink(jpath)
                     removed += 1
                 except OSError:
                     pass
@@ -830,6 +997,19 @@ def prune_files(table: dict, now: float = None) -> int:
                 _funlock(fh)
                 try:
                     fh.close()
+                except OSError:
+                    pass
+            # The lock file goes LAST and only after this handle is closed:
+            # Windows refuses to unlink an open file, so deleting it while held
+            # (correct and deliberate on POSIX) silently left every `.lock`
+            # behind there and the sweep never reclaimed anything. Nothing in
+            # this loop reopens the path afterwards, which was the reason the
+            # unlink sat inside the held block.
+            lpath = files.get("lock")
+            if lpath:
+                try:
+                    os.unlink(lpath)
+                    removed += 1
                 except OSError:
                     pass
     return removed

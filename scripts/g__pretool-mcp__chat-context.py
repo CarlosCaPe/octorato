@@ -203,7 +203,7 @@ def main() -> None:
     sentinel = _sentinel_dir() / f"{key}.json"
     _CRASH_STATE["sentinel"], _CRASH_STATE["recipient"] = sentinel, recipient
     try:
-        age = time.time() - json.loads(sentinel.read_text())["ts"]
+        age = time.time() - json.loads(sentinel.read_text(encoding="utf-8"))["ts"]
         if age < TTL_SECONDS:
             return  # context already loaded for this chat window
     except (OSError, ValueError, KeyError):
