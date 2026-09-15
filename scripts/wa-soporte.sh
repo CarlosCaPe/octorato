@@ -110,7 +110,7 @@ from pathlib import Path
 destinatario, mensaje, archivo, puerto = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 cfg_path = Path(sys.argv[5])
 try:
-    remoto = json.loads(cfg_path.read_text())["puentes"]["soporte"]["remoto"]
+    remoto = json.loads(cfg_path.read_text(encoding="utf-8"))["puentes"]["soporte"]["remoto"]
     instancia, region = remoto["instancia"], remoto["region"]
     perfil, bucket = remoto["perfil"], remoto["bucket_tmp"]
 except (OSError, KeyError, ValueError) as e:

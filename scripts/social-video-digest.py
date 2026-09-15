@@ -54,12 +54,12 @@ def expand(p: str) -> Path:
 def load_config() -> dict:
     if not CONFIG_FILE.exists():
         sys.exit(f"ERROR: config not found at {CONFIG_FILE}")
-    return json.loads(CONFIG_FILE.read_text())
+    return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
 
 
 def load_state(state_path: Path) -> dict:
     if state_path.exists():
-        return json.loads(state_path.read_text())
+        return json.loads(state_path.read_text(encoding="utf-8"))
     return {"version": 1, "creators": {}}
 
 
