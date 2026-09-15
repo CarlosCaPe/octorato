@@ -1,0 +1,12 @@
+{
+  "session_id": "sess-arming",
+  "agent_id": "agent-a",
+  "tool_name": "Edit",
+  "tool_use_id": "toolu_arm",
+  "tool_input": {
+    "file_path": "{{SANDBOX}}/wt/state-gate/scripts/qa-merge-gate.py",
+    "old_string": "a",
+    "new_string": "b"
+  },
+  "cwd": "{{SANDBOX}}/wt/state-gate"
+}

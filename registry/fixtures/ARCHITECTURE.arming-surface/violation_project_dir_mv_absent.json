@@ -1,0 +1,13 @@
+{
+  "session_id": "sess-arming",
+  "agent_id": "agent-a",
+  "tool_name": "Bash",
+  "tool_use_id": "toolu_arm",
+  "tool_input": {
+    "command": "mv {{SANDBOX}}/.claude/stage {{SANDBOX}}/.claude/deeper/.claude"
+  },
+  "cwd": "{{SANDBOX}}/wt/state-gate",
+  "_setup": {
+    "expect_names": "/deeper/.claude"
+  }
+}

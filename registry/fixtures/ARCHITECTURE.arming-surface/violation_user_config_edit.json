@@ -1,0 +1,15 @@
+{
+  "session_id": "sess-arming",
+  "agent_id": "agent-a",
+  "tool_name": "Edit",
+  "tool_use_id": "toolu_arm",
+  "tool_input": {
+    "file_path": "{{SANDBOX}}/.claude.json",
+    "old_string": "{}",
+    "new_string": "{\"mcpServers\": {}}"
+  },
+  "cwd": "{{SANDBOX}}/wt/state-gate",
+  "_setup": {
+    "expect_names": "/.claude.json"
+  }
+}

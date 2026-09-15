@@ -1,0 +1,11 @@
+{
+  "session_id": "sess-arming",
+  "agent_id": "agent-a",
+  "tool_name": "mcp__whatsapp__send_message",
+  "tool_use_id": "toolu_arm",
+  "tool_input": {
+    "recipient": "x",
+    "message": "settings.json"
+  },
+  "cwd": "{{SANDBOX}}/wt/state-gate"
+}
