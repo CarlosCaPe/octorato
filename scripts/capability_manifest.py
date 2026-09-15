@@ -14,6 +14,7 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -66,15 +67,64 @@ def _trunc(s: str, n: int = 120) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Privacy filter -- the manifest is TRACKED and PUBLIC.
+#
+# skills/, agents/ and scripts/ are scanned off the filesystem, but an operator's
+# private layer lives in those same directories and is kept out of the public repo
+# by .gitignore or .git/info/exclude. Enumerating the filesystem therefore leaks
+# private skill names, client names and operator identity into a published file.
+# Ask git what is excluded and drop it. FAIL-CLOSED: if git cannot answer, abort
+# rather than risk publishing the private layer.
+# ---------------------------------------------------------------------------
+
+def _git_excluded(paths: list[Path]) -> set:
+    """Return the subset of `paths` git considers ignored/excluded.
+
+    One `git check-ignore` call, not one per path. Raises on failure so the
+    caller aborts instead of emitting a manifest that may leak.
+
+    NUL-separated (`-z`) over raw bytes, deliberately: in text mode Windows
+    rewrites every "\\n" written to stdin as "\\r\\n", git then sees a trailing
+    CR on each path, matches nothing and silently reports "no private entries" --
+    a filter that fails open on exactly the platform it must not.
+    """
+    if not paths:
+        return set()
+    rel = [str(q.relative_to(BRAIN)).replace(os.sep, "/") for q in paths]
+    payload = ("\0".join(rel) + "\0").encode("utf-8")
+    try:
+        proc = subprocess.run(
+            ["git", "check-ignore", "--stdin", "-z"],
+            input=payload, capture_output=True, cwd=str(BRAIN), timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise SystemExit(
+            f"capability_manifest: cannot reach git to filter the private layer ({exc}). "
+            "Refusing to write docs/CAPABILITIES.md: it is public and would leak private entries."
+        )
+    # check-ignore: 0 = some paths ignored, 1 = none ignored, >1 = real error
+    if proc.returncode > 1:
+        raise SystemExit(
+            f"capability_manifest: git check-ignore failed "
+            f"({proc.stderr.decode('utf-8', 'replace').strip()}). "
+            "Refusing to write docs/CAPABILITIES.md: it is public and would leak private entries."
+        )
+    hits = {h for h in proc.stdout.decode("utf-8", "replace").split("\0") if h}
+    return {q for q, r in zip(paths, rel) if r in hits}
+
+
+# ---------------------------------------------------------------------------
 # 1. Scan Skills
 # ---------------------------------------------------------------------------
 
 def scan_skills() -> list[dict]:
     skills_dir = BRAIN / "skills"
     results = []
-    for skill_dir in sorted(skills_dir.iterdir()):
-        if not skill_dir.is_dir():
-            continue
+    candidates = [d for d in sorted(skills_dir.iterdir()) if d.is_dir()]
+    private = _git_excluded(candidates)
+    for skill_dir in candidates:
+        if skill_dir in private:
+            continue  # operator's private layer -- never in a public manifest
         skill_file = skill_dir / "SKILL.md"
         if not skill_file.exists():
             continue
@@ -111,9 +161,12 @@ NON_PERSONA_FILES = {"README.md", "REGISTRY.md", "index.md", "_index.md"}
 def scan_agents() -> list[dict]:
     agents_dir = BRAIN / "agents"
     results = []
-    for division_dir in sorted(agents_dir.iterdir()):
-        if not division_dir.is_dir() or division_dir.name in EXCLUDED_AGENT_DIRS:
-            continue
+    divisions = [d for d in sorted(agents_dir.iterdir())
+                 if d.is_dir() and d.name not in EXCLUDED_AGENT_DIRS]
+    private_div = _git_excluded(divisions)
+    for division_dir in divisions:
+        if division_dir in private_div:
+            continue  # operator's private layer -- never in a public manifest
         division = division_dir.name
         # recursive: personas may live in sub-categories (game-development/godot/)
         for agent_file in sorted(division_dir.rglob("*.md")):

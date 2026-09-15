@@ -9,7 +9,7 @@
 | Skills | 233 |
 | Agents | 167 |
 | Divisions | 13 |
-| Scripts: wired | 116 |
+| Scripts: wired | 117 |
 | Scripts: orphan | 7 |
 | Rules | 77 |
 | Hook entries | 51 |
@@ -163,10 +163,10 @@
 | project-timeline-report | Generate a "Journey Into [Project]" narrative report analyzing a project's entire development history from git log, CHAN... |
 | prompt-master | Generates optimized prompts for AI tools. Activates only when the user explicitly asks to write, fix, improve, or adapt ... |
 | qa-deployment-prompts | QA Deployment Prompts |
-| querymaster | Multi-engine master router: takes a natural-language prompt, identifies the engine (PostgreSQL, Snowflake, SQL Server, A... |
+| querymaster | QueryMaster , Multi-Engine Database Agent (Master Skill) |
 | querymaster-adx | Child skill of querymaster for Azure Data Explorer. ADX uses KQL, NEVER SQL. azure-kusto-data connection with SSO, plus ... |
 | querymaster-databricks | Child skill of querymaster for Databricks. PLACEHOLDER: no workspace or cluster provisioned yet, only the connection tem... |
-| querymaster-postgresql | Child skill of querymaster for PostgreSQL (standard, Azure Database, Aurora): psycopg2 and Node connection patterns, rea... |
+| querymaster-postgresql | QueryMaster , PostgreSQL Engine Skill |
 | querymaster-snowflake | Child skill of querymaster for Snowflake: connection via Browser SSO, OAuth and service user/password, REST SQL API and ... |
 | querymaster-sqlite | Child skill of querymaster for SQLite: local file databases, Optuna storage, analytical sweeps and embedded use, with WA... |
 | querymaster-sqlserver | Child skill of querymaster for SQL Server and Azure SQL (Database, Managed Instance, on-prem): pyodbc connection with an... |
@@ -486,7 +486,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (123)
+## Scripts (124)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -608,6 +608,7 @@
 | trace-hook.py | trace-hook.py , observability surface 1 , capture hook. Reads a Claude Code hook event from stdin an... | wired |
 | update_neural_activity.py | update_neural_activity.py , observability surface 1 , connectome integration. Reads the JSONL trace ... | wired |
 | validate-skill-manifest.py | validate-skill-manifest.py , validate a skill.json against the M5 manifest schema (issue #31). | wired |
+| vectorize_signature.py | Vectorize a bitmap signature to SVG using pure Python + Pillow + NumPy. Approach: Threshold → contou... | wired |
 | wa-guardia.py | Chat watch: what arrived and we have not answered, here and now. | wired |
 | wa-latido.py | Active heartbeat for WhatsApp bridges: it measures the PIPE, not the process. | wired |
 | wa-sin-respuesta.py | Silence sentry: alerts when a client wrote and nobody answered. | wired |
