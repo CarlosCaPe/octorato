@@ -242,9 +242,12 @@ _TRANSLATE = str.maketrans({
 })
 # A comment fence at the edge of a line. A license shipped inside a source file (`//`,
 # `#`, ` * `, `<!-- -->`, a Python docstring) is the same license.
+# `--!>` closes an HTML comment exactly as `-->` does, and reading only one of
+# the two is what CodeQL's py/bad-tag-filter names: a fence left unstripped
+# leaks its own markup into the license string it was supposed to clean.
 _FENCE_HEAD = re.compile(
-    r"^(?:[ \t]*(?:/\*+|\*+/|//+|<!--|-->|\"\"\"|'''|;+|%+|--(?=\s)|\#+|\*(?!\S)))+[ \t]*")
-_FENCE_TAIL = re.compile(r"[ \t]*(?:\*/|-->|\"\"\"|''')[ \t]*$")
+    r"^(?:[ \t]*(?:/\*+|\*+/|//+|<!--|--!?>|\"\"\"|'''|;+|%+|--(?=\s)|\#+|\*(?!\S)))+[ \t]*")
+_FENCE_TAIL = re.compile(r"[ \t]*(?:\*/|--!?>|\"\"\"|''')[ \t]*$")
 _WORD = re.compile(r"[0-9]+|[a-z]+")
 # Any letter in ANY script, which is how a line is told from a rule or a blank.
 _ANY_LETTER = re.compile(r"[^\W\d_]", re.UNICODE)
