@@ -1743,52 +1743,70 @@ def check_kernel_isolation_gate(fix: bool) -> Result:
                   "release); hook order not asserted, same-event hooks run in parallel")
 
 
-def _sibling_checkout_rule_ids() -> tuple:
-    """(rule ids, checkout paths) declared by the brain's OTHER checkouts.
+_COMMITTED_IDS_CACHE: dict = {}
+
+
+def _committed_rule_ids(worktree: str) -> set:
+    """Rule ids COMMITTED at the HEAD of `worktree`, empty when it cannot vouch.
 
     The kernel journal and ptable are machine-wide on purpose: `lane_owner` and
-    `process_age` (kernel_proc.py:634, 760) probe processes that live in other
-    worktrees, so one-writer-per-tree only holds while every dimension writes to
-    the SAME table and journal directory. Splitting either per dimension would
-    break the isolation it looks like it would serve.
+    `process_age` (kernel_proc.py:634, 760) probe processes living in other
+    worktrees, so one-writer-per-tree only holds while every dimension appends
+    to the SAME table and directory. `registry/rules.yaml` is not machine-wide;
+    it travels per branch. A gate running from a feature worktree therefore
+    journals denies under a rule id THIS checkout does not carry, and judging
+    them here alone calls a registered rule an orphan.
 
-    `registry/rules.yaml` is not machine-wide. It travels per branch. So a gate
-    running from a feature worktree journals a deny under a rule id that THIS
-    checkout does not carry yet, and judging that line against this checkout
-    alone calls a registered rule an orphan. Measured 2026-09-15: 1,586 deny
-    lines from the `ARCHITECTURE.arming-surface` gate, whose row is registered
-    on the open PR #299 branch with its fixture pair and green CI.
+    Two guards decide what may vouch, and both were added after a QA pass
+    measured the coarse version laundering ids:
 
-    Widening the lookup to every checkout of this same repository keeps RULE #1
-    pointed at what it can honestly assert. A name declared by no checkout on
-    this machine is still an orphan and still a FAIL; a name declared by a
-    branch in progress is lookupable, which is what the rule asks for. Failures
-    here are swallowed on purpose: a checkout mid-rebase is not this check's
-    business, and a doctor that FAILS because a sibling worktree is briefly
-    unreadable would block a push for someone else's work in progress.
+    COMMITTED, not on-disk. `git show HEAD:registry/rules.yaml` means only a row
+    someone committed to a branch counts. Loose bytes under a path are not a
+    declaration, and an uncommitted edit here already voids the gate receipt
+    (`gate_surfaces_dirty`); a sibling must not be held to a lower bar than the
+    checkout being pushed.
+
+    SAME repository. The common git dir must match ours, so a plain directory
+    sitting at a stale worktree path, or an unrelated repo, vouches for nothing.
     """
-    ids, paths = set(), []
-    cp = run(["git", "worktree", "list", "--porcelain"], cwd=CLAUDE_DIR)
-    if cp.returncode != 0:
-        return ids, paths
-    here = os.path.realpath(str(CLAUDE_DIR))
-    for line in (cp.stdout or "").splitlines():
-        if not line.startswith("worktree "):
-            continue
-        path = line[len("worktree "):].strip()
-        if not path or not os.path.isdir(path) or os.path.realpath(path) == here:
-            continue
-        rules = Path(path) / "registry" / "rules.yaml"
-        if not rules.is_file():
-            continue
-        try:
-            found = {r.id for r in Registry.load(rules).rules}
-        except Exception:
-            continue
-        if found:
-            ids |= found
-            paths.append(path)
-    return ids, paths
+    key = os.path.realpath(worktree or "")
+    if key in _COMMITTED_IDS_CACHE:
+        return _COMMITTED_IDS_CACHE[key]
+    ids: set = set()
+    _COMMITTED_IDS_CACHE[key] = ids
+    if not key or not os.path.isdir(key):
+        return ids
+    mine = run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+               cwd=CLAUDE_DIR)
+    theirs = run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                 cwd=key)
+    if mine.returncode != 0 or theirs.returncode != 0:
+        return ids
+    if os.path.realpath((mine.stdout or "").strip()) != \
+            os.path.realpath((theirs.stdout or "").strip()):
+        return ids
+    cp = run(["git", "show", "HEAD:registry/rules.yaml"], cwd=key)
+    if cp.returncode != 0 or not (cp.stdout or "").strip():
+        return ids
+    import tempfile
+    tmp = None
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False,
+                                         encoding="utf-8") as fh:
+            fh.write(cp.stdout)
+            tmp = fh.name
+        found = {r.id for r in Registry.load(Path(tmp)).rules}
+    except Exception:
+        return ids                  # a branch mid-rewrite is not this check's business
+    finally:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    ids |= found
+    _COMMITTED_IDS_CACHE[key] = ids
+    return ids
 
 
 def check_kernel_replay(fix: bool) -> Result:
@@ -1803,11 +1821,16 @@ def check_kernel_replay(fix: bool) -> Result:
     2. The 5 newest REAL journals replay and verify. A fixture proves the
        reader; only a real journal proves the writers, and the writers are now
        fifteen different scripts.
-    3. Every `deny` line in the last 7 days names a rule id that exists in
-       registry/rules.yaml. This is RULE #1 pointed at the journal: a refusal
-       attributed to a rule the registry does not carry is an orphan mechanism,
-       and it is a FAIL, not a WARN, because the alternative is a gate that
-       refuses work under a name nobody can look up.
+    3. Every `deny` line in the last 7 days names a rule id COMMITTED either
+       here or by the checkout that fired it, which the journal's own `start`
+       line records. This is RULE #1 pointed at the journal: a refusal
+       attributed to a rule nobody committed is an orphan mechanism, and it is
+       a FAIL, not a WARN, because the alternative is a gate that refuses work
+       under a name nobody can look up. The journal is machine-wide while
+       rules.yaml travels per branch, so judging every line against this
+       checkout alone called a registered rule an orphan; judging it against
+       the checkout that fired it, at its committed HEAD, keeps the assertion
+       without letting loose bytes in a sibling vouch for anything.
 
     Never writes. Passes on a fresh install with no journals at all: zero
     journals is zero orphans, and saying so is honest where inventing a WARN
@@ -1875,46 +1898,53 @@ def check_kernel_replay(fix: bool) -> Result:
                       "fix rules.yaml, then re-run")
     now = time.time()
     cutoff = now - 7 * 24 * 3600
-    denies, orphans = 0, {}
+    denies, orphans, elsewhere = 0, {}, {}
     for mtime, pid in journals:
         if mtime < cutoff:
             continue
+        # The `start` line is where a process records the checkout it ran in
+        # (schemas/kernel-journal.schema.json), so the journal carries its own
+        # provenance and the doctor never has to guess which registry applied.
+        origin = None
         for line in kernel_proc.read_journal(pid):
-            if not isinstance(line, dict) or line.get("kind") != "deny":
+            if not isinstance(line, dict):
+                continue
+            if line.get("kind") == "start" and line.get("worktree"):
+                origin = str(line["worktree"])
+            if line.get("kind") != "deny":
                 continue
             if float(line.get("ts") or 0) < cutoff:
                 continue
             denies += 1
             rule = str(line.get("rule") or "")
-            if rule not in registered:
-                orphans.setdefault(rule or "(unnamed)", []).append(pid)
-    # Only now, and only when this checkout came up short, is it worth spawning
-    # git and parsing sibling rules.yaml files: the common case is zero orphans
-    # and pays nothing for the wider lookup.
-    elsewhere, sibling_paths = set(), []
-    if orphans:
-        sibling_ids, sibling_paths = _sibling_checkout_rule_ids()
-        elsewhere = {r for r in list(orphans) if r in sibling_ids}
-        for rule_id in elsewhere:
-            orphans.pop(rule_id, None)
-
+            if rule in registered:
+                continue
+            # A line that names no checkout gets no benefit of the doubt: it is
+            # judged here, the way it always was.
+            if origin and rule in _committed_rule_ids(origin):
+                elsewhere.setdefault(rule, set()).add(origin)
+                continue
+            orphans.setdefault(rule or "(unnamed)", []).append(pid)
     scoped = ""
     if elsewhere:
-        shown = ", ".join(sorted(elsewhere)[:3])
-        scoped = (f"; {len(elsewhere)} id(s) are declared by another checkout of this "
-                  f"brain and not by this one ({shown})")
+        shown = ", ".join(f"{r} (committed in {os.path.basename(sorted(w)[0])})"
+                          for r, w in sorted(elsewhere.items())[:3])
+        scoped = (f"; {len(elsewhere)} id(s) are committed by the checkout that fired "
+                  f"them and not by this one ({shown})")
 
     if orphans:
         named = ", ".join(f"{r} ({len(p)} journal(s))" for r, p in sorted(orphans.items())[:4])
         return Result(key, FAIL,
-                      f"{len(orphans)} deny rule id(s) in 7 days are in no registry row "
-                      f"of any checkout on this machine: {named}{scoped}",
-                      "a refusal under a name no checkout carries is an orphan "
-                      "mechanism (RULE #1): register the rule, or fix the id the gate journals")
+                      f"{len(orphans)} deny rule id(s) in 7 days name no committed "
+                      f"registry row, here or in the checkout that fired them: "
+                      f"{named}{scoped}",
+                      "a refusal under a name nobody committed is an orphan mechanism "
+                      "(RULE #1): register the rule, fix the id the gate journals, or "
+                      "remove journals no process produced")
     return Result(key, PASS,
                   f"golden replay verifies byte for byte; {min(len(journals), 5)} real "
                   f"journal(s) replay; {denies} deny(s) in 7 days, all naming a rule "
-                  f"registered here or in {len(sibling_paths)} sibling checkout(s){scoped}")
+                  f"committed here or by the checkout that fired them{scoped}")
 
 
 def check_querymaster_security_detector(fix: bool) -> Result:

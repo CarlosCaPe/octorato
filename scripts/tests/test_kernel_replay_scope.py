@@ -5,22 +5,30 @@ The kernel journal is machine-wide by design: `lane_owner` and `process_age`
 (kernel_proc.py:634, 760) probe processes living in other worktrees, so
 one-writer-per-tree only holds while every dimension appends to the same
 directory. `registry/rules.yaml` is NOT machine-wide; it travels per branch.
-The two met on 2026-09-15: a gate on an open branch journaled 1,586 denies into
-the shared journal and the doctor on master, which does not carry that row yet,
+The two met on 2026-09-15: a gate on an open branch journaled denies into the
+shared journal and the doctor on master, which does not carry that row yet,
 called a registered rule an orphan and blocked the push.
 
-What is pinned here is the correction AND its limit, in both directions:
+A deny is now judged against the checkout that FIRED it, which the journal's
+own `start` line records, read at that checkout's COMMITTED HEAD. Both halves
+are load-bearing and both are pinned here, because the first version of this
+fix widened the lookup to every checkout on the machine and a QA pass showed
+two ways to launder a rule id through it:
 
-  * a deny naming a rule declared by a SIBLING checkout passes (revert the fix
-    and this one fails, which is the whole point of the anchor);
-  * a deny naming a rule declared by NO checkout still FAILS, so the widening
-    did not quietly turn RULE #1 off;
-  * the helper never counts the checkout it is run from, or every id would
-    look declared-elsewhere.
+  * committed in the firing checkout passes (revert the scope resolution and
+    this one goes red, which is what makes the anchor an anchor);
+  * an UNCOMMITTED edit in that checkout does not vouch, or a sibling would be
+    held to a lower bar than the checkout being pushed, whose own uncommitted
+    edit voids the gate receipt;
+  * a plain directory sitting at a path `git worktree list` still remembers
+    does not vouch either;
+  * a deny whose journal names no checkout is judged here, with no benefit of
+    the doubt;
+  * a rule declared by NOBODY still FAILs, so none of this turned RULE #1 off.
 """
 from __future__ import annotations
 
-import importlib.util
+import json
 import os
 import shutil
 import subprocess
@@ -31,7 +39,6 @@ from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parent.parent
 ROOT = SCRIPTS.parent
-DOCTOR = SCRIPTS / "brain_doctor.py"
 
 HEAD = "version: 1\nrules:\n"
 
@@ -55,6 +62,8 @@ def _rule(rule_id: str) -> str:
 
 
 def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess:
+    """git with every inherited GIT_* scrubbed: these tests are run from a repo
+    whose own hooks export GIT_DIR, and a leaked one commits in the live brain."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     env.update({
         "GIT_AUTHOR_NAME": "fixture", "GIT_AUTHOR_EMAIL": "fixture@example.invalid",
@@ -65,67 +74,11 @@ def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess:
                           capture_output=True, text=True)
 
 
-def _load_doctor():
-    spec = importlib.util.spec_from_file_location("bd_under_test", DOCTOR)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-class SiblingCheckoutIds(unittest.TestCase):
-    """The helper reads the OTHER checkouts of the same repo, never its own."""
-
-    def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="replay-scope-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
-        self.repo = self.tmp / "brain"
-        (self.repo / "registry").mkdir(parents=True)
-        (self.repo / "registry" / "rules.yaml").write_text(
-            HEAD + _rule("TEST.here-only"), encoding="utf-8")
-        self.assertEqual(_git(self.repo, "init", "-q", "-b", "main").returncode, 0)
-        _git(self.repo, "add", "-A")
-        self.assertEqual(_git(self.repo, "commit", "-qm", "base").returncode, 0)
-
-    def _helper_ids(self):
-        bd = _load_doctor()
-        bd.CLAUDE_DIR = self.repo
-        return bd._sibling_checkout_rule_ids()
-
-    def test_own_checkout_is_never_counted(self):
-        ids, paths = self._helper_ids()
-        self.assertNotIn("TEST.here-only", ids,
-                         "the checkout under test must not vouch for itself")
-        self.assertEqual(paths, [])
-
-    def test_sibling_worktree_ids_are_found(self):
-        sib = self.tmp / "sib"
-        self.assertEqual(
-            _git(self.repo, "worktree", "add", "-q", str(sib), "-b", "feat").returncode, 0)
-        (sib / "registry" / "rules.yaml").write_text(
-            HEAD + _rule("TEST.here-only") + _rule("TEST.sibling-only"), encoding="utf-8")
-        _git(sib, "add", "-A")
-        self.assertEqual(_git(sib, "commit", "-qm", "declare").returncode, 0)
-
-        ids, paths = self._helper_ids()
-        self.assertIn("TEST.sibling-only", ids)
-        self.assertEqual([str(sib)], [str(Path(p)) for p in paths])
-
-    def test_unreadable_sibling_is_skipped_not_fatal(self):
-        sib = self.tmp / "broken"
-        self.assertEqual(
-            _git(self.repo, "worktree", "add", "-q", str(sib), "-b", "broken").returncode, 0)
-        (sib / "registry" / "rules.yaml").write_text("{ not: [valid", encoding="utf-8")
-        ids, paths = self._helper_ids()
-        self.assertEqual(paths, [], "a checkout mid-rebase is not this check's business")
-
-
 class OrphanJudgementScope(unittest.TestCase):
-    """The seam: which registry a deny line is judged against.
-
-    Runs the REAL check against a sandbox brain (its own scripts/, registry/
-    and HOME), because the defect lived in the meeting of a global journal with
-    a per-branch registry and neither half is observable from a unit test.
-    """
+    """Runs the REAL check against a sandbox brain with its own scripts/,
+    registry/ and HOME, because the defect lived in the meeting of a global
+    journal with a per-branch registry and neither half is visible to a unit
+    test."""
 
     @classmethod
     def setUpClass(cls):
@@ -143,61 +96,144 @@ class OrphanJudgementScope(unittest.TestCase):
     def tearDownClass(cls):
         shutil.rmtree(cls.tmp, ignore_errors=True)
 
-    def _home_with_deny(self, rule_id: str) -> Path:
-        """A sandbox HOME whose kernel journal holds one chained deny line."""
+    # ── helpers ─────────────────────────────────────────────────────────────
+
+    def _worktree(self, name: str, rule_id: str, commit: bool) -> Path:
+        """A real sibling checkout declaring `rule_id`, committed or not."""
+        path = self.tmp / name
+        self.assertEqual(
+            _git(self.brain, "worktree", "add", "-q", str(path), "-b", name).returncode, 0)
+        self.addCleanup(lambda: _git(self.brain, "worktree", "remove", "--force", str(path)))
+        rules = path / "registry" / "rules.yaml"
+        rules.write_text(rules.read_text(encoding="utf-8") + _rule(rule_id), encoding="utf-8")
+        if commit:
+            _git(path, "add", "-A")
+            self.assertEqual(_git(path, "commit", "-qm", f"declare {rule_id}").returncode, 0)
+        return path
+
+    def _home_with_deny(self, rule_id: str, origin: Path = None) -> Path:
+        """A sandbox HOME whose kernel journal holds one chained deny line, with
+        a `start` line naming `origin` when given."""
         home = Path(tempfile.mkdtemp(prefix="replay-home-", dir=self.tmp))
         (home / ".claude" / ".cache" / "kernel" / "journal").mkdir(parents=True)
+        start = {"kind": "start"}
+        if origin is not None:
+            start["worktree"] = str(origin)
         driver = (
-            "import os, sys\n"
+            "import sys\n"
             f"sys.path.insert(0, {str(self.brain / 'scripts')!r})\n"
             "import kernel_proc\n"
-            "kernel_proc.append('fixture-pid', {'kind': 'start'})\n"
+            f"kernel_proc.append('fixture-pid', {start!r})\n"
             f"kernel_proc.append('fixture-pid', {{'kind': 'deny', 'rule': {rule_id!r}}})\n"
         )
-        env = dict(os.environ, HOME=str(home))
-        cp = subprocess.run([sys.executable, "-c", driver], env=env,
+        cp = subprocess.run([sys.executable, "-c", driver],
+                            env=dict(os.environ, HOME=str(home)),
                             capture_output=True, text=True)
         self.assertEqual(cp.returncode, 0, cp.stderr)
         return home
 
-    def _run_check(self, home: Path):
+    def _run_check(self, home: Path) -> dict:
         driver = (
-            "import importlib.util, json, sys\n"
+            "import importlib.util, json\n"
             f"spec = importlib.util.spec_from_file_location('bd', {str(self.brain / 'scripts' / 'brain_doctor.py')!r})\n"
             "bd = importlib.util.module_from_spec(spec); spec.loader.exec_module(bd)\n"
             "r = bd.check_kernel_replay(False)\n"
             "print(json.dumps({'status': r.status, 'message': r.message}))\n"
         )
-        env = dict(os.environ, HOME=str(home))
-        cp = subprocess.run([sys.executable, "-c", driver], env=env,
+        cp = subprocess.run([sys.executable, "-c", driver],
+                            env=dict(os.environ, HOME=str(home)),
                             capture_output=True, text=True, cwd=str(self.brain))
         self.assertEqual(cp.returncode, 0, cp.stderr)
-        import json
         return json.loads(cp.stdout.strip().splitlines()[-1])
 
+    # ── the assertion still has teeth ───────────────────────────────────────
+
     def test_rule_declared_nowhere_still_fails(self):
-        """The widening must not have turned RULE #1 off."""
-        home = self._home_with_deny("TEST.declared-nowhere")
-        out = self._run_check(home)
+        out = self._run_check(self._home_with_deny("TEST.declared-nowhere"))
         self.assertEqual(out["status"], "FAIL", out["message"])
         self.assertIn("TEST.declared-nowhere", out["message"])
 
-    def test_rule_declared_only_in_a_sibling_checkout_passes(self):
-        """Revert the scope fix and this is the test that goes red."""
-        sib = self.tmp / "sibling-branch"
-        self.assertEqual(
-            _git(self.brain, "worktree", "add", "-q", str(sib), "-b", "feat-gate").returncode, 0)
-        rules = sib / "registry" / "rules.yaml"
-        rules.write_text(rules.read_text(encoding="utf-8")
-                         + _rule("TEST.declared-in-sibling"), encoding="utf-8")
-        _git(sib, "add", "-A")
-        self.assertEqual(_git(sib, "commit", "-qm", "declare gate").returncode, 0)
-        self.addCleanup(lambda: _git(self.brain, "worktree", "remove", "--force", str(sib)))
+    # ── the seam ────────────────────────────────────────────────────────────
 
-        home = self._home_with_deny("TEST.declared-in-sibling")
-        out = self._run_check(home)
+    def test_committed_in_the_firing_checkout_passes(self):
+        """Revert the scope resolution and this is the test that goes red."""
+        wt = self._worktree("feat-committed", "TEST.committed-there", commit=True)
+        out = self._run_check(self._home_with_deny("TEST.committed-there", origin=wt))
         self.assertEqual(out["status"], "PASS", out["message"])
-        self.assertIn("TEST.declared-in-sibling", out["message"])
+        self.assertIn("TEST.committed-there", out["message"])
+
+    # ── the two laundering paths a QA pass found in the coarse version ──────
+
+    def test_uncommitted_edit_in_the_firing_checkout_does_not_vouch(self):
+        wt = self._worktree("feat-dirty", "TEST.only-on-disk", commit=False)
+        out = self._run_check(self._home_with_deny("TEST.only-on-disk", origin=wt))
+        self.assertEqual(out["status"], "FAIL", out["message"])
+        self.assertIn("TEST.only-on-disk", out["message"])
+
+    def test_plain_directory_at_a_worktree_path_does_not_vouch(self):
+        wt = self._worktree("feat-replaced", "TEST.replaced-path", commit=True)
+        shutil.rmtree(wt)
+        (wt / "registry").mkdir(parents=True)
+        (wt / "registry" / "rules.yaml").write_text(
+            HEAD + _rule("TEST.replaced-path"), encoding="utf-8")
+        out = self._run_check(self._home_with_deny("TEST.replaced-path", origin=wt))
+        self.assertEqual(out["status"], "FAIL", out["message"])
+
+    def test_deny_naming_no_checkout_is_judged_here(self):
+        """Provenance-less lines get no benefit of the doubt, even when another
+        checkout happens to declare the id."""
+        self._worktree("feat-unrelated", "TEST.elsewhere-only", commit=True)
+        out = self._run_check(self._home_with_deny("TEST.elsewhere-only"))
+        self.assertEqual(out["status"], "FAIL", out["message"])
+
+
+class CommittedRuleIds(unittest.TestCase):
+    """The helper reads one checkout, at its committed HEAD, of THIS repo."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="replay-ids-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.repo = self.tmp / "brain"
+        (self.repo / "registry").mkdir(parents=True)
+        (self.repo / "registry" / "rules.yaml").write_text(
+            HEAD + _rule("TEST.here-only"), encoding="utf-8")
+        self.assertEqual(_git(self.repo, "init", "-q", "-b", "main").returncode, 0)
+        _git(self.repo, "add", "-A")
+        self.assertEqual(_git(self.repo, "commit", "-qm", "base").returncode, 0)
+
+    def _ids(self, claude_dir: Path, target: Path):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "bd_ids", SCRIPTS / "brain_doctor.py")
+        bd = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(bd)
+        bd.CLAUDE_DIR = claude_dir
+        bd._COMMITTED_IDS_CACHE.clear()
+        return bd._committed_rule_ids(str(target))
+
+    def test_an_unrelated_repository_vouches_for_nothing(self):
+        other = self.tmp / "other"
+        (other / "registry").mkdir(parents=True)
+        (other / "registry" / "rules.yaml").write_text(
+            HEAD + _rule("TEST.foreign"), encoding="utf-8")
+        self.assertEqual(_git(other, "init", "-q", "-b", "main").returncode, 0)
+        _git(other, "add", "-A")
+        self.assertEqual(_git(other, "commit", "-qm", "base").returncode, 0)
+        self.assertEqual(self._ids(self.repo, other), set())
+
+    def test_a_worktree_of_the_same_repo_vouches_for_its_head(self):
+        sib = self.tmp / "sib"
+        self.assertEqual(
+            _git(self.repo, "worktree", "add", "-q", str(sib), "-b", "feat").returncode, 0)
+        rules = sib / "registry" / "rules.yaml"
+        rules.write_text(rules.read_text(encoding="utf-8") + _rule("TEST.sibling-only"),
+                         encoding="utf-8")
+        _git(sib, "add", "-A")
+        self.assertEqual(_git(sib, "commit", "-qm", "declare").returncode, 0)
+        self.assertIn("TEST.sibling-only", self._ids(self.repo, sib))
+
+    def test_a_missing_path_is_empty_not_fatal(self):
+        self.assertEqual(self._ids(self.repo, self.tmp / "gone"), set())
 
 
 if __name__ == "__main__":

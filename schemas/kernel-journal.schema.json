@@ -63,7 +63,7 @@
     "spawn_depth": { "type": "integer", "minimum": 0, "description": "exit lines: spawnDepth from the harness meta.json, how deep in the spawn tree this process sat" },
     "model": { "type": "string", "description": "exit lines: the engine the child actually ran on, from the harness meta.json" },
     "agent_transcript_path": { "type": "string", "description": "exit lines: the harness-written transcript of this subagent, the pointer a consumer re-verifies against" },
-    "rule": { "type": "string", "description": "deny lines: the registry rule id that refused the call. `kernel-replay` FAILS on a rule id that is in no registry/rules.yaml row: an unregistered deny is an orphan mechanism (RULE #1)" },
+    "rule": { "type": "string", "description": "deny lines: the registry rule id that refused the call. `kernel-replay` FAILS on a rule id committed in no registry/rules.yaml row, neither here nor in the checkout the `start` line names: an unregistered deny is an orphan mechanism (RULE #1)" },
     "reason": { "type": "string", "description": "deny lines: the refusal text shown to the model" },
     "source": { "type": "string", "description": "deny lines: who refused. Absent means an Octorato gate; 'harness' means the runtime itself denied (PermissionDenied, documented for auto-mode denials only)" },
     "receipt_kind": { "type": "string", "description": "receipt lines: the v7 receipt's own kind (seek, qa, gate-liveness)" },

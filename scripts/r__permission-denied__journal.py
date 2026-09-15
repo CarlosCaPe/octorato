@@ -19,7 +19,8 @@ because it is the one field that says which mode was refusing.
 
 rule id: `HARNESS.permission-denied`. It is registered in registry/rules.yaml
 because the `kernel-replay` doctor check FAILS on a deny line whose rule id is
-in no registry row (an unregistered deny is an orphan mechanism, RULE #1). The
+committed in no registry row, neither in the checkout being checked nor in the
+one its journal names (an unregistered deny is an orphan mechanism, RULE #1). The
 row is DETECTOR tier: this reflex observes and records a refusal the harness
 already made, it never makes one.
 
