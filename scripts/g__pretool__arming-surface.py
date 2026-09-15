@@ -360,6 +360,17 @@ that exist on this machine (the compressors, `tar --remove-files`, `zip -m`,
 `sort -o`, `uniq`), all now covered and all found by QA rather than by this
 list. Read what follows as "what is known to pass", never as "what can pass".
 
+Three surfaces outside the stated set, named here because each arms the NEXT
+session exactly as the `env` block in settings.json does, which is the criterion
+that put `~/.claude.json` in: `~/.bashrc` and its siblings (an
+`export OCTO_MERGE_APPROVE=...` there is read by the terminal that launches the
+next hooked process), `claude mcp add ...` (registers an MCP server by writing
+`mcpServers` into `~/.claude.json` through a program this gate never parses),
+and `~/.local/bin/ai-sync` and the other runner thunks (every sync and every
+push goes through them, and they are outside the brain root this gate resolves).
+They are ALLOW today. Covering them widens the set past "the brain", which is a
+decision, not an oversight.
+
 WHAT THE INLINE LAYERS READ, AND WHAT THEY DID NOT UNTIL NOW. This block used
 to enumerate residuals meticulously and never once say that REMOVAL was unread,
 so a careful reader finished it believing the opposite. It was unread, on a gate
@@ -1150,8 +1161,50 @@ def user_config_path(brain: str) -> str:
     return os.path.join(os.path.dirname(brain), _USER_CONFIG_NAME)
 
 
+def _registered_mechanism_names() -> set:
+    """Every `canonical_name` the LIVE Registry declares, folded.
+
+    `_SCRIPT_PATTERNS` is a naming CONVENTION, and QA measured what a convention
+    misses: `secrets-grep-guard.py`, `grafo-gate.py`, `budget-check.py`,
+    `session-isolation-hook.py`, `cadence-stop-hook.py`, `claim-verify-stop.py`,
+    `source-attribution-check.py` and `octo-dim.py` are all declared in
+    rules.yaml, several of them fail-closed, and every one was writable by a
+    hooked process because none of them is spelled `g__*`.
+
+    The Registry is the derivation the header already says it wants; the tuple
+    is the hand-kept list it says it refuses. Every registered mechanism counts,
+    not only the fail-closed ones: silencing a Detector or a Reflex changes what
+    the brain records just as surely.
+
+    A line scan, not a YAML parse: this runs on the hot path, the file is 57 KB,
+    and the key is unambiguous at the start of a line. An unreadable Registry
+    falls back to the patterns rather than denying, because rules.yaml is itself
+    a protected entry and cannot be removed by the process asking.
+    """
+    got = _CACHE.get("registered_mechanisms")
+    if got is not None:
+        return got
+    names = set()
+    try:
+        path = os.path.join(brain_root(), "registry", "rules.yaml")
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                stripped = line.strip()
+                if stripped.startswith("canonical_name:"):
+                    value = stripped.split(":", 1)[1].strip().strip("'\"")
+                    if value:
+                        names.add(_fold(os.path.basename(value)))
+    except Exception:
+        names = set()
+    _CACHE["registered_mechanisms"] = names
+    return names
+
+
 def _is_gate_script(basename: str) -> bool:
-    return any(fnmatch.fnmatchcase(_fold(basename), p) for p in _SCRIPT_PATTERNS)
+    folded = _fold(basename)
+    if any(fnmatch.fnmatchcase(folded, p) for p in _SCRIPT_PATTERNS):
+        return True
+    return folded in _registered_mechanism_names()
 
 
 def project_scope(target: str, brain: str, removing: bool) -> tuple:
@@ -4722,7 +4775,26 @@ def _build_sandbox(sandbox: str, setup: dict) -> None:
     # a `.claude` of the same shape whose listing FAILS. `_holds_settings`
     # resolves that ambiguity CLOSED, and nothing proved it until now.
     os.makedirs(os.path.join(live, "sealed-ref", ".claude"), exist_ok=True)
-    _touch(os.path.join(live, "registry", "rules.yaml"), "rules: []\n")
+    # The Registry stub NAMES mechanisms, because a live one always does and
+    # `_is_gate_script` derives half its answer from those names. An empty
+    # `rules: []` made the derived half untestable: the three registry-derived
+    # violations passed by hand and did not block under the selftest, which is
+    # the sandbox lying about the environment it models. The two names the
+    # benign twins use are deliberately absent.
+    _touch(os.path.join(live, "registry", "rules.yaml"),
+           "rules:\n"
+           "- id: FIXTURE.secrets\n"
+           "  mechanism:\n"
+           "  - kind: Gate\n"
+           "    canonical_name: secrets-grep-guard.py\n"
+           "- id: FIXTURE.budget\n"
+           "  mechanism:\n"
+           "  - kind: Gate\n"
+           "    canonical_name: budget-check.py\n"
+           "- id: FIXTURE.session\n"
+           "  mechanism:\n"
+           "  - kind: Reflex\n"
+           "    canonical_name: session-isolation-hook.py\n")
     _touch(os.path.join(live, "registry", "kernel.yaml"), "max_tool_calls: 0\n")
     _touch(os.path.join(live, ".githooks", "pre-push"), "#!/bin/sh\n")
     # the rest of the hooksPath directory: a SECOND hook, the policy file the
