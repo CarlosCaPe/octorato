@@ -2151,6 +2151,39 @@ def check_stale_merged_branches(fix: bool) -> Result:
     return Result(key, PASS, f"{len(heads)} remote branch(es): every one is master or has an open PR (or merged under 7 days)")
 
 
+# A command-word invocation of octo_pkg.py in .githooks/pre-push, as opposed to a
+# MENTION of one. The registry carries `grep -qE ... .githooks/pre-push` proofs for
+# exactly this claim, but the proof runner only ever EXECUTES locators containing
+# `--selftest` (see _selftest_proofs); every other EXIT_CODE locator is inert text.
+# So the claim "pre-push invokes it" was written down and checked by nothing. This is
+# where it gets checked.
+#
+# Two conditions, and the second one was NOT obvious. First, the line's COMMAND WORD
+# must be the interpreter, which is what separates an invocation from
+# `echo "hint: octo_pkg.py verify --all"`. Second, the invocation must DECIDE something.
+# The first version had only the command-word test and it was measured false: reverting
+# the whole pre-push stanza to `if false; then` left this check green, because the
+# error-REPORTING invocation inside the failing branch is the same command word and
+# satisfied it. A wiring check that survives the deletion of the thing it checks is not
+# a check. What tells the two apart in shell is the pipe: a gating invocation redirects
+# and is tested (`... >/dev/null 2>&1; then`), a reporting one pipes its output at the
+# reader (`... 2>&1 | sed`). So the tail must reach end of line with no `|`, or reach a
+# `||`, which keeps the `cmd || { ...; exit 1; }` idiom legal and refuses `| sed`.
+# Measured on seven shapes: the `if !` gate matches, the `|| {` idiom matches, and the
+# reporting line, an echo, a printf, a comment and a disabled `if false` all do not.
+_PREPUSH_CMD = (r'^[ \t]*(if[ \t]+!?[ \t]*)?"?\$\{?PYTHON\}?"?[ \t]+'
+                r'[^|]*octo_pkg\.py[^|]*\b%s\b([^|]*$|[^|]*\|\|)')
+
+
+def _pre_push_invokes(verb: str) -> bool:
+    """True when .githooks/pre-push runs `octo_pkg.py ... <verb>` as a GATING command."""
+    text = _rt(CLAUDE_DIR / ".githooks" / "pre-push")
+    if not text:
+        return False
+    rx = re.compile(_PREPUSH_CMD % re.escape(verb))
+    return any(rx.search(ln) for ln in text.splitlines())
+
+
 def check_packages_verified(fix: bool) -> Result:
     """v8 PACKAGE: every installed package is still what was signed.
 
@@ -2160,9 +2193,29 @@ def check_packages_verified(fix: bool) -> Result:
             packages is a healthy brain, not an unfinished one)
       WARN  a lock entry absent on disk. A second machine that pulled the lock while
             offline must still be able to push an unrelated change, so this never
-            blocks; the unlock is `octo pkg sync`, which --fix runs.
-      FAIL  a present entry whose tree hash, signature or symlink does not match, or
-            a lock entry whose signer is in no allowed-signers file.
+            blocks; the unlock is `octo pkg sync`, which --fix runs. A dangling
+            skills/<name> link with no tree and no lock entry lands here too: it
+            resolves to nothing, so it loads nothing.
+      FAIL  a present entry whose tree hash, signature or symlink does not match, a
+            lock entry whose signer is in no allowed-signers file, an entry whose
+            declared kind disagrees with the installed manifest, or a vendored tree
+            with no lock entry at all (verify sweeps skills/vendor on disk, not only
+            the lock, because deleting an entry must not delete the check).
+
+    What this check CANNOT tell apart, measured and stated here rather than left for a
+    reader to infer from the tiers above: "nothing was ever installed" and "the store
+    was emptied". With the lock's `packages` list cleared and the vendor tree and the
+    symlink removed, `verify --all` returns `{"pass": 0, "total": 0}` exit 0 and this
+    check PASSes, byte for byte identical to a brain that never installed anything.
+    Every HALF-emptied state is still caught, which is what makes the design
+    defensible: a vendored tree with no lock entry is FAIL, a lock entry whose signer
+    is in no allowed-signers file is FAIL, and a `skills/<name>` link left pointing at
+    an absent `skills/vendor/<name>` is WARN with the `octo pkg uninstall` unlock. Only
+    the COMPLETE removal is silent, and it is silent because it is genuinely the same
+    state: there is nothing left on disk to check. What sees it is git, not this check.
+    `packages.lock.json` is tracked, so clearing it is a diff on the way out, the same
+    protection `registry/pkg-signers.pub` has and `company/config/pkg-signers` does not
+    (see the trust-root asymmetry in the octo_pkg module docstring).
 
     Before any of that, a capability probe: `ssh-keygen -Y` is absent on old Windows
     OpenSSH. A verify that cannot check a signature has not checked it, so the probe
@@ -2173,6 +2226,12 @@ def check_packages_verified(fix: bool) -> Result:
     if not script.exists():
         return Result(key, WARN, "scripts/octo_pkg.py not found",
                       "restore the package manager")
+    if not _pre_push_invokes("verify --all"):
+        return Result(key, FAIL,
+                      "the ladder below is live only at doctor time: .githooks/pre-push "
+                      "does not INVOKE octo_pkg.py verify --all (a mention is not an "
+                      "invocation)",
+                      "restore the package stanza in .githooks/pre-push")
     py = PYTHON or "python3"
 
     if fix:
@@ -2202,7 +2261,7 @@ def check_packages_verified(fix: bool) -> Result:
     n_pass = data.get("pass", 0)
     if fails:
         return Result(key, FAIL,
-                      f"{len(fails)}/{total} package(s) are NOT what was signed: "
+                      f"{len(fails)}/{total} package(s) are NOT what the lock signed for: "
                       + "; ".join(fails[:4]),
                       "inspect the package, then reinstall it: "
                       "python3 scripts/octo_pkg.py uninstall <name> && octo pkg sync")
@@ -2211,10 +2270,73 @@ def check_packages_verified(fix: bool) -> Result:
                       f"{n_pass}/{total} verified; {len(warns)} lock entry(ies) absent on disk: "
                       + "; ".join(warns[:4]),
                       "python3 scripts/octo_pkg.py sync")
+    if total == 0:
+        # The v8.0.0 criterion asks for "n/n verified". 0/0 satisfies that STRING and
+        # means nothing: it is a count over an empty set, and an empty set is the state
+        # of a brain that never installed a package, which is the normal state today
+        # (packages.lock.json is `{"packages": []}`). Saying so here, in the line the
+        # reader of the criterion actually meets, is the whole fix: the check still
+        # PASSes, because a brain with no packages is healthy, but it no longer lets a
+        # zero be read as a verification. What proves this mechanism at a zero
+        # denominator is its selftest, not its count, and the criterion now says so.
+        return Result(key, PASS,
+                      "0/0 packages: the lock is empty, so nothing was verified and "
+                      "this count is not a release signal. What proves this check at a "
+                      "zero denominator is its fixture selftest "
+                      "(META.kernel-package), which gate-liveness runs")
     return Result(key, PASS,
                   f"{n_pass}/{total} package(s) verified "
                   f"(tree hash, ssh-keygen -Y signature and symlink; skills signed, "
                   f"arms validated)")
+
+
+def check_skill_manifests(fix: bool) -> Result:
+    """v8 PACKAGE, the in-repo half: does every skill this brain SHIPS carry a
+    `skill.json`?
+
+    v8-kernel.md section 4 promises "`skill.json` on every skill directory". Until this
+    check existed that promise had no live mechanism at all: the generator
+    (scripts/gen_skill_manifests.py) is a one-shot invoked by no hook, no gate, no
+    workflow and no runner, so the criterion was satisfiable as a STATE and nothing kept
+    it true. The 234th skill would carry no manifest, `packages-verified` would still
+    print its own count, pre-push would still exit 0, and coverage would decay silently.
+    RULE #1 calls that rot.
+
+    The ladder, the denominator and the argument for the failure mode live in
+    octo_pkg.scan_skill_manifests, which is what this calls: one implementation, so the
+    doctor and the pre-push stanza cannot drift into disagreeing about the same tree.
+    In short: 0/N is a WARN (today 0/233; FAIL there would wall every push until the
+    mechanical backfill lands), a PARTIAL count is a FAIL naming the directories (the
+    regression state, unreachable until the backfill lands, and self-arming the moment
+    it does), n/n is a PASS, and an EMPTY denominator is a FAIL because a brain with no
+    skills is a root that resolved wrong.
+    """
+    key = "skill-manifests"
+    script = CLAUDE_DIR / "scripts" / "octo_pkg.py"
+    if not script.exists():
+        return Result(key, WARN, "scripts/octo_pkg.py not found",
+                      "restore the package manager")
+    if not _pre_push_invokes("manifests"):
+        return Result(key, FAIL,
+                      "coverage is measured but not ENFORCED: .githooks/pre-push does "
+                      "not invoke octo_pkg.py manifests, so a skill can still ship "
+                      "without its manifest at exit 0",
+                      "restore the manifests stanza in .githooks/pre-push")
+    py = PYTHON or "python3"
+    cp = run([py, str(script), "--brain", str(CLAUDE_DIR), "manifests", "--json"],
+             cwd=CLAUDE_DIR)
+    try:
+        data = json.loads((cp.stdout or "").strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        return Result(key, FAIL,
+                      f"octo pkg manifests did not return JSON (exit {cp.returncode}): "
+                      + ((cp.stderr or cp.stdout or "").strip().splitlines() or ["no output"])[-1],
+                      "run: python3 scripts/octo_pkg.py manifests")
+    status = data.get("status")
+    if status not in (PASS, WARN, FAIL):
+        return Result(key, FAIL, f"unknown status {status!r} from octo pkg manifests",
+                      "run: python3 scripts/octo_pkg.py manifests")
+    return Result(key, status, data.get("detail", ""), data.get("fix", ""))
 
 
 CHECKS = [
@@ -2252,6 +2374,7 @@ CHECKS = [
     ("stale-merged-branches", check_stale_merged_branches),
     ("capability-manifest-fresh", check_capability_manifest),
     ("packages-verified", check_packages_verified),
+    ("skill-manifests", check_skill_manifests),
 ]
 
 STATUS_ICON = {PASS: "✓", WARN: "!", FAIL: "✗"}

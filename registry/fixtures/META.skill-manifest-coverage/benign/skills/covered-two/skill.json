@@ -1,0 +1,7 @@
+{
+  "name": "covered-two",
+  "version": "1.0.0",
+  "kind": "skill",
+  "license": "AGPL-3.0-only",
+  "description": "Fixture skill for META.skill-manifest-coverage. Not a real capability."
+}

@@ -9,9 +9,9 @@
 | Skills | 233 |
 | Agents | 167 |
 | Divisions | 13 |
-| Scripts: wired | 119 |
+| Scripts: wired | 120 |
 | Scripts: orphan | 7 |
-| Rules | 79 |
+| Rules | 80 |
 | Hook entries | 52 |
 
 ## Skills (233)
@@ -486,7 +486,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (126)
+## Scripts (127)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -585,6 +585,7 @@
 | octo.py | octo.py: the terminal view of the v8 kernel (docs/architecture/v8-kernel.md). | wired |
 | octo_pkg.py | octo_pkg.py: the PACKAGE primitive of the v8 kernel. | wired |
 | octorato-isomorphism.py | octorato-isomorphism , compute the invariant shared by the three Octorato anchors. | wired |
+| proc_group.py | Kill a child's process group without ever killing our own. | wired |
 | publish-wiki.py | publish-wiki.py - publish docs/wiki/ to the public GitHub wiki. | wired |
 | qa-merge-gate.py | PreToolUse Bash hook , QA gate (FAIL-CLOSED for merge actions). | wired |
 | query_connectome.py | query_connectome.py , Octopus Ventosas (Sucker Neural Interface) Each sucker is an independent senso... | wired |
@@ -617,7 +618,7 @@
 | wa-soporte.sh | Sends a WhatsApp through the SUPPORT channel, never through the operator's personal number. | wired |
 | watchdog.py | watchdog.py , observability surface 4 anomaly detector. Reads the JSONL trace files written by trace... | wired |
 
-## Rules (79)
+## Rules (80)
 
 ### ARCHITECTURE
 
@@ -720,6 +721,7 @@
 - META.pre-push-gate
 - META.querymaster
 - META.rule-1-wired-or-corrupt
+- META.skill-manifest-coverage
 
 ### SECURITY
 

@@ -230,9 +230,15 @@ copied folder. Run these from your brain checkout (`cd ~/.claude`):
 ```bash
 python3 scripts/octo_pkg.py list
 python3 scripts/octo_pkg.py verify --all
+python3 scripts/octo_pkg.py manifests
 ```
 
-`list` shows what is installed, `verify --all` re-checks every entry. Installing takes a
+`list` shows what is installed, `verify --all` re-checks every entry. `manifests` asks
+the other question, about the skills the brain ships itself rather than the ones it
+installed: how many of them carry a `skill.json`. It prints `n/N`, names the ones that
+do not, and hands you the exact `gen_skill_manifests.py` command to mint them. Pre-push
+runs both, and only their FAIL tier stops a push, so a brain that has never installed a
+package and has not been backfilled yet still pushes normally. Installing takes a
 source in any of four spellings: a GitHub URL like
 `https://github.com/<owner>/<repo>/tree/<ref>/skills/<name>` paired with
 `--path skills/<name>`, an `<owner>/<repo>` pair with `--path`, a git repository (a
@@ -252,7 +258,9 @@ out of git, and a row in the tracked `packages.lock.json`.
 That row is what makes a second machine reproducible: `ai-pull` runs `octo pkg sync`,
 which reinstalls from the lock and verifies. `brain_doctor` reports the same ladder as
 `packages-verified`, and pre-push refuses to publish while an installed package has
-drifted from what was signed.
+drifted from what was signed. `verify` also sweeps `skills/vendor` on disk, so a tree
+sitting there with no row in the lock is a failure and not a silence: deleting the row
+does not delete the check.
 
 ### How to publish a skill of your own
 

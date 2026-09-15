@@ -17,4 +17,15 @@ does not match the tree is exactly the case that proves the tree check runs firs
 
 `signed/` and `unsigned/` carry a real `tree_sha256` over their own files. Editing a
 byte in either tree without recomputing it turns the selftest red, which is the
-intended behavior: the hash is the point.
+intended behavior: the hash is the point. So does a `chmod +x`: the digest covers
+each file's path, its bytes and a normalized owner-execute bit, so re-run
+`python3 scripts/octo_pkg.py hash <tree> --write` after ANY change here, mode
+included. No signature is committed and none should be: the selftest signs these
+trees at run time with its own throwaway key, and `ssh-keygen -Y sign` over an
+existing `.sig` declines on EOF and keeps the old one, so a checked-in signature
+would be verified against a key the sandbox does not have and the selftest would
+go red.
+
+`tampered/` is `signed/` with a different name and its `tree_sha256` zeroed. That
+single field is the whole violation, so the pair stays one edit apart: put the real
+hash back and it is a benign package again.

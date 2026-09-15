@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "license": "MIT",
   "description": "Sample package used by the PACKAGE selftest.",
-  "tree_sha256": "7c2af4c2a3296e9bfc32284c8bb0cfee06f97c6efda14d37034e409d6748b115",
+  "tree_sha256": "9879cc0bc95919f60e6f4b9e17e28c6969e60d01539174bdc68d3517ff41d79e",
   "signature": {
     "namespace": "octorato-pkg",
     "signer": "octorato-release",

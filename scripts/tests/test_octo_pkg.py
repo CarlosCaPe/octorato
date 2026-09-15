@@ -14,16 +14,19 @@ parses, and the manifest generator.
 """
 from __future__ import annotations
 
-import contextlib
+import http.server
 import importlib.util
-import io
 import json
 import os
 import re
+import shlex
 import shutil
+import signal as signal_module
+import socketserver
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -44,98 +47,50 @@ def _load(name: str, path: Path):
     return mod
 
 
-MIT_BODY_TEXT = """\
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+def _sp(args, **kw):
+    """subprocess.run with the two things this module is not allowed to omit.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-"""
-# The Apache 2.0 HEADER: its title line, version line and first section heading, and
-# nothing else. It used to be this module's stand-in for the Apache license, and the
-# recognizer answered it with a clean SPDX id. It is not the license: it is the first
-# eight lines of it, and a package stamped Apache-2.0 from those eight lines was named
-# after a document nobody had read to the end. It is a NEGATIVE fixture now, and the
-# real text (verbatim, and shipped in this repo as a real skill's license) is the
-# positive one.
-APACHE_HEAD_TEXT = """\
-                                 Apache License
-                           Version 2.0, January 2004
-                        http://www.apache.org/licenses/
-
-   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
-
-   1. Definitions.
-"""
-MIT_FILE_TEXT = "MIT License\n\nCopyright (c) 2026 Someone Else, Inc.\n\n" + MIT_BODY_TEXT
-APACHE_FULL_TEXT = (BRAIN / "skills" / "cloudflare" / "LICENSE").read_text(encoding="utf-8")
-
-
-def mutate(text: str, old: str, new: str) -> str:
-    """Replace `old` with `new`, and REFUSE a no-op.
-
-    Three fixtures in this module were edits that never landed: the phrase they meant
-    to change is wrapped across two lines in the fixture, `str.replace` matched nothing,
-    and the test then asserted that verbatim MIT is MIT. It passed against the code it
-    was written to catch. A mutation that does not mutate is not a fixture.
+    No inherited stdin: half the calls below are `ssh-keygen`, which reads its
+    "Overwrite (y/n)?" answer from STDIN, so a suite run from a terminal would block
+    on the first one that finds a signature already in place. And always a deadline:
+    the defect these tests regress is a HANG, and an unbounded child here wedges the
+    suite that is supposed to be proving the hang is gone. Callers that already pass
+    stdin or timeout keep theirs.
     """
-    if old not in text:
-        raise AssertionError(f"fixture does not contain {old!r}, so this edit is a no-op")
-    if old == new:
-        raise AssertionError(f"the edit replaces {old!r} with itself, so it is a no-op")
-    return text.replace(old, new)
+    kw.setdefault("stdin", subprocess.DEVNULL)
+    kw.setdefault("timeout", 300)
+    return subprocess.run(args, **kw)
 
-
-def cut_before(text: str, marker: str) -> str:
-    """Everything before `marker`, and REFUSE when the marker is absent.
-
-    `text.split(marker)[0]` returns the WHOLE text when the marker is not there, so a
-    fixture edit that silently stopped cutting would assert that verbatim Apache is
-    Apache. That is `mutate`'s no-op class wearing a different verb, and it was in this
-    module, in the test that proves a clause-9 copy is still a whole license.
-    """
-    if marker not in text:
-        raise AssertionError(f"fixture does not contain {marker!r}, so this cut is a no-op")
-    return text.split(marker)[0]
-
-
-def cut_after(text: str, marker: str) -> str:
-    """Everything after `marker`, and REFUSE when the marker is absent."""
-    if marker not in text:
-        raise AssertionError(f"fixture does not contain {marker!r}, so this cut is a no-op")
-    return text.split(marker, 1)[1]
-
-
-def one_line(text: str) -> str:
-    """The same license with each PARAGRAPH unwrapped onto one line.
-
-    Wrapping is not terms, so this is the same document to the recognizer, and it lets
-    a test edit one phrase without having to know where the fixture happens to break
-    its lines. Paragraph breaks are kept: collapsing the whole file onto a single line
-    would put the title, the copyright notice and the license body in one line, which
-    is not a shape any license ships in and is not what these fixtures are testing.
-    """
-    return "\n\n".join(" ".join(block.split())
-                       for block in re.split(r"\n\s*\n", text) if block.strip())
 
 octo_pkg = _load("octo_pkg_under_test", SCRIPTS / "octo_pkg.py")
+proc_group_mod = _load("proc_group_under_test", SCRIPTS / "proc_group.py")
 gen = _load("gen_skill_manifests_under_test", SCRIPTS / "gen_skill_manifests.py")
 
 
 def _ssh_ok() -> bool:
     return shutil.which("ssh-keygen") is not None and octo_pkg.ssh_keygen_y_supported()
+
+
+def _pty_ok() -> bool:
+    """Whether this platform can give a child a controlling terminal.
+
+    pty and SIGKILL are POSIX-only, and importing them at module scope would take the
+    WHOLE suite down on Windows over two tests. Probed, not assumed."""
+    try:
+        import pty, signal  # noqa: F401
+    except ImportError:
+        return False
+    return hasattr(signal, "SIGKILL")
+
+
+def _fcntl_ok() -> bool:
+    """Whether lock_held takes its POSIX branch here. The Windows branch already
+    honoured its timeout; the test below is about the one that was ignoring it."""
+    try:
+        import fcntl  # noqa: F401
+    except ImportError:
+        return False
+    return True
 
 
 class SandboxCase(unittest.TestCase):
@@ -154,7 +109,7 @@ class SandboxCase(unittest.TestCase):
                      self.root / "schemas" / "skill-manifest.schema.json")
         (self.root / "packages.lock.json").write_text(
             json.dumps({"version": 1, "packages": []}, indent=2) + "\n", encoding="utf-8")
-        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        _sp(["git", "init", "-q", str(self.root)], check=True)
         os.environ["HOME"] = str(home)
         self.addCleanup(self._restore_home)
         self.brain = octo_pkg.Brain(self.root)
@@ -165,7 +120,7 @@ class SandboxCase(unittest.TestCase):
 
     def mint_key(self, principal: str = "octorato-release") -> Path:
         key = self.tmp / f"key-{principal}"
-        subprocess.run(["ssh-keygen", "-t", "ed25519", "-N", "", "-C", principal,
+        _sp(["ssh-keygen", "-t", "ed25519", "-N", "", "-C", principal,
                         "-f", str(key)], check=True, capture_output=True)
         pub = key.with_suffix(".pub").read_text(encoding="utf-8").split()
         line = f"{principal} {pub[0]} {pub[1]}\n"
@@ -180,7 +135,7 @@ class SandboxCase(unittest.TestCase):
         return dst
 
     def sign(self, key: Path, pkg: Path):
-        subprocess.run(["ssh-keygen", "-Y", "sign", "-f", str(key), "-n",
+        _sp(["ssh-keygen", "-Y", "sign", "-f", str(key), "-n",
                         octo_pkg.SIG_NAMESPACE, str(pkg / "skill.json")],
                        check=True, capture_output=True)
 
@@ -279,7 +234,7 @@ class TestSigners(SandboxCase):
     @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
     def test_a_key_that_is_in_no_signers_file_does_not_verify(self):
         stray = self.tmp / "stray"
-        subprocess.run(["ssh-keygen", "-t", "ed25519", "-N", "", "-f", str(stray)],
+        _sp(["ssh-keygen", "-t", "ed25519", "-N", "", "-f", str(stray)],
                        check=True, capture_output=True)
         self.mint_key()  # a known principal exists, but it is not this key
         pkg = self.stage("signed")
@@ -426,7 +381,7 @@ class TestSelftest(unittest.TestCase):
     @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
     def test_selftest_passes_as_a_subprocess(self):
         """The same invocation the registry proof and pre-push use."""
-        cp = subprocess.run([sys.executable, str(SCRIPTS / "octo_pkg.py"), "--selftest",
+        cp = _sp([sys.executable, str(SCRIPTS / "octo_pkg.py"), "--selftest",
                              "registry/fixtures/META.kernel-package"],
                             cwd=str(BRAIN), capture_output=True, text=True)
         self.assertEqual(cp.returncode, 0, cp.stdout + cp.stderr)
@@ -459,7 +414,7 @@ class TestGitHubPath(SandboxCase):
                     ["git", "-C", str(repo), "add", "-A"],
                     ["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t",
                      "commit", "-q", "-m", "seed"]):
-            subprocess.run(cmd, check=True, capture_output=True)
+            _sp(cmd, check=True, capture_output=True)
         return repo
 
     @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
@@ -467,8 +422,8 @@ class TestGitHubPath(SandboxCase):
         key = self.mint_key()
         repo = self._seed_repo()
         self.sign(key, repo / "skills" / "sample-package")
-        subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, capture_output=True)
-        subprocess.run(["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t",
+        _sp(["git", "-C", str(repo), "add", "-A"], check=True, capture_output=True)
+        _sp(["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t",
                         "commit", "-q", "-m", "sig"], check=True, capture_output=True)
         rc = octo_pkg.main(["--brain", str(self.root), "install", str(repo),
                             "--path", "skills/sample-package"])
@@ -527,7 +482,7 @@ class TestQaCycle2(SandboxCase):
         repo = self.tmp / f"r-{branch}-{extra_ref}"
         (repo / "skills").mkdir(parents=True)
         shutil.copytree(FIXTURE / "signed", repo / "skills" / "pdf")
-        run = lambda *c: subprocess.run(c, check=True, capture_output=True)
+        run = lambda *c: _sp(c, check=True, capture_output=True)
         run("git", "init", "-q", "-b", branch, str(repo))
         run("git", "-C", str(repo), "add", "-A")
         run("git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t",
@@ -575,7 +530,7 @@ class TestQaCycle2(SandboxCase):
         repo = self._seed(branch="master", extra_ref="release-1")
         pkg_in_repo = repo / "skills" / "pdf"
         self.sign(key, pkg_in_repo)
-        run = lambda *c: subprocess.run(c, check=True, capture_output=True)
+        run = lambda *c: _sp(c, check=True, capture_output=True)
         run("git", "-C", str(repo), "checkout", "-q", "release-1")
         (pkg_in_repo / "ONLY-ON-RELEASE-1.md").write_text("pinned\n", encoding="utf-8")
         man = json.loads((pkg_in_repo / "skill.json").read_text(encoding="utf-8"))
@@ -620,8 +575,8 @@ class TestQaCycle2(SandboxCase):
         key = self.mint_key()
         repo = self._seed()
         self.sign(key, repo / "skills" / "pdf")
-        subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, capture_output=True)
-        subprocess.run(["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t",
+        _sp(["git", "-C", str(repo), "add", "-A"], check=True, capture_output=True)
+        _sp(["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t",
                         "commit", "-q", "-m", "sig"], check=True, capture_output=True)
         # same argument shape as the wiki line: a path-carrying source plus --path
         rc = octo_pkg.main(["--brain", str(self.root), "install", str(repo),
@@ -651,7 +606,7 @@ class TestQaCycle2(SandboxCase):
     def test_lock_scratch_files_are_gitignored_by_a_tracked_pattern(self):
         brain_root = BRAIN
         names = [f"packages.lock.json.{os.getpid()}.tmp", "packages.lock.json.lock"]
-        cp = subprocess.run(["git", "check-ignore", "-v", "--no-index", *names],
+        cp = _sp(["git", "check-ignore", "-v", "--no-index", *names],
                             cwd=str(brain_root), capture_output=True, text=True)
         self.assertEqual(cp.returncode, 0, f"not ignored: {cp.stdout or cp.stderr}")
         self.assertEqual(len(cp.stdout.strip().splitlines()), len(names), cp.stdout)
@@ -695,7 +650,7 @@ class TestQaCycle2(SandboxCase):
         man = json.loads((d / "skill.json").read_text(encoding="utf-8"))
         man["version"] = "9.9.9"
         (d / "skill.json").write_text(json.dumps(man, indent=2) + "\n", encoding="utf-8")
-        cp = subprocess.run(["ssh-keygen", "-Y", "sign", "-f", str(key), "-n",
+        cp = _sp(["ssh-keygen", "-Y", "sign", "-f", str(key), "-n",
                              octo_pkg.SIG_NAMESPACE, str(d / "skill.json")],
                             stdin=subprocess.DEVNULL, capture_output=True)
         self.assertEqual(cp.returncode, 0, "ssh-keygen reports success")
@@ -761,8 +716,11 @@ class TestLockIntegrity(SandboxCase):
             # The sandbox HOME is fine in-process (sys.path is fixed at startup) but a
             # CHILD re-derives its user site-packages from HOME, so it would lose
             # jsonschema. The brain is pinned by --brain, not by HOME.
+            stdin=subprocess.DEVNULL,
             env={**os.environ, "HOME": self._home or os.environ["HOME"]}) for d in srcs]
-        outs = [pr.communicate() for pr in procs]
+        # Bounded: these two children race for the lock, and a lock bug is exactly the
+        # shape that would make one of them wait forever on the other.
+        outs = [pr.communicate(timeout=300) for pr in procs]
         for pr, (o, e) in zip(procs, outs):
             self.assertEqual(pr.returncode, 0, e.decode())
         names = sorted(p["name"] for p in self.brain.load_lock()["packages"])
@@ -894,7 +852,7 @@ class TestProbeAndExclude(SandboxCase):
         outer = self.tmp / "outer"
         inner = outer / "nested" / "brain"
         inner.mkdir(parents=True)
-        subprocess.run(["git", "init", "-q", str(outer)], check=True, capture_output=True)
+        _sp(["git", "init", "-q", str(outer)], check=True, capture_output=True)
         b = octo_pkg.Brain(inner)
         self.assertIsNone(b._exclude_file())
         self.assertFalse(b.exclude_add("skills/x"))
@@ -911,7 +869,7 @@ class TestProbeAndExclude(SandboxCase):
         own commands in a worktree, where install printed 'not a git checkout'."""
         main_repo = self.tmp / "mainrepo"
         main_repo.mkdir()
-        subprocess.run(["git", "init", "-q", "-b", "master", str(main_repo)],
+        _sp(["git", "init", "-q", "-b", "master", str(main_repo)],
                        check=True, capture_output=True)
         (main_repo / "f.txt").write_text("x\n", encoding="utf-8")
         for cmd in (["git", "-C", str(main_repo), "add", "-A"],
@@ -919,7 +877,7 @@ class TestProbeAndExclude(SandboxCase):
                      "user.name=t", "commit", "-q", "-m", "seed"],
                     ["git", "-C", str(main_repo), "worktree", "add", "-q", "-b", "wt",
                      str(self.tmp / "wt")]):
-            subprocess.run(cmd, check=True, capture_output=True)
+            _sp(cmd, check=True, capture_output=True)
         b = octo_pkg.Brain(self.tmp / "wt")
         self.assertIsNotNone(b._exclude_file())
         self.assertTrue(b.exclude_add("skills/x"))
@@ -927,6 +885,2912 @@ class TestProbeAndExclude(SandboxCase):
         b.exclude_remove("skills/x")
         self.assertFalse(b.exclude_has("skills/x"))
 
+
+class TestQaCycle3(SandboxCase):
+    """Regressions found in QA cycle 3, one test per finding.
+
+    F1 the lock's unsigned `kind` field decided whether the signed ladder ran at all
+    F2 verify was lock-driven only, so a vendored tree with no lock entry was invisible
+    F3 the tree hash covered paths and bytes, so `chmod +x` on a shipped file was free
+    """
+
+    def _install_signed(self) -> Path:
+        key = self.mint_key()
+        pkg = self.stage("signed")
+        self.sign(key, pkg)
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "install", str(pkg)]), 0)
+        return self.brain.vendor_path("sample-package")
+
+    def _set_lock_kind(self, name: str, kind: str) -> None:
+        """Edit ONE field of packages.lock.json, the way a pull from a remote would.
+
+        The lock is tracked and unsigned, which is the whole premise of F1: this edit
+        needs no key, no signature and no write to the package itself.
+        """
+        lock = json.loads(self.brain.lock_path.read_text(encoding="utf-8"))
+        for entry in lock["packages"]:
+            if entry["name"] == name:
+                entry["kind"] = kind
+        self.brain.lock_path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+
+    def _verify_json(self) -> dict:
+        import contextlib, io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            octo_pkg.main(["--brain", str(self.root), "verify", "--all", "--json"])
+        return json.loads(buf.getvalue())
+
+    # -- F1 ---------------------------------------------------------------
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_f1_kind_flipped_to_arm_over_a_tampered_tree_is_fail(self):
+        """The finding, verbatim: one edited field in an unsigned tracked file used to
+        turn the whole ladder off for a present, tampered, vendored tree."""
+        dest = self._install_signed()
+        self._set_lock_kind("sample-package", "arm")
+        (dest / "reference.txt").write_text("tampered by whoever pushed the lock\n",
+                                            encoding="utf-8")
+        data = self._verify_json()
+        self.assertFalse(data["ok"], data)
+        self.assertEqual(data["pass"], 0, data)
+        self.assertEqual(len(data["fail"]), 1, data)
+        self.assertIn("tree changed since install", data["fail"][0],
+                      "the ladder must RUN on a present tree, whatever the lock's kind says")
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "verify", "--all"]), 1)
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_f1_kind_disagreeing_with_the_installed_manifest_is_fail_naming_both(self):
+        """Untampered tree, only the lock's kind edited. Still a FAIL, and the message
+        carries both values because either side could be the edited one."""
+        self._install_signed()
+        self._set_lock_kind("sample-package", "arm")
+        status, msg = octo_pkg.verify_entry(
+            self.brain, self.brain.load_lock()["packages"][0])
+        self.assertEqual(status, octo_pkg.FAIL, msg)
+        self.assertIn("'skill'", msg)
+        self.assertIn("'arm'", msg)
+        self.assertIn("installed manifest", msg)
+
+    def test_f1_installed_kind_comes_from_the_manifest_not_the_filename(self):
+        d = self.tmp / "kinds"
+        shutil.copytree(FIXTURE / "signed", d)
+        self.assertEqual(octo_pkg.installed_kind(d), "skill")
+        man = json.loads((d / "skill.json").read_text(encoding="utf-8"))
+        man["kind"] = "arm"
+        (d / "skill.json").write_text(json.dumps(man, indent=2) + "\n", encoding="utf-8")
+        self.assertEqual(octo_pkg.installed_kind(d), "arm",
+                         "what the manifest declares wins over the file it lives in")
+        del man["kind"]
+        (d / "skill.json").write_text(json.dumps(man, indent=2) + "\n", encoding="utf-8")
+        self.assertEqual(octo_pkg.installed_kind(d), "skill",
+                         "the schema says an absent kind means skill")
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_f1_a_real_arm_entry_with_no_vendor_tree_still_passes(self):
+        """Arm isolation is why verify does not reach into the arm's own repo, and that
+        behaviour is unchanged: it is presence on disk, not the declared kind, that
+        selects the skill ladder.
+
+        The fixture now REGISTERS the arm, because the word "registered" in that
+        message became a fact this reads rather than one it asserts (QA cycle 12). The
+        thing this test protects is untouched: no vendor tree, no ladder, still PASS.
+        """
+        cfg = self.root / octo_pkg.ARMS_PATHS_REL
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        cfg.write_text('{"some-arm": "Documents/github/some-arm"}\n', encoding="utf-8")
+        lock = self.brain.load_lock()
+        lock["packages"].append({"name": "some-arm", "kind": "arm", "version": "1.0.0",
+                                 "tree_sha256": None, "signer": None,
+                                 "source": "git@example.test:o/some-arm.git",
+                                 "installed_at": "2026-01-01T00:00:00Z"})
+        self.brain.save_lock(lock)
+        status, msg = octo_pkg.verify_entry(self.brain, lock["packages"][0])
+        self.assertEqual(status, octo_pkg.PASS, msg)
+        self.assertIn("(validated, not signed)", msg)
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "verify", "--all"]), 0)
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_f1_an_arm_entry_that_also_has_a_vendor_tree_is_a_contradiction(self):
+        self._install_signed()
+        self._set_lock_kind("sample-package", "arm")
+        status, msg = octo_pkg.verify_entry(
+            self.brain, self.brain.load_lock()["packages"][0])
+        self.assertEqual(status, octo_pkg.FAIL, msg)
+        self.assertIn("an arm is never vendored into the brain", msg)
+
+    # -- F2 ---------------------------------------------------------------
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_f2_an_unlocked_vendor_tree_is_reported_by_verify_all(self):
+        """Delete the lock entry, keep the tree and the symlink: both paths are
+        gitignored and the link is in .git/info/exclude, so nothing else would ever
+        mention this tree again while it kept loading on every prompt."""
+        dest = self._install_signed()
+        self.brain.lock_path.write_text(
+            json.dumps({"version": 1, "packages": []}, indent=2) + "\n", encoding="utf-8")
+        data = self._verify_json()
+        self.assertFalse(data["ok"], data)
+        self.assertEqual(len(data["fail"]), 1, data)
+        self.assertIn("no packages.lock.json entry", data["fail"][0])
+        self.assertIn(str(dest), data["fail"][0], "the message must name the path")
+        self.assertEqual(data["total"], 1,
+                         "an unlocked tree counts toward the total, or the ratio lies")
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "verify", "--all"]), 1)
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_f2_a_dangling_stray_symlink_is_warn_not_fail(self):
+        """Decision, stated in scan_unlocked: a link with no tree resolves to nothing,
+        so it loads no code. It is litter from a half-removed install, and failing a
+        push over litter trains the operator to bypass the gate. Reported, not fatal."""
+        dest = self._install_signed()
+        shutil.rmtree(dest)
+        self.brain.lock_path.write_text(
+            json.dumps({"version": 1, "packages": []}, indent=2) + "\n", encoding="utf-8")
+        data = self._verify_json()
+        self.assertTrue(data["ok"], data)
+        self.assertEqual(data["fail"], [], data)
+        self.assertEqual(len(data["warn"]), 1, data)
+        self.assertIn("stray link", data["warn"][0])
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "verify", "--all"]), 0)
+        # and the unlock the message names actually clears it
+        self.assertEqual(
+            octo_pkg.main(["--brain", str(self.root), "uninstall", "sample-package"]), 0)
+        self.assertEqual(self._verify_json()["warn"], [])
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_f2_a_symlink_to_somewhere_else_entirely_is_not_ours_to_report(self):
+        """skills/<name> pointing outside skills/vendor is the operator's own link."""
+        outside = self.tmp / "his-own-skill"
+        outside.mkdir()
+        os.symlink(str(outside), self.brain.link_path("his-thing"), target_is_directory=True)
+        data = self._verify_json()
+        self.assertEqual((data["fail"], data["warn"]), ([], []), data)
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_f2_a_targeted_verify_does_not_sweep_the_disk(self):
+        """`verify <name>` answers about that name. The sweep belongs to --all."""
+        self._install_signed()
+        self.brain.lock_path.write_text(
+            json.dumps({"version": 1, "packages": []}, indent=2) + "\n", encoding="utf-8")
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "verify", "--all"]), 1)
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "verify", "other-name"]), 1,
+                         "a name that is in no lock is still its own FAIL")
+
+    # -- F3 ---------------------------------------------------------------
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_f3_chmod_x_changes_the_tree_hash_and_turns_verify_fail(self):
+        """A shipped script silently becoming executable is a material change to code
+        that sits in the always-on discovery path."""
+        dest = self._install_signed()
+        before = octo_pkg.tree_sha256(dest, "skill")
+        target = dest / "reference.txt"
+        os.chmod(target, 0o755)
+        self.assertNotEqual(before, octo_pkg.tree_sha256(dest, "skill"))
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "verify", "--all"]), 1)
+        os.chmod(target, 0o644)
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "verify", "--all"]), 0,
+                         "and dropping the bit again restores the original hash")
+
+    def test_f3_only_the_owner_execute_bit_moves_the_hash(self):
+        """Group and other bits are properties of the copy and of the publisher's
+        umask, not of the package. Hashing them would make the same bytes hash
+        differently on two machines for no security gain."""
+        d = self.tmp / "modes"
+        shutil.copytree(FIXTURE / "signed", d)
+        f = d / "reference.txt"
+        os.chmod(f, 0o644)
+        base = octo_pkg.tree_sha256(d, "skill")
+        for benign in (0o600, 0o666, 0o444, 0o640):
+            os.chmod(f, benign)
+            self.assertEqual(base, octo_pkg.tree_sha256(d, "skill"), oct(benign))
+        os.chmod(f, 0o744)
+        self.assertNotEqual(base, octo_pkg.tree_sha256(d, "skill"))
+        os.chmod(f, 0o644)
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "no mkfifo on this platform")
+    def test_f3_a_fifo_in_a_package_is_refused_the_way_a_symlink_is(self):
+        """It used to fall through `if not p.is_file(): continue`, so it was invisible
+        to the hash and still shipped inside the package."""
+        d = self.tmp / "fifo-pkg"
+        shutil.copytree(FIXTURE / "signed", d)
+        os.mkfifo(d / "pipe")
+        with self.assertRaises(octo_pkg.PkgError) as cm:
+            octo_pkg.tree_sha256(d, "skill")
+        self.assertIn("non-regular file", str(cm.exception))
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_f3_a_package_carrying_a_fifo_is_refused_in_staging(self):
+        """It was already refused before the fix, but by accident and far too late:
+        the hash ignored the FIFO, so the tree check passed, the SIGNATURE was checked,
+        and only copytree then choked on the special file and rolled back. Now it dies
+        in the staging area like a tampered tree, with no key involved at all."""
+        key = self.mint_key()
+        d = self.tmp / "fifo-install"
+        shutil.copytree(FIXTURE / "signed", d)
+        if not hasattr(os, "mkfifo"):
+            self.skipTest("no mkfifo on this platform")
+        os.mkfifo(d / "pipe")
+        self.sign(key, d)
+        octo_pkg.SIG_VERIFY_CALLS = 0
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "install", str(d)]), 1)
+        self.assertEqual(octo_pkg.SIG_VERIFY_CALLS, 0,
+                         "a tree this primitive cannot hash is refused before any key is used")
+        self.assertFalse(self.brain.vendor_path("sample-package").exists())
+
+    def test_f3_an_empty_directory_is_documented_as_not_covered(self):
+        """Pinned deliberately, because the docstring claims it. An empty directory
+        carries no bytes and nothing the runtime can load; a non-empty one is covered
+        through the paths of the files inside it."""
+        d = self.tmp / "empty-dir"
+        shutil.copytree(FIXTURE / "signed", d)
+        before = octo_pkg.tree_sha256(d, "skill")
+        (d / "hollow").mkdir()
+        self.assertEqual(before, octo_pkg.tree_sha256(d, "skill"),
+                         "an empty dir is invisible: this is the documented limit")
+        (d / "hollow" / "payload.md").write_text("no longer empty\n", encoding="utf-8")
+        self.assertNotEqual(before, octo_pkg.tree_sha256(d, "skill"),
+                            "the moment it carries a file, it is covered")
+
+    # -- fixtures ---------------------------------------------------------
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_the_violation_fixture_is_the_benign_one_one_edit_away(self):
+        """`tampered/` is `signed/` with its tree_sha256 zeroed. Correcting that ONE
+        field and signing makes it INSTALLABLE again, which is what keeps the fixture
+        pair an honest violation/benign pair after a re-hash.
+
+        Asserting that the field now equals the hash we just wrote into it would be a
+        tautology (QA cycle 3 said so). The claim is about installability, so the test
+        installs and verifies.
+        """
+        d = self.tmp / "one-edit"
+        shutil.copytree(FIXTURE / "tampered", d)
+        man = json.loads((d / "skill.json").read_text(encoding="utf-8"))
+        self.assertNotEqual(man["tree_sha256"], octo_pkg.tree_sha256(d, "skill"),
+                            "the violation fixture must start out mismatched")
+        # the ONE edit
+        man["tree_sha256"] = octo_pkg.tree_sha256(d, "skill")
+        (d / "skill.json").write_text(json.dumps(man, indent=2) + "\n", encoding="utf-8")
+        key = self.mint_key()
+        self.sign(key, d)
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "install", str(d)]), 0,
+                         "one corrected field must be enough to make it install")
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "verify", "--all"]), 0)
+
+
+class TestQaCycle4(SandboxCase):
+    """QA cycle 3 found that the cycle-3 fix itself could be turned into a traceback.
+
+    verify_entry promises it never raises, and the whole sweep depends on that: an
+    exception aborts the loop, so the other packages and the unlocked-tree scan never
+    report, and the failure that does surface names no package. Fail-closed is not the
+    same as reporting correctly.
+    """
+
+    def _install_signed(self, tag: str = "pkg") -> tuple[str, Path]:
+        """Install one freshly signed package under its own name.
+
+        A per-tag name and staging dir, and one key minted for the whole test: the
+        shared helpers write to fixed paths, and both ssh-keygen and copytree refuse
+        to overwrite, so a loop that reuses them dies on its second turn.
+        """
+        if not getattr(self, "_key", None):
+            self._key = self.mint_key()
+        name = "sample-" + tag
+        pkg = self.tmp / ("src-" + tag)
+        shutil.copytree(FIXTURE / "signed", pkg)
+        man = json.loads((pkg / "skill.json").read_text(encoding="utf-8"))
+        man["name"] = name
+        (pkg / "SKILL.md").write_text("---\nname: " + name + "\n---\n# " + name + "\n",
+                                      encoding="utf-8")
+        man["tree_sha256"] = octo_pkg.tree_sha256(pkg, "skill")
+        (pkg / "skill.json").write_text(json.dumps(man, indent=2) + "\n", encoding="utf-8")
+        self.sign(self._key, pkg)
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "install", str(pkg)]), 0)
+        return name, self.brain.vendor_path(name)
+
+    def _verify_json(self) -> dict:
+        import contextlib, io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            octo_pkg.main(["--brain", str(self.root), "verify", "--all", "--json"])
+        return json.loads(buf.getvalue())
+
+    def _rewrite_manifest(self, dest: Path, raw: str) -> None:
+        (dest / "skill.json").write_text(raw, encoding="utf-8")
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_a_crafted_kind_value_does_not_raise(self):
+        """`kind` as a list or dict used to hit `declared in MANIFEST_NAME`, and `in`
+        on a dict hashes its operand, so an unhashable value raised TypeError."""
+        for i, value in enumerate((["skill"], {}, 42, True)):
+            with self.subTest(kind=value):
+                name, dest = self._install_signed("kind%d" % i)
+                try:
+                    man = json.loads((dest / "skill.json").read_text(encoding="utf-8"))
+                    man["kind"] = value
+                    self._rewrite_manifest(dest, json.dumps(man))
+                    out = self._verify_json()
+                    self.assertFalse(out["ok"])
+                    hit = [f for f in out["fail"] if f.startswith(name)]
+                    self.assertEqual(len(hit), 1, out["fail"])
+                    self.assertIn("no readable kind", hit[0])
+                finally:
+                    # in a finally, so one failing subtest does not leave its package
+                    # installed and make the NEXT subtest fail for a borrowed reason.
+                    # QA cycle 4 caught exactly that: `42` and `True` never crashed on
+                    # the old tip, they only errored there by inheriting subtest 0's
+                    # wreckage. A subtest has to fail for its own input or it is noise.
+                    octo_pkg.main(["--brain", str(self.root), "uninstall", name])
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_a_manifest_that_is_not_an_object_does_not_raise(self):
+        """`[]`, `"skill"`, `42` and `null` all parse as JSON. `.get` raises on all of
+        them, so the manifest has to be shape-checked before it is read."""
+        for i, raw in enumerate(("[]", '"skill"', "42", "null")):
+            with self.subTest(manifest=raw):
+                name, dest = self._install_signed("shape%d" % i)
+                try:
+                    self._rewrite_manifest(dest, raw)
+                    out = self._verify_json()
+                    self.assertFalse(out["ok"])
+                    hit = [f for f in out["fail"] if f.startswith(name)]
+                    self.assertEqual(len(hit), 1, out["fail"])
+                finally:
+                    octo_pkg.main(["--brain", str(self.root), "uninstall", name])
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_no_byte_sequence_in_a_manifest_reaches_a_traceback(self):
+        """QA cycle 4, findings 1 and 2. Three cycles in a row found another input
+        class escaping as an exception, so the fix is one seam (`read_json`) rather
+        than another except clause, and this test walks the classes that broke it:
+        bytes that are not UTF-8, and syntax deep enough to exhaust the parser's
+        recursion. Both are ValueError-or-worse on the way from a path to an object.
+        """
+        deep = "[" * 200000 + "]" * 200000
+        for i, raw in enumerate((b"\xff", b"\xfe\xff{}", deep.encode(), b"")):
+            with self.subTest(payload=raw[:12]):
+                name, dest = self._install_signed("bytes%d" % i)
+                try:
+                    (dest / "skill.json").write_bytes(raw)
+                    out = self._verify_json()          # must not raise
+                    self.assertFalse(out["ok"])
+                    hit = [f for f in out["fail"] if f.startswith(name)]
+                    self.assertEqual(len(hit), 1, out["fail"])
+                finally:
+                    octo_pkg.main(["--brain", str(self.root), "uninstall", name])
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_an_unreadable_package_directory_does_not_raise(self):
+        """QA cycle 4, finding 3. `Path.is_file` swallows ENOENT and ENOTDIR, not
+        EACCES, so a mode-000 package DIRECTORY raised from the stat itself, outside
+        every try. This is the unreadable-file finding one level up."""
+        name, dest = self._install_signed("dir000")
+        os.chmod(dest, 0o000)
+        self.addCleanup(lambda: os.chmod(dest, 0o755))
+        out = self._verify_json()                      # must not raise
+        self.assertFalse(out["ok"])
+        self.assertEqual(len(out["fail"]), 1, out["fail"])
+        self.assertIn(name, out["fail"][0])
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_a_lock_field_of_the_wrong_type_is_refused_by_the_reader(self):
+        """QA cycle 4, findings 4 and 6. The lock is tracked and unsigned, so its
+        fields arrive from a remote like any other file. A list-valued `signer`
+        reached a set membership test and raised TypeError; a list-valued `source`
+        reached .startswith inside sync, which `ai-pull` runs. Both are type-checked
+        at the ONE place the file is read, not at each use.
+
+        `installed_at` was added in cycle 14, and what found it was a control rather
+        than a re-read of the list: a list `source` was refused here while a dict, a
+        list or an int `installed_at` was accepted, because the field gained a
+        consumer (entry_identity) without gaining a check. Each shape is its own
+        subTest, so removing one field from the reader's tuple fails on that field
+        and not on a neighbour's."""
+        self._install_signed("locktype")
+        for field, value in (("signer", ["octorato-release"]), ("signer", {"a": 1}),
+                             ("source", ["x"]), ("tree_sha256", 7),
+                             ("installed_at", {"a": 1}), ("installed_at", ["x"]),
+                             ("installed_at", 7)):
+            with self.subTest(field=field, value=value):
+                lock = json.loads(self.brain.lock_path.read_text(encoding="utf-8"))
+                good = json.dumps(lock, indent=2) + "\n"
+                lock["packages"][0][field] = value
+                self.brain.lock_path.write_text(json.dumps(lock, indent=2) + "\n",
+                                                encoding="utf-8")
+                try:
+                    with self.assertRaises(octo_pkg.PkgError) as caught:
+                        self.brain.load_lock()
+                    self.assertIn(field, str(caught.exception))
+                finally:
+                    self.brain.lock_path.write_text(good, encoding="utf-8")
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_a_lockfile_of_unreadable_bytes_is_refused_not_a_traceback(self):
+        """QA cycle 4, finding 5. Same seam, the other tracked file."""
+        self._install_signed("lockbytes")
+        good = self.brain.lock_path.read_bytes()
+        self.addCleanup(lambda: self.brain.lock_path.write_bytes(good))
+        for raw in (b"\xff", ("[" * 200000 + "]" * 200000).encode()):
+            with self.subTest(payload=raw[:8]):
+                self.brain.lock_path.write_bytes(raw)
+                with self.assertRaises(octo_pkg.PkgError):
+                    self.brain.load_lock()
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_an_unreadable_file_in_the_tree_does_not_raise(self):
+        """tree_sha256 reads every file; a mode-000 one raises PermissionError, which
+        is an OSError and was not caught next to PkgError."""
+        name, dest = self._install_signed("unreadable")
+        victim = dest / "reference.txt"
+        os.chmod(victim, 0o000)
+        self.addCleanup(lambda: os.chmod(victim, 0o644))
+        out = self._verify_json()
+        self.assertFalse(out["ok"])
+        self.assertEqual(len(out["fail"]), 1)
+        self.assertIn(name, out["fail"][0])
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_the_control_a_clean_install_still_passes(self):
+        """The guards must refuse crafted input without refusing a real package."""
+        self._install_signed("clean")
+        out = self._verify_json()
+        self.assertTrue(out["ok"], out)
+        self.assertEqual(out["pass"], 1)
+        self.assertEqual(out["fail"], [])
+
+
+class TestQaCycle5(SandboxCase):
+    """QA cycle 5 enumerated the boundary instead of guessing at it, and found the
+    seam one file short of what it claimed. Two classes, both the same shape as the
+    seven before them: bytes that never become JSON, and a stat one directory above
+    the one that was guarded."""
+
+    def _install_signed(self, tag: str = "pkg") -> tuple[str, Path]:
+        if not getattr(self, "_key", None):
+            self._key = self.mint_key()
+        name = "sample-" + tag
+        pkg = self.tmp / ("src-" + tag)
+        shutil.copytree(FIXTURE / "signed", pkg)
+        man = json.loads((pkg / "skill.json").read_text(encoding="utf-8"))
+        man["name"] = name
+        (pkg / "SKILL.md").write_text("---\nname: " + name + "\n---\n# " + name + "\n",
+                                      encoding="utf-8")
+        man["tree_sha256"] = octo_pkg.tree_sha256(pkg, "skill")
+        (pkg / "skill.json").write_text(json.dumps(man, indent=2) + "\n", encoding="utf-8")
+        self.sign(self._key, pkg)
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "install", str(pkg)]), 0)
+        return name, self.brain.vendor_path(name)
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_a_stray_byte_in_the_allowed_signers_file_does_not_kill_the_sweep(self):
+        """The eighth, and the one that proved the seam was misnamed. The tracked
+        registry/pkg-signers.pub never becomes JSON, so naming the seam after JSON
+        left the only other read outside it, with the same `except OSError` and no
+        ValueError. One latin-1 byte in a comment line raised UnicodeDecodeError out
+        of the whole sweep: no JSON printed, no package named, every entry after the
+        first unchecked. Skipping an unreadable signers file is fail-closed, since
+        dropping principals can only refuse packages, never accept them."""
+        name, _ = self._install_signed("signers")
+        pub = self.root / "registry" / "pkg-signers.pub"
+        pub.write_bytes(pub.read_bytes() + b"# note from the maintainer: caf\xe9\n")
+        import contextlib, io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "verify", "--all"])
+        self.assertEqual(rc, 1)
+        self.assertIn(name, buf.getvalue(), "the failure has to name the package")
+        self.assertIn("allowed-signers", buf.getvalue())
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_an_unreadable_vendor_container_does_not_abort_any_verb(self):
+        """The EACCES guard went onto `is_file` inside load_manifest, but the same
+        stat happens one frame earlier whenever skills/vendor ITSELF is unreadable,
+        and there it aborted every entry rather than one. uninstall refuses outright:
+        it deletes, and a stat it cannot make means it does not know what it would be
+        deleting."""
+        self._install_signed("container")
+        import contextlib, io
+        vendor = self.brain.vendor_dir
+        os.chmod(vendor, 0o000)
+        self.addCleanup(lambda: os.chmod(vendor, 0o755))
+        for argv in (["verify", "--all"], ["list"], ["sync"], ["lock"]):
+            with self.subTest(verb=argv[0]):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    octo_pkg.main(["--brain", str(self.root)] + argv)   # must not raise
+        # main() turns PkgError into rc 1 plus a printed reason, so the assertion is
+        # on the boundary a caller actually sees, not on the exception type.
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "uninstall", "sample-container"])
+        self.assertEqual(rc, 1, "uninstall must refuse what it cannot inspect")
+        self.assertIn("cannot be read", buf.getvalue() or "")
+        self.assertTrue((vendor / "sample-container").is_dir() if os.access(vendor, os.R_OK)
+                        else True, "nothing may be removed on a refusal")
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_an_unreadable_file_makes_the_hash_refuse_not_raise(self):
+        """tree_sha256 already speaks PkgError for a symlink and a FIFO, so a file it
+        cannot read belongs in the same vocabulary. Three callers catch only PkgError
+        (hash, lock, install), and each turned an unreadable file into a traceback."""
+        name, dest = self._install_signed("hashfail")
+        victim = dest / "reference.txt"
+        os.chmod(victim, 0o000)
+        self.addCleanup(lambda: os.chmod(victim, 0o644))
+        if os.access(victim, os.R_OK):
+            self.skipTest("running as root, EACCES is not enforceable")
+        with self.assertRaises(octo_pkg.PkgError) as caught:
+            octo_pkg.tree_sha256(dest, "skill")
+        self.assertIn("cannot be read", str(caught.exception))
+
+    def test_a_name_that_is_not_utf8_is_refused_by_the_digest(self):
+        """The fix that closed the fourth crossing family shipped with NO test, in a
+        commit whose message says the family closes. Nothing in this file built a
+        filename from bytes, so the refusal was unreachable from the suite by
+        construction and a mutation disabling it survived (QA cycle 10). That is the
+        third time in this session my intent and my diff diverged."""
+        d = self.tmp / "badname"
+        shutil.copytree(FIXTURE / "signed", d)
+        clean = octo_pkg.tree_sha256(d, "skill")
+        bad = os.path.join(bytes(d), b"evil\xff.md")
+        with open(bad, "wb") as fh:
+            fh.write(b"payload\n")
+        self.assertTrue(any(b"\xff" in n for n in os.listdir(bytes(d))),
+                        "the fixture must really carry a non-UTF-8 name")
+        with self.assertRaises(octo_pkg.PkgError) as caught:
+            octo_pkg.tree_sha256(d, "skill")
+        self.assertIn("not valid UTF-8", str(caught.exception))
+        os.unlink(bad)
+        self.assertEqual(octo_pkg.tree_sha256(d, "skill"), clean,
+                         "removing it restores the original digest")
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_one_unnameable_file_does_not_take_the_whole_sweep_down(self):
+        """The security half. `verify --all` used to abort with empty stdout, so
+        anyone able to tamper with a vendored tree could suppress detection of that
+        tamper by planting a badly named file beside it. Two packages here, and the
+        healthy one must still get its verdict."""
+        import contextlib, io
+        bad_name, bad_dest = self._install_signed("aaa")
+        good_name, _ = self._install_signed("zzz")
+        with open(os.path.join(bytes(bad_dest), b"evil\xff.md"), "wb") as fh:
+            fh.write(b"payload\n")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "verify", "--all"])
+        out = buf.getvalue()
+        self.assertEqual(rc, 1)
+        self.assertIn(bad_name, out, "the offending package is named")
+        self.assertIn("not valid UTF-8", out)
+        self.assertIn(good_name, out, "the OTHER package still gets its verdict")
+        self.assertIn("1 verified", out, "the sweep finished")
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_a_stray_with_an_unnameable_name_is_still_reported(self):
+        """The SECOND encode crossing, which the digest refusal never sees: a vendor
+        directory whose own name is not UTF-8 reaches the stray-scan print directly.
+        What carries it is `errors="replace"` on stdout, a line whose comment talked
+        only about Windows glyphs. Dropping that flag made the FAIL line and the
+        summary vanish (QA cycle 10), so the invariant is pinned here."""
+        self._install_signed("witness")
+        os.mkdir(os.path.join(bytes(self.brain.vendor_dir), b"stray\xff"))
+        # A SUBPROCESS, not redirect_stdout: a StringIO accepts surrogates happily,
+        # so an in-process capture cannot see this at all and the first version of
+        # this test survived the mutation that breaks the guard. The invariant lives
+        # on the real stdout, so the test has to use one.
+        cp = _sp([sys.executable, str(SCRIPTS / "octo_pkg.py"),
+                             "--brain", str(self.root), "verify", "--all"],
+                            capture_output=True, text=True, timeout=90)
+        self.assertEqual(cp.returncode, 1, cp.stderr)
+        self.assertNotIn("Traceback", cp.stderr, "the sweep must not die on a name")
+        self.assertIn("no packages.lock.json entry", cp.stdout,
+                      "the stray is reported rather than taking the sweep down")
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_a_failed_arm_install_leaves_nothing_behind(self):
+        """install_skill learned to unwind across three cycles and install_arm never
+        did, which a cross-function symmetry audit found: take the invariant a fix
+        established and ask which siblings should hold it. Measured before the fix
+        with an ordinary corrupt lockfile, the command reported failure and left the
+        clone on disk AND the arm registered with no lock entry, so every
+        arm-iterating script would write into a repo the brain does not consider
+        installed, and the retry was permanently blocked (QA cycle 10)."""
+        import contextlib, io
+        src = self.tmp / "arm-src"
+        src.mkdir()
+        # `license` is required by the schema, and leaving it out is how the first
+        # version of this test passed for the wrong reason: validation failed BEFORE
+        # the arms-paths write, so the pre-existing handler cleaned up and the new
+        # unwind was never reached. My own revert control caught it, which is the
+        # fourth time today a test of mine proved something other than its name.
+        (src / "arm.json").write_text(json.dumps(
+            {"name": "sample-arm", "version": "1.0.0", "license": "MIT",
+             "kind": "arm"}), encoding="utf-8")
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        for args in (["init", "-q"], ["config", "user.email", "t@example.invalid"],
+                     ["config", "user.name", "t"], ["add", "-A"],
+                     ["commit", "-q", "-m", "arm"]):
+            _sp(["git", "-C", str(src)] + args, check=True,
+                           capture_output=True, env=env)
+        self.brain.lock_path.write_text("{ not json", encoding="utf-8")
+        dest = self.tmp / "armdest"
+        cfg = self.root / octo_pkg.ARMS_PATHS_REL
+        with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
+            rc = octo_pkg.main(["--brain", str(self.root), "install", "--kind", "arm",
+                                "--dest", str(dest), str(src)])
+        self.assertEqual(rc, 1)
+        self.assertFalse(dest.exists(), "a failed arm install leaves no clone")
+        self.assertFalse(cfg.exists(),
+                         "nor an arm registered for a repo that is not installed")
+
+    def test_an_unlistable_directory_is_not_a_hole_in_the_digest(self):
+        """The most serious finding of any cycle, and the one a call-site
+        enumeration structurally cannot reach: `Path.rglob` catches the OSError
+        INSIDE pathlib, so a directory the process cannot list contributes nothing
+        and never raises. `chmod 111` leaves every file in it readable by exact
+        path, so a planted script was outside the digest, inside the package,
+        loadable, and verify printed PASS over it."""
+        d = self.tmp / "unlistable"
+        shutil.copytree(FIXTURE / "signed", d)
+        clean = octo_pkg.tree_sha256(d, "skill")
+        evil = d / "evil"
+        evil.mkdir()
+        (evil / "payload.sh").write_text("payload\n", encoding="utf-8")
+        self.assertNotEqual(octo_pkg.tree_sha256(d, "skill"), clean,
+                            "a readable planted directory must change the hash")
+        os.chmod(evil, 0o111)
+        self.addCleanup(lambda: os.chmod(evil, 0o755))
+        if os.access(evil, os.R_OK):
+            self.skipTest("running as root, EACCES is not enforceable")
+        self.assertTrue((evil / "payload.sh").is_file(),
+                        "the planted file is still readable by exact path, "
+                        "which is what makes the blind spot dangerous")
+        with self.assertRaises(octo_pkg.PkgError) as caught:
+            octo_pkg.tree_sha256(d, "skill")
+        self.assertIn("cannot be listed", str(caught.exception))
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_verify_refuses_a_package_hiding_an_unlistable_directory(self):
+        """The same hole end to end, because the unit test above proves the digest
+        and this proves the verdict a reader actually sees."""
+        import contextlib, io
+        name, dest = self._install_signed("hidden")
+        evil = dest / "evil"
+        evil.mkdir()
+        (evil / "payload.sh").write_text("payload\n", encoding="utf-8")
+        os.chmod(evil, 0o111)
+        self.addCleanup(lambda: os.chmod(evil, 0o755))
+        if os.access(evil, os.R_OK):
+            self.skipTest("running as root, EACCES is not enforceable")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "verify", "--all"])
+        self.assertEqual(rc, 1, "PASS over an unhashed file is the guarantee failing")
+        self.assertIn("cannot be listed", buf.getvalue())
+
+    def test_every_resolve_site_refuses_a_symlink_loop(self):
+        """QA cycle 7 found this at one call site, the fix named that site, and cycle
+        8 found the identical bug one verb over in `hash`. That is the losing move
+        this file has made six times, so .resolve() is a seam now and the test walks
+        the family rather than the instance."""
+        import contextlib, io
+        loop = self.tmp / "loopdir"
+        os.symlink(loop, loop)
+        for argv in (["--brain", str(loop), "verify", "--all"],
+                     ["--brain", str(self.root), "hash", str(loop)],
+                     ["--brain", str(self.root), "install", "--kind", "arm",
+                      "--dest", str(loop), "owner/repo"]):
+            verb = next(a for a in argv if a in ("verify", "hash", "install"))
+            with self.subTest(verb=verb):
+                buf = io.StringIO()
+                with contextlib.redirect_stderr(buf), contextlib.redirect_stdout(io.StringIO()):
+                    rc = octo_pkg.main(argv)          # must not raise
+                self.assertEqual(rc, 1)
+                self.assertIn("cannot be resolved", buf.getvalue())
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_sync_unwinds_a_restore_it_cannot_finish(self):
+        """G2 shipped without a test. sync's rollback caught only OSError while its
+        comment claimed it matched install's, so when exclude_add started raising
+        PkgError through the seam, sync reported a package skipped that it had in
+        fact restored whole, tree and symlink live."""
+        import contextlib, io
+        name, dest = self._install_signed("syncroll")
+        link = self.brain.link_path(name)
+        shutil.rmtree(dest)
+        link.unlink()
+        exclude = self.root / ".git" / "info" / "exclude"
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        exclude.write_bytes(b"# ruta con acento: caf\xe9/\n")
+        with contextlib.redirect_stdout(io.StringIO()):
+            octo_pkg.main(["--brain", str(self.root), "sync"])
+        self.assertFalse(dest.exists(), "a skipped restore must leave no tree behind")
+        self.assertFalse(link.is_symlink())
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_a_failing_cleanup_does_not_lose_the_original_cause(self):
+        """G3 shipped without a test. The unwind wrapped only the exclude call, so a
+        bare stat inside it could skip the rollback AND drop the reason, leaving the
+        tree-plus-link-no-lock state the whole cycle exists to prevent."""
+        import contextlib, io
+        key = self.mint_key()
+        pkg = self.stage("signed")
+        self.sign(key, pkg)
+        # The failure goes into exclude_add (the PRIMARY path, which is what makes
+        # the install fail) AND into the cleanup's own rmtree, which is the thing
+        # G3 was about. The first version injected only into the primary path, so
+        # it passed with the narrow pre-G3 wrapper still in place: it was testing
+        # the BaseException width, not the cleanup wrapper (QA cycle 9 proved that
+        # by mutation, and it is the third test in this session found passing for
+        # a reason other than its name).
+        real_add = octo_pkg.Brain.exclude_add
+        real_rmtree = octo_pkg.shutil.rmtree
+        def boom(self_, rel):
+            raise PermissionError("ORIGINAL CAUSE")
+        def boom_cleanup(path, *a, **kw):
+            raise PermissionError("CLEANUP FAILED")
+        octo_pkg.Brain.exclude_add = boom
+        octo_pkg.shutil.rmtree = boom_cleanup
+        self.addCleanup(lambda: setattr(octo_pkg.Brain, "exclude_add", real_add))
+        self.addCleanup(lambda: setattr(octo_pkg.shutil, "rmtree", real_rmtree))
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf), contextlib.redirect_stdout(io.StringIO()):
+            rc = octo_pkg.main(["--brain", str(self.root), "install", str(pkg)])
+        self.assertEqual(rc, 1)
+        self.assertIn("ORIGINAL CAUSE", buf.getvalue(),
+                      "the cause must survive a cleanup that fails on its way out")
+        self.assertNotIn("CLEANUP FAILED", buf.getvalue(),
+                         "the cleanup's own failure must not replace the cause")
+        self.assertIn("rolled back", buf.getvalue())
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_an_entry_with_no_kind_is_restored_not_prescribed_forever(self):
+        """The schema says absent means skill, and three readers disagreed: verify
+        applied the default, sync and lock compared to "skill" directly. So verify
+        printed `absent on disk, fix: sync` and sync skipped that entry forever, a
+        prescription that does nothing (QA cycle 8)."""
+        import contextlib, io
+        name, dest = self._install_signed("nokind")
+        link = self.brain.link_path(name)
+        lock = json.loads(self.brain.lock_path.read_text(encoding="utf-8"))
+        for entry in lock["packages"]:
+            entry.pop("kind", None)
+            entry["source"] = str(self.tmp / "src-nokind")
+        self.brain.lock_path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+        shutil.rmtree(dest)
+        link.unlink()
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            octo_pkg.main(["--brain", str(self.root), "sync"])
+        self.assertIn("1 restored", buf.getvalue(),
+                      "`0 restored` also contains the word, so count it")
+        self.assertTrue(dest.is_dir(), "the entry verify prescribes sync for must be "
+                                       "the entry sync restores")
+
+    def test_the_brain_argument_survives_a_symlink_loop(self):
+        """pathlib turns ELOOP into RuntimeError, not OSError, so this call sitting
+        outside the backstop meant a traceback for a bad argument."""
+        import contextlib, io
+        loop = self.tmp / "loop"
+        os.symlink(loop, loop)
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            rc = octo_pkg.main(["--brain", str(loop), "verify", "--all"])
+        self.assertEqual(rc, 1)
+        self.assertIn("cannot be resolved", buf.getvalue())
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_a_cp1252_byte_in_the_git_exclude_unwinds_the_install(self):
+        """The severest of the ten, and the one that broke a stated invariant rather
+        than a report. .git/info/exclude is plain text written by hand and by other
+        tools, so a cp1252 comment in it is ordinary on Windows. It raised
+        UnicodeDecodeError, which is a ValueError, straight past an unwind that
+        caught only (OSError, PkgError), leaving a vendored tree and a live symlink
+        in the always-on discovery path with no lock entry."""
+        import contextlib, io
+        key = self.mint_key()
+        pkg = self.stage("signed")
+        self.sign(key, pkg)
+        exclude = self.root / ".git" / "info" / "exclude"
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        exclude.write_bytes(b"# ruta con acento: caf\xe9/\n")
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf), contextlib.redirect_stdout(io.StringIO()):
+            rc = octo_pkg.main(["--brain", str(self.root), "install", str(pkg)])
+        self.assertEqual(rc, 1)
+        self.assertIn("rolled back", buf.getvalue())
+        self.assertFalse(self.brain.vendor_path("sample-package").exists(),
+                         "an unwound install leaves no tree in the discovery path")
+        self.assertFalse(self.brain.link_path("sample-package").is_symlink())
+        self.assertEqual(self.brain.load_lock()["packages"], [])
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_an_unreadable_skills_dir_is_reported_not_raised(self):
+        """The guard went onto the vendor loop and stopped there, so the second loop
+        over skills/ kept the shape the first one had just lost."""
+        import contextlib, io
+        self._install_signed("skillsdir")
+        skills = self.root / "skills"
+        os.chmod(skills, 0o000)
+        self.addCleanup(lambda: os.chmod(skills, 0o755))
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "verify", "--all"])
+        self.assertEqual(rc, 1)
+        self.assertIn("cannot be listed", buf.getvalue())
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_uninstall_reports_a_tree_it_cannot_remove(self):
+        """The ordering comment names an unreadable subdirectory as its motivating
+        case, and that case still left as a traceback. A test that only asserts the
+        happy-path order is why it survived (QA cycle 6 said so)."""
+        import contextlib, io
+        name, dest = self._install_signed("stuck")
+        sub = dest / "sub"
+        sub.mkdir()
+        (sub / "x.txt").write_text("x", encoding="utf-8")
+        os.chmod(sub, 0o000)
+        self.addCleanup(lambda: os.chmod(sub, 0o755))
+        if os.access(sub, os.R_OK):
+            self.skipTest("running as root, EACCES is not enforceable")
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf), contextlib.redirect_stdout(io.StringIO()):
+            rc = octo_pkg.main(["--brain", str(self.root), "uninstall", name])
+        self.assertEqual(rc, 1)
+        self.assertIn("could not be removed", buf.getvalue())
+        self.assertTrue(self.brain.link_path(name).is_symlink(),
+                        "the link stays, so nothing became an unlocked tree")
+        self.assertEqual([p["name"] for p in self.brain.load_lock()["packages"]], [name],
+                         "the lock still says installed, which is the reportable direction")
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_uninstall_removes_the_tree_before_the_link(self):
+        """Order is the correctness part, not the reporting part. Unlinking first and
+        then removing left a half-removed install when the rmtree could not finish:
+        tree present, symlink gone, lock entry still there. The tree carries the code,
+        so the tree goes first and a failure leaves the install whole."""
+        name, dest = self._install_signed("order")
+        link = self.brain.link_path(name)
+        self.assertTrue(dest.is_dir() and link.is_symlink())
+        calls = []
+        real_rmtree = octo_pkg.shutil.rmtree
+        def watched(path, *a, **kw):
+            calls.append(("rmtree", link.is_symlink()))
+            return real_rmtree(path, *a, **kw)
+        octo_pkg.shutil.rmtree = watched
+        self.addCleanup(lambda: setattr(octo_pkg.shutil, "rmtree", real_rmtree))
+        import contextlib, io
+        with contextlib.redirect_stdout(io.StringIO()):
+            octo_pkg.main(["--brain", str(self.root), "uninstall", name])
+        self.assertEqual(calls[0], ("rmtree", True),
+                         "the symlink must still be there when the tree is removed")
+        self.assertFalse(dest.exists())
+        self.assertFalse(link.is_symlink())
+
+
+class ArmFixture(SandboxCase):
+    """A real arm repo and an installed arm, shared by the two arm cycles. No tests."""
+
+    def _arm_src(self, name: str = "sample-arm", manifest: dict | None = None) -> Path:
+        src = self.tmp / f"arm-src-{name}"
+        src.mkdir()
+        man = manifest if manifest is not None else {
+            "name": name, "version": "1.0.0", "license": "MIT", "kind": "arm"}
+        (src / "arm.json").write_text(json.dumps(man), encoding="utf-8")
+        # GIT_* scrubbed: a test launched from inside a git hook inherits GIT_DIR and
+        # every `git -C <tmp>` below would commit into the LIVE repo instead.
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        for args in (["init", "-q"], ["config", "user.email", "t@example.invalid"],
+                     ["config", "user.name", "t"], ["add", "-A"],
+                     ["commit", "-q", "-m", "arm"]):
+            _sp(["git", "-C", str(src)] + args, check=True,
+                           capture_output=True, env=env, timeout=120)
+        return src
+
+    def arm_dest(self, name: str = "sample-arm") -> Path:
+        """Where an arm goes in the SHIPPED configuration: under $HOME, so what lands
+        in arms-paths.json is the relative `Documents/github/<name>`.
+
+        This is not decoration. A --dest outside $HOME makes install_arm fall back to
+        an absolute `rel`, and one receipt test was green only because of that: it
+        asserted the printed line contained the absolute dest, which the shipped shape
+        never puts there (QA cycle 12).
+        """
+        return Path(os.environ["HOME"]) / "Documents" / "github" / name
+
+    def _install_arm(self, name: str = "sample-arm",
+                     dest: Path | None = None) -> tuple[Path, Path]:
+        import contextlib, io
+        src = self._arm_src(name)
+        dest = dest if dest is not None else self.arm_dest(name)
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc = octo_pkg.main(["--brain", str(self.root), "install", "--kind", "arm",
+                                "--dest", str(dest), str(src)])
+        self.assertEqual(rc, 0)
+        return src, dest
+
+
+class TestQaCycle11(ArmFixture):
+    """The arm path, which had one test and therefore one covered line of it.
+
+    Cycle 10 fixed install_arm's unwind and shipped three holes: the read the unwind
+    depends on sat above the try, the lock every other writer takes was still not
+    taken here, and uninstall manufactured the very orphan the unwind prevents while
+    printing that it had removed four things. Cycle 11 also found the older guard
+    (`except PkgError` around the clone validation) uncovered, because cycle 10's test
+    was strengthened past it: correcting a weak test un-covered a real guard, so both
+    ends of that flow are pinned here.
+    """
+
+    def test_install_arm_waits_for_the_lock_every_other_writer_takes(self):
+        """B1: the one lock writer that never took the lock.
+
+        install_skill, uninstall and lock all wrap their read-modify-write in
+        lock_held; install_arm computed its write from an unprotected snapshot and
+        reported success. Measured with two processes: the skill install waited 2.11s,
+        the arm install went through in 0.19s and its own entry was gone from the
+        lock afterwards. The state is the one lock_held's docstring names, reached on
+        the SUCCESS path, so no unwind ever runs over it.
+
+        Deterministic rather than racy: the lock is HELD here, and the child must
+        block. `dest.exists()` while it is blocked is the discriminator that says it
+        got past the clone and is waiting on the lock rather than still cloning.
+        """
+        src = self._arm_src()
+        dest = self.tmp / "armdest"
+        argv = [sys.executable, str(SCRIPTS / "octo_pkg.py"), "--brain", str(self.root),
+                "install", "--kind", "arm", "--dest", str(dest), str(src)]
+        # See the concurrent-install test: a CHILD re-derives user site-packages from
+        # HOME and would lose jsonschema. The brain is pinned by --brain.
+        env = {**os.environ, "HOME": self._home or os.environ["HOME"]}
+        proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                env=env)
+        try:
+            with self.brain.lock_held():
+                try:
+                    proc.communicate(timeout=6)
+                    blocked = False
+                except subprocess.TimeoutExpired:
+                    blocked = True
+                cloned = dest.exists()
+                mid = [p.get("name") for p in
+                       json.loads(self.brain.lock_path.read_text(encoding="utf-8"))["packages"]]
+            out, err = proc.communicate(timeout=180)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.communicate(timeout=60)
+        self.assertTrue(blocked,
+                        "install_arm finished while another process held the lock: "
+                        "its lock write is computed from an unprotected snapshot")
+        self.assertTrue(cloned, "it must have been waiting on the LOCK, not on the clone")
+        self.assertEqual(mid, [],
+                         "nothing may be written to the lock while it is held elsewhere")
+        self.assertEqual(proc.returncode, 0, err.decode("utf-8", "replace"))
+        self.assertEqual([p["name"] for p in self.brain.load_lock()["packages"]],
+                         ["sample-arm"], "and the entry lands once the lock is free")
+
+    def test_an_unparseable_arms_paths_unwinds_the_way_an_empty_one_does(self):
+        """B2: the read the unwind depends on sat ABOVE the try.
+
+        Measured before the fix: `[]` unwound (rc=1, no clone) and `{ oops` did not
+        (rc=1, clone left). The unparseable case is the commoner corruption and it
+        reproduces the original symptom exactly: a clone on disk with the retry
+        blocked forever by "destination already exists".
+        """
+        import contextlib, io
+        cfg = self.root / octo_pkg.ARMS_PATHS_REL
+        for shape in ('{ oops', '[]', '"a string"'):
+            with self.subTest(arms_paths=shape):
+                src = self._arm_src()
+                dest = self.tmp / f"armdest-{abs(hash(shape))}"
+                cfg.parent.mkdir(parents=True, exist_ok=True)
+                cfg.write_text(shape, encoding="utf-8")
+                with contextlib.redirect_stderr(io.StringIO()), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    rc = octo_pkg.main(["--brain", str(self.root), "install", "--kind",
+                                        "arm", "--dest", str(dest), str(src)])
+                self.assertEqual(rc, 1)
+                self.assertFalse(dest.exists(),
+                                 f"arms-paths.json = {shape!r} left the clone behind, "
+                                 f"which blocks every retry")
+                self.assertEqual(cfg.read_text(encoding="utf-8"), shape,
+                                 "and the operator's file is not rewritten under him")
+                shutil.rmtree(src)
+
+    def test_uninstalling_an_arm_deregisters_it_instead_of_orphaning_it(self):
+        """B3: uninstall manufactured the orphan install's unwind exists to prevent,
+        and printed four removals to cover it.
+
+        Measured before the fix: rc=0, "vendor tree, symlink, exclude entry and lock
+        entry removed", clone still on disk, still in arms-paths.json, lock entry
+        gone, and `verify --all` saw 0/0 because a lock-less arm has no row and the
+        stray scan only walks skills/vendor.
+        """
+        import contextlib, io
+        src, dest = self._install_arm()
+        cfg = self.root / octo_pkg.ARMS_PATHS_REL
+        # The fixture is now the SHIPPED shape, and this line is why. The receipt
+        # assertion below used to pass because --dest sat outside $HOME, where
+        # install_arm falls back to an absolute `rel`; with the registry holding the
+        # relative string it shows what the operator would really be handed, and an
+        # openable absolute path is what a location line is for (QA cycle 12).
+        self.assertEqual(json.loads(cfg.read_text(encoding="utf-8"))["sample-arm"],
+                         "Documents/github/sample-arm",
+                         "the registered value is relative to $HOME")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "uninstall", "sample-arm"])
+        self.assertEqual(rc, 0)
+        said = buf.getvalue()
+        self.assertNotIn("sample-arm", json.loads(cfg.read_text(encoding="utf-8")),
+                         "registered with no lock entry is the orphan itself")
+        self.assertEqual(self.brain.load_lock()["packages"], [])
+        self.assertTrue(dest.exists(),
+                        "the clone is the operator's own repo and is never deleted")
+        self.assertIn(octo_pkg.ARMS_PATHS_REL, said)
+        self.assertIn(str(dest), said,
+                      "and it says where the repo was left, as a path that can be "
+                      "opened: printing the registry's $HOME-relative string as if it "
+                      "were a location sends the operator to the wrong directory")
+        for lie in ("vendor tree", "symlink", "exclude entry"):
+            self.assertNotIn(lie, said,
+                             f"an arm has no {lie}; claiming it is a false receipt")
+        self.assertIn("lock entry", said)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(octo_pkg.main(["--brain", str(self.root), "verify", "--all"]), 0)
+
+    def test_a_validation_failure_after_the_clone_leaves_nothing_behind(self):
+        """The older guard, `except PkgError: rmtree(target); raise`, which cycle 10
+        left with ZERO coverage without touching it. Its only test was the weak
+        license-less arm, and fixing that test to reach the NEW unwind moved the flow
+        past validation, so the older guard ended up held by nothing. Correcting a
+        weak test silently un-covers whatever it was accidentally exercising.
+        """
+        import contextlib, io
+        cases = {
+            "no-license": {"name": "sample-arm", "version": "1.0.0", "kind": "arm"},
+            "wrong-kind": {"name": "sample-arm", "version": "1.0.0", "license": "MIT",
+                           "kind": "skill"},
+        }
+        for tag, man in cases.items():
+            with self.subTest(manifest=tag):
+                src = self._arm_src(f"bad-{tag}", manifest=man)
+                dest = self.tmp / f"armdest-{tag}"
+                with contextlib.redirect_stderr(io.StringIO()), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    rc = octo_pkg.main(["--brain", str(self.root), "install", "--kind",
+                                        "arm", "--dest", str(dest), str(src)])
+                self.assertEqual(rc, 1)
+                self.assertFalse(dest.exists(),
+                                 "a refused arm.json leaves no clone to block the retry")
+                self.assertFalse((self.root / octo_pkg.ARMS_PATHS_REL).exists())
+
+    def test_an_existing_arms_paths_is_restored_byte_for_byte(self):
+        """The `cfg.write_text(cfg_before)` half of the unwind. Only the
+        `cfg_before is None` path had a test, so a rollback over an arms-paths.json
+        that already had arms in it was never once executed."""
+        import contextlib, io
+        cfg = self.root / octo_pkg.ARMS_PATHS_REL
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        before = '{\n  "other-arm": "Documents/github/other-arm"\n}\n'
+        cfg.write_text(before, encoding="utf-8")
+        src = self._arm_src()
+        dest = self.tmp / "armdest"
+        self.brain.lock_path.write_text("{ not json", encoding="utf-8")
+        with contextlib.redirect_stderr(io.StringIO()), \
+                contextlib.redirect_stdout(io.StringIO()):
+            rc = octo_pkg.main(["--brain", str(self.root), "install", "--kind", "arm",
+                                "--dest", str(dest), str(src)])
+        self.assertEqual(rc, 1)
+        self.assertFalse(dest.exists())
+        self.assertEqual(cfg.read_text(encoding="utf-8"), before,
+                         "the other arm's registration must survive, byte for byte")
+
+    def test_a_non_exception_is_re_raised_after_the_unwind(self):
+        """`if not isinstance(e, Exception): raise`. A Ctrl-C mid-install must still
+        stop the program, and it must not stop it half-installed."""
+        import contextlib, io
+        src = self._arm_src()
+        dest = self.tmp / "armdest"
+        cfg = self.root / octo_pkg.ARMS_PATHS_REL
+        real_save = octo_pkg.Brain.save_lock
+
+        def interrupted(self_, lock):
+            raise KeyboardInterrupt()
+
+        octo_pkg.Brain.save_lock = interrupted
+        self.addCleanup(lambda: setattr(octo_pkg.Brain, "save_lock", real_save))
+        with contextlib.redirect_stderr(io.StringIO()), \
+                contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(KeyboardInterrupt):
+                octo_pkg.main(["--brain", str(self.root), "install", "--kind", "arm",
+                               "--dest", str(dest), str(src)])
+        self.assertFalse(dest.exists(), "the unwind runs first, then the re-raise")
+        self.assertFalse(cfg.exists(), "and the registration it wrote is taken back")
+
+    def test_an_unreadable_arms_paths_is_never_deleted_by_the_unwind(self):
+        """The read moved inside the protected region, so it can now fail there, and
+        `cfg_before is None` no longer means "the file did not exist". Without a
+        separate `cfg_known` flag the unwind reaches its unlink branch and answers
+        "I could not read your arms-paths.json" by deleting it."""
+        import contextlib, io
+        cfg = self.root / octo_pkg.ARMS_PATHS_REL
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        cfg.write_text('{"other-arm": "elsewhere"}\n', encoding="utf-8")
+        os.chmod(cfg, 0o000)
+        self.addCleanup(lambda: os.chmod(cfg, 0o644))
+        if os.access(cfg, os.R_OK):
+            self.skipTest("running as root, EACCES is not enforceable")
+        src = self._arm_src()
+        dest = self.tmp / "armdest"
+        with contextlib.redirect_stderr(io.StringIO()), \
+                contextlib.redirect_stdout(io.StringIO()):
+            rc = octo_pkg.main(["--brain", str(self.root), "install", "--kind", "arm",
+                                "--dest", str(dest), str(src)])
+        self.assertEqual(rc, 1)
+        self.assertFalse(dest.exists())
+        self.assertTrue(cfg.exists(),
+                        "a file this could not READ is a file it must not delete")
+
+    def test_verify_json_carries_a_non_utf8_name_through_a_real_stdout(self):
+        """The test gap, and it is the same sin twice in one diff: the ensure_ascii
+        fix shipped with no test, and none was possible on the surface it was written
+        against. Every --json test went through redirect_stdout(StringIO) plus
+        json.loads, and a StringIO never ENCODES, so the shipped form and the mutant
+        round-trip identically through it. The invariant lives on a real stdout, so
+        the test needs a subprocess, which is the treatment the stray test already
+        got one finding earlier.
+        """
+        vendor = self.brain.vendor_dir
+        vendor.mkdir(parents=True, exist_ok=True)
+        os.mkdir(os.path.join(bytes(vendor), b"stray\xff"))
+        cp = _sp([sys.executable, str(SCRIPTS / "octo_pkg.py"),
+                             "--brain", str(self.root), "verify", "--all", "--json"],
+                            capture_output=True, text=True, timeout=180,
+                            env={**os.environ, "HOME": self._home or os.environ["HOME"]})
+        self.assertNotIn("Traceback", cp.stderr)
+        payload = json.loads(cp.stdout.strip().splitlines()[-1])
+        self.assertIn(os.fsdecode(b"stray\xff"), " ".join(payload["fail"]),
+                      "the consumer must get the name back byte for byte; "
+                      "ensure_ascii=False sends the surrogate into the "
+                      "errors='replace' stream and the name it reads is a "
+                      "different string")
+
+
+class TestQaCycle12(ArmFixture):
+    """Cycle 11 protected install_arm and left its neighbours unprotected.
+
+    The shape repeats: an invariant is established in one function, the comment
+    defending it CLAIMS its siblings already hold it, and nobody checked. `lock` was
+    named in that claim and was the one unprotected read-modify-write left. uninstall
+    got the deregistration and not the unwind. verify printed the word "registered"
+    without reading the registry. And two guards shipped with no test at all, which
+    is the state that tells the next reader to stop looking.
+    """
+
+    def _race(self, mutate):
+        """Run `mutate(brain)` at the moment lock_held is taken, then take it.
+
+        The window these bugs live in is between an unprotected READ and the write
+        that lands under the lock, so a second process has to land inside it. Driving
+        that from lock_held itself is deterministic where a real race is not, and it
+        puts the concurrent write exactly where the measured one arrived.
+        """
+        real = octo_pkg.Brain.lock_held
+
+        def racing(self_, timeout=30.0):
+            mutate(self_)
+            return real(self_, timeout)
+
+        octo_pkg.Brain.lock_held = racing
+        self.addCleanup(lambda: setattr(octo_pkg.Brain, "lock_held", real))
+
+    # -- A: the unprotected read-modify-write the comment said did not exist ------
+    def test_lock_writes_against_the_file_it_is_about_to_overwrite(self):
+        """cmd_lock read the lock, hashed every tree and shelled out to ssh-keygen,
+        then wrote that stale snapshot back inside lock_held. os.replace makes the
+        loss total and silent: QA measured a concurrent install of `newcomer-b`
+        vanishing while `lock` printed success at rc 0.
+        """
+        import contextlib, io
+        lock = self.brain.load_lock()
+        lock["packages"].append({"name": "already-here", "kind": "arm",
+                                 "version": "1.0.0", "source": "git@example.test:o/a"})
+        self.brain.save_lock(lock)
+
+        def other_process_installs(brain):
+            cur = json.loads(brain.lock_path.read_text(encoding="utf-8"))
+            cur["packages"].append({"name": "newcomer-b", "kind": "arm",
+                                    "version": "2.0.0", "source": "git@example.test:o/b"})
+            brain.lock_path.write_text(json.dumps(cur, indent=2) + "\n", encoding="utf-8")
+
+        self._race(other_process_installs)
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc = octo_pkg.main(["--brain", str(self.root), "lock"])
+        self.assertEqual(rc, 0)
+        names = [p["name"] for p in self.brain.load_lock()["packages"]]
+        self.assertIn("newcomer-b", names,
+                      "an install that landed while lock was hashing was overwritten "
+                      "by a snapshot taken before it, at rc 0, with no message")
+        self.assertIn("already-here", names, "and the entry it was re-locking survives")
+
+    # -- B: the unwind uninstall never got, and the word verify never checked -----
+    def test_uninstall_puts_arms_paths_back_when_the_lock_write_fails(self):
+        """_deregister_arm WRITES, and save_lock can fail after it. Without an unwind
+        that leaves deregistered-but-still-locked: the mirror image of the orphan
+        install_arm's unwind exists to prevent, and just as invisible.
+        """
+        import contextlib, io
+        self._install_arm()
+        cfg = self.root / octo_pkg.ARMS_PATHS_REL
+        before = cfg.read_text(encoding="utf-8")
+        real_save = octo_pkg.Brain.save_lock
+
+        def boom(self_, lock):
+            raise PermissionError(13, "Permission denied")
+
+        octo_pkg.Brain.save_lock = boom
+        self.addCleanup(lambda: setattr(octo_pkg.Brain, "save_lock", real_save))
+        with contextlib.redirect_stderr(io.StringIO()), \
+                contextlib.redirect_stdout(io.StringIO()):
+            rc = octo_pkg.main(["--brain", str(self.root), "uninstall", "sample-arm"])
+        self.assertEqual(rc, 1)
+        self.assertEqual(cfg.read_text(encoding="utf-8"), before,
+                         "the registration is written back byte for byte, or the arm "
+                         "is deregistered with its lock entry still standing")
+        self.assertEqual([p["name"] for p in self.brain.load_lock()["packages"]],
+                         ["sample-arm"], "and the lock is what it was, so a retry works")
+
+    def test_verify_does_not_say_registered_over_an_arm_that_is_not(self):
+        """`arm registered (validated, not signed)` was printed without ever opening
+        arms-paths.json. WARN and not FAIL on purpose: a second machine after
+        ai-pull has the tracked lock and not the gitignored registry, and a push must
+        not break there. It carries its own `fix:` because sync skips non-skill
+        entries, so prescribing sync would prescribe a no-op.
+        """
+        import contextlib, io
+        lock = self.brain.load_lock()
+        entry = {"name": "some-arm", "kind": "arm", "version": "1.0.0",
+                 "tree_sha256": None, "signer": None,
+                 "source": "git@example.test:o/some-arm.git"}
+        lock["packages"].append(entry)
+        self.brain.save_lock(lock)
+
+        status, msg = octo_pkg.verify_entry(self.brain, entry)
+        self.assertEqual(status, octo_pkg.WARN, msg)
+        self.assertIn("does not register it", msg)
+        self.assertIn("fix:", msg, "or cmd_verify prints 'run sync' under a WARN sync "
+                                   "cannot fix")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.assertEqual(
+                octo_pkg.main(["--brain", str(self.root), "verify", "--all"]), 0,
+                "an unregistered arm is not a push-blocking failure")
+        self.assertNotIn("fix: python3", buf.getvalue())
+
+        cfg = self.root / octo_pkg.ARMS_PATHS_REL
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        cfg.write_text('{"some-arm": "Documents/github/some-arm"}\n', encoding="utf-8")
+        status, msg = octo_pkg.verify_entry(self.brain, entry)
+        self.assertEqual(status, octo_pkg.PASS, msg)
+        self.assertIn(str(Path(os.environ["HOME"]) / "Documents" / "github" / "some-arm"),
+                      msg, "and when it does say registered, it says where")
+
+    # -- C: the unwind is the inverse of the write, symlinks included -------------
+    def test_the_unwind_over_a_symlinked_registry_deletes_what_the_write_created(self):
+        """With arms-paths.json a DANGLING symlink, exists() reads absent and
+        write_text creates the file at the far end. `cfg.unlink()` then deleted the
+        operator's SYMLINK and left that stray file: both halves backwards, and
+        "restores byte for byte" false for the one shape where the write and the
+        delete disagree about what the path means.
+        """
+        import contextlib, io
+        cfg = self.root / octo_pkg.ARMS_PATHS_REL
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        far = self.tmp / "elsewhere" / "arms-paths.json"
+        far.parent.mkdir(parents=True)
+        cfg.symlink_to(far)
+        self.assertFalse(cfg.exists(), "the fixture is a DANGLING link, the shape that "
+                                       "makes the write and the unwind disagree")
+        src = self._arm_src()
+        dest = self.arm_dest()
+        self.brain.lock_path.write_text("{ not json", encoding="utf-8")
+        with contextlib.redirect_stderr(io.StringIO()), \
+                contextlib.redirect_stdout(io.StringIO()):
+            rc = octo_pkg.main(["--brain", str(self.root), "install", "--kind", "arm",
+                                "--dest", str(dest), str(src)])
+        self.assertEqual(rc, 1)
+        self.assertFalse(dest.exists())
+        self.assertTrue(cfg.is_symlink(),
+                        "the symlink is the operator's, not something the write made")
+        self.assertFalse(far.exists(),
+                         "and the file the write DID make, at the far end, is gone")
+
+    # -- E: two guards that shipped with no test ---------------------------------
+    def test_a_lock_row_that_vanished_mid_uninstall_is_not_claimed_as_removed(self):
+        """The `any(p.get("name") == name ...)` guard. `entry` is read before the
+        lock, so a concurrent uninstall of the same name can take the row away before
+        this one writes; appending "lock entry" unconditionally would put a removal
+        this process did not perform on the receipt. Unreachable in one process, which
+        is why the writer that reaches it is driven from lock_held.
+        """
+        import contextlib, io
+        lock = self.brain.load_lock()
+        lock["packages"].append({"name": "ghost", "kind": "skill", "version": "1.0.0",
+                                 "signer": "octorato-release", "tree_sha256": "d0",
+                                 "source": "git@example.test:o/ghost.git"})
+        self.brain.save_lock(lock)
+
+        def other_process_uninstalls(brain):
+            cur = json.loads(brain.lock_path.read_text(encoding="utf-8"))
+            cur["packages"] = [p for p in cur["packages"] if p["name"] != "ghost"]
+            brain.lock_path.write_text(json.dumps(cur, indent=2) + "\n", encoding="utf-8")
+
+        self._race(other_process_uninstalls)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "uninstall", "ghost"])
+        self.assertEqual(rc, 0)
+        self.assertIn("nothing was there to remove", buf.getvalue())
+        self.assertNotIn("lock entry", buf.getvalue(),
+                         "the row was gone before this process wrote; claiming it is "
+                         "a receipt for work someone else did")
+
+    def test_a_registry_that_stopped_being_an_object_refuses_the_deregistration(self):
+        """_deregister_arm's non-dict `raise PkgError`. Replacing it with a `return`
+        was invisible to the whole suite, though the docstring argues at length that
+        skipping leaves registered-and-unlocked, the orphan this branch exists to stop
+        making. Reachable the same way as the guard above: the file is a dict when
+        uninstall reads it and a list by the time the lock is held.
+        """
+        import contextlib, io
+        self._install_arm()
+        cfg = self.root / octo_pkg.ARMS_PATHS_REL
+
+        def other_process_corrupts_it(brain):
+            (brain.root / octo_pkg.ARMS_PATHS_REL).write_text("[]\n", encoding="utf-8")
+
+        self._race(other_process_corrupts_it)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            rc = octo_pkg.main(["--brain", str(self.root), "uninstall", "sample-arm"])
+        self.assertEqual(rc, 1)
+        self.assertIn("is not an object", err.getvalue())
+        self.assertEqual(cfg.read_text(encoding="utf-8"), "[]\n",
+                         "a file it refuses to understand is a file it does not rewrite")
+        self.assertEqual([p["name"] for p in self.brain.load_lock()["packages"]],
+                         ["sample-arm"],
+                         "refusing leaves registered-and-locked, which a retry can act "
+                         "on; skipping leaves the orphan")
+
+    # -- F: the seam its own sibling already used --------------------------------
+    def test_an_unreadable_registry_is_named_by_the_seam_at_install(self):
+        """`if cfg.exists():` was raw while _deregister_arm went through stat_ok, so
+        an unsearchable company/config/ answered with a bare Errno 13 instead of the
+        seam's sentence naming the file.
+        """
+        import contextlib, io
+        cfgdir = self.root / "company" / "config"
+        cfgdir.mkdir(parents=True)
+        os.chmod(cfgdir, 0o000)
+        self.addCleanup(lambda: os.chmod(cfgdir, 0o755))
+        if os.access(cfgdir, os.X_OK):
+            self.skipTest("running as root, EACCES is not enforceable")
+        src = self._arm_src()
+        dest = self.arm_dest()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            rc = octo_pkg.main(["--brain", str(self.root), "install", "--kind", "arm",
+                                "--dest", str(dest), str(src)])
+        self.assertEqual(rc, 1)
+        self.assertIn(f"{octo_pkg.ARMS_PATHS_REL} cannot be read", err.getvalue(),
+                      "the raw stat says PermissionError over an absolute path and "
+                      "never says which file the install could not read")
+        self.assertFalse(dest.exists(), "and the clone still unwinds")
+
+    # -- G: a value that is documented as a list ---------------------------------
+    def test_a_candidate_array_is_rendered_as_a_path_not_as_a_python_list(self):
+        """brain_doctor.resolve_home_relative and CLAUDE.md both say a value may be an
+        array of candidates. `str(was)` printed `the clone at ['a/b', 'c/d']`. The
+        first candidate that exists wins, the way the doctor resolves it.
+        """
+        import contextlib, io
+        src, dest = self._install_arm()
+        cfg = self.root / octo_pkg.ARMS_PATHS_REL
+        cfg.write_text(json.dumps({"sample-arm": ["Documents/github/nowhere",
+                                                  "Documents/github/sample-arm"]},
+                                  indent=2) + "\n", encoding="utf-8")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "uninstall", "sample-arm"])
+        said = buf.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertIn(str(dest), said)
+        self.assertNotIn("['", said, "a Python list repr is not a location")
+        self.assertNotIn("nowhere", said,
+                         "and the candidate that is not on disk is not the answer")
+
+    # -- H and I: the orphan's exit, and the clone it never mentioned -------------
+    def test_an_arm_registered_with_no_lock_entry_can_be_uninstalled(self):
+        """The state this whole commit is about had no exit: `uninstall` answered rc 1
+        "is not installed" and left the registration, so hand-editing arms-paths.json
+        was the only way out, which is the habit the lock exists to remove.
+        """
+        import contextlib, io
+        cfg = self.root / octo_pkg.ARMS_PATHS_REL
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        cfg.write_text('{"orphan-arm": "Documents/github/orphan-arm"}\n',
+                       encoding="utf-8")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "uninstall", "orphan-arm"])
+        said = buf.getvalue()
+        self.assertEqual(rc, 0, "an install that half-unwound has to be undoable")
+        self.assertEqual(json.loads(cfg.read_text(encoding="utf-8")), {})
+        self.assertIn(octo_pkg.ARMS_PATHS_REL, said)
+        self.assertIn("left in place", said)
+
+    def test_the_clone_is_still_reported_when_the_registry_is_already_gone(self):
+        """With no arms-paths.json the `arm_path is None` branch said nothing about
+        the clone, so the operator was told it survives everywhere except where he is
+        least likely to know: with the registry already inconsistent.
+        """
+        import contextlib, io
+        self._install_arm()
+        (self.root / octo_pkg.ARMS_PATHS_REL).unlink()
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "uninstall", "sample-arm"])
+        said = buf.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertIn("lock entry", said)
+        self.assertIn("left in place", said,
+                      "the clone survives in BOTH branches; silence in one of them is "
+                      "a receipt that hides a directory on disk")
+        self.assertIn(octo_pkg.ARMS_PATHS_REL, said)
+
+    # -- J: the claim and the code, saying the same thing ------------------------
+    def test_an_os_error_after_the_registration_is_wrapped_not_re_raised(self):
+        """The other half of `if not isinstance(e, Exception): raise`, and the half a
+        commit message described backwards ("a non-PkgError is re-raised"). An OSError
+        is NOT re-raised: it is wrapped into PkgError, a reported refusal at rc 1
+        instead of a traceback, which is this module's stance everywhere. Only a
+        BaseException that is not an Exception goes back out, and the KeyboardInterrupt
+        test one class up pins that side.
+        """
+        import contextlib, io
+        src = self._arm_src()
+        dest = self.arm_dest()
+        cfg = self.root / octo_pkg.ARMS_PATHS_REL
+        real_save = octo_pkg.Brain.save_lock
+
+        def boom(self_, lock):
+            raise OSError(28, "No space left on device")
+
+        octo_pkg.Brain.save_lock = boom
+        self.addCleanup(lambda: setattr(octo_pkg.Brain, "save_lock", real_save))
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            rc = octo_pkg.main(["--brain", str(self.root), "install", "--kind", "arm",
+                                "--dest", str(dest), str(src)])
+        self.assertEqual(rc, 1)
+        self.assertIn("install of arm sample-arm rolled back: OSError", err.getvalue(),
+                      "re-raising here would reach main's generic backstop, which "
+                      "cannot say what was rolled back")
+        self.assertFalse(dest.exists())
+        self.assertFalse(cfg.exists())
+
+
+class TestQaCycle13(ArmFixture):
+    """Cycle 12 moved the assertion one hop and left the new last hop unpinned.
+
+    The named shape at eleven instances: `cmd_lock` learned to write under the lock
+    and applied its result BY NAME, so the row it stamps can be a different package;
+    `cmd_sync` was the same unprotected read-modify-write one function further on,
+    with a network fetch for a window; `_render_arm_location` fixed the list it had
+    been shown and left the family; `cmd_uninstall` re-read the registry inside the
+    lock in the callee and decided the whole branch from a read outside it.
+
+    The two helpers below are deliberate copies of TestQaCycle5._install_signed and
+    TestQaCycle12._race rather than a move: three QA cycles are built on those two
+    classes, and a shared-fixture refactor at this depth risks silently changing what
+    an existing test covers, which is the sub-form of the same shape this class is
+    about.
+    """
+
+    def _install_signed(self, tag: str = "pkg") -> tuple[str, Path]:
+        if not getattr(self, "_key", None):
+            self._key = self.mint_key()
+        name = "sample-" + tag
+        pkg = self.tmp / ("src-" + tag)
+        shutil.copytree(FIXTURE / "signed", pkg)
+        man = json.loads((pkg / "skill.json").read_text(encoding="utf-8"))
+        man["name"] = name
+        (pkg / "SKILL.md").write_text("---\nname: " + name + "\n---\n# " + name + "\n",
+                                      encoding="utf-8")
+        man["tree_sha256"] = octo_pkg.tree_sha256(pkg, "skill")
+        (pkg / "skill.json").write_text(json.dumps(man, indent=2) + "\n", encoding="utf-8")
+        self.sign(self._key, pkg)
+        self.assertEqual(octo_pkg.main(["--brain", str(self.root), "install", str(pkg)]), 0)
+        return name, self.brain.vendor_path(name)
+
+    def _race(self, mutate):
+        """Run `mutate(brain)` at the moment lock_held is taken, then take it."""
+        real = octo_pkg.Brain.lock_held
+
+        def racing(self_, timeout=30.0):
+            mutate(self_)
+            return real(self_, timeout)
+
+        octo_pkg.Brain.lock_held = racing
+        self.addCleanup(lambda: setattr(octo_pkg.Brain, "lock_held", real))
+
+    def _read_lock(self) -> list:
+        return json.loads(self.brain.lock_path.read_text(encoding="utf-8"))["packages"]
+
+    def _row(self, name: str) -> dict:
+        return next(p for p in self._read_lock() if p["name"] == name)
+
+    def _stale_hash(self, name: str) -> None:
+        """Make `lock` want to update this row: the lock's hash is not the tree's."""
+        lock = json.loads(self.brain.lock_path.read_text(encoding="utf-8"))
+        for entry in lock["packages"]:
+            if entry["name"] == name:
+                entry["tree_sha256"] = "0" * 64
+        self.brain.lock_path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+
+    # -- A: a name is a key, not an identity -------------------------------------
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_lock_does_not_stamp_a_row_whose_kind_changed_under_it(self):
+        """Cycle 12 made `lock` write under the lock and apply BY NAME, and the name
+        can outlive the package. A row that was a skill when the hash was computed and
+        an arm when it was applied got the skill's hash, signer and version stamped
+        onto it at rc 0 under `re-locked: 1 entry(ies) updated`. Nothing catches it
+        afterwards either: verify_entry's arm branch never reads those fields. Silent
+        corruption of a tracked file.
+        """
+        import contextlib, io
+        name, _ = self._install_signed("kindflip")
+        self._stale_hash(name)
+
+        def other_process_turns_it_into_an_arm(brain):
+            cur = json.loads(brain.lock_path.read_text(encoding="utf-8"))
+            for entry in cur["packages"]:
+                if entry["name"] == name:
+                    entry["kind"] = "arm"
+                    entry["tree_sha256"] = None
+                    entry["signer"] = None
+            brain.lock_path.write_text(json.dumps(cur, indent=2) + "\n", encoding="utf-8")
+
+        self._race(other_process_turns_it_into_an_arm)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "lock"])
+        row = self._row(name)
+        self.assertEqual(row["kind"], "arm", "the racer's row is what survives")
+        self.assertIsNone(row["tree_sha256"],
+                          "a skill's tree hash stamped onto an arm row is corruption "
+                          "no verify tier ever reads back")
+        self.assertIsNone(row["signer"])
+        self.assertIn("not updated", buf.getvalue())
+        self.assertEqual(rc, 1, "a re-lock that skipped a row it was asked to re-lock "
+                                "did not do what it was asked")
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_lock_does_not_stamp_a_row_that_was_deleted_and_re_added(self):
+        """The second shape of the same miss, and the one that stays plausible: the
+        row is still a skill, so kind alone does not catch it. The old package's hash
+        and signer land on the new row while `source` stays the new one, which
+        surfaces later as a false `tree changed since install` blaming a package that
+        was never installed from there.
+        """
+        import contextlib, io
+        name, _ = self._install_signed("readd")
+        self._stale_hash(name)
+
+        def other_process_reinstalls_from_elsewhere(brain):
+            cur = json.loads(brain.lock_path.read_text(encoding="utf-8"))
+            cur["packages"] = [p for p in cur["packages"] if p["name"] != name]
+            cur["packages"].append({
+                "name": name, "kind": "skill", "version": "9.9.9",
+                "tree_sha256": "b" * 64, "signer": "someone-else",
+                "source": "git@example.test:other/repo",
+                "installed_at": "2030-01-01T00:00:00Z"})
+            brain.lock_path.write_text(json.dumps(cur, indent=2) + "\n", encoding="utf-8")
+
+        self._race(other_process_reinstalls_from_elsewhere)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "lock"])
+        row = self._row(name)
+        self.assertEqual(row["tree_sha256"], "b" * 64,
+                         "the new install's hash, not the hash of the tree the old "
+                         "row pointed at")
+        self.assertEqual(row["signer"], "someone-else")
+        self.assertEqual(row["version"], "9.9.9")
+        self.assertEqual(rc, 1)
+        self.assertIn("not updated", buf.getvalue())
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_the_relock_receipt_names_only_the_rows_the_apply_loop_touched(self):
+        """M-B: the commit's own headline claim, and it was invisible to the suite.
+
+        The source and the commit message both say "`changed` is what was actually
+        applied, not what was computed, so the receipt cannot name a row that is
+        gone". Reverting `changed` to the computed names passed every test, because
+        the only race test appends an ARM row: `updates` is empty there and the apply
+        branch never runs. Two skills, one of them uninstalled inside the window, is
+        the case the claim is about.
+        """
+        import contextlib, io
+        kept, _ = self._install_signed("kept")
+        vanishing, _ = self._install_signed("vanishing")
+        self._stale_hash(kept)
+        self._stale_hash(vanishing)
+
+        def other_process_uninstalls_one(brain):
+            cur = json.loads(brain.lock_path.read_text(encoding="utf-8"))
+            cur["packages"] = [p for p in cur["packages"] if p["name"] != vanishing]
+            brain.lock_path.write_text(json.dumps(cur, indent=2) + "\n", encoding="utf-8")
+
+        self._race(other_process_uninstalls_one)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "lock"])
+        said = buf.getvalue()
+        self.assertEqual(rc, 0, "a row that is simply gone is not a refusal")
+        self.assertIn("re-locked: 1 entry(ies) updated", said,
+                      "one row was applied, and the receipt counts applications")
+        self.assertIn(kept, said)
+        self.assertNotIn(vanishing, said,
+                         "naming a row that is no longer in the lock tells the "
+                         "operator a package was re-locked that does not exist")
+        self.assertEqual([p["name"] for p in self._read_lock()], [kept])
+        self.assertNotEqual(self._row(kept)["tree_sha256"], "0" * 64,
+                            "and the row that did survive was really updated, so the "
+                            "apply branch this test exists for actually ran")
+
+    # -- B: the unfixed sibling, with a network fetch for a window ---------------
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_sync_does_not_restore_a_package_whose_lock_row_was_removed(self):
+        """cmd_sync was cycle 12's exact class one function on, and its window is a
+        FETCH, wider than the ssh-keygen window that was closed. Measured with a real
+        second process: while sync fetched, another pid ran `uninstall`, and sync then
+        restored the vendor tree, the symlink and the exclude entry for a package with
+        NO lock row. scan_unlocked calls that the most dangerous state there is, and
+        it sits in the always-on discovery path. sync's trailing verify does exit 1
+        and name it, so it was never silent; creating the state is the bug.
+        """
+        import contextlib, io
+        name, dest = self._install_signed("syncrace")
+        link = self.brain.link_path(name)
+        lock = json.loads(self.brain.lock_path.read_text(encoding="utf-8"))
+        for entry in lock["packages"]:
+            entry["source"] = str(self.tmp / "src-syncrace")
+        self.brain.lock_path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+        shutil.rmtree(dest)
+        link.unlink()
+        self.brain.exclude_remove(f"skills/{name}")
+
+        def other_process_uninstalls_it(brain):
+            brain.lock_path.write_text(
+                json.dumps({"version": 1, "packages": []}, indent=2) + "\n",
+                encoding="utf-8")
+
+        self._race(other_process_uninstalls_it)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            octo_pkg.main(["--brain", str(self.root), "sync"])
+        self.assertFalse(dest.exists(),
+                         "a tree restored for a package the lock no longer names is an "
+                         "unlocked stray, gitignored and loading on every prompt")
+        self.assertFalse(link.is_symlink())
+        self.assertFalse(self.brain.exclude_has(f"skills/{name}"))
+        self.assertIn("was removed while", buf.getvalue())
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_a_restore_that_fails_after_the_exclude_leaves_no_line_behind(self):
+        """sync's unwind undid the tree and the link and not the exclude entry, while
+        install_skill's undoes all three. exclude_add is the LAST step, so a failure
+        at or after it left a `skills/<name>` line in .git/info/exclude for a package
+        that is not on disk: untracked, absent from git status, and it silently
+        pre-excludes whatever the operator later puts at that path by hand.
+        """
+        import contextlib, io
+        name, dest = self._install_signed("excroll")
+        link = self.brain.link_path(name)
+        lock = json.loads(self.brain.lock_path.read_text(encoding="utf-8"))
+        for entry in lock["packages"]:
+            entry["source"] = str(self.tmp / "src-excroll")
+        self.brain.lock_path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+        shutil.rmtree(dest)
+        link.unlink()
+        self.brain.exclude_remove(f"skills/{name}")
+        self.assertFalse(self.brain.exclude_has(f"skills/{name}"), "the control")
+
+        real_add = octo_pkg.Brain.exclude_add
+
+        def add_then_fail(self_, rel):
+            real_add(self_, rel)          # the write really happens, then the step fails
+            raise PermissionError(13, "died after the exclude was written")
+
+        octo_pkg.Brain.exclude_add = add_then_fail
+        self.addCleanup(lambda: setattr(octo_pkg.Brain, "exclude_add", real_add))
+        with contextlib.redirect_stdout(io.StringIO()):
+            octo_pkg.main(["--brain", str(self.root), "sync"])
+        self.assertFalse(dest.exists())
+        self.assertFalse(link.is_symlink())
+        self.assertFalse(self.brain.exclude_has(f"skills/{name}"),
+                         "the unwind has to be the inverse of every step it took, not "
+                         "of the two that were easy to remember")
+
+    # -- C: the family, not the instance -----------------------------------------
+    def test_a_registry_value_that_is_not_a_path_is_named_not_rendered_as_one(self):
+        """Cycle 12 taught _render_arm_location about a flat list of strings, which is
+        the shape it had been shown, and left every other shape going through str():
+        a nested list printed `/home/.../['a']`, a dict printed `/home/.../{'x': 1}`.
+        arms-paths.json is gitignored and hand-edited, so these are typos, and the
+        lock type-checks every field it reads for exactly this reason.
+        """
+        home = os.environ["HOME"]
+        for value in ([["a"]], {"x": 1}, 7, None, [None]):
+            with self.subTest(value=value):
+                said = octo_pkg._render_arm_location(value)
+                self.assertNotIn(home, said,
+                                 f"{value!r} rendered as {said!r}: a value that is "
+                                 f"not a path must never be joined onto $HOME and "
+                                 f"handed over as a place to go")
+                self.assertTrue(said.startswith("(no usable path"),
+                                f"{value!r} rendered as {said!r}, which reads as a "
+                                f"location; it has to read as a value that is not one")
+                self.assertIn(octo_pkg.ARMS_PATHS_REL, said,
+                              "and the line has to say where the bad value lives")
+
+    def test_an_empty_registry_value_does_not_report_the_whole_home_directory(self):
+        """The worst member of that family, end to end. `""` joined to $HOME resolves
+        to $HOME itself, which exists, so uninstall printed `the clone at
+        /home/<user> is your own repo and was left in place` over the operator's
+        entire home directory: a receipt that is not merely ugly but false.
+        """
+        import contextlib, io
+        self._install_arm()
+        cfg = self.root / octo_pkg.ARMS_PATHS_REL
+        cfg.write_text(json.dumps({"sample-arm": ""}, indent=2) + "\n", encoding="utf-8")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "uninstall", "sample-arm"])
+        said = buf.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertNotIn(f"the clone at {os.environ['HOME']} is", said,
+                         "$HOME is not where the arm was cloned")
+        self.assertIn("no usable path", said)
+
+    # -- D: the caller that re-read nothing --------------------------------------
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_uninstall_decides_arm_from_the_rows_the_lock_holds(self):
+        """`is_arm` selects a whole branch (deregister, or not) and was decided from
+        reads taken before the lock, while _deregister_arm underneath it already
+        re-read inside. Half a fix: a row that becomes an arm inside the window is
+        uninstalled as a skill, so the registration survives with no lock entry, which
+        is the orphan the rest of this commit exists to prevent.
+        """
+        import contextlib, io
+        name, _ = self._install_signed("late")
+        cfg = self.root / octo_pkg.ARMS_PATHS_REL
+
+        def other_process_makes_it_an_arm(brain):
+            cur = json.loads(brain.lock_path.read_text(encoding="utf-8"))
+            for entry in cur["packages"]:
+                if entry["name"] == name:
+                    entry["kind"] = "arm"
+            brain.lock_path.write_text(json.dumps(cur, indent=2) + "\n", encoding="utf-8")
+            c = brain.root / octo_pkg.ARMS_PATHS_REL
+            c.parent.mkdir(parents=True, exist_ok=True)
+            c.write_text(json.dumps({name: "Documents/github/" + name}) + "\n",
+                         encoding="utf-8")
+
+        self._race(other_process_makes_it_an_arm)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "uninstall", name])
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(cfg.read_text(encoding="utf-8")), {},
+                         "deregistered-with-no-lock-row is the orphan, and it is "
+                         "invisible to verify because a lock-less arm has no row")
+        self.assertIn(octo_pkg.ARMS_PATHS_REL, buf.getvalue())
+        self.assertEqual(self._read_lock(), [])
+
+    def test_a_registry_that_is_not_an_object_is_a_verify_failure_not_a_warn(self):
+        """M-K: `_arm_registration`'s non-dict `raise`, whose docstring argues the
+        point at length ("I could not read the registry" is not "the arm is not
+        registered"), can become `return None` with the whole suite still green.
+        _deregister_arm's identical guard IS pinned; the sibling this commit
+        introduced was not. Through verify, which is the always-on reader: returning
+        None turns a FAIL naming an unreadable file into a WARN saying the arm is
+        simply not registered here, and rc 1 into rc 0.
+        """
+        import contextlib, io
+        self._install_arm()
+        cfg = self.root / octo_pkg.ARMS_PATHS_REL
+        cfg.write_text("[]\n", encoding="utf-8")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "verify", "--all"])
+        said = buf.getvalue()
+        self.assertEqual(rc, 1, "a registry it cannot read is a failure to report, "
+                                "never 'the arm is not registered here'")
+        self.assertIn("cannot be read for it", said)
+        self.assertIn("is not an object", said)
+        self.assertNotIn("does not register it", said)
+
+    # -- E: the branch the fixture correction stopped covering -------------------
+    def test_an_arm_installed_outside_home_is_registered_at_its_absolute_path(self):
+        """M-A: install_arm's `except ValueError: rel = str(target)`, uncovered.
+
+        Cycle 12 moved every arm test to the shipped $HOME-relative --dest, which was
+        the right correction (a receipt test had been green only because of the
+        absolute fallback). It also deleted the only assertion that reached this
+        branch: tests still install outside $HOME, and none of them says what gets
+        registered there. Correcting a weak test silently dropped coverage it was
+        providing by accident, which is the sub-form of the shape this class is about.
+        """
+        import contextlib, io
+        outside = self.tmp / "elsewhere" / "sample-arm"
+        self.assertFalse(str(outside).startswith(os.environ["HOME"]), "the premise")
+        src, dest = self._install_arm(dest=outside)
+        cfg = self.root / octo_pkg.ARMS_PATHS_REL
+        self.assertEqual(json.loads(cfg.read_text(encoding="utf-8")),
+                         {"sample-arm": str(outside)},
+                         "a path relative_to($HOME) cannot express has to be stored "
+                         "absolute; a raised ValueError here fails the whole install")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            octo_pkg.main(["--brain", str(self.root), "uninstall", "sample-arm"])
+        self.assertIn(f"the clone at {outside} is your own repo", buf.getvalue(),
+                      "and the absolute value renders as itself, not joined onto $HOME")
+
+    # -- F: the message the run had the context to make true ---------------------
+    def test_a_failed_lock_write_says_what_it_restored_not_that_it_may_have(self):
+        """install wraps a post-registration failure into "rolled back"; uninstall let
+        the raw OSError reach main's backstop, which says "the operation did not
+        complete and may have left work half done". This run knows better: the
+        registry was written back byte for byte and the lock never moved. A backstop
+        guesses because it has no context.
+        """
+        import contextlib, io
+        self._install_arm()
+        real_save = octo_pkg.Brain.save_lock
+
+        def boom(self_, lock):
+            raise PermissionError(13, "Permission denied")
+
+        octo_pkg.Brain.save_lock = boom
+        self.addCleanup(lambda: setattr(octo_pkg.Brain, "save_lock", real_save))
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            rc = octo_pkg.main(["--brain", str(self.root), "uninstall", "sample-arm"])
+        said = err.getvalue()
+        self.assertEqual(rc, 1)
+        self.assertNotIn("may have left work half done", said,
+                         "the generic backstop's guess, printed over a run that knows")
+        self.assertIn("put back byte for byte", said)
+        self.assertIn("PermissionError", said, "and the cause is not swallowed")
+        self.assertNotIn("had already been removed", said,
+                         "`gone` is a COPY of `removed` taken before the protected "
+                         "region; aliasing it lets the deregistration this sentence "
+                         "just said was put back appear in the same sentence as "
+                         "something that is gone (cycle 14 mutation M16)")
+
+
+class TestQaCycle14(ArmFixture):
+    """Cycle 13 NARROWED the delete-and-re-add shape and its docstring said closed.
+
+    `entry_identity` was (kind, source, installed_at), and the docstring credited
+    installed_at with catching "a delete-and-re-add from the same source". No test
+    varied one field on its own: the re-add test moved source, installed_at, version,
+    signer and tree_sha256 at once, so dropping installed_at from the identity, or
+    dropping source, each passed all 349 tests. Only `kind` was really pinned.
+
+    And installed_at is `strftime("%Y-%m-%dT%H:%M:%SZ")`, one second wide, so a re-add
+    from the SAME source inside one second is identity-identical to the row it
+    replaced. QA measured the corruption still landing through that: the old package's
+    hash and signer stamped onto the new row, rc 0, `re-locked: 1 entry(ies) updated`.
+
+    So every identity field gets its own test that varies THAT field and nothing else.
+    The point is not the count, it is that each mutant has exactly one test it can die
+    to, and no test can borrow a neighbour's evidence.
+    """
+
+    # Bound, not copied and not inherited: cycle 13 copied cycle 12's helpers because
+    # a shared-fixture refactor at that depth could silently change what an existing
+    # test covers. Binding the same function objects has neither cost. Subclassing
+    # TestQaCycle13 would re-run its whole suite a second time under this name.
+    _install_signed = TestQaCycle13._install_signed
+    _race = TestQaCycle13._race
+    _read_lock = TestQaCycle13._read_lock
+    _row = TestQaCycle13._row
+    _stale_hash = TestQaCycle13._stale_hash
+
+    def _pin(self, tag: str, field: str, value) -> str:
+        """Install a skill, make `lock` want to rewrite its row, then change exactly
+        ONE identity field under the lock.
+
+        Everything else in the row is byte-identical, so the whole-row assertion below
+        can only be carried by `field`. A stamp shows up as tree_sha256 going back to
+        the tree's real hash, which is what `lock` would have written.
+        """
+        import contextlib, io
+        name, _ = self._install_signed(tag)
+        self._stale_hash(name)
+        before = dict(self._row(name))
+
+        def other_process_changes_one_field(brain):
+            cur = json.loads(brain.lock_path.read_text(encoding="utf-8"))
+            for entry in cur["packages"]:
+                if entry["name"] == name:
+                    entry[field] = value
+            brain.lock_path.write_text(json.dumps(cur, indent=2) + "\n", encoding="utf-8")
+
+        self._race(other_process_changes_one_field)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "lock"])
+        said = buf.getvalue()
+        self.assertEqual(self._row(name), dict(before, **{field: value}),
+                         f"{field} moved under the lock and the row was stamped "
+                         f"anyway: an update computed against a row that no longer "
+                         f"exists, written at rc 0 under a success receipt")
+        self.assertEqual(rc, 1, "a re-lock the operator asked for and did not get")
+        self.assertIn("not updated", said)
+        self.assertIn(field, said, "the WARN has to name the field that moved; that "
+                                   "is the whole content of the message")
+        return said
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_identity_pins_kind_on_its_own(self):
+        self._pin("pinkind", "kind", "arm")
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_identity_pins_source_on_its_own(self):
+        self._pin("pinsource", "source", "git@example.test:other/repo")
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_identity_pins_installed_at_on_its_own(self):
+        self._pin("pinwhen", "installed_at", "2030-01-01T00:00:00Z")
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_identity_pins_tree_sha256_on_its_own(self):
+        """The field `lock` overwrites, which is what makes it the right one to read:
+        an update is computed against the hash a row HELD, so a row whose hash is no
+        longer that is not the row that was hashed."""
+        self._pin("pinhash", "tree_sha256", "b" * 64)
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_identity_pins_signer_on_its_own(self):
+        """The other field `lock` overwrites. Stamping a signer is worse than stamping
+        a hash: it is the value the whole trust ladder reads back."""
+        self._pin("pinsigner", "signer", "someone-else")
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_lock_does_not_stamp_a_re_add_from_the_same_source_in_one_second(self):
+        """The hole cycle 13's docstring said installed_at had closed, measured.
+
+        Not a single-field pin, on purpose: this is the reproduction. kind, source and
+        installed_at are carried over from the old row byte for byte, which is exactly
+        what an uninstall-plus-reinstall from the same source inside one second
+        produces, and against the three-field identity it compared EQUAL. Measured on
+        shipped HEAD: rc 0, the row left holding the old package's hash and the old
+        package's signer, under `re-locked: 1 entry(ies) updated`.
+        """
+        import contextlib, io
+        name, _ = self._install_signed("samesrc")
+        self._stale_hash(name)
+        old = dict(self._row(name))
+
+        def other_process_re_adds_from_the_same_source(brain):
+            cur = json.loads(brain.lock_path.read_text(encoding="utf-8"))
+            cur["packages"] = [p for p in cur["packages"] if p["name"] != name]
+            cur["packages"].append(dict(old, version="9.9.9", tree_sha256="c" * 64,
+                                        signer="someone-else"))
+            brain.lock_path.write_text(json.dumps(cur, indent=2) + "\n", encoding="utf-8")
+
+        self._race(other_process_re_adds_from_the_same_source)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "lock"])
+        row = self._row(name)
+        self.assertEqual(row["tree_sha256"], "c" * 64,
+                         "the old package's hash on the new row surfaces later as a "
+                         "false 'tree changed since install' blaming a package that "
+                         "was never installed from there")
+        self.assertEqual(row["signer"], "someone-else")
+        self.assertEqual(row["version"], "9.9.9")
+        self.assertEqual(rc, 1)
+        self.assertIn("not updated", buf.getvalue())
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_sync_does_not_restore_over_a_row_whose_hash_alone_moved(self):
+        """What the removed clause used to say, said by the identity instead.
+
+        cmd_sync compared `row.tree_sha256 != entry.tree_sha256` beside its identity
+        check. With tree_sha256 inside the identity that clause cannot fail on its
+        own, so it reads as a second guard while being a copy of half the first: a
+        mutant that survives by construction. It is gone, and this is the test that
+        keeps what it was doing.
+        """
+        import contextlib, io
+        name, dest = self._install_signed("synchash")
+        link = self.brain.link_path(name)
+        lock = json.loads(self.brain.lock_path.read_text(encoding="utf-8"))
+        for entry in lock["packages"]:
+            entry["source"] = str(self.tmp / "src-synchash")
+        self.brain.lock_path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+        shutil.rmtree(dest)
+        link.unlink()
+        self.brain.exclude_remove(f"skills/{name}")
+
+        def other_process_moves_the_hash(brain):
+            cur = json.loads(brain.lock_path.read_text(encoding="utf-8"))
+            for entry in cur["packages"]:
+                entry["tree_sha256"] = "d" * 64
+            brain.lock_path.write_text(json.dumps(cur, indent=2) + "\n", encoding="utf-8")
+
+        self._race(other_process_moves_the_hash)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            octo_pkg.main(["--brain", str(self.root), "sync"])
+        self.assertFalse(dest.exists(),
+                         "the bytes fetched describe the hash the row held before it "
+                         "moved; restoring them puts a tree on disk the CURRENT row "
+                         "does not describe, and verify then blames the wrong source")
+        self.assertFalse(link.is_symlink())
+        self.assertFalse(self.brain.exclude_has(f"skills/{name}"))
+        self.assertIn("entry changed while", buf.getvalue())
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_sync_does_not_copy_over_an_install_that_landed_while_it_fetched(self):
+        """The other race sync's critical section defends, and it deletes work.
+
+        `if dest.exists() or dest.is_symlink(): continue` inside the lock reads like
+        tidiness and is not: without it, sync reaches shutil.copytree over a tree that
+        an install put there while sync was fetching, copytree raises FileExistsError,
+        and sync's own unwind then rmtree's the OTHER run's freshly installed package
+        and drops its exclude line. The row is untouched, so nothing downstream ever
+        explains where the tree went. Untested until cycle 14.
+        """
+        import contextlib, io
+        name, dest = self._install_signed("syncwin")
+        link = self.brain.link_path(name)
+        lock = json.loads(self.brain.lock_path.read_text(encoding="utf-8"))
+        for entry in lock["packages"]:
+            entry["source"] = str(self.tmp / "src-syncwin")
+        self.brain.lock_path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+        kept = dest / "INSTALLED-BY-THE-OTHER-RUN.md"
+        shutil.rmtree(dest)
+        link.unlink()
+
+        def other_process_finishes_installing_it(brain):
+            # The lock row is left EXACTLY as it is: this is the same package from the
+            # same source, so the identity check passes and the dest check is the only
+            # thing between sync and the other run's tree.
+            shutil.copytree(self.tmp / "src-syncwin", dest)
+            kept.write_text("landed while sync was fetching\n", encoding="utf-8")
+            os.symlink(os.path.relpath(dest, link.parent), link, target_is_directory=True)
+
+        self._race(other_process_finishes_installing_it)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            octo_pkg.main(["--brain", str(self.root), "sync"])
+        self.assertTrue(kept.exists(),
+                        "sync copied over a tree another run had just installed, and "
+                        "its unwind then deleted that run's package")
+        self.assertTrue(link.is_symlink())
+        self.assertTrue(self.brain.exclude_has(f"skills/{name}"))
+
+    def test_an_unusable_registry_value_is_printed_bounded(self):
+        """_short exists to bound what a receipt pastes back, and nothing measured it.
+
+        arms-paths.json is hand-edited and gitignored, so an unusable value can be any
+        size at all. A verify line that pastes a whole nested object back at the
+        operator is not a receipt, it is the file (cycle 14 mutation M23).
+        """
+        said = octo_pkg._render_arm_location([["x" * 500]])
+        self.assertIn("no usable path", said)
+        self.assertNotIn("x" * 100, said, "the value is NAMED, not reproduced")
+        self.assertLess(len(said), 200, said)
+
+    @unittest.skipUnless(_fcntl_ok(), "no fcntl: the POSIX branch is not the one that runs here")
+    def test_lock_held_refuses_within_the_timeout_it_advertises(self):
+        """`timeout` was real on the Windows branch and ignored on the one that runs.
+
+        POSIX called a BLOCKING flock(LOCK_EX): QA asked for 2s against a held lock
+        and waited the full 11s the holder took. A parameter naming a bound it does
+        not impose is this commit's own finding one layer down. The holder here is a
+        second file descriptor, which conflicts with this one because flock is per
+        open-file-description and not per process (measured, not assumed), and the
+        attempt runs in a daemon thread so that a revert to the blocking call FAILS
+        this test in ten seconds instead of hanging the suite: a hang is not a
+        detection.
+        """
+        import fcntl, threading, time
+        self.brain.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        guard = self.brain.lock_path.with_name(self.brain.lock_path.name + ".lock")
+        holder = open(guard, "a+")
+        self.addCleanup(holder.close)
+        fcntl.flock(holder.fileno(), fcntl.LOCK_EX)
+
+        outcome = {}
+
+        def attempt():
+            try:
+                with self.brain.lock_held(timeout=0.5):
+                    outcome["acquired"] = True
+            except octo_pkg.PkgError as e:
+                outcome["refused"] = str(e)
+
+        started = time.monotonic()
+        t = threading.Thread(target=attempt, daemon=True)
+        t.start()
+        t.join(10)
+        waited = time.monotonic() - started
+        self.assertFalse(t.is_alive(),
+                         "lock_held(timeout=0.5) was still blocking after 10s: the "
+                         "argument names a bound it does not impose")
+        self.assertNotIn("acquired", outcome, "the lock was held by another fd")
+        self.assertIn("refused", outcome)
+        self.assertIn("0.5", outcome["refused"], "and it says what it waited for")
+        self.assertLess(waited, 5, f"asked for 0.5s, waited {waited:.1f}s")
+
+    @unittest.skipUnless(_fcntl_ok(), "no fcntl: the POSIX branch is not the one that runs here")
+    def test_lock_held_measures_its_bound_on_a_clock_that_cannot_step_back(self):
+        """A wall clock is not a stopwatch, and this waits with one.
+
+        Both branches computed the deadline with `time.time()`. An NTP correction
+        landing mid-wait steps it BACKWARDS, and then the poll compares against a
+        deadline an hour away: the caller that asked for 0.5s waits until the holder
+        lets go, and cmd_sync's whole-run budget is defeated by a clock rather than by
+        contention. The shim here is the real time module with one method replaced, so
+        the sleep and the monotonic clock under it are genuine, and the attempt runs in
+        a daemon thread for the same reason as the test above: a revert FAILS in ten
+        seconds instead of hanging the suite. Restoring the module in the cleanup is
+        also what lets a leaked thread finish, because its next poll then reads a real
+        clock that is already past a real deadline.
+        """
+        import fcntl, threading, time
+        self.brain.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        guard = self.brain.lock_path.with_name(self.brain.lock_path.name + ".lock")
+        holder = open(guard, "a+")
+        self.addCleanup(holder.close)
+        fcntl.flock(holder.fileno(), fcntl.LOCK_EX)
+
+        class ClockStepsBack:
+            """time, except that time() jumps an hour back after the first read."""
+            def __init__(self):
+                self.reads = 0
+
+            def time(self_):
+                self_.reads += 1
+                return time.time() - (3600 if self_.reads > 1 else 0)
+
+            def __getattr__(self_, k):
+                return getattr(time, k)      # monotonic and sleep stay real
+
+        shim = ClockStepsBack()
+        octo_pkg.time = shim
+        self.addCleanup(lambda: setattr(octo_pkg, "time", time))
+
+        outcome = {}
+
+        def attempt():
+            try:
+                with self.brain.lock_held(timeout=0.5):
+                    outcome["acquired"] = True
+            except octo_pkg.PkgError as e:
+                outcome["refused"] = str(e)
+
+        started = time.monotonic()
+        t = threading.Thread(target=attempt, daemon=True)
+        t.start()
+        t.join(10)
+        waited = time.monotonic() - started
+        self.assertFalse(t.is_alive(),
+                         "the clock stepped back an hour and lock_held(timeout=0.5) is "
+                         "still waiting: its bound is measured on a wall clock, so an "
+                         "NTP correction suspends it")
+        self.assertNotIn("acquired", outcome, "the lock was held by another fd")
+        self.assertIn("refused", outcome)
+        self.assertLess(waited, 5, f"asked for 0.5s, waited {waited:.1f}s")
+
+
+class TestQaCycle15(ArmFixture):
+    """cmd_sync's two pre-fetch guards, and the run-level bound the lock never had.
+
+    Cycle 14 pinned every field of the identity that the in-lock re-check compares.
+    Four lines ABOVE that re-check, `cmd_sync` has two guards that nothing reached:
+    the fetched manifest's hash against the row's, and the fetched manifest's NAME
+    against the row's. Both survived all 359 tests and all 58 selftest legs; the
+    no-op control in the same mutation batch survived too, so the run discriminated.
+
+    The name one is the worst finding of this series because its failure mode is
+    silent and green. The threat model is the module's own: packages.lock.json is
+    TRACKED and UNSIGNED, so one edited row arrives through an ordinary `git pull`.
+    Point row `sample-aaa` at a source that publishes `sample-bbb` and edit that row's
+    tree_sha256 to match, which is exactly what gets past the hash guard one line up,
+    and without the name guard package B lands installed and symlinked under package
+    A's name, at rc 0, under `1 restored, 0 skipped`, with verify reporting
+    `2 verified, 0 failed`. Verify checks the tree against the manifest INSIDE it and
+    never against the row's name, so nothing downstream ever names it, and a skill in
+    skills/ runs on every prompt.
+    """
+
+    _install_signed = TestQaCycle13._install_signed
+    _race = TestQaCycle13._race
+    _read_lock = TestQaCycle13._read_lock
+    _row = TestQaCycle13._row
+
+    def _detach(self, name: str) -> Path:
+        """Take the package off disk, leaving only its lock row: what sync restores."""
+        dest = self.brain.vendor_path(name)
+        link = self.brain.link_path(name)
+        shutil.rmtree(dest)
+        link.unlink()
+        self.brain.exclude_remove(f"skills/{name}")
+        return dest
+
+    def _edit_row(self, name: str, **fields) -> None:
+        """Edit ONE row of the tracked, unsigned lockfile. This is not a contrivance:
+        it is the exact shape in which a lock change reaches a machine, an ordinary
+        `git pull`, and it is why every field read out of this file is a guard's job
+        rather than a fact."""
+        lock = json.loads(self.brain.lock_path.read_text(encoding="utf-8"))
+        for entry in lock["packages"]:
+            if entry["name"] == name:
+                entry.update(fields)
+        self.brain.lock_path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+
+    def _sync(self) -> tuple[int, str]:
+        import contextlib, io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = octo_pkg.main(["--brain", str(self.root), "sync"])
+        return rc, buf.getvalue()
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_sync_does_not_install_one_package_under_another_packages_name(self):
+        """Row A points at a source publishing B, with A's hash edited to match.
+
+        The hash guard one line above passes BY CONSTRUCTION here: the row carries B's
+        hash and the fetch produces B's tree. So this test can only be carried by the
+        name guard, and the in-lock identity re-check cannot carry it either, because
+        nothing races and the row is byte-identical to the entry it was read from.
+
+        Without the guard, measured: tree installed at skills/vendor/sample-aaa whose
+        SKILL.md says sample-bbb, symlink created, `1 restored, 0 skipped`, rc 0, and
+        verify `2 verified, 0 failed (2/2)`.
+        """
+        a, dest_a = self._install_signed("aaa")
+        b, _ = self._install_signed("bbb")
+        src_b = self.tmp / "src-bbb"
+        self._edit_row(a, source=str(src_b),
+                       tree_sha256=json.loads((src_b / "skill.json").read_text(
+                           encoding="utf-8"))["tree_sha256"])
+        self._detach(a)
+
+        rc, said = self._sync()
+
+        installed = ""
+        if (dest_a / "SKILL.md").exists():
+            installed = (dest_a / "SKILL.md").read_text(encoding="utf-8")
+        self.assertFalse(dest_a.exists(),
+                         f"{b} is installed at {octo_pkg.VENDOR_REL}/{a}: a package "
+                         f"under another package's name, in the always-on discovery "
+                         f"path, at rc {rc} under a success receipt. What landed says "
+                         f"{installed!r}")
+        self.assertFalse(self.brain.link_path(a).is_symlink())
+        self.assertFalse(self.brain.exclude_has(f"skills/{a}"))
+        self.assertIn("source now publishes", said)
+        self.assertIn(b, said, "the WARN has to name what the source actually "
+                               "publishes; that is the whole content of the message")
+        self.assertIn("0 restored", said)
+
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_sync_does_not_install_a_tree_the_lock_row_does_not_describe(self):
+        """One edited hash on a row whose source is real, signed and unchanged.
+
+        The name guard cannot carry this (the source publishes exactly this name) and
+        neither can the in-lock re-check (nothing races). Without the guard the tree
+        is restored, the symlink created and the receipt says `1 restored`, and only
+        the trailing verify then fails at rc 1: less severe than the name guard only
+        because it eventually surfaces, and it still put an unverifiable tree in the
+        discovery path first.
+        """
+        name, dest = self._install_signed("drift")
+        self._edit_row(name, source=str(self.tmp / "src-drift"), tree_sha256="f" * 64)
+        self._detach(name)
+
+        rc, said = self._sync()
+
+        self.assertFalse(dest.exists(),
+                         "a tree whose hash the lock row does not carry was restored "
+                         "into the discovery path, and only verify said so afterwards")
+        self.assertFalse(self.brain.link_path(name).is_symlink())
+        self.assertFalse(self.brain.exclude_has(f"skills/{name}"))
+        self.assertIn("source tree hash differs", said)
+        self.assertIn("0 restored", said)
+
+    @unittest.skipUnless(_fcntl_ok(), "no fcntl: the POSIX branch is not the one that runs here")
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_sync_bounds_the_lock_wait_of_a_whole_run_not_of_one_acquire(self):
+        """The fourteenth instance of this commit's own pattern, in this commit.
+
+        lock_held's timeout is per ACQUIRE. cmd_sync acquires once per absent package
+        inside a `try` whose `except PkgError` turns a refusal into a WARN and
+        continues, so the docstring's bound ("a pull must not hang behind a session
+        holding the lock for a clone") was a per-RUN claim at a scope nothing imposed.
+        QA measured three absent packages against a held lock at 90.5s, and 234 rows
+        would be ~117 minutes of sequential 30-second waits.
+
+        The kill is exact rather than timed, because a timeout is not a detection and
+        this box has run this module at 22s and at 900s: after the first acquire spends
+        the whole budget, every later acquire is handed 0.0, which is what "one
+        deadline for the run" MEANS. Per-acquire hands out the same number three times.
+        The wall-clock assertion is over the lock wait ONLY, summed inside the wrapper,
+        so no fetch, install or verify time is in it.
+        """
+        import contextlib, fcntl, time
+        budget = 0.4
+        names = []
+        for i in range(3):
+            name, _ = self._install_signed("bound%d" % i)
+            self._edit_row(name, source=str(self.tmp / ("src-bound%d" % i)))
+            self._detach(name)
+            names.append(name)
+
+        guard = self.brain.lock_path.with_name(self.brain.lock_path.name + ".lock")
+        guard.parent.mkdir(parents=True, exist_ok=True)
+        holder = open(guard, "a+")
+        self.addCleanup(holder.close)
+        fcntl.flock(holder.fileno(), fcntl.LOCK_EX)   # a second fd: flock is per ofd
+
+        asked, waits = [], []
+        real = octo_pkg.Brain.lock_held
+
+        @contextlib.contextmanager
+        def recording(self_, timeout=30.0):
+            asked.append(timeout)
+            started = time.monotonic()
+            try:
+                with real(self_, timeout):
+                    waits.append(time.monotonic() - started)
+                    yield
+            except octo_pkg.PkgError:
+                waits.append(time.monotonic() - started)
+                raise
+
+        octo_pkg.Brain.lock_held = recording
+        self.addCleanup(lambda: setattr(octo_pkg.Brain, "lock_held", real))
+        prior = octo_pkg.SYNC_LOCK_BUDGET
+        octo_pkg.SYNC_LOCK_BUDGET = budget
+        self.addCleanup(lambda: setattr(octo_pkg, "SYNC_LOCK_BUDGET", prior))
+
+        rc, said = self._sync()
+
+        self.assertEqual(len(asked), 3, "one acquire per absent package")
+        # First, because it is the one that names the bug: a per-acquire timeout hands
+        # out the same number three times and a run deadline hands out what is left.
+        self.assertEqual(asked[1:], [0.0, 0.0],
+                         f"each acquire was handed a fresh budget ({asked}): the bound "
+                         f"is per acquire and a run of N absent packages waits N times "
+                         f"it, which is the claim the docstring makes and the mechanism "
+                         f"does not impose")
+        self.assertLessEqual(asked[0], budget)
+        self.assertLess(sum(waits), 2 * budget,
+                        f"the whole run waited {sum(waits):.2f}s for a lock it was "
+                        f"told to wait {budget}s for")
+        for name in names:
+            self.assertFalse(self.brain.vendor_path(name).exists(),
+                             "the lock was held throughout: nothing can be restored")
+        self.assertEqual(said.count("could not acquire"), 3)
+        self.assertIn("0 restored", said)
+
+    @unittest.skipUnless(_fcntl_ok(), "no fcntl: the POSIX branch is not the one that runs here")
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_sync_spends_its_budget_on_waiting_and_not_on_fetching(self):
+        """The fifteenth instance of the pattern, inside the edit that fixed the
+        fourteenth.
+
+        The run bound was first written as an absolute deadline taken before the loop,
+        so EVERYTHING in the loop consumed it and the network fetches consume nearly
+        all of it, while the docstring promised three times over that "what is bounded
+        is the WAITING and only the waiting". QA cycle 16 measured it with NOTHING
+        holding the lock and a 1.5s fetch against a 2.0s budget: the acquires were
+        handed [0.484, 0.0, 0.0]. A run that waited for nothing arrived at a bare
+        non-blocking probe, and at the shipped 30s a fresh clone spends the whole
+        budget cloning and then refuses a package to any session holding the lock for
+        50ms, where the per-acquire shape would have waited and restored it.
+
+        The contended leg above cannot see this and neither reading is wrong there: it
+        holds the lock throughout, so the budget goes to waiting under BOTH semantics
+        and `asked[1:] == [0.0, 0.0]` is satisfied by both. This leg is the one where
+        they disagree, and it is the uncontended one. Nothing holds the lock and one
+        fetch alone outlasts the whole budget: waiting-only hands every acquire the
+        full budget and restores all three, an elapsed-time deadline hands out 0.0
+        from the first acquire on.
+        """
+        import contextlib, time
+        budget = 0.4
+        names = []
+        for i in range(3):
+            name, _ = self._install_signed("slow%d" % i)
+            self._edit_row(name, source=str(self.tmp / ("src-slow%d" % i)))
+            self._detach(name)
+            names.append(name)
+
+        real_fetch = octo_pkg.fetch_source
+
+        def slow_fetch(*a, **kw):
+            time.sleep(budget + 0.2)   # one fetch alone outlasts the whole budget
+            return real_fetch(*a, **kw)
+
+        octo_pkg.fetch_source = slow_fetch
+        self.addCleanup(lambda: setattr(octo_pkg, "fetch_source", real_fetch))
+
+        asked = []
+        real = octo_pkg.Brain.lock_held
+
+        @contextlib.contextmanager
+        def recording(self_, timeout=30.0):
+            asked.append(timeout)
+            with real(self_, timeout):
+                yield
+
+        octo_pkg.Brain.lock_held = recording
+        self.addCleanup(lambda: setattr(octo_pkg.Brain, "lock_held", real))
+        prior = octo_pkg.SYNC_LOCK_BUDGET
+        octo_pkg.SYNC_LOCK_BUDGET = budget
+        self.addCleanup(lambda: setattr(octo_pkg, "SYNC_LOCK_BUDGET", prior))
+
+        rc, said = self._sync()
+
+        self.assertEqual(len(asked), 3, "one acquire per absent package")
+        self.assertGreater(
+            min(asked), 0.9 * budget,
+            f"nothing held the lock, so this run waited for nothing, and its acquires "
+            f"were handed {asked} out of a {budget}s budget: the bound is over elapsed "
+            f"time and the fetches are spending it, not over the waiting the docstring "
+            f"says it bounds")
+        for name in names:
+            self.assertTrue(self.brain.vendor_path(name).exists(),
+                            "nothing held the lock: every package is restorable")
+        self.assertIn("3 restored", said)
+
+    def test_the_identity_labels_are_in_the_order_the_identity_returns(self):
+        """Using IDENTITY_FIELDS removed the LENGTH half of the drift risk, not the
+        order half. cmd_lock's WARN zips the constant against the tuple, so reordering
+        the constant mis-names every field that moved. Each field's name is its own
+        value here, so the identity of a row built from the constant IS the constant
+        when, and only when, the two agree in order.
+
+        "and no test failed" is what this test was first written against, and QA cycle
+        16 measured that it is not true of EVERY reordering, so the claim is narrowed
+        to what was measured. Both halves of that narrowing then named the wrong
+        commit, which is this PR's own defect one layer down: "the parent commit" was
+        5e5be15, the GRANDPARENT, and the parent a5b509c is where this very test
+        arrived. Re-measured at cycle 17, one swap per archived checkout: swapping
+        `installed_at` with `tree_sha256` kills three tests here and at a5b509c, two of
+        which (test_identity_pins_installed_at_on_its_own and
+        test_identity_pins_tree_sha256_on_its_own) already failed at 5e5be15 for their
+        own reasons. The reordering that nothing caught is `kind` with `source`: it
+        survives all 151 tests at 5e5be15 and dies, alone, on this assertion -- 155
+        tests at a5b509c, FAILED (failures=1).
+        """
+        self.assertEqual(
+            octo_pkg.entry_identity({f: f for f in octo_pkg.IDENTITY_FIELDS}),
+            octo_pkg.IDENTITY_FIELDS,
+            "entry_identity returns its fields in a different order than "
+            "IDENTITY_FIELDS labels them: the WARN names the wrong field")
+
+
+class TestQaCycle17(ArmFixture):
+    """The two halves of the lock this commit was still taking on trust.
+
+    Cycle 16's finding was that the run budget was being spent by FETCHING; the fix
+    charges the waiting. Cycle 17 deleted the charge on the ACQUIRED path -- the one
+    line `lock_budget_left -= time.monotonic() - started` that runs when the lock is
+    actually handed over -- and all 365 tests stayed green, this module's 157 among
+    them. Both budget tests above survive that deletion, for opposite reasons: the
+    contended one holds the lock throughout, so every acquire REFUSES and the charge
+    on the refusal path carries it, and the uncontended one asserts every acquire was
+    handed a FULL budget, which is precisely what a run that charges nothing produces.
+    Neither can see a wait that SUCCEEDED, and a wait that succeeds is the one a real
+    contended run mostly does. Measured here with eight absent packages,
+    SYNC_LOCK_BUDGET at 1.0s, and a holder that releases 0.5s after each acquire
+    begins and re-takes the guard only once the run has had it: shipped hands out
+    [1.0, 0.495, 0.0 x6] for 1.01s of total waiting and the receipt reads 2 restored,
+    6 skipped; the deletion hands out [1.0] x8, waits 0.505-0.525s at every one of
+    them for 4.09s of total waiting, and restores all 8. The six packages are bought
+    back at 4x the bound. So without that line the run-level bound holds only on runs
+    where every acquire is refused, and the waiting grows as N x the hold everywhere
+    else.
+
+    And lock_held's O_EXCL branch had no test at all. All four lock tests above carry
+    @skipUnless(_fcntl_ok()), so on this box the branch is never entered: reverting
+    BOTH of its `time.monotonic()` sites to `time.time()` survives the whole module,
+    while the docstring paragraph that covers both branches said "the test drives this
+    with a clock that does". It drove one. `sys.modules["fcntl"] = None` makes the
+    function's own `import fcntl` raise the way it raises on Windows, which is the only
+    door into the branch on a POSIX box, and it is one name rather than the whole
+    import machinery.
+
+    Cycle 18 then found that the budget leg it asked for is one-sided BY CONSTRUCTION:
+    `started` is stamped before `lock_held` is entered, so a real wait always comes
+    out a little longer than the holder's sleep and the assertion can only be an upper
+    bound. It sees the charge going missing and cannot see it landing twice -- the
+    double charge measured green -- and the `acquired` flag survived only on 21ms of
+    margin borrowed from a different test's floor. The second budget leg below owns
+    the clock instead of measuring it, so its assertion is an equality and both
+    mutants die on any box. The pair is deliberate: the real clock proves the wiring,
+    the fake one proves the arithmetic.
+    """
+
+    _install_signed = TestQaCycle13._install_signed
+    _detach = TestQaCycle15._detach
+    _edit_row = TestQaCycle15._edit_row
+    _sync = TestQaCycle15._sync
+
+    def _windows(self) -> None:
+        """Make `import fcntl` fail, and put sys.modules back however it was.
+
+        Shimming one entry in sys.modules rather than builtins.__import__ keeps the
+        blast radius to one name: every other import in this process, including the
+        ones the daemon threads below make, still goes through the real machinery.
+        A test that leaves a module poisoned leaks into every later module of the same
+        `discover` run, so the restore is a cleanup and not a `finally` in the body.
+        """
+        had = "fcntl" in sys.modules
+        prior = sys.modules.get("fcntl")
+        sys.modules["fcntl"] = None
+
+        def restore():
+            if had:
+                sys.modules["fcntl"] = prior
+            else:
+                sys.modules.pop("fcntl", None)
+
+        self.addCleanup(restore)
+
+    def _guard(self) -> Path:
+        guard = self.brain.lock_path.with_name(self.brain.lock_path.name + ".lock")
+        guard.parent.mkdir(parents=True, exist_ok=True)
+        return guard
+
+    def _sentinel(self) -> Path:
+        """The O_EXCL branch's lock file, and a cleanup that removes it either way."""
+        sentinel = Path(str(self._guard()) + ".excl")
+        self.addCleanup(lambda: sentinel.unlink(missing_ok=True))
+        return sentinel
+
+    # -- A: the budget is charged for the waits that SUCCEED, too -----------------
+    @unittest.skipUnless(_fcntl_ok(), "no fcntl: the POSIX branch is not the one that runs here")
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_sync_charges_the_run_budget_for_a_wait_that_succeeded(self):
+        """The sixteenth instance of the pattern, inside the fix for the fifteenth.
+
+        The lock is held across the FIRST acquire only and released 0.5s after that
+        acquire begins, so the first wait succeeds and the second acquire is the
+        measurement. Two packages and a 2.0s budget mean nothing here is refused and
+        both packages are restored under either accounting, so this test can only be
+        carried by the arithmetic: shipped charges the 0.5s it waited and hands the
+        second acquire at most 1.5s, the deletion charges nothing and hands it the
+        full 2.0s. The margin is one-sided by construction -- the releaser sleeps
+        AFTER the acquire is under way, so a slower box makes the first wait longer
+        and the asserted number smaller, never larger.
+        """
+        import contextlib
+        import fcntl
+        import threading
+        import time
+        budget, hold = 2.0, 0.5
+        names = []
+        for i in range(2):
+            name, _ = self._install_signed("charge%d" % i)
+            self._edit_row(name, source=str(self.tmp / ("src-charge%d" % i)))
+            self._detach(name)
+            names.append(name)
+
+        holder = open(self._guard(), "a+")
+        self.addCleanup(holder.close)
+        fcntl.flock(holder.fileno(), fcntl.LOCK_EX)   # a second fd: flock is per ofd
+
+        asking = threading.Event()
+        released = threading.Event()
+
+        def release_once():
+            if not asking.wait(60):
+                return
+            time.sleep(hold)
+            fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
+            released.set()
+
+        releaser = threading.Thread(target=release_once, daemon=True)
+        releaser.start()
+        # If the run never asks for the lock, the releaser would sit on its wait until
+        # the process ends. Unblock it in the cleanup and join it, so nothing of this
+        # test outlives this test.
+        self.addCleanup(releaser.join, 30)
+        self.addCleanup(asking.set)
+
+        asked = []
+        real = octo_pkg.Brain.lock_held
+
+        @contextlib.contextmanager
+        def recording(self_, timeout=30.0):
+            asked.append(timeout)
+            asking.set()
+            with real(self_, timeout):
+                yield
+
+        octo_pkg.Brain.lock_held = recording
+        self.addCleanup(lambda: setattr(octo_pkg.Brain, "lock_held", real))
+        prior = octo_pkg.SYNC_LOCK_BUDGET
+        octo_pkg.SYNC_LOCK_BUDGET = budget
+        self.addCleanup(lambda: setattr(octo_pkg, "SYNC_LOCK_BUDGET", prior))
+
+        rc, said = self._sync()
+
+        self.assertEqual(len(asked), 2, "one acquire per absent package")
+        self.assertEqual(asked[0], budget, "the first acquire is handed the whole run")
+        self.assertTrue(released.is_set(),
+                        "the holder never let go: this leg is about a wait that WON")
+        self.assertLessEqual(
+            asked[1], budget - (hold - 0.1),
+            f"the first acquire waited {hold}s and then GOT the lock, and the second "
+            f"was still handed {asked[1]}s of a {budget}s budget: only a REFUSED wait "
+            f"is charged, so a run whose acquires succeed waits N times the bound and "
+            f"SYNC_LOCK_BUDGET is not one")
+        for name in names:
+            self.assertTrue(self.brain.vendor_path(name).exists(),
+                            "the lock was released: both packages are restorable, so "
+                            "nothing but the accounting can carry this test")
+        self.assertEqual(rc, 0)
+        self.assertIn("2 restored", said)
+
+    # -- A2: the same charge, two-sided, on a clock this test owns ---------------
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_sync_charges_a_successful_wait_exactly_once_on_a_clock_it_owns(self):
+        """The arithmetic of the charge, where the leg above can only bound it.
+
+        The real-clock leg is one-sided BY CONSTRUCTION and cycle 18 measured why:
+        `bounded_lock` stamps `started` before `lock_held` is entered, so the
+        releaser's sleep begins after the stamp and the first wait comes out a little
+        LONGER than the hold every time. `asked[1]` can therefore only be asserted
+        from above, and an upper bound cannot see an OVER-charge. Charging
+        `lock_budget_left -= 2 * (time.monotonic() - started)` leaves that leg green
+        at `asked[1]` around 0.99. The `acquired` flag, whose only job is to keep the
+        acquired charge and the refused charge from both landing, is then killed
+        purely as a side effect of the UNCONTENDED test's floor: removing it puts
+        `min(asked)` at 0.339 against a 0.36 floor, 21ms of margin supplied by about
+        30ms of in-lock copytree per package. A faster box or a leaner install path
+        and that guard has no test at all.
+
+        So this leg owns the clock instead of measuring one. `lock_held` is replaced
+        by a stub that advances a fake `octo_pkg.time.monotonic` by exactly `hold`
+        and returns without waiting, which makes the charge exact and the assertion
+        an EQUALITY: the second acquire is handed `budget - hold`, not at most it.
+        Either way of charging twice -- the flag removed, or the subtraction doubled
+        -- hands it `budget - 2 * hold` and fails here on any box under any load.
+        Load is the reason this is a fake clock rather than a tightened real-clock
+        bound: this module has been measured at 900s on this box.
+
+        The fake wall clock steps an hour BACK after its first read, so
+        `bounded_lock`'s clock sites are covered here as well, and they were covered
+        nowhere before: cycle 18's module-wide wall-clock revert was killed only by
+        the two `lock_held` legs, which leaves these three. Reverting all three
+        together makes the wait come out at -3600s and hands the second acquire
+        3601.99s of a 2.0s budget; reverting the acquired charge alone makes it come
+        out at +1.7e9 and hands it 0.0s. Measured, both fail here.
+
+        Both legs stay. This one proves the arithmetic, which a real clock cannot;
+        the one above proves that a real flock, a real holder and a real release are
+        what the arithmetic is charging, which a stub cannot.
+        """
+        import contextlib
+        import time
+        budget, hold = 2.0, 0.5
+        names = []
+        for i in range(2):
+            name, _ = self._install_signed("bench%d" % i)
+            self._edit_row(name, source=str(self.tmp / ("src-bench%d" % i)))
+            self._detach(name)
+            names.append(name)
+
+        class Bench:
+            """The real time module, with monotonic under this test's hand.
+
+            `monotonic` moves only when the stub below moves it, so the charge is a
+            number this test chose rather than one it measured. `time` steps an hour
+            back after its first read, the way an NTP correction steps it, so a
+            revert of either charge site to the wall clock fails here rather than
+            flaking somewhere else.
+            """
+
+            def __init__(self_):
+                self_.mono = 1000.0
+                self_.wall_reads = 0
+
+            def monotonic(self_):
+                return self_.mono
+
+            def time(self_):
+                self_.wall_reads += 1
+                return time.time() - (3600 if self_.wall_reads > 1 else 0)
+
+            def __getattr__(self_, k):
+                return getattr(time, k)   # sleep and everything else stay real
+
+        clock = Bench()
+        asked = []
+        real = octo_pkg.Brain.lock_held
+
+        @contextlib.contextmanager
+        def instant(self_, timeout=30.0):
+            """A wait of exactly `hold`, costing no wall time and taking no lock."""
+            asked.append(timeout)
+            clock.mono += hold
+            yield
+
+        octo_pkg.Brain.lock_held = instant
+        self.addCleanup(lambda: setattr(octo_pkg.Brain, "lock_held", real))
+        octo_pkg.time = clock
+        self.addCleanup(lambda: setattr(octo_pkg, "time", time))
+        prior = octo_pkg.SYNC_LOCK_BUDGET
+        octo_pkg.SYNC_LOCK_BUDGET = budget
+        self.addCleanup(lambda: setattr(octo_pkg, "SYNC_LOCK_BUDGET", prior))
+
+        rc, said = self._sync()
+
+        self.assertEqual(len(asked), 2, "one acquire per absent package")
+        self.assertEqual(asked[0], budget, "the first acquire is handed the whole run")
+        # 1000.0 and 0.5 are exact in binary and the stub is the only thing that moves
+        # this clock, so this is an equality and not a tolerance.
+        self.assertEqual(
+            asked[1], budget - hold,
+            f"a wait of exactly {hold}s off a {budget}s budget left {asked[1]}s for "
+            f"the next acquire instead of {budget - hold}s: a successful wait is not "
+            f"charged exactly once. Less means it is charged twice -- the `acquired` "
+            f"flag gone, or the subtraction doubled -- and more means it is not "
+            f"charged at all")
+        for name in names:
+            self.assertTrue(self.brain.vendor_path(name).exists(),
+                            "the stub never refuses, so both packages restore and "
+                            "nothing but the accounting can carry this test")
+        self.assertEqual(rc, 0)
+        self.assertIn("2 restored", said)
+
+    # -- B: the branch that is never taken on this box ----------------------------
+    def test_lock_held_without_fcntl_takes_and_clears_its_sentinel(self):
+        """The O_EXCL branch, entered at all for the first time.
+
+        Everything below this asserts something about a timeout, and a timeout test
+        that silently ran the POSIX branch would assert it about the wrong code. This
+        one is the control: it proves the door opens, by naming the file only the
+        O_EXCL branch creates.
+        """
+        self._windows()
+        sentinel = self._sentinel()
+        self.assertFalse(sentinel.exists())
+        with self.brain.lock_held(timeout=1.0):
+            self.assertTrue(sentinel.exists(),
+                            "no sentinel: the POSIX branch ran and every timeout "
+                            "assertion below is about code this box does not enter")
+        self.assertFalse(sentinel.exists(), "the sentinel outlived the block it guards")
+
+    def test_lock_held_without_fcntl_refuses_within_the_timeout_it_advertises(self):
+        """The bound is real on this branch too, and it names what it could not take.
+
+        No thread here, unlike the POSIX pair above: this branch polls against a
+        deadline in every version of itself, so a regression refuses late rather than
+        hanging, and the wall-clock assertion is the detection.
+        """
+        import time
+        self._windows()
+        sentinel = self._sentinel()
+        os.close(os.open(str(sentinel), os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+
+        started = time.monotonic()
+        with self.assertRaises(octo_pkg.PkgError) as caught:
+            with self.brain.lock_held(timeout=0.5):
+                pass
+        waited = time.monotonic() - started
+
+        self.assertIn("0.5", str(caught.exception), "it says what it waited for")
+        self.assertIn(sentinel.name, str(caught.exception), "and what it waited on")
+        self.assertGreater(waited, 0.4, f"refused after {waited:.2f}s: it did not wait")
+        self.assertLess(waited, 5, f"asked for 0.5s, waited {waited:.1f}s")
+        self.assertTrue(sentinel.exists(),
+                        "a refused acquire removed a sentinel it never created")
+
+    def test_lock_held_without_fcntl_refuses_an_exhausted_budget_without_sleeping(self):
+        """timeout=0.0 is a real caller, not a degenerate one.
+
+        cmd_sync hands `max(0.0, lock_budget_left)`, so every acquire after the run
+        budget is spent arrives here as 0.0. The deadline check runs BEFORE the sleep,
+        which is what makes that a single probe rather than a 50ms one: 234 rows on a
+        fresh clone whose budget is gone would otherwise be 12 seconds of sleeping to
+        reach the same refusals. The bound asserted is BELOW one sleep quantum, so
+        moving the deadline check under the sleep fails this test rather than merely
+        slowing it: measured worst-case over 200 consecutive refusals on this box,
+        1.97ms, against the 40ms asserted and the 50ms one sleep costs.
+        """
+        import time
+        self._windows()
+        sentinel = self._sentinel()
+        os.close(os.open(str(sentinel), os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+
+        started = time.monotonic()
+        with self.assertRaises(octo_pkg.PkgError):
+            with self.brain.lock_held(timeout=0.0):
+                pass
+        waited = time.monotonic() - started
+        self.assertLess(waited, 0.04,
+                        f"an exhausted budget still spent {waited * 1000:.0f}ms before "
+                        f"refusing, which is a 50ms sleep: the deadline is checked "
+                        f"after the sleep and not before it")
+
+    def test_lock_held_without_fcntl_measures_its_bound_on_a_clock_that_cannot_step_back(self):
+        """The same NTP step-back as the POSIX leg, on the branch that had no test.
+
+        Reverting BOTH `time.monotonic()` sites in this branch to `time.time()` was
+        measured green across this whole module, because nothing entered the branch.
+        The shim is the real time module with one method replaced, so the sleep and
+        the monotonic clock under it stay genuine, and the attempt runs in a daemon
+        thread so a revert FAILS in ten seconds instead of hanging the suite. The
+        cleanups run last-registered-first, so `octo_pkg.time` is restored before the
+        sentinel is removed: a leaked thread's next poll then reads a real clock that
+        is already past a real deadline and it ends.
+        """
+        import threading
+        import time
+        self._windows()
+        sentinel = self._sentinel()
+        os.close(os.open(str(sentinel), os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+
+        class ClockStepsBack:
+            """time, except that time() jumps an hour back after the first read."""
+
+            def __init__(self_):
+                self_.reads = 0
+
+            def time(self_):
+                self_.reads += 1
+                return time.time() - (3600 if self_.reads > 1 else 0)
+
+            def __getattr__(self_, k):
+                return getattr(time, k)      # monotonic and sleep stay real
+
+        octo_pkg.time = ClockStepsBack()
+        self.addCleanup(lambda: setattr(octo_pkg, "time", time))
+
+        outcome = {}
+
+        def attempt():
+            try:
+                with self.brain.lock_held(timeout=0.5):
+                    outcome["acquired"] = True
+            except octo_pkg.PkgError as e:
+                outcome["refused"] = str(e)
+
+        started = time.monotonic()
+        t = threading.Thread(target=attempt, daemon=True)
+        t.start()
+        t.join(10)
+        waited = time.monotonic() - started
+
+        self.assertFalse(t.is_alive(),
+                         "the clock stepped back an hour and the O_EXCL branch is "
+                         "still polling: its bound is measured on a wall clock, so an "
+                         "NTP correction suspends it")
+        self.assertNotIn("acquired", outcome, "the sentinel was already on disk")
+        self.assertIn("refused", outcome)
+        self.assertLess(waited, 5, f"asked for 0.5s, waited {waited:.1f}s")
 
 class TestGenerator(unittest.TestCase):
     def setUp(self):
@@ -940,14 +3804,6 @@ class TestGenerator(unittest.TestCase):
         d.mkdir()
         (d / "SKILL.md").write_text(body, encoding="utf-8")
         return d
-
-    def _gen(self, *extra: str) -> tuple[int, str]:
-        """Run the generator and return (exit code, what it printed). The report is
-        part of the contract: a refusal that names the wrong reason is a wrong answer."""
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            rc = gen.main(["--root", str(self.root), "--write", *extra])
-        return rc, buf.getvalue()
 
     def test_dry_run_writes_nothing(self):
         d = self._skill("alpha", "---\nname: alpha\ndescription: does a thing\n---\n# Alpha\n")
@@ -1003,1745 +3859,1342 @@ class TestGenerator(unittest.TestCase):
             self.assertFalse((self.root / skipped / "skill.json").exists())
 
     def test_per_skill_license_beats_the_repo_default(self):
+        """Seeded with a REAL license text, not a one-line marker.
+
+        The generator recognises a license by reading the terms, not by matching
+        a title, so `Apache License, Version 2.0\\n` alone is not a license: it
+        is a line that looks like one. The shipped samples under
+        `scripts/tests/license-samples/` are what a skill actually carries.
+        """
+        sample = (Path(__file__).resolve().parent / "license-samples" / "MPL-2.0.txt")
         d = self._skill("zeta", "---\nname: zeta\ndescription: d\n---\n")
-        (d / "LICENSE.txt").write_text(APACHE_FULL_TEXT, encoding="utf-8")
+        (d / "LICENSE.txt").write_text(sample.read_text(encoding="utf-8"), encoding="utf-8")
         gen.main(["--root", str(self.root), "--write", "--default-license", "MIT"])
         man = json.loads((d / "skill.json").read_text(encoding="utf-8"))
-        self.assertEqual(man["license"], "Apache-2.0")
+        self.assertEqual(man["license"], "MPL-2.0")
 
-    # --- the four roads a license value can be reached by --------------------
-    # A LICENSE that is present says something. Absent is the only case a default
-    # may speak for, and the two failure roads (unrecognized, unreadable) must be
-    # reported rather than relabelled: a wrong license on a public package is a
-    # legal claim about someone else's work.
+    def test_an_unrecognised_license_refuses_instead_of_guessing(self):
+        """The strictness is the feature, so it gets an anchor of its own.
 
-    # The MIT license in full, written out in this module rather than imported from the
-    # one under test: a fixture derived from the recognizer agrees with it by
-    # construction. The fixture this replaces was an ABRIDGED MIT on one line (a grant
-    # cut off at "without restriction", a disclaimer cut off at "EXPRESS OR IMPLIED")
-    # and the recognizer called it MIT, which is the same defect as the EULA: a prefix
-    # match names a document after reading its first clause.
-    _MIT_BODY = MIT_BODY_TEXT
-    _FOREIGN_TERMS = ('Use of these skills and related files ("Materials") is governed by the Vendor Developer Terms (available at https://vendor.example/legal/developer-terms/).\\n')
-
-    def test_no_license_falls_back_to_the_repo_default(self):
-        self._skill("eta", "---\nname: eta\ndescription: d\n---\n")
-        self.assertEqual(gen.main(["--root", str(self.root), "--write",
-                                   "--default-license", "MIT"]), 0)
-        man = json.loads((self.root / "eta" / "skill.json").read_text(encoding="utf-8"))
-        self.assertEqual(man["license"], "MIT")
-
-    def test_an_unrecognized_license_is_reported_not_defaulted(self):
-        d = self._skill("theta", "---\nname: theta\ndescription: d\n---\n")
-        (d / "LICENSE.txt").write_text(self._FOREIGN_TERMS, encoding="utf-8")
-        rc, out = self._gen("--default-license", "MIT")
-        self.assertEqual(rc, 1)
-        self.assertFalse((d / "skill.json").exists(),
-                         "a manifest was written claiming the repo default over foreign terms")
-        self.assertIn("does not recognize", out)
-
-    @unittest.skipIf(os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0),
-                     "chmod 000 does not deny the owner on Windows or as root")
-    def test_an_unreadable_license_is_reported_not_defaulted(self):
-        d = self._skill("iota", "---\nname: iota\ndescription: d\n---\n")
-        lic = d / "LICENSE.txt"
-        lic.write_text(self._MIT_BODY, encoding="utf-8")
-        lic.chmod(0o000)
-        self.addCleanup(lic.chmod, 0o644)
-        rc, out = self._gen("--default-license", "MIT")
-        self.assertEqual(rc, 1)
-        self.assertFalse((d / "skill.json").exists(),
-                         "present-and-unreadable was collapsed into absent")
-        # The road matters, not just the refusal: an unreadable LICENSE and an
-        # unrecognized one both stop the write, and reporting the wrong one sends
-        # whoever fixes it to read terms nobody could open.
-        self.assertIn("unreadable", out)
-
-    def test_an_uppercase_license_extension_is_still_found(self):
-        d = self._skill("kappa", "---\nname: kappa\ndescription: d\n---\n")
-        (d / "LICENSE.TXT").write_text(self._FOREIGN_TERMS, encoding="utf-8")
-        self.assertEqual(gen.main(["--root", str(self.root), "--write",
-                                   "--default-license", "MIT"]), 1)
-        self.assertFalse((d / "skill.json").exists(),
-                         "LICENSE.TXT was never opened, so foreign terms read as no terms")
-
-    def test_verbatim_mit_without_a_header_line_is_recognized(self):
-        d = self._skill("lambda", "---\nname: lambda\ndescription: d\n---\n")
-        (d / "LICENSE.txt").write_text("Copyright 2025 Someone Else, Inc.\n\n" + self._MIT_BODY,
-                                       encoding="utf-8")
-        self.assertEqual(gen.main(["--root", str(self.root), "--write",
-                                   "--default-license", "Apache-2.0"]), 0)
-        man = json.loads((d / "skill.json").read_text(encoding="utf-8"))
-        self.assertEqual(man["license"], "MIT")
-
-    def test_prose_that_merely_quotes_mit_is_not_claimed_as_mit(self):
-        d = self._skill("mu", "---\nname: mu\ndescription: d\n---\n")
-        (d / "LICENSE.txt").write_text(
-            self._FOREIGN_TERMS
-            + "\nThese terms are not the MIT License. For reference, MIT reads:\n\n"
-            + self._MIT_BODY, encoding="utf-8")
-        self.assertEqual(gen.main(["--root", str(self.root), "--write",
-                                   "--default-license", "MIT"]), 1)
-        self.assertFalse((d / "skill.json").exists(),
-                         "a document that quotes the MIT grant was claimed as MIT")
-
-
-    def test_an_unreadable_repo_license_is_not_assumed_to_be_mit(self):
-        # The default speaks for 192 skills, so where IT comes from is the same
-        # question one level up: a repo whose own LICENSE cannot be read has no
-        # default to give, and the answer is a usage error, not a constant.
-        fake_brain = self.tmp / "brain"
-        fake_brain.mkdir()
-        (fake_brain / "LICENSE").write_text(self._FOREIGN_TERMS, encoding="utf-8")
-        self.assertIsNone(gen.repo_default_license(fake_brain))
-        real, gen.BRAIN = gen.BRAIN, fake_brain
-        self.addCleanup(setattr, gen, "BRAIN", real)
-        self._skill("nu", "---\nname: nu\ndescription: d\n---\n")
-        rc, _ = self._gen()
-        self.assertEqual(rc, 2)
-        self.assertFalse((self.root / "nu" / "skill.json").exists())
-
-
-class TestTheRecognizerRefusesMitLookalikes(unittest.TestCase):
-    """MIT recognized end to end, or not at all.
-
-    The prefix recognizer this replaces anchored the grant through "obtaining a copy"
-    and matched the as-is clause by prefix, so text could be spliced into the grant and
-    appended after the disclaimer and the document still came back MIT. Each case here
-    is one edit away from `MIT_FILE_TEXT`, which must stay MIT: a refusal that also
-    refuses the real thing is not a fix.
-    """
-
-    def test_the_benign_counterpart_is_still_mit(self):
-        self.assertEqual(gen.license_terms(MIT_FILE_TEXT), ("MIT", ""))
-
-    def test_a_proprietary_evaluation_eula_is_not_mit(self):
-        # Opens with MIT's exact first words, grants thirty days of evaluation and
-        # forbids redistribution, then carries MIT's notice and disclaimer verbatim.
-        # The old recognizer wrote this out as MIT end to end.
-        eula = ("Copyright (c) 2026 Vendor Inc. All rights reserved.\n\n"
-                "Permission is hereby granted, free of charge, to any person obtaining "
-                "a copy of this software to EVALUATE the Software for thirty (30) days. "
-                "No other right is granted. Redistribution is prohibited.\n\n"
-                + cut_after(MIT_BODY_TEXT, "subject to the following conditions:").lstrip())
-        ident, why = gen.license_terms(eula)
-        self.assertIsNone(ident, "a proprietary EULA was recognized as MIT")
-        # The cause is the word that differs, quoted with the line it sits on.
-        self.assertIn("differs from the license text", why)
-
-    def test_a_commons_clause_after_mit_is_not_mit(self):
-        text = MIT_FILE_TEXT + ("\nCommons Clause: the Licensor grants no right to Sell "
-                                "the Software.\n")
-        ident, why = gen.license_terms(text)
-        self.assertIsNone(ident, "MIT plus a no-sale rider was recognized as MIT")
-        self.assertIn("plus terms MIT does not carry", why)
-
-    def test_a_non_commercial_restriction_spliced_into_the_grant_is_not_mit(self):
-        text = mutate(MIT_FILE_TEXT, "without restriction,",
-                      "without restriction for non-commercial purposes only,")
-        self.assertIsNone(gen.license_terms(text)[0])
-
-    def test_an_indemnity_appended_to_the_disclaimer_is_not_mit(self):
-        text = MIT_FILE_TEXT.rstrip() + (" LICENSEE SHALL INDEMNIFY THE AUTHORS AGAINST "
-                                         "ALL CLAIMS ARISING FROM ITS USE.\n")
-        self.assertIsNone(gen.license_terms(text)[0])
-
-    def test_additional_terms_appended_are_not_mit(self):
-        text = MIT_FILE_TEXT + "\nADDITIONAL TERMS: Licensee may not redistribute.\n"
-        self.assertIsNone(gen.license_terms(text)[0])
-
-    # --- the same document, dressed differently: these ARE MIT ----------------
-    def test_a_markdown_heading_over_mit_is_still_mit(self):
-        self.assertEqual(gen.license_terms("# MIT License\n\n" + MIT_BODY_TEXT)[0], "MIT")
-
-    def test_an_spdx_tag_line_over_mit_is_still_mit(self):
-        text = "SPDX-License-Identifier: MIT\n\nCopyright (c) 2026 X\n\n" + MIT_BODY_TEXT
-        self.assertEqual(gen.license_terms(text)[0], "MIT")
-
-    def test_a_byte_order_mark_does_not_change_the_terms(self):
-        self.assertEqual(gen.license_terms("﻿" + MIT_FILE_TEXT)[0], "MIT")
-
-    def test_an_unexplained_preamble_is_refused_by_its_own_reason(self):
-        # Still refused, and that is right: nobody can vouch for a sentence sitting
-        # above a grant. What changed is the SENTENCE. Reporting "carries terms this
-        # generator does not recognize" about verbatim MIT sends the reader to the
-        # wrong place, which is the same wrong-cause defect as calling an undecodable
-        # file unrecognized.
-        ident, why = gen.license_terms("Skill bundle terms\n\n" + MIT_BODY_TEXT)
-        self.assertIsNone(ident)
-        self.assertIn("above it", why)
-        self.assertNotIn("does not recognize", why)
-
-
-class TestTheRecognizerReadsLicenseTextNotMentions(unittest.TestCase):
-    """`search` for a license title answers about any sentence that names it."""
-
-    def test_a_denial_of_apache_is_not_apache(self):
-        text = "This software is NOT licensed under the Apache License, Version 2.0.\n"
-        self.assertIsNone(gen.license_terms(text)[0],
-                          "a sentence denying Apache was read as granting it")
-
-    def test_the_full_apache_text_resolves(self):
-        self.assertEqual(gen.license_terms(APACHE_FULL_TEXT)[0], "Apache-2.0")
-
-    def test_an_apache_header_alone_is_not_the_apache_license(self):
-        # Eight lines of a two-hundred-line license. Recognizing it named a package
-        # after a document that was never read past its first section heading.
-        ident, why = gen.license_terms(APACHE_HEAD_TEXT)
-        self.assertIsNone(ident)
-        self.assertIn("Apache-2.0", why)
-
-    def test_a_dual_license_expression_is_refused_not_halved(self):
-        ident, why = gen.license_terms("SPDX-License-Identifier: Apache-2.0 OR MIT\n")
-        self.assertIsNone(ident, "one side of a dual license was picked, dropping the other")
-        self.assertIn("ONE identifier", why)
-
-    def test_a_grant_notice_naming_gpl_is_not_the_gpl_text(self):
-        text = ("GNU GENERAL PUBLIC LICENSE Version 3 or any later version applies to "
-                "this work.\n")
-        self.assertIsNone(gen.license_terms(text)[0],
-                          "a notice granting 'or later' was flattened to GPL-3.0-only")
-
-    def test_an_spdx_tag_that_contradicts_the_text_is_refused(self):
-        text = "SPDX-License-Identifier: Apache-2.0\n\n" + MIT_BODY_TEXT
-        ident, why = gen.license_terms(text)
-        self.assertIsNone(ident)
-        self.assertIn("while its text is MIT", why)
-
-
-class TestLicenseFileBlindSpots(unittest.TestCase):
-    """A name that says LICENSE and holds no readable terms is a question, not a default.
-
-    Every case here USED to write a manifest claiming the repo default, silently,
-    because the lookup filtered on is_file() and on an exact three-name list.
-    """
-
-    def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="test-lic-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
-
-    def _dir(self, name):
-        d = self.tmp / name
-        d.mkdir()
-        return d
-
-    def test_a_directory_named_license_is_reported(self):
-        d = self._dir("isdir")
-        (d / "LICENSE").mkdir()
-        ident, why = gen.resolve_license(d)
-        self.assertIsNone(ident)
-        self.assertIn("is a directory", why)
-
-    def test_a_dangling_symlink_named_license_is_reported(self):
-        d = self._dir("dangling")
-        os.symlink(str(d / "gone.txt"), d / "LICENSE")
-        ident, why = gen.resolve_license(d)
-        self.assertIsNone(ident)
-        self.assertIn("dangling symlink", why)
-
-    def test_copying_is_read_like_a_license(self):
-        d = self._dir("copying")
-        (d / "COPYING").write_text(MIT_FILE_TEXT, encoding="utf-8")
-        self.assertEqual(gen.resolve_license(d), ("MIT", ""))
-
-    def test_a_license_with_a_suffix_is_read_like_a_license(self):
-        d = self._dir("suffixed")
-        (d / "LICENSE-MIT").write_text(MIT_FILE_TEXT, encoding="utf-8")
-        self.assertEqual(gen.resolve_license(d), ("MIT", ""))
-
-    def test_a_second_license_file_is_opened_too(self):
-        # MIT first by preference order, foreign terms in the file the old lookup
-        # never opened. Preference order decided the answer; now both are read.
-        d = self._dir("second")
-        (d / "LICENSE").write_text(MIT_FILE_TEXT, encoding="utf-8")
-        (d / "LICENSE.md").write_text("Vendor Developer Terms govern this material.\n",
-                                      encoding="utf-8")
-        ident, why = gen.resolve_license(d)
-        self.assertIsNone(ident, "the second license file was never opened")
-        self.assertIn("LICENSE.md", why)
-
-    def test_two_recognized_licenses_that_disagree_say_so(self):
-        d = self._dir("disagree")
-        (d / "LICENSE").write_text(MIT_FILE_TEXT, encoding="utf-8")
-        (d / "LICENSE-APACHE").write_text(APACHE_FULL_TEXT, encoding="utf-8")
-        ident, why = gen.resolve_license(d)
-        self.assertIsNone(ident)
-        self.assertIn("disagree", why)
-        self.assertIn("MIT", why)
-        self.assertIn("Apache-2.0", why)
-
-    def test_a_utf16_license_reports_the_decoding_not_the_terms(self):
-        # The wrong-cause class: "does not recognize the terms" about a file nobody
-        # could decode sends whoever fixes it to read a document that is not text.
-        d = self._dir("utf16")
-        (d / "LICENSE").write_bytes(MIT_FILE_TEXT.encode("utf-16"))
-        ident, why = gen.resolve_license(d)
-        self.assertIsNone(ident)
-        self.assertIn("not readable text", why)
-        self.assertNotIn("does not recognize", why)
-
-    def test_a_latin1_license_reports_the_decoding_not_the_terms(self):
-        d = self._dir("latin1")
-        (d / "LICENSE").write_bytes("Copyright © 2026\n".encode("latin-1")
-                                    + MIT_BODY_TEXT.encode("utf-8"))
-        ident, why = gen.resolve_license(d)
-        self.assertIsNone(ident)
-        self.assertIn("not valid UTF-8", why)
-
-    def test_a_crlf_license_is_the_same_document(self):
-        """The end-to-end shape, and it anchors NOTHING on its own.
-
-        `read_license` normalizes CRLF, and `_Doc` splits with `str.splitlines`, which
-        already treats \r\n, \r and \n alike. Reverting the normalization leaves this
-        assertion GREEN because the second mechanism covers for the first, so the
-        contract is asserted at the function boundary below, where only one mechanism
-        can answer.
+        A wrong license on a distributable package is a legal claim, not a
+        cosmetic field, so a run that cannot describe every skill it was asked
+        about writes NONE of them and names the one that needs a hand.
         """
-        d = self._dir("crlf")
-        (d / "LICENSE").write_bytes(mutate(MIT_FILE_TEXT, "\n", "\r\n").encode("utf-8"))
-        self.assertEqual(gen.resolve_license(d), ("MIT", ""))
-
-    def test_read_license_strips_a_utf8_bom(self):
-        # The same shape as the CRLF defect: `utf-8-sig` is belt-and-braces because
-        # U+FEFF is in `_TRANSLATE` and the recognizer answers MIT either way, so an
-        # end-to-end test cannot see it. Measured: decoding the same bytes as plain
-        # utf-8 also yields MIT. The contract is asserted where only one mechanism can
-        # answer, exactly as for CRLF.
-        d = self._dir("bom")
-        (d / "LICENSE").write_bytes(b"\xef\xbb\xbf" + MIT_FILE_TEXT.encode("utf-8"))
-        text = gen.read_license(d / "LICENSE")
-        self.assertFalse(text.startswith("\ufeff"), "read_license leaked a BOM")
-        self.assertTrue(text.startswith("MIT License"))
-
-    def test_the_nul_check_names_utf16_rather_than_unrecognized_terms(self):
-        # UTF-16LE with no BOM decodes as neither utf-8 nor text, and the CAUSE has to
-        # say so: "does not recognize the terms" would send a reader to study a document
-        # nobody could decode. Reverting the NUL check leaves a refusal, so the refusal
-        # is not what this anchors; the sentence is.
-        d = self._dir("utf16")
-        (d / "LICENSE").write_bytes(MIT_FILE_TEXT.encode("utf-16-le"))
-        with self.assertRaises(gen.LicenseUndecodable) as caught:
-            gen.read_license(d / "LICENSE")
-        self.assertIn("NUL", str(caught.exception))
-        self.assertIn("UTF-16", str(caught.exception))
-
-    def test_read_license_returns_lf_only(self):
-        # The contract `read_license` actually promises: bytes in, LF-normalized text
-        # out. Every consumer downstream is free to assume it, and a future one that
-        # does not go through splitlines (a regex with a `$` anchor, a byte offset in a
-        # refusal message) would be the first to notice it was gone.
-        d = self._dir("crlf-contract")
-        for name, raw in (("LICENSE", b"a\r\nb\r\nc"), ("LICENSE.txt", b"a\rb\rc")):
-            (d / name).write_bytes(raw)
-            text = gen.read_license(d / name)
-            self.assertNotIn("\r", text, f"{name}: read_license leaked a CR")
-            self.assertEqual(text, "a\nb\nc")
-
-    def test_no_license_file_at_all_is_the_only_road_to_a_default(self):
-        self.assertEqual(gen.resolve_license(self._dir("bare")), (None, ""))
+        d = self._skill("omega", "---\nname: omega\ndescription: d\n---\n")
+        (d / "LICENSE.txt").write_text("Terms nobody has ever seen.\n", encoding="utf-8")
+        gen.main(["--root", str(self.root), "--write", "--default-license", "MIT"])
+        self.assertFalse((d / "skill.json").is_file(),
+                         "an unrecognised license must not be guessed into a manifest")
 
 
-class TestEveryFixtureEditGoesThroughMutate(unittest.TestCase):
-    """`mutate()` exists because three fixture edits in this module matched nothing and
-    the tests then asserted that verbatim MIT is MIT, passing against the code they were
-    written to catch. Vacuity is invisible by construction, a no-op edit leaves a valid
-    license and a valid license passes, so the guard cannot be another assertion about
-    behaviour: it reads the source.
+class TestNoChildWaitsForAHuman(SandboxCase):
+    """One class of defect: a child of this codebase asks a question nobody answers,
+    or outlives the call that gave up on it.
 
-    THE POLARITY IS THE POINT. The first version listed the bad routes (a bare
-    `.replace`, a chained one) and a reviewer immediately named ten more it missed: an
-    alias, `str.replace(FIXTURE, ...)`, `re.sub`, a helper, a slice, an f-string, a
-    split/join, `mod.FIXTURE`, a walrus, `getattr`. Enumerating evasions is the exact
-    failure this whole module is a repair for. So it is an ALLOW-LIST now: a license
-    fixture may be passed to a sanctioned transform, concatenated, or handed to the code
-    under test, and ANY other use of it is flagged. A route nobody thought of fails
-    CLOSED, which is a test author reading one sentence, not a silent no-op.
+    Four mechanisms, and each closes something the others do not. Measured, each with
+    the other three in place:
+
+      stdin=DEVNULL          ssh-keygen's "Overwrite (y/n)?" is read from STDIN
+      GIT_TERMINAL_PROMPT=0  git's "Username for ..." is read from /dev/TTY, so a
+                             closed stdin does nothing for it
+      start_new_session      no controlling terminal at all, which is what ends ssh's
+                             host-key question (it opens /dev/tty itself, through both
+                             of the above), and what makes the kill a GROUP kill
+      the deadline           the channel none of the above names, and the only one
+                             that does not depend on having enumerated correctly
+
+    Two spawners, because a fix in one is not a fix in the other:
+
+      octo_pkg._run                        ssh-keygen, git clone, the sync child
+      install-skill-from-github._run_git   every clone of a GitHub skill, https and ssh
+
+    ONE group kill, in scripts/proc_group.py, imported by both. Not a shared helper for
+    tidiness: the copy that used to live in the installer called killpg with no guard,
+    and when a mutant removed the start_new_session two lines above it, the call did not
+    fail a test, it SIGKILLed the test runner. A kill that can reach the caller is not
+    something to implement twice.
+
+    A third spawner, brain_doctor.run, was measured with the same defect on the pre-push
+    path. It is not covered here because it is not this change's file.
+
+    WHAT "measured RED" MEANS HERE, enumerated so the claim can be re-run rather than
+    believed. Seventeen mutants, each reverting ONE mechanism, against a control that
+    was green at both ends of the run:
+
+      pkg-stdin-live            pkg-no-setsid           pkg-kill-child-only
+      pkg-no-deadline           pkg-ceiling-none        pkg-no-git-prompt
+      pkg-no-unlink             pkg-no-clone-cleanup
+      ins-stdin-live            ins-no-setsid           ins-no-killpg
+      ins-no-timeout            ins-no-git-prompt
+      shared-no-guard           shared-sigterm          shared-group-gone-blind
+
+    Every one is killed by a test in this class. Four of them were found SURVIVING
+    first, which is the only reason the tests they now fail exist: the installer had no
+    grandchild test at all, the guard fired in no test because production never shares a
+    group, the survivor check was never asked, and the signal choice was pinned by
+    nothing. Two more findings came from the battery rather than from review: the
+    grandchild test was passing while the grandchild was alive (its marker was in the
+    shell's command line, not the survivor's argv), and `test -r /dev/tty` only stats a
+    path every process can stat, so the terminal probe has to open the device.
     """
 
-    FIXTURES = {"MIT_FILE_TEXT", "MIT_BODY_TEXT", "APACHE_FULL_TEXT", "APACHE_HEAD_TEXT",
-                "GPL3_TEXT", "MPL2_TEXT", "AGPL3_TEXT", "BSD3_TEXT"}
-    # Transforms that either refuse a no-op or cannot silently produce one.
-    SANCTIONED = {"mutate", "cut_before", "cut_after", "one_line"}
-    # Methods that READ a fixture rather than edit it. A no-op is not expressible here:
-    # `.encode()` changes the type, `.splitlines()` and `.rstrip()` cannot quietly
-    # return an unedited document where an edited one was meant, because no marker is
-    # being matched. `replace`, `sub`, `format`, `join` and slicing are NOT here, and
-    # neither is `split`, which is the vacuous cut that `cut_before`/`cut_after` exist
-    # to refuse.
-    READ_ONLY_METHODS = {"encode", "splitlines", "rstrip", "lstrip", "strip", "count",
-                         "startswith", "endswith", "find", "index", "upper", "lower"}
+    TTL = 45          # a child of this class that is still alive is a failed child
 
-    def test_a_license_fixture_is_only_ever_edited_through_a_sanctioned_transform(self):
-        import ast
-        tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
-        parent = {}
-        for node in ast.walk(tree):
-            for child in ast.iter_child_nodes(node):
-                parent[child] = node
-        # An alias is the fixture. `ALIAS = MIT_FILE_TEXT` then `ALIAS.replace(...)` was
-        # the first route past this guard, so a name bound directly to a fixture becomes
-        # one, to a fixpoint.
-        tainted = set(self.FIXTURES)
-        for _ in range(8):
-            grew = False
-            for node in ast.walk(tree):
-                if (isinstance(node, ast.Assign) and isinstance(node.value, ast.Name)
-                        and node.value.id in tainted):
-                    for tgt in node.targets:
-                        if isinstance(tgt, ast.Name) and tgt.id not in tainted:
-                            tainted.add(tgt.id)
-                            grew = True
-            if not grew:
-                break
-        offenders = []
-        for node in ast.walk(tree):
-            # `mod.MIT_FILE_TEXT` reaches the same string through an attribute, so the
-            # attribute name counts as much as the bare name.
-            if (isinstance(node, ast.Attribute) and node.attr in tainted
-                    and isinstance(node.ctx, ast.Load)):
-                up_attr = parent.get(node)
-                if isinstance(up_attr, ast.Attribute) and up_attr.attr not in self.READ_ONLY_METHODS:
-                    offenders.append(f"line {node.lineno}: reached through "
-                                     f"an attribute, then .{up_attr.attr}(...)")
-                continue
-            if not (isinstance(node, ast.Name) and node.id in tainted
-                    and isinstance(node.ctx, ast.Load)):
-                continue
-            up = parent.get(node)
-            if isinstance(up, ast.Call) and up.func is node:
-                continue                                   # not a string use
-            if isinstance(up, ast.Call) and node in up.args:
-                fn = up.func
-                name = (fn.id if isinstance(fn, ast.Name)
-                        else fn.attr if isinstance(fn, ast.Attribute) else "")
-                # A sanctioned transform, an assertion, or the code under test.
-                # A helper ON THIS CLASS is not an escape: it lives in the file this
-                # test parses, so whatever it does to the fixture is flagged at its own
-                # line. Listing helper names one by one was the enumeration treadmill in
-                # miniature, and `_ok` was the member that proved it.
-                if isinstance(fn, ast.Attribute) and isinstance(fn.value, ast.Name) \
-                        and fn.value.id == "self":
-                    continue
-                if name in self.SANCTIONED or name.startswith("assert") or name in {
-                        "license_terms", "mit_diagnosis", "is_verbatim_mit", "spdx_of",
-                        "read_license", "write_text", "write_bytes", "encode", "len",
-                        "describe", "resolve_license", "dumps"}:
-                    continue
-                offenders.append(f"line {node.lineno}: passed to {name or '?'}()")
-                continue
-            if isinstance(up, ast.Attribute):
-                if up.attr in self.READ_ONLY_METHODS:
-                    continue
-                offenders.append(f"line {node.lineno}: {node.id}.{up.attr}(...)")
-                continue
-            if isinstance(up, ast.Subscript):
-                offenders.append(f"line {node.lineno}: {node.id}[...] slice")
-                continue
-            if isinstance(up, (ast.JoinedStr, ast.FormattedValue)):
-                continue                                   # embedding, same as `+`
-            if isinstance(up, (ast.BinOp, ast.keyword, ast.Assign, ast.Compare,
-                               ast.Tuple, ast.List, ast.Dict, ast.Return, ast.Expr,
-                               ast.Starred, ast.IfExp)):
-                continue                                   # concatenation and plumbing
-            offenders.append(f"line {node.lineno}: used as {type(up).__name__}")
-        # STILL EVADABLE, and said so rather than implied: this reads the source, so
-        # `globals()["MIT_FILE_TEXT"]` or a string built at runtime reaches the fixture
-        # without a name the parser can follow. It raises the cost of an accidental
-        # no-op, which is the failure that actually happened here, not of a determined
-        # one, which has not.
-        self.assertEqual(offenders, [], "a license fixture reached a transform that can "
-                                        "silently produce a no-op; route it through "
-                                        "mutate() or cut_before(): " + "; ".join(offenders))
+    # ---------------------------------------------------------------- helpers
 
+    def _live_stdin_child(self, body: str) -> "subprocess.Popen":
+        """Run `body` in a python child whose stdin is an open pipe.
 
-class TestPartialOutput(unittest.TestCase):
-    """A run that exits 1 must leave the tree agreeing with the exit code."""
-
-    def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="test-partial-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
-        self.root = self.tmp / "skills"
-        self.root.mkdir()
-
-    def _skill(self, name, body):
-        d = self.root / name
-        d.mkdir()
-        (d / "SKILL.md").write_text(body, encoding="utf-8")
-        return d
-
-    def test_a_failing_run_writes_none_of_the_manifests_it_could_have_written(self):
-        # `aaa` sorts before `zzz`, so the loop reached it first and wrote it before
-        # ever seeing the skill it could not describe. The report then said the run
-        # exited non-zero and nothing was written, while `aaa/skill.json` was on disk.
-        ok = self._skill("aaa", "---\nname: aaa\ndescription: fine\n---\n")
-        bad = self._skill("zzz", "no front matter, no heading\n")
-        rc = gen.main(["--root", str(self.root), "--write", "--default-license", "MIT"])
-        self.assertEqual(rc, 1)
-        self.assertFalse((bad / "skill.json").exists())
-        self.assertFalse((ok / "skill.json").exists(),
-                         "a failing run left a manifest on disk for the skills it "
-                         "happened to reach first")
-
-    def test_a_clean_run_still_writes_every_manifest(self):
-        a = self._skill("aaa", "---\nname: aaa\ndescription: fine\n---\n")
-        b = self._skill("zzz", "---\nname: zzz\ndescription: also fine\n---\n")
-        rc = gen.main(["--root", str(self.root), "--write", "--default-license", "MIT"])
-        self.assertEqual(rc, 0)
-        self.assertTrue((a / "skill.json").exists())
-        self.assertTrue((b / "skill.json").exists())
-
-
-class TestUpstreamWithoutLicenseIsVisible(unittest.TestCase):
-    """A skill that names an upstream source and ships no license file takes the repo
-    default, and the corpus check has no license file to compare against, so it cannot
-    see it. Report, never refuse: which of them may carry this repo's terms is a
-    human's call, and this only stops the class from being invisible."""
-
-    def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="test-upstream-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
-        self.root = self.tmp / "skills"
-        self.root.mkdir()
-
-    def _skill(self, name, body):
-        d = self.root / name
-        d.mkdir()
-        (d / "SKILL.md").write_text(body, encoding="utf-8")
-        return d
-
-    def test_a_front_matter_source_with_no_license_is_named_in_the_report(self):
-        self._skill("borrowed", "---\nname: borrowed\ndescription: d\n"
-                                "metadata:\n  source: \"Adapted from upstream/project\"\n---\n")
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            rc = gen.main(["--root", str(self.root), "--write", "--default-license", "MIT"])
-        out = buf.getvalue()
-        self.assertEqual(rc, 0, "the report is a report, not a refusal")
-        self.assertIn("[upstream, no LICENSE] borrowed", out)
-        self.assertIn("Adapted from upstream/project", out)
-        self.assertEqual(json.loads((self.root / "borrowed" / "skill.json")
-                                    .read_text(encoding="utf-8"))["license"], "MIT")
-
-    def test_a_prose_adapted_from_line_counts_too(self):
-        self._skill("prose", "---\nname: prose\ndescription: d\n---\n"
-                             "# Prose\n\nAdapted from upstream/other (see notes).\n")
-        self.assertIsNotNone(gen.upstream_source(self.root / "prose"))
-
-    def test_a_skill_that_ships_its_own_license_is_not_in_the_report(self):
-        d = self._skill("owned", "---\nname: owned\ndescription: d\n"
-                                 "metadata:\n  source: \"upstream/project\"\n---\n")
-        (d / "LICENSE").write_text(MIT_FILE_TEXT, encoding="utf-8")
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            gen.main(["--root", str(self.root), "--write", "--default-license", "MIT"])
-        self.assertNotIn("[upstream, no LICENSE] owned", buf.getvalue())
-
-
-class TestInRepoManifestLicenses(unittest.TestCase):
-    """The corpus itself, not a sandbox: no shipped manifest may claim the repo's own
-    license over a third party's terms."""
-
-    def test_the_repo_default_exists(self):
-        # Without this the corpus test below passes vacuously: if the default were
-        # None, `declared == default` is false for every manifest and the loop
-        # certifies a corpus it never compared against anything.
-        self.assertIsNotNone(gen.repo_default_license(BRAIN),
-                             "the repo's own license could not be established, so every "
-                             "comparison below is against nothing")
-
-    def test_no_manifest_claims_the_repo_default_over_foreign_terms(self):
-        default = gen.repo_default_license(BRAIN)
-        self.assertIsNotNone(default)
-        offenders = []
-        for manifest in sorted((BRAIN / "skills").glob("*/skill.json")):
-            derived, problem = gen.resolve_license(manifest.parent)
-            declared = json.loads(manifest.read_text(encoding="utf-8"))["license"]
-            if problem:
-                # Present and unanswerable. Only a hand-written value may stand here,
-                # and the repo default is exactly what may not.
-                if declared == default:
-                    offenders.append(f"{manifest.parent.name} claims {declared} while "
-                                     f"{problem}")
-            elif derived is None:
-                # No license file. The skill's own front matter may still declare one,
-                # and a declaration is a claim to honour rather than to overwrite: a
-                # skill saying `license: Apache-2.0` handed the repo default in silence
-                # is the exact defect this cycle closed.
-                own = gen.declared_license(manifest.parent)[0]
-                if declared != (own or default):
-                    offenders.append(f"{manifest.parent.name} declares {declared} with "
-                                     f"no license file, so it should carry "
-                                     f"{own or default}")
-            elif declared != derived:
-                offenders.append(f"{manifest.parent.name} declares {declared}, its "
-                                 f"license file says {derived}")
-        self.assertEqual(offenders, [])
-
-    def test_the_upstream_report_over_the_real_corpus_is_self_consistent(self):
-        # Not a verdict on any skill. Every name it prints must really carry an
-        # upstream marker and really have no license file, and the report must not be
-        # empty on a corpus that has both: an empty report would be the invisibility
-        # this exists to end.
-        listed = [d.name for d in sorted((BRAIN / "skills").iterdir())
-                  if d.is_dir() and (d / "SKILL.md").is_file()
-                  and gen.upstream_source(d) and not gen.license_entries(d)]
-        self.assertTrue(listed, "no skill declares an upstream source without a license "
-                                "file; if that is true the report is correct, but check "
-                                "the detector before believing it")
-        for name in listed:
-            d = BRAIN / "skills" / name
-            self.assertIsNotNone(gen.upstream_source(d))
-            self.assertEqual(gen.license_entries(d), [])
-
-
-
-# --- QA cycle 3: the recognizer half -------------------------------------------
-SAMPLES = BRAIN / "scripts" / "tests" / "license-samples"
-GPL3_TEXT = (SAMPLES / "GPL-3.0.txt").read_text(encoding="utf-8")
-MPL2_TEXT = (SAMPLES / "MPL-2.0.txt").read_text(encoding="utf-8")
-AGPL3_TEXT = (SAMPLES / "AGPL-3.0.txt").read_text(encoding="utf-8")
-BSD3_TEXT = """Copyright (c) 2026 Example Holder
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
-
-1. Redistributions of source code must retain the above copyright notice, this
-   list of conditions and the following disclaimer.
-
-2. Redistributions in binary form must reproduce the above copyright notice,
-   this list of conditions and the following disclaimer in the documentation
-   and/or other materials provided with the distribution.
-
-3. Neither the name of the copyright holder nor the names of its contributors
-   may be used to endorse or promote products derived from this software
-   without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-"""
-COMMONS_CLAUSE = """
-
-"Commons Clause" License Condition v1.0
-
-Without limiting other conditions in the License, the grant of rights under the
-License will not include, and the License does not grant to you, the right to
-Sell the Software.
-"""
-
-
-class TestTypographyIsNotTerms(unittest.TestCase):
-    """A quote glyph is not a term, and a refusal that says otherwise is wrong twice.
-
-    Comparing raw text refused real MIT files over a glyph and told them a cause that
-    was not the difference: a family of packages that writes 'Software' with apostrophes
-    was told its "grant sentence is not MIT's". Each case below is a real shape found on
-    a developer disk, and each one is its own control: the fixture is verbatim MIT with
-    one typographic edit, so a case that fails says the edit changed the terms.
-    Deliberately no corpus percentage: the denominator is a live disk, it moved between
-    runs of the same selection, and a number nobody can re-derive is not evidence.
-    Every count that survives anywhere in this repo is either a property of the code
-    (template shapes, memo hits) or a git fact (a commit, a date, a file list at a
-    ref), which are the two kinds a reader can check.
-    """
-
-    def _mit(self, body):
-        ident, why = gen.license_terms(body)
-        self.assertEqual(ident, "MIT", f"refused real MIT: {why}")
-
-    def test_single_quoted_software_is_the_jshttp_family(self):
-        self._mit(mutate(mutate(MIT_FILE_TEXT, '"Software"', "'Software'"),
-                         '"AS IS"', "'AS IS'"))
-
-    def test_emphasis_markers_around_as_is(self):
-        self._mit(mutate(MIT_FILE_TEXT, '"AS IS"', "*AS IS*"))
-
-    def test_curly_quotes(self):
-        self._mit(mutate(mutate(MIT_FILE_TEXT, '"Software"', "\u201cSoftware\u201d"),
-                         '"AS IS"', "\u201cAS IS\u201d"))
-
-    def test_noninfringement_spelled_with_the_hyphen(self):
-        self._mit(mutate(MIT_FILE_TEXT, "NONINFRINGEMENT", "NON-INFRINGEMENT"))
-
-    def test_the_holder_named_inside_the_disclaimer(self):
-        # The SPDX MIT template marks the holder as a variable exactly here.
-        self._mit(mutate(one_line(MIT_FILE_TEXT),
-                         "THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE",
-                         "ACME CORPORATION BE LIABLE"))
-
-    def test_wrapped_onto_the_word_copyright(self):
-        # "COPYRIGHT HOLDERS BE LIABLE ..." opens a line with the same word a notice
-        # does. Treating it as a preamble deleted a clause out of the disclaimer and
-        # then refused the file for not carrying the clause that had been deleted.
-        wrapped = mutate(one_line(MIT_FILE_TEXT),
-                         "IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE",
-                         "IN NO EVENT SHALL THE AUTHORS OR\nCOPYRIGHT HOLDERS BE LIABLE")
-        self._mit(wrapped)
-
-    def test_the_whole_license_inside_a_c_comment(self):
-        body = "/*\n" + "\n".join(" * " + ln for ln in MIT_FILE_TEXT.splitlines()) + "\n */\n"
-        self._mit(body)
-
-    def test_a_hash_comment_wrapper(self):
-        self._mit("\n".join("# " + ln for ln in MIT_FILE_TEXT.splitlines()))
-
-    def test_a_markdown_license_heading(self):
-        self._mit("# License\n\n" + MIT_FILE_TEXT)
-
-    def test_the_parenthesised_title(self):
-        self._mit("(The MIT License)\n\n" + MIT_FILE_TEXT)
-
-    def test_the_expat_title(self):
-        self._mit("Expat License\n\n" + MIT_FILE_TEXT)
-
-    def test_an_rst_underline_under_the_title(self):
-        self._mit("License\n=======\n\n" + MIT_FILE_TEXT)
-
-    def test_a_copyright_sign_with_no_keyword(self):
-        self._mit("\u00a9 2024 Example Holder\n\n" + MIT_FILE_TEXT)
-
-    def test_a_parenthesised_c_with_no_keyword(self):
-        self._mit("(c) 2024 Example Holder\n\n" + MIT_FILE_TEXT)
-
-    def test_a_copyright_line_with_no_year(self):
-        self._mit("Copyright Steven Loria and contributors\n\n" + MIT_FILE_TEXT)
-
-    def test_a_copyright_keyword_inside_a_sentence(self):
-        self._mit("Shellfloat is copyright (c) 2020 by Michael Wood.\n\n" + MIT_FILE_TEXT)
-
-    def test_a_holder_continuation_line(self):
-        self._mit("Copyright (c) 1998-2000 Thai Open Source Software Center Ltd\n"
-                  "and Clark Cooper\n\n" + MIT_FILE_TEXT)
-
-    def test_an_indented_holder_list(self):
-        self._mit("Copyright (c) 2011-2014\n"
-                  "    Alice Smith <alice@example.com>\n"
-                  "    Bob Jones <bob@example.com>\n\n" + MIT_FILE_TEXT)
-
-    def test_an_spdx_footer(self):
-        self._mit(MIT_FILE_TEXT + "\n\nSPDX-License-Identifier: MIT\n")
-
-    def test_a_signature_block(self):
-        self._mit(MIT_FILE_TEXT + "\n\nAlice Smith <alice@example.com>\n")
-
-    def test_a_trailing_horizontal_rule(self):
-        self._mit(MIT_FILE_TEXT + "\n\n---\n")
-
-    def test_a_bare_url_line(self):
-        self._mit(MIT_FILE_TEXT + "\n\nhttps://example.com/license\n")
-
-
-class TestARefusalNamesTheActualDifference(unittest.TestCase):
-    """"Carries its cause" was this cycle's promise, and a misdiagnosis breaks it.
-
-    The refusal quotes the word the license has, the word the file has, and the line
-    they sit on, so whoever fixes it reads the sentence that differs rather than the
-    whole file.
-    """
-
-    def _why(self, body):
-        ident, why = gen.license_terms(body)
-        self.assertIsNone(ident)
-        return why
-
-    def test_a_changed_verb_is_named_word_for_word(self):
-        # "to deal WITH the Software" is a real MIT-lookalike family on disk.
-        why = self._why(mutate(one_line(MIT_FILE_TEXT), "to deal in the Software",
-                              "to deal with the Software"))
-        self.assertIn("'in'", why)
-        self.assertIn("'with'", why)
-
-    def test_a_dropped_sublicense_right_is_named(self):
-        # The openssh/ISC-style variant grants no sublicense right. That IS a different
-        # grant, and the refusal has to say which word carries the difference.
-        why = self._why(mutate(one_line(MIT_FILE_TEXT),
-                        "distribute, sublicense, and/or sell", "distribute, and/or sell"))
-        self.assertIn("'sublicense'", why)
-
-    def test_the_refusal_quotes_the_line_it_found(self):
-        why = self._why(mutate(MIT_FILE_TEXT, "MERCHANTABILITY", "SALEABILITY"))
-        self.assertIn("'merchantability'", why)
-        self.assertIn("'saleability'", why)
-
-    def test_a_slot_does_not_swallow_a_later_difference(self):
-        # The holder slot used to answer "names no copyright holder" for any failure
-        # downstream of it, which is what 400 verbatim-MIT files were told. The
-        # DEEPEST failure is the true one.
-        why = self._why(mutate(one_line(MIT_FILE_TEXT),
-                        "OTHER DEALINGS IN THE SOFTWARE", "OTHER DEALINGS IN THE PRODUCT"))
-        self.assertNotIn("names no copyright holder", why)
-        self.assertIn("'product'", why)
-
-    def test_a_slot_may_not_carry_terms(self):
-        # A variable-width hole in a template is a way to smuggle a restriction into
-        # the middle of a license, so a slot admits names and numbering, never terms.
-        why = self._why(mutate(one_line(MIT_FILE_TEXT), "IN NO EVENT SHALL THE AUTHORS",
-                        "IN NO EVENT SHALL, EXCEPT WHERE COMMERCIAL USE IS PROHIBITED, "
-                        "THE AUTHORS"))
-        self.assertTrue(why)
-
-
-class TestEveryRecognizerIsWholeDocument(unittest.TestCase):
-    """"A license is recognized whole, or it is not recognized" was true for MIT only.
-
-    The other five keyed on markers found anywhere in the file, so a Commons Clause
-    appended to Apache-2.0, a negation written above it, an advertising clause added to
-    BSD-3-Clause and a notices file holding several licenses at once all came back with
-    one clean SPDX id. Each case below is one edit from a control that must still pass.
-    """
-
-    def _refused(self, body, must_mention=""):
-        ident, why = gen.license_terms(body)
-        self.assertIsNone(ident, f"recognized as {ident}")
-        if must_mention:
-            self.assertIn(must_mention, why)
-        return why
-
-    def test_the_controls_still_resolve(self):
-        self.assertEqual(gen.license_terms(APACHE_FULL_TEXT)[0], "Apache-2.0")
-        self.assertEqual(gen.license_terms(GPL3_TEXT)[0], "GPL-3.0-only")
-        self.assertEqual(gen.license_terms(AGPL3_TEXT)[0], "AGPL-3.0-only")
-        self.assertEqual(gen.license_terms(MPL2_TEXT)[0], "MPL-2.0")
-        self.assertEqual(gen.license_terms(BSD3_TEXT)[0], "BSD-3-Clause")
-        self.assertEqual(gen.license_terms(MIT_FILE_TEXT)[0], "MIT")
-
-    def test_apache_with_a_commons_clause_appended(self):
-        self._refused(APACHE_FULL_TEXT + COMMONS_CLAUSE, "Apache-2.0")
-
-    def test_apache_with_additional_terms_appended(self):
-        self._refused(APACHE_FULL_TEXT + "\n\nADDITIONAL TERMS: redistribution prohibited.\n")
-
-    def test_a_negation_written_above_apache(self):
-        self._refused("This software is NOT licensed under the terms below.\n\n"
-                      + APACHE_FULL_TEXT)
-
-    def test_gpl_with_an_appended_commercial_restriction(self):
-        self._refused(GPL3_TEXT + "\n\nCommercial use requires a paid license from "
-                                  "the author.\n")
-
-    def test_mpl_with_an_appended_restriction(self):
-        self._refused(MPL2_TEXT + "\n\nYou may not redistribute this file.\n")
-
-    def test_agpl_with_an_appended_restriction(self):
-        # AGPL-3.0 was the sixth recognizer and the only one with no fixture: the
-        # sentence "all six read a license whole" was proven for five and asserted for
-        # the sixth. Five closed members do not close a class of six.
-        self._refused(AGPL3_TEXT + "\n\nADDITIONAL TERMS: no commercial use.\n")
-
-    def test_a_negation_written_above_agpl(self):
-        self._refused("This program is NOT under the license below.\n\n" + AGPL3_TEXT)
-
-    def test_agpl_missing_one_of_its_sections_is_not_agpl(self):
-        cut = mutate(AGPL3_TEXT, "  2. Basic Permissions.", "  2x. Basic Permissions.")
-        self._refused(cut)
-
-    def test_bsd_four_clause_is_not_bsd_three_clause(self):
-        bsd4 = mutate(
-            BSD3_TEXT,
-            "3. Neither the name",
-            "3. All advertising materials mentioning features or use of this software\n"
-            "   must display the following acknowledgement: This product includes\n"
-            "   software developed by the copyright holder.\n\n"
-            "4. Neither the name")
-        self._refused(bsd4)
-
-    def test_bsd_three_clause_clear_is_not_bsd_three_clause(self):
-        clear = mutate(
-            BSD3_TEXT,
-            "THIS SOFTWARE IS PROVIDED BY",
-            "NO EXPRESS OR IMPLIED LICENSES TO ANY PARTY'S PATENT RIGHTS ARE GRANTED\n"
-            "BY THIS LICENSE.\n\nTHIS SOFTWARE IS PROVIDED BY")
-        self._refused(clear)
-
-    def test_mit_followed_by_apache_is_neither(self):
-        self._refused(MIT_FILE_TEXT + "\n\n" + APACHE_FULL_TEXT)
-
-    def test_a_multi_license_notices_file_is_not_one_license(self):
-        self._refused("libjpeg-turbo Licenses\n\n" + MIT_FILE_TEXT + "\n\n" + BSD3_TEXT)
-
-    def test_a_friendly_lead_in_is_refused_too_and_that_is_the_price(self):
-        # Real files on this machine: archy says "This software is released under the
-        # MIT license:", Node.js says "Node.js is licensed for use as follows:", LLVM
-        # says "The LLVM Project is under the Apache License v2.0 with LLVM Exceptions".
-        # Two of those three are harmless and the third changes the terms, and the text
-        # does not say which. Admitting lead-in sentences to stop refusing the first two
-        # is the same edit that lets "This software is NOT licensed under the terms
-        # below" through, so the refusal stands and a human reads it.
-        for lead in ("This software is released under the MIT license:",
-                     "Node.js is licensed for use as follows:"):
-            self._refused(f"{lead}\n\n{MIT_FILE_TEXT}")
-        self._refused("The LLVM Project is under the Apache License v2.0 with LLVM "
-                      "Exceptions\n\n" + APACHE_FULL_TEXT)
-
-    def test_apache_that_stops_at_clause_nine_is_still_apache(self):
-        # requests, and everything that vendored it, ships this form: no
-        # "END OF TERMS AND CONDITIONS" and no appendix. It is a whole license.
-        cut = cut_before(APACHE_FULL_TEXT, "END OF TERMS AND CONDITIONS")
-        self.assertEqual(gen.license_terms(cut)[0], "Apache-2.0")
-
-
-class TestTheFilenameEnumerationDecidesAbsent(unittest.TestCase):
-    """The list of names IS the definition of "this skill has no license".
-
-    A name that is not on it is not "no license here", it is "not looked for", and both
-    used to be written into the manifest as this repo's own terms.
-    """
-
-    def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="test-licnames-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
-
-    def test_the_names_that_hold_terms_are_read(self):
-        for name in ("UNLICENSE", "COPYRIGHT", "LICENSE.Apache", "LICENSE.APACHE2",
-                     "LICENSE.BSD", "LICENSE.GPL", "LICENSE_APACHE", "APACHE-LICENSE",
-                     "GPL-LICENSE.txt", "COPYING.LESSER", "LICENSE.html",
-                     "LICENSE.markdown", "LICENSE.adoc"):
-            self.assertTrue(gen._is_license_name(name), f"{name} would be read as absent")
-
-    def test_a_notices_file_is_not_this_package_s_license(self):
-        # The mirror of the bug above: a file that lists what OTHER people's code is
-        # under, read as the skill's own terms.
-        for name in ("LICENSE-3RD-PARTY.txt", "THIRD-PARTY-LICENSES",
-                     "LICENSE-THIRD-PARTY.txt", "NOTICES-THIRD-PARTY.md"):
-            self.assertFalse(gen._is_license_name(name), f"{name} read as own terms")
-
-    def test_a_file_that_is_not_a_license_document_is_left_alone(self):
-        for name in ("license.py", "LICENSE.png", "licenses.json", "readme.md"):
-            self.assertFalse(gen._is_license_name(name))
-
-    def test_a_spdx_suffixed_license_is_opened_not_defaulted(self):
-        # sniffio ships exactly LICENSE.APACHE2. It used to be absent, and absent is
-        # the repo default.
-        (self.tmp / "LICENSE.APACHE2").write_text(APACHE_FULL_TEXT, encoding="utf-8")
-        self.assertEqual(gen.resolve_license(self.tmp), ("Apache-2.0", ""))
-
-    def test_the_reuse_licenses_directory_is_read(self):
-        d = self.tmp / "LICENSES"
-        d.mkdir()
-        (d / "Apache-2.0.txt").write_text(APACHE_FULL_TEXT, encoding="utf-8")
-        self.assertEqual(gen.resolve_license(self.tmp), ("Apache-2.0", ""))
-
-    def test_a_notices_file_beside_a_license_does_not_decide(self):
-        (self.tmp / "LICENSE").write_text(MIT_FILE_TEXT, encoding="utf-8")
-        (self.tmp / "LICENSE-3RD-PARTY.txt").write_text(APACHE_FULL_TEXT, encoding="utf-8")
-        self.assertEqual(gen.resolve_license(self.tmp), ("MIT", ""))
-
-    def test_the_gnu_and_plural_shapes_the_extension_allow_list_missed(self):
-        # Measured on a developer's disk (`find $HOME /usr/lib/python3 /usr/share/doc
-        # -xdev`): COPYING.LIB is 195 copies, four times the COPYING.LESSER the
-        # previous revision did cover. Closing one member of a class and calling the
-        # class closed leaves the COMMONER member open, every time.
-        for name in ("COPYING.LIB", "COPYINGv2", "COPYINGv3", "COPYING3",
-                     "COPYING.LESSERv2", "COPYING.LESSERv3", "COPYING.LGPLv2.1",
-                     "LICENSES-en.txt", "license.terms", "License.rtf",
-                     "LicenseRef-KDE-Accepted-LGPL.txt"):
-            self.assertTrue(gen._is_license_name(name),
-                            f"{name} would be read as absent, and absent is the default")
-
-    def test_the_extension_test_only_excludes_it_never_admits(self):
-        # The polarity IS the fix. An extension nobody enumerated has to fail toward
-        # being READ (and then recognized or refused), because failing toward absent is
-        # a silent legal claim while failing toward read is a human being asked.
-        self.assertTrue(gen._is_license_name("LICENSE.zzz"))
-        self.assertTrue(gen._is_license_name("COPYING.some-new-convention"))
-        self.assertFalse(gen._is_license_name("license.py"))
-        self.assertFalse(gen._is_license_name("LICENSE.woff2"))
-
-    def test_a_gnu_copying_lib_holding_terms_is_opened_not_defaulted(self):
-        (self.tmp / "COPYING.LIB").write_text(APACHE_FULL_TEXT, encoding="utf-8")
-        self.assertEqual(gen.resolve_license(self.tmp), ("Apache-2.0", ""))
-
-    def test_the_reuse_directory_itself_is_not_a_document(self):
-        # `LICENSES` became a recognizable NAME when the plural stem was added, and a
-        # directory holds no terms, so the whole REUSE layout answered with the refusal
-        # meant for a `LICENSE` that is a directory. The container is not the document.
-        d = self.tmp / "LICENSES"
-        d.mkdir()
-        (d / "Apache-2.0.txt").write_text(APACHE_FULL_TEXT, encoding="utf-8")
-        self.assertEqual(gen.resolve_license(self.tmp), ("Apache-2.0", ""))
-
-    def test_a_license_that_is_a_directory_is_still_a_refusal(self):
-        # The other side of the same edit: `LICENSE` singular promises one document.
-        (self.tmp / "LICENSE").mkdir()
-        ident, problem = gen.resolve_license(self.tmp)
-        self.assertIsNone(ident)
-        self.assertIn("directory", problem)
-
-
-COMMONS_CLAUSE_BODY = (
-    "The Software is provided to you by the Licensor under the License, as defined "
-    "below, subject to the following condition. Without limiting other conditions in "
-    "the License, the grant of rights under the License will not include, and the "
-    "License does not grant to you, the right to Sell the Software.")
-
-
-class TestAShapeIsNotALicenceToSkipTheContent(unittest.TestCase):
-    """`_LINK_DEF_LINE`, `_SPDX_LINE` and `_BARE_URL_LINE` dropped a line on its SHAPE,
-    and `_Doc` drops an ornament line before any recognizer runs, so their content was
-    never read by anything. A whole Commons Clause pasted into a link label or after an
-    `SPDX-FileCopyrightText:` key was invisible to all six recognizers while the SAME
-    TEXT unwrapped was refused. The control is what makes it a finding.
-    """
-
-    def _refused(self, body):
-        ident, why = gen.license_terms(body)
-        self.assertIsNone(ident, f"recognized as {ident}")
-
-    def _ok(self, body, want):
-        self.assertEqual(gen.license_terms(body)[0], want)
-
-    def test_the_control_the_same_text_unwrapped(self):
-        self._refused(MIT_FILE_TEXT + "\n" + COMMONS_CLAUSE_BODY + "\n")
-
-    def test_terms_hidden_in_a_markdown_link_label(self):
-        self._refused(MIT_FILE_TEXT + f"\n[{COMMONS_CLAUSE_BODY}]: https://acme.example/cc\n")
-        self._refused(APACHE_FULL_TEXT + f"\n[{COMMONS_CLAUSE_BODY}]: https://acme.example/cc\n")
-
-    def test_terms_hidden_after_an_spdx_key(self):
-        self._refused(MIT_FILE_TEXT + f"\nSPDX-FileCopyrightText: {COMMONS_CLAUSE_BODY}\n")
-
-    def test_the_legitimate_forms_still_pass(self):
-        self._ok("SPDX-License-Identifier: MIT\n\n" + MIT_FILE_TEXT, "MIT")
-        self._ok("SPDX-FileCopyrightText: Copyright 2020 Acme\n\n" + MIT_FILE_TEXT, "MIT")
-        self._ok(MIT_FILE_TEXT + "\n[others]: https://example.com/contributors\n", "MIT")
-        self._ok(APACHE_FULL_TEXT, "Apache-2.0")   # ships its own bare URL line
-
-    def test_a_url_line_is_read_like_every_other_line(self):
-        """This hole shipped on an UNMEASURED sentence: that vetoing a URL line
-        "would refuse the `http://www.apache.org/licenses/` line Apache-2.0 itself
-        ships". The plural `licenses` is not in the vocabulary, so it scores nothing,
-        and all six licenses resolve with the veto on. A residual justified by a
-        sentence nobody checked is this module's own failure mode, applied to itself.
+        This test never writes to that pipe and never closes it, which is what an
+        operator's terminal looks like to a subprocess: readable, and silent. The
+        pipe is the whole point, so communicate() is not used anywhere near it --
+        communicate() closes stdin and would hide the very defect under test.
         """
-        for path in ("no-commercial-use-permitted",
-                     "license-terms/non-commercial-only-expires-2026",
-                     "terms/redistribution-prohibited"):
-            ident, _ = gen.license_terms(f"{MIT_FILE_TEXT}\nhttps://acme.example/{path}\n")
-            self.assertIsNone(ident, f"terms spelled into a URL path resolved: {path}")
+        prog = (
+            "import importlib.util, sys\n"
+            f"spec = importlib.util.spec_from_file_location('m', {str(SCRIPTS / 'octo_pkg.py')!r})\n"
+            "m = importlib.util.module_from_spec(spec)\n"
+            "sys.modules['m'] = m\n"
+            "spec.loader.exec_module(m)\n"
+        ) + body
+        return subprocess.Popen(
+            [sys.executable, "-c", prog], stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env={**os.environ, "HOME": self._home or os.environ["HOME"]})
 
-    def test_the_url_lines_real_licenses_ship(self):
-        # A path is read against a NARROW vocabulary, not the full one: segmenting
-        # `gnu.org/licenses/why-not-lgpl.html` yields "not", which is a terms word,
-        # and the full vocabulary refused the GPL's own trailing link.
-        for url in ("http://www.apache.org/licenses/", "https://www.gnu.org/licenses/",
-                    "https://opensource.org/licenses/MIT",
-                    "https://www.gnu.org/licenses/why-not-lgpl.html"):
-            self._ok(f"{MIT_FILE_TEXT}\n{url}\n", "MIT")
-        for text, want in ((APACHE_FULL_TEXT, "Apache-2.0"), (GPL3_TEXT, "GPL-3.0-only"),
-                           (MPL2_TEXT, "MPL-2.0"), (AGPL3_TEXT, "AGPL-3.0-only"),
-                           (BSD3_TEXT, "BSD-3-Clause")):
-            self._ok(text, want)
+    def _finish(self, proc, what: str) -> str:
+        """Wait for a child, and FAIL by name if it is still waiting on a human."""
+        try:
+            proc.wait(timeout=self.TTL)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=self.TTL)
+            self.fail(f"{what}: the child never returned. Something below it is "
+                      f"blocked on a prompt, waiting for an answer that cannot arrive.")
+        out = proc.stdout.read().decode("utf-8", "replace")
+        err = proc.stderr.read().decode("utf-8", "replace")
+        self.assertEqual(proc.returncode, 0, f"{what} exited {proc.returncode}: {err}")
+        return out
 
-    def test_what_actually_remains_is_following_the_link(self):
-        # STATED: the module does not fetch, so terms living at the other end of an
-        # ordinary-looking URL are outside what it can see.
-        self._ok(f"{MIT_FILE_TEXT}\nhttps://acme.example/terms.html\n", "MIT")
+    def _signed_copy(self) -> tuple:
+        """A package that already carries a .sig, copied the way a publish copies it.
 
-    def test_a_line_in_letters_this_module_cannot_read(self):
-        """`_WORD` is `[0-9]+|[a-z]+`, so a line in Greek, Cyrillic, Chinese,
-        fullwidth or mathematical-bold letters contributed NO words, and
-        `outside_is_ornament` walks the word stream, so it was unreachable by every
-        check. A third ornament shape, and this one is a whole alphabet."""
-        for line in ("\u0391\u03c0\u03b1\u03b3\u03bf\u03c1\u03b5\u03cd\u03b5\u03c4\u03b1\u03b9 \u03b7 "
-                     "\u03b5\u03bc\u03c0\u03bf\u03c1\u03b9\u03ba\u03ae \u03c7\u03c1\u03ae\u03c3\u03b7.",
-                     "\uff2e\uff2f\uff2e\uff0d\uff23\uff2f\uff2d\uff2d\uff25\uff32\uff23\uff29\uff21\uff2c",
-                     "\u4ec5\u9650\u975e\u5546\u4e1a\u4f7f\u7528",
-                     "\u0422\u043e\u043b\u044c\u043a\u043e \u043d\u0435\u043a\u043e\u043c\u043c\u0435\u0440\u0447\u0435\u0441\u043a\u043e\u0435"):
-            ident, why = gen.license_terms(f"{MIT_FILE_TEXT}\n{line}\n")
-            self.assertIsNone(ident, f"unreadable script resolved: {line[:20]}")
-            self.assertIn("cannot read", why)
+        This is the reported shape: copytree brings skill.json.sig along, and the next
+        ssh-keygen finds its destination occupied.
+        """
+        key = self.mint_key()
+        src = self.stage("signed")
+        self.sign(key, src)
+        self.assertTrue((src / octo_pkg.SIG_NAME).is_file())
+        pub = self.tmp / "publish"
+        shutil.copytree(src, pub)
+        self.assertTrue((pub / octo_pkg.SIG_NAME).is_file(),
+                        "the copy must carry the stale signature, or this proves nothing")
+        return key, pub
 
-    def test_rules_and_blanks_are_still_ornament(self):
-        self._ok(f"{MIT_FILE_TEXT}\n---\n\n===\n\n***\n", "MIT")
+    # ---------------------------------------------------------------- stdin
 
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_run_does_not_hand_a_child_a_live_stdin(self):
+        """RED before the fix: _run passed input=None, subprocess handed the child the
+        parent's stdin, and ssh-keygen sat on the overwrite prompt forever."""
+        key, pub = self._signed_copy()
+        proc = self._live_stdin_child(
+            f"cp = m._run(['ssh-keygen', '-Y', 'sign', '-f', {str(key)!r}, '-n',"
+            f" m.SIG_NAMESPACE, {str(pub / 'skill.json')!r}])\n"
+            "print('RETURNED', cp.returncode)\n")
+        out = self._finish(proc, "_run over an existing signature")
+        # Not just "it came back". The two return codes are the two stdin states, and
+        # neither of them is a signature: measured, rc 0 here is ssh-keygen reading EOF
+        # and DECLINING the overwrite, leaving the old .sig in place over bytes it no
+        # longer covers, which is the quiet half of this very bug. rc 124 is a live
+        # stdin, the child sitting on the prompt until the deadline killed it. So 0
+        # proves the stdin was dead and nothing more; that the decline is also repaired
+        # is what test_publishing_the_same_package_twice asserts, and it is the only
+        # test that does. Asserting merely that the child returned would let the
+        # deadline stand in for the dead stdin and this test would pass on a tree where
+        # every child waits out the full ceiling.
+        self.assertIn("RETURNED 0", out,
+                      "the child came back, but not through a dead stdin: a 124 here "
+                      "means it sat on the overwrite prompt until the deadline killed "
+                      "it, so stdin was live and only the ceiling ended it")
 
-class TestUnfenceIsLinear(unittest.TestCase):
-    """`_unfence` stripped ONE fence glyph per pass and re-scanned the whole line, so
-    a line of `"* " * n` cost O(n^2): 4.9s at n=4000 and a 64 KB single-line LICENSE
-    that did not finish in ten minutes. A list of bullets is not an attack, it is a
-    markdown file, so that was unbounded work reachable from ordinary input.
+    @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    def test_publishing_the_same_package_twice_signs_the_manifest_both_times(self):
+        """Idempotence, which is the half a timeout would not have fixed.
 
-    Two mechanisms answer and each is sufficient on its own, so this asserts BOTH
-    directly rather than pretending a single revert can be caught by a timing test.
-    """
+        Publish once, change the manifest, publish again into the same directory. The
+        second signature must cover the second manifest. Before the fix the second
+        ssh-keygen either blocked on the prompt or, on EOF, declined it and exited 0
+        leaving the FIRST signature in place: rc 0, and a package whose signature
+        verifies against bytes nobody has.
+        """
+        key, pub = self._signed_copy()
+        mpath = pub / "skill.json"
+        proc = self._live_stdin_child(
+            "import json, pathlib\n"
+            f"key, mpath = {str(key)!r}, pathlib.Path({str(mpath)!r})\n"
+            "def covers():\n"
+            "    sig = mpath.with_name(mpath.name + '.sig')\n"
+            "    cp = m._run(['ssh-keygen', '-Y', 'check-novalidate', '-n',"
+            " m.SIG_NAMESPACE, '-s', str(sig)], stdin_bytes=mpath.read_bytes())\n"
+            "    return cp.returncode == 0\n"
+            "m._sign(pathlib.Path(key), mpath)\n"
+            "print('PUBLISH1', covers())\n"
+            "man = json.loads(mpath.read_text())\n"
+            "man['version'] = '9.9.9'\n"
+            "mpath.write_text(json.dumps(man, indent=2) + chr(10))\n"
+            "m._sign(pathlib.Path(key), mpath)\n"
+            "print('PUBLISH2', covers())\n")
+        out = self._finish(proc, "publishing the same package twice")
+        self.assertIn("PUBLISH1 True", out, "the first publish did not sign the manifest")
+        self.assertIn("PUBLISH2 True", out,
+                      "the second publish left a signature over the previous manifest: "
+                      "the stale .sig was not cleared before ssh-keygen ran")
 
-    def test_the_head_pattern_consumes_a_whole_run_in_one_match(self):
-        # Mechanism one, asserted as a property of the pattern rather than a clock.
-        self.assertEqual(gen._FENCE_HEAD.match("* " * 50).end(), 100)
-        self.assertEqual(gen._FENCE_HEAD.match("// " * 30).end(), 90)
+    # ---------------------------------------------------------------- the deadline
 
-    def test_the_loop_is_capped(self):
-        # Mechanism two. A fixpoint loop over a shrinking string terminates, so the
-        # cap is not about termination: it bounds the WORK when a future head pattern
-        # stops matching runs.
-        import inspect
-        src = inspect.getsource(gen._unfence)
-        self.assertIn("for _ in range(", src, "the unfence loop lost its cap")
-        self.assertNotIn("while out != prev", src)
+    def test_a_child_that_outlives_its_deadline_comes_back_as_a_failure(self):
+        """The timeout branch is what covers a channel nobody enumerated, so it is the
+        one path that must not be taken on trust.
 
-    def test_a_pathological_line_is_handled_in_bounded_time(self):
-        # The end-to-end fact, which goes red only if BOTH mechanisms are reverted.
+        A sleeping child is the honest stand-in for a child sitting on a prompt: from
+        the parent, waiting on a human and waiting on a clock are the same thing. What
+        the caller must see is a FAILED CompletedProcess, not an exception, because
+        every call site in this module branches on cp.returncode and an exception there
+        would turn a wedge into a traceback instead of a message.
+        """
         started = time.monotonic()
-        gen._unfence("* " * 8000)
-        gen.license_terms("* " * 8000 + "\n" + MIT_FILE_TEXT)
-        self.assertLess(time.monotonic() - started, 5.0,
-                        "a 16k-glyph fence line took seconds; _unfence is quadratic again")
+        cp = octo_pkg._run([sys.executable, "-c", "import time; time.sleep(30)"],
+                           timeout=1.5)
+        self.assertEqual(cp.returncode, 124,
+                         "a killed child must report 124, the shape coreutils timeout "
+                         "uses, so cp.returncode != 0 catches it like any other failure")
+        self.assertLess(time.monotonic() - started, 15,
+                        "_run returned only after the child finished on its own: the "
+                        "deadline was not enforced")
+        self.assertIn(b"killed after", cp.stderr or b"",
+                      "the reason a call failed must survive into stderr, or the caller "
+                      "reports a blank failure")
 
-    def test_fences_are_still_stripped(self):
-        self.assertEqual(gen._unfence(" * Copyright 2020 Acme"), "Copyright 2020 Acme")
-        self.assertEqual(gen._unfence("/* MIT */"), "MIT")
-        self.assertEqual(gen._unfence("// hello"), "hello")
-        self.assertEqual(gen._unfence("<!-- x -->"), "x")
+    def test_the_deadline_does_not_cut_a_child_that_is_working(self):
+        """The benign half. A ceiling that fires early would be its own outage, so the
+        same call one edit away from the one above has to come back rc 0."""
+        cp = octo_pkg._run([sys.executable, "-c", "print('done')"], timeout=1.5)
+        self.assertEqual(cp.returncode, 0, (cp.stderr or b"").decode())
+        self.assertIn(b"done", cp.stdout or b"")
 
+    def test_the_deadline_ends_the_whole_tree_not_just_the_child(self):
+        """A timeout that reports a kill it did not perform is worse than no timeout:
+        the caller believes the wedge is over and the process is still on the prompt.
 
-class TestATitleIsANameNotAWarning(unittest.TestCase):
-    """`modified` was made conditional on `bsd` and its seven siblings were left alone,
-    which is the same list-shaped failure one member in. Each of these resolved a
-    verbatim MIT body to plain MIT."""
-
-    def _refused(self, title):
-        ident, _ = gen.license_terms(mutate(MIT_FILE_TEXT, "MIT License", title))
-        self.assertIsNone(ident, f"{title!r} resolved to {ident}")
-
-    def test_every_qualifier_that_only_names_a_bsd_variant(self):
-        for title in ("Modified MIT License", "Revised MIT License", "New MIT License",
-                      "Simplified MIT License", "Clear MIT License",
-                      "MIT Licence (Revised)", "MIT License Version 2", "MIT License v3"):
-            self._refused(title)
-
-    def test_a_gnu_title_names_three_licenses_and_contradicts_the_rest(self):
-        # `gnu` was REMOVED from the family map on the reasoning that it names three
-        # licenses and so cannot contradict any of them. That let "GNU General Public
-        # License" sit over a verbatim MIT body and resolve to MIT. It names three, so
-        # it contradicts everything that is not one of the three.
-        for title in ("GNU General Public License", "General Public License",
-                      "GNU License", "Public License"):
-            self._refused(title)
-        self.assertEqual(gen.license_terms(GPL3_TEXT)[0], "GPL-3.0-only")
-        self.assertEqual(gen.license_terms(AGPL3_TEXT)[0], "AGPL-3.0-only")
-
-    def test_two_concrete_names_are_a_dual_license_claim(self):
-        # The manifest carries ONE identifier, so a title offering a choice is not a
-        # title: picking a side drops the option its author granted.
-        self._refused("MIT or Apache License")
-
-    def test_a_title_naming_another_license_contradicts_the_body(self):
-        for title in ("Modified BSD License", "Apache License", "Mozilla Public License"):
-            self._refused(title)
-
-    def test_a_concrete_name_is_not_widened_by_the_set_valued_words(self):
-        # The sibling test above closed ONE member: a title naming only the family of
-        # families over a body outside it. The union direction stayed open, and it runs
-        # the wrong way: naming a SPECIFIC license widened what the title would accept.
-        # `affero` and `lesser` were dragged back up into the whole GNU set, and `public`
-        # dragged that set into any title carrying the word, so an MPL or EPL title sat
-        # over a GPL body with no problem raised. Measured against the real sample bodies,
-        # all five silent:
-        #     GNU Affero General Public License over GPL-3.0  -> GPL-3.0-only
-        #     GNU Lesser General Public License over GPL-3.0  -> GPL-3.0-only
-        #     GNU Lesser General Public License over AGPL-3.0 -> AGPL-3.0-only
-        #     Mozilla Public License            over GPL-3.0  -> GPL-3.0-only
-        #     Eclipse Public License            over GPL-3.0  -> GPL-3.0-only
-        # An AGPL title over a GPL body is a materially different grant; the network
-        # clause is the reason AGPL exists.
-        for title, body, name in (
-                ("GNU Affero General Public License", GPL3_TEXT, "agpl title, gpl body"),
-                ("GNU Lesser General Public License", GPL3_TEXT, "lgpl title, gpl body"),
-                ("GNU Lesser General Public License", AGPL3_TEXT, "lgpl title, agpl body"),
-                ("Mozilla Public License", GPL3_TEXT, "mpl title, gpl body"),
-                ("Eclipse Public License", GPL3_TEXT, "epl title, gpl body")):
-            spdx, problem = gen.license_terms(f"{title}\n\n{body}")
-            self.assertIsNone(spdx, f"{name} resolved to {spdx} instead of refusing")
-            self.assertTrue(problem, f"{name} refused with no stated problem")
-        # and the legitimate resolves the narrowing could have broken
-        self.assertEqual(gen.license_terms(f"GNU General Public License\n\n{GPL3_TEXT}")[0],
-                         "GPL-3.0-only")
-        self.assertEqual(gen.license_terms(f"GNU General Public License\n\n{AGPL3_TEXT}")[0],
-                         "AGPL-3.0-only")
-        self.assertEqual(gen.license_terms(f"Mozilla Public License Version 2.0\n\n{MPL2_TEXT}")[0],
-                         "MPL-2.0")
-
-    def test_the_published_bsd_names_still_resolve(self):
-        for title in ("BSD 3-Clause License", "Modified BSD License", "New BSD License",
-                      "Revised BSD License"):
-            self.assertEqual(gen.license_terms(f"{title}\n\n{BSD3_TEXT}")[0],
-                             "BSD-3-Clause", title)
-
-    def test_the_other_five_still_resolve_under_their_own_titles(self):
-        self.assertEqual(gen.license_terms(MIT_FILE_TEXT)[0], "MIT")
-        self.assertEqual(gen.license_terms(APACHE_FULL_TEXT)[0], "Apache-2.0")
-        self.assertEqual(gen.license_terms(GPL3_TEXT)[0], "GPL-3.0-only")
-        self.assertEqual(gen.license_terms(AGPL3_TEXT)[0], "AGPL-3.0-only")
-        self.assertEqual(gen.license_terms(MPL2_TEXT)[0], "MPL-2.0")
-
-
-class TestADeclarationThatExistsIsNotAnAbsentOne(unittest.TestCase):
-    """YAML types the value. `license: [MIT]` is a list, `license: 2.0` a float, and
-    `license: no` the boolean False because YAML 1.1 reads `no` as a bool. Each was
-    measured as "declared nothing", which took the repo default over a field the author
-    had filled in: the silent-default class this module closes for files, one level up.
-    """
-
-    def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="test-decl-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
-
-    def _skill(self, decl):
-        d = self.tmp / f"s{len(list(self.tmp.iterdir()))}"
-        d.mkdir()
-        (d / "SKILL.md").write_text(f"---\nname: probe\ndescription: d\n{decl}\n---\n# P\n",
-                                    encoding="utf-8")
-        return d
-
-    def test_a_typed_declaration_is_refused_not_defaulted(self):
-        for decl in ("license: [MIT]", "license: no", "license: 2.0", "license: {}",
-                     'license: ""'):
-            manifest, problem = gen.describe(self._skill(decl), "MIT")
-            self.assertIsNone(manifest, f"{decl!r} took the repo default")
-            self.assertIn("not a bare SPDX identifier", problem)
-
-    def test_the_sibling_spelling_in_the_same_holder_is_compared(self):
-        # The loop broke at the first spelling, so `license: MIT` beside
-        # `licence: Apache-2.0` published MIT and never compared them. Same class as
-        # two holders, one level in.
-        manifest, problem = gen.describe(
-            self._skill("license: MIT\nlicence: Apache-2.0"), "MIT")
-        self.assertIsNone(manifest)
-        self.assertIn("two different license declarations", problem)
-
-    def test_a_capitalised_key_is_not_an_absent_declaration(self):
-        self.assertEqual(
-            gen.describe(self._skill("License: Apache-2.0"), "MIT")[0]["license"],
-            "Apache-2.0")
-
-    def test_an_identifier_this_generator_cannot_place_is_refused(self):
-        # `license: foo-bar` matched the bare-token shape, so it was written into a
-        # public manifest as a license and the schema called it valid, because the
-        # schema only checks the string is short.
-        for decl in ("license: foo-bar", "license: MMIT", "license: Apache-9.9"):
-            manifest, problem = gen.describe(self._skill(decl), "MIT")
-            self.assertIsNone(manifest, f"{decl!r} was written into a manifest")
-            self.assertIn("not an SPDX identifier", problem)
-        for decl, want in (("license: NOASSERTION", "NOASSERTION"),
-                           ("license: proprietary", "proprietary"),
-                           ("license: GPL-3.0", "GPL-3.0-only")):
-            self.assertEqual(gen.describe(self._skill(decl), "MIT")[0]["license"], want)
-
-    def test_two_holders_that_disagree_are_compared(self):
-        manifest, problem = gen.describe(
-            self._skill("license: MIT\nmetadata:\n  license: Apache-2.0"), "MIT")
-        self.assertIsNone(manifest)
-        self.assertIn("two different license declarations", problem)
-
-    def test_the_controls(self):
-        self.assertEqual(gen.describe(self._skill("license: Apache-2.0"), "MIT")[0]["license"],
-                         "Apache-2.0")
-        self.assertEqual(gen.describe(self._skill("license: MIT\nmetadata:\n  license: MIT"),
-                                      "MIT")[0]["license"], "MIT")
-        self.assertEqual(gen.describe(self._skill("# nothing"), "MIT")[0]["license"], "MIT")
-
-
-class TestEveryExclusionIsARoadBackToTheDefault(unittest.TestCase):
-    """Whatever the name test declines, `resolve_license` used to answer for with the
-    same `(None, "")` it uses for an empty directory, and `(None, "")` is the only road
-    to the repo default. Five shapes reached MIT in silence that way, each measured.
-    """
-
-    def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="test-setaside-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
-
-    def _skill(self, files, dirs=()):
-        d = self.tmp / f"s{len(list(self.tmp.iterdir()))}"
-        d.mkdir()
-        (d / "SKILL.md").write_text("---\nname: probe\ndescription: d\n---\n# P\n",
-                                    encoding="utf-8")
-        for x in dirs:
-            (d / x).mkdir(parents=True, exist_ok=True)
-        for n, c in files.items():
-            f = d / n
-            f.parent.mkdir(parents=True, exist_ok=True)
-            f.write_text(c, encoding="utf-8")
-        return d
-
-    def _refuses(self, files, dirs=()):
-        manifest, problem = gen.describe(self._skill(files, dirs), "MIT")
-        self.assertIsNone(manifest, "took the repo default over unread license material")
-        return problem
-
-    def test_an_empty_reuse_directory_is_not_an_absent_license(self):
-        self.assertIn("LICENSES/", self._refuses({}, dirs=["LICENSES"]))
-
-    def test_a_reuse_directory_holding_only_notices(self):
-        self.assertIn("LICENSES/", self._refuses({"LICENSES/THIRD-PARTY.txt": APACHE_FULL_TEXT}))
-
-    def test_a_notices_file_as_the_ONLY_license_named_entry(self):
-        # Excluding a notices file BESIDE a real license is right. Excluding the only
-        # one in the directory answers the question by not asking it.
-        for name in ("LICENSE-EXCEPTIONS", "LICENSE.vendor", "THIRD-PARTY-LICENSE"):
-            self.assertIn(name, self._refuses({name: APACHE_FULL_TEXT}))
-
-    def test_a_license_under_a_denied_extension(self):
-        for name in ("LICENSE.json", "LICENSE.xml", "license.yml"):
-            self.assertIn(name, self._refuses({name: APACHE_FULL_TEXT}))
-
-    def test_a_license_one_directory_down(self):
-        self.assertIn("docs/LICENSE.txt", self._refuses({"docs/LICENSE.txt": APACHE_FULL_TEXT}))
-
-    def test_a_backup_copy_is_never_adopted_as_the_terms(self):
-        # Worse than a silent default, which is what these used to be measured doing:
-        # an editor or patch backup holds what the terms USED to be, and adopting one
-        # publishes a superseded license as the current claim.
-        for name in ("LICENSE.txt~", "LICENSE.orig", "LICENSE.txt.bak", "LICENSE.old",
-                     "LICENSE.rej", "LICENSE.txt.tmp"):
-            self.assertIn(name, self._refuses({name: APACHE_FULL_TEXT}))
-
-    def test_a_package_manifest_that_declares_terms_nothing_reads(self):
-        for name, body in (("package.json", '{"name":"x","license":"AGPL-3.0"}'),
-                           ("pyproject.toml", '[project]\nlicense = "MIT"\n')):
-            self.assertIn(name, self._refuses({name: body}))
-
-    def test_a_lone_notice_file(self):
-        self.assertIn("NOTICE.txt", self._refuses({"NOTICE.txt": APACHE_FULL_TEXT}))
-
-    def test_provenance_files_are_a_report_and_not_a_refusal(self):
-        # `UPSTREAM.md` was measured reaching the default with nothing even reporting
-        # it, because only SKILL.md and README.md were read. It is read now, and it is
-        # a REPORT: refusing on provenance would turn every attributed skill into a
-        # hand-written manifest.
-        d = self._skill({"UPSTREAM.md": "Vendored from https://github.com/foo/bar (AGPL-3.0)\n"})
-        self.assertEqual(gen.describe(d, "MIT")[0]["license"], "MIT")
-        self.assertIn("github.com/foo/bar", gen.upstream_source(d))
-
-    def test_a_backup_beside_a_real_license_does_not_disturb_it(self):
-        d = self._skill({"LICENSE": MIT_FILE_TEXT, "LICENSE.orig": APACHE_FULL_TEXT})
-        self.assertEqual(gen.describe(d, "MIT")[0]["license"], "MIT")
-
-    def test_the_controls_still_reach_the_default_or_their_own_terms(self):
-        d = self._skill({"notes.md": "nothing license-shaped here"})
-        self.assertEqual(gen.describe(d, "MIT")[0]["license"], "MIT")
-        d = self._skill({"LICENSE": MIT_FILE_TEXT, "LICENSE-3RD-PARTY.txt": APACHE_FULL_TEXT})
-        self.assertEqual(gen.describe(d, "MIT")[0]["license"], "MIT")
-        d = self._skill({"LICENSE": MIT_FILE_TEXT, "references/LICENSE.txt": APACHE_FULL_TEXT})
-        self.assertEqual(gen.describe(d, "MIT")[0]["license"], "MIT")
-        d = self._skill({"LICENSES/Apache-2.0.txt": APACHE_FULL_TEXT})
-        self.assertEqual(gen.describe(d, "MIT")[0]["license"], "Apache-2.0")
-
-
-class TestATimeLimitIsTerms(unittest.TestCase):
-    """`_name_like` and `_is_copyright_notice` veto a line by VOCABULARY, and a
-    vocabulary is an allow-list: a year is an attribution signal, so any short line
-    carrying one and no listed word came through as a holder. Every case here was
-    measured resolving its document to plain MIT.
-    """
-
-    def _refused(self, body):
-        ident, why = gen.license_terms(body)
-        self.assertIsNone(ident, f"recognized as {ident}")
-        return why
-
-    def _mit(self, body):
-        ident, why = gen.license_terms(body)
-        self.assertEqual(ident, "MIT", f"refused a real holder: {why}")
-
-    def test_a_dated_restriction_floating_over_the_license(self):
-        for line in ("Valid until 2026", "Trial ends 2026", "Void After 2026",
-                     "Academic Purposes 2024"):
-            self._refused(f"{line}\n\n{MIT_FILE_TEXT}")
-        self._refused(MIT_FILE_TEXT + "\nExpires 2027-01-01\n")
-
-    def test_the_scope_and_term_phrasings_measured_in_cycle_six(self):
-        for holder in ("Copyright 2020 Foo, solely for Acme Inc.",
-                       "Copyright 2020 Foo; Expiring 2027",
-                       "Copyright 2020 Foo, limited to Acme Inc.",
-                       "Copyright 2020 Foo; Ceasing 2027",
-                       "Copyright 2020 Foo; Resale Banned",
-                       "Copyright 2020 Foo; Resale Barred",
-                       "Copyright 2020 Foo; Unsellable",
-                       "Copyright 2020 Foo; Unlicensed"):
-            self._refused(mutate(MIT_FILE_TEXT, "Copyright (c) 2026 Someone Else, Inc.",
-                                 holder))
-
-    def test_a_contact_does_not_buy_a_scoping_line_its_way_in(self):
-        # ANY capitalised line of ten words or fewer plus a contact was ornament
-        # anywhere, so a restriction bought admission with an address.
-        self._refused("Resale Banned <legal@acme.example>\n\n" + MIT_FILE_TEXT)
-        self._refused("Enterprise Customers Of Acme <legal@acme.example>\n\n"
-                      + MIT_FILE_TEXT)
-        self._mit(MIT_FILE_TEXT + "\n\nAlice Smith <alice@example.com>\n")
-
-    def test_a_contact_line_is_read_by_its_PATH_and_not_only_its_words(self):
-        """Isolates the contact-path veto, which the tests above cannot see.
-
-        `words()` fuses intra-word hyphens, so `eula-restricted-build` becomes one
-        token and the ordinary vocabulary check on a contact-bearing line is
-        unreachable for exactly the text a URL can carry. "eula" is the one word in
-        `_URL_TERMS` and NOT in `_TERMS_VOCAB`, so only the path split can answer
-        here: reverting it leaves every other test green and flips this one.
+        Measured before the group kill existed: this exact command returned rc 124 in
+        2.0 s with the backgrounded grandchild still alive. The real shape is `git
+        clone` over ssh, where the grandchild is `ssh` and it is the one holding the
+        terminal; `sh -c` reproduces it with no network and no keys.
         """
-        self._refused(MIT_FILE_TEXT +
-                      "\nDocs <https://acme.example/eula-restricted-build>\n")
-        # And the control: the same shape with nothing restrictive in the path.
-        self._mit(MIT_FILE_TEXT + "\nDocs <https://acme.example/getting-started>\n")
+        marker = f"octo-pkg-grandchild-{os.getpid()}"
+        sleeper = self._sleeper(marker)
+        started = time.monotonic()
+        cp = octo_pkg._run(["sh", "-c", f"{sleeper} & exec {sleeper}"], timeout=2)
+        elapsed = time.monotonic() - started
+        self.assertEqual(cp.returncode, 124, (cp.stderr or b"").decode())
+        self.assertLess(elapsed, 15, "the deadline did not fire; _run waited out the "
+                                     "child instead of killing it")
+        self.assertEqual(self._survivors(marker), [],
+                         "_run reported 124 while a grandchild was still running: the "
+                         "deadline killed the direct child and left its tree behind")
 
-    def test_a_second_sentence_on_the_copyright_line(self):
-        for holder in ("Copyright 2020 Foo. Educational purposes.",
-                       "Copyright 2020 Foo. Revoked 2026.",
-                       "Copyright 2020 Foo, exclusively for Acme Inc."):
-            self._refused(mutate(MIT_FILE_TEXT, "Copyright (c) 2026 Someone Else, Inc.",
-                                 holder))
+    def test_a_call_that_names_no_timeout_still_has_the_ceiling(self):
+        """The production shape. Every _run call in this module except the tests calls
+        it with no timeout argument at all, so a ceiling that only exists when a caller
+        passes one is not a ceiling. Two mutants survived the suite on exactly this gap:
+        a default of None, and the module constant set to None."""
+        self.assertIsInstance(octo_pkg._RUN_TIMEOUT, (int, float),
+                              "the module ceiling is not a number, so no default call "
+                              "is bounded")
+        self.assertGreater(octo_pkg._RUN_TIMEOUT, 0)
+        original = octo_pkg._RUN_TIMEOUT
+        octo_pkg._RUN_TIMEOUT = 1.5
+        self.addCleanup(setattr, octo_pkg, "_RUN_TIMEOUT", original)
+        started = time.monotonic()
+        cp = octo_pkg._run([sys.executable, "-c", "import time; time.sleep(30)"])
+        self.assertEqual(cp.returncode, 124,
+                         "a call with no timeout argument ran unbounded: the constant "
+                         "is not what the default resolves to")
+        self.assertLess(time.monotonic() - started, 15)
 
-    def test_a_title_that_says_the_terms_were_changed(self):
-        # "Modified BSD License" is a published NAME. "Modified MIT License" is a
-        # warning, and it sat over verbatim MIT text resolving to plain MIT.
-        self._refused(mutate(MIT_FILE_TEXT, "MIT License", "Modified MIT License"))
+    # ---------------------------------------------------------------- the installer
 
-    def test_real_holders_that_this_must_not_refuse(self):
-        # Each was measured being refused by a stricter draft of the same rule (one that
-        # required every lower-case word in the notice to be a particle or a corporate
-        # form). It refused a large fraction of a disk sweep, a proportion of one
-        # machine's $HOME that does not reproduce, and was dropped for these.
-        for holder in ("Copyright (c) 2017-present, Jon Schlinkert.",
-                       "Copyright (c) 2014, Nathan LaFreniere and other contributors",
-                       "Copyright (c) 2012-2018 Aseem Kishore, and [others].",
-                       "Copyright 2007, 2008 The Python Markdown Project (v. 1.7 and later)",
-                       "Copyright (c) 2026 Alice Smith <alice@example.com>",
-                       "Copyright (c) 2026 Alice B. Smith",
-                       "Copyright (c) 2026 Acme Inc. and Beta Ltd.",
-                       "Copyright (c) 1998-2000 Thai Open Source Software Center Ltd "
-                       "and Clark Cooper"):
-            self._mit(mutate(MIT_FILE_TEXT, "Copyright (c) 2026 Someone Else, Inc.", holder))
+    def test_the_installers_git_helper_gets_a_dead_stdin(self):
+        """The installer's own stdin discipline, which had no test of its own.
 
-    def test_a_holder_list_under_its_notice_is_still_a_holder_list(self):
-        self._mit(mutate(MIT_FILE_TEXT, "Copyright (c) 2026 Someone Else, Inc.",
-                         "Copyright (c) 2026 Someone Else, Inc.\n    Acme Inc.\n    Beta Ltd."))
+        `git hash-object --stdin` reads standard input and nothing else, so it is the
+        cheapest honest probe: with fd 0 dead it hashes the empty object and exits, and
+        with fd 0 a live pipe it blocks forever. No network, no remote, no keys.
+        """
+        gh = octo_pkg._github_module()
+        proc = self._live_stdin_child(
+            "import importlib.util as u, sys\n"
+            f"s2 = u.spec_from_file_location('gh', {str(BRAIN / 'skills' / 'skill-installer' / 'scripts' / 'install-skill-from-github.py')!r})\n"
+            "gh = u.module_from_spec(s2); sys.modules['gh'] = gh\n"
+            "sys.path.insert(0, %r)\n" % str(BRAIN / "skills" / "skill-installer" / "scripts") +
+            "s2.loader.exec_module(gh)\n"
+            "gh._run_git(['git', 'hash-object', '--stdin'])\n"
+            "print('RETURNED 0')\n")
+        out = self._finish(proc, "install-skill-from-github._run_git reading stdin")
+        self.assertIn("RETURNED 0", out)
+        self.assertTrue(hasattr(gh, "_GIT_TIMEOUT"))
 
-    def test_a_markdown_link_definition_is_a_link_not_terms(self):
-        self._mit(MIT_FILE_TEXT + "\n[others]: https://example.com/contributors\n")
+    def _sleeper(self, marker: str) -> str:
+        """A command whose MARKER survives into the grandchild's own argv.
 
-    # The two tests below use words that are DELIBERATELY absent from _TERMS_VOCAB
-    # ("superseded", "lapses"), because the vocabulary is the mechanism they are not
-    # testing. Reverting the vocabulary leaves them green and reverting the structural
-    # rule turns them red, which is the only way to tell the two apart: with a listed
-    # word, either mechanism answers and neither is proven.
+        It has to be a python child, not `sleep`: with `sh -c "sleep 300 & exec sleep
+        300 # marker"` the survivor's cmdline is a bare `sleep 300` and pgrep finds
+        nothing, so the test passed while the grandchild was alive. A trailing argument
+        to `python -c` lands in sys.argv and therefore in the cmdline.
+        """
+        # 20 s, not 300. These tests call _run IN PROCESS, so the class TTL does not
+        # bound them: with the deadline mutated away, a 300 s sleeper ran to completion
+        # and the mutant reported NOTHING inside a normal budget (rc -9 at 420 s, no
+        # summary). 20 s is long enough to still be running when the 2 s deadline fires
+        # and short enough that a missing deadline comes back as a FAILED assertion.
+        return f"{sys.executable} -c 'import time; time.sleep(20)' {marker}"
 
-    def test_an_UNLISTED_restriction_floating_over_the_license(self):
-        # What the adjacency rule is FOR. Short, capitalised, carrying a year, using a
-        # word nobody put in the vocabulary: a holder to every test except "does this
-        # line continue a copyright notice".
-        for line in ("Lapses 2027", "Superseded 2026"):
-            self._refused(f"{line}\n\n{MIT_FILE_TEXT}")
+    @staticmethod
+    def _alive(marker: str) -> list:
+        """Read only. Split from _survivors because that one kills what it finds, and a
+        test that wants to INSPECT a survivor (its session, say) must look before the
+        cleanup destroys the thing it was about to measure. Never pkill -f: that matches
+        this process's own command line and reaches other sessions on the box."""
+        found = subprocess.run(["pgrep", "-f", marker], capture_output=True, text=True,
+                               stdin=subprocess.DEVNULL, timeout=30)
+        return [pid for pid in found.stdout.split() if pid]
 
-    def test_an_UNLISTED_second_sentence_on_the_copyright_line(self):
-        # What the sentence-break rule is FOR, for the same reason.
-        self._refused(mutate(MIT_FILE_TEXT, "Copyright (c) 2026 Someone Else, Inc.",
-                             "Copyright 2020 Foo. Superseded by v2."))
+    def _survivors(self, marker: str) -> list:
+        alive = self._alive(marker)
+        for pid in alive:                          # never leave the box dirtier
+            try:
+                os.kill(int(pid), signal_module.SIGKILL)
+            except (ProcessLookupError, ValueError):
+                pass
+        return alive
 
+    def test_the_installers_deadline_ends_the_whole_tree_too(self):
+        """The installer is the spawner that clones over ssh, so it is the one where an
+        orphaned grandchild matters most, and it had no grandchild test at all: the
+        mutant that removed its group kill survived the whole suite."""
+        gh = octo_pkg._github_module()
+        original = gh._GIT_TIMEOUT
+        gh._GIT_TIMEOUT = 2.0
+        self.addCleanup(setattr, gh, "_GIT_TIMEOUT", original)
+        marker = f"octo-ins-grandchild-{os.getpid()}"
+        sleeper = self._sleeper(marker)
+        started = time.monotonic()
+        with self.assertRaises(gh.InstallError):
+            gh._run_git(["sh", "-c", f"{sleeper} & exec {sleeper}"])
+        self.assertLess(time.monotonic() - started, 15,
+                        "the installer's deadline did not fire")
+        self.assertEqual(self._survivors(marker), [],
+                         "the installer reported a timeout while a grandchild was "
+                         "still running: it killed the direct child and left its tree")
 
-class TestSpdxTagsCarryWhatOnlyTheyCanCarry(unittest.TestCase):
-    """GPL-3.0-or-later and GPL-3.0-only sit over IDENTICAL text. The tag is the only
-    carrier of the difference, and refusing it for "contradicting" the body threw away
-    the one fact the file had to give."""
+    def test_the_installers_reap_keeps_an_escaper_from_faking_a_leftover(self):
+        """The installer's REAP, which had no anchor of its own.
 
-    def test_or_later_over_gpl3_text_is_kept(self):
+        `_run_git` mirrors octo_pkg._run line for line on the timeout branch, and the
+        reap was measured on one side only. QA deleted the installer's `proc.wait()`
+        and the whole suite stayed green: the two tests that touch this branch cannot
+        see it. test_the_installers_deadline_ends_the_whole_tree_too never reads the
+        exception message, and test_the_installers_git_helper_has_its_own_ceiling
+        asserts the substring "was killed", which the appended " (process group not
+        confirmed dead)" leaves intact. A suffix that only ever ADDS to the message is
+        invisible to any test that matches a prefix of it.
+
+        So this drives the one shape that separates them, the same shape
+        test_a_descendant_that_leaves_the_group_survives_and_is_not_reported drives
+        against octo_pkg: a real `setsid` escaper that holds the output pipe. The
+        escaper keeps the write end open, so the post-kill communicate() expires with
+        our own child SIGKILLed and never reaped; an unreaped child is a zombie, a
+        zombie stays in its process group, and killpg(group, 0) succeeds on one. Take
+        the reap away and every escaper comes back "not confirmed dead", naming a
+        process that is already gone.
+
+        Three assertions, because each alone is satisfied by the wrong thing: that the
+        escaper is really in a session of its own (read from /proc, so a setsid that
+        quietly did nothing fails here rather than passing as an escape), that the
+        descendant which STAYED in the group did die (otherwise this measures a broken
+        group kill and not the reap), and only then that the message stays silent.
+        """
+        if shutil.which("setsid") is None:
+            self.skipTest("setsid is not installed, so the escaper cannot be produced")
+        gh = octo_pkg._github_module()
+        original = gh._GIT_TIMEOUT
+        gh._GIT_TIMEOUT = 2.0
+        self.addCleanup(setattr, gh, "_GIT_TIMEOUT", original)
+        escaped_marker = f"octo-ins-escaper-{os.getpid()}"
+        stayed_marker = f"octo-ins-stayed-{os.getpid()}"
+        self.addCleanup(self._survivors, escaped_marker)
+        self.addCleanup(self._survivors, stayed_marker)
+        with self.assertRaises(gh.InstallError) as failed:
+            gh._run_git(["sh", "-c", f"setsid {self._sleeper(escaped_marker)} & "
+                                     f"exec {self._sleeper(stayed_marker)}"])
+        message = str(failed.exception)
+        # Look before cleaning up: _survivors kills what it finds and /proc goes with
+        # the process, so the session has to be read while the escaper is still there.
+        escapers = self._alive(escaped_marker)
+        sessions = {int(pid): self._session_of(int(pid)) for pid in escapers}
+        self._survivors(escaped_marker)
+        stayed = self._survivors(stayed_marker)
         self.assertEqual(
-            gen.license_terms("SPDX-License-Identifier: GPL-3.0-or-later\n" + GPL3_TEXT),
-            ("GPL-3.0-or-later", ""))
-
-    def test_a_deprecated_id_is_answered_with_its_replacement(self):
+            len(escapers), 1,
+            f"the escaper was not there to be missed ({escapers!r}), so this test "
+            f"measured nothing: with no survivor holding the pipe the post-kill "
+            f"communicate() never expires and the reap is never reached")
+        pid = int(escapers[0])
         self.assertEqual(
-            gen.license_terms("SPDX-License-Identifier: GPL-3.0\n" + GPL3_TEXT)[0],
-            "GPL-3.0-only")
+            sessions[pid], pid,
+            f"the survivor (session {sessions[pid]}) was not in a session of its own, "
+            f"so it did not escape the group and the reap branch is unmeasured here")
+        self.assertEqual(stayed, [],
+                         "the descendant that stayed IN the group survived the kill, "
+                         "which is a broken group kill and not this test's subject")
+        self.assertNotIn(
+            "not confirmed dead", message,
+            "the installer warned about leftovers after a kill that worked: its own "
+            "child was SIGKILLed and left unreaped, and a zombie still answers "
+            f"killpg(group, 0). Message was {message!r}")
 
-    def test_spdx_ids_are_case_insensitive(self):
+    def test_the_kill_is_a_signal_a_child_cannot_ignore(self):
+        """Which signal is not a detail: a shell that traps TERM outlives it and the
+        call still reports a kill. Pinned with a child that traps exactly that."""
+        marker = f"octo-pkg-trapper-{os.getpid()}"
+        sleeper = self._sleeper(marker)
+        started = time.monotonic()
+        cp = octo_pkg._run(["sh", "-c", f"trap '' TERM; {sleeper} & exec {sleeper}"],
+                           timeout=2)
+        self.assertEqual(cp.returncode, 124)
+        self.assertLess(time.monotonic() - started, 15, "the deadline did not fire")
+        self.assertEqual(self._survivors(marker), [],
+                         "a child that ignores SIGTERM survived the deadline: the "
+                         "signal is catchable and the kill is advisory")
+
+    def test_an_explicit_none_timeout_is_documented_as_unbounded(self):
+        """`timeout=None` means NO ceiling. That is a real escape hatch and no caller in
+        this module uses it, which is exactly why it is pinned: the next person who
+        types it should find a test saying what it does, not discover an unbounded
+        child in production."""
+        original = octo_pkg._RUN_TIMEOUT
+        octo_pkg._RUN_TIMEOUT = 0.5
+        self.addCleanup(setattr, octo_pkg, "_RUN_TIMEOUT", original)
+        sleeps_two = [sys.executable, "-c", "import time; time.sleep(2)"]
+        self.assertEqual(octo_pkg._run(sleeps_two).returncode, 124,
+                         "the default ceiling did not apply")
+        self.assertEqual(octo_pkg._run(sleeps_two, timeout=None).returncode, 0,
+                         "timeout=None is documented as unbounded; it now bounds")
+
+    def test_a_killed_clone_does_not_poison_the_retry(self):
+        """install_arm refuses a destination that exists, and a KILLED git leaves a
+        partial one, so without a cleanup the first timeout makes every later attempt
+        die on "destination already exists" instead of on the real reason.
+
+        The premise is measured, not assumed: a real clone killed by this module's own
+        deadline left the destination behind holding a .git at every ceiling tried
+        (0.02 s, 0.05 s, 0.15 s). The opposite is also measured and is why the seam is
+        driven here rather than with a bad URL: a git that fails GRACEFULLY removes its
+        own destination (no such repo, source not a repo, source is a file, all three
+        leave nothing), so a test built on one of those passes with the cleanup deleted.
+
+        _run is replaced for one call to reproduce the measured post-kill state exactly.
+        What is under test is install_arm's contract, not git's behaviour.
+        """
+        target = self.tmp / "arm-dest"
+        real_run = octo_pkg._run
+
+        def killed_mid_clone(args, **kwargs):
+            if args[:2] == ["git", "clone"]:
+                Path(args[-1]).mkdir(parents=True, exist_ok=True)
+                (Path(args[-1]) / ".git").mkdir(exist_ok=True)   # what git leaves
+                return subprocess.CompletedProcess(
+                    args, 124, b"", b"oct-pkg: killed after 600.0s: git clone")
+            return real_run(args, **kwargs)
+
+        octo_pkg._run = killed_mid_clone
+        self.addCleanup(setattr, octo_pkg, "_run", real_run)
+        with self.assertRaises(octo_pkg.PkgError) as failed:
+            octo_pkg.install_arm(self.brain, "https://example.invalid/arm.git",
+                                 dest=str(target))
+        self.assertIn("clone failed", str(failed.exception))
+        self.assertFalse(target.exists(),
+                         f"the killed clone left {target} behind, so every retry now "
+                         f"dies on 'destination already exists' instead of the reason")
+
+    _GUARD_PROBE = (
+        "import os, subprocess, sys\n"
+        "sys.path.insert(0, {scripts!r})\n"
+        "import proc_group\n"
+        "kid = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'],\n"
+        "                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,\n"
+        "                       stderr=subprocess.DEVNULL)\n"
+        "shared = os.getpgid(kid.pid) == os.getpgid(0)\n"
+        "landed = proc_group.kill_group(kid)\n"
+        "kid.wait(timeout=10)\n"
+        # PROBE-SURVIVED is the sentinel, and it exists because a missing guard does
+        # not make this program print a WRONG answer, it makes the program stop. So the
+        # pass condition has to be a line only a living probe can emit: rc -9 with no
+        # sentinel is the failure, rc 124 with no sentinel is a hang, and "no output"
+        # is neither a pass nor a fail until one of those two says which.
+        "print('LEADER', os.getpid() == os.getpgid(0), 'SHARED', shared,\n"
+        "      'GROUPKILL', landed, 'PROBE-SURVIVED', flush=True)\n")
+
+    def _run_guard_probe(self, as_leader: bool) -> str:
+        """Drive kill_group on a child that shares OUR group, from a sacrificial process.
+
+        Sealed in its own session so a missing guard kills the probe rather than this
+        test process; the probe's death by signal is then the failure signal, because a
+        dead reporter reports nothing.
+
+        `as_leader` is the whole point of having two. A process spawned straight into a
+        new session is a group leader, and for a leader os.getpgid(0) == os.getpid(),
+        so a guard comparing against the WRONG one of those is still correct there. The
+        non-leader is the ordinary shape (anything under a shell, a git hook, the sync
+        child) and it is the state that separates the two.
+        """
+        prog = self._GUARD_PROBE.format(scripts=str(SCRIPTS))
+        # shlex.quote, not !r: a python repr escapes the newlines as backslash-n and
+        # sh does not expand those inside single quotes, so the probe arrived at python
+        # as one broken line and printed nothing at all.
+        argv = ([sys.executable, "-c", prog] if as_leader
+                else ["sh", "-c", f"{shlex.quote(sys.executable)} -c {shlex.quote(prog)}"])
+        proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, start_new_session=True)
+        try:
+            out, err = proc.communicate(timeout=self.TTL)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.communicate(timeout=self.TTL)
+            self.fail(f"the guard probe (leader={as_leader}) never returned")
+        state = "leader" if as_leader else "non-leader"
+        text = out.decode("utf-8", "replace")
+        self.assertGreaterEqual(
+            proc.returncode, 0,
+            f"the {state} probe was killed by signal {-proc.returncode}: kill_group "
+            f"fired on a group it shares with the caller, which in production is the "
+            f"caller's own group. stderr: {err.decode('utf-8', 'replace')[-200:]!r}")
+        self.assertIn(
+            "PROBE-SURVIVED", text,
+            f"the {state} probe exited {proc.returncode} without reaching its own last "
+            f"line, so it reported nothing rather than reporting a pass. stdout "
+            f"{text!r}, stderr {err.decode('utf-8', 'replace')[-200:]!r}")
+        return text
+
+    def test_the_group_kill_refuses_to_kill_its_own_group(self):
+        """The guard, tested from BOTH process states, because one of them cannot see it.
+
+        In normal operation the guard never fires: the spawner passes start_new_session,
+        the child leads its own group, and the comparison is always false. It matters in
+        one case, a regression in the spawner, and that case is worth pinning: a child
+        without its own session shares ours, and an unguarded killpg then SIGKILLs the
+        caller, its runner and every sibling. Measured that way twice before the guard
+        existed: the mutant did not fail the suite, it killed it, exit -9, no summary.
+
+        Testing it only from a session leader was a hole of the same shape. A leader has
+        os.getpgid(0) == os.getpid(), so a guard comparing against os.getpid() by
+        mistake passes there, and the probe was a leader. Measured: with that mutation,
+        the leader probe returns False and survives while the non-leader probe kills its
+        caller with SIGKILL. Both states are asserted below for that reason.
+
+        What the probe actually prints, because a pushed commit body of this branch
+        says it "prints its pid, pgid, sid and the child's group" and it does not: the
+        line is `LEADER <bool> SHARED <bool> GROUPKILL <bool> PROBE-SURVIVED` and it
+        carries no raw ids at all. That is not a weaker anchor, it is a different one.
+        The discriminating information travels as DERIVED booleans computed inside the
+        probe, where the comparison is made: `LEADER` is os.getpid() == os.getpgid(0)
+        and `SHARED` is the child's group == the probe's own. The equality asserted at
+        the end of this test, seen == {True: True, False: False}, is what proves the
+        two iterations really ran in different process states, which is the claim the
+        raw ids would have been printed to support. Read the ids as never having been
+        there rather than as having gone missing.
+        """
+        seen = {}
+        for as_leader in (True, False):
+            text = self._run_guard_probe(as_leader)
+            self.assertIn("SHARED True", text,
+                          f"the probe (leader={as_leader}) never reproduced the "
+                          f"shared-group case: {text!r}")
+            self.assertIn("GROUPKILL False", text,
+                          f"kill_group reported a GROUP kill on the caller's own group "
+                          f"(leader={as_leader}); it must fall back to the direct child")
+            seen[as_leader] = "LEADER True" in text
+        self.assertEqual(seen, {True: True, False: False},
+                         "the two probes did not actually run in different process "
+                         "states, so the pair proves no more than one of them would")
+
+    def test_a_clean_kill_says_nothing_about_leftovers(self):
+        """A warning that fires on correct behaviour is worse than none, because it
+        trains the reader to skip it.
+
+        Measured before the reap wait existed: 11 of 20 CLEAN group kills printed
+        "check for leftovers", including a control with no survivor at all. Cause: a
+        SIGKILLed process is a zombie until reaped and killpg(group, 0) succeeds on a
+        zombie, so the check answered "still there" for a group already dead.
+
+        This one watches the CONSEQUENCE and its rate depends on machine load: the same
+        defect that warned 11 times in 20 under load warned 0 times in 8 on a quiet box,
+        so on its own it is a coin flip and it let the zero-window mutant through. The
+        deterministic pin is the wait itself, in the group_gone test above. Both are
+        kept because they fail for different reasons and this is the one that speaks in
+        the units an operator sees.
+        """
+        marker = f"octo-pkg-clean-{os.getpid()}"
+        sleeper = self._sleeper(marker)
+        noisy = 0
+        for _ in range(8):
+            cp = octo_pkg._run(["sh", "-c", f"{sleeper} & exec {sleeper}"], timeout=0.4)
+            self.assertEqual(cp.returncode, 124)
+            if b"not confirmed dead" in (cp.stderr or b""):
+                noisy += 1
+        self.assertEqual(self._survivors(marker), [])
+        self.assertEqual(noisy, 0,
+                         f"{noisy} of 8 clean kills warned about leftovers; the check "
+                         f"is answering before the group has been reaped")
+
+    def test_the_leftover_warning_is_wired_to_the_check_and_reads_it_in_order(self):
+        """The consumer of group_gone, which nothing anchored.
+
+        Two mutations passed without this: removing the note's condition outright, and
+        reading the process group after the pid has been REAPED. The second is the
+        subtle one and it is silent: group_of then returns None, group_gone is handed
+        None, and the answer is an unconditional "nothing to warn about". So this
+        asserts the group id is real at the moment the check is asked, and that a False
+        answer actually reaches the caller's stderr.
+
+        The reap is the boundary, not the kill. Measured: moving the read to just after
+        kill_group and before communicate() leaves this test and its 21 siblings green,
+        because getpgid still answers for a zombie. Moving it past communicate() turns
+        this test, and only this test, red. An earlier draft of this docstring named the
+        kill as the boundary and would have sent the next reader to the wrong line.
+        """
+        seen = {}
+        real_gone = octo_pkg.proc_group.group_gone
+
+        def recording_gone(proc, group):
+            seen["group"] = group
+            return False                      # force the warning path
+
+        octo_pkg.proc_group.group_gone = recording_gone
+        self.addCleanup(setattr, octo_pkg.proc_group, "group_gone", real_gone)
+        marker = f"octo-pkg-order-{os.getpid()}"
+        sleeper = self._sleeper(marker)
+        cp = octo_pkg._run(["sh", "-c", f"{sleeper} & exec {sleeper}"], timeout=0.4)
+        self._survivors(marker)
+        self.assertEqual(cp.returncode, 124)
+        self.assertIn("group", seen, "the timeout path never consulted group_gone")
+        self.assertIsNotNone(
+            seen["group"],
+            "group_gone was handed None: the process group was read AFTER the kill, by "
+            "which time the pid is reaped, so the check can never answer anything")
+        self.assertIn(b"not confirmed dead", cp.stderr or b"",
+                      "group_gone said the group was still alive and the caller said "
+                      "nothing about it")
+
+    def test_a_group_with_a_live_member_is_not_reported_as_gone(self):
+        """The survivor check, which decides whether a timeout warns or stays quiet.
+
+        It replaced an inference from whether the output pipe was still held, and that
+        inference answered a different question: a survivor that had closed its pipe
+        came back as a clean 124 with nothing said. A check nobody tests is the same
+        silence one layer down, so this asks it both ways round the kill.
+        """
+        proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"],
+                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, start_new_session=True)
+        self.addCleanup(proc.kill)
+        group = proc_group_mod.group_of(proc)
+        self.assertIsNotNone(group)
+        started = time.monotonic()
+        self.assertFalse(proc_group_mod.group_gone(proc, group),
+                         "a group whose member is still running was reported gone, so "
+                         "a survivor would come back as a clean timeout")
+        waited = time.monotonic() - started
+        # The WAIT, not its statistical consequence. A SIGKILLed process is a zombie
+        # until reaped and killpg(group, 0) succeeds on a zombie, so answering
+        # instantly warns on kills that were perfectly clean: 11 of 20, measured. The
+        # rate depends on machine load, which makes a count-the-warnings test a coin
+        # flip on a quiet box; that a populated group costs the full window to declare
+        # dead does not depend on load at all.
+        self.assertGreater(proc_group_mod._REAP_POLL_SECONDS, 0,
+                           "the reap window is zero, so the check answers before a "
+                           "killed group can have been reaped")
+        self.assertGreaterEqual(
+            waited, proc_group_mod._REAP_POLL_SECONDS * 0.5,
+            f"group_gone answered in {waited:.3f}s for a group that still had a live "
+            f"member; it is not waiting out the reap window at all")
+        proc_group_mod.kill_group(proc)
+        proc.wait(timeout=self.TTL)
+        self.assertTrue(proc_group_mod.group_gone(proc, group),
+                        "the group was reported alive after everything in it was "
+                        "killed, which would warn on every single timeout")
+
+    @staticmethod
+    def _session_of(pid: int) -> int | None:
+        """The session id of a live pid, read from /proc. Used to SHOW that a probe
+        produced the state it claims, instead of trusting that setsid ran."""
+        try:
+            stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+        except OSError:
+            return None
+        # comm sits in parentheses and may contain spaces, so split on the LAST ')'.
+        fields = stat.rsplit(")", 1)[1].split()
+        return int(fields[3])          # state, ppid, pgrp, session
+
+    def test_a_descendant_that_leaves_the_group_survives_and_is_not_reported(self):
+        """The limit the module docstring states, pinned instead of asserted in prose.
+
+        proc_group reaches a process GROUP, not a process tree. A descendant that calls
+        setsid is no longer in the group, so the kill misses it AND group_gone cannot
+        see it, and the caller reports an ordinary clean timeout while the escaper is
+        still running. That sentence was a promise with nothing behind it: every other
+        test in this class spawns descendants that STAY in the group, so none of them
+        would notice if the sentence stopped being true in either direction.
+
+        Both halves are asserted, because either one alone is satisfied by the wrong
+        thing: that the escaper is still alive (or the kill did reach it and the note is
+        obsolete) and that stderr stays silent (or the note's second clause is wrong and
+        it does warn). The escaper's session id is read from /proc and compared to its
+        own pid, so a setsid that quietly did nothing fails here instead of passing as
+        an escape that never happened.
+        """
+        if shutil.which("setsid") is None:
+            self.skipTest("setsid is not installed, so the escaper cannot be produced")
+        escaped_marker = f"octo-pkg-escaper-{os.getpid()}"
+        stayed_marker = f"octo-pkg-stayed-{os.getpid()}"
+        self.addCleanup(self._survivors, escaped_marker)
+        self.addCleanup(self._survivors, stayed_marker)
+        cp = octo_pkg._run(
+            ["sh", "-c", f"setsid {self._sleeper(escaped_marker)} & "
+                         f"exec {self._sleeper(stayed_marker)}"], timeout=2)
+        self.assertEqual(cp.returncode, 124, (cp.stderr or b"").decode())
+        # Look before cleaning up: _survivors kills what it finds, and /proc goes away
+        # with the process, so reading the session afterwards measured None once.
+        escapers = self._alive(escaped_marker)
+        sessions = {int(pid): self._session_of(int(pid)) for pid in escapers}
+        self._survivors(escaped_marker)
+        stayed = self._survivors(stayed_marker)
         self.assertEqual(
-            gen.license_terms("SPDX-License-Identifier: mit\n" + MIT_FILE_TEXT)[0], "MIT")
+            len(escapers), 1,
+            f"the escaper was not there to be missed ({escapers!r}), so this test "
+            f"measured nothing: with no survivor a silent stderr proves nothing")
+        pid = int(escapers[0])
+        self.assertEqual(
+            sessions[pid], pid,
+            f"the survivor (session {sessions[pid]}) was not in a session of its own, "
+            f"so it did not escape the group; something else kept it alive and the "
+            f"limit is unmeasured here")
+        self.assertEqual(stayed, [],
+                         "the descendant that stayed IN the group survived the kill, "
+                         "which is not this limit but a broken group kill")
+        self.assertNotIn(
+            b"not confirmed dead", cp.stderr or b"",
+            "the escaper produced a warning: the docstring says such a survivor comes "
+            "back as an ordinary timeout with nothing said, and it no longer does")
 
-    def test_a_tag_from_another_family_is_still_refused(self):
-        ident, why = gen.license_terms("SPDX-License-Identifier: MIT\n" + APACHE_FULL_TEXT)
-        self.assertIsNone(ident)
-        self.assertIn("Apache-2.0", why)
+    def test_an_unanswerable_group_check_does_not_become_a_warning(self):
+        """The "do not cry wolf" clause of group_gone, which nothing anchored.
 
+        group_gone answers True, meaning nothing to warn about, when it CANNOT answer:
+        no group id to ask about, or a kernel that refuses the question. That is the
+        same defect as the zombie window arriving by another door. A warning the reader
+        can do nothing with is what teaches the reader to skip the warning that matters,
+        and the reap-window test only covers the zombie door.
 
-class TestFrontMatterLicenseIsRead(unittest.TestCase):
-    """Eight skills WROTE `license:` and nothing READ it, so a skill declaring
-    Apache-2.0 with no license file was handed the repo default, MIT, in silence."""
+        The live group is asked again AFTER the refusal is lifted and must come back
+        False. Without that line, a True from an empty group and a True from an
+        unanswerable question are the same value and this test would pass on either.
 
-    def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="test-fmlic-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
-        self.root = self.tmp / "skills"
-        self.root.mkdir()
+        NOT covered: the no-killpg branch, which is Windows. Deleting killpg from the os
+        module would assert something about a platform this run is not on.
+        """
+        proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(20)"],
+                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, start_new_session=True)
+        self.addCleanup(proc.wait)
+        self.addCleanup(proc.kill)
+        group = proc_group_mod.group_of(proc)
+        self.assertIsNotNone(group)
+        self.assertTrue(
+            proc_group_mod.group_gone(proc, None),
+            "a missing group id was reported as a live group, so every timeout on a "
+            "platform without getpgid would warn about leftovers it never looked for")
+        real_killpg = proc_group_mod.os.killpg
 
-    def _skill(self, name, fm_extra="", license_text=None):
-        d = self.root / name
-        d.mkdir()
-        (d / "SKILL.md").write_text(f"---\nname: {name}\ndescription: d\n{fm_extra}---\n",
-                                    encoding="utf-8")
-        if license_text is not None:
-            (d / "LICENSE").write_text(license_text, encoding="utf-8")
-        return d
+        def refuses(*_args):
+            raise PermissionError("EPERM, as a kernel that will not answer")
 
-    def _run(self):
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            rc = gen.main(["--root", str(self.root), "--write", "--default-license", "MIT"])
-        return rc, buf.getvalue()
+        proc_group_mod.os.killpg = refuses
+        try:
+            unanswerable = proc_group_mod.group_gone(proc, group)
+        finally:
+            proc_group_mod.os.killpg = real_killpg     # process-wide; restore or leak
+        self.assertTrue(
+            unanswerable,
+            "a group the kernel refused to answer about became a warning; nobody can "
+            "act on it and it costs the warnings that are real their credibility")
+        self.assertFalse(
+            proc_group_mod.group_gone(proc, group),
+            "the live group answered 'gone' once the refusal was lifted, so the True "
+            "above came from the group being empty and not from the refusal at all")
 
-    def test_a_declared_license_with_no_file_is_honoured_not_overwritten(self):
-        self._skill("borrowed", "license: Apache-2.0\n")
-        rc, out = self._run()
-        self.assertEqual(rc, 0, out)
-        got = json.loads((self.root / "borrowed" / "skill.json").read_text(encoding="utf-8"))
-        self.assertEqual(got["license"], "Apache-2.0",
-                         "the declaration was overwritten with the repo default")
+    # Spellings of "signal a whole process group" that a person writes by hand. The
+    # first is the obvious one; the second is the one that made the token count a lie,
+    # because os.kill with a NEGATIVE pid is a group kill and contains no "killpg" at
+    # all. A third spelling, getattr(os, "kill" + "pg"), also passes and always will:
+    # no static check catches a name assembled at runtime. This is a tripwire for the
+    # copy someone writes by hand, which is how the first one got here, and it is not
+    # and cannot be a sandbox against a determined author.
+    _GROUP_KILL_SPELLINGS = (
+        re.compile(r"\bkillpg\b"),
+        re.compile(r"\bos\.kill\s*\(\s*-"),
+    )
 
-    def test_a_declaration_that_contradicts_the_license_file_is_refused(self):
-        self._skill("liar", "license: Apache-2.0\n", MIT_FILE_TEXT)
-        rc, out = self._run()
-        self.assertEqual(rc, 1)
-        self.assertIn("declares Apache-2.0 while its license file says MIT", out)
-        self.assertFalse((self.root / "liar" / "skill.json").exists())
+    @classmethod
+    def _scan_group_kills(cls, roots, exclude=()):
+        """Return (offenders, files_read). One scan, two callers, on purpose.
 
-    def test_a_declaration_that_agrees_is_written(self):
-        self._skill("honest", "license: Apache-2.0\n", APACHE_FULL_TEXT)
-        rc, out = self._run()
-        self.assertEqual(rc, 0, out)
-        self.assertEqual(json.loads((self.root / "honest" / "skill.json")
-                                    .read_text(encoding="utf-8"))["license"], "Apache-2.0")
-
-    def test_a_declaration_that_is_a_sentence_is_a_question_not_a_parse(self):
-        self._skill("prose", 'license: "MIT (author: A. N. Other, preserve attribution)"\n')
-        rc, out = self._run()
-        self.assertEqual(rc, 1)
-        self.assertIn("not a bare SPDX identifier", out)
-
-    def test_metadata_license_counts_too(self):
-        self._skill("nested", "metadata:\n  license: Apache-2.0\n")
-        self.assertEqual(gen.declared_license(self.root / "nested")[0], "Apache-2.0")
-
-    def test_no_declaration_and_no_file_is_the_only_road_to_the_default(self):
-        self._skill("ours")
-        rc, out = self._run()
-        self.assertEqual(rc, 0, out)
-        self.assertEqual(json.loads((self.root / "ours" / "skill.json")
-                                    .read_text(encoding="utf-8"))["license"], "MIT")
-
-    def test_noassertion_is_reported_on_every_run(self):
-        self._skill("unresolved", "license: NOASSERTION\n")
-        rc, out = self._run()
-        self.assertEqual(rc, 0, out)
-        self.assertIn("[NOASSERTION] unresolved", out)
-        self.assertEqual(json.loads((self.root / "unresolved" / "skill.json")
-                                    .read_text(encoding="utf-8"))["license"], "NOASSERTION")
-
-
-class TestProvenanceMarkersAreWide(unittest.TestCase):
-    """Eight manifests claiming this repo's MIT over Cloudflare-authored material were
-    invisible to the report whose whole job was to see them, because every one of them
-    says where it came from under a `## Retrieval Sources` heading and the detector
-    looked for a `Source:` line."""
-
-    def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="test-prov-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
-
-    def _skill(self, body, readme=None):
-        d = self.tmp / "s"
-        if d.exists():
-            shutil.rmtree(d)
-        d.mkdir()
-        (d / "SKILL.md").write_text(body, encoding="utf-8")
-        if readme:
-            (d / "README.md").write_text(readme, encoding="utf-8")
-        return d
-
-    def _found(self, body, readme=None):
-        return gen.upstream_source(self._skill(body, readme))
-
-    def test_the_prose_conventions_that_were_missed(self):
-        for line in ("Ported from upstream/project.", "Forked from upstream/project.",
-                     "Inspired by upstream/project.", "Vendored from upstream/project.",
-                     "Original: upstream/project", "Credits: upstream/project",
-                     "Sources: upstream/project", "Adapted from upstream/project",
-                     "Based on upstream/project"):
-            self.assertIsNotNone(self._found(f"---\nname: s\ndescription: d\n---\n\n{line}\n"),
-                                 f"missed: {line}")
-
-    def test_a_retrieval_sources_heading_with_a_url(self):
-        body = ("---\nname: s\ndescription: d\n---\n\n# S\n\n## Retrieval Sources\n\n"
-                "| Source | How to retrieve |\n|---|---|\n"
-                "| Docs | https://developers.example.com/agents/ |\n")
-        found = self._found(body)
-        self.assertIsNotNone(found, "the eight Cloudflare skills say it exactly this way")
-        self.assertIn("https://developers.example.com/agents/", found)
-
-    def test_a_source_column_under_an_unrelated_heading_is_not_provenance(self):
-        # A skill that triages an inbox tabulates its RUNTIME sources. Reporting those
-        # as upstream material buries the report that has to stay readable to be read.
-        body = ("---\nname: s\ndescription: d\n---\n\n# S\n\n## Pipeline\n\n"
-                "| Source | Fetch endpoint |\n|---|---|\n| Gmail | messages.list |\n")
-        self.assertIsNone(self._found(body))
-
-    def test_provenance_in_a_sibling_readme(self):
-        self.assertIsNotNone(self._found(
-            "---\nname: s\ndescription: d\n---\n\n# S\n",
-            readme="# S\n\nAdapted from upstream/project.\n"))
-
-    def test_an_author_line_plus_a_third_party_copyright(self):
-        self.assertIsNotNone(self._found(
-            "---\nname: s\ndescription: d\n---\n\n# S\n\n"
-            "Author: A. N. Other\n\nCopyright (c) 2026 Other Corp\n"))
-
-    def test_a_block_scalar_origin_is_parsed_not_grepped(self):
-        # The prose regex ran over raw YAML, so `origin: >-` would hand back ">-" as the
-        # source and a list "- https://...". The 48 skills that declare one of these keys
-        # all write a plain scalar, so the regex was right by luck, not by reading.
-        found = self._found("---\nname: s\ndescription: d\nmetadata:\n"
-                            "  origin: >-\n    https://example.com/upstream\n---\n")
-        self.assertEqual(found, "https://example.com/upstream")
-
-    def test_a_list_origin_is_parsed(self):
-        found = self._found("---\nname: s\ndescription: d\nmetadata:\n"
-                            "  origin:\n    - https://example.com/a\n"
-                            "    - https://example.com/b\n---\n")
-        self.assertIn("https://example.com/a", found)
-        self.assertNotIn("- https", found)
-
-    def test_a_source_line_inside_a_code_fence_is_a_template_not_a_claim(self):
-        body = ("---\nname: s\ndescription: d\n---\n\n# S\n\n```bash\n"
-                "# Source: /etc/profile\nsource /etc/profile\n```\n")
-        self.assertIsNone(self._found(body))
-
-    def test_a_cross_reference_is_not_a_source(self):
-        body = ("---\nname: s\ndescription: d\n---\n\n# S\n\n"
-                "Based on Section 2.7.2 (445 active SPs observed in 1 hour):\n")
-        self.assertIsNone(self._found(body))
-
-    def test_a_repo_key_line_is_the_header_a_tool_skill_writes(self):
-        # Three skills in this repo carry this and nothing else: a `**Repo**:` line
-        # under the title with that tool's own license beside it. `agent-browser` says
-        # Apache 2.0 in its prose while its manifest says MIT, and nothing saw it.
-        for line in ("**Repo**: https://github.com/upstream/project",
-                     "Repo: https://github.com/upstream/project · MIT",
-                     "Repository: https://github.com/upstream/project"):
-            found = self._found(f"---\nname: s\ndescription: d\n---\n\n# S\n\n{line}\n")
-            self.assertIsNotNone(found, f"missed: {line}")
-            self.assertIn("upstream/project", found)
-
-    def test_a_repo_line_with_no_external_url_is_not_a_claim(self):
-        # Without the URL this marker matches every example command and every local
-        # path that happens to say "repo", and it buries the report.
-        for line in ("Repo: the arm's own checkout", "**Repo**: ./vendor/thing"):
-            self.assertIsNone(self._found(
-                f"---\nname: s\ndescription: d\n---\n\n# S\n\n{line}\n"), f"fired on: {line}")
-
-
-class TestTheShippedManifestsMatchWhatTheGeneratorDerives(unittest.TestCase):
-    """The corpus itself. Every shipped manifest must be the one the generator would
-    write today, and where the generator refuses, the value standing there may be
-    anything a human decided EXCEPT the repo default."""
-
-    def test_every_manifest_agrees_with_the_generator(self):
-        default = gen.repo_default_license(BRAIN)
-        self.assertIsNotNone(default, "the repo's own license could not be established, "
-                                      "so every comparison below is against nothing")
-        offenders = []
-        for manifest in sorted((BRAIN / "skills").glob("*/skill.json")):
-            shipped = json.loads(manifest.read_text(encoding="utf-8"))["license"]
-            derived, problem = gen.describe(manifest.parent, default)
-            if derived is None:
-                if shipped == default:
-                    offenders.append(f"{manifest.parent.name} claims the repo default "
-                                     f"{shipped} while {problem}")
-            elif derived["license"] != shipped:
-                offenders.append(f"{manifest.parent.name} ships {shipped}, the generator "
-                                 f"derives {derived['license']}")
-        self.assertEqual(offenders, [])
-
-    def test_the_third_party_skills_this_repo_decided_no_longer_claim_its_terms(self):
-        # The thirteen this cycle answered, plus the seven gsap skills. Each carries
-        # its upstream's own license id, and where the upstream ships a license file
-        # that file travels with the material as that license requires.
-        expected = {
-            **{n: "Apache-2.0" for n in ("agents-sdk", "cloudflare",
-                                         "cloudflare-email-service", "durable-objects",
-                                         "sandbox-sdk", "web-perf",
-                                         "workers-best-practices", "wrangler")},
-            **{n: "MIT" for n in ("gsap-core", "gsap-frameworks", "gsap-performance",
-                                  "gsap-plugins", "gsap-scrolltrigger", "gsap-timeline",
-                                  "gsap-utils")},
-            **{n: "proprietary" for n in ("figma", "figma-implement-design",
-                                          "figma-use")},
-            # `sandbox-sdk` was NOASSERTION here on the sentence "this name is NOT
-            # present in cloudflare/skills". It is absent from the CURRENT listing
-            # because upstream dropped that name on 2026-08-07 (f96bff75), months after
-            # the 2026-05-23 bundle. The tree at 60147cbb, the last upstream commit
-            # before that bundle, carries skills/sandbox-sdk/SKILL.md, and our copy
-            # differs from it only by a locally appended "## See also". Provenance is a
-            # question about a date; a listing only ever answers about today.
-            **{n: "NOASSERTION" for n in ("orchestrated-planning",
-                                          "progressive-code-exploration",
-                                          "knowledge-corpus", "project-timeline-report",
-                                          "session-memory-search")},
-        }
-        wrong = []
-        for name, want in sorted(expected.items()):
-            mf = BRAIN / "skills" / name / "skill.json"
-            got = json.loads(mf.read_text(encoding="utf-8"))["license"]
-            if got != want:
-                wrong.append(f"{name} ships {got}, should ship {want}")
-        self.assertEqual(wrong, [])
-
-    def test_the_licenses_those_skills_must_carry_are_actually_there(self):
-        # Apache-2.0 and MIT both condition the grant on the license text travelling
-        # with the material. A manifest field saying "Apache-2.0" with no license file
-        # beside it is a claim, not compliance.
-        missing = []
-        for name in ("agents-sdk", "cloudflare", "cloudflare-email-service", "sandbox-sdk",
-                     "durable-objects", "web-perf", "workers-best-practices", "wrangler",
-                     "gsap-core", "gsap-frameworks", "gsap-performance", "gsap-plugins",
-                     "gsap-scrolltrigger", "gsap-timeline", "gsap-utils"):
-            d = BRAIN / "skills" / name
-            derived, problem = gen.resolve_license(d)
-            shipped = json.loads((d / "skill.json").read_text(encoding="utf-8"))["license"]
-            if derived != shipped:
-                missing.append(f"{name}: manifest says {shipped}, its own license file "
-                               f"says {derived or problem}")
-            if not gen.upstream_source(d):
-                missing.append(f"{name}: no provenance line names where it came from")
-        self.assertEqual(missing, [])
-
-    def test_every_skill_that_names_an_external_upstream_is_visible_in_the_report(self):
-        # Not a verdict on any of them. The generator prints this class on every run
-        # precisely because whether this repo's terms may speak for someone else's
-        # material is a human's call; what may NOT happen is the question going unasked.
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            gen.main(["--root", str(BRAIN / "skills")])
-        out = buf.getvalue()
-        unlisted = []
-        for d in sorted((BRAIN / "skills").iterdir()):
-            if not d.is_dir() or not (d / "SKILL.md").is_file():
+        Split out so the SAME code that reports on the real tree can be pointed at a
+        planted violation and shown to fire. An empty offenders list has two causes and
+        only one of them is good news: the tree is clean, or the scan read nothing. The
+        second is what a broken glob, a renamed directory or a too-eager skip produces,
+        and it is indistinguishable from the first unless the files read come back too.
+        """
+        offenders, read = [], []
+        skip = {Path(x).resolve() for x in exclude}
+        for root in roots:
+            root = Path(root)
+            if not root.is_dir():
                 continue
-            src = gen.upstream_source(d)
-            if not src or gen.license_entries(d):
-                continue
-            if not re.search(r"https?://", src):
-                continue
-            if f"] {d.name}:" not in out:
-                unlisted.append(d.name)
-        self.assertEqual(unlisted, [], "an external upstream that no report names is "
-                                       "the invisibility this exists to end")
+            for path in sorted(root.rglob("*.py")):
+                if path.name == "proc_group.py" or ".git" in path.parts:
+                    continue
+                if path.resolve() in skip:
+                    continue
+                read.append(path.resolve())
+                for number, line in enumerate(
+                        path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+                    bare = line.strip()
+                    if bare.startswith("#") or not bare:
+                        continue
+                    if any(rx.search(bare) for rx in cls._GROUP_KILL_SPELLINGS):
+                        offenders.append(f"{path}:{number}: {bare[:70]}")
+        return offenders, read
+
+    def test_there_is_exactly_one_group_kill_in_the_tree(self):
+        """The second copy is the defect, so finding one is the test.
+
+        This started as two implementations that disagreed about one line, the guard,
+        and the one without it SIGKILLed the runner when a mutant removed the flag it
+        silently depended on. Fixing that copy does not stop the next one: a reviewer
+        has to notice a new group kill, and nobody noticed the first.
+
+        Asserting `offenders == []` alone was not this test. That value is satisfied by
+        a clean tree and equally by a scan that read no files at all, so a broken root
+        list would have reported the same green as a repository with no second copy.
+        Three assertions, in the order that makes the last one mean something:
+
+        1. the detector FIRES, on a planted tree holding one file per spelling plus a
+           benign `os.kill(pid, ...)` that must NOT be flagged, because a matcher that
+           flagged everything would also pass step 3 by never being wrong about a real
+           file that does not exist;
+        2. the scan REACHES named real files whose paths exercise each root and each
+           depth, and does not reach the one module allowed to hold the primitive;
+        3. and only then, that it found nothing.
+
+        Scope is every .py under the roots below except proc_group.py, deliberately
+        including brain_doctor.py and the hook scripts. It is not the whole checkout: an
+        unrelated .py in the working tree is not this repo's code, and scanning one
+        turned a mutation control red on a harness file.
+        """
+        planted = self.tmp / "planted" / "pkg"
+        planted.mkdir(parents=True)
+        (planted / "obvious.py").write_text(
+            "import os\nos.killpg(group, 9)\n", encoding="utf-8")
+        (planted / "sneaky.py").write_text(
+            "import os\nos.kill(-group, 9)\n", encoding="utf-8")
+        (planted / "benign.py").write_text(
+            "import os\nos.kill(pid, 9)\n", encoding="utf-8")
+        hits, planted_read = self._scan_group_kills([planted.parent])
+        self.assertEqual(
+            sorted(Path(h.split(":")[0]).name for h in hits), ["obvious.py", "sneaky.py"],
+            f"the scan did not flag both hand-written spellings, or flagged the plain "
+            f"per-pid kill that is not a group kill: {hits!r}")
+        self.assertEqual(len(planted_read), 3, planted_read)
+
+        roots = [BRAIN / "scripts", BRAIN / "skills", BRAIN / "templates"]
+        offenders, read = self._scan_group_kills(
+            roots, exclude=[Path(__file__)])       # this file names the spellings
+        for must in (SCRIPTS / "octo_pkg.py",              # root of the first root
+                     SCRIPTS / "brain_doctor.py",
+                     SCRIPTS / "tests" / "test_kernel_proc.py",     # a nested dir
+                     BRAIN / "skills" / "skill-installer" / "scripts"
+                     / "install-skill-from-github.py",     # the second root, nested
+                     BRAIN / "templates" / "cotizacion" / "cotizacion_engine.py"):
+            self.assertIn(must.resolve(), read,
+                          f"the scan never read {must}, so its green says nothing "
+                          f"about that file; the roots or the glob are wrong")
+        self.assertNotIn((SCRIPTS / "proc_group.py").resolve(), read,
+                         "the module that owns the primitive was scanned, so the only "
+                         "legitimate group kill would be reported as an offender")
+        self.assertEqual(offenders, [],
+                         "a second group kill has appeared outside proc_group.py, "
+                         "which is where the one guarded implementation lives:\n"
+                         + "\n".join(offenders))
+
+    def test_neither_spawner_gives_its_child_a_controlling_terminal(self):
+        """What start_new_session buys, tested as the property and not as a side effect.
+
+        A child with no controlling terminal cannot open /dev/tty, and that is the only
+        thing that ends a prompt written straight to the terminal: ssh's host-key
+        question ("Are you sure you want to continue connecting?") was measured hanging
+        with stdin already DEVNULL and GIT_TERMINAL_PROMPT already set, and finishing
+        rc 128 once the child ran in its own session. The installer clones over ssh, so
+        this is its channel, and it had no test of its own.
+
+        The probe OPENS the device: `exec 3</dev/tty`, and rc 0 means a terminal was
+        there, which is the failure. It cannot be `test -r /dev/tty`, which only stats
+        the path: the device node exists and is mode-readable for everyone, so that
+        version returns 0 even from a session with no terminal at all. Measured, and it
+        is why this test failed against correct code on its first run. Under a pty
+        because a child with no terminal ANYWHERE would pass this by accident.
+        """
+        gh = octo_pkg._github_module()
+        open_tty = "exec 3</dev/tty"
+
+        def probe(report):
+            cp = octo_pkg._run(["sh", "-c", open_tty])
+            lines = [f"_run={cp.returncode}"]
+            try:
+                gh._run_git(["sh", "-c", open_tty])
+                lines.append("_run_git=0")
+            except gh.InstallError:
+                lines.append("_run_git=refused")
+            report.write_text(" ".join(lines), encoding="utf-8")
+
+        seen = self._under_a_controlling_terminal(
+            probe, "a child of either spawner opening /dev/tty")
+        self.assertEqual(len(seen.split()), 2, f"the probe reported {seen!r}")
+        self.assertNotEqual(seen.split()[0], "_run=0",
+                            "octo_pkg._run gave its child a controlling terminal: a "
+                            "prompt written to /dev/tty would still wait for a human")
+        self.assertEqual(seen.split()[1], "_run_git=refused",
+                         "install-skill-from-github._run_git gave its child a "
+                         "controlling terminal, which is the ssh host-key channel")
+
+    def test_the_installers_git_helper_has_its_own_ceiling(self):
+        """Its timeout had no test either, and a mutant that removed it survived."""
+        gh = octo_pkg._github_module()
+        self.assertIsInstance(gh._GIT_TIMEOUT, (int, float))
+        self.assertGreater(gh._GIT_TIMEOUT, 0)
+        original = gh._GIT_TIMEOUT
+        gh._GIT_TIMEOUT = 1.5
+        self.addCleanup(setattr, gh, "_GIT_TIMEOUT", original)
+        started = time.monotonic()
+        with self.assertRaises(gh.InstallError) as caught:
+            gh._run_git([sys.executable, "-c", "import time; time.sleep(30)"])
+        self.assertIn("was killed", str(caught.exception))
+        self.assertLess(time.monotonic() - started, 15,
+                        "the installer ran its child unbounded")
+
+    # ---------------------------------------------------------------- /dev/tty
+
+    def _http_401(self) -> str:
+        """A local git remote that answers 401, so git asks for a username.
+
+        Local and offline on purpose: the prompt is the subject, the network is not.
+        """
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(401)
+                self.send_header("WWW-Authenticate", 'Basic realm="git"')
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def log_message(self, *a):
+                pass
+
+        srv = socketserver.ThreadingTCPServer(("127.0.0.1", 0), Handler)
+        srv.daemon_threads = True
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.shutdown)
+        return "http://127.0.0.1:%d/owner/repo.git" % srv.server_address[1]
+
+    def _under_a_controlling_terminal(self, fn, what: str) -> str:
+        """Run `fn(report_path)` in a child that OWNS a terminal, fail if it does not
+        finish, and return whatever the child wrote to that path.
+
+        pty.fork, not a pipe: git's credential prompt is read from /dev/tty, so a child
+        with no controlling terminal never reaches the code path under test. This is
+        the harness that separates the /dev/tty channel from the stdin one.
+
+        The child reports through a FILE, not through its exit status, because the
+        thing under test stopped being "did it finish". Once the spawner runs its
+        children in their own session they have no /dev/tty to read and they finish
+        either way; what separates the two mechanisms is WHY git gave up, and only the
+        message says that.
+        """
+        import pty
+        import signal
+
+        report = self.tmp / f"report-{abs(hash(what)) % 10**8}"
+        pid, fd = pty.fork()
+        if pid == 0:                                   # pragma: no cover - child
+            try:
+                fn(report)
+                os._exit(0)
+            except BaseException:
+                os._exit(1)
+        deadline = time.monotonic() + self.TTL
+        try:
+            while time.monotonic() < deadline:
+                done, status = os.waitpid(pid, os.WNOHANG)
+                if done:
+                    self.assertEqual(os.WEXITSTATUS(status), 0,
+                                     f"{what}: the child raised instead of returning")
+                    return report.read_text(encoding="utf-8") if report.exists() else ""
+                time.sleep(0.05)
+            os.kill(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+            self.fail(f"{what}: the child owned a terminal and never returned. It is "
+                      f"sitting on a prompt that only a human could answer.")
+        finally:
+            os.close(fd)
+
+    @unittest.skipUnless(_pty_ok(), "no pty/SIGKILL on this platform")
+    def test_a_git_child_cannot_block_on_a_credential_prompt(self):
+        """The member a closed stdin does NOT close.
+
+        Measured both ways before the fix: with the parent's stdin inherited AND with
+        stdin=DEVNULL, `git clone` against a 401 remote hung, because it reads the
+        username from /dev/tty. Only GIT_TERMINAL_PROMPT=0 ends it, which is why _env
+        sets it and why this test exists next to the stdin one instead of trusting it.
+        """
+        url, dest = self._http_401(), self.tmp / "clone-run"
+
+        def clone(report):
+            cp = octo_pkg._run(["git", "-c", "credential.helper=", "clone",
+                                url, str(dest)])
+            report.write_text((cp.stderr or b"").decode("utf-8", "replace"),
+                              encoding="utf-8")
+
+        err = self._under_a_controlling_terminal(
+            clone, "octo_pkg._run(git clone) against a remote that asks for a password")
+        # The message, not the exit code, and this is why: running the child in its own
+        # session ALSO ends this prompt, measured, because git then has no /dev/tty to
+        # open and fails "No such device or address". Two mechanisms reaching the same
+        # member is fine; two mechanisms where only one is ever tested is how a fix
+        # rots. "terminal prompts disabled" is git saying it never asked, which only
+        # GIT_TERMINAL_PROMPT=0 produces.
+        self.assertIn("terminal prompts disabled", err,
+                      "git was stopped by something other than GIT_TERMINAL_PROMPT=0; "
+                      f"it said: {err.strip()[-160:]!r}")
+        self.assertFalse(dest.exists(), "a 401 must not leave a checkout behind")
+
+    @unittest.skipUnless(_pty_ok(), "no pty/SIGKILL on this platform")
+    def test_the_installers_git_helper_cannot_block_either(self):
+        """Same channel, the other spawner, and the one that actually clones GitHub.
+
+        install-skill-from-github.py runs git through its own helper, not through
+        _run, so fixing _run alone would have left the busiest path in this codebase
+        hanging on the same prompt.
+        """
+        # Loaded through octo_pkg's own importer, so this is the same module object a
+        # real GitHub install gets, sys.path shim and all.
+        gh = octo_pkg._github_module()
+        url, dest = self._http_401(), self.tmp / "clone-gh"
+
+        def clone(report):
+            try:
+                gh._run_git(["git", "-c", "credential.helper=", "clone", url, str(dest)])
+                report.write_text("no refusal at all", encoding="utf-8")
+            except gh.InstallError as refused:         # a refusal is the right ending
+                report.write_text(str(refused), encoding="utf-8")
+
+        err = self._under_a_controlling_terminal(
+            clone, "install-skill-from-github._run_git against the same remote")
+        self.assertIn("terminal prompts disabled", err,
+                      "the installer's git was stopped by something other than "
+                      f"GIT_TERMINAL_PROMPT=0; it said: {err.strip()[-160:]!r}")
+        self.assertFalse(dest.exists(), "a 401 must not leave a checkout behind")
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestManifestCoverage(unittest.TestCase):
+    """The in-repo half of PACKAGE: `skill.json` on every skill directory.
+
+    The claim existed in docs/architecture/v8-kernel.md section 4 with NO live
+    mechanism behind it. `gen_skill_manifests.py` is a one-shot that no hook, gate,
+    workflow or runner calls, so once the backfill landed the count could only decay:
+    the 234th skill would ship with no manifest and pre-push would exit 0. These tests
+    pin the ladder that replaced the state, in both directions and at both ends.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="test-cover-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def _brain(self, spec: dict, name: str = "b"):
+        """spec: {skill_name: has_manifest}. Returns a Brain over a throwaway tree."""
+        root = self.tmp / name
+        (root / "skills").mkdir(parents=True)
+        for skill, has_manifest in spec.items():
+            d = root / "skills" / skill
+            d.mkdir()
+            (d / "SKILL.md").write_text(f"---\nname: {skill}\n---\n", encoding="utf-8")
+            if has_manifest:
+                (d / "skill.json").write_text(
+                    json.dumps({"name": skill, "version": "1.0.0", "kind": "skill"}),
+                    encoding="utf-8")
+        return octo_pkg.Brain(root)
+
+    # ---- the two directions the report has to show ----------------------
+
+    def test_a_skill_without_a_manifest_is_caught(self):
+        res = octo_pkg.scan_skill_manifests(self._brain({"a": True, "b": False}))
+        self.assertEqual(res["status"], octo_pkg.FAIL)
+        self.assertEqual(res["missing"], ["b"])
+        self.assertEqual((res["covered"], res["total"]), (1, 2))
+
+    def test_a_fully_covered_tree_passes(self):
+        res = octo_pkg.scan_skill_manifests(self._brain({"a": True, "b": True}))
+        self.assertEqual(res["status"], octo_pkg.PASS)
+        self.assertEqual((res["covered"], res["total"]), (2, 2))
+        self.assertEqual(res["missing"], [])
+
+    # ---- the failure mode, which is the design decision -----------------
+
+    def test_zero_coverage_warns_and_does_not_wall_the_repo(self):
+        """0/N is the pre-backfill state the live brain is in (0/233 today). FAIL here
+        would block every push on every branch until the mechanical PR lands, which is
+        a gate that gets --no-verify'd rather than obeyed."""
+        brain = self._brain({"a": False, "b": False})
+        res = octo_pkg.scan_skill_manifests(brain)
+        self.assertEqual(res["status"], octo_pkg.WARN)
+        self.assertEqual((res["covered"], res["total"]), (0, 2))
+        self.assertEqual(octo_pkg.cmd_manifests(brain, True), 0, "a WARN must exit 0")
+
+    def test_a_partial_count_fails_and_that_is_the_regression_state(self):
+        """Manifests existing means the backfill ran, so a bare directory is a skill
+        added after it. This is the branch that must block, and the ladder arms itself
+        into it with no hand-kept threshold and no date."""
+        brain = self._brain({"a": True, "b": False})
+        self.assertEqual(octo_pkg.cmd_manifests(brain, True), 1)
+
+    def test_an_empty_denominator_fails_rather_than_reading_as_clean(self):
+        """The 0/0 shape `packages-verified` cannot tell from 'nothing installed'. Here
+        it can be told apart: a brain with no skills is a root that resolved wrong."""
+        root = self.tmp / "empty"
+        (root / "skills").mkdir(parents=True)
+        res = octo_pkg.scan_skill_manifests(octo_pkg.Brain(root))
+        self.assertEqual(res["status"], octo_pkg.FAIL)
+        self.assertEqual(res["total"], 0)
+        self.assertEqual(octo_pkg.cmd_manifests(octo_pkg.Brain(root), True), 1)
+
+    def test_a_missing_skills_dir_fails_instead_of_crashing(self):
+        root = self.tmp / "noskills"
+        root.mkdir()
+        self.assertEqual(octo_pkg.scan_skill_manifests(octo_pkg.Brain(root))["status"],
+                         octo_pkg.FAIL)
+
+    # ---- what counts as a skill -----------------------------------------
+
+    def test_the_denominator_is_measured_not_hand_kept(self):
+        """A directory with no SKILL.md is not a skill and must not enter the count;
+        a hand-kept list would be a second thing to forget, and forgetting it reads as
+        coverage."""
+        brain = self._brain({"a": True})
+        (brain.root / "skills" / "notaskill").mkdir()
+        (brain.root / "skills" / "notaskill" / "README.md").write_text("x", encoding="utf-8")
+        self.assertEqual(octo_pkg.scan_skill_manifests(brain)["total"], 1)
+
+    def test_vendor_and_learned_are_skipped_exactly_as_the_generator_skips_them(self):
+        """Pins the two SKIP sets equal. The generator that FILLS the coverage and the
+        check that MEASURES it must agree on what a skill directory is, or the backfill
+        can report done against a denominator the check does not use."""
+        self.assertEqual(octo_pkg.MANIFEST_SKIP_DIRS, gen.SKIP_DIRS)
+        brain = self._brain({"a": True})
+        for skipped in sorted(octo_pkg.MANIFEST_SKIP_DIRS):
+            d = brain.root / "skills" / skipped
+            d.mkdir()
+            (d / "SKILL.md").write_text("---\nname: x\n---\n", encoding="utf-8")
+        res = octo_pkg.scan_skill_manifests(brain)
+        self.assertEqual(res["status"], octo_pkg.PASS)
+        self.assertEqual(res["total"], 1)
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlinks unavailable")
+    def test_a_symlinked_skill_dir_is_the_vendor_ladder_s_question_not_this_one(self):
+        """`skills/<name>` is a symlink when the package manager installed it. Counting
+        it here would ask verify's question twice, in the wrong denominator."""
+        brain = self._brain({"a": True})
+        vendor = brain.root / "skills" / "vendor" / "installed"
+        vendor.mkdir(parents=True)
+        (vendor / "SKILL.md").write_text("---\nname: installed\n---\n", encoding="utf-8")
+        try:
+            (brain.root / "skills" / "installed").symlink_to(vendor, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest("symlink not permitted here")
+        res = octo_pkg.scan_skill_manifests(brain)
+        self.assertEqual(res["total"], 1, "the symlinked package must not be counted")
+        self.assertEqual(res["status"], octo_pkg.PASS)
+
+    # ---- the contract its consumers read --------------------------------
+
+    def test_the_unlock_is_scoped_to_what_is_actually_missing(self):
+        partial = octo_pkg.scan_skill_manifests(self._brain({"a": True, "b": False}, "p"))
+        self.assertIn("--only b", octo_pkg._manifest_unlock(partial))
+        # A TRUNCATED --only list is worse than none: it looks complete, the operator
+        # pastes it, the count moves and the gate stays red. Past the cap the unlock
+        # drops the names rather than shortening them.
+        spec = {"ok": True}
+        spec.update({f"m{i}": False for i in range(octo_pkg._UNLOCK_NAME_CAP + 1)})
+        many = octo_pkg.scan_skill_manifests(self._brain(spec, "many"))
+        self.assertEqual(many["status"], octo_pkg.FAIL)
+        self.assertNotIn("--only", octo_pkg._manifest_unlock(many))
+        zero = octo_pkg.scan_skill_manifests(self._brain({"a": False}, "z"))
+        self.assertTrue(octo_pkg._manifest_unlock(zero).endswith("--root skills --write"))
+        full = octo_pkg.scan_skill_manifests(self._brain({"a": True}, "f"))
+        self.assertEqual(octo_pkg._manifest_unlock(full), "")
+
+    def test_the_json_payload_caps_missing_but_never_the_counts(self):
+        """brain_doctor parses this. Uncapped, `missing` is 233 names on the WARN tier,
+        which is a doctor line nobody reads; the counts are the answer."""
+        brain = self._brain({f"s{i:03d}": False for i in range(30)})
+        cp = _sp([sys.executable, str(SCRIPTS / "octo_pkg.py"), "--brain", str(brain.root),
+                  "manifests", "--json"], capture_output=True, text=True)
+        data = json.loads(cp.stdout.strip().splitlines()[-1])
+        self.assertEqual(cp.returncode, 0)
+        self.assertEqual((data["total"], data["covered"], data["missing_total"]), (30, 0, 30))
+        self.assertEqual(len(data["missing"]), 20)
+
+    @unittest.skipIf(os.name == "nt", "non-UTF-8 filenames are not reachable on Windows")
+    def test_a_non_utf8_skill_dir_name_is_reported_not_vanished(self):
+        """This module's recurring defect class (QA cycles 10 and 11): a name that is
+        not valid UTF-8 reaches a print, the encode raises, and the REPORT disappears
+        while the exit code stays 0. The scan walks skills/ by name, so it is on that
+        path too. Both renderings must survive: the JSON escapes the lone surrogate
+        (ensure_ascii=True) so json.loads hands the consumer the name back intact, and
+        the human line rides the errors="replace" stream flag."""
+        root = self.tmp / "badname"
+        (root / "skills").mkdir(parents=True)
+        bad = os.fsdecode(b"bad\xffname")
+        try:
+            d = root / "skills" / bad
+            d.mkdir()
+        except (OSError, UnicodeError):
+            self.skipTest("this filesystem rejects non-UTF-8 names")
+        (d / "SKILL.md").write_text("---\nname: x\n---\n", encoding="utf-8")
+        self.assertEqual(octo_pkg.scan_skill_manifests(octo_pkg.Brain(root))["total"], 1)
+        for args, parse in ((["manifests", "--json"], True), (["manifests"], False)):
+            cp = _sp([sys.executable, str(SCRIPTS / "octo_pkg.py"), "--brain", str(root),
+                      *args], capture_output=True, text=True)
+            self.assertEqual(cp.returncode, 0, cp.stderr)
+            self.assertTrue(cp.stdout.strip(), f"the report vanished for {args}")
+            if parse:
+                data = json.loads(cp.stdout.strip().splitlines()[-1])
+                self.assertEqual(data["missing"], [bad])
+
+    def test_the_live_brain_denominator_matches_the_documented_count(self):
+        """The doc cites 233 from `find skills -maxdepth 2 -name SKILL.md`. If this
+        check counts a different set, its ratio is about a corpus nobody described."""
+        res = octo_pkg.scan_skill_manifests(octo_pkg.Brain(BRAIN))
+        expected = sum(1 for d in (BRAIN / "skills").iterdir()
+                       if d.is_dir() and not d.is_symlink()
+                       and d.name not in octo_pkg.MANIFEST_SKIP_DIRS
+                       and (d / "SKILL.md").is_file())
+        self.assertEqual(res["total"], expected)
+        self.assertGreater(res["total"], 200)
+
+
+class TestManifestCoverageWiring(unittest.TestCase):
+    """RULE #1: the ladder above is only a rule if something live runs it."""
+
+    def test_the_selftest_passes_as_a_subprocess(self):
+        """The exact invocation the registry proof and gate-liveness use."""
+        cp = _sp([sys.executable, str(SCRIPTS / "octo_pkg.py"), "--selftest",
+                  "registry/fixtures/META.skill-manifest-coverage"],
+                 cwd=str(BRAIN), capture_output=True, text=True)
+        self.assertEqual(cp.returncode, 0, cp.stdout + cp.stderr)
+        self.assertIn("0 failure(s)", cp.stdout)
+
+    def test_the_fixture_pair_is_exactly_one_edit_apart(self):
+        """A pair that drifts to two edits stops proving which edit the ladder reacted
+        to. Asserted here as well as inside the selftest, because this is the file a
+        reviewer changes the fixture from."""
+        f = BRAIN / "registry" / "fixtures" / "META.skill-manifest-coverage"
+        self.assertEqual(octo_pkg._tree_diff(f / "violation", f / "benign"),
+                         ["skills/covered-two/skill.json"])
+
+    def test_selftest_dispatch_is_by_layout_so_a_rename_cannot_run_the_wrong_legs(self):
+        tmp = Path(tempfile.mkdtemp(prefix="test-dispatch-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        (tmp / "neither").mkdir()
+        cp = _sp([sys.executable, str(SCRIPTS / "octo_pkg.py"), "--selftest",
+                  str(tmp / "neither")], cwd=str(BRAIN), capture_output=True, text=True)
+        self.assertEqual(cp.returncode, 2)
+        self.assertIn("matches no known fixture layout", cp.stderr)
+
+    def test_pre_push_gates_on_manifests_rather_than_merely_mentioning_it(self):
+        """The registry carries a grep proof for this, but the proof runner only ever
+        EXECUTES locators containing --selftest, so that proof is inert text. This is
+        where the claim is checked, and brain_doctor checks it with the same regex.
+
+        The seven shapes below are not decoration. The first version of this check had
+        only the command-word test, and reverting the whole pre-push stanza to
+        `if false; then` left it GREEN: the error-reporting invocation inside the failing
+        branch is the same command word. A wiring check that survives the deletion of the
+        thing it checks is not a check, so the tail condition (no pipe, or a `||`) is the
+        half that carries the proof."""
+        bd = _load("brain_doctor_under_test", SCRIPTS / "brain_doctor.py")
+        self.assertTrue(bd._pre_push_invokes("manifests"))
+        self.assertTrue(bd._pre_push_invokes("verify --all"))
+        self.assertFalse(bd._pre_push_invokes("no-such-verb"))
+        rx = re.compile(bd._PREPUSH_CMD % re.escape("manifests"))
+        gate = '  if ! "$PYTHON" "$REPO_ROOT/scripts/octo_pkg.py" --brain "$R" manifests >/dev/null 2>&1; then'
+        or_idiom = '  "$PYTHON" "$R/scripts/octo_pkg.py" manifests || { echo x; exit 1; }'
+        report = '      "$PYTHON" "$R/scripts/octo_pkg.py" manifests 2>&1 | sed \'s/^/  /\''
+        for legal in (gate, or_idiom):
+            self.assertTrue(rx.search(legal), legal)
+        for refused in (report,
+                        '  echo "hint: scripts/octo_pkg.py manifests"',
+                        "  printf '%s' \"run scripts/octo_pkg.py manifests\"",
+                        "# scripts/octo_pkg.py manifests",
+                        "  if false; then"):
+            self.assertFalse(rx.search(refused), refused)
+
+    def test_the_registry_row_is_wired_to_the_fixture_that_exists(self):
+        import yaml
+        rules = yaml.safe_load((BRAIN / "registry" / "rules.yaml")
+                               .read_text(encoding="utf-8"))["rules"]
+        row = next(r for r in rules if r["id"] == "META.skill-manifest-coverage")
+        self.assertEqual(row["strength"], "GATE")
+        self.assertTrue(row["gateable"])
+        self.assertEqual(row["enforcement"], "fail-closed")
+        locators = [p["locator"] for p in row["proof"] if p["method"] == "EXIT_CODE"]
+        selftests = [l for l in locators if "--selftest" in l]
+        self.assertEqual(len(selftests), 1, "gate-liveness runs exactly the --selftest proofs")
+        self.assertTrue((BRAIN / selftests[0].split()[-1]).is_dir())
+        anchor = row["source"]["anchor"]
+        self.assertIn(anchor, (BRAIN / "CLAUDE.md").read_text(encoding="utf-8"))
+
+    def test_the_tmp_ignore_rule_no_longer_shadows_fixture_seeds(self):
+        """The pattern this branch added was a repo-wide `*.tmp`, which also matched
+        registry/fixtures/*.tmp. `fixture-seeds-tracked` FAILs on exactly that shape:
+        a fixture ignored by a generic rule ships on no other checkout."""
+        for path in ("docs/foo.tmp", "scripts/bar.tmp", "registry/fixtures/x.tmp"):
+            cp = _sp(["git", "check-ignore", "-q", "--no-index", path],
+                     cwd=str(BRAIN), capture_output=True)
+            self.assertEqual(cp.returncode, 1, f"{path} must not be ignored")
+        cp = _sp(["git", "check-ignore", "-q", "--no-index", "packages.lock.json.42.tmp"],
+                 cwd=str(BRAIN), capture_output=True)
+        self.assertEqual(cp.returncode, 0, "the lockfile's own temp file must stay ignored")
