@@ -326,6 +326,13 @@ def pull(args) -> int:
     print()
     sync(args.arms or None)
 
+    # Packages before the doctor: a machine that just pulled a new lock entry has
+    # the entry and not the tree, and the doctor's packages-verified would report a
+    # WARN the operator then has to clear by hand. Called by PATH-free path on
+    # purpose: the `octo` thunk does not exist on a fresh clone until
+    # install-runners.py has run, and pull is the command that runs first.
+    script_step("scripts/octo_pkg.py", "sync", label="\n=== Packages (octo pkg sync) ===")
+
     script_step("scripts/brain_doctor.py", label="\n=== Brain doctor ===")
     return 0
 

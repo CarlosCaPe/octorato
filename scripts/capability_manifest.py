@@ -75,6 +75,13 @@ def scan_skills() -> list[dict]:
     for skill_dir in sorted(skills_dir.iterdir()):
         if not skill_dir.is_dir():
             continue
+        # A symlinked skill dir is an installed package (v8 PACKAGE: skills/<name> ->
+        # skills/vendor/<name>). Counting it would make docs/CAPABILITIES.md depend on
+        # which packages this machine happens to have installed, and the manifest gate
+        # at pre-push demands a machine-independent file. Packages are listed by
+        # `octo pkg list`, not here.
+        if skill_dir.is_symlink():
+            continue
         skill_file = skill_dir / "SKILL.md"
         if not skill_file.exists():
             continue
