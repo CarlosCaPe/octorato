@@ -1,0 +1,1 @@
+{"tool_name": "Bash", "tool_input": {"command": "flock -n /tmp/x git status"}, "cwd": "/nonexistent/repo"}
