@@ -1896,9 +1896,19 @@ def glob_hit(pattern: str, icase: bool) -> tuple:
         raise
     brain = brain_root()
     out = (None, None)
+    norm = pattern.replace("\\", "/")
     for path, why in _protected_pairs(brain):
         try:
             if hits(pattern, path, icase):
+                out = (path, why)
+                break
+            # A pair can name a DIRECTORY (`.githooks`, `.cache/kernel`), and a
+            # glob that reaches a file INSIDE it never matches the directory
+            # itself: `find <live>/.githooks -name pre-push -delete` builds
+            # `<live>/.githooks/*pre-push`, which is deeper than the pair and so
+            # was measured ALLOW while `rm <live>/.githooks/pre-push` DENIED.
+            # The entry is a SHAPE, so containment is the question, not equality.
+            if os.path.isdir(path) and norm.startswith(path.replace("\\", "/") + "/"):
                 out = (path, why)
                 break
         except Exception:
@@ -3359,6 +3369,30 @@ _DIRECT_REMOVE = (
 )
 
 
+def _inside_write_dirs() -> set:
+    """Live spellings of the protected entries that are DIRECTORIES.
+
+    Only the curated `_EXACT` entries qualify. `_dir_needles` also carries the
+    brain root, `scripts` and `registry/fixtures`, and anchoring writes one
+    segment inside those would deny writing a skill, a helper script or a
+    fixture, which is ordinary work: measured as a false positive on
+    `open('<live>/skills/pre-push','w')` before this narrowing.
+    """
+    got = _CACHE.get("inside_write_dirs")
+    if got is not None:
+        return got
+    brain = brain_root()
+    out = set()
+    for rel in _EXACT:
+        for root in (brain, "~/" + _BRAIN_DIRNAME) if "_BRAIN_DIRNAME" in globals() \
+                else (brain,):
+            path = os.path.join(root, *rel.split("/"))
+            if os.path.isdir(os.path.join(brain, *rel.split("/"))):
+                out.add(path)
+    _CACHE["inside_write_dirs"] = out
+    return out
+
+
 def _direct_hit(body: str, needles: list, extra=(), dirs=None):
     """(literal, label) when a protected path is the DIRECT operand of a write
     or a removal inside *body*.
@@ -3381,9 +3415,26 @@ def _direct_hit(body: str, needles: list, extra=(), dirs=None):
             continue              # cheap string test before any regex compile
         quoted = re.escape(needle)
         is_dir_only = needle not in needles
-        for pats, label in ((() if is_dir_only else _DIRECT_WRITE, "direct write"),
-                            (_DIRECT_REMOVE, "direct removal"),
-                            (() if is_dir_only else extra, "direct write")):
+        # Writing TO a directory is meaningless, which is why the write patterns
+        # were skipped for a directory needle. Writing to a file INSIDE it is
+        # not: `python3 - <<PY open('<live>/.githooks/pre-push','w') PY`
+        # installs a git-time gate and was measured ALLOW. So a directory needle
+        # keeps its write patterns, anchored one segment deeper, and a bare
+        # mention of the directory still fires nothing.
+        # A protected DIRECTORY is in both needle lists, so `is_dir_only` is
+        # False for it and the bare-needle write patterns ran against the
+        # directory itself, which no real command writes to. The deeper anchor
+        # is what the entry actually means: one segment inside.
+        inside = needle in _inside_write_dirs()
+        deep_q = quoted + r"/[^'\"\s)`]+"
+        for pats, label, subst in ((() if is_dir_only else _DIRECT_WRITE,
+                                    "direct write", quoted),
+                                   (_DIRECT_WRITE if inside else (),
+                                    "direct write", deep_q),
+                                   (_DIRECT_REMOVE, "direct removal", quoted),
+                                   (_DIRECT_REMOVE if inside else (),
+                                    "direct removal", deep_q),
+                                   (() if is_dir_only else extra, "direct write", quoted)):
             for pat in pats:
                 # `.replace`, never `.format`: these patterns carry regex
                 # repetition braces (`{0,2}`), and str.format read one as a
@@ -3391,7 +3442,7 @@ def _direct_hit(body: str, needles: list, extra=(), dirs=None):
                 # swallowed it. A whole layer was silently off. The selftest
                 # compiles every pattern against a sample needle so a brace
                 # cannot do that again.
-                if re.search(pat.replace("{q}", quoted), flat):
+                if re.search(pat.replace("{q}", subst), flat):
                     return needle, label
     return None
 
