@@ -90,6 +90,21 @@ _PAT_GIT_PUSH = re.compile(
     r'(?:[\s:/\'"+])(?:HEAD:)?\+?(main|master)(?=$|\s|:|[\'"])'
 )
 
+# Unanchored twins, used ONLY inside a sub-command already known to start with
+# a wrapper. Same bodies, no `^\s*`.
+_SEARCH_GH_MERGE = re.compile(_PAT_GH_MERGE.pattern.replace(r"^\s*", "", 1))
+_SEARCH_GIT_PUSH = re.compile(_PAT_GIT_PUSH.pattern.replace(r"^\s*", "", 1))
+
+
+def _api_write_action_anywhere(sub: str):
+    """The API form inside a wrapped sub-command: the tool name may sit after
+    the wrapper's flags, so the `^` on `_PAT_API_TOOL` is what has to go."""
+    m = re.search(_PAT_API_TOOL.pattern.replace(r"^\s*", "", 1), sub)
+    if not m:
+        return None
+    return _api_write_action(sub[m.start():])
+
+
 # Extracts the PR number from `gh pr merge <N> [flags]`
 # (?=\s|$) anchors the digit capture to a whole token.
 _PR_NUM_RE = re.compile(r"^\s*gh\s+pr\s+merge\s+(\d+)(?=\s|$)")
@@ -426,6 +441,18 @@ _WRAPPER_TOKEN = re.compile(r"""^((?:"[^"]*"|'[^']*'|[^\s"'])+)(\s*)""")
 
 
 def _peel_wrapper(s: str):
+    """Guarded front door. The table comes from another file, so ANY shape
+    of it that raises degrades to 'not peeled' instead of deciding the gate:
+    QA measured `valued: None` and `arg: \"1\"` crashing the finder and
+    failing OPEN for the whole command, one level below the non-mapping case
+    the isinstance check already caught."""
+    try:
+        return _peel_wrapper_unguarded(s)
+    except Exception:
+        return None
+
+
+def _peel_wrapper_unguarded(s: str):
     """*s* with ONE leading wrapper (its flags, their values, its positionals)
     removed, or None when it does not start with one. Basename-matched, so
     `/usr/bin/timeout` peels exactly as `timeout` does."""
@@ -563,7 +590,47 @@ def _find_publish_subcmd(cmd: str) -> str | None:
             return raw_sub
         if _api_write_action(sub) is not None:
             return raw_sub
+        # A sub-command that STARTS with a wrapper carries a command after it,
+        # and the peel has to land on that command exactly for the anchored
+        # patterns above to see it. Three QA cycles found three layers it had
+        # to read to land there (quotes, then backslashes, then a quoted flag),
+        # each one a live bypass, and hand-rolling a shell tokenizer is a race
+        # that keeps producing a next layer.
+        #
+        # So the anchor is dropped for this case ONLY: inside a wrapped
+        # sub-command the publish patterns are searched anywhere. The peel is
+        # still what decides IF a sub-command is wrapped, but no longer what
+        # decides whether the publish inside it is seen. Over-gating is the
+        # direction this errs in: `sudo git commit -m "gh pr merge 9"` now
+        # gates, which costs one `OCTO_MERGE_APPROVE` and merges nothing.
+        if _starts_with_wrapper(raw_sub) and _publish_anywhere(sub):
+            return raw_sub
     return None
+
+
+def _starts_with_wrapper(raw_sub: str) -> bool:
+    head = _WRAPPER_HEAD.match(_strip_grouping(raw_sub))
+    return bool(head) and os.path.basename(head.group(1)) in _WRAPPER_NAMES
+
+
+def _strip_grouping(s: str) -> str:
+    """Only the cheap, unambiguous prefixes, so the wrapper test reads the same
+    first word `_strip_leading` would start from."""
+    out = s.lstrip()
+    prev = None
+    while out != prev:
+        prev = out
+        for pat in (_W_GROUP, _W_ASSIGN, _W_REDIR):
+            m = pat.match(out)
+            if m:
+                out = out[m.end():]
+                break
+    return out
+
+
+def _publish_anywhere(sub: str) -> bool:
+    return bool(_SEARCH_GH_MERGE.search(sub) or _SEARCH_GIT_PUSH.search(sub)
+                or _api_write_action_anywhere(sub))
 
 
 def _extract_pr_id(matched_sub: str) -> str:

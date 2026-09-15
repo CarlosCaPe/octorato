@@ -180,6 +180,48 @@ class AMalformedSpecDegradesInsteadOfCrashing(unittest.TestCase):
     def test_the_publish_is_still_found(self):
         self.assertTrue(GATE._find_publish_subcmd("sudo -E ls; " + MERGE))
 
+    def test_wrong_value_types_do_not_crash_the_gate_open(self):
+        """isinstance on the ENTRY was not enough. A mapping of the right shape
+        with `valued: None` or `arg: "1"` still raised inside the loop, and the
+        exception failed the gate OPEN for the whole command."""
+        for key, val in (("valued", None), ("valued", 5), ("cd", None),
+                         ("arg", "1"), ("arg", -1), ("arg", 10 ** 9)):
+            with self.subTest(key=key, value=val):
+                GATE._WRAPPER_SPECS = dict(GATE._EXTRA_WRAPPERS)
+                GATE._WRAPPER_SPECS["sudo"] = {"valued": (), "cd": (), "arg": 0,
+                                               key: val}
+                self.assertTrue(GATE._find_publish_subcmd("sudo -E ls; " + MERGE),
+                                f"{key}={val!r} lost the publish")
+
+
+class AWrappedSubcommandIsSearchedUnanchored(unittest.TestCase):
+    """The class fix, after three QA cycles each found one more layer the
+    tokenizer had to read to land on the command: quotes, then backslashes,
+    then a quoted flag. Inside a sub-command that STARTS with a wrapper the
+    publish patterns are searched anywhere, so the peel decides whether a
+    sub-command is wrapped and no longer whether the publish inside it is seen.
+    """
+
+    def test_every_spelling_the_tokenizer_could_not_land_on(self):
+        for pre in ("sudo -u car\\ los ", "flock /tmp/my\\ lock ",
+                    'sudo -u "car \\" los" ', "sudo -u 'car'\\''los' ",
+                    'sudo -u \\" ', 'sudo "-u" carlos ', "sudo '-E' "):
+            with self.subTest(prefix=pre):
+                self.assertTrue(GATE._find_publish_subcmd(pre + MERGE), pre)
+
+    def test_ordinary_wrapped_work_is_not_gated(self):
+        for command in ("sudo -E apt update", "sudo -u 'car los' gh pr list",
+                        "time -p make build", "flock -n /tmp/x git status",
+                        "timeout 300 gh pr list", "nice make",
+                        "ionice -c 3 -n 7 gh pr list", "nohup gh pr list"):
+            with self.subTest(command=command):
+                self.assertIsNone(GATE._find_publish_subcmd(command), command)
+
+    def test_an_unwrapped_subcommand_keeps_its_anchor(self):
+        """Dropping the anchor is scoped to wrapped sub-commands: a quoted
+        mention elsewhere must still pass."""
+        self.assertIsNone(GATE._find_publish_subcmd('git commit -m "%s"' % MERGE))
+
 
 if __name__ == "__main__":
     unittest.main()
