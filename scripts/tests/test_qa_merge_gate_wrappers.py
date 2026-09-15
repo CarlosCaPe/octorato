@@ -42,22 +42,40 @@ GATE = _load("qa_merge_gate_under_test", SCRIPTS / "qa-merge-gate.py")
 PARSER = _load("tree_owner_under_test", SCRIPTS / "g__pretool-bash__tree-owner.py")
 
 
-class WrapperTableDoesNotDrift(unittest.TestCase):
-    def test_every_shared_wrapper_is_peeled_here_too(self):
-        shared = set(PARSER._WRAPPERS)
-        mine = set(GATE._WRAPPER_ARGC) | {"env", "command"}   # those two predate this table
-        missing = sorted(shared - mine)
-        self.assertEqual(missing, [],
-                         "the shared parser peels these and the merge gate does not, "
-                         "which is exactly how a prefix gets to disarm the gate")
+class WrapperSpecsDoNotDrift(unittest.TestCase):
+    """The first cut pinned NAMES only, and QA measured what that misses.
 
-    def test_timeout_and_flock_eat_their_positional(self):
-        """`timeout 300 cmd` and `flock /tmp/x cmd` take an argument before the
-        command; the rest do not. Getting this wrong eats the command itself."""
-        self.assertEqual(GATE._WRAPPER_ARGC["timeout"], 1)
-        self.assertEqual(GATE._WRAPPER_ARGC["flock"], 1)
-        self.assertEqual(GATE._WRAPPER_ARGC["sudo"], 0)
-        self.assertEqual(GATE._WRAPPER_ARGC["nohup"], 0)
+    The shared parser keeps a per-wrapper `valued` tuple, a `cd` tuple and an
+    `arg` count. Flattening those into one set made `-E` value-taking for
+    `sudo` because `xargs` takes a value for it, so `sudo -E gh pr merge 9` ate
+    `gh` and the gate saw `pr merge 9`, which matches nothing. Six spellings
+    became bypasses. A name-only pin would have stayed green through all of it,
+    so the pin now compares the SPEC.
+    """
+
+    def test_every_shared_wrapper_resolves_to_the_shared_spec(self):
+        specs = GATE._wrapper_specs()
+        for name, shared in PARSER._WRAPPERS.items():
+            with self.subTest(wrapper=name):
+                self.assertIn(name, specs, f"{name} is peeled by the shared "
+                                           f"parser and not by the merge gate")
+                self.assertEqual(specs[name], shared,
+                                 f"{name} drifted from the shared parser's spec")
+
+    def test_every_peeled_name_is_reachable_from_the_cheap_test(self):
+        """`_WRAPPER_NAMES` decides whether the shared table is imported at all,
+        so a spec the name set does not carry is a spec that never runs."""
+        missing = sorted(set(GATE._wrapper_specs()) - set(GATE._WRAPPER_NAMES))
+        self.assertEqual(missing, [])
+
+    def test_the_positional_eaters_are_the_ones_that_eat(self):
+        specs = GATE._wrapper_specs()
+        self.assertEqual(specs["timeout"]["arg"], 1)
+        self.assertEqual(specs["flock"]["arg"], 1)
+        self.assertEqual(specs["chrt"]["arg"], 1)
+        for name in ("sudo", "nohup", "env", "time", "nice"):
+            with self.subTest(wrapper=name):
+                self.assertEqual(specs[name]["arg"], 0)
 
 
 class ThePeelReachesTheCommand(unittest.TestCase):
@@ -84,6 +102,30 @@ class ThePeelReachesTheCommand(unittest.TestCase):
     def test_wrappers_nest(self):
         self.assertTrue(self._bare("env A=1 sudo nohup timeout 300 gh pr merge 307")
                         .startswith("gh pr merge"))
+
+    def test_a_flag_valued_for_one_wrapper_is_not_valued_for_another(self):
+        """Every one of these ALLOWED before the per-wrapper split, because a
+        flat option set let another wrapper's valued flag eat the command."""
+        for spelling in ("sudo -E gh pr merge 9", "sudo -n gh pr merge 9",
+                         "sudo -s gh pr merge 9", "sudo -i gh pr merge 9",
+                         "sudo -k gh pr merge 9", "sudo -P gh pr merge 9",
+                         "time -p gh pr merge 9", "exec -c gh pr merge 9",
+                         "ionice -t gh pr merge 9", "xargs -t gh pr merge 9",
+                         "flock -n /tmp/x gh pr merge 9",
+                         "doas -n gh pr merge 9"):
+            with self.subTest(spelling=spelling):
+                self.assertTrue(self._bare(spelling).startswith("gh pr merge"), spelling)
+
+    def test_chrt_eats_its_priority(self):
+        self.assertTrue(self._bare("chrt 50 gh pr merge 9").startswith("gh pr merge"))
+        self.assertTrue(self._bare("chrt --rr 50 gh pr merge 9").startswith("gh pr merge"))
+
+    def test_env_honours_its_own_valued_flags(self):
+        """Pre-existing on master, and the reason the old `{env, command}`
+        escape hatch was not true: `-u` takes a name and `-C` takes a dir."""
+        self.assertTrue(self._bare("env -u FOO gh pr merge 9").startswith("gh pr merge"))
+        self.assertTrue(self._bare("env -C /tmp gh pr merge 9").startswith("gh pr merge"))
+        self.assertTrue(self._bare("env A=1 B=2 gh pr merge 9").startswith("gh pr merge"))
 
     def test_a_wrapper_in_front_of_ordinary_work_is_left_alone(self):
         """The peel must not invent a publish where there is none."""

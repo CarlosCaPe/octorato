@@ -323,12 +323,17 @@ def _join_continuations(cmd: str) -> str:
 
 # Strip leading wrapper tokens from an already-split sub-command before pattern
 # matching. Applied PER sub-command so it never crosses a real separator boundary.
-# Covers: grouping openers, env-assignments (VAR=val), redirections, the `env`
-# wrapper (with its own -flags and VAR=val args), and the `command` builtin.
-# SECURITY: without the env/command peel, `env A=1 gh pr merge` or `command gh pr
-# merge` evade the ^gh/^git anchor and bypass the approval gate. Iterative so the
-# wrappers may interleave (`env A=1 command git push origin main`). The real
-# approval channels stay the agent-proof env/file, never an inline token.
+# Covers: grouping openers, env-assignments (VAR=val), redirections, and EVERY
+# command-taking wrapper, `env` and `command` among them, through the shared
+# parser's per-wrapper spec (`_wrapper_specs`).
+# SECURITY: without the peel, `env A=1 gh pr merge`, `command gh pr merge` or
+# `timeout 300 gh pr merge` evade the ^gh/^git anchor and bypass the approval
+# gate. The last one was not hypothetical: it merged PR #307 on 2026-09-15.
+# Iterative so the wrappers may interleave (`env A=1 sudo nohup timeout 300 ...`).
+# The spec is per wrapper, never a flat option set: a flag that takes a value for
+# one wrapper and not for another made the peel eat the command itself, which
+# looks like coverage and is the opposite. The real approval channels stay the
+# agent-proof env/file, never an inline token.
 _W_GROUP = re.compile(r"^[({]\s*")
 _W_ASSIGN = re.compile(r"^[A-Za-z_]\w*=\S*\s+")
 _W_REDIR = re.compile(r"^\d*[<>]+\S*\s+")
@@ -340,54 +345,89 @@ _W_COMMAND = re.compile(r"^command\s+")
 # Wrapper programs that take a COMMAND as their argument, peeled for exactly the
 # reason `env` and `command` already were: every pattern below anchors at the
 # START of a sub-command, so a prefix left in place is a prefix that disarms the
-# gate. Measured on this machine 2026-09-15, and it was not theoretical:
+# gate. Measured 2026-09-15: `timeout 300 gh pr merge 307 --squash` ALLOWED
+# while the bare form DENIED, and that form merged a PR without the operator's
+# approval.
 #
-#   gh pr merge 307 --squash --delete-branch            -> rc=2, BLOCKED
-#   timeout 300 gh pr merge 307 --squash --delete-branch -> rc=0, ALLOWED
+# The spec is PER WRAPPER and that is the whole correctness of it. A first cut
+# flattened every wrapper's option list into one set, and QA measured what the
+# flattening costs: `-E` takes a value for `xargs`, so `sudo -E gh pr merge 9`
+# ate `gh` and the remainder `pr merge 9` matched nothing. Six spellings became
+# NEW bypasses, `sudo -E` and `sudo -n` among them, which are the two most
+# common sudo spellings in scripts. A peel that eats the command is worse than
+# no peel, because it looks like coverage.
 #
-# and the second form merged the PR without the operator's env approval. Six
-# characters of prefix turned a fail-closed gate into a decorative one.
-#
-# Kept LOCAL rather than imported from the shared parser: this runs on EVERY
-# Bash call and that module is a heavy import. `test_qa_merge_gate_wrappers.py`
-# pins this table to COVER the shared parser's `_WRAPPERS`, so the two cannot
-# drift apart silently; covering more than it is allowed, covering less is not,
-# because more peeling can only over-gate and never under-gate.
-#
-# The value is how many POSITIONAL arguments the wrapper eats before the command
-# starts: `timeout 300 cmd` and `flock /tmp/x cmd` eat one, the rest eat none.
-_WRAPPER_ARGC = {
-    "sudo": 0, "nohup": 0, "setsid": 0, "exec": 0, "time": 0, "nice": 0,
-    "ionice": 0, "stdbuf": 0, "xargs": 0, "doas": 0, "chrt": 0,
-    "timeout": 1, "flock": 1,
+# So the shared parser's table is the source for every wrapper it knows, read
+# lazily and only when a sub-command actually starts with a wrapper name: the
+# import costs ~30 ms on top of a 21 ms interpreter, which is real on a hook
+# that runs on every Bash call and is not paid by the unwrapped 99%.
+_SHARED_PARSER = Path(__file__).resolve().parent / "g__pretool-bash__tree-owner.py"
+
+# Wrappers the shared parser does not carry, in ITS shape so the two compose.
+# `arg` is how many POSITIONALS the wrapper eats before the command starts:
+# `flock /tmp/x cmd` and `chrt 50 cmd` eat one, the rest eat none.
+_EXTRA_WRAPPERS = {
+    "setsid": {"valued": (), "cd": (), "arg": 0},
+    "ionice": {"valued": ("-c", "--class", "-n", "--classdata", "-p", "--pid"),
+               "cd": (), "arg": 0},
+    "doas": {"valued": ("-u", "-C"), "cd": (), "arg": 0},
+    "flock": {"valued": ("-w", "--wait", "--timeout", "-E", "--conflict-exit-code"),
+              "cd": (), "arg": 1},
+    "chrt": {"valued": ("-p", "--pid"), "cd": (), "arg": 1},
 }
-# Flags of those wrappers that consume the NEXT token, so the token after them
-# is an option value and never the command.
-_WRAPPER_VALUED = {
-    "-u", "--user", "-g", "--group", "-p", "--prompt", "-C", "--close-from",
-    "-h", "--host", "-R", "--chroot", "-U", "--other-user", "-T",
-    "--command-timeout", "-r", "--role", "-t", "--type", "-D", "--chdir",
-    "-a", "-f", "--format", "-o", "--output", "-n", "--adjustment", "-s",
-    "--signal", "-k", "--kill-after", "-i", "-e", "--input", "--error",
-    "-I", "-P", "-d", "-E", "-L", "--max-args", "--replace", "--max-procs",
-    "--delimiter", "--arg-file", "--max-lines", "-c", "--class",
-}
+# Names only, so the cheap test that decides whether to import costs a set hit.
+_WRAPPER_NAMES = frozenset({
+    "env", "sudo", "command", "nohup", "exec", "time", "nice", "timeout",
+    "stdbuf", "xargs", "setsid", "ionice", "doas", "flock", "chrt",
+})
+_WRAPPER_SPECS = None
+
+
+def _wrapper_specs() -> dict:
+    """Per-wrapper {valued, cd, arg}, the shared parser's table plus the extras.
+
+    Falls back to the extras alone if the import fails. That direction is safe:
+    an unknown wrapper is simply not peeled, which leaves the gate where it was
+    before this change rather than eating a command it cannot parse."""
+    global _WRAPPER_SPECS
+    if _WRAPPER_SPECS is not None:
+        return _WRAPPER_SPECS
+    specs = dict(_EXTRA_WRAPPERS)
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_qmg_shared_parser", str(_SHARED_PARSER))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        for name, entry in mod._WRAPPERS.items():
+            specs[name] = entry
+    except Exception:
+        pass
+    _WRAPPER_SPECS = specs
+    return specs
+
+
+_ENV_ASSIGN_TOKEN = re.compile(r"^[A-Za-z_]\w*=")
 _WRAPPER_HEAD = re.compile(r"^([^\s;&|]+)(\s+)")
 _WRAPPER_TOKEN = re.compile(r"^(\S+)(\s*)")
 
 
 def _peel_wrapper(s: str):
-    """*s* with ONE leading wrapper (and its flags and positional) removed, or
-    None when it does not start with one. Basename-matched, so `/usr/bin/timeout`
-    peels exactly as `timeout` does."""
+    """*s* with ONE leading wrapper (its flags, their values, its positionals)
+    removed, or None when it does not start with one. Basename-matched, so
+    `/usr/bin/timeout` peels exactly as `timeout` does."""
     head = _WRAPPER_HEAD.match(s)
     if not head:
         return None
     name = os.path.basename(head.group(1))
-    if name not in _WRAPPER_ARGC:
+    if name not in _WRAPPER_NAMES:
         return None
+    spec = _wrapper_specs().get(name)
+    if spec is None:
+        return None
+    takes_value = set(spec.get("valued", ())) | set(spec.get("cd", ()))
     rest = s[head.end():]
-    eat = _WRAPPER_ARGC[name]
+    eat = spec.get("arg", 0)
     while rest:
         tok = _WRAPPER_TOKEN.match(rest)
         if not tok:
@@ -395,10 +435,15 @@ def _peel_wrapper(s: str):
         word = tok.group(1)
         if word.startswith("-"):
             rest = rest[tok.end():]
-            if word in _WRAPPER_VALUED:
+            # `--flag=value` carries its own value; only the bare spelling of a
+            # value-taking flag reaches for the next token.
+            if "=" not in word and word in takes_value:
                 nxt = _WRAPPER_TOKEN.match(rest)
                 if nxt:
                     rest = rest[nxt.end():]
+            continue
+        if _ENV_ASSIGN_TOKEN.match(word):
+            rest = rest[tok.end():]          # `env A=1 B=2 cmd`
             continue
         if eat:
             eat -= 1
