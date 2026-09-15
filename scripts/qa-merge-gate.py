@@ -359,10 +359,18 @@ _W_COMMAND = re.compile(r"^command\s+")
 #
 # So the shared parser's table is the source for every wrapper it knows, read
 # lazily and only when a sub-command actually starts with a wrapper name. The
-# import costs 14 ms in-process, median of 9 (a first measurement said ~30 ms by
-# differencing two subprocesses, which charged interpreter start to the import
-# and was wrong). Small, but it is per Bash call and the unwrapped 99% should
-# not pay it.
+# import costs about 10 ms in a fresh process, which is how a hook pays it, and
+# 0.3 ms once a process has already loaded it. Two earlier figures in this file
+# were wrong in opposite directions: ~30 ms differenced two subprocesses and
+# charged interpreter start to the import, and 14 ms sat between the warm and
+# cold numbers. Small either way, but it is per Bash call and the unwrapped 99%
+# should not pay it.
+#
+# The peel of the ten SHARED wrappers depends on that module importing
+# `kernel_proc` from its own directory. Where it cannot, the fallback leaves
+# only the five local extras and says nothing: every `timeout`, `sudo` and `env`
+# spelling quietly stops being peeled. That is the safe direction (the gate
+# returns to where it was) and it is silent, which is the part worth knowing.
 _SHARED_PARSER = Path(__file__).resolve().parent / "g__pretool-bash__tree-owner.py"
 
 # Wrappers the shared parser does not carry, in ITS shape so the two compose.
