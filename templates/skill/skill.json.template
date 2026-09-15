@@ -1,0 +1,17 @@
+{
+  "kind": "skill",
+  "name": "{{SKILL_SLUG}}",
+  "version": "1.0.0",
+  "license": "{{SPDX_LICENSE}}",
+  "description": "{{ONE_LINE_DESCRIPTION}}",
+  "capabilities": ["{{CAPABILITY_1}}"],
+  "dependencies": {},
+  "author": "{{AUTHOR}}",
+  "homepage": "{{HOMEPAGE_URL}}",
+  "tree_sha256": "{{TREE_SHA256}}",
+  "signature": {
+    "namespace": "octorato-pkg",
+    "signer": "octorato-release",
+    "file": "skill.json.sig"
+  }
+}

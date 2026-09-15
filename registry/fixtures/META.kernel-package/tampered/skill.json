@@ -1,0 +1,13 @@
+{
+  "kind": "skill",
+  "name": "sample-tampered",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Sample package used by the PACKAGE selftest.",
+  "tree_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "signature": {
+    "namespace": "octorato-pkg",
+    "signer": "octorato-release",
+    "file": "skill.json.sig"
+  }
+}
