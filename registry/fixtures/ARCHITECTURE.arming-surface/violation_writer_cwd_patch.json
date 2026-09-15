@@ -1,0 +1,10 @@
+{
+  "session_id": "sess-arming",
+  "agent_id": "agent-a",
+  "tool_name": "Bash",
+  "tool_use_id": "toolu_arm",
+  "tool_input": {
+    "command": "cd {{SANDBOX}}/.claude && patch -p0"
+  },
+  "cwd": "{{SANDBOX}}/wt/state-gate"
+}

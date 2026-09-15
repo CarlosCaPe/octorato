@@ -1,0 +1,14 @@
+{
+  "session_id": "sess-arming",
+  "agent_id": "agent-a",
+  "tool_name": "Write",
+  "tool_use_id": "toolu_arm",
+  "tool_input": {
+    "file_path": "{{SANDBOX}}/.claude/registry/kernel.yaml",
+    "content": "x"
+  },
+  "cwd": "{{SANDBOX}}/wt/state-gate",
+  "_setup": {
+    "expect_names": "kernel.yaml"
+  }
+}
