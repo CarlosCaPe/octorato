@@ -1731,10 +1731,7 @@ def interpreter_write(command: str):
     # `-…c` enter the lexer and change verdicts; `_C_CHANNEL` asks both.
     if not _C_CHANNEL.search(command):
         return None
-    try:
-        tokens = shlex.split(command)
-    except ValueError:
-        return None
+    tokens = _lex(command)
     needles = _needles()
     for body in _c_bodies(tokens):
         found = _needle_marker(body, needles)
@@ -1987,10 +1984,7 @@ def extra_tree_hits(command: str, cwd: str) -> list:
         segments = [command or ""]
     here = cwd
     for seg in segments:
-        try:
-            tokens = shlex.split(seg.strip().rstrip(";"))
-        except ValueError:
-            continue
+        tokens = _lex(seg.strip().rstrip(";"))
         if not tokens:
             continue
         if tokens[0] in ("cd", "pushd") and len(tokens) > 1:
@@ -2568,13 +2562,9 @@ def exotic_redirect_hits(command: str, cwd: str) -> list:
     is one token and never becomes a target. `cd` is tracked here too, so
     `cd ~/.claude && echo x >| settings.json` resolves the same as the absolute
     spelling."""
-    import shlex
     if not any(op in command for op in _EXOTIC_REDIRECT):
         return []
-    try:
-        tokens = shlex.split(command)
-    except ValueError:
-        return []
+    tokens = _lex(command)
     mod = _parser()
     here, out, i = cwd, [], 0
     while i < len(tokens):
@@ -2613,10 +2603,7 @@ def extra_put_hits(command: str, cwd: str) -> list:
     here = cwd
     out = []
     for seg in segments:
-        try:
-            tokens = shlex.split(seg.strip().rstrip(";"))
-        except ValueError:
-            continue
+        tokens = _lex(seg.strip().rstrip(";"))
         _redirs, tokens = mod.redirect_targets(tokens)   # `cp a b > log`
         if not tokens:
             continue
@@ -2739,7 +2726,27 @@ def _lex(command: str) -> list:
     try:
         return shlex.split(command)
     except ValueError:
-        return []          # a command that cannot be read denies nothing
+        # An unreadable command is NOT a command that denies nothing. That
+        # default was measured as a bypass: `cp /tmp/x <live>/scripts/
+        # qa-merge-gate.py # don't` raises on the apostrophe inside the trailing
+        # comment, the token list came back empty, and every layer built on it
+        # went blind while the same command WITHOUT the comment denied.
+        #
+        # `comments=True` is not the fix: it truncates a path that legitimately
+        # carries `#` (`rm /a/b#c.json` lexes to `/a/b`), which would hide a
+        # protected path instead of showing it. Degrade to whitespace tokens
+        # with surrounding quotes stripped, so the operand stays visible to
+        # every needle test.
+        #
+        # Deliberately not a deny: the failure is provoked by the user's own
+        # text, and a gate that refused an apostrophe would block real work.
+        raw = command.split()
+        cut = len(raw)
+        for i, tok in enumerate(raw):
+            if tok.startswith("#"):
+                cut = i           # bash's own rule: `#` opens a comment only at
+                break             # the START of a word, so `/a/b#c.json` stays
+        return [t.strip("\"'") for t in raw[:cut]]
 
 
 def _command_starts(tokens: list) -> list:
@@ -3060,10 +3067,7 @@ def extra_git_hits(command: str, cwd: str) -> list:
         segments = [command or ""]
     here, out = cwd, []
     for seg in segments:
-        try:
-            tokens = shlex.split(seg.strip().rstrip(";"))
-        except ValueError:
-            continue
+        tokens = _lex(seg.strip().rstrip(";"))
         # `2>&1` is a redirect, not an argument, and counting it as one made
         # `git -C <repo> config core.hooksPath 2>&1` look like a two-positional
         # SET. Measured: that was the last false deny left in the corpus replay.
