@@ -1,1 +1,0 @@
-{"tool_name": "Bash", "tool_input": {"command": "timeout 60 git log --grep=\"gh pr merge 287\""}, "cwd": "/nonexistent/repo"}
