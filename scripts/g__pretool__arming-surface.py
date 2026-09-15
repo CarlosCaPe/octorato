@@ -1961,7 +1961,11 @@ def glob_hit(pattern: str, icase: bool) -> tuple:
             # `<live>/.githooks/*pre-push`, which is deeper than the pair and so
             # was measured ALLOW while `rm <live>/.githooks/pre-push` DENIED.
             # The entry is a SHAPE, so containment is the question, not equality.
-            if os.path.isdir(path) and norm.startswith(path.replace("\\", "/") + "/"):
+            # Shape, not stat, for the same reason `_inside_write_dirs` is: a
+            # `.cache/receipts` that does not exist yet is exactly when forging
+            # a receipt inside it matters.
+            if path in _inside_write_dirs() and \
+                    norm.startswith(path.replace("\\", "/") + "/"):
                 out = (path, why)
                 break
         except Exception:
@@ -3423,13 +3427,25 @@ _DIRECT_REMOVE = (
 
 
 def _inside_write_dirs() -> set:
-    """Live spellings of the protected entries that are DIRECTORIES.
+    """Live spellings of the `_EXACT` entries that are DIRECTORIES.
 
-    Only the curated `_EXACT` entries qualify. `_dir_needles` also carries the
-    brain root, `scripts` and `registry/fixtures`, and anchoring writes one
-    segment inside those would deny writing a skill, a helper script or a
-    fixture, which is ordinary work: measured as a false positive on
-    `open('<live>/skills/pre-push','w')` before this narrowing.
+    Only the curated entries qualify. `_dir_needles` also carries the brain
+    root, `scripts` and `registry/fixtures`, and anchoring writes one segment
+    inside those denied `open('<live>/skills/pre-push','w')`, ordinary work,
+    measured as a false positive before this narrowing.
+
+    Directory-ness is read off the SHAPE of the entry, never off `os.path.isdir`.
+    A stat answers "is it there right now", and QA measured what that costs: on
+    a fresh clone `.cache/receipts` does not exist until the first receipt is
+    written, which is exactly the moment forging one matters, and the stat made
+    the entry protect nothing until then. An entry with no extension is a
+    directory; `.git/config` folds in harmlessly, since nothing lives under it.
+
+    Both spellings are emitted, absolute and `~`-prefixed, because `_needles`
+    and `_dir_needles` both carry the tilde form and a needle is matched by
+    equality. The first cut guarded the tilde half behind a name that exists
+    nowhere in this file, so the branch was dead and
+    `open(os.path.expanduser('~/.claude/.githooks/pre-push'),'w')` stayed ALLOW.
     """
     got = _CACHE.get("inside_write_dirs")
     if got is not None:
@@ -3437,11 +3453,11 @@ def _inside_write_dirs() -> set:
     brain = brain_root()
     out = set()
     for rel in _EXACT:
-        for root in (brain, "~/" + _BRAIN_DIRNAME) if "_BRAIN_DIRNAME" in globals() \
-                else (brain,):
-            path = os.path.join(root, *rel.split("/"))
-            if os.path.isdir(os.path.join(brain, *rel.split("/"))):
-                out.add(path)
+        if os.path.splitext(rel)[1]:
+            continue                       # carries an extension: a file
+        parts = rel.split("/")
+        out.add(os.path.join(brain, *parts))
+        out.add("~/" + "/".join([os.path.basename(brain)] + parts))
     _CACHE["inside_write_dirs"] = out
     return out
 

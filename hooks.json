@@ -228,8 +228,7 @@
         },
         {
           "type": "command",
-          "command": "python3 ~/.claude/scripts/g__pretool__arming-surface.py",
-          "timeout": 5
+          "command": "python3 ~/.claude/scripts/g__pretool__arming-surface.py"
         }
       ],
       "matcher": "*"
