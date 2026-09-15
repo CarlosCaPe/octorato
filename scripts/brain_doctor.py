@@ -1905,8 +1905,23 @@ def check_kernel_replay(fix: bool) -> Result:
         # The `start` line is where a process records the checkout it ran in
         # (schemas/kernel-journal.schema.json), so the journal carries its own
         # provenance and the doctor never has to guess which registry applied.
+        #
+        # It is not always the first line. A RESUMED session writes its `start`
+        # only when the register hook fires, after the tool calls that beat it:
+        # measured on this machine, 1 journal of 137 carries `start` at seq 14
+        # behind 14 `tool` lines, `source: resume`. Scanning forward only would
+        # read every line before it as provenance-less and call a registered
+        # rule an orphan, which is the exact symptom this check exists to stop.
+        # So the first `start` seeds the origin for the whole journal, and a
+        # later one takes over from where it appears.
+        lines = kernel_proc.read_journal(pid)
         origin = None
-        for line in kernel_proc.read_journal(pid):
+        for line in lines:
+            if isinstance(line, dict) and line.get("kind") == "start" \
+                    and line.get("worktree"):
+                origin = str(line["worktree"])
+                break
+        for line in lines:
             if not isinstance(line, dict):
                 continue
             if line.get("kind") == "start" and line.get("worktree"):

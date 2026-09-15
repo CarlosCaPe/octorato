@@ -111,20 +111,26 @@ class OrphanJudgementScope(unittest.TestCase):
             self.assertEqual(_git(path, "commit", "-qm", f"declare {rule_id}").returncode, 0)
         return path
 
-    def _home_with_deny(self, rule_id: str, origin: Path = None) -> Path:
+    def _home_with_deny(self, rule_id: str, origin: Path = None,
+                        start_last: bool = False) -> Path:
         """A sandbox HOME whose kernel journal holds one chained deny line, with
-        a `start` line naming `origin` when given."""
+        a `start` line naming `origin` when given. `start_last` writes that line
+        AFTER the deny, the way a resumed session does."""
         home = Path(tempfile.mkdtemp(prefix="replay-home-", dir=self.tmp))
         (home / ".claude" / ".cache" / "kernel" / "journal").mkdir(parents=True)
         start = {"kind": "start"}
         if origin is not None:
             start["worktree"] = str(origin)
+        if start_last:
+            start["source"] = "resume"
+        records = [{"kind": "deny", "rule": rule_id}, start] if start_last \
+            else [start, {"kind": "deny", "rule": rule_id}]
         driver = (
             "import sys\n"
             f"sys.path.insert(0, {str(self.brain / 'scripts')!r})\n"
             "import kernel_proc\n"
-            f"kernel_proc.append('fixture-pid', {start!r})\n"
-            f"kernel_proc.append('fixture-pid', {{'kind': 'deny', 'rule': {rule_id!r}}})\n"
+            f"kernel_proc.append('fixture-pid', {records[0]!r})\n"
+            f"kernel_proc.append('fixture-pid', {records[1]!r})\n"
         )
         cp = subprocess.run([sys.executable, "-c", driver],
                             env=dict(os.environ, HOME=str(home)),
@@ -161,6 +167,17 @@ class OrphanJudgementScope(unittest.TestCase):
         out = self._run_check(self._home_with_deny("TEST.committed-there", origin=wt))
         self.assertEqual(out["status"], "PASS", out["message"])
         self.assertIn("TEST.committed-there", out["message"])
+
+    def test_start_line_after_the_deny_still_carries_provenance(self):
+        """A resumed session writes `start` late. Measured on the operator's
+        machine: 1 journal of 137 has it at seq 14, behind 14 `tool` lines. A
+        forward-only scan reads everything before it as provenance-less and
+        calls a registered rule an orphan, which is the symptom this check
+        exists to remove."""
+        wt = self._worktree("feat-resumed", "TEST.resumed-origin", commit=True)
+        out = self._run_check(
+            self._home_with_deny("TEST.resumed-origin", origin=wt, start_last=True))
+        self.assertEqual(out["status"], "PASS", out["message"])
 
     # ── the two laundering paths a QA pass found in the coarse version ──────
 
