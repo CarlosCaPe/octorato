@@ -217,6 +217,32 @@ class AWrappedSubcommandIsSearchedUnanchored(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertIsNone(GATE._find_publish_subcmd(command), command)
 
+    def test_the_search_does_not_read_a_quoted_argument_as_a_command(self):
+        """QA measured the cost of letting it: a wrapped grep for the merge
+        string gated, and that line carries no PR number, so the only exit is
+        the blanket `OCTO_QA_OK=1`. An over-gate that expensive is how a gate
+        gets switched off."""
+        for command in ('timeout 120 grep -rn "%s" scripts/' % MERGE,
+                        'timeout 60 git log --grep="%s"' % MERGE,
+                        'sudo git commit -m "docs: explain %s"' % MERGE,
+                        'sudo echo "legit push to master"',
+                        'sudo logger "laugh pr merge went fine"'):
+            with self.subTest(command=command[:48]):
+                self.assertIsNone(GATE._find_publish_subcmd(command), command)
+
+    def test_the_wrapped_search_is_linear(self):
+        """The unanchored push twin re-scanned to the end of the sub-command per
+        occurrence. QA measured 88k at 8.0 s against this hook's 5 s timeout,
+        and a killed PreToolUse hook writes no stdout, which reads as ALLOW: a
+        slow sub-command first, the bare publish behind it. The body is capped
+        now, so this has to finish in well under the timeout."""
+        import time
+        payload = "sudo echo " + ("git push origin dev x " * 8000)
+        start = time.perf_counter()
+        GATE._find_publish_subcmd(payload)
+        self.assertLess(time.perf_counter() - start, 1.0,
+                        "the wrapped search went superlinear again")
+
     def test_an_unwrapped_subcommand_keeps_its_anchor(self):
         """Dropping the anchor is scoped to wrapped sub-commands: a quoted
         mention elsewhere must still pass."""

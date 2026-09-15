@@ -92,8 +92,36 @@ _PAT_GIT_PUSH = re.compile(
 
 # Unanchored twins, used ONLY inside a sub-command already known to start with
 # a wrapper. Same bodies, no `^\s*`.
-_SEARCH_GH_MERGE = re.compile(_PAT_GH_MERGE.pattern.replace(r"^\s*", "", 1))
-_SEARCH_GIT_PUSH = re.compile(_PAT_GIT_PUSH.pattern.replace(r"^\s*", "", 1))
+# `(?<![\w-])` so `laugh pr merge` and `legit push to master` are not the tool,
+# and the push body is BOUNDED. Unanchored, the lazy `[^|&;]*?` re-scanned to the
+# end of the sub-command once per `git push` occurrence: QA measured 88k of a
+# wrapped line at 8.0 s against this hook's 5 s timeout, and a killed PreToolUse
+# hook writes no stdout, which the harness reads as ALLOW. That made a bypass
+# this gate did not have before: a slow sub-command first, the bare publish
+# behind it. A real `git push origin main` puts the branch within a couple of
+# hundred characters of `push`, so the cap costs nothing real and makes each
+# attempt O(1) instead of O(len).
+_SEARCH_GH_MERGE = re.compile(
+    _PAT_GH_MERGE.pattern.replace(r"^\s*", r"(?<![\w-])", 1))
+_SEARCH_GIT_PUSH = re.compile(
+    _PAT_GIT_PUSH.pattern.replace(r"^\s*", r"(?<![\w-])", 1)
+                          .replace(r"[^|&;]*?", r"[^|&;]{0,200}?", 1))
+
+
+_QUOTED_SPAN = re.compile(r"\"[^\"]*\"|'[^']*'")
+
+
+def _outside_quotes(sub: str) -> str:
+    """*sub* with quoted spans blanked, same length so nothing else shifts.
+
+    The unanchored search must not read an ARGUMENT as a command. QA measured
+    the cost of letting it: `grep -rn "<the merge form>" scripts/` behind
+    `timeout` gated, and since that line carries no PR number the gate asks for
+    an approval that cannot be given, leaving the blanket `OCTO_QA_OK=1` as the
+    only exit. An over-gate that expensive is not the safe direction; it is how
+    a gate gets switched off. Text the shell will not execute is text this
+    search does not read."""
+    return _QUOTED_SPAN.sub(lambda m: " " * (m.end() - m.start()), sub)
 
 
 def _api_write_action_anywhere(sub: str):
@@ -629,8 +657,9 @@ def _strip_grouping(s: str) -> str:
 
 
 def _publish_anywhere(sub: str) -> bool:
-    return bool(_SEARCH_GH_MERGE.search(sub) or _SEARCH_GIT_PUSH.search(sub)
-                or _api_write_action_anywhere(sub))
+    bare = _outside_quotes(sub)
+    return bool(_SEARCH_GH_MERGE.search(bare) or _SEARCH_GIT_PUSH.search(bare)
+                or _api_write_action_anywhere(bare))
 
 
 def _extract_pr_id(matched_sub: str) -> str:

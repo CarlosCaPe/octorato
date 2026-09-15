@@ -1,0 +1,1 @@
+{"tool_name": "Bash", "tool_input": {"command": "timeout 120 grep -rn \"gh pr merge 287\" scripts/"}, "cwd": "/nonexistent/repo"}
