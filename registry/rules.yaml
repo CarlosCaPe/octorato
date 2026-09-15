@@ -1904,8 +1904,9 @@ rules:
   # REFLEX, not GATE, and the distinction is the honest one: the harness has
   # already refused by the time this fires. The reflex observes and records; it
   # never decides. The row exists because `kernel-replay` FAILS on a deny line
-  # whose rule id is in no registry row, and this reflex writes deny lines under
-  # exactly this id. An unregistered deny is an orphan mechanism (RULE #1).
+  # whose rule id is in no registry row of ANY checkout of this repo, and this
+  # reflex writes deny lines under exactly this id. An unregistered deny is an
+  # orphan mechanism (RULE #1).
   #
   # Scope, measured on runtime 2.1.261, not assumed: the event fires for the
   # AUTO-MODE classifier only. A permission-rule denial and a user-rejected
