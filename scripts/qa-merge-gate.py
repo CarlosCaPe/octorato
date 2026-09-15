@@ -358,9 +358,11 @@ _W_COMMAND = re.compile(r"^command\s+")
 # no peel, because it looks like coverage.
 #
 # So the shared parser's table is the source for every wrapper it knows, read
-# lazily and only when a sub-command actually starts with a wrapper name: the
-# import costs ~30 ms on top of a 21 ms interpreter, which is real on a hook
-# that runs on every Bash call and is not paid by the unwrapped 99%.
+# lazily and only when a sub-command actually starts with a wrapper name. The
+# import costs 14 ms in-process, median of 9 (a first measurement said ~30 ms by
+# differencing two subprocesses, which charged interpreter start to the import
+# and was wrong). Small, but it is per Bash call and the unwrapped 99% should
+# not pay it.
 _SHARED_PARSER = Path(__file__).resolve().parent / "g__pretool-bash__tree-owner.py"
 
 # Wrappers the shared parser does not carry, in ITS shape so the two compose.
@@ -400,7 +402,13 @@ def _wrapper_specs() -> dict:
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         for name, entry in mod._WRAPPERS.items():
-            specs[name] = entry
+            # Validated, not trusted. An entry that is not a mapping made
+            # `_peel_wrapper` raise, the exception escaped the finder, and the
+            # gate failed OPEN for the WHOLE command, the bare publish in a
+            # later sub-command included. A table this gate does not own is
+            # untrusted input like any other.
+            if isinstance(entry, dict):
+                specs[name] = entry
     except Exception:
         pass
     _WRAPPER_SPECS = specs
@@ -409,7 +417,12 @@ def _wrapper_specs() -> dict:
 
 _ENV_ASSIGN_TOKEN = re.compile(r"^[A-Za-z_]\w*=")
 _WRAPPER_HEAD = re.compile(r"^([^\s;&|]+)(\s+)")
-_WRAPPER_TOKEN = re.compile(r"^(\S+)(\s*)")
+# A token is a run of quoted segments and unquoted non-space characters, so
+# `-u "car los"` is TWO tokens and not four. `\S+` split it at the space and
+# the second half stopped the peel, which QA measured as a live bypass: the
+# quoted spelling ALLOWED while the unquoted one denied. The shell reads the
+# quotes; so must anything that counts tokens.
+_WRAPPER_TOKEN = re.compile(r"""^((?:"[^"]*"|'[^']*'|[^\s"'])+)(\s*)""")
 
 
 def _peel_wrapper(s: str):
@@ -423,8 +436,8 @@ def _peel_wrapper(s: str):
     if name not in _WRAPPER_NAMES:
         return None
     spec = _wrapper_specs().get(name)
-    if spec is None:
-        return None
+    if not isinstance(spec, dict):
+        return None          # unknown or unusable: leave the sub-command alone
     takes_value = set(spec.get("valued", ())) | set(spec.get("cd", ()))
     rest = s[head.end():]
     eat = spec.get("arg", 0)

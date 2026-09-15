@@ -38,6 +38,8 @@ def _load(name: str, path: Path):
     return mod
 
 
+MERGE = "gh pr " + "merge 9"
+
 GATE = _load("qa_merge_gate_under_test", SCRIPTS / "qa-merge-gate.py")
 PARSER = _load("tree_owner_under_test", SCRIPTS / "g__pretool-bash__tree-owner.py")
 
@@ -67,6 +69,12 @@ class WrapperSpecsDoNotDrift(unittest.TestCase):
         so a spec the name set does not carry is a spec that never runs."""
         missing = sorted(set(GATE._wrapper_specs()) - set(GATE._WRAPPER_NAMES))
         self.assertEqual(missing, [])
+
+    def test_every_name_in_the_cheap_test_has_a_spec(self):
+        """The reverse gap: a name with no spec peels nothing, silently."""
+        specs = GATE._wrapper_specs()
+        orphan = sorted(set(GATE._WRAPPER_NAMES) - set(specs))
+        self.assertEqual(orphan, [])
 
     def test_the_positional_eaters_are_the_ones_that_eat(self):
         specs = GATE._wrapper_specs()
@@ -127,6 +135,21 @@ class ThePeelReachesTheCommand(unittest.TestCase):
         self.assertTrue(self._bare("env -C /tmp gh pr merge 9").startswith("gh pr merge"))
         self.assertTrue(self._bare("env A=1 B=2 gh pr merge 9").startswith("gh pr merge"))
 
+    def test_a_quoted_value_with_a_space_is_one_token(self):
+        """QA measured this as a live bypass of the first cut: `\\S+` split
+        `-u "car los"` at the space, the second half stopped the peel, and the
+        quoted spelling ALLOWED while the unquoted one denied."""
+        for pre in ('sudo -u "car los" ', "sudo -u 'car los' ", 'sudo -p "pw: " ',
+                    'time -f "%e s" ', 'flock "/tmp/my lock" ',
+                    "flock '/tmp/my lock' ", 'timeout "300" '):
+            with self.subTest(prefix=pre):
+                self.assertTrue(self._bare(pre + MERGE).startswith("gh pr "), pre)
+
+    def test_a_quoted_value_does_not_invent_a_publish(self):
+        self.assertEqual(self._bare('sudo -u "car los" apt update'), "apt update")
+        self.assertEqual(self._bare('flock "/tmp/my lock" git status'), "git status")
+
+
     def test_a_wrapper_in_front_of_ordinary_work_is_left_alone(self):
         """The peel must not invent a publish where there is none."""
         self.assertEqual(self._bare("timeout 300 ls -la"), "ls -la")
@@ -134,6 +157,28 @@ class ThePeelReachesTheCommand(unittest.TestCase):
 
     def test_a_command_that_is_not_wrapped_is_untouched(self):
         self.assertEqual(self._bare("gh pr merge 307 --squash"), "gh pr merge 307 --squash")
+
+
+class AMalformedSpecDegradesInsteadOfCrashing(unittest.TestCase):
+    """The table comes from another file, so it is untrusted input.
+
+    QA measured the cost of trusting it: a non-mapping entry made the peel
+    raise, the exception escaped the finder, and the gate failed OPEN for the
+    WHOLE command, so a bare publish in a later sub-command went unseen. A gate
+    that crashes open is worse than one that does not peel."""
+
+    def setUp(self):
+        self._saved = GATE._WRAPPER_SPECS
+        self.addCleanup(lambda: setattr(GATE, "_WRAPPER_SPECS", self._saved))
+        GATE._WRAPPER_SPECS = dict(GATE._EXTRA_WRAPPERS)
+        GATE._WRAPPER_SPECS["sudo"] = "not-a-dict"
+
+    def test_the_peel_does_not_raise(self):
+        self.assertEqual(GATE._strip_leading("sudo -E ls; " + MERGE),
+                         "sudo -E ls; " + MERGE)
+
+    def test_the_publish_is_still_found(self):
+        self.assertTrue(GATE._find_publish_subcmd("sudo -E ls; " + MERGE))
 
 
 if __name__ == "__main__":
