@@ -125,12 +125,21 @@ class OrphanJudgementScope(unittest.TestCase):
             start["source"] = "resume"
         records = [{"kind": "deny", "rule": rule_id}, start] if start_last \
             else [start, {"kind": "deny", "rule": rule_id}]
+        return self._home_with_records(records, home)
+
+    def _home_with_records(self, records: list, home: Path = None) -> Path:
+        """A sandbox HOME whose kernel journal holds exactly `records`, chained
+        by the real `kernel_proc.append` so the replay verifies."""
+        if home is None:
+            home = Path(tempfile.mkdtemp(prefix="replay-home-", dir=self.tmp))
+            (home / ".claude" / ".cache" / "kernel" / "journal").mkdir(parents=True)
+        appends = "".join(
+            f"kernel_proc.append('fixture-pid', {r!r})\n" for r in records)
         driver = (
             "import sys\n"
             f"sys.path.insert(0, {str(self.brain / 'scripts')!r})\n"
             "import kernel_proc\n"
-            f"kernel_proc.append('fixture-pid', {records[0]!r})\n"
-            f"kernel_proc.append('fixture-pid', {records[1]!r})\n"
+            + appends
         )
         cp = subprocess.run([sys.executable, "-c", driver],
                             env=dict(os.environ, HOME=str(home)),
@@ -178,6 +187,24 @@ class OrphanJudgementScope(unittest.TestCase):
         out = self._run_check(
             self._home_with_deny("TEST.resumed-origin", origin=wt, start_last=True))
         self.assertEqual(out["status"], "PASS", out["message"])
+
+    def test_a_later_start_takes_over_from_where_it_appears(self):
+        """A session that resumes into a DIFFERENT checkout must not keep
+        vouching with the first one. Journal: startA, startB, deny, with the id
+        committed only in A. The deny belongs to B, so A cannot vouch for it and
+        the verdict is FAIL. Drop the in-loop reassignment and this goes PASS,
+        which would let any checkout a process ever visited vouch for every deny
+        it ever made."""
+        a = self._worktree("feat-origin-a", "TEST.only-in-a", commit=True)
+        b = self._worktree("feat-origin-b", "TEST.only-in-b", commit=True)
+        home = self._home_with_records([
+            {"kind": "start", "worktree": str(a)},
+            {"kind": "start", "worktree": str(b), "source": "resume"},
+            {"kind": "deny", "rule": "TEST.only-in-a"},
+        ])
+        out = self._run_check(home)
+        self.assertEqual(out["status"], "FAIL", out["message"])
+        self.assertIn("TEST.only-in-a", out["message"])
 
     # ── the two laundering paths a QA pass found in the coarse version ──────
 
