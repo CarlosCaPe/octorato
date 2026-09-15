@@ -21,6 +21,16 @@ import os
 import re
 from pathlib import Path
 
+# Force UTF-8 on stdout/stderr so the emoji + arrow glyphs in the report
+# survive on Windows shells defaulting to cp1252. Without this the script
+# does its work correctly and still crashes with UnicodeEncodeError while
+# printing the verdict.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 # ── Paths ──────────────────────────────────────────────────────────────
 CLAUDE_DIR = Path.home() / ".claude"
 REGISTRY_PATH = CLAUDE_DIR / "agents" / "REGISTRY.md"
@@ -115,7 +125,7 @@ def parse_registry() -> list[dict]:
         sys.exit(2)
 
     agents = []
-    lines = REGISTRY_PATH.read_text().splitlines()
+    lines = REGISTRY_PATH.read_text(encoding="utf-8").splitlines()
     current_division = ""
     in_xref = False
 
@@ -201,7 +211,7 @@ def parse_skills() -> list[dict]:
         if not skill_file.exists():
             continue
 
-        content = skill_file.read_text(errors="replace")
+        content = skill_file.read_text(encoding="utf-8", errors="replace")
         
         # Extract YAML frontmatter
         name = skill_dir.name
