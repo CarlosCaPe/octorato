@@ -15,6 +15,24 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-09-17]: v7.9.2
+- chore(skills): a skill.json manifest for every existing skill (v8 packages) (#287)
+
+## [2026-09-15]: v7.9.1
+- fix(doctor): resolve a deny to the checkout that fired it (#307)
+
+## [2026-09-15]: v7.9.0
+- feat(kernel): phase 5, packages installable like services (v8) (#282)
+
+## [2026-09-15]: v7.8.0
+- feat(gate): the arming surface is not writable by a hooked process (#299)
+
+## [2026-09-15]: v7.7.4
+- fix(scripts): make the brain read text as UTF-8 on Windows (#306)
+
+## [2026-09-09]: v7.7.3
+- fix(kernel): make the v8 isolation gates and the journal work on Windows (#302)
+
 ## [2026-09-09]: v7.7.2
 ### Other
 - fix(scripts)+feat(comms): windows-proof gate selftests; outward-send gate requires an explicit send ask (#277)
