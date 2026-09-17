@@ -15,6 +15,10 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-09-17]: v8.0.1
+- docs(v8-kernel): state the release criterion as brain_doctor prints it (#314)
+- docs(changelog): backfill v8.0.0 (#313)
+
 ## [2026-09-17]: v8.0.0
 ### Octorato v8: the kernel
 Every run now passes through four primitives, enforced by hooks, scripts and git, not by prose:
