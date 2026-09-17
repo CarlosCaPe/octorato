@@ -14,6 +14,13 @@ machine-generated growth ledger lives at
 `knowledge/repo-watch/<date>.md` (daily watchlist digests).
 
 ## [Unreleased]
+### Octorato v8: the kernel
+Every run now passes through four primitives, enforced by hooks, scripts and git, not by prose:
+- **PROCESS**: every session and every subagent has a pid, a parent, a worktree, a quota and an exit status (`scripts/kernel_proc.py`, `octo ps|top`). Quotas are enforced at the tool boundary in the one hot-path gate; a breached process is starved, not killed.
+- **ISOLATION**: one writer per tree and per file lane, denied not advised (`g__pretool-write__tree-owner.py`, `g__pretool-bash__tree-owner.py`); a whole-tree git verb or a Bash mutation aimed at another live process's file names that process, its type and its age. The arming surface (settings, hooks, gates, registry, fixtures, pre-push) is not writable by a hooked process.
+- **JOURNAL**: an append-only, hash-chained record per process, refusals and receipts included, replayable and verifiable (`octo replay --verify`).
+- **PACKAGE**: skills carry a signed semver manifest with a tree hash and a tracked lockfile, verified by the doctor and by pre-push; arms are validated and installed, not signed (`octo pkg install|verify|lock|sync`). Every one of the brain's own 233 skills now carries a `skill.json`, and the coverage is a live ladder (`skill-manifests`), not a state.
+Release criterion, read off the six doctor checks it names: `kernel-process-live`, `kernel-isolation-gate`, `kernel-quota-live` and `kernel-replay` PASS, `packages-verified` proven by its fixture at an empty lock, and `skill-manifests 233/233`. What v8 does not do, stated plainly: it cannot kill or suspend a running agent and it does not schedule; both stay out of scope (`docs/architecture/v8-kernel.md`).
 
 ## [2026-09-17]: v7.9.2
 - chore(skills): a skill.json manifest for every existing skill (v8 packages) (#287)
