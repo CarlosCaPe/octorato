@@ -15,6 +15,18 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-09-15]: v7.9.1
+### Fixes
+- fix(doctor): resolve a deny to the checkout that fired it (#307)
+
+## [2026-09-15]: v7.9.0
+### Features
+- feat(kernel): phase 5, packages installable like services (v8) (#282)
+
+## [2026-09-15]: v7.8.0
+### Features
+- feat(gate): the arming surface is not writable by a hooked process (#299)
+
 ## [2026-09-15]: v7.7.4
 - fix(scripts): make the brain read text as UTF-8 on Windows (#306)
 
