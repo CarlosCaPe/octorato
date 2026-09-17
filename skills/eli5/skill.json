@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "eli5",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Explains any document, concept or architecture in plain adult language, with analogies and no jargon. Triggers on 'eli5', 'explicame como si tuviera 5', 'hazlo simple', 'en cristiano'. Alias of lii5."
+}

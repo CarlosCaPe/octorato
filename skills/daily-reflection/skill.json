@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "daily-reflection",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Honest end-of-session retro, errors first, that distills the lesson into brain memory. Triggers on 'que aprendiste hoy?', 'reflexiona', '/reflect', 'what did you learn today', 'how would you be better tomorrow'."
+}

@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "whatsapp-mcp-bridge-gotchas",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Fixes for the lharries/whatsapp-mcp bridge: 403 media download, 405 client-outdated, QR vs phone-code pairing, encrypt-at-rest, @lid JID migration, outbound anti-spam. Load before installing or debugging a personal WhatsApp MCP."
+}

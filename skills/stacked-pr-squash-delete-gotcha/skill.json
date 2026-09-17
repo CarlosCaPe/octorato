@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "stacked-pr-squash-delete-gotcha",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Recover from and prevent stacked-PR breakage caused by squash-merge + auto-delete-branch on the base PR. Use when working with stacked branches or any PR whose base branch is another PR's head."
+}

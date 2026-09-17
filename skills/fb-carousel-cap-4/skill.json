@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "fb-carousel-cap-4",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Meta Graph /feed?attached_media= silently 500s with N>=5 photos + a long caption — cap defensively at 4 inside any FB Page carousel publisher"
+}

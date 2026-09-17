@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "coworking-concept-collision",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Protocol for when two live sessions are codifying the SAME concept concurrently (not just sharing a working tree). Detect semantic friction BEFORE committing, defer ownership to whoever is further ahead, and integrate from an isolated dimension. Trigger — a file you are about to reference or claim primacy over shows as modified (M) by another live session, or your new skill overlaps a concept another dimension is actively editing."
+}

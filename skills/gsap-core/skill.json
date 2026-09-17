@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "gsap-core",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "GSAP core API: to(), from(), fromTo(), easing, duration, stagger, defaults and matchMedia (responsive, prefers-reduced-motion). For JS animation in React, Vue or vanilla, over DOM or SVG."
+}

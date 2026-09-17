@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "batch-import-relative-paths",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "When you batch-add an `import` line to N source files via sed/awk, the relative path must be computed PER-FILE (depth varies). Vite/esbuild often silently normalize bad `../` and the bug hides across multiple deploys until a larger rebuild forces strict module resolution."
+}

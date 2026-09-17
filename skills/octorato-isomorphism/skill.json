@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "octorato-isomorphism",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Octorato's three anchors (octopus, Linux, tesseract) are one structure shown three times, not three brands glued together. Names the abstraction method. Invoke when explaining why they cohere or when adding a new anchor."
+}

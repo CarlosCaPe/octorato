@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "windows-brain-script-portability",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Scripts in ~/.claude/scripts/ that run on a Windows brain: use the python3.cmd shim and not bare python3, and reconfigure stdout to UTF-8 if you print symbols. Use it when writing a brain script or triaging a Windows-only crash."
+}

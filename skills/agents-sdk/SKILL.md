@@ -1,6 +1,9 @@
 ---
 name: agents-sdk
 description: Build AI agents on Cloudflare Workers using the Agents SDK. Load when creating stateful agents, durable workflows, real-time WebSocket apps, scheduled tasks, MCP servers, chat applications, voice agents, or browser automation. Covers Agent class, state management, callable RPC, Workflows, durable execution, queues, retries, observability, and React hooks. Biases towards retrieval from Cloudflare docs over pre-trained knowledge.
+license: Apache-2.0
+metadata:
+  origin: "https://github.com/cloudflare/skills (Apache-2.0). Installed by wrangler on first run and committed here as 6c78520 on 2026-05-23; upstream ships no NOTICE file, and its LICENSE appendix carries the unfilled \"[name of copyright owner]\" placeholder, so no copyright holder string is asserted here that was not read from a file."
 ---
 
 # Cloudflare Agents SDK

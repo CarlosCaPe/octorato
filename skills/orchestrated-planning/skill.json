@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "orchestrated-planning",
+  "version": "1.0.0",
+  "license": "NOASSERTION",
+  "description": "Create and execute phased implementation plans with documentation discovery and subagent delegation. Use when asked to plan a feature, execute a multi-step task, or when 2D Delegate determines the task needs structured planning before execution."
+}

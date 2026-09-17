@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "teams-1on1-send-no-chat-read",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Sends a Teams 1:1 message through the Graph API even when the token does NOT carry Chat.Read scopes: derives the chat ID from the sorted OIDs in the canonical form 19:{oid1}_{oid2}@unq.gbl.spaces."
+}

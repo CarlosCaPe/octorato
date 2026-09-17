@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "backward-compatible-schema-changes",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Backward-Compatible Schema Changes"
+}

@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "peripheral-parallel-dispatch",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Decision rule for WHEN to fan work out to N parallel sub-agents/arms vs solve it centrally, and HOW the center reconciles divergent results without becoming the bottleneck. Use before launching multiple agents or a Workflow, or when one context can't hold the whole job."
+}

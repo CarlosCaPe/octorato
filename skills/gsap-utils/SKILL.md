@@ -2,6 +2,8 @@
 name: gsap-utils
 description: Official GSAP skill for gsap.utils — clamp, mapRange, normalize, interpolate, random, snap, toArray, wrap, pipe. Use when the user asks about gsap.utils, clamp, mapRange, random, snap, toArray, wrap, or helper utilities in GSAP.
 license: MIT
+metadata:
+  origin: "https://github.com/greensock/gsap-skills (MIT), Copyright (c) 2026 GreenSock. MIT requires the copyright notice to travel with the material, so the upstream LICENSE is retained verbatim in this skill."
 ---
 
 # gsap.utils

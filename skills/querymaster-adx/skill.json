@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "querymaster-adx",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Child skill of querymaster for Azure Data Explorer. ADX uses KQL, NEVER SQL. azure-kusto-data connection with SSO, plus best practices for real-time telemetry. Activates when the resolved engine is ADX."
+}

@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "floci-local-aws",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Run AWS services locally — S3, DynamoDB, SQS, Lambda, ECS, ECR, OpenSearch, MSK/Kafka, Athena and ~45 more — using Floci, an MIT-licensed AWS emulator built with Quarkus Native. Use when the task involves local AWS development, integration testing, or CI without hitting real AWS, or when migrating off LocalStack Community Edition (sunset March 2026, now requires auth token). 24ms cold start, 13 MiB RAM at idle."
+}

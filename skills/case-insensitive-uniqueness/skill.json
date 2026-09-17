@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "case-insensitive-uniqueness",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Case-Insensitive Uniqueness (Functional Indexes)"
+}

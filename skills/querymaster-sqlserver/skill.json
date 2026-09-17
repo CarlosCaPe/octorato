@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "querymaster-sqlserver",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Child skill of querymaster for SQL Server and Azure SQL (Database, Managed Instance, on-prem): pyodbc connection with an Azure AD token and T-SQL best practices. Activates when the resolved engine is SQL Server."
+}

@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "tramite-mx-assistant",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Assistant for MX government procedures: drives the portal with agent-browser, STOPS at captcha, OTP and card payment, and picks up the PDF from email. For criminal-record checks, civil registry certificates, apostilles, consular appointments, SAT and IMSS."
+}

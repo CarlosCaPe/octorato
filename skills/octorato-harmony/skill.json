@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "octorato-harmony",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "When the same value reads 10 in one place and 12 in another, converge both to a canonical one referenced everywhere, never forked. Triggers when editing design tokens, styles or conventions across several files, and on 'converge' or 'armoniza'."
+}

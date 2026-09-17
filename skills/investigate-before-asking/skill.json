@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "investigate-before-asking",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Canonical mandate — before asking the operator any clarifying question, spend 30-60 seconds doing read-only investigation that could answer the question itself. Asking questions answered by a grep, a file read, or a 2-second tool call is rude and slow. Triggers — any time you are about to ask a question, run this skill mentally first."
+}

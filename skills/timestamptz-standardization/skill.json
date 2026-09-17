@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "timestamptz-standardization",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Timestamp Standardization (timestamptz)"
+}

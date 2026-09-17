@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "stream-transcript-dom-scrape",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "When a Microsoft Stream recording is read-only and the transcript download says 'no permission', the player still renders the text in the DOM and Playwright captures it. Careful: this may amount to circumvention under the MS services agreement."
+}

@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "skillsmp",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Searches, discovers and installs agent skills from skillsmp.com, the largest open collection of SKILL.md files. Triggers on 'busca skills para X', on installing one from skillsmp, or on asking for community skill recommendations."
+}

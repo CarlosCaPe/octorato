@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "playwright-interactive",
+  "version": "1.0.0",
+  "license": "Apache-2.0",
+  "description": "Persistent browser and Electron interaction through `js_repl` for fast iterative UI debugging."
+}

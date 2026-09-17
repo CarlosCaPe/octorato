@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "imagegen",
+  "version": "1.0.0",
+  "license": "Apache-2.0",
+  "description": "Generates or edits raster images with AI: photos, illustrations, textures, sprites, mockups, cutouts with a transparent background. Do not use it when the asset must be SVG, vector or HTML/CSS."
+}

@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "market-research-framework",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Consulting-grade market research framework, 12 modules from sizing to entry strategy. Triggers on 'market research', 'TAM/SAM/SOM', 'analisis competitivo', 'segmentacion de clientes', 'SWOT', 'Porter', 'pricing', 'go-to-market'."
+}

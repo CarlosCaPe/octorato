@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "session-isolation",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "MANDATORY: every concurrent session on a repo needs its own git worktree and session id. NEVER two live sessions on the same working tree. Load before opening a second session, or when investigating 'mis cambios se fueron en el commit de otra sesion'."
+}

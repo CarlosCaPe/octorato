@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "ado-refactor-performance-gate",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Mandatory performance gate for Azure DevOps SQL refactor tickets. Use when a ticket includes stored procedure refactor/review and you must validate execution plans, index usage, parameter sniffing risk, and query structure optimization opportunities."
+}

@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "horizontal-scroll-html-vs-body",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Android Chrome ignores overflow-x:hidden on <body> if <html> still allows it — clip the root, not just the body, to kill phantom horizontal scroll"
+}

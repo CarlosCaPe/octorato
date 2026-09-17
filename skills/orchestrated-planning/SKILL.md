@@ -5,6 +5,8 @@ metadata:
   source: "Adapted from claude-mem make-plan + do skills (thedotmack/claude-mem)"
   version: "1.0.0"
   adopted: "2026-04-13"
+  origin: "Adapted from https://github.com/thedotmack/claude-mem (make-plan + do skills). Entered this repo on 2026-05-15 in commit b71318d, when upstream had been Apache-2.0 since 2026-05-08 (commit 36b0929f). Its own front matter declares adopted: 2026-04-13, when upstream was AGPL-3.0-only (since 2025-09-11, commit 97807494). The dates name different licenses and neither is established as the one that attaches, so no license is asserted."
+license: NOASSERTION
 ---
 
 # Orchestrated Planning & Execution

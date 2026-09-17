@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "pre-merge-qa-gate",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Before arming auto-merge on a PR that touches production code, dispatch a QA specialist agent against an explicit test/user-case spec for the diff. Build-passes ≠ correct. Auto-merge is the merge mechanism, not the gate."
+}

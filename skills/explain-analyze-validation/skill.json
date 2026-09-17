@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "explain-analyze-validation",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "EXPLAIN ANALYZE Query Validation"
+}

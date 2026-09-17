@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "web-perf",
+  "version": "1.0.0",
+  "license": "Apache-2.0",
+  "description": "Audits web performance with the Chrome DevTools MCP: Core Web Vitals (LCP, INP, CLS), render-blocking resources, network chains and layout shifts. Triggers when asked to audit, profile or optimize load."
+}

@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "tos-safe-social-share-helper",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Architectural pattern for cases where a client wants to \"auto-publish to social platform X\" but the platform's ToS forbids API automation for that surface (FB Groups post-2024, IG personal accounts, LinkedIn personal feeds, etc.). Build a 1-click manual flow with clipboard-prefill + deep-link + tracking, not a bot. Saves the client's account from ban, gives them legal velocity, and produces telemetry the bot couldn't."
+}

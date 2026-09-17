@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "security-ownership-map",
+  "version": "1.0.0",
+  "license": "Apache-2.0",
+  "description": "Security-oriented code ownership topology from git history: bus factor, owners of sensitive code, orphans, CSV/JSON export. Only when a security analysis is requested, not for maintainer lists."
+}

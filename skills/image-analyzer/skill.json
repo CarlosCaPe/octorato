@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "image-analyzer",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "MANDATORY TRIGGER: 'imagen', 'mira la imagen', 'screenshot', 'foto', 'captura', 'que ves', 'look at this', or when an image is pasted into the chat. Analyzes, describes and classifies images with GPT-4o vision."
+}

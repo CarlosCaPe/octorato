@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "unicode-symbol-compatibility",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Unicode Symbol Compatibility in Markdown Documents"
+}

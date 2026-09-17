@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "inbox-triage-classifier",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Triage for inboxes (email, Slack, Teams, JIRA, PRs): classifies what needs action and returns a per-item verdict with urgency. Read-only, never marks as read and never replies. Use it on 'que tengo pendiente?', 'do I owe anyone a reply?'."
+}

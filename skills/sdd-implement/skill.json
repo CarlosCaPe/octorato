@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "sdd-implement",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "SDD step 4. Read plan.md and implement the feature step by step, then verify all acceptance criteria are met. Use after /sdd-plan has produced plan.md."
+}

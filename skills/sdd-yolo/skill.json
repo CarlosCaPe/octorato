@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "sdd-yolo",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "SDD fast path. Runs the full pipeline — analyse → plan → implement → review → archive — with a single confirmation gate before implementation begins. Stops automatically if Critical or Major issues are found in review. Use when you want to ship a well-understood feature with minimal interruptions."
+}

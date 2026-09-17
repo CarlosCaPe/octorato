@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "sdd-archive",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "SDD step 7. Archive feature.md and plan.md into docs/specs-archive/<yyyymmddHHMM>-<feature-name>/ directory, then update docs/project.md with the new feature, and any architecture decisions made. Use after /sdd-review is complete and the feature is ready to merge."
+}

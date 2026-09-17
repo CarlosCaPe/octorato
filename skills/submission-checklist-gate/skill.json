@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "submission-checklist-gate",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Before sending a reply to a formal requirement (bank, government agency, any institution), build an explicit checklist of EVERYTHING the requesting message demands (attachments, signatures, formats) by re-reading the source file on disk, and audit the outbound package manifest against it. Trigger, any outbound submission answering an inbound requirement, especially when the inbound was summarized by a sub-agent."
+}

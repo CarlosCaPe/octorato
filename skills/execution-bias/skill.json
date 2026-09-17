@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "execution-bias",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Don't defer to 'later / follow-up / next session' what can be done now. If no real blocker and auto-mode is on, execute without asking. The 'green light' is auto-mode itself."
+}

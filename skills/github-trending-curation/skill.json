@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "github-trending-curation",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Daily brain discovery loop. Pulls top trending from GitHub + HN + Product Hunt, runs heuristic + LLM filter against existing brain skills, surfaces only candidates that beat what we have. Output lands in `~/.claude/knowledge/github-trending/<date>.md` and a daily Notion page. Promote a candidate to a real skill with `/trending-promote <date> <repo>` — that path also auto-publishes a news article and pushes to the dataqbs FB Page."
+}

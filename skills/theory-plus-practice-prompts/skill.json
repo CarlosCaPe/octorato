@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "theory-plus-practice-prompts",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Any long technical document that explains a framework and demonstrates a case MUST carry runnable prompts with real data next to the claims. No theory without prompts, no prompts without theory. Applies to POCs, whitepapers and deliverables."
+}

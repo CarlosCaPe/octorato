@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "cache-bust-deploy-validation",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "After a production deploy of a CDN-fronted site, force cache-bust on every validation request and inspect Age/cache-status headers — the CDN can serve a stale 200 with old content for hours, hiding a broken deploy. Use whenever validating a freshly-deployed web app, debugging \"deploy completed but the live site shows the old version\", or building a post-deploy smoke test."
+}

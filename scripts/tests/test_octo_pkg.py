@@ -3859,11 +3859,32 @@ class TestGenerator(unittest.TestCase):
             self.assertFalse((self.root / skipped / "skill.json").exists())
 
     def test_per_skill_license_beats_the_repo_default(self):
+        """Seeded with a REAL license text, not a one-line marker.
+
+        The generator recognises a license by reading the terms, not by matching
+        a title, so `Apache License, Version 2.0\\n` alone is not a license: it
+        is a line that looks like one. The shipped samples under
+        `scripts/tests/license-samples/` are what a skill actually carries.
+        """
+        sample = (Path(__file__).resolve().parent / "license-samples" / "MPL-2.0.txt")
         d = self._skill("zeta", "---\nname: zeta\ndescription: d\n---\n")
-        (d / "LICENSE.txt").write_text("Apache License, Version 2.0\n", encoding="utf-8")
+        (d / "LICENSE.txt").write_text(sample.read_text(encoding="utf-8"), encoding="utf-8")
         gen.main(["--root", str(self.root), "--write", "--default-license", "MIT"])
         man = json.loads((d / "skill.json").read_text(encoding="utf-8"))
-        self.assertEqual(man["license"], "Apache-2.0")
+        self.assertEqual(man["license"], "MPL-2.0")
+
+    def test_an_unrecognised_license_refuses_instead_of_guessing(self):
+        """The strictness is the feature, so it gets an anchor of its own.
+
+        A wrong license on a distributable package is a legal claim, not a
+        cosmetic field, so a run that cannot describe every skill it was asked
+        about writes NONE of them and names the one that needs a hand.
+        """
+        d = self._skill("omega", "---\nname: omega\ndescription: d\n---\n")
+        (d / "LICENSE.txt").write_text("Terms nobody has ever seen.\n", encoding="utf-8")
+        gen.main(["--root", str(self.root), "--write", "--default-license", "MIT"])
+        self.assertFalse((d / "skill.json").is_file(),
+                         "an unrecognised license must not be guessed into a manifest")
 
 
 class TestNoChildWaitsForAHuman(SandboxCase):

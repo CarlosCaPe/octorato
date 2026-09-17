@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "finops-budget-policy",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Per-arm monthly USD budget caps with three escalation levels (alert / warn / hard_stop). Config lives in ~/.claude/budgets.yaml (gitignored). A PreToolUse hook calls scripts/budget-check.py before expensive tools (Agent, subagent dispatch, browser automation) and refuses to invoke when an arm's grace-adjusted cap is burned through."
+}

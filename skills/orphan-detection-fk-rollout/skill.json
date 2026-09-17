@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "orphan-detection-fk-rollout",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Orphan Data Detection & FK Rollout"
+}

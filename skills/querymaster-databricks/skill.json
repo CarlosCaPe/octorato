@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "querymaster-databricks",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Child skill of querymaster for Databricks. PLACEHOLDER: no workspace or cluster provisioned yet, only the connection template with databricks-sql-connector. Completed once access exists."
+}

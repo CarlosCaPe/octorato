@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "cron-bridge-daily-publisher",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Pattern to auto-publish N curated items per day from D1 to a social platform through the scheduler worker. Includes fair rotation, idempotency by hash, sentinel dedup and a retraction sweep."
+}

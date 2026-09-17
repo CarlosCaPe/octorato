@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "connection-pooling-timeout-safety",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Connection Pooling & Timeout Safety"
+}

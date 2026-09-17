@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "save-transcript",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Recovers the COMPLETE transcript of a meeting recording (Microsoft Stream, SharePoint) from its URL, and delivers a clean .txt with provenance, ready to share. Triggers on 'save-transcript', 'baja el transcript', 'saca el transcript de esta junta', 'transcript de <URL>'. For raw audio with no rendered transcript use transcribe."
+}

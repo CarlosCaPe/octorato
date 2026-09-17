@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "database-guard-pattern",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Database Guard Pattern"
+}

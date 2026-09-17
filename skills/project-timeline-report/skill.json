@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "project-timeline-report",
+  "version": "1.0.0",
+  "license": "NOASSERTION",
+  "description": "Generate a \"Journey Into [Project]\" narrative report analyzing a project's entire development history from git log, CHANGELOG, and release notes. Use when user asks for a timeline report, project history analysis, development journey, full project report, or \"what's the story of this project?\". No external dependencies."
+}

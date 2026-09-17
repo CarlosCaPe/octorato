@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "hook-profile-gating",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Runtime gate hooks via OCTO_HOOK_PROFILE (minimal|standard|strict) and OCTO_DISABLED_HOOKS (comma-separated ids) — disable noisy hooks without editing hook files. Use when onboarding a new arm, debugging a runaway hook, or running a low-context session where the full hook stack is overhead. Always-on hooks (leak-guard, secret-scan, hooks-drift) cannot be disabled via env — that's by design. Pattern adopted from affaan-m/ECC."
+}

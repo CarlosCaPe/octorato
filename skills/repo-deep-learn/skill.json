@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "repo-deep-learn",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Deep analysis of ONE GitHub repo: inventories the code, extracts patterns that could become a skill and writes a report to ~/.claude/knowledge/repo-deep-learn/. Use it when the operator hands you a repo and asks what can be learned from it."
+}

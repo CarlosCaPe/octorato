@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "runtime-adaptation-over-source-edit",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Decision rule for WHERE a new behavior or lesson belongs — the runtime layer (skill / memory / config / hook) vs the core source (CLAUDE.md). Default to the runtime layer; touch the core only when the change is a true invariant. Use whenever a lesson, preference, or new capability arrives and you must decide what to edit."
+}
