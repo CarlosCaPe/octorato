@@ -14,6 +14,8 @@ machine-generated growth ledger lives at
 `knowledge/repo-watch/<date>.md` (daily watchlist digests).
 
 ## [Unreleased]
+
+## [2026-09-17]: v8.0.0
 ### Octorato v8: the kernel
 Every run now passes through four primitives, enforced by hooks, scripts and git, not by prose:
 - **PROCESS**: every session and every subagent has a pid, a parent, a worktree, a quota and an exit status (`scripts/kernel_proc.py`, `octo ps|top`). Quotas are enforced at the tool boundary in the one hot-path gate; a breached process is starved, not killed.
