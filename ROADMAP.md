@@ -31,11 +31,11 @@ This is **[RFC #0002](https://github.com/CarlosCaPe/octorato/discussions)** — 
 
 | Milestone | Theme | Maturity | Gaps |
 |-----------|-------|----------|------|
-| **M1 — The Kernel Boundary** | Define what the OS *is* — the contract everything plugs into | `status: shipped` (v8.0.0) | Contract is live as four primitives; model/harness portability continues per binding row ([multi-runtime](docs/architecture/multi-runtime.md)) |
+| **M1 — The Kernel Boundary** | Define what the OS *is* — the contract everything plugs into | `status: shipped` (v8.0.0) | Contract is live as four primitives. Still open here: capability + identity, and harness portability of the PROCESS/JOURNAL events (Cursor cannot project them yet, see [multi-runtime](docs/architecture/multi-runtime.md)) |
 | **M2 — Isolation & Resource Control** | Make the boundary actually *enforce* limits (not just $) | `status: in progress` (isolation + quotas shipped in v8) | Uniform tool-driver model · compute quotas beyond tool calls and minutes |
 | **M3 — Observability First** | See what your agents did and why | `status: in progress` (replayable journal shipped in v8) | Trace schema + tracing across processes |
 | **M4 — Concurrency & Messaging** | Run many agents at once, safely, with recovery | `status: future` | Scheduler/process model · IPC/message bus · fault tolerance/checkpoint |
-| **M5 — Distribution** | Package, install, and boot agents like services | `status: in progress` (signed semver packages + lockfile shipped in v8) | Hosted package index · dependency resolution · init/service manager |
+| **M5 — Distribution** | Package, install, and boot agents like services | `status: in progress` (signed semver packages + lockfile shipped in v8) | Hosted package index · dependency resolution · signed arms · init/service manager |
 
 M3 is pulled forward on purpose: it's low-dependency, immediately useful, and the best on-ramp for new contributors.
 
