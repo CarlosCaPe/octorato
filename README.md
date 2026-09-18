@@ -30,7 +30,7 @@ Free and open source (MIT). Runs on Claude Code and Cursor today. No code to wri
 |---|---|
 | The assistant starts every session blank. | It starts with your rules, your projects and what it learned last time. |
 | Work for client A can leak into client B. | Each client lives in its own sealed folder. Working on one, the assistant cannot see the other. |
-| You don't know what the assistant did, or what it cost. | Every run is recorded, and you can cap what one run may spend. |
+| You don't know what the assistant did, or what it cost. | Every run is recorded (on Claude Code; on Cursor, the main session only), and you can cap how many steps and minutes one run may take. Caps are opt-in: with none set, nothing is capped. |
 | A rule is a line in a document the assistant may skip. | Every rule is tied to an automatic check. A rule without a check does not count. |
 
 ## Try it in 5 minutes
@@ -48,6 +48,10 @@ claude
 # 3b. Cursor: install the checks, then open an Agent session
 python3 ~/.claude/scripts/merge-hooks-cursor.py
 ```
+
+<p align="center"><img src="assets/demo.gif" alt="Terminal demo: brain_doctor checks that every rule is wired to a live mechanism, then the pre-push gate refuses a commit carrying a fake AWS key" width="100%"></p>
+
+<p align="center"><sub><b>Real footage.</b> The health check confirms every rule has a working check behind it, then the push guard refuses a fake AWS key before it can leave the machine.</sub></p>
 
 What changes right away: every answer ends with a receipt (what it used, what it touched, how it checked), and the assistant picks the how-to guide or role that fits the task instead of guessing. Full walkthrough in the [Getting Started](https://github.com/CarlosCaPe/octorato/wiki/Getting-Started) page.
 
@@ -82,14 +86,16 @@ Every action follows four steps, and they are checked by hooks, not by good inte
 | Skill | A how-to guide the assistant loads when a task needs it. |
 | Agent | A role card: a text file describing a job. Not a person. |
 | Hook | An automatic check that runs before or after the assistant acts. It can refuse the action. |
-| Kernel | New in v8. The part that gives every run an identity, a journal and a spending limit. |
+| Kernel | New in v8. The part that gives every run an identity, a journal and a cap on steps and minutes. |
 | Connectome | An index that finds the right skill or agent for a task. |
 | Provenance footer | The receipt at the end of every answer: basis, engine, files touched, how it was verified. |
 | 4D | The four steps above. |
 
+**About cost, plainly.** Per-client cost is an estimate from local session logs at list price, attributed by folder. The budget halt is real code, but it arms itself only once you write a `budgets.yaml`. The mechanism is real; the precision is opt-in, and the docs say which is which.
+
 ## What's new in v8, "The Kernel" (September 2026)
 
-Until v7, Octorato could tell you what the assistant *should* do. Version 8 adds the part that watches each run: every process (a session, or a helper it spawns) gets a record, an append-only journal you can replay line by line, and a cap on how many calls or minutes it may spend. Two runs can no longer write over each other's files, and a skill installed from outside has to be signed before it loads. Plain summary in the [CHANGELOG](CHANGELOG.md); the full contract in [docs/architecture/v8-kernel.md](docs/architecture/v8-kernel.md).
+Until v7, Octorato could tell you what the assistant *should* do. Version 8 adds the part that watches each run: every process (a session, or a helper it spawns) gets a record, an append-only journal you can replay line by line, and a cap on how many calls or minutes it may take. Two runs can no longer write over each other's files, and a skill installed with `octo pkg` is checked (manifest, tree hash, signature) before it lands. On Cursor the kernel records the main session only; the gaps are listed in [docs/architecture/multi-runtime.md](docs/architecture/multi-runtime.md). Plain summary in the [CHANGELOG](CHANGELOG.md); the full contract in [docs/architecture/v8-kernel.md](docs/architecture/v8-kernel.md).
 
 ## Built with Octorato
 
@@ -113,7 +119,7 @@ Pick the depth you want. Each level stands on its own.
 | 2 minutes | [FAQ](FAQ.md): the questions people actually ask, answered plainly. |
 | 10 minutes | [Wiki](https://github.com/CarlosCaPe/octorato/wiki): one page per part, starting with [Architecture](https://github.com/CarlosCaPe/octorato/wiki/Architecture). |
 | 30 minutes | [The long tour](docs/ANATOMY.md): every part of the brain, the biology behind the names, and why it is shaped this way. |
-| Reference | [White paper](WHITEPAPER.md) · [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md) · [Architecture notes](docs/architecture/) · [Capability manifest](docs/CAPABILITIES.md) |
+| Reference | [White paper](WHITEPAPER.md) · [Launch article](https://www.linkedin.com/pulse/introducing-octorato-open-source-finops-brain-ai-agents-dataqbs-trbjc) · [Live page](https://www.dataqbs.com/octorato) · [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md) · [Architecture notes](docs/architecture/) · [Capability manifest](docs/CAPABILITIES.md) |
 
 ## Contributing
 

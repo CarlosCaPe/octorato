@@ -18,7 +18,7 @@ The A→Z below uses the brain's own vocabulary. If you only want the everyday m
 | Agent | A role card: a text file describing a job (reviewer, data engineer, writer). Not a person. |
 | Hook | An automatic check that runs before or after the assistant acts. It can refuse the action. |
 | Gate | A hook that refuses. Fail-closed means "when in doubt, refuse". |
-| Kernel | New in v8. The part that gives every run an identity, a journal and a spending limit. |
+| Kernel | New in v8. The part that gives every run an identity, a journal and a cap on steps and minutes. |
 | Connectome | An index that finds the right skill or agent for a task. |
 | 4D | The four steps every action follows: describe, delegate, check, disclose. |
 | Provenance footer | The receipt at the end of every answer: basis, engine, files touched, how it was verified. |

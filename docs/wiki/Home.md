@@ -8,7 +8,7 @@
 
 - It is a folder (`~/.claude`) of rules, how-to guides and role cards. The assistant reads it every time it starts.
 - It keeps each client or project in its own sealed folder, so work never leaks from one to another.
-- It records every run and can cap what a run may spend (the v8 kernel).
+- It records every run and can cap how many steps and minutes a run may take (the v8 kernel; caps are opt-in).
 - It is not a chatbot and there are no people in it. An "agent" here is a text file describing a role, the way a job description does.
 - It is free (MIT) and runs on Claude Code and Cursor today.
 

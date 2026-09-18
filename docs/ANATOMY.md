@@ -2,7 +2,7 @@
 
 > **Organ:** the anatomy atlas in long form. The front-page [README](../README.md) says what Octorato is in plain words; this page is the full walk through every part, kept for the reader who wants the depth.
 
-> Moved out of the README on 2026-09-18 so the front page stays short. Nothing was cut; section anchors are unchanged.
+> Moved out of the README on 2026-09-18 so the front page stays short. Nothing from the body was cut and section anchors are unchanged; the old front page's pitch, demo and honest-scope note now live on the README in plain words.
 
 ---
 

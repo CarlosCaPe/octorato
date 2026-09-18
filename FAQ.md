@@ -4,7 +4,7 @@ Plain answers to the questions people (and the AI agents that read this repo) ac
 
 ## What is Octorato?
 
-A folder of plain-text files that gives your AI coding assistant a lasting memory, house rules, and a receipt for everything it does. In its own vocabulary: an **open-source AI agent operating system**, one file-native "brain" (rules, 230+ skills, 160+ specialist agents, memory, all markdown under git) that one operator runs across many sealed client "arms", with per-client cost attribution and hard budget halts. MIT licensed.
+A folder of plain-text files that gives your AI coding assistant a lasting memory, house rules, and a receipt for everything it does. In its own vocabulary: an **open-source AI agent operating system**, one file-native "brain" (rules, 230+ skills, 160+ specialist agents, memory, all markdown under git) that one operator runs across many sealed client "arms", with per-client cost attribution (an estimate from local logs at list price) and budget halts that arm once you write a `budgets.yaml`. MIT licensed.
 
 ## Are the agents people?
 
@@ -50,7 +50,7 @@ The same principle extends to the whole capability set. A generated manifest, [`
 
 ## What is v8, "The Kernel"?
 
-The September 2026 release. Until then the brain could say what the assistant should do; v8 adds the part that watches each run. Every process gets a record and an append-only journal you can replay line by line, a cap on how many calls or minutes it may spend, and one-writer-per-file isolation so two runs cannot overwrite each other. A skill installed from outside has to be signed before it loads. Contract: [`docs/architecture/v8-kernel.md`](docs/architecture/v8-kernel.md).
+The September 2026 release. Until then the brain could say what the assistant should do; v8 adds the part that watches each run. Every process gets a record and an append-only journal you can replay line by line, a cap on how many calls or minutes it may take, and one-writer-per-file isolation so two runs cannot overwrite each other. A skill installed with `octo pkg` is checked (manifest, tree hash, signature) before it lands; a folder copied by hand is outside that check. On Cursor the kernel records the main session only. Contract: [`docs/architecture/v8-kernel.md`](docs/architecture/v8-kernel.md).
 
 ## Who maintains Octorato?
 
