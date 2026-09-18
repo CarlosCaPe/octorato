@@ -1,6 +1,6 @@
 # Multi-runtime: all editors, all engines
 
-> **Status:** live as of 2026-09-06 (v7.2.0).
+> **Status:** live as of 2026-09-06 (v7.2.0); unchanged by v8.0.0 (the kernel primitives are runtime-agnostic hooks, 2026-09-18).
 > **Thesis:** Octorato is a **file-native agent OS**. It is not "a Claude Code config" and not "an Anthropic product." The brain grows as new **runtimes** (editors/harnesses) and **engines** (models) become known. Claude was first; Cursor + Grok are **supported peers with live bindings** (see Honest gaps: not every Claude-shaped hook maps 1:1 yet). The next editor or model gets a binding row, not a fork of the OS.
 
 ## The invariant

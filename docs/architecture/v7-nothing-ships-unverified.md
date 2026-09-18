@@ -68,7 +68,7 @@ v7.0.0 ships when `brain_doctor.py` prints all of:
 
 Not a claim of zero defects. A claim that zero known defect classes are unwired, and that no send leaves without receipts. The next unknown class will still get through once; v7 guarantees it gets through with a ledger that shows exactly which receipt was missing, and that the gate written for it is proven before the incident closes.
 
-## Status (as of v7.2.0, 2026-09-06)
+## Status (as of v7.2.0, 2026-09-06; contract unchanged at v8.0.0, where the receipt ledger sits beside the per-process journal of [v8-kernel.md](v8-kernel.md))
 
 Phases 1 to 5 shipped in one PR: `scripts/receipt_ledger.py`, `r__posttool__receipt-seek.py`, `g__pretool-mcp__outward-send.py` (fixture-proven, 4 block + 6 allow), `r__subagent-stop__qa-receipt.py`, `qa-merge-gate` reading the ledger, the six waivers retired (five recorded as detector or reflex by design via `v7_decision`, `FLOW.budget-halt` promoted with a fixture pair and path-scoped caps), and three new doctor assertions (`waiver-age`, `incident-fixture-coverage`, `reflex-triage`). Doctor on that tree: floor FORCED 27/27 (100%), waived 0, 29 selftests live.
 
