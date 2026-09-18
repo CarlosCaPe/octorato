@@ -39,7 +39,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 
 ROOT = Path(__file__).resolve().parent.parent
-TARGETS = [ROOT / "README.md", ROOT / "FAQ.md"]
+TARGETS = [ROOT / "README.md", ROOT / "FAQ.md", ROOT / "docs" / "ANATOMY.md"]
 
 
 def count_skills() -> int:

@@ -68,6 +68,7 @@ edges:
     concept: "skill count"
     appears_in:
       - README.md
+      - docs/ANATOMY.md
       - docs/wiki/Home.md
       - docs/wiki/_Sidebar.md
       - docs/wiki/Skills.md
@@ -80,6 +81,7 @@ edges:
     concept: "agent count"
     appears_in:
       - README.md
+      - docs/ANATOMY.md
       - docs/wiki/Home.md
       - docs/wiki/_Sidebar.md
       - docs/wiki/Agents.md
@@ -200,7 +202,8 @@ edges:
       - templates/memory/MEMORY.template.md                  # empty index adopters copy
       - skills/arm-onboarding/SKILL.md                        # a new arm = a new arm-brain (its own .claude/memory)
       - CLAUDE.md                                             # §The Octopus Architecture + Information Flow (memory routing)
-      - README.md                                            # brain/arms labels + counts framing
+      - README.md                                            # brain/arms labels + counts framing (plain words)
+      - docs/ANATOMY.md                                      # the long tour: memory section moved here from the README
       - docs/wiki/Glossary.md                                # define brain memory / arm memory / 1+N brains
       - docs/wiki/Architecture.md                            # the two-tier memory in the architecture map
       - "<each arm>/.claude/memory/ (symlinked to the harness; sealed arm-brain)"  # off-repo, per-arm
@@ -228,7 +231,8 @@ edges:
       - docs/architecture/capability-inventory.md             # generated census (moved here from docs/ root)
       - docs/architecture/hook-orchestration.md               # nervous-system spec (linked from wiki Architecture)
       - docs/architecture/memory-model.md                     # brain memory spec (1+N)
-      - README.md                                             # organism overview (diet: organs carry the depth)
+      - README.md                                             # front door in plain words (no metaphor above the fold)
+      - docs/ANATOMY.md                                       # organism overview, long form (the former README body)
     kind: appears_in
     note: >-
       The documentation IS the organism: docs/wiki/ pages are operator-facing

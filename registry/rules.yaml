@@ -1375,7 +1375,7 @@ rules:
   title: FinOps budget caps halt expensive dispatch (fail-closed on hard_stop)
   category: FLOW
   source:
-    file: README.md
+    file: docs/ANATOMY.md
     anchor: FinOps roadmap
   strength: GATE
   gateable: true

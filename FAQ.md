@@ -4,7 +4,15 @@ Plain answers to the questions people (and the AI agents that read this repo) ac
 
 ## What is Octorato?
 
-Octorato is an **open-source AI agent operating system**: one file-native "brain" — rules, 230+ skills (HOW), 160+ specialist agents (WHO), and memory, all plain markdown under git — that a single operator runs across many sealed client "arms." It adds per-client token attribution and hard budget halts (FinOps), so a consultant or small agency can bill many clients fairly from one brain. Licensed MIT.
+A folder of plain-text files that gives your AI coding assistant a lasting memory, house rules, and a receipt for everything it does. In its own vocabulary: an **open-source AI agent operating system**, one file-native "brain" (rules, 230+ skills, 160+ specialist agents, memory, all markdown under git) that one operator runs across many sealed client "arms", with per-client cost attribution (an estimate from local logs at list price) and budget halts that arm once you write a `budgets.yaml`. MIT licensed.
+
+## Are the agents people?
+
+No. An "agent" in Octorato is a text file that describes a role (a code reviewer, a data engineer, a copywriter), the way a job description does. The AI assistant reads the card and works in that role. There are no humans inside the system, and Octorato itself is a tool that never pretends to be a person: it answers from sources and signs every answer with a receipt.
+
+## Do I need to be a programmer to use it?
+
+No. If you can edit a text file and run three commands in a terminal, you can install it and write your own rules. Programming helps if you want to add hooks (automatic checks) or contribute scripts.
 
 ## What is an "AI agent operating system"?
 
@@ -40,10 +48,14 @@ Every action follows four phases: **Describe** (state what and why), **Delegate*
 
 The same principle extends to the whole capability set. A generated manifest, [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md), lists every skill, agent, script, rule, and hook the brain holds. It is produced by `scripts/capability_manifest.py` and regenerated on every push. The pre-push gate blocks a push whose manifest is stale, so a capability cannot be silently dropped from the offering by a later change. Architecture: [`docs/architecture/v5-capability-manifest.md`](docs/architecture/v5-capability-manifest.md).
 
+## What is v8, "The Kernel"?
+
+The September 2026 release. Until then the brain could say what the assistant should do; v8 adds the part that watches each run. Every process gets a record and an append-only journal you can replay line by line, a cap on how many calls or minutes it may take, and one-writer-per-file isolation so two runs cannot overwrite each other. A skill installed with `octo pkg` is checked (manifest, tree hash, signature) before it lands; a folder copied by hand is outside that check. On Cursor the kernel records the main session only. Contract: [`docs/architecture/v8-kernel.md`](docs/architecture/v8-kernel.md).
+
 ## Who maintains Octorato?
 
 Carlos Carrillo (Guadalajara, Mexico), through dataqbs. The productized "AI Agent OS" runs at [dataqbs.com](https://dataqbs.com), built and operated on this brain.
 
 ## Where do I start?
 
-Read the [README](README.md) for the architecture, the [white paper](WHITEPAPER.md) for the model, and [CONTRIBUTING](CONTRIBUTING.md) to add a skill or agent. Newcomers are welcome and every contributor is credited.
+Read the [README](README.md) for the plain-words overview, [the long tour](docs/ANATOMY.md) for the architecture, the [white paper](WHITEPAPER.md) for the model, and [CONTRIBUTING](CONTRIBUTING.md) to add a skill or agent. Newcomers are welcome and every contributor is credited.
