@@ -95,7 +95,7 @@ Every action follows four steps, and they are checked by hooks, not by good inte
 
 ## What's new in v8, "The Kernel" (September 2026)
 
-Until v7, Octorato could tell you what the assistant *should* do. Version 8 adds the part that watches each run: every process (a session, or a helper it spawns) gets a record, an append-only journal you can replay line by line, and a cap on how many calls or minutes it may take. Two runs can no longer write over each other's files, and a skill installed with `octo pkg` is checked (manifest, tree hash, signature) before it lands. On Cursor the kernel records the main session only; the gaps are listed in [docs/architecture/multi-runtime.md](docs/architecture/multi-runtime.md). Plain summary in the [CHANGELOG](CHANGELOG.md); the full contract in [docs/architecture/v8-kernel.md](docs/architecture/v8-kernel.md).
+Until v7, Octorato could tell you what the assistant *should* do. Version 8 adds the part that watches each run: every process (a session, or a helper it spawns) gets a record, an append-only journal you can replay line by line, and a cap on how many calls or minutes it may take. Two runs can no longer write over each other's files, and a skill installed with `octo pkg` is checked (manifest, tree hash, signature) before it lands. On Cursor the kernel records the main session only; the gap is stated in the risks section of [docs/architecture/v8-kernel.md](docs/architecture/v8-kernel.md). Plain summary in the [CHANGELOG](CHANGELOG.md); the full contract in [docs/architecture/v8-kernel.md](docs/architecture/v8-kernel.md).
 
 ## Built with Octorato
 
