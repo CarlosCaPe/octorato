@@ -6,6 +6,24 @@
 
 Octorato is an open-source AI-agent operating system. Its name fuses two ideas — *octopus* + *tesseract* — and that fusion runs all the way down through the architecture. Most of the vocabulary below falls into one of five families: **structure** (Brain, Arm, Company brain, CLASS/OBJECT/ARM), **flow** (4D Paradigm and its gates), **intelligence** (Connectome, Skills, Agents, Divisions), **money** (FinOps, Budget cap, Trace event), and **operations** (the sync scripts, the generic-safety guard, the self-growth loop).
 
+## Plain words first
+
+The A→Z below uses the brain's own vocabulary. If you only want the everyday meaning, this table is enough.
+
+| Word | Plain meaning |
+|---|---|
+| Brain | The shared folder of rules and guides, `~/.claude`. Public and generic: no client data in it, ever. |
+| Arm | One client, project or topic in its own sealed folder. An arm never knows another arm exists. |
+| Skill | A how-to guide the assistant loads when a task needs it. |
+| Agent | A role card: a text file describing a job (reviewer, data engineer, writer). Not a person. |
+| Hook | An automatic check that runs before or after the assistant acts. It can refuse the action. |
+| Gate | A hook that refuses. Fail-closed means "when in doubt, refuse". |
+| Kernel | New in v8. The part that gives every run an identity, a journal and a cap on steps and minutes. |
+| Connectome | An index that finds the right skill or agent for a task. |
+| 4D | The four steps every action follows: describe, delegate, check, disclose. |
+| Provenance footer | The receipt at the end of every answer: basis, engine, files touched, how it was verified. |
+| Operator | The human who runs the brain. The only bridge between arms. |
+
 ---
 
 ## A
