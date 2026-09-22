@@ -315,6 +315,24 @@ The same principle now covers the whole capability set. A generated manifest, [`
 
 ---
 
+## 11. The kernel (v8): every run has a record
+
+Up to v7 the brain could say what the assistant *should* do and refuse a send or a merge that carried no receipt. It could not say what a given run *did*. Two sessions on the same checkout could overwrite each other's files, a helper process could spend the whole budget before anyone read it, and a skill copied from elsewhere loaded on every prompt with nobody having checked it.
+
+v8.0.0 (2026-09-17) adds the kernel, four primitives that close those gaps:
+
+| Primitive | Plain meaning | Where |
+|---|---|---|
+| **Process** | Every run (a session, or a helper it spawns) gets a row: who it is, who started it, which folder it works in. `octo ps` lists them. | `scripts/kernel_proc.py`, `.cache/kernel/ptable.json` |
+| **Journal** | Before every tool call, one line is appended to that run's journal. Hash-chained, so a run can be replayed and checked afterwards (`octo replay --verify`). | `scripts/g__pretool__kernel.py`, `.cache/kernel/journal/` |
+| **Isolation** | One writer per file. A write, a whole-tree git verb or a shell mutation aimed at a path another live run holds is refused, with that run named. | `scripts/g__pretool-write__tree-owner.py`, `scripts/g__pretool-bash__tree-owner.py` |
+| **Quota** | Each run carries a ceiling on tool calls and minutes. The defaults are unlimited; the operator's caps live in a private config. A call over the cap is refused and still journaled. | `registry/kernel.yaml`, `company/config/kernel.json` |
+| **Package** | A skill installed from outside is a signed package, not a copied folder: manifest, tree hash and signature are checked in a staging area before anything lands. | `scripts/octo_pkg.py`, `packages.lock.json` |
+
+What the kernel does **not** do, stated plainly: it cannot kill, suspend or signal a process (the host harness owns the loop), and it does not schedule. It observes, records and refuses. The full contract, with every limit and its reproduction, is [`docs/architecture/v8-kernel.md`](../architecture/v8-kernel.md); the operator's commands (`octo ps`, `octo top`, `octo journal`, `octo bench`) are on [[Getting-Started]].
+
+---
+
 ## See also
 
 - [[The-4D-Paradigm]] — the nervous-system protocol; the Change Gate, the three delegate questions, and the Impact Radius scan.
