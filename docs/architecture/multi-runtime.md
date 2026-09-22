@@ -1,6 +1,6 @@
 # Multi-runtime: all editors, all engines
 
-> **Status:** live as of 2026-09-06 (v7.2.0).
+> **Status:** live as of 2026-09-06 (v7.2.0). v8.0.0 (2026-09-17) did not change the bindings; the kernel is implemented first on Claude Code and portable by binding rows, and two of its events do not project to Cursor yet (Honest gaps, item 5).
 > **Thesis:** Octorato is a **file-native agent OS**. It is not "a Claude Code config" and not "an Anthropic product." The brain grows as new **runtimes** (editors/harnesses) and **engines** (models) become known. Claude was first; Cursor + Grok are **supported peers with live bindings** (see Honest gaps: not every Claude-shaped hook maps 1:1 yet). The next editor or model gets a binding row, not a fork of the OS.
 
 ## The invariant
@@ -65,6 +65,7 @@ These are known, intentional, or pending, not silent failures:
 2. **Composer / bundled GPT list prices**: `_pricing.py` reports `$0` list (UNKNOWN) rather than inventing Anthropic Sonnet rates. Add rows when a public list exists or when reconciling invoices.
 3. **Cursor Task allow-list ≠ xAI API names**: prefer harness slugs (`composer-2.5-fast`, `grok-4.5-fast-xhigh`, `gpt-5.5-medium`, …). Treat `grok-4.3` / `grok-build-0.1` as API/FinOps unless the harness lists them.
 4. **MCP census**: `capability-census.py` reads Claude registries **and** `.cursor/mcp.json` (user + workspace). In-session truth is still `GetMcpTools`.
+5. **v8 kernel on Cursor**: `merge-hooks-cursor.py` cannot project `SubagentStart` or `PermissionDenied`, so on Cursor the kernel keeps no child-process record and no refusal journal; PROCESS and JOURNAL are Claude-shaped today (`docs/architecture/v8-kernel.md` §1: "implemented first on Claude Code 2.1.x and portable by binding rows"). The PreToolUse-class primitives (isolation, quotas, packages) do project.
 
 ## What stays Claude-shaped on purpose
 
