@@ -54,6 +54,12 @@ Autonomous chats: `~/.claude/company/config/outward-send-autonomous.json`
      ({"chats": [{"jid": "...", "label": "...", "since": "YYYY-MM-DD"}]}, private)
      names chats where the operator has standing instructions to reply and act;
      a send to a listed recipient skips requirement 4 only.
+     Residual, stated: that file is not on the arming surface (company/ is
+     the operator's private config, not a gate body), so a hooked process CAN
+     write it; measured ALLOW for a Write to it and for `tee` into it while a
+     Write to hooks.json denies. A self-inserted JID lifts the send ask only:
+     the gate receipt, absence, attribute, promise and thread checks still run,
+     the write lands in the kernel journal, and the operator owns the list.
 
 Selftest: CLAUDE_SESSION_ID=__selftest__ (set by gate_selftest, never reachable
 from the model's inline env) makes the gate accept HEAD and gates "SELFTEST" in
