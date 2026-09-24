@@ -53,8 +53,19 @@ ask, so the send is denied.
 Autonomous chats: `~/.claude/company/config/outward-send-autonomous.json`
      ({"chats": [{"jid": "...", "label": "...", "since": "YYYY-MM-DD"}]}, private)
      names chats where the operator has standing instructions to reply and act;
-     a send to a listed recipient skips requirement 4 only.
-     Residual, stated: that file is not on the arming surface (company/ is
+     a send to a listed recipient skips requirement 4 only. A listed chat with
+     "send_ok_from_chat": true also lets the operator type `send-ok` IN that
+     chat (his own phone, is_from_me = 1 in the bridge store) to release a
+     MESSAGE send to a third party within "window_minutes" (default 60, valid
+     1..240); never a deploy or a release. The store is always
+     ~/.config/whatsapp-mcp/store/messages.db (no per-chat path). Residual,
+     stated plainly: that store and the config are files under $HOME a hooked
+     process can write, so one config write plus one store row lifts the send
+     ask for every message send to any recipient for up to 240 minutes; wider
+     than the per-recipient allowlist, narrower than the prompt hatch (the row
+     stays visible in the bridge database and the write lands in the kernel
+     journal). One token covers every send in its window, not one send.
+     Residual, stated: the config file is not on the arming surface (company/ is
      the operator's private config, not a gate body), so a hooked process CAN
      write it; measured ALLOW for a Write to it and for `tee` into it while a
      Write to hooks.json denies. A self-inserted JID lifts the send ask only:
@@ -218,20 +229,141 @@ _AUTONOMOUS_FILE = Path.home() / ".claude" / "company" / "config" / "outward-sen
 _WA_SEND = re.compile(r"whatsapp.*(send_message|send_file|send_audio_message)$", re.IGNORECASE)
 
 
-def autonomous_chat(tool_name: str, tool_input) -> bool:
-    """True when this send targets a chat the private allowlist names."""
-    if not _WA_SEND.search(str(tool_name)) or not isinstance(tool_input, dict):
-        return False
-    recipient = str(tool_input.get("recipient") or "").strip()
-    if not recipient:
-        return False
+def _autonomous_cfg() -> list:
+    """The private allowlist's chat rows, [] when the file is absent or malformed."""
     try:
         cfg = json.loads(_AUTONOMOUS_FILE.read_text(encoding="utf-8"))
-        chats = cfg.get("chats") or []
-        return any(isinstance(c, dict) and str(c.get("jid", "")).strip() == recipient
-                   for c in chats)
+        return [c for c in (cfg.get("chats") or []) if isinstance(c, dict)]
     except Exception:
+        return []
+
+
+def _send_recipient(tool_name: str, tool_input) -> str:
+    """The recipient of a WhatsApp send: the MCP field, or the first positional
+    after the support-bridge script in a Bash command ("" when none)."""
+    if not isinstance(tool_input, dict):
+        return ""
+    if _WA_SEND.search(str(tool_name)):
+        return str(tool_input.get("recipient") or "").strip()
+    if tool_name == "Bash":
+        import receipt_ledger
+        for sc in receipt_ledger.subcommands(str(tool_input.get("command", ""))):
+            toks = receipt_ledger.tokens_of(sc)
+            if toks and toks[0] in _READERS:
+                continue
+            for i, t in enumerate(toks):
+                if any(receipt_ledger._is_script_token(t, n) for n in _SEND_SCRIPTS):
+                    # The script takes `--archivo <path>` anywhere and strips
+                    # it; the recipient is the first positional that is left.
+                    rest = toks[i + 1:]
+                    j = 0
+                    while j < len(rest):
+                        if rest[j] == "--archivo":
+                            j += 2
+                            continue
+                        if not rest[j].startswith("-"):
+                            return rest[j].strip()
+                        j += 1
+                    return ""
+    return ""
+
+
+def autonomous_chat(tool_name: str, tool_input) -> bool:
+    """True when this send targets a chat the private allowlist names."""
+    recipient = _send_recipient(tool_name, tool_input)
+    if not recipient:
         return False
+    return any(str(c.get("jid", "")).strip() == recipient for c in _autonomous_cfg())
+
+
+# send-ok FROM the chat (operator directive 2026-09-24): in a listed chat that
+# carries "send_ok_from_chat": true, the operator types the hatch in the group
+# itself instead of in this prompt, and a MESSAGE send to a THIRD PARTY (mail,
+# another chat, the support bridge) that follows within "window_minutes"
+# (default 60, valid 1..240; a value outside that range disables the
+# hatch for the chat) is treated as asked for. A deploy or a release is never
+# released by a chat token: those are not messages. The row must be the
+# operator's own phone (is_from_me = 1 in the personal bridge store, always
+# ~/.config/whatsapp-mcp/store/messages.db: no per-chat path, so the config
+# cannot point the check at a store the model made). Residual, stated
+# plainly: that store is a file under $HOME the model can write (measured:
+# an insert through python's sqlite3 module and a `cp` over the file both
+# pass g__pretool__arming-surface.py), and so is the config file, so ONE
+# config write plus ONE store row lifts the send ask for EVERY message send
+# to ANY recipient for up to 240 minutes; that is wider than the allowlist
+# above (per recipient, no clock) and narrower than the prompt hatch (the
+# store row is a fact in the bridge database, it stays visible, and the
+# write lands in the kernel journal). One token covers every send in its
+# window, not one send: the operator scopes it by timing.
+_DEFAULT_WA_STORE = Path.home() / ".config" / "whatsapp-mcp" / "store" / "messages.db"
+_WINDOW_MAX_MINUTES = 240.0
+
+
+def _row_age_minutes(ts: str, now) -> float:
+    """Minutes from a bridge timestamp ("YYYY-MM-DD HH:MM:SS[.frac]+HH:MM") to now."""
+    from datetime import datetime, timezone
+    m = re.match(r"(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(?:\.(\d+))?\s*(Z|[+-]\d{2}:?\d{2})?$", str(ts).strip())
+    if not m:
+        return float("inf")
+    frac = (m.group(3) or "")[:6].ljust(6, "0")
+    tz = m.group(4) or "+00:00"
+    if tz == "Z":
+        tz = "+00:00"
+    if ":" not in tz:
+        tz = tz[:3] + ":" + tz[3:]
+    dt = datetime.fromisoformat(f"{m.group(1)}T{m.group(2)}.{frac}{tz}")
+    return (now - dt.astimezone(timezone.utc)).total_seconds() / 60.0
+
+
+def _now_for(transcript: str):
+    """Wall clock, except under selftest, where the fixture's own turn timestamp
+    is the clock so the window is proven in both directions on static rows."""
+    import receipt_ledger
+    from datetime import datetime, timezone
+    if os.environ.get("CLAUDE_SESSION_ID") == receipt_ledger.SELFTEST_SESSION and transcript:
+        _, human = receipt_ledger._turn_entries(transcript)
+        ts = str((human or {}).get("timestamp") or "")
+        if ts:
+            return datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(timezone.utc)
+    return datetime.now(timezone.utc)
+
+
+def chat_send_ok(transcript: str = "") -> bool:
+    """True when the operator's own phone typed `send-ok` in a listed chat
+    that carries send_ok_from_chat, inside that chat's window."""
+    import sqlite3
+    now = _now_for(transcript)
+    db = _DEFAULT_WA_STORE
+    if not db.is_file():
+        return False
+    for c in _autonomous_cfg():
+        if c.get("send_ok_from_chat") is not True:
+            continue
+        jid = str(c.get("jid", "")).strip()
+        if not jid:
+            continue
+        try:
+            window = float(c.get("window_minutes", 60))
+            if not (1.0 <= window <= _WINDOW_MAX_MINUTES):
+                continue
+            con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+            # No ORDER BY on the timestamp column: it is text and the live
+            # store mixes UTC offsets, so text order is not time order. Every
+            # candidate row is aged in Python instead.
+            rows = con.execute(
+                "SELECT content, timestamp FROM messages WHERE chat_jid = ? AND is_from_me = 1 "
+                "AND content LIKE '%send-ok%'", (jid,)).fetchall()
+            con.close()
+        except Exception:
+            continue
+        for content, ts in rows:
+            if "send-ok" not in _HATCH.findall(str(content or "")):
+                continue
+            age = _row_age_minutes(ts, now)
+            # A row from the future is a clock error, never an authorization.
+            if 0 <= age <= window:
+                return True
+    return False
 
 
 # -- v8 kernel journal (Phase 4, v8-kernel.md) --------------------------------
@@ -286,6 +418,15 @@ def _bash_is_send(command: str) -> bool:
             if t == "gh" and receipt_ledger.words_after(toks, i, 2) == ["release", "create"]:
                 return True
     return False
+
+
+def _is_message_send(tool_name: str, tool_input: dict) -> bool:
+    """A send of a MESSAGE (mail, chat, the support bridge): the only shape a
+    chat-typed send-ok may release. Deploys and releases are sends for the
+    gate but never messages, so they stay on the prompt hatch."""
+    if tool_name == "Bash":
+        return bool(_send_recipient(tool_name, tool_input))
+    return bool(_SEND_TOOL.search(tool_name))
 
 
 def is_send(tool_name: str, tool_input: dict) -> bool:
@@ -355,7 +496,8 @@ def check(data: dict) -> str:
         return ""
     # A listed autonomous chat waives requirement 4 only; everything below
     # still runs on the body.
-    waive_ask = autonomous_chat(tool_name, tool_input)
+    waive_ask = autonomous_chat(tool_name, tool_input) or (
+        _is_message_send(tool_name, tool_input) and chat_send_ok(transcript))
     body = "\n".join(ln for ln in "\n".join(found).splitlines()
                      if not ln.lstrip().startswith(">"))
     if not body.strip():
