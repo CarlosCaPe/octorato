@@ -57,7 +57,14 @@ Autonomous chats: `~/.claude/company/config/outward-send-autonomous.json`
      "send_ok_from_chat": true also lets the operator type `send-ok` IN that
      chat (his own phone, is_from_me = 1 in the bridge store) to release a
      MESSAGE send to a third party within "window_minutes" (default 60, valid
-     1..240); never a deploy or a release.
+     1..240); never a deploy or a release. The store is always
+     ~/.config/whatsapp-mcp/store/messages.db (no per-chat path). Residual,
+     stated plainly: that store and the config are files under $HOME a hooked
+     process can write, so one config write plus one store row lifts the send
+     ask for every message send to any recipient for up to 240 minutes; wider
+     than the per-recipient allowlist, narrower than the prompt hatch (the row
+     stays visible in the bridge database and the write lands in the kernel
+     journal). One token covers every send in its window, not one send.
      Residual, stated: that file is not on the arming surface (company/ is
      the operator's private config, not a gate body), so a hooked process CAN
      write it; measured ALLOW for a Write to it and for `tee` into it while a

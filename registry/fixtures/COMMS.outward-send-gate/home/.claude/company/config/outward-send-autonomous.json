@@ -28,6 +28,13 @@
       "since": "2026-09-24",
       "send_ok_from_chat": "false",
       "window_minutes": 60
+    },
+    {
+      "jid": "120363000000000006@g.us",
+      "label": "fixture group where the operator typed send-okay, not the token",
+      "since": "2026-09-24",
+      "send_ok_from_chat": true,
+      "window_minutes": 60
     }
   ]
 }
