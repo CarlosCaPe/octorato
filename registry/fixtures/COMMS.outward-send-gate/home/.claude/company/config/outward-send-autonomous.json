@@ -1,10 +1,19 @@
 {
-  "_comment": "selftest seed: one autonomous chat, a fixture JID that exists nowhere",
+  "_comment": "selftest seed: one autonomous chat with send-ok from the chat (60 min window), one where only a member typed the token; fixture JIDs that exist nowhere",
   "chats": [
     {
       "jid": "120363000000000001@g.us",
       "label": "fixture household group",
-      "since": "2026-09-24"
+      "since": "2026-09-24",
+      "send_ok_from_chat": true,
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363000000000003@g.us",
+      "label": "fixture group, member typed the token",
+      "since": "2026-09-24",
+      "send_ok_from_chat": true,
+      "window_minutes": 60
     }
   ]
 }
