@@ -65,7 +65,7 @@ Autonomous chats: `~/.claude/company/config/outward-send-autonomous.json`
      than the per-recipient allowlist, narrower than the prompt hatch (the row
      stays visible in the bridge database and the write lands in the kernel
      journal). One token covers every send in its window, not one send.
-     Residual, stated: that file is not on the arming surface (company/ is
+     Residual, stated: the config file is not on the arming surface (company/ is
      the operator's private config, not a gate body), so a hooked process CAN
      write it; measured ALLOW for a Write to it and for `tee` into it while a
      Write to hooks.json denies. A self-inserted JID lifts the send ask only:
@@ -280,7 +280,7 @@ def autonomous_chat(tool_name: str, tool_input) -> bool:
 # carries "send_ok_from_chat": true, the operator types the hatch in the group
 # itself instead of in this prompt, and a MESSAGE send to a THIRD PARTY (mail,
 # another chat, the support bridge) that follows within "window_minutes"
-# (default 60, clamped to 1..240; a value outside that range disables the
+# (default 60, valid 1..240; a value outside that range disables the
 # hatch for the chat) is treated as asked for. A deploy or a release is never
 # released by a chat token: those are not messages. The row must be the
 # operator's own phone (is_from_me = 1 in the personal bridge store, always

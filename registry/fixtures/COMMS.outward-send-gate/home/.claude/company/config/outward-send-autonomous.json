@@ -17,10 +17,10 @@
     },
     {
       "jid": "120363000000000004@g.us",
-      "label": "fixture group with an unbounded window (>240 = disabled)",
+      "label": "fixture group with an out-of-range window (241 > 240 = disabled)",
       "since": "2026-09-24",
       "send_ok_from_chat": true,
-      "window_minutes": 100000
+      "window_minutes": 241
     },
     {
       "jid": "120363000000000005@g.us",
