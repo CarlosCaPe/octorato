@@ -1,5 +1,5 @@
 {
-  "_comment": "selftest seed: one autonomous chat with send-ok from the chat (60 min window), one where only a member typed the token; fixture JIDs that exist nowhere",
+  "_comment": "selftest seed: chat 001 = autonomous + send-ok from the chat (60 min); chat 003 = send-ok from the chat where only a member ever typed the token; fixture JIDs that exist nowhere",
   "chats": [
     {
       "jid": "120363000000000001@g.us",
@@ -13,6 +13,20 @@
       "label": "fixture group, member typed the token",
       "since": "2026-09-24",
       "send_ok_from_chat": true,
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363000000000004@g.us",
+      "label": "fixture group with an unbounded window (>240 = disabled)",
+      "since": "2026-09-24",
+      "send_ok_from_chat": true,
+      "window_minutes": 100000
+    },
+    {
+      "jid": "120363000000000005@g.us",
+      "label": "fixture group whose flag is the STRING 'false'",
+      "since": "2026-09-24",
+      "send_ok_from_chat": "false",
       "window_minutes": 60
     }
   ]

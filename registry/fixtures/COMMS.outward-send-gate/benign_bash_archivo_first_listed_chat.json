@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-archivo-first",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "~/.claude/scripts/wa-soporte.sh --archivo /tmp/x.pdf 120363000000000001@g.us \"Ahí va el formulario firmado.\""
+  },
+  "cwd": "/home/user",
+  "transcript_path": "benign_bash_archivo_first_listed_chat_transcript.jsonl"
+}
