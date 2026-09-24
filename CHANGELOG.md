@@ -15,6 +15,16 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-09-24]: v8.1.0
+- feat(outward-send): autonomous chats waive the send ask, by private allowlist (#319)
+
+## [2026-09-22]: v8.0.3
+- docs: plain-words front door, long tour to docs/ANATOMY.md, kernel explained everywhere (#317)
+
+## [2026-09-22]: v8.0.2
+- docs(reflection): log the session's hours to the company time ledger before the memory step (#318)
+- docs(changelog): backfill v8.0.1 (#315)
+
 ## [2026-09-17]: v8.0.1
 - docs(v8-kernel): state the release criterion as brain_doctor prints it (#314)
 - docs(changelog): backfill v8.0.0 (#313)
