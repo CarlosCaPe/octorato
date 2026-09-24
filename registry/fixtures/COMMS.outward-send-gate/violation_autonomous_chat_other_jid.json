@@ -1,0 +1,10 @@
+{
+  "session_id": "fx-auto-other",
+  "tool_name": "mcp__whatsapp__send_message",
+  "tool_input": {
+    "recipient": "120363000000000002@g.us",
+    "message": "Ya está el formulario firmado, revísalo y me dices."
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_autonomous_chat_other_jid_transcript.jsonl"
+}

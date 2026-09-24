@@ -50,6 +50,11 @@ qa-merge-gate). Requirement 4 is fail-closed by construction: no readable
 operator turn (missing transcript, forged or sidechain human entry) means no
 ask, so the send is denied.
 
+Autonomous chats: `~/.claude/company/config/outward-send-autonomous.json`
+     ({"chats": [{"jid": "...", "label": "...", "since": "YYYY-MM-DD"}]}, private)
+     names chats where the operator has standing instructions to reply and act;
+     a send to a listed recipient skips requirement 4 only.
+
 Selftest: CLAUDE_SESSION_ID=__selftest__ (set by gate_selftest, never reachable
 from the model's inline env) makes the gate accept HEAD and gates "SELFTEST" in
 the seeded global ledger, since a fixture cannot know the live tree.
@@ -195,6 +200,34 @@ def _walk_strings(obj, out: list) -> None:
             _walk_strings(v, out)
 
 
+# Autonomous chats: a private allowlist of chat JIDs (the operator's own
+# family or household group, for instance) where the operator has standing
+# instructions to answer and act without a per-message send ask. The list
+# lives in the company brain (gitignored), never here, so the public gate
+# carries no JID. Only requirement 4 (the explicit send ask) is waived for a
+# listed recipient; the receipt, absence, attribute, promise and thread
+# checks still run, because a household chat is still an outward send.
+# Fail-closed: an unreadable or malformed file waives nothing.
+_AUTONOMOUS_FILE = Path.home() / ".claude" / "company" / "config" / "outward-send-autonomous.json"
+_WA_SEND = re.compile(r"whatsapp.*(send_message|send_file|send_audio_message)$", re.IGNORECASE)
+
+
+def autonomous_chat(tool_name: str, tool_input) -> bool:
+    """True when this send targets a chat the private allowlist names."""
+    if not _WA_SEND.search(str(tool_name)) or not isinstance(tool_input, dict):
+        return False
+    recipient = str(tool_input.get("recipient") or "").strip()
+    if not recipient:
+        return False
+    try:
+        cfg = json.loads(_AUTONOMOUS_FILE.read_text(encoding="utf-8"))
+        chats = cfg.get("chats") or []
+        return any(isinstance(c, dict) and str(c.get("jid", "")).strip() == recipient
+                   for c in chats)
+    except Exception:
+        return False
+
+
 # -- v8 kernel journal (Phase 4, v8-kernel.md) --------------------------------
 _KERNEL_RULE = "COMMS.outward-send-gate"
 
@@ -314,12 +347,15 @@ def check(data: dict) -> str:
     ok = hatches(human)
     if "send-ok" in ok:
         return ""
+    # A listed autonomous chat waives requirement 4 only; everything below
+    # still runs on the body.
+    waive_ask = autonomous_chat(tool_name, tool_input)
     body = "\n".join(ln for ln in "\n".join(found).splitlines()
                      if not ln.lstrip().startswith(">"))
     if not body.strip():
         # Nothing to read for the phrase checks, but a file or an audio still
         # leaves: requirement 4 applies to it exactly as to a text body.
-        return _ask_deny(human)
+        return "" if waive_ask else _ask_deny(human)
     # A send is the model's own text: a quotation inside it is the model
     # quoting itself, and a claim split across lines is still one claim.
     flat = re.sub(r"\s+", " ", body)
@@ -369,7 +405,8 @@ def check(data: dict) -> str:
     # 4. Explicit send ask: operator directive 2026-08-14, deliver by default and
     #    transmit only the message that was asked for, per message. send-ok is the
     #    standing hatch (returned above). Last, so earlier denies keep their name.
-    return _ask_deny(human)
+    #    A listed autonomous chat is the other standing hatch, per recipient.
+    return "" if waive_ask else _ask_deny(human)
 
 
 def main() -> int:
