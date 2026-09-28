@@ -15,6 +15,10 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-09-28]: v8.2.1
+### Other
+- docs(changelog): backfill v8.0.2 through v8.2.0; record three reflex-triage decisions (#322)
+
 ## [2026-09-24]: v8.2.0
 - feat(outward-send): send-ok typed in an autonomous chat releases a third-party send (#321)
 
