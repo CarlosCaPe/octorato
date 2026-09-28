@@ -157,3 +157,15 @@ decisions:
     mechanism: scripts/g__pretool-bash__tree-owner.py
     reason: "both halves are live: the session half forks a newcomer into its own worktree and denies broad staging on a shared tree, and the subagent half is now denied per process, not per session (v8 Phase 2 keys lanes by pid, so two subagents of one session are two writers): a whole-tree verb (checkout/switch/reset --hard/stash/clean -f/worktree remove) in a root another live process holds a lane in, a pathspec verb or a Bash mutation on that lane, and octo --release from Bash, all denied with the holder named; the Write twin is scripts/g__pretool-write__tree-owner.py"
     decided: 2026-09-07
+  - slug: feedback_identifier_is_not_a_person
+    decision: demote
+    reason: "no hook resolves a chat identifier to a person yet; candidate shape: a read-time resolver that labels raw identifiers from memory plus private config, or an outward-send check that fires on an @<digits> mention with no registered mapping. Highest-priority candidate: three recurrences with third-party impact"
+    decided: 2026-09-28
+  - slug: lesson_a_repeated_manual_step_is_a_broken_automation
+    decision: demote
+    reason: "the detectable moment is the repetition itself and no hook counts it; candidate shape: a brain_doctor check that fails when a bot workflow logs N consecutive auth failures, the silent 401 behind the repeated manual merges"
+    decided: 2026-09-28
+  - slug: lesson_silent_fallback_turns_unreadable_into_an_assertion
+    decision: demote
+    reason: "a design-review class, not a per-turn moment; candidate shape: a lint over generators that fill legal or provenance fields (license) and fall back to a default on an unrecognized source instead of reporting it"
+    decided: 2026-09-28
