@@ -50,6 +50,11 @@
           "statusMessage": "✍ cadence lint (anti AI-tells)...",
           "timeout": 5,
           "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/r__posttool__definition-closed.py",
+          "timeout": 5,
+          "type": "command"
         }
       ],
       "matcher": "Write|Edit"

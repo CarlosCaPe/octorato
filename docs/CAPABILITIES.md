@@ -9,10 +9,10 @@
 | Skills | 233 |
 | Agents | 167 |
 | Divisions | 13 |
-| Scripts: wired | 120 |
+| Scripts: wired | 122 |
 | Scripts: orphan | 7 |
-| Rules | 80 |
-| Hook entries | 52 |
+| Rules | 81 |
+| Hook entries | 53 |
 
 ## Skills (233)
 
@@ -486,7 +486,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (127)
+## Scripts (129)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -592,6 +592,7 @@
 | querymaster-security-detector.py | QueryMaster security-canon detector (RULE #1 backing for SECURITY.querymaster-rules). | wired |
 | quickstart.py | quickstart.py , zero-to-alive for a brand-new Octorato user, in one command. | wired |
 | r__permission-denied__journal.py | r__permission-denied__journal.py: PermissionDenied reflex, the harness's own refusals. | wired |
+| r__posttool__definition-closed.py | r__posttool__definition-closed: PostToolUse Write|Edit reflex (advisory). | wired |
 | r__posttool__receipt-seek.py | r__posttool__receipt-seek.py: PostToolUse reflex that writes a SEEK receipt. | wired |
 | r__pretool-write__base-freshness.py | r__pretool-write__base-freshness.py: PreToolUse warner for a STALE EDIT BASE. | wired |
 | r__session__proc-register.py | r__session__proc-register.py: SessionStart reflex that opens a kernel process. | wired |
@@ -607,6 +608,7 @@
 | slos.py | slos.py , observability surface 3. Brain SLOs + error budget burn rate. Reads the SLO config (`~/.cl... | wired |
 | social-video-digest.py | social-video-digest , daily triage of social-video creators for brain-worthy gems. What this DOES (c... | wired |
 | source-attribution-check.py | source-attribution-check.py: Stop hook, every answer MUST end with its provenance. | wired |
+| stale_value_sweep.py | stale_value_sweep: find every file that still holds an OLD value. | wired |
 | sync-ai-docs.ps1 |  | orphan |
 | sync-readme-counts.py | Sync the skill/agent counts cited in README.md + FAQ.md to the numbers on disk. | wired |
 | trace-hook.py | trace-hook.py , observability surface 1 , capture hook. Reads a Claude Code hook event from stdin an... | wired |
@@ -618,7 +620,7 @@
 | wa-soporte.sh | Sends a WhatsApp through the SUPPORT channel, never through the operator's personal number. | wired |
 | watchdog.py | watchdog.py , observability surface 4 anomaly detector. Reads the JSONL trace files written by trace... | wired |
 
-## Rules (80)
+## Rules (81)
 
 ### ARCHITECTURE
 
@@ -672,6 +674,7 @@
 - FLOW.bulk-fetch-delegation
 - FLOW.calendar-facts-as-data
 - FLOW.canon-heal
+- FLOW.definition-closed-sweep
 - FLOW.delegate-gate
 - FLOW.do-it-today
 - FLOW.enforcement-scripts
@@ -735,7 +738,7 @@
 | Event | Wired Scripts |
 |---|---|
 | PermissionDenied | r__permission-denied__journal.py |
-| PostToolUse | cadence-lint.py, canon-heal-hook.py, client-doc-lint-hook.py, d__posttool__delegation-ledger.py, impact-radius-hook.py, r__posttool__receipt-seek.py, trace-hook.py |
+| PostToolUse | cadence-lint.py, canon-heal-hook.py, client-doc-lint-hook.py, d__posttool__delegation-ledger.py, impact-radius-hook.py, r__posttool__definition-closed.py, r__posttool__receipt-seek.py, trace-hook.py |
 | PreToolUse | budget-check.py, config-ship-verify.py, delegate-gate.py, dimension-awareness-hook.py, g__pretool-bash__git-discipline.py, g__pretool-bash__tree-owner.py, g__pretool-mcp__chat-context.py, g__pretool-mcp__outward-send.py, g__pretool-write__tree-owner.py, g__pretool__arming-surface.py, g__pretool__kernel.py, grafo-gate.py, qa-merge-gate.py, r__pretool-write__base-freshness.py, secrets-grep-guard.py, trace-hook.py |
 | SessionStart | merge-hooks.py, r__session__proc-register.py, session-isolation-hook.py |
 | Stop | cadence-stop-hook.py, claim-verify-stop.py, d__stop__wa-guardia.py, g__stop__defer-today.py, g__stop__delegation-audit.py, g__stop__draft-promise.py, g__stop__goal-anchor.py, g__stop__paste-ready-raw.py, g__stop__unsourced-absence.py, g__stop__unsourced-attribute.py, grafo-ledger-check.py, no-pause-suggestion.py, source-attribution-check.py, trace-hook.py |

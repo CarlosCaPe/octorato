@@ -351,6 +351,20 @@ edges:
       - scripts/cadence-stop-hook.py                          # chat-reply enforcement (Stop hook, blocks once)
     kind: appears_in
 
+  - id: definition-closed-sweep
+    concept: "definition closed / stale value sweep / find holders of the previous value by value"
+    appears_in:
+      - scripts/stale_value_sweep.py                          # the sweep CLI (search by value, receipt)
+      - scripts/r__posttool__definition-closed.py             # the advisory reflex (PostToolUse Write|Edit)
+      - CLAUDE.md                                             # 4D Paradigm: Definition closed
+      - skills/reflexes-over-discipline/SKILL.md              # worked example: how to run the sweep
+      - registry/rules.yaml                                   # FLOW.definition-closed-sweep
+      - hooks.json                                            # the PostToolUse wiring
+    kind: appears_in
+    note: >-
+      The reflex quotes the CLI's flags in its advisory. Change a flag or the
+      receipt words, reconcile the reflex text, CLAUDE.md and the skill together.
+
   - id: qa-merge-gate
     concept: "qa merge gate / fail-closed merge approval / OCTO_MERGE_APPROVE / protected repos / repo-scoped publish gate"
     appears_in:

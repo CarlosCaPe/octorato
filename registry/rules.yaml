@@ -2052,3 +2052,31 @@ rules:
     locator: 'Kernel: packages'
     expect: present
   liveness_required: FIRES
+- id: FLOW.definition-closed-sweep
+  title: 'Definition closed: find every holder of the previous value by value (advisory reflex, not a gate)'
+  category: FLOW
+  source:
+    file: CLAUDE.md
+    anchor: Definition closed
+  strength: REFLEX
+  gateable: false
+  enforcement: n/a
+  firing_mode:
+  - hook
+  - cli
+  mechanism:
+  - kind: Reflex
+    canonical_name: r__posttool__definition-closed.py
+    firing_event: PostToolUse
+    firing_matcher: Write|Edit
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: PostToolUse|Write|Edit|r__posttool__definition-closed.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/r__posttool__definition-closed.py --selftest
+    expect: 0
+  - method: EXIT_CODE
+    locator: scripts/stale_value_sweep.py --selftest
+    expect: 0
+  liveness_required: FIRES
