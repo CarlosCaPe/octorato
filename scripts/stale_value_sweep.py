@@ -11,16 +11,30 @@ Usage:
   stale_value_sweep.py --selftest
 
 Scope: files git knows about under the root (tracked, plus untracked files that
-are not ignored), text only, 2 MB or smaller. A value matches as a whole token:
-an alphanumeric edge needs a non-word character next to it, so "421" does not
-match inside "14210". Matching is case-insensitive and line by line.
+are not ignored), text only, 2 MB or smaller. Symlinks are skipped, and so is
+any path whose real location is outside the root. A file name that is not
+valid UTF-8 is swept like any other.
+
+Matching is case-insensitive and line by line. A value matches as a whole
+token: an alphanumeric edge needs a non-word character next to it, so "421"
+does not match inside "9421" or "4210". A value made only of digits is read as
+a number:
+  - it does not match inside a longer number written with separators or
+    decimals: "421" skips "1,421", "421,000", "0.421" and "421.5";
+  - it still matches "421." at the end of a sentence, "$421", "421%", "-421"
+    and "421-A";
+  - a value of four or more digits also matches its written forms with a
+    thousands separator: "1421" finds "1,421", "1.421" and "1 421".
 
 Exit codes: 0 for a search that ran (a finding is not an error), 2 on bad
 usage or a root git cannot list.
 
-What it cannot see: files outside the root, ignored files, binaries (PDF,
-spreadsheets, images), a value split across two lines, and the same value in
-another spelling ("four hundred", "1,421" for "1421").
+What it cannot see: files outside the root, ignored files, symlinked files,
+binaries (PDF, spreadsheets, images), files over 2 MB, a value split across two
+lines, and a number spelled as words ("four hundred"). Two readings it cannot
+tell apart: "1.421" as a decimal and as 1421 with a separator (both are
+reported for "1421"), and "421" standing as the last group of a number written
+with spaces ("1 421" is reported for "421").
 """
 import argparse
 import json
@@ -49,8 +63,9 @@ def _clean_env() -> dict:
 
 
 def _git(args, cwd):
+    """Output stays bytes: one file name that is not UTF-8 must not abort the run."""
     return subprocess.run(["git", *args], cwd=str(cwd), env=_clean_env(),
-                          capture_output=True, text=True, timeout=60)
+                          capture_output=True, timeout=60)
 
 
 def git_toplevel(cwd: Path):
@@ -58,9 +73,10 @@ def git_toplevel(cwd: Path):
         res = _git(["rev-parse", "--show-toplevel"], cwd)
     except Exception:
         return None
-    if res.returncode != 0 or not res.stdout.strip():
+    top = os.fsdecode(res.stdout).strip()
+    if res.returncode != 0 or not top:
         return None
-    return Path(res.stdout.strip())
+    return Path(top)
 
 
 def list_files(root: Path):
@@ -71,20 +87,46 @@ def list_files(root: Path):
         return None
     if res.returncode != 0:
         return None
-    return sorted({p for p in res.stdout.split("\0") if p})
+    return sorted({os.fsdecode(p) for p in res.stdout.split(b"\0") if p})
+
+
+LEAD_BOUNDARY = r"(?<!\w)"
+TRAIL_BOUNDARY = r"(?!\w)"
+THOUSANDS_SEP = "[., \u00a0]?"
 
 
 def value_pattern(value: str):
+    if re.fullmatch(r"[0-9]+", value):
+        groups, rest = [], value
+        while len(rest) > 3:
+            groups.insert(0, rest[-3:])
+            rest = rest[:-3]
+        groups.insert(0, rest)
+        body = THOUSANDS_SEP.join(groups)
+        # A digit and a separator before, or a separator and a digit after,
+        # mean this is a piece of a different number.
+        return re.compile(LEAD_BOUNDARY + r"(?<![0-9][.,])" + body
+                          + TRAIL_BOUNDARY + r"(?![.,][0-9])")
     parts = [re.escape(p) for p in value.split()]
     body = r"[ \t]+".join(parts)
-    head = r"(?<!\w)" if value[0].isalnum() else ""
-    tail = r"(?!\w)" if value[-1].isalnum() else ""
+    head = LEAD_BOUNDARY if value[0].isalnum() else ""
+    tail = TRAIL_BOUNDARY if value[-1].isalnum() else ""
     return re.compile(head + body + tail, re.IGNORECASE)
+
+
+def _within(path, real_root: str) -> bool:
+    try:
+        real = os.path.realpath(path)
+    except OSError:
+        return False
+    return real == real_root or real.startswith(real_root.rstrip(os.sep) + os.sep)
 
 
 def read_text(path: Path):
     """The file's text, or None when it is missing, too large or binary."""
     try:
+        if os.path.islink(path):
+            return None
         if not path.is_file() or path.stat().st_size > MAX_BYTES:
             return None
         raw = path.read_bytes()
@@ -101,8 +143,11 @@ def sweep(root: Path, values):
     if files is None:
         return None
     patterns = [(v, value_pattern(v)) for v in values]
+    real_root = os.path.realpath(root)
     holders = []
     for rel in files:
+        if not _within(root / rel, real_root):
+            continue
         text = read_text(root / rel)
         if text is None:
             continue
@@ -154,30 +199,104 @@ def _selftest() -> int:
         # Nothing links to this one, and it still holds the previous value.
         (repo / "notes" / "old" / "estimate.md").write_text(
             "intro\nBudget assumes headcount 421 and 3 Cycles per year.\n", encoding="utf-8")
-        (repo / "docs" / "serial.md").write_text("Part number 14210 ships.\n", encoding="utf-8")
+        (repo / "docs" / "lead.md").write_text("Part number 9421 ships.\n", encoding="utf-8")
+        (repo / "docs" / "trail.md").write_text("Part number 4210 ships.\n", encoding="utf-8")
+        (repo / "cases").mkdir()
+        cases = {  # file -> (text, found by --old 421, found by --old 1421)
+            "comma_before.md": ("Total 1,421 seats.", False, True),
+            "comma_after.md": ("Total 421,000 seats.", False, False),
+            "decimal_before.md": ("Ratio 0.421 now.", False, False),
+            "decimal_after.md": ("Ratio 421.5 now.", False, False),
+            "sentence_end.md": ("Headcount is 421.", True, False),
+            "currency.md": ("Costs $421 each.", True, False),
+            "percent.md": ("Up 421% since.", True, False),
+            "negative.md": ("Delta -421 units.", True, False),
+            "suffix.md": ("Model 421-A ships.", True, False),
+            "plain_thousands.md": ("Total 1421 seats.", False, True),
+            "dot_thousands.md": ("Total 1.421 seats.", False, True),
+            "longer_thousands.md": ("Total 11,421 seats.", False, False),
+            "thousands_then_more.md": ("Total 1,421,000 seats.", False, False),
+        }
+        for name, (text, _a, _b) in cases.items():
+            (repo / "cases" / name).write_text(text + "\n", encoding="utf-8")
+        # "1 421" is its own case: --old 1421 must find it, and --old 421 finds
+        # it too (a stated limit), so it stays out of the table above.
+        (repo / "spaced").mkdir()
+        (repo / "spaced" / "space_thousands.md").write_text("Total 1 421 seats.\n", encoding="utf-8")
+        outside = tmp / "outside.md"
+        outside.write_text("headcount 421\n", encoding="utf-8")
+        linked = True
+        try:
+            os.symlink(outside, repo / "docs" / "link.md")
+            # A link to a holder inside the root would count that holder twice.
+            os.symlink(repo / "notes" / "old" / "estimate.md", repo / "docs" / "link_inside.md")
+        except (OSError, NotImplementedError):
+            linked = False
+        # A tracked directory that is later replaced by a link to the outside:
+        # git still lists moved/held.md, and the file itself is not a link.
+        (repo / "moved").mkdir()
+        (repo / "moved" / "held.md").write_text("nothing here\n", encoding="utf-8")
+        (tmp / "elsewhere").mkdir()
+        (tmp / "elsewhere" / "held.md").write_text("headcount 421\n", encoding="utf-8")
+        odd_name = True
+        try:
+            with open(os.path.join(os.fsencode(str(repo / "docs")), b"odd\xff\xfe.md"), "wb") as fh:
+                fh.write(b"headcount 421\n")
+        except (OSError, ValueError):
+            odd_name = False
         (repo / "docs" / "blob.bin").write_bytes(b"\0\1\2 421 \0")
         (repo / ".gitignore").write_text("ignored.md\n", encoding="utf-8")
         (repo / "ignored.md").write_text("headcount 421\n", encoding="utf-8")
-        for args in (["init", "-q"], ["add", "--", "README.md", "docs", "notes", ".gitignore"]):
+        for args in (["init", "-q"], ["add", "--", "README.md", "docs", "notes", "moved", ".gitignore"]):
             res = _git(args, repo)
             if res.returncode != 0:
-                print(f"selftest FAIL: git {args[0]}: {res.stderr.strip()}", file=sys.stderr)
+                print(f"selftest FAIL: git {args[0]}: "
+                      f"{os.fsdecode(res.stderr).strip()}", file=sys.stderr)
                 return 1
+        # cases/ and spaced/ stay untracked on purpose: untracked files that
+        # are not ignored are swept too.
+        if linked:
+            shutil.rmtree(repo / "moved")
+            os.symlink(tmp / "elsewhere", repo / "moved")
 
         holders = sweep(repo, ["421"])
+        if holders is None:
+            failures.append("the sweep could not list the repo")
         names = [h["file"] for h in (holders or [])]
-        if names != ["notes/old/estimate.md"]:
-            failures.append(f"unlinked holder: expected only notes/old/estimate.md, got {names}")
-        elif holders[0]["first_line"] != 2 or holders[0]["hits"] != 1:
-            failures.append(f"hit count or first line wrong: {holders[0]}")
-        if "docs/serial.md" in names:
-            failures.append("421 matched inside 14210")
+        unlinked = [h for h in (holders or []) if h["file"] == "notes/old/estimate.md"]
+        if not unlinked:
+            failures.append(f"unlinked holder not found: {names}")
+        elif unlinked[0]["first_line"] != 2 or unlinked[0]["hits"] != 1:
+            failures.append(f"hit count or first line wrong: {unlinked[0]}")
+        if "docs/lead.md" in names:
+            failures.append("leading boundary: 421 matched inside 9421")
+        if "docs/trail.md" in names:
+            failures.append("trailing boundary: 421 matched inside 4210")
         if "docs/blob.bin" in names:
             failures.append("binary file was searched")
         if "ignored.md" in names:
             failures.append("ignored file was searched")
-        if not receipt(["421"], holders or [], repo).startswith("SWEEP-COMPLETE old=1 files=1 hits=1 "):
-            failures.append("receipt for a finding is wrong: " + receipt(["421"], holders or [], repo))
+        if linked and "docs/link.md" in names:
+            failures.append("a symlink to a file outside the root was reported")
+        if linked and "docs/link_inside.md" in names:
+            failures.append("a symlink to a holder inside the root was reported twice")
+        if linked and "moved/held.md" in names:
+            failures.append("a file reached through a linked directory outside the root was reported")
+        if odd_name and not any(n.startswith("docs/odd") for n in names):
+            failures.append(f"the holder with a non-UTF-8 name was not reported: {names}")
+        thousands = [h["file"] for h in (sweep(repo, ["1421"]) or [])]
+        for name, (text, by_421, by_1421) in cases.items():
+            rel = f"cases/{name}"
+            if (rel in names) != by_421:
+                failures.append(f"--old 421 on {text!r}: expected match={by_421}")
+            if (rel in thousands) != by_1421:
+                failures.append(f"--old 1421 on {text!r}: expected match={by_1421}")
+        if "spaced/space_thousands.md" not in thousands:
+            failures.append("--old 1421 did not match the written form '1 421'")
+        line = receipt(["421"], holders or [], repo)
+        total = sum(h["hits"] for h in (holders or []))
+        if not line.startswith(f"SWEEP-COMPLETE old=1 files={len(names)} hits={total} "):
+            failures.append("receipt for a finding is wrong: " + line)
 
         words = sweep(repo, ["3 cycles"])
         if [h["file"] for h in (words or [])] != ["notes/old/estimate.md"]:
@@ -195,8 +314,13 @@ def _selftest() -> int:
         for f in failures:
             print(f"selftest FAIL: {f}", file=sys.stderr)
         return 1
-    print("selftest PASS: unlinked holder found, absent value empty, binary and "
-          "ignored skipped, 421 not matched inside 14210, phrase case-insensitive")
+    skipped = [label for label, ran in (("symlink", linked), ("non-UTF-8 name", odd_name))
+               if not ran]
+    print("selftest PASS: unlinked holder found, absent value empty, binary, ignored "
+          "and symlinked skipped, non-UTF-8 name swept, 421 not matched inside 9421 "
+          "or 4210, 13 numeric boundary cases, 1421 matches 1,421 / 1.421 / 1 421, "
+          "phrase case-insensitive"
+          + (f" (not run on this filesystem: {', '.join(skipped)})" if skipped else ""))
     return 0
 
 
