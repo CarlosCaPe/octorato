@@ -18,25 +18,40 @@ Fires only when all of these hold:
   - the NEW text of this call (Edit: new_string, Write: content) has a closure
     marker (English or Spanish) and a number in the same sentence or line. A
     number is an integer of 2+ digits or one written with thousands separators
-    (1,438 or 1.438). Dates, clock times, and references such as #12, PR 12,
-    issue 12, ticket 12 or line 12 are not numbers here;
+    (1,438 or 1.438). Dates, ISO datetimes, clock times, and references such
+    as #12, PR 12, issue 12, ticket 12 or line 12 are not numbers here, and
+    neither is a year (19xx or 20xx) when it is the only number in the
+    sentence;
   - this session has not been advised about this file yet.
 
 Advisory only: emits additionalContext, always exits 0, never blocks. Fails
 open on unparseable input and on any exception.
 
-State: one file per session under ~/.claude/.cache/reflex/definition-closed/,
-or under the directory named by OCTO_REFLEX_STATE_DIR when that variable is
-set (tests and manual runs, so a check does not write into the live cache).
-State files older than 14 days are deleted on each write.
+State: one file per session, dc-<session id>.json, under
+~/.claude/.cache/reflex/definition-closed/, or under the directory named by
+OCTO_REFLEX_STATE_DIR when that variable holds an ABSOLUTE path (tests and
+manual runs, so a check does not write into the live cache; a relative value
+is ignored). The hook writes only files of that name and only over its own
+earlier state: a file of that name holding anything else is left untouched,
+and a state directory that is a symlink is neither read nor written. In both
+cases the advisory is still emitted, so the cost is a repeated advisory.
+
+Limits: state files are never deleted by the hook; remove the directory by
+hand to reset. Each file is about 70 bytes per advised path.
 
 What it cannot see: a definition closed in chat and never written to arm
 memory; a closure written through Bash, MultiEdit or NotebookEdit; a one-digit
-value or a number spelled as a word; a marker and its number in different
-sentences; a closure phrased with no listed marker; text past the first 2 MB
-of one write; a second closure in a file it already advised on in this
-session. It also fires on a false positive such as "confirmed 12 rows
+value or a number spelled as a word; a closed value with decimals (0.75,
+421.5); a closed value that is itself a year-shaped number standing alone
+(2024); a marker and its number in different sentences; a closure phrased with
+no listed marker; text past the first 262,144 characters (256 KB of
+characters) of one write; a second closure in a file it already advised on in
+this session. It also fires on a false positive such as "confirmed 12 rows
 loaded", which is why it only advises.
+
+Every quantifier that sits next to another one over whitespace is bounded to
+three characters, so a reference written as "PR" plus four or more spaces plus
+a number is read as a number.
 
 Stdin:  {"session_id", "tool_name", "tool_input": {"file_path", ...}, ...}
 Stdout: {"hookSpecificOutput": {"hookEventName": "PostToolUse",
@@ -62,38 +77,45 @@ for _stream in (sys.stdout, sys.stderr):
 CLAUDE_DIR = Path(__file__).resolve().parent.parent
 LIVE_DIR = Path.home() / ".claude"
 STATE_ENV = "OCTO_REFLEX_STATE_DIR"
-STATE_MAX_AGE_S = 14 * 24 * 3600
-MAX_SCAN_CHARS = 2 * 1024 * 1024
+STATE_PREFIX = "dc-"
+MAX_SCAN_CHARS = 256 * 1024
 WORKTREE_TIMEOUT_S = 2
 
 MARKER_RE = re.compile(
     r"(?<!\w)(closed|confirmed|final|locked|cerrad[oa]|confirmad[oa]|"
-    r"definitiv[oa]|queda[ \t]+en|quedan)(?!\w)", re.IGNORECASE)
+    r"definitiv[oa]|queda[ \t]{1,3}en|quedan)(?!\w)", re.IGNORECASE)
 NUMBER_RE = re.compile(
     r"(?<![\w.,:#])(?:\d{1,3}(?:[.,]\d{3})+|\d{2,})(?![\w:])(?![.,]\d)")
 _MONTH = (r"(?:january|february|march|april|may|june|july|august|september|"
           r"october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|"
           r"nov|dec|enero|febrero|marzo|abril|mayo|junio|julio|agosto|"
           r"septiembre|setiembre|octubre|noviembre|diciembre)")
+# Whitespace between tokens is horizontal and bounded (_W, _W0): the text is
+# read line by line, and two unbounded runs side by side go quadratic.
+_W = r"[ \t]{1,3}"
+_W0 = r"[ \t]{0,3}"
 DATE_RE = re.compile(
-    r"\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b"
+    r"\b\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|z|[+-]\d{2}:?\d{2})?"
+    r"|\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b"
     r"|\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b"
-    r"|\b\d{1,2}(?:st|nd|rd|th)?\s+(?:de\s+)?" + _MONTH + r"\b\.?(?:,?\s+(?:de\s+|del\s+)?\d{4}\b)?"
-    r"|\b" + _MONTH + r"\b\.?\s+\d{1,2}(?:st|nd|rd|th)?\b(?:,?\s+\d{4}\b)?"
-    r"|\b" + _MONTH + r"\b\.?\s+(?:de\s+|del\s+)?\d{4}\b",
+    r"|\b\d{1,2}(?:st|nd|rd|th)?" + _W + r"(?:de" + _W + r")?" + _MONTH
+    + r"\b\.?(?:,?" + _W + r"(?:de" + _W + r"|del" + _W + r")?\d{4}\b)?"
+    r"|\b" + _MONTH + r"\b\.?" + _W + r"\d{1,2}(?:st|nd|rd|th)?\b(?:,?" + _W + r"\d{4}\b)?"
+    r"|\b" + _MONTH + r"\b\.?" + _W + r"(?:de" + _W + r"|del" + _W + r")?\d{4}\b",
     re.IGNORECASE)
 NOISE_RE = re.compile(
-    r"\b(?:prs?|issues?|tickets?|lines?)\b\s*#?\s*\d+"
-    r"|#\s*\d+"
+    r"\b(?:prs?|issues?|tickets?|lines?)\b" + _W0 + r"#?" + _W0 + r"\d+"
+    r"|#" + _W0 + r"\d+"
     r"|\b\d{1,2}:\d{2}(?::\d{2})?\b",
     re.IGNORECASE)
+YEAR_RE = re.compile(r"(?:19|20)\d{2}")
 SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?;])\s+")
 
 
 def state_dir() -> Path:
     override = os.environ.get(STATE_ENV)
-    if override:
-        return Path(override).expanduser()
+    if override and os.path.isabs(override):
+        return Path(override)
     return LIVE_DIR / ".cache" / "reflex" / "definition-closed"
 
 
@@ -158,54 +180,44 @@ def closure_near_number(text: str) -> bool:
             if not MARKER_RE.search(sentence):
                 continue
             rest = NOISE_RE.sub(" ", DATE_RE.sub(" ", sentence))
-            if NUMBER_RE.search(rest):
-                return True
+            numbers = NUMBER_RE.findall(rest)
+            if not numbers:
+                continue
+            if len(numbers) == 1 and YEAR_RE.fullmatch(numbers[0]):
+                continue
+            return True
     return False
 
 
-def prune_state(directory: Path, now=None) -> int:
-    """Delete state files older than 14 days. Returns how many went."""
-    cutoff = (time.time() if now is None else now) - STATE_MAX_AGE_S
-    removed = 0
-    try:
-        with os.scandir(directory) as entries:
-            for entry in entries:
-                try:
-                    if (entry.name.endswith(".json")
-                            and entry.is_file(follow_symlinks=False)
-                            and entry.stat(follow_symlinks=False).st_mtime < cutoff):
-                        os.unlink(entry.path)
-                        removed += 1
-                except OSError:
-                    continue
-    except OSError:
-        pass
-    return removed
-
-
 def first_time(session_id, file_path: str, directory: Path) -> bool:
-    """True once per session per file. A state file that cannot be read or
-    written never silences the advisory."""
+    """True once per session per file. State that cannot be trusted, read or
+    written never silences the advisory, and this function never deletes and
+    never writes over a file that is not its own earlier state."""
+    if os.path.islink(directory):
+        return True
     if not isinstance(session_id, str) or not session_id:
         session_id = "no-session"
     safe = re.sub(r"[^A-Za-z0-9_.-]", "_", session_id)[:120]
-    state = directory / f"{safe}.json"
+    state = directory / f"{STATE_PREFIX}{safe}.json"
     seen = []
-    try:
-        loaded = json.loads(state.read_text(encoding="utf-8"))
-        if isinstance(loaded, list):
-            seen = [s for s in loaded if isinstance(s, str)]
-    except (OSError, ValueError):
-        pass
+    if os.path.lexists(state):
+        if os.path.islink(state):
+            return True
+        try:
+            loaded = json.loads(state.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return True
+        if not isinstance(loaded, list) or not all(isinstance(s, str) for s in loaded):
+            return True
+        seen = loaded
     key = os.path.realpath(file_path)
     if key in seen:
         return False
     try:
         directory.mkdir(parents=True, exist_ok=True)
-        prune_state(directory)
         tmp = state.with_name(state.name + f".{os.getpid()}.tmp")
         tmp.write_text(json.dumps(seen + [key]), encoding="utf-8")
-        os.replace(tmp, state)
+        os.replace(tmp, state)  # on failure the temp file stays where it is
     except OSError:
         pass
     return True
@@ -315,6 +327,8 @@ def _selftest() -> int:
             "thousands separator, dot": ("Plantilla cerrada en 1.438 personas.", "Write"),
             "number after a date": ("Confirmed on 2026/01/15: headcount 438.", "Write"),
             "number after a reference": ("Closed in PR 12 with headcount 438.", "Write"),
+            "number next to a year": ("Headcount for 2026 closed at 438.", "Write"),
+            "number after an ISO datetime": ("Confirmed 2026-01-15T10:30:00Z: headcount 438.", "Write"),
         }
         for name, (text, tool) in firing.items():
             if fresh(text, tool) is None:
@@ -336,6 +350,10 @@ def _selftest() -> int:
             "ticket reference": "Confirmed in Ticket #4521.",
             "line reference": "Confirmed at line 120.",
             "clock time": "Confirmed at 15:30.",
+            "ISO datetime, zulu": "Confirmed at 2026-01-15T10:30:00Z.",
+            "ISO datetime, offset": "Confirmed at 2026-01-15T10:30:00.123+02:00.",
+            "year standing alone": "The plan for 2026 is final.",
+            "year of the last century": "Closed since 1998.",
             "decimal": "Ratio confirmed at 0.75.",
             "marker and number in different sentences":
                 "The scope is closed. Headcount might be 438.",
@@ -384,32 +402,126 @@ def _selftest() -> int:
         for bad in (12345, ["a"], None):
             raw = json.dumps({"session_id": bad, "tool_name": "Write", "tool_input": {
                 "file_path": str(memory / "nosession.md"), "content": "Headcount closed at 438."}})
-            before = (state / "no-session.json").exists()
+            before = (state / "dc-no-session.json").exists()
             got = run(raw)
-            if not (state / "no-session.json").exists():
-                failures.append(f"session_id {bad!r} did not use the no-session state file")
+            if not (state / "dc-no-session.json").exists():
+                failures.append(f"session_id {bad!r} did not use the dc-no-session state file")
             if (got is None) != before:
                 failures.append(f"session_id {bad!r}: fired={got is not None}, expected {not before}")
 
-        # Pruning: a state file older than 14 days goes on the next write.
-        old = state / "old-session.json"
-        young = state / "young-session.json"
-        old.write_text("[]", encoding="utf-8")
-        young.write_text("[]", encoding="utf-8")
-        stale = time.time() - STATE_MAX_AGE_S - 3600
-        os.utime(old, (stale, stale))
-        fresh("Headcount closed at 438.")
-        if old.exists():
-            failures.append("a state file older than 14 days was not pruned")
-        if not young.exists():
-            failures.append("a recent state file was pruned")
+        # The hook deletes nothing: old files and files that are not its own
+        # survive a firing write, whatever their name or age.
+        shared = tmp / "shared"
+        shared.mkdir()
+        kept = {"settings.json": '{"env": {}}', "hooks.json": '{"hooks": {}}',
+                "package.json": '{"name": "x"}', "s9.json": '["not", "ours"]'}
+        long_ago = time.time() - 400 * 24 * 3600
+        for name, body in kept.items():
+            (shared / name).write_text(body, encoding="utf-8")
+            os.utime(shared / name, (long_ago, long_ago))
+        got = evaluate(event(note, "Headcount closed at 438.", session="s9"),
+                       directory=shared, brain_roots=roots)
+        if got is None:
+            failures.append("shared state directory: the advisory was not emitted")
+        for name, body in kept.items():
+            if not (shared / name).exists() or (shared / name).read_text(encoding="utf-8") != body:
+                failures.append(f"shared state directory: {name} was deleted or rewritten")
+        if sorted(os.listdir(shared)) != sorted(list(kept) + ["dc-s9.json"]):
+            failures.append(f"shared state directory holds {sorted(os.listdir(shared))}")
 
-        # The state directory follows OCTO_REFLEX_STATE_DIR.
+        # A file with the hook's own name that is not the hook's own shape is
+        # left as it is, and the advisory still goes out, every time.
+        foreign = tmp / "foreign"
+        foreign.mkdir()
+        for body in ('{"keep": "me"}', "not json at all", '[1, 2]'):
+            (foreign / "dc-s1.json").write_text(body, encoding="utf-8")
+            for _ in range(2):
+                got = evaluate(event(note, "Headcount closed at 438."),
+                               directory=foreign, brain_roots=roots)
+                if got is None:
+                    failures.append(f"foreign state file {body!r}: the advisory was silenced")
+            if (foreign / "dc-s1.json").read_text(encoding="utf-8") != body:
+                failures.append(f"foreign state file {body!r} was overwritten")
+        if os.listdir(foreign) != ["dc-s1.json"]:
+            failures.append(f"foreign state directory holds {os.listdir(foreign)}")
+
+        # A state directory that is a symlink is neither read nor written.
+        target = tmp / "link-target"
+        target.mkdir()
+        (target / "dc-s1.json").write_text(json.dumps([os.path.realpath(note)]), encoding="utf-8")
+        try:
+            os.symlink(target, tmp / "linked-state")
+            linked_state = True
+        except (OSError, NotImplementedError):
+            linked_state = False
+        if linked_state:
+            got = evaluate(event(note, "Headcount closed at 438."),
+                           directory=tmp / "linked-state", brain_roots=roots)
+            if got is None:
+                failures.append("symlinked state directory: state was read (advisory silenced)")
+            got = evaluate(event(str(memory / "other.md"), "Headcount closed at 438."),
+                           directory=tmp / "linked-state", brain_roots=roots)
+            if got is None:
+                failures.append("symlinked state directory: the advisory was not emitted")
+            if os.listdir(target) != ["dc-s1.json"] or json.loads(
+                    (target / "dc-s1.json").read_text(encoding="utf-8")) != [os.path.realpath(note)]:
+                failures.append("symlinked state directory: state was written through the link")
+
+        # The scan stops at MAX_SCAN_CHARS characters.
+        filler = "plain words only\n"
+        pad = filler * (MAX_SCAN_CHARS // len(filler) + 1)
+        if closure_near_number(pad + "Headcount closed at 438.\n"):
+            failures.append("scan cap: a closure past the cap was read")
+        if not closure_near_number(pad[:MAX_SCAN_CHARS - 200] + "\nHeadcount closed at 438.\n"):
+            failures.append("scan cap: a closure inside the cap was missed")
+
+        # No input of 100 KB may cost more than a second.
+        size = 100 * 1024
+        hostile = {
+            "marker, reference word, spaces": "closed pr" + " " * size + "x",
+            "marker, hash, spaces": "closed #" + " " * size + "x",
+            "marker, day number, spaces": "closed 12" + " " * size + "x",
+            "marker, month, spaces": "closed january" + " " * size + "x",
+            "marker, queda, spaces": "closed queda" + " " * size + "x",
+            "long digit run": "closed x" + "1" * size + "x",
+            "runs of '1 '": "closed " + "1 " * (size // 2),
+            "runs of '1:'": "closed " + "1:" * (size // 2),
+            "runs of '12 de '": "closed " + "12 de " * (size // 6),
+            "runs of separators": "closed " + ",." * (size // 2),
+            "runs of '1,234'": "closed x1" + ",234" * (size // 4) + "x",
+            "runs of 'pr '": "closed " + "pr " * (size // 3),
+            "runs of sentence ends": "closed " + ". " * (size // 2),
+        }
+        timings = []
+        for name, text in hostile.items():
+            started = time.perf_counter()
+            closure_near_number(text)
+            spent = time.perf_counter() - started
+            timings.append((name, spent))
+            if spent > 1.0:
+                failures.append(f"timing: {name} took {spent:.2f} s at 100 KB")
+        if "--timings" in sys.argv:
+            for name, spent in timings:
+                print(f"  {spent * 1000:8.1f} ms  {name}")
+
+        # The hook body holds no call that deletes a file.
+        source = Path(__file__).read_text(encoding="utf-8")
+        body = source.split("\ndef _selftest()", 1)[0] + source.split('\nif __name__ == "__main__":', 1)[1]
+        deleting = re.findall(r"unlink|os\.remove|rmtree|os\.rmdir|removedirs|send2trash", body)
+        if deleting:
+            failures.append(f"the hook body carries a delete call: {sorted(set(deleting))}")
+
+        # The state directory follows OCTO_REFLEX_STATE_DIR, absolute paths only.
         saved = os.environ.get(STATE_ENV)
         try:
             os.environ[STATE_ENV] = str(tmp / "env-state")
             if state_dir() != tmp / "env-state":
                 failures.append(f"{STATE_ENV} was not honoured")
+            default = LIVE_DIR / ".cache" / "reflex" / "definition-closed"
+            for relative in ("relative/state", "./state", "~/state", "state"):
+                os.environ[STATE_ENV] = relative
+                if state_dir() != default:
+                    failures.append(f"{STATE_ENV}={relative!r} was followed; only absolute paths count")
         finally:
             if saved is None:
                 os.environ.pop(STATE_ENV, None)
@@ -450,9 +562,11 @@ def _selftest() -> int:
             print(f"selftest FAIL: {f}", file=sys.stderr)
         return 1
     print("selftest PASS: advisory on an arm memory closure at any depth, root "
-          "shell-quoted, once per session per file, 6 firing and 25 silent "
-          "inputs, non-string session id, 14-day prune, state dir override, "
-          "brain worktrees excluded")
+          "shell-quoted, once per session per file, 8 firing and 29 silent "
+          "inputs, non-string session id, nothing deleted and no delete call in "
+          "the hook body, foreign state file kept, symlinked state dir skipped, "
+          "absolute-only state dir override, scan cap pinned, 13 hostile inputs "
+          "under 1 s, brain worktrees excluded")
     return 0
 
 

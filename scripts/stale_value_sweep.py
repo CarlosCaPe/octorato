@@ -24,17 +24,29 @@ a number:
   - it still matches "421." at the end of a sentence, "$421", "421%", "-421"
     and "421-A";
   - a value of four or more digits also matches its written forms with a
-    thousands separator: "1421" finds "1,421", "1.421" and "1 421".
+    thousands separator: "1421" finds "1,421", "1.421", "1 421", "1'421" and
+    the forms with a no-break space (U+00A0) or a narrow no-break space
+    (U+202F). The written form is not matched when it is a piece of something
+    else: followed by a separator and three more digits ("1 421 000"),
+    preceded by a digit and a separator ("3 1 421"), or followed by a hyphen
+    and a word character ("1.421-rc1");
+  - an old value given in its written form ("1,421" or "1.421") is read as
+    the number 1421 and matched the same way.
 
 Exit codes: 0 for a search that ran (a finding is not an error), 2 on bad
 usage or a root git cannot list.
 
 What it cannot see: files outside the root, ignored files, symlinked files,
-binaries (PDF, spreadsheets, images), files over 2 MB, a value split across two
-lines, and a number spelled as words ("four hundred"). Two readings it cannot
-tell apart: "1.421" as a decimal and as 1421 with a separator (both are
-reported for "1421"), and "421" standing as the last group of a number written
-with spaces ("1 421" is reported for "421").
+binaries (PDF, spreadsheets, images), UTF-16 text (it carries NUL bytes and is
+skipped as binary), files over 2 MB, a value split across two lines, a number
+spelled as words ("four hundred"), and a number with a letter-like sign
+attached ("421\u00ba" does not match "421", because the ordinal sign is a
+word character).
+
+Readings it cannot tell apart, all reported: "1.421" as a decimal and as 1421
+with a separator; "page 1 421 words", where 1 and 421 are two numbers; "421"
+as the last group of a number written with a space or an apostrophe ("1 421"
+and "1 421 000" are reported for "421"); and an old value "1.421" meant as a decimal, which is read as 1421.
 """
 import argparse
 import json
@@ -92,21 +104,37 @@ def list_files(root: Path):
 
 LEAD_BOUNDARY = r"(?<!\w)"
 TRAIL_BOUNDARY = r"(?!\w)"
-THOUSANDS_SEP = "[., \u00a0]?"
+THOUSANDS_SEP = "[., '\u00a0\u202f]"
+WRITTEN_VALUE_RE = re.compile(r"[0-9]{1,3}(?:[.,][0-9]{3})+")
+# A digit and a separator before, or a separator and a digit after, mean this
+# is a piece of a different number.
+PLAIN_LEAD = r"(?<![0-9][.,])"
+PLAIN_TRAIL = r"(?![.,][0-9])"
+WRITTEN_LEAD = r"(?<![0-9]" + THOUSANDS_SEP + r")"
+WRITTEN_TRAIL = r"(?!" + THOUSANDS_SEP + r"[0-9]{3})" + r"(?![.,][0-9])" + r"(?!-\w)"
+
+
+def normalise(value: str) -> str:
+    """An old value in its written form, "1,421" or "1.421", is the number 1421."""
+    if WRITTEN_VALUE_RE.fullmatch(value):
+        return re.sub(r"[.,]", "", value)
+    return value
 
 
 def value_pattern(value: str):
+    value = normalise(value)
     if re.fullmatch(r"[0-9]+", value):
         groups, rest = [], value
         while len(rest) > 3:
             groups.insert(0, rest[-3:])
             rest = rest[:-3]
         groups.insert(0, rest)
-        body = THOUSANDS_SEP.join(groups)
-        # A digit and a separator before, or a separator and a digit after,
-        # mean this is a piece of a different number.
-        return re.compile(LEAD_BOUNDARY + r"(?<![0-9][.,])" + body
-                          + TRAIL_BOUNDARY + r"(?![.,][0-9])")
+        plain = LEAD_BOUNDARY + PLAIN_LEAD + value + TRAIL_BOUNDARY + PLAIN_TRAIL
+        if len(groups) == 1:
+            return re.compile(plain)
+        written = (LEAD_BOUNDARY + WRITTEN_LEAD + THOUSANDS_SEP.join(groups)
+                   + TRAIL_BOUNDARY + WRITTEN_TRAIL)
+        return re.compile(plain + "|" + written)
     parts = [re.escape(p) for p in value.split()]
     body = r"[ \t]+".join(parts)
     head = LEAD_BOUNDARY if value[0].isalnum() else ""
@@ -173,6 +201,12 @@ def receipt(values, holders, root: Path) -> str:
     return f"{word} old={len(values)} files={len(holders)} hits={total} root={root}"
 
 
+def printable(name: str) -> str:
+    """A file name on one line: control and unprintable characters escaped."""
+    return "".join(c if c.isprintable() else c.encode("unicode_escape", "backslashreplace").decode("ascii")
+                   for c in name)
+
+
 def render(values, holders, root: Path) -> str:
     lines = []
     groups = {}
@@ -180,9 +214,9 @@ def render(values, holders, root: Path) -> str:
         top = h["file"].split("/", 1)[0] if "/" in h["file"] else "."
         groups.setdefault(top, []).append(h)
     for top in sorted(groups):
-        lines.append(f"{top}/" if top != "." else "./")
+        lines.append(f"{printable(top)}/" if top != "." else "./")
         for h in groups[top]:
-            lines.append(f"  {h['file']}  hits={h['hits']}  first_line={h['first_line']}")
+            lines.append(f"  {printable(h['file'])}  hits={h['hits']}  first_line={h['first_line']}")
     lines.append(receipt(values, holders, root))
     return "\n".join(lines)
 
@@ -202,7 +236,10 @@ def _selftest() -> int:
         (repo / "docs" / "lead.md").write_text("Part number 9421 ships.\n", encoding="utf-8")
         (repo / "docs" / "trail.md").write_text("Part number 4210 ships.\n", encoding="utf-8")
         (repo / "cases").mkdir()
-        cases = {  # file -> (text, found by --old 421, found by --old 1421)
+        # file -> (text, found by --old 421, found by --old 1421). A 421 that
+        # follows a space or an apostrophe is reported for --old 421: that is
+        # the stated limit, pinned here so a change to it is a choice.
+        cases = {
             "comma_before.md": ("Total 1,421 seats.", False, True),
             "comma_after.md": ("Total 421,000 seats.", False, False),
             "decimal_before.md": ("Ratio 0.421 now.", False, False),
@@ -216,6 +253,16 @@ def _selftest() -> int:
             "dot_thousands.md": ("Total 1.421 seats.", False, True),
             "longer_thousands.md": ("Total 11,421 seats.", False, False),
             "thousands_then_more.md": ("Total 1,421,000 seats.", False, False),
+            "spaced_then_more.md": ("Total 1 421 000 seats.", True, False),
+            "dotted_then_more.md": ("Total 1.421.000 seats.", False, False),
+            "spaced_piece.md": ("Total 3 1 421 seats.", True, False),
+            "comma_piece.md": ("Total 3,1 421 seats.", True, False),
+            "version.md": ("Release 1.421-rc1 shipped.", False, False),
+            "apostrophe.md": ("Total 1'421 seats.", True, True),
+            "no_break_space.md": ("Total 1\u00a0421 seats.", True, True),
+            "narrow_no_break_space.md": ("Total 1\u202f421 seats.", True, True),
+            "written_then_dash_space.md": ("Total 1,421 - final.", False, True),
+            "ordinal.md": ("Item 421\u00ba listed.", False, False),
         }
         for name, (text, _a, _b) in cases.items():
             (repo / "cases" / name).write_text(text + "\n", encoding="utf-8")
@@ -293,6 +340,20 @@ def _selftest() -> int:
                 failures.append(f"--old 1421 on {text!r}: expected match={by_1421}")
         if "spaced/space_thousands.md" not in thousands:
             failures.append("--old 1421 did not match the written form '1 421'")
+        for written in ("1,421", "1.421"):
+            if sorted(h["file"] for h in (sweep(repo, [written]) or [])) != sorted(thousands):
+                failures.append(f"--old {written} was not read as the number 1421")
+        if value_pattern("1,42").pattern == value_pattern("142").pattern:
+            failures.append("'1,42' is not a written thousands form and must stay literal")
+
+        (repo / "odd").mkdir()
+        try:
+            (repo / "odd" / "two\nlines\x1b.md").write_text("headcount 777\n", encoding="utf-8")
+            shown = render(["777"], sweep(repo, ["777"]) or [], repo).splitlines()
+            if len(shown) != 3 or "two\\nlines\\x1b.md" not in shown[1]:
+                failures.append(f"a control character in a file name broke the listing: {shown}")
+        except OSError:
+            pass
         line = receipt(["421"], holders or [], repo)
         total = sum(h["hits"] for h in (holders or []))
         if not line.startswith(f"SWEEP-COMPLETE old=1 files={len(names)} hits={total} "):
@@ -318,8 +379,9 @@ def _selftest() -> int:
                if not ran]
     print("selftest PASS: unlinked holder found, absent value empty, binary, ignored "
           "and symlinked skipped, non-UTF-8 name swept, 421 not matched inside 9421 "
-          "or 4210, 13 numeric boundary cases, 1421 matches 1,421 / 1.421 / 1 421, "
-          "phrase case-insensitive"
+          "or 4210, 23 numeric cases, 1421 matches 1,421 / 1.421 / 1 421 / 1'421, "
+          "written old value normalised, control characters escaped, phrase "
+          "case-insensitive"
           + (f" (not run on this filesystem: {', '.join(skipped)})" if skipped else ""))
     return 0
 

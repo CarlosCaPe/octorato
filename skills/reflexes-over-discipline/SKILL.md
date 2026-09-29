@@ -186,7 +186,7 @@ A closed definition (headcount 421 -> 438, 3 cycles -> 2 periods) leaves the old
 python3 ~/.claude/scripts/stale_value_sweep.py --root <arm root> --old "421" --old "3 cycles"
 ```
 
-It lists holders by top-level directory with hit counts and ends on a receipt (`SWEEP-COMPLETE` or `SWEEP-EMPTY`). Whole-token match: "421" skips "9421", "4210", "1,421" and "421.5", while "1421" also finds "1,421", "1.421" and "1 421". It cannot see binaries, ignored files, symlinked files, files over 2 MB, a value split across two lines, or a number spelled as words. The reflex `r__posttool__definition-closed.py` hands over this command when an arm memory entry closes a definition.
+It lists holders by top-level directory with hit counts and ends on a receipt (`SWEEP-COMPLETE` or `SWEEP-EMPTY`). Whole-token match: "421" skips "9421", "4210", "1,421" and "421.5", while "1421" (or "1,421") also finds "1,421", "1.421", "1 421" and "1'421", but not "1 421 000" or "1.421-rc1". It cannot see binaries, UTF-16 text, ignored files, symlinked files, files over 2 MB, a value split across two lines, or a number spelled as words. It reports "page 1 421 words" for "1421" and "1 421" for "421"; read those hits before editing. The reflex `r__posttool__definition-closed.py` hands over this command when an arm memory entry closes a definition.
 
 ## See also
 
