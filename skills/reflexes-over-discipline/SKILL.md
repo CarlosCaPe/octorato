@@ -178,6 +178,16 @@ Some rules cannot be wired as hooks today: they require a tool that does not exi
 
 Do not accept "can't be a hook" without checking all three hook types first. Most rules that feel un-hookable just need the trigger identified correctly.
 
+## Worked example: the stale value sweep
+
+A closed definition (headcount 421 -> 438, 3 cycles -> 2 periods) leaves the old value in files nobody links to. Search for the value, not for references:
+
+```bash
+python3 ~/.claude/scripts/stale_value_sweep.py --root <arm root> --old "421" --old "3 cycles"
+```
+
+It lists holders by top-level directory with hit counts and ends on a receipt (`SWEEP-COMPLETE` or `SWEEP-EMPTY`). Whole-token match, so "421" skips "14210". It cannot see binaries, ignored files, or another spelling of the value. The reflex `r__posttool__definition-closed.py` hands over this command when an arm memory entry closes a definition.
+
 ## See also
 
 - [[hook-profile-gating]]: per-session hook activation (minimal/standard/strict) so the growing hook stack stays manageable

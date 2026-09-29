@@ -371,6 +371,10 @@ Every signal — brain ↔ arm ↔ agent ↔ human — follows four phases:
 
 **Signal flow:** 1D + 2D fire BEFORE action; 3D + 4D fire AFTER. The 4D Gate sits in the middle (mandatory pre-flight Change Manifest, blocks writes until confirmed). **Full protocols, gate formats, validation matrix, the WHILE loop, the Provenance footer, and the Impact Radius scan (`impact-radius.py`) live in `skills/4d-paradigm-protocol/SKILL.md`.**
 
+### Definition closed (sweep holders by value)
+
+When a counterpart closes a definition (a count, a periodicity, a catalog size), every file in the arm that still holds the OLD value is found by searching for the value itself, never from memory and never by following references between documents: the document nobody links to is the one that stays stale. Impact Radius covers a concept in the BRAIN; this covers a value in an ARM's documents. Mechanism: `scripts/r__posttool__definition-closed.py` (PostToolUse `Write|Edit`, advisory reflex, never blocks) fires when an arm memory entry carries a closure marker next to a number and hands over the exact command, `python3 ~/.claude/scripts/stale_value_sweep.py --root <arm root> --old "<previous value>"`. The hook cannot know the previous value, so the agent fills it in. HOW in `skills/reflexes-over-discipline/SKILL.md`.
+
 ### 2D Delegate Gate (3 Mandatory Questions)
 
 At the START of every non-trivial task, run all three in this order:
