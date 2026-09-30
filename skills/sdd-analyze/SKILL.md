@@ -61,8 +61,10 @@ Do not report style preferences. Do not propose new features. Do not rewrite cri
 ## Step 2: Report
 
 Print the report, capped at **50 findings**, most severe first. If more exist, say how many
-were cut. Ids are stable: the same problem in a re-run keeps its id, so number within each
-prefix in document order (`C-01`, `C-02`).
+were cut. Ids are stable across re-runs because they name what the finding is about, not
+its position: prefix plus the criterion or task id it concerns (`C-AC-03`, `O-T07`), or the
+file and line when it concerns neither (`R-plan.md:31`). Add a letter when one subject carries
+two findings of the same pass (`X-AC-05a`, `X-AC-05b`).
 
 ```markdown
 # Analysis: <Feature Name>

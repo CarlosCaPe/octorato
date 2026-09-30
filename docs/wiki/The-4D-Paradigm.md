@@ -302,7 +302,7 @@ Archive             → /sdd-archive  → docs/specs-archive/ (requires CONVERGE
 
 ### Solo-operator adaptations
 
-- **Max 20 tasks** in any `plan.md` — consolidate if SDD generates more.
+- **Max 20 planned tasks** in any `plan.md` (Convergence sections appended later do not count); consolidate if SDD generates more.
 - `feature.md` and `plan.md` live in the working directory during the task and are cleaned up after (git tracks the actual changes).
 - `review.md` is optional for MEDIUM, mandatory for LARGE.
 - `/sdd-yolo` maps to the "hazlo directo" exception — the full pipeline behind a single gate.

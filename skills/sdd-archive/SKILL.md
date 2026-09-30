@@ -37,9 +37,11 @@ Use `feature_name` from Step 0. Capture the current timestamp using `date +"%Y%m
 
 ### 2. Verify Completion
 Completion is a converge verdict, not ticked checkboxes (criteria are never ticked).
-- For a `Spec-Format: ears-1` spec, require the latest `/sdd-converge` report for this spec
-  directory to end with `CONVERGE-VERDICT: CONVERGED`. If it says `GAPS` or no converge pass
-  ran, stop and tell the user to run `/sdd-converge`.
+- For a `Spec-Format: ears-1` spec, require a `CONVERGE-VERDICT: CONVERGED` for this spec
+  directory, newer than the last change to its code. Today that verdict is the final message
+  of the converge subagent in this session; from v9 phase 3 on, the receipt ledger records it
+  and the push gate checks it. If the latest verdict says `GAPS`, or none is available, stop
+  and tell the user to run `/sdd-converge`.
 - For an older spec without that header, warn the user that completion was never verified
   and ask for confirmation before archiving.
 
@@ -108,7 +110,7 @@ If the feature introduced new environment variables, configuration keys, add the
 ## Environment & Configuration
 | Key | Description | Required | Default |
 |-----|-------------|----------|---------|
-| JWT_SECRET | Secret key for JWT signing | Yes |: |
+| JWT_SECRET | Secret key for JWT signing | Yes | none |
 | JWT_EXPIRY_MINUTES | Access token TTL in minutes | No | 15 |
 ```
 

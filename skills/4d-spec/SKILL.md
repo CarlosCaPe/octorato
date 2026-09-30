@@ -104,7 +104,7 @@ the code, never a claim by the builder:
 
 ## Key Adaptations for Solo Operator
 
-- **Max 20 tasks** in any plan.md: if SDD generates more, consolidate
+- **Max 20 planned tasks** in any plan.md (tasks above the first `## Convergence` section): if SDD generates more, consolidate
 - **No docs/project.md required**: we already have `.claude/CLAUDE.md` per arm
 - **feature.md lives in project root** during work, archived after
 - **review.md is optional for MEDIUM**: only mandatory for LARGE

@@ -37,7 +37,7 @@ Check the conversation for `feature_description` and for `docs/project.md`.
 
 ---
 
-## Phase 1: Analyse
+## Phase 1: Spec
 
 Follow the full `sdd-feature` process:
 
@@ -103,8 +103,18 @@ Follow the full `sdd-implement` process:
 
 6. Run `/sdd-converge` as an independent verifier subagent.
 7. On `GAPS`, implement the tasks it appended under `## Convergence <n>`, then run it again.
-8. Stop the pipeline if the same criterion stays unmet after 3 converge passes, and report it.
-   Continue only on `CONVERGED`.
+8. Stop the pipeline if the same criterion stays unmet after 3 converge passes. Continue only
+   on `CONVERGED`. When you stop, print:
+
+```
+## YOLO Pipeline Stopped: converge did not close
+
+Feature: <Feature Name>
+Unmet after 3 passes: <AC ids, with the converge evidence for each>
+
+feature.md and plan.md stay in place. Decide whether the criterion or the code is wrong:
+/sdd-refine for the criterion, /sdd-implement for the code, then /sdd-converge.
+```
 
 ---
 

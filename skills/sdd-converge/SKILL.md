@@ -37,9 +37,13 @@ When every criterion is met, you write **nothing**. `plan.md` stays byte-identic
 2. `plan.md`: which tasks claim which criteria, and any earlier Convergence sections.
 3. The code and tests those tasks name.
 
-Run `python3 ~/.claude/scripts/spec_lint.py <spec-directory>` first. If it reports findings,
-stop and return `GAPS` with the linter output as the only content: a spec a script cannot
-read cannot be judged.
+Run `python3 ~/.claude/scripts/spec_lint.py <spec-directory>` first, and take
+`sha256sum plan.md` now: you only know which branch of Step 3 applies after judging.
+
+If the linter reports findings, stop: a spec a script cannot read cannot be judged. Write
+nothing, because the plan's own grammar may be what is broken, and report the linter output
+as the reason. Your message still ends with the two protocol lines of Step 4, with
+`CONVERGE-VERDICT: GAPS`. The fix belongs to `/sdd-refine` or `/sdd-plan`, not to you.
 
 ## Step 2: Judge Each Criterion
 
@@ -47,7 +51,7 @@ For every criterion, decide one status and record the evidence you observed:
 
 | Status | Meaning |
 |---|---|
-| `met` | You ran or read something that shows the behaviour holds, and a test pins it |
+| `met` | You ran or read something that shows the behaviour holds in every case the criterion names, and a test pins it |
 | `partial` | The behaviour holds in some cases the criterion covers, not all |
 | `unmet` | The behaviour is absent |
 | `contradicted` | The code does the opposite of the criterion |
@@ -73,8 +77,8 @@ Task ids continue after the highest existing id. Every task follows the plan gra
 the linter can read it. Then run the linter on the spec directory and fix your own section
 if it reports a finding.
 
-**No gaps.** Write nothing. Confirm with `sha256sum plan.md` before and after that the file
-did not change.
+**No gaps.** Write nothing. Compare `sha256sum plan.md` with the value you took in Step 1 and
+report both.
 
 ## Step 4: Report
 

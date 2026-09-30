@@ -408,7 +408,7 @@ For tasks above TRIVIAL complexity, 4D integrates with SDD via the `4d-spec` orc
 | 3-5 | MEDIUM | 4D + `plan.md` |
 | 6+ | LARGE | 4D + full SDD (`feature.md` + `plan.md` + analyze + implement ⇄ converge + `review.md` + archive) |
 
-Signals: +2 touches 4-10 files, +4 touches 10+, +2 new feature, +3 architecture decision, +2 multi-module, +5 user requests spec. Max 20 tasks per plan.md. SDD artifacts NEVER at brain root. Full classifier + workflow in `skills/4d-spec/SKILL.md`.
+Signals: +2 touches 4-10 files, +4 touches 10+, +2 new feature, +3 architecture decision, +2 multi-module, +5 user requests spec. Max 20 planned tasks per plan.md (Convergence sections appended by the converge pass do not count). SDD artifacts NEVER at brain root. Full classifier + workflow in `skills/4d-spec/SKILL.md`.
 
 **Done is a verdict (v9).** On LARGE tasks the builder never grades its own work: `sdd-implement` and `sdd-review` no longer tick or pass acceptance criteria. Specs declare `Spec-Format: ears-1` (EARS criteria with a Glossary subject, at most 3 open markers) and plans use the task grammar `T## [AC-##] <path>: <action>`, so `scripts/spec_lint.py` checks both deterministically. `sdd-analyze` checks the plan against the spec before any code, and `sdd-converge` decides completion from the code and tests, appending the missing work or leaving `plan.md` byte-identical with `CONVERGE-VERDICT: CONVERGED`. Both run as independent verifier subagents on the judgment tier. Contract and phases: `docs/specs-archive/202609301321-v9-done-is-a-verdict/`.
 
