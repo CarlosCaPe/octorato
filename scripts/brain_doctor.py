@@ -2401,6 +2401,70 @@ def check_packages_verified(fix: bool) -> Result:
                   f"arms validated)")
 
 
+_SPEC_GATE_CMD = (r'^[ \t]*(if[ \t]+!?[ \t]*)?"?\$\{?PYTHON\}?"?[ \t]+'
+                  r'[^|]*spec_lint\.py[^|]*--push-range([^|]*$|[^|]*\|\|)')
+
+
+def check_spec_contract(fix: bool) -> Result:
+    """v9, done is a verdict: every ears-1 spec in the tree reads clean, and the
+    push gate that keeps it that way is in .githooks/pre-push.
+
+    The two gate rules (FLOW.spec-contract, FLOW.done-is-a-verdict) prove their
+    fixtures through gate-liveness; what that cannot see is the brain's OWN specs.
+    A spec edited on a branch pushed with --no-verify, or merged through the web UI,
+    reaches master without the push stanza ever running, so the doctor re-reads
+    every ears-1 spec on disk. Legacy specs without the header are skipped by the
+    linter, as they are at push time."""
+    key = "spec-contract"
+    script = CLAUDE_DIR / "scripts" / "spec_lint.py"
+    if not script.exists():
+        return Result(key, FAIL, "scripts/spec_lint.py is missing",
+                      "restore the spec linter; the v9 push gate calls it")
+    text = _rt(CLAUDE_DIR / ".githooks" / "pre-push") or ""
+    if not any(re.search(_SPEC_GATE_CMD, ln) for ln in text.splitlines()):
+        return Result(key, FAIL,
+                      ".githooks/pre-push does not invoke spec_lint.py --push-range, so a "
+                      "spec can claim converged without a verdict",
+                      "restore the OCTORATO-SPEC-GATE stanza in .githooks/pre-push")
+    dirs = sorted(p.parent for base in ("docs/specs", "docs/specs-archive")
+                  for p in (CLAUDE_DIR / base).glob("*/feature.md"))
+    if not dirs:
+        return Result(key, PASS, "no spec directories yet; the push stanza is present")
+    cp = run([PYTHON or "python3", str(script), *map(str, dirs)], cwd=CLAUDE_DIR)
+    lines = (cp.stdout or "").strip().splitlines()
+    linted = sum(1 for ln in lines if ln.startswith("ok "))
+    skipped = sum(1 for ln in lines if ln.startswith("skip "))
+    if cp.returncode != 0:
+        bad = [ln for ln in lines if not ln.startswith(("ok ", "skip "))]
+        return Result(key, FAIL, f"{len(bad)} finding(s): " + "; ".join(bad[:3]),
+                      "python3 scripts/spec_lint.py <spec-dir> and fix the findings")
+    # The push stanza is skippable (--no-verify from a worktree is not denied, and a
+    # web-UI merge runs no hook), so a converged status can reach the tree without a
+    # verdict. Receipts are per machine, so a missing one is a WARN, never a FAIL: a
+    # second machine that pulled a legitimately converged spec holds no receipt.
+    unverified = []
+    try:
+        sys.path.insert(0, str(CLAUDE_DIR / "scripts"))
+        import receipt_ledger
+        for d in dirs:
+            head = "\n".join((d / "feature.md").read_text(encoding="utf-8").splitlines()[:30])
+            if re.search(r"Spec-Format:\**\s*ears-1", head) and \
+                    re.search(r"Status:\**\s*converged\b", head, re.IGNORECASE):
+                rel = d.relative_to(CLAUDE_DIR).as_posix()
+                if receipt_ledger.converge_pass_for(rel) is None:
+                    unverified.append(rel)
+    except Exception as exc:  # the ledger is advisory here; the push gate is the enforcer
+        unverified.append(f"(receipt ledger unreadable: {exc})")
+    if unverified:
+        return Result(key, WARN,
+                      f"{len(unverified)} spec(s) say converged with no CONVERGED receipt on "
+                      f"this machine: " + ", ".join(unverified[:3]),
+                      "run /sdd-converge on it here, or confirm it converged on the machine "
+                      "that pushed it")
+    return Result(key, PASS,
+                  f"{linted} ears-1 spec(s) clean, {skipped} legacy skipped; push stanza present")
+
+
 def check_skill_manifests(fix: bool) -> Result:
     """v8 PACKAGE, the in-repo half: does every skill this brain SHIPS carry a
     `skill.json`?
@@ -2486,6 +2550,7 @@ CHECKS = [
     ("capability-manifest-fresh", check_capability_manifest),
     ("packages-verified", check_packages_verified),
     ("skill-manifests", check_skill_manifests),
+    ("spec-contract", check_spec_contract),
 ]
 
 STATUS_ICON = {PASS: "✓", WARN: "!", FAIL: "✗"}

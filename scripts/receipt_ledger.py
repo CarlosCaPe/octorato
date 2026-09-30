@@ -515,6 +515,64 @@ def parse_verdict(text: str) -> tuple:
     return verdict, scope
 
 
+_CONVERGE_VERDICT = re.compile(r"CONVERGE-VERDICT\s*:\s*(CONVERGED|GAPS)\b", re.IGNORECASE)
+_CONVERGE_SCOPE = re.compile(r"CONVERGE-SCOPE\s*:\s*(\S+)", re.IGNORECASE)
+
+
+def parse_converge(text: str) -> tuple:
+    """(verdict, scope) from a converge pass's final report (v9): the LAST
+    occurrence of each, like parse_verdict, so a protocol line quoted earlier in
+    the report cannot stand in for the verdict at its end. The scope is a spec
+    directory, normalised with no leading ./ and no trailing slash. ("", "")
+    when absent."""
+    if not text:
+        return "", ""
+    vms = list(_CONVERGE_VERDICT.finditer(text))
+    sms = list(_CONVERGE_SCOPE.finditer(text))
+    verdict = vms[-1].group(1).upper() if vms else ""
+    scope = normalize_spec_dir(sms[-1].group(1).strip("`'\"")) if sms else ""
+    return verdict, scope
+
+
+def normalize_spec_dir(path: str) -> str:
+    p = str(path or "").strip().replace("\\", "/")
+    while p.startswith("./"):
+        p = p[2:]
+    return p.rstrip("/")
+
+
+def converge_latest_for(spec_dir: str, session_id: str = "") -> dict | None:
+    """Most recent anchored `converge` receipt for `spec_dir`, whatever its
+    verdict: written for a verifier persona, pointing at a harness-shaped agent
+    transcript, and whose transcript re-parses to the same verdict and to this
+    exact scope. A prefix match would let one spec's verdict cover another's.
+    `session_id` empty means any session: the push gate runs outside one."""
+    want = normalize_spec_dir(spec_dir)
+    if not want:
+        return None
+    for r in reversed(read_global()):
+        if r.get("kind") != "converge" or r.get("verdict") not in ("CONVERGED", "GAPS"):
+            continue
+        if normalize_spec_dir(r.get("scope", "")) != want:
+            continue
+        if not QA_AGENT_TYPE.search(str(r.get("agent_type", ""))):
+            continue
+        tp = str(r.get("agent_transcript_path") or "")
+        if not tp or not _harness_agent_transcript(Path(tp), session_id, str(r.get("agent_id") or "")):
+            continue
+        verdict, scope = parse_converge(last_assistant_text(tp))
+        if verdict == r.get("verdict") and scope == want:
+            return r
+    return None
+
+
+def converge_pass_for(spec_dir: str, session_id: str = "") -> dict | None:
+    """The latest anchored converge receipt for `spec_dir`, only when it says
+    CONVERGED. A CONVERGED followed by a later GAPS is stale, not a pass."""
+    r = converge_latest_for(spec_dir, session_id)
+    return r if r and r.get("verdict") == "CONVERGED" else None
+
+
 def scope_names(scope: str, token: str) -> bool:
     """Whole-token match: '#260', 'PR#260' and '260' name 260, never 26 or 2600."""
     t = re.escape(str(token).lstrip("#"))

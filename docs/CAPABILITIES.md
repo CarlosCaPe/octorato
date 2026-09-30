@@ -11,7 +11,7 @@
 | Divisions | 13 |
 | Scripts: wired | 121 |
 | Scripts: orphan | 7 |
-| Rules | 80 |
+| Rules | 82 |
 | Hook entries | 52 |
 
 ## Skills (235)
@@ -621,7 +621,7 @@
 | wa-soporte.sh | Sends a WhatsApp through the SUPPORT channel, never through the operator's personal number. | wired |
 | watchdog.py | watchdog.py , observability surface 4 anomaly detector. Reads the JSONL trace files written by trace... | wired |
 
-## Rules (80)
+## Rules (82)
 
 ### ARCHITECTURE
 
@@ -677,6 +677,7 @@
 - FLOW.canon-heal
 - FLOW.delegate-gate
 - FLOW.do-it-today
+- FLOW.done-is-a-verdict
 - FLOW.enforcement-scripts
 - FLOW.figma-use-prerequisite
 - FLOW.graph-before-grep
@@ -690,6 +691,7 @@
 - FLOW.receipt-ledger
 - FLOW.root-goal-anchor
 - FLOW.skill-first
+- FLOW.spec-contract
 - FLOW.suggest-unlock
 - FLOW.wa-guardia-on-pending
 - FLOW.web-agent-browser
