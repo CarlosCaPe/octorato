@@ -30,12 +30,12 @@ Four phases, one pull request each, every one from its own worktree. The order f
 
 ### Phase 2: the verdict skills and the flow
 
-- [ ] T07 [AC-07] skills/sdd-analyze/SKILL.md, skills/sdd-analyze/skill.json: read-only pass over spec, plan and rules file. Findings carry stable ids, a severity and a cap of 50. It runs as a verifier persona on the judgment tier.
-- [ ] T08 [AC-10, AC-11, AC-12] skills/sdd-converge/SKILL.md, skills/sdd-converge/skill.json: judge each criterion from code and tests. Append a `## Convergence <n>` task section on gaps, leave the plan untouched when converged, and end with the two protocol lines.
-- [ ] T09 [AC-08] skills/sdd-implement/SKILL.md: remove step 5. `impl-summary.md` lists files and deviations only.
-- [ ] T10 [AC-09] skills/sdd-review/SKILL.md, skills/sdd-archive/SKILL.md: remove Dimension 1 and the instruction to tick criteria. The review keeps its 7 quality dimensions and reads the converge verdict. Archive stops requiring ticked criteria and requires a `CONVERGED` verdict, and stops scanning the removed Open Questions section.
-- [ ] T11 [AC-18] skills/4d-spec/SKILL.md, skills/sdd-yolo/SKILL.md: describe the LARGE flow with analyze before implement and the implement and converge loop. TRIVIAL and MEDIUM stay as they are.
-- [ ] T12 [AC-18] CLAUDE.md, docs/wiki/Skills.md, docs/wiki/The-4D-Paradigm.md, docs/wiki/Glossary.md, docs/CAPABILITIES.md, connectome/lineage.yaml: update the 4D+S section and the wiki to the new flow, regenerate the capability manifest, add the `sdd` edge to the lineage graph.
+- [x] T07 [AC-07] skills/sdd-analyze/SKILL.md, skills/sdd-analyze/skill.json: read-only pass over spec, plan and rules file. Findings carry stable ids, a severity and a cap of 50. It runs as a verifier persona on the judgment tier.
+- [x] T08 [AC-10, AC-11, AC-12] skills/sdd-converge/SKILL.md, skills/sdd-converge/skill.json: judge each criterion from code and tests. Append a `## Convergence <n>` task section on gaps, leave the plan untouched when converged, and end with the two protocol lines.
+- [x] T09 [AC-08] skills/sdd-implement/SKILL.md: remove step 5. `impl-summary.md` lists files and deviations only.
+- [x] T10 [AC-09] skills/sdd-review/SKILL.md, skills/sdd-archive/SKILL.md: remove Dimension 1 and the instruction to tick criteria. The review keeps its 7 quality dimensions and reads the converge verdict. Archive stops requiring ticked criteria and requires a `CONVERGED` verdict, and stops scanning the removed Open Questions section.
+- [x] T11 [AC-18] skills/4d-spec/SKILL.md, skills/sdd-yolo/SKILL.md: describe the LARGE flow with analyze before implement and the implement and converge loop. TRIVIAL and MEDIUM stay as they are.
+- [x] T12 [AC-18] CLAUDE.md, docs/wiki/Skills.md, docs/wiki/The-4D-Paradigm.md, docs/wiki/Glossary.md, docs/CAPABILITIES.md, connectome/lineage.yaml: update the 4D+S section and the wiki to the new flow, regenerate the capability manifest, add the `sdd` edge to the lineage graph.
 
 ### Phase 3: the receipt, the push gate and the wiring
 
