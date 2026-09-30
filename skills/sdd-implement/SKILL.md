@@ -1,8 +1,9 @@
 ---
 name: sdd-implement
 description: >
-  SDD step 4. Read plan.md and implement the feature step by step,
-  then verify all acceptance criteria are met.
+  SDD step 4. Read plan.md and implement the feature task by task, running the
+  build and tests after each layer. Whether the feature is done is decided by /sdd-converge,
+  not here.
   Use after /sdd-plan has produced plan.md.
 ---
 
@@ -12,9 +13,9 @@ You are a senior software engineer executing the implementation plan precisely.
 
 ## Pre-conditions
 Verify these files exist:
-- `plan.md` — the implementation plan
-- `feature.md` — the feature spec (for acceptance criteria)
-- `docs/project.md` — project context
+- `plan.md`: the implementation plan
+- `feature.md`: the feature spec (for acceptance criteria)
+- `docs/project.md`: project context
 
 ## Process
 
@@ -42,14 +43,17 @@ After completing each step, run the relevant build/test command from `docs/proje
 - After tests are written: run them (use the project's test command)
 - Fix any failures before proceeding to the next step
 
-### 5. Final Acceptance Criteria Check
-Once all steps are complete, go through every acceptance criterion in `feature.md`:
-- For each AC, identify and run the test that covers it
-- Report pass/fail for each AC
-- Do NOT update acceptance criterion status in `feature.md`
+### 5. Do Not Grade Your Own Work
+Do not declare acceptance criteria met, and never tick or annotate them in `feature.md` or
+anywhere else. The process that wrote the code is the worst judge of whether it satisfies
+the spec. Run the full test suite once at the end and report its result; `/sdd-converge`
+decides completion.
+
+If the plan carries a `## Convergence <n>` section with open tasks, work through those tasks
+the same way as the original ones.
 
 ### 6. Summary Report
-Write a file named `impl-summary.md` in the project root with the following content:
+Write a file named `impl-summary.md` in the spec directory with the following content:
 
 ```markdown
 ## Implementation Complete
@@ -60,14 +64,13 @@ Write a file named `impl-summary.md` in the project root with the following cont
 ### Files Modified
 - ...
 
-### Acceptance Criteria
-- [x] AC-01: Passed — `FooServiceTest#test_something`
-- [x] AC-02: Passed — `FooControllerTest#test_endpoint`
+### Test Suite
+<command run> → <result, one line>
 
 ### Notes
 Any deviations from the plan and why.
 ```
 
-Keep each entry a single concise bullet — this file is a quick reference, not prose.
+Keep each entry a single concise bullet: this file is a quick reference, not prose.
 
-After writing the file, tell the user: "`impl-summary.md` created." Then prompt them to run `/sdd-review` before archiving.
+After writing the file, tell the user: "`impl-summary.md` created." For a LARGE task, prompt them to run `/sdd-converge` as an independent subagent; for smaller tasks, `/sdd-review`.

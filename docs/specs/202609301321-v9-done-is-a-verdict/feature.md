@@ -96,6 +96,7 @@ Refinement asks one question, offers a recommended answer, and writes the answer
 - [ ] AC-19: WHEN the Refiner needs a clarification, THE Refiner SHALL ask one question with a recommended answer and SHALL apply the answer to the affected section before asking another.
 - [ ] AC-20: WHEN the Spec_Linter reads this Spec with its markers resolved, THE Spec_Linter SHALL exit zero.
 - [ ] AC-21: THE Planner SHALL write at most 20 tasks above the first Convergence section.
+- [ ] AC-22: THE Spec_Author SHALL create each Spec in its own directory `docs/specs/<yyyymmddHHMM>-<feature-name>/`, and no later step SHALL move a Spec out of it.
 
 ## Technical Scope
 
@@ -103,9 +104,10 @@ Refinement asks one question, offers a recommended answer, and writes the answer
 
 - Skills: `4d-spec`, `sdd-feature`, `sdd-refine`, `sdd-plan`, `sdd-implement`, `sdd-review`, `sdd-yolo`, `sdd-archive`.
 - Gates: `.githooks/pre-push`, `scripts/brain_doctor.py`, `scripts/receipt_ledger.py`, `scripts/r__subagent-stop__qa-receipt.py`.
-- Registry: `registry/rules.yaml`, `registry/fixtures/`, `hooks.json`.
+- Registry: `registry/rules.yaml`, `registry/fixtures/`. No hook is added; the existing SubagentStop reflex is extended.
 - Docs: `CLAUDE.md` (the 4D+S section plus a new anchor), `docs/CAPABILITIES.md`, `docs/wiki/Skills.md`, `docs/wiki/The-4D-Paradigm.md`, `docs/wiki/Glossary.md`, `ROADMAP.md`, `CHANGELOG.md`.
 - Graph: `connectome/lineage.yaml` (the `sdd` concept has no edge today).
+- Docs: `docs/ANATOMY.md` (its 4D+S table).
 
 ### New Components Required
 
@@ -146,5 +148,7 @@ v9.0.0 is cut by the operator with an `Octorato-Major:` trailer once every crite
 | Date | Change Summary |
 |------|----------------|
 | 2026-09-30 | Initial spec |
+| 2026-09-30 | Operator decision: a Spec lives in `docs/specs/<yyyymmddHHMM>-<feature-name>/` from creation and never moves, so the converge scope, the receipt and the push gate share one key (AC-22). This spec moved there from `docs/specs-archive/`. |
+| 2026-09-30 | QA of phase 2: no hook is added (hooks.json leaves the scope), ANATOMY joins the flow surfaces, analyze ids name their subject so they survive a re-run. |
 | 2026-09-30 | QA of phase 1: AC-05 split, the 20 task cap moves to AC-21 (one behaviour per criterion). `sdd-archive` joins the affected skills, since it requires ticked criteria. |
 | 2026-09-30 | AC-14 resolved: brain repository only (operator). Enforcement moved from the merge gate to the push gate, since the merge gate cannot see a diff. Receipt freshness added to AC-14. The existing QA receipt reflex is extended, no new hook. Task grammar accepts several paths. |

@@ -99,16 +99,17 @@ class CliTest(unittest.TestCase):
 
 
 class LiveSpecTest(unittest.TestCase):
-    def test_every_ears_spec_in_the_archive_is_clean(self):
-        archive = ROOT / "docs" / "specs-archive"
+    def test_every_ears_spec_in_the_repo_is_clean(self):
         checked = 0
-        for feature in sorted(archive.glob("*/feature.md")):
+        features = sorted((ROOT / "docs" / "specs").glob("*/feature.md")) + \
+            sorted((ROOT / "docs" / "specs-archive").glob("*/feature.md"))
+        for feature in features:
             rep = spec_lint.lint(feature.parent)
             if rep.skipped:
                 continue
             checked += 1
             self.assertEqual(rep.findings, [], feature)
-        self.assertGreaterEqual(checked, 1, "no ears-1 spec found in docs/specs-archive")
+        self.assertGreaterEqual(checked, 1, "no ears-1 spec found in docs/specs or docs/specs-archive")
 
 
 if __name__ == "__main__":

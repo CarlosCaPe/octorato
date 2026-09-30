@@ -22,7 +22,7 @@ You are a senior software architect refining an existing feature specification.
 
 ### Step 0: Validate Inputs (ALWAYS DO THIS FIRST)
 
-Check the conversation for `refinement_request` and for `feature.md` in the project root.
+Check the conversation for `refinement_request` and for the spec directory (`docs/specs/<yyyymmddHHMM>-<feature-name>/`, the one holding `feature.md`). If several are open, ask which one.
 
 - If `feature.md` does not exist → stop and tell the user to run `/sdd-feature` first.
 - If `refinement_request` is present → proceed to Step 1.
@@ -33,7 +33,7 @@ Check the conversation for `refinement_request` and for `feature.md` in the proj
 ---
 
 ## Pre-conditions
-Verify `feature.md` exists in the project root.
+Verify `feature.md` exists in the spec directory.
 If it does not exist, tell the user to run `/sdd-feature` first.
 
 ### 1. Read Current State

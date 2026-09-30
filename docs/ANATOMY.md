@@ -291,7 +291,7 @@ For tasks above trivial complexity, the 4D integrates with a spec-driven workflo
 |-------|-------|---------------|
 | 0-2 | **TRIVIAL** | 4D only (no spec artifacts) |
 | 3-5 | **MEDIUM** | 4D + `plan.md` (task checklist feeds the Gate) |
-| 6+ | **LARGE** | 4D + full SDD: `feature.md` → `plan.md` → implement → `review.md` → archive |
+| 6+ | **LARGE** | 4D + full SDD: `feature.md` → `plan.md` → analyze → implement ⇄ converge → `review.md` → archive |
 
 **Complexity signals:** +2 touches 4-10 files, +4 touches 10+, +2 new feature, +3 architecture decision, +5 user requests spec, +1 schema change, +1 new API.
 

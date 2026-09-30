@@ -106,7 +106,7 @@ AI AGENT — nervous system, executes via 4D paradigm
 The brain is published as **open-source**; git history is publicly visible on GitHub. Therefore:
 
 - **NEVER** commit anything referencing arm codes, client names, coworkers, internal project codenames, vendor incidents, ticket IDs, internal URLs, customer data — every surface git records (commits, branches, tags, PR descriptions, filenames, file contents).
-- **SDD artifacts (`feature*.md`, `plan*.md`, `spec*.md`) NEVER at brain root.** Even client-free. They MUST live in `docs/specs-archive/`, `templates/`, or arm-side. `check-generic.py` rejects root-level SDD files.
+- **SDD artifacts (`feature*.md`, `plan*.md`, `spec*.md`) NEVER at brain root.** Even client-free. They MUST live in `docs/specs/` (one directory per spec from day one), `docs/specs-archive/` (history), `templates/`, or arm-side. `check-generic.py` rejects root-level SDD files.
 - Lessons from an arm are **distilled to generic skills** BEFORE entering the brain.
 - The operator's `company/` directory is gitignored — nothing from `company/` ever flows public.
 - Commit messages must be **purely about the framework change** — never about who triggered it or where the lesson came from.
@@ -406,9 +406,11 @@ For tasks above TRIVIAL complexity, 4D integrates with SDD via the `4d-spec` orc
 |---|---|---|
 | 0-2 | TRIVIAL | 4D only |
 | 3-5 | MEDIUM | 4D + `plan.md` |
-| 6+ | LARGE | 4D + full SDD (`feature.md` + `plan.md` + `review.md` + archive) |
+| 6+ | LARGE | 4D + full SDD (`feature.md` + `plan.md` + analyze + implement ⇄ converge + `review.md` + archive) |
 
-Signals: +2 touches 4-10 files, +4 touches 10+, +2 new feature, +3 architecture decision, +2 multi-module, +5 user requests spec. Max 20 tasks per plan.md. SDD artifacts NEVER at brain root. Full classifier + workflow in `skills/4d-spec/SKILL.md`.
+Signals: +2 touches 4-10 files, +4 touches 10+, +2 new feature, +3 architecture decision, +2 multi-module, +5 user requests spec. Max 20 planned tasks per plan.md (Convergence sections appended by the converge pass do not count). SDD artifacts NEVER at brain root. Full classifier + workflow in `skills/4d-spec/SKILL.md`.
+
+**Done is a verdict (v9).** On LARGE tasks the builder never grades its own work: `sdd-implement` and `sdd-review` no longer tick or pass acceptance criteria. Specs declare `Spec-Format: ears-1` (EARS criteria with a Glossary subject, at most 3 open markers) and plans use the task grammar `T## [AC-##] <path>: <action>`, so `scripts/spec_lint.py` checks both deterministically. `sdd-analyze` checks the plan against the spec before any code, and `sdd-converge` decides completion from the code and tests, appending the missing work or leaving `plan.md` byte-identical with `CONVERGE-VERDICT: CONVERGED`. Both run as independent verifier subagents on the judgment tier. Every ears-1 spec lives in `docs/specs/<yyyymmddHHMM>-<feature-name>/` from creation and never moves, because the converge verdict and the receipt are keyed on that path. Contract and phases: `docs/specs/202609301321-v9-done-is-a-verdict/`.
 
 ### Enforcement Scripts (Mandatory)
 

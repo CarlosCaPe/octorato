@@ -134,7 +134,7 @@ The **Change Gate** — the synapse between the afferent and efferent halves of 
 The framework's **nervous system protocol** — every signal (brain↔arm↔agent↔human) follows four phases: **[[#Describe]] → [[#Delegate]] → [[#Diligent]] → [[#Disclose]]**. The first two are *afferent* (sensory, before acting); the last two are *efferent* (motor, after acting); the [[#4D Gate]] sits between them. Named "4D" after the **tesseract** (the 4-dimensional analog of a cube): the four phases are not sequential steps but *dimensions* active simultaneously in every action — the control plane, not a checklist. Full protocol in `skills/4d-paradigm-protocol/SKILL.md`.
 
 ### 4D+S
-**4D + Spec-Driven Development.** For tasks above trivial complexity, the 4D Paradigm integrates with an [[#SDD]] workflow, scaled by a complexity score: **0–2 TRIVIAL** (4D only), **3–5 MEDIUM** (4D + `plan.md`), **6+ LARGE** (4D + full SDD: `feature.md` → `plan.md` → implement → `review.md` → archive). Orchestrated by the `4d-spec` skill. Signals raise the score: +2 for touching 4–10 files, +4 for 10+, +3 for an architecture decision, +5 if the user requests a spec.
+**4D + Spec-Driven Development.** For tasks above trivial complexity, the 4D Paradigm integrates with an [[#SDD]] workflow, scaled by a complexity score: **0–2 TRIVIAL** (4D only), **3–5 MEDIUM** (4D + `plan.md`), **6+ LARGE** (4D + full SDD: `feature.md` → `plan.md` → analyze → implement ⇄ converge → `review.md` → archive). Orchestrated by the `4d-spec` skill. Signals raise the score: +2 for touching 4–10 files, +4 for 10+, +3 for an architecture decision, +5 if the user requests a spec.
 
 ---
 
@@ -205,7 +205,7 @@ The skill (`skills/skill-creator/SKILL.md`) that governs **how new skills are au
 The sync script that propagates one arm's `.claude/CLAUDE.md` into the tool-specific config files — `.github/copilot-instructions.md` (Copilot) and `.cursorrules` (Cursor) — so **one source of truth keeps three AI tools in sync**. Run `sync-ai-docs` for all arms or `sync-ai-docs <arm>` for one. Called automatically by [[#ai-push]] and [[#ai-pull]]. Part of the "glial layer" — infrastructure that doesn't fire signals but keeps the neurons alive.
 
 ### SDD
-**Spec-Driven Development** — a phased implementation pipeline (`feature.md` → `plan.md` → implement → `review.md` → archive) handled by the `sdd-*` skill cluster and activated by [[#4D+S]] on larger tasks. Archived specs in `docs/specs-archive/` become institutional memory. **SDD artifacts (`feature*.md`, `plan*.md`, `spec*.md`) must never sit at the brain root** — even client-free, they leak roadmap; [[#check-generic]] rejects them there.
+**Spec-Driven Development** — a phased implementation pipeline (`feature.md` → `plan.md` → analyze → implement ⇄ converge → `review.md` → archive) handled by the `sdd-*` skill cluster. Since v9, completion is a converge verdict computed by an independent verifier, never a checkbox the builder ticks and activated by [[#4D+S]] on larger tasks. Each spec lives in its own `docs/specs/<yyyymmddHHMM>-<name>/` directory from day one and becomes institutional memory there (older ones sit in `docs/specs-archive/`). **SDD artifacts (`feature*.md`, `plan*.md`, `spec*.md`) must never sit at the brain root** — even client-free, they leak roadmap; [[#check-generic]] rejects them there.
 
 ---
 

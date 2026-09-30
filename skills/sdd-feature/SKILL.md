@@ -60,7 +60,10 @@ decision inline, exactly where it matters, as a marker: `[NEEDS CLARIFICATION: <
 - If the description is too thin to write even one requirement, ask the user one question and wait.
 
 ### 4. Write feature.md
-Once you have enough information, create `feature.md` in the project root with this structure:
+Once you have enough information, create the **spec directory** `docs/specs/<yyyymmddHHMM>-<feature-name>/`, with the timestamp from
+`date +"%Y%m%d%H%M"` and the feature name in kebab-case. The spec is born there and never moves:
+the plan, the converge verdict, the receipt and the archive all name this one directory. Write
+`feature.md` inside it with this structure:
 
 ```markdown
 # Feature: <Feature Name>

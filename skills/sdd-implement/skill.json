@@ -3,5 +3,5 @@
   "name": "sdd-implement",
   "version": "1.0.0",
   "license": "MIT",
-  "description": "SDD step 4. Read plan.md and implement the feature step by step, then verify all acceptance criteria are met. Use after /sdd-plan has produced plan.md."
+  "description": "SDD step 4. Read plan.md and implement the feature task by task, running the build and tests after each layer. Whether the feature is done is decided by /sdd-converge, not here. Use after /sdd-plan has produced plan.md."
 }

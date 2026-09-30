@@ -58,7 +58,7 @@ SKIP_PATH_PARTS = {"__pycache__", ".git", "node_modules", ".venv", "venv"}
 # Filename patterns that must NEVER appear at the brain root.
 # SDD artifacts (feature*.md, plan*.md, spec*.md) leak internal roadmap and
 # inspiration sources into the public repo even when they contain zero client
-# identifiers. They belong in the arm, in docs/specs-archive/, in templates/,
+# identifiers. They belong in the arm, in docs/specs/ or docs/specs-archive/, in templates/,
 # or in company/ (gitignored) — never at root. See CLAUDE.md §"Brain Stays Generic".
 ROOT_FORBIDDEN_PATTERNS = (
     re.compile(r"^feature(-.+)?\.md$", re.IGNORECASE),
@@ -202,7 +202,7 @@ def main():
         if forbidden:
             print("✗ check-generic: BLOCKED — SDD artifacts at brain root")
             print("  These files leak internal roadmap/sources into the public repo.")
-            print("  Move them to the arm, docs/specs-archive/, templates/, or company/.")
+            print("  Move them to the arm, docs/specs/, docs/specs-archive/, templates/, or company/.")
             for f in forbidden:
                 print(f"    forbidden: {f}")
             print()

@@ -3,5 +3,5 @@
   "name": "sdd-review",
   "version": "1.0.0",
   "license": "MIT",
-  "description": "SDD step 5. Reviews the implemented feature code against language and framework best practices, checks for code duplication, security vulnerabilities, performance issues, test coverage, and alignment with feature.md acceptance criteria. Use after /sdd-implement or on any existing feature implementation."
+  "description": "SDD step 5. Reviews the implemented feature code against language and framework best practices, checks for code duplication, security vulnerabilities, performance issues and test quality. Completion against feature.md is decided by /sdd-converge; the review reads that verdict and never re-grades the criteria. Use after /sdd-implement or on any existing feature implementation."
 }
