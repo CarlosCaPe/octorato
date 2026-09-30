@@ -329,6 +329,10 @@ def lint(target: Path, ready: bool = False) -> Report:
 
 ZERO_SHA = "0" * 40
 SPEC_HOMES = ("docs/specs", "docs/specs-archive")
+# Git tree modes of a regular file, an executable file and a directory. Anything else
+# at a spec path (120000 symlink, 160000 submodule, or a mode git adds later) is
+# refused: an allow-list, because the deny-list version missed the submodule.
+PLAIN_MODES = ("100644", "100755", "040000")
 _SPEC_DIR_NAME = re.compile(r"^\d{12}-[a-z0-9][a-z0-9-]*$")
 
 
@@ -432,10 +436,11 @@ def push_findings(repo: Path, base: str, head: str) -> list:
     for p in sorted(changed):
         if _on_spec_path(p):
             mode = _git(repo, "ls-tree", head, "--", p).split(" ", 1)[0]
-            if mode == "120000":
-                findings.append(f"{p}: a spec home, a spec directory or a spec file may not be "
-                                f"a symlink; the gate reads the tree, and a link hides the "
-                                f"specs behind it")
+            if mode and mode not in PLAIN_MODES:
+                findings.append(f"{p}: a spec home, a spec directory or a spec file must be a "
+                                f"plain file or directory, not a symlink or a submodule "
+                                f"(mode {mode}); the gate reads the tree, and a link or a "
+                                f"submodule hides the specs behind it")
     spec_dirs = sorted({str(Path(p).parent) for p in changed
                         if Path(p).name in ("feature.md", "plan.md")
                         and is_spec_dir(str(Path(p).parent))})
@@ -562,6 +567,18 @@ def _push_selftest_case(case: Path) -> list:
             (repo / sd / "feature.md").write_text(
                 text.replace("THE Exporter SHALL write UTF-8.", "The exporter writes UTF-8."))
         head = commit("status", "2026-09-30T12:00:00+00:00")
+        if spec.get("gitlink_spec"):
+            # a submodule at the spec directory: files on disk once initialised,
+            # nothing in the superproject's tree
+            e = dict(env, GIT_AUTHOR_DATE="2026-09-30T12:00:00+00:00",
+                     GIT_COMMITTER_DATE="2026-09-30T12:00:00+00:00")
+            subprocess.run(["git", "-C", str(repo), "rm", "-r", "-q", "--cached", sd],
+                           check=True, env=e, capture_output=True)
+            subprocess.run(["git", "-C", str(repo), "update-index", "--add", "--cacheinfo",
+                            f"160000,{base},{sd}"], check=True, env=e)
+            subprocess.run(["git", "-C", str(repo), "commit", "-qm", "gitlink"],
+                           check=True, env=e, capture_output=True)
+            head = _git(repo, "rev-parse", "HEAD").strip()
 
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         import receipt_ledger

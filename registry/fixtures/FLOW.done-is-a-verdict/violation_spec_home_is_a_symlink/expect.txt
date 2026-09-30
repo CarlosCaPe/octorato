@@ -1,1 +1,1 @@
-may not be a symlink
+not a symlink or a submodule
