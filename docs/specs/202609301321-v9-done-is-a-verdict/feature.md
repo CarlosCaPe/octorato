@@ -96,6 +96,7 @@ Refinement asks one question, offers a recommended answer, and writes the answer
 - [ ] AC-19: WHEN the Refiner needs a clarification, THE Refiner SHALL ask one question with a recommended answer and SHALL apply the answer to the affected section before asking another.
 - [ ] AC-20: WHEN the Spec_Linter reads this Spec with its markers resolved, THE Spec_Linter SHALL exit zero.
 - [ ] AC-21: THE Planner SHALL write at most 20 tasks above the first Convergence section.
+- [ ] AC-22: THE Spec_Author SHALL create each Spec in its own directory `docs/specs/<yyyymmddHHMM>-<feature-name>/`, and no later step SHALL move a Spec out of it.
 
 ## Technical Scope
 
@@ -147,6 +148,7 @@ v9.0.0 is cut by the operator with an `Octorato-Major:` trailer once every crite
 | Date | Change Summary |
 |------|----------------|
 | 2026-09-30 | Initial spec |
+| 2026-09-30 | Operator decision: a Spec lives in `docs/specs/<yyyymmddHHMM>-<feature-name>/` from creation and never moves, so the converge scope, the receipt and the push gate share one key (AC-22). This spec moved there from `docs/specs-archive/`. |
 | 2026-09-30 | QA of phase 2: no hook is added (hooks.json leaves the scope), ANATOMY joins the flow surfaces, analyze ids name their subject so they survive a re-run. |
 | 2026-09-30 | QA of phase 1: AC-05 split, the 20 task cap moves to AC-21 (one behaviour per criterion). `sdd-archive` joins the affected skills, since it requires ticked criteria. |
 | 2026-09-30 | AC-14 resolved: brain repository only (operator). Enforcement moved from the merge gate to the push gate, since the merge gate cannot see a diff. Receipt freshness added to AC-14. The existing QA receipt reflex is extended, no new hook. Task grammar accepts several paths. |

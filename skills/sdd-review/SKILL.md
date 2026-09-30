@@ -160,7 +160,7 @@ Consult any linting rules, style guides, or formatter config present in the proj
 
 ## Output Format
 
-Write the review to `review.md` in the project root using this structure:
+Write the review to `review.md` in the spec directory using this structure:
 
 ```markdown
 # Code Review: <Feature Name or Path>

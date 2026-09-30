@@ -140,8 +140,8 @@ Proceed automatically to archive:
 1. Follow the full `sdd-archive` process.
 2. Update `docs/project.md` (features list, architecture decisions, API surface, env config).
 3. Show the proposed `project.md` changes and ask for confirmation before writing.
-4. Move `feature.md` and `plan.md` to `docs/specs-archive/<feature-name>/`.
-5. Create `docs/specs-archive/<feature-name>/README.md`.
+4. The spec directory `docs/specs/<yyyymmddHHMM>-<feature-name>/` stays where it is.
+5. Create `README.md` in it.
 
 Then print the final pipeline summary:
 
@@ -149,7 +149,7 @@ Then print the final pipeline summary:
 ## YOLO Pipeline Complete ✓
 
 Feature: <Feature Name>
-Archived to: docs/specs-archive/<feature-name>/
+Spec directory: docs/specs/<yyyymmddHHMM>-<feature-name>/
 
 Phase results:
   Spec        ✓
@@ -159,7 +159,7 @@ Phase results:
   Review      ✓  (<verdict>)
   Archive     ✓
 
-Next: commit docs/specs-archive/<feature-name>/ and docs/project.md to version control.
+Next: commit the spec directory and docs/project.md to version control.
 ```
 
 ### If verdict is 🟠 Requires fixes and re-review OR 🔴 Do not merge
@@ -185,4 +185,4 @@ Critical/Major findings must be resolved before archiving.
 Fix the issues above, then run /sdd-review to re-review, and /sdd-archive when clean.
 ```
 
-Leave `feature.md` and `plan.md` in the project root so the user can continue manually.
+Leave the spec directory as it is so the user can continue manually.

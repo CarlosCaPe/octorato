@@ -42,7 +42,7 @@ From `docs/project.md`, note:
 
 ### 3. Produce plan.md
 
-Create `plan.md` in the project root with this structure:
+Create `plan.md` in the spec directory, next to `feature.md`, with this structure:
 
 ```markdown
 # Implementation Plan: <Feature Name>

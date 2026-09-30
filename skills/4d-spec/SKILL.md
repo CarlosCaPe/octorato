@@ -90,7 +90,7 @@ the code, never a claim by the builder:
    Convergence section to `plan.md`; go back to step 6. Loop until `CONVERGED`
 8. **3D Review**: `/sdd-review` (7 quality dimensions, reads the converge verdict)
 9. **4D Disclose**: impact radius + converge and review verdicts
-10. **Archive**: `/sdd-archive` requires `CONVERGED`, then moves to `docs/specs-archive/`
+10. **Archive**: `/sdd-archive` requires `CONVERGED` and updates `docs/project.md`; the spec stays in its directory
 
 ## Integration with Existing 4D
 
@@ -106,7 +106,7 @@ the code, never a claim by the builder:
 
 - **Max 20 planned tasks** in any plan.md (tasks above the first `## Convergence` section): if SDD generates more, consolidate
 - **No docs/project.md required**: we already have `.claude/CLAUDE.md` per arm
-- **feature.md lives in project root** during work, archived after
+- **A LARGE spec is born in `docs/specs/<yyyymmddHHMM>-<feature-name>/` and never moves**: the converge verdict and the receipt are keyed on that path
 - **review.md is optional for MEDIUM**: only mandatory for LARGE
 - **`/sdd-yolo`** maps to our "hazlo directo" exception: full pipeline with single gate
 

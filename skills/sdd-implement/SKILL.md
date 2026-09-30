@@ -53,7 +53,7 @@ If the plan carries a `## Convergence <n>` section with open tasks, work through
 the same way as the original ones.
 
 ### 6. Summary Report
-Write a file named `impl-summary.md` in the project root with the following content:
+Write a file named `impl-summary.md` in the spec directory with the following content:
 
 ```markdown
 ## Implementation Complete

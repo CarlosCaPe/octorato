@@ -297,13 +297,13 @@ Execute             → /sdd-implement (verifies each layer, grades nothing)
 3D Converge         → /sdd-converge (independent verifier, GAPS loops back to Execute)
 3D Review           → /sdd-review   (7 quality dimensions, quotes the converge verdict)
 4D Disclose         → impact radius + converge and review verdicts
-Archive             → /sdd-archive  → docs/specs-archive/ (requires CONVERGED)
+Archive             → /sdd-archive  (requires CONVERGED; the spec stays in docs/specs/<ts>-<name>/)
 ```
 
 ### Solo-operator adaptations
 
 - **Max 20 planned tasks** in any `plan.md` (Convergence sections appended later do not count); consolidate if SDD generates more.
-- `feature.md` and `plan.md` live in the working directory during the task and are cleaned up after (git tracks the actual changes).
+- A LARGE spec is born in `docs/specs/<yyyymmddHHMM>-<feature-name>/` with its `plan.md` and never moves: the converge verdict is keyed on that path.
 - `review.md` is optional for MEDIUM, mandatory for LARGE.
 - `/sdd-yolo` maps to the "hazlo directo" exception — the full pipeline behind a single gate.
 

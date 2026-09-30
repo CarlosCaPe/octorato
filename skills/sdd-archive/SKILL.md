@@ -1,8 +1,9 @@
 ---
 name: sdd-archive
 description: >
-  SDD step 7. Archive feature.md and plan.md into docs/specs-archive/<yyyymmddHHMM>-<feature-name>/ directory,
-  then update docs/project.md with the new feature, and any architecture decisions made. 
+  SDD step 7. Close a feature: require the converge verdict, update docs/project.md with the
+  feature and any architecture decisions, and write a README in the spec directory. Specs already
+  live in docs/specs/<yyyymmddHHMM>-<feature-name>/ and are not moved; legacy root files are.
   Use after /sdd-review is complete and the feature is ready to merge.
 argument-hint: <feature-name> (optional, derived from feature.md if omitted)
 ---
@@ -19,11 +20,11 @@ argument-hint: <feature-name> (optional, derived from feature.md if omitted)
 
 ### Step 0: Validate Inputs (ALWAYS DO THIS FIRST)
 
-Check the conversation for `feature_name` and for `feature.md` / `plan.md` in the project root.
+Locate the spec directory: `docs/specs/<yyyymmddHHMM>-<feature-name>/`, the one holding
+`feature.md`. A legacy spec may still sit at the project root instead.
 
 - If `feature.md` or `plan.md` do not exist → stop and tell the user both files are required.
-- Note whether `review.md` exists in the project root: it will be archived if present.
-- Note whether `impl-summary.md` exists in the project root: it will be archived if present.
+- Note whether `review.md` and `impl-summary.md` exist next to them.
 - If `feature_name` is provided → use it as the archive directory name (kebab-case).
 - If `feature_name` is missing → read `feature.md` and derive it from the `# Feature:` heading,
   converting to kebab-case (e.g. "User Authentication" → `user-authentication`). Proceed automatically.
@@ -33,7 +34,7 @@ Check the conversation for `feature_name` and for `feature.md` / `plan.md` in th
 ## Process
 
 ### 1. Determine the Feature Name
-Use `feature_name` from Step 0. Capture the current timestamp using `date +"%Y%m%d%H%M"` and prepend it to form the archive directory name: `<yyyymmddHHMM>-<feature-name>` (e.g. `202604191430-jwt-authentication`).
+Use `feature_name` from Step 0. For a spec already in `docs/specs/`, the directory name is the feature name. For legacy root files, capture the timestamp with `date +"%Y%m%d%H%M"` and prepend it: `<yyyymmddHHMM>-<feature-name>` (e.g. `202604191430-jwt-authentication`).
 
 ### 2. Verify Completion
 Completion is a converge verdict, not ticked checkboxes (criteria are never ticked).
@@ -141,21 +142,22 @@ Before writing, present a summary of every change you are about to make to `proj
 Ask the user to confirm before writing. If they request changes to the proposed
 updates, apply their corrections first, then write.
 
-### 5. Archive
-Run the following operations:
+### 5. Place the Files
+- **Spec already in `docs/specs/<yyyymmddHHMM>-<feature-name>/`** (every spec `/sdd-feature`
+  writes): move nothing. Its path is the key the converge verdict and the receipt were recorded
+  under, and moving it would orphan them.
+- **Legacy files at the project root:** move them into a new spec directory:
+
 ```bash
-ARCHIVE_DIR="docs/specs-archive/$(date +"%Y%m%d%H%M")-<feature-name>"
-mkdir -p "$ARCHIVE_DIR"
-mv feature.md "$ARCHIVE_DIR/feature.md"
-mv plan.md "$ARCHIVE_DIR/plan.md"
-# move review.md only if it exists
-[ -f review.md ] && mv review.md "$ARCHIVE_DIR/review.md"
-# move impl-summary.md only if it exists
-[ -f impl-summary.md ] && mv impl-summary.md "$ARCHIVE_DIR/impl-summary.md"
+SPEC_DIR="docs/specs/$(date +"%Y%m%d%H%M")-<feature-name>"
+mkdir -p "$SPEC_DIR"
+mv feature.md plan.md "$SPEC_DIR/"
+[ -f review.md ] && mv review.md "$SPEC_DIR/"
+[ -f impl-summary.md ] && mv impl-summary.md "$SPEC_DIR/"
 ```
 
 ### 6. Create a Brief Summary
-Create `docs/specs-archive/<yyyymmddHHMM>-<feature-name>/README.md`:
+Create `README.md` in the spec directory:
 
 ```markdown
 # <Feature Name>
@@ -167,6 +169,6 @@ Implemented on: <date>
 
 ### 7. Confirm
 Report the final summary to the user:
-- Files archived to `docs/specs-archive/<yyyymmddHHMM>-<feature-name>/` (`feature.md`, `plan.md`, `review.md`, and `impl-summary.md` if it existed)
+- The spec directory and what it holds (`feature.md`, `plan.md`, `review.md` and `impl-summary.md` if present), and whether anything was moved
 - Sections updated in `docs/project.md`
-- Remind them to commit both `docs/specs-archive/<yyyymmddHHMM>-<feature-name>/` and `docs/project.md` to version control
+- Remind them to commit the spec directory and `docs/project.md` to version control

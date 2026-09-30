@@ -302,6 +302,8 @@ edges:
       - docs/ANATOMY.md                                       # the 4D+S complexity table
     kind: appears_in
     note: >-
+      Every ears-1 spec lives in docs/specs/<yyyymmddHHMM>-<name>/ from creation
+      and never moves: that path is the key of the converge verdict and the receipt.
       One flow described in fifteen places. Changing a step, a verdict word or
       the task grammar means reconciling every surface here, and the linter's
       fixtures when the grammar moves. Lights the `sdd` seek that fell back to

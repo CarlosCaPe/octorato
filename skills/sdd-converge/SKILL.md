@@ -88,7 +88,7 @@ lines, as plain text:
 
 ```
 CONVERGE-VERDICT: CONVERGED | GAPS
-CONVERGE-SCOPE: <spec directory, relative to the repository root>
+CONVERGE-SCOPE: <spec directory, relative to the repository root, e.g. docs/specs/202609301321-slugify>
 ```
 
 `CONVERGED` only when every criterion is `met`. Anything else is `GAPS`. These two lines are
