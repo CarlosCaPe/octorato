@@ -87,7 +87,7 @@ Ask the user to confirm before applying.
 ### 5. Apply the Refinements
 Update `feature.md` in place. Preserve:
 - Existing section structure and numbering where possible
-- Completed checkboxes on ACs if any exist
+- The checkbox state of every criterion exactly as found; never tick or untick one
 - The `Spec-Format` header, the Glossary, and EARS form for every criterion (new criteria
   follow the patterns in `/sdd-feature`, with a Glossary name as subject)
 - Open markers you did not resolve; add a new one only if the refinement raises a question

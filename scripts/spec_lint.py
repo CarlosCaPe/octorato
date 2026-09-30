@@ -9,27 +9,40 @@ and makes no model call: the same input gives the same answer on every machine.
 What it checks, per spec directory (a `feature.md`, optionally a `plan.md`):
 
   feature.md
-    - the header declares `Spec-Format: ears-1`, else the file is SKIPPED
-      (exit 0), so specs written before v9 never break
-    - a `## Glossary` section with at least one `- **Name**:` entry
-    - every item under `## Acceptance Criteria` carries a unique `AC-##` id
+    - a header LINE in the first 30 lines reads `Spec-Format: ears-1` (bold and a
+      `>` quote allowed), else the file is SKIPPED (exit 0), so specs written
+      before v9 never break; a sentence that merely mentions it does not opt in
+    - a `## Glossary` section with at least one `- **Name**:` entry (names are
+      letters, digits, `_` and `-`)
+    - `## Acceptance Criteria` holds at least one criterion, and EVERY non-blank
+      line in it is a `- [ ] AC-##: ` item with a unique id; prose there is a
+      finding, because a criterion demoted to prose would drop out of coverage
     - every criterion is one EARS sentence whose subject is a Glossary name:
         THE <X> SHALL ...                    (ubiquitous)
         WHEN <trigger>, THE <X> SHALL ...    (event)
         WHILE <state>, THE <X> SHALL ...     (state)
         WHERE <feature>, THE <X> SHALL ...   (optional)
         IF <condition>, THEN THE <X> SHALL ...(unwanted behaviour)
-    - at most 3 `[NEEDS CLARIFICATION: ...]` markers; with --ready, zero
+    - at most 3 NEEDS CLARIFICATION markers; with --ready, zero. A marker is
+      `[NEEDS CLARIFICATION]` or `[NEEDS CLARIFICATION: ...]`, any case, and
+      may span lines
 
   plan.md (when present)
-    - every task line is `- [ ] T## [AC-##, AC-##] <path>, <path>: <action>`
-    - task ids are unique, and at most 20 tasks sit above the first
-      `## Convergence` heading (converge passes append below it)
+    - every task line is `- [ ] T## [AC-##, AC-##] <path>, <path>: <action>`;
+      a `*` or `+` bullet that looks like a task is a finding, not a skip, and
+      paths are separated by `, ` and contain no spaces or commas
+    - task ids are unique; at least one and at most 20 tasks sit above the first
+      `## Convergence` heading, and Convergence sections come last (converge
+      passes append there). Residual, stated: the linter cannot tell who wrote a
+      Convergence section, so an author who writes one by hand moves tasks past
+      the cap; the converge receipt (v9 phase 3) is what ties those sections to
+      a converge pass
     - every criterion is referenced by at least one task, and every referenced
       criterion exists
 
-Markers and task lines inside fenced code blocks or inline code spans are not
-read, so a document can quote the grammar without tripping it.
+Markers, criteria and task lines inside fenced code blocks (``` or ~~~) are not
+read, and markers inside inline code spans are not counted, so a document can
+quote the grammar without tripping it.
 
 Usage:
   spec_lint.py [--ready] <spec-dir | feature.md> [...]
@@ -53,19 +66,19 @@ from pathlib import Path
 MAX_MARKERS = 3
 MAX_TASKS = 20
 
-_FORMAT = re.compile(r"Spec-Format:\**\s*ears-1\b")
-_GLOSSARY_ENTRY = re.compile(r"^- \*\*([A-Za-z][\w]*)\*\*:")
+_FORMAT = re.compile(r"^\s*(?:>\s*)?\**Spec-Format:\**\s*ears-1\s*$", re.MULTILINE)
+_GLOSSARY_ENTRY = re.compile(r"^- \*\*([A-Za-z][\w-]*)\*\*:")
 _AC_ITEM = re.compile(r"^- \[[ xX]\] (AC-\d+): (.*)$")
-_MARKER = re.compile(r"\[NEEDS CLARIFICATION:[^\]]*\]")
+_MARKER = re.compile(r"\[\s*NEEDS\s+CLARIFICATION\s*(?::[^\]]*)?\]", re.IGNORECASE)
 _INLINE_CODE = re.compile(r"`[^`\n]*`")
 _EARS = [
-    ("ubiquitous", re.compile(r"^THE (\w+) SHALL\b")),
-    ("event", re.compile(r"^WHEN .+?, THE (\w+) SHALL\b")),
-    ("state", re.compile(r"^WHILE .+?, THE (\w+) SHALL\b")),
-    ("optional", re.compile(r"^WHERE .+?, THE (\w+) SHALL\b")),
-    ("unwanted", re.compile(r"^IF .+?, THEN THE (\w+) SHALL\b")),
+    ("ubiquitous", re.compile(r"^THE ([\w-]+) SHALL\b")),
+    ("event", re.compile(r"^WHEN .+?, THE ([\w-]+) SHALL\b")),
+    ("state", re.compile(r"^WHILE .+?, THE ([\w-]+) SHALL\b")),
+    ("optional", re.compile(r"^WHERE .+?, THE ([\w-]+) SHALL\b")),
+    ("unwanted", re.compile(r"^IF .+?, THEN THE ([\w-]+) SHALL\b")),
 ]
-_TASK_START = re.compile(r"^\s*- \[[ xX]\] T\d+\b")
+_TASK_START = re.compile(r"^\s*[-*+] \[[ xX]\] T\d+\b")
 _TASK = re.compile(
     r"^- \[[ xX]\] (T\d{2,}) \[(AC-\d+(?:, AC-\d+)*)\] (\S[^:]*?): (\S.*)$"
 )
@@ -86,7 +99,7 @@ def _readable_lines(text: str) -> list:
     """(line_no, line) with fenced blocks blanked, so quoted grammar is ignored."""
     out, fenced = [], False
     for i, line in enumerate(text.splitlines(), 1):
-        if line.lstrip().startswith("```"):
+        if line.lstrip().startswith(("```", "~~~")):
             fenced = not fenced
             out.append((i, ""))
             continue
@@ -138,8 +151,7 @@ def lint_feature(feature: Path, report: Report, ready: bool) -> set:
             continue
         m = _AC_ITEM.match(line)
         if not m:
-            if line.lstrip().startswith("- "):
-                report.add(feature, i, "criterion without an `- [ ] AC-##: ` id")
+            report.add(feature, i, "line in Acceptance Criteria is not a `- [ ] AC-##: ` criterion")
             continue
         ac, sentence = m.group(1), m.group(2)
         if ac in ids:
@@ -153,9 +165,13 @@ def lint_feature(feature: Path, report: Report, ready: bool) -> set:
         elif glossary and subject not in glossary:
             report.add(feature, i, f"{ac} subject '{subject}' is not in the Glossary")
 
-    markers = [(i, n) for i, line in lines
-               if (n := len(_MARKER.findall(_INLINE_CODE.sub("", line))))]
-    total = sum(n for _i, n in markers)
+    if "Acceptance Criteria" in secs and not ids:
+        report.add(feature, 1, "`## Acceptance Criteria` holds no criterion")
+
+    # Markers are counted over the joined text so one split across lines counts.
+    body = "\n".join(_INLINE_CODE.sub("", line) for _i, line in lines)
+    markers = [(body.count("\n", 0, m.start()) + 1, 1) for m in _MARKER.finditer(body)]
+    total = len(markers)
     if total > MAX_MARKERS:
         report.add(feature, markers[0][0],
                    f"{total} NEEDS CLARIFICATION markers, the cap is {MAX_MARKERS}")
@@ -176,6 +192,9 @@ def lint_plan(plan: Path, criteria: set, report: Report) -> None:
         if _CONVERGENCE.match(line):
             in_convergence = True
             continue
+        if line.startswith("## ") and in_convergence:
+            report.add(plan, i, "a section follows a `## Convergence` section; Convergence sections come last")
+            continue
         if not _TASK_START.match(line):
             continue
         m = _TASK.match(line)
@@ -186,14 +205,16 @@ def lint_plan(plan: Path, criteria: set, report: Report) -> None:
         if tid in seen:
             report.add(plan, i, f"{tid} duplicates line {seen[tid]}")
         seen[tid] = i
-        if any(not p.strip() or re.search(r"\s", p.strip()) for p in paths.split(", ")):
-            report.add(plan, i, f"{tid} has an empty path or a path with spaces")
+        if any(not p.strip() or re.search(r"[\s,]", p.strip()) for p in paths.split(", ")):
+            report.add(plan, i, f"{tid} has an empty path, or a path with spaces or a bare comma")
         if not in_convergence:
             planned += 1
         for ac in acs:
             referenced.add(ac)
-            if criteria and ac not in criteria:
+            if ac not in criteria:
                 report.add(plan, i, f"{tid} references unknown criterion {ac}")
+    if seen and not planned:
+        report.add(plan, 1, "no task sits above the first `## Convergence` heading")
     if planned > MAX_TASKS:
         report.add(plan, 1, f"{planned} tasks, the cap is {MAX_TASKS}")
     for ac in sorted(criteria - referenced, key=lambda a: int(a[3:])):

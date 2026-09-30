@@ -79,7 +79,7 @@ Refinement asks one question, offers a recommended answer, and writes the answer
 - [ ] AC-02: WHEN the Spec_Linter reads a Spec containing an acceptance criterion that matches no EARS pattern, THE Spec_Linter SHALL exit non-zero and print the file and line.
 - [ ] AC-03: IF a Spec carries more than 3 `[NEEDS CLARIFICATION]` markers, THEN THE Spec_Linter SHALL exit non-zero.
 - [ ] AC-04: WHILE a Spec carries any `[NEEDS CLARIFICATION]` marker, THE Planner SHALL refuse to write `plan.md` and SHALL name the open markers.
-- [ ] AC-05: THE Planner SHALL write every task as `- [ ] T## [AC-##] <path>: <action>`, with one or more criterion ids and one or more paths, and SHALL write at most 20 tasks.
+- [ ] AC-05: THE Planner SHALL write every task as `- [ ] T## [AC-##] <path>: <action>`, with one or more criterion ids and one or more paths.
 - [ ] AC-06: WHEN the Spec_Linter reads a `plan.md` beside a Spec, THE Spec_Linter SHALL exit non-zero if any acceptance criterion is referenced by no task or any task references an unknown criterion id.
 - [ ] AC-07: WHEN a LARGE task has a Spec and a `plan.md` and no implementation file has been written, THE Analyzer SHALL produce a findings report with stable ids, capped at 50 findings, and SHALL modify no file.
 - [ ] AC-08: THE Implementer SHALL NOT record acceptance criterion status in `impl-summary.md` or in the Spec.
@@ -95,12 +95,13 @@ Refinement asks one question, offers a recommended answer, and writes the answer
 - [ ] AC-18: THE Orchestrator SHALL route LARGE tasks through feature, refine, plan, analyze, implement, converge, review and archive in that order, and SHALL repeat implement and converge until the verdict is `CONVERGED`.
 - [ ] AC-19: WHEN the Refiner needs a clarification, THE Refiner SHALL ask one question with a recommended answer and SHALL apply the answer to the affected section before asking another.
 - [ ] AC-20: WHEN the Spec_Linter reads this Spec with its markers resolved, THE Spec_Linter SHALL exit zero.
+- [ ] AC-21: THE Planner SHALL write at most 20 tasks above the first Convergence section.
 
 ## Technical Scope
 
 ### Affected Modules
 
-- Skills: `4d-spec`, `sdd-feature`, `sdd-refine`, `sdd-plan`, `sdd-implement`, `sdd-review`, `sdd-yolo`.
+- Skills: `4d-spec`, `sdd-feature`, `sdd-refine`, `sdd-plan`, `sdd-implement`, `sdd-review`, `sdd-yolo`, `sdd-archive`.
 - Gates: `.githooks/pre-push`, `scripts/brain_doctor.py`, `scripts/receipt_ledger.py`, `scripts/r__subagent-stop__qa-receipt.py`.
 - Registry: `registry/rules.yaml`, `registry/fixtures/`, `hooks.json`.
 - Docs: `CLAUDE.md` (the 4D+S section plus a new anchor), `docs/CAPABILITIES.md`, `docs/wiki/Skills.md`, `docs/wiki/The-4D-Paradigm.md`, `docs/wiki/Glossary.md`, `ROADMAP.md`, `CHANGELOG.md`.
@@ -145,4 +146,5 @@ v9.0.0 is cut by the operator with an `Octorato-Major:` trailer once every crite
 | Date | Change Summary |
 |------|----------------|
 | 2026-09-30 | Initial spec |
+| 2026-09-30 | QA of phase 1: AC-05 split, the 20 task cap moves to AC-21 (one behaviour per criterion). `sdd-archive` joins the affected skills, since it requires ticked criteria. |
 | 2026-09-30 | AC-14 resolved: brain repository only (operator). Enforcement moved from the merge gate to the push gate, since the merge gate cannot see a diff. Receipt freshness added to AC-14. The existing QA receipt reflex is extended, no new hook. Task grammar accepts several paths. |

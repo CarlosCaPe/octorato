@@ -72,7 +72,8 @@ Low / Medium / High, with a brief justification
 - `T##` ids are unique and sequential. At most **20** tasks; consolidate if you need more.
 - The brackets list every criterion the task serves. Every criterion in `feature.md` appears
   in at least one task, and no task names a criterion that does not exist.
-- Paths are comma-separated, without spaces, and name the files the task creates or changes.
+- Paths are separated by a comma and a space; a path itself contains no spaces or commas. They
+  name the files the task creates or changes.
 - There is no separate mapping table: the brackets are the mapping.
 - Sections titled `## Convergence <n>` are appended later by the converge pass and are not
   counted against the cap. Never write one yourself.

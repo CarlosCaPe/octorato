@@ -49,6 +49,14 @@ class SelftestTest(unittest.TestCase):
         with mock.patch.object(spec_lint, "MAX_MARKERS", 99):
             self.assertEqual(_quiet(spec_lint.selftest, FIXTURES), 1)
 
+    def test_selftest_goes_red_when_prose_in_criteria_is_tolerated(self):
+        # A criterion demoted to prose must not silently leave coverage.
+        real = spec_lint._AC_ITEM
+        loose = re.compile(r"^(?:- \[[ xX]\] )?(AC-\d+): (.*)$")
+        with mock.patch.object(spec_lint, "_AC_ITEM", loose):
+            self.assertIsNot(spec_lint._AC_ITEM, real)
+            self.assertEqual(_quiet(spec_lint.selftest, FIXTURES), 1)
+
     def test_selftest_refuses_an_empty_fixture_dir(self):
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(_quiet(spec_lint.selftest, Path(d)), 1)
@@ -62,6 +70,7 @@ class EarsTest(unittest.TestCase):
             "WHILE a job runs, THE Scheduler SHALL wait.": "Scheduler",
             "WHERE retries are on, THE Scheduler SHALL retry.": "Scheduler",
             "IF the disk is full, THEN THE Exporter SHALL NOT truncate.": "Exporter",
+            "THE Report-Exporter SHALL write UTF-8.": "Report-Exporter",
         }
         for sentence, subject in cases.items():
             self.assertEqual(spec_lint._ears_subject(sentence), subject, sentence)

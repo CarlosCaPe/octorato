@@ -119,7 +119,8 @@ Description...
 ### 5. Acceptance Criteria Are EARS Sentences
 Every criterion is ONE sentence in one of the five EARS patterns above, with the keywords in
 capitals exactly as shown and a Glossary name as its subject. `SHALL NOT` is allowed. One
-behaviour per criterion; a criterion that needs "and" to describe two outcomes is two criteria.
+behaviour per criterion. Several SHALL clauses may describe that one behaviour (what it does,
+what it must leave untouched, what it reports); two independent behaviours are two criteria.
 Criteria are never ticked by the author, the implementer or the reviewer.
 
 ### 6. Lint the Spec
