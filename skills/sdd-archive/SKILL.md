@@ -22,8 +22,8 @@ argument-hint: <feature-name> (optional, derived from feature.md if omitted)
 Check the conversation for `feature_name` and for `feature.md` / `plan.md` in the project root.
 
 - If `feature.md` or `plan.md` do not exist → stop and tell the user both files are required.
-- Note whether `review.md` exists in the project root — it will be archived if present.
-- Note whether `impl-summary.md` exists in the project root — it will be archived if present.
+- Note whether `review.md` exists in the project root: it will be archived if present.
+- Note whether `impl-summary.md` exists in the project root: it will be archived if present.
 - If `feature_name` is provided → use it as the archive directory name (kebab-case).
 - If `feature_name` is missing → read `feature.md` and derive it from the `# Feature:` heading,
   converting to kebab-case (e.g. "User Authentication" → `user-authentication`). Proceed automatically.
@@ -36,14 +36,18 @@ Check the conversation for `feature_name` and for `feature.md` / `plan.md` in th
 Use `feature_name` from Step 0. Capture the current timestamp using `date +"%Y%m%d%H%M"` and prepend it to form the archive directory name: `<yyyymmddHHMM>-<feature-name>` (e.g. `202604191430-jwt-authentication`).
 
 ### 2. Verify Completion
-Read `feature.md` and check that all acceptance criteria checkboxes are ticked.
-If any are unchecked, warn the user and ask for confirmation before archiving.
+Completion is a converge verdict, not ticked checkboxes (criteria are never ticked).
+- For a `Spec-Format: ears-1` spec, require the latest `/sdd-converge` report for this spec
+  directory to end with `CONVERGE-VERDICT: CONVERGED`. If it says `GAPS` or no converge pass
+  ran, stop and tell the user to run `/sdd-converge`.
+- For an older spec without that header, warn the user that completion was never verified
+  and ask for confirmation before archiving.
 
 ### 3. Update docs/project.md
 
 This is a critical step. Read `docs/project.md` in full, then read the archived
 `feature.md` and `plan.md` to extract what actually changed. Update `project.md`
-across the following sections — add sections if they do not already exist.
+across the following sections: add sections if they do not already exist.
 
 #### 3a. Features List
 Locate or create a `## Features` section. Add the new feature as a single line entry:
@@ -53,10 +57,10 @@ Locate or create a `## Features` section. Add the new feature as a single line e
 - **<Feature Name>**: <one-sentence description of what it does> (`docs/<feature-name>/`)
 ```
 
-Preserve the existing list. Append the new entry — do not reorder or remove existing entries.
+Preserve the existing list. Append the new entry: do not reorder or remove existing entries.
 
 #### 3b. Architecture Decisions
-Scan `feature.md` (Open Questions, Technical Scope) and `plan.md` (Architecture Decisions)
+Scan `feature.md` (Technical Scope, Revision History) and `plan.md` (Architecture Decisions)
 for any decisions that represent a meaningful change or addition to how the system is built.
 
 Examples of what qualifies:
@@ -104,7 +108,7 @@ If the feature introduced new environment variables, configuration keys, add the
 ## Environment & Configuration
 | Key | Description | Required | Default |
 |-----|-------------|----------|---------|
-| JWT_SECRET | Secret key for JWT signing | Yes | — |
+| JWT_SECRET | Secret key for JWT signing | Yes |: |
 | JWT_EXPIRY_MINUTES | Access token TTL in minutes | No | 15 |
 ```
 

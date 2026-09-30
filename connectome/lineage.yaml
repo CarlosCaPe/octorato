@@ -282,6 +282,30 @@ edges:
       surfaces. Lights the session-isolation seek that fell back to grep
       repeatedly on 2026-06-02/03.
 
+  - id: sdd-flow
+    concept: "sdd / spec-driven development / 4d+s / ears-1 spec / task grammar / analyze / converge / done is a verdict"
+    appears_in:
+      - skills/4d-spec/SKILL.md                               # the orchestrator: classifier + LARGE flow
+      - skills/sdd-feature/SKILL.md                           # ears-1 spec, Glossary, markers
+      - skills/sdd-refine/SKILL.md                            # one question at a time
+      - skills/sdd-plan/SKILL.md                              # task grammar, refuses an unready spec
+      - skills/sdd-analyze/SKILL.md                           # read-only spec vs plan pass
+      - skills/sdd-implement/SKILL.md                         # builds, grades nothing
+      - skills/sdd-converge/SKILL.md                          # decides done, CONVERGE-VERDICT
+      - skills/sdd-review/SKILL.md                            # 7 quality dimensions
+      - skills/sdd-archive/SKILL.md                           # requires CONVERGED
+      - skills/sdd-yolo/SKILL.md                              # the whole flow behind one gate
+      - scripts/spec_lint.py                                  # deterministic reader of ears-1 specs
+      - CLAUDE.md                                             # 4D+S section + Done is a verdict
+      - docs/wiki/The-4D-Paradigm.md                          # section 6, the LARGE pipeline
+      - docs/wiki/Glossary.md                                 # 4D+S and SDD entries
+    kind: appears_in
+    note: >-
+      One flow described in fourteen places. Changing a step, a verdict word or
+      the task grammar means reconciling every surface here, and the linter's
+      fixtures when the grammar moves. Lights the `sdd` seek that fell back to
+      grep on 2026-09-30.
+
   - id: arm-lineage-template
     from: templates/arm/connectome/lineage.yaml
     to:

@@ -44,64 +44,71 @@ Assess the task against these criteria:
 |-------|-------|---------|
 | 0-2 | TRIVIAL | 4D only (Describe → Gate → Execute → Diligent → Disclose) |
 | 3-5 | MEDIUM | 4D + `plan.md` (task checklist before Gate) |
-| 6+ | LARGE | 4D + full SDD (`feature.md` + `plan.md` + `review.md` + archive) |
+| 6+ | LARGE | 4D + full SDD (`feature.md` + `plan.md` + analyze + implement ⇄ converge + `review.md` + archive) |
 
 ## Workflow by Level
 
 ### TRIVIAL (score 0-2)
 
-Standard 4D — no SDD artifacts needed:
-1. **1D Describe** — state what and why (1-3 sentences)
-2. **2D Delegate** — run delegate-check
-3. **4D Gate** — Change Manifest table
+Standard 4D: no SDD artifacts needed:
+1. **1D Describe**: state what and why (1-3 sentences)
+2. **2D Delegate**: run delegate-check
+3. **4D Gate**: Change Manifest table
 4. **Execute**
-5. **3D Diligent** — build/lint/test
-6. **4D Disclose** — impact + side effects
+5. **3D Diligent**: build/lint/test
+6. **4D Disclose**: impact + side effects
 
 ### MEDIUM (score 3-5)
 
 4D + task checklist:
-1. **1D Describe** — state what and why
-2. **2D Delegate** — run delegate-check
-3. **2S Plan** — generate `plan.md` with numbered tasks (cap: 20 tasks max)
-   - Use `/sdd-plan` format but lighter — no AC mapping table needed
+1. **1D Describe**: state what and why
+2. **2D Delegate**: run delegate-check
+3. **2S Plan**: generate `plan.md` with numbered tasks (cap: 20 tasks max)
+   - Use `/sdd-plan` format but lighter: no AC mapping table needed
    - Plan lives in working directory, deleted after completion
-4. **4D Gate** — Change Manifest + plan.md summary
-5. **Execute** — follow plan tasks in order, mark done
-6. **3D Diligent** — build/lint/test
-7. **4D Disclose** — impact + side effects
-8. Clean up — delete plan.md (git tracks the actual changes)
+4. **4D Gate**: Change Manifest + plan.md summary
+5. **Execute**: follow plan tasks in order, mark done
+6. **3D Diligent**: build/lint/test
+7. **4D Disclose**: impact + side effects
+8. Clean up: delete plan.md (git tracks the actual changes)
 
 ### LARGE (score 6+)
 
-Full 4D+SDD:
-1. **1D Describe + Spec** — `/sdd-feature` → produces `feature.md`
-   - If spec needs refinement: `/sdd-refine`
-2. **2D Delegate** — run delegate-check (loads relevant agents/skills)
-3. **2S Plan** — `/sdd-plan` → produces `plan.md` with full detail
-4. **4D Gate** — Change Manifest + spec summary + plan summary
-5. **Execute** — `/sdd-implement` (follows plan, verifies each layer)
-6. **3D Diligent + Review** — `/sdd-review` (8-dimension review against spec)
-7. **4D Disclose** — impact radius + review verdict
-8. **Archive** — `/sdd-archive` → moves to `docs/specs-archive/`
+Full 4D+SDD. "Done" is a verdict computed against the spec by a pass that did not write
+the code, never a claim by the builder:
+1. **1D Describe + Spec**: `/sdd-feature` produces an ears-1 `feature.md` (EARS criteria,
+   Glossary, at most 3 open markers)
+   - Resolve markers with `/sdd-refine`, one question at a time
+2. **2D Delegate**: run delegate-check (loads relevant agents/skills)
+3. **2S Plan**: `/sdd-plan` refuses while markers remain, then writes `plan.md` in the task
+   grammar `T## [AC-##] <path>: <action>`
+4. **2S Analyze**: `/sdd-analyze` as an independent verifier subagent. `FIX-FIRST` sends you
+   back to step 1 or 3
+5. **4D Gate**: Change Manifest + spec summary + plan summary + analyze verdict
+6. **Execute**: `/sdd-implement` (follows plan, verifies each layer, grades nothing)
+7. **3D Converge**: `/sdd-converge` as an independent verifier subagent. `GAPS` appends a
+   Convergence section to `plan.md`; go back to step 6. Loop until `CONVERGED`
+8. **3D Review**: `/sdd-review` (7 quality dimensions, reads the converge verdict)
+9. **4D Disclose**: impact radius + converge and review verdicts
+10. **Archive**: `/sdd-archive` requires `CONVERGED`, then moves to `docs/specs-archive/`
 
 ## Integration with Existing 4D
 
 | 4D Phase | SDD Enhancement | When |
 |----------|----------------|------|
 | 1D Describe | Becomes `feature.md` with ACs and edge cases | LARGE only |
-| 2D Delegate | No change — delegate-check still runs | Always |
+| 2D Delegate | No change: delegate-check still runs | Always |
 | 4D Gate | Manifest now INCLUDES plan.md task list | MEDIUM+ |
-| 3D Diligent | Adds 8-dimension review against spec | LARGE only |
+| 3D Diligent | Adds the converge loop (done = verdict) + 7-dimension quality review | LARGE only |
 | 4D Disclose | Adds archive for institutional memory | LARGE only |
 
 ## Key Adaptations for Solo Operator
 
-- **Max 20 tasks** in any plan.md — if SDD generates more, consolidate
-- **No docs/project.md required** — we already have `.claude/CLAUDE.md` per arm
+- **Max 20 tasks** in any plan.md: if SDD generates more, consolidate
+- **No docs/project.md required**: we already have `.claude/CLAUDE.md` per arm
 - **feature.md lives in project root** during work, archived after
-- **review.md is optional for MEDIUM** — only mandatory for LARGE
-- **`/sdd-yolo`** maps to our "hazlo directo" exception — full pipeline with single gate
+- **review.md is optional for MEDIUM**: only mandatory for LARGE
+- **`/sdd-yolo`** maps to our "hazlo directo" exception: full pipeline with single gate
 
 ## Output Format
 
@@ -122,7 +129,9 @@ At task start, always report:
 | Write a spec | `/sdd-feature` |
 | Refine a spec | `/sdd-refine` |
 | Generate plan | `/sdd-plan` |
+| Check spec against plan | `/sdd-analyze` |
 | Implement from plan | `/sdd-implement` |
-| Review against spec | `/sdd-review` |
+| Decide whether it is done | `/sdd-converge` |
+| Review code quality | `/sdd-review` |
 | Archive completed work | `/sdd-archive` |
 | Full pipeline (one gate) | `/sdd-yolo` |

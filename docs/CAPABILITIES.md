@@ -6,7 +6,7 @@
 
 | Metric | Count |
 |---|---|
-| Skills | 233 |
+| Skills | 235 |
 | Agents | 167 |
 | Divisions | 13 |
 | Scripts: wired | 121 |
@@ -14,7 +14,7 @@
 | Rules | 80 |
 | Hook entries | 52 |
 
-## Skills (233)
+## Skills (235)
 
 | Name | Description |
 |---|---|
@@ -184,7 +184,9 @@
 | schema-row-counts | Get exact row counts per table in a given schema , PostgreSQL primary, with notes for other engines. Two-column result: ... |
 | schema-separation-orm-control | Schema Separation for ORM/Scaffolding Control |
 | screenshot | Use when the user explicitly asks for a desktop or system screenshot (full screen, specific app or window, or a pixel re... |
+| sdd-analyze | SDD: Analyze Spec and Plan |
 | sdd-archive | SDD: Archive |
+| sdd-converge | SDD: Converge |
 | sdd-feature | SDD: Feature Analysis |
 | sdd-implement | SDD: Implementation |
 | sdd-init | SDD: Init docs/project.md |
