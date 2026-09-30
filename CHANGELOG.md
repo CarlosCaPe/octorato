@@ -15,6 +15,12 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-09-30]: v8.5.0
+### Features
+- feat(v9): the converge receipt and the push gate (phase 3) (#335)
+### Other
+- docs(changelog): backfill v8.4.0 (#334)
+
 ## [2026-09-30]: v8.4.0
 ### Features
 - feat(sdd): v9 phase 2, done is a verdict (sdd-analyze + sdd-converge) (#333)
