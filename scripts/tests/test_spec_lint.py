@@ -170,6 +170,14 @@ class HeaderTest(unittest.TestCase):
                    "docs/specs/a/b", "templates/spec", "feature"):
             self.assertFalse(spec_lint.is_spec_dir(no), no)
 
+    def test_spec_paths_match_any_case_but_only_lower_case_is_canonical(self):
+        for p in ("Docs/specs/202609300000-a", "DOCS/SPECS/202609300000-a", "docs/Specs/202609300000-a"):
+            self.assertTrue(spec_lint.is_spec_dir(p), p)
+        self.assertTrue(spec_lint.is_canonical_spec_path("docs/specs/202609300000-a/feature.md"))
+        for p in ("Docs/specs/202609300000-a/feature.md", "docs/specs/202609300000-a/Feature.md",
+                  "docs/SPECS-ARCHIVE/old/plan.md"):
+            self.assertFalse(spec_lint.is_canonical_spec_path(p), p)
+
     def test_prose_mention_is_not_a_header(self):
         self.assertFalse(spec_lint.is_ears("# F\n\nThis spec does not use Spec-Format: ears-1 yet.\n"))
 

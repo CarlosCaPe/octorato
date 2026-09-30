@@ -392,14 +392,38 @@ def _newest_branch_code(repo: Path, head: str, spec_dir: str) -> str:
     return max(out, key=_parse_ts) if out else ""
 
 
+SPEC_FILES = ("feature.md", "plan.md")
+_LFS_POINTER = "version https://git-lfs.github.com/spec/"
+
+
+def _home_at(parts: tuple, i: int) -> str:
+    """The spec home spelled at parts[i:i+2], case-folded, or ""."""
+    pair = "/".join(parts[i:i + 2]).lower()
+    return pair if pair in SPEC_HOMES else ""
+
+
 def is_spec_dir(path: str) -> bool:
     """A spec lives in its own directory under docs/specs/ or docs/specs-archive/, at
     any depth of the repository (an arm keeps the same layout). Test fixtures, templates
     and any other feature.md elsewhere are not specs, and the gate never reads them:
     violation fixtures are malformed on purpose."""
     parts = Path(path).parts
-    return any(parts[i:i + 2] == tuple(home.split("/")) and len(parts) == i + 3
-               for home in SPEC_HOMES for i in range(len(parts) - 1))
+    return any(_home_at(parts, i) and len(parts) == i + 3 for i in range(len(parts) - 1))
+
+
+def is_canonical_spec_path(path: str) -> bool:
+    """A spec path spelled exactly: the home in lower case and, for a file, a
+    lower-case name. On a case-insensitive filesystem (Windows, macOS by default)
+    `Docs/specs/x/Feature.md` lands on `docs/specs/x/feature.md`, so a gate that
+    matched the spelling alone would miss a spec a person sees on disk."""
+    parts = Path(path).parts
+    for i in range(len(parts) - 1):
+        if _home_at(parts, i):
+            if "/".join(parts[i:i + 2]) not in SPEC_HOMES:
+                return False
+            tail = parts[i + 3:] if len(parts) > i + 3 else ()
+            return all(x == x.lower() for x in tail if x.lower() in SPEC_FILES)
+    return True
 
 
 def _on_spec_path(path: str) -> bool:
@@ -410,9 +434,9 @@ def _on_spec_path(path: str) -> bool:
     parts = Path(path).parts
     if not parts:
         return False
-    if parts[-1] == "docs":
+    if parts[-1].lower() == "docs":
         return True
-    if len(parts) >= 2 and "/".join(parts[-2:]) in SPEC_HOMES:
+    if len(parts) >= 2 and _home_at(parts, len(parts) - 2):
         return True
     return is_spec_dir(path) or is_spec_dir(str(Path(path).parent))
 
@@ -441,9 +465,22 @@ def push_findings(repo: Path, base: str, head: str) -> list:
                                 f"plain file or directory, not a symlink or a submodule "
                                 f"(mode {mode}); the gate reads the tree, and a link or a "
                                 f"submodule hides the specs behind it")
-    spec_dirs = sorted({str(Path(p).parent) for p in changed
-                        if Path(p).name in ("feature.md", "plan.md")
-                        and is_spec_dir(str(Path(p).parent))})
+    spec_paths = [p for p in changed
+                  if Path(p).name.lower() in SPEC_FILES and is_spec_dir(str(Path(p).parent))]
+    for p in sorted(spec_paths):
+        if not is_canonical_spec_path(p):
+            findings.append(f"{p}: a spec path is spelled `docs/specs/<name>/feature.md` (or "
+                            f"plan.md, or docs/specs-archive) in lower case; on a "
+                            f"case-insensitive filesystem another spelling lands on the "
+                            f"same file")
+            continue
+        blob = _show(repo, head, p)
+        if blob is not None and blob.startswith(_LFS_POINTER):
+            findings.append(f"{p}: a spec file may not be a Git LFS pointer; the gate reads "
+                            f"the tree, and the pointer hides the spec behind it")
+    spec_dirs = sorted({str(Path(p).parent) for p in spec_paths
+                        if is_canonical_spec_path(p)
+                        and not (_show(repo, head, p) or "").startswith(_LFS_POINTER)})
 
     for sd in spec_dirs:
         feature_now = _show(repo, head, f"{sd}/feature.md")
@@ -550,6 +587,11 @@ def _push_selftest_case(case: Path) -> list:
             (repo / sd / "plan.md").unlink()
         if spec.get("delete_spec"):
             shutil.rmtree(repo / sd)
+        if spec.get("new_lfs_spec"):
+            lfs = repo / "docs" / "specs" / "202609300001-lfs"
+            lfs.mkdir(parents=True)
+            (lfs / "feature.md").write_text(
+                _LFS_POINTER + "v1\noid sha256:" + "0" * 64 + "\nsize 1234\n")
         if spec.get("symlink_home"):
             real = repo / "elsewhere" / "specs"
             real.mkdir(parents=True)
