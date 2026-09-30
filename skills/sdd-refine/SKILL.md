@@ -16,7 +16,7 @@ You are a senior software architect refining an existing feature specification.
 
 | Input                | Required | Description                       | Example                                               |
 |----------------------|----------|-----------------------------------|-------------------------------------------------------|
-| `refinement_request` | Optional | What to change or add to the spec | "Add rate limiting — max 5 login attempts per minute" |
+| `refinement_request` | Optional | What to change or add to the spec | "Add rate limiting: max 5 login attempts per minute" |
 
 ## Steps
 
@@ -38,9 +38,9 @@ If it does not exist, tell the user to run `/sdd-feature` first.
 
 ### 1. Read Current State
 Read these files before doing anything:
-- `feature.md` — the existing spec to be refined
-- `docs/project.md` — project context and constraints
-- `plan.md` — if it exists, note which parts of the plan may be invalidated by changes
+- `feature.md`: the existing spec to be refined
+- `docs/project.md`: project context and constraints
+- `plan.md`: if it exists, note which parts of the plan may be invalidated by changes
 
 ### 2. Understand the Refinement Request
 The refinement input is: **`refinement_request`** (collected in Step 0).
@@ -50,9 +50,16 @@ Analyse `refinement_request` against the current `feature.md` and identify:
 - Whether the change expands scope, reduces scope, or clarifies existing scope
 - Any knock-on effects (e.g., changing a requirement may invalidate other ACs)
 
-### 3. Ask Clarifying Questions if Needed
-If the refinement request is ambiguous or incomplete, ask targeted questions before editing.
-Keep questions to 3 or fewer. Wait for answers.
+### 3. Clarify One Question at a Time
+Open `[NEEDS CLARIFICATION: ...]` markers in `feature.md` come first, then any ambiguity in the
+refinement request itself. Work through them one by one:
+
+1. Ask **one** question. Offer 2 to 4 concrete options and mark one as recommended, with the
+   reason in one line (impact, scope, risk).
+2. Wait for the answer.
+3. Apply it immediately to the section it affects, and delete the marker it resolves.
+4. Only then ask the next question. Stop after 5 questions in one session; anything left stays
+   as a marker.
 
 ### 4. Show a Diff Summary Before Editing
 Before modifying the file, present a brief plan of changes:
@@ -66,10 +73,10 @@ Before modifying the file, present a brief plan of changes:
 
 ### Modifications
 - FR-02: Updated to clarify that X also applies to Y
-- AC-02: Strengthened — must complete within 200ms, not 500ms
+- AC-02: Strengthened: must complete within 200ms, not 500ms
 
 ### Removals
-- FR-03: Removed — out of scope per user confirmation
+- FR-03: Removed: out of scope per user confirmation
 
 ### No Change
 - All other sections remain as-is
@@ -81,8 +88,10 @@ Ask the user to confirm before applying.
 Update `feature.md` in place. Preserve:
 - Existing section structure and numbering where possible
 - Completed checkboxes on ACs if any exist
-- The `## Open Questions` section — resolve any questions answered by this refinement,
-  and add new ones if this refinement raises them
+- The `Spec-Format` header, the Glossary, and EARS form for every criterion (new criteria
+  follow the patterns in `/sdd-feature`, with a Glossary name as subject)
+- Open markers you did not resolve; add a new one only if the refinement raises a question
+  you cannot answer, and never exceed 3 in total
 
 Increment requirement IDs sequentially (do not reuse deleted IDs).
 
@@ -118,4 +127,8 @@ Append a refinement record at the bottom of `feature.md`:
 | <date> | <One-line summary of this refinement> |
 ```
 
-If a revision history table already exists, append a new row — do not recreate the table.
+If a revision history table already exists, append a new row; do not recreate the table.
+The row names the questions answered in this session. This table is the only clarification log.
+
+### 8. Lint
+Run `python3 ~/.claude/scripts/spec_lint.py <spec-directory>` and fix every finding.

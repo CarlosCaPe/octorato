@@ -9,7 +9,7 @@
 | Skills | 233 |
 | Agents | 167 |
 | Divisions | 13 |
-| Scripts: wired | 120 |
+| Scripts: wired | 121 |
 | Scripts: orphan | 7 |
 | Rules | 80 |
 | Hook entries | 52 |
@@ -486,7 +486,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (127)
+## Scripts (128)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -607,6 +607,7 @@
 | slos.py | slos.py , observability surface 3. Brain SLOs + error budget burn rate. Reads the SLO config (`~/.cl... | wired |
 | social-video-digest.py | social-video-digest , daily triage of social-video creators for brain-worthy gems. What this DOES (c... | wired |
 | source-attribution-check.py | source-attribution-check.py: Stop hook, every answer MUST end with its provenance. | wired |
+| spec_lint.py | spec_lint.py: the deterministic reader of a v9 spec (Spec-Format: ears-1). | wired |
 | sync-ai-docs.ps1 |  | orphan |
 | sync-readme-counts.py | Sync the skill/agent counts cited in README.md + FAQ.md to the numbers on disk. | wired |
 | trace-hook.py | trace-hook.py , observability surface 1 , capture hook. Reads a Claude Code hook event from stdin an... | wired |
