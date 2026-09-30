@@ -15,6 +15,12 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-09-30]: v8.3.1
+### Fixes
+- fix(receipts): skip refused handbacks; stamp handback runs by their report (#330)
+### Other
+- docs(changelog): backfill v8.3.0 (#331)
+
 ## [2026-09-30]: v8.3.0
 ### Features
 - feat(sdd): v9 phase 1, a spec a script can read (ears-1 + spec_lint) (#327)
