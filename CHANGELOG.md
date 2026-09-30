@@ -15,6 +15,12 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-09-30]: v8.2.3
+### Fixes
+- fix(receipts): read a QA verdict delivered through SubagentHandback (#328)
+### Other
+- docs(changelog): backfill v8.2.2 (#325)
+
 ## [2026-09-29]: v8.2.2
 ### Other
 - chore(registry): record reflex-triage decisions for two recurrent lessons (#324)
