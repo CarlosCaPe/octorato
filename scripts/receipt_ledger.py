@@ -529,19 +529,42 @@ def scope_names(scope: str, token: str) -> bool:
 HANDBACK_TOOL = "SubagentHandback"
 
 
+def _refused_handbacks(entry: dict) -> set:
+    """tool_use ids of SubagentHandback calls the harness answered with
+    `success: false`. Read from `toolUseResult` on a harness-written tool
+    result; measured over 157 real handbacks, 152 carried true and 5 false
+    ("not active for this agent", "already delivered")."""
+    if entry.get("type") != "user" or not harness_entry(entry):
+        return set()
+    result = entry.get("toolUseResult")
+    if not isinstance(result, dict) or result.get("success") is not False:
+        return set()
+    content = (entry.get("message") or {}).get("content") or []
+    return {b.get("tool_use_id") for b in content
+            if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("tool_use_id")}
+
+
 def last_assistant_text(transcript_path: str) -> str:
     """The final report of a transcript: the newest assistant entry carrying
-    either text blocks or a SubagentHandback message. When one entry has both,
-    the handback wins, because it is what the parent was handed."""
+    either text blocks or a delivered SubagentHandback message. When one entry
+    has both, the handback wins, because it is what the parent was handed.
+
+    A handback the harness REFUSED never reached the parent, so it is not a
+    report: it is skipped and the walk goes on to older entries. A handback
+    with no result written yet still counts, because SubagentStop can read the
+    transcript before the harness appends the result, and a refusal is always
+    written at once with the call it refuses."""
     try:
         lines = _tail_lines(transcript_path)
     except OSError:
         return ""
+    refused: set = set()
     for line in reversed(lines):
         try:
             entry = json.loads(line)
         except json.JSONDecodeError:
             continue
+        refused |= _refused_handbacks(entry)
         if entry.get("type") != "assistant":
             continue
         content = (entry.get("message") or {}).get("content") or []
@@ -550,6 +573,7 @@ def last_assistant_text(transcript_path: str) -> str:
         handbacks = [b.get("input", {}).get("message") for b in content
                      if isinstance(b, dict) and b.get("type") == "tool_use"
                      and b.get("name") == HANDBACK_TOOL
+                     and b.get("id") not in refused
                      and isinstance(b.get("input"), dict)
                      and isinstance(b["input"].get("message"), str)]
         if handbacks:
