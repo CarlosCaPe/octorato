@@ -26,7 +26,7 @@ Every ears-1 spec is created in `docs/specs/<yyyymmddHHMM>-<feature-name>/` and 
 
 ### What the push gate checks
 
-For every pushed ref, `spec_lint.py --push-range <base> <head>`:
+For every pushed ref, `spec_lint.py --push-range <base> <head>` reads the specs the range touches. A spec is a `feature.md` in its own directory directly under `docs/specs/` or `docs/specs-archive/`, at any depth of the repository; test fixtures and templates elsewhere are never read, because violation fixtures are malformed on purpose. Deleting a spec is allowed. For each spec it:
 
 1. lints, at the pushed head, every ears-1 spec whose `feature.md` or `plan.md` the range changes (AC-15). The headers are part of the lint: every header-shaped `Status` or `Spec-Format` line, in any markup, must be the canonical `> **Status:** draft|approved|converged` and `> **Spec-Format:** ears-1`, exactly once, in the first 30 lines. The gate reads only the canonical form, so any other form is a finding, never an unseen flip;
 2. refuses a spec that stops being ears-1 in the range (its Spec-Format header removed or broken), and a spec directory under `docs/specs/` not named `<yyyymmddHHMM>-<lowercase-slug>`;

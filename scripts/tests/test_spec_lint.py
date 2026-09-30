@@ -162,6 +162,14 @@ class HeaderTest(unittest.TestCase):
             self.assertEqual(spec_lint.spec_status(text), "?", line)
         self.assertEqual(spec_lint.spec_status(base.replace("draft", "converged", 1)), "converged")
 
+    def test_only_directories_under_the_spec_homes_are_specs(self):
+        for yes in ("docs/specs/202609300000-a", "docs/specs-archive/old",
+                    "arm/docs/specs/202609300000-a"):
+            self.assertTrue(spec_lint.is_spec_dir(yes), yes)
+        for no in ("registry/fixtures/FLOW.spec-contract/violation_not_ears", "docs/specs",
+                   "docs/specs/a/b", "templates/spec", "feature"):
+            self.assertFalse(spec_lint.is_spec_dir(no), no)
+
     def test_prose_mention_is_not_a_header(self):
         self.assertFalse(spec_lint.is_ears("# F\n\nThis spec does not use Spec-Format: ears-1 yet.\n"))
 

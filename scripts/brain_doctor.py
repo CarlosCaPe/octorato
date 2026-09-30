@@ -2443,7 +2443,7 @@ def check_spec_contract(fix: bool) -> Result:
                       "spec can claim converged without a verdict",
                       "restore the OCTORATO-SPEC-GATE stanza in .githooks/pre-push")
     dirs = sorted(p.parent for base in ("docs/specs", "docs/specs-archive")
-                  for p in (CLAUDE_DIR / base).rglob("feature.md"))
+                  for p in (CLAUDE_DIR / base).glob("*/feature.md"))  # the gate's own scope
     if not dirs:
         return Result(key, PASS, "no spec directories yet; the push stanza is present")
     cp = run([PYTHON or "python3", str(script), *map(str, dirs)], cwd=CLAUDE_DIR)

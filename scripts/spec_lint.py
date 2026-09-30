@@ -326,6 +326,7 @@ def lint(target: Path, ready: bool = False) -> Report:
 # --------------------------------------------------------------------------
 
 ZERO_SHA = "0" * 40
+SPEC_HOMES = ("docs/specs", "docs/specs-archive")
 _SPEC_DIR_NAME = re.compile(r"^\d{12}-[a-z0-9][a-z0-9-]*$")
 
 
@@ -380,6 +381,16 @@ def _newest_branch_code(repo: Path, head: str, spec_dir: str) -> str:
                 "--", ".", f":(exclude){spec_dir}").strip()
 
 
+def is_spec_dir(path: str) -> bool:
+    """A spec lives in its own directory under docs/specs/ or docs/specs-archive/, at
+    any depth of the repository (an arm keeps the same layout). Test fixtures, templates
+    and any other feature.md elsewhere are not specs, and the gate never reads them:
+    violation fixtures are malformed on purpose."""
+    parts = Path(path).parts
+    return any(parts[i:i + 2] == tuple(home.split("/")) and len(parts) == i + 3
+               for home in SPEC_HOMES for i in range(len(parts) - 1))
+
+
 def _parse_ts(value: str) -> _dt.datetime:
     ts = _dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     return ts if ts.tzinfo else ts.replace(tzinfo=_dt.timezone.utc)
@@ -397,11 +408,14 @@ def push_findings(repo: Path, base: str, head: str) -> list:
 
     changed = _changed_paths(repo, commits)
     spec_dirs = sorted({str(Path(p).parent) for p in changed
-                        if Path(p).name in ("feature.md", "plan.md")})
+                        if Path(p).name in ("feature.md", "plan.md")
+                        and is_spec_dir(str(Path(p).parent))})
 
     for sd in spec_dirs:
         feature_now = _show(repo, head, f"{sd}/feature.md")
         feature_before = _show(repo, before, f"{sd}/feature.md") if before else None
+        if feature_now is None:
+            continue  # the spec was deleted or moved away; deleting a spec is allowed
         if not is_ears(feature_now):
             if is_ears(feature_before):
                 findings.append(f"{sd}: the spec stops being ears-1 in this push (its "
@@ -491,6 +505,8 @@ def _push_selftest_case(case: Path) -> list:
         (repo / sd / "feature.md").write_text(text)
         if spec.get("delete_plan"):
             (repo / sd / "plan.md").unlink()
+        if spec.get("delete_spec"):
+            shutil.rmtree(repo / sd)
         if spec.get("break_spec"):
             text = (repo / sd / "feature.md").read_text()
             (repo / sd / "feature.md").write_text(
