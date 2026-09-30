@@ -67,6 +67,23 @@ def status_of(text, quota_hit: bool = False) -> str:
     return "error" if _ERROR_HEAD.match(first) else "ok"
 
 
+def final_message(payload: dict) -> str:
+    """What the child said on its way out. The harness sends
+    `last_assistant_message` EMPTY when the child reported through
+    SubagentHandback, so an empty payload falls back to the transcript, read by
+    the same function the QA receipt uses. Without it every handback run was
+    stamped `error`, the crash status, though its report was delivered."""
+    text = str(payload.get("last_assistant_message") or "")
+    tp = str(payload.get("agent_transcript_path") or "")
+    if not text.strip() and tp:
+        try:
+            import receipt_ledger
+            text = receipt_ledger.last_assistant_text(tp)
+        except Exception:
+            return ""
+    return text
+
+
 def meta_path(payload: dict, pid: str) -> str:
     """`<session-dir>/subagents/agent-<id>.meta.json`, or '' when unresolvable.
 
@@ -133,7 +150,7 @@ def main() -> int:
         now = time.time()
         rec = {
             "kind": "exit",
-            "status": status_of(payload.get("last_assistant_message"),
+            "status": status_of(final_message(payload),
                                  any(l.get("kind") == "quota" for l in lines)),
             "tool_count": sum(1 for l in lines if l.get("kind") == "tool"),
             "seq_before": int(tail.get("seq", -1)),
