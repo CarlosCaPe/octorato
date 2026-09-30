@@ -148,6 +148,7 @@ v9.0.0 is cut by the operator with an `Octorato-Major:` trailer once every crite
 | Date | Change Summary |
 |------|----------------|
 | 2026-09-30 | Initial spec |
+| 2026-09-30 | Re-QA of the phase 3 fix: freshness takes the later of the author and committer dates, since an amend or a cherry-pick keeps the old author date; a rebase after the verdict now stales it. |
 | 2026-09-30 | QA of phase 3: freshness is measured against the branch's own code commits by author date, not only the pushed range, and reads the transcript's timestamp, not the ledger line (AC-14). Headers must be canonical, since the gate reads only that form. |
 | 2026-09-30 | Operator decision: a Spec lives in `docs/specs/<yyyymmddHHMM>-<feature-name>/` from creation and never moves, so the converge scope, the receipt and the push gate share one key (AC-22). This spec moved there from `docs/specs-archive/`. |
 | 2026-09-30 | QA of phase 2: no hook is added (hooks.json leaves the scope), ANATOMY joins the flow surfaces, analyze ids name their subject so they survive a re-run. |

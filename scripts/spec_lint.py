@@ -138,15 +138,17 @@ class Report:
 
 
 def _readable_lines(text: str) -> list:
-    """(line_no, line) with fenced blocks blanked, so quoted grammar is ignored."""
-    out, fenced = [], False
-    for i, line in enumerate(text.splitlines(), 1):
-        if line.lstrip().startswith(("```", "~~~")):
-            fenced = not fenced
-            out.append((i, ""))
-            continue
-        out.append((i, "" if fenced else line))
-    return out
+    """(line_no, line) with fenced blocks blanked, so quoted grammar is ignored.
+    Only a fence that CLOSES hides its lines: an unclosed opening fence would
+    otherwise hide every header after it and turn a spec into a silent skip."""
+    lines = text.splitlines()
+    marks = [i for i, line in enumerate(lines) if line.lstrip().startswith(("```", "~~~"))]
+    if len(marks) % 2:
+        marks = marks[:-1]
+    hidden = set()
+    for a, b in zip(marks[0::2], marks[1::2]):
+        hidden.update(range(a, b + 1))
+    return [(i + 1, "" if i in hidden else line) for i, line in enumerate(lines)]
 
 
 def _sections(lines: list) -> dict:
@@ -370,15 +372,20 @@ def _changed_paths(repo: Path, commits: list) -> set:
 
 
 def _newest_branch_code(repo: Path, head: str, spec_dir: str) -> str:
-    """Author date of the newest commit that is on this branch (reachable from head,
-    not from the default remote branch) and touches a path outside the spec
-    directory. Author dates survive a rebase, so a rebase alone never stales a
-    verdict; a code commit pushed in an EARLIER push of the same branch still
-    counts, which closes the two-push split. "" when there is none."""
+    """The latest author OR committer date among the commits that are on this branch
+    (reachable from head, not from the default remote branch) and touch a path
+    outside the spec directory. A code commit pushed in an EARLIER push of the same
+    branch still counts, which closes the two-push split. Both dates count because
+    each one alone is slipped by an everyday command: an amend or a cherry-pick keeps
+    the old author date, and only the committer date shows when the code landed.
+    The cost is stated: a rebase after the verdict stales it, and the converge pass
+    runs again. That only concerns the push that flips a spec, once per spec.
+    "" when there is none."""
     not_refs = _default_remote_branches(repo)
     args = [head] + (["--not", *not_refs] if not_refs else [])
-    return _git(repo, "log", "-1", "--format=%aI", *args,
-                "--", ".", f":(exclude){spec_dir}").strip()
+    out = _git(repo, "log", "--format=%aI %cI", *args,
+               "--", ".", f":(exclude){spec_dir}").split()
+    return max(out, key=_parse_ts) if out else ""
 
 
 def is_spec_dir(path: str) -> bool:
@@ -407,6 +414,12 @@ def push_findings(repo: Path, base: str, head: str) -> list:
     before = parents[0] if parents else None
 
     changed = _changed_paths(repo, commits)
+    for p in sorted(changed):
+        if is_spec_dir(p) or is_spec_dir(str(Path(p).parent)):
+            mode = _git(repo, "ls-tree", head, "--", p).split(" ", 1)[0]
+            if mode == "120000":
+                findings.append(f"{p}: a spec directory or spec file may not be a symlink; "
+                                f"the gate reads the tree, and a link hides the spec from it")
     spec_dirs = sorted({str(Path(p).parent) for p in changed
                         if Path(p).name in ("feature.md", "plan.md")
                         and is_spec_dir(str(Path(p).parent))})
@@ -433,14 +446,15 @@ def push_findings(repo: Path, base: str, head: str) -> list:
             rep = lint(Path(tmp))
             findings += [f.replace(tmp, sd) for f in rep.findings]
 
+        if spec_status(feature_now) == "converged" and plan_now is None:
+            findings.append(f"{sd}: the spec says converged but has no plan.md; a converged "
+                            f"spec keeps the plan it was judged against")
+            continue
         # AC-14: a status flip to converged needs a fresh CONVERGED receipt.
         if spec_status(feature_now) != "converged":
             continue
         if spec_status(feature_before) == "converged":
             continue
-        if plan_now is None:
-            findings.append(f"{sd}: Status becomes converged but the spec has no plan.md; "
-                            f"a converged spec keeps the plan it was judged against")
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         import receipt_ledger
         receipt = receipt_ledger.converge_latest_for(sd)
@@ -494,6 +508,14 @@ def _push_selftest_case(case: Path) -> list:
         if spec.get("code_change"):
             (repo / "app.py").write_text("x = 2\n")
             commit("code", "2026-09-30T11:00:00+00:00")
+        if spec.get("late_code_old_author"):
+            # an amend or a cherry-pick: authored before the verdict, landed after it
+            (repo / "app.py").write_text("x = 3\n")
+            e = dict(env, GIT_AUTHOR_DATE="2026-09-30T11:00:00+00:00",
+                     GIT_COMMITTER_DATE="2026-09-30T11:45:00+00:00")
+            subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, env=e)
+            subprocess.run(["git", "-C", str(repo), "commit", "-qm", "late code"],
+                           check=True, env=e, capture_output=True)
         text = feature
         if spec.get("flip", True):
             text = text.replace("> **Status:** approved",
@@ -507,6 +529,13 @@ def _push_selftest_case(case: Path) -> list:
             (repo / sd / "plan.md").unlink()
         if spec.get("delete_spec"):
             shutil.rmtree(repo / sd)
+        if spec.get("symlink_spec"):
+            hidden = repo / "notes" / "hidden"
+            hidden.mkdir(parents=True)
+            shutil.move(str(repo / sd / "feature.md"), hidden / "feature.md")
+            shutil.move(str(repo / sd / "plan.md"), hidden / "plan.md")
+            shutil.rmtree(repo / sd)
+            os.symlink(os.path.relpath(hidden, (repo / sd).parent), repo / sd)
         if spec.get("break_spec"):
             text = (repo / sd / "feature.md").read_text()
             (repo / sd / "feature.md").write_text(
