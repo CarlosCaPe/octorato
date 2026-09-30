@@ -88,7 +88,7 @@ Refinement asks one question, offers a recommended answer, and writes the answer
 - [ ] AC-11: IF the Converger finds a criterion unmet, partial or contradicted, THEN THE Converger SHALL append a `## Convergence <n>` section of tasks to `plan.md`, SHALL change no other byte of it, and SHALL end with `CONVERGE-VERDICT: GAPS`.
 - [ ] AC-12: WHEN the Converger finds every criterion met, THE Converger SHALL leave `plan.md` byte-identical and SHALL end with `CONVERGE-VERDICT: CONVERGED` and `CONVERGE-SCOPE: <spec directory>`.
 - [ ] AC-13: WHEN a subagent of a verifier persona ends with `CONVERGE-VERDICT` and `CONVERGE-SCOPE` lines, THE Receipt_Ledger SHALL record the verdict with the harness-written agent transcript path.
-- [ ] AC-14: IF a pushed commit range changes a Spec header to `Status: converged` and no `CONVERGED` receipt for that spec directory is newer than the last commit in the range that touches a path outside that directory, THEN THE Push_Gate SHALL block the push.
+- [ ] AC-14: IF a pushed commit range changes a Spec header to `Status: converged` and the latest converge receipt for that spec directory is not a `CONVERGED` verdict whose transcript timestamp is newer than the newest commit on the branch that touches a path outside that directory, THEN THE Push_Gate SHALL block the push.
 - [ ] AC-15: IF a pushed commit changes a Spec or its `plan.md` and the Spec_Linter exits non-zero on it, THEN THE Push_Gate SHALL block the push.
 - [ ] AC-16: THE Spec_Linter SHALL skip any `feature.md` that does not declare `Spec-Format: ears-1`.
 - [ ] AC-17: WHEN the Doctor runs, THE Doctor SHALL report each v9 rule as wired, with its violation fixture blocking and its benign fixture allowing.
@@ -148,6 +148,7 @@ v9.0.0 is cut by the operator with an `Octorato-Major:` trailer once every crite
 | Date | Change Summary |
 |------|----------------|
 | 2026-09-30 | Initial spec |
+| 2026-09-30 | QA of phase 3: freshness is measured against the branch's own code commits by author date, not only the pushed range, and reads the transcript's timestamp, not the ledger line (AC-14). Headers must be canonical, since the gate reads only that form. |
 | 2026-09-30 | Operator decision: a Spec lives in `docs/specs/<yyyymmddHHMM>-<feature-name>/` from creation and never moves, so the converge scope, the receipt and the push gate share one key (AC-22). This spec moved there from `docs/specs-archive/`. |
 | 2026-09-30 | QA of phase 2: no hook is added (hooks.json leaves the scope), ANATOMY joins the flow surfaces, analyze ids name their subject so they survive a re-run. |
 | 2026-09-30 | QA of phase 1: AC-05 split, the 20 task cap moves to AC-21 (one behaviour per criterion). `sdd-archive` joins the affected skills, since it requires ticked criteria. |

@@ -1,0 +1,1 @@
+Spec-Format header must sit in the first 30 lines

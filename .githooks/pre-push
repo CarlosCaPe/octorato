@@ -406,7 +406,7 @@ if [ -z "$PYTHON" ]; then
   } >&2
   exit 1
 fi
-for spec_range in "${SPEC_RANGES[@]}"; do
+for spec_range in ${SPEC_RANGES[@]+"${SPEC_RANGES[@]}"}; do  # empty-array safe under set -u on bash 3.2
   set -- $spec_range
   if ! "$PYTHON" "$REPO_ROOT/scripts/spec_lint.py" --repo "$REPO_ROOT" --push-range "$1" "$2" >/dev/null 2>&1; then
     {
