@@ -10,7 +10,8 @@ finishes and its final message carries the verdict protocol
 this hook, running in the harness process, appends a qa receipt to the global
 ledger with the agent id, type and the harness-written agent transcript path.
 qa-merge-gate re-reads that transcript before honoring the receipt, so the
-line is a pointer, not the proof.
+line is a pointer, not the proof. A verdict delivered through SubagentHandback
+(no final text block) is read from the transcript by the same function.
 
 Why here and not in prose: "QA approved" typed by the main loop is
 indistinguishable from an invention. The verdict has to come from a different
@@ -29,30 +30,6 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
-def _last_text_from(path: str) -> str:
-    """Fallback when the payload carries no last_assistant_message."""
-    try:
-        import receipt_ledger
-        lines = receipt_ledger._tail_lines(path)
-    except Exception:
-        return ""
-    for line in reversed(lines):
-        try:
-            entry = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if entry.get("type") != "assistant":
-            continue
-        content = (entry.get("message") or {}).get("content") or []
-        if isinstance(content, str):
-            return content
-        texts = [b.get("text", "") for b in content
-                 if isinstance(b, dict) and b.get("type") == "text"]
-        if texts:
-            return "\n".join(texts)
-    return ""
-
-
 def main() -> int:
     try:
         data = json.loads(sys.stdin.read())
@@ -60,11 +37,14 @@ def main() -> int:
         return 0
     text = str(data.get("last_assistant_message") or "")
     tp = str(data.get("agent_transcript_path") or "")
-    if not text and tp:
-        text = _last_text_from(tp)
     try:
         import receipt_ledger
         verdict, scope = receipt_ledger.parse_verdict(text)
+        # The payload can carry a message without the verdict (or none at all)
+        # when the agent reported through SubagentHandback; the transcript is
+        # the fallback, read by the same function qa-merge-gate re-reads with.
+        if not verdict and tp:
+            verdict, scope = receipt_ledger.parse_verdict(receipt_ledger.last_assistant_text(tp))
         if not verdict:
             return 0
         receipt_ledger.append_global({

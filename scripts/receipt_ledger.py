@@ -521,7 +521,18 @@ def scope_names(scope: str, token: str) -> bool:
     return bool(re.search(rf"(?<![\w]){t}(?![\w])", scope))
 
 
+# A subagent can end by calling this tool instead of writing a final text block:
+# its `message` input IS the report the parent receives. Measured 2026-09-30: a
+# Reality Checker whose transcript ended thinking -> SubagentHandback -> result
+# carried its verdict only there, so reading text blocks alone found no verdict,
+# wrote no receipt, and the merge gate refused a PASS it could not see.
+HANDBACK_TOOL = "SubagentHandback"
+
+
 def last_assistant_text(transcript_path: str) -> str:
+    """The final report of a transcript: the newest assistant entry carrying
+    either text blocks or a SubagentHandback message. When one entry has both,
+    the handback wins, because it is what the parent was handed."""
     try:
         lines = _tail_lines(transcript_path)
     except OSError:
@@ -536,6 +547,13 @@ def last_assistant_text(transcript_path: str) -> str:
         content = (entry.get("message") or {}).get("content") or []
         if isinstance(content, str):
             return content
+        handbacks = [b.get("input", {}).get("message") for b in content
+                     if isinstance(b, dict) and b.get("type") == "tool_use"
+                     and b.get("name") == HANDBACK_TOOL
+                     and isinstance(b.get("input"), dict)
+                     and isinstance(b["input"].get("message"), str)]
+        if handbacks:
+            return handbacks[-1]
         texts = [b.get("text", "") for b in content
                  if isinstance(b, dict) and b.get("type") == "text"]
         if texts:
