@@ -398,6 +398,21 @@ def is_spec_dir(path: str) -> bool:
                for home in SPEC_HOMES for i in range(len(parts) - 1))
 
 
+def _on_spec_path(path: str) -> bool:
+    """True for a `docs` directory, a spec home (`docs/specs`, `docs/specs-archive`),
+    a spec directory or a file in one, at any depth. A symlink at ANY of these hides
+    real specs from a gate that reads the git tree, while a filesystem walk (the
+    doctor, an editor, a person) follows the link and still sees them."""
+    parts = Path(path).parts
+    if not parts:
+        return False
+    if parts[-1] == "docs":
+        return True
+    if len(parts) >= 2 and "/".join(parts[-2:]) in SPEC_HOMES:
+        return True
+    return is_spec_dir(path) or is_spec_dir(str(Path(path).parent))
+
+
 def _parse_ts(value: str) -> _dt.datetime:
     ts = _dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     return ts if ts.tzinfo else ts.replace(tzinfo=_dt.timezone.utc)
@@ -415,11 +430,12 @@ def push_findings(repo: Path, base: str, head: str) -> list:
 
     changed = _changed_paths(repo, commits)
     for p in sorted(changed):
-        if is_spec_dir(p) or is_spec_dir(str(Path(p).parent)):
+        if _on_spec_path(p):
             mode = _git(repo, "ls-tree", head, "--", p).split(" ", 1)[0]
             if mode == "120000":
-                findings.append(f"{p}: a spec directory or spec file may not be a symlink; "
-                                f"the gate reads the tree, and a link hides the spec from it")
+                findings.append(f"{p}: a spec home, a spec directory or a spec file may not be "
+                                f"a symlink; the gate reads the tree, and a link hides the "
+                                f"specs behind it")
     spec_dirs = sorted({str(Path(p).parent) for p in changed
                         if Path(p).name in ("feature.md", "plan.md")
                         and is_spec_dir(str(Path(p).parent))})
@@ -529,6 +545,11 @@ def _push_selftest_case(case: Path) -> list:
             (repo / sd / "plan.md").unlink()
         if spec.get("delete_spec"):
             shutil.rmtree(repo / sd)
+        if spec.get("symlink_home"):
+            real = repo / "elsewhere" / "specs"
+            real.mkdir(parents=True)
+            shutil.move(str(repo / "docs" / "specs"), real.parent / "moved")
+            os.symlink(os.path.relpath(real.parent / "moved", repo / "docs"), repo / "docs" / "specs")
         if spec.get("symlink_spec"):
             hidden = repo / "notes" / "hidden"
             hidden.mkdir(parents=True)
