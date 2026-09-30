@@ -2052,3 +2052,67 @@ rules:
     locator: 'Kernel: packages'
     expect: present
   liveness_required: FIRES
+- id: FLOW.spec-contract
+  title: 'An ears-1 spec a script can read: EARS criteria, task grammar, coverage, checked at push'
+  category: FLOW
+  source:
+    file: CLAUDE.md
+    anchor: Done is a verdict
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - cli
+  - git-hook
+  mechanism:
+  - kind: Gate
+    canonical_name: spec_lint.py
+    firing_event: PrePush
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: scripts/spec_lint.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/spec_lint.py --selftest registry/fixtures/FLOW.spec-contract
+    expect: 0
+  - method: EXIT_CODE
+    locator: grep -qE '^[ \t]*(if[ \t]+!?[ \t]*)?"?\$\{?PYTHON\}?"?[ \t]+[^|]*spec_lint\.py[^|]*--push-range([^|]*$|[^|]*\|\|)'
+      .githooks/pre-push
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: Done is a verdict
+    expect: present
+  liveness_required: FIRES
+- id: FLOW.done-is-a-verdict
+  title: 'Done is a verdict: a spec reaches converged only with a fresh CONVERGED receipt from an independent verifier'
+  category: FLOW
+  source:
+    file: CLAUDE.md
+    anchor: Done is a verdict
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - cli
+  - git-hook
+  mechanism:
+  - kind: Gate
+    canonical_name: spec_lint.py
+    firing_event: PrePush
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: scripts/spec_lint.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/spec_lint.py --selftest registry/fixtures/FLOW.done-is-a-verdict
+    expect: 0
+  - method: EXIT_CODE
+    locator: grep -qE '^[ \t]*(if[ \t]+!?[ \t]*)?"?\$\{?PYTHON\}?"?[ \t]+[^|]*spec_lint\.py[^|]*--push-range([^|]*$|[^|]*\|\|)'
+      .githooks/pre-push
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: Done is a verdict
+    expect: present
+  liveness_required: FIRES

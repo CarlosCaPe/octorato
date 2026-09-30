@@ -7,6 +7,11 @@ finishes and its final message carries the verdict protocol
     QA-VERDICT: PASS | FAIL | NEEDS-WORK
     QA-SCOPE: PR #260            (or a branch, a sha, a file set)
 
+or the v9 converge protocol (skills/sdd-converge)
+
+    CONVERGE-VERDICT: CONVERGED | GAPS
+    CONVERGE-SCOPE: docs/specs/<yyyymmddHHMM>-<feature-name>
+
 this hook, running in the harness process, appends a qa receipt to the global
 ledger with the agent id, type and the harness-written agent transcript path.
 qa-merge-gate re-reads that transcript before honoring the receipt, so the
@@ -39,23 +44,25 @@ def main() -> int:
     tp = str(data.get("agent_transcript_path") or "")
     try:
         import receipt_ledger
-        verdict, scope = receipt_ledger.parse_verdict(text)
         # The payload can carry a message without the verdict (or none at all)
         # when the agent reported through SubagentHandback; the transcript is
-        # the fallback, read by the same function qa-merge-gate re-reads with.
-        if not verdict and tp:
-            verdict, scope = receipt_ledger.parse_verdict(receipt_ledger.last_assistant_text(tp))
-        if not verdict:
-            return 0
-        receipt_ledger.append_global({
-            "kind": "qa",
-            "verdict": verdict,
-            "scope": scope,
+        # the fallback, read by the same function the consumers re-read with.
+        fallback = None
+        base = {
             "agent_id": data.get("agent_id") or "",
             "agent_type": data.get("agent_type") or "",
             "agent_transcript_path": tp,
             "session_id": data.get("session_id") or "",
-        })
+        }
+        for kind, parse in (("qa", receipt_ledger.parse_verdict),
+                             ("converge", receipt_ledger.parse_converge)):
+            verdict, scope = parse(text)
+            if not verdict and tp:
+                if fallback is None:
+                    fallback = receipt_ledger.last_assistant_text(tp)
+                verdict, scope = parse(fallback)
+            if verdict:
+                receipt_ledger.append_global(dict(base, kind=kind, verdict=verdict, scope=scope))
     except Exception:
         return 0
     return 0

@@ -135,8 +135,10 @@ scan_messages() {
 
 # ── Iterate refs being pushed ──────────────────────────────────────────────
 
+SPEC_RANGES=()
 while read -r local_ref local_sha remote_ref remote_sha; do
   [ "$local_sha" = "$ZERO" ] && continue   # ref deletion, nothing to scan
+  SPEC_RANGES+=("$remote_sha $local_sha")  # consumed by the OCTORATO-SPEC-GATE stanza below
 
   if [ "$remote_sha" = "$ZERO" ]; then
     # New branch — find commits unique to this push (not in any other remote ref)
@@ -381,5 +383,41 @@ if [ -f "$REPO_ROOT/scripts/octo_pkg.py" ]; then
     exit 1
   fi
 fi
+
+# OCTORATO-SPEC-GATE: v9, "done is a verdict" (docs/specs/202609301321-v9-done-is-a-verdict).
+# For every pushed ref, spec_lint.py --push-range lints each ears-1 spec the range
+# changes (AC-15) and refuses a spec whose Status flips to `converged` unless the
+# latest anchored converge receipt for that spec directory says CONVERGED and is
+# newer than the last commit in the range outside the spec directory (AC-14).
+# The receipt lives in this machine's ledger (~/.claude/.cache/receipts), so the
+# machine that ran the converge pass is the one that pushes the status change.
+# A missing linter blocks, like every other stanza: a gate may not vanish silently.
+if [ ! -f "$REPO_ROOT/scripts/spec_lint.py" ]; then
+  {
+    echo ""
+    echo "✗ pre-push: scripts/spec_lint.py MISSING: the spec gate cannot be skipped silently."
+  } >&2
+  exit 1
+fi
+if [ -z "$PYTHON" ]; then
+  {
+    echo ""
+    echo "✗ pre-push: no working Python found; the spec gate requires Python."
+  } >&2
+  exit 1
+fi
+for spec_range in "${SPEC_RANGES[@]}"; do
+  set -- $spec_range
+  if ! "$PYTHON" "$REPO_ROOT/scripts/spec_lint.py" --repo "$REPO_ROOT" --push-range "$1" "$2" >/dev/null 2>&1; then
+    {
+      echo ""
+      echo "✗ pre-push: a spec in this push is malformed, or claims converged without a verdict."
+      "$PYTHON" "$REPO_ROOT/scripts/spec_lint.py" --repo "$REPO_ROOT" --push-range "$1" "$2" 2>&1 | sed 's/^/  /'
+      echo ""
+      echo "  Fix the spec, or run /sdd-converge as a verifier subagent on this machine, then re-push."
+    } >&2
+    exit 1
+  fi
+done
 
 exit 0

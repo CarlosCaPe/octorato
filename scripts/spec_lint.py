@@ -44,9 +44,23 @@ Markers, criteria and task lines inside fenced code blocks (``` or ~~~) are not
 read, and markers inside inline code spans are not counted, so a document can
 quote the grammar without tripping it.
 
+Push gate (v9 phase 3, called by .githooks/pre-push once per pushed ref):
+  spec_lint.py --push-range <base-sha> <head-sha>
+    - lints, at <head>, every ears-1 spec whose feature.md or plan.md the range
+      changes (AC-15)
+    - for every ears-1 spec whose `Status:` header becomes `converged` in the
+      range, requires the latest anchored converge receipt for that spec
+      directory to say CONVERGED and to be newer than the last commit in the
+      range touching a path outside that directory (AC-14)
+    A base of all zeros means a new branch: the range is every commit not on any
+    remote. The receipt lives in this machine's ledger, so the machine that ran
+    the converge pass is the one that pushes the status change.
+
 Usage:
   spec_lint.py [--ready] <spec-dir | feature.md> [...]
+  spec_lint.py --push-range <base> <head>
   spec_lint.py --selftest registry/fixtures/FLOW.spec-contract
+  spec_lint.py --selftest registry/fixtures/FLOW.done-is-a-verdict
 
 Exit: 0 clean or skipped, 1 findings, 2 usage error.
 
@@ -54,12 +68,21 @@ Selftest: each subdirectory of the fixture dir is one case. `violation*` cases
 must exit 1 and, when they carry an `expect.txt`, print that substring, so a
 violation that fails for the wrong reason does not count. `benign*` cases must
 exit 0. A case may carry an `args` file with extra flags (for example --ready).
+A case that carries a `push.json` is a push scenario instead: the selftest builds
+a throwaway git repository and a throwaway HOME with a receipt ledger, and runs
+the push check against it.
 """
 from __future__ import annotations
 
 import argparse
+import datetime as _dt
+import json
+import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -236,6 +259,171 @@ def lint(target: Path, ready: bool = False) -> Report:
     return report
 
 
+# --------------------------------------------------------------------------
+# Push gate
+# --------------------------------------------------------------------------
+
+ZERO_SHA = "0" * 40
+_STATUS = re.compile(r"^\s*(?:>\s*)?\**Status:\**\s*([A-Za-z-]+)", re.MULTILINE)
+
+
+def _git(repo: Path, *args: str) -> str:
+    cp = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True)
+    if cp.returncode != 0:
+        raise RuntimeError(f"git {' '.join(args)}: {cp.stderr.strip()}")
+    return cp.stdout
+
+
+def _show(repo: Path, rev: str, path: str):
+    cp = subprocess.run(["git", "-C", str(repo), "show", f"{rev}:{path}"],
+                        capture_output=True, text=True)
+    return cp.stdout if cp.returncode == 0 else None
+
+
+def _status(text) -> str:
+    if not text:
+        return ""
+    m = _STATUS.search("\n".join(text.splitlines()[:30]))
+    return m.group(1).lower() if m else ""
+
+
+def _is_ears(text) -> bool:
+    return bool(text) and bool(_FORMAT.search("\n".join(text.splitlines()[:30])))
+
+
+def _range_args(base: str, head: str) -> list:
+    return [head, "--not", "--remotes"] if base == ZERO_SHA else [f"{base}..{head}"]
+
+
+def push_findings(repo: Path, base: str, head: str) -> list:
+    """Findings for one pushed ref. Empty list means the push may go."""
+    findings: list = []
+    commits = _git(repo, "rev-list", *_range_args(base, head)).split()
+    if not commits:
+        return findings
+    oldest = commits[-1]
+    parents = _git(repo, "rev-list", "--parents", "-n", "1", oldest).split()[1:]
+    before = parents[0] if parents else None
+
+    changed: set = set()
+    for c in commits:
+        changed.update(p for p in _git(repo, "diff-tree", "--no-commit-id", "--name-only",
+                                          "-r", "--root", c).splitlines() if p)
+    spec_dirs = sorted({str(Path(p).parent) for p in changed
+                        if Path(p).name in ("feature.md", "plan.md")})
+
+    for sd in spec_dirs:
+        feature_now = _show(repo, head, f"{sd}/feature.md")
+        if not _is_ears(feature_now):
+            continue
+        # AC-15: lint the spec as it is at the pushed head.
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "feature.md").write_text(feature_now, encoding="utf-8")
+            plan_now = _show(repo, head, f"{sd}/plan.md")
+            if plan_now is not None:
+                (Path(tmp) / "plan.md").write_text(plan_now, encoding="utf-8")
+            rep = lint(Path(tmp))
+            findings += [f.replace(tmp, sd) for f in rep.findings]
+
+        # AC-14: a status flip to converged needs a fresh CONVERGED receipt.
+        if _status(feature_now) != "converged":
+            continue
+        feature_before = _show(repo, before, f"{sd}/feature.md") if before else None
+        if _status(feature_before) == "converged":
+            continue
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import receipt_ledger
+        receipt = receipt_ledger.converge_latest_for(sd)
+        if receipt is None:
+            findings.append(f"{sd}: Status becomes converged, but this machine holds no "
+                            f"converge receipt for {sd}. Run /sdd-converge as a verifier "
+                            f"subagent, then push again.")
+            continue
+        if receipt.get("verdict") != "CONVERGED":
+            findings.append(f"{sd}: Status becomes converged, but the latest converge "
+                            f"verdict for it is {receipt.get('verdict')} "
+                            f"({receipt.get('ts', '?')}).")
+            continue
+        outside = _git(repo, "log", "-1", "--format=%cI", *_range_args(base, head),
+                       "--", ".", f":(exclude){sd}").strip()
+        if outside:
+            code_at = _dt.datetime.fromisoformat(outside)
+            got_at = _dt.datetime.fromisoformat(str(receipt.get("ts")))
+            if got_at <= code_at:
+                findings.append(f"{sd}: the CONVERGED receipt ({receipt.get('ts')}) is "
+                                f"older than a commit in this push outside the spec "
+                                f"directory ({outside}). Run /sdd-converge again.")
+    return findings
+
+
+def _push_selftest_case(case: Path) -> list:
+    """Build the scenario a push.json describes and return its findings."""
+    spec = json.loads((case / "push.json").read_text())
+    sd = "docs/specs/202609300000-toy"
+    home = Path(tempfile.mkdtemp(prefix="spec-push-home-"))
+    repo = Path(tempfile.mkdtemp(prefix="spec-push-repo-"))
+    saved = {k: os.environ.get(k) for k in ("HOME", "USERPROFILE")}
+    try:
+        os.environ["HOME"] = os.environ["USERPROFILE"] = str(home)
+        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
+                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+
+        def commit(msg: str, when: str) -> str:
+            e = dict(env, GIT_AUTHOR_DATE=when, GIT_COMMITTER_DATE=when)
+            subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, env=e)
+            subprocess.run(["git", "-C", str(repo), "commit", "-qm", msg, "--allow-empty"],
+                           check=True, env=e, capture_output=True)
+            return _git(repo, "rev-parse", "HEAD").strip()
+
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        feature = (case / "feature.md").read_text()
+        (repo / sd).mkdir(parents=True)
+        (repo / sd / "feature.md").write_text(feature)
+        (repo / sd / "plan.md").write_text((case / "plan.md").read_text())
+        (repo / "app.py").write_text("x = 1\n")
+        base = commit("base", "2026-09-30T10:00:00+00:00")
+        if spec.get("code_change"):
+            (repo / "app.py").write_text("x = 2\n")
+            commit("code", "2026-09-30T11:00:00+00:00")
+        if spec.get("flip", True):
+            (repo / sd / "feature.md").write_text(
+                feature.replace("> **Status:** approved", "> **Status:** converged"))
+        if spec.get("break_spec"):
+            text = (repo / sd / "feature.md").read_text()
+            (repo / sd / "feature.md").write_text(
+                text.replace("THE Exporter SHALL write UTF-8.", "The exporter writes UTF-8."))
+        head = commit("status", "2026-09-30T12:00:00+00:00")
+
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import receipt_ledger
+        for i, r in enumerate(spec.get("receipts", [])):
+            aid = f"a{i:03d}"
+            sid = "s-self"
+            scope = r.get("scope", sd)
+            tdir = home / ".claude" / "projects" / "p" / sid / "subagents"
+            tdir.mkdir(parents=True, exist_ok=True)
+            tp = tdir / f"agent-{aid}.jsonl"
+            entry = {"type": "assistant", "uuid": f"u{i}", "parentUuid": f"p{i}",
+                     "sessionId": sid, "timestamp": r["ts"],
+                     "message": {"role": "assistant", "content": [{"type": "text",
+                         "text": f"report\nCONVERGE-VERDICT: {r['verdict']}\nCONVERGE-SCOPE: {scope}"}]}}
+            tp.write_text(json.dumps(entry) + "\n")
+            receipt_ledger.append_global({"kind": "converge", "verdict": r["verdict"],
+                                          "scope": scope, "agent_id": aid,
+                                          "agent_type": r.get("agent_type", "Reality Checker"),
+                                          "agent_transcript_path": str(tp),
+                                          "session_id": sid, "ts": r["ts"]})
+        return push_findings(repo, base, head)
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        shutil.rmtree(home, ignore_errors=True)
+        shutil.rmtree(repo, ignore_errors=True)
+
+
 def _print(report: Report) -> None:
     if report.skipped:
         print(f"skip {report.path}: no `Spec-Format: ears-1` header")
@@ -258,16 +446,19 @@ def selftest(fixture_dir: Path) -> int:
     failures = []
     for case in violations + benigns:
         args = (case / "args").read_text().split() if (case / "args").is_file() else []
-        rep = lint(case, ready="--ready" in args)
-        out = "\n".join(rep.findings)
+        if (case / "push.json").is_file():
+            found = _push_selftest_case(case)
+        else:
+            found = lint(case, ready="--ready" in args).findings
+        out = "\n".join(found)
         if case in violations:
-            if not rep.findings:
+            if not found:
                 failures.append(f"{case.name}: expected findings, got none")
             elif (case / "expect.txt").is_file():
                 want = (case / "expect.txt").read_text().strip()
                 if want not in out:
                     failures.append(f"{case.name}: findings lack '{want}': {out}")
-        elif rep.findings:
+        elif found:
             failures.append(f"{case.name}: expected clean, got: {out}")
     if failures:
         for f in failures:
@@ -283,9 +474,22 @@ def main(argv=None) -> int:
     ap.add_argument("--ready", action="store_true",
                     help="also fail while any NEEDS CLARIFICATION marker is open")
     ap.add_argument("--selftest", metavar="FIXTURE_DIR", type=Path)
+    ap.add_argument("--push-range", nargs=2, metavar=("BASE", "HEAD"),
+                    help="push gate: check one pushed ref (base may be all zeros)")
+    ap.add_argument("--repo", type=Path, default=Path("."),
+                    help="repository for --push-range (default: current directory)")
     args = ap.parse_args(argv)
     if args.selftest:
         return selftest(args.selftest)
+    if args.push_range:
+        try:
+            found = push_findings(args.repo, *args.push_range)
+        except (RuntimeError, ValueError, OSError) as exc:
+            print(f"push check could not run: {exc}", file=sys.stderr)
+            return 2
+        for f in found:
+            print(f)
+        return 1 if found else 0
     if not args.targets:
         ap.print_usage(sys.stderr)
         return 2

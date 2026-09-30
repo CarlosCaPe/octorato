@@ -43,7 +43,8 @@ Follow the full `sdd-feature` process:
 
 1. Read `docs/project.md`.
 2. Analyse the request: **`feature_description`** (collected in Step 0).
-3. Write `feature.md` in the ears-1 format of `sdd-feature`: `Spec-Format: ears-1` header,
+3. Create the spec directory `docs/specs/<yyyymmddHHMM>-<feature-name>/` and write `feature.md`
+   in it, in the ears-1 format of `sdd-feature`: `Spec-Format: ears-1` header,
    Glossary, EARS acceptance criteria. Anything you cannot decide becomes an inline
    `[NEEDS CLARIFICATION: ...]` marker (at most 3).
 4. If markers remain, resolve them with the user one question at a time, each with a

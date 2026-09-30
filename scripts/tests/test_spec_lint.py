@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import os
 import re
 import sys
 import tempfile
@@ -60,6 +61,83 @@ class SelftestTest(unittest.TestCase):
     def test_selftest_refuses_an_empty_fixture_dir(self):
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(_quiet(spec_lint.selftest, Path(d)), 1)
+
+
+PUSH_FIXTURES = ROOT / "registry" / "fixtures" / "FLOW.done-is-a-verdict"
+
+
+class PushGateTest(unittest.TestCase):
+    def test_push_fixture_ladder_passes(self):
+        self.assertEqual(_quiet(spec_lint.selftest, PUSH_FIXTURES), 0)
+
+    def test_push_selftest_goes_red_when_any_receipt_is_accepted(self):
+        # Break the thing the gate guards: every spec reads as freshly converged.
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import receipt_ledger
+        fake = {"verdict": "CONVERGED", "ts": "2999-01-01T00:00:00+00:00"}
+        with mock.patch.object(receipt_ledger, "converge_latest_for", lambda *a, **k: fake):
+            self.assertEqual(_quiet(spec_lint.selftest, PUSH_FIXTURES), 1)
+
+    def test_push_selftest_goes_red_when_freshness_is_ignored(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import receipt_ledger
+        real = receipt_ledger.converge_latest_for
+        def aged(*a, **k):
+            r = real(*a, **k)
+            return dict(r, ts="2999-01-01T00:00:00+00:00") if r else r
+        with mock.patch.object(receipt_ledger, "converge_latest_for", aged):
+            self.assertEqual(_quiet(spec_lint.selftest, PUSH_FIXTURES), 1)
+
+
+class DoctorCheckTest(unittest.TestCase):
+    def setUp(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import brain_doctor
+        self.bd = brain_doctor
+
+    def test_passes_on_this_tree(self):
+        self.assertEqual(self.bd.check_spec_contract(False).status, "PASS")
+
+    def test_fails_without_the_pre_push_stanza(self):
+        with mock.patch.object(self.bd, "_rt", lambda p: "#!/bin/sh\nexit 0\n"):
+            self.assertEqual(self.bd.check_spec_contract(False).status, "FAIL")
+
+    def test_fails_on_a_broken_spec_in_the_tree(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "scripts").mkdir()
+            (root / ".githooks").mkdir()
+            (root / "scripts" / "spec_lint.py").write_text((ROOT / "scripts" / "spec_lint.py").read_text())
+            (root / ".githooks" / "pre-push").write_text((ROOT / ".githooks" / "pre-push").read_text())
+            bad = root / "docs" / "specs" / "202609300000-bad"
+            bad.mkdir(parents=True)
+            (bad / "feature.md").write_text((FIXTURES / "violation_not_ears" / "feature.md").read_text())
+            with mock.patch.object(self.bd, "CLAUDE_DIR", root):
+                self.assertEqual(self.bd.check_spec_contract(False).status, "FAIL")
+
+
+class DoctorConvergedWithoutReceiptTest(unittest.TestCase):
+    def test_warns_when_a_spec_says_converged_without_a_receipt(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import brain_doctor as bd
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "scripts").mkdir()
+            (root / ".githooks").mkdir()
+            for f in ("spec_lint.py", "receipt_ledger.py"):
+                (root / "scripts" / f).write_text((ROOT / "scripts" / f).read_text())
+            (root / ".githooks" / "pre-push").write_text((ROOT / ".githooks" / "pre-push").read_text())
+            spec = root / "docs" / "specs" / "202609300000-done"
+            spec.mkdir(parents=True)
+            text = (FIXTURES / "benign_all_patterns" / "feature.md").read_text()
+            (spec / "feature.md").write_text(text.replace("> **Status:** draft", "> **Status:** converged"))
+            (spec / "plan.md").write_text((FIXTURES / "benign_all_patterns" / "plan.md").read_text())
+            home = root / "home"
+            with mock.patch.object(bd, "CLAUDE_DIR", root), \
+                    mock.patch.dict(os.environ, {"HOME": str(home), "USERPROFILE": str(home)}):
+                r = bd.check_spec_contract(False)
+            self.assertEqual(r.status, "WARN", r.message)
+            self.assertIn("202609300000-done", r.message)
 
 
 class EarsTest(unittest.TestCase):

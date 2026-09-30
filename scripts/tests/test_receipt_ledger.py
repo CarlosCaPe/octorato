@@ -200,6 +200,52 @@ class ReceiptLedgerAnchors(unittest.TestCase):
                           "agent_id": "outside-hb", "agent_transcript_path": str(outside)})
         self.assertIsNone(rl.qa_pass_for("328", "sess-1"))
 
+    def _converge_agent(self, name, text, sid="sess-1"):
+        return self._agent(name, text, sid=sid)
+
+    def test_converge_receipt_anchors_scope_persona_and_latest_verdict(self):
+        sd = "docs/specs/202609301200-toy"
+        ok = self._converge_agent("agent-c1.jsonl", f"report\nCONVERGE-VERDICT: CONVERGED\nCONVERGE-SCOPE: {sd}")
+        quoted = self._converge_agent("agent-c2.jsonl",
+            f"the protocol is `CONVERGE-VERDICT: CONVERGED`\n...\nCONVERGE-VERDICT: GAPS\nCONVERGE-SCOPE: {sd}")
+        outside = Path(self.tmp) / "outside-c.jsonl"
+        _tr(outside, [A([{"type": "text", "text": f"CONVERGE-VERDICT: CONVERGED\nCONVERGE-SCOPE: {sd}"}])])
+        rec = lambda path, verdict="CONVERGED", scope=sd, agent="Reality Checker", aid=None: rl.append_global(
+            {"kind": "converge", "verdict": verdict, "scope": scope, "agent_type": agent,
+             "agent_id": aid or Path(path).stem.replace("agent-", ""), "agent_transcript_path": str(path)})
+        rec(outside)                                  # forged: transcript outside the harness dir
+        rec(ok, agent="Explore")                      # not a verifier persona
+        rec(quoted)                                   # ledger says CONVERGED, transcript ends GAPS
+        self.assertIsNone(rl.converge_pass_for(sd))
+        rec(ok)
+        self.assertIsNotNone(rl.converge_pass_for(sd))
+        self.assertIsNotNone(rl.converge_pass_for("./" + sd + "/"))       # normalised
+        self.assertIsNone(rl.converge_pass_for("docs/specs/202609301200"))  # a prefix never matches
+        self.assertIsNone(rl.converge_pass_for(sd + "-other"))
+        # A later GAPS makes the earlier CONVERGED stale.
+        gaps = self._converge_agent("agent-c3.jsonl", f"CONVERGE-VERDICT: GAPS\nCONVERGE-SCOPE: {sd}")
+        rec(gaps, verdict="GAPS")
+        self.assertIsNone(rl.converge_pass_for(sd))
+        self.assertEqual(rl.converge_latest_for(sd)["verdict"], "GAPS")
+        self.assertEqual(rl.parse_converge("CONVERGE-VERDICT: converged\nCONVERGE-SCOPE: `./a/b/`"), ("CONVERGED", "a/b"))
+
+    def test_reflex_records_a_converge_verdict_delivered_by_handback(self):
+        sd = "docs/specs/202609301200-toy"
+        d = Path(self.tmp) / ".claude" / "projects" / "p" / "sess-1" / "subagents"
+        d.mkdir(parents=True, exist_ok=True)
+        tp = d / "agent-v1.jsonl"
+        _tr(tp, [A([U("SubagentHandback", {"message": f"ok\nCONVERGE-VERDICT: CONVERGED\nCONVERGE-SCOPE: {sd}"}, "hb")]),
+                 _h({"type": "user", "toolUseResult": {"success": True},
+                     "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "hb", "content": "ok"}]}}, "sess-1")])
+        payload = json.dumps({"session_id": "sess-1", "agent_id": "v1", "agent_type": "Reality Checker",
+                              "agent_transcript_path": str(tp), "last_assistant_message": ""})
+        subprocess.run([sys.executable, str(SCRIPTS / "r__subagent-stop__qa-receipt.py")],
+                       input=payload, text=True, env=dict(os.environ), check=True)
+        kinds = [r.get("kind") for r in rl.read_global()]
+        self.assertEqual(kinds.count("converge"), 1)
+        self.assertEqual(kinds.count("qa"), 0)
+        self.assertIsNotNone(rl.converge_pass_for(sd))
+
     # ---- gate anchoring ----
     def test_gate_receipt_binds_head_and_gate_tree_and_cleanliness(self):
         repo = Path(self.tmp) / "brain"

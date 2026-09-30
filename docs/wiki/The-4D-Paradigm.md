@@ -307,7 +307,7 @@ Archive             → /sdd-archive  (requires CONVERGED; the spec stays in doc
 - `review.md` is optional for MEDIUM, mandatory for LARGE.
 - `/sdd-yolo` maps to the "hazlo directo" exception — the full pipeline behind a single gate.
 
-> **Brain hygiene:** SDD artifacts (`feature*.md`, `plan*.md`, `spec*.md`) must **never** sit at the brain root. They leak roadmap and source context even with zero client data. They belong in `docs/specs-archive/`, `templates/`, or arm-side. The `check-generic.py` enforcement rejects root-level SDD files. See [[Architecture]] for the generic-brain contract.
+> **Brain hygiene:** SDD artifacts (`feature*.md`, `plan*.md`, `spec*.md`) must **never** sit at the brain root. They leak roadmap and source context even with zero client data. They belong in `docs/specs/` (one directory per spec from day one), `docs/specs-archive/` (history), `templates/`, or arm-side. The `check-generic.py` enforcement rejects root-level SDD files. See [[Architecture]] for the generic-brain contract.
 
 ### 4D+S output format
 

@@ -39,12 +39,12 @@ Four phases, one pull request each, every one from its own worktree. The order f
 
 ### Phase 3: the receipt, the push gate and the wiring
 
-- [ ] T13 [AC-13] scripts/receipt_ledger.py, scripts/r__subagent-stop__qa-receipt.py, scripts/tests/test_receipt_ledger.py: add `parse_converge()` and `converge_pass_for(spec_dir)`. The reflex records `kind: converge`. Tests cover a forged line, a non-verifier persona and a verdict quoted earlier in the message.
-- [ ] T14 [AC-14] scripts/spec_lint.py: add `--push-range <base> <head>`. For each spec whose status became `converged` in the range, require a fresh receipt as defined in the architecture decisions.
-- [ ] T15 [AC-14, AC-15] .githooks/pre-push: add one stanza that lints every `ears-1` spec and runs the push-range check for each ref. A missing linter blocks the push, as the other stanzas do.
-- [ ] T16 [AC-17] registry/rules.yaml, registry/fixtures/FLOW.done-is-a-verdict/: register `FLOW.spec-contract` and `FLOW.done-is-a-verdict` with their proofs. Fixtures hold a status flip with no receipt (blocks), with a stale receipt (blocks) and with a fresh one (allows).
-- [ ] T17 [AC-17] scripts/brain_doctor.py: add two `CHECKS` rows that run the two selftests and confirm the pre-push stanza is present.
-- [ ] T18 [AC-17] CLAUDE.md, docs/architecture/v9-done-is-a-verdict.md: register the "Done is a verdict" paragraph phase 2 added as the rule anchor and the contract document. The document states the measured residuals: whether `git push --no-verify` from a worktree is denied, receipts local to one machine, a transcript that can be forged under `$HOME`.
+- [x] T13 [AC-13] scripts/receipt_ledger.py, scripts/r__subagent-stop__qa-receipt.py, scripts/tests/test_receipt_ledger.py: add `parse_converge()` and `converge_pass_for(spec_dir)`. The reflex records `kind: converge`. Tests cover a forged line, a non-verifier persona and a verdict quoted earlier in the message.
+- [x] T14 [AC-14] scripts/spec_lint.py: add `--push-range <base> <head>`. For each spec whose status became `converged` in the range, require a fresh receipt as defined in the architecture decisions.
+- [x] T15 [AC-14, AC-15] .githooks/pre-push: add one stanza that lints every `ears-1` spec and runs the push-range check for each ref. A missing linter blocks the push, as the other stanzas do.
+- [x] T16 [AC-17] registry/rules.yaml, registry/fixtures/FLOW.done-is-a-verdict/: register `FLOW.spec-contract` and `FLOW.done-is-a-verdict` with their proofs. Fixtures hold a status flip with no receipt (blocks), with a stale receipt (blocks) and with a fresh one (allows).
+- [x] T17 [AC-17] scripts/brain_doctor.py: add the `spec-contract` check. It confirms the pre-push stanza, lints every ears-1 spec on disk, and warns on a converged spec with no receipt on this machine. The two selftests already run through `gate-liveness`, so a second row would duplicate it.
+- [x] T18 [AC-17] CLAUDE.md, docs/architecture/v9-done-is-a-verdict.md: register the "Done is a verdict" paragraph phase 2 added as the rule anchor and the contract document. The document states the measured residuals: whether `git push --no-verify` from a worktree is denied, receipts local to one machine, a transcript that can be forged under `$HOME`.
 
 ### Phase 4: release
 

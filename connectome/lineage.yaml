@@ -300,11 +300,17 @@ edges:
       - docs/wiki/The-4D-Paradigm.md                          # section 6, the LARGE pipeline
       - docs/wiki/Glossary.md                                 # 4D+S and SDD entries
       - docs/ANATOMY.md                                       # the 4D+S complexity table
+      - docs/architecture/v9-done-is-a-verdict.md             # the contract + measured residuals
+      - scripts/receipt_ledger.py                             # parse_converge, converge_latest_for/pass_for
+      - scripts/r__subagent-stop__qa-receipt.py               # records the converge receipt
+      - .githooks/pre-push                                    # OCTORATO-SPEC-GATE stanza
+      - registry/rules.yaml                                   # FLOW.spec-contract, FLOW.done-is-a-verdict
+      - scripts/brain_doctor.py                               # spec-contract check
     kind: appears_in
     note: >-
       Every ears-1 spec lives in docs/specs/<yyyymmddHHMM>-<name>/ from creation
       and never moves: that path is the key of the converge verdict and the receipt.
-      One flow described in fifteen places. Changing a step, a verdict word or
+      One flow described in twenty-one places. Changing a step, a verdict word or
       the task grammar means reconciling every surface here, and the linter's
       fixtures when the grammar moves. Lights the `sdd` seek that fell back to
       grep on 2026-09-30.
