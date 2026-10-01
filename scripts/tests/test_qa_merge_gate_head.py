@@ -113,7 +113,6 @@ class GateHead(unittest.TestCase):
         forms = [f"gh pr merge 96 --squash --delete-branch --match-head-commit {SHA}",
                  f"gh pr merge 96 -sd --match-head-commit={SHA.upper()}",
                  f"gh pr merge 96 -R o/r -t done --match-head-commit {SHA}",
-                 f"gh pr merge 96 --match-head-commit {OTHER} --match-head-commit {SHA}",
                  f"gh api -X PUT repos/o/r/pulls/96/merge -f sha={SHA}",
                  f"gh api -X PUT repos/o/r/pulls/96/merge --raw-field=sha={SHA}",
                  f"gh api -X PUT repos/o/r/pulls/96/merge -Fsha={SHA}"]
@@ -168,7 +167,9 @@ class GateHead(unittest.TestCase):
                 self.assertEqual(rc, 2, cmd)
             rc, _ = self.run_gate(f"gh pr merge 96 -t#x --match-head-commit {SHA}")
             self.assertEqual(rc, 0)
-        self.assertIn(("96", OTHER), self.calls)
+        # Two pin candidates: neither is trusted, so only the single-pin command
+        # reached a receipt lookup.
+        self.assertEqual(self.calls, [("96", SHA)])
 
     # ---- syntax the gate does not read, while an approval is exported (AC-20) ----
     def test_an_approved_merge_inside_unparsed_syntax_blocks(self):
@@ -320,6 +321,30 @@ class GateHead(unittest.TestCase):
                 rc, _ = self.run_gate(cmd)
                 self.assertEqual(rc, 2, repr(cmd))
 
+    def test_a_second_pin_candidate_is_never_trusted(self):
+        with self.lookup({SHA: receipt("PASS")}):
+            for cmd in (f"gh pr merge 96 --match-head-commit={SHA} -s=t --match-head-commit={OTHER}",
+                        f"gh pr merge 96 --match-head-commit={SHA} -d=t --match-head-commit={OTHER}",
+                        f"gh api -X PUT repos/o/r/pulls/96/merge -f sha={SHA} -i=t -f sha={OTHER}",
+                        f"gh pr merge 96 --match-head-commit={OTHER} -t {{x}}>/dev/null --match-head-commit={SHA}",
+                        f"gh pr merge 96 -t 'see --match-head-commit' --match-head-commit {SHA}"):
+                rc, err = self.run_gate(cmd)
+                self.assertEqual(rc, 2, cmd)
+                self.assertIn("pins no commit", err, cmd)
+            rc, err = self.run_gate(f"gh pr merge 96 -s=t --match-head-commit={SHA}")
+            self.assertEqual(rc, 0, err)
+
+    def test_the_pull_request_is_the_first_positional(self):
+        with self.lookup({SHA: receipt("PASS")}):
+            for cmd in (f"gh pr merge --squash 96 --match-head-commit {SHA}",
+                        f"gh pr merge --squash --delete-branch 96 --match-head-commit {SHA}",
+                        f"gh pr merge -t done 96 --match-head-commit {SHA}",
+                        f"gh pr merge https://github.com/o/r/pull/96 --match-head-commit {SHA}"):
+                rc, err = self.run_gate(cmd)
+                self.assertEqual(rc, 0, f"{cmd}\n{err}")
+            rc, _ = self.run_gate(f"gh pr merge -t 96 97 --match-head-commit {SHA}")
+            self.assertEqual(rc, 2)  # 96 is the subject; the merge is 97, not approved
+
     # ---- --auto (AC-06) ----
     def test_auto_is_refused_on_an_approved_merge(self):
         with self.lookup({SHA: receipt("PASS")}):
@@ -400,6 +425,45 @@ class GateHead(unittest.TestCase):
         rc, err = self.run_gate(f"gh pr merge 96 --match-head-commit {SHA}")
         self.assertEqual(rc, 2)
         self.assertIn("--match-head-commit", err)
+
+
+class RepoScopeEveryReading(unittest.TestCase):
+    """The target repo is judged under both readings; one protected gates."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="gate-cwd-"))
+        self.brain = self.tmp / "brain"
+        self.other = self.tmp / "other"
+        for d in (self.brain, self.other):
+            (d / ".git").mkdir(parents=True)
+            (d / ".git" / "config").write_text("[core]\n")
+        self.roots = mock.patch.object(gate, "_protected_roots", lambda: [self.brain.resolve()])
+        self.roots.start()
+
+    def tearDown(self):
+        self.roots.stop()
+
+    def protected(self, cmd):
+        sub = [s for s in gate._split_subcmds(cmd) if "push" in s][-1]
+        return gate._is_protected_target(cmd, sub, str(self.brain))
+
+    def test_a_cd_bash_never_runs_cannot_move_the_target(self):
+        cmd = f"cat <<'EOF'\n'\ncd {self.other}\n'\nEOF\ngit push origin main"
+        self.assertTrue(self.protected(cmd))
+
+    def test_a_cd_both_readings_agree_on_still_moves_it(self):
+        self.assertFalse(self.protected(f"cd {self.other} && git push origin main"))
+        self.assertTrue(self.protected("git push origin main"))
+
+
+class SeekNeedsBothReadings(unittest.TestCase):
+    def test_a_seek_only_one_reading_finds_is_no_receipt(self):
+        # Inside a comment bash never runs it; the previous reader, which knows no
+        # comments, would have counted it. A receipt must hold under both readings.
+        one = "echo x # ; python3 ~/.claude/scripts/query_connectome.py memory x"
+        self.assertFalse(receipt_ledger.bash_is_seek(one))
+        self.assertTrue(receipt_ledger.bash_is_seek(
+            "python3 ~/.claude/scripts/query_connectome.py memory x"))
 
 
 if __name__ == "__main__":

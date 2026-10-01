@@ -251,24 +251,29 @@ def _repo_root_and_gitdir(start: str):
         p = p.parent
 
 
-def _effective_cwd(cmd: str, matched_sub: str, session_cwd: str) -> str:
-    """Session cwd adjusted by any `cd` sub-commands BEFORE the matched one.
-    Only plain `cd <path>` is parsed; `cd -`, `pushd`, subshells are ignored,
-    which leaves cwd unadjusted and can only OVER-gate, never under-gate."""
-    cwd = session_cwd or os.getcwd()
-    # The `cd`s that count are those of the reading the match came from.
-    reading = _split_bash(cmd)
-    if matched_sub not in reading:
-        reading = _split_master(cmd)
-    for raw in reading:
-        if raw == matched_sub:
-            break
-        s = _strip_leading(raw).strip()
-        m = re.match(r"^cd\s+(\S+)", s)
-        if m:
-            p = os.path.expanduser(m.group(1).strip("'\""))
-            cwd = p if os.path.isabs(p) else os.path.join(cwd, p)
-    return cwd
+def _effective_cwds(cmd: str, matched_sub: str, session_cwd: str) -> list:
+    """The directory the matched sub-command runs in, once per reading: the
+    session cwd moved by each plain `cd <path>` before it. The two readings can
+    disagree (a `cd` inside a heredoc body the bash-shaped reader reads as a
+    line, which bash never runs), so the gate treats the target as unprotected
+    only when EVERY reading's directory is. Residual, the same as before this
+    change: a `cd` inside a pipeline or a subshell is applied although bash
+    runs it in a child shell."""
+    start = session_cwd or os.getcwd()
+    out = []
+    for reading in (_split_bash(cmd), _split_master(cmd)):
+        cwd = start
+        for raw in reading:
+            if raw == matched_sub:
+                break
+            s = _strip_leading(raw).strip()
+            m = re.match(r"^cd\s+(\S+)", s)
+            if m:
+                p = os.path.expanduser(m.group(1).strip("'\""))
+                cwd = p if os.path.isabs(p) else os.path.join(cwd, p)
+        if cwd not in out:
+            out.append(cwd)
+    return out
 
 
 def _is_protected_target(cmd: str, matched_sub: str, session_cwd: str):
@@ -304,19 +309,29 @@ def _is_protected_target(cmd: str, matched_sub: str, session_cwd: str):
             return slug in known  # exact canonical match, no suffix tricks
 
     # Resolve the repo the command operates on: git -C wins, else effective cwd.
-    # A relative -C is joined against the effective SESSION cwd, never the
-    # hook's own cwd (QA finding 3: right answer, deterministic reason).
-    target = None
+    # A relative -C is joined against each effective SESSION cwd, never the
+    # hook's own cwd (QA finding 3: right answer, deterministic reason). Every
+    # candidate directory is judged; one protected or unresolvable gates.
+    targets = []
+    bases = _effective_cwds(cmd, matched_sub, session_cwd)
     m = re.match(r"^\s*git\s+((?:(?:-C|-c)\s+\S+\s+)*)", sub)
-    if m and m.group(1):
-        c = re.search(r"-C\s+(\S+)", m.group(1))
+    c = re.search(r"-C\s+(\S+)", m.group(1)) if (m and m.group(1)) else None
+    for base in bases:
         if c:
             raw = os.path.expanduser(c.group(1).strip("'\""))
-            base = _effective_cwd(cmd, matched_sub, session_cwd)
-            target = raw if os.path.isabs(raw) else os.path.join(base, raw)
-    if target is None:
-        target = _effective_cwd(cmd, matched_sub, session_cwd)
+            targets.append(raw if os.path.isabs(raw) else os.path.join(base, raw))
+        else:
+            targets.append(base)
+    verdicts = [_protected_dir(t) for t in targets]
+    if any(v is True for v in verdicts):
+        return True
+    if any(v is None for v in verdicts):
+        return None
+    return False
 
+
+def _protected_dir(target: str):
+    """True / False / None (unresolvable) for one directory."""
     root, gitdir = _repo_root_and_gitdir(target)
     if root is None:
         return None
@@ -577,7 +592,7 @@ def _split_bash(cmd: str) -> list[str]:
     return parts
 
 
-_REDIR_OP = re.compile(r"(?:\d*|&)(?:>>|>\||>&|<&|<>|<<<|>|<)")
+_REDIR_OP = re.compile(r"(?:\{[A-Za-z_]\w*\}|\d*|&)(?:>>|>\||>&|<&|<>|<<<|>|<)")
 
 
 def _drop_redirections(sub: str) -> str:
@@ -739,6 +754,10 @@ def _extract_pr_id(matched_sub: str) -> str:
     m = _PR_NUM_RE.match(sub)
     if m:
         return m.group(1)
+    if _PAT_GH_MERGE.match(sub):
+        target = _merge_target(sub)
+        if target:
+            return target
     push_m = _PAT_GIT_PUSH.match(sub)
     if push_m:
         return push_m.group(1)
@@ -746,6 +765,48 @@ def _extract_pr_id(matched_sub: str) -> str:
     if api is not None:
         return api
     return "unknown"
+
+
+def _merge_target(sub: str) -> str:
+    """The pull request number of `gh pr merge [flags] <n|url> [flags]`: the
+    first positional after `merge`, skipping flags and their values the way
+    gh does. "" when it is not a number or a pull request URL."""
+    import shlex
+    try:
+        argv = shlex.split(sub)
+    except ValueError:
+        return ""
+    if "merge" not in argv:
+        return ""
+    rest = argv[argv.index("merge") + 1:]
+    i = 0
+    while i < len(rest):
+        tok = rest[i]
+        if tok == "--":
+            rest = rest[i + 1:]
+            i = 0
+            break
+        if tok.startswith("--"):
+            i += 2 if (tok in _MERGE_LONG_VALUE and "=" not in tok) else 1
+            continue
+        if tok.startswith("-") and len(tok) > 1:
+            takes = False
+            for j in range(1, len(tok)):
+                if tok[j] not in _MERGE_SHORT_VALUE and tok[j + 1:j + 2] == "=":
+                    break
+                if tok[j] in _MERGE_SHORT_VALUE:
+                    takes = not tok[j + 1:]
+                    break
+            i += 2 if takes else 1
+            continue
+        break
+    if i >= len(rest):
+        return ""
+    ref = rest[i]
+    if ref.isdigit():
+        return ref
+    m = re.match(r"^https?://[^/]+/[^/]+/[^/]+/pull/(\d+)/?$", ref)
+    return m.group(1) if m else ""
 
 
 # -- Commit pin (docs/specs/202610012100-qa-receipt-bound-to-head) -------------
@@ -788,6 +849,8 @@ def _walk_flags(argv: list, short_value: set, long_value: set) -> tuple:
             continue
         if tok.startswith("-") and len(tok) > 1:
             for j in range(1, len(tok)):
+                if tok[j] not in short_value and tok[j + 1:j + 2] == "=":
+                    break  # pflag: `-s=t` gives the bool its value and ends the cluster
                 if tok[j] in short_value:
                     rest = tok[j + 1:]
                     if rest.startswith("="):
@@ -819,11 +882,15 @@ def _argv_after(sub: str, n_words: int) -> list | None:
 def _merge_pin(sub: str) -> tuple:
     """(pin, auto) for an already-stripped merge sub-command. pin is the 40-digit
     commit the merge is pinned to, lower case, or "" when there is none that gh
-    would send; auto is True for `gh pr merge --auto`."""
+    would send; auto is True for `gh pr merge --auto`. The pin text must occur
+    exactly once in the command: with one candidate, any misreading of gh's
+    grammar can only lose it, never swap in another commit."""
     if _PAT_GH_MERGE.match(sub):
         argv = _argv_after(sub, 3)
         if argv is None:
             return "", False
+        if sum(tok.count("match-head-commit") for tok in argv) != 1:
+            return "", "--auto" in argv  # zero or several candidates: none is trusted
         values, bools = _walk_flags(argv, _MERGE_SHORT_VALUE, _MERGE_LONG_VALUE)
         pins = [v for name, v in values if name == "--match-head-commit"]
         pin = pins[-1] if pins else ""
@@ -832,6 +899,8 @@ def _merge_pin(sub: str) -> tuple:
         argv = _argv_after(sub, 2)
         if argv is None:
             return "", False
+        if sum(tok.count("sha=") for tok in argv) != 1:
+            return "", False  # zero or several `sha=` candidates: none is trusted
         values, _ = _walk_flags(argv, _API_SHORT_VALUE, _API_LONG_VALUE)
         if any(name == "--input" for name, _ in values):
             # With --input, gh sends the file as the body and moves every field

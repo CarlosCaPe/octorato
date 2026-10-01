@@ -88,11 +88,23 @@ GIT_HOOK_ENV = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX",
 HARNESS_FIELDS = ("uuid", "parentUuid", "sessionId", "timestamp")
 
 
+_GATE_MOD = None
+
+
+def _qa_gate_module():
+    global _GATE_MOD
+    if _GATE_MOD is None:
+        spec = importlib.util.spec_from_file_location("qa_merge_gate", _HERE / "qa-merge-gate.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _GATE_MOD = mod
+    return _GATE_MOD
+
+
 def _qa_gate_helpers():
-    """Borrow the command-boundary splitter the merge gate already proved."""
-    spec = importlib.util.spec_from_file_location("qa_merge_gate", _HERE / "qa-merge-gate.py")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    """Borrow the command-boundary splitter the merge gate already proved: the
+    union of its two readings, so a SEND is found wherever either finds it."""
+    mod = _qa_gate_module()
     return mod._split_subcmds, mod._strip_leading
 
 
@@ -132,7 +144,7 @@ def _raw_split(command: str) -> list:
         return [command]
 
 
-def subcommands(command: str) -> list:
+def subcommands(command: str, split=None) -> list:
     """Sub-commands of a shell string: split on UNQUOTED separators, leading
     env/redirect/grouping removed, wrappers peeled, `sh -c` expanded. The RAW
     (unstripped) form of each is returned too, so an assignment such as
@@ -140,8 +152,8 @@ def subcommands(command: str) -> list:
     token (QA cycle 4: the strip peeled it only after `;`, not after `&&`)."""
     out = []
     try:
-        split, strip = _qa_gate_helpers()
-        raws = [pp for pp in split(str(command or "")) if pp.strip()]
+        union, strip = _qa_gate_helpers()
+        raws = [pp for pp in (split or union)(str(command or "")) if pp.strip()]
     except Exception:
         raws = [str(command or "")]
     for raw in raws:
@@ -187,8 +199,19 @@ def bash_is_seek(command: str) -> bool:
     """A seek anywhere in the argv of any sub-command, by TOKEN (never by
     substring): wrappers, interpreters and indirection through argv are all
     covered by the same rule, and a quoted commit message stays one token that
-    is not the script name (QA cycle 3)."""
-    for sc in subcommands(str(command or "")):
+    is not the script name (QA cycle 3). A seek is a RECEIPT, so it must hold
+    under both of the merge gate's readings: the union that finds more sends
+    would otherwise also find more seeks, and a looser receipt is a weaker gate."""
+    try:
+        mod = _qa_gate_module()
+        readers = (mod._split_bash, mod._split_master)
+    except Exception:
+        return _seek_in(subcommands(str(command or "")))
+    return all(_seek_in(subcommands(str(command or ""), r)) for r in readers)
+
+
+def _seek_in(subs: list) -> bool:
+    for sc in subs:
         toks = tokens_of(sc)
         for i, t in enumerate(toks):
             if _is_script_token(t, "query_connectome.py") and "memory" in toks[i + 1:i + 2]:
