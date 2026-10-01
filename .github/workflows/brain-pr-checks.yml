@@ -2,13 +2,15 @@ name: Brain PR Checks
 
 # Pre-merge gate for the octorato brain repo.
 #
-# Two checks:
+# Checks:
 #   1. check-generic — verifies no client / arm tokens leaked into the
 #      staged diff or commit metadata. The brain is public on GitHub;
 #      any client-specific string must be caught BEFORE merge.
 #   2. connectome-rebuild — verifies generate_neural_map.py still runs
 #      without error and the output is valid JSON. Protects against
 #      malformed skill / agent definitions silently breaking the graph.
+#   Later additions: lineage-sound, unit-tests (scripts/tests on a clean
+#      runner) and counts-render, each explained at its job.
 #
 # Why this exists: until 2026-05-20, the brain had only `traffic-watch.yml`
 # (analytics). Nothing validated PRs. Adding the minimum guardrails so
@@ -115,6 +117,33 @@ jobs:
             echo "::error::lineage graph is unsound — a seek over it would lie. Fix connectome/lineage.yaml."
             exit 1
           }
+
+  unit-tests:
+    name: scripts/tests pass on a clean runner
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # the tests run arbitrary code that shells out to git; it needs no token
+          persist-credentials: false
+
+      # The suite ran only from .githooks/pre-push, on the pusher's machine, so a
+      # green PR said nothing about the gate code it changed (QA of #339). The
+      # first run of this job found two things a developer box hid: PyYAML was
+      # missing from requirements.txt (a system python3-yaml supplied it), and
+      # one test patched the shared shutil module in a way newer 3.12 and 3.11
+      # patch releases expose. Both are fixed at the root, not here.
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Run scripts/tests
+        run: python3 -m unittest discover scripts/tests -p 'test_*.py'
 
   counts-render:
     name: README/FAQ counts are rendered (no stale floors)

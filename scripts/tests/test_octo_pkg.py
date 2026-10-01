@@ -1624,8 +1624,18 @@ class TestQaCycle5(SandboxCase):
         real_rmtree = octo_pkg.shutil.rmtree
         def boom(self_, rel):
             raise PermissionError("ORIGINAL CAUSE")
+        root = str(self.root)
+
         def boom_cleanup(path, *a, **kw):
-            raise PermissionError("CLEANUP FAILED")
+            # Only the brain's own tree fails to clean up. octo_pkg.shutil IS the
+            # shared shutil module, and on recent patch releases (seen on 3.11.16 and
+            # 3.12.14, not on 3.12.3) tempfile.TemporaryDirectory looks rmtree up on
+            # it at exit, so a blanket patch also broke the staging directory's
+            # cleanup and its error replaced the cause before the code under test
+            # ever saw it.
+            if str(path).startswith(root):
+                raise PermissionError("CLEANUP FAILED")
+            return real_rmtree(path, *a, **kw)
         octo_pkg.Brain.exclude_add = boom
         octo_pkg.shutil.rmtree = boom_cleanup
         self.addCleanup(lambda: setattr(octo_pkg.Brain, "exclude_add", real_add))
