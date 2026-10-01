@@ -540,7 +540,7 @@ def push_findings(repo: Path, base: str, head: str) -> list:
                 continue
             findings.append(f"{p}: this push removes an ears-1 spec ({', '.join(gone)}) and adds "
                             f"this one without the Spec-Format header; a spec does not leave "
-                            f"ears-1 by moving. Keep the header, or push the removal alone")
+                            f"ears-1 by moving. Keep the header, or land the removal in its own pull request")
     spec_dirs = sorted({str(Path(p).parent) for p in spec_paths
                         if is_canonical_spec_path(p)
                         and not _is_lfs_pointer(_show(repo, head, p))})
@@ -582,7 +582,8 @@ def push_findings(repo: Path, base: str, head: str) -> list:
         if receipt is None:
             findings.append(f"{sd}: Status becomes converged, but this machine holds no "
                             f"converge receipt for {sd}. Run /sdd-converge as a verifier "
-                            f"subagent, then push again.")
+                            f"subagent, then push again. (The comparison is with the "
+                            f"default remote branch; if that ref is stale, `git fetch` first.)")
             continue
         if receipt.get("verdict") != "CONVERGED":
             findings.append(f"{sd}: Status becomes converged, but the latest converge "
