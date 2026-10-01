@@ -300,14 +300,17 @@ def _is_protected_target(cmd: str, matched_sub: str, session_cwd: str):
     # gh pr merge with an explicit -R/--repo slug: compare against the slugs
     # of the protected roots. No parsable slugs → None (gate).
     if _PAT_GH_MERGE.match(sub):
-        found = list(re.finditer(r"(?:^|\s)(?:-R|--repo)[=\s]+(\S+)", sub))
-        m = found[-1] if found else None  # gh keeps the last value
-        if m:
-            slug = _canon_slug(m.group(1))
+        # Every `-R/--repo` value in the text is a candidate: gh keeps the last
+        # real flag, but a raw read cannot tell a flag from the same text inside
+        # a quoted --body or --subject, so ANY protected or unparseable
+        # candidate gates, and only all-unprotected ungates.
+        found = re.findall(r"(?:^|\s)(?:-R|--repo)[=\s]+(\S+)", sub)
+        if found:
             known = [s for s in (_remote_slug(r) for r in _protected_roots()) if s]
-            if not known or slug is None:
+            slugs = [_canon_slug(v) for v in found]
+            if not known or any(sl is None for sl in slugs):
                 return None  # unparseable either side → gate
-            return slug in known  # exact canonical match, no suffix tricks
+            return any(sl in known for sl in slugs)  # exact canonical match
 
     # Resolve the repo the command operates on: git -C wins, else effective cwd.
     # A relative -C is joined against each effective SESSION cwd, never the
@@ -777,7 +780,7 @@ def _extract_pr_id(matched_sub: str) -> str:
     sub = _strip_leading(matched_sub)
     m = _PR_NUM_RE.match(sub)
     if m:
-        return m.group(1)
+        return str(int(m.group(1)))
     if _PAT_GH_MERGE.match(sub):
         target = _merge_target(sub)
         if target:
@@ -827,10 +830,13 @@ def _merge_target(sub: str) -> str:
     if i >= len(rest):
         return ""
     ref = rest[i]
-    if ref.isdigit():
-        return ref
-    m = re.match(r"^https?://[^/]+/[^/]+/[^/]+/pull/(\d+)/?$", ref)
-    return m.group(1) if m else ""
+    # The forms gh resolves to a pull request number: `96`, `096`, `#96`, and
+    # a URL to the pull request or any page under it (`/files`, `#comment`).
+    m = re.match(r"^#?(\d+)$", ref)
+    if m:
+        return str(int(m.group(1)))
+    m = re.match(r"^https?://[^/]+/[^/]+/[^/]+/pull/(\d+)(?:[/?#].*)?$", ref)
+    return str(int(m.group(1))) if m else ""
 
 
 # -- Commit pin (docs/specs/202610012100-qa-receipt-bound-to-head) -------------
@@ -923,7 +929,7 @@ def _merge_pin(sub: str) -> tuple:
         argv = _argv_after(sub, 2)
         if argv is None:
             return "", False
-        if sum(tok.count("sha=") for tok in argv) != 1:
+        if sum(tok.count("sha=") + tok.count("sha[") for tok in argv) != 1:
             return "", False  # zero or several `sha=` candidates: none is trusted
         values, _ = _walk_flags(argv, _API_SHORT_VALUE, _API_LONG_VALUE)
         if any(name == "--input" for name, _ in values):
@@ -1163,10 +1169,11 @@ def _decide(cmd: str, matched_sub: str, data: dict) -> int:
     except Exception:
         protected = None  # unresolvable → keep gating (fail-closed)
     approved = os.environ.get("OCTO_MERGE_APPROVE", "").strip()
-    if protected is False and pr_id.isdigit() and approved == pr_id:
-        # The operator approved exactly this number: its pin and receipt are
-        # checked whatever the scope reader concludes, since GH_REPO or a URL
-        # can point gh at a protected repo from any directory.
+    if protected is False and approved and (not pr_id.isdigit() or pr_id == approved):
+        # While an approval is exported, scope may only ungate a merge whose
+        # target is a number the gate read and that is NOT the approved one:
+        # GH_REPO or a URL can aim gh at a protected repo from any directory,
+        # and a target the gate cannot read may be the approved PR.
         protected = None
     if protected is False:
         _nudge(
@@ -1293,6 +1300,16 @@ def _decide(cmd: str, matched_sub: str, data: dict) -> int:
         return 0
 
     # ── BLOCK — fail-closed ───────────────────────────────────────────────────
+    if pr_id == "unknown" and _PAT_GH_MERGE.match(_canonical(matched_sub)):
+        print(
+            "✗ QA GATE (fail-closed): this `gh pr merge` names its pull request in a form the\n"
+            "  gate cannot read (a branch name, or a reference it does not parse). Approval and\n"
+            "  the QA receipt are per pull request number, so write the number:\n"
+            "    gh pr merge <n> --squash --delete-branch --match-head-commit <40-digit commit>",
+            file=sys.stderr,
+        )
+        _journal_deny("merge of an unreadable pull request reference blocked", data)
+        return 2
     label = f"PR #{pr_id}" if pr_id not in ("unknown", "main", "master") else f"branch '{pr_id}'"
     print(
         f"✗ QA GATE (fail-closed): merge of {label} needs operator approval.\n"

@@ -327,7 +327,8 @@ class GateHead(unittest.TestCase):
                         f"gh pr merge 96 --match-head-commit={SHA} -d=t --match-head-commit={OTHER}",
                         f"gh api -X PUT repos/o/r/pulls/96/merge -f sha={SHA} -i=t -f sha={OTHER}",
                         f"gh pr merge 96 --match-head-commit={OTHER} -t {{x}}>/dev/null --match-head-commit={SHA}",
-                        f"gh pr merge 96 -t 'see --match-head-commit' --match-head-commit {SHA}"):
+                        f"gh pr merge 96 -t 'see --match-head-commit' --match-head-commit {SHA}",
+                        f"gh api -X PUT repos/o/r/pulls/96/merge -f sha={SHA} -f 'sha[]=x'"):
                 rc, err = self.run_gate(cmd)
                 self.assertEqual(rc, 2, cmd)
                 self.assertIn("pins no commit", err, cmd)
@@ -363,12 +364,25 @@ class GateHead(unittest.TestCase):
             with mock.patch.object(gate, "_is_protected_target", lambda *a, **k: False), \
                     self.lookup({SHA: receipt("PASS")}):
                 for cmd in ("GH_REPO=CarlosCaPe/octorato gh pr merge 96 --squash",
-                            "gh pr merge https://github.com/CarlosCaPe/octorato/pull/96"):
+                            "gh pr merge https://github.com/CarlosCaPe/octorato/pull/96",
+                            "gh pr merge https://github.com/CarlosCaPe/octorato/pull/96/files --squash",
+                            "gh pr merge 'https://github.com/CarlosCaPe/octorato/pull/96#issuecomment-1'",
+                            "gh pr merge '#96' --squash", "gh pr merge 096 --squash",
+                            ):
                     rc, err = self.run_gate(cmd)
                     self.assertEqual(rc, 2, cmd)
                     self.assertIn("pins no commit", err)
+                rc, err = self.run_gate("gh pr merge some-branch --squash")
+                self.assertEqual(rc, 2)
+                self.assertIn("write the number", err)
                 rc, _ = self.run_gate("gh pr merge 97 --squash")   # another number: scope applies
                 self.assertEqual(rc, 0)
+            with self.lookup({SHA: receipt("PASS")}):
+                for cmd in (f"gh pr merge '#96' --match-head-commit {SHA}",
+                            f"gh pr merge 096 --match-head-commit {SHA}",
+                            f"gh pr merge https://github.com/o/r/pull/96/files --match-head-commit {SHA}"):
+                    rc, err = self.run_gate(cmd)
+                    self.assertEqual(rc, 0, f"{cmd}\n{err}")
         finally:
             self.protected.start()
 
@@ -488,6 +502,20 @@ class RepoScopeEveryReading(unittest.TestCase):
     def test_a_cd_bash_never_runs_cannot_move_the_target(self):
         cmd = f"cat <<'EOF'\n'\ncd {self.other}\n'\nEOF\ngit push origin main"
         self.assertTrue(self.protected(cmd))
+
+    def test_every_repo_flag_value_is_a_candidate(self):
+        (self.brain / ".git" / "config").write_text(
+            '[remote "origin"]\n\turl = https://github.com/acme/brain.git\n')
+        cwd = str(self.other)
+        judge = lambda cmd: gate._is_protected_target(cmd, cmd, cwd)
+        # A -R inside a quoted body or subject must not outvote the real flag.
+        for cmd in ('gh pr merge 96 -R acme/brain --body "note -R other/repo"',
+                    'gh pr merge 96 -R acme/brain -t "x -R other/repo"',
+                    'gh pr merge 96 --repo acme/brain --subject "see --repo other/x"',
+                    "gh -R other/repo pr merge 96 -R acme/brain",
+                    "gh pr merge 96 -R acme/brain"):
+            self.assertIsNot(judge(cmd), False, cmd)
+        self.assertFalse(judge("gh pr merge 96 -R other/repo"))
 
     def test_a_cd_both_readings_agree_on_still_moves_it(self):
         self.assertFalse(self.protected(f"cd {self.other} && git push origin main"))
