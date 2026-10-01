@@ -15,6 +15,11 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-10-01]: v9.0.1
+### Other
+- ci: run scripts/tests on every pull request, and record two v9 residuals (#341)
+- docs(changelog): backfill v9.0.0 (#340)
+
 ## [2026-10-01]: v9.0.0
 ### Octorato v9: done is a verdict
 On a LARGE task the builder no longer grades its own work. "Done" is a verdict an independent pass computes against the spec, in three layers:
