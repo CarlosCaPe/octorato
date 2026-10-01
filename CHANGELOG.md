@@ -14,6 +14,8 @@ machine-generated growth ledger lives at
 `knowledge/repo-watch/<date>.md` (daily watchlist digests).
 
 ## [Unreleased]
+
+## [2026-10-01]: v9.0.0
 ### Octorato v9: done is a verdict
 On a LARGE task the builder no longer grades its own work. "Done" is a verdict an independent pass computes against the spec, in three layers:
 - **A spec a script can read**: a spec declares `Spec-Format: ears-1`, writes its acceptance criteria in EARS with a Glossary subject, keeps at most 3 open markers, and its plan uses the task grammar `T## [AC-##] <path>: <action>`. `scripts/spec_lint.py` checks all of it with the standard library only, so coverage of criteria by tasks is computed, not judged (rule `FLOW.spec-contract`).
