@@ -271,5 +271,164 @@ class ReceiptLedgerAnchors(unittest.TestCase):
         self.assertFalse(rl.gate_receipt_ok(rl.gate_tree_hash(repo)))    # new gate tree, no receipt
 
 
+
+# ---- QA verdict bound to the commit it reviewed --------------------------------
+# docs/specs/202610012100-qa-receipt-bound-to-head
+H1 = "a" * 40
+H2 = "b" * 40
+
+
+class QaHeadAnchoring(unittest.TestCase):
+    setUp = ReceiptLedgerAnchors.setUp
+    tearDown = ReceiptLedgerAnchors.tearDown
+
+    def _entry(self, text, ts, uid=None, sid="sess-1", handback=None):
+        blocks = [{"type": "text", "text": text}] if text is not None else []
+        if handback is not None:
+            blocks.append(U("SubagentHandback", {"message": handback}, "hb-" + (uid or "x")))
+        return {"type": "assistant", "uuid": uid or str(_uuid.uuid4()), "parentUuid": str(_uuid.uuid4()),
+                "sessionId": sid, "timestamp": ts, "message": {"role": "assistant", "content": blocks}}
+
+    def _transcript(self, name, entries, sid="sess-1", pad_after=0):
+        d = Path(self.tmp) / ".claude" / "projects" / "p" / sid / "subagents"
+        d.mkdir(parents=True, exist_ok=True)
+        p = d / name
+        with p.open("w", encoding="utf-8") as fh:
+            for e in entries:
+                fh.write(json.dumps(e) + "\n")
+            for i in range(pad_after):  # harness-shaped filler, pushes earlier entries out of the tail
+                fh.write(json.dumps(_h({"type": "user", "message": {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": f"pad{i}", "content": "x" * 900}]}}, sid)) + "\n")
+        return str(p)
+
+    def _row(self, tp, verdict, head, uid, pr="PR #500", agent="Reality Checker"):
+        rl.append_global({"kind": "qa", "verdict": verdict, "scope": pr, "head": head, "entry_uuid": uid,
+                          "agent_type": agent, "agent_id": Path(tp).stem.replace("agent-", ""),
+                          "agent_transcript_path": tp})
+
+    def _report(self, verdict, head, pr="PR #500"):
+        return f"review\nQA-VERDICT: {verdict}\nQA-SCOPE: {pr}\nQA-HEAD: {head}"
+
+    def test_parse_qa_head_takes_the_last_full_commit(self):
+        self.assertEqual(rl.parse_qa_head("QA-HEAD: " + H1.upper()), H1)
+        self.assertEqual(rl.parse_qa_head("quoted `QA-HEAD: " + H2 + "` then\nQA-HEAD: " + H1), H1)
+        self.assertEqual(rl.parse_qa_head("QA-HEAD: " + H1 + "\nQA-HEAD: abc123"), "")  # malformed last
+        self.assertEqual(rl.parse_qa_head("QA-HEAD: " + H1[:12]), "")
+        self.assertEqual(rl.parse_qa_head("no head here"), "")
+
+    def test_reflex_reads_the_transcript_first_and_anchors_the_entry(self):
+        uid = "u-reflex-1"
+        tp = self._transcript("agent-r1.jsonl", [
+            self._entry("QA-VERDICT: PASS\nQA-SCOPE: PR #500\nQA-HEAD: " + H1, "2026-10-01T10:00:00.000Z",
+                        uid, handback=self._report("NEEDS-WORK", H1.upper()))])
+        payload = json.dumps({"session_id": "sess-1", "agent_id": "r1", "agent_type": "Reality Checker",
+                              "agent_transcript_path": tp,
+                              "last_assistant_message": "QA-VERDICT: PASS\nQA-SCOPE: PR #500\nQA-HEAD: " + H1})
+        subprocess.run([sys.executable, str(SCRIPTS / "r__subagent-stop__qa-receipt.py")],
+                       input=payload, text=True, env=dict(os.environ), check=True)
+        row = [r for r in rl.read_global() if r.get("kind") == "qa"][-1]
+        self.assertEqual(row["verdict"], "NEEDS-WORK")       # the delivered handback, not the payload
+        self.assertEqual(row["head"], H1)                     # lower case
+        self.assertEqual(row["entry_uuid"], uid)
+        self.assertEqual(row["entry_ts"], "2026-10-01T10:00:00.000Z")
+        self.assertEqual(rl.qa_latest_for("500", H1)["verdict"], "NEEDS-WORK")
+
+    def test_reflex_falls_back_to_the_payload_when_the_transcript_has_no_verdict(self):
+        tp = self._transcript("agent-r2.jsonl", [self._entry("still working", "2026-10-01T10:00:00.000Z")])
+        payload = json.dumps({"session_id": "sess-1", "agent_id": "r2", "agent_type": "Reality Checker",
+                              "agent_transcript_path": tp, "last_assistant_message": self._report("PASS", H1)})
+        subprocess.run([sys.executable, str(SCRIPTS / "r__subagent-stop__qa-receipt.py")],
+                       input=payload, text=True, env=dict(os.environ), check=True)
+        row = [r for r in rl.read_global() if r.get("kind") == "qa"][-1]
+        self.assertEqual((row["verdict"], row["head"], row.get("entry_uuid")), ("PASS", H1, None))
+        self.assertIsNone(rl.qa_latest_for("500", H1))       # unanchored: opens nothing
+
+    def test_the_newest_entry_decides_never_the_ledger_order(self):
+        old = self._transcript("agent-o1.jsonl", [self._entry(self._report("PASS", H1), "2026-10-01T09:00:00.000Z", "u-old")])
+        new = self._transcript("agent-n1.jsonl", [self._entry(self._report("NEEDS-WORK", H1), "2026-10-01T11:00:00.000Z", "u-new")])
+        self._row(old, "PASS", H1, "u-old")
+        self._row(new, "NEEDS-WORK", H1, "u-new")
+        self.assertEqual(rl.qa_latest_for("500", H1)["verdict"], "NEEDS-WORK")
+        self._row(old, "PASS", H1, "u-old")                 # an older PASS re-appended last
+        self.assertEqual(rl.qa_latest_for("500", H1)["verdict"], "NEEDS-WORK")
+        self.assertIsNone(rl.qa_latest_for("500", H2))      # another commit: nothing
+        self.assertIsNone(rl.qa_latest_for("50", H1))       # substring never names a PR
+
+    def test_a_resumed_reviewer_keeps_its_earlier_verdict(self):
+        for name, later in (("agent-p1.jsonl", "Sure, here is more detail in plain prose."),
+                            ("agent-p2.jsonl", self._report("PASS", H1))):
+            tp = self._transcript(name, [
+                self._entry(self._report("NEEDS-WORK", H1), "2026-10-01T10:00:00.000Z", "u-" + name),
+                self._entry(later, "2026-10-01T10:30:00.000Z")])
+            self._row(tp, "NEEDS-WORK", H1, "u-" + name)
+        older_pass = self._transcript("agent-p0.jsonl", [self._entry(self._report("PASS", H1), "2026-10-01T09:00:00.000Z", "u-p0")])
+        self._row(older_pass, "PASS", H1, "u-p0")
+        got = rl.qa_latest_for("500", H1)
+        self.assertEqual(got["verdict"], "NEEDS-WORK")
+
+    def test_rows_that_disagree_with_their_entry_are_skipped(self):
+        tp = self._transcript("agent-d1.jsonl", [self._entry(self._report("NEEDS-WORK", H2), "2026-10-01T12:00:00.000Z", "u-d1")])
+        self._row(tp, "NEEDS-WORK", H1, "u-d1")             # ledger head differs from the entry
+        tp2 = self._transcript("agent-d2.jsonl", [self._entry(self._report("NEEDS-WORK", H1), "2026-10-01T12:00:00.000Z", "u-d2")])
+        self._row(tp2, "PASS", H1, "u-d2")                  # ledger verdict differs from the entry
+        self._row(tp2, "PASS", H1, "u-gone")                # entry not in the transcript
+        self.assertIsNone(rl.qa_latest_for("500", H1))
+        good = self._transcript("agent-d3.jsonl", [self._entry(self._report("PASS", H1), "2026-10-01T08:00:00.000Z", "u-d3")])
+        self._row(good, "PASS", H1, "u-d3")
+        self.assertEqual(rl.qa_latest_for("500", H1)["verdict"], "PASS")
+
+    def test_an_anchored_entry_far_from_the_end_is_still_read(self):
+        tp = self._transcript("agent-f1.jsonl",
+                              [self._entry(self._report("NEEDS-WORK", H1), "2026-10-01T12:00:00.000Z", "u-far")],
+                              pad_after=400)
+        self.assertGreater(os.path.getsize(tp), 300_000)
+        self._row(tp, "NEEDS-WORK", H1, "u-far")
+        older = self._transcript("agent-f0.jsonl", [self._entry(self._report("PASS", H1), "2026-10-01T09:00:00.000Z", "u-f0")])
+        self._row(older, "PASS", H1, "u-f0")
+        self.assertEqual(rl.qa_latest_for("500", H1)["verdict"], "NEEDS-WORK")
+
+    def test_a_repeated_uuid_must_agree(self):
+        same = self._entry(self._report("PASS", H1), "2026-10-01T10:00:00.000Z", "u-dup")
+        twin = dict(same, cwd="/elsewhere")
+        tp = self._transcript("agent-u1.jsonl", [same, twin])
+        self._row(tp, "PASS", H1, "u-dup")
+        self.assertEqual(rl.qa_latest_for("500", H1)["verdict"], "PASS")
+        bad = dict(same, message={"role": "assistant", "content": [{"type": "text", "text": self._report("FAIL", H1)}]})
+        tp2 = self._transcript("agent-u2.jsonl", [same, bad])
+        self._row(tp2, "PASS", H1, "u-dup")
+        self.assertIsNone(rl.report_at(tp2, "u-dup"))
+        # A child that names the anchor only as parentUuid is not the anchor.
+        child = self._entry("unrelated", "2026-10-01T10:01:00.000Z")
+        child["parentUuid"] = "u-dup"
+        tp3 = self._transcript("agent-u3.jsonl", [same, child])
+        self.assertEqual(rl.report_at(tp3, "u-dup")[0], self._report("PASS", H1))
+
+    def test_only_this_pull_request_is_opened_and_never_a_fifo(self):
+        seen = []
+        real = rl.report_at
+        rl.report_at = lambda tp, uid: (seen.append(tp), real(tp, uid))[1]
+        try:
+            other = self._transcript("agent-x1.jsonl", [self._entry(self._report("PASS", H1, "PR #501"), "2026-10-01T10:00:00.000Z", "u-x1")])
+            self._row(other, "PASS", H1, "u-x1", pr="PR #501")
+            mine = self._transcript("agent-x2.jsonl", [self._entry(self._report("PASS", H1), "2026-10-01T10:00:00.000Z", "u-x2")])
+            self._row(mine, "PASS", H1, "u-x2")
+            self.assertEqual(rl.qa_latest_for("500", H1)["verdict"], "PASS")
+            self.assertEqual(seen, [mine])
+        finally:
+            rl.report_at = real
+        if hasattr(os, "mkfifo"):
+            d = Path(self.tmp) / ".claude" / "projects" / "p" / "sess-1" / "subagents"
+            fifo = d / "agent-fifo.jsonl"
+            os.mkfifo(fifo)
+            self._row(str(fifo), "NEEDS-WORK", H1, "u-fifo")
+            import threading
+            box = {}
+            t = threading.Thread(target=lambda: box.setdefault("r", rl.qa_latest_for("500", H1)), daemon=True)
+            t.start()
+            t.join(5)
+            self.assertFalse(t.is_alive(), "a FIFO at a transcript path must never be opened")
+            self.assertEqual(box["r"]["verdict"], "PASS")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -87,9 +87,17 @@ Brief any agent with:
 - The test/user case spec (or `feature.md` if the PR has one)
 - An explicit instruction: "Default verdict NEEDS WORK — require concrete evidence (file:line citation, curl response, agent-browser screenshot, tsc output, grep result) before approving anything. Run shell commands to verify schema/contract claims, do not trust source-code reading alone."
 
-### 4. Only after agent verdict, arm auto-merge
+### 4. Only after agent verdict, merge the commit that was reviewed
 
-If `✅ VERIFIED` → arm `gh pr merge <N> --auto --squash` and let CI complete the merge.
+The reviewer's final report ends with three lines, which the SubagentStop hook records as the receipt:
+
+```
+QA-VERDICT: PASS
+QA-SCOPE: PR #<N>
+QA-HEAD: <the 40-digit commit it reviewed>
+```
+
+If `✅ VERIFIED` → merge directly, pinned to that commit: `gh pr merge <N> --squash --delete-branch --match-head-commit <sha>`. GitHub refuses the merge when the head moved after the review. `--auto` is refused by `qa-merge-gate`, because whether GitHub re-checks the pin when an auto-merge fires is not established. A push after the review needs a new QA pass on the new commit; the newest verdict for a commit decides.
 
 If `⚠️ PARTIAL` → decide whether to ship with caveats (document the unknown in the PR body) or wait for more evidence.
 

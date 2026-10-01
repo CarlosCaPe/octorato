@@ -40,6 +40,19 @@ v7 (2026-09-05): approval is necessary, not sufficient. A merge also needs a QA
 receipt for the PR in the receipt ledger (~/.claude/.cache/receipts/global.jsonl),
 written by the SubagentStop hook from a QA subagent's QA-VERDICT/QA-SCOPE lines
 and re-read from that agent's transcript. OCTO_QA_OK=1 is the explicit bypass.
+
+2026-10-01 (docs/specs/202610012100-qa-receipt-bound-to-head): a PASS approves
+the COMMIT the reviewer read, not the pull request. The reviewer adds a third
+line, QA-HEAD: <40-digit commit>, and an approved merge of a pull request must
+pin that commit in its own arguments: `gh pr merge <n> --match-head-commit <sha>`
+or a REST merge with `-f sha=<sha>`. GitHub refuses a direct merge whose head
+differs from the pin, so the pinned commit is the merged one; `--auto` is refused
+because GitHub's re-check of the pin on auto-merge is not established. The pin is
+read the way gh reads its arguments (value flags, clustered short flags), so a
+pin that is really the subject of the merge never counts. The newest receipt for
+that pull request and commit decides, by the harness timestamp of the transcript
+entry it was recorded from, so a NEEDS-WORK cannot be outvoted by an older PASS.
+The lookup makes no network call and is cut off after 3 seconds, which blocks.
 Fail-closed ONLY for positively-identified merge commands.
 Any parsing error on a non-merge command → exit 0 (fail-open).
 Design mirrors grafo-gate.py: same I/O protocol, same stdin JSON shape.
@@ -452,6 +465,126 @@ def _extract_pr_id(matched_sub: str) -> str:
     return "unknown"
 
 
+# -- Commit pin (docs/specs/202610012100-qa-receipt-bound-to-head) -------------
+# gh's flag parser gives a flag that takes a value the next token, whatever it
+# looks like, and lets short flags cluster (`-st` = squash, then subject). A pin
+# is therefore only the value of the pin flag itself; reading the raw text, or a
+# token after another value flag, would accept a pin gh sends as the subject.
+# Tables from cli/cli pkg/cmd/pr/merge/merge.go and pkg/cmd/api/api.go (gh 2.88).
+_MERGE_SHORT_VALUE = set("tbFAR")
+_MERGE_LONG_VALUE = {"--subject", "--body", "--body-file", "--author-email",
+                     "--repo", "--match-head-commit"}
+_API_SHORT_VALUE = set("fFHXqtp")
+_API_LONG_VALUE = {"--field", "--raw-field", "--header", "--method", "--input",
+                   "--jq", "--template", "--preview", "--hostname", "--cache"}
+_API_FIELD_FLAGS = {"-f", "-F", "--field", "--raw-field"}
+_SHA40 = re.compile(r"[0-9a-fA-F]{40}")
+_LOOKUP_DEADLINE = 3.0  # seconds; the hook itself is killed at 5 (hooks.json)
+
+
+def _walk_flags(argv: list, short_value: set, long_value: set) -> tuple:
+    """(values, bools) as gh's parser sees them: values is [(flag, value)] for
+    flags that take a value, bools the set of long flags seen without one."""
+    values, bools = [], set()
+    i = 0
+    while i < len(argv):
+        tok = argv[i]
+        if tok == "--":
+            break
+        if tok.startswith("--") and len(tok) > 2:
+            name, eq, val = tok.partition("=")
+            if name in long_value:
+                if eq:
+                    values.append((name, val))
+                elif i + 1 < len(argv):
+                    values.append((name, argv[i + 1]))
+                    i += 1
+            else:
+                bools.add(name)
+            i += 1
+            continue
+        if tok.startswith("-") and len(tok) > 1:
+            for j in range(1, len(tok)):
+                if tok[j] in short_value:
+                    rest = tok[j + 1:]
+                    if rest.startswith("="):
+                        rest = rest[1:]
+                    if rest:
+                        values.append(("-" + tok[j], rest))
+                    elif i + 1 < len(argv):
+                        values.append(("-" + tok[j], argv[i + 1]))
+                        i += 1
+                    break
+        i += 1
+    return values, bools
+
+
+def _argv_after(sub: str, n_words: int) -> list | None:
+    """shlex argv of *sub* after its first *n_words* words, or None."""
+    import shlex
+    try:
+        argv = shlex.split(sub)
+    except ValueError:
+        return None
+    return argv[n_words:] if len(argv) >= n_words else None
+
+
+def _merge_pin(sub: str) -> tuple:
+    """(pin, auto) for an already-stripped merge sub-command. pin is the 40-digit
+    commit the merge is pinned to, lower case, or "" when there is none that gh
+    would send; auto is True for `gh pr merge --auto`."""
+    if _PAT_GH_MERGE.match(sub):
+        argv = _argv_after(sub, 3)
+        if argv is None:
+            return "", False
+        values, bools = _walk_flags(argv, _MERGE_SHORT_VALUE, _MERGE_LONG_VALUE)
+        pins = [v for name, v in values if name == "--match-head-commit"]
+        pin = pins[-1] if pins else ""
+        return (pin.lower() if _SHA40.fullmatch(pin) else ""), "--auto" in bools
+    if re.match(r"^\s*gh\s+api\b", sub):
+        argv = _argv_after(sub, 2)
+        if argv is None:
+            return "", False
+        values, _ = _walk_flags(argv, _API_SHORT_VALUE, _API_LONG_VALUE)
+        shas = {v[4:] for name, v in values if name in _API_FIELD_FLAGS and v.startswith("sha=")}
+        if len(shas) != 1:
+            return "", False
+        pin = shas.pop()
+        return (pin.lower() if _SHA40.fullmatch(pin) else ""), False
+    return "", False  # curl and anything else: no readable pin
+
+
+def _qa_lookup_with_deadline(pr_id: str, pin: str):
+    """('ok', receipt-or-None) or ('timeout', None). The lookup runs in a daemon
+    thread joined for _LOOKUP_DEADLINE seconds: that pre-empts even a read that
+    blocks, and the thread dies with the process when the hook returns."""
+    import threading
+    box = {}
+
+    def work():
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            import receipt_ledger
+            box["r"] = receipt_ledger.qa_latest_for(pr_id, pin)
+        except Exception:
+            box["r"] = None
+
+    t = threading.Thread(target=work, daemon=True)
+    t.start()
+    t.join(_LOOKUP_DEADLINE)
+    if t.is_alive():
+        return "timeout", None
+    return "ok", box.get("r")
+
+
+def _pinned_form(pr_id: str) -> str:
+    return (f"gh pr merge {pr_id} --squash --delete-branch --match-head-commit <40-digit commit>\n"
+            f"    (or gh api -X PUT repos/<owner>/<repo>/pulls/{pr_id}/merge -f sha=<40-digit commit>)")
+
+
+_QA_PROTOCOL = ("    QA-VERDICT: PASS\n    QA-SCOPE: PR #{pr}\n    QA-HEAD: <the 40-digit commit it reviewed>")
+
+
 # -- v8 kernel journal (Phase 4, v8-kernel.md) --------------------------------
 _KERNEL_RULE = "CODE.qa-merge-gate"
 
@@ -533,24 +666,74 @@ def main() -> int:
         # "QA approved" typed by the main loop is not a receipt. OCTO_QA_OK=1 stays
         # the operator's explicit blanket bypass (bootstrap, or a docs-only PR).
         if os.environ.get("OCTO_QA_OK", "").strip() != "1":
-            try:
-                sys.path.insert(0, str(Path(__file__).resolve().parent))
-                import receipt_ledger
-                qa = receipt_ledger.qa_pass_for(pr_id, str(data.get("session_id") or ""), str(data.get("transcript_path") or ""))
-            except Exception:
-                qa = None
-            if qa is None:
-                print(
-                    f"✗ QA GATE (fail-closed): PR #{pr_id} is operator-approved but carries NO QA "
-                    f"receipt.\n  v7: run an independent QA subagent (judgment tier) on the PR and "
-                    f"have it end with\n    QA-VERDICT: PASS\n    QA-SCOPE: PR #{pr_id}\n  The "
-                    f"SubagentStop hook records the verdict; the ledger line is re-read from the "
-                    f"agent transcript.\n  Explicit operator bypass: OCTO_QA_OK=1 (blanket, logged).",
-                    file=sys.stderr,
-                )
-                _journal_deny(f"merge of PR #{pr_id} blocked: operator-approved but no QA receipt", data)
-                return 2
-            _nudge(f"✓ QA gate: QA receipt for PR #{pr_id} ({qa.get('agent_type') or 'subagent'}, {qa.get('ts', '')}).")
+            if pr_id.isdigit():
+                # A pull request: the PASS must be for the commit this merge pins.
+                pin, auto = _merge_pin(_strip_leading(matched_sub))
+                if auto:
+                    print(
+                        f"✗ QA GATE (fail-closed): PR #{pr_id} is approved, but `--auto` is refused.\n"
+                        f"  GitHub enforces the commit pin on a direct merge; whether it re-checks it\n"
+                        f"  when an auto-merge fires is not established. Merge directly:\n"
+                        f"    {_pinned_form(pr_id)}",
+                        file=sys.stderr,
+                    )
+                    _journal_deny(f"merge of PR #{pr_id} blocked: --auto on an approved merge", data)
+                    return 2
+                if not pin:
+                    print(
+                        f"✗ QA GATE (fail-closed): PR #{pr_id} is approved, but the merge pins no commit.\n"
+                        f"  A QA PASS approves the commit it reviewed. Pin that commit, the one in the\n"
+                        f"  reviewer's QA-HEAD line, in the command's own arguments:\n"
+                        f"    {_pinned_form(pr_id)}\n"
+                        f"  A pin inside another argument (a subject, a body) is not a pin: gh would not\n"
+                        f"  send it. A JSON body (--input, curl -d) cannot be read; use -f sha=.",
+                        file=sys.stderr,
+                    )
+                    _journal_deny(f"merge of PR #{pr_id} blocked: no commit pin", data)
+                    return 2
+                state, qa = _qa_lookup_with_deadline(pr_id, pin)
+                if state == "timeout":
+                    print(
+                        f"✗ QA GATE (fail-closed): the QA receipt lookup for PR #{pr_id} did not finish\n"
+                        f"  within {_LOOKUP_DEADLINE:g} seconds, so the merge is blocked rather than left to a hook timeout.",
+                        file=sys.stderr,
+                    )
+                    _journal_deny(f"merge of PR #{pr_id} blocked: receipt lookup timed out", data)
+                    return 2
+                if qa is None or qa.get("verdict") != "PASS":
+                    found = (f"the newest QA verdict for that commit is {qa.get('verdict')}"
+                             if qa else "no QA receipt names that pull request and that commit")
+                    print(
+                        f"✗ QA GATE (fail-closed): PR #{pr_id} at {pin[:12]}: {found}.\n"
+                        f"  Run an independent QA subagent (judgment tier) on that exact commit and have\n"
+                        f"  its final report end with\n" + _QA_PROTOCOL.format(pr=pr_id) + "\n"
+                        f"  The SubagentStop hook records it; the gate re-reads that transcript entry, and\n"
+                        f"  the newest verdict for the commit decides. Explicit operator bypass: OCTO_QA_OK=1.",
+                        file=sys.stderr,
+                    )
+                    _journal_deny(f"merge of PR #{pr_id} blocked: no PASS for the pinned commit", data)
+                    return 2
+                _nudge(f"✓ QA gate: QA PASS for PR #{pr_id} at {pin[:12]} "
+                       f"({qa.get('agent_type') or 'subagent'}, {qa.get('verdict_ts', '')}).")
+            else:
+                try:
+                    sys.path.insert(0, str(Path(__file__).resolve().parent))
+                    import receipt_ledger
+                    qa = receipt_ledger.qa_pass_for(pr_id, str(data.get("session_id") or ""), str(data.get("transcript_path") or ""))
+                except Exception:
+                    qa = None
+                if qa is None:
+                    print(
+                        f"✗ QA GATE (fail-closed): {pr_id} is operator-approved but carries NO QA "
+                        f"receipt.\n  Run an independent QA subagent (judgment tier) and have its final "
+                        f"report end with\n" + _QA_PROTOCOL.format(pr=pr_id) + "\n  The SubagentStop "
+                        f"hook records the verdict; the ledger line is re-read from the agent transcript.\n"
+                        f"  Explicit operator bypass: OCTO_QA_OK=1 (blanket, logged).",
+                        file=sys.stderr,
+                    )
+                    _journal_deny(f"merge of {pr_id} blocked: operator-approved but no QA receipt", data)
+                    return 2
+                _nudge(f"✓ QA gate: QA receipt for {pr_id} ({qa.get('agent_type') or 'subagent'}, {qa.get('ts', '')}).")
         _nudge(
             f"✓ QA gate: operator-approved PR #{pr_id} via OCTO_MERGE_APPROVE "
             f"(env, agent-proof)."
@@ -577,7 +760,8 @@ def main() -> int:
         f"  Operator: export OCTO_MERGE_APPROVE={pr_id} in your shell (env, agent-proof),\n"
         f"  then re-run the merge. The file channel (octo-dim approve-merge) is an audit\n"
         f"  log, not a gate pass: the agent can forge it, so only the harness env counts.\n"
-        f"  QA (independent reviewer) must have passed first before granting approval.\n"
+        f"  QA (independent reviewer) must have passed first, on the commit the merge pins:\n"
+        f"    {_pinned_form(pr_id) if pr_id.isdigit() else 'git push (no commit pin for a branch push)'}\n"
         f"  Operator directive 2026-06-01: the gate is the agent's approval, not just green CI.",
         file=sys.stderr,
     )
