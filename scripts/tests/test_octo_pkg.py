@@ -1628,10 +1628,11 @@ class TestQaCycle5(SandboxCase):
 
         def boom_cleanup(path, *a, **kw):
             # Only the brain's own tree fails to clean up. octo_pkg.shutil IS the
-            # shared shutil module, and from CPython 3.12.x (seen on 3.12.14, not on
-            # 3.12.3) tempfile.TemporaryDirectory looks rmtree up on it at exit, so
-            # a blanket patch also broke the staging directory's cleanup and its
-            # error replaced the cause before the code under test ever saw it.
+            # shared shutil module, and on recent patch releases (seen on 3.11.16 and
+            # 3.12.14, not on 3.12.3) tempfile.TemporaryDirectory looks rmtree up on
+            # it at exit, so a blanket patch also broke the staging directory's
+            # cleanup and its error replaced the cause before the code under test
+            # ever saw it.
             if str(path).startswith(root):
                 raise PermissionError("CLEANUP FAILED")
             return real_rmtree(path, *a, **kw)
