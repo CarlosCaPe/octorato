@@ -124,16 +124,20 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
+        with:
+          # the tests run arbitrary code that shells out to git; it needs no token
+          persist-credentials: false
 
       # The suite ran only from .githooks/pre-push, on the pusher's machine, so a
-      # green PR said nothing about the gate code it changed (QA of #339). On a
-      # clean HOME every failure traced to one cause, the dependencies of
-      # requirements.txt living in the user's site-packages; installed here,
-      # the full suite passes.
+      # green PR said nothing about the gate code it changed (QA of #339). The
+      # first run of this job found two things a developer box hid: PyYAML was
+      # missing from requirements.txt (a system python3-yaml supplied it), and
+      # one test patched the shared shutil module in a way newer 3.12 and 3.11
+      # patch releases expose. Both are fixed at the root, not here.
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.11'
 
       - name: Install deps
         run: pip install -r requirements.txt
