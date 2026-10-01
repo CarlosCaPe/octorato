@@ -1,0 +1,7 @@
+{
+  "code_change": true,
+  "flip": true,
+  "break_spec": true,
+  "receipts": [],
+  "spec_dir": "registry/fixtures/x/violation_case"
+}

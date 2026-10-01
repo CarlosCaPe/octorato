@@ -2077,7 +2077,7 @@ rules:
     locator: scripts/spec_lint.py --selftest registry/fixtures/FLOW.spec-contract
     expect: 0
   - method: EXIT_CODE
-    locator: grep -qE '^[ \t]*(if[ \t]+!?[ \t]*)?"?\$\{?PYTHON\}?"?[ \t]+[^|]*spec_lint\.py[^|]*--push-range([^|]*$|[^|]*\|\|)'
+    locator: grep -qE '^[ \t]*if[ \t]+![ \t]+"?\$\{?PYTHON\}?"?[ \t]+[^|;]*spec_lint\.py[^|;]*--push-range[^|;]*;[ \t]*then[ \t]*$'
       .githooks/pre-push
     expect: 0
   - method: ANCHOR_PRESENT
@@ -2109,7 +2109,7 @@ rules:
     locator: scripts/spec_lint.py --selftest registry/fixtures/FLOW.done-is-a-verdict
     expect: 0
   - method: EXIT_CODE
-    locator: grep -qE '^[ \t]*(if[ \t]+!?[ \t]*)?"?\$\{?PYTHON\}?"?[ \t]+[^|]*spec_lint\.py[^|]*--push-range([^|]*$|[^|]*\|\|)'
+    locator: grep -qE '^[ \t]*if[ \t]+![ \t]+"?\$\{?PYTHON\}?"?[ \t]+[^|;]*spec_lint\.py[^|;]*--push-range[^|;]*;[ \t]*then[ \t]*$'
       .githooks/pre-push
     expect: 0
   - method: ANCHOR_PRESENT

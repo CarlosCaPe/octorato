@@ -560,9 +560,10 @@ def converge_latest_for(spec_dir: str, session_id: str = "") -> dict | None:
         tp = str(r.get("agent_transcript_path") or "")
         if not tp or not _harness_agent_transcript(Path(tp), session_id, str(r.get("agent_id") or "")):
             continue
-        verdict, scope = parse_converge(last_assistant_text(tp))
+        report, verdict_ts = last_assistant_report(tp)
+        verdict, scope = parse_converge(report)
         if verdict == r.get("verdict") and scope == want:
-            return r
+            return dict(r, verdict_ts=verdict_ts)
     return None
 
 
@@ -602,7 +603,7 @@ def _refused_handbacks(entry: dict) -> set:
             if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("tool_use_id")}
 
 
-def last_assistant_text(transcript_path: str) -> str:
+def last_assistant_report(transcript_path: str) -> tuple:
     """The final report of a transcript: the newest assistant entry carrying
     either text blocks or a delivered SubagentHandback message. When one entry
     has both, the handback wins, because it is what the parent was handed.
@@ -611,11 +612,15 @@ def last_assistant_text(transcript_path: str) -> str:
     report: it is skipped and the walk goes on to older entries. A handback
     with no result written yet still counts, because SubagentStop can read the
     transcript before the harness appends the result, and a refusal is always
-    written at once with the call it refuses."""
+    written at once with the call it refuses.
+
+    Returns (report, timestamp of the entry that carries it). The timestamp is
+    harness-written, so a consumer measuring freshness reads it here rather than
+    the ledger line, which anyone can append with any `ts`."""
     try:
         lines = _tail_lines(transcript_path)
     except OSError:
-        return ""
+        return "", ""
     refused: set = set()
     for line in reversed(lines):
         try:
@@ -626,8 +631,9 @@ def last_assistant_text(transcript_path: str) -> str:
         if entry.get("type") != "assistant":
             continue
         content = (entry.get("message") or {}).get("content") or []
+        ts = str(entry.get("timestamp") or "")
         if isinstance(content, str):
-            return content
+            return content, ts
         handbacks = [b.get("input", {}).get("message") for b in content
                      if isinstance(b, dict) and b.get("type") == "tool_use"
                      and b.get("name") == HANDBACK_TOOL
@@ -635,12 +641,16 @@ def last_assistant_text(transcript_path: str) -> str:
                      and isinstance(b.get("input"), dict)
                      and isinstance(b["input"].get("message"), str)]
         if handbacks:
-            return handbacks[-1]
+            return handbacks[-1], ts
         texts = [b.get("text", "") for b in content
                  if isinstance(b, dict) and b.get("type") == "text"]
         if texts:
-            return "\n".join(texts)
-    return ""
+            return "\n".join(texts), ts
+    return "", ""
+
+
+def last_assistant_text(transcript_path: str) -> str:
+    return last_assistant_report(transcript_path)[0]
 
 
 _AGENT_FILE = re.compile(r"^agent-([A-Za-z0-9]+)\.jsonl$")

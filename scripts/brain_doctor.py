@@ -2401,8 +2401,24 @@ def check_packages_verified(fix: bool) -> Result:
                   f"arms validated)")
 
 
-_SPEC_GATE_CMD = (r'^[ \t]*(if[ \t]+!?[ \t]*)?"?\$\{?PYTHON\}?"?[ \t]+'
-                  r'[^|]*spec_lint\.py[^|]*--push-range([^|]*$|[^|]*\|\|)')
+_SPEC_GATE_CMD = (r'^[ \t]*if[ \t]+![ \t]+"?\$\{?PYTHON\}?"?[ \t]+'
+                  r'[^|;]*spec_lint\.py[^|;]*--push-range[^|;]*;[ \t]*then[ \t]*$')
+
+
+def _spec_gate_blocks(text: str) -> bool:
+    """The stanza must be `if ! "$PYTHON" ... spec_lint.py --push-range ...; then`
+    and its body must reach `exit 1` before the matching `fi`. A presence grep
+    alone matched `... || true` and `...; :`, which keep the line and drop the gate."""
+    lines = text.splitlines()
+    for n, ln in enumerate(lines):
+        if re.search(_SPEC_GATE_CMD, ln):
+            for body in lines[n + 1:n + 40]:
+                s = body.strip()
+                if s.startswith("fi"):
+                    break
+                if re.match(r"exit[ \t]+1\b", s):
+                    return True
+    return False
 
 
 def check_spec_contract(fix: bool) -> Result:
@@ -2421,13 +2437,13 @@ def check_spec_contract(fix: bool) -> Result:
         return Result(key, FAIL, "scripts/spec_lint.py is missing",
                       "restore the spec linter; the v9 push gate calls it")
     text = _rt(CLAUDE_DIR / ".githooks" / "pre-push") or ""
-    if not any(re.search(_SPEC_GATE_CMD, ln) for ln in text.splitlines()):
+    if not _spec_gate_blocks(text):
         return Result(key, FAIL,
                       ".githooks/pre-push does not invoke spec_lint.py --push-range, so a "
                       "spec can claim converged without a verdict",
                       "restore the OCTORATO-SPEC-GATE stanza in .githooks/pre-push")
     dirs = sorted(p.parent for base in ("docs/specs", "docs/specs-archive")
-                  for p in (CLAUDE_DIR / base).glob("*/feature.md"))
+                  for p in (CLAUDE_DIR / base).glob("*/feature.md"))  # the gate's own scope
     if not dirs:
         return Result(key, PASS, "no spec directories yet; the push stanza is present")
     cp = run([PYTHON or "python3", str(script), *map(str, dirs)], cwd=CLAUDE_DIR)
@@ -2446,10 +2462,11 @@ def check_spec_contract(fix: bool) -> Result:
     try:
         sys.path.insert(0, str(CLAUDE_DIR / "scripts"))
         import receipt_ledger
+        import spec_lint
         for d in dirs:
-            head = "\n".join((d / "feature.md").read_text(encoding="utf-8").splitlines()[:30])
-            if re.search(r"Spec-Format:\**\s*ears-1", head) and \
-                    re.search(r"Status:\**\s*converged\b", head, re.IGNORECASE):
+            text = (d / "feature.md").read_text(encoding="utf-8")
+            # The gate's own reader: any header shape the linter accepts or flags.
+            if spec_lint.is_ears(text) and spec_lint.spec_status(text) == "converged":
                 rel = d.relative_to(CLAUDE_DIR).as_posix()
                 if receipt_ledger.converge_pass_for(rel) is None:
                     unverified.append(rel)

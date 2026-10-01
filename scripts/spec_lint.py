@@ -9,9 +9,13 @@ and makes no model call: the same input gives the same answer on every machine.
 What it checks, per spec directory (a `feature.md`, optionally a `plan.md`):
 
   feature.md
-    - a header LINE in the first 30 lines reads `Spec-Format: ears-1` (bold and a
-      `>` quote allowed), else the file is SKIPPED (exit 0), so specs written
-      before v9 never break; a sentence that merely mentions it does not opt in
+    - any header-shaped `Spec-Format` line opts the file in; without one it is
+      SKIPPED (exit 0), so specs written before v9 never break, and a sentence
+      that merely mentions it does not opt in
+    - the `Spec-Format` and `Status` headers are exactly `> **Spec-Format:** ears-1`
+      and `> **Status:** draft|approved|converged`, once each, in the first 30
+      lines; any other header-shaped form is a finding, because the push gate
+      reads only the canonical one
     - a `## Glossary` section with at least one `- **Name**:` entry (names are
       letters, digits, `_` and `-`)
     - `## Acceptance Criteria` holds at least one criterion, and EVERY non-blank
@@ -49,9 +53,11 @@ Push gate (v9 phase 3, called by .githooks/pre-push once per pushed ref):
     - lints, at <head>, every ears-1 spec whose feature.md or plan.md the range
       changes (AC-15)
     - for every ears-1 spec whose `Status:` header becomes `converged` in the
-      range, requires the latest anchored converge receipt for that spec
-      directory to say CONVERGED and to be newer than the last commit in the
-      range touching a path outside that directory (AC-14)
+      range, requires a plan.md and the latest anchored converge receipt for
+      that spec directory to say CONVERGED, with a transcript timestamp newer
+      than the newest code commit on the branch (AC-14)
+    - refuses a spec that stops being ears-1, and a docs/specs/ directory not
+      named <yyyymmddHHMM>-<slug>
     A base of all zeros means a new branch: the range is every commit not on any
     remote. The receipt lives in this machine's ledger, so the machine that ran
     the converge pass is the one that pushes the status change.
@@ -89,7 +95,20 @@ from pathlib import Path
 MAX_MARKERS = 3
 MAX_TASKS = 20
 
-_FORMAT = re.compile(r"^\s*(?:>\s*)?\**Spec-Format:\**\s*ears-1\s*$", re.MULTILINE)
+HEAD_LINES = 30
+STATUSES = ("draft", "approved", "converged")
+# The canonical header lines. Anything header-SHAPED that is not exactly one of
+# these is a finding, because the push gate reads only the canonical form: a
+# spec that wrote `**Status**: converged` used to flip unseen (QA of v9 phase 3).
+_CANON_FORMAT = re.compile(r"^> \*\*Spec-Format:\*\* ears-1\s*$")
+_CANON_STATUS = re.compile(r"^> \*\*Status:\*\* (draft|approved|converged)\s*$")
+# Header-shaped: optional quote/list/table markers and emphasis, the key, emphasis,
+# a colon or a table bar, then a value this format recognises. Prose that merely
+# mentions the key ("This spec does not use Spec-Format: ears-1") is not a header.
+_LOOSE_FORMAT = re.compile(
+    r"^\s*(?:[>*+|-]\s*)*[*_]*\s*spec[-_ ]?format\s*[*_]*\s*[:|]\s*[*_]*\s*ears-\d+", re.IGNORECASE)
+_LOOSE_STATUS = re.compile(
+    r"^\s*(?:[>*+|-]\s*)*[*_]*\s*status\s*[*_]*\s*[:|]\s*[*_]*\s*(?:draft|approved|converged)\b", re.IGNORECASE)
 _GLOSSARY_ENTRY = re.compile(r"^- \*\*([A-Za-z][\w-]*)\*\*:")
 _AC_ITEM = re.compile(r"^- \[[ xX]\] (AC-\d+): (.*)$")
 _MARKER = re.compile(r"\[\s*NEEDS\s+CLARIFICATION\s*(?::[^\]]*)?\]", re.IGNORECASE)
@@ -119,15 +138,17 @@ class Report:
 
 
 def _readable_lines(text: str) -> list:
-    """(line_no, line) with fenced blocks blanked, so quoted grammar is ignored."""
-    out, fenced = [], False
-    for i, line in enumerate(text.splitlines(), 1):
-        if line.lstrip().startswith(("```", "~~~")):
-            fenced = not fenced
-            out.append((i, ""))
-            continue
-        out.append((i, "" if fenced else line))
-    return out
+    """(line_no, line) with fenced blocks blanked, so quoted grammar is ignored.
+    Only a fence that CLOSES hides its lines: an unclosed opening fence would
+    otherwise hide every header after it and turn a spec into a silent skip."""
+    lines = text.splitlines()
+    marks = [i for i, line in enumerate(lines) if line.lstrip().startswith(("```", "~~~"))]
+    if len(marks) % 2:
+        marks = marks[:-1]
+    hidden = set()
+    for a, b in zip(marks[0::2], marks[1::2]):
+        hidden.update(range(a, b + 1))
+    return [(i + 1, "" if i in hidden else line) for i, line in enumerate(lines)]
 
 
 def _sections(lines: list) -> dict:
@@ -151,14 +172,57 @@ def _ears_subject(sentence: str):
     return None
 
 
+def _header_lines(text: str, loose: re.Pattern) -> list:
+    """(line_no, line) for every header-shaped line outside fences and inline code."""
+    return [(i, line) for i, line in _readable_lines(text)
+            if loose.match(_INLINE_CODE.sub("", line))]
+
+
+def is_ears(text) -> bool:
+    """A spec opts in with ANY header-shaped Spec-Format line, canonical or not, so a
+    malformed header is a finding instead of a silent skip. Legacy specs carry none."""
+    return bool(text) and bool(_header_lines(text, _LOOSE_FORMAT))
+
+
+def spec_status(text) -> str:
+    """The canonical status, or "?" when the header is missing, duplicated,
+    malformed or outside the head: the linter reports those, the gate refuses them."""
+    if not text:
+        return ""
+    found = _header_lines(text, _LOOSE_STATUS)
+    if len(found) != 1:
+        return "?"
+    i, line = found[0]
+    m = _CANON_STATUS.match(line)
+    return m.group(1) if m and i <= HEAD_LINES else "?"
+
+
+def _lint_headers(feature: Path, text: str, report: Report) -> None:
+    for key, loose, canon, want in (
+            ("Spec-Format", _LOOSE_FORMAT, _CANON_FORMAT, "> **Spec-Format:** ears-1"),
+            ("Status", _LOOSE_STATUS, _CANON_STATUS, "> **Status:** draft|approved|converged")):
+        found = _header_lines(text, loose)
+        if not found:
+            report.add(feature, 1, f"no {key} header in the first {HEAD_LINES} lines")
+            continue
+        if len(found) > 1:
+            report.add(feature, found[1][0],
+                       f"{key} header appears {len(found)} times; keep exactly one")
+        for i, line in found:
+            if not canon.match(line):
+                report.add(feature, i, f"{key} header must be exactly `{want}`")
+            elif i > HEAD_LINES:
+                report.add(feature, i, f"{key} header must sit in the first {HEAD_LINES} lines")
+
+
 def lint_feature(feature: Path, report: Report, ready: bool) -> set:
     """Returns the set of criterion ids, for the plan coverage check."""
     text = feature.read_text(encoding="utf-8")
     lines = _readable_lines(text)
-    head = "\n".join(line for _i, line in lines[:30])
-    if not _FORMAT.search(head):
+    if not is_ears(text):
         report.skipped = True
         return set()
+    _lint_headers(feature, text, report)
 
     secs = _sections(lines)
     glossary = {m.group(1) for _i, line in secs.get("Glossary", [])
@@ -264,7 +328,12 @@ def lint(target: Path, ready: bool = False) -> Report:
 # --------------------------------------------------------------------------
 
 ZERO_SHA = "0" * 40
-_STATUS = re.compile(r"^\s*(?:>\s*)?\**Status:\**\s*([A-Za-z-]+)", re.MULTILINE)
+SPEC_HOMES = ("docs/specs", "docs/specs-archive")
+# Git tree modes of a regular file, an executable file and a directory. Anything else
+# at a spec path (120000 symlink, 160000 submodule, or a mode git adds later) is
+# refused: an allow-list, because the deny-list version missed the submodule.
+PLAIN_MODES = ("100644", "100755", "040000")
+_SPEC_DIR_NAME = re.compile(r"^\d{12}-[a-z0-9][a-z0-9-]*$")
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -280,19 +349,101 @@ def _show(repo: Path, rev: str, path: str):
     return cp.stdout if cp.returncode == 0 else None
 
 
-def _status(text) -> str:
-    if not text:
-        return ""
-    m = _STATUS.search("\n".join(text.splitlines()[:30]))
-    return m.group(1).lower() if m else ""
-
-
-def _is_ears(text) -> bool:
-    return bool(text) and bool(_FORMAT.search("\n".join(text.splitlines()[:30])))
-
-
 def _range_args(base: str, head: str) -> list:
     return [head, "--not", "--remotes"] if base == ZERO_SHA else [f"{base}..{head}"]
+
+
+def _default_remote_branches(repo: Path) -> list:
+    """Remote-tracking refs of the default branch (origin/HEAD, else */main, */master)."""
+    refs = _git(repo, "for-each-ref", "--format=%(refname)",
+                "refs/remotes/").split()
+    for ref in (r for r in refs if r.endswith("/HEAD")):
+        cp = subprocess.run(["git", "-C", str(repo), "symbolic-ref", "-q", ref],
+                            capture_output=True, text=True)
+        if cp.returncode == 0 and cp.stdout.strip():
+            return [cp.stdout.strip()]
+    return [r for r in refs if r.rsplit("/", 1)[-1] in ("main", "master")]
+
+
+def _changed_paths(repo: Path, commits: list) -> set:
+    out: set = set()
+    for c in commits:
+        raw = subprocess.run(["git", "-C", str(repo), "-c", "core.quotePath=false", "diff-tree",
+                              "--no-commit-id", "--name-only", "-r", "-z", "--root", c],
+                             capture_output=True).stdout
+        out.update(p for p in raw.decode("utf-8", "surrogateescape").split("\0") if p)
+    return out
+
+
+def _newest_branch_code(repo: Path, head: str, spec_dir: str) -> str:
+    """The latest author OR committer date among the commits that are on this branch
+    (reachable from head, not from the default remote branch) and touch a path
+    outside the spec directory. A code commit pushed in an EARLIER push of the same
+    branch still counts, which closes the two-push split. Both dates count because
+    each one alone is slipped by an everyday command: an amend or a cherry-pick keeps
+    the old author date, and only the committer date shows when the code landed.
+    The cost is stated: a rebase after the verdict stales it, and the converge pass
+    runs again. That only concerns the push that flips a spec, once per spec.
+    "" when there is none."""
+    not_refs = _default_remote_branches(repo)
+    args = [head] + (["--not", *not_refs] if not_refs else [])
+    out = _git(repo, "log", "--format=%aI %cI", *args,
+               "--", ".", f":(exclude){spec_dir}").split()
+    return max(out, key=_parse_ts) if out else ""
+
+
+SPEC_FILES = ("feature.md", "plan.md")
+_LFS_POINTER = "version https://git-lfs.github.com/spec/"
+
+
+def _home_at(parts: tuple, i: int) -> str:
+    """The spec home spelled at parts[i:i+2], case-folded, or ""."""
+    pair = "/".join(parts[i:i + 2]).lower()
+    return pair if pair in SPEC_HOMES else ""
+
+
+def is_spec_dir(path: str) -> bool:
+    """A spec lives in its own directory under docs/specs/ or docs/specs-archive/, at
+    any depth of the repository (an arm keeps the same layout). Test fixtures, templates
+    and any other feature.md elsewhere are not specs, and the gate never reads them:
+    violation fixtures are malformed on purpose."""
+    parts = Path(path).parts
+    return any(_home_at(parts, i) and len(parts) == i + 3 for i in range(len(parts) - 1))
+
+
+def is_canonical_spec_path(path: str) -> bool:
+    """A spec path spelled exactly: the home in lower case and, for a file, a
+    lower-case name. On a case-insensitive filesystem (Windows, macOS by default)
+    `Docs/specs/x/Feature.md` lands on `docs/specs/x/feature.md`, so a gate that
+    matched the spelling alone would miss a spec a person sees on disk."""
+    parts = Path(path).parts
+    for i in range(len(parts) - 1):
+        if _home_at(parts, i):
+            if "/".join(parts[i:i + 2]) not in SPEC_HOMES:
+                return False
+            tail = parts[i + 3:] if len(parts) > i + 3 else ()
+            return all(x == x.lower() for x in tail if x.lower() in SPEC_FILES)
+    return True
+
+
+def _on_spec_path(path: str) -> bool:
+    """True for a `docs` directory, a spec home (`docs/specs`, `docs/specs-archive`),
+    a spec directory or a file in one, at any depth. A symlink at ANY of these hides
+    real specs from a gate that reads the git tree, while a filesystem walk (the
+    doctor, an editor, a person) follows the link and still sees them."""
+    parts = Path(path).parts
+    if not parts:
+        return False
+    if parts[-1].lower() == "docs":
+        return True
+    if len(parts) >= 2 and _home_at(parts, len(parts) - 2):
+        return True
+    return is_spec_dir(path) or is_spec_dir(str(Path(path).parent))
+
+
+def _parse_ts(value: str) -> _dt.datetime:
+    ts = _dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    return ts if ts.tzinfo else ts.replace(tzinfo=_dt.timezone.utc)
 
 
 def push_findings(repo: Path, base: str, head: str) -> list:
@@ -305,31 +456,62 @@ def push_findings(repo: Path, base: str, head: str) -> list:
     parents = _git(repo, "rev-list", "--parents", "-n", "1", oldest).split()[1:]
     before = parents[0] if parents else None
 
-    changed: set = set()
-    for c in commits:
-        changed.update(p for p in _git(repo, "diff-tree", "--no-commit-id", "--name-only",
-                                          "-r", "--root", c).splitlines() if p)
-    spec_dirs = sorted({str(Path(p).parent) for p in changed
-                        if Path(p).name in ("feature.md", "plan.md")})
+    changed = _changed_paths(repo, commits)
+    for p in sorted(changed):
+        if _on_spec_path(p):
+            mode = _git(repo, "ls-tree", head, "--", p).split(" ", 1)[0]
+            if mode and mode not in PLAIN_MODES:
+                findings.append(f"{p}: a spec home, a spec directory or a spec file must be a "
+                                f"plain file or directory, not a symlink or a submodule "
+                                f"(mode {mode}); the gate reads the tree, and a link or a "
+                                f"submodule hides the specs behind it")
+    spec_paths = [p for p in changed
+                  if Path(p).name.lower() in SPEC_FILES and is_spec_dir(str(Path(p).parent))]
+    for p in sorted(spec_paths):
+        if not is_canonical_spec_path(p):
+            findings.append(f"{p}: a spec path is spelled `docs/specs/<name>/feature.md` (or "
+                            f"plan.md, or docs/specs-archive) in lower case; on a "
+                            f"case-insensitive filesystem another spelling lands on the "
+                            f"same file")
+            continue
+        blob = _show(repo, head, p)
+        if blob is not None and blob.startswith(_LFS_POINTER):
+            findings.append(f"{p}: a spec file may not be a Git LFS pointer; the gate reads "
+                            f"the tree, and the pointer hides the spec behind it")
+    spec_dirs = sorted({str(Path(p).parent) for p in spec_paths
+                        if is_canonical_spec_path(p)
+                        and not (_show(repo, head, p) or "").startswith(_LFS_POINTER)})
 
     for sd in spec_dirs:
         feature_now = _show(repo, head, f"{sd}/feature.md")
-        if not _is_ears(feature_now):
+        feature_before = _show(repo, before, f"{sd}/feature.md") if before else None
+        if feature_now is None:
+            continue  # the spec was deleted or moved away; deleting a spec is allowed
+        if not is_ears(feature_now):
+            if is_ears(feature_before):
+                findings.append(f"{sd}: the spec stops being ears-1 in this push (its "
+                                f"Spec-Format header was removed or broken); restore it")
             continue
+        if sd.startswith("docs/specs/") and not _SPEC_DIR_NAME.match(sd[len("docs/specs/"):]):
+            findings.append(f"{sd}: a spec directory under docs/specs/ is named "
+                            f"<yyyymmddHHMM>-<lowercase-slug>")
         # AC-15: lint the spec as it is at the pushed head.
+        plan_now = _show(repo, head, f"{sd}/plan.md")
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / "feature.md").write_text(feature_now, encoding="utf-8")
-            plan_now = _show(repo, head, f"{sd}/plan.md")
             if plan_now is not None:
                 (Path(tmp) / "plan.md").write_text(plan_now, encoding="utf-8")
             rep = lint(Path(tmp))
             findings += [f.replace(tmp, sd) for f in rep.findings]
 
-        # AC-14: a status flip to converged needs a fresh CONVERGED receipt.
-        if _status(feature_now) != "converged":
+        if spec_status(feature_now) == "converged" and plan_now is None:
+            findings.append(f"{sd}: the spec says converged but has no plan.md; a converged "
+                            f"spec keeps the plan it was judged against")
             continue
-        feature_before = _show(repo, before, f"{sd}/feature.md") if before else None
-        if _status(feature_before) == "converged":
+        # AC-14: a status flip to converged needs a fresh CONVERGED receipt.
+        if spec_status(feature_now) != "converged":
+            continue
+        if spec_status(feature_before) == "converged":
             continue
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         import receipt_ledger
@@ -342,24 +524,23 @@ def push_findings(repo: Path, base: str, head: str) -> list:
         if receipt.get("verdict") != "CONVERGED":
             findings.append(f"{sd}: Status becomes converged, but the latest converge "
                             f"verdict for it is {receipt.get('verdict')} "
-                            f"({receipt.get('ts', '?')}).")
+                            f"({receipt.get('verdict_ts') or receipt.get('ts', '?')}).")
             continue
-        outside = _git(repo, "log", "-1", "--format=%cI", *_range_args(base, head),
-                       "--", ".", f":(exclude){sd}").strip()
-        if outside:
-            code_at = _dt.datetime.fromisoformat(outside)
-            got_at = _dt.datetime.fromisoformat(str(receipt.get("ts")))
-            if got_at <= code_at:
-                findings.append(f"{sd}: the CONVERGED receipt ({receipt.get('ts')}) is "
-                                f"older than a commit in this push outside the spec "
-                                f"directory ({outside}). Run /sdd-converge again.")
+        code = _newest_branch_code(repo, head, sd)
+        if code:
+            verdict_at = _parse_ts(receipt.get("verdict_ts") or receipt.get("ts"))
+            if verdict_at <= _parse_ts(code):
+                findings.append(f"{sd}: the CONVERGED verdict "
+                                f"({receipt.get('verdict_ts') or receipt.get('ts')}) is older "
+                                f"than a code commit on this branch ({code}). Run "
+                                f"/sdd-converge again.")
     return findings
 
 
 def _push_selftest_case(case: Path) -> list:
     """Build the scenario a push.json describes and return its findings."""
     spec = json.loads((case / "push.json").read_text())
-    sd = "docs/specs/202609300000-toy"
+    sd = spec.get("spec_dir", "docs/specs/202609300000-toy")
     home = Path(tempfile.mkdtemp(prefix="spec-push-home-"))
     repo = Path(tempfile.mkdtemp(prefix="spec-push-repo-"))
     saved = {k: os.environ.get(k) for k in ("HOME", "USERPROFILE")}
@@ -385,14 +566,61 @@ def _push_selftest_case(case: Path) -> list:
         if spec.get("code_change"):
             (repo / "app.py").write_text("x = 2\n")
             commit("code", "2026-09-30T11:00:00+00:00")
+        if spec.get("late_code_old_author"):
+            # an amend or a cherry-pick: authored before the verdict, landed after it
+            (repo / "app.py").write_text("x = 3\n")
+            e = dict(env, GIT_AUTHOR_DATE="2026-09-30T11:00:00+00:00",
+                     GIT_COMMITTER_DATE="2026-09-30T11:45:00+00:00")
+            subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, env=e)
+            subprocess.run(["git", "-C", str(repo), "commit", "-qm", "late code"],
+                           check=True, env=e, capture_output=True)
+        text = feature
         if spec.get("flip", True):
-            (repo / sd / "feature.md").write_text(
-                feature.replace("> **Status:** approved", "> **Status:** converged"))
+            text = text.replace("> **Status:** approved",
+                                spec.get("status_line", "> **Status:** converged"))
+        if spec.get("append_status"):
+            text = text.replace("## Summary", spec["append_status"] + "\n\n## Summary")
+        if spec.get("remove_format"):
+            text = text.replace("> **Spec-Format:** ears-1\n", "")
+        (repo / sd / "feature.md").write_text(text)
+        if spec.get("delete_plan"):
+            (repo / sd / "plan.md").unlink()
+        if spec.get("delete_spec"):
+            shutil.rmtree(repo / sd)
+        if spec.get("new_lfs_spec"):
+            lfs = repo / "docs" / "specs" / "202609300001-lfs"
+            lfs.mkdir(parents=True)
+            (lfs / "feature.md").write_text(
+                _LFS_POINTER + "v1\noid sha256:" + "0" * 64 + "\nsize 1234\n")
+        if spec.get("symlink_home"):
+            real = repo / "elsewhere" / "specs"
+            real.mkdir(parents=True)
+            shutil.move(str(repo / "docs" / "specs"), real.parent / "moved")
+            os.symlink(os.path.relpath(real.parent / "moved", repo / "docs"), repo / "docs" / "specs")
+        if spec.get("symlink_spec"):
+            hidden = repo / "notes" / "hidden"
+            hidden.mkdir(parents=True)
+            shutil.move(str(repo / sd / "feature.md"), hidden / "feature.md")
+            shutil.move(str(repo / sd / "plan.md"), hidden / "plan.md")
+            shutil.rmtree(repo / sd)
+            os.symlink(os.path.relpath(hidden, (repo / sd).parent), repo / sd)
         if spec.get("break_spec"):
             text = (repo / sd / "feature.md").read_text()
             (repo / sd / "feature.md").write_text(
                 text.replace("THE Exporter SHALL write UTF-8.", "The exporter writes UTF-8."))
         head = commit("status", "2026-09-30T12:00:00+00:00")
+        if spec.get("gitlink_spec"):
+            # a submodule at the spec directory: files on disk once initialised,
+            # nothing in the superproject's tree
+            e = dict(env, GIT_AUTHOR_DATE="2026-09-30T12:00:00+00:00",
+                     GIT_COMMITTER_DATE="2026-09-30T12:00:00+00:00")
+            subprocess.run(["git", "-C", str(repo), "rm", "-r", "-q", "--cached", sd],
+                           check=True, env=e, capture_output=True)
+            subprocess.run(["git", "-C", str(repo), "update-index", "--add", "--cacheinfo",
+                            f"160000,{base},{sd}"], check=True, env=e)
+            subprocess.run(["git", "-C", str(repo), "commit", "-qm", "gitlink"],
+                           check=True, env=e, capture_output=True)
+            head = _git(repo, "rev-parse", "HEAD").strip()
 
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         import receipt_ledger
@@ -404,7 +632,7 @@ def _push_selftest_case(case: Path) -> list:
             tdir.mkdir(parents=True, exist_ok=True)
             tp = tdir / f"agent-{aid}.jsonl"
             entry = {"type": "assistant", "uuid": f"u{i}", "parentUuid": f"p{i}",
-                     "sessionId": sid, "timestamp": r["ts"],
+                     "sessionId": sid, "timestamp": r.get("transcript_ts", r["ts"]),
                      "message": {"role": "assistant", "content": [{"type": "text",
                          "text": f"report\nCONVERGE-VERDICT: {r['verdict']}\nCONVERGE-SCOPE: {scope}"}]}}
             tp.write_text(json.dumps(entry) + "\n")

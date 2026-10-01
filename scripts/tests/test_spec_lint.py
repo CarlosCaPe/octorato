@@ -84,7 +84,8 @@ class PushGateTest(unittest.TestCase):
         real = receipt_ledger.converge_latest_for
         def aged(*a, **k):
             r = real(*a, **k)
-            return dict(r, ts="2999-01-01T00:00:00+00:00") if r else r
+            far = "2999-01-01T00:00:00+00:00"
+            return dict(r, ts=far, verdict_ts=far) if r else r
         with mock.patch.object(receipt_ledger, "converge_latest_for", aged):
             self.assertEqual(_quiet(spec_lint.selftest, PUSH_FIXTURES), 1)
 
@@ -104,6 +105,15 @@ class DoctorCheckTest(unittest.TestCase):
     def test_fails_without_the_pre_push_stanza(self):
         with mock.patch.object(self.bd, "_rt", lambda p: "#!/bin/sh\nexit 0\n"):
             self.assertEqual(self.bd.check_spec_contract(False).status, "FAIL")
+
+    def test_fails_when_the_stanza_ignores_the_exit_code(self):
+        real = (ROOT / ".githooks" / "pre-push").read_text()
+        for broken in (real.replace('>/dev/null 2>&1; then', '>/dev/null 2>&1 || true; then'),
+                       real.replace("      echo \"  Fix the spec, or run /sdd-converge", "      :\n      echo \"  Fix the spec, or run /sdd-converge")
+                           .replace("    } >&2\n    exit 1\n  fi\ndone", "    } >&2\n  fi\ndone")):
+            self.assertNotEqual(broken, real)
+            with mock.patch.object(self.bd, "_rt", lambda p, b=broken: b):
+                self.assertEqual(self.bd.check_spec_contract(False).status, "FAIL")
 
     def test_fails_on_a_broken_spec_in_the_tree(self):
         with tempfile.TemporaryDirectory() as d:
@@ -141,6 +151,35 @@ class DoctorConvergedWithoutReceiptTest(unittest.TestCase):
                 r = bd.check_spec_contract(False)
             self.assertEqual(r.status, "WARN", r.message)
             self.assertIn("202609300000-done", r.message)
+
+
+class HeaderTest(unittest.TestCase):
+    def test_every_header_shape_reads_as_a_header(self):
+        base = (FIXTURES / "benign_all_patterns" / "feature.md").read_text()
+        for line in ("> **Status**: converged", "- **Status:** converged", "_Status:_ converged",
+                     "| Status | converged |", "> **STATUS:** CONVERGED"):
+            text = base.replace("> **Status:** draft", line)
+            self.assertEqual(spec_lint.spec_status(text), "?", line)
+        self.assertEqual(spec_lint.spec_status(base.replace("draft", "converged", 1)), "converged")
+
+    def test_only_directories_under_the_spec_homes_are_specs(self):
+        for yes in ("docs/specs/202609300000-a", "docs/specs-archive/old",
+                    "arm/docs/specs/202609300000-a"):
+            self.assertTrue(spec_lint.is_spec_dir(yes), yes)
+        for no in ("registry/fixtures/FLOW.spec-contract/violation_not_ears", "docs/specs",
+                   "docs/specs/a/b", "templates/spec", "feature"):
+            self.assertFalse(spec_lint.is_spec_dir(no), no)
+
+    def test_spec_paths_match_any_case_but_only_lower_case_is_canonical(self):
+        for p in ("Docs/specs/202609300000-a", "DOCS/SPECS/202609300000-a", "docs/Specs/202609300000-a"):
+            self.assertTrue(spec_lint.is_spec_dir(p), p)
+        self.assertTrue(spec_lint.is_canonical_spec_path("docs/specs/202609300000-a/feature.md"))
+        for p in ("Docs/specs/202609300000-a/feature.md", "docs/specs/202609300000-a/Feature.md",
+                  "docs/SPECS-ARCHIVE/old/plan.md"):
+            self.assertFalse(spec_lint.is_canonical_spec_path(p), p)
+
+    def test_prose_mention_is_not_a_header(self):
+        self.assertFalse(spec_lint.is_ears("# F\n\nThis spec does not use Spec-Format: ears-1 yet.\n"))
 
 
 class EarsTest(unittest.TestCase):
