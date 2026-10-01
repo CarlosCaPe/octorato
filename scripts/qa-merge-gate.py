@@ -546,6 +546,10 @@ def _merge_pin(sub: str) -> tuple:
         if argv is None:
             return "", False
         values, _ = _walk_flags(argv, _API_SHORT_VALUE, _API_LONG_VALUE)
+        if any(name == "--input" for name, _ in values):
+            # With --input, gh sends the file as the body and moves every field
+            # flag to the query string (`gh help api`), so `-f sha=` pins nothing.
+            return "", False
         shas = {v[4:] for name, v in values if name in _API_FIELD_FLAGS and v.startswith("sha=")}
         if len(shas) != 1:
             return "", False

@@ -32,3 +32,9 @@ One pull request. The ledger learns the commit and the newest-verdict lookup fir
 - `python3 -m unittest discover scripts/tests -p 'test_*.py'` passes on the system Python and in a clean 3.11 venv.
 - `python3 scripts/qa-merge-gate.py --selftest registry/fixtures/CODE.qa-merge-gate` passes.
 - `python3 scripts/brain_doctor.py`: no new FAIL.
+
+## Convergence 1
+
+- [ ] T08 [AC-04, AC-05] scripts/qa-merge-gate.py: treat a REST merge that carries `--input` as unpinned even when it also carries `-f sha=<sha>`, because gh then sends field flags as query-string parameters and the body comes from the unread file (`gh api --help`: "any parameters specified via field flags are added to the query string"); measured: `gh api -X PUT repos/o/r/pulls/96/merge --input body.json -f sha=<SHA>` and `... -f sha=<SHA> --input -` both exit 0 against a PASS receipt.
+- [ ] T09 [AC-04, AC-05] scripts/tests/test_qa_merge_gate_head.py: add `--input body.json -f sha=<SHA>` and `-f sha=<SHA> --input -` to the cases that must block with "pins no commit".
+- [ ] T10 [AC-13] skills/pre-merge-qa-gate/SKILL.md: the frontmatter description ("Before arming auto-merge ... Auto-merge is the merge mechanism") and the body at lines 12, 39 and 63 still teach arming auto-merge as the merge mechanism, contradicting step 4 and the gate's `--auto` refusal; restate them as the pinned direct merge.

@@ -98,6 +98,9 @@ class GateHead(unittest.TestCase):
                  f"gh api -X PUT repos/o/r/pulls/96/merge -f commit_message=sha={SHA}",
                  f"gh api -X PUT repos/o/r/pulls/96/merge -H sha={SHA}",
                  f"gh api -X PUT repos/o/r/pulls/96/merge --input body.json",
+                 f"gh api -X PUT repos/o/r/pulls/96/merge --input body.json -f sha={SHA}",
+                 f"gh api -X PUT repos/o/r/pulls/96/merge -f sha={SHA} --input -",
+                 f"gh api -X PUT repos/o/r/pulls/96/merge -f sha={SHA} --input=body.json",
                  f"curl -X PUT -d '{{\"sha\":\"{SHA}\"}}' https://api.github.com/repos/o/r/pulls/96/merge"]
         with self.lookup({SHA: receipt("PASS")}):
             for cmd in cases:
