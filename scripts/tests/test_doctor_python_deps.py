@@ -7,6 +7,7 @@ FAIL blocked every push from the live brain.
 """
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 import unittest
@@ -43,12 +44,33 @@ class PythonDepsTest(unittest.TestCase):
         r = check((ROOT / "requirements.txt").read_text(encoding="utf-8"))
         self.assertEqual(r.status, brain_doctor.PASS, r.message)
 
-    def test_the_old_import_probe_misses_pyyaml(self):
-        # Break the thing the check guards: probing the import name of `pyyaml`.
-        import subprocess
-        cp = subprocess.run([sys.executable, "-c", "import pyyaml"], capture_output=True)
-        self.assertNotEqual(cp.returncode, 0)
+    def test_installed_but_unimportable_is_reported(self):
+        # Metadata alone is not enough: a distribution whose own dependency is
+        # gone keeps its metadata while `import` fails. Build one on a path the
+        # probe's interpreter sees, and require the check to call it missing.
+        with tempfile.TemporaryDirectory() as site:
+            info = Path(site, "octo_broken_dist-1.0.dist-info")
+            info.mkdir()
+            (info / "METADATA").write_text(
+                "Metadata-Version: 2.1\nName: octo-broken-dist\nVersion: 1.0\n")
+            (info / "top_level.txt").write_text("octo_broken_mod\n")
+            Path(site, "octo_broken_mod.py").write_text(
+                "raise ImportError('a dependency of this package is missing')\n")
+            env = {"PYTHONPATH": site + os.pathsep + os.environ.get("PYTHONPATH", "")}
+            with mock.patch.dict(os.environ, env):
+                r = check("octo-broken-dist>=1\n")
+        self.assertEqual(r.status, brain_doctor.FAIL)
+        self.assertIn("octo-broken-dist", r.message)
 
+    def test_requirement_lines_are_read_by_their_name(self):
+        text = ("# a comment\n"
+                "pyyaml  # a bare name with a comment\n"
+                "PyYAML[libyaml]~=6.0 ; python_version >= '3.8'\n"
+                "-r other.txt\n"
+                "--index-url https://example.invalid/simple\n")
+        r = check(text)
+        self.assertEqual(r.status, brain_doctor.PASS, r.message)
+        self.assertIn("pyyaml, PyYAML", r.message)
 
 if __name__ == "__main__":
     unittest.main()

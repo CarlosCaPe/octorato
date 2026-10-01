@@ -188,6 +188,39 @@ def check_interpreter(fix: bool) -> Result:
                   "install Python 3.8+ and ensure it is on PATH")
 
 
+# The distribution name at the start of a requirement line; what follows it (extras,
+# a version specifier, an environment marker) is not part of the name.
+_REQ_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+
+# requirements.txt names DISTRIBUTIONS, and a distribution's import name can differ
+# from it: `pyyaml` is imported as `yaml`. Probing `import <name>` reported PyYAML
+# missing where it was installed. Probing only the metadata was weaker still: a
+# distribution whose own dependency is gone keeps its metadata, so it read as
+# present while `import` failed. The probe does both: the distribution must be
+# installed, and each top-level module it provides must import. Runs in the target
+# interpreter; argv[1] is the distribution name.
+_DEP_PROBE = """
+import importlib, importlib.metadata as md, re, sys
+name = sys.argv[1]
+dist = md.distribution(name)
+norm = lambda n: re.sub(r"[-_.]+", "_", n).lower()
+mods = set()
+try:
+    for mod, owners in md.packages_distributions().items():
+        if any(norm(o) == norm(dist.metadata["Name"]) for o in owners):
+            mods.add(mod)
+except AttributeError:
+    pass
+if not mods:
+    mods = set((dist.read_text("top_level.txt") or "").split())
+if not mods:
+    mods = {norm(name)}
+for mod in sorted(mods):
+    if not mod.startswith("_") and mod.isidentifier():
+        importlib.import_module(mod)
+"""
+
+
 def check_python_deps(fix: bool) -> Result:
     key = "python-deps"
     req_file = CLAUDE_DIR / "requirements.txt"
@@ -196,24 +229,19 @@ def check_python_deps(fix: bool) -> Result:
                       "create ~/.claude/requirements.txt listing third-party deps")
     required = []
     for line in req_file.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        name = line.split("==")[0].split(">=")[0].split("<")[0].split("[")[0].strip()
-        if name:
-            required.append(name)
-    # requirements.txt names DISTRIBUTIONS, and a distribution's import name can
-    # differ from it (`pyyaml` is imported as `yaml`). Probing `import <name>`
-    # reported PyYAML missing on a machine where it was installed, so the probe
-    # asks the interpreter's package metadata for the distribution instead.
+        line = line.split("#", 1)[0].strip()
+        if not line or line.startswith("-"):
+            continue  # a comment, or an option line (-r, -e, --index-url)
+        m = _REQ_NAME.match(line)
+        if m:
+            required.append(m.group(0))
     missing = []
     for pkg in required:
-        probe = run([PYTHON or "python3", "-c",
-                     f"import importlib.metadata as m; m.version({pkg!r})"])
+        probe = run([PYTHON or "python3", "-c", _DEP_PROBE, pkg])
         if probe.returncode != 0:
             missing.append(pkg)
     if not missing:
-        return Result(key, PASS, f"all declared deps importable ({', '.join(required)})")
+        return Result(key, PASS, f"all declared deps installed and importable ({', '.join(required)})")
     if fix:
         install = run([PYTHON or "python3", "-m", "pip", "install", "--user",
                        "-r", str(req_file)])
