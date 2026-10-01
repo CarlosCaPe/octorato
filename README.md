@@ -93,6 +93,10 @@ Every action follows four steps, and they are checked by hooks, not by good inte
 
 **About cost, plainly.** Per-client cost is an estimate from local session logs at list price, attributed by folder. The budget halt is real code, but it arms itself only once you write a `budgets.yaml`. The mechanism is real; the precision is opt-in, and the docs say which is which.
 
+## What's new in v9, "Done Is a Verdict" (October 2026)
+
+Until v8, the assistant that wrote the code was also the one that said "done". Version 9 takes that call away from it on large tasks. The requirements are written in a fixed sentence pattern a script can check, a second assistant that did not write the code judges each requirement against the code and the tests, and its verdict is recorded as a receipt. A push that marks the work as finished is refused without a fresh receipt. The check runs on your machine before a push; where it can be skipped is listed, with measurements, in [docs/architecture/v9-done-is-a-verdict.md](docs/architecture/v9-done-is-a-verdict.md). Plain summary in the [CHANGELOG](CHANGELOG.md).
+
 ## What's new in v8, "The Kernel" (September 2026)
 
 Until v7, Octorato could tell you what the assistant *should* do. Version 8 adds the part that watches each run: every process (a session, or a helper it spawns) gets a record, an append-only journal you can replay line by line, and a cap on how many calls or minutes it may take. Two runs can no longer write over each other's files, and a skill installed with `octo pkg` is checked (manifest, tree hash, signature) before it lands. On Cursor the kernel records the main session only; the gap is stated in the risks section of [docs/architecture/v8-kernel.md](docs/architecture/v8-kernel.md). Plain summary in the [CHANGELOG](CHANGELOG.md); the full contract in [docs/architecture/v8-kernel.md](docs/architecture/v8-kernel.md).

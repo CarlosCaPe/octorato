@@ -62,5 +62,5 @@ A receipt is anchored the same way a QA receipt is: written by the harness-side 
 |---|---|---|
 | 1. A spec a script can read | T01-T06 | #327 |
 | 2. The verdict skills and the flow | T07-T12 | #333 |
-| 3. The receipt, the push gate and the wiring | T13-T18 | this document's PR |
+| 3. The receipt, the push gate and the wiring | T13-T18 | #335, #337 |
 | 4. Release | T19-T20 | converge on this spec, then the operator cuts v9.0.0 |

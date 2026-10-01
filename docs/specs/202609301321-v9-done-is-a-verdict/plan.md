@@ -49,7 +49,7 @@ Four phases, one pull request each, every one from its own worktree. The order f
 ### Phase 4: release
 
 - [ ] T19 [AC-12, AC-20] docs/specs/202609301321-v9-done-is-a-verdict/feature.md: run the converge pass on this spec with a verifier persona. On `CONVERGED`, commit the status change alone and push it through the new gate.
-- [ ] T20 [AC-18] ROADMAP.md, CHANGELOG.md: describe v9 next to v8. The operator cuts v9.0.0 with the `Octorato-Major:` trailer.
+- [x] T20 [AC-18] ROADMAP.md, CHANGELOG.md: describe v9 next to v8. The operator cuts v9.0.0 with the `Octorato-Major:` trailer.
 
 ## Verification per Phase
 

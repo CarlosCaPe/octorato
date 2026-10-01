@@ -14,6 +14,13 @@ machine-generated growth ledger lives at
 `knowledge/repo-watch/<date>.md` (daily watchlist digests).
 
 ## [Unreleased]
+### Octorato v9: done is a verdict
+On a LARGE task the builder no longer grades its own work. "Done" is a verdict an independent pass computes against the spec, in three layers:
+- **A spec a script can read**: a spec declares `Spec-Format: ears-1`, writes its acceptance criteria in EARS with a Glossary subject, keeps at most 3 open markers, and its plan uses the task grammar `T## [AC-##] <path>: <action>`. `scripts/spec_lint.py` checks all of it with the standard library only, so coverage of criteria by tasks is computed, not judged (rule `FLOW.spec-contract`).
+- **Verdict skills**: `sdd-analyze` checks the plan against the spec before any code is written, and `sdd-converge` judges every criterion against the code and tests afterwards. It appends the missing work to `plan.md`, or leaves the file byte-identical and returns `CONVERGE-VERDICT: CONVERGED`. Both run as verifier subagents on the judgment tier; `sdd-implement` and `sdd-review` no longer tick or pass criteria.
+- **Receipt and gate**: a SubagentStop reflex records the verifier's verdict as a `converge` receipt, and `.githooks/pre-push` runs `spec_lint.py --push-range` on every pushed ref. A spec cannot become `Status: converged` in a push unless the latest anchored receipt for that exact directory says CONVERGED and is newer than the newest code commit on the branch (rule `FLOW.done-is-a-verdict`). The doctor check `spec-contract` re-lints every spec on disk.
+
+Every ears-1 spec lives in `docs/specs/<yyyymmddHHMM>-<feature-name>/` from creation and never moves, because the verdict, the receipt and the gate are keyed on that path. What v9 does not do, stated plainly: the push stanza can be skipped or disarmed from a worktree, receipts are local to one machine, and the verifier persona is chosen by the main loop. Each residual and its bound is measured in `docs/architecture/v9-done-is-a-verdict.md`.
 
 ## [2026-10-01]: v8.5.1
 ### Fixes
