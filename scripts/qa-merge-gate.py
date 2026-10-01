@@ -375,11 +375,15 @@ def _strip_leading(s: str) -> str:
 
 
 def _split_subcmds(cmd: str) -> list[str]:
-    """Split *cmd* on unquoted shell separators (;  &&  ||  |  newline).
+    """Split *cmd* on unquoted shell separators the way bash does:
+    ;  &&  ||  |  |&  &  newline.
 
-    Tracks single-quote and double-quote state so that separators inside
-    quoted strings are treated as literal characters and do NOT cause a split.
-    Returns a list of raw sub-command strings (may be empty after stripping).
+    Quote state is tracked so separators inside quotes stay literal. A
+    backslash escapes the next character outside single quotes, an unquoted
+    `#` at the start of a word opens a comment that runs to the newline (an
+    apostrophe inside it opens no quote), and an `&` that belongs to a
+    redirection (`2>&1`, `&>`, `>&`, `<&`) is not a separator. Returns a list
+    of raw sub-command strings (may be empty after stripping).
     """
     parts: list[str] = []
     buf: list[str] = []
@@ -387,30 +391,49 @@ def _split_subcmds(cmd: str) -> list[str]:
     in_double = False
     i = 0
     n = len(cmd)
+
+    def cut():
+        parts.append("".join(buf))
+        buf.clear()
+
     while i < n:
         ch = cmd[i]
-        if ch == "'" and not in_double:
-            in_single = not in_single
+        if in_single:
+            buf.append(ch)
+            if ch == "'":
+                in_single = False
+            i += 1
+        elif ch == "\\" and i + 1 < n:
+            buf.append(cmd[i:i + 2])
+            i += 2
+        elif in_double:
+            buf.append(ch)
+            if ch == '"':
+                in_double = False
+            i += 1
+        elif ch == "'":
+            in_single = True
             buf.append(ch)
             i += 1
-        elif ch == '"' and not in_single:
-            in_double = not in_double
+        elif ch == '"':
+            in_double = True
             buf.append(ch)
             i += 1
-        elif not in_single and not in_double:
-            # Check for two-char separators first
-            two = cmd[i:i + 2]
-            if two in ("&&", "||"):
-                parts.append("".join(buf))
-                buf = []
-                i += 2
-            elif ch in (";", "|", "\n"):
-                parts.append("".join(buf))
-                buf = []
+        elif ch == "#" and (not buf or buf[-1][-1:].isspace()):
+            while i < n and cmd[i] != "\n":
                 i += 1
-            else:
-                buf.append(ch)
-                i += 1
+        elif cmd[i:i + 2] in ("&&", "||", "|&"):
+            cut()
+            i += 2
+        elif ch == "&" and cmd[i + 1:i + 2] == ">":
+            buf.append(ch)  # &> / &>> redirection
+            i += 1
+        elif ch == "&" and buf and buf[-1][-1:] in (">", "<"):
+            buf.append(ch)  # 2>&1, >&2, <&3
+            i += 1
+        elif ch in (";", "|", "&", "\n"):
+            cut()
+            i += 1
         else:
             buf.append(ch)
             i += 1
@@ -527,10 +550,11 @@ def _argv_after(sub: str, n_words: int) -> list | None:
     """shlex argv of *sub* after its first *n_words* words, or None."""
     import shlex
     try:
-        # comments=True: bash drops an unquoted `# ...`, so a pin written after
-        # one is never sent. shlex also reads a mid-word `#` as a comment, which
-        # can only lose a pin, so it errs toward blocking.
-        argv = shlex.split(sub, comments=True)
+        # No comments=True: *sub* comes from _split_subcmds, which already drops
+        # an unquoted `#` comment at the start of a word, the only place bash
+        # opens one. shlex would also cut at a mid-word `#` (`-t#x`), which bash
+        # keeps, and hide a later pin that gh sends (last pin wins).
+        argv = shlex.split(sub)
     except ValueError:
         return None
     return argv[n_words:] if len(argv) >= n_words else None

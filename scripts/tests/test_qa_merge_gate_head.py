@@ -131,8 +131,18 @@ class GateHead(unittest.TestCase):
                          " && gh api -X PUT repos/o/r/pulls/96/merge"):
                 rc, _ = self.run_gate(pinned + tail)
                 self.assertEqual(rc, 2, tail)
-            rc, _ = self.run_gate(f"{pinned} && echo done")
-            self.assertEqual(rc, 0)
+            # Every separator bash honours, and a comment whose apostrophe opens no quote.
+            for tail in (" & gh pr merge 96", " |& gh pr merge 96",
+                         " # it's done\ngh pr merge 96"):
+                rc, _ = self.run_gate(pinned + tail)
+                self.assertEqual(rc, 2, tail)
+            rc, _ = self.run_gate("echo hi # don't\ngh pr merge 96 --squash")
+            self.assertEqual(rc, 2)
+            # Redirection ampersands are not separators.
+            for ok in (f"{pinned} && echo done", f"{pinned} 2>&1 | tee log",
+                       f"{pinned} &>/dev/null", f"{pinned} # merged it's fine"):
+                rc, err = self.run_gate(ok)
+                self.assertEqual(rc, 0, f"{ok}\n{err}")
 
     def test_a_pin_behind_a_shell_comment_is_no_pin(self):
         with self.lookup({SHA: receipt("PASS")}):
@@ -143,6 +153,18 @@ class GateHead(unittest.TestCase):
                 self.assertIn("pins no commit", err, cmd)
             rc, _ = self.run_gate(f"gh pr merge 96 -t 'fix #12' --match-head-commit {SHA}")
             self.assertEqual(rc, 0)
+
+    def test_a_mid_word_hash_hides_no_later_pin(self):
+        # bash keeps a mid-word `#`; gh sends the LAST pin, which nobody reviewed.
+        with self.lookup({SHA: receipt("PASS")}):
+            for cmd in (f"gh pr merge 96 --match-head-commit {SHA} -t#x --match-head-commit {OTHER}",
+                        f"gh pr merge 96 --match-head-commit {SHA} --subject=#x --match-head-commit {OTHER}",
+                        f"gh api -X PUT repos/o/r/pulls/96/merge -f sha={SHA} -f x=#y -f sha={OTHER}"):
+                rc, _ = self.run_gate(cmd)
+                self.assertEqual(rc, 2, cmd)
+            rc, _ = self.run_gate(f"gh pr merge 96 -t#x --match-head-commit {SHA}")
+            self.assertEqual(rc, 0)
+        self.assertIn(("96", OTHER), self.calls)
 
     # ---- --auto (AC-06) ----
     def test_auto_is_refused_on_an_approved_merge(self):

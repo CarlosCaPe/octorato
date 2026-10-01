@@ -409,6 +409,14 @@ class QaHeadAnchoring(unittest.TestCase):
         self._row(again, "PASS", H1, "u-v5")
         self.assertEqual(rl.qa_latest_for("500", H1)["verdict"], "PASS")
 
+    def test_on_an_equal_timestamp_a_revocation_wins(self):
+        same = "2026-10-01T10:00:00.000Z"
+        nw = self._transcript("agent-t1.jsonl", [self._entry(self._report("NEEDS-WORK", H1), same, "u-t1")])
+        ok = self._transcript("agent-t2.jsonl", [self._entry(self._report("PASS", H1), same, "u-t2")])
+        self._row(nw, "NEEDS-WORK", H1, "u-t1")
+        self._row(ok, "PASS", H1, "u-t2")
+        self.assertEqual(rl.qa_latest_for("500", H1)["verdict"], "NEEDS-WORK")
+
     def test_a_repeated_uuid_must_agree(self):
         same = self._entry(self._report("PASS", H1), "2026-10-01T10:00:00.000Z", "u-dup")
         twin = dict(same, cwd="/elsewhere")

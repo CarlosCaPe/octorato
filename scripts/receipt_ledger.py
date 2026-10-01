@@ -857,6 +857,7 @@ def qa_latest_for(token: str, head: str) -> dict | None:
         key = _ts_key(ts)
         if key is None:
             continue
-        if best_ts is None or key > best_ts:
+        if (best_ts is None or key > best_ts
+                or (key == best_ts and verdict != "PASS")):
             best, best_ts = dict(r, verdict_ts=ts), key
     return best

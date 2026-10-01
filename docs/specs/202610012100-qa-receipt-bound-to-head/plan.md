@@ -33,6 +33,13 @@ One pull request. The ledger learns the commit and the newest-verdict lookup fir
 - [ ] T12 [AC-18] scripts/receipt_ledger.py: in `qa_latest_for`, a re-read FAIL or NEEDS-WORK whose report has no valid head is a candidate for every commit of the pull request.
 - [ ] T13 [AC-18, AC-19] scripts/tests/test_qa_merge_gate_head.py, scripts/tests/test_receipt_ledger.py: chained merges (`||`, `;`, merge then REST merge, merge then `--auto`), a pin after a `#` comment in both forms, a quoted `#` in a subject that still allows; a headless and a short-head NEEDS-WORK newer than a PASS that must revoke, and an older one that must not.
 
+## QA cycle 2
+
+- [ ] T16 [AC-05, AC-19] scripts/qa-merge-gate.py: read the pin argv with plain `shlex.split`, because `_split_subcmds` already drops comments only at a word start as bash does, and shlex's `comments=True` also cut at a mid-word `#` (`-t#x`), hiding a later pin gh sends.
+- [ ] T17 [AC-08] scripts/receipt_ledger.py: on an equal entry timestamp a FAIL or NEEDS-WORK wins over a PASS, so ledger order never decides.
+- [ ] T18 [AC-13] skills/pre-merge-qa-gate/skill.json, CLAUDE.md, docs/architecture/v7-nothing-ships-unverified.md: the manifest description matches the frontmatter; the docs name exactly which separators are split and the substitution residual.
+- [ ] T19 [AC-05, AC-08, AC-19] scripts/tests/test_qa_merge_gate_head.py, scripts/tests/test_receipt_ledger.py: three mid-word `#` spellings that hide a later pin must block, a mid-word `#` before the only pin still allows, and an equal-timestamp NEEDS-WORK beats a PASS.
+
 ## Verification
 
 - `python3 -m unittest discover scripts/tests -p 'test_*.py'` passes on the system Python and in a clean 3.11 venv.
@@ -44,3 +51,8 @@ One pull request. The ledger learns the commit and the newest-verdict lookup fir
 - [ ] T08 [AC-04, AC-05] scripts/qa-merge-gate.py: treat a REST merge that carries `--input` as unpinned even when it also carries `-f sha=<sha>`, because gh then sends field flags as query-string parameters and the body comes from the unread file (`gh api --help`: "any parameters specified via field flags are added to the query string"); measured: `gh api -X PUT repos/o/r/pulls/96/merge --input body.json -f sha=<SHA>` and `... -f sha=<SHA> --input -` both exit 0 against a PASS receipt.
 - [ ] T09 [AC-04, AC-05] scripts/tests/test_qa_merge_gate_head.py: add `--input body.json -f sha=<SHA>` and `-f sha=<SHA> --input -` to the cases that must block with "pins no commit".
 - [ ] T10 [AC-13] skills/pre-merge-qa-gate/SKILL.md: the frontmatter description ("Before arming auto-merge ... Auto-merge is the merge mechanism") and the body at lines 12, 39 and 63 still teach arming auto-merge as the merge mechanism, contradicting step 4 and the gate's `--auto` refusal; restate them as the pinned direct merge.
+
+## Convergence 2
+
+- [ ] T14 [AC-19] scripts/qa-merge-gate.py: split sub-commands the way bash does, so a single `&` and a `|&` end a sub-command and an unquoted `#` comment ends the line before quote tracking (an apostrophe inside a comment must not open a quote); measured exit 0 with `OCTO_MERGE_APPROVE=96` and a PASS for the pin on `gh pr merge 96 --match-head-commit <SHA> & gh pr merge 96`, `... |& gh pr merge 96`, and `gh pr merge 96 --match-head-commit <SHA> # it's done` followed by a newline and `gh pr merge 96`, where bash runs the second, unpinned merge (and `echo hi # don't` newline `gh pr merge 96` is not detected at all).
+- [ ] T15 [AC-19] scripts/tests/test_qa_merge_gate_head.py: add the `&`, `|&` and comment-apostrophe-then-newline chains to the cases that must block, and keep `gh pr merge 96 -t 'fix #12' --match-head-commit <SHA>` allowed.
