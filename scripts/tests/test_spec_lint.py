@@ -125,6 +125,31 @@ class PushGateTest(unittest.TestCase):
         with mock.patch.object(spec_lint, "_before_rev", by_date):
             self.assertEqual(_quiet(spec_lint.selftest, PUSH_FIXTURES), 1)
 
+    def test_push_selftest_goes_red_when_before_is_the_remote_refs_own_tip(self):
+        # Against the ref's tip a spec converged on the default branch reads as this
+        # branch's flip, and code pushed after a pushed flip is never checked.
+        with mock.patch.object(spec_lint, "_before_rev", lambda repo, base, head: base):
+            self.assertEqual(_quiet(spec_lint.selftest, PUSH_FIXTURES), 1)
+
+    def test_push_selftest_goes_red_when_submodule_changes_can_be_ignored(self):
+        def porcelain(repo, before, head):
+            out = subprocess.run(["git", "-C", str(repo), "-c", "core.quotePath=false", "diff",
+                                  "--name-only", "--no-renames", "-z", before, head],
+                                 capture_output=True, check=True).stdout
+            return {q for q in out.decode().split("\0") if q}
+        with mock.patch.object(spec_lint, "_changed_paths", porcelain):
+            self.assertEqual(_quiet(spec_lint.selftest, PUSH_FIXTURES), 1)
+
+    def test_a_spec_does_not_leave_ears_by_moving(self):
+        for name in ("violation_renamed_spec_leaves_ears_with_flip",
+                     "violation_renamed_spec_changes_format_version_with_flip"):
+            found = spec_lint._push_selftest_case(PUSH_FIXTURES / name)
+            self.assertTrue(any("does not leave ears-1 by moving" in f for f in found), found)
+        # the same move with the header kept is an ordinary flip at the new path
+        kept = spec_lint._push_selftest_case(
+            PUSH_FIXTURES / "benign_renamed_spec_flip_with_receipt_for_the_new_path")
+        self.assertEqual(kept, [])
+
     def test_a_new_ref_is_compared_with_the_default_remote_branch(self):
         case = PUSH_FIXTURES / "violation_flip_no_receipt"
         sd = "docs/specs/202609300000-toy"

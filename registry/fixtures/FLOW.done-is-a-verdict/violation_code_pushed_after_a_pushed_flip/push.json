@@ -1,0 +1,11 @@
+{
+  "code_change": true,
+  "remote_master_at_base": true,
+  "code_after_flip": true,
+  "receipts": [
+    {
+      "verdict": "CONVERGED",
+      "ts": "2026-09-30T11:30:00+00:00"
+    }
+  ]
+}

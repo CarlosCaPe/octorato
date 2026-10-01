@@ -58,10 +58,10 @@ Push gate (v9 phase 3, called by .githooks/pre-push once per pushed ref):
       than the newest code commit on the branch (AC-14)
     - refuses a spec that stops being ears-1, and a docs/specs/ directory not
       named <yyyymmddHHMM>-<slug>
-    The pushed head is compared, as one tree diff, with what the remote ref holds
-    (<base>). A base of all zeros means a new ref: the comparison is then with the
-    merge base of the default remote branch. Commit order and merge commits do not
-    matter to it. The receipt lives in this machine's ledger, so the machine that
+    The pushed head is compared, as one tree diff, with its merge base with the
+    default remote branch, so the check covers what the branch changes, on every
+    push of it. Without a default remote branch the comparison falls back to what
+    the remote ref holds (<base>). Commit order and merge commits do not matter. The receipt lives in this machine's ledger, so the machine that
     ran the converge pass is the one that pushes the status change.
 
 Usage:
@@ -367,24 +367,33 @@ def _default_remote_branches(repo: Path) -> list:
 
 
 def _before_rev(repo: Path, base: str, head: str):
-    """The commit the push is compared against: what the remote ref holds now, or on
-    a new ref the merge base with the default remote branch. None when there is
-    neither, and then every file at head counts as changed.
+    """The commit the push is compared against: the merge base of the pushed head
+    and the default remote branch, so the comparison is "what this branch changes".
+    Without a default remote branch it falls back to what the remote ref holds
+    (<base>), and with neither to None: every file at head then counts as changed.
+
+    Why the merge base and not the remote ref's own tip:
+    - a spec that converged on the default branch through its own pull request
+      reaches every other branch by merge or rebase. Against the ref's tip it read
+      as that branch's flip, and the branch could not be pushed again;
+    - a flip already pushed stays in the comparison, so code pushed after it (an
+      ordinary second push, or a force push that slides code under the flip) meets
+      the freshness check again.
 
     It is read from topology, never from the order `git rev-list` prints. That order
     follows commit dates, so a commit dated before its own parent moved the "before"
     onto a state that was already converged, and the flip went unseen (converge
     pass 1 of v9)."""
-    if base != ZERO_SHA:
-        cp = subprocess.run(["git", "-C", str(repo), "cat-file", "-e", f"{base}^{{commit}}"],
-                            capture_output=True)
-        if cp.returncode == 0:
-            return base
     for ref in _default_remote_branches(repo):
         cp = subprocess.run(["git", "-C", str(repo), "merge-base", head, ref],
                             capture_output=True, text=True)
         if cp.returncode == 0 and cp.stdout.strip():
             return cp.stdout.strip()
+    if base != ZERO_SHA:
+        cp = subprocess.run(["git", "-C", str(repo), "cat-file", "-e", f"{base}^{{commit}}"],
+                            capture_output=True)
+        if cp.returncode == 0:
+            return base
     return None
 
 
@@ -393,11 +402,14 @@ def _changed_paths(repo: Path, before, head: str) -> set:
     pushed head. One tree diff, not a walk over the commits: `git diff-tree` on a
     merge commit prints nothing without -m, so a spec edited inside a merge commit
     never reached the check (converge pass 1 of v9). Renames are not paired, so both
-    the old and the new path are listed."""
+    the old and the new path are listed. Submodule changes are always listed:
+    porcelain `git diff` honours `diff.ignoreSubmodules` and a tracked `.gitmodules`
+    with `ignore = all`, which hid a submodule placed over a spec directory."""
     if before is None:
         cmd = ["ls-tree", "-r", "--name-only", "-z", head]
     else:
-        cmd = ["diff", "--name-only", "--no-renames", "-z", before, head]
+        cmd = ["diff", "--name-only", "--no-renames", "--ignore-submodules=none", "-z",
+               before, head]
     cp = subprocess.run(["git", "-C", str(repo), "-c", "core.quotePath=false", *cmd],
                         capture_output=True)
     if cp.returncode != 0:
@@ -514,6 +526,21 @@ def push_findings(repo: Path, base: str, head: str) -> list:
         if _is_lfs_pointer(blob):
             findings.append(f"{p}: a spec file may not be a Git LFS pointer; the gate reads "
                             f"the tree, and the pointer hides the spec behind it")
+    # A spec may not leave ears-1 by moving: the old path then reads as a deleted
+    # spec and the new one as a file that never declared the format, and both are
+    # allowed on their own. Paired by what the push does, not by git's rename
+    # detection, which a large enough edit defeats (converge pass 2 of v9).
+    features = [p for p in spec_paths if Path(p).name == "feature.md"]
+    gone = [p for p in features
+            if before and is_ears(_show(repo, before, p)) and _show(repo, head, p) is None]
+    if gone:
+        for p in features:
+            now = _show(repo, head, p)
+            if now is None or is_ears(now) or (before and _show(repo, before, p) is not None):
+                continue
+            findings.append(f"{p}: this push removes an ears-1 spec ({', '.join(gone)}) and adds "
+                            f"this one without the Spec-Format header; a spec does not leave "
+                            f"ears-1 by moving. Keep the header, or push the removal alone")
     spec_dirs = sorted({str(Path(p).parent) for p in spec_paths
                         if is_canonical_spec_path(p)
                         and not _is_lfs_pointer(_show(repo, head, p))})
@@ -599,6 +626,10 @@ def _push_selftest_case(case: Path) -> list:
         (repo / sd / "plan.md").write_text((case / "plan.md").read_text())
         (repo / "app.py").write_text("x = 1\n")
         base = commit("base", "2026-09-30T10:00:00+00:00")
+        pushed = base  # what the remote ref holds before the push
+        if spec.get("remote_master_at_base"):
+            subprocess.run(["git", "-C", str(repo), "update-ref",
+                            "refs/remotes/origin/master", base], check=True)
         if spec.get("code_change"):
             (repo / "app.py").write_text("x = 2\n")
             commit("code", "2026-09-30T11:00:00+00:00")
@@ -621,6 +652,8 @@ def _push_selftest_case(case: Path) -> list:
         if spec.get("replace_format"):
             text = text.replace("> **Spec-Format:** ears-1", spec["replace_format"])
         (repo / sd / "feature.md").write_text(text)
+        if spec.get("rename_spec_to"):
+            shutil.move(str(repo / sd), str(repo / spec["rename_spec_to"]))
         if spec.get("delete_plan"):
             (repo / sd / "plan.md").unlink()
         if spec.get("delete_spec"):
@@ -683,11 +716,39 @@ def _push_selftest_case(case: Path) -> list:
             child = tree_commit([head], "2026-09-30T10:30:00+00:00")
             head = tree_commit([child, head], "2026-09-30T12:30:00+00:00")
             subprocess.run(["git", "-C", str(repo), "update-ref", "HEAD", head], check=True)
+        if spec.get("code_after_flip"):
+            # the flip went out in an earlier push; this push carries only code
+            pushed = head
+            (repo / "app.py").write_text("x = 9\n")
+            head = commit("code after the flip", "2026-09-30T12:30:00+00:00")
+        if spec.get("converged_on_master"):
+            # the spec converges on the default branch through its own pull request,
+            # and this branch, already pushed, takes it in by merging
+            pushed = head
+            e = dict(env, GIT_AUTHOR_DATE="2026-09-30T12:30:00+00:00",
+                     GIT_COMMITTER_DATE="2026-09-30T12:30:00+00:00")
+
+            def run(*a):
+                subprocess.run(["git", "-C", str(repo), *a], check=True, env=e,
+                               capture_output=True)
+            branch = _git(repo, "symbolic-ref", "--short", "HEAD").strip()
+            run("checkout", "-q", "-b", "default-branch", base)
+            (repo / sd / "feature.md").write_text(
+                feature.replace("> **Status:** approved", "> **Status:** converged"))
+            run("commit", "-qam", "converged on the default branch")
+            run("update-ref", "refs/remotes/origin/master", "HEAD")
+            run("checkout", "-q", branch)
+            run("merge", "-q", "--no-ff", "-m", "take the default branch in", "default-branch")
+            head = _git(repo, "rev-parse", "HEAD").strip()
         if spec.get("gitlink_spec"):
             # a submodule at the spec directory: files on disk once initialised,
             # nothing in the superproject's tree
             e = dict(env, GIT_AUTHOR_DATE="2026-09-30T12:00:00+00:00",
                      GIT_COMMITTER_DATE="2026-09-30T12:00:00+00:00")
+            if spec.get("gitmodules_ignore_all"):
+                (repo / ".gitmodules").write_text(
+                    f'[submodule "spec"]\n\tpath = {sd}\n\turl = ./spec\n\tignore = all\n')
+                subprocess.run(["git", "-C", str(repo), "add", ".gitmodules"], check=True, env=e)
             subprocess.run(["git", "-C", str(repo), "rm", "-r", "-q", "--cached", sd],
                            check=True, env=e, capture_output=True)
             subprocess.run(["git", "-C", str(repo), "update-index", "--add", "--cacheinfo",
@@ -715,7 +776,7 @@ def _push_selftest_case(case: Path) -> list:
                                           "agent_type": r.get("agent_type", "Reality Checker"),
                                           "agent_transcript_path": str(tp),
                                           "session_id": sid, "ts": r["ts"]})
-        return push_findings(repo, base, head)
+        return push_findings(repo, pushed, head)
     finally:
         for k, v in saved.items():
             if v is None:
