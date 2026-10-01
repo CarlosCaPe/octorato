@@ -591,6 +591,9 @@ def classify(
 # ──────────────────────────────────────────────────────────────────────────
 
 
+_VERDICT_LINE = re.compile(r"^\s*(?:\d+[.)]\s*)?((?:KEEP|DROP)\b.*)$", re.I)
+
+
 def llm_qa_gate(candidates: list[Candidate], groq_key: str) -> list[Candidate]:
     """Final pass: ask Groq (openai/gpt-oss-120b) to drop low-value entries."""
     survivors = [c for c in candidates if c.bucket != "SKIP"]
@@ -650,14 +653,22 @@ def llm_qa_gate(candidates: list[Candidate], groq_key: str) -> list[Candidate]:
         return candidates
 
     content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-    verdicts = [line.strip() for line in content.splitlines() if line.strip()]
-    for i, v in enumerate(verdicts[: len(survivors)]):
-        up = v.upper()
-        if up.startswith("DROP"):
+    # Verdicts map to survivors by position, so a preamble line or numbering ("1. KEEP")
+    # would shift or hide them. Keep only KEEP/DROP lines (numbering stripped) and fail
+    # open unless there is exactly one per survivor.
+    verdicts = []
+    for line in content.splitlines():
+        m = _VERDICT_LINE.match(line)
+        if m:
+            verdicts.append(m.group(1).strip())
+    if len(verdicts) != len(survivors):
+        log("WARN", "groq llm gate returned a verdict count that does not match; surfacing heuristic survivors as-is",
+            expected=len(survivors), got=len(verdicts))
+        return candidates
+    for i, v in enumerate(verdicts):
+        if v.upper().startswith("DROP"):
             survivors[i].bucket = "SKIP"
-            survivors[i].llm_verdict = v
-        elif up.startswith("KEEP"):
-            survivors[i].llm_verdict = v
+        survivors[i].llm_verdict = v
     return candidates
 
 

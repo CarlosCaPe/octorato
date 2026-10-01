@@ -35,7 +35,7 @@ python3 ~/.claude/scripts/github_trending_digest.py --dry-run        # don't wri
    - `paid-alternative` — README contains "alternative to <SaaS>" OR description claims OSS replacement for paid (Postman/ElevenLabs/Datadog/Linear/etc.)
    - `SKIP` — none match, OR an existing brain skill covers the same vocab (via `query_connectome.py` similarity > 0.4) and the trending repo isn't 2× more stars
 
-4. **LLM QA gate** — Groq `llama-3.3-70b-versatile` (`GROQ_API_KEY` from `projects/dataqbs_site/.dev.vars`). Reviews the heuristic survivors with a "does this beat what we already have?" prompt. Drops the ones that don't. ~20-30 calls/day. Graceful skip if key missing.
+4. **LLM QA gate** — Groq `openai/gpt-oss-120b` (`GROQ_API_KEY` from `projects/dataqbs_site/.dev.vars`). Reviews the heuristic survivors with a "does this beat what we already have?" prompt. Drops the ones that don't. ~20-30 calls/day. Graceful skip if key missing.
 
 5. **Output writers** (both run, second is optional):
    - **Markdown archive** (always): `~/.claude/knowledge/github-trending/<YYYY-MM-DD>.md`
