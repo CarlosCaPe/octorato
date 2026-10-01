@@ -202,9 +202,14 @@ def check_python_deps(fix: bool) -> Result:
         name = line.split("==")[0].split(">=")[0].split("<")[0].split("[")[0].strip()
         if name:
             required.append(name)
+    # requirements.txt names DISTRIBUTIONS, and a distribution's import name can
+    # differ from it (`pyyaml` is imported as `yaml`). Probing `import <name>`
+    # reported PyYAML missing on a machine where it was installed, so the probe
+    # asks the interpreter's package metadata for the distribution instead.
     missing = []
     for pkg in required:
-        probe = run([PYTHON or "python3", "-c", f"import {pkg}"])
+        probe = run([PYTHON or "python3", "-c",
+                     f"import importlib.metadata as m; m.version({pkg!r})"])
         if probe.returncode != 0:
             missing.append(pkg)
     if not missing:
