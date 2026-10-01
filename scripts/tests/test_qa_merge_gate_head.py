@@ -345,6 +345,44 @@ class GateHead(unittest.TestCase):
             rc, _ = self.run_gate(f"gh pr merge -t 96 97 --match-head-commit {SHA}")
             self.assertEqual(rc, 2)  # 96 is the subject; the merge is 97, not approved
 
+    def test_flags_between_pr_and_merge_and_a_carriage_return(self):
+        with self.lookup({SHA: receipt("PASS")}):
+            for cmd in ("gh pr -t x merge 96 --squash", "gh pr --subject x merge 96",
+                        f"gh pr --match-head-commit={OTHER} merge 96 --squash",
+                        f"gh pr merge 96 -t x\r--match-head-commit={SHA}"):
+                rc, _ = self.run_gate(cmd)
+                self.assertEqual(rc, 2, repr(cmd))
+            for cmd in (f"gh pr -t x merge 96 --match-head-commit {SHA}",
+                        f"gh pr --match-head-commit={SHA} merge 96 --squash"):
+                rc, err = self.run_gate(cmd)
+                self.assertEqual(rc, 0, f"{cmd!r}\n{err}")
+
+    def test_the_approved_number_is_never_ruled_out_of_scope(self):
+        self.protected.stop()
+        try:
+            with mock.patch.object(gate, "_is_protected_target", lambda *a, **k: False), \
+                    self.lookup({SHA: receipt("PASS")}):
+                for cmd in ("GH_REPO=CarlosCaPe/octorato gh pr merge 96 --squash",
+                            "gh pr merge https://github.com/CarlosCaPe/octorato/pull/96"):
+                    rc, err = self.run_gate(cmd)
+                    self.assertEqual(rc, 2, cmd)
+                    self.assertIn("pins no commit", err)
+                rc, _ = self.run_gate("gh pr merge 97 --squash")   # another number: scope applies
+                self.assertEqual(rc, 0)
+        finally:
+            self.protected.start()
+
+    def test_an_approved_api_merge_names_its_pr_in_its_own_endpoint(self):
+        with self.lookup({SHA: receipt("PASS")}):
+            for cmd in (f"gh api -f x=/pulls/96/merge -X PUT repos/o/r/pulls/97/merge -f sha={SHA}",
+                        "gh api graphql -f query='mutation($sha: String, $note: String){ mergePullRequest("
+                        "input:{pullRequestId:\"PR_x\", commitBody:$sha}) { clientMutationId } }'"
+                        f" -f sha={SHA} -f note=/pulls/96/merge"):
+                rc, err = self.run_gate(cmd)
+                self.assertEqual(rc, 2, cmd)
+            rc, err = self.run_gate(f"gh api -X PUT repos/o/r/pulls/96/merge -f sha={SHA}")
+            self.assertEqual(rc, 0, err)
+
     # ---- --auto (AC-06) ----
     def test_auto_is_refused_on_an_approved_merge(self):
         with self.lookup({SHA: receipt("PASS")}):
@@ -457,6 +495,10 @@ class RepoScopeEveryReading(unittest.TestCase):
 
 
 class SeekNeedsBothReadings(unittest.TestCase):
+    def test_the_rule_holds_inside_sh_c(self):
+        inner = "cat >/dev/null <<'EOF'\n'\npython3 ~/.claude/scripts/query_connectome.py memory x\n'\nEOF"
+        self.assertFalse(receipt_ledger.bash_is_seek('bash -c "' + inner + '"'))
+
     def test_a_seek_only_one_reading_finds_is_no_receipt(self):
         # Inside a comment bash never runs it; the previous reader, which knows no
         # comments, would have counted it. A receipt must hold under both readings.
@@ -464,6 +506,34 @@ class SeekNeedsBothReadings(unittest.TestCase):
         self.assertFalse(receipt_ledger.bash_is_seek(one))
         self.assertTrue(receipt_ledger.bash_is_seek(
             "python3 ~/.claude/scripts/query_connectome.py memory x"))
+
+
+_os_spec = importlib.util.spec_from_file_location("outward_send", SCRIPTS / "g__pretool-mcp__outward-send.py")
+outward = importlib.util.module_from_spec(_os_spec)
+_os_spec.loader.exec_module(outward)
+
+
+class WaiverNeedsEveryRecipient(unittest.TestCase):
+    def setUp(self):
+        self.cfg = mock.patch.object(outward, "_autonomous_cfg", lambda: [{"jid": "111@g.us"}])
+        self.cfg.start()
+
+    def tearDown(self):
+        self.cfg.stop()
+
+    def waived(self, command):
+        return outward.autonomous_chat("Bash", {"command": command})
+
+    def test_a_listed_chat_is_waived(self):
+        self.assertTrue(self.waived("bash ~/.claude/scripts/wa-soporte.sh 111@g.us hola"))
+
+    def test_any_unlisted_recipient_under_any_reading_voids_the_waiver(self):
+        S = "~/.claude/scripts/wa-soporte.sh"
+        # Body lines read alone name the listed chat first; the previous reading,
+        # like bash, resyncs on the quote and runs the send to the other chat.
+        cmd = f"cat <<'EOF'\n'\n{S} 111@g.us x\n'\nEOF\n{S} 222@s.whatsapp.net hola"
+        self.assertFalse(self.waived(cmd))
+        self.assertFalse(self.waived(f"{S} 111@g.us a; {S} 222@s.whatsapp.net b"))
 
 
 if __name__ == "__main__":

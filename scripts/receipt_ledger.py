@@ -108,7 +108,7 @@ def _qa_gate_helpers():
     return mod._split_subcmds, mod._strip_leading
 
 
-def _peel(sc: str) -> list:
+def _peel(sc: str, split=None) -> list:
     """Strip interpreter/wrapper prefixes; `bash -c "..."` unquotes and re-splits."""
     import shlex
     out, seen = [], set()
@@ -126,7 +126,7 @@ def _peel(sc: str) -> list:
                 inner = parts[0] if parts else inner
             except ValueError:
                 pass
-            stack.extend(_raw_split(inner))
+            stack.extend(_raw_split(inner, split))
             continue
         prev = None
         while prev != cur:
@@ -136,10 +136,12 @@ def _peel(sc: str) -> list:
     return out
 
 
-def _raw_split(command: str) -> list:
+def _raw_split(command: str, split=None) -> list:
+    """Split the text of an `sh -c` with the SAME reader as the outer command,
+    so a receipt that must hold under both readings holds at every level."""
     try:
-        split, strip = _qa_gate_helpers()
-        return [strip(p) for p in split(command.replace("\\\n", " ")) if p.strip()]
+        union, strip = _qa_gate_helpers()
+        return [strip(p) for p in (split or union)(command) if p.strip()]
     except Exception:
         return [command]
 
@@ -162,7 +164,7 @@ def subcommands(command: str, split=None) -> list:
             stripped = strip(raw)
         except Exception:
             stripped = raw
-        out.extend(_peel(stripped))
+        out.extend(_peel(stripped, split))
         if raw.strip() != stripped.strip():
             out.append(raw.strip())
     return out

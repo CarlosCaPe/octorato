@@ -87,7 +87,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 # gh pr merge <N> [flags]  — anchored at sub-command start
 _PAT_GH_MERGE = re.compile(
-    r"^\s*gh\s+(?:(?:-R|--repo)(?:=\S+|\s+\S+)\s+)*pr\s+(?:(?:-R|--repo)(?:=\S+|\s+\S+)\s+)*merge\b")
+    r"^\s*gh\s+(?:(?:-R|--repo)(?:=\S+|\s+\S+)\s+)*pr\s+(?:-\S+(?:\s+[^\s-]\S*)?\s+)*merge\b")
 
 # git [-C <path>] [-c key=val] push [opts] <remote> <ref>
 # Catches: git push origin main  /  git push origin "main"  /
@@ -300,7 +300,8 @@ def _is_protected_target(cmd: str, matched_sub: str, session_cwd: str):
     # gh pr merge with an explicit -R/--repo slug: compare against the slugs
     # of the protected roots. No parsable slugs → None (gate).
     if _PAT_GH_MERGE.match(sub):
-        m = re.search(r"(?:^|\s)(?:-R|--repo)[=\s]+(\S+)", sub)
+        found = list(re.finditer(r"(?:^|\s)(?:-R|--repo)[=\s]+(\S+)", sub))
+        m = found[-1] if found else None  # gh keeps the last value
         if m:
             slug = _canon_slug(m.group(1))
             known = [s for s in (_remote_slug(r) for r in _protected_roots()) if s]
@@ -636,15 +637,42 @@ def _drop_redirections(sub: str) -> str:
     return re.sub(r"\s*\)+\s*$", "", "".join(out))
 
 
+def _bash_words(text: str) -> list:
+    """shlex POSIX split on bash's blanks only (space, tab, newline): shlex's
+    default also splits on a carriage return, which bash keeps inside a word,
+    so `-t x\r--match-head-commit=<sha>` would read as a pin gh never gets."""
+    import shlex
+    lex = shlex.shlex(text, posix=True)
+    lex.whitespace = " \t\n"
+    lex.whitespace_split = True
+    lex.commenters = ""
+    return list(lex)
+
+
+def _flag_span(argv: list, j: int) -> int:
+    """How many words the gh flag at argv[j] takes: 2 when it is a value flag
+    of `pr merge` without its value attached, else 1."""
+    tok = argv[j]
+    if tok.startswith("--"):
+        return 2 if (tok in _MERGE_LONG_VALUE and "=" not in tok and j + 1 < len(argv)) else 1
+    for k in range(1, len(tok)):
+        if tok[k] not in _MERGE_SHORT_VALUE and tok[k + 1:k + 2] == "=":
+            return 1
+        if tok[k] in _MERGE_SHORT_VALUE:
+            return 2 if (not tok[k + 1:] and j + 1 < len(argv)) else 1
+    return 1
+
+
 def _canonical(sub: str) -> str:
     """The stripped sub-command as gh sees its argv: quotes removed (`'gh'`
-    runs gh) and a leading global `-R/--repo <slug>` moved after the
-    subcommand, so `gh -R o/r pr merge 96` reads as `gh pr merge 96 -R o/r`.
-    A sub-command shlex cannot split is returned unchanged."""
+    runs gh), a leading global `-R/--repo <slug>` and every flag gh accepts
+    between `pr` and `merge` moved after the subcommand, so
+    `gh -R o/r pr -t x merge 96` reads as `gh pr merge 96 -R o/r -t x`.
+    A sub-command that cannot be split is returned unchanged."""
     import shlex
     sub = _drop_redirections(_strip_leading(sub))
     try:
-        argv = shlex.split(sub)
+        argv = _bash_words(sub)
     except ValueError:
         return sub
     if argv and os.path.basename(argv[0]) == "gh":
@@ -660,17 +688,13 @@ def _canonical(sub: str) -> str:
             else:
                 break
         if argv[i:i + 1] == ["pr"]:
-            # `gh pr -R <slug> merge`: the flag may also sit after `pr`.
+            # gh accepts merge's flags between `pr` and `merge` too
+            # (`gh pr -t x merge 96`), each with its value.
             j = i + 1
-            while j < len(argv):
-                if argv[j] in ("-R", "--repo") and j + 1 < len(argv):
-                    moved += argv[j:j + 2]
-                    del argv[j:j + 2]
-                elif argv[j].startswith("--repo=") or (argv[j].startswith("-R") and len(argv[j]) > 2):
-                    moved.append(argv[j])
-                    del argv[j]
-                else:
-                    break
+            while j < len(argv) and argv[j].startswith("-") and argv[j] != "--":
+                span = _flag_span(argv, j)
+                moved += argv[j:j + span]
+                del argv[j:j + span]
         argv = argv[:1] + argv[i:] + moved
     return shlex.join(argv)
 
@@ -686,7 +710,7 @@ def _canonical(sub: str) -> str:
 # commands would block if this ran always). The mention is looked for with
 # quotes and backslashes removed, so `\gh` and `'gh'` count.
 _PUBLISH_MENTION = re.compile(
-    r"\bpr\s+(?:(?:-R|--repo)(?:=|\s+)?\S+\s+)*merge\b|\bpulls/[^\s/]+/merge\b|/merges\b|mergePullRequest"
+    r"\bpr\b(?:\s+-\S+(?:\s+[^\s-]\S*)?)*\s+merge\b|\bpulls/[^\s/]+/merge\b|/merges\b|mergePullRequest"
     r"|\bgit\b[^\n]*\bpush\b[^\n]*\b(?:main|master)\b|/git/refs/heads/(?:main|master)\b",
     re.IGNORECASE,
 )
@@ -773,7 +797,7 @@ def _merge_target(sub: str) -> str:
     gh does. "" when it is not a number or a pull request URL."""
     import shlex
     try:
-        argv = shlex.split(sub)
+        argv = _bash_words(sub)
     except ValueError:
         return ""
     if "merge" not in argv:
@@ -873,7 +897,7 @@ def _argv_after(sub: str, n_words: int) -> list | None:
         # an unquoted `#` comment at the start of a word, the only place bash
         # opens one. shlex would also cut at a mid-word `#` (`-t#x`), which bash
         # keeps, and hide a later pin that gh sends (last pin wins).
-        argv = shlex.split(sub)
+        argv = _bash_words(sub)
     except ValueError:
         return None
     return argv[n_words:] if len(argv) >= n_words else None
@@ -912,6 +936,51 @@ def _merge_pin(sub: str) -> tuple:
         pin = shas.pop()
         return (pin.lower() if _SHA40.fullmatch(pin) else ""), False
     return "", False  # curl and anything else: no readable pin
+
+
+def _api_endpoint(sub: str) -> str:
+    """The endpoint positional of `gh api [flags] <endpoint> [flags]`, read
+    with gh api's value-flag table; "" when there is none."""
+    try:
+        argv = _bash_words(sub)
+    except ValueError:
+        return ""
+    if argv[:2] != ["gh", "api"]:
+        return ""
+    i, rest = 0, argv[2:]
+    while i < len(rest):
+        tok = rest[i]
+        if tok == "--":
+            return rest[i + 1] if i + 1 < len(rest) else ""
+        if tok.startswith("--"):
+            i += 2 if (tok in _API_LONG_VALUE and "=" not in tok) else 1
+            continue
+        if tok.startswith("-") and len(tok) > 1:
+            takes = False
+            for k in range(1, len(tok)):
+                if tok[k] not in _API_SHORT_VALUE and tok[k + 1:k + 2] == "=":
+                    break
+                if tok[k] in _API_SHORT_VALUE:
+                    takes = not tok[k + 1:]
+                    break
+            i += 2 if takes else 1
+            continue
+        return tok
+    return ""
+
+
+_ENDPOINT_PR = re.compile(r"^/?repos/[^/\s]+/[^/\s]+/pulls/(\d+)/merge/?$")
+_ANY_PULLS_MERGE = re.compile(r"/?pulls/\d+/merge\b")
+
+
+def _api_merge_matches(sub: str, pr_id: str) -> bool:
+    """An approved `gh api` merge must be a REST call whose own endpoint is
+    the approved pull request, and the text must name one merge path only: a
+    second `/pulls/N/merge` (in a field, a header, a GraphQL body) is where
+    the approved number was being read from instead of the call gh makes."""
+    canon = _canonical(sub)
+    m = _ENDPOINT_PR.match(_api_endpoint(canon))
+    return bool(m) and m.group(1) == pr_id and len(_ANY_PULLS_MERGE.findall(canon)) == 1
 
 
 def _qa_lookup_with_deadline(pr_id: str, pin: str):
@@ -1093,6 +1162,12 @@ def _decide(cmd: str, matched_sub: str, data: dict) -> int:
         protected = _is_protected_target(cmd, matched_sub, data.get("cwd") or "")
     except Exception:
         protected = None  # unresolvable → keep gating (fail-closed)
+    approved = os.environ.get("OCTO_MERGE_APPROVE", "").strip()
+    if protected is False and pr_id.isdigit() and approved == pr_id:
+        # The operator approved exactly this number: its pin and receipt are
+        # checked whatever the scope reader concludes, since GH_REPO or a URL
+        # can point gh at a protected repo from any directory.
+        protected = None
     if protected is False:
         _nudge(
             "✓ QA gate: publish targets a non-protected repo (repo-scope) — ungated. "
@@ -1120,6 +1195,17 @@ def _decide(cmd: str, matched_sub: str, data: dict) -> int:
                         file=sys.stderr,
                     )
                     _journal_deny(f"merge of PR #{pr_id} blocked: expansion in the merge", data)
+                    return 2
+                if (_canonical(matched_sub).startswith("gh api")
+                        and not _api_merge_matches(matched_sub, pr_id)):
+                    print(
+                        f"✗ QA GATE (fail-closed): PR #{pr_id} is approved, but this API call does not\n"
+                        f"  merge it through its own REST endpoint (a GraphQL merge ignores `sha`, and\n"
+                        f"  a second /pulls/<n>/merge in a field is not the call gh makes). Use:\n"
+                        f"    {_pinned_form(pr_id)}",
+                        file=sys.stderr,
+                    )
+                    _journal_deny(f"merge of PR #{pr_id} blocked: API endpoint is not the approved PR", data)
                     return 2
                 pin, auto = _merge_pin(_canonical(matched_sub))
                 if auto:

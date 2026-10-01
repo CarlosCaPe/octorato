@@ -268,12 +268,55 @@ def _send_recipient(tool_name: str, tool_input) -> str:
     return ""
 
 
+def _bash_recipients(command: str, split=None) -> list:
+    """Every support-bridge recipient in *command* under one reading."""
+    import receipt_ledger
+    out = []
+    for sc in receipt_ledger.subcommands(command, split):
+        toks = receipt_ledger.tokens_of(sc)
+        if toks and toks[0] in _READERS:
+            continue
+        for i, t in enumerate(toks):
+            if any(receipt_ledger._is_script_token(t, n) for n in _SEND_SCRIPTS):
+                rest = toks[i + 1:]
+                j = 0
+                while j < len(rest):
+                    if rest[j] == "--archivo":
+                        j += 2
+                        continue
+                    if not rest[j].startswith("-"):
+                        out.append(rest[j].strip())
+                        break
+                    j += 1
+                else:
+                    out.append("")
+                break
+    return out
+
+
 def autonomous_chat(tool_name: str, tool_input) -> bool:
-    """True when this send targets a chat the private allowlist names."""
-    recipient = _send_recipient(tool_name, tool_input)
-    if not recipient:
+    """True when this send targets a chat the private allowlist names. For a
+    Bash send, EVERY recipient under BOTH of the merge gate's readings must be
+    listed: the waiver lifts a check, so it must not rest on the reading that
+    happens to put an allowlisted chat first."""
+    allowed = {str(c.get("jid", "")).strip() for c in _autonomous_cfg()} - {""}
+    if not allowed or not isinstance(tool_input, dict):
         return False
-    return any(str(c.get("jid", "")).strip() == recipient for c in _autonomous_cfg())
+    if tool_name != "Bash":
+        recipient = _send_recipient(tool_name, tool_input)
+        return bool(recipient) and recipient in allowed
+    import receipt_ledger
+    command = str(tool_input.get("command", ""))
+    try:
+        mod = receipt_ledger._qa_gate_module()
+        readers = (mod._split_bash, mod._split_master)
+    except Exception:
+        readers = (None,)
+    for reader in readers:
+        recips = _bash_recipients(command, reader)
+        if not recips or any(r not in allowed for r in recips):
+            return False
+    return True
 
 
 # send-ok FROM the chat (operator directive 2026-09-24): in a listed chat that
