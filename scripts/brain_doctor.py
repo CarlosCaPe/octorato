@@ -191,33 +191,91 @@ def check_interpreter(fix: bool) -> Result:
 # The distribution name at the start of a requirement line; what follows it (extras,
 # a version specifier, an environment marker) is not part of the name.
 _REQ_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+# A line that is a bare URL or VCS reference names no distribution of its own.
+_REQ_URL = re.compile(r"^(?:[A-Za-z][A-Za-z0-9+.-]*://|git\+|hg\+|svn\+|bzr\+)")
+
+
+def _read_requirements(path: Path, seen: set | None = None) -> list:
+    """(name, marker) for every requirement, following `-r` / `--requirement`
+    includes relative to the including file. Option lines and bare URLs carry no
+    distribution name and are skipped; a cycle of includes is read once."""
+    seen = seen if seen is not None else set()
+    real = path.resolve()
+    if real in seen or not path.is_file():
+        return []
+    seen.add(real)
+    out = []
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.split(" #", 1)[0].split("\t#", 1)[0].strip()
+        if not line or line.startswith("#"):
+            continue
+        inc = re.match(r"^(?:-r|--requirement)(?:\s+|=)(\S+)$", line)
+        if inc:
+            out += _read_requirements(path.parent / inc.group(1), seen)
+            continue
+        if line.startswith("-") or _REQ_URL.match(line):
+            continue
+        spec, _, marker = line.partition(";")
+        m = _REQ_NAME.match(spec.strip())
+        if m:
+            out.append((m.group(0), marker.strip()))
+    return out
+
 
 # requirements.txt names DISTRIBUTIONS, and a distribution's import name can differ
 # from it: `pyyaml` is imported as `yaml`. Probing `import <name>` reported PyYAML
 # missing where it was installed. Probing only the metadata was weaker still: a
 # distribution whose own dependency is gone keeps its metadata, so it read as
 # present while `import` failed. The probe does both: the distribution must be
-# installed, and each top-level module it provides must import. Runs in the target
-# interpreter; argv[1] is the distribution name.
+# installed, and each top-level module it provides must import.
+#
+# Which modules a distribution provides comes from packages_distributions(), then
+# top_level.txt. A listed module that is not on the path at all is skipped (some
+# packages list one they never ship), unless NONE of the listed modules is there,
+# which is a broken install. With no list at all (an apt flat .egg-info, a
+# metapackage) the name is only a guess: imported when such a module exists,
+# otherwise the metadata stands alone, because guessing `pygobject` for `gi` is the
+# same mistake as `pyyaml` for `yaml`.
+#
+# An environment marker is evaluated in the TARGET interpreter, which is the one the
+# marker describes; a requirement it excludes is not checked. Without `packaging`
+# (or pip's vendored copy) the marker cannot be read and the requirement is checked.
+#
+# Runs in the target interpreter: argv[1] is the distribution, argv[2] the marker.
 _DEP_PROBE = """
-import importlib, importlib.metadata as md, re, sys
-name = sys.argv[1]
+import importlib, importlib.metadata as md, importlib.util, re, sys
+name, marker = sys.argv[1], sys.argv[2]
+if marker:
+    try:
+        from packaging.markers import Marker
+    except ImportError:
+        try:
+            from pip._vendor.packaging.markers import Marker
+        except ImportError:
+            Marker = None
+    if Marker is not None and not Marker(marker).evaluate():
+        sys.exit(0)
 dist = md.distribution(name)
 norm = lambda n: re.sub(r"[-_.]+", "_", n).lower()
-mods = set()
+listed = set()
 try:
     for mod, owners in md.packages_distributions().items():
         if any(norm(o) == norm(dist.metadata["Name"]) for o in owners):
-            mods.add(mod)
+            listed.add(mod)
 except AttributeError:
     pass
-if not mods:
-    mods = set((dist.read_text("top_level.txt") or "").split())
-if not mods:
-    mods = {norm(name)}
-for mod in sorted(mods):
-    if not mod.startswith("_") and mod.isidentifier():
-        importlib.import_module(mod)
+if not listed:
+    listed = set((dist.read_text("top_level.txt") or "").split())
+listed = {m for m in listed if not m.startswith("_") and m.isidentifier()}
+if listed:
+    present = [m for m in sorted(listed) if importlib.util.find_spec(m) is not None]
+    if not present:
+        sys.exit("none of the modules " + ", ".join(sorted(listed)) + " is on the path")
+else:
+    guess = norm(name)
+    present = [guess] if guess.isidentifier() and importlib.util.find_spec(guess) else []
+for mod in present:
+    importlib.import_module(mod)
 """
 
 
@@ -227,19 +285,16 @@ def check_python_deps(fix: bool) -> Result:
     if not req_file.exists():
         return Result(key, WARN, "no requirements.txt at brain root",
                       "create ~/.claude/requirements.txt listing third-party deps")
-    required = []
-    for line in req_file.read_text(encoding="utf-8").splitlines():
-        line = line.split("#", 1)[0].strip()
-        if not line or line.startswith("-"):
-            continue  # a comment, or an option line (-r, -e, --index-url)
-        m = _REQ_NAME.match(line)
-        if m:
-            required.append(m.group(0))
+    reqs = _read_requirements(req_file)
+    if not reqs:
+        return Result(key, WARN, "requirements.txt declares no distribution",
+                      "list the brain's third-party imports in ~/.claude/requirements.txt")
+    required = [name for name, _ in reqs]
     missing = []
-    for pkg in required:
-        probe = run([PYTHON or "python3", "-c", _DEP_PROBE, pkg])
+    for name, marker in reqs:
+        probe = run([PYTHON or "python3", "-c", _DEP_PROBE, name, marker])
         if probe.returncode != 0:
-            missing.append(pkg)
+            missing.append(name)
     if not missing:
         return Result(key, PASS, f"all declared deps installed and importable ({', '.join(required)})")
     if fix:
