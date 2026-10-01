@@ -184,16 +184,40 @@ class GateHead(unittest.TestCase):
                 self.assertIn("does not parse", err, cmd)
         self.assertEqual(self.calls, [])
 
-    def test_without_an_approval_quoted_merges_in_data_are_left_alone(self):
+    def test_heredoc_bodies_are_read_line_by_line(self):
+        # A body can reach a shell in more ways than a list names, so every body
+        # line is read as a command (fail-closed, as on master), each with fresh
+        # quote state so a quote in the body hides nothing after it.
         os.environ.pop("OCTO_MERGE_APPROVE", None)
-        for cmd in ("cat > notes.md <<'EOF'\nrun gh pr merge 96 --match-head-commit <sha>\nEOF",
-                    "python3 - <<'PY'\nprint('gh pr merge 96')\nPY",
-                    "git commit -q -F - <<'EOF'\nteach gh pr merge <n> --match-head-commit\nEOF"):
+        for cmd in ("cat <<EOF | bash\ngh pr merge 96\nEOF", "exec bash <<EOF\ngh pr merge 96\nEOF",
+                    "/usr/bin/env bash <<EOF\ngh pr merge 96\nEOF", "source /dev/stdin <<EOF\ngh pr merge 96\nEOF",
+                    "<<EOF bash\ngh pr merge 96\nEOF", "cat <<EOF\nit's\nEOF\ngh pr merge 96",
+                    'cat <<"E O"\nx\nE O\ngh pr merge 96'):
             rc, _ = self.run_gate(cmd)
-            self.assertEqual(rc, 0, cmd)
-        # A heredoc fed to a shell is a script, so its merge is still a merge.
-        rc, _ = self.run_gate("bash <<EOF\ngh pr merge 96 --squash\nEOF")
-        self.assertEqual(rc, 2)
+            self.assertEqual(rc, 2, repr(cmd))
+        # Plain data with no merge in it passes.
+        rc, _ = self.run_gate("cat > notes.md <<'EOF'\nit's fine\nEOF\necho done")
+        self.assertEqual(rc, 0)
+
+    def test_a_shift_in_arithmetic_is_not_a_heredoc(self):
+        os.environ.pop("OCTO_MERGE_APPROVE", None)
+        for cmd in ("echo $((1<<2))\ngh pr merge 96", "(( x = 1 << 2 ))\ngh pr merge 96",
+                    "echo $[1<<2]\ngh pr merge 96"):
+            rc, _ = self.run_gate(cmd)
+            self.assertEqual(rc, 2, repr(cmd))
+
+    def test_ansi_c_and_repo_flag_after_pr_are_read(self):
+        with self.lookup({SHA: receipt("PASS")}):
+            for cmd in ("gh pr $'merge' 96", "gh pr $'\\x6derge' 96",
+                        "gh api -X PUT repos/o/r/pulls/96/$'merge'"):
+                rc, err = self.run_gate(cmd)
+                self.assertEqual(rc, 2, cmd)
+                self.assertIn("does not parse", err, cmd)
+            rc, err = self.run_gate("gh pr -R o/r merge 96")
+            self.assertEqual(rc, 2)
+            self.assertIn("pins no commit", err)
+            rc, err = self.run_gate(f"gh pr -R o/r merge 96 --match-head-commit {SHA}")
+            self.assertEqual(rc, 0, err)
 
     def test_reserved_words_quoted_heads_and_global_repo_flag_are_merges(self):
         with self.lookup({SHA: receipt("PASS")}):
@@ -219,6 +243,30 @@ class GateHead(unittest.TestCase):
                     "case x in x) gh pr merge 5;; esac", "for i in 1; do gh pr merge 5; done"):
             rc, _ = self.run_gate(cmd)
             self.assertEqual(rc, 2, repr(cmd))
+
+    def test_honest_wrappers_and_path_qualified_gh_are_merges(self):
+        with self.lookup({SHA: receipt("PASS")}):
+            for cmd in ("/usr/bin/gh pr merge 96", "./bin/gh pr merge 96", "timeout 5 gh pr merge 96",
+                        "timeout -k 2 30s gh pr merge 96", "exec gh pr merge 96", "nohup gh pr merge 96",
+                        "time -p gh pr merge 96", "nice -n 5 gh pr merge 96", "gh -Rfoo/bar pr merge 96",
+                        "(true)#'\ngh pr merge 96\n#'"):
+                rc, err = self.run_gate(cmd)
+                self.assertEqual(rc, 2, repr(cmd))
+            rc, err = self.run_gate(f"timeout 60 /usr/bin/gh pr merge 96 --match-head-commit {SHA}")
+            self.assertEqual(rc, 0, err)
+
+    def test_an_expansion_in_an_approved_merge_blocks(self):
+        with self.lookup({SHA: receipt("PASS")}):
+            for cmd in (f"gh pr merge 96 --match-head-commit {SHA} {{--match-head-commit={OTHER},}}",
+                        f"gh pr merge 96 --match-head-commit {SHA} -t {{x,--match-head-commit={OTHER}}}",
+                        f"X=--match-head-commit={OTHER}; gh pr merge 96 --match-head-commit {SHA} $X",
+                        f'gh pr merge 96 --match-head-commit {SHA} -t "$X"',
+                        f"gh pr merge 96 --match-head-commit {SHA} *"):
+                rc, err = self.run_gate(cmd)
+                self.assertEqual(rc, 2, cmd)
+            # Quoted text that bash does not expand stays allowed.
+            rc, err = self.run_gate(f"gh pr merge 96 -t '{{a,b}} $y *' --match-head-commit {SHA}")
+            self.assertEqual(rc, 0, err)
 
     # ---- --auto (AC-06) ----
     def test_auto_is_refused_on_an_approved_merge(self):

@@ -86,7 +86,8 @@ for _stream in (sys.stdout, sys.stderr):
 # ---------------------------------------------------------------------------
 
 # gh pr merge <N> [flags]  — anchored at sub-command start
-_PAT_GH_MERGE = re.compile(r"^\s*gh\s+(?:(?:-R|--repo)(?:=\S+|\s+\S+)\s+)*pr\s+merge\b")
+_PAT_GH_MERGE = re.compile(
+    r"^\s*gh\s+(?:(?:-R|--repo)(?:=\S+|\s+\S+)\s+)*pr\s+(?:(?:-R|--repo)(?:=\S+|\s+\S+)\s+)*merge\b")
 
 # git [-C <path>] [-c key=val] push [opts] <remote> <ref>
 # Catches: git push origin main  /  git push origin "main"  /
@@ -345,9 +346,15 @@ _W_ENV = re.compile(r"^env\b\s*")
 _W_ENVARG = re.compile(r"^(?:-\S+|[A-Za-z_]\w*=\S*)\s+")
 _W_COMMAND = re.compile(r"^command\s+")
 # Reserved words and the pipeline negation run the command that follows them.
-_W_RESERVED = re.compile(r"^(?:!|if|then|else|elif|do|while|until|time|coproc)\s+")
+_W_RESERVED = re.compile(r"^(?:!|if|then|else|elif|do|while|until|time(?:\s+-p)?|coproc)\s+")
 # `case WORD in` and a pattern label `pat)` / `(a|b)` precede the command they run.
 _W_CASE = re.compile(r"^case\s+\S+\s+in\s+")
+# Wrappers that run the command after them: exec, nohup, time -p, nice,
+# timeout with its options and duration.
+_W_WRAP = re.compile(
+    r"^(?:exec|nohup|time\s+-p|nice(?:\s+-n\s*-?\d+|\s+-\d+)?"
+    r"|timeout(?:\s+(?:-[sk]\s*\S+|--[\w-]+(?:=\S+)?))*\s+\d[\w.]*)\s+"
+)
 _W_LABEL = re.compile(r"^\(?[^\s()|;&]+(?:\|[^\s()|;&]+)*\)\s*")
 
 
@@ -358,7 +365,7 @@ def _strip_leading(s: str) -> str:
     prev = None
     while s != prev:
         prev = s
-        for pat in (_W_GROUP, _W_ASSIGN, _W_REDIR, _W_COMMAND, _W_RESERVED, _W_CASE, _W_LABEL):
+        for pat in (_W_GROUP, _W_ASSIGN, _W_REDIR, _W_COMMAND, _W_RESERVED, _W_CASE, _W_LABEL, _W_WRAP):
             m = pat.match(s)
             if m:
                 s = s[m.end():]
@@ -375,7 +382,9 @@ def _strip_leading(s: str) -> str:
     return s
 
 
-_SHELL_HEAD = re.compile(r"^(?:\S*/)?(?:ba|z|da|k|fi)?sh$")
+def _in_arithmetic(text: str) -> bool:
+    """True when *text* ends inside an unclosed `$((`/`((` or `$[`."""
+    return text.count("((") > text.count("))") or text.count("$[") > text.count("]")
 
 
 def _split_subcmds(cmd: str) -> list[str]:
@@ -386,10 +395,16 @@ def _split_subcmds(cmd: str) -> list[str]:
     backslash escapes the next character outside single quotes, an unquoted
     `#` at the start of a word opens a comment that runs to the newline (an
     apostrophe inside it opens no quote), and an `&` that belongs to a
-    redirection (`2>&1`, `&>`, `>&`, `<&`) is not a separator. A heredoc
-    body (`<<WORD` / `<<-WORD`, up to the line that is the delimiter) is data,
-    not commands, and is left out. Returns a list of raw sub-command strings
-    (may be empty after stripping).
+    redirection (`2>&1`, `&>`, `>&`, `<&`) is not a separator.
+
+    A heredoc body (`<<WORD` / `<<-WORD`, up to the line that is the
+    delimiter) is split too, ONE LINE AT A TIME with fresh quote state: a body
+    may be fed to a shell in more ways than a list can name (`| bash`, `exec`,
+    `env`, `source /dev/stdin`, `<<EOF bash`), so it is read as commands, and
+    reading each line alone keeps a quote in the body from hiding the lines
+    after it. A `<<` inside arithmetic (`$((`, `((`, `$[`) is a shift, not a
+    heredoc. Returns a list of raw sub-command strings (may be empty after
+    stripping).
     """
     parts: list[str] = []
     buf: list[str] = []
@@ -404,8 +419,9 @@ def _split_subcmds(cmd: str) -> list[str]:
         parts.append("".join(buf))
         buf.clear()
 
-    def skip_bodies(j: int) -> int:
-        """*j* is just past a newline: skip every pending heredoc body."""
+    def split_bodies(j: int) -> int:
+        """*j* is just past a newline: split every pending heredoc body, each
+        line on its own, and resume after its delimiter line."""
         while pending:
             delim, strip_tabs = pending.pop(0)
             while j <= n:
@@ -414,6 +430,7 @@ def _split_subcmds(cmd: str) -> list[str]:
                 j = n + 1 if end == -1 else end + 1
                 if (line.lstrip("\t") if strip_tabs else line) == delim:
                     break
+                parts.extend(_split_subcmds(line))
         return min(j, n)
 
     while i < n:
@@ -451,6 +468,9 @@ def _split_subcmds(cmd: str) -> list[str]:
         elif cmd.startswith("<<<", i):
             buf.append("<<<")  # here-string: its word is an ordinary argument
             i += 3
+        elif cmd.startswith("<<", i) and _in_arithmetic("".join(buf)):
+            buf.append("<<")  # a shift inside $(( )), (( )) or $[ ]
+            i += 2
         elif cmd.startswith("<<", i):
             j = i + 2
             strip_tabs = cmd.startswith("-", j)
@@ -459,16 +479,19 @@ def _split_subcmds(cmd: str) -> list[str]:
                 j += 1
             k = j
             while k < n and cmd[k] not in " \t\n;&|<>()":
-                k += 1
+                if cmd[k] in "'\"":
+                    close = cmd.find(cmd[k], k + 1)
+                    k = n if close == -1 else close + 1
+                elif cmd[k] == "\\":
+                    k += 2
+                else:
+                    k += 1
             word = cmd[j:k]
-            head = _strip_leading("".join(buf)).split()[:1]
-            # A heredoc fed to a shell is a script: its body runs, so it is
-            # split like any other command text instead of being skipped.
-            if word and not (head and _SHELL_HEAD.match(head[0])):
+            if word:
                 pending.append((re.sub(r"['\"\\]", "", word), strip_tabs))
             buf.append(cmd[i:k])
             i = k
-        elif ch == "#" and (not buf or buf[-1].isspace()):
+        elif ch == "#" and (not buf or buf[-1].isspace() or buf[-1] in ("(", ")")):
             while i < n and cmd[i] != "\n":
                 i += 1
         elif cmd[i:i + 2] in ("&&", "||", "|&"):
@@ -482,7 +505,7 @@ def _split_subcmds(cmd: str) -> list[str]:
             i += 1
         elif ch == "\n":
             cut()
-            i = skip_bodies(i + 1)
+            i = split_bodies(i + 1)
         elif ch in (";", "|", "&"):
             cut()
             i += 1
@@ -504,17 +527,30 @@ def _canonical(sub: str) -> str:
         argv = shlex.split(sub)
     except ValueError:
         return sub
-    if argv[:1] == ["gh"]:
+    if argv and os.path.basename(argv[0]) == "gh":
+        argv[0] = "gh"
         moved, i = [], 1
         while i < len(argv):
             if argv[i] in ("-R", "--repo") and i + 1 < len(argv):
                 moved += argv[i:i + 2]
                 i += 2
-            elif argv[i].startswith("--repo="):
+            elif argv[i].startswith("--repo=") or (argv[i].startswith("-R") and len(argv[i]) > 2):
                 moved.append(argv[i])
                 i += 1
             else:
                 break
+        if argv[i:i + 1] == ["pr"]:
+            # `gh pr -R <slug> merge`: the flag may also sit after `pr`.
+            j = i + 1
+            while j < len(argv):
+                if argv[j] in ("-R", "--repo") and j + 1 < len(argv):
+                    moved += argv[j:j + 2]
+                    del argv[j:j + 2]
+                elif argv[j].startswith("--repo=") or (argv[j].startswith("-R") and len(argv[j]) > 2):
+                    moved.append(argv[j])
+                    del argv[j]
+                else:
+                    break
         argv = argv[:1] + argv[i:] + moved
     return shlex.join(argv)
 
@@ -530,7 +566,7 @@ def _canonical(sub: str) -> str:
 # commands would block if this ran always). The mention is looked for with
 # quotes and backslashes removed, so `\gh` and `'gh'` count.
 _PUBLISH_MENTION = re.compile(
-    r"\bpr\s+merge\b|\bpulls/[^\s/]+/merge\b|/merges\b|mergePullRequest"
+    r"\bpr\s+(?:(?:-R|--repo)(?:=|\s+)?\S+\s+)*merge\b|\bpulls/[^\s/]+/merge\b|/merges\b|mergePullRequest"
     r"|\bgit\b[^\n]*\bpush\b[^\n]*\b(?:main|master)\b|/git/refs/heads/(?:main|master)\b",
     re.IGNORECASE,
 )
@@ -545,7 +581,15 @@ def _unparsed_publish(cmd: str) -> bool:
     `eval`)."""
     if not _UNPARSED_SYNTAX.search(cmd):
         return False
-    return bool(_PUBLISH_MENTION.search(re.sub(r"['\"\\]", "", cmd)))
+
+    def ansi_c(m):
+        try:
+            return m.group(1).encode("latin-1", "backslashreplace").decode("unicode_escape")
+        except Exception:
+            return m.group(1)
+
+    decoded = re.sub(r"\$'((?:\\.|[^'\\])*)'", ansi_c, cmd)
+    return bool(_PUBLISH_MENTION.search(re.sub(r"['\"\\]", "", decoded)))
 
 
 def _find_publish_subcmd(cmd: str) -> str | None:
@@ -719,6 +763,31 @@ def _qa_lookup_with_deadline(pr_id: str, pin: str):
     return "ok", box.get("r")
 
 
+def _expands(sub: str) -> bool:
+    """True when bash would expand part of *sub* before gh sees it: a `$` or
+    a backtick outside single quotes, or a brace or glob character outside
+    any quotes. An honest pinned merge has none, and an expansion can carry a
+    different pin than the one this gate reads (`{--match-head-commit=X,}`)."""
+    in_s = in_d = False
+    i = 0
+    while i < len(sub):
+        c = sub[i]
+        if in_s:
+            in_s = c != "'"
+        elif c == "\\":
+            i += 1
+        elif c == "'" and not in_d:
+            in_s = True
+        elif c == '"':
+            in_d = not in_d
+        elif c in "$`":
+            return True
+        elif not in_d and c in "{}*?[":
+            return True
+        i += 1
+    return False
+
+
 def _pinned_form(pr_id: str) -> str:
     return (f"gh pr merge {pr_id} --squash --delete-branch --match-head-commit <40-digit commit>\n"
             f"    (or gh api -X PUT repos/<owner>/<repo>/pulls/{pr_id}/merge -f sha=<40-digit commit>)")
@@ -849,6 +918,16 @@ def _decide(cmd: str, matched_sub: str, data: dict) -> int:
         if os.environ.get("OCTO_QA_OK", "").strip() != "1":
             if pr_id.isdigit():
                 # A pull request: the PASS must be for the commit this merge pins.
+                if _expands(_strip_leading(matched_sub)):
+                    print(
+                        f"✗ QA GATE (fail-closed): PR #{pr_id} is approved, but the merge carries a\n"
+                        f"  shell expansion ($, a backtick, braces or a glob), so the pin gh receives\n"
+                        f"  is not the one this gate can read. Write it literally:\n"
+                        f"    {_pinned_form(pr_id)}",
+                        file=sys.stderr,
+                    )
+                    _journal_deny(f"merge of PR #{pr_id} blocked: expansion in the merge", data)
+                    return 2
                 pin, auto = _merge_pin(_canonical(matched_sub))
                 if auto:
                     print(
