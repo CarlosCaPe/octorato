@@ -402,13 +402,18 @@ def llm_qa_gate(candidates: list, groq_key: str) -> list:
         "either 'KEEP <reason>' or 'DROP <reason>'. Reasons <= 12 words."
     )
     body = json.dumps({
-        "model": "llama-3.3-70b-versatile",
+        # llama-3.3-70b-versatile was decommissioned by Groq (HTTP 404 model_not_found).
+        # gpt-oss shares the completion budget with its reasoning, so the cap is
+        # max_completion_tokens with low reasoning effort; a small cap returns empty
+        # content with HTTP 200.
+        "model": "openai/gpt-oss-120b",
         "messages": [
             {"role": "system", "content": "You are a terse curation gate. Respond exactly N lines, KEEP or DROP per item."},
             {"role": "user", "content": prompt},
         ],
         "temperature": 0,
-        "max_tokens": 1500,
+        "max_completion_tokens": 3000,
+        "reasoning_effort": "low",
     }).encode("utf-8")
     req = urllib.request.Request(
         "https://api.groq.com/openai/v1/chat/completions",
