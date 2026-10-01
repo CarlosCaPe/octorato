@@ -534,13 +534,24 @@ def push_findings(repo: Path, base: str, head: str) -> list:
     gone = [p for p in features
             if before and is_ears(_show(repo, before, p)) and _show(repo, head, p) is None]
     if gone:
-        for p in features:
+        # Every feature.md the push ADDS, anywhere in the tree: one level deeper or
+        # outside the spec homes it is not a spec the gate reads, so a spec moved
+        # there kept its header, said converged and passed (converge pass 3 of v9).
+        for p in sorted(q for q in changed if Path(q).name.casefold() == "feature.md"):
             now = _show(repo, head, p)
-            if now is None or is_ears(now) or (before and _show(repo, before, p) is not None):
+            if now is None or (before and _show(repo, before, p) is not None):
                 continue
-            findings.append(f"{p}: this push removes an ears-1 spec ({', '.join(gone)}) and adds "
-                            f"this one without the Spec-Format header; a spec does not leave "
-                            f"ears-1 by moving. Keep the header, or land the removal in its own pull request")
+            removed = ", ".join(gone)
+            if not is_spec_dir(str(Path(p).parent)):
+                findings.append(f"{p}: this push removes an ears-1 spec ({removed}) and adds this "
+                                f"feature.md outside a spec directory, where the gate does not "
+                                f"read it; a spec does not leave the gate by moving. Keep it in "
+                                f"its directory, or land the removal in its own pull request")
+            elif not is_ears(now):
+                findings.append(f"{p}: this push removes an ears-1 spec ({removed}) and adds "
+                                f"this one without the Spec-Format header; a spec does not leave "
+                                f"ears-1 by moving. Keep the header, or land the removal in its "
+                                f"own pull request")
     spec_dirs = sorted({str(Path(p).parent) for p in spec_paths
                         if is_canonical_spec_path(p)
                         and not _is_lfs_pointer(_show(repo, head, p))})
@@ -655,6 +666,10 @@ def _push_selftest_case(case: Path) -> list:
         (repo / sd / "feature.md").write_text(text)
         if spec.get("rename_spec_to"):
             shutil.move(str(repo / sd), str(repo / spec["rename_spec_to"]))
+        for key, act in (("move_feature_to", shutil.move), ("copy_feature_to", shutil.copy)):
+            if spec.get(key):
+                (repo / spec[key]).parent.mkdir(parents=True, exist_ok=True)
+                act(str(repo / sd / "feature.md"), str(repo / spec[key]))
         if spec.get("delete_plan"):
             (repo / sd / "plan.md").unlink()
         if spec.get("delete_spec"):

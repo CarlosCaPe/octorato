@@ -150,6 +150,19 @@ class PushGateTest(unittest.TestCase):
             PUSH_FIXTURES / "benign_renamed_spec_flip_with_receipt_for_the_new_path")
         self.assertEqual(kept, [])
 
+    def test_a_spec_does_not_leave_the_gate_by_moving(self):
+        # One level deeper or outside the spec homes a feature.md is not a spec the
+        # gate reads; moved there with its header kept, the flip passed unseen.
+        for name in ("violation_spec_moved_one_level_deeper_with_flip",
+                     "violation_spec_moved_one_level_deeper_without_header",
+                     "violation_spec_moved_outside_the_spec_homes_with_flip"):
+            found = spec_lint._push_selftest_case(PUSH_FIXTURES / name)
+            self.assertTrue(any("outside a spec directory" in f for f in found), found)
+        # the same file added while the spec stays where it is: a copy, not a move
+        copied = spec_lint._push_selftest_case(
+            PUSH_FIXTURES / "benign_feature_copied_outside_the_spec_homes_while_the_spec_stays")
+        self.assertEqual(copied, [])
+
     def test_a_new_ref_is_compared_with_the_default_remote_branch(self):
         case = PUSH_FIXTURES / "violation_flip_no_receipt"
         sd = "docs/specs/202609300000-toy"
