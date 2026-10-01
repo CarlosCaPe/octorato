@@ -105,6 +105,21 @@ class ModuleListTest(unittest.TestCase):
             fake_dist(site, "octo-named-mod", {"octo_named_mod": "raise ImportError('x')\n"})
             self.assertEqual(check_on(site, "octo-named-mod\n").status, brain_doctor.FAIL)
 
+    def test_entry_points_name_the_module_when_no_list_exists(self):
+        # Ubuntu's python3-jsonschema: no RECORD, no top_level.txt, a console script
+        # pointing at jsonschema.cli. With the module deleted it must FAIL, not WARN.
+        with tempfile.TemporaryDirectory() as site:
+            fake_dist(site, "octo-ep-only", {})
+            info = next(Path(site).glob("octo_ep_only-*.dist-info"))
+            (info / "entry_points.txt").write_text(
+                "[console_scripts]\nocto-ep = octo_ep_mod.cli:main\n")
+            gone = check_on(site, "octo-ep-only\n")
+            Path(site, "octo_ep_mod").mkdir()
+            Path(site, "octo_ep_mod", "__init__.py").write_text("")
+            here = check_on(site, "octo-ep-only\n")
+        self.assertEqual(gone.status, brain_doctor.FAIL)
+        self.assertEqual(here.status, brain_doctor.PASS, here.message)
+
     def test_a_namespace_leftover_of_a_shipped_package_is_absent(self):
         # The distribution's RECORD ships octo_ns_mod/__init__.py; the file is gone
         # and only the directory is left, which imports as a namespace package.
@@ -169,6 +184,29 @@ class RequirementFileTest(unittest.TestCase):
         r = check(text)
         self.assertEqual(r.status, brain_doctor.PASS, r.message)
         self.assertNotIn("git", r.message.replace("pyyaml", ""))
+
+    def test_hash_pinned_requirements_are_read(self):
+        # The default layout of pip-compile --generate-hashes. An unjoined trailing
+        # backslash read each requirement as a path and dropped the whole file.
+        text = ("pyyaml>=6.0 \\\n"
+                "    --hash=sha256:aaaa \\\n"
+                "    --hash=sha256:bbbb\n"
+                "no-such-distribution-octorato-test==1.0 \\\n"
+                "    --hash=sha256:cccc\n")
+        r = check(text)
+        self.assertEqual(r.status, brain_doctor.FAIL, r.message)
+        self.assertIn("missing deps: no-such-distribution-octorato-test", r.message)
+        self.assertEqual(check("pyyaml>=6.0 \\\n    --hash=sha256:aaaa\n").status, brain_doctor.PASS)
+
+    @unittest.skipUnless(_marker_evaluator(), "no marker evaluator in this interpreter")
+    def test_a_marker_that_fails_to_evaluate_is_named_as_such(self):
+        # Parses, then raises while evaluating (`~=` needs two release segments).
+        # Read as "missing", it blamed an installed package.
+        r = check('pyyaml ; python_full_version ~= "3"\n')
+        if r.status == brain_doctor.PASS:
+            self.skipTest("this packaging release evaluates the comparison without raising")
+        self.assertEqual(r.status, brain_doctor.FAIL)
+        self.assertIn("unreadable environment marker", r.message)
 
     def test_a_file_with_no_distribution_warns(self):
         self.assertEqual(check("--index-url https://example.invalid\n-c constraints.txt\n").status,

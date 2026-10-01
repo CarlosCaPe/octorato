@@ -215,7 +215,11 @@ def _read_requirements(path: Path, seen: set | None = None, broken: list | None 
         return []
     seen.add(real)
     out = []
-    for raw in path.read_text(encoding="utf-8").splitlines():
+    # Join continuation lines first, as pip does: `pip-compile --generate-hashes`
+    # writes `name==1.0 \` and the hashes below it, and an unjoined trailing
+    # backslash read the requirement as a path and dropped it from the check.
+    text = re.sub(r"\\\r?\n", " ", path.read_text(encoding="utf-8"))
+    for raw in text.splitlines():
         line = raw.split(" #", 1)[0].split("\t#", 1)[0].strip()
         if not line or line.startswith("#"):
             continue
@@ -226,7 +230,8 @@ def _read_requirements(path: Path, seen: set | None = None, broken: list | None 
         if line.startswith("-") or _REQ_URL.match(line):
             continue
         spec, _, marker = line.partition(";")
-        spec = spec.strip()
+        spec = spec.split(" --", 1)[0].strip()  # per-requirement options (--hash=...)
+        marker = marker.split(" --", 1)[0].strip()
         name = spec.split("@", 1)[0].strip() if "@" in spec else spec
         if _REQ_PATH.search(name):
             continue
@@ -250,7 +255,8 @@ def _read_requirements(path: Path, seen: set | None = None, broken: list | None 
 # the distribution's own RECORD lists an `__init__.py` for it is a leftover
 # directory, and counts as absent.
 #
-# With no list at all the import name is unknown. Debian strips RECORD and a
+# With no list from those two, the modules its entry points run are used. With no
+# list at all the import name is unknown. Debian strips RECORD and a
 # hatchling build writes no top_level.txt, so Ubuntu's own python3-jsonschema is in
 # this case, and so is any requirement on Python < 3.10 without top_level.txt. The
 # name is tried as a module; when no such module exists the metadata is all there
@@ -279,7 +285,7 @@ if marker:
     if Marker is not None:
         try:
             applies = Marker(marker).evaluate()
-        except InvalidMarker:
+        except Exception:  # InvalidMarker, and evaluation errors such as InvalidVersion
             sys.exit(4)
         if not applies:
             sys.exit(5)
@@ -294,6 +300,10 @@ except AttributeError:
     pass
 if not listed:
     listed = set((dist.read_text("top_level.txt") or "").split())
+if not listed:
+    # Entry points name the modules they run: Ubuntu's python3-jsonschema has no
+    # RECORD and no top_level.txt, but its console script points at jsonschema.cli.
+    listed = {ep.value.split(":")[0].split(".")[0].strip() for ep in dist.entry_points}
 listed = {m for m in listed if not m.startswith("_") and m.isidentifier()}
 # RECORD read raw: from 3.12 Distribution.files drops entries that no longer exist
 # on disk, which is exactly the file a leftover directory has lost.
