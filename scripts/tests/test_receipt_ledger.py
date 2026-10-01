@@ -104,7 +104,10 @@ class ReceiptLedgerAnchors(unittest.TestCase):
         # before `#` opens no comment, and a comment ends at its newline.
         for cmd, tail in (("echo \\ #x; npx wrangler deploy", "npx wrangler deploy"),
                           ("echo a\\\t#x; gh release create v1", "gh release create v1"),
-                          ("echo x # c \\\nnpx wrangler deploy", "npx wrangler deploy")):
+                          ("echo x # c \\\nnpx wrangler deploy", "npx wrangler deploy"),
+                          ("echo a\u00a0#; npx wrangler deploy", "npx wrangler deploy"),
+                          ("echo a\f#; npx wrangler deploy", "npx wrangler deploy"),
+                          ("bash <<'EOF'\nwrangler \\\ndeploy\nEOF", "wrangler  deploy")):
             self.assertIn(tail, [c.strip() for c in rl.subcommands(cmd)], repr(cmd))
 
     # ---- qa anchoring ----

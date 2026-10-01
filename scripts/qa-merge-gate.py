@@ -256,7 +256,11 @@ def _effective_cwd(cmd: str, matched_sub: str, session_cwd: str) -> str:
     Only plain `cd <path>` is parsed; `cd -`, `pushd`, subshells are ignored,
     which leaves cwd unadjusted and can only OVER-gate, never under-gate."""
     cwd = session_cwd or os.getcwd()
-    for raw in _split_subcmds(cmd):
+    # The `cd`s that count are those of the reading the match came from.
+    reading = _split_bash(cmd)
+    if matched_sub not in reading:
+        reading = _split_master(cmd)
+    for raw in reading:
         if raw == matched_sub:
             break
         s = _strip_leading(raw).strip()
@@ -382,12 +386,69 @@ def _strip_leading(s: str) -> str:
     return s
 
 
+def _split_master(cmd: str) -> list[str]:
+    """The reading this gate used before the bash-shaped reader: backslash-
+    newline joined everywhere, quote state continuous across lines, split on
+    ; && || | newline. Kept verbatim so _split_subcmds is never weaker than it
+    was: every divergence the new reader has (a comment it opens, a heredoc
+    body it reads alone) can only ADD sub-commands to this one."""
+    cmd = re.sub(r"\\\n", " ", cmd)
+    parts: list[str] = []
+    buf: list[str] = []
+    in_single = False
+    in_double = False
+    i = 0
+    n = len(cmd)
+    while i < n:
+        ch = cmd[i]
+        if ch == "'" and not in_double:
+            in_single = not in_single
+            buf.append(ch)
+            i += 1
+        elif ch == '"' and not in_single:
+            in_double = not in_double
+            buf.append(ch)
+            i += 1
+        elif not in_single and not in_double:
+            two = cmd[i:i + 2]
+            if two in ("&&", "||"):
+                parts.append("".join(buf))
+                buf = []
+                i += 2
+            elif ch in (";", "|", "\n"):
+                parts.append("".join(buf))
+                buf = []
+                i += 1
+            else:
+                buf.append(ch)
+                i += 1
+        else:
+            buf.append(ch)
+            i += 1
+    parts.append("".join(buf))
+    return parts
+
+
+def _split_subcmds(cmd: str) -> list[str]:
+    """Every sub-command of *cmd* under BOTH readings: the bash-shaped one
+    (_split_bash) first, then any piece only the previous reading
+    (_split_master) produces. A publish either reading finds is decided, so a
+    divergence of the new reader can never make a gate weaker than before."""
+    out = list(_split_bash(cmd))
+    seen = set(out)
+    for part in _split_master(cmd):
+        if part not in seen:
+            seen.add(part)
+            out.append(part)
+    return out
+
+
 def _in_arithmetic(text: str) -> bool:
     """True when *text* ends inside an unclosed `$((`/`((` or `$[`."""
     return text.count("((") > text.count("))") or text.count("$[") > text.count("]")
 
 
-def _split_subcmds(cmd: str) -> list[str]:
+def _split_bash(cmd: str) -> list[str]:
     """Split *cmd* on unquoted shell separators the way bash does:
     ;  &&  ||  |  |&  &  newline.
 
@@ -430,7 +491,7 @@ def _split_subcmds(cmd: str) -> list[str]:
                 j = n + 1 if end == -1 else end + 1
                 if (line.lstrip("\t") if strip_tabs else line) == delim:
                     break
-                parts.extend(_split_subcmds(line))
+                parts.extend(_split_bash(line))
         return min(j, n)
 
     while i < n:
@@ -444,7 +505,7 @@ def _split_subcmds(cmd: str) -> list[str]:
             if cmd[i + 1] != "\n":
                 buf.append(cmd[i:i + 2])  # one element: never read as a blank or `>`
             i += 2  # backslash-newline is a line continuation: both go
-        elif ch == "$" and cmd.startswith("'", i + 1):
+        elif ch == "$" and cmd.startswith("'", i + 1) and not in_double:
             # ANSI-C quoting: a backslash escapes the next character, so `\'`
             # does not close it.
             j = i + 2
@@ -491,7 +552,7 @@ def _split_subcmds(cmd: str) -> list[str]:
                 pending.append((re.sub(r"['\"\\]", "", word), strip_tabs))
             buf.append(cmd[i:k])
             i = k
-        elif ch == "#" and (not buf or buf[-1].isspace() or buf[-1] in ("(", ")")):
+        elif ch == "#" and (not buf or buf[-1] in (" ", "\t", "(", ")")):
             while i < n and cmd[i] != "\n":
                 i += 1
         elif cmd[i:i + 2] in ("&&", "||", "|&"):
@@ -516,13 +577,57 @@ def _split_subcmds(cmd: str) -> list[str]:
     return parts
 
 
+_REDIR_OP = re.compile(r"(?:\d*|&)(?:>>|>\||>&|<&|<>|<<<|>|<)")
+
+
+def _drop_redirections(sub: str) -> str:
+    """*sub* without its unquoted redirections (`>/dev/null`, `2>&1`, `-t >x`):
+    bash removes them before the command sees its argv, so a pin walk over
+    them would hand the wrong word to a value flag. A trailing `)` that
+    closes a subshell goes too."""
+    out, i, n = [], 0, len(sub)
+    in_s = in_d = False
+    word_start = True
+    while i < n:
+        c = sub[i]
+        if in_s:
+            out.append(c); in_s = c != "'"; i += 1; continue
+        if in_d:
+            out.append(c)
+            if c == "\\" and i + 1 < n:
+                out.append(sub[i + 1]); i += 2; continue
+            in_d = c != '"'; i += 1; continue
+        if c == "\\" and i + 1 < n:
+            out.append(sub[i:i + 2]); i += 2; word_start = False; continue
+        m = _REDIR_OP.match(sub, i) if (word_start or c in "<>") else None
+        if m and (m.group(0)[-1] in "<>&|" or m.group(0).endswith(">")):
+            j = m.end()
+            while j < n and sub[j] in " \t":
+                j += 1
+            while j < n and sub[j] not in " \t":  # the target word, quotes kept whole
+                if sub[j] in "'\"":
+                    close = sub.find(sub[j], j + 1)
+                    j = n if close == -1 else close + 1
+                else:
+                    j += 2 if sub[j] == "\\" else 1
+            out.append(" "); i = j; word_start = True; continue
+        if c == "'":
+            in_s = True
+        elif c == '"':
+            in_d = True
+        out.append(c)
+        word_start = c in " \t"
+        i += 1
+    return re.sub(r"\s*\)+\s*$", "", "".join(out))
+
+
 def _canonical(sub: str) -> str:
     """The stripped sub-command as gh sees its argv: quotes removed (`'gh'`
     runs gh) and a leading global `-R/--repo <slug>` moved after the
     subcommand, so `gh -R o/r pr merge 96` reads as `gh pr merge 96 -R o/r`.
     A sub-command shlex cannot split is returned unchanged."""
     import shlex
-    sub = _strip_leading(sub)
+    sub = _drop_redirections(_strip_leading(sub))
     try:
         argv = shlex.split(sub)
     except ValueError:
@@ -765,8 +870,8 @@ def _qa_lookup_with_deadline(pr_id: str, pin: str):
 
 def _expands(sub: str) -> bool:
     """True when bash would expand part of *sub* before gh sees it: a `$` or
-    a backtick outside single quotes, or a brace or glob character outside
-    any quotes. An honest pinned merge has none, and an expansion can carry a
+    a backtick outside single quotes, a glob character outside any quotes, or
+    a brace expansion (`{a,b}`, `{1..3}`); `{owner}` is literal. An honest pinned merge has none, and an expansion can carry a
     different pin than the one this gate reads (`{--match-head-commit=X,}`)."""
     in_s = in_d = False
     i = 0
@@ -782,8 +887,12 @@ def _expands(sub: str) -> bool:
             in_d = not in_d
         elif c in "$`":
             return True
-        elif not in_d and c in "{}*?[":
+        elif not in_d and c in "*?[":
             return True
+        elif not in_d and c == "{":
+            m = re.match(r"\{[^\s{}]*(?:,|\.\.)[^\s{}]*\}", sub[i:])
+            if m:
+                return True
         i += 1
     return False
 
@@ -871,8 +980,23 @@ def main() -> int:
         _journal_deny("publish mentioned inside unparsed shell syntax", data)
         return 2
 
-    # Fast path: no sub-command starts with a publish pattern → exit 0 silently.
     subs = _find_publish_subcmds(cmd)
+    if (os.environ.get("OCTO_MERGE_APPROVE", "").strip()
+            and os.environ.get("OCTO_QA_OK", "").strip() != "1"):
+        for raw in _split_subcmds(cmd):
+            if raw not in subs and _PUBLISH_MENTION.search(re.sub(r"['\"\\]", "", raw)):
+                _PUBLISH_IDENTIFIED = True
+                print(
+                    "✗ QA GATE (fail-closed): an approval is exported, and a part of this command\n"
+                    "  names a merge the gate cannot read as one (a wrapper such as env -u,\n"
+                    "  stdbuf, setsid or xargs in front of gh, or merge text in an argument).\n"
+                    "  Run the merge as its own plain command:\n"
+                    "    gh pr merge <n> --squash --delete-branch --match-head-commit <sha>",
+                    file=sys.stderr,
+                )
+                _journal_deny("publish mentioned in an unidentified sub-command", data)
+                return 2
+    # Fast path: no sub-command starts with a publish pattern → exit 0 silently.
     if not subs:
         return 0
 

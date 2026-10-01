@@ -140,9 +140,13 @@ class GateHead(unittest.TestCase):
             self.assertEqual(rc, 2)
             # Redirection ampersands are not separators.
             for ok in (f"{pinned} && echo done", f"{pinned} 2>&1 | tee log",
-                       f"{pinned} &>/dev/null", f"{pinned} # merged it's fine"):
+                       f"{pinned} &>/dev/null", f"{pinned} # merged"):
                 rc, err = self.run_gate(ok)
                 self.assertEqual(rc, 0, f"{ok}\n{err}")
+            # On the approved path a command the two readings disagree on blocks:
+            # the previous reading keeps the comment and its lone quote.
+            rc, _ = self.run_gate(f"{pinned} # merged it's fine")
+            self.assertEqual(rc, 2)
 
     def test_a_pin_behind_a_shell_comment_is_no_pin(self):
         with self.lookup({SHA: receipt("PASS")}):
@@ -267,6 +271,54 @@ class GateHead(unittest.TestCase):
             # Quoted text that bash does not expand stays allowed.
             rc, err = self.run_gate(f"gh pr merge 96 -t '{{a,b}} $y *' --match-head-commit {SHA}")
             self.assertEqual(rc, 0, err)
+
+    def test_a_redirect_never_shifts_the_pin(self):
+        with self.lookup({SHA: receipt("PASS")}):
+            for cmd in (f"gh pr merge 96 --match-head-commit={OTHER} -t >/dev/null --match-head-commit={SHA}",
+                        f"gh pr merge 96 --match-head-commit={OTHER} -t > /dev/null --match-head-commit={SHA}",
+                        f"gh pr merge 96 --match-head-commit={OTHER} --subject 2>/dev/null --match-head-commit={SHA}"):
+                rc, _ = self.run_gate(cmd)
+                self.assertEqual(rc, 2, cmd)
+            for cmd in (f"gh pr merge 96 --squash --match-head-commit {SHA} 2>&1 | tail -3",
+                        f"gh pr merge 96 --match-head-commit {SHA} >/tmp/log 2>&1",
+                        f"gh pr merge 96 -t '>' --match-head-commit {SHA}",
+                        f"cd . && (gh pr merge 96 --squash --match-head-commit {SHA})",
+                        f"gh api -X PUT repos/{{owner}}/{{repo}}/pulls/96/merge -f sha={SHA}"):
+                rc, err = self.run_gate(cmd)
+                self.assertEqual(rc, 0, f"{cmd}\n{err}")
+
+    def test_an_unidentified_merge_mention_blocks_while_approved(self):
+        with self.lookup({SHA: receipt("PASS")}):
+            for cmd in ("env -u GH_TOKEN gh pr merge 96", "env -C . gh pr merge 96",
+                        "stdbuf -oL gh pr merge 96", "setsid gh pr merge 96",
+                        "builtin command gh pr merge 96",
+                        "gh pr list -q .[].number | xargs -n1 gh pr merge --squash"):
+                rc, err = self.run_gate(cmd)
+                self.assertEqual(rc, 2, cmd)
+        # Without an approval nothing merges through this gate, so text that only
+        # mentions a merge is left alone.
+        os.environ.pop("OCTO_MERGE_APPROVE", None)
+        rc, _ = self.run_gate('echo "next: gh pr merge 96 --match-head-commit <sha>"')
+        self.assertEqual(rc, 0)
+
+    def test_never_weaker_than_the_previous_reading(self):
+        # Each runs `gh pr merge 5` in bash and was blocked before this change.
+        os.environ.pop("OCTO_MERGE_APPROVE", None)
+        for cmd in ('echo "$\'" ; gh pr merge 5 ; echo "\'"',
+                    "echo a\u00a0#; gh pr merge 5", "echo a\v#; gh pr merge 5",
+                    "echo a\x1c#; gh pr merge 5", "echo a\u2028#; gh pr merge 5",
+                    "bash <<'EOF'\ngh pr \\\n  merge 5 --squash\nEOF",
+                    "bash <<'EOF'\necho \"a\nb\"; gh pr merge 5\nEOF",
+                    "cat <<$'E'\nx\nE\necho \"a\nb\"; gh pr merge 5",
+                    "echo ${x/<</y}\necho \"a\nb\"; gh pr merge 5"):
+            rc, _ = self.run_gate(cmd)
+            self.assertEqual(rc, 2, repr(cmd))
+        # The same shapes are an unidentified or unparsed merge on the approved path.
+        os.environ["OCTO_MERGE_APPROVE"] = "5"
+        with self.lookup({SHA: receipt("PASS")}):
+            for cmd in ("echo a\u00a0#; gh pr merge 5", "echo a\v#; gh pr merge 5"):
+                rc, _ = self.run_gate(cmd)
+                self.assertEqual(rc, 2, repr(cmd))
 
     # ---- --auto (AC-06) ----
     def test_auto_is_refused_on_an_approved_merge(self):
