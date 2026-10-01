@@ -1,0 +1,1 @@
+{"tool_name": "Bash", "tool_input": {"command": "/usr/bin/timeout 300 gh pr merge 287 --squash"}, "cwd": "/nonexistent/repo"}

@@ -1,0 +1,1 @@
+{"tool_name": "Bash", "tool_input": {"command": "env -u FOO ls -la"}, "cwd": "/nonexistent/repo"}
