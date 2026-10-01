@@ -66,7 +66,6 @@ class PythonDepsTest(unittest.TestCase):
         text = ("# a comment\n"
                 "pyyaml  # a bare name with a comment\n"
                 "PyYAML[libyaml]~=6.0 ; python_version >= '3.8'\n"
-                "-r other.txt\n"
                 "--index-url https://example.invalid/simple\n")
         r = check(text)
         self.assertEqual(r.status, brain_doctor.PASS, r.message)
@@ -90,12 +89,31 @@ def check_on(site: str, requirements: str):
 
 
 class ModuleListTest(unittest.TestCase):
-    def test_no_module_list_and_no_module_of_that_name_rests_on_metadata(self):
-        # An apt flat .egg-info (PyGObject provides `gi`) or a metapackage: guessing
-        # the module from the name is the pyyaml-for-yaml mistake again.
+    def test_no_module_list_and_no_module_of_that_name_is_unverified(self):
+        # An apt flat .egg-info (PyGObject provides `gi`), a metapackage, or Ubuntu's
+        # python3-jsonschema (no RECORD, no top_level.txt): the import name is
+        # unknown. Calling it missing was the pyyaml-for-yaml mistake; calling it
+        # importable hid a deleted jsonschema module. It is a WARN that says so.
         with tempfile.TemporaryDirectory() as site:
             fake_dist(site, "octo-gi-like", {"octo_gi_mod": ""})
-            self.assertEqual(check_on(site, "octo-gi-like\n").status, brain_doctor.PASS)
+            r = check_on(site, "octo-gi-like\n")
+        self.assertEqual(r.status, brain_doctor.WARN)
+        self.assertIn("unverified: octo-gi-like", r.message)
+
+    def test_no_module_list_but_a_module_of_that_name_is_imported(self):
+        with tempfile.TemporaryDirectory() as site:
+            fake_dist(site, "octo-named-mod", {"octo_named_mod": "raise ImportError('x')\n"})
+            self.assertEqual(check_on(site, "octo-named-mod\n").status, brain_doctor.FAIL)
+
+    def test_a_namespace_leftover_of_a_shipped_package_is_absent(self):
+        # The distribution's RECORD ships octo_ns_mod/__init__.py; the file is gone
+        # and only the directory is left, which imports as a namespace package.
+        with tempfile.TemporaryDirectory() as site:
+            fake_dist(site, "octo-leftover", {}, top_level=["octo_ns_mod"])
+            info = next(Path(site).glob("octo_leftover-*.dist-info"))
+            (info / "RECORD").write_text("octo_ns_mod/__init__.py,,\n")
+            Path(site, "octo_ns_mod").mkdir()
+            self.assertEqual(check_on(site, "octo-leftover\n").status, brain_doctor.FAIL)
 
     def test_a_listed_module_that_is_not_shipped_is_skipped(self):
         with tempfile.TemporaryDirectory() as site:
@@ -153,8 +171,43 @@ class RequirementFileTest(unittest.TestCase):
         self.assertNotIn("git", r.message.replace("pyyaml", ""))
 
     def test_a_file_with_no_distribution_warns(self):
-        self.assertEqual(check("-r nowhere.txt\n--index-url https://example.invalid\n").status,
+        self.assertEqual(check("--index-url https://example.invalid\n-c constraints.txt\n").status,
                          brain_doctor.WARN)
+
+    def test_a_missing_include_fails_and_names_it(self):
+        # pip refuses the file; dropping the include silently took every requirement
+        # it held out of the check.
+        r = check("-r gone.txt\npyyaml>=6.0\n")
+        self.assertEqual(r.status, brain_doctor.FAIL)
+        self.assertIn("gone.txt", r.message)
+
+    def test_an_attached_include_path_is_followed(self):
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, "requirements.txt").write_text("-rmore.txt\n")
+            Path(d, "more.txt").write_text("no-such-distribution-octorato-test\n")
+            with mock.patch.object(brain_doctor, "CLAUDE_DIR", Path(d)):
+                r = brain_doctor.check_python_deps(False)
+        self.assertEqual(r.status, brain_doctor.FAIL)
+
+    def test_local_paths_and_archives_name_no_distribution(self):
+        text = ("local/path\nfoo-1.0-py3-none-any.whl\nsome-pkg-1.0.tar.gz\n"
+                "C:\\x\\p.whl\n./here\npyyaml>=6.0\n")
+        r = check(text)
+        self.assertEqual(r.status, brain_doctor.PASS, r.message)
+
+    @unittest.skipUnless(_marker_evaluator(), "no marker evaluator in this interpreter")
+    def test_an_unreadable_marker_is_named_as_such(self):
+        r = check("pyyaml ; this is not a marker\n")
+        self.assertEqual(r.status, brain_doctor.FAIL)
+        self.assertIn("unreadable environment marker", r.message)
+        self.assertNotIn("missing deps", r.message)
+
+    @unittest.skipUnless(_marker_evaluator(), "no marker evaluator in this interpreter")
+    def test_a_marker_excluded_dep_is_not_listed_as_installed(self):
+        r = check('pyyaml>=6.0\nno-such-distribution-octorato-test ; python_version < "3.0"\n')
+        self.assertEqual(r.status, brain_doctor.PASS, r.message)
+        self.assertIn("not for this interpreter by marker: no-such-distribution-octorato-test", r.message)
+        self.assertIn("importable (pyyaml)", r.message)
 
 if __name__ == "__main__":
     unittest.main()

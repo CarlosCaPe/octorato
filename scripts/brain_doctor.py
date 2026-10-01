@@ -191,17 +191,27 @@ def check_interpreter(fix: bool) -> Result:
 # The distribution name at the start of a requirement line; what follows it (extras,
 # a version specifier, an environment marker) is not part of the name.
 _REQ_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
-# A line that is a bare URL or VCS reference names no distribution of its own.
+# A line that is a bare URL or VCS reference names no distribution of its own, and
+# neither does a local path or an archive file.
 _REQ_URL = re.compile(r"^(?:[A-Za-z][A-Za-z0-9+.-]*://|git\+|hg\+|svn\+|bzr\+)")
+_REQ_PATH = re.compile(r"^[./~]|[/\\]|\.(?:whl|zip|tar\.gz|tgz|tar\.bz2)$|^[A-Za-z]:")
+_REQ_INCLUDE = re.compile(r"^(?:-r|--requirement)(?:\s+|=)?(\S+)$")
 
 
-def _read_requirements(path: Path, seen: set | None = None) -> list:
+def _read_requirements(path: Path, seen: set | None = None, broken: list | None = None) -> list:
     """(name, marker) for every requirement, following `-r` / `--requirement`
-    includes relative to the including file. Option lines and bare URLs carry no
-    distribution name and are skipped; a cycle of includes is read once."""
+    includes relative to the including file. Option lines (`-c` constraints
+    included), bare URLs, local paths and archives carry no distribution name and
+    are skipped; a cycle of includes is read once. An include that does not exist
+    is appended to `broken`: pip refuses such a file, and dropping it silently took
+    every requirement it held out of the check."""
     seen = seen if seen is not None else set()
     real = path.resolve()
-    if real in seen or not path.is_file():
+    if real in seen:
+        return []
+    if not path.is_file():
+        if broken is not None:
+            broken.append(str(path))
         return []
     seen.add(real)
     out = []
@@ -209,14 +219,18 @@ def _read_requirements(path: Path, seen: set | None = None) -> list:
         line = raw.split(" #", 1)[0].split("\t#", 1)[0].strip()
         if not line or line.startswith("#"):
             continue
-        inc = re.match(r"^(?:-r|--requirement)(?:\s+|=)(\S+)$", line)
+        inc = _REQ_INCLUDE.match(line)
         if inc:
-            out += _read_requirements(path.parent / inc.group(1), seen)
+            out += _read_requirements(path.parent / inc.group(1), seen, broken)
             continue
         if line.startswith("-") or _REQ_URL.match(line):
             continue
         spec, _, marker = line.partition(";")
-        m = _REQ_NAME.match(spec.strip())
+        spec = spec.strip()
+        name = spec.split("@", 1)[0].strip() if "@" in spec else spec
+        if _REQ_PATH.search(name):
+            continue
+        m = _REQ_NAME.match(name)
         if m:
             out.append((m.group(0), marker.strip()))
     return out
@@ -230,31 +244,45 @@ def _read_requirements(path: Path, seen: set | None = None) -> list:
 # installed, and each top-level module it provides must import.
 #
 # Which modules a distribution provides comes from packages_distributions(), then
-# top_level.txt. A listed module that is not on the path at all is skipped (some
-# packages list one they never ship), unless NONE of the listed modules is there,
-# which is a broken install. With no list at all (an apt flat .egg-info, a
-# metapackage) the name is only a guess: imported when such a module exists,
-# otherwise the metadata stands alone, because guessing `pygobject` for `gi` is the
-# same mistake as `pyyaml` for `yaml`.
+# top_level.txt. A listed module that is not on the path is skipped (some packages
+# list one they never ship), unless NONE of the listed modules is there, which is a
+# broken install. A listed module that resolves only as a namespace package while
+# the distribution's own RECORD lists an `__init__.py` for it is a leftover
+# directory, and counts as absent.
 #
-# An environment marker is evaluated in the TARGET interpreter, which is the one the
-# marker describes; a requirement it excludes is not checked. Without `packaging`
-# (or pip's vendored copy) the marker cannot be read and the requirement is checked.
+# With no list at all the import name is unknown. Debian strips RECORD and a
+# hatchling build writes no top_level.txt, so Ubuntu's own python3-jsonschema is in
+# this case, and so is any requirement on Python < 3.10 without top_level.txt. The
+# name is tried as a module; when no such module exists the metadata is all there
+# is, and that is reported as UNVERIFIED (a WARN), never as importable, because
+# reading it as a PASS hid a deleted jsonschema module and reading it as missing
+# called PyGObject (module `gi`) absent.
+#
+# An environment marker is evaluated in the TARGET interpreter, the one it
+# describes. Without `packaging` (or pip's vendored copy) the requirement is checked
+# as written.
 #
 # Runs in the target interpreter: argv[1] is the distribution, argv[2] the marker.
+# Exit codes: 0 verified, 3 metadata only, 4 unreadable marker, 5 excluded by its
+# marker, anything else missing or broken.
 _DEP_PROBE = """
 import importlib, importlib.metadata as md, importlib.util, re, sys
 name, marker = sys.argv[1], sys.argv[2]
 if marker:
     try:
-        from packaging.markers import Marker
+        from packaging.markers import Marker, InvalidMarker
     except ImportError:
         try:
-            from pip._vendor.packaging.markers import Marker
+            from pip._vendor.packaging.markers import Marker, InvalidMarker
         except ImportError:
             Marker = None
-    if Marker is not None and not Marker(marker).evaluate():
-        sys.exit(0)
+    if Marker is not None:
+        try:
+            applies = Marker(marker).evaluate()
+        except InvalidMarker:
+            sys.exit(4)
+        if not applies:
+            sys.exit(5)
 dist = md.distribution(name)
 norm = lambda n: re.sub(r"[-_.]+", "_", n).lower()
 listed = set()
@@ -267,15 +295,30 @@ except AttributeError:
 if not listed:
     listed = set((dist.read_text("top_level.txt") or "").split())
 listed = {m for m in listed if not m.startswith("_") and m.isidentifier()}
+# RECORD read raw: from 3.12 Distribution.files drops entries that no longer exist
+# on disk, which is exactly the file a leftover directory has lost.
+shipped = {line.split(",", 1)[0].replace("\\\\", "/")
+           for line in (dist.read_text("RECORD") or "").splitlines() if line}
+
+def real(mod):
+    spec = importlib.util.find_spec(mod)
+    if spec is None:
+        return False
+    if spec.origin in (None, "namespace") and mod + "/__init__.py" in shipped:
+        return False
+    return True
+
 if listed:
-    present = [m for m in sorted(listed) if importlib.util.find_spec(m) is not None]
+    present = [m for m in sorted(listed) if real(m)]
     if not present:
         sys.exit("none of the modules " + ", ".join(sorted(listed)) + " is on the path")
 else:
     guess = norm(name)
-    present = [guess] if guess.isidentifier() and importlib.util.find_spec(guess) else []
+    present = [guess] if guess.isidentifier() and real(guess) else []
 for mod in present:
     importlib.import_module(mod)
+if not present:
+    sys.exit(3)
 """
 
 
@@ -285,18 +328,36 @@ def check_python_deps(fix: bool) -> Result:
     if not req_file.exists():
         return Result(key, WARN, "no requirements.txt at brain root",
                       "create ~/.claude/requirements.txt listing third-party deps")
-    reqs = _read_requirements(req_file)
+    broken_includes: list = []
+    reqs = _read_requirements(req_file, broken=broken_includes)
+    if broken_includes:
+        return Result(key, FAIL,
+                      f"requirements include not found: {', '.join(broken_includes)}; "
+                      f"the requirements it lists are not checked",
+                      "fix the -r path in requirements.txt")
     if not reqs:
         return Result(key, WARN, "requirements.txt declares no distribution",
                       "list the brain's third-party imports in ~/.claude/requirements.txt")
-    required = [name for name, _ in reqs]
-    missing = []
+    verified, unverified, excluded, bad_marker, missing = [], [], [], [], []
     for name, marker in reqs:
-        probe = run([PYTHON or "python3", "-c", _DEP_PROBE, name, marker])
-        if probe.returncode != 0:
-            missing.append(name)
+        rc = run([PYTHON or "python3", "-c", _DEP_PROBE, name, marker]).returncode
+        {0: verified, 3: unverified, 4: bad_marker, 5: excluded}.get(rc, missing).append(name)
+    notes = []
+    if excluded:
+        notes.append(f"not for this interpreter by marker: {', '.join(excluded)}")
+    if unverified:
+        notes.append(f"installed, module name unknown so the import is unverified: "
+                     f"{', '.join(unverified)}")
+    tail = (" | " + "; ".join(notes)) if notes else ""
+    if bad_marker:
+        return Result(key, FAIL,
+                      f"unreadable environment marker for: {', '.join(bad_marker)}{tail}",
+                      "fix the marker after ';' in requirements.txt")
     if not missing:
-        return Result(key, PASS, f"all declared deps installed and importable ({', '.join(required)})")
+        status = WARN if unverified else PASS
+        return Result(key, status,
+                      f"declared deps installed and importable ({', '.join(verified) or 'none'}){tail}",
+                      "an import name the probe cannot find: check it by hand" if unverified else "")
     if fix:
         install = run([PYTHON or "python3", "-m", "pip", "install", "--user",
                        "-r", str(req_file)])
@@ -306,7 +367,7 @@ def check_python_deps(fix: bool) -> Result:
                       f"pip install failed (missing: {', '.join(missing)})",
                       f"run manually: pip install --user -r {req_file}")
     return Result(key, FAIL,
-                  f"missing deps: {', '.join(missing)} — heartbeat/connectome will silently degrade",
+                  f"missing deps: {', '.join(missing)}: heartbeat/connectome will silently degrade{tail}",
                   f"pip install --user -r {req_file}  (or rerun with --fix)")
 
 
