@@ -12,6 +12,7 @@ import importlib.util
 import io
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -88,6 +89,129 @@ class PushGateTest(unittest.TestCase):
             return dict(r, ts=far, verdict_ts=far) if r else r
         with mock.patch.object(receipt_ledger, "converge_latest_for", aged):
             self.assertEqual(_quiet(spec_lint.selftest, PUSH_FIXTURES), 1)
+
+    def test_push_selftest_goes_red_when_only_the_current_lfs_url_matches(self):
+        # A legacy pointer (hawser, git-media) hides a spec the same way.
+        current = "version https://git-lfs.github.com/spec/"
+        with mock.patch.object(spec_lint, "_is_lfs_pointer",
+                               lambda b: bool(b) and b.startswith(current)):
+            self.assertEqual(_quiet(spec_lint.selftest, PUSH_FIXTURES), 1)
+
+    def test_push_selftest_goes_red_when_paths_match_by_lower_not_casefold(self):
+        def by_lower(parts, i):
+            pair = "/".join(parts[i:i + 2]).lower()
+            return pair if pair in spec_lint.SPEC_HOMES else ""
+        with mock.patch.object(spec_lint, "_home_at", by_lower):
+            self.assertEqual(_quiet(spec_lint.selftest, PUSH_FIXTURES), 1)
+
+    def test_push_selftest_goes_red_when_merge_commits_are_not_read(self):
+        # The old reader: one `git diff-tree` per commit, which prints nothing for a merge.
+        def per_commit(repo, before, head):
+            out = set()
+            revs = spec_lint._git(repo, "rev-list", f"{before}..{head}").split()
+            for c in revs:
+                out.update(q for q in spec_lint._git(
+                    repo, "-c", "core.quotePath=false", "diff-tree", "--no-commit-id",
+                    "--name-only", "-r", "-z", "--root", c).split("\0") if q)
+            return out
+        with mock.patch.object(spec_lint, "_changed_paths", per_commit):
+            self.assertEqual(_quiet(spec_lint.selftest, PUSH_FIXTURES), 1)
+
+    def test_push_selftest_goes_red_when_before_follows_commit_dates(self):
+        # The old "before": the first parent of the last commit `git rev-list` prints.
+        def by_date(repo, base, head):
+            last = spec_lint._git(repo, "rev-list", f"{base}..{head}").split()[-1]
+            return spec_lint._git(repo, "rev-list", "--parents", "-n", "1", last).split()[1]
+        with mock.patch.object(spec_lint, "_before_rev", by_date):
+            self.assertEqual(_quiet(spec_lint.selftest, PUSH_FIXTURES), 1)
+
+    def test_push_selftest_goes_red_when_before_is_the_remote_refs_own_tip(self):
+        # Against the ref's tip a spec converged on the default branch reads as this
+        # branch's flip, and code pushed after a pushed flip is never checked.
+        with mock.patch.object(spec_lint, "_before_rev", lambda repo, base, head: base):
+            self.assertEqual(_quiet(spec_lint.selftest, PUSH_FIXTURES), 1)
+
+    def test_push_selftest_goes_red_when_submodule_changes_can_be_ignored(self):
+        def porcelain(repo, before, head):
+            out = subprocess.run(["git", "-C", str(repo), "-c", "core.quotePath=false", "diff",
+                                  "--name-only", "--no-renames", "-z", before, head],
+                                 capture_output=True, check=True).stdout
+            return {q for q in out.decode().split("\0") if q}
+        with mock.patch.object(spec_lint, "_changed_paths", porcelain):
+            self.assertEqual(_quiet(spec_lint.selftest, PUSH_FIXTURES), 1)
+
+    def test_a_spec_does_not_leave_ears_by_moving(self):
+        for name in ("violation_renamed_spec_leaves_ears_with_flip",
+                     "violation_renamed_spec_changes_format_version_with_flip"):
+            found = spec_lint._push_selftest_case(PUSH_FIXTURES / name)
+            self.assertTrue(any("does not leave ears-1 by moving" in f for f in found), found)
+        # the same move with the header kept is an ordinary flip at the new path
+        kept = spec_lint._push_selftest_case(
+            PUSH_FIXTURES / "benign_renamed_spec_flip_with_receipt_for_the_new_path")
+        self.assertEqual(kept, [])
+
+    def test_a_spec_does_not_leave_the_gate_by_moving(self):
+        # One level deeper or outside the spec homes a feature.md is not a spec the
+        # gate reads; moved there with its header kept, the flip passed unseen.
+        for name in ("violation_spec_moved_one_level_deeper_with_flip",
+                     "violation_spec_moved_one_level_deeper_without_header",
+                     "violation_spec_moved_outside_the_spec_homes_with_flip"):
+            found = spec_lint._push_selftest_case(PUSH_FIXTURES / name)
+            self.assertTrue(any("outside a spec directory" in f for f in found), found)
+        # the same file added while the spec stays where it is: a copy, not a move
+        copied = spec_lint._push_selftest_case(
+            PUSH_FIXTURES / "benign_feature_copied_outside_the_spec_homes_while_the_spec_stays")
+        self.assertEqual(copied, [])
+
+    def test_a_new_ref_is_compared_with_the_default_remote_branch(self):
+        case = PUSH_FIXTURES / "violation_flip_no_receipt"
+        sd = "docs/specs/202609300000-toy"
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, home = Path(tmp) / "repo", Path(tmp) / "home"
+            home.mkdir()
+            env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
+                       GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+
+            def git(*a):
+                return subprocess.run(["git", "-C", str(repo), *a], check=True, env=env,
+                                      capture_output=True, text=True).stdout.strip()
+            subprocess.run(["git", "init", "-q", str(repo)], check=True)
+            (repo / sd).mkdir(parents=True)
+            feature = (case / "feature.md").read_text()
+            (repo / sd / "feature.md").write_text(feature)
+            (repo / sd / "plan.md").write_text((case / "plan.md").read_text())
+            git("add", "-A"); git("commit", "-qm", "base")
+            base = git("rev-parse", "HEAD")
+            (repo / sd / "feature.md").write_text(
+                feature.replace("> **Status:** approved", "> **Status:** converged"))
+            git("add", "-A"); git("commit", "-qm", "flip")
+            head = git("rev-parse", "HEAD")
+            with mock.patch.dict(os.environ, {"HOME": str(home), "USERPROFILE": str(home)}):
+                # no remote-tracking ref at all: every file is new, the flip is seen
+                self.assertTrue(spec_lint.push_findings(repo, spec_lint.ZERO_SHA, head))
+                git("update-ref", "refs/remotes/origin/master", base)
+                found = spec_lint.push_findings(repo, spec_lint.ZERO_SHA, head)
+                self.assertTrue(any("holds no converge receipt" in f for f in found), found)
+                # the remote already holds this head: nothing to check
+                git("update-ref", "refs/remotes/origin/master", head)
+                self.assertEqual(spec_lint.push_findings(repo, spec_lint.ZERO_SHA, head), [])
+
+    def test_a_miscased_spec_blocks_while_present_and_may_be_deleted(self):
+        present = spec_lint._push_selftest_case(PUSH_FIXTURES / "violation_spec_path_miscased")
+        self.assertTrue(any("in lower case" in f for f in present), present)
+        gone = spec_lint._push_selftest_case(PUSH_FIXTURES / "benign_miscased_spec_deleted_in_push")
+        self.assertEqual(gone, [])
+
+    def test_lfs_pointer_shapes(self):
+        oid = "oid sha256:" + "0" * 64 + "\nsize 12\n"
+        for url in ("https://git-lfs.github.com/spec/v1", "https://hawser.github.com/spec/v1",
+                    "http://git-media.io/v/2"):
+            self.assertTrue(spec_lint._is_lfs_pointer(f"version {url}\n{oid}"), url)
+        self.assertTrue(spec_lint._is_lfs_pointer(
+            "version https://git-lfs.github.com/spec/v1\next-0-foo sha256:" + "1" * 64 + "\n" + oid))
+        for not_pointer in (None, "", "# Feature: x\n\n> **Status:** draft\n",
+                            "version 2 of this spec\n\noid sha256: see below\n"):
+            self.assertFalse(spec_lint._is_lfs_pointer(not_pointer), not_pointer)
 
 
 class DoctorCheckTest(unittest.TestCase):
@@ -177,6 +301,20 @@ class HeaderTest(unittest.TestCase):
         for p in ("Docs/specs/202609300000-a/feature.md", "docs/specs/202609300000-a/Feature.md",
                   "docs/SPECS-ARCHIVE/old/plan.md"):
             self.assertFalse(spec_lint.is_canonical_spec_path(p), p)
+
+    def test_spec_paths_match_by_casefold(self):
+        # `ſ` (long s) folds to `s`; lower() leaves it, so lower() missed this spelling.
+        long_s = "doc\u017f/specs/202609300000-a"
+        self.assertTrue(spec_lint.is_spec_dir(long_s))
+        self.assertFalse(spec_lint.is_canonical_spec_path(long_s + "/feature.md"))
+        self.assertTrue(spec_lint._on_spec_path("doc\u017f"))
+
+    def test_only_ears_1_declares_the_format(self):
+        # AC-16: a file that names another version does not declare ears-1 and is skipped.
+        for version in ("ears-2", "ears-10", "ears-1a"):
+            self.assertFalse(spec_lint.is_ears(f"# F\n\n> **Spec-Format:** {version}\n"), version)
+        self.assertTrue(spec_lint.is_ears("# F\n\n> **Spec-Format:** ears-1\n"))
+        self.assertTrue(spec_lint.is_ears("# F\n\n**Spec-Format**: EARS-1\n"))
 
     def test_prose_mention_is_not_a_header(self):
         self.assertFalse(spec_lint.is_ears("# F\n\nThis spec does not use Spec-Format: ears-1 yet.\n"))

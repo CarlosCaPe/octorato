@@ -62,7 +62,8 @@ refinement request itself. Work through them one by one:
    as a marker.
 
 ### 4. Show a Diff Summary Before Editing
-Before modifying the file, present a brief plan of changes:
+The answers of step 3 are already in the file. For every other change the refinement
+asks for, present a brief plan before modifying the file:
 
 ```
 ## Proposed Changes to feature.md

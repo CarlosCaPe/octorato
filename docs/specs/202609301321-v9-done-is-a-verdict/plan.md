@@ -48,8 +48,8 @@ Four phases, one pull request each, every one from its own worktree. The order f
 
 ### Phase 4: release
 
-- [ ] T19 [AC-12, AC-20] docs/specs/202609301321-v9-done-is-a-verdict/feature.md: run the converge pass on this spec with a verifier persona. On `CONVERGED`, commit the status change alone and push it through the new gate.
-- [ ] T20 [AC-18] ROADMAP.md, CHANGELOG.md: describe v9 next to v8. The operator cuts v9.0.0 with the `Octorato-Major:` trailer.
+- [x] T19 [AC-12, AC-20] docs/specs/202609301321-v9-done-is-a-verdict/feature.md: run the converge pass on this spec with a verifier persona. On `CONVERGED`, commit the status change alone and push it through the new gate.
+- [x] T20 [AC-18] ROADMAP.md, CHANGELOG.md: describe v9 next to v8. The operator cuts v9.0.0 with the `Octorato-Major:` trailer.
 
 ## Verification per Phase
 
@@ -74,3 +74,18 @@ Phase 3 adds a live test of the gate: a push that flips the status with no recei
 ## Estimated Complexity
 
 High. About 30 files over four pull requests, with two gate surfaces and one new CLI.
+
+## Convergence 1
+
+- [x] T21 [AC-14, AC-15] scripts/spec_lint.py, registry/fixtures/FLOW.done-is-a-verdict/: a spec change made in a merge commit never reaches the push check, because `_changed_paths` runs `git diff-tree` without `-m` or `-c` (spec_lint.py:371-372) and that prints nothing for a merge; measured in a scratch repository, `--push-range` exits 0 for a merge commit that flips Status to converged with no receipt and for a merge commit that breaks an EARS criterion, while the same edit in an ordinary commit exits 1, so read merge commits too and add one violation fixture per case.
+- [x] T22 [AC-14] scripts/spec_lint.py, registry/fixtures/FLOW.done-is-a-verdict/: the state a flip is compared against is the first parent of the last commit `git rev-list` prints (spec_lint.py:455-457), and that list is ordered by commit date, not by topology; measured with base, then F (ordinary commit, flips to converged, dated 12:00), then K (child of F, committer date 11:00), then a merge M with parents K and F, where `--push-range base M` exits 0 with no receipt because the before state is read from F, while `--push-range base K` exits 1, so take the before state from the pushed base (the merge base on a new branch) and add a violation fixture.
+- [x] T23 [AC-16] scripts/spec_lint.py, registry/fixtures/FLOW.spec-contract/: a `feature.md` whose header reads `> **Spec-Format:** ears-2` does not declare ears-1 and is not skipped, since `_LOOSE_FORMAT` opts in any `ears-<digits>` (spec_lint.py:108-109, 181-184) and the lint exits 1 with "Spec-Format header must be exactly"; no fixture pins either behaviour, so skip that file, or keep the refusal, pin it with a fixture and have AC-16 reworded through /sdd-refine.
+- [x] T24 [AC-04, AC-07, AC-08, AC-09, AC-10, AC-11, AC-12, AC-18, AC-19, AC-22] scripts/tests/test_sdd_skill_contract.py: the skill text read on 2026-10-01 matches each of these criteria, but nothing pins it, since no test, fixture, registry proof or doctor check reads skills/sdd-plan, sdd-analyze, sdd-implement, sdd-review, sdd-converge, sdd-refine, sdd-archive, sdd-yolo or 4d-spec (the only test that names a skill is the pre-push echo string in test_spec_lint.py:112), so a skill edited back to ticking criteria, to writing a plan over open markers or to moving a spec passes every check; add a test that asserts the contract lines of each skill and fails when one is removed.
+
+## Convergence 2
+
+- [x] T25 [AC-14] scripts/spec_lint.py, registry/fixtures/FLOW.done-is-a-verdict/: a spec that leaves ears-1 while its directory is renamed slips past the push check, because renames are not paired (`--no-renames`, spec_lint.py:400), the old path reads as a deleted spec (spec_lint.py:524-525) and the new path as a file that was never ears-1 (spec_lint.py:526-530); measured in a scratch repository, `git mv` of the spec directory plus dropping the Spec-Format header (or changing it to ears-2) plus the flip to `Status: converged` makes `--push-range` exit 0 with an empty ledger, and the same push with a broken criterion in place of the flip also exits 0, while each of those edits without the rename exits 1 with "stops being ears-1" and the rename with the header kept exits 1 with "holds no converge receipt", so refuse a `feature.md` that was ears-1 in the before state and is not at the pushed head whatever its path, and add a violation fixture for the renamed flip.
+
+## Convergence 3
+
+- [x] T26 [AC-14] scripts/spec_lint.py, registry/fixtures/FLOW.done-is-a-verdict/: the pairing T25 added reads only the `feature.md` files that sit in a spec directory (`features` is built from `spec_paths`, spec_lint.py:514-515, 533), so a spec moved in one push to a path the gate does not read flips with no receipt; measured in a scratch repository with an empty ledger, `git mv` of `docs/specs/<name>/feature.md` to `docs/specs/<name>/v2/feature.md`, to `docs/specs/<other>/v2/feature.md` or to `notes/toy/feature.md` plus the flip to `Status: converged` makes `--push-range` exit 0, with the Spec-Format header kept and with it dropped, while the same move to `docs/specs/<other>/` or `docs/specs-archive/<name>/` exits 1, so when a push removes an ears-1 spec, refuse every `feature.md` it adds outside a spec directory, and add a violation fixture for the nested move with the header kept and one with it dropped.
