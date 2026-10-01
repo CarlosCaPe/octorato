@@ -28,7 +28,9 @@ This is **[RFC #0002](https://github.com/CarlosCaPe/octorato/discussions)** — 
 
 v8 (the kernel) shipped in September 2026 and is specified in [docs/architecture/v8-kernel.md](docs/architecture/v8-kernel.md): PROCESS, ISOLATION, JOURNAL and PACKAGE as a contract enforced by hooks, scripts and git, no daemon. It covers M1, the non-money half of M2, the replay half of M3 and the package half of M5; M4 stays future.
 
-v9 (done is a verdict) is the next major, specified in [docs/architecture/v9-done-is-a-verdict.md](docs/architecture/v9-done-is-a-verdict.md). It adds no milestone to the table below; it hardens the governance layer the table rests on. On a large task the agent that wrote the code no longer decides that the work is finished: an independent pass judges every acceptance criterion against the code and tests, and a spec reaches `converged` in a push only with that pass's receipt. What it cannot enforce is listed in the same document, with the measurement for each.
+v9 (done is a verdict) shipped in October 2026 and is specified in [docs/architecture/v9-done-is-a-verdict.md](docs/architecture/v9-done-is-a-verdict.md). It adds no milestone to the table below; it hardens the governance layer the table rests on. On a large task the agent that wrote the code no longer decides that the work is finished: an independent pass judges every acceptance criterion against the code and tests, and in this repository a spec reaches `converged` in a push only with that pass's receipt. What it cannot enforce is listed in the same document, with the measurement for each.
+
+The table has not been re-graded since v8 shipped: the cells v8 covers (M1, parts of M2, M3 and M5) still show the status they had before it.
 
 | Milestone | Theme | Maturity | Gaps |
 |-----------|-------|----------|------|

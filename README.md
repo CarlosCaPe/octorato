@@ -95,7 +95,7 @@ Every action follows four steps, and they are checked by hooks, not by good inte
 
 ## What's new in v9, "Done Is a Verdict" (October 2026)
 
-Until v8, the assistant that wrote the code was also the one that said "done". Version 9 takes that call away from it on large tasks. The requirements are written in a fixed sentence pattern a script can check, a second assistant that did not write the code judges each requirement against the code and the tests, and its verdict is recorded as a receipt. A push that marks the work as finished is refused without a fresh receipt. The check runs on your machine before a push; where it can be skipped is listed, with measurements, in [docs/architecture/v9-done-is-a-verdict.md](docs/architecture/v9-done-is-a-verdict.md). Plain summary in the [CHANGELOG](CHANGELOG.md).
+Until v8, the assistant that wrote the code was also the one that said "done". Version 9 takes that call away from it on large tasks. The requirements are written in a fixed sentence pattern a script can check, a second assistant that did not write the code judges each requirement against the code and the tests, and its verdict is recorded as a receipt. A push of this repository that marks the work as finished is refused without a fresh receipt. The check runs on your machine before a push and is not installed in your other projects; where it can be skipped is listed, with measurements, in [docs/architecture/v9-done-is-a-verdict.md](docs/architecture/v9-done-is-a-verdict.md). Plain summary in the [CHANGELOG](CHANGELOG.md).
 
 ## What's new in v8, "The Kernel" (September 2026)
 
