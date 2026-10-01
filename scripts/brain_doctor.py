@@ -217,9 +217,21 @@ def _read_requirements(path: Path, seen: set | None = None, broken: list | None 
     out = []
     # Join continuation lines first, as pip does: `pip-compile --generate-hashes`
     # writes `name==1.0 \` and the hashes below it, and an unjoined trailing
-    # backslash read the requirement as a path and dropped it from the check.
-    text = re.sub(r"\\\r?\n", " ", path.read_text(encoding="utf-8"))
-    for raw in text.splitlines():
+    # backslash read the requirement as a path and dropped it from the check. Like
+    # pip, a comment line is never joined to the next one.
+    lines, buf = [], ""
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        if not buf and raw.lstrip().startswith("#"):
+            lines.append(raw)
+            continue
+        if raw.endswith("\\"):
+            buf += raw[:-1] + " "
+            continue
+        lines.append(buf + raw)
+        buf = ""
+    if buf:
+        lines.append(buf)
+    for raw in lines:
         line = raw.split(" #", 1)[0].split("\t#", 1)[0].strip()
         if not line or line.startswith("#"):
             continue
@@ -303,7 +315,11 @@ if not listed:
 if not listed:
     # Entry points name the modules they run: Ubuntu's python3-jsonschema has no
     # RECORD and no top_level.txt, but its console script points at jsonschema.cli.
-    listed = {ep.value.split(":")[0].split(".")[0].strip() for ep in dist.entry_points}
+    # Only a module named after the distribution counts: a plugin's entry point
+    # names its HOST, and trusting that blamed the plugin for a missing host, or
+    # passed a plugin whose own module was gone.
+    named = {ep.value.split(":")[0].split(".")[0].strip() for ep in dist.entry_points}
+    listed = {m for m in named if norm(m) == norm(name)}
 listed = {m for m in listed if not m.startswith("_") and m.isidentifier()}
 # RECORD read raw: from 3.12 Distribution.files drops entries that no longer exist
 # on disk, which is exactly the file a leftover directory has lost.

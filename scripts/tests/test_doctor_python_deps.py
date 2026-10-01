@@ -109,16 +109,26 @@ class ModuleListTest(unittest.TestCase):
         # Ubuntu's python3-jsonschema: no RECORD, no top_level.txt, a console script
         # pointing at jsonschema.cli. With the module deleted it must FAIL, not WARN.
         with tempfile.TemporaryDirectory() as site:
-            fake_dist(site, "octo-ep-only", {})
-            info = next(Path(site).glob("octo_ep_only-*.dist-info"))
+            fake_dist(site, "octo-ep-mod", {})
+            info = next(Path(site).glob("octo_ep_mod-*.dist-info"))
             (info / "entry_points.txt").write_text(
                 "[console_scripts]\nocto-ep = octo_ep_mod.cli:main\n")
-            gone = check_on(site, "octo-ep-only\n")
+            gone = check_on(site, "octo-ep-mod\n")
             Path(site, "octo_ep_mod").mkdir()
             Path(site, "octo_ep_mod", "__init__.py").write_text("")
-            here = check_on(site, "octo-ep-only\n")
+            here = check_on(site, "octo-ep-mod\n")
         self.assertEqual(gone.status, brain_doctor.FAIL)
         self.assertEqual(here.status, brain_doctor.PASS, here.message)
+
+    def test_an_entry_point_into_another_package_is_not_the_module_list(self):
+        # A plugin with no module list whose entry point names its host.
+        with tempfile.TemporaryDirectory() as site:
+            fake_dist(site, "octo-plugin", {"octo_plugin": ""})
+            info = next(Path(site).glob("octo_plugin-*.dist-info"))
+            (info / "entry_points.txt").write_text("[octo.hooks]\nx = octo_host.plugins:x\n")
+            self.assertEqual(check_on(site, "octo-plugin\n").status, brain_doctor.PASS)
+            Path(site, "octo_plugin.py").unlink()
+            self.assertEqual(check_on(site, "octo-plugin\n").status, brain_doctor.WARN)
 
     def test_a_namespace_leftover_of_a_shipped_package_is_absent(self):
         # The distribution's RECORD ships octo_ns_mod/__init__.py; the file is gone
@@ -207,6 +217,24 @@ class RequirementFileTest(unittest.TestCase):
             self.skipTest("this packaging release evaluates the comparison without raising")
         self.assertEqual(r.status, brain_doctor.FAIL)
         self.assertIn("unreadable environment marker", r.message)
+
+    def test_a_comment_ending_in_a_backslash_does_not_swallow_the_next_line(self):
+        r = check("# a comment ending in a backslash \\\nno-such-distribution-octorato-test\n")
+        self.assertEqual(r.status, brain_doctor.FAIL, r.message)
+
+    @unittest.skipUnless(_marker_evaluator(), "no marker evaluator in this interpreter")
+    def test_a_hash_pinned_line_with_a_marker_keeps_the_marker_clean(self):
+        r = check('pyyaml>=6.0 ; python_version >= "3" \\\n    --hash=sha256:aaaa\n'
+                  'no-such-distribution-octorato-test==1.0 ; python_version < "3.0" \\\n'
+                  '    --hash=sha256:bbbb\n')
+        self.assertEqual(r.status, brain_doctor.PASS, r.message)
+        self.assertIn("not for this interpreter by marker: no-such-distribution-octorato-test", r.message)
+
+    def test_a_per_requirement_option_with_a_path_keeps_the_requirement(self):
+        # Without cutting options off the spec, the `/` in the option's value read
+        # the whole requirement as a local path and dropped it from the check.
+        r = check("no-such-distribution-octorato-test==1.0 --config-settings key=a/b\n")
+        self.assertEqual(r.status, brain_doctor.FAIL, r.message)
 
     def test_a_file_with_no_distribution_warns(self):
         self.assertEqual(check("--index-url https://example.invalid\n-c constraints.txt\n").status,
