@@ -15,6 +15,12 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-10-01]: v8.5.1
+### Fixes
+- fix(v9): close the push-gate bypasses found by the phase 3 QA (#337)
+### Other
+- docs(changelog): backfill v8.5.0 (#336)
+
 ## [2026-09-30]: v8.5.0
 ### Features
 - feat(v9): the converge receipt and the push gate (phase 3) (#335)
