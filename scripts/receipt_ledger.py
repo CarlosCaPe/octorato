@@ -816,8 +816,9 @@ def qa_latest_for(token: str, head: str) -> dict | None:
     regular-file agent transcript (any session), and name the transcript entry
     it was recorded from (`entry_uuid`). That exact entry is re-read: its
     verdict, scope and commit must equal the row's, name this pull request and
-    this commit. A row without an anchor, or whose entry is gone or now says
-    something else, is skipped. Of what is left, the receipt whose entry the
+    this commit. A FAIL or NEEDS-WORK whose report carries no valid commit
+    names every commit of the pull request. A row without an anchor, or whose
+    entry is gone or now says something else, is skipped. Of what is left, the receipt whose entry the
     harness wrote last decides, never the ledger order, which anyone can
     re-append to."""
     head = str(head or "").lower()
@@ -843,7 +844,13 @@ def qa_latest_for(token: str, head: str) -> dict | None:
         verdict, scope = parse_verdict(report)
         if verdict != r.get("verdict") or scope != str(r.get("scope") or ""):
             continue
-        if parse_qa_head(report) != head or str(r.get("head") or "") != head:
+        report_head = parse_qa_head(report)
+        if str(r.get("head") or "") != report_head:
+            continue
+        # A revocation that names no valid commit revokes the whole pull
+        # request: a reviewer who forgot or shortened QA-HEAD must not leave
+        # an earlier PASS standing. A PASS always needs the exact commit.
+        if report_head != head and not (report_head == "" and verdict != "PASS"):
             continue
         if not scope_names(scope, token):
             continue

@@ -123,6 +123,27 @@ class GateHead(unittest.TestCase):
                 self.assertEqual(rc, 0, f"{cmd}\n{err}")
         self.assertTrue(all(c == ("96", SHA) for c in self.calls), self.calls)
 
+    # ---- every sub-command, and what bash actually passes (AC-19) ----
+    def test_a_chained_unpinned_merge_cannot_ride_on_a_pinned_one(self):
+        pinned = f"gh pr merge 96 --squash --match-head-commit {SHA}"
+        with self.lookup({SHA: receipt("PASS")}):
+            for tail in (" || gh pr merge 96 --squash", "; gh pr merge 96 --auto",
+                         " && gh api -X PUT repos/o/r/pulls/96/merge"):
+                rc, _ = self.run_gate(pinned + tail)
+                self.assertEqual(rc, 2, tail)
+            rc, _ = self.run_gate(f"{pinned} && echo done")
+            self.assertEqual(rc, 0)
+
+    def test_a_pin_behind_a_shell_comment_is_no_pin(self):
+        with self.lookup({SHA: receipt("PASS")}):
+            for cmd in (f"gh pr merge 96 --squash # --match-head-commit {SHA}",
+                        f"gh api -X PUT repos/o/r/pulls/96/merge # -f sha={SHA}"):
+                rc, err = self.run_gate(cmd)
+                self.assertEqual(rc, 2, cmd)
+                self.assertIn("pins no commit", err, cmd)
+            rc, _ = self.run_gate(f"gh pr merge 96 -t 'fix #12' --match-head-commit {SHA}")
+            self.assertEqual(rc, 0)
+
     # ---- --auto (AC-06) ----
     def test_auto_is_refused_on_an_approved_merge(self):
         with self.lookup({SHA: receipt("PASS")}):

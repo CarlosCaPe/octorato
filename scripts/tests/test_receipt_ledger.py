@@ -387,6 +387,28 @@ class QaHeadAnchoring(unittest.TestCase):
         self._row(older, "PASS", H1, "u-f0")
         self.assertEqual(rl.qa_latest_for("500", H1)["verdict"], "NEEDS-WORK")
 
+    def test_a_revocation_with_no_valid_head_covers_the_whole_pull_request(self):
+        ok = self._transcript("agent-v0.jsonl", [self._entry(self._report("PASS", H1), "2026-10-01T09:00:00.000Z", "u-v0")])
+        self._row(ok, "PASS", H1, "u-v0")
+        old = self._transcript("agent-v1.jsonl", [self._entry(
+            "QA-VERDICT: NEEDS-WORK\nQA-SCOPE: PR #500", "2026-10-01T08:00:00.000Z", "u-v1")])
+        self._row(old, "NEEDS-WORK", "", "u-v1")
+        self.assertEqual(rl.qa_latest_for("500", H1)["verdict"], "PASS")   # older: does not revoke
+        for name, text in (("agent-v2.jsonl", "QA-VERDICT: NEEDS-WORK\nQA-SCOPE: PR #500"),
+                           ("agent-v3.jsonl", "QA-VERDICT: FAIL\nQA-SCOPE: PR #500\nQA-HEAD: " + H1[:12])):
+            tp = self._transcript(name, [self._entry(text, "2026-10-01T10:00:00.000Z", "u-" + name)])
+            verdict = "NEEDS-WORK" if "NEEDS" in text else "FAIL"
+            self._row(tp, verdict, "", "u-" + name)
+        self.assertNotEqual(rl.qa_latest_for("500", H1)["verdict"], "PASS")
+        self.assertNotEqual(rl.qa_latest_for("500", H2)["verdict"], "PASS")
+        # A headless PASS opens nothing, and a newer pinned PASS decides again.
+        bare = self._transcript("agent-v4.jsonl", [self._entry("QA-VERDICT: PASS\nQA-SCOPE: PR #500", "2026-10-01T11:00:00.000Z", "u-v4")])
+        self._row(bare, "PASS", "", "u-v4")
+        self.assertNotEqual(rl.qa_latest_for("500", H1)["verdict"], "PASS")
+        again = self._transcript("agent-v5.jsonl", [self._entry(self._report("PASS", H1), "2026-10-01T12:00:00.000Z", "u-v5")])
+        self._row(again, "PASS", H1, "u-v5")
+        self.assertEqual(rl.qa_latest_for("500", H1)["verdict"], "PASS")
+
     def test_a_repeated_uuid_must_agree(self):
         same = self._entry(self._report("PASS", H1), "2026-10-01T10:00:00.000Z", "u-dup")
         twin = dict(same, cwd="/elsewhere")

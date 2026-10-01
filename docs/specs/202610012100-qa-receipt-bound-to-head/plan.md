@@ -27,6 +27,12 @@ One pull request. The ledger learns the commit and the newest-verdict lookup fir
 - [ ] T06 [AC-03, AC-04, AC-05, AC-06, AC-07, AC-08, AC-09, AC-10, AC-11, AC-12, AC-13, AC-15] scripts/tests/test_qa_merge_gate_head.py: drive the gate's `main()` with a fake ledger lookup. Cover no pin, a malformed pin, a pin inside a `-t` subject, a pin as the value of `-t`, `-b`, `-A`, `-R` and `-F` in spaced, `=`, attached and clustered (`-st`, `-sdt`, `-mt`) forms, a pin inside a `commit_message` field and as a `-H` value, a repeated flag, `--auto`, `--auto` under the bypass, a pin with no receipt, a newer NEEDS-WORK, a PASS for another commit, a passing pin through `gh pr merge` in both spellings and through `gh api -f sha=`, a `--input` body, the bypass, a push to main, a lookup that sleeps past the deadline and must be pre-empted (not a fake that returns early), block messages that name `QA-HEAD` and `--match-head-commit`, and no network or git process started.
 - [ ] T07 [AC-13] CLAUDE.md, docs/architecture/v7-nothing-ships-unverified.md, docs/ANATOMY.md, skills/pre-merge-qa-gate/SKILL.md: state the three protocol lines, the pinned direct merge command, and the newest-verdict rule; replace the skill's `--auto` instruction with the pinned direct merge.
 
+## QA cycle 1
+
+- [ ] T11 [AC-19] scripts/qa-merge-gate.py: decide every publish sub-command of the command and block when any one blocks; buffer the allow nudges into one hook output; split the pin argv with `shlex.split(..., comments=True)`.
+- [ ] T12 [AC-18] scripts/receipt_ledger.py: in `qa_latest_for`, a re-read FAIL or NEEDS-WORK whose report has no valid head is a candidate for every commit of the pull request.
+- [ ] T13 [AC-18, AC-19] scripts/tests/test_qa_merge_gate_head.py, scripts/tests/test_receipt_ledger.py: chained merges (`||`, `;`, merge then REST merge, merge then `--auto`), a pin after a `#` comment in both forms, a quoted `#` in a subject that still allows; a headless and a short-head NEEDS-WORK newer than a PASS that must revoke, and an older one that must not.
+
 ## Verification
 
 - `python3 -m unittest discover scripts/tests -p 'test_*.py'` passes on the system Python and in a clean 3.11 venv.

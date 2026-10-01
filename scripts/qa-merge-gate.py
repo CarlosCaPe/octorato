@@ -419,7 +419,13 @@ def _split_subcmds(cmd: str) -> list[str]:
 
 
 def _find_publish_subcmd(cmd: str) -> str | None:
-    """Return the first sub-command that matches a publish pattern, or None.
+    """The first publish sub-command, or None; see _find_publish_subcmds."""
+    subs = _find_publish_subcmds(cmd)
+    return subs[0] if subs else None
+
+
+def _find_publish_subcmds(cmd: str) -> list:
+    """Every sub-command that matches a publish pattern, in order.
 
     Processing order (FIX 5 → split → FIX 3+4 → pattern):
       1. Join backslash-newline continuations (FIX 5) so multi-line commands
@@ -434,15 +440,13 @@ def _find_publish_subcmd(cmd: str) -> str | None:
     because the split step keeps quoted content intact.
     """
     cmd = _join_continuations(cmd)
+    found = []
     for raw_sub in _split_subcmds(cmd):
         sub = _strip_leading(raw_sub)
-        if _PAT_GH_MERGE.match(sub):
-            return raw_sub
-        if _PAT_GIT_PUSH.match(sub):
-            return raw_sub
-        if _api_write_action(sub) is not None:
-            return raw_sub
-    return None
+        if (_PAT_GH_MERGE.match(sub) or _PAT_GIT_PUSH.match(sub)
+                or _api_write_action(sub) is not None):
+            found.append(raw_sub)
+    return found
 
 
 def _extract_pr_id(matched_sub: str) -> str:
@@ -523,7 +527,10 @@ def _argv_after(sub: str, n_words: int) -> list | None:
     """shlex argv of *sub* after its first *n_words* words, or None."""
     import shlex
     try:
-        argv = shlex.split(sub)
+        # comments=True: bash drops an unquoted `# ...`, so a pin written after
+        # one is never sent. shlex also reads a mid-word `#` as a comment, which
+        # can only lose a pin, so it errs toward blocking.
+        argv = shlex.split(sub, comments=True)
     except ValueError:
         return None
     return argv[n_words:] if len(argv) >= n_words else None
@@ -616,13 +623,22 @@ def _journal_deny(reason, payload=None, tool_use_id=None) -> None:
         pass
 
 
+_NUDGES: list = []
+
+
 def _nudge(text: str) -> None:
-    print(json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "additionalContext": text,
-        }
-    }))
+    """Buffered: main() prints one hook output for the whole command."""
+    _NUDGES.append(text)
+
+
+def _flush_nudges() -> None:
+    if _NUDGES:
+        print(json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "\n".join(_NUDGES),
+            }
+        }))
 
 
 def main() -> int:
@@ -639,14 +655,28 @@ def main() -> int:
         return 0
 
     # Fast path: no sub-command starts with a publish pattern → exit 0 silently.
-    matched_sub = _find_publish_subcmd(cmd)
-    if matched_sub is None:
+    subs = _find_publish_subcmds(cmd)
+    if not subs:
         return 0
 
     # Positively identified as a merge action — from here on, a crash must fail
     # CLOSED (the __main__ handler reads this flag and exits 2, not 0).
     global _PUBLISH_IDENTIFIED
     _PUBLISH_IDENTIFIED = True
+    del _NUDGES[:]
+    # Every publish sub-command is decided on its own and all must pass: a
+    # chain such as `merge --match-head-commit <sha> || merge` would otherwise
+    # let the second, unpinned merge ride on the first one's check.
+    for matched_sub in subs:
+        rc = _decide(cmd, matched_sub, data)
+        if rc != 0:
+            return rc
+    _flush_nudges()
+    return 0
+
+
+def _decide(cmd: str, matched_sub: str, data: dict) -> int:
+    """0 to allow this one publish sub-command, 2 to block the whole command."""
     pr_id = _extract_pr_id(matched_sub)
 
     # ── Repo scope: only PROTECTED repos are gated ────────────────────────────

@@ -83,6 +83,8 @@ A gated action with no pull request number (`git push` to `main` or `master`, a 
 - [ ] AC-15: IF the receipt lookup does not finish within 3 seconds, including a read that blocks, THEN THE Merge_Gate SHALL block the merge.
 - [ ] AC-16: WHEN a QA_Reviewer that recorded a verdict is resumed and replies again, THE Receipt_Ledger SHALL keep reading the earlier receipt from its own entry, whatever the later reply says.
 - [ ] AC-17: WHEN the QA_Reflex records a qa receipt, THE QA_Reflex SHALL store the harness `uuid` and `timestamp` of the transcript entry it parsed the report from.
+- [ ] AC-18: IF the anchored qa receipt with the newest transcript timestamp for the pull request is a FAIL or NEEDS-WORK whose report carries no valid `QA-HEAD`, THEN THE Merge_Gate SHALL treat it as the verdict for every commit of that pull request.
+- [ ] AC-19: WHEN one Bash command carries several publish sub-commands, THE Merge_Gate SHALL decide each one and allow the command only when every one is allowed, and SHALL read a pin only from the arguments bash passes, so an unquoted `#` comment ends them.
 
 ## Technical Scope
 
@@ -127,3 +129,4 @@ The merge gate already reads the pull request number from the command (`_extract
 | 2026-10-01 | Analyze pass 5 (FIX-FIRST): measured on the real ledger, a resumed reviewer's later reply changed what its earlier receipt re-read as; each receipt is now anchored to the entry it was recorded from (AC-02, AC-16, AC-17); the converge consumer's same exposure is named as a follow-up. |
 | 2026-10-01 | Analyze pass 6 (FIX-FIRST, plan only): the anchored entry is read from the whole transcript, not the 256 KB tail, and a uuid on several lines must agree; the converge follow-up is filed as a tracked issue with the pull request. |
 | 2026-10-01 | Analyze pass 7: READY, 17 of 17 criteria covered. Whole-transcript reads measured at 0.58 s for the busiest real pull request (47 receipts, 68.5 MB). Status approved. |
+| 2026-10-01 | QA cycle 1 (NEEDS-WORK at 8053ec5): an unpinned merge chained after a pinned one (`|| gh pr merge <n>`) and a pin hidden behind a shell comment both passed; a NEEDS-WORK whose head was missing or malformed revoked nothing. Added AC-18 and AC-19. |
