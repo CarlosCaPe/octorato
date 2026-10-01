@@ -393,12 +393,19 @@ def _newest_branch_code(repo: Path, head: str, spec_dir: str) -> str:
 
 
 SPEC_FILES = ("feature.md", "plan.md")
-_LFS_POINTER = "version https://git-lfs.github.com/spec/"
+# A Git LFS pointer, current or legacy: the spec URL changed twice
+# (git-media.io, hawser.github.com, git-lfs.github.com), so the gate matches the
+# shape the pointer format fixes: a `version` line, optional `ext-` lines, then the oid.
+_LFS_POINTER = re.compile(r"\Aversion \S+\n(?:ext-\S+ [^\n]*\n)*oid sha256:[0-9a-f]{64}\s")
+
+
+def _is_lfs_pointer(blob) -> bool:
+    return bool(blob) and bool(_LFS_POINTER.match(blob))
 
 
 def _home_at(parts: tuple, i: int) -> str:
     """The spec home spelled at parts[i:i+2], case-folded, or ""."""
-    pair = "/".join(parts[i:i + 2]).lower()
+    pair = "/".join(parts[i:i + 2]).casefold()
     return pair if pair in SPEC_HOMES else ""
 
 
@@ -415,14 +422,15 @@ def is_canonical_spec_path(path: str) -> bool:
     """A spec path spelled exactly: the home in lower case and, for a file, a
     lower-case name. On a case-insensitive filesystem (Windows, macOS by default)
     `Docs/specs/x/Feature.md` lands on `docs/specs/x/feature.md`, so a gate that
-    matched the spelling alone would miss a spec a person sees on disk."""
+    matched the spelling alone would miss a spec a person sees on disk. Matching
+    uses casefold, not lower: `docſ` (long s) folds to `docs` and lower() leaves it."""
     parts = Path(path).parts
     for i in range(len(parts) - 1):
         if _home_at(parts, i):
             if "/".join(parts[i:i + 2]) not in SPEC_HOMES:
                 return False
             tail = parts[i + 3:] if len(parts) > i + 3 else ()
-            return all(x == x.lower() for x in tail if x.lower() in SPEC_FILES)
+            return all(x in SPEC_FILES for x in tail if x.casefold() in SPEC_FILES)
     return True
 
 
@@ -434,7 +442,7 @@ def _on_spec_path(path: str) -> bool:
     parts = Path(path).parts
     if not parts:
         return False
-    if parts[-1].lower() == "docs":
+    if parts[-1].casefold() == "docs":
         return True
     if len(parts) >= 2 and _home_at(parts, len(parts) - 2):
         return True
@@ -466,21 +474,23 @@ def push_findings(repo: Path, base: str, head: str) -> list:
                                 f"(mode {mode}); the gate reads the tree, and a link or a "
                                 f"submodule hides the specs behind it")
     spec_paths = [p for p in changed
-                  if Path(p).name.lower() in SPEC_FILES and is_spec_dir(str(Path(p).parent))]
+                  if Path(p).name.casefold() in SPEC_FILES and is_spec_dir(str(Path(p).parent))]
     for p in sorted(spec_paths):
+        blob = _show(repo, head, p)
         if not is_canonical_spec_path(p):
+            if blob is None:
+                continue  # gone at the pushed head: a miscased spec may be deleted or renamed
             findings.append(f"{p}: a spec path is spelled `docs/specs/<name>/feature.md` (or "
                             f"plan.md, or docs/specs-archive) in lower case; on a "
                             f"case-insensitive filesystem another spelling lands on the "
                             f"same file")
             continue
-        blob = _show(repo, head, p)
-        if blob is not None and blob.startswith(_LFS_POINTER):
+        if _is_lfs_pointer(blob):
             findings.append(f"{p}: a spec file may not be a Git LFS pointer; the gate reads "
                             f"the tree, and the pointer hides the spec behind it")
     spec_dirs = sorted({str(Path(p).parent) for p in spec_paths
                         if is_canonical_spec_path(p)
-                        and not (_show(repo, head, p) or "").startswith(_LFS_POINTER)})
+                        and not _is_lfs_pointer(_show(repo, head, p))})
 
     for sd in spec_dirs:
         feature_now = _show(repo, head, f"{sd}/feature.md")
@@ -590,8 +600,11 @@ def _push_selftest_case(case: Path) -> list:
         if spec.get("new_lfs_spec"):
             lfs = repo / "docs" / "specs" / "202609300001-lfs"
             lfs.mkdir(parents=True)
+            version = spec["new_lfs_spec"]
+            if version is True:
+                version = "https://git-lfs.github.com/spec/v1"
             (lfs / "feature.md").write_text(
-                _LFS_POINTER + "v1\noid sha256:" + "0" * 64 + "\nsize 1234\n")
+                f"version {version}\noid sha256:" + "0" * 64 + "\nsize 1234\n")
         if spec.get("symlink_home"):
             real = repo / "elsewhere" / "specs"
             real.mkdir(parents=True)

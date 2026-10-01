@@ -89,6 +89,37 @@ class PushGateTest(unittest.TestCase):
         with mock.patch.object(receipt_ledger, "converge_latest_for", aged):
             self.assertEqual(_quiet(spec_lint.selftest, PUSH_FIXTURES), 1)
 
+    def test_push_selftest_goes_red_when_only_the_current_lfs_url_matches(self):
+        # A legacy pointer (hawser, git-media) hides a spec the same way.
+        current = "version https://git-lfs.github.com/spec/"
+        with mock.patch.object(spec_lint, "_is_lfs_pointer",
+                               lambda b: bool(b) and b.startswith(current)):
+            self.assertEqual(_quiet(spec_lint.selftest, PUSH_FIXTURES), 1)
+
+    def test_push_selftest_goes_red_when_paths_match_by_lower_not_casefold(self):
+        def by_lower(parts, i):
+            pair = "/".join(parts[i:i + 2]).lower()
+            return pair if pair in spec_lint.SPEC_HOMES else ""
+        with mock.patch.object(spec_lint, "_home_at", by_lower):
+            self.assertEqual(_quiet(spec_lint.selftest, PUSH_FIXTURES), 1)
+
+    def test_a_miscased_spec_blocks_while_present_and_may_be_deleted(self):
+        present = spec_lint._push_selftest_case(PUSH_FIXTURES / "violation_spec_path_miscased")
+        self.assertTrue(any("in lower case" in f for f in present), present)
+        gone = spec_lint._push_selftest_case(PUSH_FIXTURES / "benign_miscased_spec_deleted_in_push")
+        self.assertEqual(gone, [])
+
+    def test_lfs_pointer_shapes(self):
+        oid = "oid sha256:" + "0" * 64 + "\nsize 12\n"
+        for url in ("https://git-lfs.github.com/spec/v1", "https://hawser.github.com/spec/v1",
+                    "http://git-media.io/v/2"):
+            self.assertTrue(spec_lint._is_lfs_pointer(f"version {url}\n{oid}"), url)
+        self.assertTrue(spec_lint._is_lfs_pointer(
+            "version https://git-lfs.github.com/spec/v1\next-0-foo sha256:" + "1" * 64 + "\n" + oid))
+        for not_pointer in (None, "", "# Feature: x\n\n> **Status:** draft\n",
+                            "version 2 of this spec\n\noid sha256: see below\n"):
+            self.assertFalse(spec_lint._is_lfs_pointer(not_pointer), not_pointer)
+
 
 class DoctorCheckTest(unittest.TestCase):
     def setUp(self):
@@ -177,6 +208,13 @@ class HeaderTest(unittest.TestCase):
         for p in ("Docs/specs/202609300000-a/feature.md", "docs/specs/202609300000-a/Feature.md",
                   "docs/SPECS-ARCHIVE/old/plan.md"):
             self.assertFalse(spec_lint.is_canonical_spec_path(p), p)
+
+    def test_spec_paths_match_by_casefold(self):
+        # `ſ` (long s) folds to `s`; lower() leaves it, so lower() missed this spelling.
+        long_s = "doc\u017f/specs/202609300000-a"
+        self.assertTrue(spec_lint.is_spec_dir(long_s))
+        self.assertFalse(spec_lint.is_canonical_spec_path(long_s + "/feature.md"))
+        self.assertTrue(spec_lint._on_spec_path("doc\u017f"))
 
     def test_prose_mention_is_not_a_header(self):
         self.assertFalse(spec_lint.is_ears("# F\n\nThis spec does not use Spec-Format: ears-1 yet.\n"))
