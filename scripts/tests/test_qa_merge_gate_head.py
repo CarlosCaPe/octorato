@@ -166,6 +166,60 @@ class GateHead(unittest.TestCase):
             self.assertEqual(rc, 0)
         self.assertIn(("96", OTHER), self.calls)
 
+    # ---- syntax the gate does not read, while an approval is exported (AC-20) ----
+    def test_an_approved_merge_inside_unparsed_syntax_blocks(self):
+        pinned = f"gh pr merge 96 --squash --match-head-commit {SHA}"
+        shapes = [f"{pinned} # done \\\ngh pr merge 96",               # continuation in a comment
+                  "echo a\\\\\ngh pr merge 96",                         # escaped backslash, then newline
+                  f"{pinned}\ncat <<EOF\nit's\nEOF\ngh pr merge 96",    # heredoc body with a quote
+                  f"{pinned} -t $'x\\''\ngh pr merge 96\necho '",       # ANSI-C quoting
+                  f"gh pr merge 96 --match-head-commit {SHA} -t x\\ #y --match-head-commit {OTHER}",
+                  f"\\gh pr merge 96 --match-head-commit {SHA}",
+                  f"bash -c 'gh pr merge 96 --match-head-commit {SHA}'",
+                  f"echo \"$(gh pr merge 96)\"; {pinned}"]
+        with self.lookup({SHA: receipt("PASS")}):
+            for cmd in shapes:
+                rc, err = self.run_gate(cmd)
+                self.assertEqual(rc, 2, cmd)
+                self.assertIn("does not parse", err, cmd)
+        self.assertEqual(self.calls, [])
+
+    def test_without_an_approval_quoted_merges_in_data_are_left_alone(self):
+        os.environ.pop("OCTO_MERGE_APPROVE", None)
+        for cmd in ("cat > notes.md <<'EOF'\nrun gh pr merge 96 --match-head-commit <sha>\nEOF",
+                    "python3 - <<'PY'\nprint('gh pr merge 96')\nPY",
+                    "git commit -q -F - <<'EOF'\nteach gh pr merge <n> --match-head-commit\nEOF"):
+            rc, _ = self.run_gate(cmd)
+            self.assertEqual(rc, 0, cmd)
+        # A heredoc fed to a shell is a script, so its merge is still a merge.
+        rc, _ = self.run_gate("bash <<EOF\ngh pr merge 96 --squash\nEOF")
+        self.assertEqual(rc, 2)
+
+    def test_reserved_words_quoted_heads_and_global_repo_flag_are_merges(self):
+        with self.lookup({SHA: receipt("PASS")}):
+            for cmd in ("if true; then gh pr merge 96; fi", "! gh pr merge 96",
+                        "'gh' pr merge 96", "gh -R o/r pr merge 96", "time gh pr merge 96",
+                        "while true; do gh pr merge 96; done"):
+                rc, err = self.run_gate(cmd)
+                self.assertEqual(rc, 2, cmd)
+                self.assertIn("pins no commit", err, cmd)
+            for cmd in (f"'gh' pr merge 96 --match-head-commit {SHA}",
+                        f"gh -R o/r pr merge 96 --match-head-commit {SHA}",
+                        f"if true; then gh pr merge 96 --match-head-commit {SHA}; fi"):
+                rc, err = self.run_gate(cmd)
+                self.assertEqual(rc, 0, f"{cmd}\n{err}")
+
+    def test_split_matches_bash_on_escapes_continuations_ansi_c_and_case(self):
+        # Each of these runs `gh pr merge 5` in bash; with no approval it must block.
+        os.environ.pop("OCTO_MERGE_APPROVE", None)
+        for cmd in ("echo \\ #x; gh pr merge 5", "echo a\\\t#x; gh pr merge 5",
+                    "echo \\>& gh pr merge 5", "echo \\<&gh pr merge 5",
+                    "echo $'a\\'b'; gh pr merge 5", "echo x # c \\\ngh pr merge 5",
+                    "gh pr \\\nmerge 5", "echo a\\\\\ngh pr merge 5",
+                    "case x in x) gh pr merge 5;; esac", "for i in 1; do gh pr merge 5; done"):
+            rc, _ = self.run_gate(cmd)
+            self.assertEqual(rc, 2, repr(cmd))
+
     # ---- --auto (AC-06) ----
     def test_auto_is_refused_on_an_approved_merge(self):
         with self.lookup({SHA: receipt("PASS")}):

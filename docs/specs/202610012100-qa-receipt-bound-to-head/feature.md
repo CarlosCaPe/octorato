@@ -85,6 +85,7 @@ A gated action with no pull request number (`git push` to `main` or `master`, a 
 - [ ] AC-17: WHEN the QA_Reflex records a qa receipt, THE QA_Reflex SHALL store the harness `uuid` and `timestamp` of the transcript entry it parsed the report from.
 - [ ] AC-18: IF the anchored qa receipt with the newest transcript timestamp for the pull request is a FAIL or NEEDS-WORK whose report carries no valid `QA-HEAD`, THEN THE Merge_Gate SHALL treat it as the verdict for every commit of that pull request.
 - [ ] AC-19: WHEN one Bash command carries several publish sub-commands, THE Merge_Gate SHALL decide each one and allow the command only when every one is allowed, and SHALL read a pin only from the arguments bash passes, so an unquoted `#` comment ends them.
+- [ ] AC-20: IF the operator's approval is exported and a command mentions a merge or a push to main inside syntax the Merge_Gate does not parse (a backslash, a heredoc, ANSI-C quoting, a substitution, `sh -c`, `eval`), THEN THE Merge_Gate SHALL block the whole command and name the plain command form.
 
 ## Technical Scope
 
@@ -131,3 +132,4 @@ The merge gate already reads the pull request number from the command (`_extract
 | 2026-10-01 | Analyze pass 7: READY, 17 of 17 criteria covered. Whole-transcript reads measured at 0.58 s for the busiest real pull request (47 receipts, 68.5 MB). Status approved. |
 | 2026-10-01 | QA cycle 1 (NEEDS-WORK at 8053ec5): an unpinned merge chained after a pinned one (`|| gh pr merge <n>`) and a pin hidden behind a shell comment both passed; a NEEDS-WORK whose head was missing or malformed revoked nothing. Added AC-18 and AC-19. |
 | 2026-10-01 | Converge pass 2 and QA cycle 2 (at a3588bb): `&`, `|&` and a comment carrying an apostrophe still chained an unpinned merge; shlex's mid-word comment hid a later pin; ties fell back to ledger order. Covered by T14-T19 under the existing AC-05, AC-08, AC-13 and AC-19. |
+| 2026-10-01 | Converge pass 3 (at b1b5022): backslash-newline, heredoc bodies, `$'...'`, an escaped blank, reserved words and quoted command words still misled the hand-written reader. Rather than chase bash shape by shape, AC-20 makes the approved path read only plain commands; the splitter also skips heredoc bodies (bash never runs them) unless fed to a shell. Replayed over 20,858 real commands: 1 new detection (a real `time gh api ... /merge`), 16 dropped (all text inside heredoc bodies), 478 that would block only while an approval is exported. |

@@ -53,6 +53,9 @@ pin that is really the subject of the merge never counts. The newest receipt for
 that pull request and commit decides, by the harness timestamp of the transcript
 entry it was recorded from, so a NEEDS-WORK cannot be outvoted by an older PASS.
 The lookup makes no network call and is cut off after 3 seconds, which blocks.
+While an approval is exported, a command that mentions a merge inside syntax
+this gate does not parse (backslash, heredoc, $'...', substitution, sh -c,
+eval) is blocked whole: on the approved path the gate reads plain commands only.
 Fail-closed ONLY for positively-identified merge commands.
 Any parsing error on a non-merge command → exit 0 (fail-open).
 Design mirrors grafo-gate.py: same I/O protocol, same stdin JSON shape.
@@ -83,7 +86,7 @@ for _stream in (sys.stdout, sys.stderr):
 # ---------------------------------------------------------------------------
 
 # gh pr merge <N> [flags]  — anchored at sub-command start
-_PAT_GH_MERGE = re.compile(r"^\s*gh\s+pr\s+merge\b")
+_PAT_GH_MERGE = re.compile(r"^\s*gh\s+(?:(?:-R|--repo)(?:=\S+|\s+\S+)\s+)*pr\s+merge\b")
 
 # git [-C <path>] [-c key=val] push [opts] <remote> <ref>
 # Catches: git push origin main  /  git push origin "main"  /
@@ -252,7 +255,7 @@ def _effective_cwd(cmd: str, matched_sub: str, session_cwd: str) -> str:
     Only plain `cd <path>` is parsed; `cd -`, `pushd`, subshells are ignored,
     which leaves cwd unadjusted and can only OVER-gate, never under-gate."""
     cwd = session_cwd or os.getcwd()
-    for raw in _split_subcmds(_join_continuations(cmd)):
+    for raw in _split_subcmds(cmd):
         if raw == matched_sub:
             break
         s = _strip_leading(raw).strip()
@@ -327,13 +330,6 @@ def _is_protected_target(cmd: str, matched_sub: str, session_cwd: str):
     return False
 
 
-# FIX 5: join backslash-newline continuations before any splitting so that
-# `gh pr \<newline>merge 96` is treated as a single token.
-def _join_continuations(cmd: str) -> str:
-    """Replace backslash-newline pairs with a single space."""
-    return re.sub(r"\\\n", " ", cmd)
-
-
 # Strip leading wrapper tokens from an already-split sub-command before pattern
 # matching. Applied PER sub-command so it never crosses a real separator boundary.
 # Covers: grouping openers, env-assignments (VAR=val), redirections, the `env`
@@ -348,6 +344,11 @@ _W_REDIR = re.compile(r"^\d*[<>]+\S*\s+")
 _W_ENV = re.compile(r"^env\b\s*")
 _W_ENVARG = re.compile(r"^(?:-\S+|[A-Za-z_]\w*=\S*)\s+")
 _W_COMMAND = re.compile(r"^command\s+")
+# Reserved words and the pipeline negation run the command that follows them.
+_W_RESERVED = re.compile(r"^(?:!|if|then|else|elif|do|while|until|time|coproc)\s+")
+# `case WORD in` and a pattern label `pat)` / `(a|b)` precede the command they run.
+_W_CASE = re.compile(r"^case\s+\S+\s+in\s+")
+_W_LABEL = re.compile(r"^\(?[^\s()|;&]+(?:\|[^\s()|;&]+)*\)\s*")
 
 
 def _strip_leading(s: str) -> str:
@@ -357,7 +358,7 @@ def _strip_leading(s: str) -> str:
     prev = None
     while s != prev:
         prev = s
-        for pat in (_W_GROUP, _W_ASSIGN, _W_REDIR, _W_COMMAND):
+        for pat in (_W_GROUP, _W_ASSIGN, _W_REDIR, _W_COMMAND, _W_RESERVED, _W_CASE, _W_LABEL):
             m = pat.match(s)
             if m:
                 s = s[m.end():]
@@ -374,6 +375,9 @@ def _strip_leading(s: str) -> str:
     return s
 
 
+_SHELL_HEAD = re.compile(r"^(?:\S*/)?(?:ba|z|da|k|fi)?sh$")
+
+
 def _split_subcmds(cmd: str) -> list[str]:
     """Split *cmd* on unquoted shell separators the way bash does:
     ;  &&  ||  |  |&  &  newline.
@@ -382,8 +386,10 @@ def _split_subcmds(cmd: str) -> list[str]:
     backslash escapes the next character outside single quotes, an unquoted
     `#` at the start of a word opens a comment that runs to the newline (an
     apostrophe inside it opens no quote), and an `&` that belongs to a
-    redirection (`2>&1`, `&>`, `>&`, `<&`) is not a separator. Returns a list
-    of raw sub-command strings (may be empty after stripping).
+    redirection (`2>&1`, `&>`, `>&`, `<&`) is not a separator. A heredoc
+    body (`<<WORD` / `<<-WORD`, up to the line that is the delimiter) is data,
+    not commands, and is left out. Returns a list of raw sub-command strings
+    (may be empty after stripping).
     """
     parts: list[str] = []
     buf: list[str] = []
@@ -392,9 +398,23 @@ def _split_subcmds(cmd: str) -> list[str]:
     i = 0
     n = len(cmd)
 
+    pending: list = []  # heredoc delimiters whose bodies start at the next newline
+
     def cut():
         parts.append("".join(buf))
         buf.clear()
+
+    def skip_bodies(j: int) -> int:
+        """*j* is just past a newline: skip every pending heredoc body."""
+        while pending:
+            delim, strip_tabs = pending.pop(0)
+            while j <= n:
+                end = cmd.find("\n", j)
+                line = cmd[j:] if end == -1 else cmd[j:end]
+                j = n + 1 if end == -1 else end + 1
+                if (line.lstrip("\t") if strip_tabs else line) == delim:
+                    break
+        return min(j, n)
 
     while i < n:
         ch = cmd[i]
@@ -404,8 +424,17 @@ def _split_subcmds(cmd: str) -> list[str]:
                 in_single = False
             i += 1
         elif ch == "\\" and i + 1 < n:
-            buf.append(cmd[i:i + 2])
-            i += 2
+            if cmd[i + 1] != "\n":
+                buf.append(cmd[i:i + 2])  # one element: never read as a blank or `>`
+            i += 2  # backslash-newline is a line continuation: both go
+        elif ch == "$" and cmd.startswith("'", i + 1):
+            # ANSI-C quoting: a backslash escapes the next character, so `\'`
+            # does not close it.
+            j = i + 2
+            while j < n and cmd[j] != "'":
+                j += 2 if cmd[j] == "\\" else 1
+            buf.append(cmd[i:j + 1])
+            i = j + 1
         elif in_double:
             buf.append(ch)
             if ch == '"':
@@ -419,7 +448,27 @@ def _split_subcmds(cmd: str) -> list[str]:
             in_double = True
             buf.append(ch)
             i += 1
-        elif ch == "#" and (not buf or buf[-1][-1:].isspace()):
+        elif cmd.startswith("<<<", i):
+            buf.append("<<<")  # here-string: its word is an ordinary argument
+            i += 3
+        elif cmd.startswith("<<", i):
+            j = i + 2
+            strip_tabs = cmd.startswith("-", j)
+            j += 1 if strip_tabs else 0
+            while j < n and cmd[j] in " \t":
+                j += 1
+            k = j
+            while k < n and cmd[k] not in " \t\n;&|<>()":
+                k += 1
+            word = cmd[j:k]
+            head = _strip_leading("".join(buf)).split()[:1]
+            # A heredoc fed to a shell is a script: its body runs, so it is
+            # split like any other command text instead of being skipped.
+            if word and not (head and _SHELL_HEAD.match(head[0])):
+                pending.append((re.sub(r"['\"\\]", "", word), strip_tabs))
+            buf.append(cmd[i:k])
+            i = k
+        elif ch == "#" and (not buf or buf[-1].isspace()):
             while i < n and cmd[i] != "\n":
                 i += 1
         elif cmd[i:i + 2] in ("&&", "||", "|&"):
@@ -428,10 +477,13 @@ def _split_subcmds(cmd: str) -> list[str]:
         elif ch == "&" and cmd[i + 1:i + 2] == ">":
             buf.append(ch)  # &> / &>> redirection
             i += 1
-        elif ch == "&" and buf and buf[-1][-1:] in (">", "<"):
+        elif ch == "&" and buf and buf[-1] in (">", "<"):
             buf.append(ch)  # 2>&1, >&2, <&3
             i += 1
-        elif ch in (";", "|", "&", "\n"):
+        elif ch == "\n":
+            cut()
+            i = skip_bodies(i + 1)
+        elif ch in (";", "|", "&"):
             cut()
             i += 1
         else:
@@ -439,6 +491,61 @@ def _split_subcmds(cmd: str) -> list[str]:
             i += 1
     parts.append("".join(buf))
     return parts
+
+
+def _canonical(sub: str) -> str:
+    """The stripped sub-command as gh sees its argv: quotes removed (`'gh'`
+    runs gh) and a leading global `-R/--repo <slug>` moved after the
+    subcommand, so `gh -R o/r pr merge 96` reads as `gh pr merge 96 -R o/r`.
+    A sub-command shlex cannot split is returned unchanged."""
+    import shlex
+    sub = _strip_leading(sub)
+    try:
+        argv = shlex.split(sub)
+    except ValueError:
+        return sub
+    if argv[:1] == ["gh"]:
+        moved, i = [], 1
+        while i < len(argv):
+            if argv[i] in ("-R", "--repo") and i + 1 < len(argv):
+                moved += argv[i:i + 2]
+                i += 2
+            elif argv[i].startswith("--repo="):
+                moved.append(argv[i])
+                i += 1
+            else:
+                break
+        argv = argv[:1] + argv[i:] + moved
+    return shlex.join(argv)
+
+
+# While the operator has an approval exported, a command that MENTIONS a
+# publish inside shell syntax this gate does not parse is blocked whole.
+# Hand-reading bash failed open three review cycles in a row (backslash-newline,
+# heredoc bodies, $'...', escaped blanks), and an approved merge is exactly the
+# case where a misread pin merges an unreviewed commit, so on that path the gate
+# reads only plain commands and refuses to guess about the rest. Without an
+# approval nothing can merge through this gate anyway, so ordinary work that
+# quotes a merge in a heredoc is left alone (measured: 487 of 20,846 real
+# commands would block if this ran always). The mention is looked for with
+# quotes and backslashes removed, so `\gh` and `'gh'` count.
+_PUBLISH_MENTION = re.compile(
+    r"\bpr\s+merge\b|\bpulls/[^\s/]+/merge\b|/merges\b|mergePullRequest"
+    r"|\bgit\b[^\n]*\bpush\b[^\n]*\b(?:main|master)\b|/git/refs/heads/(?:main|master)\b",
+    re.IGNORECASE,
+)
+_UNPARSED_SYNTAX = re.compile(
+    r"\\|\$'|<<|`|\$\(|[<>]\(|\beval\b|\b(?:ba|z|da|k)?sh\s+(?:-\w+\s+)*-\w*c\b"
+)
+
+
+def _unparsed_publish(cmd: str) -> bool:
+    """True when *cmd* mentions a publish and carries syntax the gate does not
+    parse (a backslash, a heredoc, ANSI-C quoting, a substitution, `sh -c`,
+    `eval`)."""
+    if not _UNPARSED_SYNTAX.search(cmd):
+        return False
+    return bool(_PUBLISH_MENTION.search(re.sub(r"['\"\\]", "", cmd)))
 
 
 def _find_publish_subcmd(cmd: str) -> str | None:
@@ -450,25 +557,25 @@ def _find_publish_subcmd(cmd: str) -> str | None:
 def _find_publish_subcmds(cmd: str) -> list:
     """Every sub-command that matches a publish pattern, in order.
 
-    Processing order (FIX 5 → split → FIX 3+4 → pattern):
-      1. Join backslash-newline continuations (FIX 5) so multi-line commands
-         are not split at the wrong boundary.
-      2. Split on unquoted shell separators (; && || | newline).
-      3. Per sub-command, strip leading env-assignments, redirections, and
-         grouping chars (FIX 3+4) — AFTER splitting so we never cross a real
-         separator.
-      4. Match patterns anchored at the start of the stripped sub-command.
+    Processing order (split → FIX 3+4 → pattern):
+      1. Split the way bash does (_split_subcmds): separators, quotes, escapes,
+         line continuations, comments and heredoc bodies.
+      2. Per sub-command, strip leading env-assignments, redirections,
+         grouping chars, reserved words and case labels (FIX 3+4), AFTER
+         splitting so we never cross a real separator.
+      3. Match patterns anchored at the start of the stripped sub-command, or
+         of its canonical argv (_canonical).
 
     A publish keyword appearing only inside a quoted argument is NOT matched
     because the split step keeps quoted content intact.
     """
-    cmd = _join_continuations(cmd)
     found = []
     for raw_sub in _split_subcmds(cmd):
-        sub = _strip_leading(raw_sub)
-        if (_PAT_GH_MERGE.match(sub) or _PAT_GIT_PUSH.match(sub)
-                or _api_write_action(sub) is not None):
-            found.append(raw_sub)
+        for sub in {_strip_leading(raw_sub), _canonical(raw_sub)}:
+            if (_PAT_GH_MERGE.match(sub) or _PAT_GIT_PUSH.match(sub)
+                    or _api_write_action(sub) is not None):
+                found.append(raw_sub)
+                break
     return found
 
 
@@ -678,6 +785,23 @@ def main() -> int:
     except Exception:
         return 0
 
+    global _PUBLISH_IDENTIFIED
+    if (os.environ.get("OCTO_MERGE_APPROVE", "").strip()
+            and os.environ.get("OCTO_QA_OK", "").strip() != "1"
+            and _unparsed_publish(cmd)):
+        _PUBLISH_IDENTIFIED = True
+        print(
+            "✗ QA GATE (fail-closed): an approval is exported, and this command mentions a\n"
+            "  merge or a push to main inside\n"
+            "  shell syntax the gate does not parse (a backslash, a heredoc, $'...', a\n"
+            "  substitution, sh -c, eval). Write the merge as one plain command, e.g.\n"
+            "    gh pr merge <n> --squash --delete-branch --match-head-commit <sha>\n"
+            "  and put long text in a file (--body-file, git commit -F <file>).",
+            file=sys.stderr,
+        )
+        _journal_deny("publish mentioned inside unparsed shell syntax", data)
+        return 2
+
     # Fast path: no sub-command starts with a publish pattern → exit 0 silently.
     subs = _find_publish_subcmds(cmd)
     if not subs:
@@ -685,7 +809,6 @@ def main() -> int:
 
     # Positively identified as a merge action — from here on, a crash must fail
     # CLOSED (the __main__ handler reads this flag and exits 2, not 0).
-    global _PUBLISH_IDENTIFIED
     _PUBLISH_IDENTIFIED = True
     del _NUDGES[:]
     # Every publish sub-command is decided on its own and all must pass: a
@@ -701,7 +824,7 @@ def main() -> int:
 
 def _decide(cmd: str, matched_sub: str, data: dict) -> int:
     """0 to allow this one publish sub-command, 2 to block the whole command."""
-    pr_id = _extract_pr_id(matched_sub)
+    pr_id = _extract_pr_id(_canonical(matched_sub))
 
     # ── Repo scope: only PROTECTED repos are gated ────────────────────────────
     try:
@@ -726,7 +849,7 @@ def _decide(cmd: str, matched_sub: str, data: dict) -> int:
         if os.environ.get("OCTO_QA_OK", "").strip() != "1":
             if pr_id.isdigit():
                 # A pull request: the PASS must be for the commit this merge pins.
-                pin, auto = _merge_pin(_strip_leading(matched_sub))
+                pin, auto = _merge_pin(_canonical(matched_sub))
                 if auto:
                     print(
                         f"✗ QA GATE (fail-closed): PR #{pr_id} is approved, but `--auto` is refused.\n"

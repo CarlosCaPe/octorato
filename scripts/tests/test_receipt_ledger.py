@@ -99,6 +99,14 @@ class ReceiptLedgerAnchors(unittest.TestCase):
         self.assertTrue(rl.bash_is_seek("nohup timeout 30 python3 ~/.claude/scripts/query_connectome.py memory x"))
         self.assertTrue(rl.bash_is_seek("bash -c 'python3 ~/.claude/scripts/query_connectome.py memory x'"))
 
+    def test_subcommands_split_like_bash(self):
+        # The outward-send gate reads sends through this split: an escaped blank
+        # before `#` opens no comment, and a comment ends at its newline.
+        for cmd, tail in (("echo \\ #x; npx wrangler deploy", "npx wrangler deploy"),
+                          ("echo a\\\t#x; gh release create v1", "gh release create v1"),
+                          ("echo x # c \\\nnpx wrangler deploy", "npx wrangler deploy")):
+            self.assertIn(tail, [c.strip() for c in rl.subcommands(cmd)], repr(cmd))
+
     # ---- qa anchoring ----
     def _agent(self, name, text, sid="sess-1", shaped=True):
         d = Path(self.tmp) / ".claude" / "projects" / "p" / sid / "subagents"

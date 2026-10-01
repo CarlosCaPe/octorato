@@ -141,7 +141,7 @@ def subcommands(command: str) -> list:
     out = []
     try:
         split, strip = _qa_gate_helpers()
-        raws = [pp for pp in split(str(command or "").replace("\\\n", " ")) if pp.strip()]
+        raws = [pp for pp in split(str(command or "")) if pp.strip()]
     except Exception:
         raws = [str(command or "")]
     for raw in raws:
