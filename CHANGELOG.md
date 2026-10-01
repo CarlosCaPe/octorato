@@ -15,6 +15,12 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-10-01]: v9.0.2
+### Fixes
+- fix(doctor): python-deps probes distributions, not import names (#343)
+### Other
+- docs(changelog): backfill v9.0.1 (#342)
+
 ## [2026-10-01]: v9.0.1
 ### Other
 - ci: run scripts/tests on every pull request, and record two v9 residuals (#341)
