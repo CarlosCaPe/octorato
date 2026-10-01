@@ -12,6 +12,7 @@ import importlib.util
 import io
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -102,6 +103,60 @@ class PushGateTest(unittest.TestCase):
             return pair if pair in spec_lint.SPEC_HOMES else ""
         with mock.patch.object(spec_lint, "_home_at", by_lower):
             self.assertEqual(_quiet(spec_lint.selftest, PUSH_FIXTURES), 1)
+
+    def test_push_selftest_goes_red_when_merge_commits_are_not_read(self):
+        # The old reader: one `git diff-tree` per commit, which prints nothing for a merge.
+        def per_commit(repo, before, head):
+            out = set()
+            revs = spec_lint._git(repo, "rev-list", f"{before}..{head}").split()
+            for c in revs:
+                out.update(q for q in spec_lint._git(
+                    repo, "-c", "core.quotePath=false", "diff-tree", "--no-commit-id",
+                    "--name-only", "-r", "-z", "--root", c).split("\0") if q)
+            return out
+        with mock.patch.object(spec_lint, "_changed_paths", per_commit):
+            self.assertEqual(_quiet(spec_lint.selftest, PUSH_FIXTURES), 1)
+
+    def test_push_selftest_goes_red_when_before_follows_commit_dates(self):
+        # The old "before": the first parent of the last commit `git rev-list` prints.
+        def by_date(repo, base, head):
+            last = spec_lint._git(repo, "rev-list", f"{base}..{head}").split()[-1]
+            return spec_lint._git(repo, "rev-list", "--parents", "-n", "1", last).split()[1]
+        with mock.patch.object(spec_lint, "_before_rev", by_date):
+            self.assertEqual(_quiet(spec_lint.selftest, PUSH_FIXTURES), 1)
+
+    def test_a_new_ref_is_compared_with_the_default_remote_branch(self):
+        case = PUSH_FIXTURES / "violation_flip_no_receipt"
+        sd = "docs/specs/202609300000-toy"
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, home = Path(tmp) / "repo", Path(tmp) / "home"
+            home.mkdir()
+            env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
+                       GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+
+            def git(*a):
+                return subprocess.run(["git", "-C", str(repo), *a], check=True, env=env,
+                                      capture_output=True, text=True).stdout.strip()
+            subprocess.run(["git", "init", "-q", str(repo)], check=True)
+            (repo / sd).mkdir(parents=True)
+            feature = (case / "feature.md").read_text()
+            (repo / sd / "feature.md").write_text(feature)
+            (repo / sd / "plan.md").write_text((case / "plan.md").read_text())
+            git("add", "-A"); git("commit", "-qm", "base")
+            base = git("rev-parse", "HEAD")
+            (repo / sd / "feature.md").write_text(
+                feature.replace("> **Status:** approved", "> **Status:** converged"))
+            git("add", "-A"); git("commit", "-qm", "flip")
+            head = git("rev-parse", "HEAD")
+            with mock.patch.dict(os.environ, {"HOME": str(home), "USERPROFILE": str(home)}):
+                # no remote-tracking ref at all: every file is new, the flip is seen
+                self.assertTrue(spec_lint.push_findings(repo, spec_lint.ZERO_SHA, head))
+                git("update-ref", "refs/remotes/origin/master", base)
+                found = spec_lint.push_findings(repo, spec_lint.ZERO_SHA, head)
+                self.assertTrue(any("holds no converge receipt" in f for f in found), found)
+                # the remote already holds this head: nothing to check
+                git("update-ref", "refs/remotes/origin/master", head)
+                self.assertEqual(spec_lint.push_findings(repo, spec_lint.ZERO_SHA, head), [])
 
     def test_a_miscased_spec_blocks_while_present_and_may_be_deleted(self):
         present = spec_lint._push_selftest_case(PUSH_FIXTURES / "violation_spec_path_miscased")
@@ -215,6 +270,13 @@ class HeaderTest(unittest.TestCase):
         self.assertTrue(spec_lint.is_spec_dir(long_s))
         self.assertFalse(spec_lint.is_canonical_spec_path(long_s + "/feature.md"))
         self.assertTrue(spec_lint._on_spec_path("doc\u017f"))
+
+    def test_only_ears_1_declares_the_format(self):
+        # AC-16: a file that names another version does not declare ears-1 and is skipped.
+        for version in ("ears-2", "ears-10", "ears-1a"):
+            self.assertFalse(spec_lint.is_ears(f"# F\n\n> **Spec-Format:** {version}\n"), version)
+        self.assertTrue(spec_lint.is_ears("# F\n\n> **Spec-Format:** ears-1\n"))
+        self.assertTrue(spec_lint.is_ears("# F\n\n**Spec-Format**: EARS-1\n"))
 
     def test_prose_mention_is_not_a_header(self):
         self.assertFalse(spec_lint.is_ears("# F\n\nThis spec does not use Spec-Format: ears-1 yet.\n"))

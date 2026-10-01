@@ -58,9 +58,11 @@ Push gate (v9 phase 3, called by .githooks/pre-push once per pushed ref):
       than the newest code commit on the branch (AC-14)
     - refuses a spec that stops being ears-1, and a docs/specs/ directory not
       named <yyyymmddHHMM>-<slug>
-    A base of all zeros means a new branch: the range is every commit not on any
-    remote. The receipt lives in this machine's ledger, so the machine that ran
-    the converge pass is the one that pushes the status change.
+    The pushed head is compared, as one tree diff, with what the remote ref holds
+    (<base>). A base of all zeros means a new ref: the comparison is then with the
+    merge base of the default remote branch. Commit order and merge commits do not
+    matter to it. The receipt lives in this machine's ledger, so the machine that
+    ran the converge pass is the one that pushes the status change.
 
 Usage:
   spec_lint.py [--ready] <spec-dir | feature.md> [...]
@@ -105,8 +107,11 @@ _CANON_STATUS = re.compile(r"^> \*\*Status:\*\* (draft|approved|converged)\s*$")
 # Header-shaped: optional quote/list/table markers and emphasis, the key, emphasis,
 # a colon or a table bar, then a value this format recognises. Prose that merely
 # mentions the key ("This spec does not use Spec-Format: ears-1") is not a header.
+# Only `ears-1` opts in: a header naming another version (`ears-2`) does not declare
+# this format, so the file is skipped like a legacy spec (AC-16). The push gate still
+# refuses a spec that LEAVES ears-1 in a push.
 _LOOSE_FORMAT = re.compile(
-    r"^\s*(?:[>*+|-]\s*)*[*_]*\s*spec[-_ ]?format\s*[*_]*\s*[:|]\s*[*_]*\s*ears-\d+", re.IGNORECASE)
+    r"^\s*(?:[>*+|-]\s*)*[*_]*\s*spec[-_ ]?format\s*[*_]*\s*[:|]\s*[*_]*\s*ears-1\b", re.IGNORECASE)
 _LOOSE_STATUS = re.compile(
     r"^\s*(?:[>*+|-]\s*)*[*_]*\s*status\s*[*_]*\s*[:|]\s*[*_]*\s*(?:draft|approved|converged)\b", re.IGNORECASE)
 _GLOSSARY_ENTRY = re.compile(r"^- \*\*([A-Za-z][\w-]*)\*\*:")
@@ -349,10 +354,6 @@ def _show(repo: Path, rev: str, path: str):
     return cp.stdout if cp.returncode == 0 else None
 
 
-def _range_args(base: str, head: str) -> list:
-    return [head, "--not", "--remotes"] if base == ZERO_SHA else [f"{base}..{head}"]
-
-
 def _default_remote_branches(repo: Path) -> list:
     """Remote-tracking refs of the default branch (origin/HEAD, else */main, */master)."""
     refs = _git(repo, "for-each-ref", "--format=%(refname)",
@@ -365,14 +366,43 @@ def _default_remote_branches(repo: Path) -> list:
     return [r for r in refs if r.rsplit("/", 1)[-1] in ("main", "master")]
 
 
-def _changed_paths(repo: Path, commits: list) -> set:
-    out: set = set()
-    for c in commits:
-        raw = subprocess.run(["git", "-C", str(repo), "-c", "core.quotePath=false", "diff-tree",
-                              "--no-commit-id", "--name-only", "-r", "-z", "--root", c],
-                             capture_output=True).stdout
-        out.update(p for p in raw.decode("utf-8", "surrogateescape").split("\0") if p)
-    return out
+def _before_rev(repo: Path, base: str, head: str):
+    """The commit the push is compared against: what the remote ref holds now, or on
+    a new ref the merge base with the default remote branch. None when there is
+    neither, and then every file at head counts as changed.
+
+    It is read from topology, never from the order `git rev-list` prints. That order
+    follows commit dates, so a commit dated before its own parent moved the "before"
+    onto a state that was already converged, and the flip went unseen (converge
+    pass 1 of v9)."""
+    if base != ZERO_SHA:
+        cp = subprocess.run(["git", "-C", str(repo), "cat-file", "-e", f"{base}^{{commit}}"],
+                            capture_output=True)
+        if cp.returncode == 0:
+            return base
+    for ref in _default_remote_branches(repo):
+        cp = subprocess.run(["git", "-C", str(repo), "merge-base", head, ref],
+                            capture_output=True, text=True)
+        if cp.returncode == 0 and cp.stdout.strip():
+            return cp.stdout.strip()
+    return None
+
+
+def _changed_paths(repo: Path, before, head: str) -> set:
+    """Every path whose content or mode differs between the before state and the
+    pushed head. One tree diff, not a walk over the commits: `git diff-tree` on a
+    merge commit prints nothing without -m, so a spec edited inside a merge commit
+    never reached the check (converge pass 1 of v9). Renames are not paired, so both
+    the old and the new path are listed."""
+    if before is None:
+        cmd = ["ls-tree", "-r", "--name-only", "-z", head]
+    else:
+        cmd = ["diff", "--name-only", "--no-renames", "-z", before, head]
+    cp = subprocess.run(["git", "-C", str(repo), "-c", "core.quotePath=false", *cmd],
+                        capture_output=True)
+    if cp.returncode != 0:
+        raise RuntimeError(f"git {' '.join(cmd)}: {cp.stderr.decode('utf-8', 'replace').strip()}")
+    return {p for p in cp.stdout.decode("utf-8", "surrogateescape").split("\0") if p}
 
 
 def _newest_branch_code(repo: Path, head: str, spec_dir: str) -> str:
@@ -457,14 +487,10 @@ def _parse_ts(value: str) -> _dt.datetime:
 def push_findings(repo: Path, base: str, head: str) -> list:
     """Findings for one pushed ref. Empty list means the push may go."""
     findings: list = []
-    commits = _git(repo, "rev-list", *_range_args(base, head)).split()
-    if not commits:
+    before = _before_rev(repo, base, head)
+    changed = _changed_paths(repo, before, head)
+    if not changed:
         return findings
-    oldest = commits[-1]
-    parents = _git(repo, "rev-list", "--parents", "-n", "1", oldest).split()[1:]
-    before = parents[0] if parents else None
-
-    changed = _changed_paths(repo, commits)
     for p in sorted(changed):
         if _on_spec_path(p):
             mode = _git(repo, "ls-tree", head, "--", p).split(" ", 1)[0]
@@ -592,6 +618,8 @@ def _push_selftest_case(case: Path) -> list:
             text = text.replace("## Summary", spec["append_status"] + "\n\n## Summary")
         if spec.get("remove_format"):
             text = text.replace("> **Spec-Format:** ears-1\n", "")
+        if spec.get("replace_format"):
+            text = text.replace("> **Spec-Format:** ears-1", spec["replace_format"])
         (repo / sd / "feature.md").write_text(text)
         if spec.get("delete_plan"):
             (repo / sd / "plan.md").unlink()
@@ -621,7 +649,40 @@ def _push_selftest_case(case: Path) -> list:
             text = (repo / sd / "feature.md").read_text()
             (repo / sd / "feature.md").write_text(
                 text.replace("THE Exporter SHALL write UTF-8.", "The exporter writes UTF-8."))
-        head = commit("status", "2026-09-30T12:00:00+00:00")
+        if spec.get("in_merge"):
+            # the spec edit lives ONLY in a merge commit: its tree differs from both
+            # parents, and a per-commit diff without -m prints nothing for it
+            def tree_commit(tree: str, parents: list, when: str) -> str:
+                e = dict(env, GIT_AUTHOR_DATE=when, GIT_COMMITTER_DATE=when)
+                args = [a for q in parents for a in ("-p", q)]
+                return subprocess.run(["git", "-C", str(repo), "commit-tree", tree, *args,
+                                       "-m", "m"], check=True, env=e, capture_output=True,
+                                      text=True).stdout.strip()
+            tip = _git(repo, "rev-parse", "HEAD").strip()
+            side = tree_commit(_git(repo, "rev-parse", "HEAD^{tree}").strip(), [tip],
+                               "2026-09-30T11:30:00+00:00")
+            subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, env=env)
+            merged = tree_commit(_git(repo, "write-tree").strip(), [tip, side],
+                                 "2026-09-30T12:00:00+00:00")
+            subprocess.run(["git", "-C", str(repo), "update-ref", "HEAD", merged], check=True)
+            head = merged
+        else:
+            head = commit("status", "2026-09-30T12:00:00+00:00")
+        if spec.get("child_dated_before_parent"):
+            # F (the flip, 12:00) <- K (its child, dated 10:30, before every other
+            # commit of the push) <- M (merge of K and F). `git rev-list` prints by
+            # date, so K comes last, and reading "before" off the last one landed on
+            # its parent F, which is already converged.
+            def tree_commit(parents: list, when: str) -> str:
+                e = dict(env, GIT_AUTHOR_DATE=when, GIT_COMMITTER_DATE=when)
+                args = [a for q in parents for a in ("-p", q)]
+                return subprocess.run(["git", "-C", str(repo), "commit-tree",
+                                       _git(repo, "rev-parse", f"{head}^{{tree}}").strip(),
+                                       *args, "-m", "m"], check=True, env=e,
+                                      capture_output=True, text=True).stdout.strip()
+            child = tree_commit([head], "2026-09-30T10:30:00+00:00")
+            head = tree_commit([child, head], "2026-09-30T12:30:00+00:00")
+            subprocess.run(["git", "-C", str(repo), "update-ref", "HEAD", head], check=True)
         if spec.get("gitlink_spec"):
             # a submodule at the spec directory: files on disk once initialised,
             # nothing in the superproject's tree

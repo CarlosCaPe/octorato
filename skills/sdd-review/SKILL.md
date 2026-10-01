@@ -38,7 +38,7 @@ Read the following before starting:
 - `docs/project.md`: tech stack, architecture, conventions
 - `feature.md`: functional requirements (if present); criteria are context, not your checklist
 - The latest `CONVERGE-VERDICT` for this spec, when the task was LARGE: the final message of
-  the converge subagent (recorded in the receipt ledger from v9 phase 3 on). Quote it in the
+  the converge subagent (recorded in the receipt ledger). Quote it in the
   Summary; if it is `GAPS` or missing, say so first.
 - Never edit `feature.md`. Criteria are not yours to tick or rewrite.
 - `plan.md`: intended implementation approach (if present)

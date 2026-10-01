@@ -385,10 +385,10 @@ if [ -f "$REPO_ROOT/scripts/octo_pkg.py" ]; then
 fi
 
 # OCTORATO-SPEC-GATE: v9, "done is a verdict" (docs/specs/202609301321-v9-done-is-a-verdict).
-# For every pushed ref, spec_lint.py --push-range lints each ears-1 spec the range
+# For every pushed ref, spec_lint.py --push-range lints each ears-1 spec the push
 # changes (AC-15) and refuses a spec whose Status flips to `converged` unless the
 # latest anchored converge receipt for that spec directory says CONVERGED and is
-# newer than the last commit in the range outside the spec directory (AC-14).
+# newer than the newest commit on the branch outside the spec directory (AC-14).
 # The receipt lives in this machine's ledger (~/.claude/.cache/receipts), so the
 # machine that ran the converge pass is the one that pushes the status change.
 # A missing linter blocks, like every other stanza: a gate may not vanish silently.

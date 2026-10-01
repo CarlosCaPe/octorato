@@ -64,7 +64,7 @@ Standard 4D: no SDD artifacts needed:
 1. **1D Describe**: state what and why
 2. **2D Delegate**: run delegate-check
 3. **2S Plan**: generate `plan.md` with numbered tasks (cap: 20 tasks max)
-   - Use `/sdd-plan` format but lighter: no AC mapping table needed
+   - Use `/sdd-plan` format but lighter: tasks need no `[AC-##]` brackets
    - Plan lives in working directory, deleted after completion
 4. **4D Gate**: Change Manifest + plan.md summary
 5. **Execute**: follow plan tasks in order, mark done
