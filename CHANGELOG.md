@@ -15,6 +15,12 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-10-01]: v9.0.3
+### Fixes
+- fix(scripts): move curation gates off the decommissioned Groq llama-3.3 model (#344)
+### Other
+- docs(changelog): backfill v9.0.2 (#345)
+
 ## [2026-10-01]: v9.0.2
 ### Fixes
 - fix(doctor): python-deps probes distributions, not import names (#343)
