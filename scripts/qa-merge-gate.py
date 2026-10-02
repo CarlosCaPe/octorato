@@ -282,23 +282,40 @@ def _effective_cwds(cmd: str, matched_sub: str, session_cwd: str) -> list:
         for raw in reading:
             if raw == matched_sub:
                 break
-            s = _strip_leading(raw).strip()
-            # Only a plain `cd <dir>` is read. Any other directory change
-            # (`pushd`, `popd`, `builtin cd`, a `cd` option, a redirection
-            # or a second word, CDPATH) leaves the directory unknown.
-            if re.search(r"(?<![\w$])CDPATH\b", raw) or re.match(
-                    r"^(?:builtin\s+|command\s+)?(?:pushd|popd)\b|^builtin\s+cd\b", s):
-                cwd = None
-                continue
-            m = re.match(r"^cd\s+(\S+)\s*$", s)
-            if m and not m.group(1).startswith("-") and cwd is not None:
-                p = os.path.expanduser(m.group(1).strip("'\""))
-                cwd = p if os.path.isabs(p) else os.path.join(cwd, p)
-            elif re.match(r"^cd(?:\s|$)", s):
-                cwd = None
+            cwd = _apply_dir_change(_strip_leading(raw).strip(), raw, cwd)
         if cwd not in out:
             out.append(cwd)
     return out
+
+
+_DIR_VERBS = {"cd", "pushd", "popd"}
+
+
+def _apply_dir_change(s: str, raw: str, cwd):
+    """The directory after one sub-command, or None when it moved somewhere
+    the gate cannot read. Words are read as bash sees them after quote
+    removal (`'cd'`, `c""d`, `builtin 'cd'`). Only `cd <dir>` naming one
+    existing directory moves the cwd; any other `cd`, `pushd` or `popd`, a
+    `builtin`/`command` in front of one, CDPATH, or a target that does not
+    exist (cdable_vars resolves a variable name) leaves it unknown."""
+    if cwd is None:
+        return None
+    if re.search(r"CDPATH", re.sub(r"['\"\\]", "", raw)):
+        return None
+    try:
+        words = _bash_words(s)
+    except ValueError:
+        return None if re.search(r"(?:cd|pushd|popd)", re.sub(r"['\"\\]", "", s)) else cwd
+    while words and words[0] in ("builtin", "command"):
+        words = words[1:]
+    if not words or words[0] not in _DIR_VERBS:
+        return cwd
+    if words[0] != "cd" or len(words) != 2 or words[1].startswith("-") or any(
+            c in words[1] for c in "$`*?[{<>"):
+        return None
+    p = os.path.expanduser(words[1])
+    p = p if os.path.isabs(p) else os.path.join(cwd, p)
+    return p if os.path.isdir(p) else None
 
 
 def _is_protected_target(cmd: str, matched_sub: str, session_cwd: str):
@@ -1006,6 +1023,12 @@ def _canonical(sub: str) -> str:
                 else:
                     takes = False
                 argv = rest_argv[1:] if takes else rest_argv
+            if argv and os.path.basename(argv[0]) not in ("gh", "git"):
+                # A word env cannot be read past (`$'-C'`): read from the
+                # command it names, so the merge is still found.
+                nxt = next((j for j, w in enumerate(argv) if os.path.basename(w) in ("gh", "git")), None)
+                if nxt is not None:
+                    argv = argv[nxt:]
         else:
             break
     if argv and os.path.basename(argv[0]) == "gh":

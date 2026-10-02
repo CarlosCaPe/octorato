@@ -681,6 +681,14 @@ class RepoScopeEveryReading(unittest.TestCase):
             sub = [s for s in gate._split_subcmds(cmd) if "merge" in s][-1]
             self.assertIsNot(gate._is_protected_target(cmd, sub, cwd), False, cmd)
         self.assertTrue(gate._unparsed_publish("env -S 'gh\\_pr\\_merge\\_9'"))
+        # Quoted directory verbs are read as bash reads them.
+        for cmd in ("'cd' /x && gh pr merge 9", "c\"\"d /x && gh pr merge 9",
+                    "'pushd' /x && gh pr merge 9", "builtin 'cd' /x && gh pr merge 9",
+                    "cd /does/not/exist && gh pr merge 9"):
+            sub = [s for s in gate._split_subcmds(cmd) if "merge" in s][-1]
+            self.assertIsNot(gate._is_protected_target(cmd, sub, cwd), False, cmd)
+        # An env word the gate cannot read does not hide the merge.
+        self.assertIsNotNone(gate._find_publish_subcmd("env $'-C' /x gh pr merge 9"))
         for cmd in ("env X=1 gh pr merge 9", "cd $HOME/x && gh pr merge 9"):
             sub = [s for s in gate._split_subcmds(cmd) if "merge" in s][-1]
             self.assertFalse(gate._env_with_option(sub), cmd)
