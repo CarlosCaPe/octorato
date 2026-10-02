@@ -358,6 +358,25 @@ class GateHead(unittest.TestCase):
                 rc, err = self.run_gate(cmd)
                 self.assertEqual(rc, 0, f"{cmd!r}\n{err}")
 
+    def test_an_approval_never_gates_a_branch_push_outside_the_protected_set(self):
+        self.protected.stop()
+        try:
+            with mock.patch.object(gate, "_is_protected_target", lambda *a, **k: False):
+                for cmd in ("git push origin main", "git push origin HEAD:master"):
+                    rc, _ = self.run_gate(cmd)
+                    self.assertEqual(rc, 0, cmd)
+        finally:
+            self.protected.start()
+
+    def test_the_approval_is_normalised_like_the_pr(self):
+        os.environ["OCTO_MERGE_APPROVE"] = "096"
+        with self.lookup({SHA: receipt("PASS")}):
+            for cmd in (f"gh pr merge 96 --match-head-commit {SHA}",
+                        f"gh pr merge '+96' --match-head-commit {SHA}",
+                        f"gh pr merge '#+96' --match-head-commit {SHA}"):
+                rc, err = self.run_gate(cmd)
+                self.assertEqual(rc, 0, f"{cmd}\n{err}")
+
     def test_the_approved_number_is_never_ruled_out_of_scope(self):
         self.protected.stop()
         try:
@@ -513,9 +532,18 @@ class RepoScopeEveryReading(unittest.TestCase):
                     'gh pr merge 96 -R acme/brain -t "x -R other/repo"',
                     'gh pr merge 96 --repo acme/brain --subject "see --repo other/x"',
                     "gh -R other/repo pr merge 96 -R acme/brain",
-                    "gh pr merge 96 -R acme/brain"):
+                    "gh pr merge 96 -R acme/brain",
+                    "gh pr merge 97 -Racme/brain --squash", "gh -Racme/brain pr merge 97",
+                    "gh pr -Racme/brain merge 97", "gh pr merge 97 -sRacme/brain",
+                    "gh pr merge 97 -dR acme/brain", "gh pr merge 97 -R=acme/brain",
+                    "gh pr merge 97 --repo=acme/brain"):
             self.assertIsNot(judge(cmd), False, cmd)
         self.assertFalse(judge("gh pr merge 96 -R other/repo"))
+        # A repo named only inside a quoted value is not a flag: the cwd decides.
+        brain_cwd = str(self.brain)
+        self.assertTrue(gate._is_protected_target(
+            "gh pr merge 351 --body ' -R other/repo' --squash",
+            "gh pr merge 351 --body ' -R other/repo' --squash", brain_cwd))
 
     def test_a_cd_both_readings_agree_on_still_moves_it(self):
         self.assertFalse(self.protected(f"cd {self.other} && git push origin main"))

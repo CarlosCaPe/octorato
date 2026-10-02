@@ -152,7 +152,7 @@ def _api_write_action(sub: str) -> str | None:
         return None
     m = _API_PR_NUM_RE.search(sub)          # PR merge, REST
     if m:
-        return m.group(1)
+        return str(int(m.group(1)))
     if _API_GRAPHQL_MERGE.search(sub):      # PR merge, GraphQL mutation
         return "unknown"
     if _API_REFS_RE.search(sub):            # ref write to a head
@@ -251,6 +251,32 @@ def _repo_root_and_gitdir(start: str):
         p = p.parent
 
 
+def _repo_flag_values(sub: str) -> list:
+    """Every value gh could take for -R/--repo in *sub*'s words: `-R x`,
+    `-Rx`, `-R=x`, a short cluster ending in R (`-dR x`, `-sRx`), `--repo x`
+    and `--repo=x`. Read from words so the attached and clustered forms gh
+    accepts are candidates too."""
+    try:
+        argv = _bash_words(_drop_redirections(_strip_leading(sub)))
+    except ValueError:
+        return []
+    out = []
+    for i, tok in enumerate(argv):
+        nxt = argv[i + 1] if i + 1 < len(argv) else ""
+        if tok == "--repo":
+            out.append(nxt)
+        elif tok.startswith("--repo="):
+            out.append(tok[len("--repo="):])
+        elif tok.startswith("-") and not tok.startswith("--") and "R" in tok[1:]:
+            k = tok.index("R", 1)
+            if any(c in _MERGE_SHORT_VALUE for c in tok[1:k]):
+                continue  # an earlier value flag in the cluster takes the rest
+            rest = tok[k + 1:]
+            rest = rest[1:] if rest.startswith("=") else rest
+            out.append(rest or nxt)
+    return [v for v in out if v]
+
+
 def _effective_cwds(cmd: str, matched_sub: str, session_cwd: str) -> list:
     """The directory the matched sub-command runs in, once per reading: the
     session cwd moved by each plain `cd <path>` before it. The two readings can
@@ -299,18 +325,26 @@ def _is_protected_target(cmd: str, matched_sub: str, session_cwd: str):
 
     # gh pr merge with an explicit -R/--repo slug: compare against the slugs
     # of the protected roots. No parsable slugs → None (gate).
-    if _PAT_GH_MERGE.match(sub):
+    if _PAT_GH_MERGE.match(sub) or _PAT_GH_MERGE.match(_canonical(sub)):
         # Every `-R/--repo` value in the text is a candidate: gh keeps the last
         # real flag, but a raw read cannot tell a flag from the same text inside
         # a quoted --body or --subject, so ANY protected or unparseable
         # candidate gates, and only all-unprotected ungates.
-        found = re.findall(r"(?:^|\s)(?:-R|--repo)[=\s]+(\S+)", sub)
-        if found:
+        real = _repo_flag_values(sub)
+        raw = re.findall(r"(?:^|\s)(?:-R|--repo)[=\s]+(\S+)", sub)
+        if real or raw:
             known = [s for s in (_remote_slug(r) for r in _protected_roots()) if s]
-            slugs = [_canon_slug(v) for v in found]
-            if not known or any(sl is None for sl in slugs):
-                return None  # unparseable either side → gate
-            return any(sl in known for sl in slugs)  # exact canonical match
+            if not known:
+                return None  # unparseable protected set → gate
+            raw_slugs = [_canon_slug(v) for v in raw]
+            if any(sl in known for sl in raw_slugs if sl):
+                return True  # a protected slug anywhere in the text gates
+            if real:
+                slugs = [_canon_slug(v) for v in real]
+                if any(sl is None for sl in slugs):
+                    return None  # unparseable real flag → gate
+                return any(sl in known for sl in slugs)
+            # Only quoted text named a repo: gh uses the cwd, so judge that.
 
     # Resolve the repo the command operates on: git -C wins, else effective cwd.
     # A relative -C is joined against each effective SESSION cwd, never the
@@ -794,6 +828,12 @@ def _extract_pr_id(matched_sub: str) -> str:
     return "unknown"
 
 
+def _norm_pr(value: str) -> str:
+    """`0350` and `350` are one pull request; anything else is kept as is."""
+    value = str(value or "").strip()
+    return str(int(value)) if value.isdigit() else value
+
+
 def _merge_target(sub: str) -> str:
     """The pull request number of `gh pr merge [flags] <n|url> [flags]`: the
     first positional after `merge`, skipping flags and their values the way
@@ -830,9 +870,9 @@ def _merge_target(sub: str) -> str:
     if i >= len(rest):
         return ""
     ref = rest[i]
-    # The forms gh resolves to a pull request number: `96`, `096`, `#96`, and
+    # The forms gh resolves to a pull request number: `96`, `096`, `+96`, `#96`, and
     # a URL to the pull request or any page under it (`/files`, `#comment`).
-    m = re.match(r"^#?(\d+)$", ref)
+    m = re.match(r"^#?\+?(\d+)$", ref)
     if m:
         return str(int(m.group(1)))
     m = re.match(r"^https?://[^/]+/[^/]+/[^/]+/pull/(\d+)(?:[/?#].*)?$", ref)
@@ -1168,8 +1208,9 @@ def _decide(cmd: str, matched_sub: str, data: dict) -> int:
         protected = _is_protected_target(cmd, matched_sub, data.get("cwd") or "")
     except Exception:
         protected = None  # unresolvable → keep gating (fail-closed)
-    approved = os.environ.get("OCTO_MERGE_APPROVE", "").strip()
-    if protected is False and approved and (not pr_id.isdigit() or pr_id == approved):
+    approved = _norm_pr(os.environ.get("OCTO_MERGE_APPROVE", ""))
+    unreadable_pr = pr_id == "unknown" and not _PAT_GIT_PUSH.match(_strip_leading(matched_sub))
+    if protected is False and approved and (pr_id == approved or unreadable_pr):
         # While an approval is exported, scope may only ungate a merge whose
         # target is a number the gate read and that is NOT the approved one:
         # GH_REPO or a URL can aim gh at a protected repo from any directory,
@@ -1183,7 +1224,7 @@ def _decide(cmd: str, matched_sub: str, data: dict) -> int:
         return 0
 
     # ── Channel 1: env, PR-scoped, agent-proof (preferred) ───────────────────
-    env_approve = os.environ.get("OCTO_MERGE_APPROVE", "").strip()
+    env_approve = _norm_pr(os.environ.get("OCTO_MERGE_APPROVE", ""))
     if env_approve and env_approve == pr_id:
         # v7 phase 3: the operator's approval is necessary, not sufficient. An
         # independent QA verdict must exist as a HARNESS-written receipt for this
