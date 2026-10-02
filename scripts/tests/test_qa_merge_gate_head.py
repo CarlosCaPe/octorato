@@ -766,6 +766,29 @@ class RepoScopeEveryReading(unittest.TestCase):
         self.assertFalse(judge(f"GIT_DIR={self.other}/.git gh pr merge 9"))
         self.assertFalse(judge("GIT_DIR=.git gh pr merge 9"))
 
+    def test_a_git_dir_inside_another_repo_is_read_as_git_reads_it(self):
+        # A bare repo or a gitfile inside an unprotected repo: git uses it, not
+        # the repo around it.
+        url = '[remote "origin"]\n\turl = https://github.com/acme/brain.git\n'
+        (self.brain / ".git" / "config").write_text(url)
+        for name, remote in (("b.git", url), ("ok.git", url.replace("acme/brain", "acme/free"))):
+            bare = self.other / name
+            for d in ("objects", "refs"):
+                (bare / d).mkdir(parents=True)
+            (bare / "HEAD").write_text("ref: refs/heads/main\n")
+            (bare / "config").write_text(remote)
+        (self.other / "g").write_text(f"gitdir: {self.brain}/.git\n")
+        cwd = str(self.other)
+        judge = lambda cmd: gate._is_protected_target(cmd, cmd.split("&& ")[-1], cwd)
+        for cmd in ("GIT_DIR=b.git gh pr merge 9 --squash",
+                    f"GIT_DIR={self.other}/b.git gh pr merge 9",
+                    "cd b.git && gh pr merge 9",
+                    "git -C b.git push origin main",
+                    "GIT_DIR=g gh pr merge 9"):
+            self.assertIsNot(judge(cmd), False, cmd)
+        self.assertFalse(judge("GIT_DIR=ok.git gh pr merge 9"))
+        self.assertFalse(judge("cd ok.git && gh pr merge 9"))
+
     def test_a_relative_git_dir_is_read_from_the_command_directory(self):
         # The hook process runs from an unprotected third repo, where bl/.git
         # does not exist; the command runs in `other`, where bl is the brain.

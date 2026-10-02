@@ -233,28 +233,46 @@ def _canon_slug(s: str) -> str | None:
     return m.group(1).lower() if m else None
 
 
+def _gitfile_target(f: Path):
+    """The git dir a `gitdir:` file points to, or None."""
+    try:
+        m = re.search(r"gitdir:\s*(.+)", f.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError):
+        return None
+    if not m:
+        return None
+    gd = Path(m.group(1).strip())
+    return (gd if gd.is_absolute() else (f.parent / gd)).resolve()
+
+
+def _is_git_dir(d: Path) -> bool:
+    """A directory git accepts as a git dir on its own (a bare repo, or a
+    `.git` dir named directly): HEAD, objects/ and refs/."""
+    return (d / "HEAD").is_file() and (d / "objects").is_dir() and (d / "refs").is_dir()
+
+
 def _repo_root_and_gitdir(start: str):
-    """Walk up from *start* to the first .git entry. Returns (worktree_root,
-    resolved_gitdir_or_None). A linked worktree's .git FILE points into the
-    main repo's .git dir — that is how a brain worktree is recognized."""
+    """Find the repo git finds from *start*, by git's own rules. Returns
+    (root, resolved_gitdir_or_None). A file is a gitfile and is followed (a
+    `GIT_DIR` may name one); at each level a `.git` entry wins, then the
+    directory itself if it is a git dir (a bare repo); otherwise walk up. A
+    linked worktree's .git FILE points into the main repo's .git dir — that
+    is how a brain worktree is recognized."""
     try:
         p = Path(start).resolve()
     except Exception:
         return None, None
+    if p.is_file():
+        gd = _gitfile_target(p)
+        return (p.parent, gd) if gd is not None else (None, None)
     while True:
         g = p / ".git"
         if g.is_dir():
             return p, g
         if g.is_file():
-            try:
-                m = re.search(r"gitdir:\s*(.+)", g.read_text(encoding="utf-8"))
-                if m:
-                    gd = Path(m.group(1).strip())
-                    gd = gd if gd.is_absolute() else (p / gd)
-                    return p, gd.resolve()
-            except OSError:
-                pass
-            return p, None
+            return p, _gitfile_target(g)
+        if _is_git_dir(p):
+            return p, p
         if p.parent == p:
             return None, None
         p = p.parent
