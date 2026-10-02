@@ -335,6 +335,15 @@ class GateHead(unittest.TestCase):
             rc, err = self.run_gate(f"gh pr merge 96 -s=t --match-head-commit={SHA}")
             self.assertEqual(rc, 0, err)
 
+    def test_moved_root_flags_parse_before_the_pull_request(self):
+        # cobra pairs `-d -t` at the root; pflag then gives `-t` the first word
+        # after `merge`, so gh merges 351, never the approved 350.
+        with self.lookup({SHA: receipt("PASS")}):
+            for cmd in (f"gh -d -t pr merge 96 97 --squash --match-head-commit {SHA}",
+                        f"gh -s -b pr merge 96 97 --match-head-commit {SHA}"):
+                rc, _ = self.run_gate(cmd)
+                self.assertEqual(rc, 2, cmd)
+
     def test_merge_flags_at_gh_root_are_read(self):
         with self.lookup({SHA: receipt("PASS")}):
             for cmd in ("gh --subject=x pr merge 96", "gh --delete-branch=true pr merge 96",
@@ -562,16 +571,44 @@ class RepoScopeEveryReading(unittest.TestCase):
                     "gh pr merge 350 -b '-dR other/repo'", "gh pr merge 350 --author-email -Rother/repo",
                     "gh pr merge 350 -F -Rother/repo", "gh pr merge 350 --body-file -Rother/repo"):
             self.assertTrue(gate._is_protected_target(cmd, cmd, str(self.brain)), cmd)
-        # Real flags in every spelling still move the target.
-        for cmd in ("gh pr merge 97 -Rother/repo", "gh pr merge 97 -R=other/repo",
-                    "gh pr merge 97 -dRother/repo", "gh pr merge 97 --repo=other/repo",
-                    "gh -Rother/repo pr merge 97", "gh pr -Rother/repo merge 97"):
+        # Spellings the previous judge reads move the target out of the brain;
+        # the attached and clustered ones it does not read stay gated in the
+        # brain (the previous judge is the floor), and still gate a protected
+        # slug from anywhere (see above).
+        for cmd in ("gh pr merge 97 -R other/repo", "gh pr merge 97 -R=other/repo",
+                    "gh pr merge 97 --repo=other/repo", "gh pr merge 97 --repo other/repo"):
             self.assertFalse(gate._is_protected_target(cmd, cmd, str(self.brain)), cmd)
+        for cmd in ("gh pr merge 97 -Rother/repo", "gh pr merge 97 -dRother/repo",
+                    "gh -Rother/repo pr merge 97", "gh pr -Rother/repo merge 97"):
+            self.assertIsNot(gate._is_protected_target(cmd, cmd, str(self.brain)), False, cmd)
         # A repo named only inside a quoted value is not a flag: the cwd decides.
         brain_cwd = str(self.brain)
         self.assertTrue(gate._is_protected_target(
             "gh pr merge 351 --body ' -R other/repo' --squash",
             "gh pr merge 351 --body ' -R other/repo' --squash", brain_cwd))
+
+    def test_a_root_flag_before_api_keeps_the_rest_path_as_target(self):
+        (self.brain / ".git" / "config").write_text(
+            '[remote "origin"]\n\turl = https://github.com/acme/brain.git\n')
+        for cmd in ("gh -X PUT api repos/acme/brain/pulls/97/merge",
+                    "gh --method=PUT api repos/acme/brain/pulls/97/merge",
+                    "gh --hostname github.com api -X PUT repos/acme/brain/pulls/97/merge"):
+            self.assertTrue(gate._is_protected_target(cmd, cmd, str(self.other)), cmd)
+        # From the brain the previous judge reads the directory: still gated.
+        self.assertIsNot(gate._is_protected_target(
+            "gh -X PUT api repos/acme/other/pulls/97/merge",
+            "gh -X PUT api repos/acme/other/pulls/97/merge", str(self.brain)), False)
+
+    def test_scope_is_never_looser_than_the_previous_judge(self):
+        (self.brain / ".git" / "config").write_text(
+            '[remote "origin"]\n\turl = https://github.com/acme/brain.git\n')
+        for cmd in ("gh pr merge 350 --squash $'-t' -Rother/repo",
+                    'gh pr merge 351 --squash $"-t" -Rother/repo',
+                    "T=-t; gh pr merge 351 --squash $T -Rother/repo",
+                    "gh pr merge 351 --squash {-t,} -Rother/repo",
+                    "gh pr merge 350 --squash $(echo -t) -Rother/repo"):
+            sub = [s for s in gate._split_subcmds(cmd) if "merge" in s][0]
+            self.assertIsNot(gate._is_protected_target(cmd, sub, str(self.brain)), False, cmd)
 
     def test_a_cd_both_readings_agree_on_still_moves_it(self):
         self.assertFalse(self.protected(f"cd {self.other} && git push origin main"))

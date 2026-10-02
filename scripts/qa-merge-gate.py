@@ -294,7 +294,92 @@ def _effective_cwds(cmd: str, matched_sub: str, session_cwd: str) -> list:
 
 def _is_protected_target(cmd: str, matched_sub: str, session_cwd: str):
     """True = protected, False = positively NOT protected, None = unresolvable
-    (treated as protected: the gate stays fail-closed when unsure)."""
+    (treated as protected: the gate stays fail-closed when unsure).
+
+    The stricter of two judges: the current scope reader and the previous
+    gate's, kept verbatim. Every reading that could UNGATE more (real -R
+    flags, quoted values, PR forms) met a bash expansion it cannot see
+    (`$'-t'`, `{-t,}`, `$T`) and came out looser than before; with the
+    previous judge as a floor, the new one can only add gating."""
+    new = _scope_current(cmd, matched_sub, session_cwd)
+    try:
+        old = _scope_previous(cmd, matched_sub, session_cwd)
+    except Exception:
+        old = None
+    if new is True or old is True:
+        return True
+    if new is None or old is None:
+        return None
+    return False
+
+
+def _scope_previous(cmd: str, matched_sub: str, session_cwd: str):
+    """The previous gate's scope judge, verbatim in logic: its own split
+    (_split_master), its own prefix peel, `gh pr merge` only at the head, the
+    first raw -R, and a single cwd."""
+    sub = _strip_leading_previous(matched_sub)
+    if _api_write_action(sub) is not None:
+        m = _API_REPO_ANY_RE.search(sub)
+        if not m:
+            return None
+        slug = _canon_slug(m.group(1))
+        known = {s for s in (_remote_slug(r) for r in _protected_roots()) if s}
+        if not known or slug is None:
+            return None
+        return slug in known
+    if re.match(r"^\s*gh\s+pr\s+merge\b", sub):
+        m = re.search(r"(?:^|\s)(?:-R|--repo)[=\s]+(\S+)", sub)
+        if m:
+            slug = _canon_slug(m.group(1))
+            known = [s for s in (_remote_slug(r) for r in _protected_roots()) if s]
+            if not known or slug is None:
+                return None
+            return slug in known
+    cwd = session_cwd or os.getcwd()
+    for raw in _split_master(cmd):
+        if raw == matched_sub:
+            break
+        s = _strip_leading_previous(raw).strip()
+        m = re.match(r"^cd\s+(\S+)", s)
+        if m:
+            p = os.path.expanduser(m.group(1).strip("'\""))
+            cwd = p if os.path.isabs(p) else os.path.join(cwd, p)
+    target = None
+    m = re.match(r"^\s*git\s+((?:(?:-C|-c)\s+\S+\s+)*)", sub)
+    if m and m.group(1):
+        c = re.search(r"-C\s+(\S+)", m.group(1))
+        if c:
+            raw = os.path.expanduser(c.group(1).strip("'\""))
+            target = raw if os.path.isabs(raw) else os.path.join(cwd, raw)
+    return _protected_dir(target or cwd)
+
+
+def _strip_leading_previous(s: str) -> str:
+    """The previous prefix peel: grouping, assignments, redirections,
+    `command`, and `env` with its flags and assignments."""
+    s = s.lstrip()
+    prev = None
+    while s != prev:
+        prev = s
+        for pat in (_W_GROUP, _W_ASSIGN, _W_REDIR, _W_COMMAND):
+            m = pat.match(s)
+            if m:
+                s = s[m.end():]
+                break
+        else:
+            m = _W_ENV.match(s)
+            if m:
+                s = s[m.end():]
+                while True:
+                    m2 = _W_ENVARG.match(s)
+                    if not m2:
+                        break
+                    s = s[m2.end():]
+    return s
+
+
+def _scope_current(cmd: str, matched_sub: str, session_cwd: str):
+    """The current scope reader (see _is_protected_target)."""
     sub = _strip_leading(matched_sub)
 
     # gh api / curl write (PR merge, branch merge into main/master, or a
@@ -302,9 +387,11 @@ def _is_protected_target(cmd: str, matched_sub: str, session_cwd: str):
     # (the agent can fire the API call from anywhere, so cwd-based resolution
     # would under-gate). Resolve owner/repo from the path and compare against
     # the protected slugs. GraphQL / any form with no path repo is unresolvable
-    # → None (gate, fail-closed).
-    if _api_write_action(sub) is not None:
-        m = _API_REPO_ANY_RE.search(sub)
+    # → None (gate, fail-closed). The canonical form is read too, so a root
+    # flag before `api` (`gh -X PUT api repos/...`) still finds its path.
+    api_sub = sub if _api_write_action(sub) is not None else _canonical(sub)
+    if _api_write_action(api_sub) is not None:
+        m = _API_REPO_ANY_RE.search(api_sub)
         if not m:
             return None
         slug = _canon_slug(m.group(1))
@@ -692,9 +779,9 @@ def _flag_span(argv: list, j: int) -> int:
 
 def _canonical(sub: str) -> str:
     """The stripped sub-command as gh sees its argv: quotes removed (`'gh'`
-    runs gh), a leading global `-R/--repo <slug>` and every flag gh accepts
-    between `pr` and `merge` moved after the subcommand, so
-    `gh -R o/r pr -t x merge 96` reads as `gh pr merge 96 -R o/r -t x`.
+    runs gh), and every flag cobra skips before the subcommand (at the root
+    and between `pr` and `merge`) moved right after it, in order, so
+    `gh -R o/r pr -t x merge 96` reads as `gh pr merge -R o/r -t x 96`.
     A sub-command that cannot be split is returned unchanged."""
     import shlex
     sub = _drop_redirections(_strip_leading(sub))
@@ -708,22 +795,32 @@ def _canonical(sub: str) -> str:
         # skips them: `--name=value` and a short cluster longer than two
         # characters (`-dR<slug>`) are one word; any other flag also takes the
         # next word. gh then resolves the rest (`gh --subject=x pr merge 96`).
+        def skip(words, k):
+            # cobra's stripFlags: a `--name=value` or a short cluster longer
+            # than two characters is one word; any other flag takes the next.
+            tok = words[k]
+            one = "=" in tok or (not tok.startswith("--") and len(tok) > 2)
+            return 1 if one or k + 1 >= len(words) else 2
+
         moved, i = [], 1
         while i < len(argv) and argv[i].startswith("-") and argv[i] != "--":
-            tok = argv[i]
-            one = "=" in tok or (not tok.startswith("--") and len(tok) > 2)
-            span = 1 if one or i + 1 >= len(argv) else 2
+            span = skip(argv, i)
             moved += argv[i:i + span]
             i += span
-        if argv[i:i + 1] == ["pr"]:
-            # gh accepts merge's flags between `pr` and `merge` too
-            # (`gh pr -t x merge 96`), each with its value.
-            j = i + 1
-            while j < len(argv) and argv[j].startswith("-") and argv[j] != "--":
-                span = _flag_span(argv, j)
-                moved += argv[j:j + span]
-                del argv[j:j + span]
-        argv = argv[:1] + argv[i:] + moved
+        head = argv[i:]
+        cut = 1  # the subcommand word itself (`pr`, `api`, ...)
+        if head[:1] == ["pr"]:
+            # Flags gh skips between `pr` and `merge` (`gh pr -t x merge 96`),
+            # by the same root rule, since cobra strips them before `merge`.
+            j = 1
+            while j < len(head) and head[j].startswith("-") and head[j] != "--":
+                span = skip(head, j)
+                moved += head[j:j + span]
+                del head[j:j + span]
+            cut = 2 if len(head) > 1 else 1
+        # pflag then parses the moved words FIRST, so they go right after the
+        # subcommand, in their original order, ahead of what followed it.
+        argv = argv[:1] + head[:cut] + moved + head[cut:]
     return shlex.join(argv)
 
 
