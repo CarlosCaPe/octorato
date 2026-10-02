@@ -252,29 +252,19 @@ def _repo_root_and_gitdir(start: str):
 
 
 def _repo_flag_values(sub: str) -> list:
-    """Every value gh could take for -R/--repo in *sub*'s words: `-R x`,
-    `-Rx`, `-R=x`, a short cluster ending in R (`-dR x`, `-sRx`), `--repo x`
-    and `--repo=x`. Read from words so the attached and clustered forms gh
-    accepts are candidates too."""
+    """The -R/--repo values gh actually receives as flags: the canonical argv
+    (root and `pr`-level flags already moved after `merge`) walked with gh's
+    value-flag table, so a word another flag consumes (`--body "-Rx"`,
+    `-t -Rx`) is that flag's value, never a repo. Every spelling pflag
+    accepts is read: `-R x`, `-Rx`, `-R=x`, `-dRx`, `--repo x`, `--repo=x`."""
     try:
-        argv = _bash_words(_drop_redirections(_strip_leading(sub)))
+        argv = _bash_words(_canonical(sub))
     except ValueError:
         return []
-    out = []
-    for i, tok in enumerate(argv):
-        nxt = argv[i + 1] if i + 1 < len(argv) else ""
-        if tok == "--repo":
-            out.append(nxt)
-        elif tok.startswith("--repo="):
-            out.append(tok[len("--repo="):])
-        elif tok.startswith("-") and not tok.startswith("--") and "R" in tok[1:]:
-            k = tok.index("R", 1)
-            if any(c in _MERGE_SHORT_VALUE for c in tok[1:k]):
-                continue  # an earlier value flag in the cluster takes the rest
-            rest = tok[k + 1:]
-            rest = rest[1:] if rest.startswith("=") else rest
-            out.append(rest or nxt)
-    return [v for v in out if v]
+    if "merge" not in argv:
+        return []
+    values, _ = _walk_flags(argv[argv.index("merge") + 1:], _MERGE_SHORT_VALUE, _MERGE_LONG_VALUE)
+    return [v for name, v in values if name in ("-R", "--repo") and v]
 
 
 def _effective_cwds(cmd: str, matched_sub: str, session_cwd: str) -> list:
@@ -714,16 +704,17 @@ def _canonical(sub: str) -> str:
         return sub
     if argv and os.path.basename(argv[0]) == "gh":
         argv[0] = "gh"
+        # Flags before the subcommand, read the way cobra's root `stripFlags`
+        # skips them: `--name=value` and a short cluster longer than two
+        # characters (`-dR<slug>`) are one word; any other flag also takes the
+        # next word. gh then resolves the rest (`gh --subject=x pr merge 96`).
         moved, i = [], 1
-        while i < len(argv):
-            if argv[i] in ("-R", "--repo") and i + 1 < len(argv):
-                moved += argv[i:i + 2]
-                i += 2
-            elif argv[i].startswith("--repo=") or (argv[i].startswith("-R") and len(argv[i]) > 2):
-                moved.append(argv[i])
-                i += 1
-            else:
-                break
+        while i < len(argv) and argv[i].startswith("-") and argv[i] != "--":
+            tok = argv[i]
+            one = "=" in tok or (not tok.startswith("--") and len(tok) > 2)
+            span = 1 if one or i + 1 >= len(argv) else 2
+            moved += argv[i:i + span]
+            i += span
         if argv[i:i + 1] == ["pr"]:
             # gh accepts merge's flags between `pr` and `merge` too
             # (`gh pr -t x merge 96`), each with its value.

@@ -335,6 +335,21 @@ class GateHead(unittest.TestCase):
             rc, err = self.run_gate(f"gh pr merge 96 -s=t --match-head-commit={SHA}")
             self.assertEqual(rc, 0, err)
 
+    def test_merge_flags_at_gh_root_are_read(self):
+        with self.lookup({SHA: receipt("PASS")}):
+            for cmd in ("gh --subject=x pr merge 96", "gh --delete-branch=true pr merge 96",
+                        "gh -dRCarlosCaPe/octorato pr merge 96"):
+                rc, err = self.run_gate(cmd)
+                self.assertEqual(rc, 2, cmd)
+                self.assertIn("pins no commit", err, cmd)
+            for cmd in (f"gh -dRCarlosCaPe/octorato pr merge 96 --match-head-commit {SHA}",
+                        f"gh --squash=true pr merge 96 --match-head-commit {SHA}"):
+                rc, err = self.run_gate(cmd)
+                self.assertEqual(rc, 0, f"{cmd}\n{err}")
+        os.environ.pop("OCTO_MERGE_APPROVE", None)
+        rc, _ = self.run_gate("gh --subject=x pr merge 97")
+        self.assertEqual(rc, 2)
+
     def test_the_pull_request_is_the_first_positional(self):
         with self.lookup({SHA: receipt("PASS")}):
             for cmd in (f"gh pr merge --squash 96 --match-head-commit {SHA}",
@@ -539,6 +554,19 @@ class RepoScopeEveryReading(unittest.TestCase):
                     "gh pr merge 97 --repo=acme/brain"):
             self.assertIsNot(judge(cmd), False, cmd)
         self.assertFalse(judge("gh pr merge 96 -R other/repo"))
+        # A word another flag consumes is that flag's value, never a repo: the
+        # directory decides, and here it is the protected one.
+        for cmd in ('gh pr merge 350 --body "-R other/repo"', 'gh pr merge 350 --body "-Rother/repo"',
+                    "gh pr merge 350 --subject -Rother/repo", "gh pr merge 350 -t -Rother/repo",
+                    "gh pr merge 350 --match-head-commit -Rother/repo",
+                    "gh pr merge 350 -b '-dR other/repo'", "gh pr merge 350 --author-email -Rother/repo",
+                    "gh pr merge 350 -F -Rother/repo", "gh pr merge 350 --body-file -Rother/repo"):
+            self.assertTrue(gate._is_protected_target(cmd, cmd, str(self.brain)), cmd)
+        # Real flags in every spelling still move the target.
+        for cmd in ("gh pr merge 97 -Rother/repo", "gh pr merge 97 -R=other/repo",
+                    "gh pr merge 97 -dRother/repo", "gh pr merge 97 --repo=other/repo",
+                    "gh -Rother/repo pr merge 97", "gh pr -Rother/repo merge 97"):
+            self.assertFalse(gate._is_protected_target(cmd, cmd, str(self.brain)), cmd)
         # A repo named only inside a quoted value is not a flag: the cwd decides.
         brain_cwd = str(self.brain)
         self.assertTrue(gate._is_protected_target(
