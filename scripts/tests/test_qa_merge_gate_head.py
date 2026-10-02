@@ -665,6 +665,32 @@ class RepoScopeEveryReading(unittest.TestCase):
         (inc / ".git").mkdir(parents=True)
         (inc / ".git" / "config").write_text('[include]\n\tpath = ../../g\n[remote "origin"]\n\turl = https://github.com/acme/other.git\n')
         self.assertIsNot(gate._is_protected_target("gh pr merge 96", "gh pr merge 96", str(inc)), False)
+        # An optioned env, or a variable that moves git's config, is unreadable.
+        for cmd in ("env -S 'gh pr merge -R CarlosCaPe/octorato 9'",
+                    "env -S 'gh pr merge 9' -R CarlosCaPe/octorato",
+                    "env -C /x gh pr merge 9", "env --chdir=/x gh pr merge 9",
+                    "env -iC /x gh pr merge 9", "env --uns FOO gh pr merge 9",
+                    "HOME=/x gh pr merge 9", "export HOME=/x; gh pr merge 9",
+                    "XDG_CONFIG_HOME=/x gh pr merge 9", "GIT_COMMON_DIR=/x gh pr merge 9"):
+            sub = [s for s in gate._split_subcmds(cmd) if "merge" in s][-1]
+            self.assertIsNot(gate._is_protected_target(cmd, sub, cwd), False, cmd)
+        for cmd in ("env X=1 gh pr merge 9", "cd $HOME/x && gh pr merge 9"):
+            sub = [s for s in gate._split_subcmds(cmd) if "merge" in s][-1]
+            self.assertFalse(gate._env_with_option(sub), cmd)
+        # A linked worktree whose common config, or a config.worktree, rewrites urls.
+        for name in ("config", "config.worktree"):
+            wt = self.tmp / ("wt-" + name)
+            common = self.tmp / ("common-" + name)
+            (common / "worktrees" / "w").mkdir(parents=True)
+            (common / "config").write_text('[remote "origin"]\n\turl = https://github.com/acme/other.git\n')
+            (common / name).write_text('[url "https://github.com/CarlosCaPe/octorato.git"]\n\tinsteadOf = x\n',
+                                       ) if name == "config.worktree" else (common / "config").write_text(
+                '[remote "origin"]\n\turl = https://github.com/acme/other.git\n'
+                '[url "https://github.com/CarlosCaPe/octorato.git"]\n\tinsteadOf = x\n')
+            (common / "worktrees" / "w" / "commondir").write_text("../..\n")
+            wt.mkdir()
+            (wt / ".git").write_text(f"gitdir: {common}/worktrees/w\n")
+            self.assertIsNot(gate._is_protected_target("gh pr merge 9", "gh pr merge 9", str(wt)), False, name)
         # git push ignores GH_REPO: a pointer must not gate it.
         self.assertFalse(gate._is_protected_target(
             "GH_REPO=acme/brain git push origin main", "GH_REPO=acme/brain git push origin main", cwd))

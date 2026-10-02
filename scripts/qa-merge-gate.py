@@ -421,8 +421,16 @@ def _pointed_repos(cmd: str, sub: str) -> list:
             out.append(_UNCLEAN)
         else:
             out.append(("dir", os.path.expanduser(v)))
-    if re.search(r"(?<![\w])GIT_CONFIG\w*=", cmd) or any(k.startswith("GIT_CONFIG") for k in os.environ):
-        out.append(_UNCLEAN)  # git reads extra or replacement config: remotes may be rewritten
+    bare = re.sub(r"['\"\\]", "", cmd)
+    moves = r"HOME|XDG_CONFIG_HOME|GIT_CONFIG\w*|GIT_COMMON_DIR|GIT_CEILING_DIRECTORIES|GIT_DISCOVERY_ACROSS_FILESYSTEM"
+    if re.search(rf"(?<![\w${{])(?:{moves})(?![\w])", bare) or any(
+            re.fullmatch(rf"GIT_CONFIG\w*|GIT_COMMON_DIR|GIT_DIR|GIT_WORK_TREE|GIT_CEILING_DIRECTORIES", k)
+            for k in os.environ):
+        # Variables that move where git finds the repo or reads its config
+        # (HOME and XDG_CONFIG_HOME hold the global config): a command that
+        # names one may point gh at another remote. Others (GIT_EDITOR,
+        # GIT_TERMINAL_PROMPT) do not, and are not read.
+        out.append(_UNCLEAN)
     if re.search(r"\bgit\b[^\n;&|]*\b(?:remote\s+(?:set-url|add|rename)|config\b[^\n;&|]*(?:remote\.|url\.|insteadof))",
                  cmd, re.IGNORECASE):
         out.append(_UNCLEAN)  # the command rewrites which repo gh will read
@@ -432,8 +440,28 @@ def _pointed_repos(cmd: str, sub: str) -> list:
     return out
 
 
+def _env_with_option(matched_sub: str) -> bool:
+    """True when an `env` in front of the command carries any option. env can
+    change the directory (`-C`), replace the command line (`-S`), and GNU
+    accepts abbreviations and clusters, so the gate does not model it: an
+    optioned env makes the target unreadable. `env NAME=value gh ...` with no
+    option stays readable."""
+    s = matched_sub.lstrip()
+    try:
+        words = _bash_words(s)
+    except ValueError:
+        words = s.split()
+    head = next((j for j, w in enumerate(words)
+                 if w in ("gh", "git") or w.endswith(("/gh", "/git"))), len(words))
+    return any((w == "env" or w.endswith("/env"))
+               and any(x.startswith("-") for x in words[i + 1:head])
+               for i, w in enumerate(words[:head]))
+
+
 def _scope_current(cmd: str, matched_sub: str, session_cwd: str):
     """The current scope reader (see _is_protected_target)."""
+    if _env_with_option(matched_sub):
+        return None
     sub = _strip_leading(matched_sub)
 
     # Issue #351: GH_REPO, a pull request URL and a repo path inside an API
@@ -518,6 +546,28 @@ def _scope_current(cmd: str, matched_sub: str, session_cwd: str):
     return False
 
 
+def _repo_config_files(repo_root: Path) -> list:
+    """Every config file of this repository git reads: `.git/config`, the
+    gitdir's config, the common dir's config (a linked worktree), and the
+    `config.worktree` beside each."""
+    _, gitdir = _repo_root_and_gitdir(str(repo_root))
+    dirs = [repo_root / ".git"]
+    if gitdir is not None:
+        common = gitdir
+        try:
+            cd = (gitdir / "commondir").read_text(encoding="utf-8").strip()
+            common = (gitdir / cd).resolve() if not Path(cd).is_absolute() else Path(cd)
+        except OSError:
+            pass
+        dirs += [gitdir, common]
+    out = []
+    for d in dirs:
+        for name in ("config", "config.worktree"):
+            if d / name not in out:
+                out.append(d / name)
+    return out
+
+
 def _protected_dir(target: str):
     """True / False / None (unresolvable) for one directory. A repo whose
     config rewrites urls (`url.<base>.insteadOf`) cannot have its remotes
@@ -526,8 +576,8 @@ def _protected_dir(target: str):
     if root is None:
         return None
     xdg = Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config"))
-    cfgs = [root / ".git" / "config", (gitdir / "config") if gitdir else None,
-            Path.home() / ".gitconfig", xdg / "git" / "config", Path("/etc/gitconfig")]
+    cfgs = _repo_config_files(root) + [Path.home() / ".gitconfig", xdg / "git" / "config",
+                                       Path("/etc/gitconfig")]
     for cfg in cfgs:
         try:
             text = cfg.read_text(encoding="utf-8").lower() if cfg is not None else ""
@@ -559,18 +609,8 @@ def _remote_slugs(repo_root: Path) -> set:
     from the repo's own config or, for a linked worktree, from the common
     git dir its `.git` file and `commondir` point to. Ports are allowed
     (`ssh://git@github.com:22/o/r`). An ssh `Host` alias remote is not read."""
-    cfgs = [repo_root / ".git" / "config"]
-    _, gitdir = _repo_root_and_gitdir(str(repo_root))
-    if gitdir is not None:
-        common = gitdir
-        try:
-            cd = (gitdir / "commondir").read_text(encoding="utf-8").strip()
-            common = (gitdir / cd).resolve() if not Path(cd).is_absolute() else Path(cd)
-        except OSError:
-            pass
-        cfgs += [gitdir / "config", common / "config"]
     out = set()
-    for cfg_path in cfgs:
+    for cfg_path in _repo_config_files(repo_root):
         try:
             cfg = cfg_path.read_text(encoding="utf-8")
         except (OSError, NotADirectoryError):
