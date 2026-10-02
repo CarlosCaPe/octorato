@@ -918,8 +918,9 @@ def _anchor_stands(transcript_path: str, uuid: str, same, revokes) -> bool:
             if isinstance(blocks, list) and any(
                     isinstance(b, dict) and b.get("type") == "tool_use"
                     and b.get("name") == HANDBACK_TOOL and b.get("id") in ok_ids
+                    and b.get("id") not in refused
                     for b in blocks):
-                delivered = True  # the harness confirmed this handback
+                delivered = True  # confirmed by the harness and never refused
         if boundary:
             delivered = False
             if in_run and (final is None or not same(final)):

@@ -602,6 +602,17 @@ class QaHeadAnchoring(unittest.TestCase):
         refused2 = _h({"type": "user", "toolUseResult": {"success": False, "message": "not active"},
                        "message": {"role": "user", "content": [
                            {"type": "tool_result", "tool_use_id": "hbE2", "content": "refused"}]}})
+        # An id the harness both confirmed and refused is not a delivery either.
+        quote3 = self._entry(f"quoting:\nCONVERGE-VERDICT: CONVERGED\nCONVERGE-SCOPE: {sd}-c",
+                             "2026-10-02T12:00:00.000Z", "u-e3")
+        quote3["message"]["content"].append(U("SubagentHandback", {"message": "x"}, "hbE3"))
+        both = [_h({"type": "user", "toolUseResult": {"success": ok},
+                    "message": {"role": "user", "content": [
+                        {"type": "tool_result", "tool_use_id": "hbE3", "content": "r"}]}}) for ok in (True, False)]
+        tp3 = self._transcript("agent-e3.jsonl", [quote3] + both + [self._resume(),
+                                                                     self._entry("ok", "2026-10-02T12:10:00.000Z")])
+        self._conv_row(tp3, "CONVERGED", "u-e3", sd + "-c")
+        self.assertIsNone(rl.converge_latest_for(sd + "-c"))
         tp2 = self._transcript("agent-e1.jsonl", [quote, err, again, refused2, self._resume(),
                                                   self._entry("ok", "2026-10-02T11:10:00.000Z")])
         self._conv_row(tp2, "CONVERGED", "u-e1", sd)
