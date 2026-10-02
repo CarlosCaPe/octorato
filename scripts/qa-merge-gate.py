@@ -207,8 +207,8 @@ def _remote_slug(repo_root: Path) -> str | None:
     """owner/repo (lowercase) parsed from <root>/.git/config; file reads only."""
     try:
         cfg = (repo_root / ".git" / "config").read_text(encoding="utf-8")
-        m = re.search(r"url\s*=\s*\S*github\.com[:/]([\w.-]+/[\w.-]+?)(?:\.git)?\s*$",
-                      cfg, re.MULTILINE)
+        m = re.search(r"url\s*=\s*\S*github\.com(?::\d+)?[:/]([\w.-]+/[\w.-]+?)(?:\.git)?/?\s*$",
+                      cfg, re.MULTILINE | re.IGNORECASE)
         return m.group(1).lower() if m else None
     except Exception:
         return None
@@ -378,7 +378,7 @@ def _strip_leading_previous(s: str) -> str:
     return s
 
 
-_GH_REPO_ASSIGN = re.compile(r"GH_REPO=([^\s;&|)]*)")
+_GH_REPO_ASSIGN = re.compile(r"(?<![\w])GH_REPO=([^\s;&|)]*)")
 _PR_URL_REPO = re.compile(r"https?://[^/\s'\"]+/([\w.-]+/[\w.-]+)/pull/\d+", re.IGNORECASE)
 _API_REPO_ALL = re.compile(r"repos/([\w.-]+/[\w.-]+?)/(?:pulls/\d+/merge|merges|git/refs)\b",
                            re.IGNORECASE)
@@ -403,11 +403,21 @@ def _pointed_repos(cmd: str, sub: str) -> list:
     GH_REPO assignment anywhere in the command (or in the hook's own
     environment), a pull request URL, and every `repos/<o>/<r>/...` merge path
     in the text (a field value can carry one before the real endpoint)."""
-    out = [_clean_repo_value(m.group(1)) for m in _GH_REPO_ASSIGN.finditer(cmd)]
+    from urllib.parse import unquote
+    assigns = list(_GH_REPO_ASSIGN.finditer(cmd))
+    out = [_clean_repo_value(m.group(1)) for m in assigns]
+    # GH_REPO set any other way (`+=`, `env GH_RE""PO=`, `'GH_REPO'=`,
+    # `printf -v GH_REPO`, `read GH_REPO`, a bare `export GH_REPO`) cannot be
+    # read reliably: every mention of the name beyond the clean assignments
+    # makes the pointer unreadable, which gates.
+    mentions = len(re.findall(r"(?<![\w])GH_REPO(?![\w])", re.sub(r"['\"\\]", "", cmd)))
+    if mentions > len(assigns):
+        out.append(_UNCLEAN)
     if os.environ.get("GH_REPO", "").strip():
         out.append(_clean_repo_value(os.environ["GH_REPO"]))
-    out += _PR_URL_REPO.findall(sub)
-    out += _API_REPO_ALL.findall(sub)
+    for text in {sub, unquote(sub)}:  # gh path-decodes a URL (`octo%72ato`)
+        out += _PR_URL_REPO.findall(text)
+        out += _API_REPO_ALL.findall(text)
     return out
 
 
@@ -419,7 +429,7 @@ def _scope_current(cmd: str, matched_sub: str, session_cwd: str):
     # field can each aim gh at a protected repo from any directory. Any such
     # pointer that names a protected repo gates; the readers below may only
     # add gating to this, and the previous judge stays the floor.
-    raw_pointed = _pointed_repos(cmd, sub)
+    raw_pointed = [] if _PAT_GIT_PUSH.match(sub) else _pointed_repos(cmd, sub)
     pointed = [_canon_slug(v) for v in raw_pointed if v is not _UNCLEAN]
     if raw_pointed:
         known = {s for s in (_remote_slug(r) for r in _protected_roots()) if s}
@@ -514,13 +524,30 @@ def _protected_dir(target: str):
 
 
 def _remote_slugs(repo_root: Path) -> set:
-    """Every owner/repo (lowercase) named by a github.com remote url."""
-    try:
-        cfg = (repo_root / ".git" / "config").read_text(encoding="utf-8")
-    except Exception:
-        return set()
-    return {m.lower() for m in re.findall(
-        r"url\s*=\s*\S*github\.com[:/]([\w.-]+/[\w.-]+?)(?:\.git)?\s*$", cfg, re.MULTILINE | re.IGNORECASE)}
+    """Every owner/repo (lowercase) named by a github.com remote url, read
+    from the repo's own config or, for a linked worktree, from the common
+    git dir its `.git` file and `commondir` point to. Ports are allowed
+    (`ssh://git@github.com:22/o/r`). An ssh `Host` alias remote is not read."""
+    cfgs = [repo_root / ".git" / "config"]
+    _, gitdir = _repo_root_and_gitdir(str(repo_root))
+    if gitdir is not None:
+        common = gitdir
+        try:
+            cd = (gitdir / "commondir").read_text(encoding="utf-8").strip()
+            common = (gitdir / cd).resolve() if not Path(cd).is_absolute() else Path(cd)
+        except OSError:
+            pass
+        cfgs += [gitdir / "config", common / "config"]
+    out = set()
+    for cfg_path in cfgs:
+        try:
+            cfg = cfg_path.read_text(encoding="utf-8")
+        except (OSError, NotADirectoryError):
+            continue
+        out |= {m.lower() for m in re.findall(
+            r"url\s*=\s*\S*github\.com(?::\d+)?[:/]([\w.-]+/[\w.-]+?)(?:\.git)?/?\s*$",
+            cfg, re.MULTILINE | re.IGNORECASE)}
+    return out
 
 
 # Strip leading wrapper tokens from an already-split sub-command before pattern

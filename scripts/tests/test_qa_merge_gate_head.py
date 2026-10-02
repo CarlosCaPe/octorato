@@ -629,6 +629,26 @@ class RepoScopeEveryReading(unittest.TestCase):
                     "GH_REPO=$R gh pr merge 96"):
             sub = [s for s in gate._split_subcmds(cmd) if "merge" in s][-1]
             self.assertIsNot(gate._is_protected_target(cmd, sub, cwd), False, cmd)
+        for cmd in ("gh pr merge https://github.com/acme/br%61in/pull/96 --squash",
+                    "gh pr merge https://github.com/acme%2Fbrain/pull/96",
+                    "GH_REPO+=acme/brain gh pr merge 96", 'env GH_RE""PO=acme/brain gh pr merge 96',
+                    "env 'GH_REPO'=acme/brain gh pr merge 96",
+                    "printf -v GH_REPO %s acme/brain; export GH_REPO; gh pr merge 96"):
+            sub = [s for s in gate._split_subcmds(cmd) if "merge" in s][-1]
+            self.assertIsNot(gate._is_protected_target(cmd, sub, cwd), False, cmd)
+        # git push ignores GH_REPO: a pointer must not gate it.
+        self.assertFalse(gate._is_protected_target(
+            "GH_REPO=acme/brain git push origin main", "GH_REPO=acme/brain git push origin main", cwd))
+        # A linked worktree of a protected clone, and an ssh remote with a port.
+        clone = self.tmp / "clone"
+        (clone / ".git" / "worktrees" / "wt").mkdir(parents=True)
+        (clone / ".git" / "config").write_text('[remote "origin"]\n\turl = ssh://git@github.com:22/acme/brain.git\n')
+        (clone / ".git" / "worktrees" / "wt" / "commondir").write_text("../..\n")
+        linked = self.tmp / "linked"
+        linked.mkdir()
+        (linked / ".git").write_text(f"gitdir: {clone / '.git' / 'worktrees' / 'wt'}\n")
+        self.assertTrue(gate._is_protected_target("gh pr merge 96", "gh pr merge 96", str(clone)))
+        self.assertTrue(gate._is_protected_target("gh pr merge 96", "gh pr merge 96", str(linked)))
         # A fork clone whose `upstream` is protected is protected.
         fork = self.tmp / "fork"
         (fork / ".git").mkdir(parents=True)
