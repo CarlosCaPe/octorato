@@ -359,6 +359,17 @@ class GateHead(unittest.TestCase):
         rc, _ = self.run_gate("gh --subject=x pr merge 97")
         self.assertEqual(rc, 2)
 
+    def test_assignments_bash_reads_do_not_hide_a_merge(self):
+        os.environ.pop("OCTO_MERGE_APPROVE", None)
+        for cmd in ("env -S 'gh pr merge 96'", "env --split-string='gh pr merge 96'",
+                    "env -iu GH_REPO gh pr merge 96",
+                    "X+=1 gh pr merge 96 --squash", "env 'X'=1 gh pr merge 96",
+                    'env GH_RE""PO=acme/brain gh pr merge 96', "GH_REPO+=acme/brain gh pr merge 96",
+                    "env -u FOO GH_REPO=acme/brain gh pr merge 96"):
+            self.assertTrue(gate._find_publish_subcmds(cmd), cmd)
+            rc, _ = self.run_gate(cmd)
+            self.assertEqual(rc, 2, cmd)
+
     def test_the_pull_request_is_the_first_positional(self):
         with self.lookup({SHA: receipt("PASS")}):
             for cmd in (f"gh pr merge --squash 96 --match-head-commit {SHA}",
@@ -610,9 +621,188 @@ class RepoScopeEveryReading(unittest.TestCase):
             sub = [s for s in gate._split_subcmds(cmd) if "merge" in s][0]
             self.assertIsNot(gate._is_protected_target(cmd, sub, str(self.brain)), False, cmd)
 
+    def test_any_pointer_at_a_protected_repo_gates_from_anywhere(self):
+        # Issue #351: from a non-protected directory, with no approval.
+        (self.brain / ".git" / "config").write_text(
+            '[remote "origin"]\n\turl = https://github.com/acme/brain.git\n')
+        cwd = str(self.other)
+        for cmd in ("GH_REPO=acme/brain gh pr merge 96 --squash",
+                    "export GH_REPO=acme/brain; gh pr merge 96",
+                    "gh pr merge https://github.com/acme/brain/pull/96 --squash",
+                    "gh api -X PUT -f commit_title=repos/a/b/merges repos/acme/brain/pulls/96/merge",
+                    "gh pr merge 96 --squash -t 'x -R other/repo' -R acme/brain"):
+            sub = [s for s in gate._split_subcmds(cmd) if "merge" in s][-1]
+            self.assertIsNot(gate._is_protected_target(cmd, sub, cwd), False, cmd)
+        for cmd in ("gh pr merge Https://GitHub.com/acme/brain/pull/96 --squash",
+                    "gh pr merge HTTPS://github.com/acme/brain/pull/96",
+                    'GH_REPO=acme/"brain" gh pr merge 96 --squash',
+                    'GH_REPO=ac""me/brain gh pr merge 96', "GH_REPO=acme/br\\ain gh pr merge 96",
+                    "GH_REPO=$R gh pr merge 96"):
+            sub = [s for s in gate._split_subcmds(cmd) if "merge" in s][-1]
+            self.assertIsNot(gate._is_protected_target(cmd, sub, cwd), False, cmd)
+        for cmd in ("gh pr merge https://github.com/acme/br%61in/pull/96 --squash",
+                    "gh pr merge https://github.com/acme%2Fbrain/pull/96",
+                    "GH_REPO+=acme/brain gh pr merge 96", 'env GH_RE""PO=acme/brain gh pr merge 96',
+                    "env 'GH_REPO'=acme/brain gh pr merge 96",
+                    "printf -v GH_REPO %s acme/brain; export GH_REPO; gh pr merge 96"):
+            sub = [s for s in gate._split_subcmds(cmd) if "merge" in s][-1]
+            self.assertIsNot(gate._is_protected_target(cmd, sub, cwd), False, cmd)
+        # Repo pointers through GIT_DIR, a same-command remote rewrite, insteadOf.
+        for cmd in (f"GIT_DIR={self.brain}/.git gh pr merge 96",
+                    "git remote set-url origin https://github.com/acme/brain && gh pr merge 96"):
+            sub = [s for s in gate._split_subcmds(cmd) if "merge" in s][-1]
+            self.assertIsNot(gate._is_protected_target(cmd, sub, cwd), False, cmd)
+        iof = self.tmp / "iof"
+        (iof / ".git").mkdir(parents=True)
+        (iof / ".git" / "config").write_text('[url "https://github.com/acme/"]\n\tinsteadOf = zz:\n[remote "origin"]\n\turl = zz:brain\n')
+        self.assertIsNot(gate._is_protected_target("gh pr merge 96", "gh pr merge 96", str(iof)), False)
+        for cmd in ("GIT_CONFIG_GLOBAL=../g gh pr merge 96",
+                    "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=url.x.insteadOf GIT_CONFIG_VALUE_0=y gh pr merge 96",
+                    "export GIT_CONFIG_PARAMETERS=x; gh pr merge 96"):
+            sub = [s for s in gate._split_subcmds(cmd) if "merge" in s][-1]
+            self.assertIsNot(gate._is_protected_target(cmd, sub, cwd), False, cmd)
+        inc = self.tmp / "inc"
+        (inc / ".git").mkdir(parents=True)
+        (inc / ".git" / "config").write_text('[include]\n\tpath = ../../g\n[remote "origin"]\n\turl = https://github.com/acme/other.git\n')
+        self.assertIsNot(gate._is_protected_target("gh pr merge 96", "gh pr merge 96", str(inc)), False)
+        # An optioned env, or a variable that moves git's config, is unreadable.
+        for cmd in ("env -S 'gh pr merge -R CarlosCaPe/octorato 9'",
+                    "env -S 'gh pr merge 9' -R CarlosCaPe/octorato",
+                    "env -C /x gh pr merge 9", "env --chdir=/x gh pr merge 9",
+                    "env -iC /x gh pr merge 9", "env --uns FOO gh pr merge 9",
+                    "HOME=/x gh pr merge 9", "export HOME=/x; gh pr merge 9",
+                    "XDG_CONFIG_HOME=/x gh pr merge 9", "GIT_COMMON_DIR=/x gh pr merge 9"):
+            sub = [s for s in gate._split_subcmds(cmd) if "merge" in s][-1]
+            self.assertIsNot(gate._is_protected_target(cmd, sub, cwd), False, cmd)
+        for cmd in ("env $'-C' /x gh pr merge 9", "pushd /x && gh pr merge 9",
+                    "builtin cd /x && gh pr merge 9", "cd -P /x && gh pr merge 9",
+                    "cd -- /x && gh pr merge 9", "CDPATH=/x cd y && gh pr merge 9",
+                    "cd >/dev/null /x && gh pr merge 9"):
+            sub = [s for s in gate._split_subcmds(cmd) if "merge" in s][-1]
+            self.assertIsNot(gate._is_protected_target(cmd, sub, cwd), False, cmd)
+        self.assertTrue(gate._unparsed_publish("env -S 'gh\\_pr\\_merge\\_9'"))
+        # Quoted directory verbs are read as bash reads them.
+        for cmd in ("'cd' /x && gh pr merge 9", "c\"\"d /x && gh pr merge 9",
+                    "'pushd' /x && gh pr merge 9", "builtin 'cd' /x && gh pr merge 9",
+                    "cd /does/not/exist && gh pr merge 9"):
+            sub = [s for s in gate._split_subcmds(cmd) if "merge" in s][-1]
+            self.assertIsNot(gate._is_protected_target(cmd, sub, cwd), False, cmd)
+        # An env word the gate cannot read does not hide the merge.
+        self.assertIsNotNone(gate._find_publish_subcmd("env $'-C' /x gh pr merge 9"))
+        for cmd in ("env X=1 gh pr merge 9", "cd $HOME/x && gh pr merge 9"):
+            sub = [s for s in gate._split_subcmds(cmd) if "merge" in s][-1]
+            self.assertFalse(gate._env_with_option(sub), cmd)
+        # A linked worktree whose common config, or a config.worktree, rewrites urls.
+        for name in ("config", "config.worktree"):
+            wt = self.tmp / ("wt-" + name)
+            common = self.tmp / ("common-" + name)
+            (common / "worktrees" / "w").mkdir(parents=True)
+            (common / "config").write_text('[remote "origin"]\n\turl = https://github.com/acme/other.git\n')
+            (common / name).write_text('[url "https://github.com/CarlosCaPe/octorato.git"]\n\tinsteadOf = x\n',
+                                       ) if name == "config.worktree" else (common / "config").write_text(
+                '[remote "origin"]\n\turl = https://github.com/acme/other.git\n'
+                '[url "https://github.com/CarlosCaPe/octorato.git"]\n\tinsteadOf = x\n')
+            (common / "worktrees" / "w" / "commondir").write_text("../..\n")
+            wt.mkdir()
+            (wt / ".git").write_text(f"gitdir: {common}/worktrees/w\n")
+            self.assertIsNot(gate._is_protected_target("gh pr merge 9", "gh pr merge 9", str(wt)), False, name)
+        # git push ignores GH_REPO: a pointer must not gate it.
+        self.assertFalse(gate._is_protected_target(
+            "GH_REPO=acme/brain git push origin main", "GH_REPO=acme/brain git push origin main", cwd))
+        # A linked worktree of a protected clone, and an ssh remote with a port.
+        clone = self.tmp / "clone"
+        (clone / ".git" / "worktrees" / "wt").mkdir(parents=True)
+        (clone / ".git" / "config").write_text('[remote "origin"]\n\turl = ssh://git@github.com:22/acme/brain.git\n')
+        (clone / ".git" / "worktrees" / "wt" / "commondir").write_text("../..\n")
+        linked = self.tmp / "linked"
+        linked.mkdir()
+        (linked / ".git").write_text(f"gitdir: {clone / '.git' / 'worktrees' / 'wt'}\n")
+        self.assertTrue(gate._is_protected_target("gh pr merge 96", "gh pr merge 96", str(clone)))
+        self.assertTrue(gate._is_protected_target("gh pr merge 96", "gh pr merge 96", str(linked)))
+        # A fork clone whose `upstream` is protected is protected.
+        fork = self.tmp / "fork"
+        (fork / ".git").mkdir(parents=True)
+        (fork / ".git" / "config").write_text(
+            '[remote "origin"]\n\turl = https://github.com/someone/brain.git\n'
+            '[remote "upstream"]\n\turl = https://github.com/acme/brain.git\n')
+        self.assertTrue(gate._is_protected_target("gh pr merge 96", "gh pr merge 96", str(fork)))
+        # Pointers at an unprotected repo from an unprotected directory stay ungated.
+        for cmd in ("GH_REPO=acme/other gh pr merge 96 --squash",
+                    "GH_REPO='acme/other' gh pr merge 96",
+                    "gh pr merge https://github.com/acme/other/pull/96"):
+            self.assertFalse(gate._is_protected_target(cmd, cmd, cwd), cmd)
+
     def test_a_cd_both_readings_agree_on_still_moves_it(self):
         self.assertFalse(self.protected(f"cd {self.other} && git push origin main"))
         self.assertTrue(self.protected("git push origin main"))
+
+    def test_a_cd_whose_logical_and_physical_readings_differ_gates(self):
+        # bash's cd is logical by default and physical under `set -P`: through
+        # <brain>/link/.. one reading is the brain and the other the link's
+        # repo, so the target is unresolvable. A link the same command creates
+        # does not exist yet when the hook reads the path.
+        (self.other / "sub").mkdir()
+        (self.brain / "link").symlink_to(self.other / "sub")
+        (self.other / "back").symlink_to(self.brain)
+        judge = lambda cmd: gate._is_protected_target(cmd, cmd.split("&& ")[-1], str(self.tmp))
+        for cmd in (f"cd {self.brain}/link/.. && git push origin main",
+                    f"cd {self.brain}/link && cd .. && git push origin main",
+                    f"set -P && cd {self.other}/back/.. && git push origin main",
+                    f"ln -s {self.brain} {self.other}/fresh && cd {self.other}/fresh/.. && git push origin main"):
+            self.assertIsNot(judge(cmd), False, cmd)
+        self.assertFalse(judge(f"cd {self.brain}/link && git push origin main"))
+        self.assertFalse(judge(f"cd {self.other}/sub/.. && git push origin main"))
+
+    def test_a_repo_path_that_does_not_exist_yet_gates(self):
+        # A clone or a link the command makes before gh or git runs: the hook
+        # cannot read it, and walking up would judge the repo around it.
+        cwd = str(self.other)
+        judge = lambda cmd: gate._is_protected_target(cmd, cmd.split("&& ")[-1], cwd)
+        for cmd in (f"ln -s {self.brain} nx && GIT_DIR=nx/.git gh pr merge 9 --squash",
+                    f"git clone -q {self.brain} nx && GIT_WORK_TREE=nx gh pr merge 9",
+                    f"ln -s {self.brain} nx && git -C nx push origin main",
+                    f"git -C {self.other}/nx push origin main"):
+            self.assertIsNot(judge(cmd), False, cmd)
+        self.assertFalse(judge(f"GIT_DIR={self.other}/.git gh pr merge 9"))
+        self.assertFalse(judge("GIT_DIR=.git gh pr merge 9"))
+
+    def test_a_git_dir_inside_another_repo_is_read_as_git_reads_it(self):
+        # A bare repo or a gitfile inside an unprotected repo: git uses it, not
+        # the repo around it.
+        url = '[remote "origin"]\n\turl = https://github.com/acme/brain.git\n'
+        (self.brain / ".git" / "config").write_text(url)
+        for name, remote in (("b.git", url), ("ok.git", url.replace("acme/brain", "acme/free"))):
+            bare = self.other / name
+            for d in ("objects", "refs"):
+                (bare / d).mkdir(parents=True)
+            (bare / "HEAD").write_text("ref: refs/heads/main\n")
+            (bare / "config").write_text(remote)
+        (self.other / "g").write_text(f"gitdir: {self.brain}/.git\n")
+        cwd = str(self.other)
+        judge = lambda cmd: gate._is_protected_target(cmd, cmd.split("&& ")[-1], cwd)
+        for cmd in ("GIT_DIR=b.git gh pr merge 9 --squash",
+                    f"GIT_DIR={self.other}/b.git gh pr merge 9",
+                    "cd b.git && gh pr merge 9",
+                    "git -C b.git push origin main",
+                    "GIT_DIR=g gh pr merge 9"):
+            self.assertIsNot(judge(cmd), False, cmd)
+        self.assertFalse(judge("GIT_DIR=ok.git gh pr merge 9"))
+        self.assertFalse(judge("cd ok.git && gh pr merge 9"))
+
+    def test_a_relative_git_dir_is_read_from_the_command_directory(self):
+        # The hook process runs from an unprotected third repo, where bl/.git
+        # does not exist; the command runs in `other`, where bl is the brain.
+        (self.other / "bl").symlink_to(self.brain)
+        third = self.tmp / "third"
+        (third / ".git").mkdir(parents=True)
+        (third / ".git" / "config").write_text("[core]\n")
+        here = os.getcwd()
+        os.chdir(third)
+        self.addCleanup(os.chdir, here)
+        cmd = "GIT_DIR=bl/.git gh pr merge 9"
+        self.assertIsNot(gate._is_protected_target(cmd, cmd, str(self.other)), False)
+        cmd = f"cd {self.other} && GIT_DIR=bl/.git gh pr merge 9"
+        self.assertIsNot(gate._is_protected_target(cmd, cmd.split("&& ")[-1], str(self.tmp)), False)
 
 
 class SeekNeedsBothReadings(unittest.TestCase):

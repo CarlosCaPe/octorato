@@ -10,6 +10,20 @@ the full command string is split on UNQUOTED shell separators (; && || | newline
 before pattern matching, so a publish pattern that appears only inside a quoted
 argument (``git commit -m "gh pr merge 96"``) does NOT trigger the gate.
 Shell indirection (``bash -c "..."``, ``$(...)``) remains accepted residual risk.
+Without an approval, ``sudo`` or ``xargs`` in front of an ``env`` that moves the
+directory (``sudo env -C <brain> gh pr merge N``) is the same residual: the
+gate does not read the directory through them. With one exported, both block.
+The filesystem is read as it is when the hook runs, before any part of the
+command: a link an earlier sub-command puts over an existing directory, or
+retargets, is judged by what was there before (``rm -rf d && ln -s <brain> d
+&& cd d && gh pr merge N``, ``ln -sfn <brain> l && git -C l push origin
+main``). Like shell indirection, this is a residual a pre-execution hook
+cannot close; the exported approval is the boundary.
+Repo discovery is a copy of git's rules, not git (issue #356): a git dir laid
+out in a way the copy does not read, such as a ``HEAD`` + ``commondir`` dir or a
+gitfile not named ``.git`` whose target is a clone outside the protected
+paths, is judged as the repo around it. Until the gate asks git itself, that
+is a stated residual, with or without an approval.
 
 When a Bash command is detected as a merge action, this hook BLOCKS execution
 unless an operator approval is present via one of two AGENT-PROOF env channels.
@@ -207,8 +221,8 @@ def _remote_slug(repo_root: Path) -> str | None:
     """owner/repo (lowercase) parsed from <root>/.git/config; file reads only."""
     try:
         cfg = (repo_root / ".git" / "config").read_text(encoding="utf-8")
-        m = re.search(r"url\s*=\s*\S*github\.com[:/]([\w.-]+/[\w.-]+?)(?:\.git)?\s*$",
-                      cfg, re.MULTILINE)
+        m = re.search(r"url\s*=\s*\S*github\.com(?::\d+)?[:/]([\w.-]+/[\w.-]+?)(?:\.git)?/?\s*$",
+                      cfg, re.MULTILINE | re.IGNORECASE)
         return m.group(1).lower() if m else None
     except Exception:
         return None
@@ -224,28 +238,48 @@ def _canon_slug(s: str) -> str | None:
     return m.group(1).lower() if m else None
 
 
+def _gitfile_target(f: Path):
+    """The git dir a `gitdir:` file points to, or None."""
+    try:
+        m = re.search(r"gitdir:\s*(.+)", f.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError):
+        return None
+    if not m:
+        return None
+    gd = Path(m.group(1).strip())
+    return (gd if gd.is_absolute() else (f.parent / gd)).resolve()
+
+
+def _is_git_dir(d: Path) -> bool:
+    """A directory git accepts as a git dir on its own (a bare repo, or a
+    `.git` dir named directly): HEAD, objects/ and refs/."""
+    return (d / "HEAD").is_file() and (d / "objects").is_dir() and (d / "refs").is_dir()
+
+
 def _repo_root_and_gitdir(start: str):
-    """Walk up from *start* to the first .git entry. Returns (worktree_root,
-    resolved_gitdir_or_None). A linked worktree's .git FILE points into the
-    main repo's .git dir — that is how a brain worktree is recognized."""
+    """Approximate the repo git finds from *start*. Returns (root,
+    resolved_gitdir_or_None). A file is a gitfile and is followed (a
+    `GIT_DIR` may name one); at each level a `.git` entry wins, then the
+    directory itself if it holds HEAD, objects/ and refs/ (a bare repo);
+    otherwise walk up. A linked worktree's .git FILE points into the main
+    repo's .git dir — that is how a brain worktree is recognized. This is a
+    copy of git's rules, not git: other layouts are a stated residual (see the
+    module header and issue #356)."""
     try:
         p = Path(start).resolve()
     except Exception:
         return None, None
+    if p.is_file():
+        gd = _gitfile_target(p)
+        return (p.parent, gd) if gd is not None else (None, None)
     while True:
         g = p / ".git"
         if g.is_dir():
             return p, g
         if g.is_file():
-            try:
-                m = re.search(r"gitdir:\s*(.+)", g.read_text(encoding="utf-8"))
-                if m:
-                    gd = Path(m.group(1).strip())
-                    gd = gd if gd.is_absolute() else (p / gd)
-                    return p, gd.resolve()
-            except OSError:
-                pass
-            return p, None
+            return p, _gitfile_target(g)
+        if _is_git_dir(p):
+            return p, p
         if p.parent == p:
             return None, None
         p = p.parent
@@ -282,14 +316,51 @@ def _effective_cwds(cmd: str, matched_sub: str, session_cwd: str) -> list:
         for raw in reading:
             if raw == matched_sub:
                 break
-            s = _strip_leading(raw).strip()
-            m = re.match(r"^cd\s+(\S+)", s)
-            if m:
-                p = os.path.expanduser(m.group(1).strip("'\""))
-                cwd = p if os.path.isabs(p) else os.path.join(cwd, p)
+            cwd = _apply_dir_change(_strip_leading(raw).strip(), raw, cwd)
         if cwd not in out:
             out.append(cwd)
     return out
+
+
+_DIR_VERBS = {"cd", "pushd", "popd"}
+
+
+def _apply_dir_change(s: str, raw: str, cwd):
+    """The directory after one sub-command, or None when it moved somewhere
+    the gate cannot read. Words are read as bash sees them after quote
+    removal (`'cd'`, `c""d`, `builtin 'cd'`). Only `cd <dir>` naming one
+    existing directory moves the cwd; any other `cd`, `pushd` or `popd`, a
+    `builtin`/`command` in front of one, CDPATH, or a target that does not
+    exist (cdable_vars resolves a variable name) leaves it unknown. bash
+    reads the target logically by default (`..` drops the previous word
+    before any symlink is followed) and physically under `set -P`, so the
+    path must exist as written and the two readings must reach the same
+    directory; `cd <link>/..` or a name that does not exist yet leaves it
+    unknown. The filesystem is read as it is when the hook runs (see the
+    module header)."""
+    if cwd is None:
+        return None
+    if re.search(r"CDPATH", re.sub(r"['\"\\]", "", raw)):
+        return None
+    try:
+        words = _bash_words(s)
+    except ValueError:
+        return None if re.search(r"(?:cd|pushd|popd)", re.sub(r"['\"\\]", "", s)) else cwd
+    while words and words[0] in ("builtin", "command"):
+        words = words[1:]
+    if not words or words[0] not in _DIR_VERBS:
+        return cwd
+    if words[0] != "cd" or len(words) != 2 or words[1].startswith("-") or any(
+            c in words[1] for c in "$`*?[{<>"):
+        return None
+    p = os.path.expanduser(words[1])
+    raw = p if os.path.isabs(p) else os.path.join(cwd, p)
+    logical = os.path.normpath(raw)
+    if not (os.path.isdir(raw) and os.path.isdir(logical)):
+        return None
+    if os.path.realpath(raw) != os.path.realpath(logical):
+        return None
+    return logical
 
 
 def _is_protected_target(cmd: str, matched_sub: str, session_cwd: str):
@@ -378,9 +449,121 @@ def _strip_leading_previous(s: str) -> str:
     return s
 
 
+_GH_REPO_ASSIGN = re.compile(r"(?<![\w])GH_REPO=([^\s;&|)]*)")
+_PR_URL_REPO = re.compile(r"https?://[^/\s'\"]+/([\w.-]+/[\w.-]+)/pull/\d+", re.IGNORECASE)
+_API_REPO_ALL = re.compile(r"repos/([\w.-]+/[\w.-]+?)/(?:pulls/\d+/merge|merges|git/refs)\b",
+                           re.IGNORECASE)
+_UNCLEAN = object()  # a GH_REPO value the gate cannot read as a repo
+
+
+def _clean_repo_value(raw: str):
+    """A GH_REPO value as gh will see it, or _UNCLEAN. One surrounding pair
+    of quotes is removed; any quote, backslash, `$` or backtick left inside
+    means bash would still rewrite it (`CarlosCaPe/"octorato"`), so it is not
+    read, it is unresolvable."""
+    v = raw.strip()
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in "'\"":
+        v = v[1:-1]
+    if not v or any(c in v for c in "'\"\\$`") or _canon_slug(v) is None:
+        return _UNCLEAN
+    return v
+
+
+def _pointed_repos(cmd: str, sub: str) -> list:
+    """Every repo the command can point gh at besides the directory: a
+    GH_REPO assignment anywhere in the command (or in the hook's own
+    environment), a pull request URL, and every `repos/<o>/<r>/...` merge path
+    in the text (a field value can carry one before the real endpoint)."""
+    from urllib.parse import unquote
+    assigns = list(_GH_REPO_ASSIGN.finditer(cmd))
+    out = [_clean_repo_value(m.group(1)) for m in assigns]
+    # GH_REPO set any other way (`+=`, `env GH_RE""PO=`, `'GH_REPO'=`,
+    # `printf -v GH_REPO`, `read GH_REPO`, a bare `export GH_REPO`) cannot be
+    # read reliably: every mention of the name beyond the clean assignments
+    # makes the pointer unreadable, which gates.
+    mentions = len(re.findall(r"(?<![\w])GH_REPO(?![\w])", re.sub(r"['\"\\]", "", cmd)))
+    if mentions > len(assigns):
+        out.append(_UNCLEAN)
+    if os.environ.get("GH_REPO", "").strip():
+        out.append(_clean_repo_value(os.environ["GH_REPO"]))
+    for m in re.finditer(r"(?<![\w])GIT_(?:DIR|WORK_TREE)=([^\s;&|)]*)", cmd):
+        v = m.group(1).strip("'\"")
+        if not v or any(c in v for c in "'\"\\$`"):
+            out.append(_UNCLEAN)
+        else:
+            out.append(("dir", os.path.expanduser(v)))
+    bare = re.sub(r"['\"\\]", "", cmd)
+    moves = r"HOME|XDG_CONFIG_HOME|GIT_CONFIG\w*|GIT_COMMON_DIR|GIT_CEILING_DIRECTORIES|GIT_DISCOVERY_ACROSS_FILESYSTEM"
+    if re.search(rf"(?<![\w${{])(?:{moves})(?![\w])", bare) or any(
+            re.fullmatch(rf"GIT_CONFIG\w*|GIT_COMMON_DIR|GIT_DIR|GIT_WORK_TREE|GIT_CEILING_DIRECTORIES", k)
+            for k in os.environ):
+        # Variables that move where git finds the repo or reads its config
+        # (HOME and XDG_CONFIG_HOME hold the global config): a command that
+        # names one may point gh at another remote. Others (GIT_EDITOR,
+        # GIT_TERMINAL_PROMPT) do not, and are not read.
+        out.append(_UNCLEAN)
+    if re.search(r"\bgit\b[^\n;&|]*\b(?:remote\s+(?:set-url|add|rename)|config\b[^\n;&|]*(?:remote\.|url\.|insteadof))",
+                 cmd, re.IGNORECASE):
+        out.append(_UNCLEAN)  # the command rewrites which repo gh will read
+    for text in {sub, unquote(sub)}:  # gh path-decodes a URL (`octo%72ato`)
+        out += _PR_URL_REPO.findall(text)
+        out += _API_REPO_ALL.findall(text)
+    return out
+
+
+def _env_with_option(matched_sub: str) -> bool:
+    """True when an `env` in front of the command carries any option. env can
+    change the directory (`-C`), replace the command line (`-S`), and GNU
+    accepts abbreviations and clusters, so the gate does not model it: any
+    word between env and the command that is not a plain `NAME=value` (an
+    option however it is spelled, `$'-C'` included) makes the target
+    unreadable. `env NAME=value gh ...` stays readable."""
+    s = matched_sub.lstrip()
+    try:
+        words = _bash_words(s)
+    except ValueError:
+        words = s.split()
+    head = next((j for j, w in enumerate(words)
+                 if w in ("gh", "git") or w.endswith(("/gh", "/git"))), len(words))
+    return any((w == "env" or w.endswith("/env"))
+               and any(not re.fullmatch(r"[A-Za-z_]\w*\+?=[^\s$`\\]*", x) for x in words[i + 1:head])
+               for i, w in enumerate(words[:head]))
+
+
 def _scope_current(cmd: str, matched_sub: str, session_cwd: str):
     """The current scope reader (see _is_protected_target)."""
+    if _env_with_option(matched_sub):
+        return None
     sub = _strip_leading(matched_sub)
+
+    # Issue #351: GH_REPO, a pull request URL and a repo path inside an API
+    # field can each aim gh at a protected repo from any directory. Any such
+    # pointer that names a protected repo gates; the readers below may only
+    # add gating to this, and the previous judge stays the floor.
+    raw_pointed = [] if _PAT_GIT_PUSH.match(sub) else _pointed_repos(cmd, sub)
+    for v in raw_pointed:
+        if isinstance(v, tuple):
+            # A relative GIT_DIR or GIT_WORK_TREE is read from the directory
+            # the command runs in, not from the hook's own.
+            if os.path.isabs(v[1]):
+                dirs = [v[1]]
+            else:
+                bases = _effective_cwds(cmd, matched_sub, session_cwd)
+                if None in bases:
+                    return None
+                dirs = [os.path.join(b, v[1]) for b in bases]
+            for d in dirs:
+                verdict = _protected_dir(d)
+                if verdict is not False:
+                    return verdict
+    raw_pointed = [v for v in raw_pointed if not isinstance(v, tuple)]
+    pointed = [_canon_slug(v) for v in raw_pointed if v is not _UNCLEAN]
+    if raw_pointed:
+        known = {s for s in (_remote_slug(r) for r in _protected_roots()) if s}
+        if any(sl in known for sl in pointed if sl):
+            return True
+        if any(v is _UNCLEAN for v in raw_pointed):
+            return None  # a GH_REPO the gate cannot read may name a protected repo
 
     # gh api / curl write (PR merge, branch merge into main/master, or a
     # main/master ref update): the target repo is in the REST path, NOT the cwd
@@ -431,6 +614,8 @@ def _scope_current(cmd: str, matched_sub: str, session_cwd: str):
     bases = _effective_cwds(cmd, matched_sub, session_cwd)
     m = re.match(r"^\s*git\s+((?:(?:-C|-c)\s+\S+\s+)*)", sub)
     c = re.search(r"-C\s+(\S+)", m.group(1)) if (m and m.group(1)) else None
+    if None in bases:
+        return None  # a directory change the gate cannot read
     for base in bases:
         if c:
             raw = os.path.expanduser(c.group(1).strip("'\""))
@@ -445,11 +630,51 @@ def _scope_current(cmd: str, matched_sub: str, session_cwd: str):
     return False
 
 
+def _repo_config_files(repo_root: Path) -> list:
+    """Every config file of this repository git reads: `.git/config`, the
+    gitdir's config, the common dir's config (a linked worktree), and the
+    `config.worktree` beside each."""
+    _, gitdir = _repo_root_and_gitdir(str(repo_root))
+    dirs = [repo_root / ".git"]
+    if gitdir is not None:
+        common = gitdir
+        try:
+            cd = (gitdir / "commondir").read_text(encoding="utf-8").strip()
+            common = (gitdir / cd).resolve() if not Path(cd).is_absolute() else Path(cd)
+        except OSError:
+            pass
+        dirs += [gitdir, common]
+    out = []
+    for d in dirs:
+        for name in ("config", "config.worktree"):
+            if d / name not in out:
+                out.append(d / name)
+    return out
+
+
 def _protected_dir(target: str):
-    """True / False / None (unresolvable) for one directory."""
+    """True / False / None (unresolvable) for one directory. A repo whose
+    config rewrites urls (`url.<base>.insteadOf`) cannot have its remotes
+    read, so it is unresolvable. A path that does not exist when the hook runs
+    is unresolvable too: walking up from it would judge the repo around it,
+    while the command may create it (a clone, a link) before gh or git runs."""
+    if not os.path.exists(target):
+        return None
     root, gitdir = _repo_root_and_gitdir(target)
     if root is None:
         return None
+    xdg = Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config"))
+    cfgs = _repo_config_files(root) + [Path.home() / ".gitconfig", xdg / "git" / "config",
+                                       Path("/etc/gitconfig")]
+    for cfg in cfgs:
+        try:
+            text = cfg.read_text(encoding="utf-8").lower() if cfg is not None else ""
+        except (OSError, NotADirectoryError):
+            continue
+        # A url rewrite, or an include that may carry one, anywhere git reads
+        # config: the remote this repo names is not the one gh will use.
+        if "insteadof" in text or re.search(r"^\s*\[include", text, re.MULTILINE):
+            return None
     candidates = [root] + ([gitdir] if gitdir is not None else [])
     for cand in candidates:
         for prot in _protected_roots():
@@ -457,12 +682,31 @@ def _protected_dir(target: str):
                 return True
     # A CLONE of a protected repo living anywhere is still protected: compare
     # the target's own remote slug against the protected slugs (QA finding 2).
-    tgt_slug = _remote_slug(root)
-    if tgt_slug:
+    # Every remote counts, not only the first: in a fork clone gh targets the
+    # `upstream` remote, which may be the protected repo.
+    tgt_slugs = _remote_slugs(root)
+    if tgt_slugs:
         known = {s for s in (_remote_slug(r) for r in _protected_roots()) if s}
-        if tgt_slug in known:
+        if tgt_slugs & known:
             return True
     return False
+
+
+def _remote_slugs(repo_root: Path) -> set:
+    """Every owner/repo (lowercase) named by a github.com remote url, read
+    from the repo's own config or, for a linked worktree, from the common
+    git dir its `.git` file and `commondir` point to. Ports are allowed
+    (`ssh://git@github.com:22/o/r`). An ssh `Host` alias remote is not read."""
+    out = set()
+    for cfg_path in _repo_config_files(repo_root):
+        try:
+            cfg = cfg_path.read_text(encoding="utf-8")
+        except (OSError, NotADirectoryError):
+            continue
+        out |= {m.lower() for m in re.findall(
+            r"url\s*=\s*\S*github\.com(?::\d+)?[:/]([\w.-]+/[\w.-]+?)(?:\.git)?/?\s*$",
+            cfg, re.MULTILINE | re.IGNORECASE)}
+    return out
 
 
 # Strip leading wrapper tokens from an already-split sub-command before pattern
@@ -477,7 +721,7 @@ _W_GROUP = re.compile(r"^[({]\s*")
 _W_ASSIGN = re.compile(r"^[A-Za-z_]\w*=\S*\s+")
 _W_REDIR = re.compile(r"^\d*[<>]+\S*\s+")
 _W_ENV = re.compile(r"^env\b\s*")
-_W_ENVARG = re.compile(r"^(?:-\S+|[A-Za-z_]\w*=\S*)\s+")
+_W_ENVARG = re.compile(r"^(?:-\w*[uC]\s+\S+|--(?:unset|chdir)(?:=|\s+)\S+|-\S+|[A-Za-z_]\w*\+?=\S*)\s+")
 _W_COMMAND = re.compile(r"^command\s+")
 # Reserved words and the pipeline negation run the command that follows them.
 _W_RESERVED = re.compile(r"^(?:!|if|then|else|elif|do|while|until|time(?:\s+-p)?|coproc)\s+")
@@ -784,11 +1028,68 @@ def _canonical(sub: str) -> str:
     `gh -R o/r pr -t x merge 96` reads as `gh pr merge -R o/r -t x 96`.
     A sub-command that cannot be split is returned unchanged."""
     import shlex
+    raw = sub
     sub = _drop_redirections(_strip_leading(sub))
     try:
         argv = _bash_words(sub)
     except ValueError:
+        argv = None
+    if not (argv and os.path.basename(argv[0]) == "gh"):
+        # The prefix peel may have consumed a word bash still reads, such as
+        # the command given to `env -S`; read the raw sub-command instead.
+        try:
+            raw_argv = _bash_words(_drop_redirections(raw.lstrip()))
+        except ValueError:
+            raw_argv = []
+        if raw_argv and (raw_argv[0] == "env" or raw_argv[0].endswith("/env")
+                         or re.match(r"^[A-Za-z_]\w*\+?=", raw_argv[0])):
+            argv = raw_argv
+    if argv is None:
         return sub
+    # Leading assignments as bash reads them, after quote removal (`X+=1`,
+    # `'X'=1`, `GH_RE""PO=x`), and `env` with its options and assignments:
+    # each one still runs the command after it.
+    while argv:
+        if re.match(r"^[A-Za-z_]\w*\+?=", argv[0]):
+            argv = argv[1:]
+        elif argv[0] == "env" or argv[0].endswith("/env"):
+            argv = argv[1:]
+            while argv and (argv[0].startswith("-") or re.match(r"^[A-Za-z_]\w*\+?=", argv[0])):
+                tok, rest_argv = argv[0], argv[1:]
+                if tok == "--":
+                    argv = rest_argv
+                    break
+                if tok.startswith("--split-string") or (
+                        not tok.startswith("--") and "S" in tok[1:]):
+                    # The value is a command line: read it as one.
+                    if tok.startswith("--"):
+                        val = tok.split("=", 1)[1] if "=" in tok else (rest_argv[:1] or [""])[0]
+                        rest_argv = rest_argv if "=" in tok else rest_argv[1:]
+                    else:
+                        val = tok[tok.index("S", 1) + 1:] or (rest_argv[:1] or [""])[0]
+                        rest_argv = rest_argv if tok[tok.index("S", 1) + 1:] else rest_argv[1:]
+                    try:
+                        argv = _bash_words(val) + rest_argv
+                    except ValueError:
+                        argv = rest_argv
+                    break
+                if tok.startswith("--"):
+                    takes = tok in ("--unset", "--chdir")
+                elif tok.startswith("-"):
+                    # A short cluster: the last of u/C takes the next word
+                    # when nothing follows it in the token (`-iu FOO`).
+                    takes = tok[-1] in "uC"
+                else:
+                    takes = False
+                argv = rest_argv[1:] if takes else rest_argv
+            if argv and os.path.basename(argv[0]) not in ("gh", "git"):
+                # A word env cannot be read past (`$'-C'`): read from the
+                # command it names, so the merge is still found.
+                nxt = next((j for j, w in enumerate(argv) if os.path.basename(w) in ("gh", "git")), None)
+                if nxt is not None:
+                    argv = argv[nxt:]
+        else:
+            break
     if argv and os.path.basename(argv[0]) == "gh":
         argv[0] = "gh"
         # Flags before the subcommand, read the way cobra's root `stripFlags`
@@ -858,7 +1159,8 @@ def _unparsed_publish(cmd: str) -> bool:
             return m.group(1)
 
     decoded = re.sub(r"\$'((?:\\.|[^'\\])*)'", ansi_c, cmd)
-    return bool(_PUBLISH_MENTION.search(re.sub(r"['\"\\]", "", decoded)))
+    split_string = re.sub(r"\\[_tnfv]", " ", decoded)  # env -S word breaks
+    return any(_PUBLISH_MENTION.search(re.sub(r"['\"\\]", "", text)) for text in (decoded, split_string))
 
 
 def _find_publish_subcmd(cmd: str) -> str | None:
