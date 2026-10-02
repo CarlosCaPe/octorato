@@ -551,6 +551,28 @@ class QaHeadAnchoring(unittest.TestCase):
         self._conv_row(tp, "CONVERGED", "u-w", sd)
         self.assertIsNone(rl.converge_latest_for(sd))
 
+    def test_a_refused_handback_or_a_continued_message_is_not_an_ended_turn(self):
+        sd = "docs/specs/202610020005-toy"
+        conv = lambda v: f"CONVERGE-VERDICT: {v}\nCONVERGE-SCOPE: {sd}"
+        quote = self._entry("quoting:\n" + conv("CONVERGED"), "2026-10-02T10:00:00.000Z", "u-q1")
+        quote["message"]["content"].append(U("SubagentHandback", {"message": "x"}, "hbR"))
+        refusal = _h({"type": "user", "toolUseResult": {"success": False, "message": "not active"},
+                      "message": {"role": "user", "content": [
+                          {"type": "tool_result", "tool_use_id": "hbR", "content": "refused"}]}})
+        tp = self._transcript("agent-q1.jsonl", [quote, refusal, self._resume(),
+                                                 self._entry("ok, done", "2026-10-02T10:10:00.000Z")])
+        self._conv_row(tp, "CONVERGED", "u-q1", sd)
+        self.assertIsNone(rl.converge_latest_for(sd))
+        sd2 = sd + "-b"
+        conv2 = lambda v: f"CONVERGE-VERDICT: {v}\nCONVERGE-SCOPE: {sd2}"
+        a = self._entry("quoting:\n" + conv2("CONVERGED"), "2026-10-02T11:00:00.000Z", "u-q2")
+        a["message"]["id"] = "msg_same"
+        b = self._entry("continuing, no verdict", "2026-10-02T11:01:00.000Z")
+        b["message"]["id"] = "msg_same"
+        tp2 = self._transcript("agent-q2.jsonl", [a, self._resume(), b])
+        self._conv_row(tp2, "CONVERGED", "u-q2", sd2)
+        self.assertIsNone(rl.converge_latest_for(sd2))
+
     def test_a_scopeless_later_needs_work_revokes_a_pass(self):
         tp = self._transcript("agent-r4.jsonl", [
             self._entry(self._report("PASS", H1, "PR #503"), "2026-10-02T10:00:00.000Z", "u-r4"),

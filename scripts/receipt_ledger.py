@@ -805,13 +805,19 @@ def _is_resume(entry: dict) -> bool:
             and content.lstrip().startswith(_RESUME))
 
 
-def _awaits_tool(entry) -> bool:
-    """True when an assistant entry left a tool call pending (other than the
-    SubagentHandback that delivers its report): the agent was mid-work."""
+def _awaits_tool(entry, refused: set = frozenset()) -> bool:
+    """True when an assistant entry left a tool call pending: the agent was
+    mid-work. A SubagentHandback that delivered the report ends the turn; one
+    the harness refused does not (the agent keeps working after it)."""
     blocks = ((entry or {}).get("message") or {}).get("content") or []
     return isinstance(blocks, list) and any(
-        isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") != HANDBACK_TOOL
+        isinstance(b, dict) and b.get("type") == "tool_use"
+        and (b.get("name") != HANDBACK_TOOL or b.get("id") in refused)
         for b in blocks)
+
+
+def _message_id(entry) -> str:
+    return str(((entry or {}).get("message") or {}).get("id") or "")
 
 
 def _is_prompt(entry: dict) -> bool:
@@ -835,7 +841,15 @@ def _is_prompt(entry: dict) -> bool:
 def _anchor_stands(transcript_path: str, uuid: str, same, revokes) -> bool:
     """True when the run that holds the anchored assistant entry ENDS on a
     report that says the same thing (`same(final_report)`) and no report in a
-    later run satisfies `revokes(report)`. A run ends only at a real prompt.
+    later run satisfies `revokes(report)`. A run ends at a real prompt, or at
+    a SendMessage resume that follows an ended turn (no tool call pending, no
+    refused handback, and the next assistant entry starts a new message).
+
+    Residual, stated: an agent killed right after a mid-run text entry, and
+    then resumed or never resumed, leaves that entry as its run's last report.
+    It cannot be told apart from an ordinary turn that ended on text (48 real
+    resumes follow exactly that shape), so such a quote reads as the run's
+    final report.
 
     A receipt is recorded by a hook that fails open, so a resumed reviewer's
     later NEEDS-WORK or GAPS may never reach the ledger; reading it from the
@@ -864,13 +878,23 @@ def _anchor_stands(transcript_path: str, uuid: str, same, revokes) -> bool:
                if e.get("type") == "assistant" and e.get("uuid") == uuid), None)
     if at is None:
         return False
+    tail = entries[at:]
+    # The message id of the next assistant entry after each position, so a
+    # resume followed by the SAME message (the turn went on) is not a boundary.
+    next_mid, nxt = [""] * len(tail), ""
+    for i in range(len(tail) - 1, -1, -1):
+        next_mid[i] = nxt
+        if tail[i].get("type") == "assistant":
+            nxt = _message_id(tail[i])
     final, in_run, last_asst = None, True, None
-    for e in entries[at:]:
+    for i, e in enumerate(tail):
         # A run ends at a real prompt, or at a resume that arrives after the
         # agent ended its turn; one that arrives mid tool loop ("while you
         # were working") is not an end (207 of 212 real resumes are ends).
-        boundary = _is_prompt(e) or (_is_resume(e) and last_asst is not None
-                                     and not _awaits_tool(last_asst))
+        boundary = _is_prompt(e) or (
+            _is_resume(e) and last_asst is not None
+            and not _awaits_tool(last_asst, refused)
+            and not (_message_id(last_asst) and next_mid[i] == _message_id(last_asst)))
         if e.get("type") == "assistant":
             last_asst = e
         if boundary:
