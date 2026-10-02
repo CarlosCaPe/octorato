@@ -306,3 +306,8 @@ registry/fixtures/**/home/.wa-fixture/*.db
 # directory. This negates ONLY that directory under registry/fixtures; the
 # real /company/ at the brain root stays ignored by the rules at the top.
 !registry/fixtures/**/company/
+# Same reason for `projects/`: a panel receipt is anchored to a reviewer
+# transcript the gate only reads under ~/.claude/projects/, so its seed lives
+# under a fixture `home/.claude/projects/`. Only that directory under
+# registry/fixtures is negated; the real projects/ stays ignored.
+!registry/fixtures/**/projects/

@@ -1,0 +1,13 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "git status"
+  },
+  "tool_response": {
+    "stdout": "clean",
+    "stderr": ""
+  },
+  "session_id": "fx-sent",
+  "tool_use_id": "toolu_not_a_send",
+  "_now": "2026-10-02T12:00:00.000Z"
+}

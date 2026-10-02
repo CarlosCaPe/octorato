@@ -517,8 +517,13 @@ edges:
       - scripts/r__subagent-stop__qa-receipt.py          # QA receipt writer
       - scripts/qa-merge-gate.py                         # consumer: env approval AND QA receipt
       - scripts/brain_doctor.py                          # gate receipt writer; waiver-age, incident-fixture-coverage, reflex-triage
-      - registry/rules.yaml                              # FLOW.receipt-ledger, COMMS.outward-send-gate, FLOW.qa-receipt
+      - registry/rules.yaml                              # FLOW.receipt-ledger, COMMS.outward-send-gate, FLOW.qa-receipt, FLOW.panel-before-send, FLOW.sent-message-ledger
       - registry/fixtures/COMMS.outward-send-gate        # liveness proof of the send gate
+      - scripts/panel_digest.py                          # panel digest shared by the gate and the main loop
+      - scripts/panel_fixture_seed.py                    # seeds PASS panel receipts into send fixtures
+      - scripts/r__posttool__sent-ledger.py              # sent-message ledger writer
+      - registry/fixtures/FLOW.panel-before-send         # liveness proof of the panel check
+      - registry/fixtures/FLOW.sent-message-ledger       # selftest of the sent ledger
       - registry/reflex-triage.yaml                      # phase 5 decisions
       - hooks.json                                       # PostToolUse / PreToolUse / SubagentStop wiring
     kind: appears_in

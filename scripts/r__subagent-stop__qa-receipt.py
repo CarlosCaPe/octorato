@@ -13,6 +13,11 @@ or the v9 converge protocol (skills/sdd-converge)
     CONVERGE-VERDICT: CONVERGED | GAPS
     CONVERGE-SCOPE: docs/specs/<yyyymmddHHMM>-<feature-name>
 
+or the panel protocol (FLOW.panel-before-send)
+
+    PANEL-VERDICT: PASS | NEEDS-WORK
+    PANEL-SHA256: <64 hex>       (panel_digest.py of the reviewed message)
+
 this hook, running in the harness process, appends a receipt to the global
 ledger with the agent id, type, the harness-written agent transcript path and
 the harness `uuid` and `timestamp` of the transcript entry the report came
@@ -64,13 +69,20 @@ def main() -> int:
             "session_id": data.get("session_id") or "",
         }
         for kind, parse in (("qa", receipt_ledger.parse_verdict),
-                             ("converge", receipt_ledger.parse_converge)):
+                             ("converge", receipt_ledger.parse_converge),
+                             ("panel", receipt_ledger.parse_panel)):
             source, anchor = report, {"entry_uuid": entry_uuid, "entry_ts": entry_ts}
             verdict, scope = parse(source)
             if not verdict:
                 source, anchor = text, {}
                 verdict, scope = parse(source)
-            if not verdict:
+            if not verdict or (kind == "panel" and not scope):
+                continue
+            if kind == "panel":
+                # The digest is the panel's scope: a verdict with no valid
+                # digest names no message and is not recorded.
+                record = dict(base, kind=kind, verdict=verdict, digest=scope, **anchor)
+                receipt_ledger.append_global(record)
                 continue
             record = dict(base, kind=kind, verdict=verdict, scope=scope, **anchor)
             if kind == "qa":

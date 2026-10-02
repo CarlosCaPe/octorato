@@ -1,0 +1,10 @@
+{
+  "_comment": "selftest seed: one fixture household chat, a JID that exists nowhere",
+  "chats": [
+    {
+      "jid": "120363000000000001@g.us",
+      "label": "fixture household group",
+      "since": "2026-10-01"
+    }
+  ]
+}

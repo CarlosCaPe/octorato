@@ -34,8 +34,22 @@ WHAT IT REQUIRES (docs/architecture/v7-nothing-ships-unverified.md)
   4. Explicit send ask (operator directive 2026-08-14: deliver by default,
      transmit only the message that was asked for). A non-negated send verb
      must stand in the operator's own prompt for the turn, outside quotes and
-     code spans; `send-ok` is the standing hatch. Checked last, so every
+     code spans; `send-ok` is the standing hatch. Checked after 1-3, so every
      earlier deny keeps its own name.
+  5. Panel receipt (FLOW.panel-before-send, operator directive 2026-10-02: no
+     message leaves without a panel, however small). Every MESSAGE send (mail
+     send/reply/forward, WhatsApp send_message/send_file/send_audio_message,
+     the support bridge, its --archivo included) computes panel_digest.py over
+     the outgoing text plus the bytes of every attachment, and is denied
+     unless the panel receipt that DECIDES that digest in this session, inside
+     120 minutes, says PASS (receipt_ledger.panel_pass_for). A later
+     NEEDS-WORK for the same digest revokes. NO hatch: send-ok, the
+     autonomous-chat allowlist and a chat-typed send-ok waive requirement 4
+     only, never this one. Fail closed: a body or attachment the gate cannot
+     read with certainty (panel_digest.PanelDigestError), an unreadable
+     ledger and a crash all deny. Checked LAST, so the earlier checks keep
+     their own deny and their fixtures stay meaningful. Deploys and releases
+     are not messages and are out of scope here.
 
 The Stop gates are not replaced. They still catch drafts and prose; this gate
 is the choke point for what actually leaves, and it imports their detectors so
@@ -488,8 +502,74 @@ def _ask_deny(human: str) -> str:
             "'send-ok' en SU mensaje lo exime.")
 
 
+def _is_panel_send(tool_name: str, tool_input) -> bool:
+    """A MESSAGE send, the shape requirement 5 covers: every MCP send tool,
+    and a Bash command that invokes the support bridge under EITHER shell
+    reading (the union finds more sends, and a send found is a send gated)."""
+    if tool_name != "Bash":
+        return bool(_SEND_TOOL.search(tool_name))
+    import receipt_ledger
+    command = str((tool_input or {}).get("command", "")) if isinstance(tool_input, dict) else ""
+    try:
+        mod = receipt_ledger._qa_gate_module()
+        readers = (None, mod._split_bash, mod._split_master)
+    except Exception:
+        readers = (None,)
+    for reader in readers:
+        for sc in receipt_ledger.subcommands(command, reader):
+            toks = receipt_ledger.tokens_of(sc)
+            if toks and toks[0] in _READERS:
+                continue
+            if any(receipt_ledger._is_script_token(t, n) for t in toks for n in _SEND_SCRIPTS):
+                return True
+    return False
+
+
+def _panel_deny(data: dict) -> str:
+    """Requirement 5 as a deny reason, or "" when every message this call
+    sends carries a PASS panel receipt for its exact digest."""
+    import receipt_ledger
+    import panel_digest
+    tool_name = str(data.get("tool_name", ""))
+    tool_input = data.get("tool_input") or {}
+    if not _is_panel_send(tool_name, tool_input):
+        return ""
+    try:
+        digests = panel_digest.digests_for(tool_name, tool_input)
+    except panel_digest.PanelDigestError as e:
+        return (f"🧑‍⚖️ NO PANEL POSSIBLE: the gate cannot tell with certainty what this send "
+                f"carries ({e}). Send the message as a plain call (MCP tool, or the support "
+                f"bridge with a literal message and no $, backtick or heredoc), with every "
+                f"attachment a readable local file, then get a panel for it.")
+    session_id = data.get("session_id") or os.environ.get("CLAUDE_SESSION_ID") or ""
+    now = _now_for(str(data.get("transcript_path") or ""))
+    missing = [d for d in digests if not receipt_ledger.panel_pass_for(d, session_id, now)]
+    if not missing:
+        return ""
+    listing = ", ".join(missing)
+    return (f"🧑‍⚖️ NO PANEL RECEIPT for this message (sha256 {listing}). Operator directive "
+            f"2026-10-02: no message leaves without a panel. Hand the exact message to a "
+            f"reviewer subagent (a reviewer persona: Reality Checker, Code Reviewer, ...) and "
+            f"have it end its report with two lines: 'PANEL-VERDICT: PASS' (or NEEDS-WORK) and "
+            f"'PANEL-SHA256: <digest>'. The digest is "
+            f"`python3 ~/.claude/scripts/panel_digest.py --body-file <file> [--attach <path> ...]` "
+            f"(mail: subject line, then body, then the HTML body if any; or "
+            f"`--tool-input <json> --tool-name {tool_name}`). A PASS counts in this session "
+            f"for 120 minutes; a later NEEDS-WORK revokes it; an edited body or a changed "
+            f"attachment is a new digest. No hatch: send-ok does not waive this.")
+
+
 def check(data: dict) -> str:
-    """Return the deny reason, or "" to allow. Raises only on internal errors."""
+    """Return the deny reason, or "" to allow. Raises only on internal errors.
+    Requirements 1-4 first, each keeping its own deny; the panel (5) last."""
+    reason = _receipt_checks(data)
+    if reason:
+        return reason
+    return _panel_deny(data)
+
+
+def _receipt_checks(data: dict) -> str:
+    """Requirements 1-4. Returns the deny reason, or ""."""
     import receipt_ledger
     tool_name = str(data.get("tool_name", ""))
     tool_input = data.get("tool_input") or {}

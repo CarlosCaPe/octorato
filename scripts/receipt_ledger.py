@@ -26,6 +26,14 @@ proof:
                    must live under the harness projects dir, its LAST assistant
                    text must re-parse to PASS with a scope naming the PR as a
                    whole token, and the agent type must be a QA persona.
+  panel receipt    written by the same reflex when a reviewer ends with
+                   PANEL-VERDICT / PANEL-SHA256 (panel_digest.py of the message
+                   it reviewed). Anchor: the exact transcript entry re-reads to
+                   the same verdict and digest, in THIS session, a reviewer
+                   persona, inside 120 minutes; the newest decides.
+  sent record      written by r__posttool__sent-ledger.py after a message send
+                   left (sent.jsonl): channel, recipient, message id, digest,
+                   panel receipt id. A trail for a later recall step, not a gate.
 
 Residual, stated plainly (QA cycle 2, 2026-09-05): the session transcript and
 the agent transcripts are FILES under $HOME, and the model can append to them
@@ -41,7 +49,8 @@ qa-merge-gate: the env is the boundary, the ledger is the trail.
 
 Layout (gitignored, per machine):
   ~/.claude/.cache/receipts/<session_id>.jsonl   seek receipts for one session
-  ~/.claude/.cache/receipts/global.jsonl         gate-liveness + qa receipts
+  ~/.claude/.cache/receipts/global.jsonl         gate-liveness + qa + panel receipts
+  ~/.claude/.cache/receipts/sent.jsonl           messages that left (sent-message ledger)
 
 A line is JSON: {"kind": ..., "ts": ISO-8601 UTC, ...fields}.
 """
@@ -1091,3 +1100,118 @@ def qa_latest_for(token: str, head: str) -> dict | None:
                 continue
         return dict(r, verdict_ts=ts)
     return None
+
+
+# --------------------------------------------------------------------------
+# Panel receipt (FLOW.panel-before-send)
+# --------------------------------------------------------------------------
+# A reviewer subagent ends its report with
+#     PANEL-VERDICT: PASS | NEEDS-WORK
+#     PANEL-SHA256: <64 hex>          (panel_digest.py of the reviewed message)
+# and r__subagent-stop__qa-receipt.py records a `panel` receipt anchored to the
+# harness transcript entry, the same way it records a QA verdict. The
+# outward-send gate honours only the receipt that DECIDES that digest.
+
+_PANEL_VERDICT = re.compile(r"PANEL-VERDICT\s*:\s*(PASS|NEEDS[ -]WORK)\b", re.IGNORECASE)
+_PANEL_SHA = re.compile(r"PANEL-SHA256\s*:\s*(\S+)", re.IGNORECASE)
+_SHA64 = re.compile(r"[0-9a-f]{64}")
+# A panel is a reviewer persona: the QA set plus an explicit "panel" type.
+PANEL_AGENT_TYPE = re.compile(QA_AGENT_TYPE.pattern + r"|panel", re.IGNORECASE)
+PANEL_WINDOW_MINUTES = 120
+
+
+def parse_panel(text: str) -> tuple:
+    """(verdict, digest) from a reviewer's final report: the LAST occurrence of
+    each, so a protocol line quoted earlier cannot stand in for the verdict at
+    the end. A malformed last digest yields "" (never an earlier one)."""
+    if not text:
+        return "", ""
+    vms = list(_PANEL_VERDICT.finditer(text))
+    sms = list(_PANEL_SHA.finditer(text))
+    verdict = vms[-1].group(1).upper().replace(" ", "-") if vms else ""
+    sha = sms[-1].group(1).strip().strip("`'\"").rstrip(".,;").lower() if sms else ""
+    return verdict, (sha if _SHA64.fullmatch(sha) else "")
+
+
+def panel_latest_for(digest: str, session_id: str, now=None,
+                     window_minutes: float = PANEL_WINDOW_MINUTES) -> dict | None:
+    """The panel receipt that decides `digest` in session `session_id`,
+    whatever its verdict, or None.
+
+    A ledger row counts only when it was written for a reviewer persona, points
+    at a harness-shaped agent transcript of THIS session and agent id, names the
+    transcript entry it came from (`entry_uuid`), and that exact entry re-reads
+    to the same verdict and digest. Its time is the entry's harness timestamp,
+    never the ledger line's. Rows older than `window_minutes` (or from the
+    future) are dropped. Of the rest the newest decides; on an equal or an
+    unreadable time a NEEDS-WORK wins. A PASS also has to stand in its own
+    transcript: the run must end on the same PASS and no later run of that
+    reviewer may say NEEDS-WORK for this digest (the recording hook fails open,
+    so a revocation can be missing from the ledger)."""
+    want = str(digest or "").lower()
+    if not _SHA64.fullmatch(want) or not session_id:
+        return None
+    now = now or _dt.datetime.now(_dt.timezone.utc)
+    cands = []
+    for r in read_global():
+        if r.get("kind") != "panel" or r.get("verdict") not in ("PASS", "NEEDS-WORK"):
+            continue
+        if str(r.get("digest") or "").lower() != want:
+            continue
+        if not PANEL_AGENT_TYPE.search(str(r.get("agent_type", ""))):
+            continue
+        tp, uuid = str(r.get("agent_transcript_path") or ""), str(r.get("entry_uuid") or "")
+        if not tp or not uuid:
+            continue
+        # A `~` path resolves under THIS process's HOME (fixtures seed it that
+        # way); it still has to land in the harness projects dir below.
+        tp = os.path.expanduser(tp)
+        if not _harness_agent_transcript(Path(tp), session_id, str(r.get("agent_id") or "")):
+            continue
+        got = report_at(tp, uuid)
+        if got is None:
+            continue
+        report, ts = got
+        verdict, sha = parse_panel(report)
+        if verdict != r.get("verdict") or sha != want:
+            continue
+        key = _ts_key(ts)
+        if key is None:
+            if verdict == "PASS":
+                continue
+            key = _NEVER_OLDER
+        else:
+            age = (now - key).total_seconds() / 60.0
+            if age < 0 or age > window_minutes:
+                continue
+        cands.append((key, verdict != "PASS", r, tp, uuid, ts))
+    cands.sort(key=lambda c: (c[0], c[1]), reverse=True)
+    same = lambda rep_: parse_panel(rep_) == ("PASS", want)
+    revokes = lambda rep_: parse_panel(rep_) == ("NEEDS-WORK", want)
+    for key, is_revocation, r, tp, uuid, ts in cands:
+        if not is_revocation and not _anchor_stands(tp, uuid, same, revokes):
+            continue
+        return dict(r, verdict_ts=ts)
+    return None
+
+
+def panel_pass_for(digest: str, session_id: str, now=None) -> dict | None:
+    """The deciding panel receipt for `digest`, only when it says PASS."""
+    r = panel_latest_for(digest, session_id, now)
+    return r if r and r.get("verdict") == "PASS" else None
+
+
+# --------------------------------------------------------------------------
+# Sent-message ledger (written after a send; read by a later recall step)
+# --------------------------------------------------------------------------
+
+def sent_path() -> Path:
+    return receipts_dir() / "sent.jsonl"
+
+
+def append_sent(record: dict) -> None:
+    _append(sent_path(), dict(record, kind="sent"))
+
+
+def read_sent() -> list:
+    return _read(sent_path())

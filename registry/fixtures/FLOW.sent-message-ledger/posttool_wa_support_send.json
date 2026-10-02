@@ -1,0 +1,14 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "~/.claude/scripts/wa-soporte.sh 5210000000000 \"The form is signed and attached.\" --archivo ~/attach/doc.pdf"
+  },
+  "tool_response": {
+    "stdout": "{\"success\": true, \"message\": \"sent\", \"message_id\": \"3EB0FIXTURE02\", \"chat_jid\": \"5210000000000@s.whatsapp.net\"}",
+    "stderr": "",
+    "interrupted": false
+  },
+  "session_id": "fx-sent",
+  "tool_use_id": "toolu_wa_support_send",
+  "_now": "2026-10-02T12:00:00.000Z"
+}
