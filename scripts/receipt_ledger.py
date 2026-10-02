@@ -596,9 +596,11 @@ def converge_latest_for(spec_dir: str, session_id: str = "") -> dict | None:
     since docs/specs/202610012100-qa-receipt-bound-to-head) is re-read from
     that exact entry over the whole transcript, so a resumed verifier's later
     reply cannot change what the receipt says and a verdict beyond the 256 KB
-    tail stays readable. An older row with no anchor keeps the tail read until
-    it ages out. The newest entry timestamp decides, never the ledger order; on
-    an equal timestamp GAPS wins."""
+    tail stays readable. An anchored CONVERGED stands only when it was the
+    final report of its run and no later report in the transcript says GAPS
+    for this spec (the hook that records receipts fails open). A row with no
+    anchor keeps the tail read. The newest entry timestamp decides, never the
+    ledger order; on an equal timestamp, or an unreadable one, GAPS wins."""
     want = normalize_spec_dir(spec_dir)
     if not want:
         return None
@@ -624,9 +626,14 @@ def converge_latest_for(spec_dir: str, session_id: str = "") -> dict | None:
         verdict, scope = parse_converge(report)
         if verdict != r.get("verdict") or scope != want:
             continue
+        if uuid and verdict == "CONVERGED" and not _anchor_stands(
+                tp, uuid, lambda rep_: parse_converge(rep_) == ("GAPS", want)):
+            continue
         key = _ts_key(verdict_ts)
         if key is None:
-            continue
+            if verdict != "GAPS":
+                continue
+            key = _NEVER_OLDER  # an unreadable time cannot drop a GAPS
         if (best_key is None or key > best_key
                 or (key == best_key and verdict == "GAPS")):
             best, best_key = dict(r, verdict_ts=verdict_ts), key
@@ -781,6 +788,66 @@ def report_at(transcript_path: str, uuid: str):
     return reports.pop(), str(found[0].get("timestamp") or "")
 
 
+def _is_prompt(entry: dict) -> bool:
+    """A user entry that starts a new run (a prompt or a resume), as opposed
+    to one that only carries tool results back to the agent."""
+    if entry.get("type") != "user":
+        return False
+    content = (entry.get("message") or {}).get("content")
+    if isinstance(content, str):
+        return True
+    return isinstance(content, list) and any(
+        isinstance(b, dict) and b.get("type") != "tool_result" for b in content)
+
+
+def _anchor_stands(transcript_path: str, uuid: str, revokes) -> bool:
+    """True when the anchored assistant entry is the FINAL report of its run
+    (no later assistant report before the next prompt) and no later report
+    anywhere in the transcript satisfies `revokes(report)`.
+
+    A receipt is recorded by a hook that fails open, so a resumed reviewer's
+    later NEEDS-WORK or GAPS may never reach the ledger; reading it from the
+    transcript keeps a passing verdict from outliving its own revocation. And
+    the ledger is writable, so a hand-written row naming a mid-run entry that
+    merely quotes the protocol lines must not stand for the run's verdict."""
+    if not uuid or not _regular_file(transcript_path):
+        return False
+    entries, refused = [], set()
+    try:
+        with open(transcript_path, "rb") as fh:
+            for raw in fh:
+                try:
+                    entry = json.loads(raw.decode("utf-8", errors="replace"))
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(entry, dict) or not harness_entry(entry):
+                    continue
+                refused |= _refused_handbacks(entry)
+                if entry.get("type") in ("assistant", "user"):
+                    entries.append(entry)
+    except OSError:
+        return False
+    at = next((i for i, e in enumerate(entries)
+               if e.get("type") == "assistant" and e.get("uuid") == uuid), None)
+    if at is None:
+        return False
+    in_run = True
+    for e in entries[at + 1:]:
+        if _is_prompt(e):
+            in_run = False
+            continue
+        if e.get("type") != "assistant" or e.get("uuid") == uuid:
+            continue
+        report = _entry_report(e, refused)
+        if report is None:
+            continue
+        if in_run:
+            return False  # the anchored entry was not the run's final report
+        if revokes(report):
+            return False
+    return True
+
+
 def last_assistant_text(transcript_path: str) -> str:
     return last_assistant_report(transcript_path)[0]
 
@@ -853,6 +920,18 @@ def _ts_key(ts: str):
         return None
 
 
+_NEVER_OLDER = _dt.datetime.max.replace(tzinfo=_dt.timezone.utc)
+
+
+def _revokes_pass(report: str, token: str, head: str) -> bool:
+    """A later report that revokes a PASS for this pull request at this
+    commit: FAIL or NEEDS-WORK naming the PR, at the same commit or none."""
+    verdict, scope = parse_verdict(report)
+    if verdict not in ("FAIL", "NEEDS-WORK") or not scope_names(scope, token):
+        return False
+    return parse_qa_head(report) in (head, "")
+
+
 def qa_latest_for(token: str, head: str) -> dict | None:
     """The qa receipt that decides pull request `token` at commit `head`,
     whatever its verdict; None when no receipt names both.
@@ -901,9 +980,14 @@ def qa_latest_for(token: str, head: str) -> dict | None:
             continue
         if not scope_names(scope, token):
             continue
+        if verdict == "PASS" and not _anchor_stands(
+                tp, uuid, lambda rep_, h=head: _revokes_pass(rep_, token, h)):
+            continue
         key = _ts_key(ts)
         if key is None:
-            continue
+            if verdict == "PASS":
+                continue
+            key = _NEVER_OLDER  # an unreadable time cannot drop a revocation
         if (best_ts is None or key > best_ts
                 or (key == best_ts and verdict != "PASS")):
             best, best_ts = dict(r, verdict_ts=ts), key
