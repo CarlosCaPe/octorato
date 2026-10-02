@@ -15,6 +15,12 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-10-02]: v9.1.2
+### Fixes
+- fix(qa-gate): any GH_REPO, PR URL or API path naming a protected repo gates (#354)
+### Other
+- docs(changelog): backfill v9.1.1 (#355)
+
 ## [2026-10-02]: v9.1.1
 ### Fixes
 - fix(receipts): read a converge receipt from its anchored entry (#353)
