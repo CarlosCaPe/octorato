@@ -498,6 +498,38 @@ class QaHeadAnchoring(unittest.TestCase):
         self._conv_row(tp, "CONVERGED", "u-mid", sd)
         self.assertIsNone(rl.converge_latest_for(sd))
 
+    def test_injected_user_entries_do_not_end_a_run(self):
+        sd = "docs/specs/202610020002-toy"
+        conv = lambda v: f"CONVERGE-VERDICT: {v}\nCONVERGE-SCOPE: {sd}"
+        meta = _h({"type": "user", "isMeta": True,
+                   "message": {"role": "user", "content": "[SYSTEM NOTIFICATION - NOT USER INPUT] done"}})
+        loaded = _h({"type": "user", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "ts1", "content": "ok"},
+            {"type": "text", "text": "Tool loaded."}]}})
+        for name, sep in (("agent-i1.jsonl", meta), ("agent-i2.jsonl", loaded)):
+            tp = self._transcript(name, [
+                self._entry("quoting:\n" + conv("CONVERGED"), "2026-10-02T10:00:00.000Z", "u-" + name),
+                sep,
+                self._entry("final report, no verdict", "2026-10-02T10:10:00.000Z")])
+            self._conv_row(tp, "CONVERGED", "u-" + name, sd)
+        self.assertIsNone(rl.converge_latest_for(sd))
+        # An honest PASS followed by a notification and a repeated PASS stands.
+        tp = self._transcript("agent-i3.jsonl", [
+            self._entry(self._report("PASS", H1), "2026-10-02T10:00:00.000Z", "u-i3"),
+            meta,
+            self._entry(self._report("PASS", H1), "2026-10-02T10:05:00.000Z")])
+        self._row(tp, "PASS", H1, "u-i3")
+        self.assertEqual(rl.qa_latest_for("500", H1)["verdict"], "PASS")
+
+    def test_a_later_gaps_without_a_scope_line_revokes(self):
+        sd = "docs/specs/202610020003-toy"
+        tp = self._transcript("agent-j1.jsonl", [
+            self._entry(f"CONVERGE-VERDICT: CONVERGED\nCONVERGE-SCOPE: {sd}", "2026-10-02T10:00:00.000Z", "u-j1"),
+            self._prompt(),
+            self._entry("CONVERGE-VERDICT: GAPS", "2026-10-02T10:30:00.000Z")])
+        self._conv_row(tp, "CONVERGED", "u-j1", sd)
+        self.assertIsNone(rl.converge_pass_for(sd))
+
     def test_ties_and_unreadable_times_favour_the_revocation(self):
         sd = "docs/specs/202610020001-toy"
         conv = lambda v: f"CONVERGE-VERDICT: {v}\nCONVERGE-SCOPE: {sd}"

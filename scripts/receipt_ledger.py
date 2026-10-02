@@ -596,15 +596,15 @@ def converge_latest_for(spec_dir: str, session_id: str = "") -> dict | None:
     since docs/specs/202610012100-qa-receipt-bound-to-head) is re-read from
     that exact entry over the whole transcript, so a resumed verifier's later
     reply cannot change what the receipt says and a verdict beyond the 256 KB
-    tail stays readable. An anchored CONVERGED stands only when it was the
-    final report of its run and no later report in the transcript says GAPS
-    for this spec (the hook that records receipts fails open). A row with no
+    tail stays readable. An anchored CONVERGED stands only when its run ends
+    on a report that also says CONVERGED for this spec and no later run says
+    GAPS for it or for no scope (the hook that records receipts fails open). A row with no
     anchor keeps the tail read. The newest entry timestamp decides, never the
     ledger order; on an equal timestamp, or an unreadable one, GAPS wins."""
     want = normalize_spec_dir(spec_dir)
     if not want:
         return None
-    best, best_key = None, None
+    cands = []
     for r in read_global():
         if r.get("kind") != "converge" or r.get("verdict") not in ("CONVERGED", "GAPS"):
             continue
@@ -626,18 +626,23 @@ def converge_latest_for(spec_dir: str, session_id: str = "") -> dict | None:
         verdict, scope = parse_converge(report)
         if verdict != r.get("verdict") or scope != want:
             continue
-        if uuid and verdict == "CONVERGED" and not _anchor_stands(
-                tp, uuid, lambda rep_: parse_converge(rep_) == ("GAPS", want)):
-            continue
         key = _ts_key(verdict_ts)
         if key is None:
             if verdict != "GAPS":
                 continue
             key = _NEVER_OLDER  # an unreadable time cannot drop a GAPS
-        if (best_key is None or key > best_key
-                or (key == best_key and verdict == "GAPS")):
-            best, best_key = dict(r, verdict_ts=verdict_ts), key
-    return best
+        cands.append((key, verdict == "GAPS", r, tp, uuid, verdict_ts))
+    # Newest first, GAPS first on a tie; only a candidate that could win pays
+    # for the whole-transcript check.
+    cands.sort(key=lambda c: (c[0], c[1]), reverse=True)
+    same = lambda rep_: parse_converge(rep_) == ("CONVERGED", want)
+    revokes = lambda rep_: (parse_converge(rep_)[0] == "GAPS"
+                            and parse_converge(rep_)[1] in (want, ""))
+    for key, is_gaps, r, tp, uuid, verdict_ts in cands:
+        if not is_gaps and uuid and not _anchor_stands(tp, uuid, same, revokes):
+            continue
+        return dict(r, verdict_ts=verdict_ts)
+    return None
 
 
 def converge_pass_for(spec_dir: str, session_id: str = "") -> dict | None:
@@ -788,28 +793,38 @@ def report_at(transcript_path: str, uuid: str):
     return reports.pop(), str(found[0].get("timestamp") or "")
 
 
+_INJECTED = ("<system-reminder>", "[SYSTEM NOTIFICATION")
+
+
 def _is_prompt(entry: dict) -> bool:
-    """A user entry that starts a new run (a prompt or a resume), as opposed
-    to one that only carries tool results back to the agent."""
-    if entry.get("type") != "user":
+    """A user entry that starts a new run (a prompt or a resume). Not one the
+    harness injects mid-run (`isMeta`: notifications, skill loads, reminders)
+    and not one that carries a tool result back to the agent, even when it
+    also holds text ("Tool loaded.")."""
+    if entry.get("type") != "user" or entry.get("isMeta"):
         return False
     content = (entry.get("message") or {}).get("content")
     if isinstance(content, str):
-        return True
-    return isinstance(content, list) and any(
-        isinstance(b, dict) and b.get("type") != "tool_result" for b in content)
+        return not content.lstrip().startswith(_INJECTED)
+    if not isinstance(content, list):
+        return False
+    if any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
+        return False
+    texts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
+    return bool(texts) and not all(t.lstrip().startswith(_INJECTED) for t in texts)
 
 
-def _anchor_stands(transcript_path: str, uuid: str, revokes) -> bool:
-    """True when the anchored assistant entry is the FINAL report of its run
-    (no later assistant report before the next prompt) and no later report
-    anywhere in the transcript satisfies `revokes(report)`.
+def _anchor_stands(transcript_path: str, uuid: str, same, revokes) -> bool:
+    """True when the run that holds the anchored assistant entry ENDS on a
+    report that says the same thing (`same(final_report)`) and no report in a
+    later run satisfies `revokes(report)`. A run ends only at a real prompt.
 
     A receipt is recorded by a hook that fails open, so a resumed reviewer's
     later NEEDS-WORK or GAPS may never reach the ledger; reading it from the
     transcript keeps a passing verdict from outliving its own revocation. And
     the ledger is writable, so a hand-written row naming a mid-run entry that
-    merely quotes the protocol lines must not stand for the run's verdict."""
+    merely quotes the protocol lines stands only if the run's own final
+    report carries the same verdict."""
     if not uuid or not _regular_file(transcript_path):
         return False
     entries, refused = [], set()
@@ -831,20 +846,24 @@ def _anchor_stands(transcript_path: str, uuid: str, revokes) -> bool:
                if e.get("type") == "assistant" and e.get("uuid") == uuid), None)
     if at is None:
         return False
-    in_run = True
-    for e in entries[at + 1:]:
+    final, in_run = None, True
+    for e in entries[at:]:
         if _is_prompt(e):
+            if in_run and (final is None or not same(final)):
+                return False  # the run did not end on this verdict
             in_run = False
             continue
-        if e.get("type") != "assistant" or e.get("uuid") == uuid:
+        if e.get("type") != "assistant":
             continue
         report = _entry_report(e, refused)
         if report is None:
             continue
         if in_run:
-            return False  # the anchored entry was not the run's final report
-        if revokes(report):
+            final = report
+        elif revokes(report):
             return False
+    if in_run and (final is None or not same(final)):
+        return False
     return True
 
 
@@ -950,7 +969,7 @@ def qa_latest_for(token: str, head: str) -> dict | None:
     head = str(head or "").lower()
     if not token or not _SHA40.fullmatch(head):
         return None
-    best, best_ts = None, None
+    cands = []
     for r in read_global():
         if r.get("kind") != "qa" or r.get("verdict") not in ("PASS", "FAIL", "NEEDS-WORK"):
             continue
@@ -980,15 +999,18 @@ def qa_latest_for(token: str, head: str) -> dict | None:
             continue
         if not scope_names(scope, token):
             continue
-        if verdict == "PASS" and not _anchor_stands(
-                tp, uuid, lambda rep_, h=head: _revokes_pass(rep_, token, h)):
-            continue
         key = _ts_key(ts)
         if key is None:
             if verdict == "PASS":
                 continue
             key = _NEVER_OLDER  # an unreadable time cannot drop a revocation
-        if (best_ts is None or key > best_ts
-                or (key == best_ts and verdict != "PASS")):
-            best, best_ts = dict(r, verdict_ts=ts), key
-    return best
+        cands.append((key, verdict != "PASS", r, tp, uuid, ts, scope))
+    cands.sort(key=lambda c: (c[0], c[1]), reverse=True)
+    for key, is_revocation, r, tp, uuid, ts, scope in cands:
+        if not is_revocation:
+            same = lambda rep_, sc=scope: (parse_verdict(rep_) == ("PASS", sc)
+                                           and parse_qa_head(rep_) == head)
+            if not _anchor_stands(tp, uuid, same, lambda rep_: _revokes_pass(rep_, token, head)):
+                continue
+        return dict(r, verdict_ts=ts)
+    return None
