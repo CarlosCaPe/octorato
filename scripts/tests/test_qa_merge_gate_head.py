@@ -736,6 +736,16 @@ class RepoScopeEveryReading(unittest.TestCase):
         self.assertFalse(self.protected(f"cd {self.other} && git push origin main"))
         self.assertTrue(self.protected("git push origin main"))
 
+    def test_cd_through_a_symlink_is_read_logically(self):
+        # bash's cd is logical: <brain>/link/.. is the brain, although the link
+        # points into another repo and a physical read lands there.
+        (self.other / "sub").mkdir()
+        (self.brain / "link").symlink_to(self.other / "sub")
+        judge = lambda cmd: gate._is_protected_target(cmd, cmd.split("&& ")[-1], str(self.tmp))
+        self.assertTrue(judge(f"cd {self.brain}/link/.. && git push origin main"))
+        self.assertTrue(judge(f"cd {self.brain}/link && cd .. && git push origin main"))
+        self.assertFalse(judge(f"cd {self.brain}/link && git push origin main"))
+
 
 class SeekNeedsBothReadings(unittest.TestCase):
     def test_the_rule_holds_inside_sh_c(self):

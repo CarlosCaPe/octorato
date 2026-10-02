@@ -10,6 +10,9 @@ the full command string is split on UNQUOTED shell separators (; && || | newline
 before pattern matching, so a publish pattern that appears only inside a quoted
 argument (``git commit -m "gh pr merge 96"``) does NOT trigger the gate.
 Shell indirection (``bash -c "..."``, ``$(...)``) remains accepted residual risk.
+Without an approval, ``sudo`` or ``xargs`` in front of an ``env`` that moves the
+directory (``sudo env -C <brain> gh pr merge N``) is the same residual: the
+gate does not read the directory through them. With one exported, both block.
 
 When a Bash command is detected as a merge action, this hook BLOCKS execution
 unless an operator approval is present via one of two AGENT-PROOF env channels.
@@ -297,7 +300,10 @@ def _apply_dir_change(s: str, raw: str, cwd):
     removal (`'cd'`, `c""d`, `builtin 'cd'`). Only `cd <dir>` naming one
     existing directory moves the cwd; any other `cd`, `pushd` or `popd`, a
     `builtin`/`command` in front of one, CDPATH, or a target that does not
-    exist (cdable_vars resolves a variable name) leaves it unknown."""
+    exist (cdable_vars resolves a variable name) leaves it unknown. The
+    target is read logically, as bash's default `cd -L` reads it: `..` drops
+    the previous word of the path before any symlink is followed, so
+    `cd <link>/..` lands next to the link, not next to what it points at."""
     if cwd is None:
         return None
     if re.search(r"CDPATH", re.sub(r"['\"\\]", "", raw)):
@@ -314,7 +320,7 @@ def _apply_dir_change(s: str, raw: str, cwd):
             c in words[1] for c in "$`*?[{<>"):
         return None
     p = os.path.expanduser(words[1])
-    p = p if os.path.isabs(p) else os.path.join(cwd, p)
+    p = os.path.normpath(p if os.path.isabs(p) else os.path.join(cwd, p))
     return p if os.path.isdir(p) else None
 
 
