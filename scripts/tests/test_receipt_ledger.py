@@ -573,6 +573,19 @@ class QaHeadAnchoring(unittest.TestCase):
         self._conv_row(tp2, "CONVERGED", "u-q2", sd2)
         self.assertIsNone(rl.converge_latest_for(sd2))
 
+    def test_an_already_delivered_refusal_does_not_void_an_honest_pass(self):
+        first = self._entry(None, "2026-10-02T10:00:00.000Z", "u-d1",
+                            handback=self._report("PASS", H1, "PR #504"))
+        second = self._entry(None, "2026-10-02T10:01:00.000Z")
+        second["message"]["content"].append(U("SubagentHandback", {"message": "again"}, "hbD2"))
+        refusal = _h({"type": "user", "toolUseResult": {"success": False, "message": "already delivered"},
+                      "message": {"role": "user", "content": [
+                          {"type": "tool_result", "tool_use_id": "hbD2", "content": "refused"}]}})
+        tp = self._transcript("agent-d1.jsonl", [first, second, refusal, self._resume(),
+                                                 self._entry("tests/test_x.py", "2026-10-02T10:20:00.000Z")])
+        self._row(tp, "PASS", H1, "u-d1", pr="PR #504")
+        self.assertEqual(rl.qa_latest_for("504", H1)["verdict"], "PASS")
+
     def test_a_scopeless_later_needs_work_revokes_a_pass(self):
         tp = self._transcript("agent-r4.jsonl", [
             self._entry(self._report("PASS", H1, "PR #503"), "2026-10-02T10:00:00.000Z", "u-r4"),

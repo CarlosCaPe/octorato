@@ -845,11 +845,11 @@ def _anchor_stands(transcript_path: str, uuid: str, same, revokes) -> bool:
     a SendMessage resume that follows an ended turn (no tool call pending, no
     refused handback, and the next assistant entry starts a new message).
 
-    Residual, stated: an agent killed right after a mid-run text entry, and
-    then resumed or never resumed, leaves that entry as its run's last report.
-    It cannot be told apart from an ordinary turn that ended on text (48 real
-    resumes follow exactly that shape), so such a quote reads as the run's
-    final report.
+    Residual, stated: an agent killed right after a mid-run text entry (or a
+    thinking-only tail of the same message), and then resumed or never
+    resumed, leaves that entry as its run's last report. It cannot be told
+    apart from an ordinary turn that ended on text (48 real resumes follow
+    exactly that shape), so such a quote reads as the run's final report.
 
     A receipt is recorded by a hook that fails open, so a resumed reviewer's
     later NEEDS-WORK or GAPS may never reach the ledger; reading it from the
@@ -886,18 +886,27 @@ def _anchor_stands(transcript_path: str, uuid: str, same, revokes) -> bool:
         next_mid[i] = nxt
         if tail[i].get("type") == "assistant":
             nxt = _message_id(tail[i])
-    final, in_run, last_asst = None, True, None
+    final, in_run, last_asst, delivered = None, True, None, False
     for i, e in enumerate(tail):
         # A run ends at a real prompt, or at a resume that arrives after the
         # agent ended its turn; one that arrives mid tool loop ("while you
-        # were working") is not an end (207 of 212 real resumes are ends).
+        # were working") is not an end (205 of 212 real resumes are ends). A
+        # refused handback leaves the turn open, unless a handback already
+        # delivered the run's report (then the refusal is "already delivered").
         boundary = _is_prompt(e) or (
             _is_resume(e) and last_asst is not None
-            and not _awaits_tool(last_asst, refused)
+            and not _awaits_tool(last_asst, frozenset() if delivered else refused)
             and not (_message_id(last_asst) and next_mid[i] == _message_id(last_asst)))
         if e.get("type") == "assistant":
             last_asst = e
+            blocks = (e.get("message") or {}).get("content") or []
+            if isinstance(blocks, list) and any(
+                    isinstance(b, dict) and b.get("type") == "tool_use"
+                    and b.get("name") == HANDBACK_TOOL and b.get("id") not in refused
+                    for b in blocks):
+                delivered = True
         if boundary:
+            delivered = False
             if in_run and (final is None or not same(final)):
                 return False  # the run did not end on this verdict
             in_run = False
