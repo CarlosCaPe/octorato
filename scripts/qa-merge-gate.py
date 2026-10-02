@@ -378,9 +378,24 @@ def _strip_leading_previous(s: str) -> str:
     return s
 
 
-_GH_REPO_ASSIGN = re.compile(r"(?:^|[\s;&|(])(?:export\s+)?GH_REPO=(['\"]?)([^\s'\";&|)]+)\1")
-_PR_URL_REPO = re.compile(r"https?://[^/\s'\"]+/([\w.-]+/[\w.-]+)/pull/\d+")
-_API_REPO_ALL = re.compile(r"repos/([\w.-]+/[\w.-]+?)/(?:pulls/\d+/merge|merges|git/refs)\b")
+_GH_REPO_ASSIGN = re.compile(r"GH_REPO=([^\s;&|)]*)")
+_PR_URL_REPO = re.compile(r"https?://[^/\s'\"]+/([\w.-]+/[\w.-]+)/pull/\d+", re.IGNORECASE)
+_API_REPO_ALL = re.compile(r"repos/([\w.-]+/[\w.-]+?)/(?:pulls/\d+/merge|merges|git/refs)\b",
+                           re.IGNORECASE)
+_UNCLEAN = object()  # a GH_REPO value the gate cannot read as a repo
+
+
+def _clean_repo_value(raw: str):
+    """A GH_REPO value as gh will see it, or _UNCLEAN. One surrounding pair
+    of quotes is removed; any quote, backslash, `$` or backtick left inside
+    means bash would still rewrite it (`CarlosCaPe/"octorato"`), so it is not
+    read, it is unresolvable."""
+    v = raw.strip()
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in "'\"":
+        v = v[1:-1]
+    if not v or any(c in v for c in "'\"\\$`") or _canon_slug(v) is None:
+        return _UNCLEAN
+    return v
 
 
 def _pointed_repos(cmd: str, sub: str) -> list:
@@ -388,9 +403,9 @@ def _pointed_repos(cmd: str, sub: str) -> list:
     GH_REPO assignment anywhere in the command (or in the hook's own
     environment), a pull request URL, and every `repos/<o>/<r>/...` merge path
     in the text (a field value can carry one before the real endpoint)."""
-    out = [m.group(2) for m in _GH_REPO_ASSIGN.finditer(cmd)]
+    out = [_clean_repo_value(m.group(1)) for m in _GH_REPO_ASSIGN.finditer(cmd)]
     if os.environ.get("GH_REPO", "").strip():
-        out.append(os.environ["GH_REPO"].strip())
+        out.append(_clean_repo_value(os.environ["GH_REPO"]))
     out += _PR_URL_REPO.findall(sub)
     out += _API_REPO_ALL.findall(sub)
     return out
@@ -404,11 +419,14 @@ def _scope_current(cmd: str, matched_sub: str, session_cwd: str):
     # field can each aim gh at a protected repo from any directory. Any such
     # pointer that names a protected repo gates; the readers below may only
     # add gating to this, and the previous judge stays the floor.
-    pointed = [_canon_slug(v) for v in _pointed_repos(cmd, sub)]
-    if pointed:
+    raw_pointed = _pointed_repos(cmd, sub)
+    pointed = [_canon_slug(v) for v in raw_pointed if v is not _UNCLEAN]
+    if raw_pointed:
         known = {s for s in (_remote_slug(r) for r in _protected_roots()) if s}
         if any(sl in known for sl in pointed if sl):
             return True
+        if any(v is _UNCLEAN for v in raw_pointed):
+            return None  # a GH_REPO the gate cannot read may name a protected repo
 
     # gh api / curl write (PR merge, branch merge into main/master, or a
     # main/master ref update): the target repo is in the REST path, NOT the cwd
@@ -485,12 +503,24 @@ def _protected_dir(target: str):
                 return True
     # A CLONE of a protected repo living anywhere is still protected: compare
     # the target's own remote slug against the protected slugs (QA finding 2).
-    tgt_slug = _remote_slug(root)
-    if tgt_slug:
+    # Every remote counts, not only the first: in a fork clone gh targets the
+    # `upstream` remote, which may be the protected repo.
+    tgt_slugs = _remote_slugs(root)
+    if tgt_slugs:
         known = {s for s in (_remote_slug(r) for r in _protected_roots()) if s}
-        if tgt_slug in known:
+        if tgt_slugs & known:
             return True
     return False
+
+
+def _remote_slugs(repo_root: Path) -> set:
+    """Every owner/repo (lowercase) named by a github.com remote url."""
+    try:
+        cfg = (repo_root / ".git" / "config").read_text(encoding="utf-8")
+    except Exception:
+        return set()
+    return {m.lower() for m in re.findall(
+        r"url\s*=\s*\S*github\.com[:/]([\w.-]+/[\w.-]+?)(?:\.git)?\s*$", cfg, re.MULTILINE | re.IGNORECASE)}
 
 
 # Strip leading wrapper tokens from an already-split sub-command before pattern

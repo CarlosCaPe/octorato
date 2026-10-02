@@ -622,8 +622,23 @@ class RepoScopeEveryReading(unittest.TestCase):
                     "gh pr merge 96 --squash -t 'x -R other/repo' -R acme/brain"):
             sub = [s for s in gate._split_subcmds(cmd) if "merge" in s][-1]
             self.assertIsNot(gate._is_protected_target(cmd, sub, cwd), False, cmd)
+        for cmd in ("gh pr merge Https://GitHub.com/acme/brain/pull/96 --squash",
+                    "gh pr merge HTTPS://github.com/acme/brain/pull/96",
+                    'GH_REPO=acme/"brain" gh pr merge 96 --squash',
+                    'GH_REPO=ac""me/brain gh pr merge 96', "GH_REPO=acme/br\\ain gh pr merge 96",
+                    "GH_REPO=$R gh pr merge 96"):
+            sub = [s for s in gate._split_subcmds(cmd) if "merge" in s][-1]
+            self.assertIsNot(gate._is_protected_target(cmd, sub, cwd), False, cmd)
+        # A fork clone whose `upstream` is protected is protected.
+        fork = self.tmp / "fork"
+        (fork / ".git").mkdir(parents=True)
+        (fork / ".git" / "config").write_text(
+            '[remote "origin"]\n\turl = https://github.com/someone/brain.git\n'
+            '[remote "upstream"]\n\turl = https://github.com/acme/brain.git\n')
+        self.assertTrue(gate._is_protected_target("gh pr merge 96", "gh pr merge 96", str(fork)))
         # Pointers at an unprotected repo from an unprotected directory stay ungated.
         for cmd in ("GH_REPO=acme/other gh pr merge 96 --squash",
+                    "GH_REPO='acme/other' gh pr merge 96",
                     "gh pr merge https://github.com/acme/other/pull/96"):
             self.assertFalse(gate._is_protected_target(cmd, cmd, cwd), cmd)
 
