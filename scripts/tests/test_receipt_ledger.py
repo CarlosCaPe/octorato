@@ -521,6 +521,44 @@ class QaHeadAnchoring(unittest.TestCase):
         self._row(tp, "PASS", H1, "u-i3")
         self.assertEqual(rl.qa_latest_for("500", H1)["verdict"], "PASS")
 
+    def _resume(self, text="The coordinator sent a message while you were working:\nnext"):
+        return _h({"type": "user", "isMeta": True, "message": {"role": "user", "content": text}})
+
+    def test_a_reused_reviewer_keeps_each_runs_verdict(self):
+        # The harness writes a SendMessage resume as an isMeta entry; after the
+        # agent ended its turn it ends the run, so one reviewer can pass two PRs.
+        tp = self._transcript("agent-r1.jsonl", [
+            self._entry(self._report("PASS", H1), "2026-10-02T10:00:00.000Z", "u-r1"),
+            self._resume(),
+            self._entry(self._report("PASS", H1, "PR #501"), "2026-10-02T11:00:00.000Z")])
+        self._row(tp, "PASS", H1, "u-r1")
+        self.assertEqual(rl.qa_latest_for("500", H1)["verdict"], "PASS")
+        tp2 = self._transcript("agent-r2.jsonl", [
+            self._entry(self._report("PASS", H1, "PR #502"), "2026-10-02T10:00:00.000Z", "u-r2"),
+            self._resume("The user sent a new message while you were working:\nwhich file?"),
+            self._entry("tests/test_x.py", "2026-10-02T10:10:00.000Z")])
+        self._row(tp2, "PASS", H1, "u-r2", pr="PR #502")
+        self.assertEqual(rl.qa_latest_for("502", H1)["verdict"], "PASS")
+
+    def test_a_resume_mid_tool_loop_does_not_end_the_run(self):
+        sd = "docs/specs/202610020004-toy"
+        conv = lambda v: f"CONVERGE-VERDICT: {v}\nCONVERGE-SCOPE: {sd}"
+        working = self._entry("quoting:\n" + conv("CONVERGED"), "2026-10-02T10:00:00.000Z", "u-w")
+        working["message"]["content"].append(U("Bash", {"command": "ls"}, "b9"))
+        tp = self._transcript("agent-r3.jsonl", [
+            working, self._resume(),
+            self._entry("final report, no verdict", "2026-10-02T10:10:00.000Z")])
+        self._conv_row(tp, "CONVERGED", "u-w", sd)
+        self.assertIsNone(rl.converge_latest_for(sd))
+
+    def test_a_scopeless_later_needs_work_revokes_a_pass(self):
+        tp = self._transcript("agent-r4.jsonl", [
+            self._entry(self._report("PASS", H1, "PR #503"), "2026-10-02T10:00:00.000Z", "u-r4"),
+            self._prompt(),
+            self._entry("QA-VERDICT: NEEDS-WORK", "2026-10-02T10:30:00.000Z")])
+        self._row(tp, "PASS", H1, "u-r4", pr="PR #503")
+        self.assertIsNone(rl.qa_latest_for("503", H1))
+
     def test_a_later_gaps_without_a_scope_line_revokes(self):
         sd = "docs/specs/202610020003-toy"
         tp = self._transcript("agent-j1.jsonl", [

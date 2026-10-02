@@ -794,6 +794,24 @@ def report_at(transcript_path: str, uuid: str):
 
 
 _INJECTED = ("<system-reminder>", "[SYSTEM NOTIFICATION")
+# How the harness writes a SendMessage resume: an isMeta user entry.
+_RESUME = ("The coordinator sent a message", "Another Claude session sent a message",
+           "The user sent a new message")
+
+
+def _is_resume(entry: dict) -> bool:
+    content = (entry.get("message") or {}).get("content")
+    return (entry.get("type") == "user" and isinstance(content, str)
+            and content.lstrip().startswith(_RESUME))
+
+
+def _awaits_tool(entry) -> bool:
+    """True when an assistant entry left a tool call pending (other than the
+    SubagentHandback that delivers its report): the agent was mid-work."""
+    blocks = ((entry or {}).get("message") or {}).get("content") or []
+    return isinstance(blocks, list) and any(
+        isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") != HANDBACK_TOOL
+        for b in blocks)
 
 
 def _is_prompt(entry: dict) -> bool:
@@ -846,9 +864,16 @@ def _anchor_stands(transcript_path: str, uuid: str, same, revokes) -> bool:
                if e.get("type") == "assistant" and e.get("uuid") == uuid), None)
     if at is None:
         return False
-    final, in_run = None, True
+    final, in_run, last_asst = None, True, None
     for e in entries[at:]:
-        if _is_prompt(e):
+        # A run ends at a real prompt, or at a resume that arrives after the
+        # agent ended its turn; one that arrives mid tool loop ("while you
+        # were working") is not an end (207 of 212 real resumes are ends).
+        boundary = _is_prompt(e) or (_is_resume(e) and last_asst is not None
+                                     and not _awaits_tool(last_asst))
+        if e.get("type") == "assistant":
+            last_asst = e
+        if boundary:
             if in_run and (final is None or not same(final)):
                 return False  # the run did not end on this verdict
             in_run = False
@@ -944,10 +969,13 @@ _NEVER_OLDER = _dt.datetime.max.replace(tzinfo=_dt.timezone.utc)
 
 def _revokes_pass(report: str, token: str, head: str) -> bool:
     """A later report that revokes a PASS for this pull request at this
-    commit: FAIL or NEEDS-WORK naming the PR, at the same commit or none."""
+    commit: FAIL or NEEDS-WORK naming the PR or no scope at all, at the same
+    commit or none."""
     verdict, scope = parse_verdict(report)
-    if verdict not in ("FAIL", "NEEDS-WORK") or not scope_names(scope, token):
+    if verdict not in ("FAIL", "NEEDS-WORK"):
         return False
+    if scope and not scope_names(scope, token):
+        return False  # a scope-less revocation in the same transcript revokes
     return parse_qa_head(report) in (head, "")
 
 
