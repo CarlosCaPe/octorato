@@ -15,8 +15,11 @@ or the v9 converge protocol (skills/sdd-converge)
 
 or the panel protocol (FLOW.panel-before-send)
 
+    PANEL-TO: <recipient>        (one per recipient)
+    PANEL-ATTACH: <sha256> <path> (one per attachment)
+    PANEL-BODY-BEGIN / <exact text> / PANEL-BODY-END
     PANEL-VERDICT: PASS | NEEDS-WORK
-    PANEL-SHA256: <64 hex>       (panel_digest.py of the reviewed message)
+    PANEL-SHA256: <64 hex>       (recomputed from the block; recorded only if equal)
 
 this hook, running in the harness process, appends a receipt to the global
 ledger with the agent id, type, the harness-written agent transcript path and
@@ -79,9 +82,26 @@ def main() -> int:
             if not verdict or (kind == "panel" and not scope):
                 continue
             if kind == "panel":
-                # The digest is the panel's scope: a verdict with no valid
-                # digest names no message and is not recorded.
-                record = dict(base, kind=kind, verdict=verdict, digest=scope, **anchor)
+                # The digest is the panel's scope, and it must be RECOMPUTED
+                # from the block the reviewer read (body, recipients,
+                # attachment hashes): a stated digest alone binds to nothing.
+                # An attachment still on disk must hash to what was reviewed.
+                import panel_digest
+                got = panel_digest.recompute_from_report(source)
+                if not got or got["digest"] != scope:
+                    continue
+                stale = False
+                for sha, path in got["attachments"]:
+                    try:
+                        if path and panel_digest.file_sha256(path) != sha:
+                            stale = True
+                    except panel_digest.PanelDigestError:
+                        pass
+                if stale:
+                    continue
+                record = dict(base, kind=kind, verdict=verdict, digest=scope,
+                              recipients=got["recipients"],
+                              attachments=[h for h, _ in got["attachments"]], **anchor)
                 receipt_ledger.append_global(record)
                 continue
             record = dict(base, kind=kind, verdict=verdict, scope=scope, **anchor)

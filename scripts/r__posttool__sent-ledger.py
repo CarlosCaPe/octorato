@@ -21,7 +21,9 @@ message_id     what the tool returned: Gmail `id`, the personal bridge's
                "[message_id=... chat_jid=...]" status, the support bridge's
                JSON `message_id`; "" when the result carries none
 digest         panel_digest.py of what was sent
-panel_receipt  entry uuid of the PASS panel receipt that decided that digest
+panel_receipt  entry uuid of the PASS panel receipt that decided that digest;
+               a receipt named here with ok not false is SPENT (one send each),
+               and tool_use_id is the send that spent it
 ok             the channel's own success flag (true/false), null when absent
 
 A recall step is a separate spec; this file only keeps the trail. A reflex,
@@ -95,6 +97,7 @@ def records_for(data: dict) -> list:
     # Every Bash call reaches this reflex: leave before any import unless the
     # command can name the support bridge at all.
     if tool_name == "Bash" and "wa-soporte" not in str((tool_input or {}).get("command", "")):
+        # (a raw bridge send never gets here: the gate denies it)
         return []
     import panel_digest
     import receipt_ledger
@@ -117,7 +120,8 @@ def records_for(data: dict) -> list:
         for i, (recipient, message, archivo) in enumerate(sends):
             hit = ids[i] if len(ids) == len(sends) else (ids[-1] if len(sends) == 1 and ids else {})
             try:
-                d = panel_digest.digest(message, [panel_digest.file_sha256(archivo)] if archivo else [])
+                d = panel_digest.digest(message, [panel_digest.file_sha256(archivo)] if archivo else [],
+                                        [recipient])
             except panel_digest.PanelDigestError:
                 d = ""
             out.append(dict(base, recipient=recipient, message_id=str(hit.get("message_id") or ""),

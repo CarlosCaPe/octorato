@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-violation-raw-react",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "curl -s -X POST http://localhost:8080/api/react -d '{}'"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_raw_react_transcript.jsonl"
+}

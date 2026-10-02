@@ -34,15 +34,15 @@ Every acceptance criterion names one of these components as its subject.
 
 ### FR-01: One digest for both sides
 
-The digest is sha256 over the normalized text, a newline, and the sorted sha256 hashes of the attachment bytes. Text fields are read in a fixed order (subject, body, htmlBody, forwardText, message, caption). The support bridge message is every positional after the recipient joined by one space, as the script builds it. Whitespace layout does not change the digest; one word or one attachment byte does.
+The digest is sha256 over a canonical JSON of the normalized text, the sorted sha256 hashes of the attachment bytes and the sorted, lower-cased recipients. Each send tool has a known key set; any other key (a snake_case `draft_id` or `html_body`, a field a server adds later) is an error. Text fields are read in a fixed order (subject, body, htmlBody, forwardText, message). The support bridge message is every positional after the recipient joined by one space, as the script builds it. Whitespace layout does not change the digest; one word or one attachment byte does.
 
 ### FR-02: The panel receipt
 
-A reviewer ends its report with `PANEL-VERDICT: PASS|NEEDS-WORK` and `PANEL-SHA256: <64 hex>`. The reflex records `kind: panel` with the digest, verdict, agent id and type, transcript path, session id and the harness uuid and timestamp of the entry. A consumer re-reads that entry. The newest receipt for a digest decides; a NEEDS-WORK at an equal time wins.
+A stated digest alone binds to nothing: the main loop could show the reviewer text A and hand it the digest of B. So the reviewer's report carries the panel block that `panel_digest.py --panel-request` prints (`PANEL-TO` per recipient, `PANEL-ATTACH: <sha256> <path>` per attachment, the exact text between `PANEL-BODY-BEGIN` and `PANEL-BODY-END`), then `PANEL-VERDICT: PASS|NEEDS-WORK` and `PANEL-SHA256: <64 hex>`. The reflex recomputes the digest from that block and records only when it equals the stated one and every attachment still on disk hashes to its stated value; the consumer recomputes again from the re-read entry. A receipt authorises ONE send: once the sent ledger names it with a success flag that is not false, it is spent. The reflex records `kind: panel` with the digest, verdict, agent id and type, transcript path, session id and the harness uuid and timestamp of the entry. A consumer re-reads that entry. The newest receipt for a digest decides; a NEEDS-WORK at an equal time wins.
 
 ### FR-03: The gate
 
-Every message send the gate already covers is checked after requirements 1-4, so each earlier check keeps its own deny: mail send, reply and forward on both Gmail servers, WhatsApp `send_message`, `send_file` and `send_audio_message`, and the support bridge, `--archivo` included. There is no hatch. `send-ok`, the autonomous-chat allowlist and a chat-typed `send-ok` waive the send ask only. Deploys and releases are not messages and stay out of scope.
+A Bash command that reaches a bridge's send path without the bridge script or the MCP tool (`/api/send`, `/api/react`, any URL on the bridge ports other than `/api/revoke` and `/api/download`, an `ssm send-command` carrying a bridge payload, a heredoc whose body names one) is denied outright, unless the sub-command only reads the text (grep, cat, git). The support bridge is read only when it is the one command of the line: no chaining, pipe, redirection, newline, `$`, backtick or heredoc, because an earlier command could change what leaves. Every message send the gate already covers is checked after requirements 1-4, so each earlier check keeps its own deny: mail send, reply and forward on both Gmail servers, WhatsApp `send_message`, `send_file` and `send_audio_message`, and the support bridge, `--archivo` included. There is no hatch. `send-ok`, the autonomous-chat allowlist and a chat-typed `send-ok` waive the send ask only. Deploys and releases are not messages and stay out of scope.
 
 ### FR-04: The sent-message ledger
 
@@ -62,7 +62,14 @@ After a message send, the reflex reads the tool result and appends one line per 
 - [ ] AC-10: THE Send_Gate SHALL run the panel check after its receipt, absence, attribute, promise, thread and send-ask checks, so every existing violation fixture is still denied by its own check.
 - [ ] AC-11: WHEN a message send completes, THE Sent_Ledger_Reflex SHALL append one line per message with channel, recipient, message id, digest, panel receipt id, session id and time to the sent ledger.
 - [ ] AC-12: THE Rule_Registry SHALL hold `FLOW.panel-before-send` as a fail-closed gate with a violation and benign fixture pair, and `FLOW.sent-message-ledger` as a reflex with its own selftest.
-- [ ] AC-13: THE Rule_Text SHALL describe the panel receipt, the absence of a hatch and the sent-message ledger.
+- [ ] AC-13: THE Rule_Text SHALL describe the panel receipt, the absence of a hatch, the sent-message ledger and the residuals.
+- [ ] AC-14: THE Receipt_Reflex SHALL record a panel receipt only when the digest recomputed from the reviewer's panel block equals the stated `PANEL-SHA256` and every attachment still on disk hashes to its stated value, and THE Receipt_Ledger SHALL recompute it again from the re-read entry.
+- [ ] AC-15: IF a send tool's input carries a key outside that tool's known key set, or a draft id in any spelling, THEN THE Panel_Digest SHALL raise an error.
+- [ ] AC-16: IF a support-bridge call is not the only command of its line, THEN THE Panel_Digest SHALL raise an error.
+- [ ] AC-17: THE Panel_Digest SHALL include the normalized recipients in the digest.
+- [ ] AC-18: IF the sent ledger shows a panel receipt already spent by a send that did not report failure, THEN THE Send_Gate SHALL deny a second send on that receipt.
+- [ ] AC-19: IF a Bash command reaches a bridge's send path without the bridge script or the MCP tool, THEN THE Send_Gate SHALL deny it.
+- [ ] AC-20: THE Rule_Registry SHALL keep every fixture seed it needs tracked, so the selftests pass on a fresh clone.
 
 ## Technical Scope
 
@@ -86,10 +93,15 @@ The gate imports the digest library and the ledger. The Bash path reuses the mer
 
 - Deploys and releases: the gate keeps its existing checks there, no panel.
 - Recall (Deferred): a separate spec will revoke WhatsApp messages by id (the support bridge's `/api/revoke`, the personal MCP's `revoke_message`) and hold mails in a cancel window, reading the sent ledger this spec writes.
-- Hashing the recipient, and hashing the forwarded original of a Gmail forward (residuals, stated in `panel_digest.py`).
+- Hashing the forwarded original of a Gmail forward: the call names it by id, so only the comment is hashed (residual, stated in `panel_digest.py`). A reply with no `to` hashes `message:<id>`, not the address the server resolves.
+- Browser sends (claude-in-chrome typing into a web mail or chat): the gate sees clicks and keystrokes, not a message, so no digest can be computed from the tool call. Residual; the reason is that the browser tools carry no send semantics to read.
+- Calendar invitations (`create_event` / `update_event` with attendees): they notify people, but they are not on the send matcher and their text is an event description, not a message. Residual, to be decided in its own spec.
+- Raw sends a hook cannot read: a script written in one call and run in another, a shell function or alias, a Python import of the MCP module's own send function. The gate catches the endpoint and port shapes in the command it sees.
+- False positives accepted: any non-reader command whose text names `/api/send` or `/api/react`, or an `ssm send-command` whose payload names a bridge port or `api/`, is denied even if it would send nothing.
 
 ## Revision History
 
 | Date | Change |
 |---|---|
 | 2026-10-02 | Initial spec; scope addition from the operator the same day: the sent-message ledger (AC-11) with recall deferred. |
+| 2026-10-02 | Independent QA on 2056b52 (NEEDS-WORK, six findings): fixture seeds were `.pdf` and ignored on a fresh clone (AC-20); the receipt bound to a stated digest only (AC-14); unknown keys were skipped (AC-15); a chained write could swap the attachment (AC-16); the recipient was not hashed and a receipt could be reused (AC-17, AC-18); raw bridge sends bypassed the gate (AC-19). |

@@ -16,10 +16,12 @@ body, written the way the harness and the SubagentStop reflex write one:
         the `panel` row pointing at that entry by uuid (path under `~`, which
         the reader expands inside the selftest's throwaway HOME)
 
+Run it from a clean seed (`--reset` drops every panel row and reviewer
+transcript first, so a digest change cannot leave stale receipts behind).
 Idempotent: a fixture already seeded (same agent id) is skipped. A fixture
 whose message the gate cannot read with certainty is skipped too, and printed.
 
-Usage: panel_fixture_seed.py <fixture_dir> [--only <payload.json> ...]
+Usage: panel_fixture_seed.py <fixture_dir> [--reset] [--only <payload.json> ...]
 """
 from __future__ import annotations
 
@@ -52,12 +54,15 @@ def _uuid(seed: str) -> str:
     return f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}"
 
 
-def seed_receipt(home: Path, session: str, digest: str, verdict: str, ts: str,
-                 agent_id: str, agent_type: str = "Reality Checker",
-                 report_digest: str | None = None) -> bool:
-    """Write one reviewer transcript entry and its ledger row. `report_digest`
-    lets a fixture make the transcript say something other than the row (a
-    forged row). Returns False when this agent id was already seeded."""
+def seed_receipt(home: Path, session: str, msg, verdict: str, ts: str, agent_id: str,
+                 agent_type: str = "Reality Checker", stated_digest: str | None = None,
+                 shown=None, with_block: bool = True) -> bool:
+    """Write one reviewer transcript entry and its ledger row for message `msg`
+    (a panel_digest.Message). The report carries the panel block of `shown`
+    (default `msg`) and states `stated_digest` (default msg.digest), so a
+    fixture can make the reviewer read one text and state another's digest,
+    or (with_block=False) state a digest with no block at all. Returns False
+    when this agent id was already seeded."""
     rel = Path(".claude") / "projects" / "fx" / session / "subagents" / f"agent-{agent_id}.jsonl"
     tp = home / rel
     if tp.exists():
@@ -66,8 +71,10 @@ def seed_receipt(home: Path, session: str, digest: str, verdict: str, ts: str,
     prompt_uuid, entry_uuid = _uuid(agent_id + "p"), _uuid(agent_id + "a")
     t = _dt.datetime.fromisoformat(ts.replace("Z", "+00:00"))
     p_ts = (t - _dt.timedelta(seconds=30)).isoformat().replace("+00:00", "Z")
-    report = (f"Reviewed the message.\nPANEL-VERDICT: {verdict}\n"
-              f"PANEL-SHA256: {report_digest or digest}")
+    digest = stated_digest or msg.digest
+    block = (shown or msg).panel_block().rsplit("\nPANEL-SHA256:", 1)[0] if with_block else ""
+    report = (f"Reviewed the message.\n{block}\nPANEL-VERDICT: {verdict}\n"
+              f"PANEL-SHA256: {digest}")
     entries = [
         {"type": "user", "message": {"role": "user", "content": "Panel: review this outgoing message."},
          "uuid": prompt_uuid, "parentUuid": None, "sessionId": session, "timestamp": p_ts},
@@ -101,8 +108,21 @@ def _with_home(home: Path, fn):
             os.environ["HOME"] = old
 
 
-def seed_dir(fdir: Path, only=None) -> int:
+def reset_dir(fdir: Path) -> None:
+    import shutil
     home = fdir / "home"
+    shutil.rmtree(home / ".claude" / "projects" / "fx", ignore_errors=True)
+    ledger = home / ".claude" / ".cache" / "receipts" / "global.jsonl"
+    if ledger.exists():
+        keep = [ln for ln in ledger.read_text(encoding="utf-8").splitlines()
+                if ln.strip() and json.loads(ln).get("kind") != "panel"]
+        ledger.write_text("".join(ln + "\n" for ln in keep), encoding="utf-8")
+
+
+def seed_dir(fdir: Path, only=None, reset: bool = False) -> int:
+    home = fdir / "home"
+    if reset:
+        reset_dir(fdir)
     count = 0
     for payload in sorted(fdir.glob("*.json")):
         if only and payload.name not in only:
@@ -116,15 +136,15 @@ def seed_dir(fdir: Path, only=None) -> int:
             print(f"skip {payload.name}: no operator turn timestamp")
             continue
         try:
-            digests = _with_home(home, lambda: panel_digest.digests_for(tool, tin))
+            msgs = _with_home(home, lambda: panel_digest.message_parts(tool, tin))
         except panel_digest.PanelDigestError as e:
             print(f"skip {payload.name}: {e}")
             continue
         t = _dt.datetime.fromisoformat(ts_h.replace("Z", "+00:00")) - _dt.timedelta(minutes=5)
         ts = t.isoformat().replace("+00:00", "Z")
-        for i, d in enumerate(digests):
+        for i, m in enumerate(msgs):
             agent_id = hashlib.sha256(f"{payload.stem}:{i}".encode()).hexdigest()[:17]
-            if seed_receipt(home, session, d, "PASS", ts, agent_id):
+            if seed_receipt(home, session, m, "PASS", ts, agent_id):
                 count += 1
     print(f"seeded {count} panel receipt(s) in {fdir}")
     return 0
@@ -135,4 +155,4 @@ if __name__ == "__main__":
         print(__doc__.strip().splitlines()[-1], file=sys.stderr)
         sys.exit(2)
     only = sys.argv[sys.argv.index("--only") + 1:] if "--only" in sys.argv else None
-    sys.exit(seed_dir(Path(sys.argv[1]), only))
+    sys.exit(seed_dir(Path(sys.argv[1]), only, reset="--reset" in sys.argv))

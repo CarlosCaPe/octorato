@@ -26,11 +26,13 @@ proof:
                    must live under the harness projects dir, its LAST assistant
                    text must re-parse to PASS with a scope naming the PR as a
                    whole token, and the agent type must be a QA persona.
-  panel receipt    written by the same reflex when a reviewer ends with
-                   PANEL-VERDICT / PANEL-SHA256 (panel_digest.py of the message
-                   it reviewed). Anchor: the exact transcript entry re-reads to
-                   the same verdict and digest, in THIS session, a reviewer
-                   persona, inside 120 minutes; the newest decides.
+  panel receipt    written by the same reflex when a reviewer ends with the
+                   panel block (PANEL-TO / PANEL-ATTACH / PANEL-BODY, then
+                   PANEL-VERDICT / PANEL-SHA256). Anchor: the exact transcript
+                   entry re-reads to the same verdict, its digest RECOMPUTED
+                   from the block equals the stated one, in THIS session, a
+                   reviewer persona, inside 120 minutes; the newest decides,
+                   and a receipt spent by a send (sent.jsonl) is spent.
   sent record      written by r__posttool__sent-ledger.py after a message send
                    left (sent.jsonl): channel, recipient, message id, digest,
                    panel receipt id. A trail for a later recall step, not a gate.
@@ -1120,6 +1122,20 @@ PANEL_AGENT_TYPE = re.compile(QA_AGENT_TYPE.pattern + r"|panel", re.IGNORECASE)
 PANEL_WINDOW_MINUTES = 120
 
 
+def panel_recompute(report: str) -> str:
+    """The digest recomputed from the reviewer block of a report (the exact
+    body, its PANEL-TO recipients and PANEL-ATTACH hashes), "" when the report
+    carries no block. A stated PANEL-SHA256 alone binds to nothing: the main
+    loop could show the reviewer one text and hand it the digest of another."""
+    try:
+        import importlib
+        pd = importlib.import_module("panel_digest")
+        got = pd.recompute_from_report(report)
+    except Exception:
+        return ""
+    return (got or {}).get("digest", "")
+
+
 def parse_panel(text: str) -> tuple:
     """(verdict, digest) from a reviewer's final report: the LAST occurrence of
     each, so a protocol line quoted earlier cannot stand in for the verdict at
@@ -1173,7 +1189,7 @@ def panel_latest_for(digest: str, session_id: str, now=None,
             continue
         report, ts = got
         verdict, sha = parse_panel(report)
-        if verdict != r.get("verdict") or sha != want:
+        if verdict != r.get("verdict") or sha != want or panel_recompute(report) != want:
             continue
         key = _ts_key(ts)
         if key is None:
@@ -1186,7 +1202,7 @@ def panel_latest_for(digest: str, session_id: str, now=None,
                 continue
         cands.append((key, verdict != "PASS", r, tp, uuid, ts))
     cands.sort(key=lambda c: (c[0], c[1]), reverse=True)
-    same = lambda rep_: parse_panel(rep_) == ("PASS", want)
+    same = lambda rep_: parse_panel(rep_) == ("PASS", want) and panel_recompute(rep_) == want
     revokes = lambda rep_: parse_panel(rep_) == ("NEEDS-WORK", want)
     for key, is_revocation, r, tp, uuid, ts in cands:
         if not is_revocation and not _anchor_stands(tp, uuid, same, revokes):
@@ -1199,6 +1215,16 @@ def panel_pass_for(digest: str, session_id: str, now=None) -> dict | None:
     """The deciding panel receipt for `digest`, only when it says PASS."""
     r = panel_latest_for(digest, session_id, now)
     return r if r and r.get("verdict") == "PASS" else None
+
+
+def panel_receipt_consumed(entry_uuid: str) -> bool:
+    """True when a sent record already spent this panel receipt: a receipt
+    authorises ONE send. A send whose channel reported failure (ok false) did
+    not leave, so it does not spend the receipt."""
+    if not entry_uuid:
+        return False
+    return any(rec.get("panel_receipt") == entry_uuid and rec.get("ok") is not False
+               for rec in read_sent())
 
 
 # --------------------------------------------------------------------------

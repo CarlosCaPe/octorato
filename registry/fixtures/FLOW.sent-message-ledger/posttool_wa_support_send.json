@@ -1,7 +1,7 @@
 {
   "tool_name": "Bash",
   "tool_input": {
-    "command": "~/.claude/scripts/wa-soporte.sh 5210000000000 \"The form is signed and attached.\" --archivo ~/attach/doc.pdf"
+    "command": "~/.claude/scripts/wa-soporte.sh 5210000000000 \"The form is signed and attached.\" --archivo ~/attach/doc.txt"
   },
   "tool_response": {
     "stdout": "{\"success\": true, \"message\": \"sent\", \"message_id\": \"3EB0FIXTURE02\", \"chat_jid\": \"5210000000000@s.whatsapp.net\"}",

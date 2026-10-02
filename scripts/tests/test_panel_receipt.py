@@ -56,10 +56,34 @@ class Digest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             body = Path(d) / "b.txt"
             body.write_text("Subject\nHello there")
-            out = subprocess.run([sys.executable, str(SCRIPTS / "panel_digest.py"), "--body-file", str(body)],
-                                 capture_output=True, text=True).stdout.strip()
-            want = pd.digests_for("mcp__gmail__send_email", {"subject": "Subject", "body": "Hello there"})[0]
+            out = subprocess.run([sys.executable, str(SCRIPTS / "panel_digest.py"), "--body-file", str(body),
+                                  "--to", "a@example.test"], capture_output=True, text=True).stdout.strip()
+            want = pd.digests_for("mcp__gmail__send_email", {"to": ["a@example.test"], "subject": "Subject",
+                                                             "body": "Hello there"})[0]
             self.assertEqual(out, want)
+
+    def test_recipient_changes_digest(self):
+        a = pd.digests_for("mcp__whatsapp__send_message", {"recipient": "1", "message": "hi"})
+        b = pd.digests_for("mcp__whatsapp__send_message", {"recipient": "2", "message": "hi"})
+        self.assertNotEqual(a, b)
+
+    def test_unknown_or_snake_case_key_is_error(self):
+        for extra in ({"draft_id": "x"}, {"html_body": "<p>x</p>"}, {"bodyText": "x"}):
+            with self.assertRaises(pd.PanelDigestError):
+                pd.digests_for("mcp__gmail__send_email", dict({"to": ["a@x"], "subject": "s", "body": "b"}, **extra))
+
+    def test_panel_block_round_trips(self):
+        m = pd.message_parts("mcp__gmail__send_email", {"to": ["a@x"], "subject": "s", "body": "b  c"})[0]
+        got = pd.recompute_from_report("ok\n" + m.panel_block() + "\nPANEL-VERDICT: PASS")
+        self.assertEqual(got["digest"], m.digest)
+
+    def test_bridge_must_be_the_only_command(self):
+        s = "wa-soporte" + ".sh"
+        for cmd in (f'cp a b && {s} 1 "x" --archivo b', f'{s} 1 "x" > out', f'{s} 1 "x" | tee l',
+                    f'{s} 1 "x"; echo done'):
+            with self.assertRaises(pd.PanelDigestError):
+                pd.support_sends(cmd)
+        self.assertEqual(pd.support_sends(f'{s} 1 "a; b & c"'), [("1", "a; b & c", None)])
 
 
 class PanelLedger(unittest.TestCase):
@@ -68,7 +92,8 @@ class PanelLedger(unittest.TestCase):
         self._home = (os.environ.get("HOME"), os.environ.get("USERPROFILE"))
         os.environ["HOME"] = os.environ["USERPROFILE"] = self.tmp
         self.home = Path(self.tmp)
-        self.d = pd.digest("hello")
+        self.m = pd.Message("hello", [], ["1"])
+        self.d = self.m.digest
 
     def tearDown(self):
         for key, value in zip(("HOME", "USERPROFILE"), self._home):
@@ -78,7 +103,7 @@ class PanelLedger(unittest.TestCase):
                 os.environ[key] = value
 
     def test_reflex_records_anchored_panel_row(self):
-        seed.seed_receipt(self.home, "s1", self.d, "PASS", iso(T), "abc123")
+        seed.seed_receipt(self.home, "s1", self.m, "PASS", iso(T), "abc123")
         # drop the seeded row: the reflex must write its own
         (self.home / ".claude/.cache/receipts/global.jsonl").unlink()
         tp = self.home / ".claude/projects/fx/s1/subagents/agent-abc123.jsonl"
@@ -93,21 +118,39 @@ class PanelLedger(unittest.TestCase):
         self.assertTrue(rows[0]["entry_uuid"])
         self.assertIsNotNone(rl.panel_pass_for(self.d, "s1", T))
 
+    def test_reflex_refuses_stated_digest_that_does_not_recompute(self):
+        other = pd.Message("something else", [], ["1"])
+        seed.seed_receipt(self.home, "s1", self.m, "PASS", iso(T), "abc999", shown=other)
+        (self.home / ".claude/.cache/receipts/global.jsonl").unlink()
+        tp = self.home / ".claude/projects/fx/s1/subagents/agent-abc999.jsonl"
+        payload = {"session_id": "s1", "agent_id": "abc999", "agent_type": "Reality Checker",
+                   "agent_transcript_path": str(tp), "last_assistant_message": ""}
+        subprocess.run([sys.executable, str(SCRIPTS / "r__subagent-stop__qa-receipt.py")],
+                       input=json.dumps(payload), text=True, env=dict(os.environ), capture_output=True)
+        self.assertEqual([r for r in rl.read_global() if r.get("kind") == "panel"], [])
+
+    def test_receipt_is_single_use(self):
+        seed.seed_receipt(self.home, "s1", self.m, "PASS", iso(T), "c1")
+        r = rl.panel_pass_for(self.d, "s1", T)
+        self.assertFalse(rl.panel_receipt_consumed(r["entry_uuid"]))
+        rl.append_sent({"panel_receipt": r["entry_uuid"], "ok": None, "digest": self.d})
+        self.assertTrue(rl.panel_receipt_consumed(r["entry_uuid"]))
+
     def test_malformed_digest_records_nothing(self):
         self.assertEqual(rl.parse_panel("PANEL-VERDICT: PASS\nPANEL-SHA256: abc"), ("PASS", ""))
 
     def test_newest_decides_and_revokes(self):
-        seed.seed_receipt(self.home, "s1", self.d, "PASS", iso(T - dt.timedelta(minutes=20)), "a1")
+        seed.seed_receipt(self.home, "s1", self.m, "PASS", iso(T - dt.timedelta(minutes=20)), "a1")
         self.assertIsNotNone(rl.panel_pass_for(self.d, "s1", T))
-        seed.seed_receipt(self.home, "s1", self.d, "NEEDS-WORK", iso(T - dt.timedelta(minutes=5)), "a2")
+        seed.seed_receipt(self.home, "s1", self.m, "NEEDS-WORK", iso(T - dt.timedelta(minutes=5)), "a2")
         self.assertIsNone(rl.panel_pass_for(self.d, "s1", T))
-        seed.seed_receipt(self.home, "s1", self.d, "PASS", iso(T - dt.timedelta(minutes=1)), "a3")
+        seed.seed_receipt(self.home, "s1", self.m, "PASS", iso(T - dt.timedelta(minutes=1)), "a3")
         self.assertIsNotNone(rl.panel_pass_for(self.d, "s1", T))
 
     def test_other_session_and_stale_never_count(self):
-        seed.seed_receipt(self.home, "s2", self.d, "PASS", iso(T - dt.timedelta(minutes=5)), "b1")
+        seed.seed_receipt(self.home, "s2", self.m, "PASS", iso(T - dt.timedelta(minutes=5)), "b1")
         self.assertIsNone(rl.panel_pass_for(self.d, "s1", T))
-        seed.seed_receipt(self.home, "s1", self.d, "PASS", iso(T - dt.timedelta(minutes=121)), "b2")
+        seed.seed_receipt(self.home, "s1", self.m, "PASS", iso(T - dt.timedelta(minutes=121)), "b2")
         self.assertIsNone(rl.panel_pass_for(self.d, "s1", T))
 
 

@@ -1,0 +1,14 @@
+{
+  "session_id": "fx-p-violation-unknown-key-html-body",
+  "tool_name": "mcp__gmail__send_email",
+  "tool_input": {
+    "to": [
+      "someone@example.test"
+    ],
+    "subject": "Monthly report",
+    "body": "Hi, the report is attached and the numbers match the invoice.",
+    "html_body": "<p>hidden extra text</p>"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_unknown_key_html_body_transcript.jsonl"
+}
