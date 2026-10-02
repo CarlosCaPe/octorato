@@ -15,6 +15,12 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-10-02]: v9.1.0
+### Features
+- feat(qa-gate): a QA PASS approves the commit it reviewed (#350)
+### Other
+- docs(changelog): backfill v9.0.4 (#348)
+
 ## [2026-10-01]: v9.0.4
 ### Fixes
 - fix(doctor): python-deps reads module lists, markers and includes correctly (#347)
