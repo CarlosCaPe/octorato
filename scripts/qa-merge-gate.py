@@ -415,6 +415,15 @@ def _pointed_repos(cmd: str, sub: str) -> list:
         out.append(_UNCLEAN)
     if os.environ.get("GH_REPO", "").strip():
         out.append(_clean_repo_value(os.environ["GH_REPO"]))
+    for m in re.finditer(r"(?<![\w])GIT_(?:DIR|WORK_TREE)=([^\s;&|)]*)", cmd):
+        v = m.group(1).strip("'\"")
+        if not v or any(c in v for c in "'\"\\$`"):
+            out.append(_UNCLEAN)
+        else:
+            out.append(("dir", os.path.expanduser(v)))
+    if re.search(r"\bgit\b[^\n;&|]*\b(?:remote\s+(?:set-url|add|rename)|config\b[^\n;&|]*(?:remote\.|url\.|insteadof))",
+                 cmd, re.IGNORECASE):
+        out.append(_UNCLEAN)  # the command rewrites which repo gh will read
     for text in {sub, unquote(sub)}:  # gh path-decodes a URL (`octo%72ato`)
         out += _PR_URL_REPO.findall(text)
         out += _API_REPO_ALL.findall(text)
@@ -430,6 +439,12 @@ def _scope_current(cmd: str, matched_sub: str, session_cwd: str):
     # pointer that names a protected repo gates; the readers below may only
     # add gating to this, and the previous judge stays the floor.
     raw_pointed = [] if _PAT_GIT_PUSH.match(sub) else _pointed_repos(cmd, sub)
+    for v in raw_pointed:
+        if isinstance(v, tuple):
+            verdict = _protected_dir(v[1])
+            if verdict is not False:
+                return verdict
+    raw_pointed = [v for v in raw_pointed if not isinstance(v, tuple)]
     pointed = [_canon_slug(v) for v in raw_pointed if v is not _UNCLEAN]
     if raw_pointed:
         known = {s for s in (_remote_slug(r) for r in _protected_roots()) if s}
@@ -502,10 +517,18 @@ def _scope_current(cmd: str, matched_sub: str, session_cwd: str):
 
 
 def _protected_dir(target: str):
-    """True / False / None (unresolvable) for one directory."""
+    """True / False / None (unresolvable) for one directory. A repo whose
+    config rewrites urls (`url.<base>.insteadOf`) cannot have its remotes
+    read, so it is unresolvable."""
     root, gitdir = _repo_root_and_gitdir(target)
     if root is None:
         return None
+    for cfg in (root / ".git" / "config", (gitdir / "config") if gitdir else None):
+        try:
+            if cfg is not None and "insteadof" in cfg.read_text(encoding="utf-8").lower():
+                return None
+        except (OSError, NotADirectoryError):
+            pass
     candidates = [root] + ([gitdir] if gitdir is not None else [])
     for cand in candidates:
         for prot in _protected_roots():
@@ -562,7 +585,7 @@ _W_GROUP = re.compile(r"^[({]\s*")
 _W_ASSIGN = re.compile(r"^[A-Za-z_]\w*=\S*\s+")
 _W_REDIR = re.compile(r"^\d*[<>]+\S*\s+")
 _W_ENV = re.compile(r"^env\b\s*")
-_W_ENVARG = re.compile(r"^(?:-\S+|[A-Za-z_]\w*=\S*)\s+")
+_W_ENVARG = re.compile(r"^(?:-[uCS]\s+\S+|--(?:unset|chdir|split-string)(?:=|\s+)\S+|-\S+|[A-Za-z_]\w*\+?=\S*)\s+")
 _W_COMMAND = re.compile(r"^command\s+")
 # Reserved words and the pipeline negation run the command that follows them.
 _W_RESERVED = re.compile(r"^(?:!|if|then|else|elif|do|while|until|time(?:\s+-p)?|coproc)\s+")
@@ -874,6 +897,19 @@ def _canonical(sub: str) -> str:
         argv = _bash_words(sub)
     except ValueError:
         return sub
+    # Leading assignments as bash reads them, after quote removal (`X+=1`,
+    # `'X'=1`, `GH_RE""PO=x`), and `env` with its options and assignments:
+    # each one still runs the command after it.
+    while argv:
+        if re.match(r"^[A-Za-z_]\w*\+?=", argv[0]):
+            argv = argv[1:]
+        elif argv[0] == "env" or argv[0].endswith("/env"):
+            argv = argv[1:]
+            while argv and (argv[0].startswith("-") or re.match(r"^[A-Za-z_]\w*=", argv[0])):
+                takes = argv[0] in ("-u", "-C", "--unset", "--chdir", "-S", "--split-string")
+                argv = argv[2:] if takes else argv[1:]
+        else:
+            break
     if argv and os.path.basename(argv[0]) == "gh":
         argv[0] = "gh"
         # Flags before the subcommand, read the way cobra's root `stripFlags`

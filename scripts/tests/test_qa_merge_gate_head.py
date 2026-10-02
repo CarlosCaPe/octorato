@@ -359,6 +359,15 @@ class GateHead(unittest.TestCase):
         rc, _ = self.run_gate("gh --subject=x pr merge 97")
         self.assertEqual(rc, 2)
 
+    def test_assignments_bash_reads_do_not_hide_a_merge(self):
+        os.environ.pop("OCTO_MERGE_APPROVE", None)
+        for cmd in ("X+=1 gh pr merge 96 --squash", "env 'X'=1 gh pr merge 96",
+                    'env GH_RE""PO=acme/brain gh pr merge 96', "GH_REPO+=acme/brain gh pr merge 96",
+                    "env -u FOO GH_REPO=acme/brain gh pr merge 96"):
+            self.assertTrue(gate._find_publish_subcmds(cmd), cmd)
+            rc, _ = self.run_gate(cmd)
+            self.assertEqual(rc, 2, cmd)
+
     def test_the_pull_request_is_the_first_positional(self):
         with self.lookup({SHA: receipt("PASS")}):
             for cmd in (f"gh pr merge --squash 96 --match-head-commit {SHA}",
@@ -636,6 +645,15 @@ class RepoScopeEveryReading(unittest.TestCase):
                     "printf -v GH_REPO %s acme/brain; export GH_REPO; gh pr merge 96"):
             sub = [s for s in gate._split_subcmds(cmd) if "merge" in s][-1]
             self.assertIsNot(gate._is_protected_target(cmd, sub, cwd), False, cmd)
+        # Repo pointers through GIT_DIR, a same-command remote rewrite, insteadOf.
+        for cmd in (f"GIT_DIR={self.brain}/.git gh pr merge 96",
+                    "git remote set-url origin https://github.com/acme/brain && gh pr merge 96"):
+            sub = [s for s in gate._split_subcmds(cmd) if "merge" in s][-1]
+            self.assertIsNot(gate._is_protected_target(cmd, sub, cwd), False, cmd)
+        iof = self.tmp / "iof"
+        (iof / ".git").mkdir(parents=True)
+        (iof / ".git" / "config").write_text('[url "https://github.com/acme/"]\n\tinsteadOf = zz:\n[remote "origin"]\n\turl = zz:brain\n')
+        self.assertIsNot(gate._is_protected_target("gh pr merge 96", "gh pr merge 96", str(iof)), False)
         # git push ignores GH_REPO: a pointer must not gate it.
         self.assertFalse(gate._is_protected_target(
             "GH_REPO=acme/brain git push origin main", "GH_REPO=acme/brain git push origin main", cwd))
