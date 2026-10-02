@@ -15,6 +15,12 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-10-02]: v9.1.1
+### Fixes
+- fix(receipts): read a converge receipt from its anchored entry (#353)
+### Other
+- docs(changelog): backfill v9.1.0 (#352)
+
 ## [2026-10-02]: v9.1.0
 ### Features
 - feat(qa-gate): a QA PASS approves the commit it reviewed (#350)
