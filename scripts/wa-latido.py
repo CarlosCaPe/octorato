@@ -187,7 +187,7 @@ def cura_tunel(cfg):
 def carga():
     if not os.path.exists(CONFIG):
         raise SondaRota(f"falta {CONFIG}")
-    with open(CONFIG) as f:
+    with open(CONFIG, encoding="utf-8") as f:
         cfgs = json.load(f)["puentes"]
     for c in cfgs.values():
         for k in ("dir", "db"):
@@ -449,7 +449,7 @@ def late(nombre, cfg, curar=True):
 def guarda(res, nota=""):
     try:
         os.makedirs(os.path.dirname(ESTADO), exist_ok=True)
-        with open(ESTADO, "w") as f:
+        with open(ESTADO, "w", encoding="utf-8") as f:
             json.dump({"cuando": datetime.now().isoformat(timespec="seconds"),
                        "resultado": res, "nota": nota}, f, indent=1)
     except Exception as e:
