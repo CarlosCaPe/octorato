@@ -13,6 +13,12 @@ Shell indirection (``bash -c "..."``, ``$(...)``) remains accepted residual risk
 Without an approval, ``sudo`` or ``xargs`` in front of an ``env`` that moves the
 directory (``sudo env -C <brain> gh pr merge N``) is the same residual: the
 gate does not read the directory through them. With one exported, both block.
+The filesystem is read as it is when the hook runs, before any part of the
+command: a link an earlier sub-command puts over an existing directory, or
+retargets, is judged by what was there before (``rm -rf d && ln -s <brain> d
+&& cd d && gh pr merge N``, ``ln -sfn <brain> l && git -C l push origin
+main``). Like shell indirection, this is a residual a pre-execution hook
+cannot close; the exported approval is the boundary.
 
 When a Bash command is detected as a merge action, this hook BLOCKS execution
 unless an operator approval is present via one of two AGENT-PROOF env channels.
@@ -304,8 +310,9 @@ def _apply_dir_change(s: str, raw: str, cwd):
     reads the target logically by default (`..` drops the previous word
     before any symlink is followed) and physically under `set -P`, so the
     path must exist as written and the two readings must reach the same
-    directory; `cd <link>/..` or a link the same command creates leaves it
-    unknown."""
+    directory; `cd <link>/..` or a name that does not exist yet leaves it
+    unknown. The filesystem is read as it is when the hook runs (see the
+    module header)."""
     if cwd is None:
         return None
     if re.search(r"CDPATH", re.sub(r"['\"\\]", "", raw)):
