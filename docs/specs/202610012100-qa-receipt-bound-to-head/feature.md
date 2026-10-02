@@ -1,6 +1,6 @@
 # Feature: A QA verdict is bound to the commit it reviewed
 
-> **Status:** approved
+> **Status:** converged
 > **Spec-Format:** ears-1
 > **Date:** 2026-10-01
 > **Classification:** LARGE (score 7: 4-10 files, an architecture decision on the merge gate, multiple modules)
@@ -151,3 +151,4 @@ The merge gate already reads the pull request number from the command (`_extract
 | 2026-10-02 | QA cycle 10 (FAIL at 5c215a9): reading every word that starts with `-R` as a repo flag took the value of another flag (`--body "-Rother/repo"`, `-t -Rother/repo`), so a merge in the protected directory went ungated without an approval, where master gated it. Real `-R/--repo` values now come from the same pflag walk the pin uses, over the canonical argv, so a word another flag consumes is never a repo. |
 | 2026-10-02 | Converge pass 11 (at e19a243): a root flag before `api` (`gh -X PUT api repos/.../pulls/N/merge`) was detected through the canonical argv, but the scope check matched only the raw text and fell back to the directory, as on master. The scope check now reads the API call from the canonical form as well, so the repo comes from the REST path. |
 | 2026-10-02 | QA cycle 11 (FAIL at e19a243): every scope reading that could ungate more met a bash expansion it cannot see (`$'-t'`, `$"-t"`, `$T`, `{-t,}`), so a merge in the protected directory went ungated where master gated it; and root flags moved to the end let gh give `-t` the first word after `merge` (`gh -d -t pr merge 350 351` merges 351 while the gate checked 350). Scope is now the stricter of the current reader and the previous gate's judge kept verbatim, so it is never weaker than before by construction; moved root and `pr`-level flags go right after the subcommand in their original order, read with cobra's skip rule at both levels. |
+| 2026-10-02 | Converge pass 12: CONVERGED at a1dbb07, 20 of 20 criteria met, plan.md byte-identical. QA cycle 12: PASS at a1dbb07 (scope never looser than the previous judge across about 48k property comparisons, positive control 606; approved path checked against the merge mutation real gh 2.88.1 sends). Status converged. |
