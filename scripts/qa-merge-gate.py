@@ -19,6 +19,11 @@ retargets, is judged by what was there before (``rm -rf d && ln -s <brain> d
 && cd d && gh pr merge N``, ``ln -sfn <brain> l && git -C l push origin
 main``). Like shell indirection, this is a residual a pre-execution hook
 cannot close; the exported approval is the boundary.
+Repo discovery is a copy of git's rules, not git (issue #356): a git dir laid
+out in a way the copy does not read, such as a ``HEAD`` + ``commondir`` dir or a
+gitfile not named ``.git`` whose target is a clone outside the protected
+paths, is judged as the repo around it. Until the gate asks git itself, that
+is a stated residual, with or without an approval.
 
 When a Bash command is detected as a merge action, this hook BLOCKS execution
 unless an operator approval is present via one of two AGENT-PROOF env channels.
@@ -252,12 +257,14 @@ def _is_git_dir(d: Path) -> bool:
 
 
 def _repo_root_and_gitdir(start: str):
-    """Find the repo git finds from *start*, by git's own rules. Returns
-    (root, resolved_gitdir_or_None). A file is a gitfile and is followed (a
+    """Approximate the repo git finds from *start*. Returns (root,
+    resolved_gitdir_or_None). A file is a gitfile and is followed (a
     `GIT_DIR` may name one); at each level a `.git` entry wins, then the
-    directory itself if it is a git dir (a bare repo); otherwise walk up. A
-    linked worktree's .git FILE points into the main repo's .git dir — that
-    is how a brain worktree is recognized."""
+    directory itself if it holds HEAD, objects/ and refs/ (a bare repo);
+    otherwise walk up. A linked worktree's .git FILE points into the main
+    repo's .git dir — that is how a brain worktree is recognized. This is a
+    copy of git's rules, not git: other layouts are a stated residual (see the
+    module header and issue #356)."""
     try:
         p = Path(start).resolve()
     except Exception:
