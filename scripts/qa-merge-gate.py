@@ -518,9 +518,19 @@ def _scope_current(cmd: str, matched_sub: str, session_cwd: str):
     raw_pointed = [] if _PAT_GIT_PUSH.match(sub) else _pointed_repos(cmd, sub)
     for v in raw_pointed:
         if isinstance(v, tuple):
-            verdict = _protected_dir(v[1])
-            if verdict is not False:
-                return verdict
+            # A relative GIT_DIR or GIT_WORK_TREE is read from the directory
+            # the command runs in, not from the hook's own.
+            if os.path.isabs(v[1]):
+                dirs = [v[1]]
+            else:
+                bases = _effective_cwds(cmd, matched_sub, session_cwd)
+                if None in bases:
+                    return None
+                dirs = [os.path.join(b, v[1]) for b in bases]
+            for d in dirs:
+                verdict = _protected_dir(d)
+                if verdict is not False:
+                    return verdict
     raw_pointed = [v for v in raw_pointed if not isinstance(v, tuple)]
     pointed = [_canon_slug(v) for v in raw_pointed if v is not _UNCLEAN]
     if raw_pointed:
@@ -620,7 +630,11 @@ def _repo_config_files(repo_root: Path) -> list:
 def _protected_dir(target: str):
     """True / False / None (unresolvable) for one directory. A repo whose
     config rewrites urls (`url.<base>.insteadOf`) cannot have its remotes
-    read, so it is unresolvable."""
+    read, so it is unresolvable. A path that does not exist when the hook runs
+    is unresolvable too: walking up from it would judge the repo around it,
+    while the command may create it (a clone, a link) before gh or git runs."""
+    if not os.path.exists(target):
+        return None
     root, gitdir = _repo_root_and_gitdir(target)
     if root is None:
         return None

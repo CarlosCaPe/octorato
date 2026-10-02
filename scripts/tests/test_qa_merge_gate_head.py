@@ -753,6 +753,34 @@ class RepoScopeEveryReading(unittest.TestCase):
         self.assertFalse(judge(f"cd {self.brain}/link && git push origin main"))
         self.assertFalse(judge(f"cd {self.other}/sub/.. && git push origin main"))
 
+    def test_a_repo_path_that_does_not_exist_yet_gates(self):
+        # A clone or a link the command makes before gh or git runs: the hook
+        # cannot read it, and walking up would judge the repo around it.
+        cwd = str(self.other)
+        judge = lambda cmd: gate._is_protected_target(cmd, cmd.split("&& ")[-1], cwd)
+        for cmd in (f"ln -s {self.brain} nx && GIT_DIR=nx/.git gh pr merge 9 --squash",
+                    f"git clone -q {self.brain} nx && GIT_WORK_TREE=nx gh pr merge 9",
+                    f"ln -s {self.brain} nx && git -C nx push origin main",
+                    f"git -C {self.other}/nx push origin main"):
+            self.assertIsNot(judge(cmd), False, cmd)
+        self.assertFalse(judge(f"GIT_DIR={self.other}/.git gh pr merge 9"))
+        self.assertFalse(judge("GIT_DIR=.git gh pr merge 9"))
+
+    def test_a_relative_git_dir_is_read_from_the_command_directory(self):
+        # The hook process runs from an unprotected third repo, where bl/.git
+        # does not exist; the command runs in `other`, where bl is the brain.
+        (self.other / "bl").symlink_to(self.brain)
+        third = self.tmp / "third"
+        (third / ".git").mkdir(parents=True)
+        (third / ".git" / "config").write_text("[core]\n")
+        here = os.getcwd()
+        os.chdir(third)
+        self.addCleanup(os.chdir, here)
+        cmd = "GIT_DIR=bl/.git gh pr merge 9"
+        self.assertIsNot(gate._is_protected_target(cmd, cmd, str(self.other)), False)
+        cmd = f"cd {self.other} && GIT_DIR=bl/.git gh pr merge 9"
+        self.assertIsNot(gate._is_protected_target(cmd, cmd.split("&& ")[-1], str(self.tmp)), False)
+
 
 class SeekNeedsBothReadings(unittest.TestCase):
     def test_the_rule_holds_inside_sh_c(self):
