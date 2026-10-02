@@ -590,11 +590,22 @@ def converge_latest_for(spec_dir: str, session_id: str = "") -> dict | None:
     verdict: written for a verifier persona, pointing at a harness-shaped agent
     transcript, and whose transcript re-parses to the same verdict and to this
     exact scope. A prefix match would let one spec's verdict cover another's.
-    `session_id` empty means any session: the push gate runs outside one."""
+    `session_id` empty means any session: the push gate runs outside one.
+
+    A row that names its transcript entry (`entry_uuid`, written by the reflex
+    since docs/specs/202610012100-qa-receipt-bound-to-head) is re-read from
+    that exact entry over the whole transcript, so a resumed verifier's later
+    reply cannot change what the receipt says and a verdict beyond the 256 KB
+    tail stays readable. An anchored CONVERGED stands only when its run ends
+    on a report that also says CONVERGED for this spec and no later run says
+    GAPS for it or for no scope (the hook that records receipts fails open). A row with no
+    anchor keeps the tail read. The newest entry timestamp decides, never the
+    ledger order; on an equal timestamp, or an unreadable one, GAPS wins."""
     want = normalize_spec_dir(spec_dir)
     if not want:
         return None
-    for r in reversed(read_global()):
+    cands = []
+    for r in read_global():
         if r.get("kind") != "converge" or r.get("verdict") not in ("CONVERGED", "GAPS"):
             continue
         if normalize_spec_dir(r.get("scope", "")) != want:
@@ -604,10 +615,33 @@ def converge_latest_for(spec_dir: str, session_id: str = "") -> dict | None:
         tp = str(r.get("agent_transcript_path") or "")
         if not tp or not _harness_agent_transcript(Path(tp), session_id, str(r.get("agent_id") or "")):
             continue
-        report, verdict_ts = last_assistant_report(tp)
+        uuid = str(r.get("entry_uuid") or "")
+        if uuid:
+            got = report_at(tp, uuid)
+            if got is None:
+                continue
+            report, verdict_ts = got
+        else:
+            report, verdict_ts = last_assistant_report(tp)
         verdict, scope = parse_converge(report)
-        if verdict == r.get("verdict") and scope == want:
-            return dict(r, verdict_ts=verdict_ts)
+        if verdict != r.get("verdict") or scope != want:
+            continue
+        key = _ts_key(verdict_ts)
+        if key is None:
+            if verdict != "GAPS":
+                continue
+            key = _NEVER_OLDER  # an unreadable time cannot drop a GAPS
+        cands.append((key, verdict == "GAPS", r, tp, uuid, verdict_ts))
+    # Newest first, GAPS first on a tie; only a candidate that could win pays
+    # for the whole-transcript check.
+    cands.sort(key=lambda c: (c[0], c[1]), reverse=True)
+    same = lambda rep_: parse_converge(rep_) == ("CONVERGED", want)
+    revokes = lambda rep_: (parse_converge(rep_)[0] == "GAPS"
+                            and parse_converge(rep_)[1] in (want, ""))
+    for key, is_gaps, r, tp, uuid, verdict_ts in cands:
+        if not is_gaps and uuid and not _anchor_stands(tp, uuid, same, revokes):
+            continue
+        return dict(r, verdict_ts=verdict_ts)
     return None
 
 
@@ -641,6 +675,20 @@ def _refused_handbacks(entry: dict) -> set:
         return set()
     result = entry.get("toolUseResult")
     if not isinstance(result, dict) or result.get("success") is not False:
+        return set()
+    content = (entry.get("message") or {}).get("content") or []
+    return {b.get("tool_use_id") for b in content
+            if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("tool_use_id")}
+
+
+def _delivered_results(entry: dict) -> set:
+    """tool_use ids the harness answered with `success: true`: evidence that
+    a SubagentHandback was delivered, as opposed to merely not refused (an
+    error string or a missing result is not a delivery)."""
+    if entry.get("type") != "user" or not harness_entry(entry):
+        return set()
+    result = entry.get("toolUseResult")
+    if not isinstance(result, dict) or result.get("success") is not True:
         return set()
     content = (entry.get("message") or {}).get("content") or []
     return {b.get("tool_use_id") for b in content
@@ -759,6 +807,140 @@ def report_at(transcript_path: str, uuid: str):
     return reports.pop(), str(found[0].get("timestamp") or "")
 
 
+_INJECTED = ("<system-reminder>", "[SYSTEM NOTIFICATION")
+# How the harness writes a SendMessage resume: an isMeta user entry.
+_RESUME = ("The coordinator sent a message", "Another Claude session sent a message",
+           "The user sent a new message")
+
+
+def _is_resume(entry: dict) -> bool:
+    content = (entry.get("message") or {}).get("content")
+    return (entry.get("type") == "user" and isinstance(content, str)
+            and content.lstrip().startswith(_RESUME))
+
+
+def _awaits_tool(entry, refused: set = frozenset()) -> bool:
+    """True when an assistant entry left a tool call pending: the agent was
+    mid-work. A SubagentHandback that delivered the report ends the turn; one
+    the harness refused does not (the agent keeps working after it)."""
+    blocks = ((entry or {}).get("message") or {}).get("content") or []
+    return isinstance(blocks, list) and any(
+        isinstance(b, dict) and b.get("type") == "tool_use"
+        and (b.get("name") != HANDBACK_TOOL or b.get("id") in refused)
+        for b in blocks)
+
+
+def _message_id(entry) -> str:
+    return str(((entry or {}).get("message") or {}).get("id") or "")
+
+
+def _is_prompt(entry: dict) -> bool:
+    """A user entry that starts a new run (a prompt or a resume). Not one the
+    harness injects mid-run (`isMeta`: notifications, skill loads, reminders)
+    and not one that carries a tool result back to the agent, even when it
+    also holds text ("Tool loaded.")."""
+    if entry.get("type") != "user" or entry.get("isMeta"):
+        return False
+    content = (entry.get("message") or {}).get("content")
+    if isinstance(content, str):
+        return not content.lstrip().startswith(_INJECTED)
+    if not isinstance(content, list):
+        return False
+    if any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
+        return False
+    texts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
+    return bool(texts) and not all(t.lstrip().startswith(_INJECTED) for t in texts)
+
+
+def _anchor_stands(transcript_path: str, uuid: str, same, revokes) -> bool:
+    """True when the run that holds the anchored assistant entry ENDS on a
+    report that says the same thing (`same(final_report)`) and no report in a
+    later run satisfies `revokes(report)`. A run ends at a real prompt, or at
+    a SendMessage resume that follows an ended turn (no tool call pending, no
+    refused handback, and the next assistant entry starts a new message).
+
+    Residual, stated: an agent killed right after a mid-run text entry (or a
+    thinking-only tail of the same message), and then resumed or never
+    resumed, leaves that entry as its run's last report. It cannot be told
+    apart from an ordinary turn that ended on text (48 real resumes follow
+    exactly that shape), so such a quote reads as the run's final report.
+
+    A receipt is recorded by a hook that fails open, so a resumed reviewer's
+    later NEEDS-WORK or GAPS may never reach the ledger; reading it from the
+    transcript keeps a passing verdict from outliving its own revocation. And
+    the ledger is writable, so a hand-written row naming a mid-run entry that
+    merely quotes the protocol lines stands only if the run's own final
+    report carries the same verdict."""
+    if not uuid or not _regular_file(transcript_path):
+        return False
+    entries, refused, ok_ids = [], set(), set()
+    try:
+        with open(transcript_path, "rb") as fh:
+            for raw in fh:
+                try:
+                    entry = json.loads(raw.decode("utf-8", errors="replace"))
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(entry, dict) or not harness_entry(entry):
+                    continue
+                refused |= _refused_handbacks(entry)
+                ok_ids |= _delivered_results(entry)
+                if entry.get("type") in ("assistant", "user"):
+                    entries.append(entry)
+    except OSError:
+        return False
+    at = next((i for i, e in enumerate(entries)
+               if e.get("type") == "assistant" and e.get("uuid") == uuid), None)
+    if at is None:
+        return False
+    tail = entries[at:]
+    # The message id of the next assistant entry after each position, so a
+    # resume followed by the SAME message (the turn went on) is not a boundary.
+    next_mid, nxt = [""] * len(tail), ""
+    for i in range(len(tail) - 1, -1, -1):
+        next_mid[i] = nxt
+        if tail[i].get("type") == "assistant":
+            nxt = _message_id(tail[i])
+    final, in_run, last_asst, delivered = None, True, None, False
+    for i, e in enumerate(tail):
+        # A run ends at a real prompt, or at a resume that arrives after the
+        # agent ended its turn; one that arrives mid tool loop ("while you
+        # were working") is not an end (205 of 212 real resumes are ends). A
+        # refused handback leaves the turn open, unless a handback the harness
+        # confirmed (`success: true`) already delivered the run's report.
+        boundary = _is_prompt(e) or (
+            _is_resume(e) and last_asst is not None
+            and not _awaits_tool(last_asst, frozenset() if delivered else refused)
+            and not (_message_id(last_asst) and next_mid[i] == _message_id(last_asst)))
+        if e.get("type") == "assistant":
+            last_asst = e
+            blocks = (e.get("message") or {}).get("content") or []
+            if isinstance(blocks, list) and any(
+                    isinstance(b, dict) and b.get("type") == "tool_use"
+                    and b.get("name") == HANDBACK_TOOL and b.get("id") in ok_ids
+                    and b.get("id") not in refused
+                    for b in blocks):
+                delivered = True  # confirmed by the harness and never refused
+        if boundary:
+            delivered = False
+            if in_run and (final is None or not same(final)):
+                return False  # the run did not end on this verdict
+            in_run = False
+            continue
+        if e.get("type") != "assistant":
+            continue
+        report = _entry_report(e, refused)
+        if report is None:
+            continue
+        if in_run:
+            final = report
+        elif revokes(report):
+            return False
+    if in_run and (final is None or not same(final)):
+        return False
+    return True
+
+
 def last_assistant_text(transcript_path: str) -> str:
     return last_assistant_report(transcript_path)[0]
 
@@ -831,6 +1013,21 @@ def _ts_key(ts: str):
         return None
 
 
+_NEVER_OLDER = _dt.datetime.max.replace(tzinfo=_dt.timezone.utc)
+
+
+def _revokes_pass(report: str, token: str, head: str) -> bool:
+    """A later report that revokes a PASS for this pull request at this
+    commit: FAIL or NEEDS-WORK naming the PR or no scope at all, at the same
+    commit or none."""
+    verdict, scope = parse_verdict(report)
+    if verdict not in ("FAIL", "NEEDS-WORK"):
+        return False
+    if scope and not scope_names(scope, token):
+        return False  # a scope-less revocation in the same transcript revokes
+    return parse_qa_head(report) in (head, "")
+
+
 def qa_latest_for(token: str, head: str) -> dict | None:
     """The qa receipt that decides pull request `token` at commit `head`,
     whatever its verdict; None when no receipt names both.
@@ -849,7 +1046,7 @@ def qa_latest_for(token: str, head: str) -> dict | None:
     head = str(head or "").lower()
     if not token or not _SHA40.fullmatch(head):
         return None
-    best, best_ts = None, None
+    cands = []
     for r in read_global():
         if r.get("kind") != "qa" or r.get("verdict") not in ("PASS", "FAIL", "NEEDS-WORK"):
             continue
@@ -881,8 +1078,16 @@ def qa_latest_for(token: str, head: str) -> dict | None:
             continue
         key = _ts_key(ts)
         if key is None:
-            continue
-        if (best_ts is None or key > best_ts
-                or (key == best_ts and verdict != "PASS")):
-            best, best_ts = dict(r, verdict_ts=ts), key
-    return best
+            if verdict == "PASS":
+                continue
+            key = _NEVER_OLDER  # an unreadable time cannot drop a revocation
+        cands.append((key, verdict != "PASS", r, tp, uuid, ts, scope))
+    cands.sort(key=lambda c: (c[0], c[1]), reverse=True)
+    for key, is_revocation, r, tp, uuid, ts, scope in cands:
+        if not is_revocation:
+            same = lambda rep_, sc=scope: (parse_verdict(rep_) == ("PASS", sc)
+                                           and parse_qa_head(rep_) == head)
+            if not _anchor_stands(tp, uuid, same, lambda rep_: _revokes_pass(rep_, token, head)):
+                continue
+        return dict(r, verdict_ts=ts)
+    return None

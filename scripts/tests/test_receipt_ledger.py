@@ -428,6 +428,230 @@ class QaHeadAnchoring(unittest.TestCase):
         self._row(ok, "PASS", H1, "u-t2")
         self.assertEqual(rl.qa_latest_for("500", H1)["verdict"], "NEEDS-WORK")
 
+    def _conv_row(self, tp, verdict, uid, sd):
+        rl.append_global({"kind": "converge", "verdict": verdict, "scope": sd, "entry_uuid": uid,
+                          "agent_type": "Reality Checker", "agent_id": Path(tp).stem.replace("agent-", ""),
+                          "agent_transcript_path": tp})
+
+    def test_a_converge_receipt_is_read_from_its_anchored_entry(self):
+        sd = "docs/specs/202610020000-toy"
+        conv = lambda v: f"report\nCONVERGE-VERDICT: {v}\nCONVERGE-SCOPE: {sd}"
+        # A resumed verifier that replies CONVERGED later keeps its first GAPS.
+        tp = self._transcript("agent-k1.jsonl", [
+            self._entry(conv("GAPS"), "2026-10-02T10:00:00.000Z", "u-k1"),
+            self._entry(conv("CONVERGED"), "2026-10-02T10:30:00.000Z")])
+        self._conv_row(tp, "GAPS", "u-k1", sd)
+        self.assertEqual(rl.converge_latest_for(sd)["verdict"], "GAPS")
+        # An anchored verdict far from the end of its transcript is still read.
+        far = self._transcript("agent-k2.jsonl",
+                               [self._entry(conv("CONVERGED"), "2026-10-02T11:00:00.000Z", "u-k2")],
+                               pad_after=400)
+        self.assertGreater(os.path.getsize(far), 300_000)
+        self._conv_row(far, "CONVERGED", "u-k2", sd)
+        self.assertEqual(rl.converge_latest_for(sd)["verdict"], "CONVERGED")
+        # An older GAPS re-appended last does not outvote the newer entry.
+        self._conv_row(tp, "GAPS", "u-k1", sd)
+        self.assertEqual(rl.converge_latest_for(sd)["verdict"], "CONVERGED")
+        self.assertIsNotNone(rl.converge_pass_for(sd))
+        # A row whose entry is gone or says something else opens nothing.
+        self._conv_row(far, "CONVERGED", "u-missing", sd)
+        later = self._transcript("agent-k3.jsonl",
+                                 [self._entry(conv("GAPS"), "2026-10-02T12:00:00.000Z", "u-k3")])
+        self._conv_row(later, "CONVERGED", "u-k3", sd)   # ledger says CONVERGED, entry says GAPS
+        self.assertEqual(rl.converge_latest_for(sd)["verdict"], "CONVERGED")
+        self.assertEqual(rl.converge_latest_for(sd)["entry_uuid"], "u-k2")
+
+    def _prompt(self, text="resume", sid="sess-1"):
+        return _h({"type": "user", "message": {"role": "user", "content": text}}, sid)
+
+    def test_an_unrecorded_later_revocation_voids_an_anchored_pass(self):
+        sd = "docs/specs/202610020000-toy"
+        conv = lambda v: f"report\nCONVERGE-VERDICT: {v}\nCONVERGE-SCOPE: {sd}"
+        # CONVERGED, then a resumed run replies GAPS; only the CONVERGED row exists.
+        tp = self._transcript("agent-m1.jsonl", [
+            self._entry(conv("CONVERGED"), "2026-10-02T10:00:00.000Z", "u-m1"),
+            self._prompt(),
+            self._entry(conv("GAPS"), "2026-10-02T10:30:00.000Z")])
+        self._conv_row(tp, "CONVERGED", "u-m1", sd)
+        self.assertIsNone(rl.converge_pass_for(sd))
+        # The same for a QA PASS revoked by a later NEEDS-WORK at the same commit.
+        qa = self._transcript("agent-m2.jsonl", [
+            self._entry(self._report("PASS", H1), "2026-10-02T10:00:00.000Z", "u-m2"),
+            self._prompt(),
+            self._entry(self._report("NEEDS-WORK", H1), "2026-10-02T10:30:00.000Z")])
+        self._row(qa, "PASS", H1, "u-m2")
+        self.assertIsNone(rl.qa_latest_for("500", H1))
+        # A later NEEDS-WORK for another commit does not revoke this one.
+        qa2 = self._transcript("agent-m3.jsonl", [
+            self._entry(self._report("PASS", H1), "2026-10-02T11:00:00.000Z", "u-m3"),
+            self._prompt(),
+            self._entry(self._report("NEEDS-WORK", H2), "2026-10-02T11:30:00.000Z")])
+        self._row(qa2, "PASS", H1, "u-m3")
+        self.assertEqual(rl.qa_latest_for("500", H1)["verdict"], "PASS")
+
+    def test_an_anchor_must_be_the_final_report_of_its_run(self):
+        sd = "docs/specs/202610020000-toy"
+        conv = lambda v: f"CONVERGE-VERDICT: {v}\nCONVERGE-SCOPE: {sd}"
+        tp = self._transcript("agent-n1.jsonl", [
+            self._entry("quoting the expected output:\n" + conv("CONVERGED"), "2026-10-02T10:00:00.000Z", "u-mid"),
+            self._entry("still checking, no verdict yet", "2026-10-02T10:05:00.000Z")])
+        self._conv_row(tp, "CONVERGED", "u-mid", sd)
+        self.assertIsNone(rl.converge_latest_for(sd))
+
+    def test_injected_user_entries_do_not_end_a_run(self):
+        sd = "docs/specs/202610020002-toy"
+        conv = lambda v: f"CONVERGE-VERDICT: {v}\nCONVERGE-SCOPE: {sd}"
+        meta = _h({"type": "user", "isMeta": True,
+                   "message": {"role": "user", "content": "[SYSTEM NOTIFICATION - NOT USER INPUT] done"}})
+        loaded = _h({"type": "user", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "ts1", "content": "ok"},
+            {"type": "text", "text": "Tool loaded."}]}})
+        for name, sep in (("agent-i1.jsonl", meta), ("agent-i2.jsonl", loaded)):
+            tp = self._transcript(name, [
+                self._entry("quoting:\n" + conv("CONVERGED"), "2026-10-02T10:00:00.000Z", "u-" + name),
+                sep,
+                self._entry("final report, no verdict", "2026-10-02T10:10:00.000Z")])
+            self._conv_row(tp, "CONVERGED", "u-" + name, sd)
+        self.assertIsNone(rl.converge_latest_for(sd))
+        # An honest PASS followed by a notification and a repeated PASS stands.
+        tp = self._transcript("agent-i3.jsonl", [
+            self._entry(self._report("PASS", H1), "2026-10-02T10:00:00.000Z", "u-i3"),
+            meta,
+            self._entry(self._report("PASS", H1), "2026-10-02T10:05:00.000Z")])
+        self._row(tp, "PASS", H1, "u-i3")
+        self.assertEqual(rl.qa_latest_for("500", H1)["verdict"], "PASS")
+
+    def _resume(self, text="The coordinator sent a message while you were working:\nnext"):
+        return _h({"type": "user", "isMeta": True, "message": {"role": "user", "content": text}})
+
+    def test_a_reused_reviewer_keeps_each_runs_verdict(self):
+        # The harness writes a SendMessage resume as an isMeta entry; after the
+        # agent ended its turn it ends the run, so one reviewer can pass two PRs.
+        tp = self._transcript("agent-r1.jsonl", [
+            self._entry(self._report("PASS", H1), "2026-10-02T10:00:00.000Z", "u-r1"),
+            self._resume(),
+            self._entry(self._report("PASS", H1, "PR #501"), "2026-10-02T11:00:00.000Z")])
+        self._row(tp, "PASS", H1, "u-r1")
+        self.assertEqual(rl.qa_latest_for("500", H1)["verdict"], "PASS")
+        tp2 = self._transcript("agent-r2.jsonl", [
+            self._entry(self._report("PASS", H1, "PR #502"), "2026-10-02T10:00:00.000Z", "u-r2"),
+            self._resume("The user sent a new message while you were working:\nwhich file?"),
+            self._entry("tests/test_x.py", "2026-10-02T10:10:00.000Z")])
+        self._row(tp2, "PASS", H1, "u-r2", pr="PR #502")
+        self.assertEqual(rl.qa_latest_for("502", H1)["verdict"], "PASS")
+
+    def test_a_resume_mid_tool_loop_does_not_end_the_run(self):
+        sd = "docs/specs/202610020004-toy"
+        conv = lambda v: f"CONVERGE-VERDICT: {v}\nCONVERGE-SCOPE: {sd}"
+        working = self._entry("quoting:\n" + conv("CONVERGED"), "2026-10-02T10:00:00.000Z", "u-w")
+        working["message"]["content"].append(U("Bash", {"command": "ls"}, "b9"))
+        tp = self._transcript("agent-r3.jsonl", [
+            working, self._resume(),
+            self._entry("final report, no verdict", "2026-10-02T10:10:00.000Z")])
+        self._conv_row(tp, "CONVERGED", "u-w", sd)
+        self.assertIsNone(rl.converge_latest_for(sd))
+
+    def test_a_refused_handback_or_a_continued_message_is_not_an_ended_turn(self):
+        sd = "docs/specs/202610020005-toy"
+        conv = lambda v: f"CONVERGE-VERDICT: {v}\nCONVERGE-SCOPE: {sd}"
+        quote = self._entry("quoting:\n" + conv("CONVERGED"), "2026-10-02T10:00:00.000Z", "u-q1")
+        quote["message"]["content"].append(U("SubagentHandback", {"message": "x"}, "hbR"))
+        refusal = _h({"type": "user", "toolUseResult": {"success": False, "message": "not active"},
+                      "message": {"role": "user", "content": [
+                          {"type": "tool_result", "tool_use_id": "hbR", "content": "refused"}]}})
+        tp = self._transcript("agent-q1.jsonl", [quote, refusal, self._resume(),
+                                                 self._entry("ok, done", "2026-10-02T10:10:00.000Z")])
+        self._conv_row(tp, "CONVERGED", "u-q1", sd)
+        self.assertIsNone(rl.converge_latest_for(sd))
+        sd2 = sd + "-b"
+        conv2 = lambda v: f"CONVERGE-VERDICT: {v}\nCONVERGE-SCOPE: {sd2}"
+        a = self._entry("quoting:\n" + conv2("CONVERGED"), "2026-10-02T11:00:00.000Z", "u-q2")
+        a["message"]["id"] = "msg_same"
+        b = self._entry("continuing, no verdict", "2026-10-02T11:01:00.000Z")
+        b["message"]["id"] = "msg_same"
+        tp2 = self._transcript("agent-q2.jsonl", [a, self._resume(), b])
+        self._conv_row(tp2, "CONVERGED", "u-q2", sd2)
+        self.assertIsNone(rl.converge_latest_for(sd2))
+
+    def test_an_already_delivered_refusal_does_not_void_an_honest_pass(self):
+        first = self._entry(None, "2026-10-02T10:00:00.000Z", "u-d1",
+                            handback=self._report("PASS", H1, "PR #504"))
+        ok = _h({"type": "user", "toolUseResult": {"success": True},
+                 "message": {"role": "user", "content": [
+                     {"type": "tool_result", "tool_use_id": "hb-u-d1", "content": "delivered"}]}})
+        second = self._entry(None, "2026-10-02T10:01:00.000Z")
+        second["message"]["content"].append(U("SubagentHandback", {"message": "again"}, "hbD2"))
+        refusal = _h({"type": "user", "toolUseResult": {"success": False, "message": "already delivered"},
+                      "message": {"role": "user", "content": [
+                          {"type": "tool_result", "tool_use_id": "hbD2", "content": "refused"}]}})
+        tp = self._transcript("agent-d1.jsonl", [first, ok, second, refusal, self._resume(),
+                                                 self._entry("tests/test_x.py", "2026-10-02T10:20:00.000Z")])
+        self._row(tp, "PASS", H1, "u-d1", pr="PR #504")
+        self.assertEqual(rl.qa_latest_for("504", H1)["verdict"], "PASS")
+        # A handback answered with an error string, or with no result, is not a
+        # delivery: the A3 shape stays closed.
+        sd = "docs/specs/202610020006-toy"
+        quote = self._entry(f"quoting:\nCONVERGE-VERDICT: CONVERGED\nCONVERGE-SCOPE: {sd}",
+                            "2026-10-02T11:00:00.000Z", "u-e1")
+        quote["message"]["content"].append(U("SubagentHandback", {}, "hbE1"))
+        err = _h({"type": "user", "toolUseResult": "Error: InputValidationError",
+                  "message": {"role": "user", "content": [
+                      {"type": "tool_result", "tool_use_id": "hbE1", "content": "Error"}]}})
+        again = self._entry(None, "2026-10-02T11:01:00.000Z")
+        again["message"]["content"].append(U("SubagentHandback", {"message": "x"}, "hbE2"))
+        refused2 = _h({"type": "user", "toolUseResult": {"success": False, "message": "not active"},
+                       "message": {"role": "user", "content": [
+                           {"type": "tool_result", "tool_use_id": "hbE2", "content": "refused"}]}})
+        # An id the harness both confirmed and refused is not a delivery either.
+        quote3 = self._entry(f"quoting:\nCONVERGE-VERDICT: CONVERGED\nCONVERGE-SCOPE: {sd}-c",
+                             "2026-10-02T12:00:00.000Z", "u-e3")
+        quote3["message"]["content"].append(U("SubagentHandback", {"message": "x"}, "hbE3"))
+        both = [_h({"type": "user", "toolUseResult": {"success": ok},
+                    "message": {"role": "user", "content": [
+                        {"type": "tool_result", "tool_use_id": "hbE3", "content": "r"}]}}) for ok in (True, False)]
+        tp3 = self._transcript("agent-e3.jsonl", [quote3] + both + [self._resume(),
+                                                                     self._entry("ok", "2026-10-02T12:10:00.000Z")])
+        self._conv_row(tp3, "CONVERGED", "u-e3", sd + "-c")
+        self.assertIsNone(rl.converge_latest_for(sd + "-c"))
+        tp2 = self._transcript("agent-e1.jsonl", [quote, err, again, refused2, self._resume(),
+                                                  self._entry("ok", "2026-10-02T11:10:00.000Z")])
+        self._conv_row(tp2, "CONVERGED", "u-e1", sd)
+        self.assertIsNone(rl.converge_latest_for(sd))
+
+    def test_a_scopeless_later_needs_work_revokes_a_pass(self):
+        tp = self._transcript("agent-r4.jsonl", [
+            self._entry(self._report("PASS", H1, "PR #503"), "2026-10-02T10:00:00.000Z", "u-r4"),
+            self._prompt(),
+            self._entry("QA-VERDICT: NEEDS-WORK", "2026-10-02T10:30:00.000Z")])
+        self._row(tp, "PASS", H1, "u-r4", pr="PR #503")
+        self.assertIsNone(rl.qa_latest_for("503", H1))
+
+    def test_a_later_gaps_without_a_scope_line_revokes(self):
+        sd = "docs/specs/202610020003-toy"
+        tp = self._transcript("agent-j1.jsonl", [
+            self._entry(f"CONVERGE-VERDICT: CONVERGED\nCONVERGE-SCOPE: {sd}", "2026-10-02T10:00:00.000Z", "u-j1"),
+            self._prompt(),
+            self._entry("CONVERGE-VERDICT: GAPS", "2026-10-02T10:30:00.000Z")])
+        self._conv_row(tp, "CONVERGED", "u-j1", sd)
+        self.assertIsNone(rl.converge_pass_for(sd))
+
+    def test_ties_and_unreadable_times_favour_the_revocation(self):
+        sd = "docs/specs/202610020001-toy"
+        conv = lambda v: f"CONVERGE-VERDICT: {v}\nCONVERGE-SCOPE: {sd}"
+        same = "2026-10-02T10:00:00.000Z"
+        for order in (("GAPS", "CONVERGED"), ("CONVERGED", "GAPS")):
+            sdx = sd + "-" + order[0].lower()
+            cx = lambda v: f"CONVERGE-VERDICT: {v}\nCONVERGE-SCOPE: {sdx}"
+            for i, v in enumerate(order):
+                tp = self._transcript(f"agent-t{order[0][0]}{i}.jsonl", [self._entry(cx(v), same, f"u-t{order[0][0]}{i}")])
+                self._conv_row(tp, v, f"u-t{order[0][0]}{i}", sdx)
+            self.assertEqual(rl.converge_latest_for(sdx)["verdict"], "GAPS", order)
+        old = self._transcript("agent-w1.jsonl", [self._entry(conv("CONVERGED"), "2026-10-02T09:00:00.000Z", "u-w1")])
+        bad = self._transcript("agent-w2.jsonl", [self._entry(conv("GAPS"), "garbage", "u-w2")])
+        self._conv_row(old, "CONVERGED", "u-w1", sd)
+        self._conv_row(bad, "GAPS", "u-w2", sd)
+        self.assertEqual(rl.converge_latest_for(sd)["verdict"], "GAPS")
+
     def test_a_repeated_uuid_must_agree(self):
         same = self._entry(self._report("PASS", H1), "2026-10-01T10:00:00.000Z", "u-dup")
         twin = dict(same, cwd="/elsewhere")
