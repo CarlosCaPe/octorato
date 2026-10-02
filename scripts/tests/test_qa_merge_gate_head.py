@@ -361,7 +361,9 @@ class GateHead(unittest.TestCase):
 
     def test_assignments_bash_reads_do_not_hide_a_merge(self):
         os.environ.pop("OCTO_MERGE_APPROVE", None)
-        for cmd in ("X+=1 gh pr merge 96 --squash", "env 'X'=1 gh pr merge 96",
+        for cmd in ("env -S 'gh pr merge 96'", "env --split-string='gh pr merge 96'",
+                    "env -iu GH_REPO gh pr merge 96",
+                    "X+=1 gh pr merge 96 --squash", "env 'X'=1 gh pr merge 96",
                     'env GH_RE""PO=acme/brain gh pr merge 96', "GH_REPO+=acme/brain gh pr merge 96",
                     "env -u FOO GH_REPO=acme/brain gh pr merge 96"):
             self.assertTrue(gate._find_publish_subcmds(cmd), cmd)
@@ -654,6 +656,15 @@ class RepoScopeEveryReading(unittest.TestCase):
         (iof / ".git").mkdir(parents=True)
         (iof / ".git" / "config").write_text('[url "https://github.com/acme/"]\n\tinsteadOf = zz:\n[remote "origin"]\n\turl = zz:brain\n')
         self.assertIsNot(gate._is_protected_target("gh pr merge 96", "gh pr merge 96", str(iof)), False)
+        for cmd in ("GIT_CONFIG_GLOBAL=../g gh pr merge 96",
+                    "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=url.x.insteadOf GIT_CONFIG_VALUE_0=y gh pr merge 96",
+                    "export GIT_CONFIG_PARAMETERS=x; gh pr merge 96"):
+            sub = [s for s in gate._split_subcmds(cmd) if "merge" in s][-1]
+            self.assertIsNot(gate._is_protected_target(cmd, sub, cwd), False, cmd)
+        inc = self.tmp / "inc"
+        (inc / ".git").mkdir(parents=True)
+        (inc / ".git" / "config").write_text('[include]\n\tpath = ../../g\n[remote "origin"]\n\turl = https://github.com/acme/other.git\n')
+        self.assertIsNot(gate._is_protected_target("gh pr merge 96", "gh pr merge 96", str(inc)), False)
         # git push ignores GH_REPO: a pointer must not gate it.
         self.assertFalse(gate._is_protected_target(
             "GH_REPO=acme/brain git push origin main", "GH_REPO=acme/brain git push origin main", cwd))

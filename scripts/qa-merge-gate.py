@@ -421,6 +421,8 @@ def _pointed_repos(cmd: str, sub: str) -> list:
             out.append(_UNCLEAN)
         else:
             out.append(("dir", os.path.expanduser(v)))
+    if re.search(r"(?<![\w])GIT_CONFIG\w*=", cmd) or any(k.startswith("GIT_CONFIG") for k in os.environ):
+        out.append(_UNCLEAN)  # git reads extra or replacement config: remotes may be rewritten
     if re.search(r"\bgit\b[^\n;&|]*\b(?:remote\s+(?:set-url|add|rename)|config\b[^\n;&|]*(?:remote\.|url\.|insteadof))",
                  cmd, re.IGNORECASE):
         out.append(_UNCLEAN)  # the command rewrites which repo gh will read
@@ -523,12 +525,18 @@ def _protected_dir(target: str):
     root, gitdir = _repo_root_and_gitdir(target)
     if root is None:
         return None
-    for cfg in (root / ".git" / "config", (gitdir / "config") if gitdir else None):
+    xdg = Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config"))
+    cfgs = [root / ".git" / "config", (gitdir / "config") if gitdir else None,
+            Path.home() / ".gitconfig", xdg / "git" / "config", Path("/etc/gitconfig")]
+    for cfg in cfgs:
         try:
-            if cfg is not None and "insteadof" in cfg.read_text(encoding="utf-8").lower():
-                return None
+            text = cfg.read_text(encoding="utf-8").lower() if cfg is not None else ""
         except (OSError, NotADirectoryError):
-            pass
+            continue
+        # A url rewrite, or an include that may carry one, anywhere git reads
+        # config: the remote this repo names is not the one gh will use.
+        if "insteadof" in text or re.search(r"^\s*\[include", text, re.MULTILINE):
+            return None
     candidates = [root] + ([gitdir] if gitdir is not None else [])
     for cand in candidates:
         for prot in _protected_roots():
@@ -585,7 +593,7 @@ _W_GROUP = re.compile(r"^[({]\s*")
 _W_ASSIGN = re.compile(r"^[A-Za-z_]\w*=\S*\s+")
 _W_REDIR = re.compile(r"^\d*[<>]+\S*\s+")
 _W_ENV = re.compile(r"^env\b\s*")
-_W_ENVARG = re.compile(r"^(?:-[uCS]\s+\S+|--(?:unset|chdir|split-string)(?:=|\s+)\S+|-\S+|[A-Za-z_]\w*\+?=\S*)\s+")
+_W_ENVARG = re.compile(r"^(?:-\w*[uC]\s+\S+|--(?:unset|chdir)(?:=|\s+)\S+|-\S+|[A-Za-z_]\w*\+?=\S*)\s+")
 _W_COMMAND = re.compile(r"^command\s+")
 # Reserved words and the pipeline negation run the command that follows them.
 _W_RESERVED = re.compile(r"^(?:!|if|then|else|elif|do|while|until|time(?:\s+-p)?|coproc)\s+")
@@ -892,10 +900,23 @@ def _canonical(sub: str) -> str:
     `gh -R o/r pr -t x merge 96` reads as `gh pr merge -R o/r -t x 96`.
     A sub-command that cannot be split is returned unchanged."""
     import shlex
+    raw = sub
     sub = _drop_redirections(_strip_leading(sub))
     try:
         argv = _bash_words(sub)
     except ValueError:
+        argv = None
+    if not (argv and os.path.basename(argv[0]) == "gh"):
+        # The prefix peel may have consumed a word bash still reads, such as
+        # the command given to `env -S`; read the raw sub-command instead.
+        try:
+            raw_argv = _bash_words(_drop_redirections(raw.lstrip()))
+        except ValueError:
+            raw_argv = []
+        if raw_argv and (raw_argv[0] == "env" or raw_argv[0].endswith("/env")
+                         or re.match(r"^[A-Za-z_]\w*\+?=", raw_argv[0])):
+            argv = raw_argv
+    if argv is None:
         return sub
     # Leading assignments as bash reads them, after quote removal (`X+=1`,
     # `'X'=1`, `GH_RE""PO=x`), and `env` with its options and assignments:
@@ -905,9 +926,34 @@ def _canonical(sub: str) -> str:
             argv = argv[1:]
         elif argv[0] == "env" or argv[0].endswith("/env"):
             argv = argv[1:]
-            while argv and (argv[0].startswith("-") or re.match(r"^[A-Za-z_]\w*=", argv[0])):
-                takes = argv[0] in ("-u", "-C", "--unset", "--chdir", "-S", "--split-string")
-                argv = argv[2:] if takes else argv[1:]
+            while argv and (argv[0].startswith("-") or re.match(r"^[A-Za-z_]\w*\+?=", argv[0])):
+                tok, rest_argv = argv[0], argv[1:]
+                if tok == "--":
+                    argv = rest_argv
+                    break
+                if tok.startswith("--split-string") or (
+                        not tok.startswith("--") and "S" in tok[1:]):
+                    # The value is a command line: read it as one.
+                    if tok.startswith("--"):
+                        val = tok.split("=", 1)[1] if "=" in tok else (rest_argv[:1] or [""])[0]
+                        rest_argv = rest_argv if "=" in tok else rest_argv[1:]
+                    else:
+                        val = tok[tok.index("S", 1) + 1:] or (rest_argv[:1] or [""])[0]
+                        rest_argv = rest_argv if tok[tok.index("S", 1) + 1:] else rest_argv[1:]
+                    try:
+                        argv = _bash_words(val) + rest_argv
+                    except ValueError:
+                        argv = rest_argv
+                    break
+                if tok.startswith("--"):
+                    takes = tok in ("--unset", "--chdir")
+                elif tok.startswith("-"):
+                    # A short cluster: the last of u/C takes the next word
+                    # when nothing follows it in the token (`-iu FOO`).
+                    takes = tok[-1] in "uC"
+                else:
+                    takes = False
+                argv = rest_argv[1:] if takes else rest_argv
         else:
             break
     if argv and os.path.basename(argv[0]) == "gh":
