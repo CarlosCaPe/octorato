@@ -1,0 +1,1 @@
+{"tool_name": "Bash", "tool_input": {"command": "echo \\>& gh pr merge 96"}, "cwd": "/nonexistent/repo"}

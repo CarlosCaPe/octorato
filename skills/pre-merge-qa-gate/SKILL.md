@@ -1,6 +1,6 @@
 ---
 name: pre-merge-qa-gate
-description: Before arming auto-merge on a PR that touches production code, dispatch a QA specialist agent against an explicit test/user-case spec for the diff. Build-passes ≠ correct. Auto-merge is the merge mechanism, not the gate.
+description: Before merging a PR that touches production code, dispatch a QA specialist agent against an explicit test/user-case spec for the diff, then merge directly, pinned to the commit it reviewed. Build-passes ≠ correct. The merge is the mechanism, not the gate.
 metadata:
   type: skill
 ---
@@ -9,7 +9,7 @@ metadata:
 
 ## What
 
-A discipline for AI-driven dev: **no PR lands without an agent-validated QA pass against an explicit test/user-case spec**. Auto-merge SQUASH is fine as the *merge mechanism*, but the gate that precedes arming auto-merge is the QA agent verdict.
+A discipline for AI-driven dev: **no PR lands without an agent-validated QA pass against an explicit test/user-case spec**. A direct SQUASH merge pinned to the reviewed commit (`--match-head-commit`) is the *merge mechanism*; the gate that precedes it is the QA agent verdict.
 
 Build pipelines (`astro check`, `tsc --noEmit`, unit tests) tell you the **code compiles**. They do not tell you:
 - Whether the click handler actually wires to a real endpoint
@@ -36,7 +36,7 @@ Activate this discipline for any PR that:
 
 ## How
 
-Four steps before arming auto-merge SQUASH:
+Four steps before the pinned SQUASH merge:
 
 ### 1. Build locally first
 
@@ -60,7 +60,7 @@ Invocation:
 /bug-hunter --pr current --scan-only
 ```
 
-`--scan-only` keeps it in review mode (no auto-fixes — the operator owns the merge). Output: `.bug-hunter/referee.json` with verdict per finding + severity. **Auto-merge gate**: only arm when no finding has `severity >= HIGH`.
+`--scan-only` keeps it in review mode (no auto-fixes; the operator owns the merge). Output: `.bug-hunter/referee.json` with verdict per finding + severity. **Merge gate**: only merge when no finding has `severity >= HIGH`.
 
 The 3-agent flow:
 1. **Hunter** searches the diff for bugs. Has shell/Read/Grep access — can `grep migrations/` to verify column names, `npx tsc --noEmit` for type errors, `wrangler d1 PRAGMA table_info(...)` for schema sanity.
@@ -87,9 +87,17 @@ Brief any agent with:
 - The test/user case spec (or `feature.md` if the PR has one)
 - An explicit instruction: "Default verdict NEEDS WORK — require concrete evidence (file:line citation, curl response, agent-browser screenshot, tsc output, grep result) before approving anything. Run shell commands to verify schema/contract claims, do not trust source-code reading alone."
 
-### 4. Only after agent verdict, arm auto-merge
+### 4. Only after agent verdict, merge the commit that was reviewed
 
-If `✅ VERIFIED` → arm `gh pr merge <N> --auto --squash` and let CI complete the merge.
+The reviewer's final report ends with three lines, which the SubagentStop hook records as the receipt:
+
+```
+QA-VERDICT: PASS
+QA-SCOPE: PR #<N>
+QA-HEAD: <the 40-digit commit it reviewed>
+```
+
+If `✅ VERIFIED` → merge directly, pinned to that commit: `gh pr merge <N> --squash --delete-branch --match-head-commit <sha>`. GitHub refuses the merge when the head moved after the review. `--auto` is refused by `qa-merge-gate`, because whether GitHub re-checks the pin when an auto-merge fires is not established. A push after the review needs a new QA pass on the new commit; the newest verdict for a commit decides.
 
 If `⚠️ PARTIAL` → decide whether to ship with caveats (document the unknown in the PR body) or wait for more evidence.
 
@@ -100,7 +108,7 @@ Post-deploy live verification (cache-bust curl + agent-browser screenshot) is st
 ## Anti-patterns to refuse
 
 - **"I'll ship and ask the user to validate"** → No. Validate first.
-- **"Auto-merge will land it; the user will tell me if broken"** → No. The operator's time is expensive; agents are cheap.
+- **"The merge will land it; the user will tell me if broken"** → No. The operator's time is expensive; agents are cheap.
 - **"Build green = correct"** → No. Build verifies compilation, not behavior.
 - **"This change is small"** → If small means TRIVIAL (typo, comment), skip the gate. If small means "small in lines but touches auth / CSP / hydration", run the gate.
 

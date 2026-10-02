@@ -6,17 +6,21 @@ finishes and its final message carries the verdict protocol
 
     QA-VERDICT: PASS | FAIL | NEEDS-WORK
     QA-SCOPE: PR #260            (or a branch, a sha, a file set)
+    QA-HEAD: <40-digit commit>   (the commit reviewed; a merge pins it)
 
 or the v9 converge protocol (skills/sdd-converge)
 
     CONVERGE-VERDICT: CONVERGED | GAPS
     CONVERGE-SCOPE: docs/specs/<yyyymmddHHMM>-<feature-name>
 
-this hook, running in the harness process, appends a qa receipt to the global
-ledger with the agent id, type and the harness-written agent transcript path.
-qa-merge-gate re-reads that transcript before honoring the receipt, so the
-line is a pointer, not the proof. A verdict delivered through SubagentHandback
-(no final text block) is read from the transcript by the same function.
+this hook, running in the harness process, appends a receipt to the global
+ledger with the agent id, type, the harness-written agent transcript path and
+the harness `uuid` and `timestamp` of the transcript entry the report came
+from. qa-merge-gate re-reads that exact entry before honoring the receipt, so
+the line is a pointer, not the proof, and a resumed agent's later reply cannot
+change what an earlier receipt says. The report is read from the transcript
+first (a verdict delivered through SubagentHandback included); the payload
+message is the fallback only when the transcript yields no verdict.
 
 Why here and not in prose: "QA approved" typed by the main loop is
 indistinguishable from an invention. The verdict has to come from a different
@@ -44,10 +48,15 @@ def main() -> int:
     tp = str(data.get("agent_transcript_path") or "")
     try:
         import receipt_ledger
-        # The payload can carry a message without the verdict (or none at all)
-        # when the agent reported through SubagentHandback; the transcript is
-        # the fallback, read by the same function the consumers re-read with.
-        fallback = None
+        # The transcript's final report comes first: it is the report every
+        # consumer re-reads, and the payload message can differ from it (a
+        # quoted protocol line in the last text block, while the delivered
+        # handback says something else). The entry's harness uuid and timestamp
+        # anchor the receipt, so a later reply of a resumed agent cannot change
+        # what this receipt says. The payload is the fallback only when the
+        # transcript yields no verdict.
+        report, entry_ts, entry_uuid = (receipt_ledger.last_assistant_entry(tp)
+                                        if tp else ("", "", ""))
         base = {
             "agent_id": data.get("agent_id") or "",
             "agent_type": data.get("agent_type") or "",
@@ -56,13 +65,17 @@ def main() -> int:
         }
         for kind, parse in (("qa", receipt_ledger.parse_verdict),
                              ("converge", receipt_ledger.parse_converge)):
-            verdict, scope = parse(text)
-            if not verdict and tp:
-                if fallback is None:
-                    fallback = receipt_ledger.last_assistant_text(tp)
-                verdict, scope = parse(fallback)
-            if verdict:
-                receipt_ledger.append_global(dict(base, kind=kind, verdict=verdict, scope=scope))
+            source, anchor = report, {"entry_uuid": entry_uuid, "entry_ts": entry_ts}
+            verdict, scope = parse(source)
+            if not verdict:
+                source, anchor = text, {}
+                verdict, scope = parse(source)
+            if not verdict:
+                continue
+            record = dict(base, kind=kind, verdict=verdict, scope=scope, **anchor)
+            if kind == "qa":
+                record["head"] = receipt_ledger.parse_qa_head(source)
+            receipt_ledger.append_global(record)
     except Exception:
         return 0
     return 0

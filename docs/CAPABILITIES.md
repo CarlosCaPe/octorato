@@ -155,7 +155,7 @@
 | playwright-interactive | Persistent browser and Electron interaction through `js_repl` for fast iterative UI debugging. |
 | post-check-verification | Post-Check Verification |
 | pr-first-on-auto-deploy-main | On repos where pushing to main auto-deploys to production, default to PR-based workflow even for self-authored changes ,... |
-| pre-merge-qa-gate | Before arming auto-merge on a PR that touches production code, dispatch a QA specialist agent against an explicit test/u... |
+| pre-merge-qa-gate | Before merging a PR that touches production code, dispatch a QA specialist agent against an explicit test/user-case spec... |
 | primary-key-coverage-identity | Primary Key Coverage & Identity Columns |
 | procedure-rebuild-pg-get-functiondef | Procedure Rebuild via pg_get_functiondef |
 | production-bug-fix-stored-functions | Production Bug Fix in Stored Functions |

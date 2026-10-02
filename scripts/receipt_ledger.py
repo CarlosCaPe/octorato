@@ -52,6 +52,7 @@ import importlib.util
 import json
 import os
 import re
+import stat
 import subprocess
 from pathlib import Path
 
@@ -87,15 +88,27 @@ GIT_HOOK_ENV = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX",
 HARNESS_FIELDS = ("uuid", "parentUuid", "sessionId", "timestamp")
 
 
+_GATE_MOD = None
+
+
+def _qa_gate_module():
+    global _GATE_MOD
+    if _GATE_MOD is None:
+        spec = importlib.util.spec_from_file_location("qa_merge_gate", _HERE / "qa-merge-gate.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _GATE_MOD = mod
+    return _GATE_MOD
+
+
 def _qa_gate_helpers():
-    """Borrow the command-boundary splitter the merge gate already proved."""
-    spec = importlib.util.spec_from_file_location("qa_merge_gate", _HERE / "qa-merge-gate.py")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    """Borrow the command-boundary splitter the merge gate already proved: the
+    union of its two readings, so a SEND is found wherever either finds it."""
+    mod = _qa_gate_module()
     return mod._split_subcmds, mod._strip_leading
 
 
-def _peel(sc: str) -> list:
+def _peel(sc: str, split=None) -> list:
     """Strip interpreter/wrapper prefixes; `bash -c "..."` unquotes and re-splits."""
     import shlex
     out, seen = [], set()
@@ -113,7 +126,7 @@ def _peel(sc: str) -> list:
                 inner = parts[0] if parts else inner
             except ValueError:
                 pass
-            stack.extend(_raw_split(inner))
+            stack.extend(_raw_split(inner, split))
             continue
         prev = None
         while prev != cur:
@@ -123,15 +136,17 @@ def _peel(sc: str) -> list:
     return out
 
 
-def _raw_split(command: str) -> list:
+def _raw_split(command: str, split=None) -> list:
+    """Split the text of an `sh -c` with the SAME reader as the outer command,
+    so a receipt that must hold under both readings holds at every level."""
     try:
-        split, strip = _qa_gate_helpers()
-        return [strip(p) for p in split(command.replace("\\\n", " ")) if p.strip()]
+        union, strip = _qa_gate_helpers()
+        return [strip(p) for p in (split or union)(command) if p.strip()]
     except Exception:
         return [command]
 
 
-def subcommands(command: str) -> list:
+def subcommands(command: str, split=None) -> list:
     """Sub-commands of a shell string: split on UNQUOTED separators, leading
     env/redirect/grouping removed, wrappers peeled, `sh -c` expanded. The RAW
     (unstripped) form of each is returned too, so an assignment such as
@@ -139,8 +154,8 @@ def subcommands(command: str) -> list:
     token (QA cycle 4: the strip peeled it only after `;`, not after `&&`)."""
     out = []
     try:
-        split, strip = _qa_gate_helpers()
-        raws = [pp for pp in split(str(command or "").replace("\\\n", " ")) if pp.strip()]
+        union, strip = _qa_gate_helpers()
+        raws = [pp for pp in (split or union)(str(command or "")) if pp.strip()]
     except Exception:
         raws = [str(command or "")]
     for raw in raws:
@@ -149,7 +164,7 @@ def subcommands(command: str) -> list:
             stripped = strip(raw)
         except Exception:
             stripped = raw
-        out.extend(_peel(stripped))
+        out.extend(_peel(stripped, split))
         if raw.strip() != stripped.strip():
             out.append(raw.strip())
     return out
@@ -186,8 +201,19 @@ def bash_is_seek(command: str) -> bool:
     """A seek anywhere in the argv of any sub-command, by TOKEN (never by
     substring): wrappers, interpreters and indirection through argv are all
     covered by the same rule, and a quoted commit message stays one token that
-    is not the script name (QA cycle 3)."""
-    for sc in subcommands(str(command or "")):
+    is not the script name (QA cycle 3). A seek is a RECEIPT, so it must hold
+    under both of the merge gate's readings: the union that finds more sends
+    would otherwise also find more seeks, and a looser receipt is a weaker gate."""
+    try:
+        mod = _qa_gate_module()
+        readers = (mod._split_bash, mod._split_master)
+    except Exception:
+        return _seek_in(subcommands(str(command or "")))
+    return all(_seek_in(subcommands(str(command or ""), r)) for r in readers)
+
+
+def _seek_in(subs: list) -> bool:
+    for sc in subs:
         toks = tokens_of(sc)
         for i, t in enumerate(toks):
             if _is_script_token(t, "query_connectome.py") and "memory" in toks[i + 1:i + 2]:
@@ -515,6 +541,24 @@ def parse_verdict(text: str) -> tuple:
     return verdict, scope
 
 
+_QA_HEAD = re.compile(r"QA-HEAD\s*:\s*(\S+)", re.IGNORECASE)
+_SHA40 = re.compile(r"[0-9a-fA-F]{40}")
+
+
+def parse_qa_head(text: str) -> str:
+    """The commit a QA reviewer declares it reviewed: the LAST `QA-HEAD:` line,
+    lower-cased, and only when it is a full 40-digit commit. A malformed last
+    line yields "" rather than falling back to an earlier one, so a quoted line
+    earlier in the report can never stand in for the real declaration."""
+    if not text:
+        return ""
+    hits = list(_QA_HEAD.finditer(text))
+    if not hits:
+        return ""
+    sha = hits[-1].group(1).strip().rstrip(".,;")
+    return sha.lower() if _SHA40.fullmatch(sha) else ""
+
+
 _CONVERGE_VERDICT = re.compile(r"CONVERGE-VERDICT\s*:\s*(CONVERGED|GAPS)\b", re.IGNORECASE)
 _CONVERGE_SCOPE = re.compile(r"CONVERGE-SCOPE\s*:\s*(\S+)", re.IGNORECASE)
 
@@ -603,7 +647,28 @@ def _refused_handbacks(entry: dict) -> set:
             if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("tool_use_id")}
 
 
-def last_assistant_report(transcript_path: str) -> tuple:
+def _entry_report(entry: dict, refused: set):
+    """The report one assistant entry carries, or None: a delivered
+    SubagentHandback message wins over text blocks in the same entry."""
+    content = (entry.get("message") or {}).get("content") or []
+    if isinstance(content, str):
+        return content
+    handbacks = [b.get("input", {}).get("message") for b in content
+                 if isinstance(b, dict) and b.get("type") == "tool_use"
+                 and b.get("name") == HANDBACK_TOOL
+                 and b.get("id") not in refused
+                 and isinstance(b.get("input"), dict)
+                 and isinstance(b["input"].get("message"), str)]
+    if handbacks:
+        return handbacks[-1]
+    texts = [b.get("text", "") for b in content
+             if isinstance(b, dict) and b.get("type") == "text"]
+    if texts:
+        return "\n".join(texts)
+    return None
+
+
+def last_assistant_entry(transcript_path: str) -> tuple:
     """The final report of a transcript: the newest assistant entry carrying
     either text blocks or a delivered SubagentHandback message. When one entry
     has both, the handback wins, because it is what the parent was handed.
@@ -614,13 +679,15 @@ def last_assistant_report(transcript_path: str) -> tuple:
     transcript before the harness appends the result, and a refusal is always
     written at once with the call it refuses.
 
-    Returns (report, timestamp of the entry that carries it). The timestamp is
-    harness-written, so a consumer measuring freshness reads it here rather than
-    the ledger line, which anyone can append with any `ts`."""
+    Returns (report, timestamp, uuid) of the entry that carries it. Timestamp
+    and uuid are harness-written: a consumer measuring freshness reads them
+    here rather than the ledger line, which anyone can append with any `ts`,
+    and a receipt anchors to the uuid so a later reply of a resumed agent
+    cannot change what an earlier receipt says."""
     try:
         lines = _tail_lines(transcript_path)
     except OSError:
-        return "", ""
+        return "", "", ""
     refused: set = set()
     for line in reversed(lines):
         try:
@@ -630,23 +697,66 @@ def last_assistant_report(transcript_path: str) -> tuple:
         refused |= _refused_handbacks(entry)
         if entry.get("type") != "assistant":
             continue
-        content = (entry.get("message") or {}).get("content") or []
-        ts = str(entry.get("timestamp") or "")
-        if isinstance(content, str):
-            return content, ts
-        handbacks = [b.get("input", {}).get("message") for b in content
-                     if isinstance(b, dict) and b.get("type") == "tool_use"
-                     and b.get("name") == HANDBACK_TOOL
-                     and b.get("id") not in refused
-                     and isinstance(b.get("input"), dict)
-                     and isinstance(b["input"].get("message"), str)]
-        if handbacks:
-            return handbacks[-1], ts
-        texts = [b.get("text", "") for b in content
-                 if isinstance(b, dict) and b.get("type") == "text"]
-        if texts:
-            return "\n".join(texts), ts
-    return "", ""
+        report = _entry_report(entry, refused)
+        if report is not None:
+            return report, str(entry.get("timestamp") or ""), str(entry.get("uuid") or "")
+    return "", "", ""
+
+
+def last_assistant_report(transcript_path: str) -> tuple:
+    """(report, timestamp) of the final report; see last_assistant_entry."""
+    report, ts, _ = last_assistant_entry(transcript_path)
+    return report, ts
+
+
+def _regular_file(path) -> bool:
+    """Only a regular file is ever opened as a transcript: a FIFO or a device
+    placed where a transcript belongs would hold the read open until the hook
+    is killed, and a killed hook reads as allow."""
+    try:
+        return stat.S_ISREG(os.stat(path).st_mode)
+    except OSError:
+        return False
+
+
+def report_at(transcript_path: str, uuid: str):
+    """(report, timestamp) of the exact assistant entry whose own `uuid` field
+    is `uuid`, read from the WHOLE transcript, or None.
+
+    The whole file, because a resumed reviewer's earlier verdict often sits far
+    from the end (36 of 200 anchored verdicts in real transcripts lay beyond the
+    256 KB tail every other reader keeps). The `uuid` FIELD, never a substring:
+    the next entry names its parent by the same value in `parentUuid`. When
+    several lines carry that uuid (the harness repeats some, identical but for
+    `cwd`), they must all yield the same report, or there is no answer."""
+    if not uuid or not _regular_file(transcript_path):
+        return None
+    needle = uuid.encode()
+    refused: set = set()
+    found = []
+    try:
+        with open(transcript_path, "rb") as fh:
+            for raw in fh:
+                if needle not in raw and b"toolUseResult" not in raw:
+                    continue
+                try:
+                    entry = json.loads(raw.decode("utf-8", errors="replace"))
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(entry, dict):
+                    continue
+                refused |= _refused_handbacks(entry)
+                if entry.get("type") == "assistant" and entry.get("uuid") == uuid \
+                        and harness_entry(entry):
+                    found.append(entry)
+    except OSError:
+        return None
+    if not found:
+        return None
+    reports = {_entry_report(e, refused) for e in found}
+    if len(reports) != 1 or None in reports:
+        return None
+    return reports.pop(), str(found[0].get("timestamp") or "")
 
 
 def last_assistant_text(transcript_path: str) -> str:
@@ -664,6 +774,8 @@ def _harness_agent_transcript(path: Path, session_id: str, agent_id: str) -> boo
         rp = path.resolve()
         rel = rp.relative_to(harness_projects_dir().resolve())
     except (ValueError, OSError):
+        return False
+    if not _regular_file(rp):
         return False
     parts = rel.parts
     if len(parts) != 4 or parts[2] != "subagents":
@@ -709,3 +821,68 @@ def qa_pass_for(token: str, session_id: str = "", transcript_path: str = "") -> 
         if verdict == "PASS" and scope_names(scope, token):
             return r
     return None
+
+
+def _ts_key(ts: str):
+    try:
+        t = _dt.datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+        return t if t.tzinfo else t.replace(tzinfo=_dt.timezone.utc)
+    except ValueError:
+        return None
+
+
+def qa_latest_for(token: str, head: str) -> dict | None:
+    """The qa receipt that decides pull request `token` at commit `head`,
+    whatever its verdict; None when no receipt names both.
+
+    Ledger rows are narrowed by their own kind and scope only, so the cost is
+    one pull request's receipts and no transcript of another is opened. Each
+    remaining row must be a verifier persona's, point at a harness-shaped,
+    regular-file agent transcript (any session), and name the transcript entry
+    it was recorded from (`entry_uuid`). That exact entry is re-read: its
+    verdict, scope and commit must equal the row's, name this pull request and
+    this commit. A FAIL or NEEDS-WORK whose report carries no valid commit
+    names every commit of the pull request. A row without an anchor, or whose
+    entry is gone or now says something else, is skipped. Of what is left, the receipt whose entry the
+    harness wrote last decides, never the ledger order, which anyone can
+    re-append to."""
+    head = str(head or "").lower()
+    if not token or not _SHA40.fullmatch(head):
+        return None
+    best, best_ts = None, None
+    for r in read_global():
+        if r.get("kind") != "qa" or r.get("verdict") not in ("PASS", "FAIL", "NEEDS-WORK"):
+            continue
+        if not scope_names(str(r.get("scope") or ""), token):
+            continue
+        if not QA_AGENT_TYPE.search(str(r.get("agent_type", ""))):
+            continue
+        tp, uuid = str(r.get("agent_transcript_path") or ""), str(r.get("entry_uuid") or "")
+        if not tp or not uuid:
+            continue
+        if not _harness_agent_transcript(Path(tp), "", str(r.get("agent_id") or "")):
+            continue
+        got = report_at(tp, uuid)
+        if got is None:
+            continue
+        report, ts = got
+        verdict, scope = parse_verdict(report)
+        if verdict != r.get("verdict") or scope != str(r.get("scope") or ""):
+            continue
+        report_head = parse_qa_head(report)
+        if str(r.get("head") or "") != report_head:
+            continue
+        # A revocation that names no valid commit revokes the whole pull
+        # request: a reviewer who forgot or shortened QA-HEAD must not leave
+        # an earlier PASS standing. A PASS always needs the exact commit.
+        if report_head != head and not (report_head == "" and verdict != "PASS"):
+            continue
+        if not scope_names(scope, token):
+            continue
+        key = _ts_key(ts)
+        if key is None:
+            continue
+        if (best_ts is None or key > best_ts
+                or (key == best_ts and verdict != "PASS")):
+            best, best_ts = dict(r, verdict_ts=ts), key
+    return best
