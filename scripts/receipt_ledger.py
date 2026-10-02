@@ -590,11 +590,20 @@ def converge_latest_for(spec_dir: str, session_id: str = "") -> dict | None:
     verdict: written for a verifier persona, pointing at a harness-shaped agent
     transcript, and whose transcript re-parses to the same verdict and to this
     exact scope. A prefix match would let one spec's verdict cover another's.
-    `session_id` empty means any session: the push gate runs outside one."""
+    `session_id` empty means any session: the push gate runs outside one.
+
+    A row that names its transcript entry (`entry_uuid`, written by the reflex
+    since docs/specs/202610012100-qa-receipt-bound-to-head) is re-read from
+    that exact entry over the whole transcript, so a resumed verifier's later
+    reply cannot change what the receipt says and a verdict beyond the 256 KB
+    tail stays readable. An older row with no anchor keeps the tail read until
+    it ages out. The newest entry timestamp decides, never the ledger order; on
+    an equal timestamp GAPS wins."""
     want = normalize_spec_dir(spec_dir)
     if not want:
         return None
-    for r in reversed(read_global()):
+    best, best_key = None, None
+    for r in read_global():
         if r.get("kind") != "converge" or r.get("verdict") not in ("CONVERGED", "GAPS"):
             continue
         if normalize_spec_dir(r.get("scope", "")) != want:
@@ -604,11 +613,24 @@ def converge_latest_for(spec_dir: str, session_id: str = "") -> dict | None:
         tp = str(r.get("agent_transcript_path") or "")
         if not tp or not _harness_agent_transcript(Path(tp), session_id, str(r.get("agent_id") or "")):
             continue
-        report, verdict_ts = last_assistant_report(tp)
+        uuid = str(r.get("entry_uuid") or "")
+        if uuid:
+            got = report_at(tp, uuid)
+            if got is None:
+                continue
+            report, verdict_ts = got
+        else:
+            report, verdict_ts = last_assistant_report(tp)
         verdict, scope = parse_converge(report)
-        if verdict == r.get("verdict") and scope == want:
-            return dict(r, verdict_ts=verdict_ts)
-    return None
+        if verdict != r.get("verdict") or scope != want:
+            continue
+        key = _ts_key(verdict_ts)
+        if key is None:
+            continue
+        if (best_key is None or key > best_key
+                or (key == best_key and verdict == "GAPS")):
+            best, best_key = dict(r, verdict_ts=verdict_ts), key
+    return best
 
 
 def converge_pass_for(spec_dir: str, session_id: str = "") -> dict | None:

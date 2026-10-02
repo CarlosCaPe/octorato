@@ -428,6 +428,39 @@ class QaHeadAnchoring(unittest.TestCase):
         self._row(ok, "PASS", H1, "u-t2")
         self.assertEqual(rl.qa_latest_for("500", H1)["verdict"], "NEEDS-WORK")
 
+    def _conv_row(self, tp, verdict, uid, sd):
+        rl.append_global({"kind": "converge", "verdict": verdict, "scope": sd, "entry_uuid": uid,
+                          "agent_type": "Reality Checker", "agent_id": Path(tp).stem.replace("agent-", ""),
+                          "agent_transcript_path": tp})
+
+    def test_a_converge_receipt_is_read_from_its_anchored_entry(self):
+        sd = "docs/specs/202610020000-toy"
+        conv = lambda v: f"report\nCONVERGE-VERDICT: {v}\nCONVERGE-SCOPE: {sd}"
+        # A resumed verifier that replies CONVERGED later keeps its first GAPS.
+        tp = self._transcript("agent-k1.jsonl", [
+            self._entry(conv("GAPS"), "2026-10-02T10:00:00.000Z", "u-k1"),
+            self._entry(conv("CONVERGED"), "2026-10-02T10:30:00.000Z")])
+        self._conv_row(tp, "GAPS", "u-k1", sd)
+        self.assertEqual(rl.converge_latest_for(sd)["verdict"], "GAPS")
+        # An anchored verdict far from the end of its transcript is still read.
+        far = self._transcript("agent-k2.jsonl",
+                               [self._entry(conv("CONVERGED"), "2026-10-02T11:00:00.000Z", "u-k2")],
+                               pad_after=400)
+        self.assertGreater(os.path.getsize(far), 300_000)
+        self._conv_row(far, "CONVERGED", "u-k2", sd)
+        self.assertEqual(rl.converge_latest_for(sd)["verdict"], "CONVERGED")
+        # An older GAPS re-appended last does not outvote the newer entry.
+        self._conv_row(tp, "GAPS", "u-k1", sd)
+        self.assertEqual(rl.converge_latest_for(sd)["verdict"], "CONVERGED")
+        self.assertIsNotNone(rl.converge_pass_for(sd))
+        # A row whose entry is gone or says something else opens nothing.
+        self._conv_row(far, "CONVERGED", "u-missing", sd)
+        later = self._transcript("agent-k3.jsonl",
+                                 [self._entry(conv("GAPS"), "2026-10-02T12:00:00.000Z", "u-k3")])
+        self._conv_row(later, "CONVERGED", "u-k3", sd)   # ledger says CONVERGED, entry says GAPS
+        self.assertEqual(rl.converge_latest_for(sd)["verdict"], "CONVERGED")
+        self.assertEqual(rl.converge_latest_for(sd)["entry_uuid"], "u-k2")
+
     def test_a_repeated_uuid_must_agree(self):
         same = self._entry(self._report("PASS", H1), "2026-10-01T10:00:00.000Z", "u-dup")
         twin = dict(same, cwd="/elsewhere")
