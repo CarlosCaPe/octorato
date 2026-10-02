@@ -681,6 +681,20 @@ def _refused_handbacks(entry: dict) -> set:
             if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("tool_use_id")}
 
 
+def _delivered_results(entry: dict) -> set:
+    """tool_use ids the harness answered with `success: true`: evidence that
+    a SubagentHandback was delivered, as opposed to merely not refused (an
+    error string or a missing result is not a delivery)."""
+    if entry.get("type") != "user" or not harness_entry(entry):
+        return set()
+    result = entry.get("toolUseResult")
+    if not isinstance(result, dict) or result.get("success") is not True:
+        return set()
+    content = (entry.get("message") or {}).get("content") or []
+    return {b.get("tool_use_id") for b in content
+            if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("tool_use_id")}
+
+
 def _entry_report(entry: dict, refused: set):
     """The report one assistant entry carries, or None: a delivered
     SubagentHandback message wins over text blocks in the same entry."""
@@ -859,7 +873,7 @@ def _anchor_stands(transcript_path: str, uuid: str, same, revokes) -> bool:
     report carries the same verdict."""
     if not uuid or not _regular_file(transcript_path):
         return False
-    entries, refused = [], set()
+    entries, refused, ok_ids = [], set(), set()
     try:
         with open(transcript_path, "rb") as fh:
             for raw in fh:
@@ -870,6 +884,7 @@ def _anchor_stands(transcript_path: str, uuid: str, same, revokes) -> bool:
                 if not isinstance(entry, dict) or not harness_entry(entry):
                     continue
                 refused |= _refused_handbacks(entry)
+                ok_ids |= _delivered_results(entry)
                 if entry.get("type") in ("assistant", "user"):
                     entries.append(entry)
     except OSError:
@@ -891,8 +906,8 @@ def _anchor_stands(transcript_path: str, uuid: str, same, revokes) -> bool:
         # A run ends at a real prompt, or at a resume that arrives after the
         # agent ended its turn; one that arrives mid tool loop ("while you
         # were working") is not an end (205 of 212 real resumes are ends). A
-        # refused handback leaves the turn open, unless a handback already
-        # delivered the run's report (then the refusal is "already delivered").
+        # refused handback leaves the turn open, unless a handback the harness
+        # confirmed (`success: true`) already delivered the run's report.
         boundary = _is_prompt(e) or (
             _is_resume(e) and last_asst is not None
             and not _awaits_tool(last_asst, frozenset() if delivered else refused)
@@ -902,9 +917,9 @@ def _anchor_stands(transcript_path: str, uuid: str, same, revokes) -> bool:
             blocks = (e.get("message") or {}).get("content") or []
             if isinstance(blocks, list) and any(
                     isinstance(b, dict) and b.get("type") == "tool_use"
-                    and b.get("name") == HANDBACK_TOOL and b.get("id") not in refused
+                    and b.get("name") == HANDBACK_TOOL and b.get("id") in ok_ids
                     for b in blocks):
-                delivered = True
+                delivered = True  # the harness confirmed this handback
         if boundary:
             delivered = False
             if in_run and (final is None or not same(final)):

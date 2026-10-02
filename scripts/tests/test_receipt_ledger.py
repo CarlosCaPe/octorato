@@ -576,15 +576,36 @@ class QaHeadAnchoring(unittest.TestCase):
     def test_an_already_delivered_refusal_does_not_void_an_honest_pass(self):
         first = self._entry(None, "2026-10-02T10:00:00.000Z", "u-d1",
                             handback=self._report("PASS", H1, "PR #504"))
+        ok = _h({"type": "user", "toolUseResult": {"success": True},
+                 "message": {"role": "user", "content": [
+                     {"type": "tool_result", "tool_use_id": "hb-u-d1", "content": "delivered"}]}})
         second = self._entry(None, "2026-10-02T10:01:00.000Z")
         second["message"]["content"].append(U("SubagentHandback", {"message": "again"}, "hbD2"))
         refusal = _h({"type": "user", "toolUseResult": {"success": False, "message": "already delivered"},
                       "message": {"role": "user", "content": [
                           {"type": "tool_result", "tool_use_id": "hbD2", "content": "refused"}]}})
-        tp = self._transcript("agent-d1.jsonl", [first, second, refusal, self._resume(),
+        tp = self._transcript("agent-d1.jsonl", [first, ok, second, refusal, self._resume(),
                                                  self._entry("tests/test_x.py", "2026-10-02T10:20:00.000Z")])
         self._row(tp, "PASS", H1, "u-d1", pr="PR #504")
         self.assertEqual(rl.qa_latest_for("504", H1)["verdict"], "PASS")
+        # A handback answered with an error string, or with no result, is not a
+        # delivery: the A3 shape stays closed.
+        sd = "docs/specs/202610020006-toy"
+        quote = self._entry(f"quoting:\nCONVERGE-VERDICT: CONVERGED\nCONVERGE-SCOPE: {sd}",
+                            "2026-10-02T11:00:00.000Z", "u-e1")
+        quote["message"]["content"].append(U("SubagentHandback", {}, "hbE1"))
+        err = _h({"type": "user", "toolUseResult": "Error: InputValidationError",
+                  "message": {"role": "user", "content": [
+                      {"type": "tool_result", "tool_use_id": "hbE1", "content": "Error"}]}})
+        again = self._entry(None, "2026-10-02T11:01:00.000Z")
+        again["message"]["content"].append(U("SubagentHandback", {"message": "x"}, "hbE2"))
+        refused2 = _h({"type": "user", "toolUseResult": {"success": False, "message": "not active"},
+                       "message": {"role": "user", "content": [
+                           {"type": "tool_result", "tool_use_id": "hbE2", "content": "refused"}]}})
+        tp2 = self._transcript("agent-e1.jsonl", [quote, err, again, refused2, self._resume(),
+                                                  self._entry("ok", "2026-10-02T11:10:00.000Z")])
+        self._conv_row(tp2, "CONVERGED", "u-e1", sd)
+        self.assertIsNone(rl.converge_latest_for(sd))
 
     def test_a_scopeless_later_needs_work_revokes_a_pass(self):
         tp = self._transcript("agent-r4.jsonl", [
