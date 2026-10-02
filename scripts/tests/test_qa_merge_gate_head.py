@@ -736,15 +736,22 @@ class RepoScopeEveryReading(unittest.TestCase):
         self.assertFalse(self.protected(f"cd {self.other} && git push origin main"))
         self.assertTrue(self.protected("git push origin main"))
 
-    def test_cd_through_a_symlink_is_read_logically(self):
-        # bash's cd is logical: <brain>/link/.. is the brain, although the link
-        # points into another repo and a physical read lands there.
+    def test_a_cd_whose_logical_and_physical_readings_differ_gates(self):
+        # bash's cd is logical by default and physical under `set -P`: through
+        # <brain>/link/.. one reading is the brain and the other the link's
+        # repo, so the target is unresolvable. A link the same command creates
+        # does not exist yet when the hook reads the path.
         (self.other / "sub").mkdir()
         (self.brain / "link").symlink_to(self.other / "sub")
+        (self.other / "back").symlink_to(self.brain)
         judge = lambda cmd: gate._is_protected_target(cmd, cmd.split("&& ")[-1], str(self.tmp))
-        self.assertTrue(judge(f"cd {self.brain}/link/.. && git push origin main"))
-        self.assertTrue(judge(f"cd {self.brain}/link && cd .. && git push origin main"))
+        for cmd in (f"cd {self.brain}/link/.. && git push origin main",
+                    f"cd {self.brain}/link && cd .. && git push origin main",
+                    f"set -P && cd {self.other}/back/.. && git push origin main",
+                    f"ln -s {self.brain} {self.other}/fresh && cd {self.other}/fresh/.. && git push origin main"):
+            self.assertIsNot(judge(cmd), False, cmd)
         self.assertFalse(judge(f"cd {self.brain}/link && git push origin main"))
+        self.assertFalse(judge(f"cd {self.other}/sub/.. && git push origin main"))
 
 
 class SeekNeedsBothReadings(unittest.TestCase):

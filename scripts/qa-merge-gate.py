@@ -300,10 +300,12 @@ def _apply_dir_change(s: str, raw: str, cwd):
     removal (`'cd'`, `c""d`, `builtin 'cd'`). Only `cd <dir>` naming one
     existing directory moves the cwd; any other `cd`, `pushd` or `popd`, a
     `builtin`/`command` in front of one, CDPATH, or a target that does not
-    exist (cdable_vars resolves a variable name) leaves it unknown. The
-    target is read logically, as bash's default `cd -L` reads it: `..` drops
-    the previous word of the path before any symlink is followed, so
-    `cd <link>/..` lands next to the link, not next to what it points at."""
+    exist (cdable_vars resolves a variable name) leaves it unknown. bash
+    reads the target logically by default (`..` drops the previous word
+    before any symlink is followed) and physically under `set -P`, so the
+    path must exist as written and the two readings must reach the same
+    directory; `cd <link>/..` or a link the same command creates leaves it
+    unknown."""
     if cwd is None:
         return None
     if re.search(r"CDPATH", re.sub(r"['\"\\]", "", raw)):
@@ -320,8 +322,13 @@ def _apply_dir_change(s: str, raw: str, cwd):
             c in words[1] for c in "$`*?[{<>"):
         return None
     p = os.path.expanduser(words[1])
-    p = os.path.normpath(p if os.path.isabs(p) else os.path.join(cwd, p))
-    return p if os.path.isdir(p) else None
+    raw = p if os.path.isabs(p) else os.path.join(cwd, p)
+    logical = os.path.normpath(raw)
+    if not (os.path.isdir(raw) and os.path.isdir(logical)):
+        return None
+    if os.path.realpath(raw) != os.path.realpath(logical):
+        return None
+    return logical
 
 
 def _is_protected_target(cmd: str, matched_sub: str, session_cwd: str):
