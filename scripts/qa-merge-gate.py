@@ -378,9 +378,37 @@ def _strip_leading_previous(s: str) -> str:
     return s
 
 
+_GH_REPO_ASSIGN = re.compile(r"(?:^|[\s;&|(])(?:export\s+)?GH_REPO=(['\"]?)([^\s'\";&|)]+)\1")
+_PR_URL_REPO = re.compile(r"https?://[^/\s'\"]+/([\w.-]+/[\w.-]+)/pull/\d+")
+_API_REPO_ALL = re.compile(r"repos/([\w.-]+/[\w.-]+?)/(?:pulls/\d+/merge|merges|git/refs)\b")
+
+
+def _pointed_repos(cmd: str, sub: str) -> list:
+    """Every repo the command can point gh at besides the directory: a
+    GH_REPO assignment anywhere in the command (or in the hook's own
+    environment), a pull request URL, and every `repos/<o>/<r>/...` merge path
+    in the text (a field value can carry one before the real endpoint)."""
+    out = [m.group(2) for m in _GH_REPO_ASSIGN.finditer(cmd)]
+    if os.environ.get("GH_REPO", "").strip():
+        out.append(os.environ["GH_REPO"].strip())
+    out += _PR_URL_REPO.findall(sub)
+    out += _API_REPO_ALL.findall(sub)
+    return out
+
+
 def _scope_current(cmd: str, matched_sub: str, session_cwd: str):
     """The current scope reader (see _is_protected_target)."""
     sub = _strip_leading(matched_sub)
+
+    # Issue #351: GH_REPO, a pull request URL and a repo path inside an API
+    # field can each aim gh at a protected repo from any directory. Any such
+    # pointer that names a protected repo gates; the readers below may only
+    # add gating to this, and the previous judge stays the floor.
+    pointed = [_canon_slug(v) for v in _pointed_repos(cmd, sub)]
+    if pointed:
+        known = {s for s in (_remote_slug(r) for r in _protected_roots()) if s}
+        if any(sl in known for sl in pointed if sl):
+            return True
 
     # gh api / curl write (PR merge, branch merge into main/master, or a
     # main/master ref update): the target repo is in the REST path, NOT the cwd

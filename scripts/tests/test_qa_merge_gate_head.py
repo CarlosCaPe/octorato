@@ -610,6 +610,23 @@ class RepoScopeEveryReading(unittest.TestCase):
             sub = [s for s in gate._split_subcmds(cmd) if "merge" in s][0]
             self.assertIsNot(gate._is_protected_target(cmd, sub, str(self.brain)), False, cmd)
 
+    def test_any_pointer_at_a_protected_repo_gates_from_anywhere(self):
+        # Issue #351: from a non-protected directory, with no approval.
+        (self.brain / ".git" / "config").write_text(
+            '[remote "origin"]\n\turl = https://github.com/acme/brain.git\n')
+        cwd = str(self.other)
+        for cmd in ("GH_REPO=acme/brain gh pr merge 96 --squash",
+                    "export GH_REPO=acme/brain; gh pr merge 96",
+                    "gh pr merge https://github.com/acme/brain/pull/96 --squash",
+                    "gh api -X PUT -f commit_title=repos/a/b/merges repos/acme/brain/pulls/96/merge",
+                    "gh pr merge 96 --squash -t 'x -R other/repo' -R acme/brain"):
+            sub = [s for s in gate._split_subcmds(cmd) if "merge" in s][-1]
+            self.assertIsNot(gate._is_protected_target(cmd, sub, cwd), False, cmd)
+        # Pointers at an unprotected repo from an unprotected directory stay ungated.
+        for cmd in ("GH_REPO=acme/other gh pr merge 96 --squash",
+                    "gh pr merge https://github.com/acme/other/pull/96"):
+            self.assertFalse(gate._is_protected_target(cmd, cmd, cwd), cmd)
+
     def test_a_cd_both_readings_agree_on_still_moves_it(self):
         self.assertFalse(self.protected(f"cd {self.other} && git push origin main"))
         self.assertTrue(self.protected("git push origin main"))
