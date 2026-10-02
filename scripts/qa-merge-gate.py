@@ -283,10 +283,19 @@ def _effective_cwds(cmd: str, matched_sub: str, session_cwd: str) -> list:
             if raw == matched_sub:
                 break
             s = _strip_leading(raw).strip()
-            m = re.match(r"^cd\s+(\S+)", s)
-            if m:
+            # Only a plain `cd <dir>` is read. Any other directory change
+            # (`pushd`, `popd`, `builtin cd`, a `cd` option, a redirection
+            # or a second word, CDPATH) leaves the directory unknown.
+            if re.search(r"(?<![\w$])CDPATH\b", raw) or re.match(
+                    r"^(?:builtin\s+|command\s+)?(?:pushd|popd)\b|^builtin\s+cd\b", s):
+                cwd = None
+                continue
+            m = re.match(r"^cd\s+(\S+)\s*$", s)
+            if m and not m.group(1).startswith("-") and cwd is not None:
                 p = os.path.expanduser(m.group(1).strip("'\""))
                 cwd = p if os.path.isabs(p) else os.path.join(cwd, p)
+            elif re.match(r"^cd(?:\s|$)", s):
+                cwd = None
         if cwd not in out:
             out.append(cwd)
     return out
@@ -443,9 +452,10 @@ def _pointed_repos(cmd: str, sub: str) -> list:
 def _env_with_option(matched_sub: str) -> bool:
     """True when an `env` in front of the command carries any option. env can
     change the directory (`-C`), replace the command line (`-S`), and GNU
-    accepts abbreviations and clusters, so the gate does not model it: an
-    optioned env makes the target unreadable. `env NAME=value gh ...` with no
-    option stays readable."""
+    accepts abbreviations and clusters, so the gate does not model it: any
+    word between env and the command that is not a plain `NAME=value` (an
+    option however it is spelled, `$'-C'` included) makes the target
+    unreadable. `env NAME=value gh ...` stays readable."""
     s = matched_sub.lstrip()
     try:
         words = _bash_words(s)
@@ -454,7 +464,7 @@ def _env_with_option(matched_sub: str) -> bool:
     head = next((j for j, w in enumerate(words)
                  if w in ("gh", "git") or w.endswith(("/gh", "/git"))), len(words))
     return any((w == "env" or w.endswith("/env"))
-               and any(x.startswith("-") for x in words[i + 1:head])
+               and any(not re.fullmatch(r"[A-Za-z_]\w*\+?=[^\s$`\\]*", x) for x in words[i + 1:head])
                for i, w in enumerate(words[:head]))
 
 
@@ -532,6 +542,8 @@ def _scope_current(cmd: str, matched_sub: str, session_cwd: str):
     bases = _effective_cwds(cmd, matched_sub, session_cwd)
     m = re.match(r"^\s*git\s+((?:(?:-C|-c)\s+\S+\s+)*)", sub)
     c = re.search(r"-C\s+(\S+)", m.group(1)) if (m and m.group(1)) else None
+    if None in bases:
+        return None  # a directory change the gate cannot read
     for base in bases:
         if c:
             raw = os.path.expanduser(c.group(1).strip("'\""))
@@ -1065,7 +1077,8 @@ def _unparsed_publish(cmd: str) -> bool:
             return m.group(1)
 
     decoded = re.sub(r"\$'((?:\\.|[^'\\])*)'", ansi_c, cmd)
-    return bool(_PUBLISH_MENTION.search(re.sub(r"['\"\\]", "", decoded)))
+    split_string = re.sub(r"\\[_tnfv]", " ", decoded)  # env -S word breaks
+    return any(_PUBLISH_MENTION.search(re.sub(r"['\"\\]", "", text)) for text in (decoded, split_string))
 
 
 def _find_publish_subcmd(cmd: str) -> str | None:

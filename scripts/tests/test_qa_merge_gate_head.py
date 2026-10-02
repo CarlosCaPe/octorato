@@ -674,6 +674,13 @@ class RepoScopeEveryReading(unittest.TestCase):
                     "XDG_CONFIG_HOME=/x gh pr merge 9", "GIT_COMMON_DIR=/x gh pr merge 9"):
             sub = [s for s in gate._split_subcmds(cmd) if "merge" in s][-1]
             self.assertIsNot(gate._is_protected_target(cmd, sub, cwd), False, cmd)
+        for cmd in ("env $'-C' /x gh pr merge 9", "pushd /x && gh pr merge 9",
+                    "builtin cd /x && gh pr merge 9", "cd -P /x && gh pr merge 9",
+                    "cd -- /x && gh pr merge 9", "CDPATH=/x cd y && gh pr merge 9",
+                    "cd >/dev/null /x && gh pr merge 9"):
+            sub = [s for s in gate._split_subcmds(cmd) if "merge" in s][-1]
+            self.assertIsNot(gate._is_protected_target(cmd, sub, cwd), False, cmd)
+        self.assertTrue(gate._unparsed_publish("env -S 'gh\\_pr\\_merge\\_9'"))
         for cmd in ("env X=1 gh pr merge 9", "cd $HOME/x && gh pr merge 9"):
             sub = [s for s in gate._split_subcmds(cmd) if "merge" in s][-1]
             self.assertFalse(gate._env_with_option(sub), cmd)
