@@ -130,6 +130,7 @@ import json
 import os
 import shlex
 import sqlite3
+from collections import Counter
 import subprocess
 import sys
 import tempfile
@@ -422,30 +423,46 @@ def revisa(cfg, ahora=None, estados=None, cobertura=None):
     # que llega un chat nuevo, y ese chat es invisible hasta que alguien se acuerda
     # de agregarlo: se encontraron cuatro chats con mensajes de clientes que nunca
     # entraron a la lista, uno con 54 dias de silencio. Con `vigilancia.todos: true`
-    # el vigia cubre, ademas de la lista, todo chat del puente que haya recibido al
-    # menos un mensaje entrante (sin entrantes no hay nadie esperando). Fuera quedan
-    # `status@broadcast`, el numero `propio` del puente y lo que diga
-    # `vigilancia.excluir`. La lista explicita sigue mandando en etiqueta, cliente y
-    # puente; lo descubierto sale como "chat sin etiqueta" para que alguien lo nombre.
+    # el vigia cubre, ademas de la lista, todo chat que haya recibido al menos un
+    # mensaje entrante (sin entrantes no hay nadie esperando), grupos incluidos.
+    #   - `todos_puentes`: puentes que se recorren (por omision, solo el de
+    #     `vigilancia.puente`). Ojo con el personal: cientos de chats viejos.
+    #   - `todos_dias`: si se da, solo cuenta un chat con un entrante en esa
+    #     ventana; acota ruido y costo en bases grandes.
+    #   - Fuera siempre: difusiones (`@broadcast`, estados) y canales
+    #     (`@newsletter`), que no se contestan; el numero `propio` del puente
+    #     (digitos o JID, con o sin `+`); y `vigilancia.excluir`.
+    # La lista explicita sigue mandando en etiqueta, cliente y puente; lo
+    # descubierto sale como "chat sin etiqueta" para que alguien lo nombre. La
+    # deduplicacion va por (jid, puente): el mismo JID en otro puente es otra
+    # conversacion.
     chats = list(vig.get("chats") or [])
     if vig.get("todos"):
-        conocidos = {c["jid"] for c in chats}
-        excluir = set(vig.get("excluir") or []) | {"status@broadcast"}
+        conocidos = {(c["jid"], c.get("puente", nombre_puente)) for c in chats}
+        excluir = set(vig.get("excluir") or [])
+        dias = vig.get("todos_dias")
+        desde_sql = ((ahora - timedelta(days=int(dias))).isoformat()
+                     if dias else None)
         for nombre in vig.get("todos_puentes") or [nombre_puente]:
             con = abrir(nombre)
             if con is None:
                 continue
             propio = str(((cfg.get("puentes") or {}).get(nombre) or {})
-                         .get("propio") or "")
-            filas = con.execute(
-                "SELECT DISTINCT chat_jid FROM messages WHERE is_from_me = 0 "
-                "AND chat_jid IS NOT NULL ORDER BY chat_jid").fetchall()
-            for (jid,) in filas:
-                if jid in conocidos or jid in excluir:
+                         .get("propio") or "").split("@", 1)[0].lstrip("+")
+            sql = ("SELECT DISTINCT chat_jid FROM messages WHERE is_from_me = 0 "
+                   "AND chat_jid IS NOT NULL")
+            args = []
+            if desde_sql:
+                sql += " AND timestamp >= ?"
+                args.append(desde_sql)
+            for (jid,) in con.execute(sql + " ORDER BY chat_jid", args).fetchall():
+                if (jid, nombre) in conocidos or jid in excluir:
+                    continue
+                if jid.endswith(("@broadcast", "@newsletter")):
                     continue
                 if propio and jid.split("@", 1)[0] == propio:
                     continue
-                conocidos.add(jid)
+                conocidos.add((jid, nombre))
                 chats.append({"jid": jid, "quien": f"chat sin etiqueta ({jid})",
                               "cliente": "Sin etiquetar", "canal": "whatsapp",
                               "puente": nombre})
@@ -1171,27 +1188,38 @@ def selftest():
                     f"chat {chat}: {'debia avisar y callo' if debia else 'no debia avisar y grito'}")
 
         # ---- todos los chats, sin lista a mano -----------------------------
-        # Con `todos` el vigia descubre los chats con entrantes. B va en la lista
-        # (contestado, no avisa), E esta excluido, el numero propio del puente no
-        # cuenta aunque tenga entrantes, y A, F y G salen como "sin etiqueta".
+        # Con `todos` el vigia descubre los chats con entrantes. A va en la lista
+        # explicita y SI avisa: debe salir una sola vez y con su etiqueta, nunca
+        # repetido como "sin etiqueta". E esta excluido. El numero propio (escrito
+        # como JID completo, como lo documenta la plantilla), una difusion y un
+        # canal tienen entrantes pero no cuentan. F y G salen como "sin etiqueta".
         con = sqlite3.connect(db)
-        t = (ahora - timedelta(minutes=45)).astimezone()
-        con.execute("INSERT INTO messages VALUES (?,?,?,?,?,?)",
-                    ("p1", "PROPIO@s.whatsapp.net", 0, t.isoformat(sep=" "), None,
-                     "latido"))
+        t = (ahora - timedelta(minutes=45)).astimezone().isoformat(sep=" ")
+        for mid, jid in (("p1", "5210000@s.whatsapp.net"), ("s1", "status@broadcast"),
+                         ("n1", "999@newsletter")):
+            con.execute("INSERT INTO messages VALUES (?,?,?,?,?,?)",
+                        (mid, jid, 0, t, None, "aviso"))
         con.commit(); con.close()
-        cfg_todos = {"puentes": {"p": {"db": str(db), "propio": "PROPIO"}},
+        cfg_todos = {"puentes": {"p": {"db": str(db),
+                                       "propio": "+5210000@s.whatsapp.net"}},
                      "vigilancia": {"puente": "p", "umbral_minutos": 20,
                                     "todos": True, "excluir": ["E"],
-                                    "chats": [{"jid": "B", "quien": "B",
-                                               "cliente": "B",
+                                    "chats": [{"jid": "A", "quien": "A",
+                                               "cliente": "A",
                                                "canal": "whatsapp"}]}}
-        r_todos = {s["quien"] for s in revisa(cfg_todos, ahora, [], [])}
-        esperado = {f"chat sin etiqueta ({c})" for c in "AFG"}
+        r_todos = Counter(s["quien"] for s in revisa(cfg_todos, ahora, [], []))
+        esperado = Counter({"A": 1, "chat sin etiqueta (F)": 1,
+                            "chat sin etiqueta (G)": 1})
         casos += 1
         if r_todos != esperado:
-            fallos.append(f"todos: esperaba {sorted(esperado)} y salio "
-                          f"{sorted(r_todos)}")
+            fallos.append(f"todos: esperaba {dict(esperado)} y salio "
+                          f"{dict(r_todos)}")
+        # Ventana de 1 dia: todos los entrantes de prueba son recientes, asi que
+        # el resultado no cambia (la ventana no debe esconder chats vivos).
+        cfg_todos["vigilancia"]["todos_dias"] = 1
+        casos += 1
+        if Counter(s["quien"] for s in revisa(cfg_todos, ahora, [], [])) != esperado:
+            fallos.append("todos_dias: la ventana cambio el resultado de chats recientes")
 
         # ---- un chat puede vivir en OTRO puente -----------------------------
         # El fallo que esto vigila es silencioso: con un solo puente global, un
