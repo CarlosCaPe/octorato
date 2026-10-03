@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-violation-deploy-then-restart",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "aws --profile ops ssm send-command --instance-ids i-0aaaaaaaaaaaaaaaa --document-name AWS-RunShellScript --parameters '{\"commands\": [\"echo aW1wb3J0IHNxbGl0ZTMKYyA9IHNxbGl0ZTMuY29ubmVjdCgnZmlsZTovb3B0L2Z4L3N0b3JlLmRiP21vZGU9cm8nLCB1cmk9VHJ1ZSkKcHJpbnQoYy5leGVjdXRlKCdzZWxlY3QgY291bnQoKikgZnJvbSB0JykuZmV0Y2hvbmUoKSkK | base64 -d > /opt/fx/watch.py\", \"systemctl restart fx-watch\"]}'"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_deploy_then_restart_transcript.jsonl"
+}

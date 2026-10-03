@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-violation-deploy-non-decodable-blob",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "aws --profile ops ssm send-command --instance-ids i-0aaaaaaaaaaaaaaaa --document-name AWS-RunShellScript --parameters '{\"commands\": [\"echo QUJD%%%notb64AAAAAAAAAA | base64 -d > /opt/fx/watch.py\"]}'"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_deploy_non_decodable_blob_transcript.jsonl"
+}

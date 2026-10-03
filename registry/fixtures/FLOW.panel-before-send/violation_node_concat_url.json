@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-violation-node-concat-url",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "node -e \"fetch('http://local'+'host:80'+'81/api/se'+'nd', {method: 'POST', body: '{}'})\""
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_node_concat_url_transcript.jsonl"
+}

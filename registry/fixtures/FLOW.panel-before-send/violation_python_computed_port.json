@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-violation-python-computed-port",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "python3 -c \"import urllib.request as u; u.urlopen('http://127.0.0.1:'+str(8000+81)+'/api/x')\""
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_python_computed_port_transcript.jsonl"
+}
