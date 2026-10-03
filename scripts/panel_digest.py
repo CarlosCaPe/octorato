@@ -60,6 +60,7 @@ CLI
     panel_digest.py --body-file F [--to R ...] [--attach P ...]
     panel_digest.py --tool-input F.json --tool-name NAME
     either form plus --panel-request prints the reviewer block instead
+    either form plus --validation-request prints the chat-validation message
 A mail's body file is the subject line, then the body (then htmlBody).
 """
 from __future__ import annotations
@@ -355,6 +356,20 @@ def message_parts(tool_name: str, tool_input) -> list:
     return [_mcp_message(tool_name, tool_input)]
 
 
+def validation_text(msg: Message) -> str:
+    """The chat-validation message for one outgoing message (the gate's
+    chat-validated release): the digest prefix, the recipients, the
+    attachment names, and the exact normalized text inside ONE «...» block.
+    The gate compares each part for equality, never as a substring."""
+    lines = [f"Validate sha256:{msg.digest[:12]}",
+             "To: " + " ".join(norm_recipients(msg.recipients))]
+    names = [os.path.basename(str(p)) for _, p in msg.attachments if p]
+    if names:
+        lines.append("Attach: " + " ".join(names))
+    lines.append("«" + normalize(msg.text) + "»")
+    return "\n".join(lines)
+
+
 def digests_for(tool_name: str, tool_input) -> list:
     return [m.digest for m in message_parts(tool_name, tool_input)]
 
@@ -373,6 +388,8 @@ def _cli(argv: list) -> int:
     ap.add_argument("--tool-name", default="", help="send tool name, with --tool-input")
     ap.add_argument("--panel-request", action="store_true",
                     help="print the reviewer block (recipients, attachments, body, digest)")
+    ap.add_argument("--validation-request", action="store_true",
+                    help="print the chat-validation message for an approver (chat-validated release)")
     a = ap.parse_args(argv)
     try:
         if a.tool_input:
@@ -383,7 +400,8 @@ def _cli(argv: list) -> int:
                 raise PanelDigestError("--to is required: the recipient is part of the digest")
             msgs = [Message(text, [(file_sha256(p), p) for p in a.attach], a.to)]
         for m in msgs:
-            print(m.panel_block() if a.panel_request else m.digest)
+            print(m.panel_block() if a.panel_request
+                  else validation_text(m) if a.validation_request else m.digest)
         return 0
     except (PanelDigestError, OSError, ValueError) as e:
         print(f"panel_digest: {e}", file=sys.stderr)

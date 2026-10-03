@@ -5,7 +5,8 @@
     or allowed when it is benign, and the committed fixtures match the builder
   - the closed yes-list, sender id normalization
   - the support replica path: an approver there releases, its is_from_me never does
-  - an attachment's file name must be in the validation message
+  - an attachment's file name must be a whole token of the validation message
+  - recipients and the quoted text are compared for equality, never as substrings
   - the sent-ledger reflex writes the release key, and the gate then refuses
     a second send on that approval
 
@@ -138,7 +139,7 @@ class SupportReplica(Built):
     def test_bridge_own_account_never_approves(self):
         jid = seed._jid(113)
         self._support([("S1", jid, seed.OPERATOR, "sí", "2026-10-03 11:58:00+00:00", 1)])
-        self.assertIn("not an approver",
+        self.assertIn("an is_from_me yes never releases",
                       run_gate(self.home, self.fdir, self.payload("violation_store_missing")))
 
 
@@ -152,19 +153,46 @@ class Attachments(Built):
         msg = pd.message_parts(p["tool_name"], p["tool_input"])[0]
         panel_fixture_seed.seed_receipt(self.home, p["session_id"], msg, "PASS",
                                         "2026-10-03T11:55:00Z", "attachcase0000001")
+        vtext = pd.validation_text(msg)
+        if not v_names_file:
+            vtext = vtext.replace("Attach: hoja.txt", "")
         sent = self.home / ".claude" / ".cache" / "receipts" / "sent.jsonl"
         lines = [json.loads(ln) for ln in sent.read_text(encoding="utf-8").splitlines()]
         for ln in lines:
-            if ln.get("message_id") == "V101" and v_names_file:
-                ln["text"] += " Adjunto: hoja.txt"
+            if ln.get("message_id") == "V101":
+                ln["text"] = pd.normalize(vtext)
         sent.write_text("".join(json.dumps(ln) + "\n" for ln in lines), encoding="utf-8")
         return run_gate(self.home, self.fdir, p)
 
     def test_attachment_name_required(self):
-        self.assertIn("does not name hoja.txt", self._case(False))
+        self.assertIn("does not name the attachment(s) ['hoja.txt']", self._case(False))
 
     def test_attachment_named_releases(self):
         self.assertEqual(self._case(True), "")
+
+
+class Validation(unittest.TestCase):
+    def setUp(self):
+        self.g = _gate_module()
+
+    def test_tokens_are_whole(self):
+        m = pd.Message("Hola", [], ["bob@example.test"])
+        good = pd.validation_text(m)
+        self.assertEqual(self.g._validates(good, m), "")
+        bad = good.replace("bob@example.test", "notbob@example.test.evil")
+        self.assertIn("names recipients", self.g._validates(bad, m))
+        self.assertIn("names recipients", self.g._validates(good.replace("To:", "To: x@example.test"), m))
+
+    def test_block_is_compared_for_equality(self):
+        m = pd.Message("Aceptamos la oferta.", [], ["a@example.test"])
+        longer = pd.validation_text(pd.Message("Aceptamos la oferta. Salvo la clausula 5.", [],
+                                               ["a@example.test"]))
+        longer = longer.replace(longer.split("sha256:")[1][:12], m.digest[:12])
+        self.assertIn("exactly", self.g._validates(longer, m))
+
+    def test_two_blocks_is_not_a_validation(self):
+        m = pd.Message("x", [], ["a@example.test"])
+        self.assertIsNone(self.g.parse_validation(pd.validation_text(m) + " «y»"))
 
 
 class SingleUse(Built):
@@ -178,7 +206,7 @@ class SingleUse(Built):
                        capture_output=True, env=env, timeout=60)
         sent = self.home / ".claude" / ".cache" / "receipts" / "sent.jsonl"
         last = json.loads(sent.read_text(encoding="utf-8").splitlines()[-1])
-        self.assertEqual(last.get("chat_release"), f"{seed._jid(101)}|V101|A101")
+        self.assertEqual(last.get("chat_release"), f"{seed._jid(101)}|A101")
         self.assertIn("already released a send", run_gate(self.home, self.fdir, p))
 
     def test_reflex_records_whatsapp_text(self):

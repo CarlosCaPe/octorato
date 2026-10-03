@@ -135,6 +135,76 @@
         "10000000000001@lid"
       ],
       "window_minutes": 60
+    },
+    {
+      "jid": "120363900000000116@g.us",
+      "label": "fixture validation chat 116",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363900000000117@g.us",
+      "label": "fixture validation chat 117",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363900000000118@g.us",
+      "label": "fixture validation chat 118",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363900000000119@g.us",
+      "label": "fixture validation chat 119",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363900000000120@g.us",
+      "label": "fixture validation chat 120",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363900000000121@g.us",
+      "label": "fixture validation chat 121",
+      "since": "2026-10-03",
+      "approvers": [],
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363900000000122@g.us",
+      "label": "fixture validation chat 122",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363900000000123@g.us",
+      "label": "fixture validation chat 123",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60
     }
   ]
 }

@@ -7,7 +7,7 @@ five things a fixture has to hold at once: the private allowlist with
 per send and the gate receipt. Writing them by hand drifts (a digest changes,
 a timestamp moves), so this script rebuilds the whole directory from the CASES
 table below. Every id is synthetic and exists nowhere: chats 120363900000000NNN,
-approver 10000000000001, a non-approver 20000000000002, the operator's own
+approver 10000000000001 (the default `approvers`), a non-approver 20000000000002, the operator's own
 phone 34600000000, mail at example.test.
 
 Each payload carries `_expect`, the substring its deny reason must hold (""
@@ -15,8 +15,8 @@ for a benign case); scripts/tests/test_chat_release.py checks it, the selftest
 harness ignores it.
 
 Timeline of a case (the operator turn at 12:00 is the selftest clock): panel
-receipt 11:55, validation message V 11:57, approval 11:58. A case overrides
-what it needs.
+receipt 11:55, validation message V 11:57 (panel_digest.validation_text of the
+send), approval 11:58. A case overrides what it needs.
 
 Usage: chat_release_fixture_seed.py [fixture_dir]   (default: the rule's dir)
 """
@@ -52,29 +52,41 @@ def _mail(n: int, to: str = "office@example.test") -> dict:
             "body": f"Buenos días, adjunto la solicitud número {n} firmada. Saludos."}
 
 
-def _v_text(tin: dict, to: str) -> str:
-    return (f"Para validar, este correo sale a {to}:\nAsunto: {tin['subject']}\n"
-            f"{tin['body']}\n¿Lo envío?")
+def _msg(tool: str, tin: dict, home: Path):
+    old = os.environ.get("HOME")
+    os.environ["HOME"] = str(home)
+    try:
+        return panel_digest.message_parts(tool, tin)[0]
+    finally:
+        os.environ["HOME"] = old or ""
 
 
-# name, chat, payload kind, overrides. Fields:
+def _other_validation(n: int) -> str:
+    """A validation message for a DIFFERENT mail to the same chat."""
+    return panel_digest.validation_text(panel_digest.Message(
+        f"Otra solicitud {n}\nTexto distinto {n}.", [], ["office@example.test"]))
+
+
+# One case per release path or failed condition. Fields:
 #   tool / tool_input      the send S (default: a Gmail send_email of _mail(n))
 #   v                      sent-ledger V line overrides (None = no V line)
+#   v_from                 build V from this tool input instead of S's
+#   v_edit                 (old, new) replaced in V's generated text
 #   rows                   store rows (id, sender, content, "HH:MM:SS", is_from_me)
+#   approvers              the chat row's approvers (default [APPROVER@lid])
 #   panel                  panel receipt time HH:MM:SS, None for no receipt
 #   extra_sent             more sent-ledger lines
 #   expect                 deny-reason substring ("" = allow)
 CASES = [
     {"name": "benign_approved_by_approver", "n": 101,
      "rows": [("A101", APPROVER, "Sí, así envíalo @5215500000000", "11:58:00", 0)], "expect": ""},
-    {"name": "benign_approved_by_operator_phone", "n": 102,
-     "rows": [("A102", OPERATOR, "ok", "11:58:00", 1)], "expect": ""},
+    {"name": "violation_operator_plain_yes_personal", "n": 102,
+     "rows": [("A102", OPERATOR, "ok", "11:58:00", 1)], "expect": "an is_from_me yes never releases"},
     {"name": "benign_whatsapp_third_party", "n": 103, "tool": "mcp__whatsapp__send_message",
      "tool_input": {"recipient": "5215511111103", "message": "Hola, la cita queda el martes 10:00."},
      "rows": [("A103", APPROVER, "dale!", "11:58:00", 0)], "expect": ""},
     {"name": "violation_approved_by_non_approver", "n": 104,
-     "rows": [("A104", OTHER, "sí", "11:58:00", 0)],
-     "expect": "not an approver"},
+     "rows": [("A104", OTHER, "sí", "11:58:00", 0)], "expect": "not an approver"},
     {"name": "violation_approval_before_validation", "n": 105,
      "rows": [("A105", APPROVER, "envíalo", "11:56:30", 0)],
      "expect": "before the validation message"},
@@ -85,20 +97,14 @@ CASES = [
      "rows": [("A107", APPROVER, "ok", "11:58:00", 0),
               ("R107", APPROVER, "espera, no lo mandes todavía", "11:59:00", 0)],
      "expect": "took the approval back"},
-    {"name": "violation_validation_body_differs", "n": 108,
-     "v": {"text": "Para validar, sale a office@example.test: Asunto: Solicitud 108 "
-                   "Buenos días, adjunto la solicitud número 999 firmada. Saludos."},
-     "rows": [("A108", APPROVER, "sí", "11:58:00", 0)],
-     "expect": "does not quote"},
-    {"name": "violation_recipient_not_named", "n": 109,
-     "v": {"text": "Para validar: Solicitud 109 Buenos días, adjunto la solicitud número 109 "
-                   "firmada. Saludos."},
-     "rows": [("A109", APPROVER, "sí", "11:58:00", 0)],
-     "expect": "does not name office@example.test"},
+    {"name": "violation_validation_body_differs", "n": 108, "v_edit": ("número 108", "número 999"),
+     "rows": [("A108", APPROVER, "sí", "11:58:00", 0)], "expect": "does not quote this send's text exactly"},
+    {"name": "violation_recipient_not_named", "n": 109, "v_edit": ("To: office@example.test", "To:"),
+     "rows": [("A109", APPROVER, "sí", "11:58:00", 0)], "expect": "names recipients []"},
     {"name": "violation_second_send_reuses_approval", "n": 110,
      "rows": [("A110", APPROVER, "sí", "11:58:00", 0)],
      "extra_sent": [{"channel": "gmail", "recipient": "office@example.test", "message_id": "G110",
-                     "chat_release": f"{_jid(110)}|V110|A110", "ok": True, "ts": "11:59:00"}],
+                     "chat_release": f"{_jid(110)}|A110", "ok": True, "ts": "11:59:00"}],
      "expect": "already released a send"},
     {"name": "violation_deploy_with_approval", "n": 111, "tool": "Bash",
      "tool_input": {"command": "npx wrangler deploy"}, "panel": None, "v": None,
@@ -117,6 +123,38 @@ CASES = [
      "extra_sent": [{"channel": "wa-personal", "recipient": _jid(115), "message_id": "A115",
                      "text": "ok", "ok": True, "ts": "11:58:05"}],
      "expect": "no approver replied yes"},
+    {"name": "violation_agent_yes_no_message_id", "n": 116,
+     "rows": [("X116", OPERATOR, "ok", "11:58:00", 1)],
+     "extra_sent": [{"channel": "wa-personal", "recipient": _jid(116), "message_id": "",
+                     "text": "ok", "ok": True, "ts": "11:58:05"}],
+     "expect": "an is_from_me yes never releases"},
+    {"name": "violation_truncated_send", "n": 117,
+     "tool_input": {"to": ["office@example.test"], "subject": "Oferta 117", "body": "Aceptamos la oferta."},
+     "v_from": {"to": ["office@example.test"], "subject": "Oferta 117",
+                "body": "Aceptamos la oferta. Siempre que se elimine la clausula 5."},
+     "rows": [("A117", APPROVER, "sí", "11:58:00", 0)], "expect": "does not quote this send's text exactly"},
+    {"name": "violation_recipient_substring", "n": 118,
+     "tool_input": {"to": ["bob@example.test"], "subject": "Hola 118", "body": "Hola 118."},
+     "v_edit": ("To: bob@example.test", "To: notbob@example.test.evil"),
+     "rows": [("A118", APPROVER, "sí", "11:58:00", 0)], "expect": "names recipients"},
+    {"name": "violation_cc_missing", "n": 119,
+     "tool_input": {"to": ["office@example.test"], "cc": ["boss@example.test"], "subject": "Hola 119",
+                    "body": "Hola 119."},
+     "v_edit": ("boss@example.test ", ""),
+     "rows": [("A119", APPROVER, "sí", "11:58:00", 0)], "expect": "names recipients"},
+    {"name": "violation_one_yes_two_validations", "n": 120, "v": {"ts": "11:56:50"},
+     "rows": [("A120", APPROVER, "ok", "11:58:00", 0)],
+     "extra_sent": [{"channel": "wa-personal", "recipient": _jid(120), "message_id": "V120b",
+                     "text": _other_validation(120), "ok": True, "ts": "11:57:00"}],
+     "expect": "answers another validation message"},
+    {"name": "violation_empty_approvers", "n": 121, "approvers": [],
+     "rows": [("A121", APPROVER, "sí", "11:58:00", 0)], "expect": "ENVÍO SIN PEDIDO"},
+    {"name": "violation_operator_retraction", "n": 122,
+     "rows": [("A122", APPROVER, "sí", "11:58:00", 0), ("R122", OPERATOR, "espera", "11:59:00", 1)],
+     "expect": "took the approval back"},
+    {"name": "violation_retraction_mejor_no", "n": 123,
+     "rows": [("A123", APPROVER, "sí", "11:58:00", 0), ("R123", APPROVER, "mejor no", "11:59:00", 0)],
+     "expect": "took the approval back"},
 ]
 
 
@@ -154,22 +192,25 @@ def build(fdir: Path) -> int:
         tool = c.get("tool", "mcp__gmail__send_email")
         tin = c.get("tool_input") or _mail(n)
         cfg["chats"].append({"jid": jid, "label": f"fixture validation chat {n}", "since": DAY,
-                             "approvers": [f"{APPROVER}@lid"], "window_minutes": 60})
+                             "approvers": c.get("approvers", [f"{APPROVER}@lid"]),
+                             "window_minutes": 60})
         for rid, sender, content, hms, from_me in c.get("rows", []):
             con.execute("INSERT INTO messages (id, chat_jid, sender, content, timestamp, is_from_me) "
                         "VALUES (?,?,?,?,?,?)", (rid, jid, sender, content, f"{DAY} {hms}+00:00", from_me))
-        to = (tin.get("to") or [tin.get("recipient", "")])[0] if isinstance(tin, dict) else ""
         if c.get("v", {}) is not None and tool != "Bash":
-            if tool.startswith("mcp__whatsapp"):
-                vtext = f"Para validar, este mensaje sale a {to}: {tin['message']} ¿Lo envío?"
-            else:
-                vtext = _v_text(tin, to)
+            vtext = panel_digest.validation_text(_msg(tool, c.get("v_from") or tin, home))
+            if c.get("v_from"):
+                # same digest as S, so only the quoted text differs
+                vtext = vtext.replace(_msg(tool, c["v_from"], home).digest[:12],
+                                      _msg(tool, tin, home).digest[:12])
+            if c.get("v_edit"):
+                assert c["v_edit"][0] in vtext, c["name"]
+                vtext = vtext.replace(*c["v_edit"])
             v = {"session_id": session, "tool_use_id": f"tv{n}", "channel": "wa-personal",
                  "recipient": jid, "message_id": f"V{n}", "chat_jid": jid, "digest": "",
                  "ok": True, "panel_receipt": "", "text": panel_digest.normalize(vtext),
                  "ts": "11:57:00"}
             v.update(c.get("v") or {})
-            v["text"] = panel_digest.normalize(v["text"])
             sent.append(v)
         for extra in c.get("extra_sent", []):
             sent.append(dict({"session_id": session, "tool_use_id": f"tx{n}", "digest": "",
@@ -190,13 +231,7 @@ def build(fdir: Path) -> int:
             "".join(json.dumps(e, ensure_ascii=False) + "\n" for e in entries), encoding="utf-8")
         panel = c.get("panel", "11:55:00")
         if panel and tool != "Bash":
-            old = os.environ.get("HOME")
-            os.environ["HOME"] = str(home)
-            try:
-                msgs = panel_digest.message_parts(tool, tin)
-            finally:
-                os.environ["HOME"] = old or ""
-            for i, m in enumerate(msgs):
+            for i, m in enumerate([_msg(tool, tin, home)]):
                 panel_fixture_seed.seed_receipt(home, session, m, "PASS", f"{DAY}T{panel}Z",
                                                 f"cvr{n:03d}{i:02d}0000000000"[:17])
     con.commit()

@@ -10,5 +10,5 @@
   },
   "cwd": "/home/user",
   "transcript_path": "violation_recipient_not_named_transcript.jsonl",
-  "_expect": "does not name office@example.test"
+  "_expect": "names recipients []"
 }

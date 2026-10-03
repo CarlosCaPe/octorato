@@ -1,0 +1,17 @@
+{
+  "session_id": "fx-cvr-119",
+  "tool_name": "mcp__gmail__send_email",
+  "tool_input": {
+    "to": [
+      "office@example.test"
+    ],
+    "cc": [
+      "boss@example.test"
+    ],
+    "subject": "Hola 119",
+    "body": "Hola 119."
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_cc_missing_transcript.jsonl",
+  "_expect": "names recipients"
+}

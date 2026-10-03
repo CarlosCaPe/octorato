@@ -9,6 +9,6 @@
     "body": "Buenos días, adjunto la solicitud número 102 firmada. Saludos."
   },
   "cwd": "/home/user",
-  "transcript_path": "benign_approved_by_operator_phone_transcript.jsonl",
-  "_expect": ""
+  "transcript_path": "violation_operator_plain_yes_personal_transcript.jsonl",
+  "_expect": "an is_from_me yes never releases"
 }

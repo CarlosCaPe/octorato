@@ -1,0 +1,14 @@
+{
+  "session_id": "fx-cvr-121",
+  "tool_name": "mcp__gmail__send_email",
+  "tool_input": {
+    "to": [
+      "office@example.test"
+    ],
+    "subject": "Solicitud 121",
+    "body": "Buenos días, adjunto la solicitud número 121 firmada. Saludos."
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_empty_approvers_transcript.jsonl",
+  "_expect": "ENVÍO SIN PEDIDO"
+}

@@ -10,5 +10,5 @@
   },
   "cwd": "/home/user",
   "transcript_path": "violation_validation_body_differs_transcript.jsonl",
-  "_expect": "does not quote"
+  "_expect": "does not quote this send's text exactly"
 }

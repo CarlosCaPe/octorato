@@ -25,3 +25,11 @@ One pull request. The release logic in the gate, the text and release key in the
 - [ ] T07 [AC-13] registry/rules.yaml: `FLOW.chat-validated-release` fail-closed with its selftest proof.
 - [ ] T08 [AC-01, AC-03, AC-09, AC-10, AC-12, AC-15] scripts/tests/test_chat_release.py: yes-list, sender ids, support replica path, own-message exclusion, attachment names, reflex key.
 - [ ] T09 [AC-14] CLAUDE.md: the chat-validated release under "Nothing ships unverified", with its residuals.
+
+## QA cycle 1
+
+- [ ] T10 [AC-06, AC-07, AC-15, AC-16, AC-17, AC-18] scripts/g__pretool-mcp__outward-send.py: equality against the validation shape, one approval bound to the latest validation message, key per approval id, is_from_me never approves, empty approvers release nothing, operator retraction.
+- [ ] T11 [AC-06] scripts/panel_digest.py: validation_text and `--validation-request`.
+- [ ] T12 [AC-06, AC-07, AC-15, AC-16, AC-17, AC-18] scripts/chat_release_fixture_seed.py, registry/fixtures/FLOW.chat-validated-release: one violation per QA finding (truncated send, recipient substring, cc missing, one yes two validations, agent yes with no message id, empty approvers, operator retraction, mejor no).
+- [ ] T13 [AC-06, AC-16] scripts/tests/test_chat_release.py: whole-token and equality checks, attachment token, key per approval.
+- [ ] T14 [AC-14] CLAUDE.md: the new rules and residuals.
