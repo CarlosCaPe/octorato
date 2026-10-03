@@ -222,6 +222,33 @@ class SingleUse(Built):
         self.assertEqual(last.get("text"), pd.normalize(p["tool_input"]["message"]))
 
 
+class TrailerCli(Built):
+    def test_validation_request_prints_the_chat_trailer(self):
+        p = self.payload("benign_custom_trailer")
+        tin = self.tmp / "tin.json"
+        tin.write_text(json.dumps(p["tool_input"]), encoding="utf-8")
+        env = dict(os.environ, HOME=str(self.home))
+        out = subprocess.run([sys.executable, str(SCRIPTS / "panel_digest.py"), "--tool-input", str(tin),
+                              "--tool-name", p["tool_name"], "--validation-request",
+                              "--chat", seed._jid(128)], capture_output=True, text=True, env=env).stdout
+        self.assertTrue(out.strip().endswith(seed.ES_TRAILER))
+        sent = (self.home / ".claude" / ".cache" / "receipts" / "sent.jsonl").read_text(encoding="utf-8")
+        v = [json.loads(ln) for ln in sent.splitlines() if json.loads(ln).get("message_id") == "V128"][0]
+        self.assertEqual(pd.normalize(out), v["text"])
+
+    def test_unknown_chat_is_an_error(self):
+        p = self.payload("benign_custom_trailer")
+        tin = self.tmp / "tin.json"
+        tin.write_text(json.dumps(p["tool_input"]), encoding="utf-8")
+        cp = subprocess.run([sys.executable, str(SCRIPTS / "panel_digest.py"), "--tool-input", str(tin),
+                             "--tool-name", p["tool_name"], "--validation-request", "--chat", "nope@g.us"],
+                            capture_output=True, text=True, env=dict(os.environ, HOME=str(self.home)))
+        self.assertEqual(cp.returncode, 2)
+
+    def test_es_trailer_words_are_not_an_approval(self):
+        self.assertFalse(_gate_module().is_affirmative(seed.ES_TRAILER))
+
+
 class Selftest(unittest.TestCase):
     def test_gate_selftest_passes(self):
         cp = subprocess.run([sys.executable, str(GATE), "--selftest", str(FIXTURES)],

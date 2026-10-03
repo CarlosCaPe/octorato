@@ -446,7 +446,10 @@ def chat_send_ok(transcript: str = "") -> bool:
 #      and a fixed trailer. The shape is CLOSED and compared for EQUALITY,
 #      never as a substring: the whole text, normalized, equals what
 #      --validation-request prints for S (block, digest prefix, address
-#      tokens, attachment names and trailer, nothing before or after).
+#      tokens, attachment names and trailer, nothing before or after). The
+#      trailer is the chat row's `validation_trailer` when set (the approvers'
+#      language), else panel_digest.VALIDATION_TRAILER; `--validation-request
+#      --chat <jid>` prints the same text the gate rebuilds.
 #   c. In the chat an approver (a sender in "approvers", never an is_from_me
 #      row in either store: in the personal store is_from_me is the operator
 #      OR the agent sending through his account, in the support replica it is
@@ -593,12 +596,12 @@ def _release_message(tool_name: str, tool_input):
     return msgs[0]
 
 
-def _validates(vtext: str, msg) -> str:
+def _validates(vtext: str, msg, trailer=None) -> str:
     """"" when vtext is a validation message for msg, else what differs."""
-    return _validation_gap(vtext, msg)[1]
+    return _validation_gap(vtext, msg, trailer)[1]
 
 
-def _validation_gap(vtext: str, msg) -> tuple:
+def _validation_gap(vtext: str, msg, trailer=None) -> tuple:
     """(depth, what differs): depth ranks how close a line came, so the deny
     names the nearest validation message, not the first one read."""
     import panel_digest
@@ -619,7 +622,7 @@ def _validation_gap(vtext: str, msg) -> tuple:
     # The shape is closed: the whole text, normalized, must be exactly what
     # --validation-request prints, so a condition written before, between or
     # after its lines ("«Aceptamos.» PS: solo si ...") is a different message.
-    if panel_digest.normalize(vtext) != panel_digest.normalize(panel_digest.validation_text(msg)):
+    if panel_digest.normalize(vtext) != panel_digest.normalize(panel_digest.validation_text(msg, trailer)):
         return 0.9, "carries text outside the validation shape (only what --validation-request prints)"
     return 0, ""
 
@@ -670,6 +673,11 @@ def chat_release(data: dict) -> tuple:
             continue
         if not (1.0 <= window <= _WINDOW_MAX_MINUTES):
             continue
+        # The chat's own trailer (its approvers' language), else the default;
+        # a value that is not a non-empty string disables the chat.
+        trailer = c.get("validation_trailer")
+        if trailer is not None and not (isinstance(trailer, str) and trailer.strip()):
+            continue
         # Every validation-shaped line the agent posted to this chat, oldest
         # first: an approval binds to the latest one before it.
         vals = []
@@ -685,7 +693,7 @@ def chat_release(data: dict) -> tuple:
         vals.sort(key=lambda x: x[0])
         mine = []
         for vt, s in vals:
-            depth, why = _validation_gap(s.get("text") or "", msg)
+            depth, why = _validation_gap(s.get("text") or "", msg, trailer)
             if why:
                 note(1 + depth, f"chat release (b): the validation message {why}")
                 continue

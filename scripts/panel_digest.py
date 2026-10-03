@@ -60,7 +60,8 @@ CLI
     panel_digest.py --body-file F [--to R ...] [--attach P ...]
     panel_digest.py --tool-input F.json --tool-name NAME
     either form plus --panel-request prints the reviewer block instead
-    either form plus --validation-request prints the chat-validation message
+    either form plus --validation-request [--chat JID | --trailer T] prints the
+    chat-validation message with that chat's trailer
 A mail's body file is the subject line, then the body (then htmlBody).
 """
 from __future__ import annotations
@@ -359,10 +360,12 @@ def message_parts(tool_name: str, tool_input) -> list:
 # The one line allowed after the «...» block. The shape is closed: the gate
 # rebuilds this whole text from the send and compares it for equality, so a
 # word added before, between or after these lines is a different message.
+# A chat row in the private outward-send-autonomous.json may set its own
+# `validation_trailer` (the approvers' language); this is the default.
 VALIDATION_TRAILER = "Reply ok to send it, or no to stop it."
 
 
-def validation_text(msg: Message) -> str:
+def validation_text(msg: Message, trailer: str | None = None) -> str:
     """The chat-validation message for one outgoing message (the gate's
     chat-validated release): the digest prefix, the recipients, the
     attachment names, the exact normalized text inside ONE «...» block, and
@@ -374,8 +377,29 @@ def validation_text(msg: Message) -> str:
     if names:
         lines.append("Attach: " + " ".join(names))
     lines.append("«" + normalize(msg.text) + "»")
-    lines.append(VALIDATION_TRAILER)
+    lines.append(trailer if trailer else VALIDATION_TRAILER)
     return "\n".join(lines)
+
+
+def chat_trailer(jid: str) -> str:
+    """The validation trailer the gate uses for chat `jid`: its row's
+    `validation_trailer` in the private allowlist, else the default. Raises
+    PanelDigestError when the allowlist cannot be read, the chat is not in
+    it, or the value is not a non-empty string (the gate denies then too)."""
+    path = Path.home() / ".claude" / "company" / "config" / "outward-send-autonomous.json"
+    try:
+        rows = json.loads(path.read_text(encoding="utf-8")).get("chats") or []
+    except Exception as e:
+        raise PanelDigestError(f"the autonomous-chat allowlist is unreadable ({type(e).__name__})")
+    for c in rows:
+        if isinstance(c, dict) and str(c.get("jid", "")).strip() == jid.strip():
+            t = c.get("validation_trailer")
+            if t is None:
+                return VALIDATION_TRAILER
+            if isinstance(t, str) and t.strip():
+                return t
+            raise PanelDigestError("validation_trailer is not a non-empty string")
+    raise PanelDigestError(f"chat {jid} is not in the autonomous-chat allowlist")
 
 
 def digests_for(tool_name: str, tool_input) -> list:
@@ -398,6 +422,10 @@ def _cli(argv: list) -> int:
                     help="print the reviewer block (recipients, attachments, body, digest)")
     ap.add_argument("--validation-request", action="store_true",
                     help="print the chat-validation message for an approver (chat-validated release)")
+    ap.add_argument("--chat", default="",
+                    help="with --validation-request: the chat JID whose validation_trailer to use")
+    ap.add_argument("--trailer", default="",
+                    help="with --validation-request: the trailer line to print instead")
     a = ap.parse_args(argv)
     try:
         if a.tool_input:
@@ -408,8 +436,9 @@ def _cli(argv: list) -> int:
                 raise PanelDigestError("--to is required: the recipient is part of the digest")
             msgs = [Message(text, [(file_sha256(p), p) for p in a.attach], a.to)]
         for m in msgs:
+            trailer = a.trailer or (chat_trailer(a.chat) if a.chat else None)
             print(m.panel_block() if a.panel_request
-                  else validation_text(m) if a.validation_request else m.digest)
+                  else validation_text(m, trailer) if a.validation_request else m.digest)
         return 0
     except (PanelDigestError, OSError, ValueError) as e:
         print(f"panel_digest: {e}", file=sys.stderr)

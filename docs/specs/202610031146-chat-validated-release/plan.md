@@ -38,3 +38,4 @@ One pull request. The release logic in the gate, the text and release key in the
 
 - [ ] T15 [AC-06, AC-16] scripts/panel_digest.py, scripts/g__pretool-mcp__outward-send.py: closed validation shape with a fixed trailer compared whole; ambiguity when two validation messages sit inside the window before an approval.
 - [ ] T16 [AC-06, AC-16] scripts/chat_release_fixture_seed.py, registry/fixtures/FLOW.chat-validated-release: text after the block, text before the shape, changed trailer, an ok between two validation messages.
+- [ ] T17 [AC-19] scripts/panel_digest.py, scripts/g__pretool-mcp__outward-send.py, scripts/chat_release_fixture_seed.py, scripts/tests/test_chat_release.py: per-chat validation_trailer, `--chat`/`--trailer`, a benign custom trailer and a default trailer in a custom chat.

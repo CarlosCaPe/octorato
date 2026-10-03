@@ -41,6 +41,8 @@ APPROVER = "10000000000001"
 OTHER = "20000000000002"
 OPERATOR = "34600000000"
 PROMPT = "revisa el grupo de validación y atiende lo pendiente"
+# A chat-specific trailer in the approvers' language (fixture value).
+ES_TRAILER = "Responde ok para enviarlo, o no para detenerlo."
 
 
 def _jid(n: int) -> str:
@@ -74,6 +76,8 @@ def _other_validation(n: int) -> str:
 #   v_edit                 (old, new) replaced in V's generated text
 #   rows                   store rows (id, sender, content, "HH:MM:SS", is_from_me)
 #   approvers              the chat row's approvers (default [APPROVER@lid])
+#   trailer                the chat row's validation_trailer (V is built with it)
+#   v_trailer              build V with this trailer instead (None = default)
 #   panel                  panel receipt time HH:MM:SS, None for no receipt
 #   extra_sent             more sent-ledger lines
 #   expect                 deny-reason substring ("" = allow)
@@ -160,6 +164,11 @@ CASES = [
     {"name": "violation_trailer_changed", "n": 127,
      "v_edit": (panel_digest.VALIDATION_TRAILER, "Reply ok to send it, unless the client objects."),
      "rows": [("A127", APPROVER, "sí", "11:58:00", 0)], "expect": "carries text outside the validation shape"},
+    {"name": "benign_custom_trailer", "n": 128, "trailer": ES_TRAILER,
+     "rows": [("A128", APPROVER, "ok", "11:58:00", 0)], "expect": ""},
+    {"name": "violation_default_trailer_in_custom_chat", "n": 129, "trailer": ES_TRAILER,
+     "v_trailer": None, "rows": [("A129", APPROVER, "ok", "11:58:00", 0)],
+     "expect": "carries text outside the validation shape"},
     {"name": "violation_empty_approvers", "n": 121, "approvers": [],
      "rows": [("A121", APPROVER, "sí", "11:58:00", 0)], "expect": "ENVÍO SIN PEDIDO"},
     {"name": "violation_operator_retraction", "n": 122,
@@ -204,14 +213,17 @@ def build(fdir: Path) -> int:
         session = f"fx-cvr-{n}"
         tool = c.get("tool", "mcp__gmail__send_email")
         tin = c.get("tool_input") or _mail(n)
-        cfg["chats"].append({"jid": jid, "label": f"fixture validation chat {n}", "since": DAY,
-                             "approvers": c.get("approvers", [f"{APPROVER}@lid"]),
-                             "window_minutes": 60})
+        row = {"jid": jid, "label": f"fixture validation chat {n}", "since": DAY,
+               "approvers": c.get("approvers", [f"{APPROVER}@lid"]), "window_minutes": 60}
+        if c.get("trailer"):
+            row["validation_trailer"] = c["trailer"]
+        cfg["chats"].append(row)
         for rid, sender, content, hms, from_me in c.get("rows", []):
             con.execute("INSERT INTO messages (id, chat_jid, sender, content, timestamp, is_from_me) "
                         "VALUES (?,?,?,?,?,?)", (rid, jid, sender, content, f"{DAY} {hms}+00:00", from_me))
         if c.get("v", {}) is not None and tool != "Bash":
-            vtext = panel_digest.validation_text(_msg(tool, c.get("v_from") or tin, home))
+            vtext = panel_digest.validation_text(_msg(tool, c.get("v_from") or tin, home),
+                                                 c.get("v_trailer", c.get("trailer")))
             if c.get("v_from"):
                 # same digest as S, so only the quoted text differs
                 vtext = vtext.replace(_msg(tool, c["v_from"], home).digest[:12],

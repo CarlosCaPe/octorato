@@ -218,6 +218,26 @@
       "window_minutes": 60
     },
     {
+      "jid": "120363900000000128@g.us",
+      "label": "fixture validation chat 128",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60,
+      "validation_trailer": "Responde ok para enviarlo, o no para detenerlo."
+    },
+    {
+      "jid": "120363900000000129@g.us",
+      "label": "fixture validation chat 129",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60,
+      "validation_trailer": "Responde ok para enviarlo, o no para detenerlo."
+    },
+    {
       "jid": "120363900000000121@g.us",
       "label": "fixture validation chat 121",
       "since": "2026-10-03",
