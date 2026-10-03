@@ -1,0 +1,14 @@
+{
+  "session_id": "fx-cvr-107",
+  "tool_name": "mcp__gmail__send_email",
+  "tool_input": {
+    "to": [
+      "office@example.test"
+    ],
+    "subject": "Solicitud 107",
+    "body": "Buenos días, adjunto la solicitud número 107 firmada. Saludos."
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_retraction_after_approval_transcript.jsonl",
+  "_expect": "took the approval back"
+}
