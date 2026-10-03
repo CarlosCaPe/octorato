@@ -2,7 +2,7 @@
   "session_id": "fx-p-violation-ssm-base64-payload",
   "tool_name": "Bash",
   "tool_input": {
-    "command": "aws --profile ops ssm send-command --instance-ids i-0 --document-name AWS-RunShellScript --parameters \"commands=['echo Y3VybCAtZCBAbS5qc29u | base64 -d | bash']\""
+    "command": "aws --profile ops ssm send-command --instance-ids i-0aaaaaaaaaaaaaaaa --document-name AWS-RunShellScript --parameters \"commands=['echo Y3VybCAtZCBAbS5qc29u | base64 -d | bash']\""
   },
   "cwd": "/home/user",
   "transcript_path": "violation_ssm_base64_payload_transcript.jsonl"

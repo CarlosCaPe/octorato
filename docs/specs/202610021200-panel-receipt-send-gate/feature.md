@@ -70,9 +70,9 @@ After a message send, the reflex reads the tool result and appends one line per 
 - [ ] AC-18: IF the sent ledger shows a panel receipt already spent by a send that did not report failure, THEN THE Send_Gate SHALL deny a second send on that receipt.
 - [ ] AC-19: IF a Bash command reaches a bridge's send path without the bridge script or the MCP tool, THEN THE Send_Gate SHALL deny it.
 - [ ] AC-20: THE Rule_Registry SHALL keep every fixture seed it needs tracked, so the selftests pass on a fresh clone.
-- [ ] AC-21: IF a Bash command names a bridge port (8080 or 8081) on any host, after quote removal, on a path other than `/api/revoke` or `/api/download`, THEN THE Send_Gate SHALL deny it.
-- [ ] AC-22: IF an `ssm send-command` payload carries a decoder, eval, a pipe into a shell or interpreter, a substitution, a backtick, `sh -c`, a `file://` parameter file or a bridge mention, or its payload cannot be read, THEN THE Send_Gate SHALL deny it, and SHALL allow a plain read-only payload.
-- [ ] AC-23: IF inline interpreter code carries both an HTTP or socket primitive and a local target hint, or an HTTP client in command position takes a URL built at run time, THEN THE Send_Gate SHALL deny it.
+- [ ] AC-21: IF a Bash command sends a write-shaped request (a body, or POST, PUT, PATCH or DELETE) to a bridge port (8080 or 8081) on any host, after quote removal, on a path other than `/api/revoke` or `/api/download`, or names `/api/send` or `/api/react` with any method, THEN THE Send_Gate SHALL deny it, and SHALL allow a plain GET probe.
+- [ ] AC-22: IF an `ssm send-command` payload mentions a bridge port, `/api/send`, `/api/react` or the bridge script on any instance, or carries no readable payload, a decoder, eval, a pipe into a shell or interpreter, a substitution, a backtick, `sh -c` or a `file://` parameter file while its target hosts a bridge per the private bridge config, THEN THE Send_Gate SHALL deny it, and SHALL treat a missing config, `--targets` or an unreadable instance id as bridge-hosting.
+- [ ] AC-23: IF inline interpreter code carries an HTTP or socket primitive, a bridge-shaped target and a write shape, or an HTTP client in command position takes a URL built at run time, THEN THE Send_Gate SHALL deny it.
 
 ## Technical Scope
 
@@ -103,7 +103,8 @@ The gate imports the digest library and the ledger. The Bash path reuses the mer
 - Parallel tool calls can race the single-use rule: two sends issued together both pass PreToolUse before either PostToolUse writes the sent ledger.
 - `sent.jsonl` is a file under `$HOME` a hooked process can delete or edit, which would make a spent receipt look unspent (visible in the kernel journal, not prevented).
 - A reviewer can reproduce the PANEL-ATTACH hashes from the block it was handed without opening the attachment; the receipt proves the reviewer saw the hash, not the file's content.
-- Measured cost on 6,088 distinct real Bash commands (QA cycle 2): 136 are denied by the raw-send rules, about 100 of them `ssm send-command` calls whose payload is a `file://` parameter file, base64 or a script-built payload, which this spec deliberately treats as opaque. Narrowing that rule to the instances that host a bridge is a decision left to the operator.
+- Measured cost (replay of the 6,089 distinct Bash commands in the 400 newest local session transcripts; the same set read by both versions): 136 denies with the QA cycle 2 rules, 88 after scoping SSM to bridge-hosting instances and requiring a write shape. Of the 88, classified by hand from the command text: about 52 are raw sends or opaque payloads to the bridge host (deny intended); 20 are SSM calls whose target cannot be read (a script that builds the call, an id taken from `ps`), denied by the fail-closed rule; about 16 are false denies (9 run-time URLs in GET probes or cache busters, 3 script-built SSM calls to a non-bridge instance, 2 inline interpreter scripts, 1 GET probe loop that names `/api/send`, 1 document written by heredoc).
+- The bridge-hosting set comes from a private config file under `$HOME`; a hooked process can edit it to unscope an instance (visible in the kernel journal, not prevented).
 - False positives accepted: any non-reader command whose text names `/api/send` or `/api/react`, or an `ssm send-command` whose payload names a bridge port or `api/`, is denied even if it would send nothing.
 
 ## Revision History
@@ -111,5 +112,6 @@ The gate imports the digest library and the ledger. The Bash path reuses the mer
 | Date | Change |
 |---|---|
 | 2026-10-02 | Initial spec; scope addition from the operator the same day: the sent-message ledger (AC-11) with recall deferred. |
+| 2026-10-03 | Decision on the measured false denies: SSM opacity applies only to bridge-hosting instances (fail closed when unknown); bridge-port and inline-interpreter rules need a write shape (AC-21, AC-22, AC-23 revised). |
 | 2026-10-03 | Re-QA on 35e4d74 (NEEDS-WORK, small): any-host port match after quote removal (AC-21), opaque SSM payloads (AC-22), obfuscated inline interpreter sends and run-time URLs (AC-23), four residuals documented. |
 | 2026-10-02 | Independent QA on 2056b52 (NEEDS-WORK, six findings): fixture seeds were `.pdf` and ignored on a fresh clone (AC-20); the receipt bound to a stated digest only (AC-14); unknown keys were skipped (AC-15); a chained write could swap the attachment (AC-16); the recipient was not hashed and a receipt could be reused (AC-17, AC-18); raw bridge sends bypassed the gate (AC-19). |

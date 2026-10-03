@@ -40,3 +40,8 @@ One pull request. The digest library first, then the receipt kind in the ledger 
 
 - [ ] T16 [AC-21, AC-22, AC-23] scripts/g__pretool-mcp__outward-send.py: any-host port match after quote removal, SSM payload inspection, inline interpreter and run-time URL detection.
 - [ ] T17 [AC-21, AC-22, AC-23] registry/fixtures/FLOW.panel-before-send: one violation per shape plus benign plain SSM read, remote requests, header variable and lsof.
+
+## Decision on false denies
+
+- [ ] T18 [AC-21, AC-22, AC-23] scripts/g__pretool-mcp__outward-send.py: write-shape requirement for the bridge port and inline interpreter rules; SSM opacity scoped to bridge-hosting instances from the private config, fail closed when unknown.
+- [ ] T19 [AC-21, AC-22, AC-23] registry/fixtures/FLOW.panel-before-send: non-bridge file:// SSM, unreadable targets, unresolved and assigned instance variables, GET probe, POST /api/send via 127.1, socket lab, JS edit.

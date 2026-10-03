@@ -2,7 +2,7 @@
   "session_id": "fx-p-violation-ssm-pipe-shell",
   "tool_name": "Bash",
   "tool_input": {
-    "command": "aws --profile ops ssm send-command --instance-ids i-0 --document-name AWS-RunShellScript --parameters \"commands=['cat /tmp/x | sh']\""
+    "command": "aws --profile ops ssm send-command --instance-ids i-0aaaaaaaaaaaaaaaa --document-name AWS-RunShellScript --parameters \"commands=['cat /tmp/x | sh']\""
   },
   "cwd": "/home/user",
   "transcript_path": "violation_ssm_pipe_shell_transcript.jsonl"

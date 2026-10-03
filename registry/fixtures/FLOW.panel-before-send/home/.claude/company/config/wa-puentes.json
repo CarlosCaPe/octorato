@@ -1,0 +1,10 @@
+{
+  "_comment": "selftest seed: one synthetic bridge-hosting instance id that exists nowhere",
+  "puentes": {
+    "soporte": {
+      "remoto": {
+        "instancia": "i-0aaaaaaaaaaaaaaaa"
+      }
+    }
+  }
+}

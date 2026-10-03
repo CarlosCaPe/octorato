@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-benign-ssm-non-bridge-file-params",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "aws --profile ops ssm send-command --instance-ids i-0bbbbbbbbbbbbbbbb --document-name AWS-RunPowerShellScript --parameters file:///tmp/params.json --query Command.CommandId --output text"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "benign_ssm_non_bridge_file_params_transcript.jsonl"
+}

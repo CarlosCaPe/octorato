@@ -514,19 +514,28 @@ def _ask_deny(human: str) -> str:
 # text AND after quote removal (as bash reads it, so `/api/'send'` is
 # `/api/send`):
 #   - an outward endpoint of the bridges, /api/send or /api/react
-#   - a bridge port, `:8080` or `:8081` on ANY host (127.1, 0x7f.1, [::1] and a
-#     hostname all count), unless the path is the recall or read endpoint
-#     (/api/revoke, /api/download)
-#   - an `ssm send-command` whose payload is not plaintext-inspectable: a
-#     decoder (base64, b64decode, xxd, openssl enc, gzip -d, gunzip, zcat),
-#     eval, a pipe into a shell or an interpreter, $( or a backtick, sh -c,
-#     a file:// parameter file, or a mention of a bridge port, /api/send,
-#     /api/react or the bridge script. A plain read-only command (a sqlite
-#     read of a store, say) still goes.
+#   - a WRITE-shaped request to a bridge port, `:8080` or `:8081` on ANY host
+#     (127.1, 0x7f.1, [::1] and a hostname all count): curl/wget/httpie with
+#     a body (-d, --data*, -F, --form, -T, --upload-file, --post-data) or
+#     -X/--request/--method POST|PUT|PATCH|DELETE, or code with data=, json=,
+#     .post(, send( ... A plain GET (a status or health probe) goes, and so
+#     does the recall or read endpoint (/api/revoke, /api/download).
+#   - an `ssm send-command` that mentions a bridge (a bridge port, /api/send,
+#     /api/react, the bridge script) in any payload, on any instance; and one
+#     whose payload is not plaintext-inspectable (a decoder such as base64,
+#     b64decode, xxd, openssl enc, gzip -d, gunzip, zcat; eval; a pipe into a
+#     shell or an interpreter; $( or a backtick; sh -c; a file:// parameter
+#     file) when the target instance HOSTS A BRIDGE. Bridge-hosting instances
+#     are read from the private bridge config (company/config/wa-puentes.json,
+#     puentes.*.remoto.instancia). Fail closed: a missing or unreadable config,
+#     targets given by --targets (tags, wildcards) or an instance id the gate
+#     cannot read count as bridge-hosting. Residual: that config is a file
+#     under $HOME a hooked process can write.
 #   - inline interpreter code (python -c, node/perl/ruby -e, a heredoc or
-#     stdin into an interpreter) carrying BOTH an HTTP or socket primitive and
-#     a local target hint ('808', 'localhost', '127.', '::1', 'api/'), which
-#     catches a URL built by string concatenation
+#     stdin into an interpreter) carrying an HTTP or socket primitive, a
+#     bridge-shaped target ('808' or 'api/' not preceded by a word character)
+#     and a write shape, which catches a URL built by string concatenation
+#     while a local socket lab or a file edit mentioning fetch( goes
 #   - curl, wget or httpie whose URL argument is built at run time ($(, a
 #     backtick, ${): a URL the shell computes cannot be judged
 # A sub-command whose first token only READS (grep, cat, git, ss, lsof ...)
@@ -566,41 +575,110 @@ def _dequote(text: str) -> str:
 
 
 _SSM_MENTION = re.compile(r"808[01]|api/send|api/react|wa-soporte", re.IGNORECASE)
+_WRITE_SHAPE = re.compile(
+    r"(?:^|\s)(?:-d|--data(?:-[a-z]+)?|-F|--form(?:-string)?|-T|--upload-file|--post-data|--post-file"
+    r"|--json)(?=[\s=@]|$)"
+    r"|(?:-X|--request|--method)[\s=]*(?:POST|PUT|PATCH|DELETE)\b"
+    r"|\b(?:https?|xh)\s+(?:POST|PUT|PATCH|DELETE)\b"
+    r"|\bdata\s*=|\bjson\s*=|method\s*[=:]\s*\W?(?:POST|PUT|PATCH|DELETE)\b"
+    r"|\.(?:post|put|patch)\s*\(|\bsend(?:all)?\s*\(|\.write\s*\(|\.end\s*\(|\breact\b",
+    re.IGNORECASE)
+_BRIDGE_TARGET = re.compile(r"808|(?<![\w])api/", re.IGNORECASE)
+_INSTANCE_ID = re.compile(r"^i-[0-9a-f]{8,17}$")
+_BRIDGE_CFG = Path.home() / ".claude" / "company" / "config" / "wa-puentes.json"
 
 
-def _ssm_payloads(text: str) -> list | None:
-    """The value of every `--parameters` argument of an ssm send-command, as
-    bash passes it (after quote removal), or None when it cannot be read: a
-    command shlex cannot split, or a send-command with no --parameters."""
+def _bridge_instances():
+    """Instance ids that host a bridge, from the private bridge config, or
+    None when the config is missing, unreadable or names none (then every
+    instance counts as bridge-hosting)."""
+    try:
+        cfg = json.loads(_BRIDGE_CFG.read_text(encoding="utf-8"))
+        ids = set()
+        for entry in (cfg.get("puentes") or {}).values():
+            inst = ((entry or {}).get("remoto") or {}).get("instancia")
+            if isinstance(inst, str) and inst.strip():
+                ids.add(inst.strip())
+        return ids or None
+    except Exception:
+        return None
+
+
+def _ssm_parts(text: str):
+    """(payloads, instance_ids) of an ssm send-command as bash passes them, or
+    None when the command cannot be read. instance_ids is None when the
+    targets cannot be read: --targets (tags, wildcards), a variable the
+    command does not assign, or anything that is not a literal instance id."""
     import shlex
     try:
         toks = shlex.split(text, posix=True)
     except ValueError:
         return None
-    out = []
-    for i, t in enumerate(toks):
+    assigned = {}
+    for t in toks:
+        m = re.match(r"^([A-Za-z_]\w*)=(.*)$", t)
+        if m:
+            assigned[m.group(1)] = m.group(2).rstrip(";&|")
+    payloads, raw_ids, unreadable = [], [], False
+    i = 0
+    while i < len(toks):
+        t = toks[i]
         if t == "--parameters" and i + 1 < len(toks):
-            out.append(toks[i + 1])
+            payloads.append(toks[i + 1])
         elif t.startswith("--parameters="):
-            out.append(t.split("=", 1)[1])
-    return out or None
+            payloads.append(t.split("=", 1)[1])
+        elif t == "--targets" or t.startswith("--targets="):
+            unreadable = True
+        elif t == "--instance-ids":
+            j = i + 1
+            while j < len(toks) and not toks[j].startswith("-"):
+                raw_ids.append(toks[j])
+                j += 1
+        elif t.startswith("--instance-ids="):
+            raw_ids.append(t.split("=", 1)[1])
+        i += 1
+    ids = []
+    for r in raw_ids:
+        for part in re.split(r"[,\s]+", r):
+            if not part:
+                continue
+            m = re.match(r"^\$\{?([A-Za-z_]\w*)\}?$", part)
+            if m:
+                part = assigned.get(m.group(1), "")
+            if not _INSTANCE_ID.match(part):
+                unreadable = True
+            else:
+                ids.append(part)
+    if not ids:
+        unreadable = True
+    return payloads, (None if unreadable else ids)
 
 
 def _ssm_hit(text: str) -> bool:
-    """An ssm send-command that names a bridge anywhere, or whose PAYLOAD (the
-    --parameters value, not the shell around the aws call: `CID=$(aws ssm
-    ...)` is fine) is not plaintext-inspectable."""
+    """An ssm send-command that mentions a bridge (any instance), or whose
+    payload is not plaintext-inspectable while the target hosts a bridge. The
+    shell around the aws call (`CID=$(aws ssm ...)`) is not the payload."""
     if _SSM_MENTION.search(text) or _SSM_MENTION.search(_dequote(text)):
         return True
-    payloads = _ssm_payloads(text)
-    if payloads is None:
+    parts = _ssm_parts(text)
+    if parts is None:
         return True
-    return any(_SSM_OPAQUE.search(p) for p in payloads)
+    payloads, ids = parts
+    # No inline payload (a stored document, or a call assembled by a script)
+    # is content the gate cannot read: opaque, judged by the target below.
+    if payloads and not any(_SSM_OPAQUE.search(p) for p in payloads):
+        return False
+    bridges = _bridge_instances()
+    if bridges is None or ids is None:
+        return True
+    return any(i in bridges for i in ids)
 
 
 def _raw_hit(text: str) -> bool:
     for t in (text, _dequote(text)):
-        if _RAW_ENDPOINT.search(t) or _RAW_PORT.search(t):
+        if _RAW_ENDPOINT.search(t):
+            return True
+        if _RAW_PORT.search(t) and _WRITE_SHAPE.search(t):
             return True
     if _SSM_SEND.search(text) or _SSM_SEND.search(_dequote(text)):
         return _ssm_hit(text)
@@ -611,7 +689,8 @@ def _interp_hit(command: str) -> bool:
     if not _INTERP_INLINE.search(command):
         return False
     flat = _dequote(command)
-    return bool(_HTTP_PRIMITIVE.search(flat) and _LOCAL_TARGET.search(flat))
+    return bool(_HTTP_PRIMITIVE.search(flat) and _BRIDGE_TARGET.search(flat)
+                and _WRITE_SHAPE.search(flat))
 
 
 _HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?\n\s*\2\s*(?:\n|$)", re.DOTALL)
@@ -695,9 +774,11 @@ def raw_bridge_send(command: str) -> bool:
             if toks and os.path.basename(toks[0]) in _RAW_READERS:
                 continue
             return True
-    # The pattern sits outside every sub-command the splitter returned (a
-    # heredoc body, for instance): what runs it cannot be told, so it sends.
-    return not seen_in_sub
+    # The whole command matched while no single sub-command did. In a heredoc
+    # (a script body split across lines) what runs it cannot be told, so it
+    # sends; otherwise the parts came from different commands (a GET probe
+    # next to an unrelated POST) and nothing writes to a bridge.
+    return not seen_in_sub and "<<" in command
 
 
 def _is_panel_send(tool_name: str, tool_input) -> bool:

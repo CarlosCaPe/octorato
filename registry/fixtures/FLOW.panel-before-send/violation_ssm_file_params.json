@@ -2,7 +2,7 @@
   "session_id": "fx-p-violation-ssm-file-params",
   "tool_name": "Bash",
   "tool_input": {
-    "command": "aws --profile ops ssm send-command --instance-ids i-0 --document-name AWS-RunShellScript --parameters file:///tmp/params.json"
+    "command": "aws --profile ops ssm send-command --instance-ids i-0aaaaaaaaaaaaaaaa --document-name AWS-RunShellScript --parameters file:///tmp/params.json"
   },
   "cwd": "/home/user",
   "transcript_path": "violation_ssm_file_params_transcript.jsonl"
