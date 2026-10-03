@@ -33,3 +33,8 @@ One pull request. The release logic in the gate, the text and release key in the
 - [ ] T12 [AC-06, AC-07, AC-15, AC-16, AC-17, AC-18] scripts/chat_release_fixture_seed.py, registry/fixtures/FLOW.chat-validated-release: one violation per QA finding (truncated send, recipient substring, cc missing, one yes two validations, agent yes with no message id, empty approvers, operator retraction, mejor no).
 - [ ] T13 [AC-06, AC-16] scripts/tests/test_chat_release.py: whole-token and equality checks, attachment token, key per approval.
 - [ ] T14 [AC-14] CLAUDE.md: the new rules and residuals.
+
+## QA cycle 2
+
+- [ ] T15 [AC-06, AC-16] scripts/panel_digest.py, scripts/g__pretool-mcp__outward-send.py: closed validation shape with a fixed trailer compared whole; ambiguity when two validation messages sit inside the window before an approval.
+- [ ] T16 [AC-06, AC-16] scripts/chat_release_fixture_seed.py, registry/fixtures/FLOW.chat-validated-release: text after the block, text before the shape, changed trailer, an ok between two validation messages.

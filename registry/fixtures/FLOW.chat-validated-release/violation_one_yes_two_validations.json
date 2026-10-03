@@ -10,5 +10,5 @@
   },
   "cwd": "/home/user",
   "transcript_path": "violation_one_yes_two_validations_transcript.jsonl",
-  "_expect": "answers another validation message"
+  "_expect": "approval is ambiguous"
 }

@@ -442,17 +442,19 @@ def chat_send_ok(transcript: str = "") -> bool:
 #   b. sent.jsonl holds a validation message V the agent posted to that chat
 #      AFTER the panel receipt, in the shape `panel_digest.py
 #      --validation-request` prints: `sha256:<first 12 hex of S's digest>`,
-#      the recipients, the attachment names, and S's text inside ONE «...»
-#      block. Everything is compared for EQUALITY, never as a substring: the
-#      block, normalized, equals S's normalized text; the digest prefix
-#      equals S's; the set of address tokens outside the block equals S's
-#      recipients (case-insensitive); every attachment name is a whole token.
+#      the recipients, the attachment names, S's text inside ONE «...» block
+#      and a fixed trailer. The shape is CLOSED and compared for EQUALITY,
+#      never as a substring: the whole text, normalized, equals what
+#      --validation-request prints for S (block, digest prefix, address
+#      tokens, attachment names and trailer, nothing before or after).
 #   c. In the chat an approver (a sender in "approvers", never an is_from_me
 #      row in either store: in the personal store is_from_me is the operator
 #      OR the agent sending through his account, in the support replica it is
 #      the bridge's own account) replied with a message on the closed
 #      yes-list. The approval binds to exactly ONE V: the latest validation
-#      message the agent posted to that chat before the approval. It must be
+#      message the agent posted to that chat before the approval, and it is
+#      ambiguous (denied) when the agent posted more than one validation
+#      message there inside the window before the approval. It must be
 #      this S's V, and it must sit inside window_minutes counted from V
 #      (default 60, valid 1..240). The operator's own approval in the
 #      personal store is the separate send_ok_from_chat token above.
@@ -614,6 +616,11 @@ def _validation_gap(vtext: str, msg) -> tuple:
     names = {os.path.basename(str(p)) for _, p in msg.attachments if p}
     if not names <= words:
         return 0.8, f"does not name the attachment(s) {sorted(names - words)}"
+    # The shape is closed: the whole text, normalized, must be exactly what
+    # --validation-request prints, so a condition written before, between or
+    # after its lines ("«Aceptamos.» PS: solo si ...") is a different message.
+    if panel_digest.normalize(vtext) != panel_digest.normalize(panel_digest.validation_text(msg)):
+        return 0.9, "carries text outside the validation shape (only what --validation-request prints)"
     return 0, ""
 
 
@@ -723,6 +730,14 @@ def chat_release(data: dict) -> tuple:
             before = [(vt, s) for vt, s in vals if vt < at]
             if not before:
                 note(5, "chat release (c): the approval was posted before the validation message")
+                continue
+            # Two validation messages inside the window before the approval
+            # make it ambiguous: an "ok" meant for the older one must never
+            # release the newer one.
+            recent = [x for x in before if (at - x[0]).total_seconds() / 60.0 <= window]
+            if len(recent) > 1:
+                note(6, "chat release (c): the approval is ambiguous: the agent posted more than "
+                        "one validation message to this chat inside the window before it")
                 continue
             vt, v = before[-1]
             if not any(v is s for _, s in mine):

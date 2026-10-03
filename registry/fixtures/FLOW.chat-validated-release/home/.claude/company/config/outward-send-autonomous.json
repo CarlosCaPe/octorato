@@ -182,6 +182,42 @@
       "window_minutes": 60
     },
     {
+      "jid": "120363900000000124@g.us",
+      "label": "fixture validation chat 124",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363900000000125@g.us",
+      "label": "fixture validation chat 125",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363900000000126@g.us",
+      "label": "fixture validation chat 126",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363900000000127@g.us",
+      "label": "fixture validation chat 127",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60
+    },
+    {
       "jid": "120363900000000121@g.us",
       "label": "fixture validation chat 121",
       "since": "2026-10-03",

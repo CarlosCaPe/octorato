@@ -356,17 +356,25 @@ def message_parts(tool_name: str, tool_input) -> list:
     return [_mcp_message(tool_name, tool_input)]
 
 
+# The one line allowed after the «...» block. The shape is closed: the gate
+# rebuilds this whole text from the send and compares it for equality, so a
+# word added before, between or after these lines is a different message.
+VALIDATION_TRAILER = "Reply ok to send it, or no to stop it."
+
+
 def validation_text(msg: Message) -> str:
     """The chat-validation message for one outgoing message (the gate's
     chat-validated release): the digest prefix, the recipients, the
-    attachment names, and the exact normalized text inside ONE «...» block.
-    The gate compares each part for equality, never as a substring."""
+    attachment names, the exact normalized text inside ONE «...» block, and
+    the fixed trailer. The gate compares the whole text for equality (after
+    whitespace normalization), never as a substring."""
     lines = [f"Validate sha256:{msg.digest[:12]}",
              "To: " + " ".join(norm_recipients(msg.recipients))]
     names = [os.path.basename(str(p)) for _, p in msg.attachments if p]
     if names:
         lines.append("Attach: " + " ".join(names))
     lines.append("«" + normalize(msg.text) + "»")
+    lines.append(VALIDATION_TRAILER)
     return "\n".join(lines)
 
 
