@@ -70,6 +70,9 @@ After a message send, the reflex reads the tool result and appends one line per 
 - [ ] AC-18: IF the sent ledger shows a panel receipt already spent by a send that did not report failure, THEN THE Send_Gate SHALL deny a second send on that receipt.
 - [ ] AC-19: IF a Bash command reaches a bridge's send path without the bridge script or the MCP tool, THEN THE Send_Gate SHALL deny it.
 - [ ] AC-20: THE Rule_Registry SHALL keep every fixture seed it needs tracked, so the selftests pass on a fresh clone.
+- [ ] AC-21: IF a Bash command names a bridge port (8080 or 8081) on any host, after quote removal, on a path other than `/api/revoke` or `/api/download`, THEN THE Send_Gate SHALL deny it.
+- [ ] AC-22: IF an `ssm send-command` payload carries a decoder, eval, a pipe into a shell or interpreter, a substitution, a backtick, `sh -c`, a `file://` parameter file or a bridge mention, or its payload cannot be read, THEN THE Send_Gate SHALL deny it, and SHALL allow a plain read-only payload.
+- [ ] AC-23: IF inline interpreter code carries both an HTTP or socket primitive and a local target hint, or an HTTP client in command position takes a URL built at run time, THEN THE Send_Gate SHALL deny it.
 
 ## Technical Scope
 
@@ -96,7 +99,11 @@ The gate imports the digest library and the ledger. The Bash path reuses the mer
 - Hashing the forwarded original of a Gmail forward: the call names it by id, so only the comment is hashed (residual, stated in `panel_digest.py`). A reply with no `to` hashes `message:<id>`, not the address the server resolves.
 - Browser sends (claude-in-chrome typing into a web mail or chat): the gate sees clicks and keystrokes, not a message, so no digest can be computed from the tool call. Residual; the reason is that the browser tools carry no send semantics to read.
 - Calendar invitations (`create_event` / `update_event` with attendees): they notify people, but they are not on the send matcher and their text is an event description, not a message. Residual, to be decided in its own spec.
-- Raw sends a hook cannot read: a script written in one call and run in another, a shell function or alias, a Python import of the MCP module's own send function. The gate catches the endpoint and port shapes in the command it sees.
+- Raw sends a hook cannot read: a script written in one call and run in another; a shell alias, function or symlink that hides the command; a Python import of the MCP module's own send function. The gate judges only the command text it is handed.
+- Parallel tool calls can race the single-use rule: two sends issued together both pass PreToolUse before either PostToolUse writes the sent ledger.
+- `sent.jsonl` is a file under `$HOME` a hooked process can delete or edit, which would make a spent receipt look unspent (visible in the kernel journal, not prevented).
+- A reviewer can reproduce the PANEL-ATTACH hashes from the block it was handed without opening the attachment; the receipt proves the reviewer saw the hash, not the file's content.
+- Measured cost on 6,088 distinct real Bash commands (QA cycle 2): 136 are denied by the raw-send rules, about 100 of them `ssm send-command` calls whose payload is a `file://` parameter file, base64 or a script-built payload, which this spec deliberately treats as opaque. Narrowing that rule to the instances that host a bridge is a decision left to the operator.
 - False positives accepted: any non-reader command whose text names `/api/send` or `/api/react`, or an `ssm send-command` whose payload names a bridge port or `api/`, is denied even if it would send nothing.
 
 ## Revision History
@@ -104,4 +111,5 @@ The gate imports the digest library and the ledger. The Bash path reuses the mer
 | Date | Change |
 |---|---|
 | 2026-10-02 | Initial spec; scope addition from the operator the same day: the sent-message ledger (AC-11) with recall deferred. |
+| 2026-10-03 | Re-QA on 35e4d74 (NEEDS-WORK, small): any-host port match after quote removal (AC-21), opaque SSM payloads (AC-22), obfuscated inline interpreter sends and run-time URLs (AC-23), four residuals documented. |
 | 2026-10-02 | Independent QA on 2056b52 (NEEDS-WORK, six findings): fixture seeds were `.pdf` and ignored on a fresh clone (AC-20); the receipt bound to a stated digest only (AC-14); unknown keys were skipped (AC-15); a chained write could swap the attachment (AC-16); the recipient was not hashed and a receipt could be reused (AC-17, AC-18); raw bridge sends bypassed the gate (AC-19). |

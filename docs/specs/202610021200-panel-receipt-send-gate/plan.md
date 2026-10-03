@@ -35,3 +35,8 @@ One pull request. The digest library first, then the receipt kind in the ledger 
 - [ ] T13 [AC-18, AC-19] scripts/g__pretool-mcp__outward-send.py: raw bridge send detection, single-use deny, the --panel-request instruction.
 - [ ] T14 [AC-14, AC-15, AC-16, AC-17, AC-18, AC-19, AC-20] registry/fixtures/FLOW.panel-before-send, registry/fixtures/COMMS.outward-send-gate, registry/fixtures/FLOW.sent-message-ledger, scripts/panel_fixture_seed.py: one violation per finding, `.txt` attachment seeds, reseed with blocks.
 - [ ] T15 [AC-14, AC-15, AC-16, AC-17, AC-18] scripts/tests/test_panel_receipt.py: block round trip, recompute refusal, unknown keys, chained bridge, recipient, single use.
+
+## QA cycle 2
+
+- [ ] T16 [AC-21, AC-22, AC-23] scripts/g__pretool-mcp__outward-send.py: any-host port match after quote removal, SSM payload inspection, inline interpreter and run-time URL detection.
+- [ ] T17 [AC-21, AC-22, AC-23] registry/fixtures/FLOW.panel-before-send: one violation per shape plus benign plain SSM read, remote requests, header variable and lsof.

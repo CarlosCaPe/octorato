@@ -510,27 +510,174 @@ def _ask_deny(human: str) -> str:
 
 # Raw bridge sends (operator directive 2026-10-02: never): a message that
 # reaches a WhatsApp bridge without the bridge script or the MCP tool would
-# leave with no panel at all. Any outward endpoint of the bridges (/api/send,
-# /api/react) named in a command, any URL on the bridge ports other than the
-# recall and read endpoints, and an SSM send-command carrying a bridge payload
-# are denied outright. A sub-command that only READS the text (grep, cat,
-# git ...) is not a send.
+# leave with no panel at all. Denied outright, every pattern read on the raw
+# text AND after quote removal (as bash reads it, so `/api/'send'` is
+# `/api/send`):
+#   - an outward endpoint of the bridges, /api/send or /api/react
+#   - a bridge port, `:8080` or `:8081` on ANY host (127.1, 0x7f.1, [::1] and a
+#     hostname all count), unless the path is the recall or read endpoint
+#     (/api/revoke, /api/download)
+#   - an `ssm send-command` whose payload is not plaintext-inspectable: a
+#     decoder (base64, b64decode, xxd, openssl enc, gzip -d, gunzip, zcat),
+#     eval, a pipe into a shell or an interpreter, $( or a backtick, sh -c,
+#     a file:// parameter file, or a mention of a bridge port, /api/send,
+#     /api/react or the bridge script. A plain read-only command (a sqlite
+#     read of a store, say) still goes.
+#   - inline interpreter code (python -c, node/perl/ruby -e, a heredoc or
+#     stdin into an interpreter) carrying BOTH an HTTP or socket primitive and
+#     a local target hint ('808', 'localhost', '127.', '::1', 'api/'), which
+#     catches a URL built by string concatenation
+#   - curl, wget or httpie whose URL argument is built at run time ($(, a
+#     backtick, ${): a URL the shell computes cannot be judged
+# A sub-command whose first token only READS (grep, cat, git, ss, lsof ...)
+# is not a send. Accepted false positives are named in the spec.
+_RAW_READERS = _READERS | {"ss", "lsof", "netstat", "ps", "pgrep", "systemctl", "journalctl"}
 _RAW_ENDPOINT = re.compile(r"/api/(?:send|react)\b", re.IGNORECASE)
-_RAW_PORT = re.compile(r"(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])\s*:\s*808[01]"
-                       r"(?=\s*/)(?!\s*/api/(?:revoke|download)\b)", re.IGNORECASE)
+_RAW_PORT = re.compile(r":\s*808[01]\b(?!\s*/api/(?:revoke|download)\b)")
 _SSM_SEND = re.compile(r"\bssm\b.*\bsend-command\b", re.IGNORECASE | re.DOTALL)
-_SSM_PAYLOAD = re.compile(r"api/|wa-soporte|808[01]|whatsapp", re.IGNORECASE)
+_SSM_OPAQUE = re.compile(
+    r"base64|b64decode|\bxxd\b|openssl\s+enc|gzip\s+-d|\bgunzip\b|\bzcat\b|\beval\b"
+    r"|\|\s*(?:sudo\s+)?(?:sh|bash|zsh|dash|ksh|python\d*(?:\.\d+)?|perl|node|ruby|php)\b"
+    r"|\$\(|`|\b(?:sh|bash|zsh|dash)\s+-[a-z]*c\b|file://|808[01]|api/send|api/react|wa-soporte",
+    re.IGNORECASE)
+_INTERP_INLINE = re.compile(
+    r"(?:^|[\s;&|(])(?:\S*/)?(?:python\d*(?:\.\d+)?|node|nodejs|perl|ruby|deno|bun|php)\b"
+    r"(?:[^\n;&|]*?\s-[A-Za-z]*[ceEr]\b|[^\n;&|]*?<<|\s+-(?:\s|$))")
+_HTTP_PRIMITIVE = re.compile(
+    r"urllib|\brequests\b|http\.client|httplib|httpx|aiohttp|\bsocket\b|fetch\s*\(|net\.connect"
+    r"|https?\.(?:get|request)|\bLWP\b|Net::HTTP|HTTP::Tiny|IO::Socket|open-uri|Faraday"
+    r"|curl_exec|file_get_contents|fsockopen|createConnection|require\(\s*net\s*\)|\bnet\.connect",
+    re.IGNORECASE)
+_LOCAL_TARGET = re.compile(r"808|localhost|127\.|::1|api/", re.IGNORECASE)
+_HTTP_CLIENTS = {"curl", "wget", "http", "https", "httpie", "xh"}
+# curl/wget flags whose next token is a value, not the URL (`--url` is the URL).
+_CLIENT_VALUE_FLAGS = {"-H", "--header", "-d", "--data", "--data-raw", "--data-binary",
+                       "--data-urlencode", "-F", "--form", "-u", "--user", "-o", "--output",
+                       "-A", "--user-agent", "-e", "--referer", "-b", "--cookie", "-c",
+                       "--cookie-jar", "-T", "--upload-file", "-X", "--request", "-m",
+                       "--max-time", "--connect-timeout", "-w", "--write-out", "-K", "--config",
+                       "-O", "--output-document", "--header", "--post-data", "--post-file",
+                       "-U", "--cacert", "--cert", "--key", "-x", "--proxy", "-r", "--range"}
+_DYNAMIC = ("$(", "`", "${")
+
+
+def _dequote(text: str) -> str:
+    return re.sub(r"['\"\\]", "", text)
+
+
+_SSM_MENTION = re.compile(r"808[01]|api/send|api/react|wa-soporte", re.IGNORECASE)
+
+
+def _ssm_payloads(text: str) -> list | None:
+    """The value of every `--parameters` argument of an ssm send-command, as
+    bash passes it (after quote removal), or None when it cannot be read: a
+    command shlex cannot split, or a send-command with no --parameters."""
+    import shlex
+    try:
+        toks = shlex.split(text, posix=True)
+    except ValueError:
+        return None
+    out = []
+    for i, t in enumerate(toks):
+        if t == "--parameters" and i + 1 < len(toks):
+            out.append(toks[i + 1])
+        elif t.startswith("--parameters="):
+            out.append(t.split("=", 1)[1])
+    return out or None
+
+
+def _ssm_hit(text: str) -> bool:
+    """An ssm send-command that names a bridge anywhere, or whose PAYLOAD (the
+    --parameters value, not the shell around the aws call: `CID=$(aws ssm
+    ...)` is fine) is not plaintext-inspectable."""
+    if _SSM_MENTION.search(text) or _SSM_MENTION.search(_dequote(text)):
+        return True
+    payloads = _ssm_payloads(text)
+    if payloads is None:
+        return True
+    return any(_SSM_OPAQUE.search(p) for p in payloads)
 
 
 def _raw_hit(text: str) -> bool:
-    return bool(_RAW_ENDPOINT.search(text) or _RAW_PORT.search(text)
-                or (_SSM_SEND.search(text) and _SSM_PAYLOAD.search(text)))
+    for t in (text, _dequote(text)):
+        if _RAW_ENDPOINT.search(t) or _RAW_PORT.search(t):
+            return True
+    if _SSM_SEND.search(text) or _SSM_SEND.search(_dequote(text)):
+        return _ssm_hit(text)
+    return False
+
+
+def _interp_hit(command: str) -> bool:
+    if not _INTERP_INLINE.search(command):
+        return False
+    flat = _dequote(command)
+    return bool(_HTTP_PRIMITIVE.search(flat) and _LOCAL_TARGET.search(flat))
+
+
+_HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?\n\s*\2\s*(?:\n|$)", re.DOTALL)
+_PREFIX_WORDS = {"sudo", "env", "nice", "nohup", "command", "exec", "time", "timeout", "stdbuf",
+                 "setsid", "ionice", "doas"}
+
+
+def _dynamic_url_hit(command: str) -> bool:
+    """curl / wget / httpie IN COMMAND POSITION with a URL argument the shell
+    builds at run time. Heredoc bodies are dropped first (they are documents,
+    not commands), and each line is read on its own, so the word `http` in a
+    commit message or a document is not a client."""
+    import shlex
+    text = _HEREDOC.sub("\n", command)
+    stops = {";", "&&", "||", "|", "&", "|&", ";;", "(", ")", "{", "}"}
+    for line in text.splitlines():
+        if not any(m in line for m in _DYNAMIC):
+            continue
+        try:
+            lex = shlex.shlex(line, posix=True, punctuation_chars=True)
+            lex.whitespace_split = True
+            toks = list(lex)
+        except ValueError:
+            if re.search(r"(?:^|[;&|(]\s*)(?:curl|wget|https?|xh)\b", line):
+                return True
+            continue
+        i, at_start = 0, True
+        while i < len(toks):
+            t = toks[i]
+            if t in stops:
+                at_start = True
+                i += 1
+                continue
+            if at_start and (re.match(r"^[A-Za-z_]\w*=", t) or t in _PREFIX_WORDS
+                             or (toks[i - 1] == "timeout" if i else False) and re.match(r"^[\d.]+[smh]?$", t)):
+                i += 1
+                continue
+            if not at_start or os.path.basename(t) not in _HTTP_CLIENTS:
+                at_start = False
+                i += 1
+                continue
+            j = i + 1
+            while j < len(toks) and toks[j] not in stops:
+                a = toks[j]
+                if a in _CLIENT_VALUE_FLAGS or a in (">", ">>", "<", "2>", "&>"):
+                    j += 2
+                    continue
+                if a.startswith("-"):
+                    j += 1
+                    continue
+                nxt = toks[j + 1] if j + 1 < len(toks) else ""
+                if any(m in a for m in _DYNAMIC) or (a.endswith("$") and nxt.startswith("(")):
+                    return True
+                j += 1
+            i, at_start = j, False
+    return False
 
 
 def raw_bridge_send(command: str) -> bool:
-    """True when a Bash command reaches a bridge's send path directly."""
+    """True when a Bash command reaches a bridge's send path directly, or
+    carries a send the gate cannot judge (opaque SSM payload, inline
+    interpreter HTTP to a local target, a run-time URL)."""
     import receipt_ledger
     command = str(command or "")
+    if _interp_hit(command) or _dynamic_url_hit(command):
+        return True
     if not _raw_hit(command):
         return False
     try:
@@ -545,7 +692,7 @@ def raw_bridge_send(command: str) -> bool:
                 continue
             seen_in_sub = True
             toks = receipt_ledger.tokens_of(sc)
-            if toks and toks[0] in _READERS:
+            if toks and os.path.basename(toks[0]) in _RAW_READERS:
                 continue
             return True
     # The pattern sits outside every sub-command the splitter returned (a
@@ -615,8 +762,10 @@ def check(data: dict) -> str:
     if str(data.get("tool_name", "")) == "Bash" and raw_bridge_send(
             str((data.get("tool_input") or {}).get("command", ""))):
         return (f"🧑‍⚖️ RAW BRIDGE SEND: this command reaches a WhatsApp bridge's send path "
-                f"(/api/send, /api/react, a bridge port, or an SSM send-command with a bridge "
-                f"payload) without the bridge script or the MCP tool, so no panel can gate it. "
+                f"(/api/send, /api/react, a bridge port on any host, an SSM send-command whose "
+                f"payload is not plain text, inline interpreter HTTP to a local target, or a URL "
+                f"built at run time) without the bridge script or the MCP tool, so no panel can "
+                f"gate it. "
                 f"Operator directive 2026-10-02: never. Send through {_SEND_SCRIPTS[0]} or the "
                 f"WhatsApp MCP, with a panel receipt.")
     reason = _receipt_checks(data)

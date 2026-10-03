@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-violation-ssm-names-bridge-script",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "aws --profile ops ssm send-command --instance-ids i-0 --document-name AWS-RunShellScript --parameters \"commands=['/opt/bin/wa-soporte.sh 1 hi']\""
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_ssm_names_bridge_script_transcript.jsonl"
+}
