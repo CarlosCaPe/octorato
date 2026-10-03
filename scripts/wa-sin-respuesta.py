@@ -418,7 +418,39 @@ def revisa(cfg, ahora=None, estados=None, cobertura=None):
     umbral = timedelta(minutes=int(vig.get("umbral_minutos", 20)))
     silencios = []
 
-    for chat in vig["chats"]:
+    # TODOS LOS CHATS (2026-10-03). Una lista escrita a mano se queda corta el dia
+    # que llega un chat nuevo, y ese chat es invisible hasta que alguien se acuerda
+    # de agregarlo: se encontraron cuatro chats con mensajes de clientes que nunca
+    # entraron a la lista, uno con 54 dias de silencio. Con `vigilancia.todos: true`
+    # el vigia cubre, ademas de la lista, todo chat del puente que haya recibido al
+    # menos un mensaje entrante (sin entrantes no hay nadie esperando). Fuera quedan
+    # `status@broadcast`, el numero `propio` del puente y lo que diga
+    # `vigilancia.excluir`. La lista explicita sigue mandando en etiqueta, cliente y
+    # puente; lo descubierto sale como "chat sin etiqueta" para que alguien lo nombre.
+    chats = list(vig.get("chats") or [])
+    if vig.get("todos"):
+        conocidos = {c["jid"] for c in chats}
+        excluir = set(vig.get("excluir") or []) | {"status@broadcast"}
+        for nombre in vig.get("todos_puentes") or [nombre_puente]:
+            con = abrir(nombre)
+            if con is None:
+                continue
+            propio = str(((cfg.get("puentes") or {}).get(nombre) or {})
+                         .get("propio") or "")
+            filas = con.execute(
+                "SELECT DISTINCT chat_jid FROM messages WHERE is_from_me = 0 "
+                "AND chat_jid IS NOT NULL ORDER BY chat_jid").fetchall()
+            for (jid,) in filas:
+                if jid in conocidos or jid in excluir:
+                    continue
+                if propio and jid.split("@", 1)[0] == propio:
+                    continue
+                conocidos.add(jid)
+                chats.append({"jid": jid, "quien": f"chat sin etiqueta ({jid})",
+                              "cliente": "Sin etiquetar", "canal": "whatsapp",
+                              "puente": nombre})
+
+    for chat in chats:
         jid, quien = chat["jid"], chat.get("quien", "chat")
         # Ciego no es sano: si su puente no abre, el chat NO se anota como
         # vigilado, para que el tablero lo pinte como hueco de cobertura.
@@ -1137,6 +1169,29 @@ def selftest():
             if (chat in r) != debia:
                 fallos.append(
                     f"chat {chat}: {'debia avisar y callo' if debia else 'no debia avisar y grito'}")
+
+        # ---- todos los chats, sin lista a mano -----------------------------
+        # Con `todos` el vigia descubre los chats con entrantes. B va en la lista
+        # (contestado, no avisa), E esta excluido, el numero propio del puente no
+        # cuenta aunque tenga entrantes, y A, F y G salen como "sin etiqueta".
+        con = sqlite3.connect(db)
+        t = (ahora - timedelta(minutes=45)).astimezone()
+        con.execute("INSERT INTO messages VALUES (?,?,?,?,?,?)",
+                    ("p1", "PROPIO@s.whatsapp.net", 0, t.isoformat(sep=" "), None,
+                     "latido"))
+        con.commit(); con.close()
+        cfg_todos = {"puentes": {"p": {"db": str(db), "propio": "PROPIO"}},
+                     "vigilancia": {"puente": "p", "umbral_minutos": 20,
+                                    "todos": True, "excluir": ["E"],
+                                    "chats": [{"jid": "B", "quien": "B",
+                                               "cliente": "B",
+                                               "canal": "whatsapp"}]}}
+        r_todos = {s["quien"] for s in revisa(cfg_todos, ahora, [], [])}
+        esperado = {f"chat sin etiqueta ({c})" for c in "AFG"}
+        casos += 1
+        if r_todos != esperado:
+            fallos.append(f"todos: esperaba {sorted(esperado)} y salio "
+                          f"{sorted(r_todos)}")
 
         # ---- un chat puede vivir en OTRO puente -----------------------------
         # El fallo que esto vigila es silencioso: con un solo puente global, un
