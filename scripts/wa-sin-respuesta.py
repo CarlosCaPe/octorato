@@ -128,9 +128,9 @@ import hashlib
 import io
 import json
 import os
+import re
 import shlex
 import sqlite3
-from collections import Counter
 import subprocess
 import sys
 import tempfile
@@ -138,6 +138,7 @@ import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -427,40 +428,36 @@ def revisa(cfg, ahora=None, estados=None, cobertura=None):
     # mensaje entrante (sin entrantes no hay nadie esperando), grupos incluidos.
     #   - `todos_puentes`: puentes que se recorren (por omision, solo el de
     #     `vigilancia.puente`). Ojo con el personal: cientos de chats viejos.
-    #   - `todos_dias`: si se da, solo cuenta un chat con un entrante en esa
-    #     ventana; acota ruido y costo en bases grandes.
     #   - Fuera siempre: difusiones (`@broadcast`, estados) y canales
     #     (`@newsletter`), que no se contestan; el numero `propio` del puente
-    #     (digitos o JID, con o sin `+`); y `vigilancia.excluir`.
+    #     (se comparan solo sus digitos, venga como numero o como JID); y
+    #     `vigilancia.excluir`. Sin ventana de tiempo a proposito: comparar
+    #     timestamps del puente como texto esconde chats vivos.
     # La lista explicita sigue mandando en etiqueta, cliente y puente; lo
     # descubierto sale como "chat sin etiqueta" para que alguien lo nombre. La
     # deduplicacion va por (jid, puente): el mismo JID en otro puente es otra
     # conversacion.
-    chats = list(vig.get("chats") or [])
+    # Sin `todos`, una config sin `chats` sigue reventando a la vista (KeyError),
+    # en vez de dejar un vigia que corre sin mirar nada.
+    chats = list(vig.get("chats") or []) if vig.get("todos") else list(vig["chats"])
     if vig.get("todos"):
         conocidos = {(c["jid"], c.get("puente", nombre_puente)) for c in chats}
         excluir = set(vig.get("excluir") or [])
-        dias = vig.get("todos_dias")
-        desde_sql = ((ahora - timedelta(days=int(dias))).isoformat()
-                     if dias else None)
         for nombre in vig.get("todos_puentes") or [nombre_puente]:
             con = abrir(nombre)
             if con is None:
                 continue
-            propio = str(((cfg.get("puentes") or {}).get(nombre) or {})
-                         .get("propio") or "").split("@", 1)[0].lstrip("+")
-            sql = ("SELECT DISTINCT chat_jid FROM messages WHERE is_from_me = 0 "
-                   "AND chat_jid IS NOT NULL")
-            args = []
-            if desde_sql:
-                sql += " AND timestamp >= ?"
-                args.append(desde_sql)
-            for (jid,) in con.execute(sql + " ORDER BY chat_jid", args).fetchall():
+            propio = re.sub(r"\D", "", str(((cfg.get("puentes") or {}).get(nombre)
+                                             or {}).get("propio") or "").split("@", 1)[0])
+            filas = con.execute(
+                "SELECT DISTINCT chat_jid FROM messages WHERE is_from_me = 0 "
+                "AND chat_jid IS NOT NULL ORDER BY chat_jid").fetchall()
+            for (jid,) in filas:
                 if (jid, nombre) in conocidos or jid in excluir:
                     continue
                 if jid.endswith(("@broadcast", "@newsletter")):
                     continue
-                if propio and jid.split("@", 1)[0] == propio:
+                if propio and re.sub(r"\D", "", jid.split("@", 1)[0]) == propio:
                     continue
                 conocidos.add((jid, nombre))
                 chats.append({"jid": jid, "quien": f"chat sin etiqueta ({jid})",
@@ -1201,7 +1198,7 @@ def selftest():
                         (mid, jid, 0, t, None, "aviso"))
         con.commit(); con.close()
         cfg_todos = {"puentes": {"p": {"db": str(db),
-                                       "propio": "+5210000@s.whatsapp.net"}},
+                                       "propio": "+52 10-000@s.whatsapp.net"}},
                      "vigilancia": {"puente": "p", "umbral_minutos": 20,
                                     "todos": True, "excluir": ["E"],
                                     "chats": [{"jid": "A", "quien": "A",
@@ -1214,12 +1211,6 @@ def selftest():
         if r_todos != esperado:
             fallos.append(f"todos: esperaba {dict(esperado)} y salio "
                           f"{dict(r_todos)}")
-        # Ventana de 1 dia: todos los entrantes de prueba son recientes, asi que
-        # el resultado no cambia (la ventana no debe esconder chats vivos).
-        cfg_todos["vigilancia"]["todos_dias"] = 1
-        casos += 1
-        if Counter(s["quien"] for s in revisa(cfg_todos, ahora, [], [])) != esperado:
-            fallos.append("todos_dias: la ventana cambio el resultado de chats recientes")
 
         # ---- un chat puede vivir en OTRO puente -----------------------------
         # El fallo que esto vigila es silencioso: con un solo puente global, un
