@@ -15,6 +15,12 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-10-03]: v9.3.0
+### Features
+- feat(wa-watch): optional all-chats coverage for the silence watcher (#360)
+### Other
+- docs(changelog): backfill v9.2.0 (#359)
+
 ## [2026-10-03]: v9.2.0
 ### Features
 - feat(gates): require a panel receipt for every outward message send (#358)
