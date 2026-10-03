@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-violation-ssm-bridge-date-set",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "aws --profile ops ssm send-command --instance-ids i-0aaaaaaaaaaaaaaaa --document-name AWS-RunShellScript --parameters '{\"commands\": [\"date -s '2020-01-01'\"]}'"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_ssm_bridge_date_set_transcript.jsonl"
+}

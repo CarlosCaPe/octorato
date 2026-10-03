@@ -1,0 +1,10 @@
+{
+  "session_id": "fx-p-benign-wa-file-pass",
+  "tool_name": "mcp__whatsapp__send_file",
+  "tool_input": {
+    "recipient": "5210000000000",
+    "media_path": "~/attach/doc.txt"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "benign_wa_file_pass_transcript.jsonl"
+}

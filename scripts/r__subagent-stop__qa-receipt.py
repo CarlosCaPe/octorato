@@ -13,6 +13,14 @@ or the v9 converge protocol (skills/sdd-converge)
     CONVERGE-VERDICT: CONVERGED | GAPS
     CONVERGE-SCOPE: docs/specs/<yyyymmddHHMM>-<feature-name>
 
+or the panel protocol (FLOW.panel-before-send)
+
+    PANEL-TO: <recipient>        (one per recipient)
+    PANEL-ATTACH: <sha256> <path> (one per attachment)
+    PANEL-BODY-BEGIN / <exact text> / PANEL-BODY-END
+    PANEL-VERDICT: PASS | NEEDS-WORK
+    PANEL-SHA256: <64 hex>       (recomputed from the block; recorded only if equal)
+
 this hook, running in the harness process, appends a receipt to the global
 ledger with the agent id, type, the harness-written agent transcript path and
 the harness `uuid` and `timestamp` of the transcript entry the report came
@@ -64,13 +72,37 @@ def main() -> int:
             "session_id": data.get("session_id") or "",
         }
         for kind, parse in (("qa", receipt_ledger.parse_verdict),
-                             ("converge", receipt_ledger.parse_converge)):
+                             ("converge", receipt_ledger.parse_converge),
+                             ("panel", receipt_ledger.parse_panel)):
             source, anchor = report, {"entry_uuid": entry_uuid, "entry_ts": entry_ts}
             verdict, scope = parse(source)
             if not verdict:
                 source, anchor = text, {}
                 verdict, scope = parse(source)
-            if not verdict:
+            if not verdict or (kind == "panel" and not scope):
+                continue
+            if kind == "panel":
+                # The digest is the panel's scope, and it must be RECOMPUTED
+                # from the block the reviewer read (body, recipients,
+                # attachment hashes): a stated digest alone binds to nothing.
+                # An attachment still on disk must hash to what was reviewed.
+                import panel_digest
+                got = panel_digest.recompute_from_report(source)
+                if not got or got["digest"] != scope:
+                    continue
+                stale = False
+                for sha, path in got["attachments"]:
+                    try:
+                        if path and panel_digest.file_sha256(path) != sha:
+                            stale = True
+                    except panel_digest.PanelDigestError:
+                        pass
+                if stale:
+                    continue
+                record = dict(base, kind=kind, verdict=verdict, digest=scope,
+                              recipients=got["recipients"],
+                              attachments=[h for h, _ in got["attachments"]], **anchor)
+                receipt_ledger.append_global(record)
                 continue
             record = dict(base, kind=kind, verdict=verdict, scope=scope, **anchor)
             if kind == "qa":

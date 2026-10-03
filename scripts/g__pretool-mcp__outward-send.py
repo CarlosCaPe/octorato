@@ -34,8 +34,27 @@ WHAT IT REQUIRES (docs/architecture/v7-nothing-ships-unverified.md)
   4. Explicit send ask (operator directive 2026-08-14: deliver by default,
      transmit only the message that was asked for). A non-negated send verb
      must stand in the operator's own prompt for the turn, outside quotes and
-     code spans; `send-ok` is the standing hatch. Checked last, so every
+     code spans; `send-ok` is the standing hatch. Checked after 1-3, so every
      earlier deny keeps its own name.
+  5. Panel receipt (FLOW.panel-before-send, operator directive 2026-10-02: no
+     message leaves without a panel, however small). Every MESSAGE send (mail
+     send/reply/forward, WhatsApp send_message/send_file/send_audio_message,
+     the support bridge, its --archivo included) computes panel_digest.py over
+     the outgoing text plus the bytes of every attachment, and is denied
+     unless the panel receipt that DECIDES that digest in this session, inside
+     120 minutes, says PASS (receipt_ledger.panel_pass_for). A later
+     NEEDS-WORK for the same digest revokes. NO hatch: send-ok, the
+     autonomous-chat allowlist and a chat-typed send-ok waive requirement 4
+     only, never this one. The digest covers the recipients too, the
+     receipt must recompute from the body block the reviewer read, and a
+     receipt authorises ONE send (sent.jsonl). A raw send that reaches a
+     bridge's send path without the script or the MCP tool (/api/send,
+     /api/react, a bridge port, SSM send-command) is denied outright.
+     Fail closed: a body or attachment the gate cannot
+     read with certainty (panel_digest.PanelDigestError), an unreadable
+     ledger and a crash all deny. Checked LAST, so the earlier checks keep
+     their own deny and their fixtures stay meaningful. Deploys and releases
+     are not messages and are out of scope here.
 
 The Stop gates are not replaced. They still catch drafts and prose; this gate
 is the choke point for what actually leaves, and it imports their detectors so
@@ -474,7 +493,8 @@ def _is_message_send(tool_name: str, tool_input: dict) -> bool:
 
 def is_send(tool_name: str, tool_input: dict) -> bool:
     if tool_name == "Bash":
-        return _bash_is_send(str((tool_input or {}).get("command", "")))
+        cmd = str((tool_input or {}).get("command", ""))
+        return _bash_is_send(cmd) or raw_bridge_send(cmd)
     return bool(_SEND_TOOL.search(tool_name))
 
 
@@ -488,8 +508,690 @@ def _ask_deny(human: str) -> str:
             "'send-ok' en SU mensaje lo exime.")
 
 
+# Raw bridge sends (operator directive 2026-10-02: never): a message that
+# reaches a WhatsApp bridge without the bridge script or the MCP tool would
+# leave with no panel at all. Denied outright, every pattern read on the raw
+# text AND after quote removal (as bash reads it, so `/api/'send'` is
+# `/api/send`):
+#   - an outward endpoint of the bridges, /api/send or /api/react
+#   - ANY request to a bridge port, `:8080` or `:8081` (leading zeros too)
+#     on any host (127.1,
+#     0x7f.1, [::1], a hostname, httpie's bare `:8081`), whatever the method,
+#     unless its path is on the READ ALLOWLIST: the routes both bridges'
+#     main.go expose that send nothing (/api/revoke, /api/download,
+#     /api/group-participants). A path the gate cannot read ($p, a built
+#     string, a `$` in a URL's host or port) denies. The text is
+#     percent-decoded until stable, split string literals are joined, and
+#     /api/ paths are normalized before every match, so /api/sen%64,
+#     'sen'+'d' and /api/x/../send all read as /api/send. /api/revoke is on
+#     the list on purpose: it is the recall path, and a revoke carries no
+#     content to panel. This replaced a write-shape test
+#     that fused flags (-d'..', -Fx=y), httpie's implied POST, urlopen's
+#     positional data and a method built at run time all walked past.
+#   - an `ssm send-command` that mentions a bridge (a bridge port, /api/send,
+#     /api/react, the bridge script) in any payload, on any instance; and one
+#     whose payload is not plaintext-inspectable (a decoder such as base64,
+#     b64decode, xxd, openssl enc, gzip -d, gunzip, zcat; eval; a pipe into a
+#     shell or an interpreter; $( or a backtick; sh -c; a file:// parameter
+#     file; any interpreter run, `sh file` / `python -c` / `./file` / source)
+#     when the target instance HOSTS A BRIDGE. On such a target the rule is an
+#     ALLOWLIST since QA cycle 5: plain reads (sqlite3 without write SQL or
+#     .shell/.system, journalctl, systemctl status|is-active|show, ls, cat,
+#     tail, head, stat, df, du, ss, ps, grep, wc, echo with no redirection,
+#     cd, find without -exec/-delete, cut, tr, md5sum, sha256sum, base64
+#     without -d; not sort, uniq or date, which write with no redirection),
+#     the deploy below, and
+#     `systemctl daemon-reload`; anything else (awk system, exec, crontab, at,
+#     nohup, setsid, timeout ...) denies. One exception, operator
+#     decision 2026-10-03: a DEPLOY that only writes files under /opt, every
+#     command being `echo|printf <base64> | base64 -d [| gunzip] > /opt/...`
+#     (or `| [sudo] tee [-a] /opt/... [>/dev/null]`, `>>`), chmod, chown,
+#     mkdir -p, mv or cp on paths strictly under a directory of /opt (no /opt
+#     itself, no `.`/`..` or hidden components), or `systemctl daemon-reload` (it starts
+#     nothing new; start, restart, enable --now and reload stay denied). Every
+#     base64 blob in ANY ssm payload is decoded (gzip inside base64 too) and
+#     its content run through the bridge-term, raw-send and HTTP checks
+#     (url-safe alphabet too, quote- or newline-split fragments joined); on a
+#     bridge host a candidate that looks encoded but does not decode denies.
+#     Residuals: one decode layer only (a second layer is reachable only
+#     through the timer residual below), and a symlink under /opt cannot be
+#     resolved from here, so a write through one lands wherever it points. Residual, accepted by the
+#     operator 2026-10-03: a file written under /opt can be run later by an
+#     existing timer or unit; the decode inspection reduces that, it does
+#     not remove it. Bridge-hosting instances
+#     are read from the private bridge config (company/config/wa-puentes.json,
+#     puentes.*.remoto.instancia). Fail closed: a missing or unreadable config,
+#     targets given by --targets (tags, wildcards) or an instance id the gate
+#     cannot read count as bridge-hosting. Residual: that config is a file
+#     under $HOME a hooked process can write.
+#   - inline interpreter code (python -c, node/perl/ruby -e, a heredoc or
+#     stdin into an interpreter) that names a bridge port off the allowlist
+#     (the rule above), or carries an HTTP or socket primitive, a
+#     bridge-shaped target ('808' or 'api/' not preceded by a word character)
+#     and a write shape, which catches a URL built by string concatenation
+#     while a local socket lab or a file edit mentioning fetch( goes
+#   - curl, wget or httpie whose URL argument is built at run time ($(, a
+#     backtick, ${): a URL the shell computes cannot be judged
+# A sub-command whose first token only READS (grep, cat, git, ss, lsof ...)
+# is not a send. Accepted false positives are named in the spec.
+_RAW_READERS = _READERS | {"ss", "lsof", "netstat", "ps", "pgrep", "systemctl", "journalctl"}
+_RAW_ENDPOINT = re.compile(r"/api/(?:send|react)\b", re.IGNORECASE)
+_RAW_PORT = re.compile(r":\s*0*808[01]\b")
+_PORT_PATH = re.compile(r":\s*0*808[01]\b(\S*)")
+# A client URL whose host or port the shell fills in (`localhost:$P`,
+# `http://$H/...`) cannot be judged by the port rule.
+_DYNAMIC_AUTHORITY = re.compile(r"(?:https?://|\s:)[^\s/'\"]*\$", re.IGNORECASE)
+_API_PATH = re.compile(r"/api/[^\s'\"?#;|&)]*")
+# Routes the two bridges expose that send nothing (verified in both main.go:
+# the personal bridge has send, react, revoke, download; the support bridge
+# adds group-add, a write, and group-participants, a read). /api/status is
+# not a route of either, so it is not here.
+_READ_ROUTES = {"/api/revoke", "/api/download", "/api/group-participants"}
+_SSM_SEND = re.compile(r"\bssm\b.*\bsend-command\b", re.IGNORECASE | re.DOTALL)
+_SSM_OPAQUE = re.compile(
+    r"base64|b64decode|\bxxd\b|openssl\s+enc|gzip\s+-d|\bgunzip\b|\bzcat\b|\beval\b"
+    r"|\|\s*(?:sudo\s+)?(?:sh|bash|zsh|dash|ksh|python\d*(?:\.\d+)?|perl|node|ruby|php)\b"
+    r"|\$\(|`|\b(?:sh|bash|zsh|dash)\s+-[a-z]*c\b|file://|808[01]|api/send|api/react|wa-soporte"
+    r"|(?:^|[\s;&|(\[\'\"])(?:sudo\s+)?(?:/\S*/)?(?:sh|bash|zsh|dash|ksh|python\d*(?:\.\d+)?"
+    r"|perl|node|nodejs|ruby|php)\b(?!-)"
+    r"|(?:^|[\s;&|(\[\'\"])(?:\./\S+|source\s+\S|\.\s+/\S)",
+    re.IGNORECASE)
+_INTERP_INLINE = re.compile(
+    r"(?:^|[\s;&|(])(?:\S*/)?(?:python\d*(?:\.\d+)?|node|nodejs|perl|ruby|deno|bun|php)\b"
+    r"(?:[^\n;&|]*?\s-[A-Za-z]*[ceEr]\b|[^\n;&|]*?<<|\s+-(?:\s|$))")
+_HTTP_PRIMITIVE = re.compile(
+    r"urllib|\brequests\b|http\.client|httplib|httpx|aiohttp|\bsocket\b|fetch\s*\(|net\.connect"
+    r"|https?\.(?:get|request)|\bLWP\b|Net::HTTP|HTTP::Tiny|IO::Socket|open-uri|Faraday"
+    r"|curl_exec|file_get_contents|fsockopen|createConnection|require\(\s*net\s*\)|\bnet\.connect",
+    re.IGNORECASE)
+_LOCAL_TARGET = re.compile(r"808|localhost|127\.|::1|api/", re.IGNORECASE)
+_HTTP_CLIENTS = {"curl", "wget", "http", "https", "httpie", "xh"}
+# curl/wget flags whose next token is a value, not the URL (`--url` is the URL).
+_CLIENT_VALUE_FLAGS = {"-H", "--header", "-d", "--data", "--data-raw", "--data-binary",
+                       "--data-urlencode", "-F", "--form", "-u", "--user", "-o", "--output",
+                       "-A", "--user-agent", "-e", "--referer", "-b", "--cookie", "-c",
+                       "--cookie-jar", "-T", "--upload-file", "-X", "--request", "-m",
+                       "--max-time", "--connect-timeout", "-w", "--write-out", "-K", "--config",
+                       "-O", "--output-document", "--header", "--post-data", "--post-file",
+                       "-U", "--cacert", "--cert", "--key", "-x", "--proxy", "-r", "--range"}
+_DYNAMIC = ("$(", "`", "${")
+
+
+def _dequote(text: str) -> str:
+    return re.sub(r"['\"\\]", "", text)
+
+
+def _pct_decode(text: str) -> str:
+    """Percent-decode until stable (bounded): /api/sen%2564 -> %64 -> d."""
+    from urllib.parse import unquote
+    for _ in range(8):
+        nxt = unquote(text)
+        if nxt == text:
+            break
+        text = nxt
+    return text
+
+
+def _join_concat(text: str) -> str:
+    """'http://local'+'host' -> 'http://localhost': string concatenation in
+    inline code joined back, so a split literal reads whole."""
+    return re.sub(r"['\"]\s*\+\s*['\"]", "", text)
+
+
+def _norm_api(text: str) -> str:
+    """Every /api/... path normalized (/api/x/../send -> /api/send)."""
+    import posixpath
+    return _API_PATH.sub(lambda m: posixpath.normpath(m.group(0)), text)
+
+
+def _readings(text: str) -> tuple:
+    """The forms a command is matched in: raw, quote-removed, concatenation
+    joined, each percent-decoded until stable, and each with its /api/ paths
+    normalized."""
+    base = (text, _dequote(text), _dequote(_join_concat(text)))
+    out = []
+    for t in base:
+        for u in (t, _pct_decode(t)):
+            out.extend((u, _norm_api(u)))
+    return tuple(dict.fromkeys(out))
+
+
+def _port_off_allowlist(text: str) -> bool:
+    """True when the text names a bridge port whose path is not a read route
+    (or cannot be read)."""
+    import posixpath
+    for t in _readings(text):
+        for m in _PORT_PATH.finditer(t):
+            path = re.split(r"[?#\s'\"),;|&]", m.group(1) or "", maxsplit=1)[0]
+            if "$" in path or not path.startswith("/"):
+                return True
+            if posixpath.normpath(path) not in _READ_ROUTES:
+                return True
+        if _DYNAMIC_AUTHORITY.search(t):
+            return True
+    return False
+
+
+_SSM_MENTION = re.compile(r"808[01]|api/send|api/react|wa-soporte", re.IGNORECASE)
+_WRITE_SHAPE = re.compile(
+    r"(?:^|\s)(?:-d|--data(?:-[a-z]+)?|-F|--form(?:-string)?|-T|--upload-file|--post-data|--post-file"
+    r"|--json)(?=[\s=@]|$)"
+    r"|(?:-X|--request|--method)[\s=]*(?:POST|PUT|PATCH|DELETE)\b"
+    r"|\b(?:https?|xh)\s+(?:POST|PUT|PATCH|DELETE)\b"
+    r"|\bdata\s*=|\bjson\s*=|method\s*[=:]\s*\W?(?:POST|PUT|PATCH|DELETE)\b"
+    r"|\.(?:post|put|patch)\s*\(|\bsend(?:all)?\s*\(|\.write\s*\(|\.end\s*\(|\breact\b",
+    re.IGNORECASE)
+_LOCAL_HINT = re.compile(r"localhost|127\.|::1|0\.0\.0\.0|808", re.IGNORECASE)
+_BRIDGE_TARGET = re.compile(r"808|(?<![\w])api/", re.IGNORECASE)
+_INSTANCE_ID = re.compile(r"^i-[0-9a-f]{8,17}$")
+_BRIDGE_CFG = Path.home() / ".claude" / "company" / "config" / "wa-puentes.json"
+
+
+def _bridge_instances():
+    """Instance ids that host a bridge, from the private bridge config, or
+    None when the config is missing, unreadable or names none (then every
+    instance counts as bridge-hosting)."""
+    try:
+        cfg = json.loads(_BRIDGE_CFG.read_text(encoding="utf-8"))
+        ids = set()
+        for entry in (cfg.get("puentes") or {}).values():
+            inst = ((entry or {}).get("remoto") or {}).get("instancia")
+            if isinstance(inst, str) and inst.strip():
+                ids.add(inst.strip())
+        return ids or None
+    except Exception:
+        return None
+
+
+def _ssm_parts(text: str):
+    """(payloads, instance_ids) of an ssm send-command as bash passes them, or
+    None when the command cannot be read. instance_ids is None when the
+    targets cannot be read: --targets (tags, wildcards), a variable the
+    command does not assign, or anything that is not a literal instance id."""
+    import shlex
+    try:
+        toks = shlex.split(text, posix=True)
+    except ValueError:
+        return None
+    assigned = {}
+    for t in toks:
+        m = re.match(r"^([A-Za-z_]\w*)=(.*)$", t)
+        if m:
+            assigned[m.group(1)] = m.group(2).rstrip(";&|")
+    payloads, raw_ids, unreadable = [], [], False
+    i = 0
+    while i < len(toks):
+        t = toks[i]
+        if t == "--parameters" and i + 1 < len(toks):
+            payloads.append(toks[i + 1])
+        elif t.startswith("--parameters="):
+            payloads.append(t.split("=", 1)[1])
+        elif t == "--targets" or t.startswith("--targets="):
+            unreadable = True
+        elif t == "--instance-ids":
+            j = i + 1
+            while j < len(toks) and not toks[j].startswith("-"):
+                raw_ids.append(toks[j])
+                j += 1
+        elif t.startswith("--instance-ids="):
+            raw_ids.append(t.split("=", 1)[1])
+        i += 1
+    ids = []
+    for r in raw_ids:
+        for part in re.split(r"[,\s]+", r):
+            if not part:
+                continue
+            m = re.match(r"^\$\{?([A-Za-z_]\w*)\}?$", part)
+            if m:
+                part = assigned.get(m.group(1), "")
+            if not _INSTANCE_ID.match(part):
+                unreadable = True
+            else:
+                ids.append(part)
+    if not ids:
+        unreadable = True
+    return payloads, (None if unreadable else ids)
+
+
+_B64_BLOB = re.compile(r"[A-Za-z0-9+/_-]{16,}={0,2}")
+# A candidate the gate must be able to decode: long, and mixed like encoded
+# bytes are (upper, lower and a digit), so paths and words do not qualify.
+_B64_CANDIDATE = re.compile(r"(?=[A-Za-z0-9+/_-]*[A-Z])(?=[A-Za-z0-9+/_-]*[a-z])"
+                            r"(?=[A-Za-z0-9+/_-]*\d)[A-Za-z0-9+/_-]{24,}={0,2}")
+# Fragments the shell glues together: 'AAA''BBB', "AAA"'BBB', 'AAA'+'BBB'.
+_B64_GLUE = re.compile(r"(?<=[A-Za-z0-9+/_=-])(?:['\"]\s*\+?\s*['\"]|\\?\n)(?=[A-Za-z0-9+/_-])")
+# A file path strictly under a directory of /opt: /opt/<dir>/<name>[...]
+# (mkdir -p may name /opt/<dir> itself), every
+# component starting with a letter, digit or underscore (no `.`, `..`,
+# hidden names, empty components or /opt itself). A symlink under /opt
+# cannot be resolved from here; that is a stated residual.
+_OPT_COMP = r"[A-Za-z0-9_][A-Za-z0-9_.+-]*"
+_OPT_DIR = r"/opt/" + _OPT_COMP + r"(?:/" + _OPT_COMP + r")*(?![\w./-])"
+_OPT_PATH = r"/opt/" + _OPT_COMP + r"(?:/" + _OPT_COMP + r")+(?![\w./-])"
+_DEPLOY_SEGMENTS = (
+    re.compile(r"^(?:echo|printf)(?:\s+-n)?(?:\s+['\"]?%s['\"]?)?\s+['\"]?(?P<b64>[A-Za-z0-9+/]+={0,2})['\"]?"
+               r"\s*\|\s*base64\s+(?:-d|--decode)(?:\s+-[iw]0?)?(?P<gz>\s*\|\s*(?:gunzip|gzip\s+-d)(?:\s+-c)?)?"
+               r"\s*(?:>>?\s*" + _OPT_PATH + r"|\|\s*(?:sudo\s+)?tee\s+(?:-a\s+)?" + _OPT_PATH
+               + r"(?:\s*>\s*/dev/null)?)$"),
+    re.compile(r"^(?:sudo\s+)?(?:chmod|chown)\s+(?:-R\s+)?[\w.:+=,-]+(?:\s+" + _OPT_DIR + r")+$"),
+    re.compile(r"^(?:sudo\s+)?mkdir\s+-p(?:\s+" + _OPT_DIR + r")+$"),
+    re.compile(r"^(?:sudo\s+)?(?:mv|cp)(?:\s+-[fpa]+)?\s+" + _OPT_PATH + r"\s+" + _OPT_PATH + r"$"),
+    re.compile(r"^(?:sudo\s+)?systemctl\s+daemon-reload$"),
+)
+
+
+def _ssm_commands(payload: str) -> list | None:
+    """The command strings of an ssm --parameters value, or None when its
+    shape is not one the gate reads: JSON {"commands": [...]} or the CLI
+    shorthand commands=[...] with quoted items."""
+    import ast
+    import shlex
+    p = payload.strip()
+    try:
+        if p.startswith("{"):
+            cmds = json.loads(p).get("commands")
+        elif p.startswith("commands="):
+            rest = p[len("commands="):].strip()
+            if rest.startswith("["):
+                cmds = ast.literal_eval(rest)
+            elif rest[:1] in "'\"":
+                # Shorthand scalar in quotes: one command, as the CLI reads it.
+                cmds = [ast.literal_eval(rest)]
+            else:
+                # Shorthand scalar: the CLI splits an unquoted value on commas.
+                cmds = [c for c in rest.split(",") if c.strip()]
+        else:
+            return None
+    except Exception:
+        return None
+    del shlex
+    if isinstance(cmds, str):
+        cmds = [cmds]
+    if not isinstance(cmds, list) or not all(isinstance(c, str) for c in cmds):
+        return None
+    return cmds
+
+
+def _decode_blob(blob: str, gz: bool):
+    """Decoded text of a base64 blob, standard or url-safe alphabet
+    (gunzipped when asked or when the bytes are gzip), or None when it does
+    not decode. One layer only: a blob inside the decoded text is checked as
+    text, never decoded again (a stated residual)."""
+    import base64
+    import binascii
+    import gzip
+    try:
+        if "-" in blob or "_" in blob:
+            blob = blob.replace("-", "+").replace("_", "/")
+        raw = base64.b64decode(blob + "=" * (-len(blob) % 4), validate=True)
+        if gz or raw[:2] == b"\x1f\x8b":
+            raw = gzip.decompress(raw)
+        return raw.decode("utf-8", errors="replace")
+    except (binascii.Error, ValueError, OSError, EOFError):
+        return None
+
+
+def _content_hits(text: str) -> bool:
+    """Decoded content that names a bridge, reaches a bridge send path, or
+    carries an HTTP primitive with a bridge-shaped target and a write."""
+    for t in _readings(text):
+        if _SSM_MENTION.search(t) or _RAW_ENDPOINT.search(t):
+            return True
+    if _port_off_allowlist(text):
+        return True
+    flat = _pct_decode(_dequote(text))
+    return bool(_HTTP_PRIMITIVE.search(flat) and _BRIDGE_TARGET.search(flat)
+                and _WRITE_SHAPE.search(flat))
+
+
+def _blob_texts(payload: str):
+    """(blob, decoded or None) for every blob in a payload, quote- or
+    newline-split fragments joined first, both alphabets."""
+    for text in dict.fromkeys((payload, _B64_GLUE.sub("", payload))):
+        for m in _B64_BLOB.finditer(text):
+            yield m.group(0), _decode_blob(m.group(0), gz=False)
+
+
+def _blobs_hit(payloads: list, strict: bool = False) -> bool:
+    """Every base64-looking blob in any payload that decodes is inspected;
+    one whose content hits a check denies on any instance. With `strict`
+    (a bridge-hosting target) a candidate that looks encoded but does not
+    decode denies too."""
+    for p in payloads:
+        for blob, text in _blob_texts(p):
+            if text is not None and _content_hits(text):
+                return True
+            if strict and text is None and _B64_CANDIDATE.fullmatch(blob):
+                return True
+    return False
+
+
+def _deploy_only(payloads: list) -> bool:
+    """True when every payload is a deploy that only writes files under /opt
+    (see the header), and every blob it writes decodes to clean content."""
+    for p in payloads:
+        cmds = _ssm_commands(p)
+        if not cmds:
+            return False
+        for c in cmds:
+            if any(m in c for m in ("$(", "`", "${")):
+                return False
+            for seg in re.split(r"\s*(?:&&|;|\n)\s*", c.strip()):
+                if not seg:
+                    continue
+                m = None
+                for rx in _DEPLOY_SEGMENTS:
+                    m = rx.match(seg)
+                    if m:
+                        break
+                if not m:
+                    return False
+                if "b64" in (m.groupdict() or {}) and m.group("b64"):
+                    text = _decode_blob(m.group("b64"), gz=bool(m.group("gz")))
+                    if text is None or _content_hits(text):
+                        return False
+    return True
+
+
+# `sort`, `uniq` and `date` are not here: they write with no redirection
+# (sort -o, uniq's second positional, date -s).
+_SSM_READ_CMDS = {"sqlite3", "journalctl", "ls", "cat", "tail", "head", "stat", "df", "du", "ss",
+                  "ps", "grep", "wc", "echo", "cd", "find", "cut", "tr",
+                  "md5sum", "sha256sum", "base64"}
+_FIND_ACTS = re.compile(r"(?:^|\s)-(?:exec|execdir|ok|okdir|delete|fprint\w*|fls)\b")
+_SQLITE_WRITE = re.compile(
+    r"\.(?:shell|system|output|once|import|save|backup|restore|load|excel)\b"
+    r"|\b(?:insert|update|delete|drop|create|attach|alter|vacuum|reindex)\b"
+    r"|\breplace\b(?!\s*\()", re.IGNORECASE)
+_REDIRECT_OK = re.compile(r"\s+2>(?:&1|/dev/null)")
+
+
+def _read_segment(seg: str) -> bool:
+    """A plain read on the bridge host: every pipeline stage a read command
+    (sqlite3 without write SQL or dot-commands that write or run, journalctl,
+    systemctl status|is-active|show, ls, cat, tail, head, stat, df, du, ss,
+    ps, grep, wc, echo, cd, find without -exec/-delete, cut, tr, md5sum,
+    sha256sum, base64), no redirection other than 2>&1 or
+    2>/dev/null. Quote-aware: a `|` or `>` inside a quoted SQL string is
+    text, not an operator."""
+    import shlex
+    seg = _REDIRECT_OK.sub(" ", seg)
+    try:
+        lex = shlex.shlex(seg, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        toks = list(lex)
+    except ValueError:
+        return False
+    stages, cur = [], []
+    for t in toks:
+        if t == "|":
+            stages.append(cur)
+            cur = []
+        elif re.fullmatch(r"[();<>|&]+", t):
+            return False
+        else:
+            cur.append(t)
+    stages.append(cur)
+    for st in stages:
+        if st and st[0] == "sudo":
+            st = st[1:]
+        if not st:
+            return False
+        name = os.path.basename(st[0])
+        if name == "systemctl":
+            verbs = [t for t in st[1:] if not t.startswith("-")]
+            if not verbs or verbs[0] not in ("status", "is-active", "show"):
+                return False
+            continue
+        if name not in _SSM_READ_CMDS:
+            return False
+        text = " ".join(st)
+        if name == "sqlite3" and _SQLITE_WRITE.search(text):
+            return False
+        if name == "find" and _FIND_ACTS.search(text):
+            return False
+        if name == "base64" and re.search(r"\s-(?:d|-decode)\b", text):
+            return False
+    return True
+
+
+def _bridge_payload_ok(payloads: list) -> bool:
+    """The ONLY payloads that may run on a bridge-hosting instance: plain
+    reads, the operator-approved deploy under /opt (blobs decoded and
+    inspected), and `systemctl daemon-reload`. Everything else denies."""
+    if not payloads:
+        return False
+    for p in payloads:
+        cmds = _ssm_commands(p)
+        if not cmds:
+            return False
+        for c in cmds:
+            if any(m in c for m in ("$(", "`", "${")):
+                return False
+            for seg in re.split(r"\s*(?:&&|\|\||;|\n)\s*", c.strip()):
+                if not seg:
+                    continue
+                if _read_segment(seg):
+                    continue
+                if not _deploy_only([json.dumps({"commands": [seg]})]):
+                    return False
+    return True
+
+
+def _ssm_hit(text: str) -> bool:
+    """An ssm send-command that mentions a bridge (any instance), or whose
+    payload is not plaintext-inspectable while the target hosts a bridge. The
+    shell around the aws call (`CID=$(aws ssm ...)`) is not the payload."""
+    if any(_SSM_MENTION.search(t) for t in _readings(text)):
+        return True
+    parts = _ssm_parts(text)
+    if parts is None:
+        return True
+    payloads, ids = parts
+    bridges = _bridge_instances()
+    bridge_target = bridges is None or ids is None or any(i in bridges for i in ids)
+    if payloads and _blobs_hit(payloads, strict=bridge_target):
+        return True
+    if not bridge_target:
+        # Not a bridge host: only bridge terms (above) and decoded blobs deny.
+        return False
+    # Bridge-hosting (or unknown) target: an ALLOWLIST of payload shapes.
+    return not _bridge_payload_ok(payloads)
+
+
+def _raw_hit(text: str) -> bool:
+    for t in _readings(text):
+        if _RAW_ENDPOINT.search(t):
+            return True
+    if _port_off_allowlist(text):
+        return True
+    if _SSM_SEND.search(text) or _SSM_SEND.search(_dequote(text)):
+        return _ssm_hit(text)
+    return False
+
+
+def _interp_hit(command: str) -> bool:
+    if not _INTERP_INLINE.search(command):
+        return False
+    if _port_off_allowlist(command):
+        return True
+    for flat in _readings(command):
+        if not _HTTP_PRIMITIVE.search(flat):
+            continue
+        if _BRIDGE_TARGET.search(flat) and _WRITE_SHAPE.search(flat):
+            return True
+        # A target computed inside the code ('...:'+str(8000+81)+'/api/...'):
+        # an HTTP primitive, an api/ path and a local host hint deny even
+        # with no write shape the gate can read.
+        if "api/" in flat.lower() and _LOCAL_HINT.search(flat):
+            return True
+    return False
+
+
+_HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?\n\s*\2\s*(?:\n|$)", re.DOTALL)
+_PREFIX_WORDS = {"sudo", "env", "nice", "nohup", "command", "exec", "time", "timeout", "stdbuf",
+                 "setsid", "ionice", "doas"}
+
+
+def _dynamic_url_hit(command: str) -> bool:
+    """curl / wget / httpie IN COMMAND POSITION with a URL argument the shell
+    builds at run time. Heredoc bodies are dropped first (they are documents,
+    not commands), and each line is read on its own, so the word `http` in a
+    commit message or a document is not a client."""
+    import shlex
+    text = _HEREDOC.sub("\n", command)
+    stops = {";", "&&", "||", "|", "&", "|&", ";;", "(", ")", "{", "}"}
+    for line in text.splitlines():
+        if not any(m in line for m in _DYNAMIC):
+            continue
+        try:
+            lex = shlex.shlex(line, posix=True, punctuation_chars=True)
+            lex.whitespace_split = True
+            toks = list(lex)
+        except ValueError:
+            if re.search(r"(?:^|[;&|(]\s*)(?:curl|wget|https?|xh)\b", line):
+                return True
+            continue
+        i, at_start = 0, True
+        while i < len(toks):
+            t = toks[i]
+            if t in stops:
+                at_start = True
+                i += 1
+                continue
+            if at_start and (re.match(r"^[A-Za-z_]\w*=", t) or t in _PREFIX_WORDS
+                             or (toks[i - 1] == "timeout" if i else False) and re.match(r"^[\d.]+[smh]?$", t)):
+                i += 1
+                continue
+            if not at_start or os.path.basename(t) not in _HTTP_CLIENTS:
+                at_start = False
+                i += 1
+                continue
+            j = i + 1
+            while j < len(toks) and toks[j] not in stops:
+                a = toks[j]
+                if a in _CLIENT_VALUE_FLAGS or a in (">", ">>", "<", "2>", "&>"):
+                    j += 2
+                    continue
+                if a.startswith("-"):
+                    j += 1
+                    continue
+                nxt = toks[j + 1] if j + 1 < len(toks) else ""
+                if any(m in a for m in _DYNAMIC) or (a.endswith("$") and nxt.startswith("(")):
+                    return True
+                j += 1
+            i, at_start = j, False
+    return False
+
+
+def raw_bridge_send(command: str) -> bool:
+    """True when a Bash command reaches a bridge's send path directly, or
+    carries a send the gate cannot judge (opaque SSM payload, inline
+    interpreter HTTP to a local target, a run-time URL)."""
+    import receipt_ledger
+    command = str(command or "")
+    if _interp_hit(command) or _dynamic_url_hit(command):
+        return True
+    if not _raw_hit(command):
+        return False
+    try:
+        mod = receipt_ledger._qa_gate_module()
+        readers = (None, mod._split_bash, mod._split_master)
+    except Exception:
+        readers = (None,)
+    seen_in_sub = False
+    for reader in readers:
+        for sc in receipt_ledger.subcommands(command, reader):
+            if not _raw_hit(sc):
+                continue
+            seen_in_sub = True
+            toks = receipt_ledger.tokens_of(sc)
+            if toks and os.path.basename(toks[0]) in _RAW_READERS:
+                continue
+            return True
+    # The whole command matched while no single sub-command did. In a heredoc
+    # (a script body split across lines) what runs it cannot be told, so it
+    # sends; otherwise the parts came from different commands (a GET probe
+    # next to an unrelated POST) and nothing writes to a bridge.
+    return not seen_in_sub and "<<" in command
+
+
+def _is_panel_send(tool_name: str, tool_input) -> bool:
+    """A MESSAGE send, the shape requirement 5 covers: every MCP send tool,
+    and a Bash command that invokes the support bridge under EITHER shell
+    reading (the union finds more sends, and a send found is a send gated)."""
+    if tool_name != "Bash":
+        return bool(_SEND_TOOL.search(tool_name))
+    import panel_digest
+    command = str((tool_input or {}).get("command", "")) if isinstance(tool_input, dict) else ""
+    return panel_digest.names_bridge(command)
+
+
+def _panel_deny(data: dict) -> str:
+    """Requirement 5 as a deny reason, or "" when every message this call
+    sends carries a PASS panel receipt for its exact digest."""
+    import receipt_ledger
+    import panel_digest
+    tool_name = str(data.get("tool_name", ""))
+    tool_input = data.get("tool_input") or {}
+    if not _is_panel_send(tool_name, tool_input):
+        return ""
+    try:
+        digests = panel_digest.digests_for(tool_name, tool_input)
+    except panel_digest.PanelDigestError as e:
+        return (f"🧑‍⚖️ NO PANEL POSSIBLE: the gate cannot tell with certainty what this send "
+                f"carries ({e}). Send the message as a plain call (MCP tool, or the support "
+                f"bridge with a literal message and no $, backtick or heredoc), with every "
+                f"attachment a readable local file, then get a panel for it.")
+    session_id = data.get("session_id") or os.environ.get("CLAUDE_SESSION_ID") or ""
+    now = _now_for(str(data.get("transcript_path") or ""))
+    missing, spent = [], []
+    for d in digests:
+        r = receipt_ledger.panel_pass_for(d, session_id, now)
+        if not r:
+            missing.append(d)
+        elif receipt_ledger.panel_receipt_consumed(str(r.get("entry_uuid") or "")):
+            spent.append(d)
+    if spent and not missing:
+        return (f"🧑‍⚖️ PANEL RECEIPT ALREADY USED (sha256 {', '.join(spent)}): a panel receipt "
+                f"authorises one send, and the sent-message ledger shows this one left already. "
+                f"A second send of the same message needs a new panel.")
+    if not missing:
+        return ""
+    listing = ", ".join(missing)
+    return (f"🧑‍⚖️ NO PANEL RECEIPT for this message (sha256 {listing}). Operator directive "
+            f"2026-10-02: no message leaves without a panel. Write this call's input to a JSON "
+            f"file and run `python3 ~/.claude/scripts/panel_digest.py --tool-input <file.json> "
+            f"--tool-name {tool_name} --panel-request`; it prints the panel block (PANEL-TO, "
+            f"PANEL-ATTACH, PANEL-BODY-BEGIN..END, PANEL-SHA256). Hand that block to a reviewer "
+            f"subagent (a reviewer persona: Reality Checker, Code Reviewer, ...) and have it end "
+            f"its report with the same block plus 'PANEL-VERDICT: PASS' (or NEEDS-WORK). The "
+            f"receipt records only when the digest recomputed from that block equals "
+            f"PANEL-SHA256. It counts in this session for 120 minutes and for ONE send; a later "
+            f"NEEDS-WORK revokes it; an edited body, recipient or attachment is a new digest. "
+            f"No hatch: send-ok does not waive this.")
+
+
 def check(data: dict) -> str:
-    """Return the deny reason, or "" to allow. Raises only on internal errors."""
+    """Return the deny reason, or "" to allow. Raises only on internal errors.
+    Requirements 1-4 first, each keeping its own deny; the panel (5) last."""
+    if str(data.get("tool_name", "")) == "Bash" and raw_bridge_send(
+            str((data.get("tool_input") or {}).get("command", ""))):
+        return (f"🧑‍⚖️ RAW BRIDGE SEND: this command reaches a WhatsApp bridge's send path "
+                f"(/api/send, /api/react, a bridge port on any host, an SSM send-command whose "
+                f"payload is not plain text, inline interpreter HTTP to a local target, or a URL "
+                f"built at run time) without the bridge script or the MCP tool, so no panel can "
+                f"gate it. "
+                f"Operator directive 2026-10-02: never. Send through {_SEND_SCRIPTS[0]} or the "
+                f"WhatsApp MCP, with a panel receipt.")
+    reason = _receipt_checks(data)
+    if reason:
+        return reason
+    return _panel_deny(data)
+
+
+def _receipt_checks(data: dict) -> str:
+    """Requirements 1-4. Returns the deny reason, or ""."""
     import receipt_ledger
     tool_name = str(data.get("tool_name", ""))
     tool_input = data.get("tool_input") or {}

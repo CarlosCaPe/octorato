@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-violation-node-inline-socket",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "node -e \"require('net').connect(8081, '127.0.0.1').end('x')\""
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_node_inline_socket_transcript.jsonl"
+}

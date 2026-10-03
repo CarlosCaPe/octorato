@@ -1,0 +1,14 @@
+{
+  "session_id": "fx-p-violation-unknown-key-draft-id",
+  "tool_name": "mcp__claude_ai_Gmail__send_message",
+  "tool_input": {
+    "to": [
+      "someone@example.test"
+    ],
+    "subject": "Monthly report",
+    "body": "Hi, the report is attached and the numbers match the invoice.",
+    "draft_id": "r-123"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_unknown_key_draft_id_transcript.jsonl"
+}

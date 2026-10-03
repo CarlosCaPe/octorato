@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-violation-python-urlopen-positional-data",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "python3 -c \"import urllib.request as u; u.urlopen('http://127.0.0.1:8081/api/x', b'{}')\""
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_python_urlopen_positional_data_transcript.jsonl"
+}

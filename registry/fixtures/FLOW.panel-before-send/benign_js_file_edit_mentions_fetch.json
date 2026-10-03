@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-benign-js-file-edit-mentions-fetch",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "python3 - <<'EOF'\nfrom pathlib import Path\np=Path('build/x.js'); s=p.read_text()\ns=s.replace('await fetch(base + \"/_api/web\")', 'await c.post(\"/_api/web\")')\np.write_text(s)\nEOF"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "benign_js_file_edit_mentions_fetch_transcript.jsonl"
+}

@@ -1,0 +1,10 @@
+{
+  "session_id": "fx-p-violation-attachment-missing",
+  "tool_name": "mcp__whatsapp__send_file",
+  "tool_input": {
+    "recipient": "5210000000000",
+    "media_path": "~/attach/absent.txt"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_attachment_missing_transcript.jsonl"
+}

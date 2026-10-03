@@ -1749,6 +1749,61 @@ rules:
   liveness_required: FIRES
   covers_memory:
   - feedback_no_direct_outbound_send.md
+- id: FLOW.panel-before-send
+  title: 'Panel before send: no message leaves without a PASS panel receipt for its exact digest'
+  category: FLOW
+  source:
+    file: CLAUDE.md
+    anchor: Panel receipt
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Gate
+    canonical_name: g__pretool-mcp__outward-send.py
+    firing_event: PreToolUse
+    firing_matcher: 'mcp__gmail__send_email|mcp__claude_ai_Gmail__send_message|mcp__claude_ai_Gmail__reply|mcp__claude_ai_Gmail__forward|mcp__whatsapp__send_message|mcp__whatsapp__send_file|mcp__whatsapp__send_audio_message|Bash'
+  - kind: Reflex
+    canonical_name: r__subagent-stop__qa-receipt.py
+    firing_event: SubagentStop
+    firing_matcher: '*'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: PreToolUse|mcp__gmail__send_email|mcp__claude_ai_Gmail__send_message|mcp__claude_ai_Gmail__reply|mcp__claude_ai_Gmail__forward|mcp__whatsapp__send_message|mcp__whatsapp__send_file|mcp__whatsapp__send_audio_message|Bash|g__pretool-mcp__outward-send.py
+    expect: present
+  - method: IN_HOOKS_JSON
+    locator: SubagentStop|*|r__subagent-stop__qa-receipt.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/g__pretool-mcp__outward-send.py --selftest registry/fixtures/FLOW.panel-before-send
+    expect: 0
+  liveness_required: FIRES
+- id: FLOW.sent-message-ledger
+  title: 'Sent-message ledger: every message that left is recorded with its channel id, digest and panel receipt'
+  category: FLOW
+  source:
+    file: CLAUDE.md
+    anchor: Sent-message ledger
+  strength: REFLEX
+  gateable: false
+  enforcement: n/a
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Reflex
+    canonical_name: r__posttool__sent-ledger.py
+    firing_event: PostToolUse
+    firing_matcher: 'mcp__gmail__send_email|mcp__claude_ai_Gmail__send_message|mcp__claude_ai_Gmail__reply|mcp__claude_ai_Gmail__forward|mcp__whatsapp__send_message|mcp__whatsapp__send_file|mcp__whatsapp__send_audio_message|Bash'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: PostToolUse|mcp__gmail__send_email|mcp__claude_ai_Gmail__send_message|mcp__claude_ai_Gmail__reply|mcp__claude_ai_Gmail__forward|mcp__whatsapp__send_message|mcp__whatsapp__send_file|mcp__whatsapp__send_audio_message|Bash|r__posttool__sent-ledger.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/r__posttool__sent-ledger.py --selftest registry/fixtures/FLOW.sent-message-ledger
+    expect: 0
+  liveness_required: FIRES
 - id: FLOW.qa-receipt
   title: 'QA receipt: a subagent verdict is recorded by the harness, re-read from its transcript'
   category: FLOW

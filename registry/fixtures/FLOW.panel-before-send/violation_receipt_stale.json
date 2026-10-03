@@ -1,0 +1,13 @@
+{
+  "session_id": "fx-p-violation-receipt-stale",
+  "tool_name": "mcp__gmail__send_email",
+  "tool_input": {
+    "to": [
+      "someone@example.test"
+    ],
+    "subject": "Monthly report",
+    "body": "Hi, the report is attached and the numbers match the invoice."
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_receipt_stale_transcript.jsonl"
+}

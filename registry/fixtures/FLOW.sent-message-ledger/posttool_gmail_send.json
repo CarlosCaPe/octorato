@@ -1,0 +1,22 @@
+{
+  "tool_name": "mcp__gmail__send_email",
+  "tool_input": {
+    "to": [
+      "someone@example.test"
+    ],
+    "cc": [
+      "copy@example.test"
+    ],
+    "subject": "Monthly report",
+    "body": "The report is attached."
+  },
+  "tool_response": [
+    {
+      "type": "text",
+      "text": "{\"id\": \"18f0fixturemsg\", \"threadId\": \"18f0fixturethr\"}"
+    }
+  ],
+  "session_id": "fx-sent",
+  "tool_use_id": "toolu_gmail_send",
+  "_now": "2026-10-02T12:00:00.000Z"
+}

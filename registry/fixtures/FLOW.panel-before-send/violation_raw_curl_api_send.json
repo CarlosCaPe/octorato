@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-violation-raw-curl-api-send",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "curl -s -X POST http://localhost:8081/api/send -H 'Content-Type: application/json' -d '{\"recipient\":\"5210000000000\",\"message\":\"hi\"}'"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_raw_curl_api_send_transcript.jsonl"
+}

@@ -1,0 +1,11 @@
+[
+  {
+    "channel": "wa-support",
+    "recipient": "5210000000000",
+    "message_id": "3EB0FIXTURE02",
+    "chat_jid": "5210000000000@s.whatsapp.net",
+    "ok": true,
+    "panel_receipt": "4cb8634b-1a2c-e1fa-ab6d-452b61bd4352",
+    "digest": "6e4bd812fda38608cecbc7ab0316947eef8a08dd9ba4f4ae4493cf3abbd0babc"
+  }
+]
