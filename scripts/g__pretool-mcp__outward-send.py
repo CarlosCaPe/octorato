@@ -537,18 +537,25 @@ def _ask_deny(human: str) -> str:
 #     when the target instance HOSTS A BRIDGE. On such a target the rule is an
 #     ALLOWLIST since QA cycle 5: plain reads (sqlite3 without write SQL or
 #     .shell/.system, journalctl, systemctl status|is-active|show, ls, cat,
-#     tail, head, stat, df, du, ss, ps, grep, wc, echo and date with no
-#     redirection, cd, find without -exec/-delete), the deploy below, and
+#     tail, head, stat, df, du, ss, ps, grep, wc, echo with no redirection,
+#     cd, find without -exec/-delete, cut, tr, md5sum, sha256sum, base64
+#     without -d; not sort, uniq or date, which write with no redirection),
+#     the deploy below, and
 #     `systemctl daemon-reload`; anything else (awk system, exec, crontab, at,
 #     nohup, setsid, timeout ...) denies. One exception, operator
 #     decision 2026-10-03: a DEPLOY that only writes files under /opt, every
 #     command being `echo|printf <base64> | base64 -d [| gunzip] > /opt/...`
 #     (or `| [sudo] tee [-a] /opt/... [>/dev/null]`, `>>`), chmod, chown,
-#     mkdir -p, mv or cp inside /opt, or `systemctl daemon-reload` (it starts
+#     mkdir -p, mv or cp on paths strictly under a directory of /opt (no /opt
+#     itself, no `.`/`..` or hidden components), or `systemctl daemon-reload` (it starts
 #     nothing new; start, restart, enable --now and reload stay denied). Every
 #     base64 blob in ANY ssm payload is decoded (gzip inside base64 too) and
-#     its content run through the bridge-term, raw-send and HTTP checks; a
-#     deploy blob that does not decode denies. Residual, accepted by the
+#     its content run through the bridge-term, raw-send and HTTP checks
+#     (url-safe alphabet too, quote- or newline-split fragments joined); on a
+#     bridge host a candidate that looks encoded but does not decode denies.
+#     Residuals: one decode layer only (a second layer is reachable only
+#     through the timer residual below), and a symlink under /opt cannot be
+#     resolved from here, so a write through one lands wherever it points. Residual, accepted by the
 #     operator 2026-10-03: a file written under /opt can be run later by an
 #     existing timer or unit; the decode inspection reduces that, it does
 #     not remove it. Bridge-hosting instances
@@ -746,15 +753,28 @@ def _ssm_parts(text: str):
     return payloads, (None if unreadable else ids)
 
 
-_B64_BLOB = re.compile(r"[A-Za-z0-9+/]{16,}={0,2}")
-_OPT_PATH = r"/opt/(?!\S*\.\.)[^\s;|&<>'\"]+"
+_B64_BLOB = re.compile(r"[A-Za-z0-9+/_-]{16,}={0,2}")
+# A candidate the gate must be able to decode: long, and mixed like encoded
+# bytes are (upper, lower and a digit), so paths and words do not qualify.
+_B64_CANDIDATE = re.compile(r"(?=[A-Za-z0-9+/_-]*[A-Z])(?=[A-Za-z0-9+/_-]*[a-z])"
+                            r"(?=[A-Za-z0-9+/_-]*\d)[A-Za-z0-9+/_-]{24,}={0,2}")
+# Fragments the shell glues together: 'AAA''BBB', "AAA"'BBB', 'AAA'+'BBB'.
+_B64_GLUE = re.compile(r"(?<=[A-Za-z0-9+/_=-])(?:['\"]\s*\+?\s*['\"]|\\?\n)(?=[A-Za-z0-9+/_-])")
+# A file path strictly under a directory of /opt: /opt/<dir>/<name>[...]
+# (mkdir -p may name /opt/<dir> itself), every
+# component starting with a letter, digit or underscore (no `.`, `..`,
+# hidden names, empty components or /opt itself). A symlink under /opt
+# cannot be resolved from here; that is a stated residual.
+_OPT_COMP = r"[A-Za-z0-9_][A-Za-z0-9_.+-]*"
+_OPT_DIR = r"/opt/" + _OPT_COMP + r"(?:/" + _OPT_COMP + r")*(?![\w./-])"
+_OPT_PATH = r"/opt/" + _OPT_COMP + r"(?:/" + _OPT_COMP + r")+(?![\w./-])"
 _DEPLOY_SEGMENTS = (
     re.compile(r"^(?:echo|printf)(?:\s+-n)?(?:\s+['\"]?%s['\"]?)?\s+['\"]?(?P<b64>[A-Za-z0-9+/]+={0,2})['\"]?"
                r"\s*\|\s*base64\s+(?:-d|--decode)(?:\s+-[iw]0?)?(?P<gz>\s*\|\s*(?:gunzip|gzip\s+-d)(?:\s+-c)?)?"
                r"\s*(?:>>?\s*" + _OPT_PATH + r"|\|\s*(?:sudo\s+)?tee\s+(?:-a\s+)?" + _OPT_PATH
                + r"(?:\s*>\s*/dev/null)?)$"),
-    re.compile(r"^(?:sudo\s+)?(?:chmod|chown)\s+(?:-R\s+)?[\w.:+=,-]+(?:\s+" + _OPT_PATH + r")+$"),
-    re.compile(r"^(?:sudo\s+)?mkdir\s+-p(?:\s+" + _OPT_PATH + r")+$"),
+    re.compile(r"^(?:sudo\s+)?(?:chmod|chown)\s+(?:-R\s+)?[\w.:+=,-]+(?:\s+" + _OPT_DIR + r")+$"),
+    re.compile(r"^(?:sudo\s+)?mkdir\s+-p(?:\s+" + _OPT_DIR + r")+$"),
     re.compile(r"^(?:sudo\s+)?(?:mv|cp)(?:\s+-[fpa]+)?\s+" + _OPT_PATH + r"\s+" + _OPT_PATH + r"$"),
     re.compile(r"^(?:sudo\s+)?systemctl\s+daemon-reload$"),
 )
@@ -765,16 +785,26 @@ def _ssm_commands(payload: str) -> list | None:
     shape is not one the gate reads: JSON {"commands": [...]} or the CLI
     shorthand commands=[...] with quoted items."""
     import ast
+    import shlex
     p = payload.strip()
     try:
         if p.startswith("{"):
             cmds = json.loads(p).get("commands")
         elif p.startswith("commands="):
-            cmds = ast.literal_eval(p[len("commands="):].strip())
+            rest = p[len("commands="):].strip()
+            if rest.startswith("["):
+                cmds = ast.literal_eval(rest)
+            elif rest[:1] in "'\"":
+                # Shorthand scalar in quotes: one command, as the CLI reads it.
+                cmds = [ast.literal_eval(rest)]
+            else:
+                # Shorthand scalar: the CLI splits an unquoted value on commas.
+                cmds = [c for c in rest.split(",") if c.strip()]
         else:
             return None
     except Exception:
         return None
+    del shlex
     if isinstance(cmds, str):
         cmds = [cmds]
     if not isinstance(cmds, list) or not all(isinstance(c, str) for c in cmds):
@@ -783,12 +813,16 @@ def _ssm_commands(payload: str) -> list | None:
 
 
 def _decode_blob(blob: str, gz: bool):
-    """Decoded text of a base64 blob (gunzipped when asked or when the bytes
-    are gzip), or None when it does not decode."""
+    """Decoded text of a base64 blob, standard or url-safe alphabet
+    (gunzipped when asked or when the bytes are gzip), or None when it does
+    not decode. One layer only: a blob inside the decoded text is checked as
+    text, never decoded again (a stated residual)."""
     import base64
     import binascii
     import gzip
     try:
+        if "-" in blob or "_" in blob:
+            blob = blob.replace("-", "+").replace("_", "/")
         raw = base64.b64decode(blob + "=" * (-len(blob) % 4), validate=True)
         if gz or raw[:2] == b"\x1f\x8b":
             raw = gzip.decompress(raw)
@@ -810,13 +844,24 @@ def _content_hits(text: str) -> bool:
                 and _WRITE_SHAPE.search(flat))
 
 
-def _blobs_hit(payloads: list) -> bool:
+def _blob_texts(payload: str):
+    """(blob, decoded or None) for every blob in a payload, quote- or
+    newline-split fragments joined first, both alphabets."""
+    for text in dict.fromkeys((payload, _B64_GLUE.sub("", payload))):
+        for m in _B64_BLOB.finditer(text):
+            yield m.group(0), _decode_blob(m.group(0), gz=False)
+
+
+def _blobs_hit(payloads: list, strict: bool = False) -> bool:
     """Every base64-looking blob in any payload that decodes is inspected;
-    one whose content hits a check denies on any instance."""
+    one whose content hits a check denies on any instance. With `strict`
+    (a bridge-hosting target) a candidate that looks encoded but does not
+    decode denies too."""
     for p in payloads:
-        for m in _B64_BLOB.finditer(p):
-            text = _decode_blob(m.group(0), gz=False)
+        for blob, text in _blob_texts(p):
             if text is not None and _content_hits(text):
+                return True
+            if strict and text is None and _B64_CANDIDATE.fullmatch(blob):
                 return True
     return False
 
@@ -848,8 +893,10 @@ def _deploy_only(payloads: list) -> bool:
     return True
 
 
+# `sort`, `uniq` and `date` are not here: they write with no redirection
+# (sort -o, uniq's second positional, date -s).
 _SSM_READ_CMDS = {"sqlite3", "journalctl", "ls", "cat", "tail", "head", "stat", "df", "du", "ss",
-                  "ps", "grep", "wc", "echo", "date", "cd", "find", "cut", "tr", "sort", "uniq",
+                  "ps", "grep", "wc", "echo", "cd", "find", "cut", "tr",
                   "md5sum", "sha256sum", "base64"}
 _FIND_ACTS = re.compile(r"(?:^|\s)-(?:exec|execdir|ok|okdir|delete|fprint\w*|fls)\b")
 _SQLITE_WRITE = re.compile(
@@ -863,8 +910,8 @@ def _read_segment(seg: str) -> bool:
     """A plain read on the bridge host: every pipeline stage a read command
     (sqlite3 without write SQL or dot-commands that write or run, journalctl,
     systemctl status|is-active|show, ls, cat, tail, head, stat, df, du, ss,
-    ps, grep, wc, echo, date, cd, find without -exec/-delete, cut, tr, sort,
-    uniq, md5sum, sha256sum, base64), no redirection other than 2>&1 or
+    ps, grep, wc, echo, cd, find without -exec/-delete, cut, tr, md5sum,
+    sha256sum, base64), no redirection other than 2>&1 or
     2>/dev/null. Quote-aware: a `|` or `>` inside a quoted SQL string is
     text, not an operator."""
     import shlex
@@ -941,10 +988,11 @@ def _ssm_hit(text: str) -> bool:
     if parts is None:
         return True
     payloads, ids = parts
-    if payloads and _blobs_hit(payloads):
-        return True
     bridges = _bridge_instances()
-    if bridges is not None and ids is not None and not any(i in bridges for i in ids):
+    bridge_target = bridges is None or ids is None or any(i in bridges for i in ids)
+    if payloads and _blobs_hit(payloads, strict=bridge_target):
+        return True
+    if not bridge_target:
         # Not a bridge host: only bridge terms (above) and decoded blobs deny.
         return False
     # Bridge-hosting (or unknown) target: an ALLOWLIST of payload shapes.
