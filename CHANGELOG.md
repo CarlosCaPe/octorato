@@ -15,6 +15,12 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-10-03]: v9.2.0
+### Features
+- feat(gates): require a panel receipt for every outward message send (#358)
+### Other
+- docs(changelog): backfill v9.1.2 (#357)
+
 ## [2026-10-02]: v9.1.2
 ### Fixes
 - fix(qa-gate): any GH_REPO, PR URL or API path naming a protected repo gates (#354)
