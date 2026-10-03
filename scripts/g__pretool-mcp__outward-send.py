@@ -35,7 +35,10 @@ WHAT IT REQUIRES (docs/architecture/v7-nothing-ships-unverified.md)
      transmit only the message that was asked for). A non-negated send verb
      must stand in the operator's own prompt for the turn, outside quotes and
      code spans; `send-ok` is the standing hatch. Checked after 1-3, so every
-     earlier deny keeps its own name.
+     earlier deny keeps its own name. A chat-validated release (chat_release
+     below: an approver's yes in a listed chat on the exact text the agent
+     posted there) waives this requirement for ONE message send, and the deny
+     names the release condition that failed.
   5. Panel receipt (FLOW.panel-before-send, operator directive 2026-10-02: no
      message leaves without a panel, however small). Every MESSAGE send (mail
      send/reply/forward, WhatsApp send_message/send_file/send_audio_message,
@@ -428,6 +431,342 @@ def chat_send_ok(transcript: str = "") -> bool:
     return False
 
 
+# Chat-validated release (operator directive 2026-10-03: the operator cannot
+# be the only one watching every send; another admin of the chat holds the
+# same authority). Spec docs/specs/202610031146-chat-validated-release/.
+# A listed chat may carry "approvers": bridge sender ids (LID digits, phone
+# digits or JIDs). A chat whose approvers are missing or empty releases
+# nothing. A MESSAGE send S (exactly one message) skips requirement 4 when ALL
+# hold:
+#   a. S has its PASS panel receipt (receipt_ledger.panel_pass_for).
+#   b. sent.jsonl holds a validation message V the agent posted to that chat
+#      AFTER the panel receipt, in the shape `panel_digest.py
+#      --validation-request` prints: `sha256:<first 12 hex of S's digest>`,
+#      the recipients, the attachment names, S's text inside ONE «...» block
+#      and a fixed trailer. The shape is CLOSED and compared for EQUALITY,
+#      never as a substring: the whole text, normalized, equals what
+#      --validation-request prints for S (block, digest prefix, address
+#      tokens, attachment names and trailer, nothing before or after). The
+#      trailer is the chat row's `validation_trailer` when set (the approvers'
+#      language), else panel_digest.VALIDATION_TRAILER; `--validation-request
+#      --chat <jid>` prints the same text the gate rebuilds.
+#   c. In the chat an approver (a sender in "approvers", never an is_from_me
+#      row in either store: in the personal store is_from_me is the operator
+#      OR the agent sending through his account, in the support replica it is
+#      the bridge's own account) replied with a message on the closed
+#      yes-list. The approval binds to exactly ONE V: the latest validation
+#      message the agent posted to that chat before the approval, and it is
+#      ambiguous (denied) when the agent posted more than one validation
+#      message there inside the window before the approval. It must be
+#      this S's V, and it must sit inside window_minutes counted from V
+#      (default 60, valid 1..240). The operator's own approval in the
+#      personal store is the separate send_ok_from_chat token above.
+#   d. No later message from an approver, or from is_from_me in the personal
+#      store, retracts it before the send.
+#   e. The approval message id is not already on a sent line whose channel
+#      did not report failure: one approval, one send.
+# Deploys and releases never pass this way. Stores: the personal store when
+# the chat has rows there, else the support replica, both fixed paths, opened
+# read-only; missing or unreadable releases nothing. Residual, stated: the
+# stores, sent.jsonl and the config are files under $HOME a hooked process
+# can write, so a forged row plus a forged ledger line can release a send
+# (visible in the bridge database and the kernel journal); the closed
+# yes-list misses natural phrasings, which fail closed.
+_SUPPORT_STORE = Path.home() / ".config" / "whatsapp-support" / "bridge" / "store" / "messages.db"
+_YES = {"si", "si asi", "si asi envialo", "envialo", "mandalo", "ok", "dale", "sendok",
+        "yes", "go ahead"}
+_NOT_YES = re.compile(r"(?<!\w)(?:no|espera\w*|cambia\w*|pero)(?!\w)")
+_RETRACT = re.compile(r"(?<!\w)(?:no|espera\w*|para|cancela\w*|cancel\w*|cambia\w*|stop|wait)(?!\w)")
+# Address tokens in a validation message: a mail-shaped token (whole, so
+# notbob@example.test.evil is one token and never names bob@example.test), a
+# reply's message:<id>, or a run of 6+ digits standing alone (a phone).
+_ADDR_TOKEN = re.compile(r"message:[^\s«»,;]+|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+|(?<![\w.@])\d{6,}(?![\w@])")
+_SHA_TOKEN = re.compile(r"(?<![\w])sha256:([0-9a-f]{12})(?![0-9a-f])")
+
+
+def _plain(text: str) -> str:
+    """Lower-cased, accents, @mentions, punctuation and emoji removed,
+    whitespace collapsed: the form the yes-list and the retraction words
+    are matched in. `send-ok` reads as `sendok`."""
+    import unicodedata
+    t = unicodedata.normalize("NFKD", str(text or "").lower())
+    t = "".join(ch for ch in t if not unicodedata.combining(ch))
+    t = re.sub(r"@\S+", " ", t)
+    t = t.replace("send-ok", "sendok")
+    t = re.sub(r"[^\w\s]|_", " ", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def is_affirmative(text: str) -> bool:
+    p = _plain(text)
+    return bool(p) and not _NOT_YES.search(p) and p in _YES
+
+
+def is_retraction(text: str) -> bool:
+    return bool(_RETRACT.search(_plain(text)))
+
+
+def sender_id(value) -> str:
+    """A bridge sender as one comparable id: the part before `@`, without a
+    `:device` suffix or a leading `+`, lower-cased."""
+    s = str(value or "").strip().lower().split("@", 1)[0].split(":", 1)[0]
+    return s.lstrip("+")
+
+
+def parse_validation(text: str):
+    """(digest prefix, address tokens, other tokens, block) of a validation
+    message, or None when it is not one: exactly one «...» block and exactly
+    one sha256:<12 hex> token outside it."""
+    import panel_digest
+    t = panel_digest.normalize(text)
+    if t.count("«") != 1 or t.count("»") != 1 or t.index("«") > t.index("»"):
+        return None
+    i, j = t.index("«"), t.index("»")
+    block = panel_digest.normalize(t[i + 1:j])
+    outside = t[:i] + " " + t[j + 1:]
+    shas = _SHA_TOKEN.findall(outside)
+    if len(shas) != 1:
+        return None
+    outside = _SHA_TOKEN.sub(" ", outside)
+    addrs = {a.lower().rstrip(".") for a in _ADDR_TOKEN.findall(outside)}
+    words = {w.strip(",;") for w in outside.split()}
+    return shas[0], addrs, words, block
+
+
+def _parse_ts(ts):
+    """An aware UTC datetime from a bridge, ledger or harness timestamp, or None."""
+    from datetime import datetime, timezone
+    m = re.match(r"(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(?:\.(\d+))?\s*(Z|[+-]\d{2}:?\d{2})?$",
+                 str(ts or "").strip())
+    if not m:
+        return None
+    frac = (m.group(3) or "")[:6].ljust(6, "0")
+    tz = m.group(4) or "+00:00"
+    if tz == "Z":
+        tz = "+00:00"
+    if ":" not in tz:
+        tz = tz[:3] + ":" + tz[3:]
+    try:
+        return datetime.fromisoformat(f"{m.group(1)}T{m.group(2)}.{frac}{tz}").astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def _store_rows(jid: str):
+    """("personal"|"support", rows) for the chat, rows as (id, sender, content,
+    ts, is_from_me); (None, reason) when no store can be read."""
+    import sqlite3
+
+    def _read(db):
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        try:
+            return con.execute("SELECT id, sender, content, timestamp, is_from_me FROM messages "
+                               "WHERE chat_jid = ?", (jid,)).fetchall()
+        finally:
+            con.close()
+    if _DEFAULT_WA_STORE.is_file():
+        try:
+            rows = _read(_DEFAULT_WA_STORE)
+        except Exception:
+            return None, "the personal bridge store is unreadable"
+        if rows:
+            return "personal", rows
+    if not _SUPPORT_STORE.is_file():
+        return None, "the chat is not in the personal bridge store and the support bridge replica is missing"
+    try:
+        return "support", _read(_SUPPORT_STORE)
+    except Exception:
+        return None, "the support bridge replica is unreadable"
+
+
+def _release_message(tool_name: str, tool_input):
+    """The one panel_digest.Message a MESSAGE send carries, or raises
+    ValueError naming why it cannot be released by a chat."""
+    import panel_digest
+    if not isinstance(tool_input, dict) or not _is_message_send(tool_name, tool_input):
+        raise ValueError("deploys and releases are never released by a chat approval")
+    try:
+        # A Bash send must be ONE plain support-bridge call (panel_digest
+        # raises otherwise), so a deploy chained to it cannot ride along.
+        msgs = panel_digest.message_parts(tool_name, tool_input)
+    except panel_digest.PanelDigestError as e:
+        raise ValueError(f"the gate cannot read what this send carries ({e})")
+    if len(msgs) != 1:
+        raise ValueError("a chat approval releases exactly one message")
+    return msgs[0]
+
+
+def _validates(vtext: str, msg, trailer=None) -> str:
+    """"" when vtext is a validation message for msg, else what differs."""
+    return _validation_gap(vtext, msg, trailer)[1]
+
+
+def _validation_gap(vtext: str, msg, trailer=None) -> tuple:
+    """(depth, what differs): depth ranks how close a line came, so the deny
+    names the nearest validation message, not the first one read."""
+    import panel_digest
+    parsed = parse_validation(vtext)
+    if parsed is None:
+        return 0.1, "is not in the validation shape (one sha256 token, one «...» block)"
+    sha, addrs, words, block = parsed
+    if block != panel_digest.normalize(msg.text):
+        return 0.2, "does not quote this send's text exactly"
+    if sha != msg.digest[:12]:
+        return 0.4, "carries another message's digest"
+    want = set(panel_digest.norm_recipients(msg.recipients))
+    if addrs != want:
+        return 0.6, f"names recipients {sorted(addrs)}, the send goes to {sorted(want)}"
+    names = {os.path.basename(str(p)) for _, p in msg.attachments if p}
+    if not names <= words:
+        return 0.8, f"does not name the attachment(s) {sorted(names - words)}"
+    # The shape is closed: the whole text, normalized, must be exactly what
+    # --validation-request prints, so a condition written before, between or
+    # after its lines ("«Aceptamos.» PS: solo si ...") is a different message.
+    if panel_digest.normalize(vtext) != panel_digest.normalize(panel_digest.validation_text(msg, trailer)):
+        return 0.9, "carries text outside the validation shape (only what --validation-request prints)"
+    return 0, ""
+
+
+def chat_release(data: dict) -> tuple:
+    """("", key) when an approver released this send in a listed chat, else
+    (reason, ""). The reason names the condition that failed (a..e), or is
+    "" with an empty key when no listed chat carries approvers."""
+    import receipt_ledger
+    chats = []
+    for c in _autonomous_cfg():
+        apps = c.get("approvers")
+        ids = {sender_id(a) for a in apps} - {""} if isinstance(apps, list) else set()
+        if ids and str(c.get("jid", "")).strip():
+            chats.append((c, ids))
+    if not chats:
+        return "", ""
+    tool_name = str(data.get("tool_name", ""))
+    tool_input = data.get("tool_input") or {}
+    try:
+        msg = _release_message(tool_name, tool_input)
+    except ValueError as e:
+        return f"chat release: {e}", ""
+    session_id = data.get("session_id") or os.environ.get("CLAUDE_SESSION_ID") or ""
+    now = _now_for(str(data.get("transcript_path") or ""))
+    # a. the panel PASS, and its time: V must come after the panel read S.
+    r = receipt_ledger.panel_pass_for(msg.digest, session_id, now)
+    panel_ts = _parse_ts((r or {}).get("verdict_ts") or (r or {}).get("entry_ts"))
+    if not r or panel_ts is None:
+        return "chat release (a): this message has no PASS panel receipt", ""
+    sent = receipt_ledger.read_sent()
+    own_ids = {str(s.get("message_id")) for s in sent if s.get("message_id")}
+    spent = {str(s.get("chat_release")) for s in sent
+             if s.get("chat_release") and s.get("ok") is not False}
+    best = (0, "chat release (b): no validation message was posted to a chat with approvers "
+               "after the panel receipt")
+
+    def note(stage: float, text: str):
+        nonlocal best
+        if stage > best[0]:
+            best = (stage, text)
+
+    for c, approvers in chats:
+        jid = str(c.get("jid")).strip()
+        try:
+            window = float(c.get("window_minutes", 60))
+        except (TypeError, ValueError):
+            continue
+        if not (1.0 <= window <= _WINDOW_MAX_MINUTES):
+            continue
+        # The chat's own trailer (its approvers' language), else the default;
+        # a value that is not a non-empty string disables the chat.
+        trailer = c.get("validation_trailer")
+        if trailer is not None and not (isinstance(trailer, str) and trailer.strip()):
+            continue
+        # Every validation-shaped line the agent posted to this chat, oldest
+        # first: an approval binds to the latest one before it.
+        vals = []
+        for s in sent:
+            if not str(s.get("channel", "")).startswith("wa") or s.get("ok") is False:
+                continue
+            if jid not in (str(s.get("recipient", "")).strip(), str(s.get("chat_jid", "")).strip()):
+                continue
+            vt = _parse_ts(s.get("ts"))
+            if vt is None or parse_validation(s.get("text") or "") is None:
+                continue
+            vals.append((vt, s))
+        vals.sort(key=lambda x: x[0])
+        mine = []
+        for vt, s in vals:
+            depth, why = _validation_gap(s.get("text") or "", msg, trailer)
+            if why:
+                note(1 + depth, f"chat release (b): the validation message {why}")
+                continue
+            if vt <= panel_ts:
+                note(2, "chat release (b): the validation message was posted before the panel receipt")
+                continue
+            mine.append((vt, s))
+        if not mine:
+            continue
+        kind, rows = _store_rows(jid)
+        if kind is None:
+            note(3, f"chat release (c): {rows}")
+            continue
+        parsed = []
+        for rid, sender, content, ts, from_me in rows:
+            t = _parse_ts(ts)
+            if t is None or str(rid) in own_ids:
+                continue
+            is_appr = not from_me and sender_id(sender) in approvers
+            # A retraction counts from an approver and, in the personal
+            # store, from is_from_me too (the operator's own phone).
+            can_retract = is_appr or (kind == "personal" and bool(from_me))
+            parsed.append((t, str(rid), is_appr, can_retract, bool(from_me), str(content or "")))
+        parsed.sort()
+        first_v = mine[0][0]
+        yes_rows = [p for p in parsed if p[2] and is_affirmative(p[5]) and p[0] <= now]
+        if not yes_rows:
+            after = [p for p in parsed if first_v < p[0] <= now]
+            if any(p[4] and is_affirmative(p[5]) for p in after):
+                note(5, "chat release (c): an is_from_me yes never releases; the operator's own "
+                        "approval is the send-ok token (send_ok_from_chat)")
+            elif any(not p[2] and is_affirmative(p[5]) for p in after):
+                note(5, "chat release (c): the yes came from a sender who is not an approver")
+            elif any(p[2] and _plain(p[5]) for p in after):
+                note(5, "chat release (c): the approver's reply is not on the closed yes-list")
+            else:
+                note(5, "chat release (c): no approver replied yes after the validation message")
+            continue
+        for at, aid, _, _, _, _ in yes_rows:
+            # The ONE validation message this approval answers: the latest the
+            # agent posted to this chat before it.
+            before = [(vt, s) for vt, s in vals if vt < at]
+            if not before:
+                note(5, "chat release (c): the approval was posted before the validation message")
+                continue
+            # Two validation messages inside the window before the approval
+            # make it ambiguous: an "ok" meant for the older one must never
+            # release the newer one.
+            recent = [x for x in before if (at - x[0]).total_seconds() / 60.0 <= window]
+            if len(recent) > 1:
+                note(6, "chat release (c): the approval is ambiguous: the agent posted more than "
+                        "one validation message to this chat inside the window before it")
+                continue
+            vt, v = before[-1]
+            if not any(v is s for _, s in mine):
+                note(6, "chat release (c): the approval answers another validation message, "
+                        "not this send's")
+                continue
+            if (now - vt).total_seconds() / 60.0 > window:
+                note(6, f"chat release (c): more than {window:g} minutes passed since the "
+                        f"validation message")
+                continue
+            if any(p[3] and at < p[0] <= now and is_retraction(p[5]) for p in parsed):
+                note(7, "chat release (d): an approver took the approval back")
+                continue
+            key = f"{jid}|{aid}"
+            if key in spent:
+                note(8, "chat release (e): this approval already released a send")
+                continue
+            return "", key
+    return best[1], ""
+
+
 # -- v8 kernel journal (Phase 4, v8-kernel.md) --------------------------------
 _KERNEL_RULE = "COMMS.outward-send-gate"
 
@@ -498,14 +837,16 @@ def is_send(tool_name: str, tool_input: dict) -> bool:
     return bool(_SEND_TOOL.search(tool_name))
 
 
-def _ask_deny(human: str) -> str:
-    """Requirement 4 as a deny reason, or "" when the operator asked for this send."""
+def _ask_deny(human: str, release_note: str = "") -> str:
+    """Requirement 4 as a deny reason, or "" when the operator asked for this
+    send. `release_note` names the chat-release condition that failed."""
     if explicit_send_ask(human):
         return ""
     return ("📬 ENVÍO SIN PEDIDO: el mensaje del operador en este turno no pide mandar "
             "nada (directiva 2026-08-14: entregar paste-ready y transmitir solo a pedido "
             "explícito, por mensaje). Entrega el texto en el chat y espera el 'mándalo'; "
-            "'send-ok' en SU mensaje lo exime.")
+            "'send-ok' en SU mensaje lo exime."
+            + (f" Not released by a chat approval: {release_note}." if release_note else ""))
 
 
 # Raw bridge sends (operator directive 2026-10-02: never): a message that
@@ -1243,12 +1584,18 @@ def _receipt_checks(data: dict) -> str:
     # still runs on the body.
     waive_ask = autonomous_chat(tool_name, tool_input) or (
         _is_message_send(tool_name, tool_input) and chat_send_ok(transcript))
+    # Chat-validated release: an approver's yes in a listed chat, on the exact
+    # text the agent posted there, waives requirement 4 for that one send.
+    release_note = ""
+    if not waive_ask and not explicit_send_ask(human):
+        release_note, release_key = chat_release(data)
+        waive_ask = bool(release_key)
     body = "\n".join(ln for ln in "\n".join(found).splitlines()
                      if not ln.lstrip().startswith(">"))
     if not body.strip():
         # Nothing to read for the phrase checks, but a file or an audio still
         # leaves: requirement 4 applies to it exactly as to a text body.
-        return "" if waive_ask else _ask_deny(human)
+        return "" if waive_ask else _ask_deny(human, release_note)
     # A send is the model's own text: a quotation inside it is the model
     # quoting itself, and a claim split across lines is still one claim.
     flat = re.sub(r"\s+", " ", body)
@@ -1299,7 +1646,7 @@ def _receipt_checks(data: dict) -> str:
     #    transmit only the message that was asked for, per message. send-ok is the
     #    standing hatch (returned above). Last, so earlier denies keep their name.
     #    A listed autonomous chat is the other standing hatch, per recipient.
-    return "" if waive_ask else _ask_deny(human)
+    return "" if waive_ask else _ask_deny(human, release_note)
 
 
 def main() -> int:

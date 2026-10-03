@@ -1,0 +1,11 @@
+{
+  "session_id": "fx-cvr-103",
+  "tool_name": "mcp__whatsapp__send_message",
+  "tool_input": {
+    "recipient": "5215511111103",
+    "message": "Hola, la cita queda el martes 10:00."
+  },
+  "cwd": "/home/user",
+  "transcript_path": "benign_whatsapp_third_party_transcript.jsonl",
+  "_expect": ""
+}

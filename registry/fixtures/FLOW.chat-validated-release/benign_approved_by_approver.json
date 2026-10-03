@@ -1,0 +1,14 @@
+{
+  "session_id": "fx-cvr-101",
+  "tool_name": "mcp__gmail__send_email",
+  "tool_input": {
+    "to": [
+      "office@example.test"
+    ],
+    "subject": "Solicitud 101",
+    "body": "Buenos días, adjunto la solicitud número 101 firmada. Saludos."
+  },
+  "cwd": "/home/user",
+  "transcript_path": "benign_approved_by_approver_transcript.jsonl",
+  "_expect": ""
+}

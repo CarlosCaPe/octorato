@@ -1,0 +1,266 @@
+{
+  "_comment": "selftest seed for FLOW.chat-validated-release; synthetic ids only",
+  "chats": [
+    {
+      "jid": "120363900000000101@g.us",
+      "label": "fixture validation chat 101",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363900000000102@g.us",
+      "label": "fixture validation chat 102",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363900000000103@g.us",
+      "label": "fixture validation chat 103",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363900000000104@g.us",
+      "label": "fixture validation chat 104",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363900000000105@g.us",
+      "label": "fixture validation chat 105",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363900000000106@g.us",
+      "label": "fixture validation chat 106",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363900000000107@g.us",
+      "label": "fixture validation chat 107",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363900000000108@g.us",
+      "label": "fixture validation chat 108",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363900000000109@g.us",
+      "label": "fixture validation chat 109",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363900000000110@g.us",
+      "label": "fixture validation chat 110",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363900000000111@g.us",
+      "label": "fixture validation chat 111",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363900000000112@g.us",
+      "label": "fixture validation chat 112",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363900000000113@g.us",
+      "label": "fixture validation chat 113",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363900000000114@g.us",
+      "label": "fixture validation chat 114",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363900000000115@g.us",
+      "label": "fixture validation chat 115",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363900000000116@g.us",
+      "label": "fixture validation chat 116",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363900000000117@g.us",
+      "label": "fixture validation chat 117",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363900000000118@g.us",
+      "label": "fixture validation chat 118",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363900000000119@g.us",
+      "label": "fixture validation chat 119",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363900000000120@g.us",
+      "label": "fixture validation chat 120",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363900000000124@g.us",
+      "label": "fixture validation chat 124",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363900000000125@g.us",
+      "label": "fixture validation chat 125",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363900000000126@g.us",
+      "label": "fixture validation chat 126",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363900000000127@g.us",
+      "label": "fixture validation chat 127",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363900000000128@g.us",
+      "label": "fixture validation chat 128",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60,
+      "validation_trailer": "Responde ok para enviarlo, o no para detenerlo."
+    },
+    {
+      "jid": "120363900000000129@g.us",
+      "label": "fixture validation chat 129",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60,
+      "validation_trailer": "Responde ok para enviarlo, o no para detenerlo."
+    },
+    {
+      "jid": "120363900000000121@g.us",
+      "label": "fixture validation chat 121",
+      "since": "2026-10-03",
+      "approvers": [],
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363900000000122@g.us",
+      "label": "fixture validation chat 122",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60
+    },
+    {
+      "jid": "120363900000000123@g.us",
+      "label": "fixture validation chat 123",
+      "since": "2026-10-03",
+      "approvers": [
+        "10000000000001@lid"
+      ],
+      "window_minutes": 60
+    }
+  ]
+}

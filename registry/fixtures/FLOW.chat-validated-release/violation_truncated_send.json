@@ -1,0 +1,14 @@
+{
+  "session_id": "fx-cvr-117",
+  "tool_name": "mcp__gmail__send_email",
+  "tool_input": {
+    "to": [
+      "office@example.test"
+    ],
+    "subject": "Oferta 117",
+    "body": "Aceptamos la oferta."
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_truncated_send_transcript.jsonl",
+  "_expect": "does not quote this send's text exactly"
+}

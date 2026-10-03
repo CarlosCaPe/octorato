@@ -9,9 +9,9 @@
 | Skills | 235 |
 | Agents | 167 |
 | Divisions | 13 |
-| Scripts: wired | 124 |
+| Scripts: wired | 125 |
 | Scripts: orphan | 7 |
-| Rules | 84 |
+| Rules | 85 |
 | Hook entries | 53 |
 
 ## Skills (235)
@@ -488,7 +488,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (131)
+## Scripts (132)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -519,6 +519,7 @@
 | capability_inventory.py | capability_inventory.py , read-only capability census of skills + agents (issue #28). | wired |
 | capability_manifest.py | capability_manifest.py -- Capability Manifest Generator for Octorato. Scans skills/, agents/, script... | wired |
 | changelog-sync.py | changelog-sync.py - heal CHANGELOG.md when releases were cut without entries. | wired |
+| chat_release_fixture_seed.py | chat_release_fixture_seed.py: build the fixtures of FLOW.chat-validated-release. | wired |
 | check-generic.py | check-generic.py , Block commits that leak arm/client/person identifiers. The brain (~/.claude/) is ... | wired |
 | check-hooks-drift.py | check-hooks-drift.py , guard: settings.json.hooks must equal the projection of hooks.json. | wired |
 | check-readme-sync.sh | check-readme-sync.sh , Warn if skills/agents/scripts changed but README didn't. | orphan |
@@ -624,7 +625,7 @@
 | wa-soporte.sh | Sends a WhatsApp through the SUPPORT channel, never through the operator's personal number. | wired |
 | watchdog.py | watchdog.py , observability surface 4 anomaly detector. Reads the JSONL trace files written by trace... | wired |
 
-## Rules (84)
+## Rules (85)
 
 ### ARCHITECTURE
 
@@ -678,6 +679,7 @@
 - FLOW.bulk-fetch-delegation
 - FLOW.calendar-facts-as-data
 - FLOW.canon-heal
+- FLOW.chat-validated-release
 - FLOW.delegate-gate
 - FLOW.do-it-today
 - FLOW.done-is-a-verdict

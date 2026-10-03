@@ -17,3 +17,7 @@ knowledge/repo-deep-learn/** linguist-vendored
 # core.autocrlf=true an LF fixture checks out as CRLF on Windows and every
 # comparison fails while the code under test is correct.
 registry/fixtures/** text eol=lf
+
+# SQLite stores used as fixtures are bytes, not text: the eol rule above would
+# rewrite any CR LF pair inside a page and corrupt the database.
+registry/fixtures/**/*.db binary
