@@ -1,9 +1,0 @@
-{
-  "session_id": "fx-p-benign-get-status-probe",
-  "tool_name": "Bash",
-  "tool_input": {
-    "command": "curl -s -m 4 http://127.0.0.1:8081/api/status"
-  },
-  "cwd": "/home/user",
-  "transcript_path": "benign_get_status_probe_transcript.jsonl"
-}

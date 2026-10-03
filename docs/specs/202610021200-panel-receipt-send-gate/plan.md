@@ -45,3 +45,7 @@ One pull request. The digest library first, then the receipt kind in the ledger 
 
 - [ ] T18 [AC-21, AC-22, AC-23] scripts/g__pretool-mcp__outward-send.py: write-shape requirement for the bridge port and inline interpreter rules; SSM opacity scoped to bridge-hosting instances from the private config, fail closed when unknown.
 - [ ] T19 [AC-21, AC-22, AC-23] registry/fixtures/FLOW.panel-before-send: non-bridge file:// SSM, unreadable targets, unresolved and assigned instance variables, GET probe, POST /api/send via 127.1, socket lab, JS edit.
+
+## QA cycle 3
+
+- [ ] T20 [AC-21, AC-22, AC-23] scripts/g__pretool-mcp__outward-send.py, registry/fixtures/FLOW.panel-before-send: percent-decode until stable, read-route allowlist for bridge ports, interpreter and script runs opaque on a bridge host; fixtures for the percent-encoded send with fused -d, fused -F, httpie bare port, urlopen positional data, run-time method, SSM printf-to-file then sh, SSM python -c, read routes and plain SSM reads to a bridge host.

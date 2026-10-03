@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-violation-node-fetch-built-method",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "node -e \"fetch('http://localhost:8080/api/x', {method: 'PO'+'ST', body: '{}'})\""
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_node_fetch_built_method_transcript.jsonl"
+}

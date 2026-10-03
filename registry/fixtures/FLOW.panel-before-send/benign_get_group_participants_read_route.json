@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-benign-get-group-participants-read-route",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "curl -s -X POST http://127.0.0.1:8081/api/group-participants --data-binary @g.json"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "benign_get_group_participants_read_route_transcript.jsonl"
+}

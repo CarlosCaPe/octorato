@@ -514,25 +514,30 @@ def _ask_deny(human: str) -> str:
 # text AND after quote removal (as bash reads it, so `/api/'send'` is
 # `/api/send`):
 #   - an outward endpoint of the bridges, /api/send or /api/react
-#   - a WRITE-shaped request to a bridge port, `:8080` or `:8081` on ANY host
-#     (127.1, 0x7f.1, [::1] and a hostname all count): curl/wget/httpie with
-#     a body (-d, --data*, -F, --form, -T, --upload-file, --post-data) or
-#     -X/--request/--method POST|PUT|PATCH|DELETE, or code with data=, json=,
-#     .post(, send( ... A plain GET (a status or health probe) goes, and so
-#     does the recall or read endpoint (/api/revoke, /api/download).
+#   - ANY request to a bridge port, `:8080` or `:8081` on any host (127.1,
+#     0x7f.1, [::1], a hostname, httpie's bare `:8081`), whatever the method,
+#     unless its path is on the READ ALLOWLIST: the routes both bridges'
+#     main.go expose that send nothing (/api/revoke, /api/download,
+#     /api/group-participants). A path the gate cannot read ($p, a built
+#     string) denies. The text is percent-decoded until stable before every
+#     match, so /api/sen%64 is /api/send. This replaced a write-shape test
+#     that fused flags (-d'..', -Fx=y), httpie's implied POST, urlopen's
+#     positional data and a method built at run time all walked past.
 #   - an `ssm send-command` that mentions a bridge (a bridge port, /api/send,
 #     /api/react, the bridge script) in any payload, on any instance; and one
 #     whose payload is not plaintext-inspectable (a decoder such as base64,
 #     b64decode, xxd, openssl enc, gzip -d, gunzip, zcat; eval; a pipe into a
 #     shell or an interpreter; $( or a backtick; sh -c; a file:// parameter
-#     file) when the target instance HOSTS A BRIDGE. Bridge-hosting instances
+#     file; any interpreter run, `sh file` / `python -c` / `./file` / source)
+#     when the target instance HOSTS A BRIDGE. Bridge-hosting instances
 #     are read from the private bridge config (company/config/wa-puentes.json,
 #     puentes.*.remoto.instancia). Fail closed: a missing or unreadable config,
 #     targets given by --targets (tags, wildcards) or an instance id the gate
 #     cannot read count as bridge-hosting. Residual: that config is a file
 #     under $HOME a hooked process can write.
 #   - inline interpreter code (python -c, node/perl/ruby -e, a heredoc or
-#     stdin into an interpreter) carrying an HTTP or socket primitive, a
+#     stdin into an interpreter) that names a bridge port off the allowlist
+#     (the rule above), or carries an HTTP or socket primitive, a
 #     bridge-shaped target ('808' or 'api/' not preceded by a word character)
 #     and a write shape, which catches a URL built by string concatenation
 #     while a local socket lab or a file edit mentioning fetch( goes
@@ -542,12 +547,21 @@ def _ask_deny(human: str) -> str:
 # is not a send. Accepted false positives are named in the spec.
 _RAW_READERS = _READERS | {"ss", "lsof", "netstat", "ps", "pgrep", "systemctl", "journalctl"}
 _RAW_ENDPOINT = re.compile(r"/api/(?:send|react)\b", re.IGNORECASE)
-_RAW_PORT = re.compile(r":\s*808[01]\b(?!\s*/api/(?:revoke|download)\b)")
+_RAW_PORT = re.compile(r":\s*808[01]\b")
+_PORT_PATH = re.compile(r":\s*808[01]\b(\S*)")
+# Routes the two bridges expose that send nothing (verified in both main.go:
+# the personal bridge has send, react, revoke, download; the support bridge
+# adds group-add, a write, and group-participants, a read). /api/status is
+# not a route of either, so it is not here.
+_READ_ROUTES = {"/api/revoke", "/api/download", "/api/group-participants"}
 _SSM_SEND = re.compile(r"\bssm\b.*\bsend-command\b", re.IGNORECASE | re.DOTALL)
 _SSM_OPAQUE = re.compile(
     r"base64|b64decode|\bxxd\b|openssl\s+enc|gzip\s+-d|\bgunzip\b|\bzcat\b|\beval\b"
     r"|\|\s*(?:sudo\s+)?(?:sh|bash|zsh|dash|ksh|python\d*(?:\.\d+)?|perl|node|ruby|php)\b"
-    r"|\$\(|`|\b(?:sh|bash|zsh|dash)\s+-[a-z]*c\b|file://|808[01]|api/send|api/react|wa-soporte",
+    r"|\$\(|`|\b(?:sh|bash|zsh|dash)\s+-[a-z]*c\b|file://|808[01]|api/send|api/react|wa-soporte"
+    r"|(?:^|[\s;&|(\[\'\"])(?:sudo\s+)?(?:/\S*/)?(?:sh|bash|zsh|dash|ksh|python\d*(?:\.\d+)?"
+    r"|perl|node|nodejs|ruby|php)\b(?!-)"
+    r"|(?:^|[\s;&|(\[\'\"])(?:\./\S+|source\s+\S|\.\s+/\S)",
     re.IGNORECASE)
 _INTERP_INLINE = re.compile(
     r"(?:^|[\s;&|(])(?:\S*/)?(?:python\d*(?:\.\d+)?|node|nodejs|perl|ruby|deno|bun|php)\b"
@@ -572,6 +586,35 @@ _DYNAMIC = ("$(", "`", "${")
 
 def _dequote(text: str) -> str:
     return re.sub(r"['\"\\]", "", text)
+
+
+def _pct_decode(text: str) -> str:
+    """Percent-decode until stable (bounded): /api/sen%2564 -> %64 -> d."""
+    from urllib.parse import unquote
+    for _ in range(8):
+        nxt = unquote(text)
+        if nxt == text:
+            break
+        text = nxt
+    return text
+
+
+def _readings(text: str) -> tuple:
+    """The forms a command is matched in: raw, quote-removed, and both
+    percent-decoded."""
+    d = _dequote(text)
+    return (text, d, _pct_decode(text), _pct_decode(d))
+
+
+def _port_off_allowlist(text: str) -> bool:
+    """True when the text names a bridge port whose path is not a read route
+    (or cannot be read)."""
+    for t in _readings(text):
+        for m in _PORT_PATH.finditer(t):
+            path = re.split(r"[?#\s'\"),;|&]", m.group(1) or "", maxsplit=1)[0].rstrip("/")
+            if path not in _READ_ROUTES:
+                return True
+    return False
 
 
 _SSM_MENTION = re.compile(r"808[01]|api/send|api/react|wa-soporte", re.IGNORECASE)
@@ -658,7 +701,7 @@ def _ssm_hit(text: str) -> bool:
     """An ssm send-command that mentions a bridge (any instance), or whose
     payload is not plaintext-inspectable while the target hosts a bridge. The
     shell around the aws call (`CID=$(aws ssm ...)`) is not the payload."""
-    if _SSM_MENTION.search(text) or _SSM_MENTION.search(_dequote(text)):
+    if any(_SSM_MENTION.search(t) for t in _readings(text)):
         return True
     parts = _ssm_parts(text)
     if parts is None:
@@ -675,11 +718,11 @@ def _ssm_hit(text: str) -> bool:
 
 
 def _raw_hit(text: str) -> bool:
-    for t in (text, _dequote(text)):
+    for t in _readings(text):
         if _RAW_ENDPOINT.search(t):
             return True
-        if _RAW_PORT.search(t) and _WRITE_SHAPE.search(t):
-            return True
+    if _port_off_allowlist(text):
+        return True
     if _SSM_SEND.search(text) or _SSM_SEND.search(_dequote(text)):
         return _ssm_hit(text)
     return False
@@ -688,7 +731,9 @@ def _raw_hit(text: str) -> bool:
 def _interp_hit(command: str) -> bool:
     if not _INTERP_INLINE.search(command):
         return False
-    flat = _dequote(command)
+    if _port_off_allowlist(command):
+        return True
+    flat = _pct_decode(_dequote(command))
     return bool(_HTTP_PRIMITIVE.search(flat) and _BRIDGE_TARGET.search(flat)
                 and _WRITE_SHAPE.search(flat))
 
