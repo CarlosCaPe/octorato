@@ -20,6 +20,8 @@
 # reader's phone swaps it for the saved contact name. Without it the mention
 # notifies nobody and shows as grey text.
 #   WA_MENCIONES=5215550001111 wa-soporte.sh 1203...@g.us "@5215550001111 buenos dias"
+# Or as a flag (preferred: the outward-send gate refuses env assignments before the bridge):
+#   wa-soporte.sh 1203...@g.us "@5215550001111 buenos dias" --menciones 5215550001111@lid
 set -euo pipefail
 
 PUERTO_SOPORTE=8081
@@ -35,6 +37,15 @@ while [ $# -gt 0 ]; do
         echo "--archivo necesita una ruta" >&2
         exit 64
       fi
+      shift 2
+      ;;
+    --menciones)
+      # Same as WA_MENCIONES, as a literal flag so the send stays a plain call the panel gate can read.
+      if [ -z "${2:-}" ]; then
+        echo "--menciones necesita una lista separada por comas" >&2
+        exit 64
+      fi
+      export WA_MENCIONES="$2"
       shift 2
       ;;
     *)
