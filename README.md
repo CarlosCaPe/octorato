@@ -39,15 +39,22 @@ Free and open source (MIT). Runs on Claude Code and Cursor today. No code to wri
 # 1. Clone the brain
 git clone https://github.com/CarlosCaPe/octorato.git ~/.claude
 
-# 2. Bring it to life (wires the runners, builds the index, health-checks)
+# 2. One command does the rest
 python3 ~/.claude/scripts/quickstart.py
-
-# 3a. Claude Code: open anywhere and ask it something real
-claude
-
-# 3b. Cursor: install the checks, then open an Agent session
-python3 ~/.claude/scripts/merge-hooks-cursor.py
 ```
+
+The second command wires the automatic checks into Claude Code (and into Cursor, when Cursor is installed), turns on the guard that stops a secret from being pushed, runs a quick health check, and writes your first spec. Then open `claude` (or a Cursor Agent session) anywhere and ask it something real.
+
+Your first spec teaches the four ideas you need on day one:
+
+| Idea | What it is |
+|---|---|
+| Spec | What must be true, one checkable sentence per requirement (`feature.md`). |
+| Plan | How you will get there, in steps (`plan.md`). |
+| Tasks | The plan's numbered lines. Each one names the requirements it serves. |
+| Verdict | A second assistant that did not write the code decides when it is done. |
+
+Everything else (private notes, sealed client folders, syncing several machines) can wait. It is in the [Getting Started](https://github.com/CarlosCaPe/octorato/wiki/Getting-Started) page, under "Going further".
 
 <p align="center"><img src="assets/demo.gif" alt="Terminal demo: brain_doctor checks that every rule is wired to a live mechanism, then the pre-push gate refuses a commit carrying a fake AWS key" width="100%"></p>
 
