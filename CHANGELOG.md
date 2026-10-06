@@ -15,6 +15,12 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-10-06]: v9.5.1
+### Fixes
+- fix(gates): Windows portability of three gate selftests and two live holes (#370)
+### Other
+- docs(changelog): backfill v9.5.0 (#367)
+
 ## [2026-10-06]: v9.5.0
 ### Features
 - feat(commands): add /choice, carry one idea to a decision (#365)

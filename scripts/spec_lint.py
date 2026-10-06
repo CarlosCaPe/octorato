@@ -92,7 +92,7 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 MAX_MARKERS = 3
 MAX_TASKS = 20
@@ -552,7 +552,10 @@ def push_findings(repo: Path, base: str, head: str) -> list:
                                 f"this one without the Spec-Format header; a spec does not leave "
                                 f"ears-1 by moving. Keep the header, or land the removal in its "
                                 f"own pull request")
-    spec_dirs = sorted({str(Path(p).parent) for p in spec_paths
+    # A git path is POSIX on every platform. `str(Path(p).parent)` spelled it with
+    # backslashes on Windows, `git show <rev>:<dir>/feature.md` then found nothing,
+    # and every spec of the push was skipped without a finding.
+    spec_dirs = sorted({str(PurePosixPath(p).parent) for p in spec_paths
                         if is_canonical_spec_path(p)
                         and not _is_lfs_pointer(_show(repo, head, p))})
 
@@ -614,7 +617,7 @@ def push_findings(repo: Path, base: str, head: str) -> list:
 
 def _push_selftest_case(case: Path) -> list:
     """Build the scenario a push.json describes and return its findings."""
-    spec = json.loads((case / "push.json").read_text())
+    spec = json.loads((case / "push.json").read_text(encoding="utf-8"))
     sd = spec.get("spec_dir", "docs/specs/202609300000-toy")
     home = Path(tempfile.mkdtemp(prefix="spec-push-home-"))
     repo = Path(tempfile.mkdtemp(prefix="spec-push-repo-"))
@@ -632,22 +635,23 @@ def _push_selftest_case(case: Path) -> list:
             return _git(repo, "rev-parse", "HEAD").strip()
 
         subprocess.run(["git", "init", "-q", str(repo)], check=True)
-        feature = (case / "feature.md").read_text()
+        feature = (case / "feature.md").read_text(encoding="utf-8")
         (repo / sd).mkdir(parents=True)
-        (repo / sd / "feature.md").write_text(feature)
-        (repo / sd / "plan.md").write_text((case / "plan.md").read_text())
-        (repo / "app.py").write_text("x = 1\n")
+        (repo / sd / "feature.md").write_text(feature, encoding="utf-8")
+        (repo / sd / "plan.md").write_text((case / "plan.md").read_text(encoding="utf-8"),
+                                           encoding="utf-8")
+        (repo / "app.py").write_text("x = 1\n", encoding="utf-8")
         base = commit("base", "2026-09-30T10:00:00+00:00")
         pushed = base  # what the remote ref holds before the push
         if spec.get("remote_master_at_base"):
             subprocess.run(["git", "-C", str(repo), "update-ref",
                             "refs/remotes/origin/master", base], check=True)
         if spec.get("code_change"):
-            (repo / "app.py").write_text("x = 2\n")
+            (repo / "app.py").write_text("x = 2\n", encoding="utf-8")
             commit("code", "2026-09-30T11:00:00+00:00")
         if spec.get("late_code_old_author"):
             # an amend or a cherry-pick: authored before the verdict, landed after it
-            (repo / "app.py").write_text("x = 3\n")
+            (repo / "app.py").write_text("x = 3\n", encoding="utf-8")
             e = dict(env, GIT_AUTHOR_DATE="2026-09-30T11:00:00+00:00",
                      GIT_COMMITTER_DATE="2026-09-30T11:45:00+00:00")
             subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, env=e)
@@ -663,7 +667,7 @@ def _push_selftest_case(case: Path) -> list:
             text = text.replace("> **Spec-Format:** ears-1\n", "")
         if spec.get("replace_format"):
             text = text.replace("> **Spec-Format:** ears-1", spec["replace_format"])
-        (repo / sd / "feature.md").write_text(text)
+        (repo / sd / "feature.md").write_text(text, encoding="utf-8")
         if spec.get("rename_spec_to"):
             shutil.move(str(repo / sd), str(repo / spec["rename_spec_to"]))
         for key, act in (("move_feature_to", shutil.move), ("copy_feature_to", shutil.copy)):
@@ -681,7 +685,7 @@ def _push_selftest_case(case: Path) -> list:
             if version is True:
                 version = "https://git-lfs.github.com/spec/v1"
             (lfs / "feature.md").write_text(
-                f"version {version}\noid sha256:" + "0" * 64 + "\nsize 1234\n")
+                f"version {version}\noid sha256:" + "0" * 64 + "\nsize 1234\n", encoding="utf-8")
         if spec.get("symlink_home"):
             real = repo / "elsewhere" / "specs"
             real.mkdir(parents=True)
@@ -695,9 +699,9 @@ def _push_selftest_case(case: Path) -> list:
             shutil.rmtree(repo / sd)
             os.symlink(os.path.relpath(hidden, (repo / sd).parent), repo / sd)
         if spec.get("break_spec"):
-            text = (repo / sd / "feature.md").read_text()
+            text = (repo / sd / "feature.md").read_text(encoding="utf-8")
             (repo / sd / "feature.md").write_text(
-                text.replace("THE Exporter SHALL write UTF-8.", "The exporter writes UTF-8."))
+                text.replace("THE Exporter SHALL write UTF-8.", "The exporter writes UTF-8."), encoding="utf-8")
         if spec.get("in_merge"):
             # the spec edit lives ONLY in a merge commit: its tree differs from both
             # parents, and a per-commit diff without -m prints nothing for it
@@ -735,7 +739,7 @@ def _push_selftest_case(case: Path) -> list:
         if spec.get("code_after_flip"):
             # the flip went out in an earlier push; this push carries only code
             pushed = head
-            (repo / "app.py").write_text("x = 9\n")
+            (repo / "app.py").write_text("x = 9\n", encoding="utf-8")
             head = commit("code after the flip", "2026-09-30T12:30:00+00:00")
         if spec.get("converged_on_master"):
             # the spec converges on the default branch through its own pull request,
@@ -750,7 +754,7 @@ def _push_selftest_case(case: Path) -> list:
             branch = _git(repo, "symbolic-ref", "--short", "HEAD").strip()
             run("checkout", "-q", "-b", "default-branch", base)
             (repo / sd / "feature.md").write_text(
-                feature.replace("> **Status:** approved", "> **Status:** converged"))
+                feature.replace("> **Status:** approved", "> **Status:** converged"), encoding="utf-8")
             run("commit", "-qam", "converged on the default branch")
             run("update-ref", "refs/remotes/origin/master", "HEAD")
             run("checkout", "-q", branch)
@@ -763,7 +767,7 @@ def _push_selftest_case(case: Path) -> list:
                      GIT_COMMITTER_DATE="2026-09-30T12:00:00+00:00")
             if spec.get("gitmodules_ignore_all"):
                 (repo / ".gitmodules").write_text(
-                    f'[submodule "spec"]\n\tpath = {sd}\n\turl = ./spec\n\tignore = all\n')
+                    f'[submodule "spec"]\n\tpath = {sd}\n\turl = ./spec\n\tignore = all\n', encoding="utf-8")
                 subprocess.run(["git", "-C", str(repo), "add", ".gitmodules"], check=True, env=e)
             subprocess.run(["git", "-C", str(repo), "rm", "-r", "-q", "--cached", sd],
                            check=True, env=e, capture_output=True)
@@ -786,7 +790,7 @@ def _push_selftest_case(case: Path) -> list:
                      "sessionId": sid, "timestamp": r.get("transcript_ts", r["ts"]),
                      "message": {"role": "assistant", "content": [{"type": "text",
                          "text": f"report\nCONVERGE-VERDICT: {r['verdict']}\nCONVERGE-SCOPE: {scope}"}]}}
-            tp.write_text(json.dumps(entry) + "\n")
+            tp.write_text(json.dumps(entry) + "\n", encoding="utf-8")
             receipt_ledger.append_global({"kind": "converge", "verdict": r["verdict"],
                                           "scope": scope, "agent_id": aid,
                                           "agent_type": r.get("agent_type", "Reality Checker"),
@@ -824,7 +828,7 @@ def selftest(fixture_dir: Path) -> int:
         return 1
     failures = []
     for case in violations + benigns:
-        args = (case / "args").read_text().split() if (case / "args").is_file() else []
+        args = (case / "args").read_text(encoding="utf-8").split() if (case / "args").is_file() else []
         if (case / "push.json").is_file():
             found = _push_selftest_case(case)
         else:
@@ -834,7 +838,7 @@ def selftest(fixture_dir: Path) -> int:
             if not found:
                 failures.append(f"{case.name}: expected findings, got none")
             elif (case / "expect.txt").is_file():
-                want = (case / "expect.txt").read_text().strip()
+                want = (case / "expect.txt").read_text(encoding="utf-8").strip()
                 if want not in out:
                     failures.append(f"{case.name}: findings lack '{want}': {out}")
         elif found:

@@ -881,6 +881,14 @@ def tree_sha256(pkg_dir: Path, kind: str = "skill") -> str:
         if rel_posix in excluded:
             continue
         files.append((rel_posix, p))
+    # Ordered by the POSIX relpath's COMPONENTS, case-sensitive, which is exactly
+    # the PurePosixPath order every POSIX-signed hash was computed in. The walk
+    # sorts Path objects and WindowsPath compares case-insensitively, so
+    # `reference.txt` hashed before `SKILL.md` on Windows and after it on POSIX:
+    # a package signed on one platform never verified on the other. A plain
+    # string key is NOT that order: it puts `examples.md` before `examples/a.md`
+    # (`.` < `/`), which changed the POSIX hash of every nested tree.
+    files.sort(key=lambda t: t[0].split("/"))
     for rel_posix, p in files:
         h.update(rel_posix.encode("utf-8"))
         h.update(b"\0")
@@ -1574,7 +1582,11 @@ def install_arm(brain: Brain, source: str, dest: str | None) -> int:
                 raise PkgError(f"{ARMS_PATHS_REL} is not an object; "
                                f"fix it before registering an arm")
             try:
-                rel = str(target.relative_to(Path.home()))
+                # Resolved on both sides. `target` is resolved, and a home spelled
+                # another way (a Windows 8.3 short name, a symlinked $HOME) never
+                # prefixed it, so the arm was registered absolute, not $HOME-relative.
+                # POSIX-spelled, the shape arms-paths.json carries on every OS.
+                rel = target.relative_to(Path.home().resolve()).as_posix()
             except ValueError:
                 rel = str(target)
             # A copy for the reader, not a guard the unwind leans on: the restore
@@ -2866,7 +2878,9 @@ def _sandbox_brain(tmp: Path, real: Brain) -> Brain:
     (root / LOCK_REL).write_text(json.dumps({"version": 1, "packages": []}, indent=2) + "\n",
                                  encoding="utf-8")
     _run(["git", "init", "-q", str(root)])
-    os.environ["HOME"] = str(home)
+    # Both names: os.path.expanduser reads USERPROFILE on Windows and ignores HOME,
+    # so a HOME-only sandbox resolved `~` to the operator's real profile.
+    os.environ["HOME"] = os.environ["USERPROFILE"] = str(home)
     return Brain(root)
 
 
@@ -3022,6 +3036,7 @@ def selftest(fixture: Path, real: Brain) -> int:
             failures.append(label)
 
     saved_home = os.environ.get("HOME")
+    saved_profile = os.environ.get("USERPROFILE")
     tmp = Path(tempfile.mkdtemp(prefix="octo-pkg-selftest-"))
     try:
         brain = _sandbox_brain(tmp, real)
@@ -3210,12 +3225,17 @@ def selftest(fixture: Path, real: Brain) -> int:
         check("green again with the kind and the byte restored",
               main(["--brain", str(brain.root), "verify", "--all"]) == 0)
 
-        os.chmod(ref, 0o755)
-        check("chmod +x on a package file turns verify FAIL",
-              main(["--brain", str(brain.root), "verify", "--all"]) == 1)
-        os.chmod(ref, 0o644)
-        check("green again once the execute bit is dropped",
-              main(["--brain", str(brain.root), "verify", "--all"]) == 0)
+        if os.name == "nt":
+            # Windows has no execute bit for chmod to set (the residual tree_sha256
+            # names), so this leg cannot be expressed here. Printed, not passed.
+            print("  skip chmod +x leg: no POSIX execute bit on Windows")
+        else:
+            os.chmod(ref, 0o755)
+            check("chmod +x on a package file turns verify FAIL",
+                  main(["--brain", str(brain.root), "verify", "--all"]) == 1)
+            os.chmod(ref, 0o644)
+            check("green again once the execute bit is dropped",
+                  main(["--brain", str(brain.root), "verify", "--all"]) == 0)
 
         brain.lock_path.write_text(json.dumps({"version": 1, "packages": []}, indent=2) + "\n",
                                    encoding="utf-8")
@@ -3344,8 +3364,11 @@ def selftest(fixture: Path, real: Brain) -> int:
               and not brain.exclude_has(f"skills/{name}"))
         main(["--brain", str(brain.root), "uninstall", name])
     finally:
-        if saved_home is not None:
-            os.environ["HOME"] = saved_home
+        for k, v in (("HOME", saved_home), ("USERPROFILE", saved_profile)):
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
         shutil.rmtree(tmp, ignore_errors=True)
 
     if failures:
