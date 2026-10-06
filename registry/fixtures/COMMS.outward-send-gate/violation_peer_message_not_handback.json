@@ -1,0 +1,10 @@
+{
+  "session_id": "fx-t04-peer-v",
+  "tool_name": "mcp__whatsapp__send_message",
+  "tool_input": {
+    "recipient": "5210000000001",
+    "message": "Hola Ana, el equipo ya quedó configurado."
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_peer_message_not_handback_transcript.jsonl"
+}

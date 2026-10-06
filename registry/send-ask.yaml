@@ -1,0 +1,52 @@
+# Send_Ask list (v10 AC-05, spec docs/specs/202610061605-v10-low-friction-easy-entry/).
+#
+# Read by scripts/g__pretool-mcp__outward-send.py, requirement 4 (the explicit
+# send ask). An operator prompt that carries one of these, not negated, deferred
+# or withdrawn in its clause or after it, asks for the send. Matching folds case
+# and accents, so mándalo, Mandalo and MANDALO are the same entry. The gate's
+# original matcher (explicit_send_ask) still runs; this list only adds to it.
+#
+# Format: a two-level subset of YAML, `key:` then `  - item`, parsed by the gate
+# itself. Keep it that way: the gate runs on every send and imports nothing
+# third-party.
+
+# Spanish imperatives with their clitic. Counted anywhere in the clause; a
+# plural clitic counts too (avísales).
+spanish:
+  - mándalo
+  - envíalo
+  - mándale
+  - envíale
+  - publícalo
+  - avísale
+
+# English verbs. Counted at clause start or after a frame word (please, just,
+# ok, now, then, yes, and ...), so "the send failed" is not an ask.
+english:
+  - send it
+  - send
+  - post it
+
+# Bare go-aheads. Counted only when their OWN clause also names the message (a
+# noun below) or one of the send's recipients (an address or its local part).
+go_aheads:
+  - dale
+  - adelante
+  - órale
+  - go ahead
+
+message_nouns:
+  - mensaje
+  - correo
+  - mail
+  - email
+  - whatsapp
+  - respuesta
+  - message
+  - reply
+
+# The standing hatch typed in another case (Send-ok, SEND-OK). Counts as a send
+# ask only: it lifts requirement 4 and never the checks the exact lowercase
+# `send-ok` hatch skips.
+hatch_as_ask:
+  - send-ok
