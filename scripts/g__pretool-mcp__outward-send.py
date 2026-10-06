@@ -62,12 +62,14 @@ WHAT IT REQUIRES (docs/architecture/v7-nothing-ships-unverified.md)
      a pipeline with an interpreter or executor in any stage after the first
      (panel_digest.EXECUTOR_NAMES: shells, python*, perl, ruby, node, php,
      lua, awk with system or a quoted |, xargs, parallel, eval, source, .,
-     env, exec, nohup, timeout, sudo, doas) is a send whenever any stage
-     names the script, because `cat <script> | sh -s -- <jid> <msg>` and
-     its bash, head, tail and grep twins ran the bridge with no panel and no
-     ask. Residual, stated: a wrapper outside that set in front of the
-     shell (`| nice sh`, `| setsid sh`, `| command sh`, `| busybox sh`)
-     and a pipe into a function or an alias stay open. A script copied in
+     and the wrappers env, exec, nohup, timeout, sudo, doas, nice, setsid,
+     command, busybox, stdbuf, chroot, unbuffer, script, ionice, chrt,
+     taskset, flock, time, builtin) is a send whenever any stage names the
+     script, because `cat <script> | sh -s -- <jid> <msg>` and its bash,
+     head, tail, grep and `nice sh` twins ran the bridge with no panel and
+     no ask. A wrapper is exempt only when the word right after it is a
+     reader (`| nice grep x`). Residual, stated: a pipe into a function or
+     an alias stays open. A script copied in
      one call and run in a later one (a config key that names the script is
      denied when it is SET, but one that points at a copy or a wrapper fires
      later from any `git log`), or a name the gate cannot see (alias,

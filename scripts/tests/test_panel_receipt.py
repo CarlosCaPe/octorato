@@ -104,12 +104,16 @@ class Digest(unittest.TestCase):
                     f"head -n 500 {s} | sh -s --", f"tail -n +1 {s} | sh",
                     f"grep -rn x {s} | sh -s -- 1 hola", f"cat {s} | python3 -",
                     f"cat {s} |& /usr/bin/env bash", f"cat {s} | X=1 sh", f"cat {s} | (sh)",
-                    f"cat {s} | awk '{{system($0)}}'", f"cat {s} | tee /tmp/x | sh"):
+                    f"cat {s} | awk '{{system($0)}}'", f"cat {s} | tee /tmp/x | sh",
+                    f"cat {s} | nice sh -s -- 1 hola", f"cat {s} | nice -n 5 grep x",
+                    f"cat {s} | timeout 5 sh", f"cat {s} | setsid sh", f"cat {s} | command sh",
+                    f"cat {s} | busybox sh", f"cat {s} | stdbuf -oL sh", f"cat {s} | time sh"):
             self.assertTrue(pd.pipe_runs_script(cmd), cmd)
             self.assertTrue(pd.names_bridge(cmd), cmd)
         for cmd in (f"cat {s} | grep x", f"cat {s} 2>&1 | head", f"cat {s} | awk '{{print}}'",
                     f"cat {s} || sh", f"cat {s} | wc -l; echo x | sh", f'grep "a|sh" {s}',
-                    f"grep x {s} # | sh", "cat notes.txt | sh"):
+                    f"grep x {s} # | sh", "cat notes.txt | sh", f"cat {s} | nice grep x",
+                    f"cat {s} | env wc -l"):
             self.assertFalse(pd.pipe_runs_script(cmd), cmd)
         self.assertTrue(pd.READER_NAMES.isdisjoint(pd.EXECUTOR_NAMES))
 

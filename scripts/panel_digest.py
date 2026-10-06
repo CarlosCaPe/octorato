@@ -283,11 +283,18 @@ READER_NAMES = frozenset({"grep", "ag", "ls", "cat", "head", "tail", "wc",
 # exemption whole and is a send whenever any of its stages names the script.
 # One shape, no reading of intent: `python*` is matched as a prefix, and the
 # awk family counts only when its stage carries `system` or a quoted `|`
-# (awk's pipe to a command). Shared with the outward-send gate, never copied.
+# (awk's pipe to a command). A wrapper (_WRAPPER_NAMES, a subset) counts
+# unless the word right after it is a reader (`| nice grep x`); an option, a
+# number or anything else after it counts, so `| nice -n 5 grep` is judged as
+# a send (fail closed). Shared with the outward-send gate, never copied.
+_WRAPPER_NAMES = frozenset({"env", "exec", "nohup", "timeout", "sudo", "doas",
+                            "nice", "setsid", "command", "busybox", "stdbuf",
+                            "chroot", "unbuffer", "script", "ionice", "chrt",
+                            "taskset", "flock", "time", "builtin"})
 EXECUTOR_NAMES = frozenset({"sh", "bash", "dash", "zsh", "ksh", "fish", "python",
                             "perl", "ruby", "node", "php", "lua", "awk", "gawk",
                             "mawk", "nawk", "xargs", "parallel", "eval", "source",
-                            ".", "env", "exec", "nohup", "timeout", "sudo", "doas"})
+                            "."}) | _WRAPPER_NAMES
 _AWK_NAMES = frozenset({"awk", "gawk", "mawk", "nawk"})
 _ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _OPERATOR = re.compile(r"^[();<>|&]+$")
@@ -377,26 +384,30 @@ def pipelines(command: str) -> list:
     return [p for p in out if any(s.strip() for s in p)]
 
 
-def _stage_program(text: str) -> str:
-    """The program a pipeline stage runs: its first word after leading
-    assignments and grouping, basename only."""
+def _stage_words(text: str) -> list:
+    """The words of a pipeline stage from the program on: leading
+    assignments and grouping dropped, the program as a basename."""
     try:
         toks = shlex.split(text)
     except ValueError:
         toks = text.split()
-    for t in toks:
+    for i, t in enumerate(toks):
         t = t.strip("(){}")
         if not t or _ASSIGN.match(t):
             continue
-        return t.rsplit("/", 1)[-1]
-    return ""
+        return [t.rsplit("/", 1)[-1]] + toks[i + 1:]
+    return []
 
 
 def is_executor_stage(text: str) -> bool:
     """True when a pipeline stage runs what it reads (EXECUTOR_NAMES)."""
-    prog = _stage_program(text)
+    words = _stage_words(text)
+    prog = words[0] if words else ""
     if prog in _AWK_NAMES:
         return "system" in text or "|" in text
+    if prog in _WRAPPER_NAMES:
+        nxt = words[1].rsplit("/", 1)[-1] if len(words) > 1 else ""
+        return nxt not in READER_NAMES
     return prog in EXECUTOR_NAMES or prog.startswith("python")
 
 
