@@ -24,12 +24,12 @@ Ask this before anything else, in every session, and read the list aloud: chest 
 Ask these, one at a time, in plain words. Do not assume an answer.
 
 1. Age, and anything the person chooses to share about their situation.
-2. The main concern and since when.
-3. Medicines and supplements taken, with dose if known.
-4. Known conditions and past surgeries.
-5. Allergies.
-6. Country, since services and terms differ.
-7. Whether the person is pregnant, or whether the appointment is for a baby or a child.
+2. Whether the person is pregnant, or whether the appointment is for a baby or a child.
+3. The main concern and since when.
+4. Medicines and supplements taken, with dose if known.
+5. Known conditions and past surgeries.
+6. Allergies.
+7. Country, since services and terms differ.
 
 Write the answers into a short profile and show it back.
 

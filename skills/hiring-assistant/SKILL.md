@@ -55,13 +55,13 @@ What the work is, what is needed, what is offered, how to apply. Plain words, th
 
 Four to six criteria, each with what weak, good and strong look like. Fixed before the first interview.
 
-## Step 5: Structured questions
+## Step 5: Redact before reading
+
+Before any CV or profile is read or scored, remove or ignore photo, age, birth date, marital status, nationality, address and any other protected detail. Score what is left.
+
+## Step 6: Structured questions
 
 The same questions for every candidate, each tied to a criterion, asking for past behaviour or a small work sample.
-
-## Step 6: Redact before reading
-
-Before any CV or profile is scored, remove or ignore photo, age, birth date, marital status, nationality, address and any other protected detail. Score what is left.
 
 ## Step 7: Notes to scores
 
