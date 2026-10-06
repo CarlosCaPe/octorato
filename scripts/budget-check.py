@@ -69,31 +69,70 @@ VALID_ACTIONS = {"alert", "warn", "hard_stop"}
 DEFAULT_GRACE_PCT = 110
 
 
+_LOAD_WARNINGS: list[str] = []   # why a config that exists was read as {}
+
+
 def _load_budgets() -> dict:
     """Returns the parsed budgets dict, or {} if no config exists.
 
-    {} = no budget caps configured = nothing to enforce.
+    {} = no budget caps configured = nothing to enforce. A file that exists but
+    cannot be read also yields {}; the reason is kept in _LOAD_WARNINGS so the
+    verdict names it instead of reading as a silent allow.
     """
+    _LOAD_WARNINGS.clear()
     if BUDGETS_YAML.exists():
         try:
             import yaml  # type: ignore[import-not-found]
             return yaml.safe_load(BUDGETS_YAML.read_text(encoding="utf-8")) or {}
         except ImportError:
-            sys.stderr.write(
-                f"⚠ {BUDGETS_YAML} exists but PyYAML is not installed — "
-                f"create {BUDGETS_JSON} as a JSON fallback.\n"
-            )
+            msg = (f"{BUDGETS_YAML} exists but PyYAML is not installed — "
+                   f"create {BUDGETS_JSON} as a JSON fallback.")
+            sys.stderr.write(f"⚠ {msg}\n")
+            _LOAD_WARNINGS.append(msg)
             return {}
         except Exception as e:  # noqa: BLE001
             sys.stderr.write(f"⚠ Failed to parse {BUDGETS_YAML}: {e}\n")
+            _LOAD_WARNINGS.append(f"failed to parse {BUDGETS_YAML}: {e}")
             return {}
     if BUDGETS_JSON.exists():
         try:
             return json.loads(BUDGETS_JSON.read_text(encoding="utf-8")) or {}
         except Exception as e:  # noqa: BLE001
             sys.stderr.write(f"⚠ Failed to parse {BUDGETS_JSON}: {e}\n")
+            _LOAD_WARNINGS.append(f"failed to parse {BUDGETS_JSON}: {e}")
             return {}
     return {}
+
+
+# Top-level keys this script reads. Anything else is ignored by evaluate(), so
+# a config written in another shape (an `arms:` map, say) enforced nothing with
+# no word said. It is now named, never guessed at: no cap is invented and the
+# decision is unchanged.
+KNOWN_KEYS = ("budgets", "default", "spend_json")
+CONFIG_FIX = "convert to the budgets: list documented in budget-check.py"
+
+
+def config_problems(cfg) -> list[str]:
+    """What in a loaded config this script cannot read. [] when it reads all."""
+    if cfg in (None, {}):
+        return []
+    if not isinstance(cfg, dict):
+        return [f"top level is a {type(cfg).__name__}, not a mapping; nothing is enforced"]
+    out = []
+    unknown = sorted(str(k) for k in cfg if k not in KNOWN_KEYS)
+    if unknown:
+        out.append("unrecognised top-level key(s) ignored: " + ", ".join(unknown))
+    if "budgets" not in cfg and "default" not in cfg:
+        out.append("neither budgets: nor default: is present; no cap is enforced")
+    if "budgets" in cfg and not isinstance(cfg.get("budgets") or [], list):
+        out.append("budgets: is not a list; its entries are ignored")
+    if "default" in cfg and not isinstance(cfg.get("default") or {}, dict):
+        out.append("default: is not a mapping; it is ignored")
+    return out
+
+
+def _warnings(cfg) -> list[str]:
+    return list(_LOAD_WARNINGS) + config_problems(cfg)
 
 
 def _profiler_spend() -> dict[str, float] | None:
@@ -254,9 +293,22 @@ def evaluate(arm_filter: str | None = None, cwd: str | None = None) -> dict:
            "grace_usd": float, "action_on_breach": str, "verdict": str}
         ],
         "halt_reason": str | None,    # populated only if status == HARD_STOP
+        "config_warnings": [str],     # present only when the config is not
+                                      # fully readable (status is unchanged)
       }
     """
     cfg = _load_budgets()
+    # A non-mapping top level crashed evaluate() before (a hook error, which
+    # the harness lets through); it now reads as no caps, the same allow, named.
+    verdict = _evaluate(cfg if isinstance(cfg, dict) else {}, arm_filter, cwd)
+    warnings = _warnings(cfg)
+    if warnings:
+        verdict["config_warnings"] = warnings
+        verdict["config_fix"] = CONFIG_FIX
+    return verdict
+
+
+def _evaluate(cfg, arm_filter: str | None, cwd: str | None) -> dict:
     if not cfg:
         return {"status": "OK", "arms": [], "halt_reason": None,
                 "note": "no budgets configured"}
@@ -355,6 +407,8 @@ def _print_human(verdict: dict) -> None:
     print(f"Budget check: {status}")
     if verdict.get("note"):
         print(f"  {verdict['note']}")
+    for w in verdict.get("config_warnings") or []:
+        print(f"  WARN config: {w} (fix: {verdict.get('config_fix', CONFIG_FIX)})")
     for r in verdict["arms"]:
         marker = {"OK": "✓", "WARN": "⚠", "HARD_STOP": "🛑"}.get(r["verdict"], "?")
         print(
@@ -430,6 +484,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.json:
         json.dump(verdict, sys.stdout, indent=2)
         sys.stdout.write("\n")
+        for w in verdict.get("config_warnings") or []:
+            sys.stderr.write(f"WARN budget-check config: {w} (fix: {CONFIG_FIX})\n")
     else:
         _print_human(verdict)
 
