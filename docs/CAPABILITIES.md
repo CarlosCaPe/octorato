@@ -6,7 +6,7 @@
 
 | Metric | Count |
 |---|---|
-| Skills | 235 |
+| Skills | 236 |
 | Agents | 167 |
 | Divisions | 13 |
 | Scripts: wired | 124 |
@@ -14,7 +14,7 @@
 | Rules | 84 |
 | Hook entries | 53 |
 
-## Skills (235)
+## Skills (236)
 
 | Name | Description |
 |---|---|
@@ -148,6 +148,7 @@
 | pdf | Use when tasks involve reading, creating, or reviewing PDF files where rendering and layout matter; prefer visual checks... |
 | peer-review-lifecycle | Peer Review Lifecycle for Technical Documents |
 | peripheral-parallel-dispatch | Decision rule for WHEN to fan work out to N parallel sub-agents/arms vs solve it centrally, and HOW the center reconcile... |
+| personal-accountant | Turns an assistant into a personal bookkeeper for a household, a freelancer or a small business: classifies money in and... |
 | pg-cron-scheduled-maintenance | pg_cron Scheduled Maintenance |
 | pg-stat-statements-observability | pg_stat_statements Query Observability |
 | phi-aware-rag-ingestion | Multi-stage RAG ingestion pipeline for regulated content. Fetch → text-normalize → PHI-screen → chunk → embed → route → ... |
