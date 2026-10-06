@@ -110,11 +110,45 @@ class BridgeArgs(unittest.TestCase):
                      ["G", "hola", "--menciones", "A", "a", "todos"]):
             self.assertEqual(pd.parse_bridge_args(rest), want, rest)
 
+    @staticmethod
+    def _loop_flag_arms(src: str) -> set:
+        """Every long flag the script's argument loop dispatches on: the arms
+        of the `case "$1" in` that loop runs, read at the indentation of its
+        first arm (so arms of a case nested inside an arm are skipped), with
+        alternatives (`--x|--y)`) split and quotes removed. A flag the loop
+        learns in any spelling or indentation is a flag this sees."""
+        lines = src.splitlines()
+        start = next(i for i, ln in enumerate(lines) if re.match(r'\s*case "\$1" in\s*$', ln))
+        outer = len(lines[start]) - len(lines[start].lstrip())
+        arm_indent, arms = None, set()
+        for ln in lines[start + 1:]:
+            indent = len(ln) - len(ln.lstrip())
+            if ln.strip() == "esac" and indent == outer:
+                break
+            m = re.match(r"\s*([^\s()#][^()]*)\)\s*$", ln)
+            if not m:
+                continue
+            if arm_indent is None:
+                arm_indent = indent
+            if indent != arm_indent:
+                continue
+            for alt in m.group(1).split("|"):
+                alt = alt.strip().strip("'\"")
+                if alt.startswith("-"):
+                    arms.add(alt)
+        return arms
+
+    def test_flag_arm_reader_sees_every_spelling(self):
+        probe = ('while [ $# -gt 0 ]; do\n  case "$1" in\n    --a)\n      case "$2" in\n'
+                 '        --*) exit 64 ;;\n      esac\n      ;;\n    --b|--c)\n      ;;\n'
+                 "    '--d')\n      ;;\n    -e)\n      ;;\n    *)\n      ;;\n  esac\ndone\n")
+        self.assertEqual(self._loop_flag_arms(probe), {"--a", "--b", "--c", "--d", "-e"})
+
     def test_every_value_flag_of_the_script_is_known(self):
         # The script's own case arms are the source of truth: a flag added
         # there and not here is the bug this reader exists to prevent.
         src = (Path(pd.__file__).parent / pd.SUPPORT_SCRIPT).read_text(encoding="utf-8")
-        arms = set(re.findall(r"^\s{4}(--[a-z-]+)\)\s*$", src, re.MULTILINE))
+        arms = self._loop_flag_arms(src)
         self.assertTrue(arms)
         self.assertEqual(arms, set(pd.BRIDGE_VALUE_FLAGS))
 
@@ -193,7 +227,7 @@ class BridgeArgs(unittest.TestCase):
         s = self.S
         for cmd, text in ((f'{s} G "sizes {{a,b}} and * and ~ and [x]?"', "sizes {a,b} and * and ~ and [x]?"),
                           (f"{s} G 'a {{b,c}} *'", "a {b,c} *"),
-                          (f"{s} G a\\*b", "a*b"), (f"{s} G a~b mid~dle", "a~b mid~dle"),
+                          (f"{s} G a\\*b", "a*b"), (f"{s} G 'a~b' \"mid~dle\"", "a~b mid~dle"),
                           (f'{s} G "it\'s {{x}}"', "it's {x}"),
                           (f'{s} G "say \\"hi\\" {{x}}"', 'say "hi" {x}')):
             self.assertEqual(pd.support_sends(cmd)[0][:2], ("G", text), cmd)
@@ -216,6 +250,30 @@ class BridgeArgs(unittest.TestCase):
                 else:
                     os.environ["HOME"] = old
 
+    def test_every_reader_split_found_in_review_denies(self):
+        s = self.S
+        for cmd in (f"{s} G hola#x --menciones A", f"{s} G a=~", f"{s} --menciones a=~ G hola",
+                    f"{s} a b c ~ --archivo /etc/hostname", f"{s} G x\r--menciones\rA",
+                    f"{s} G hola --menciones A\rB", f"{s} G señal", f"{s} G hola!", f"{s} G a\x0cb",
+                    f"{s} G \"unterminated", f"{s} G hola\\", f"{s} G a\\é", f"{s} G a~b",
+                    f"{s} G mid~dle"):
+            with self.assertRaises(pd.PanelDigestError, msg=repr(cmd)):
+                pd.support_sends(cmd)
+
+    def test_scanner_words_equal_bash_words_on_accepted_lines(self):
+        # For every line the reader accepts, bash must hand over the same
+        # words. bash is run on a harmless stand-in, never the send script.
+        s = self.S
+        lines = (f'{s} G "hola #1 ¿qué? a=~ {{x}} *"', f"{s} G 'it''s' \"x\\\"y\" a\\ b",
+                 f"{s} G hola --menciones A,B", f"{s} --menciones A G \"hola\" --archivo /tmp/x",
+                 f"{s}\tG\thola\\#x", f'{s} G "a\rb" "c d"', f"{s} G a-b_c.d/e:f+g%h=i,j@k")
+        for line in lines:
+            got = pd.support_sends(line)[0]
+            rest = line[len(s):]
+            out = subprocess.run(["bash", "-c", "printf '%s\\0' X" + rest], capture_output=True,
+                                 timeout=10).stdout.decode("utf-8").split("\0")[1:-1]
+            self.assertEqual(pd.parse_bridge_args(out), got, repr(line))
+
     def test_inherited_mentions_with_no_flag_deny(self):
         os.environ[pd.MENTIONS_ENV] = "A"
         with self.assertRaises(pd.PanelDigestError):
@@ -232,6 +290,69 @@ class BridgeArgs(unittest.TestCase):
                                   "--to", "G", "--mention", "A"], capture_output=True, text=True).stdout.strip()
         self.assertEqual([out], pd.digests_for("Bash", {"command": f'{self.S} G "hola" --menciones A'}))
 
+
+
+
+class NewBridgeFixturesFailForTheirOwnReason(unittest.TestCase):
+    """Each mention or expansion fixture is denied (or allowed) by the check
+    its name says, not by an unrelated one: a violation either cannot be read
+    by the bridge reader, or reads to a digest its seeded PASS receipt does not
+    carry; a benign one reads to exactly the digest its receipt carries."""
+
+    FDIR = Path(pd.__file__).resolve().parent.parent / "registry" / "fixtures" / "FLOW.panel-before-send"
+    READER_DENIES = {"violation_support_bridge_mention_repeated",
+                     "violation_support_bridge_mention_swallows_flag",
+                     "violation_support_bridge_mention_brace_moves_recipient",
+                     "violation_support_bridge_message_unquoted_glob",
+                     "violation_support_bridge_midword_hash_hides_mention",
+                     "violation_support_bridge_carriage_return_splits_words"}
+    DIGEST_DIFFERS = {"violation_support_bridge_mention_changed",
+                      "violation_support_bridge_mention_added",
+                      "violation_support_bridge_mention_flag_first_old_binding",
+                      "violation_support_bridge_mention_flag_last_old_binding"}
+    BENIGN = {"benign_support_bridge_menciones_pass",
+              "benign_support_bridge_menciones_flag_first_pass",
+              "benign_support_bridge_quoted_brace_and_glob_pass",
+              "benign_support_bridge_quoted_hash_and_accents_pass"}
+
+    def _receipts(self):
+        ledger = self.FDIR / "home" / ".claude" / ".cache" / "receipts" / "global.jsonl"
+        out = {}
+        for line in ledger.read_text(encoding="utf-8").splitlines():
+            row = json.loads(line) if line.strip() else {}
+            if row.get("kind") == "panel":
+                out.setdefault(row["session_id"], []).append(row)
+        return out
+
+    def _command(self, name):
+        data = json.loads((self.FDIR / f"{name}.json").read_text(encoding="utf-8"))
+        return data["session_id"], data["tool_input"]["command"]
+
+    def test_every_new_fixture_is_classified(self):
+        names = {p.stem for p in self.FDIR.glob("*support_bridge*.json")
+                 if any(k in p.stem for k in ("mention", "menciones", "quoted", "glob", "hash", "carriage"))}
+        self.assertEqual(names, self.READER_DENIES | self.DIGEST_DIFFERS | self.BENIGN)
+
+    def test_each_fixture_turns_on_its_own_check(self):
+        receipts = self._receipts()
+        env = os.environ.pop(pd.MENTIONS_ENV, None)
+        try:
+            for name in sorted(self.READER_DENIES):
+                _, cmd = self._command(name)
+                with self.assertRaises(pd.PanelDigestError, msg=name):
+                    pd.digests_for("Bash", {"command": cmd})
+            for name in sorted(self.DIGEST_DIFFERS | self.BENIGN):
+                session, cmd = self._command(name)
+                seeded = [r for r in receipts.get(session, []) if r.get("verdict") == "PASS"]
+                self.assertEqual(len(seeded), 1, name)
+                got = pd.digests_for("Bash", {"command": cmd})
+                if name in self.BENIGN:
+                    self.assertEqual(got, [seeded[0]["digest"]], name)
+                else:
+                    self.assertNotEqual(got, [seeded[0]["digest"]], name)
+        finally:
+            if env is not None:
+                os.environ[pd.MENTIONS_ENV] = env
 
 
 def _gate():

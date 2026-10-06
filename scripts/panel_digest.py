@@ -74,15 +74,25 @@ denies: those mentions would leave bound to nothing. Residual, stated: a
 variable present in the shell that runs the command and absent from the
 hook's environment is not seen.
 
-WHAT THE SHELL EXPANDS, THE READER REFUSES. This module reads the line with
-shlex, which splits and unquotes but expands nothing; bash expands braces,
-globs and a leading tilde before the script sees a single argument, so an
-unquoted `{a,b}` is two arguments to the script and one to the reader, and the
-recipient moves. Outside quotes, `{`, `}`, `*`, `?`, `[` and `]` deny, and so
-does a word that begins with `~` unless it is the script's own path or the
-`--archivo` path (both are read with the same expansion bash applies). Inside
-single or double quotes none of them expands, so a quoted message carries any
-of them freely.
+OUTSIDE QUOTES, ONLY WHAT EVERY READER READS THE SAME. Three readers see a
+bridge line: bash, which hands the script its arguments; shlex, which this
+module uses; and the word scanner below. They disagree on more than one would
+list: bash expands braces, globs and a tilde (at a word's start and after `=`
+or `:`), shlex starts a comment at a `#` in mid-word where bash does not,
+shlex splits on a carriage return and Python on a no-break space where bash
+splits on neither. Each of those moved a recipient or hid a mention in review,
+and a deny-list of such characters was the wrong shape: it closed the ones
+someone found. So the rule is an allowlist. Outside quotes a bridge line may
+hold only ASCII letters and digits, `@ . _ , : / + % - =`, a space or a tab
+between words, and a backslash before a printable ASCII character. A `~` is
+allowed only as the first character of the script's own path or of the
+`--archivo` path, the two places this module applies the same expansion bash
+does. Anything else outside quotes denies: quote the message. Inside single
+quotes every character is literal to all three readers; inside double quotes
+`$` and the backtick are refused above and a backslash escapes only a double quote
+and a backslash, for both bash and shlex. Then the words the scanner produced must equal
+the tokens shlex produced, so a split that differs between the two denies
+instead of being guessed at.
 
 FAIL CLOSED: every case above raises PanelDigestError; the gate denies on it.
 Residual, stated: a Gmail forward hashes the comment only, never the forwarded
@@ -345,45 +355,84 @@ def _safe_readers():
         return ()
 
 
-_EXPANDS_UNQUOTED = "{}*?[]"
+_WORD_SAFE = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                       "0123456789@._,:/+%-=")
+_WORD_GAP = frozenset(" \t")
 
 
-def _unquoted_expansions(command: str) -> tuple:
-    """(found, tilde_words) for one simple command line.
+def _scan_words(command: str) -> list:
+    """[(word, tilde_first)] for one simple command line, read the way bash
+    reads it once quotes are removed, or a PanelDigestError for any character
+    outside quotes that is not on the allowlist (see OUTSIDE QUOTES in the
+    module docstring). tilde_first: the word begins with an unquoted `~`."""
+    words, cur, in_word, tilde_first = [], [], False, False
+    quote, i, n = "", 0, len(command)
 
-    found: the first character outside quotes that bash would expand (brace or
-    glob), "" when there is none. tilde_words: the indexes of the words that
-    begin with an unquoted `~`. Words are counted the way shlex counts them on
-    a line that holds no operator, so the indexes line up with its tokens."""
-    found, tilde_words = "", []
-    quote, word, in_word, i, n = "", -1, False, 0, len(command)
+    def start_word(c: str) -> None:
+        nonlocal in_word, tilde_first
+        if not in_word:
+            in_word, tilde_first = True, c == "~"
+
     while i < n:
         c = command[i]
-        if quote:
-            if c == "\\" and quote == '"' and i + 1 < n:
+        if quote == "'":
+            if c == "'":
+                quote = ""
+            else:
+                cur.append(c)
+            i += 1
+            continue
+        if quote == '"':
+            if c == "\\" and i + 1 < n and command[i + 1] in '"\\':
+                cur.append(command[i + 1])
                 i += 2
                 continue
-            if c == quote:
+            if c == '"':
                 quote = ""
+            else:
+                cur.append(c)
             i += 1
             continue
-        if c.isspace():
-            in_word = False
+        if c in _WORD_GAP:
+            if in_word:
+                words.append(("".join(cur), tilde_first))
+                cur, in_word = [], False
             i += 1
-            continue
-        if not in_word:
-            in_word, word = True, word + 1
-            if c == "~":
-                tilde_words.append(word)
-        if c == "\\" and i + 1 < n:
-            i += 2
             continue
         if c in "'\"":
+            start_word(c)
             quote = c
-        elif c in _EXPANDS_UNQUOTED and not found:
-            found = c
+            i += 1
+            continue
+        if c == "\\":
+            nxt = command[i + 1] if i + 1 < n else ""
+            if not nxt or not (" " <= nxt <= "~"):
+                raise PanelDigestError("the bridge call has a backslash that does not escape a "
+                                       "printable character")
+            start_word(c)
+            cur.append(nxt)
+            i += 2
+            continue
+        if c == "~":
+            if in_word:
+                raise PanelDigestError("the bridge call carries an unquoted ~ inside a word: bash "
+                                       "can expand it there. Quote it")
+            start_word(c)
+            cur.append(c)
+            i += 1
+            continue
+        if c not in _WORD_SAFE:
+            raise PanelDigestError(f"the bridge call carries {c!r} outside quotes. Outside quotes "
+                                   f"only letters, digits and @._,:/+%-= are read the same by "
+                                   f"bash and by this gate; quote the message")
+        start_word(c)
+        cur.append(c)
         i += 1
-    return found, tilde_words
+    if quote:
+        raise PanelDigestError("the bridge call has an unterminated quote")
+    if in_word:
+        words.append(("".join(cur), tilde_first))
+    return words
 
 
 def parse_bridge_args(rest) -> tuple:
@@ -440,6 +489,10 @@ def _one_bridge_call(command: str) -> tuple:
     try:
         lex = shlex.shlex(command, posix=True, punctuation_chars=True)
         lex.whitespace_split = True
+        # bash starts a comment only at the start of a word; shlex would start
+        # one mid-word and drop the rest of the line. The scanner below denies
+        # an unquoted `#` anyway; this keeps shlex from hiding it first.
+        lex.commenters = ""
         toks = list(lex)
     except ValueError:
         raise PanelDigestError("the bridge call does not parse as one shell command")
@@ -450,16 +503,15 @@ def _one_bridge_call(command: str) -> tuple:
         parts = [p for p in split(command) if p.strip()]
         if len(parts) != 1:
             raise PanelDigestError("the bridge call must be the only command of the line")
-    found, tilde_words = _unquoted_expansions(command)
-    if found:
-        raise PanelDigestError(f"the bridge call carries an unquoted {found!r}: bash expands "
-                               f"braces and globs before the script reads its arguments, so "
-                               f"what leaves is not what the gate read. Quote the message")
+    words = _scan_words(command)
+    if [w for w, _ in words] != toks:
+        raise PanelDigestError("the bridge call splits into different words for the shell and "
+                               "for this gate; quote the message")
     start = 1 if toks and toks[0] in ("bash", "sh") and len(toks) > 1 else 0
-    # A leading tilde expands too. Allowed only where this module applies the
-    # same expansion: the script's own path and the --archivo path.
+    # A leading tilde expands. Allowed only where this module applies the same
+    # expansion: the script's own path and the --archivo path.
     tilde_ok = {start} | {k + 1 for k, t in enumerate(toks) if t == "--archivo"}
-    if any(k not in tilde_ok for k in tilde_words):
+    if any(first and k not in tilde_ok for k, (_, first) in enumerate(words)):
         raise PanelDigestError("the bridge call carries a word that begins with an unquoted ~: "
                                "bash expands it before the script reads it. Quote it")
     if not toks or not receipt_ledger._is_script_token(toks[start], SUPPORT_SCRIPT) \
