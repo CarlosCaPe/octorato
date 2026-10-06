@@ -881,11 +881,14 @@ def tree_sha256(pkg_dir: Path, kind: str = "skill") -> str:
         if rel_posix in excluded:
             continue
         files.append((rel_posix, p))
-    # Ordered by the POSIX relpath string, the order the docstring promises. The
-    # walk sorts Path objects and WindowsPath compares case-insensitively, so
+    # Ordered by the POSIX relpath's COMPONENTS, case-sensitive, which is exactly
+    # the PurePosixPath order every POSIX-signed hash was computed in. The walk
+    # sorts Path objects and WindowsPath compares case-insensitively, so
     # `reference.txt` hashed before `SKILL.md` on Windows and after it on POSIX:
-    # a package signed on one platform never verified on the other.
-    files.sort(key=lambda t: t[0])
+    # a package signed on one platform never verified on the other. A plain
+    # string key is NOT that order: it puts `examples.md` before `examples/a.md`
+    # (`.` < `/`), which changed the POSIX hash of every nested tree.
+    files.sort(key=lambda t: t[0].split("/"))
     for rel_posix, p in files:
         h.update(rel_posix.encode("utf-8"))
         h.update(b"\0")
