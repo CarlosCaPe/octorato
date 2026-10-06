@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-rp10-b",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "cat /tmp/notes.txt | $SHELL -s -- 5210000000001 hola"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "benign_reader_pipe_dollar_shell_twin_transcript.jsonl"
+}

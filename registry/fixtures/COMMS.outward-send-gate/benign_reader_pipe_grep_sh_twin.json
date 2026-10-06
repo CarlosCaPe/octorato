@@ -2,7 +2,7 @@
   "session_id": "fx-rp5-b",
   "tool_name": "Bash",
   "tool_input": {
-    "command": "grep -rn x ~/.claude/scripts/wa-soporte.sh | grep -s -- 5210000000001 hola"
+    "command": "grep -rn x /tmp/notes.txt | sh -s -- 5210000000001 hola"
   },
   "cwd": "/home/user",
   "transcript_path": "benign_reader_pipe_grep_sh_twin_transcript.jsonl"

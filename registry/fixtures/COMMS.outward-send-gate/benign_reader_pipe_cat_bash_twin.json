@@ -2,7 +2,7 @@
   "session_id": "fx-rp2-b",
   "tool_name": "Bash",
   "tool_input": {
-    "command": "cat ~/.claude/scripts/wa-soporte.sh | grep -s -- 5210000000001 hola"
+    "command": "cat /tmp/notes.txt | bash -s -- 5210000000001 hola"
   },
   "cwd": "/home/user",
   "transcript_path": "benign_reader_pipe_cat_bash_twin_transcript.jsonl"

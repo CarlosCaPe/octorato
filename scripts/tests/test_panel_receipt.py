@@ -98,24 +98,24 @@ class Digest(unittest.TestCase):
         for name in ("git", "vim", "vi", "nvim", "nano", "code", "emacs", "less", "more", "man", "rg"):
             self.assertNotIn(name, pd.READER_NAMES)
 
-    def test_reader_piped_into_an_executor_is_no_exemption(self):
+    def test_only_one_plain_read_is_exempt(self):
         s = "~/.claude/scripts/wa-soporte" + ".sh"
         for cmd in (f"cat {s} | sh -s -- 1 hola", f"cat {s} | bash -s -- 1 hola",
                     f"head -n 500 {s} | sh -s --", f"tail -n +1 {s} | sh",
-                    f"grep -rn x {s} | sh -s -- 1 hola", f"cat {s} | python3 -",
-                    f"cat {s} |& /usr/bin/env bash", f"cat {s} | X=1 sh", f"cat {s} | (sh)",
-                    f"cat {s} | awk '{{system($0)}}'", f"cat {s} | tee /tmp/x | sh",
-                    f"cat {s} | nice sh -s -- 1 hola", f"cat {s} | nice -n 5 grep x",
-                    f"cat {s} | timeout 5 sh", f"cat {s} | setsid sh", f"cat {s} | command sh",
-                    f"cat {s} | busybox sh", f"cat {s} | stdbuf -oL sh", f"cat {s} | time sh"):
-            self.assertTrue(pd.pipe_runs_script(cmd), cmd)
+                    f"grep -rn x {s} | sh -s -- 1 hola", f"cat {s} | nice sh -s -- 1 hola",
+                    f"cat {s} |\nsh -s -- 1 hola", f"bash -c 'cat {s} | sh -s -- 1 hola'",
+                    f"cat {s} > /tmp/f; sh /tmp/f 1 hola", f"cat {s} | $SHELL -s -- 1 hola",
+                    f"cat {s} | $(which sh)", f"cat {s} | /bin/s?", f"cat {s} | mksh",
+                    f"cat {s} | grep x", f"git log -- {s}", f"cat {s} 2>/dev/null",
+                    f'grep "$X" {s}', f"cat ~/.claude/scripts/wa-sop''orte.sh | sh",
+                    f"sed -n 'e {s} 1 hola' /dev/null", f"{s} 1 hola"):
             self.assertTrue(pd.names_bridge(cmd), cmd)
-        for cmd in (f"cat {s} | grep x", f"cat {s} 2>&1 | head", f"cat {s} | awk '{{print}}'",
-                    f"cat {s} || sh", f"cat {s} | wc -l; echo x | sh", f'grep "a|sh" {s}',
-                    f"grep x {s} # | sh", "cat notes.txt | sh", f"cat {s} | nice grep x",
-                    f"cat {s} | env wc -l"):
-            self.assertFalse(pd.pipe_runs_script(cmd), cmd)
-        self.assertTrue(pd.READER_NAMES.isdisjoint(pd.EXECUTOR_NAMES))
+            self.assertFalse(pd.plain_read(cmd), cmd)
+        for cmd in (f"cat {s}", f"grep -n 'a|sh' {s}", f'grep -n "x y" {s}', f"head -3 {s}",
+                    f"sed -n '1,40p' {s}", f"sed -n 1,40p {s}", f"{s} --help", f"wc -l {s}",
+                    "cat /tmp/notes.txt | sh -s -- 1 hola", f"head -3 {s}.bak | sh"):
+            self.assertFalse(pd.names_bridge(cmd), cmd)
+        self.assertNotIn("ag", pd.READER_NAMES)
 
     def test_send_gate_shares_the_reader_set_and_rejects_meta_openers(self):
         import importlib.util

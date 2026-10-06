@@ -268,35 +268,16 @@ def _readers():
     return (mod._split_bash, mod._split_master)
 
 
-# A sub-command whose FIRST token is one of these only reads its arguments, so
-# naming the bridge script there is not a send. The list is the exemption, so
-# it holds only programs with NO option, config key or environment variable
-# that runs a command: git (-c alias.x=!cmd, core.pager, GIT_PAGER), vim, vi,
-# nvim, nano, code, emacs, less, more, man (LESSOPEN, `!cmd`, +cmd) and rg
-# (--pre) used to be here and each ran the bridge with no panel. The outward
-# send gate imports this set, so the two never drift.
-READER_NAMES = frozenset({"grep", "ag", "ls", "cat", "head", "tail", "wc",
+# A command that names the bridge script is a send unless the WHOLE command is
+# one plain read (plain_read): one of these programs alone on the line, plain
+# operands, no shell syntax. The set holds only programs with NO option, config
+# key or environment variable that runs a command: git (-c alias.x=!cmd,
+# core.pager, GIT_PAGER), vim, vi, nvim, nano, code, emacs, less, more, man
+# (LESSOPEN, `!cmd`, +cmd), rg (--pre) and ag (--pager) used to be here and
+# each could run the bridge with no panel. The outward send gate imports this
+# set, so the two never drift.
+READER_NAMES = frozenset({"grep", "ls", "cat", "head", "tail", "wc",
                           "stat", "file", "diff", "chmod", "chown"})
-# A pipeline stage AFTER the first whose program is one of these runs what the
-# stages before it print: `cat <script> | sh -s -- <jid> <msg>` sends with no
-# panel while `cat` alone is a reader. Such a pipeline loses the reader
-# exemption whole and is a send whenever any of its stages names the script.
-# One shape, no reading of intent: `python*` is matched as a prefix, and the
-# awk family counts only when its stage carries `system` or a quoted `|`
-# (awk's pipe to a command). A wrapper (_WRAPPER_NAMES, a subset) counts
-# unless the word right after it is a reader (`| nice grep x`); an option, a
-# number or anything else after it counts, so `| nice -n 5 grep` is judged as
-# a send (fail closed). Shared with the outward-send gate, never copied.
-_WRAPPER_NAMES = frozenset({"env", "exec", "nohup", "timeout", "sudo", "doas",
-                            "nice", "setsid", "command", "busybox", "stdbuf",
-                            "chroot", "unbuffer", "script", "ionice", "chrt",
-                            "taskset", "flock", "time", "builtin"})
-EXECUTOR_NAMES = frozenset({"sh", "bash", "dash", "zsh", "ksh", "fish", "python",
-                            "perl", "ruby", "node", "php", "lua", "awk", "gawk",
-                            "mawk", "nawk", "xargs", "parallel", "eval", "source",
-                            "."}) | _WRAPPER_NAMES
-_AWK_NAMES = frozenset({"awk", "gawk", "mawk", "nawk"})
-_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _OPERATOR = re.compile(r"^[();<>|&]+$")
 # The script name standing as a WORD anywhere inside a token: the whole token,
 # a path ending in it, or a word of a command line carried inside one token
@@ -318,134 +299,66 @@ def names_script(tok: str) -> bool:
     return bool(SCRIPT_WORD.search(str(tok)))
 
 
-def pipelines(command: str) -> list:
-    """The pipelines of a shell string, each a list of stage strings. Cuts on
-    unquoted ; && || & and newline, and splits stages on unquoted | and |&.
-    A backslash escapes the next character outside single quotes, a `#` at a
-    word start runs to the newline, and an `&` inside a redirection (`2>&1`,
-    `&>`, `>&`) cuts nothing. Never raises."""
-    cmd = str(command or "")
-    out, stages, buf = [], [], []
-    sq = dq = False
-    i, n = 0, len(cmd)
-
-    def stage():
-        stages.append("".join(buf))
-        buf.clear()
-
-    def cut():
-        stage()
-        out.append(list(stages))
-        stages.clear()
-
-    while i < n:
-        ch = cmd[i]
-        if sq:
-            sq = ch != "'"
-            buf.append(ch)
-        elif ch == "\\" and i + 1 < n:
-            buf.append(cmd[i:i + 2])
-            i += 1
-        elif dq:
-            dq = ch != '"'
-            buf.append(ch)
-        elif ch == "'":
-            sq = True
-            buf.append(ch)
-        elif ch == '"':
-            dq = True
-            buf.append(ch)
-        elif ch == "#" and (not buf or buf[-1][-1:].isspace()):
-            while i < n and cmd[i] != "\n":
-                i += 1
-            continue
-        elif ch == "|":
-            if cmd[i + 1:i + 2] == "|":
-                cut()
-                i += 1
-            else:
-                stage()
-                if cmd[i + 1:i + 2] == "&":
-                    i += 1
-        elif ch == "&":
-            if cmd[i + 1:i + 2] == "&":
-                cut()
-                i += 1
-            elif (buf and buf[-1][-1:] in "<>") or cmd[i + 1:i + 2] == ">":
-                buf.append(ch)
-            else:
-                cut()
-        elif ch in ";\n":
-            cut()
-        else:
-            buf.append(ch)
-        i += 1
-    cut()
-    return [p for p in out if any(s.strip() for s in p)]
+# plain_read, the only exemption. Any shell syntax outside a plain quoted
+# string disqualifies the command: a pipe, ; && || &, a newline, a redirect,
+# $ and backtick, ( ) and { }, a glob, ! and #. What is left is one program
+# and its words, so nothing the shell builds can run the script behind it.
+_PLAIN_META = re.compile(r"[|;&<>$`(){}\\\n\r*?\[\]!#\"']")
+_PLAIN_QUOTED = re.compile(r"'[^'\n]*'|\"[^\"$`\\\n!]*\"")
+_SED_PRINT = re.compile(r"^\s*(?:\d+|\$)(?:\s*,\s*(?:\d+|\$))?\s*p(?:\s*;\s*(?:\d+|\$)"
+                        r"(?:\s*,\s*(?:\d+|\$))?\s*p)*\s*;?\s*$")
+_SED_QUIET = frozenset({"-n", "--quiet", "--silent"})
+_HELP_FLAGS = frozenset({"--help", "-h"})
+_PLAIN_PATH = re.compile(r"^[A-Za-z0-9_./~+-]+$")
 
 
-def _stage_words(text: str) -> list:
-    """The words of a pipeline stage from the program on: leading
-    assignments and grouping dropped, the program as a basename."""
+def plain_read(command: str) -> bool:
+    """True only when the whole command is one plain read: a READER_NAMES
+    program first, `sed -n <range>p <script>`, or `<script> --help|-h`, with
+    no shell syntax anywhere outside a plain quoted string."""
+    cmd = str(command or "").strip()
+    if not cmd or _PLAIN_META.search(_PLAIN_QUOTED.sub("", cmd)):
+        return False
     try:
-        toks = shlex.split(text)
+        toks = shlex.split(cmd)
     except ValueError:
-        toks = text.split()
-    for i, t in enumerate(toks):
-        t = t.strip("(){}")
-        if not t or _ASSIGN.match(t):
-            continue
-        return [t.rsplit("/", 1)[-1]] + toks[i + 1:]
-    return []
+        return False
+    if not toks:
+        return False
+    if toks[0] in READER_NAMES:
+        return True
+
+    def is_script(t):
+        return bool(_PLAIN_PATH.match(t)) and (t == SUPPORT_SCRIPT or t.endswith("/" + SUPPORT_SCRIPT))
+    if len(toks) == 2 and is_script(toks[0]) and toks[1] in _HELP_FLAGS:
+        return True
+    if len(toks) < 4 or not _PLAIN_PATH.match(toks[0]) or toks[0].rsplit("/", 1)[-1] != "sed":
+        return False
+    flags, operands = toks[1:-2], toks[-2:]
+    if not flags or any(f not in _SED_QUIET for f in flags):
+        return False
+    return bool(_SED_PRINT.match(operands[0])) and is_script(operands[1])
 
 
-def is_executor_stage(text: str) -> bool:
-    """True when a pipeline stage runs what it reads (EXECUTOR_NAMES)."""
-    words = _stage_words(text)
-    prog = words[0] if words else ""
-    if prog in _AWK_NAMES:
-        return "system" in text or "|" in text
-    if prog in _WRAPPER_NAMES:
-        nxt = words[1].rsplit("/", 1)[-1] if len(words) > 1 else ""
-        return nxt not in READER_NAMES
-    return prog in EXECUTOR_NAMES or prog.startswith("python")
-
-
-def pipe_runs_script(command: str) -> bool:
-    """True when a pipeline of *command* has an executor in any stage after
-    the first and any of its stages names the bridge script as a word: the
-    reader exemption does not hold for that pipeline."""
-    for stages in pipelines(command):
-        if len(stages) < 2 or not any(is_executor_stage(s) for s in stages[1:]):
-            continue
-        for s in stages:
-            try:
-                toks = shlex.split(s)
-            except ValueError:
-                toks = s.split()
-            if any(names_script(t) for t in toks):
+def names_script_anywhere(command: str) -> bool:
+    """True when the bridge script stands as a word anywhere in *command*:
+    in the raw text, in a substitution, or in any token of any sub-command
+    under every shell reading (quote removal joins `wa-sop''orte.sh`)."""
+    import receipt_ledger
+    cmd = str(command or "")
+    if SCRIPT_WORD.search(cmd) or SUBST_RUNS_SCRIPT.search(cmd):
+        return True
+    for split in (None,) + tuple(_safe_readers()):
+        for sc in receipt_ledger.subcommands(cmd, split):
+            if any(names_script(t) for t in receipt_ledger.tokens_of(sc)):
                 return True
     return False
 
 
 def names_bridge(command: str) -> bool:
-    """True when any token of any sub-command names the bridge script as a
-    word, the first token not being a pure reader (`grep wa-soporte.sh`), or
-    when a substitution runs it behind any command, or when a reader's output
-    is piped into an executor (pipe_runs_script)."""
-    import receipt_ledger
-    if SUBST_RUNS_SCRIPT.search(str(command or "")):
-        return True
-    if pipe_runs_script(command):
-        return True
-    for split in (None,) + tuple(_safe_readers()):
-        for sc in receipt_ledger.subcommands(command, split):
-            toks = receipt_ledger.tokens_of(sc)
-            if toks and toks[0] in READER_NAMES:
-                continue
-            if any(names_script(t) for t in toks):
-                return True
-    return False
+    """A Bash command that names the bridge script anywhere is a send unless
+    the whole command is one plain read (plain_read)."""
+    return names_script_anywhere(command) and not plain_read(command)
 
 
 def _safe_readers():

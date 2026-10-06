@@ -42,39 +42,28 @@ WHAT IT REQUIRES (docs/architecture/v7-nothing-ships-unverified.md)
      isMeta) carries hatches and its own ask; a turn opened by a notification,
      a peer message or a compact summary reads the ask from the operator's
      latest real prompt, only when this send's panel receipt was recorded
-     after that prompt; a Bash command that is ONE plain `sed -n <range>
-     <script>` or `<script> --help|-h` is not a send. Closed with it, open on
-     master before: a process substitution, a sed `e` command or a git alias
-     that runs the support script behind a reader. Readers are exempt only
-     when the program has NO option, config key or env var that runs a
-     command (panel_digest.READER_NAMES, shared by both consumers): git, vim,
-     vi, nvim, nano, code, emacs, less, more, man and rg are not readers,
-     because `git -c alias.x=\\!<script>`, `git config alias.x '!<script>'`,
-     `git -c core.pager=<script>`, `GIT_PAGER=<script> git log` and `vim -c
-     '!<script>'` each ran the bridge with no panel and no ask. The script is
-     found as a WORD anywhere inside a token (a path, `!<script>`,
-     `key=<script> ...`, `system("<script>")`), not only as a whole token, and
-     a `$(...)` or backtick substitution behind a reader runs it too. Cost,
-     stated: a non-reader that merely names the script (`git log --
-     <script>`, `vim <script>`, a commit message with the bare name as a
-     word) is now judged as a send and denied without a panel; read it with
-     cat, grep, head or a plain `sed -n`. A reader is exempt only on its own:
-     a pipeline with an interpreter or executor in any stage after the first
-     (panel_digest.EXECUTOR_NAMES: shells, python*, perl, ruby, node, php,
-     lua, awk with system or a quoted |, xargs, parallel, eval, source, .,
-     and the wrappers env, exec, nohup, timeout, sudo, doas, nice, setsid,
-     command, busybox, stdbuf, chroot, unbuffer, script, ionice, chrt,
-     taskset, flock, time, builtin) is a send whenever any stage names the
-     script, because `cat <script> | sh -s -- <jid> <msg>` and its bash,
-     head, tail, grep and `nice sh` twins ran the bridge with no panel and
-     no ask. A wrapper is exempt only when the word right after it is a
-     reader (`| nice grep x`). Residual, stated: a pipe into a function or
-     an alias stays open. A script copied in
-     one call and run in a later one (a config key that names the script is
-     denied when it is SET, but one that points at a copy or a wrapper fires
-     later from any `git log`), or a name the gate cannot see (alias,
-     function, symlink, a name assembled at run time) is not tied to the
-     script.
+     after that prompt. A Bash command that names the support script
+     ANYWHERE (as a word in the raw text, in a substitution, or in any token
+     of any sub-command after quote removal) is a send unless the WHOLE
+     command is one plain read (panel_digest.plain_read): a READER_NAMES
+     program (cat, head, tail, grep, wc, stat, file, diff, ls, chmod, chown)
+     with plain words, `sed -n <range>p <script>`, or `<script> --help|-h`,
+     with no pipe, ; && || &, newline, redirect, $, backtick, ( ), braces,
+     glob, ! or #, and no quoted string holding $, backtick, a backslash or a
+     newline. There is no list of executors: text deny-lists did not converge
+     (`| sh`, then `| nice sh`, then `|<newline>sh`, `bash -c '...'`,
+     `> /tmp/f; sh /tmp/f`, `| $SHELL`, `| mksh`), so the exemption is the
+     one exact shape and everything else that names the script is judged as
+     a send. git, the editors, less, more, man, rg and ag are not readers,
+     because each has an option, config key or env var that runs a command.
+     Cost, stated: a pipe, a chain or a git or editor command that names the
+     script (`grep x <script> | head`, `git log -- <script>`, `cd d && cat
+     <script>`) is denied without a panel; read the script with one plain
+     command and no pipe. Measured on 26,933 real commands: 18 allow to
+     deny, 0 deny to allow. Residual, stated: a command that reaches the
+     script without its name (a glob `wa-sop*.sh`, a brace `{wa-soporte,x}`,
+     `find -name`, a variable, an alias, a function, a symlink, a copy made
+     in an earlier call) is not tied to the script.
   5. Panel receipt (FLOW.panel-before-send, operator directive 2026-10-02: no
      message leaves without a panel, however small). Every MESSAGE send (mail
      send/reply/forward, WhatsApp send_message/send_file/send_audio_message,
@@ -167,13 +156,10 @@ _SEND_TOOL = re.compile(
 # residual is indirection that hides the name from argv ($(echo ...),
 # python -c subprocess, find -exec), accepted as in qa-merge-gate.
 _SEND_SCRIPTS = ("wa-soporte.sh",)
-# A sub-command whose FIRST token is a reader never sends, whatever its argv
-# names: `grep -rn wa-soporte.sh scripts/` reads the name, it does not run
-# it (QA cycle 5 note). `find` is not here: `find -exec` runs things. The set
-# is panel_digest.READER_NAMES (one list, two consumers) and holds only
-# programs with no option, config or env that runs a command: git, vim, nano,
-# code, less, more and rg left it after each was measured running the bridge.
-# An import failure leaves the set EMPTY, so no reader is exempt (fail closed).
+# panel_digest.READER_NAMES (one list, two consumers) is the program set of the
+# one plain-read shape, and the raw-send rules below skip those readers too.
+# An import failure leaves the set EMPTY and plain_read unreachable, so no
+# reader is exempt (fail closed).
 try:
     import panel_digest as _panel_digest  # noqa: E402
     _READERS = _panel_digest.READER_NAMES
@@ -590,8 +576,6 @@ def _send_recipient(tool_name: str, tool_input) -> str:
         import receipt_ledger
         for sc in receipt_ledger.subcommands(str(tool_input.get("command", ""))):
             toks = receipt_ledger.tokens_of(sc)
-            if toks and toks[0] in _READERS:
-                continue
             for i, t in enumerate(toks):
                 if any(receipt_ledger._is_script_token(t, n) for n in _SEND_SCRIPTS):
                     # The script takes `--archivo <path>` anywhere and strips
@@ -612,12 +596,9 @@ def _send_recipient(tool_name: str, tool_input) -> str:
 def _bash_recipients(command: str, split=None) -> list:
     """Every support-bridge recipient in *command* under one reading."""
     import receipt_ledger
-    # A reader piped into an executor carries no recipient the gate can read.
-    out = [""] if _pipe_runs_script(command) else []
+    out = []
     for sc in receipt_ledger.subcommands(command, split):
         toks = receipt_ledger.tokens_of(sc)
-        if toks and toks[0] in _READERS:
-            continue
         for i, t in enumerate(toks):
             if any(receipt_ledger._is_script_token(t, n) for n in _SEND_SCRIPTS):
                 rest = toks[i + 1:]
@@ -794,67 +775,45 @@ def _deny(reason: str, payload: dict = None) -> None:
     _journal_deny(reason, payload)
 
 
-# v10 AC-07: a command that only READS the support script is not a send. The
-# exemption is deliberately narrow (QA of PR #382 walked six shapes through a
-# wider one): the WHOLE command must be ONE plain sub-command, either
+# The one exemption: a Bash command that names the support script anywhere is a
+# send unless the WHOLE command is one plain read (panel_digest.plain_read):
+#   <reader> <plain words>                  (READER_NAMES: cat, head, tail,
+#                                             grep, wc, stat, file, diff, ls,
+#                                             chmod, chown)
 #   sed -n <print-range> <script-path>      (print ranges only: GNU sed runs a
 #                                             shell with `e`, writes with `w`)
 #   <script-path> --help | -h                (the script has no help handler;
 #                                             with fewer than two arguments it
 #                                             prints its usage and exits 64)
-# with no pipe, no ; && ||, no redirect of any kind, no <( or >(, no $(,
-# backtick or heredoc, and every sed operand a plain path. The only quoting
-# allowed is single quotes, and whatever they hold must still pass the token
-# checks. Anything else falls through to the normal checks below.
-_SED_PRINT = re.compile(r"^\s*(?:\d+|\$)(?:\s*,\s*(?:\d+|\$))?\s*p(?:\s*;\s*(?:\d+|\$)(?:\s*,\s*(?:\d+|\$))?\s*p)*\s*;?\s*$")
-_SED_QUIET = {"-n", "--quiet", "--silent"}
-_HELP_FLAGS = {"--help", "-h"}
-_PLAIN_PATH = re.compile(r"^[A-Za-z0-9_./~+-]+$")
-_SHELL_META = re.compile(r"[|;&<>$`(){}\\\n\r*?\[\]!#\"]")
-
-
+# with no pipe, no ; && || &, no newline, no redirect, no <( or >(, no $(,
+# backtick, braces, glob, ! or #, and no quoted string that holds $, backtick,
+# a backslash or a newline. There is no list of executors: everything else
+# that names the script is judged as a send.
 def support_script_plain_read(command: str) -> bool:
-    """True only for the two single-sub-command read shapes above."""
-    import shlex
-    import receipt_ledger
-    cmd = str(command or "").strip()
-    if not cmd or _SHELL_META.search(re.sub(r"'[^'\n]*'", "", cmd)):
-        return False
+    """True only for one plain read (panel_digest.plain_read); with
+    panel_digest unloadable, nothing is a plain read (fail closed)."""
     try:
-        toks = shlex.split(cmd)
-    except ValueError:
+        return _panel_digest.plain_read(command)
+    except Exception:
         return False
-    is_script = lambda t: bool(_PLAIN_PATH.match(t)) and any(
-        receipt_ledger._is_script_token(t, n) for n in _SEND_SCRIPTS)
-    if len(toks) == 2 and is_script(toks[0]) and toks[1] in _HELP_FLAGS:
-        return True
-    if len(toks) < 4 or not _PLAIN_PATH.match(toks[0]) or os.path.basename(toks[0]) != "sed":
-        return False
-    flags, operands = toks[1:-2], toks[-2:]
-    if not flags or any(f not in _SED_QUIET for f in flags):
-        return False
-    return bool(_SED_PRINT.match(operands[0])) and is_script(operands[1])
 
 
 # Two shapes that RUN the support script while a reader or sed sits in
-# front (found by the same QA, open on master too): a substitution (`cat
-# <(wa-soporte.sh ...)`, and its `$(...)` and backtick twins) and a sed script
-# that names it (`sed -n 'e wa-soporte.sh ...' /dev/null`, GNU sed's `e` runs
-# a shell). A git alias, pager or editor command that shells out is no longer
-# a shape here: git and the editors left _READERS, and _names_script finds the
-# script as a word inside the token that carries the command, however the `!`
-# is quoted.
+# front: a substitution (`cat <(wa-soporte.sh ...)`, and its `$(...)` and
+# backtick twins) and a sed script that names it (`sed -n 'e wa-soporte.sh
+# ...' /dev/null`, GNU sed's `e` runs a shell). Both are also outside the
+# plain-read shape; this check stays as a substring floor under the word rule.
 _PROC_SUBST = re.compile(r"(?:[<>$]\(|`)[^)`]*(?:" + "|".join(re.escape(n) for n in _SEND_SCRIPTS) + r")")
 
 
-def _pipe_runs_script(command: str) -> bool:
-    """A reader whose output is piped into an executor (panel_digest.
-    pipe_runs_script, EXECUTOR_NAMES); with panel_digest unloadable, any pipe
-    in a command that names the script counts (fail closed)."""
+def _names_bridge(command: str) -> bool:
+    """The support script named anywhere in a command that is not one plain
+    read (panel_digest.names_bridge); with panel_digest unloadable, any
+    substring counts (fail closed)."""
     try:
-        return _panel_digest.pipe_runs_script(command)
+        return _panel_digest.names_bridge(command)
     except Exception:
-        return "|" in str(command) and any(n in str(command) for n in _SEND_SCRIPTS)
+        return any(n in str(command) for n in _SEND_SCRIPTS)
 
 
 def _names_script(tok: str) -> bool:
@@ -884,7 +843,7 @@ def _bash_is_send(command: str) -> bool:
     if support_script_plain_read(command):
         return False
     toks_list = [receipt_ledger.tokens_of(sc) for sc in receipt_ledger.subcommands(command)]
-    if _runs_script_behind_reader(command, toks_list) or _pipe_runs_script(command):
+    if _names_bridge(command) or _runs_script_behind_reader(command, toks_list):
         return True
     for toks in toks_list:
         if toks and toks[0] in _READERS:
