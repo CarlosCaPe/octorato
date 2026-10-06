@@ -16,6 +16,8 @@ computes the current-month spend per arm from skill-cost-profiler's
 Stdlib + optional PyYAML (falls back to JSON at ~/.claude/budgets.json).
 Designed to be cheap (<200ms) so it can run on every tool invocation.
 
+Residual (cache poisoning): a hand-written ~/.claude/.cache/budget/spend.json hides spend for up to 15 minutes, the same class as budgets.yaml itself being writable.
+
 Schema (~/.claude/budgets.yaml — gitignored):
 
     budgets:
@@ -501,7 +503,66 @@ def _selftest() -> int:
     argv = sys.argv
     fixture = argv[argv.index("--selftest") + 1] if len(argv) > argv.index("--selftest") + 1 \
         else "registry/fixtures/FLOW.budget-halt"
-    return gate_selftest.run_gate_selftest(__file__, fixture)
+    rc = gate_selftest.run_gate_selftest(__file__, fixture)
+    fdir = Path(fixture)
+    if not fdir.is_absolute():
+        fdir = Path(__file__).resolve().parent.parent / fdir
+    # Named cached-spend, not cache: a generic `cache/` ignore rule would keep
+    # the fixture out of git and the leg would silently not run on a clone.
+    if rc == 0 and (fdir / "cached-spend").is_dir():
+        rc = _cache_selftest(fdir / "cached-spend")
+    elif rc == 0 and fdir.name == "FLOW.budget-halt":
+        print(f"selftest FAIL: {fdir}/cached-spend is missing; the cache path is unproven",
+              file=sys.stderr)
+        rc = 1
+    return rc
+
+
+def _cache_selftest(cdir: Path) -> int:
+    """The pair above takes spend from `spend_json` and never reads the cache.
+    This leg drives the real hook through the cache: a budgets config with no
+    `spend_json`, and the cache written FRESH at run time from cache/spend.json
+    (a static timestamp would always be stale). violation*.json must block and
+    benign*.json must allow. If the cache path broke, the hook would fall back
+    to the profiler, which finds no spend in the empty sandbox, and the
+    violation would not block."""
+    import shutil
+    import tempfile
+    import gate_selftest
+    violations, benigns = sorted(cdir.glob("violation*.json")), sorted(cdir.glob("benign*.json"))
+    if not violations or not benigns or not (cdir / "budgets.yaml").is_file() \
+            or not (cdir / "spend.json").is_file():
+        print(f"selftest FAIL: {cdir} needs budgets.yaml, spend.json, violation*.json, benign*.json",
+              file=sys.stderr)
+        return 1
+    failures = []
+    for must_block, files in ((True, violations), (False, benigns)):
+        for f in files:
+            sandbox = Path(tempfile.mkdtemp(prefix="budget-cache-selftest-"))
+            try:
+                (sandbox / ".claude").mkdir()
+                shutil.copy(cdir / "budgets.yaml", sandbox / ".claude" / "budgets.yaml")
+                spend = json.loads((cdir / "spend.json").read_text(encoding="utf-8"))
+                now = _dt.datetime.now().timestamp()
+                cache = sandbox / ".claude" / ".cache" / "budget" / "spend.json"
+                cache.parent.mkdir(parents=True)
+                cache.write_text(json.dumps({"computed_at": now,
+                                             "month": _dt.date.fromtimestamp(now).strftime("%Y-%m"),
+                                             "spend": spend}), encoding="utf-8")
+                rc, out = gate_selftest._run_leg(Path(__file__).resolve(),
+                                                 gate_selftest._prep_payload(f, cdir, sandbox), sandbox)
+            except Exception as exc:  # a leg that cannot be built proves nothing
+                failures.append(f"{f.name} could not run: {exc}")
+                continue
+            finally:
+                shutil.rmtree(sandbox, ignore_errors=True)
+            if gate_selftest.emits_block(rc, out) != must_block:
+                failures.append(f"{f.name} {'did NOT block' if must_block else 'WAS blocked'} (rc={rc})")
+    if failures:
+        print("selftest FAIL (cache): " + "; ".join(failures), file=sys.stderr)
+        return 1
+    print(f"selftest PASS (cache): {len(violations)} block + {len(benigns)} allow ({cdir.name})")
+    return 0
 
 
 if __name__ == "__main__":
