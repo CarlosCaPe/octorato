@@ -1804,6 +1804,62 @@ rules:
     locator: scripts/r__posttool__sent-ledger.py --selftest registry/fixtures/FLOW.sent-message-ledger
     expect: 0
   liveness_required: FIRES
+- id: FLOW.friction-ledger
+  title: 'Friction ledger: every gate deny and Stop block the harness recorded is counted, digest only'
+  category: FLOW
+  source:
+    file: docs/architecture/v10-friction.md
+    anchor: '## Friction ledger'
+  strength: REFLEX
+  gateable: false
+  enforcement: n/a
+  firing_mode:
+  - hook
+  - cli
+  mechanism:
+  - kind: Reflex
+    canonical_name: r__stop__friction-ledger.py
+    firing_event: Stop
+    firing_matcher: '*'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: Stop|*|r__stop__friction-ledger.py
+    expect: present
+  - method: FILE_EXISTS
+    locator: scripts/friction_ledger.py
+    expect: present
+  - method: ANCHOR_PRESENT
+    locator: '## Friction ledger'
+    expect: present
+  liveness_required: FIRES
+- id: FLOW.friction-replay
+  title: 'Replay harness: a gate change is replayed on frozen real traffic and fails on a lost true positive'
+  category: FLOW
+  source:
+    file: docs/architecture/v10-friction.md
+    anchor: '## Replay harness'
+  strength: DETECTOR
+  gateable: false
+  enforcement: n/a
+  v7_decision: 'v10 phase 1 (2026-10-06): detector by design. The corpus is private and per machine, so a clone without it SKIPs; the replay is run by the builder of a gate change and its result is quoted in the PR, not forced at push.'
+  firing_mode:
+  - cli
+  mechanism:
+  - kind: Detector
+    canonical_name: replay_harness.py
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: scripts/replay_harness.py
+    expect: present
+  - method: FILE_EXISTS
+    locator: registry/friction-baseline.json
+    expect: present
+  - method: ANCHOR_PRESENT
+    locator: '## Replay harness'
+    expect: present
+  liveness_required: PRESENT
 - id: FLOW.qa-receipt
   title: 'QA receipt: a subagent verdict is recorded by the harness, re-read from its transcript'
   category: FLOW

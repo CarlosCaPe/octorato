@@ -9,10 +9,10 @@
 | Skills | 246 |
 | Agents | 167 |
 | Divisions | 13 |
-| Scripts: wired | 124 |
+| Scripts: wired | 127 |
 | Scripts: orphan | 7 |
-| Rules | 84 |
-| Hook entries | 53 |
+| Rules | 86 |
+| Hook entries | 54 |
 
 ## Skills (246)
 
@@ -499,7 +499,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (131)
+## Scripts (134)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -550,6 +550,7 @@
 | dimension-awareness-hook.py | dimension-awareness-hook.py , PreToolUse hook for 4D session dimension awareness | wired |
 | eye-check.py | Eye Check Hook , Forces agent-browser usage for web tasks. Runs on every UserPromptSubmit. Pure loca... | wired |
 | finops-digest.py | finops-digest.py , the FinOps lens over Claude Code session logs. "Lo que no se mide, no crece." Exi... | wired |
+| friction_ledger.py | friction_ledger.py: every gate deny and Stop block, counted by the system (v10 FR-01). | wired |
 | g__pretool-bash__git-discipline.py | g__pretool-bash__git-discipline.py: PreToolUse gate for the deterministic subset of GIT.version-cont... | wired |
 | g__pretool-bash__prod-write.py | PreToolUse Bash hook , compuerta de ESCRITURA EN PRODUCCION (FAIL-CLOSED). | wired |
 | g__pretool-bash__tree-owner.py | g__pretool-bash__tree-owner.py: one writer per tree and per lane (Bash side). | wired |
@@ -611,10 +612,12 @@
 | r__posttool__sent-ledger.py | r__posttool__sent-ledger.py: PostToolUse reflex that records every message | wired |
 | r__pretool-write__base-freshness.py | r__pretool-write__base-freshness.py: PreToolUse warner for a STALE EDIT BASE. | wired |
 | r__session__proc-register.py | r__session__proc-register.py: SessionStart reflex that opens a kernel process. | wired |
+| r__stop__friction-ledger.py | r__stop__friction-ledger.py: Stop reflex that keeps the Friction_Ledger current (v10 FR-01, AC-01). | wired |
 | r__subagent-start__proc-register.py | r__subagent-start__proc-register.py: SubagentStart reflex, a child process. | wired |
 | r__subagent-stop__proc-exit.py | r__subagent-stop__proc-exit.py: SubagentStop reflex, the child's exit line. | wired |
 | r__subagent-stop__qa-receipt.py | r__subagent-stop__qa-receipt.py: SubagentStop reflex that writes a QA receipt. | wired |
 | receipt_ledger.py | receipt_ledger.py: the v7 receipt ledger (shared library, not a hook). | wired |
+| replay_harness.py | replay_harness.py: replay real tool calls and Stop turns through the gates (v10 FR-01, AC-03, AC-04)... | wired |
 | repo_watch.py | repo_watch.py , daily monitor for high-value GitHub repos. | wired |
 | scan-external-refs | scan-external-refs , Scan reference repos for new skills, agents, and patterns | orphan |
 | secrets-grep-guard.py | secrets-grep-guard.py , PreToolUse:Bash hook: deny raw reads of secret-bearing files. | wired |
@@ -635,7 +638,7 @@
 | wa-soporte.sh | Sends a WhatsApp through the SUPPORT channel, never through the operator's personal number. | wired |
 | watchdog.py | watchdog.py , observability surface 4 anomaly detector. Reads the JSONL trace files written by trace... | wired |
 
-## Rules (84)
+## Rules (86)
 
 ### ARCHITECTURE
 
@@ -694,6 +697,8 @@
 - FLOW.done-is-a-verdict
 - FLOW.enforcement-scripts
 - FLOW.figma-use-prerequisite
+- FLOW.friction-ledger
+- FLOW.friction-replay
 - FLOW.graph-before-grep
 - FLOW.image-analyzer-trigger
 - FLOW.impact-radius
@@ -759,7 +764,7 @@
 | PostToolUse | cadence-lint.py, canon-heal-hook.py, client-doc-lint-hook.py, d__posttool__delegation-ledger.py, impact-radius-hook.py, r__posttool__receipt-seek.py, r__posttool__sent-ledger.py, trace-hook.py |
 | PreToolUse | budget-check.py, config-ship-verify.py, delegate-gate.py, dimension-awareness-hook.py, g__pretool-bash__git-discipline.py, g__pretool-bash__tree-owner.py, g__pretool-mcp__chat-context.py, g__pretool-mcp__outward-send.py, g__pretool-write__tree-owner.py, g__pretool__arming-surface.py, g__pretool__kernel.py, grafo-gate.py, qa-merge-gate.py, r__pretool-write__base-freshness.py, secrets-grep-guard.py, trace-hook.py |
 | SessionStart | merge-hooks.py, r__session__proc-register.py, session-isolation-hook.py |
-| Stop | cadence-stop-hook.py, claim-verify-stop.py, d__stop__wa-guardia.py, g__stop__defer-today.py, g__stop__delegation-audit.py, g__stop__draft-promise.py, g__stop__goal-anchor.py, g__stop__paste-ready-raw.py, g__stop__unsourced-absence.py, g__stop__unsourced-attribute.py, grafo-ledger-check.py, no-pause-suggestion.py, source-attribution-check.py, trace-hook.py |
+| Stop | cadence-stop-hook.py, claim-verify-stop.py, d__stop__wa-guardia.py, g__stop__defer-today.py, g__stop__delegation-audit.py, g__stop__draft-promise.py, g__stop__goal-anchor.py, g__stop__paste-ready-raw.py, g__stop__unsourced-absence.py, g__stop__unsourced-attribute.py, grafo-ledger-check.py, no-pause-suggestion.py, r__stop__friction-ledger.py, source-attribution-check.py, trace-hook.py |
 | SubagentStart | r__subagent-start__proc-register.py |
 | SubagentStop | r__subagent-stop__proc-exit.py, r__subagent-stop__qa-receipt.py |
 | UserPromptSubmit | 4d-reminder.py, arm-recall-hook.py, brain-memory-recall.py, connectome-heartbeat.py, eye-check.py, grafo-turn-reset.py, inbox-sweep-reflex.py, trace-hook.py |
