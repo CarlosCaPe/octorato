@@ -302,10 +302,13 @@ def _corrida_actual(cfg):
     when the unit is not known. Raises SondaRota when it cannot be read."""
     if cfg.get("remoto"):
         unidad = shlex.quote(cfg["remoto"]["unidad"])
+        # The trailing `true` matters: an inactive unit or a run with neither
+        # line yet makes the pipeline exit 1, SSM then reports Failed, and
+        # ssm() would raise SondaRota for a state that is merely "not yet".
         return ssm(cfg, f"inv=$(systemctl show {unidad} -p InvocationID --value); "
                         f"[ -n \"$inv\" ] && journalctl _SYSTEMD_INVOCATION_ID=$inv "
                         f"-r -o cat --no-pager | grep -m 1 -F -e "
-                        f"{shlex.quote(REJECTED)} -e {shlex.quote(LOGGED_IN)}")
+                        f"{shlex.quote(REJECTED)} -e {shlex.quote(LOGGED_IN)}; true")
     if not cfg.get("unidad"):
         return None
     if EJECUTOR_JOURNAL is not None:
@@ -838,6 +841,9 @@ def selftest():
             journal_remoto[0] = "[Client INFO] Successfully authenticated\n"
             chk("remoto: con login la corrida no esta rechazada",
                 rechazado(rcfg)[0] is False)
+            chk("remoto: el comando del journal sale con 0 aunque grep no halle nada",
+                [c for c in vistos if "_SYSTEMD_INVOCATION_ID" in c][-1]
+                .rstrip().endswith("; true"))
 
             # ---- auto-update notices
             AVISOS_VISTOS = os.path.join(d, "avisos-vistos.json")

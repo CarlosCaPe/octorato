@@ -20,7 +20,12 @@
         "db": "{{REMOTE_PATH_TO_MESSAGES_DB}}",
         "sesion": "{{REMOTE_PATH_TO_SESSION_DIR}}",
         "tunel": "{{SSM_PORT_FORWARD_COMMAND_OR_ALIAS}}",
-        "bucket_tmp": "{{S3_STAGING_BUCKET_FOR_ATTACHMENTS}}"
+        "bucket_tmp": "{{S3_STAGING_BUCKET_FOR_ATTACHMENTS}}",
+        "autoupdate": {
+          "_nota": "Optional. Read by wa-latido.py: the host's auto-update state file, and the local notifier argv that receives each new result ({reason} and {detail} are replaced).",
+          "estado": "{{REMOTE_PATH_TO_AUTOUPDATE_STATE_JSON}}",
+          "aviso": ["{{NOTIFIER_COMMAND}}", "--reason", "{reason}", "--detail", "{detail}"]
+        }
       }
     },
     "personal": {
@@ -28,7 +33,8 @@
       "dir": "{{PATH_TO_PERSONAL_BRIDGE_CHECKOUT}}",
       "bin": "{{PATH_TO_PERSONAL_BRIDGE_BINARY}}",
       "db": "{{PATH_TO_PERSONAL_BRIDGE_MESSAGES_DB}}",
-      "propio": null
+      "propio": null,
+      "unidad": "{{SYSTEMD_USER_UNIT_NAME_OPTIONAL}}"
     }
   },
   "vigilancia": {
