@@ -41,6 +41,11 @@ HOOKS_FILE = os.path.join(CLAUDE_DIR, "hooks.json")
 SETTINGS_FILE = os.path.join(CLAUDE_DIR, "settings.json")
 STATUSLINE_SCRIPT = os.path.join(CLAUDE_DIR, "scripts", "statusline.py")
 STATUSLINE = {"type": "command", "command": "python3 ~/.claude/scripts/statusline.py", "padding": 0}
+# Every value this script has ever written. Only one of these is rewritten to
+# the current canonical form; anything else is the operator's (a wrapped
+# command, another padding) and is kept as it is. Append here when STATUSLINE
+# changes, never edit an entry.
+STATUSLINE_PREVIOUS = ()
 
 
 def _merge_statusline(settings):
@@ -48,11 +53,10 @@ def _merge_statusline(settings):
     if not os.path.isfile(STATUSLINE_SCRIPT):
         return False
     current = settings.get("statusLine")
-    ours = isinstance(current, dict) and "scripts/statusline.py" in str(current.get("command", ""))
-    if current is not None and not ours:
-        print("  statusLine: operator-defined one kept (not scripts/statusline.py)")
-        return False
     if current == STATUSLINE:
+        return False
+    if current is not None and current not in STATUSLINE_PREVIOUS:
+        print("  statusLine: operator-defined one kept")
         return False
     settings["statusLine"] = dict(STATUSLINE)
     return True
@@ -199,13 +203,18 @@ def _selftest() -> int:
             settings = json.load(f)
         ok = "SessionStart" in (settings.get("hooks") or {})
         ok = ok and settings.get("statusLine") == STATUSLINE
-        # an operator-defined statusLine survives a second merge untouched
-        settings["statusLine"] = {"type": "command", "command": "my-own-line"}
-        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
-            json.dump(settings, f)
-        main()
-        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
-            ok = ok and json.load(f).get("statusLine", {}).get("command") == "my-own-line"
+        # an operator-defined statusLine survives a second merge untouched,
+        # including one that wraps our own script or changes its padding
+        for own in ({"type": "command", "command": "my-own-line"},
+                    {"type": "command", "padding": 0,
+                     "command": "python3 ~/.claude/scripts/statusline.py | cut -c1-60"},
+                    dict(STATUSLINE, padding=2)):
+            settings["statusLine"] = own
+            with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+                json.dump(settings, f)
+            main()
+            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                ok = ok and json.load(f).get("statusLine") == own
     except Exception as e:
         print(f"selftest FAIL: {e}", file=sys.stderr)
         ok = False

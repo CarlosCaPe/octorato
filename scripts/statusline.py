@@ -46,6 +46,14 @@ HEAD_LINES = 30
 _STATUS = re.compile(r"^\s*>?\s*\*\*Status:\*\*\s*([A-Za-z-]+)", re.MULTILINE)
 _TASK = re.compile(r"^\s*[-*]\s+\[([ xX])\]", re.MULTILINE)
 _STAMP = re.compile(r"^\d{12}-")
+# ANSI escape sequences, then any other non-printable character: a spec name is
+# a directory name anyone can create, and the status line is a terminal.
+_ANSI = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])")
+
+
+def printable(text: str) -> str:
+    text = _ANSI.sub("", str(text))
+    return "".join(ch for ch in text if ch.isprintable())
 
 
 def cache_dir() -> str:
@@ -70,6 +78,11 @@ def lock_path() -> str:
 
 def compute_state(brain: str = BRAIN) -> dict:
     sys.path.insert(0, _HERE)
+    # `git status` (inside gate_surfaces_dirty) would otherwise take the brain's
+    # .git/index.lock on every background refresh and can make the operator's
+    # own commit fail on "index.lock exists". receipt_ledger copies os.environ
+    # into every git call, so setting it here reaches all of them.
+    os.environ["GIT_OPTIONAL_LOCKS"] = "0"
     state = {"ts": time.time(), "gate": "?", "live": None}
     try:
         from pathlib import Path
@@ -222,9 +235,9 @@ def line(payload: dict, state) -> str:
     cwd = ws.get("current_dir") or payload.get("cwd") or os.getcwd()
     spec = active_spec(str(cwd))
     if spec:
-        name = _STAMP.sub("", spec["name"])[:40]
+        name = printable(_STAMP.sub("", spec["name"]))[:40]
         tasks = f" {spec['done']}/{spec['total']}" if spec["total"] else ""
-        parts.append(f"spec {name} {spec['status']}{tasks}")
+        parts.append(f"spec {name} {printable(spec['status'])}{tasks}")
     else:
         parts.append("no open spec")
     return " · ".join(parts)

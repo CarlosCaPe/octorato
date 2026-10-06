@@ -21,8 +21,9 @@ the page:
              voided by gate_surfaces_dirty, exactly as the outward-send gate reads
              it, without running the slow full doctor
   kernel     live processes, by kernel_proc.is_live (v8-kernel.md section 2)
-  friction   the Friction_Ledger and `octo friction` when they exist; otherwise
-             the section says "not available" and the page still renders
+  friction   the Friction_Ledger read with friction_ledger.py's field names, and
+             `octo friction`'s report called in-process (local files only) when
+             this brain has it; otherwise "not available" and the page renders
 
 Everything rendered goes through html.escape. Titles, branch names, spec names
 and ledger fields are untrusted text; the page carries no script at all, so
@@ -69,7 +70,35 @@ def snapshot_path() -> Path:
 
 
 def friction_ledger_path() -> Path:
-    return Path(os.path.expanduser("~")) / ".claude" / ".cache" / "friction" / "ledger.jsonl"
+    """The Friction_Ledger as friction_ledger.py defines it (OCTO_FRICTION_DIR
+    for tests, else the gitignored cache). The fallback mirrors that rule for a
+    brain where the module is not installed yet."""
+    try:
+        import friction_ledger
+        return Path(friction_ledger.ledger_dir()) / "ledger.jsonl"
+    except Exception:  # noqa: BLE001
+        env = os.environ.get("OCTO_FRICTION_DIR")
+        base = Path(env) if env else Path(os.path.expanduser("~")) / ".claude" / ".cache" / "friction"
+        return base / "ledger.jsonl"
+
+
+class _NoOptionalLocks:
+    """`git status` refreshes the index and takes .git/index.lock while it does,
+    so a reader running beside the operator could make their commit fail on
+    "index.lock exists". GIT_OPTIONAL_LOCKS=0 tells git to skip that optional
+    lock; receipt_ledger builds its git env from os.environ, so it inherits it."""
+
+    def __enter__(self):
+        self._old = os.environ.get("GIT_OPTIONAL_LOCKS")
+        os.environ["GIT_OPTIONAL_LOCKS"] = "0"
+        return self
+
+    def __exit__(self, *exc):
+        if self._old is None:
+            os.environ.pop("GIT_OPTIONAL_LOCKS", None)
+        else:
+            os.environ["GIT_OPTIONAL_LOCKS"] = self._old
+        return False
 
 
 def _age(seconds) -> str:
@@ -171,16 +200,28 @@ def read_pulls(now: float) -> dict:
     except (OSError, ValueError) as e:
         out["error"] = f"snapshot unreadable: {e}"
         return out
+    if not isinstance(snap, dict):
+        out["error"] = f"snapshot malformed: top level is {type(snap).__name__}, not an object"
+        return out
     try:
         out["age"] = now - float(snap.get("taken_ts"))
     except (TypeError, ValueError):
         out["age"] = None
+    prs = snap.get("prs")
+    if prs is None:
+        prs = []
+    if not isinstance(prs, list):
+        out["error"] = f"snapshot malformed: prs is {type(prs).__name__}, not a list"
+        return out
+    skipped = sum(1 for pr in prs if not isinstance(pr, dict))
+    if skipped:
+        out["error"] = f"snapshot malformed: {skipped} pull request entry(ies) not an object, skipped"
     try:
         import receipt_ledger
         ledger = receipt_ledger.read_global()
     except Exception:  # noqa: BLE001
         receipt_ledger, ledger = None, []
-    for pr in snap.get("prs") or []:
+    for pr in prs:
         if not isinstance(pr, dict):
             continue
         num = str(pr.get("number") or "")
@@ -207,10 +248,11 @@ def read_gate(root: Path) -> dict:
     """Same three reads the outward-send gate makes, in the same order."""
     try:
         import receipt_ledger
-        gates = receipt_ledger.gate_tree_hash(root)
-        dirty = receipt_ledger.gate_surfaces_dirty(root)
-        ok = receipt_ledger.gate_receipt_ok(gates) if gates else False
-        head = receipt_ledger.brain_head(root)
+        with _NoOptionalLocks():
+            gates = receipt_ledger.gate_tree_hash(root)
+            dirty = receipt_ledger.gate_surfaces_dirty(root)
+            ok = receipt_ledger.gate_receipt_ok(gates) if gates else False
+            head = receipt_ledger.brain_head(root)
     except Exception as e:  # noqa: BLE001
         return {"state": "unknown", "detail": f"unreadable: {e}", "dirty": []}
     if not gates:
@@ -264,21 +306,24 @@ def _ts_of(rec: dict):
         return None
 
 
-def _octo_has_friction() -> bool:
+def _octo_friction_report(days: int = 7):
+    """`octo friction`'s own report, called in-process. It reads only local
+    files (the ledger, latency.jsonl, registry/friction-baseline.json), so it is
+    bounded by their size and never touches the network. None when this brain's
+    octo.py has no friction report yet."""
     try:
         import octo
-        parser = octo.build_parser()
-        for action in parser._actions:  # argparse keeps subparsers here
-            choices = getattr(action, "choices", None)
-            if isinstance(choices, dict) and "friction" in choices:
-                return True
-    except Exception:  # noqa: BLE001
-        return False
-    return False
+        fn = getattr(octo, "friction_report", None)
+        return fn(days) if callable(fn) else None
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"octo friction report failed: {e}"}
 
 
 def read_friction(now: float) -> dict:
-    out = {"available": False, "rows": [], "lines": 0, "report": None, "error": None}
+    """Field names are friction_ledger.py's: gate, kind, code, session, ts (ISO).
+    A line with no usable `gate` is counted, never shown as `?`."""
+    out = {"available": False, "rows": [], "lines": 0, "unrecognised": 0,
+           "report": None, "error": None}
     path = friction_ledger_path()
     if path.is_file():
         out["available"] = True
@@ -286,16 +331,23 @@ def read_friction(now: float) -> dict:
         try:
             with open(path, "rb") as fh:
                 for raw in fh:
+                    if not raw.strip():
+                        continue
+                    out["lines"] += 1
                     try:
                         rec = json.loads(raw)
                     except ValueError:
+                        rec = None
+                    gate = rec.get("gate") if isinstance(rec, dict) else None
+                    if not isinstance(gate, str) or not gate.strip():
+                        out["unrecognised"] += 1
                         continue
-                    if not isinstance(rec, dict):
-                        continue
-                    out["lines"] += 1
-                    gate = str(rec.get("gate") or rec.get("rule") or "?")
-                    slot = per.setdefault(gate, {"gate": gate, "all": 0, "d1": 0, "d7": 0, "last": None})
+                    slot = per.setdefault(gate, {"gate": gate, "all": 0, "d1": 0, "d7": 0,
+                                                 "last": None, "codes": {}})
                     slot["all"] += 1
+                    code = rec.get("code")
+                    if isinstance(code, str) and code:
+                        slot["codes"][code] = slot["codes"].get(code, 0) + 1
                     ts = _ts_of(rec)
                     if ts is not None:
                         if now - ts <= 86400:
@@ -306,14 +358,13 @@ def read_friction(now: float) -> dict:
         except OSError as e:
             out["error"] = f"ledger unreadable: {e}"
         out["rows"] = sorted(per.values(), key=lambda s: (-s["d7"], -s["all"], s["gate"]))
-    if _octo_has_friction():
+    rep = _octo_friction_report(7)
+    if isinstance(rep, dict):
         out["available"] = True
-        try:
-            cp = subprocess.run([sys.executable, str(_HERE / "octo.py"), "friction"],
-                                capture_output=True, text=True, timeout=30)
-            out["report"] = (cp.stdout or cp.stderr or "").strip()[:20000]
-        except (OSError, subprocess.SubprocessError) as e:
-            out["report"] = f"octo friction failed: {e}"
+        if rep.get("error"):
+            out["error"] = rep["error"]
+        else:
+            out["report"] = rep
     return out
 
 
@@ -451,16 +502,42 @@ def render(data: dict) -> str:
         body = '<p class="muted">not available (no friction ledger and no <code>octo friction</code> on this brain)</p>'
     else:
         body = ""
+        if f["lines"]:
+            body += f'<p class="muted">{f["lines"]} ledger line(s)'
+            if f["unrecognised"]:
+                body += f', {f["unrecognised"]} line(s) with no recognised fields'
+            body += "</p>"
         if f["rows"]:
-            trs = [f'<tr><td class="mono">{_e(r["gate"])}</td><td class="num">{r["d1"]}</td>'
-                   f'<td class="num">{r["d7"]}</td><td class="num">{r["all"]}</td>'
-                   f'<td class="num">{_e(_age(now - r["last"]) if r["last"] else "-")}</td></tr>'
-                   for r in f["rows"]]
-            body += (f'<p class="muted">{f["lines"]} ledger line(s)</p><div class="scroll"><table>'
-                     "<tr><th>gate</th><th>24 h</th><th>7 d</th><th>all</th><th>last</th></tr>"
-                     + "".join(trs) + "</table></div>")
-        if f["report"]:
-            body += "<pre>" + _e(f["report"]) + "</pre>"
+            trs = []
+            for r in f["rows"]:
+                top = max(r["codes"].items(), key=lambda kv: (kv[1], kv[0]))[0] if r["codes"] else "-"
+                trs.append(f'<tr><td class="mono">{_e(r["gate"])}</td><td class="num">{r["d1"]}</td>'
+                           f'<td class="num">{r["d7"]}</td><td class="num">{r["all"]}</td>'
+                           f'<td class="mono hide-sm">{_e(top)}</td>'
+                           f'<td class="num">{_e(_age(now - r["last"]) if r["last"] else "-")}</td></tr>')
+            body += ('<div class="scroll"><table>'
+                     '<tr><th>gate</th><th>24 h</th><th>7 d</th><th>all</th><th class="hide-sm">top code</th>'
+                     "<th>last</th></tr>" + "".join(trs) + "</table></div>")
+        rep = f["report"]
+        if rep and rep.get("gates"):
+            trs = []
+            for g in rep["gates"]:
+                if not isinstance(g, dict):
+                    continue
+                lab = g.get("labelled") if isinstance(g.get("labelled"), dict) else None
+                fp = f'{lab.get("fp_rate", 0):.0%}' if lab else "-"
+                p50, p95 = g.get("latency_p50_ms"), g.get("latency_p95_ms")
+                p50 = "-" if not isinstance(p50, (int, float)) else f"{p50:.0f}"
+                p95 = "-" if not isinstance(p95, (int, float)) else f"{p95:.0f}"
+                trs.append(f'<tr><td class="mono">{_e(g.get("gate"))}</td>'
+                           f'<td class="num">{_e(g.get("denies"))}</td>'
+                           f'<td class="num">{_e(p50)}</td><td class="num">{_e(p95)}</td>'
+                           f'<td class="num">{_e(fp)}</td></tr>')
+            body += (f'<p class="muted">octo friction, last {_e(rep.get("days"))} day(s): '
+                     f'{_e(rep.get("ledger_rows"))} deny/block row(s), '
+                     f'{_e(rep.get("latency_rows"))} latency sample(s)</p><div class="scroll"><table>'
+                     "<tr><th>gate or hook</th><th>denies</th><th>p50 ms</th><th>p95 ms</th>"
+                     "<th>FP rate</th></tr>" + "".join(trs) + "</table></div>")
         if f["error"]:
             body += f'<p class="warn">{_e(f["error"])}</p>'
         if not body:
@@ -496,16 +573,21 @@ def write_page(root: Path = None, out: Path = None) -> Path:
 # ── cli ─────────────────────────────────────────────────────────────────────
 
 def run(args) -> int:
+    """Exit 2 when --refresh could not take a snapshot. The page is still
+    written from the previous one, so the caller gets the page and the signal
+    that its PR data is old."""
     root = Path(args.root).resolve() if getattr(args, "root", None) else brain_root()
+    rc = 0
     if getattr(args, "refresh", False):
         try:
             snap = take_snapshot(root)
             print(f"snapshot: {len(snap['prs'])} open pull request(s) -> {snapshot_path()}")
         except Exception as e:  # noqa: BLE001
             print(f"snapshot failed, rendering the previous one: {e}", file=sys.stderr)
+            rc = 2
     out = write_page(root, Path(args.out) if getattr(args, "out", None) else None)
     print(out)
-    return 0
+    return rc
 
 
 def add_arguments(p: argparse.ArgumentParser) -> None:
