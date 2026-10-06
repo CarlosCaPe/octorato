@@ -216,6 +216,33 @@ class DashFriction(Sandbox):
         self.assertIn("send-ask", page)
         self.assertNotIn(">?<", page)
 
+    def test_naive_and_z_timestamps_are_utc(self):
+        z = octo_dash._ts_of({"ts": "2026-10-06T12:00:00Z"})
+        naive = octo_dash._ts_of({"ts": "2026-10-06T12:00:00"})
+        self.assertEqual(z, naive)
+        self.assertEqual(z, 1791288000.0)
+        # A ledger line written 2 h ago with a Z timestamp lands in the 24 h window.
+        two_h = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 7200))
+        (self.fdir / "ledger.jsonl").write_text(
+            json.dumps({"v": 1, "key": "k", "ts": two_h, "gate": "g__z.py", "code": "c"}) + "\n",
+            encoding="utf-8")
+        row = octo_dash.read_friction(time.time())["rows"][0]
+        self.assertEqual((row["gate"], row["d1"], row["d7"]), ("g__z.py", 1, 1))
+
+    def test_non_numeric_fp_rate_renders_dash(self):
+        import octo
+        rep = {"days": 7, "ledger_rows": 1, "latency_rows": 0,
+               "gates": [{"gate": "g", "denies": 1, "labelled": {"fp_rate": "high"}},
+                         {"gate": "h", "denies": 1, "labelled": {"fp_rate": True}}]}
+        had = hasattr(octo, "friction_report")
+        old = getattr(octo, "friction_report", None)
+        octo.friction_report = lambda days: rep
+        self.addCleanup(lambda: setattr(octo, "friction_report", old) if had
+                        else delattr(octo, "friction_report"))
+        page = self.page()
+        self.assertIn("octo friction, last 7 day(s)", page)
+        self.assertNotIn("high", page)
+
     def test_octo_friction_report_rendered_in_process(self):
         import octo
         rep = {"days": 7, "since": "x", "ledger_rows": 4, "latency_rows": 2, "ledger_dir": "d",

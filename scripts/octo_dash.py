@@ -301,6 +301,10 @@ def _ts_of(rec: dict):
     try:
         import datetime as _dt
         t = _dt.datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+        if t.tzinfo is None:
+            # friction_ledger.py writes harness timestamps, which are UTC; a
+            # naive one read as local time would shift the 24 h / 7 d windows.
+            t = t.replace(tzinfo=_dt.timezone.utc)
         return t.timestamp()
     except (TypeError, ValueError):
         return None
@@ -454,6 +458,7 @@ def render(data: dict) -> str:
         body += f'<p class="warn">{_e(pl["error"])}</p>'
     if pl["rows"]:
         trs = []
+        none = '<span class="muted">none</span>'  # Python < 3.12: no backslash inside an f-string expression
         for r in pl["rows"]:
             url = _safe_url(r["url"])
             num = (f'<a href="{_e(url)}">#{_e(r["number"])}</a>' if url else f"#{_e(r['number'])}")
@@ -465,10 +470,10 @@ def render(data: dict) -> str:
                 f"<tr><td class=\"num\">{num}</td><td>{_e(r['title'])}"
                 f"{' ' + _chip('draft') if r['draft'] else ''}"
                 f'<div class="muted mono">{_e(r["branch"])}</div></td>'
-                f"<td>{_chip(r['qa']) if r['qa'] else '<span class=\"muted\">none</span>'}</td>"
+                f"<td>{_chip(r['qa']) if r['qa'] else none}</td>"
                 f'<td class="mono">{_short(r["qa_head"])}</td><td class="mono">{_short(r["head"])}</td>'
                 f"<td>{match}</td>"
-                f"<td>{_chip(r['decides']) if r['decides'] else '<span class=\"muted\">none</span>'}</td></tr>")
+                f"<td>{_chip(r['decides']) if r['decides'] else none}</td></tr>")
         body += ('<div class="scroll"><table><tr><th>PR</th><th>title</th><th>newest QA</th>'
                  "<th>pinned</th><th>head</th><th></th><th>decides head</th></tr>"
                  + "".join(trs) + "</table></div>")
@@ -525,7 +530,8 @@ def render(data: dict) -> str:
                 if not isinstance(g, dict):
                     continue
                 lab = g.get("labelled") if isinstance(g.get("labelled"), dict) else None
-                fp = f'{lab.get("fp_rate", 0):.0%}' if lab else "-"
+                rate = lab.get("fp_rate") if lab else None
+                fp = f"{rate:.0%}" if isinstance(rate, (int, float)) and not isinstance(rate, bool) else "-"
                 p50, p95 = g.get("latency_p50_ms"), g.get("latency_p95_ms")
                 p50 = "-" if not isinstance(p50, (int, float)) else f"{p50:.0f}"
                 p95 = "-" if not isinstance(p95, (int, float)) else f"{p95:.0f}"
