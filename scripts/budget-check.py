@@ -96,13 +96,14 @@ def _load_budgets() -> dict:
     return {}
 
 
-def _month_to_date_usd_by_arm() -> dict[str, float]:
+def _profiler_spend() -> dict[str, float] | None:
     """Run skill-cost-profiler --days N --json with N = days since 1st of month.
 
-    Returns {arm: usd_estimate}. Empty dict if profiler unavailable.
+    Returns {arm: usd_estimate}, or None when the profiler is missing or fails
+    (so a failure is never cached as "no spend").
     """
     if not COST_PROFILER.exists():
-        return {}
+        return None
     today = _dt.date.today()
     day_of_month = today.day  # 1..31; we measure month-to-date
     try:
@@ -111,12 +112,135 @@ def _month_to_date_usd_by_arm() -> dict[str, float]:
             capture_output=True, text=True, timeout=120,
         )
         if result.returncode != 0:
-            return {}
+            return None
         data = json.loads(result.stdout)
         arms_list = data.get("by_arm", []) if isinstance(data, dict) else []
         return {r["arm"]: float(r.get("usd_estimate", 0.0)) for r in arms_list}
-    except (subprocess.SubprocessError, OSError, json.JSONDecodeError):
-        return {}
+    except (subprocess.SubprocessError, OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+        return None
+
+
+def _month_to_date_usd_by_arm() -> dict[str, float]:
+    """The profiler's month-to-date spend, {} when it is unavailable."""
+    return _profiler_spend() or {}
+
+
+# -- spend cache (v10 T07, AC-11 + AC-22) -------------------------------------
+# The profiler walks every session transcript of the month: a measured 7.2 s
+# median per call, with timeouts at the hook's 10 s, on every subagent spawn.
+# The PreToolUse check now answers from a cache that SessionStart and each
+# finished spawn refresh in the background. A cache older than 15 minutes, from
+# another month, stamped in the future or unreadable is never used: the check
+# then recomputes synchronously, exactly as before, so the hard_stop decision
+# never rests on a number older than 15 minutes. A failed profiler run is not
+# cached. Residual, stated: the cache is a file under $HOME, as writable as
+# budgets.yaml itself; this is a FinOps cap, not an agent-proof boundary.
+CACHE_MAX_AGE_S = 15 * 60
+
+
+def cache_path() -> Path:
+    return Path(os.path.expanduser("~")) / ".claude" / ".cache" / "budget" / "spend.json"
+
+
+def _read_cache(now: float | None = None) -> dict[str, float] | None:
+    now = _dt.datetime.now().timestamp() if now is None else now
+    try:
+        data = json.loads(cache_path().read_text(encoding="utf-8"))
+        age = now - float(data["computed_at"])
+        if not (0 <= age <= CACHE_MAX_AGE_S):
+            return None
+        if data.get("month") != _dt.date.fromtimestamp(now).strftime("%Y-%m"):
+            return None
+        return {str(k): float(v) for k, v in dict(data["spend"]).items()}
+    except Exception:  # missing, torn or malformed: recompute
+        return None
+
+
+def _write_cache(spend: dict[str, float], now: float | None = None) -> None:
+    now = _dt.datetime.now().timestamp() if now is None else now
+    try:
+        p = cache_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_name(f".{p.name}.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps({"computed_at": now,
+                                   "month": _dt.date.fromtimestamp(now).strftime("%Y-%m"),
+                                   "spend": spend}), encoding="utf-8")
+        os.replace(tmp, p)
+    except OSError:
+        pass  # an unwritable cache only costs speed
+
+
+def refresh_cache() -> dict[str, float] | None:
+    """Recompute the month-to-date spend and store it. None on profiler failure."""
+    spend = _profiler_spend()
+    if spend is not None:
+        _write_cache(spend)
+    return spend
+
+
+def _cached_spend() -> dict[str, float]:
+    """Fresh cache, else a synchronous recompute (AC-22)."""
+    spend = _read_cache()
+    if spend is not None:
+        return spend
+    return refresh_cache() or {}
+
+
+def _cap_of(entry: dict, default: dict) -> float:
+    return float(entry.get("monthly_usd_cap", default.get("monthly_usd_cap", 0)) or 0)
+
+
+def _any_cap(default: dict, overrides: dict, arm_filter: str | None = None) -> bool:
+    """True when at least one arm could carry a cap > 0 (the same cap lookup
+    evaluate() uses per row). The default cap applies to any arm with spend."""
+    if arm_filter:
+        return _cap_of(overrides.get(arm_filter, {}), default) > 0
+    if _cap_of({}, default) > 0:
+        return True
+    return any(_cap_of(o, default) > 0 for o in overrides.values())
+
+
+def _needs_profiler(cfg: dict) -> bool:
+    """A refresh is worth running only when spend comes from the profiler and
+    some cap could apply (path scoping ignored: any cwd may need it)."""
+    if not cfg or cfg.get("spend_json"):
+        return False
+    try:
+        default = cfg.get("default") or {}
+        arms = {b["arm"]: b for b in (cfg.get("budgets") or [])
+                if isinstance(b, dict) and "arm" in b}
+        return _any_cap(default, arms)
+    except Exception:
+        return True  # unreadable caps: keep the cache warm rather than guess
+
+
+def _refresh_main(background: bool) -> int:
+    """`--refresh`: recompute the cache (one runner at a time). With
+    `--background`, detach a child that does it and return at once, so a
+    SessionStart or PostToolUse hook never waits on the profiler. Fail-open:
+    a refresh never blocks anything."""
+    try:
+        if not _needs_profiler(_load_budgets()):
+            return 0  # no caps, or spend from a file: nothing to cache
+        if background:
+            subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--refresh"],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, start_new_session=True, close_fds=True)
+            return 0
+        lock = cache_path().with_name("refresh.lock")
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        with open(lock, "a") as fh:
+            try:
+                import fcntl
+                fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except ImportError:
+                pass  # no flock (Windows): a second runner only costs CPU
+            except OSError:
+                return 0  # another refresh is running
+            refresh_cache()
+    except Exception:
+        pass
+    return 0
 
 
 def evaluate(arm_filter: str | None = None, cwd: str | None = None) -> dict:
@@ -137,17 +261,6 @@ def evaluate(arm_filter: str | None = None, cwd: str | None = None) -> dict:
         return {"status": "OK", "arms": [], "halt_reason": None,
                 "note": "no budgets configured"}
 
-    # Spend source: the profiler by default, or a JSON file {arm: usd} named by
-    # `spend_json` (an external FinOps export, or a fixture). Config-first.
-    spend_json = cfg.get("spend_json")
-    if spend_json:
-        try:
-            spend = {k: float(v) for k, v in json.loads(
-                Path(os.path.expanduser(str(spend_json))).read_text(encoding="utf-8")).items()}
-        except Exception:
-            spend = {}
-    else:
-        spend = _month_to_date_usd_by_arm()
     default = cfg.get("default") or {}
     arms_cfg = cfg.get("budgets", []) or []
     # Path scoping (v7): an arm entry may carry `path`; then its cap applies only
@@ -169,6 +282,27 @@ def evaluate(arm_filter: str | None = None, cwd: str | None = None) -> dict:
 
     # Index per-arm overrides
     overrides = {b["arm"]: b for b in arms_cfg if isinstance(b, dict) and "arm" in b}
+
+    # No cap can apply: every row below would `continue` on cap <= 0, so the
+    # verdict is OK whatever the spend. Skip computing it (the profiler is the
+    # whole cost of this hook). Same decision, measured: a config with no cap
+    # paid the full profiler run on every spawn.
+    if not _any_cap(default, overrides, arm_filter):
+        return {"status": "OK", "arms": [], "halt_reason": None,
+                "note": "no cap applies here"}
+
+    # Spend source: the profiler by default (through the cache), or a JSON file
+    # {arm: usd} named by `spend_json` (an external FinOps export, or a
+    # fixture). Config-first.
+    spend_json = cfg.get("spend_json")
+    if spend_json:
+        try:
+            spend = {k: float(v) for k, v in json.loads(
+                Path(os.path.expanduser(str(spend_json))).read_text(encoding="utf-8")).items()}
+        except Exception:
+            spend = {}
+    else:
+        spend = _cached_spend()
 
     # Build the set of arms we care about: every configured arm + any arm
     # observed with spend (so default budget can apply).
@@ -266,9 +400,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--arm", default=None, help="Restrict the check to one arm.")
     parser.add_argument("--tool", default=None, help="Name of the tool being checked (logged only).")
     parser.add_argument("--json", action="store_true", help="Emit JSON instead of human text.")
+    parser.add_argument("--refresh", action="store_true",
+                        help="Recompute the spend cache (SessionStart / PostToolUse[Agent] hooks).")
+    parser.add_argument("--background", action="store_true",
+                        help="With --refresh: detach the recompute and return at once.")
     if "--selftest" in (argv if argv is not None else sys.argv[1:]):
         return _selftest()
     args = parser.parse_args(argv)
+    if args.refresh:
+        return _refresh_main(args.background)
 
     # As a PreToolUse hook the harness passes the payload on stdin; only `cwd`
     # is read from it (for path-scoped caps). Never blocks on a missing stdin.

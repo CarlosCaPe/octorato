@@ -1387,9 +1387,23 @@ rules:
     canonical_name: budget-check.py
     firing_event: PreToolUse
     firing_matcher: Agent
+  - kind: Reflex
+    canonical_name: budget-check.py
+    firing_event: SessionStart
+    firing_matcher: null
+  - kind: Reflex
+    canonical_name: budget-check.py
+    firing_event: PostToolUse
+    firing_matcher: Agent
   proof:
   - method: IN_HOOKS_JSON
     locator: PreToolUse|Agent|budget-check.py
+    expect: present
+  - method: IN_HOOKS_JSON
+    locator: SessionStart|*|budget-check.py
+    expect: present
+  - method: IN_HOOKS_JSON
+    locator: PostToolUse|Agent|budget-check.py
     expect: present
   - method: EXIT_CODE
     locator: scripts/budget-check.py --selftest registry/fixtures/FLOW.budget-halt
