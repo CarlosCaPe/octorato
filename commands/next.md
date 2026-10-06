@@ -11,15 +11,15 @@ The operator asks this when a session got long or technical and they need the st
 `/next` takes no arguments. Its subject is whatever work is already in context:
 
 1. **The conversation in this session**, including any summary left by compaction. This is the main source.
-2. **Stored memory, when the session is new or was summarized thin.** Seek it, do not scan it: `python3 ~/.claude/scripts/query_connectome.py memory "<the work in question>"`, the memory index loaded at session start, and the arm's own memory when working inside an arm. Say in one line that the account comes from memory and from which entry, because a memory records what was true when it was written.
+2. **Stored memory, when the session is new or was summarized thin.** Seek it, do not scan it, in this order and stopping at the first that answers: `python3 ~/.claude/scripts/query_connectome.py memory "<the work in question>"`, then the memory index loaded at session start, then the arm's own memory when working inside an arm. Say in one line that the account comes from memory and from which entry, because a memory records what was true when it was written.
 
 Context tells you WHAT to report on. It never tells you the current state: that comes from the checks below.
 
 ## Before writing a word
 
-1. **Re-check the live state now.** Do not answer from what earlier turns said. A service that was down may be up, a PR that was open may be merged, a background task may have finished. Run the check for every item you are about to report (service status, PR state, last log line, test run) and report what it returns. One check per item is enough; this is a status, not an audit.
+1. **Re-check the live state now.** Do not answer from what earlier turns said. A service that was down may be up, a PR that was open may be merged, a background task may have finished. Run the check for every item you are about to report (service status, PR state, the log since the last change, test run) and report what it returns. One check per item is enough; this is a status, not an audit.
 2. **Read results whole.** No `tail`, `head` or `LIMIT` on a result you are about to draw a conclusion from. If you had to cut something, say what was cut.
-3. **Close what you can close.** If a pending item is something you can do right now, do it first and report it as done. A pending item stays on the list only when it is the operator's step or a measured block. Sending a message, merging and deploying are always the operator's step: they go in the table with their command, and this command never performs them.
+3. **Close what you can close, when it is local and reversible.** A check, a test run, a read: do it first and report it as done. Anything that leaves this machine or cannot be undone (a message, a comment, a push, a merge, a release, a deploy, a restart of a live service, a deletion) is always the operator's step: it goes in the table with its command, and this command never performs it. File changes still go through the Change Manifest. A pending item stays on the list only when it is the operator's step or a measured block.
 
 ## The answer, in this order
 
