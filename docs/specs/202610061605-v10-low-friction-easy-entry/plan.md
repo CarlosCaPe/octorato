@@ -1,6 +1,6 @@
 # Implementation Plan: v10, Low Friction and Easy Entry
 
-> **Spec:** `feature.md` in this directory (`Spec-Format: ears-1`, status draft)
+> **Spec:** `feature.md` in this directory (`Spec-Format: ears-1`, status approved)
 > **Date:** 2026-10-06
 
 ## Overview
@@ -20,7 +20,7 @@ Four phases, one pull request each, every one from its own worktree. Measurement
 
 ### Phase 1: measure
 
-- [ ] T01 [AC-01] scripts/friction_ledger.py, hooks.json, registry/rules.yaml: add the append helper, call it from every PreToolUse deny and Stop block derived from `hooks.json` (not a hand list), register it, and test that a helper failure leaves the decision unchanged.
+- [ ] T01 [AC-01] scripts/friction_ledger.py, scripts/r__stop__friction-ledger.py, hooks.json, registry/rules.yaml: build the ledger from the harness transcript (every PreToolUse deny and Stop block the harness recorded, so no gate body changes), run it as a Stop reflex that never blocks, register it, and test it against a transcript fixture holding one deny and one Stop block.
 - [ ] T02 [AC-03, AC-04] scripts/replay_harness.py, registry/friction-baseline.json: build the private corpus in `company/friction-corpus/` from the census scripts, have a verifier subagent review the labels, track only counts and hashes, and exit non-zero on a lost true positive.
 - [ ] T03 [AC-02] scripts/octo.py: add `octo friction` reading the ledger and the corpus labels, with median and p95 latency per gate.
 

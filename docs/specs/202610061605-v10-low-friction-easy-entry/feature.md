@@ -1,6 +1,6 @@
 # Feature: v10, Low Friction and Easy Entry
 
-> **Status:** draft
+> **Status:** approved
 > **Spec-Format:** ears-1
 > **Date:** 2026-10-06
 > **Classification:** LARGE (score 13: 10+ files, new feature, architectural decision, multiple modules)
