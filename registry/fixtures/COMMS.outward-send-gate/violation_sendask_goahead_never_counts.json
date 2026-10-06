@@ -1,5 +1,5 @@
 {
-  "session_id": "fx-t04-go-b",
+  "session_id": "fx-t04-go-v",
   "tool_name": "mcp__gmail__send_email",
   "tool_input": {
     "to": [
@@ -9,5 +9,5 @@
     "body": "Hola Ana, el equipo ya quedó configurado."
   },
   "cwd": "/home/user",
-  "transcript_path": "benign_sendask_goahead_names_message_transcript.jsonl"
+  "transcript_path": "violation_sendask_goahead_never_counts_transcript.jsonl"
 }

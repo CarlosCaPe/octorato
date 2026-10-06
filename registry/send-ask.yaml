@@ -27,23 +27,8 @@ english:
   - send
   - post it
 
-# Bare go-aheads. Counted only when their OWN clause also names the message (a
-# noun below) or one of the send's recipients (an address or its local part).
-go_aheads:
-  - dale
-  - adelante
-  - órale
-  - go ahead
-
-message_nouns:
-  - mensaje
-  - correo
-  - mail
-  - email
-  - whatsapp
-  - respuesta
-  - message
-  - reply
+# Bare go-aheads (dale, adelante, go ahead) never count, alone or next to a
+# noun: "dale formato al mensaje" is an edit, not a send.
 
 # The standing hatch typed in another case (Send-ok, SEND-OK). Counts as a send
 # ask only: it lifts requirement 4 and never the checks the exact lowercase
