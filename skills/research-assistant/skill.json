@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "research-assistant",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Turns an assistant into a research helper for a thesis, a paper or a report: sharpens the question, builds a search plan, keeps a source matrix of what each source actually says, outlines the argument, and checks every citation. Use on 'ayúdame con mi tesis', 'literature review', 'organiza mis fuentes', 'research question'."
+}

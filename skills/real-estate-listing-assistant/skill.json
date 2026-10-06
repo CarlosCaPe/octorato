@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "real-estate-listing-assistant",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Turns an assistant into a listing and client helper for a real-estate professional or an owner selling or renting: a listing written only from verified facts, a photo and document checklist, answers to buyer questions, and a follow-up plan. Use on 'escribe el anuncio de mi depa', 'listing description', 'cómo contesto a este interesado'."
+}
