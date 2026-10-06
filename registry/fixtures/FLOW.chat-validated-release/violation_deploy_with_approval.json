@@ -1,0 +1,10 @@
+{
+  "session_id": "fx-cvr-111",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "npx wrangler deploy"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_deploy_with_approval_transcript.jsonl",
+  "_expect": "deploys and releases are never released"
+}

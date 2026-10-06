@@ -1,0 +1,14 @@
+{
+  "session_id": "fx-cvr-108",
+  "tool_name": "mcp__gmail__send_email",
+  "tool_input": {
+    "to": [
+      "office@example.test"
+    ],
+    "subject": "Solicitud 108",
+    "body": "Buenos días, adjunto la solicitud número 108 firmada. Saludos."
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_validation_body_differs_transcript.jsonl",
+  "_expect": "does not quote this send's text exactly"
+}

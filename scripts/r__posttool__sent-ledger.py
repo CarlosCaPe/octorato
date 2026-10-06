@@ -17,6 +17,8 @@ message:
 channel        gmail | wa-personal | wa-support
 recipient      the chat / phone, or the mail's to+cc+bcc (a reply or forward
                also carries `reply_to`, the message it answers)
+text           the normalized text of a WhatsApp message (both channels), so
+               the gate can find a chat-validation message by its content
 message_id     what the tool returned: Gmail `id`, the personal bridge's
                "[message_id=... chat_jid=...]" status, the support bridge's
                JSON `message_id`; "" when the result carries none
@@ -25,6 +27,9 @@ panel_receipt  entry uuid of the PASS panel receipt that decided that digest;
                a receipt named here with ok not false is SPENT (one send each),
                and tool_use_id is the send that spent it
 ok             the channel's own success flag (true/false), null when absent
+chat_release   the chat-validated release key (chat, validation message,
+               approval) when an approver's yes released this send; once
+               written with ok not false, that approval is spent
 
 A recall step is a separate spec; this file only keeps the trail. A reflex,
 not a gate: it never blocks and fails open on every error, because a ledger
@@ -125,7 +130,8 @@ def records_for(data: dict) -> list:
             except panel_digest.PanelDigestError:
                 d = ""
             out.append(dict(base, recipient=recipient, message_id=str(hit.get("message_id") or ""),
-                            chat_jid=str(hit.get("chat_jid") or ""), digest=d, ok=_ok(objs)))
+                            chat_jid=str(hit.get("chat_jid") or ""), digest=d, ok=_ok(objs),
+                            text=panel_digest.normalize(message)))
     elif _SEND_TOOL.search(tool_name):
         try:
             digests = panel_digest.digests_for(tool_name, tool_input)
@@ -154,6 +160,8 @@ def records_for(data: dict) -> list:
             recipient = ",".join(str(p) for p in people)
         rec = dict(base, recipient=recipient, message_id=mid, chat_jid=jid,
                    digest=digests[0], ok=_ok(objs))
+        if base["channel"] == "wa-personal":
+            rec["text"] = panel_digest.normalize(str(tool_input.get("message") or ""))
         if tool_input.get("messageId"):
             rec["reply_to"] = str(tool_input["messageId"])
         out = [rec]
@@ -164,7 +172,26 @@ def records_for(data: dict) -> list:
     for rec in out:
         r = receipt_ledger.panel_pass_for(rec["digest"], session_id, now) if rec["digest"] else None
         rec["panel_receipt"] = str((r or {}).get("entry_uuid") or "")
+    key = _chat_release_key(data)
+    if key:
+        for rec in out:
+            rec["chat_release"] = key
     return out
+
+
+def _chat_release_key(data: dict) -> str:
+    """The chat-validated release key the gate would honour for this send
+    ("" when none): written on the send's line, it spends that approval. The
+    gate is loaded by path, so this reads the same function the gate ran."""
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_outward_send_gate", str(_HERE / "g__pretool-mcp__outward-send.py"))
+        gate = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gate)
+        return gate.chat_release(data)[1]
+    except Exception:
+        return ""
 
 
 def _now(data: dict):

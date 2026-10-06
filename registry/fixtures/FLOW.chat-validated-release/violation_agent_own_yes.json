@@ -1,0 +1,14 @@
+{
+  "session_id": "fx-cvr-115",
+  "tool_name": "mcp__gmail__send_email",
+  "tool_input": {
+    "to": [
+      "office@example.test"
+    ],
+    "subject": "Solicitud 115",
+    "body": "Buenos días, adjunto la solicitud número 115 firmada. Saludos."
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_agent_own_yes_transcript.jsonl",
+  "_expect": "no approver replied yes"
+}

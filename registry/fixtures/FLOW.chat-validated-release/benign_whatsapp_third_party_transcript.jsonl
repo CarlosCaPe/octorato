@@ -1,0 +1,2 @@
+{"type": "user", "message": {"role": "user", "content": "revisa el grupo de validación y atiende lo pendiente"}, "uuid": "u-cvr-103", "parentUuid": null, "sessionId": "fx-cvr-103", "timestamp": "2026-10-03T12:00:00.000Z"}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t103", "name": "mcp__whatsapp__send_message", "input": {"recipient": "5215511111103", "message": "Hola, la cita queda el martes 10:00."}}]}, "uuid": "a-cvr-103", "parentUuid": "u-cvr-103", "sessionId": "fx-cvr-103", "timestamp": "2026-10-03T12:00:00.000Z"}
