@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-t04-r3-v",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "sed -n '1e ./x' ~/.claude/scripts/wa-soporte.sh"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_sed_execute_command_transcript.jsonl"
+}
