@@ -23,7 +23,8 @@ the page:
   kernel     live processes, by kernel_proc.is_live (v8-kernel.md section 2)
   friction   the Friction_Ledger read with friction_ledger.py's field names, and
              `octo friction`'s report called in-process (local files only) when
-             this brain has it; otherwise "not available" and the page renders
+             this brain has it; an empty ledger says so, and with neither the
+             section says "not available"; the page renders either way
 
 Everything rendered goes through html.escape. Titles, branch names, spec names
 and ledger fields are untrusted text; the page carries no script at all, so
@@ -363,11 +364,14 @@ def read_friction(now: float) -> dict:
             out["error"] = f"ledger unreadable: {e}"
         out["rows"] = sorted(per.values(), key=lambda s: (-s["d7"], -s["all"], s["gate"]))
     rep = _octo_friction_report(7)
+    out["reporter"] = isinstance(rep, dict)
     if isinstance(rep, dict):
-        out["available"] = True
         if rep.get("error"):
+            out["available"] = True
             out["error"] = rep["error"]
-        else:
+        elif rep.get("ledger_rows") or rep.get("latency_rows") or rep.get("gates"):
+            # An empty report says nothing the empty-ledger line does not.
+            out["available"] = True
             out["report"] = rep
     return out
 
@@ -503,7 +507,10 @@ def render(data: dict) -> str:
     parts.append(_section("Live kernel processes", body))
 
     f = data["friction"]
-    if not f["available"]:
+    if not f["available"] and f.get("reporter"):
+        body = ('<p class="muted">no friction recorded yet: the ledger is empty '
+                "(it fills at every Stop; <code>friction_ledger.py backfill</code> covers the past)</p>")
+    elif not f["available"]:
         body = '<p class="muted">not available (no friction ledger and no <code>octo friction</code> on this brain)</p>'
     else:
         body = ""
@@ -626,7 +633,9 @@ def selftest() -> int:
         page = render(collect(root)).lower()
         bad = [t for t in ("<script", "<img", "javascript:") if t in page]
         need = [t for t in ("specs", "pull requests", "gate receipt", "live kernel processes",
-                            "friction", "snapshot age: 1m", "1/2", "not available") if t not in page]
+                            "friction", "snapshot age: 1m", "1/2") if t not in page]
+        if "not available" not in page and "no friction recorded yet" not in page:
+            need.append("friction empty state")
         if bad or need:
             print(f"selftest FAIL: injected={bad} missing={need}", file=sys.stderr)
             return 1

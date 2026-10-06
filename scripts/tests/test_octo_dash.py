@@ -101,9 +101,25 @@ class DashMissingData(Sandbox):
     def test_everything_missing_still_renders(self):
         shutil.rmtree(self.root / "docs")
         page = self.page()
-        for text in ("no docs/specs directory", "no snapshot yet", "not available",
+        for text in ("no docs/specs directory", "no snapshot yet",
                      "Gate receipt", "Live kernel processes"):
             self.assertIn(text, page)
+        # With octo friction on this brain an empty ledger says so; without it, "not available".
+        import octo
+        want = ("no friction recorded yet" if callable(getattr(octo, "friction_report", None))
+                else "not available")
+        self.assertIn(want, page)
+
+    def test_friction_not_available_without_reporter(self):
+        import octo
+        had = hasattr(octo, "friction_report")
+        old = getattr(octo, "friction_report", None)
+        if had:
+            delattr(octo, "friction_report")
+        self.addCleanup(lambda: setattr(octo, "friction_report", old) if had else None)
+        os.environ["OCTO_FRICTION_DIR"] = str(Path(self.home) / "no-friction")
+        self.addCleanup(os.environ.pop, "OCTO_FRICTION_DIR", None)
+        self.assertIn("not available", self.page())
 
     def test_corrupt_snapshot_is_named(self):
         octo_dash.cache_dir().mkdir(parents=True)
