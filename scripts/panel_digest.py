@@ -268,21 +268,49 @@ def _readers():
     return (mod._split_bash, mod._split_master)
 
 
-_READER_NAMES = {"grep", "rg", "ag", "ls", "cat", "less", "more", "head", "tail", "wc",
-                 "stat", "file", "diff", "vim", "nano", "code", "chmod", "chown", "git"}
+# A sub-command whose FIRST token is one of these only reads its arguments, so
+# naming the bridge script there is not a send. The list is the exemption, so
+# it holds only programs with NO option, config key or environment variable
+# that runs a command: git (-c alias.x=!cmd, core.pager, GIT_PAGER), vim, vi,
+# nvim, nano, code, emacs, less, more, man (LESSOPEN, `!cmd`, +cmd) and rg
+# (--pre) used to be here and each ran the bridge with no panel. The outward
+# send gate imports this set, so the two never drift.
+READER_NAMES = frozenset({"grep", "ag", "ls", "cat", "head", "tail", "wc",
+                          "stat", "file", "diff", "chmod", "chown"})
 _OPERATOR = re.compile(r"^[();<>|&]+$")
+# The script name standing as a WORD anywhere inside a token: the whole token,
+# a path ending in it, or a word of a command line carried inside one token
+# (`alias.x=!<script> ...`, `core.pager=<script> ...`, `GIT_PAGER=<script> ...`,
+# vim's `-c '!<script> ...'`). A suffix such as `<script>:` or `<script>.bak`
+# is not the word, so a commit message that names the file stays a message.
+_SEP = r"\s!=:'\"(;|&`{,<>"
+SCRIPT_WORD = re.compile(r"(?:^|[" + _SEP + r"])(?:[^" + _SEP + r"]*/)?"
+                         + re.escape(SUPPORT_SCRIPT) + r"(?=$|[\s'\")};|&`<>])")
+
+
+# A substitution runs its command before the reader in front of it ever sees
+# the output: `cat <(<script> ...)`, `cat $(<script> ...)`, `cat \`<script>\``.
+SUBST_RUNS_SCRIPT = re.compile(r"(?:[<>$]\(|`)[^)`]*" + re.escape(SUPPORT_SCRIPT))
+
+
+def names_script(tok: str) -> bool:
+    """True when *tok* names the bridge script as a word (see SCRIPT_WORD)."""
+    return bool(SCRIPT_WORD.search(str(tok)))
 
 
 def names_bridge(command: str) -> bool:
-    """True when any token of any sub-command is the bridge script, the first
-    token not being a reader (`grep wa-soporte.sh` reads the name)."""
+    """True when any token of any sub-command names the bridge script as a
+    word, the first token not being a pure reader (`grep wa-soporte.sh`), or
+    when a substitution runs it behind any command."""
     import receipt_ledger
+    if SUBST_RUNS_SCRIPT.search(str(command or "")):
+        return True
     for split in (None,) + tuple(_safe_readers()):
         for sc in receipt_ledger.subcommands(command, split):
             toks = receipt_ledger.tokens_of(sc)
-            if toks and toks[0] in _READER_NAMES:
+            if toks and toks[0] in READER_NAMES:
                 continue
-            if any(receipt_ledger._is_script_token(t, SUPPORT_SCRIPT) for t in toks):
+            if any(names_script(t) for t in toks):
                 return True
     return False
 

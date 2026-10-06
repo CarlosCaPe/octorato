@@ -45,9 +45,25 @@ WHAT IT REQUIRES (docs/architecture/v7-nothing-ships-unverified.md)
      after that prompt; a Bash command that is ONE plain `sed -n <range>
      <script>` or `<script> --help|-h` is not a send. Closed with it, open on
      master before: a process substitution, a sed `e` command or a git alias
-     that runs the support script behind a reader. Residual, stated: a script
-     copied in one call and run in a later one, or reached through a name the
-     gate cannot see (alias, function, symlink), is not tied to the script.
+     that runs the support script behind a reader. Readers are exempt only
+     when the program has NO option, config key or env var that runs a
+     command (panel_digest.READER_NAMES, shared by both consumers): git, vim,
+     vi, nvim, nano, code, emacs, less, more, man and rg are not readers,
+     because `git -c alias.x=\\!<script>`, `git config alias.x '!<script>'`,
+     `git -c core.pager=<script>`, `GIT_PAGER=<script> git log` and `vim -c
+     '!<script>'` each ran the bridge with no panel and no ask. The script is
+     found as a WORD anywhere inside a token (a path, `!<script>`,
+     `key=<script> ...`, `system("<script>")`), not only as a whole token, and
+     a `$(...)` or backtick substitution behind a reader runs it too. Cost,
+     stated: a non-reader that merely names the script (`git log --
+     <script>`, `vim <script>`, a commit message with the bare name as a
+     word) is now judged as a send and denied without a panel; read it with
+     cat, grep, head or a plain `sed -n`. Residual, stated: a script copied in
+     one call and run in a later one (a config key that names the script is
+     denied when it is SET, but one that points at a copy or a wrapper fires
+     later from any `git log`), or a name the gate cannot see (alias,
+     function, symlink, a name assembled at run time) is not tied to the
+     script.
   5. Panel receipt (FLOW.panel-before-send, operator directive 2026-10-02: no
      message leaves without a panel, however small). Every MESSAGE send (mail
      send/reply/forward, WhatsApp send_message/send_file/send_audio_message,
@@ -142,9 +158,16 @@ _SEND_TOOL = re.compile(
 _SEND_SCRIPTS = ("wa-soporte.sh",)
 # A sub-command whose FIRST token is a reader never sends, whatever its argv
 # names: `grep -rn wa-soporte.sh scripts/` reads the name, it does not run
-# it (QA cycle 5 note). `find` is not here: `find -exec` runs things.
-_READERS = {"grep", "rg", "ag", "ls", "cat", "less", "more", "head", "tail", "wc",
-            "stat", "file", "diff", "vim", "nano", "code", "chmod", "chown", "git"}
+# it (QA cycle 5 note). `find` is not here: `find -exec` runs things. The set
+# is panel_digest.READER_NAMES (one list, two consumers) and holds only
+# programs with no option, config or env that runs a command: git, vim, nano,
+# code, less, more and rg left it after each was measured running the bridge.
+# An import failure leaves the set EMPTY, so no reader is exempt (fail closed).
+try:
+    import panel_digest as _panel_digest  # noqa: E402
+    _READERS = _panel_digest.READER_NAMES
+except Exception:
+    _READERS = frozenset()
 _BODY_KEYS = ("body", "message", "text", "content", "html", "snippet",
               "caption", "subject", "description", "title", "command")
 # A hatch counts only as a standalone word in the operator's prompt, outside
@@ -371,7 +394,9 @@ def _is_operator_opener(entry: dict) -> bool:
         return False
     o = entry.get("origin")
     if isinstance(o, dict):
-        return o.get("kind") == "human"
+        # isMeta is rejected here too: a harness meta entry never carries
+        # operator words, whatever origin it was stamped with.
+        return o.get("kind") == "human" and entry.get("isMeta") is not True
     return o is None and not entry.get("isCompactSummary") and entry.get("isMeta") is not True
 
 
@@ -596,6 +621,11 @@ def _bash_recipients(command: str, split=None) -> list:
                 else:
                     out.append("")
                 break
+        else:
+            # The script named inside a token (a pager, an alias, an editor
+            # command) has no recipient the gate can read: no waiver rests on it.
+            if any(_names_script(t) for t in toks):
+                out.append("")
     return out
 
 
@@ -794,19 +824,28 @@ def support_script_plain_read(command: str) -> bool:
     return bool(_SED_PRINT.match(operands[0])) and is_script(operands[1])
 
 
-# Three shapes that RUN the support script while a reader or sed sits in
-# front (found by the same QA, open on master too): a process substitution
-# `cat <(wa-soporte.sh ...)`, a sed script that names it (`sed -n 'e
-# wa-soporte.sh ...' /dev/null`, GNU sed's `e` runs a shell), and a git alias
-# that shells out (`git -c alias.x='!wa-soporte.sh ...' x`).
-_PROC_SUBST = re.compile(r"[<>]\([^)]*(?:" + "|".join(re.escape(n) for n in _SEND_SCRIPTS) + r")")
-_GIT_ALIAS_SHELL = re.compile(r"alias\.[^=\s]*=\s*['\"]?!")
+# Two shapes that RUN the support script while a reader or sed sits in
+# front (found by the same QA, open on master too): a substitution (`cat
+# <(wa-soporte.sh ...)`, and its `$(...)` and backtick twins) and a sed script
+# that names it (`sed -n 'e wa-soporte.sh ...' /dev/null`, GNU sed's `e` runs
+# a shell). A git alias, pager or editor command that shells out is no longer
+# a shape here: git and the editors left _READERS, and _names_script finds the
+# script as a word inside the token that carries the command, however the `!`
+# is quoted.
+_PROC_SUBST = re.compile(r"(?:[<>$]\(|`)[^)`]*(?:" + "|".join(re.escape(n) for n in _SEND_SCRIPTS) + r")")
+
+
+def _names_script(tok: str) -> bool:
+    """The support script as a word anywhere in *tok*; with panel_digest
+    unloadable, any substring counts (fail closed)."""
+    try:
+        return _panel_digest.names_script(tok)
+    except Exception:
+        return any(n in str(tok) for n in _SEND_SCRIPTS)
 
 
 def _runs_script_behind_reader(command: str, toks_list: list) -> bool:
     if _PROC_SUBST.search(command):
-        return True
-    if _GIT_ALIAS_SHELL.search(command) and any(n in command for n in _SEND_SCRIPTS):
         return True
     import receipt_ledger
     for toks in toks_list:
@@ -829,7 +868,7 @@ def _bash_is_send(command: str) -> bool:
         if toks and toks[0] in _READERS:
             continue
         for i, t in enumerate(toks):
-            if any(receipt_ledger._is_script_token(t, n) for n in _SEND_SCRIPTS):
+            if _names_script(t):
                 return True
             if t.endswith("wrangler") and "deploy" in receipt_ledger.words_after(toks, i, 2):
                 return True
