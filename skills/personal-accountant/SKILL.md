@@ -29,7 +29,7 @@ Ask these, one at a time, in plain words. Do not assume an answer.
 
 Write the answers into a short profile and show it back. The profile is reused every month.
 
-## Step 2: The jurisdiction card
+## The jurisdiction card
 
 Before stating any rate, threshold, deduction or deadline, build a card for the user's country:
 
@@ -43,7 +43,7 @@ Before stating any rate, threshold, deduction or deadline, build a card for the 
 
 No card, no rule. If the assistant has no way to read the official page, it asks the user to paste the text or the link and builds the card from that. A rule recalled from memory is a hypothesis: say so and ask for the source. Cards older than twelve months are refreshed before use.
 
-## Step 3: Capture and classify
+## Step 2: Capture and classify
 
 1. Load every movement of the period into one ledger. One row per movement.
 2. Ledger columns: `date, description, amount, currency, account, category, document, deductible (yes/no/unknown), note`.
@@ -51,13 +51,13 @@ No card, no rule. If the assistant has no way to read the official page, it asks
 4. Link each row to its document (invoice, receipt) when one exists. A deductible expense with no document is flagged, not assumed.
 5. Never drop a row. Transfers between the user's own accounts are tagged as transfers, so they do not count twice.
 
-## Step 4: Reconcile
+## Step 3: Reconcile
 
 - The ledger total per account must equal the bank's closing balance movement for the period. If it does not, find the difference before going on: a missing row, a duplicate, a sign error.
 - Recompute every total from the rows with a tool, never by estimation. See [[financial-formula-verification]].
 - Report the reconciliation as a line: opening balance, money in, money out, closing balance, difference.
 
-## Step 5: Close the month
+## Step 4: Close the month
 
 Deliver one page:
 
@@ -67,13 +67,13 @@ Deliver one page:
 - What to set aside for taxes, computed only from rules that have a jurisdiction card. If a card is missing, give the base amount and say which rule is needed.
 - Three questions the user should answer before next month.
 
-## Step 6: Obligations calendar
+## Step 5: Obligations calendar
 
 List what is due and when, each line with its card: filing, payment, the form or portal, and what it needs. Flag anything due within thirty days.
 
-## Step 7: Prepare, never file
+## Step 6: Prepare, never file
 
-The assistant assembles the filing pack: the figures, the supporting documents, and the fields a form will ask for, in order. It stops at three walls, the same ones as any government procedure (see [[tramite-mx-assistant]]):
+The assistant assembles the filing pack: the figures, the supporting documents, and the fields a form will ask for, in order. It stops at three walls:
 
 - a login, a password, a one-time code;
 - a signature, electronic or by hand;
@@ -98,4 +98,4 @@ The person crosses those. When the law of the country requires a licensed profes
 
 ## Related
 
-[[financial-formula-verification]] for recomputing totals, [[source-citation-tagging]] for tagging each claim with its source, [[dry-run-gate-pattern]] for showing a filing pack before anything is submitted, [[tramite-mx-assistant]] for the stop walls of government portals, [[eli5]] for explaining a tax notice in plain words.
+[[financial-formula-verification]] for recomputing totals, [[source-citation-tagging]] for tagging each claim with its source, [[dry-run-gate-pattern]] for showing a filing pack before anything is submitted, [[tramite-mx-assistant]] as a worked example of the stop walls in one country, [[eli5]] for explaining a tax notice in plain words.

@@ -23,9 +23,11 @@ Ask these, one at a time, in plain words. Do not assume an answer.
 2. Monthly income after tax, and how steady it is.
 3. Monthly spending, by the person's own categories.
 4. Debts: balance, rate and minimum payment for each.
-5. Savings today and where they sit.
-6. The goal, the amount and the date.
-7. People who depend on this income.
+5. Which debts are behind, in collection, secured on a home or a vehicle, or owed to a landlord, a utility, a tax office or a court.
+6. Any letter, notice or call received about a debt, and its date.
+7. Savings today and where they sit.
+8. The goal, the amount and the date.
+9. People who depend on this income.
 
 Write the answers into a short profile and show it back.
 
@@ -55,15 +57,19 @@ Sort spending into fixed, flexible and things the person did not know they were 
 
 A target in months of fixed spending, chosen with the person, and the monthly amount to reach it.
 
-## Step 5: Debt order
+## Step 5: Priority debts first
 
-List debts by rate. Show the cost of two orders, highest rate first and smallest balance first, in interest and months. The person chooses.
+Before any arithmetic, separate the debts whose non-payment can cost the home, the utilities, the vehicle needed for work, or bring a court or tax action: rent, mortgage, secured loans, utilities, taxes, fines, child support. These go first whatever their rate. A legal notice or a court paper goes to [[legal-first-reader]] the same day, with its deadline on top. Name the free regulated debt-advice service of the country, from a source card.
 
-## Step 6: Goal math
+## Step 6: Debt order
+
+Among the remaining debts, list them by rate. Show the cost of two orders, highest rate first and smallest balance first, in interest and months. The person chooses.
+
+## Step 7: Goal math
 
 Amount, date, monthly saving needed. If it does not fit, show which number has to move: amount, date or spending.
 
-## Step 7: One-page plan and review date
+## Step 8: One-page plan and review date
 
 What changes this month, the number to check, and the date to look again.
 
@@ -73,12 +79,15 @@ What changes this month, the number to check, and the date to look again.
 - Promise or imply a return.
 - State a tax, pension or benefit rule with no source card.
 - Shame the person for a past decision.
+- Put an unsecured debt ahead of rent, mortgage, utilities, taxes or a court order because its rate is higher.
+- Advise ignoring a collector, a notice or a court paper.
 - Repeat full account or card numbers. Mask all but the last four characters.
 
 ## Checks before handing anything over
 
 - Every figure comes from the person's statements or is marked as an estimate.
 - Totals were recomputed with a tool.
+- Priority debts were identified before the payoff order.
 - The debt comparison shows interest and months for both orders.
 - The plan has a review date.
 

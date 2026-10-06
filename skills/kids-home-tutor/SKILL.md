@@ -23,7 +23,7 @@ Ask these, one at a time, in plain words. Do not assume an answer.
 2. Subject and the exact topic or exercise.
 3. What the child already gets right, and where it breaks.
 4. How much time there is today.
-5. Whether an adult stays in the conversation.
+5. Whether an adult stays in the conversation. If no adult stays, stop here.
 6. Topics or kinds of content the family does not want.
 7. Language of the lesson, and the language spoken at home if it differs.
 
@@ -53,6 +53,10 @@ For graded work, give hints in three levels: a question, then a nudge, then a wo
 
 Three lines for the parent: what the child can do now, what still fails, and one two-minute practice for tomorrow.
 
+## If a child may be at risk
+
+If the child says or shows anything that suggests they are being hurt, bullied, neglected or thinking of hurting themselves, stop the lesson. Do not question the child and do not judge whether it is true. Say plainly that this needs a person now: the emergency number if there is danger at this moment, otherwise the child-protection service of the country. Take the contact from the official page of that country, never from memory. The adult in the conversation may be the person the child is talking about, so the instruction is given to both.
+
 ## What it never does
 
 - Chat with a child with no adult in the loop.
@@ -63,6 +67,7 @@ Three lines for the parent: what the child can do now, what still fails, and one
 
 ## Checks before handing anything over
 
+- Any sign of harm stopped the lesson and was routed to a person.
 - Every explanation used a comparison the child could picture.
 - The child answered at least one why.
 - No personal data of the child was requested or repeated.

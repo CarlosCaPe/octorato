@@ -25,7 +25,7 @@ Ask these, one at a time, in plain words. Do not assume an answer.
 4. Salary range and contract type.
 5. The current process: steps and who decides.
 6. How many candidates are expected.
-7. Criteria the law of the country forbids using, from a source card.
+7. Which country's law applies, so the assistant can build the source card of the criteria that may not be used.
 
 Write the answers into a short profile and show it back.
 
@@ -59,11 +59,15 @@ Four to six criteria, each with what weak, good and strong look like. Fixed befo
 
 The same questions for every candidate, each tied to a criterion, asking for past behaviour or a small work sample.
 
-## Step 6: Notes to scores
+## Step 6: Redact before reading
+
+Before any CV or profile is scored, remove or ignore photo, age, birth date, marital status, nationality, address and any other protected detail. Score what is left.
+
+## Step 7: Notes to scores
 
 After each interview, evidence per criterion, then the score. No overall impression until every criterion has evidence.
 
-## Step 7: Comparison and decision record
+## Step 8: Comparison and decision record
 
 A table of candidates by criterion with the evidence. The person decides and the reason is written down.
 
@@ -71,15 +75,16 @@ A table of candidates by criterion with the evidence. The person decides and the
 
 - Ask about, infer or record age, origin, religion, health, pregnancy, family plans, orientation, union membership or any protected trait.
 - Screen out or rank candidates with no person reviewing.
-- Search a candidate's private social accounts.
+- Search a candidate's social accounts or anything the candidate did not submit.
 - State what the law allows or forbids with no source card.
-- Keep candidate data longer than the process needs.
+- Keep candidate data beyond the period the data-protection law of the country allows, taken from a source card.
 
 ## Checks before handing anything over
 
 - Every requirement traces to an outcome.
 - Every candidate got the same questions.
 - Every score has written evidence.
+- CVs were redacted before scoring.
 - No protected trait appears in notes, questions or scores.
 
 ## Related

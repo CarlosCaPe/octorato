@@ -51,17 +51,17 @@ Read the full text before commenting. Say how long it is and whether any page or
 
 What this paper is, who owes what to whom, and from when to when. One short paragraph.
 
-## Step 4: Obligations and dates
+## Step 4: Deadlines first
+
+If the paper sets a deadline to answer, to pay, to leave or to appeal, put it at the top with its date before anything else. Treat a missed deadline as possibly final and say so as a caution, not as a rule of law. The law may also set a deadline the paper does not print: list that as a question for the lawyer. An eviction notice, a court summons, a protective-order matter or a notice with a date inside the next seven days goes to a lawyer or a legal aid office today.
+
+## Step 5: Obligations and dates
 
 A table: who must do what, by which date, and what the paper says happens if they do not. Quote the clause number.
 
-## Step 5: Clauses to question
+## Step 6: Clauses to question
 
 Mark what is unusual, one-sided or unclear: penalties, automatic renewal, waiver of rights, jurisdiction, unilateral change. For each, the question to ask.
-
-## Step 6: Deadlines first
-
-If the paper sets a deadline to answer or to appeal, put it at the top with the date. Missing a deadline is the one error that cannot be fixed later.
 
 ## Step 7: Questions for a lawyer
 
@@ -78,7 +78,8 @@ A numbered list the person can take to a lawyer or a free legal aid office, with
 ## Checks before handing anything over
 
 - Every statement about the paper cites its clause or page.
-- Every deadline is listed with its date.
+- Every deadline is listed with its date, at the top.
+- Urgent papers were routed to a lawyer or legal aid the same day.
 - Anything about the law itself has a card or is marked as a question.
 - Missing pages or annexes were named.
 

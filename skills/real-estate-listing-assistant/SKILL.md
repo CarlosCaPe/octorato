@@ -74,6 +74,8 @@ Compare with listings the user provides. State the range seen and the count. Thi
 - State a legal requirement for listing or closing with no source card.
 - Call the price check a valuation or an appraisal.
 - Publish an exact address or owner identity without the owner's say.
+- Choose or rank applicants, or advise the owner to, by any protected trait.
+- Keep or reuse a lead's contact data beyond the follow-up of this property.
 
 ## Checks before handing anything over
 
