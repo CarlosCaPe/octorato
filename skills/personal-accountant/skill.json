@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "personal-accountant",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Personal bookkeeping assistant for any country: classify, reconcile, close the month, track filing dates from the official source, prepare a filing pack. Prepares, never files."
+}
