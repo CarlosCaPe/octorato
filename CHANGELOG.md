@@ -15,6 +15,12 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-10-06]: v9.4.0
+### Features
+- feat(commands): add /next, a plain-language status of the session (#364)
+### Other
+- docs(changelog): backfill v9.3.0 (#362)
+
 ## [2026-10-03]: v9.3.0
 ### Features
 - feat(wa-watch): optional all-chats coverage for the silence watcher (#360)
