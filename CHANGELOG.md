@@ -15,6 +15,12 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-10-06]: v9.10.0
+### Features
+- feat(send-gate): read the send ask the way the operator writes it (v10 T04) (#382)
+### Other
+- docs(changelog): backfill v9.9.0 (#384)
+
 ## [2026-10-06]: v9.9.0
 ### Features
 - feat(v10): phase 3 entry, one-command install that wires hooks and writes a first spec (#379)
