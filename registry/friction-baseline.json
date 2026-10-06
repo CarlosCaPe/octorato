@@ -1,7 +1,7 @@
 {
  "_comment": "v10 Replay_Harness baseline. Counts and per-case ids only: the corpus it was replayed from is private (company/friction-corpus/). Case fields: g gate, e event, h historical decision, d replayed decision, c reason code, l label (TP, FP, - unlabelled). Regenerate with `python3 scripts/replay_harness.py baseline` after an intended change.",
  "version": 1,
- "generated": "2026-10-06T16:17:50Z",
+ "generated": "2026-10-06T19:44:01Z",
  "window": {
   "since": "2026-09-06",
   "until": "2026-10-07"
@@ -174,9 +174,9 @@
   "g__pretool-mcp__outward-send.py": {
    "cases": 134,
    "historical_deny": 94,
-   "replay_deny": 94,
-   "agree": 134,
-   "hist_deny_reproduced": 94,
+   "replay_deny": 93,
+   "agree": 133,
+   "hist_deny_reproduced": 93,
    "hist_allow_reproduced": 40,
    "TP": 6,
    "FP": 32,
@@ -185,7 +185,7 @@
     32
    ],
    "labelled_denies": 38,
-   "deny_fidelity": 1.0,
+   "deny_fidelity": 0.989,
    "allow_fidelity": 1.0,
    "low_fidelity": false
   },
@@ -556,7 +556,7 @@
    "e": "PreToolUse",
    "h": "deny",
    "d": "deny",
-   "c": "send-ask",
+   "c": "panel-missing",
    "l": "FP"
   },
   "02a0847ded847c1c": {
@@ -1124,7 +1124,7 @@
    "e": "PreToolUse",
    "h": "deny",
    "d": "deny",
-   "c": "send-ask",
+   "c": "panel-impossible",
    "l": "-"
   },
   "0eba278ddf67b836": {
@@ -2139,8 +2139,8 @@
    "g": "g__pretool-mcp__outward-send.py",
    "e": "PreToolUse",
    "h": "deny",
-   "d": "deny",
-   "c": "send-ask",
+   "d": "allow",
+   "c": "",
    "l": "FP"
   },
   "2288236f1bf661ca": {
@@ -4628,7 +4628,7 @@
    "e": "PreToolUse",
    "h": "deny",
    "d": "deny",
-   "c": "send-ask",
+   "c": "panel-impossible",
    "l": "-"
   },
   "52776f3a143cc3ea": {
@@ -5996,7 +5996,7 @@
    "e": "PreToolUse",
    "h": "deny",
    "d": "deny",
-   "c": "send-ask",
+   "c": "panel-impossible",
    "l": "FP"
   },
   "6c2326acdae11503": {
@@ -6084,7 +6084,7 @@
    "e": "PreToolUse",
    "h": "deny",
    "d": "deny",
-   "c": "send-ask",
+   "c": "panel-missing",
    "l": "-"
   },
   "6d61caab79ef89d9": {
@@ -8980,7 +8980,7 @@
    "e": "PreToolUse",
    "h": "deny",
    "d": "deny",
-   "c": "send-ask",
+   "c": "panel-missing",
    "l": "-"
   },
   "a3f6068bdd0ac495": {
@@ -9532,7 +9532,7 @@
    "e": "PreToolUse",
    "h": "deny",
    "d": "deny",
-   "c": "send-ask",
+   "c": "panel-impossible",
    "l": "-"
   },
   "afa273f2a2ee5b39": {
@@ -12868,7 +12868,7 @@
    "e": "PreToolUse",
    "h": "deny",
    "d": "deny",
-   "c": "send-ask",
+   "c": "panel-impossible",
    "l": "FP"
   },
   "ee088be8783cd9bb": {
