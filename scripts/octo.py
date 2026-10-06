@@ -909,11 +909,19 @@ def friction_report(days: int, now: float = None) -> dict:
             base = json.load(fh)
     except (OSError, ValueError):
         pass
-    labelled = {}
-    for g, b in (base.get("gates") or {}).items():
-        tp, fp = (b.get("TP_FP_of_denies") or [0, 0])[:2]
-        if tp + fp:
-            labelled[g] = {"tp": tp, "fp": fp, "fp_rate": round(fp / (tp + fp), 3)}
+    # Fidelity and labels are recomputed from the baseline CASES, never read
+    # from its stored summary, so a hand-edited summary cannot vouch for itself.
+    labelled, fidelity = {}, {}
+    if base.get("cases"):
+        import replay_harness
+        for g, b in replay_harness.gate_stats(base["cases"]).items():
+            fidelity[g] = {"agree": b["agree"], "cases": b["cases"],
+                           "replay_deny": b["replay_deny"], "historical_deny": b["historical_deny"],
+                           "low_fidelity": b["low_fidelity"]}
+            tp, fp = b["TP_FP_of_denies"][:2]
+            if tp + fp:
+                labelled[g] = {"tp": tp, "fp": fp, "fp_rate": round(fp / (tp + fp), 3),
+                               "labelled": tp + fp, "historical_deny": b["historical_deny"]}
     # Every gate that denied, plus every hook with a recorded duration: a hook
     # that never denies can still be the costliest friction (budget-check).
     names = sorted(set(gates) | {g for g in per_hook if g.endswith(".py")},
@@ -927,7 +935,7 @@ def friction_report(days: int, now: float = None) -> dict:
                     "codes": dict(sorted(d["codes"].items(), key=lambda kv: -kv[1])),
                     "latency_n": len(h["ms"]), "latency_p50_ms": _median(h["ms"]),
                     "latency_p95_ms": _pct(h["ms"], 0.95), "timeouts": h["timeouts"],
-                    "labelled": labelled.get(g)})
+                    "labelled": labelled.get(g), "replay": fidelity.get(g)})
     return {"days": days, "since": since, "ledger_rows": len(rows), "latency_rows": len(lat),
             "ledger_dir": str(friction_ledger.ledger_dir()),
             "label_window": base.get("window"), "gates": out}
@@ -947,16 +955,26 @@ def cmd_friction(args) -> int:
         return 0
     lw = rep.get("label_window") or {}
     print(f"{'gate or hook':40s} {'denies':>6s} {'top reason':>18s} {'p50 ms':>7s} {'p95 ms':>7s} "
-          f"{'n lat':>6s}  FP rate (labelled denies, corpus {lw.get('since')}..{lw.get('until')})")
+          f"{'n lat':>6s}  {'replay agree':>12s} {'deny r/h':>8s}  FP rate of labelled denies "
+          f"(corpus {lw.get('since')}..{lw.get('until')})")
     for r in rep["gates"]:
         p50 = "-" if r["latency_p50_ms"] is None else f"{r['latency_p50_ms']:.0f}"
         p95 = "-" if r["latency_p95_ms"] is None else f"{r['latency_p95_ms']:.0f}"
         top = next(iter(r["codes"].items()), None)
         top = f"{top[0]} {top[1]}"[:18] if top else ""
+        rp = r.get("replay")
+        agree = f"{rp['agree']}/{rp['cases']}" if rp else "-"
+        dens = f"{rp['replay_deny']}/{rp['historical_deny']}" if rp else "-"
         lab = r["labelled"]
-        fp = f"{lab['fp_rate']:.0%} ({lab['fp']} FP / {lab['tp'] + lab['fp']})" if lab else "-"
+        fp = (f"{lab['fp_rate']:.0%} ({lab['fp']} FP, {lab['labelled']} of {lab['historical_deny']} "
+              f"labelled)") if lab else "-"
+        if rp and rp["low_fidelity"]:
+            fp += "  LOW-FIDELITY"
         print(f"{r['gate'][:40]:40s} {r['denies']:6d} {top:>18s} {p50:>7s} {p95:>7s} "
-              f"{r['latency_n']:6d}  {fp}")
+              f"{r['latency_n']:6d}  {agree:>12s} {dens:>8s}  {fp}")
+    print("replay agree: corpus cases whose replayed decision matches history; deny r/h: replayed "
+          "denies over historical denies. LOW-FIDELITY: under 50% on either side, so a replay "
+          "before/after on that gate is not evidence.")
     print("latency: the harness records a duration only when a hook prints output, and a deny "
           "leaves no duration at all, so '-' means not recorded, not fast.")
     return 0

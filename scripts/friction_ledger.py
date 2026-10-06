@@ -25,10 +25,12 @@ Each event becomes one JSONL line in the gitignored
 What is NEVER stored: the reason text, the tool input, a message body, a prompt.
 `input_sha256` is the sha256 of the input serialised as sorted-key JSON and cut
 to 1,200 characters (AC-01), so two identical denied calls share a digest and
-nothing about the call can be read back. `input_chars` is the length before
-the cut. For a Stop block the "input" is the assistant text the block refused.
+nothing about the call can be read back from the line alone. The digest is
+UNSALTED: a short input (`ls`, `git status`) can be recovered by hashing
+guesses, so the ledger is a local, gitignored file and never leaves the
+machine. `input_chars` is the length before the cut. For a Stop block the "input" is the assistant text the block refused.
 
-Hook latency rides along in `latency.jsonl` beside it: the harness writes a
+Hook latency rides along in monthly `latency-YYYY-MM.jsonl` files beside it: the harness writes a
 `durationMs` on a hook attachment and on `stop_hook_summary.hookInfos`, but only
 for a hook that printed something, so a silent hook (and a hook that denied: the
 deny leaves no success attachment) is invisible there. The report says so.
@@ -420,15 +422,27 @@ def _keys(path: Path) -> set:
     return keys
 
 
-def _append(path: Path, rows: list, seen: set) -> int:
-    new = [r for r in rows if r.get("key") and r["key"] not in seen]
+def _append(path: Path, rows: list, seen) -> int:
+    """Append rows whose key is new. `seen` is a set, or None for rows that are
+    new by construction (an incremental read past the file's saved offset)."""
+    new = [r for r in rows if r.get("key") and (seen is None or r["key"] not in seen)]
     if not new:
         return 0
     with open(path, "a", encoding="utf-8") as fh:
         for r in new:
-            seen.add(r["key"])
+            if seen is not None:
+                seen.add(r["key"])
             fh.write(json.dumps(r, ensure_ascii=False, sort_keys=True) + "\n")
     return len(new)
+
+
+def _month(ts: str) -> str:
+    m = (ts or "")[:7]
+    return m if re.fullmatch(r"\d{4}-\d{2}", m) else "unknown"
+
+
+def latency_file(d: Path, month: str) -> Path:
+    return d / f"latency-{month}.jsonl"
 
 
 def _read_offsets(path: Path) -> dict:
@@ -452,12 +466,18 @@ def ingest_paths(paths, incremental: bool = True, with_latency: bool = True,
     pending = False
     d = ledger_dir()
     d.mkdir(parents=True, exist_ok=True)
-    ledger, latency, offs = d / "ledger.jsonl", d / "latency.jsonl", d / "offsets.json"
+    ledger, offs = d / "ledger.jsonl", d / "offsets.json"
     added_e = added_l = files = 0
+    # Dedupe sets load LAZILY: a Stop with nothing new reads no ledger at all.
+    # The event ledger is small (hundreds of lines a month) and is always
+    # deduped. Latency is large (about 70k rows a month), so it is rotated by
+    # month and deduped only when a file is read from byte 0 (a new transcript,
+    # a reset offset or a full re-read), which is when a resumed copy can repeat
+    # rows; past a saved offset every byte is new by construction.
+    seen_e = None
+    seen_l = {}
     with _Lock(d / ".lock"):
         offsets = _read_offsets(offs) if incremental else {}
-        seen_e = _keys(ledger)
-        seen_l = _keys(latency) if with_latency else set()
         for p in paths:
             p = str(p)
             try:
@@ -489,14 +509,28 @@ def ingest_paths(paths, incremental: bool = True, with_latency: bool = True,
                 continue  # no whole line yet
             buf = buf[:cut + 1]
             ev, lat = scan_bytes(buf, with_latency)
-            added_e += _append(ledger, ev, seen_e)
-            if with_latency:
-                added_l += _append(latency, lat, seen_l)
+            if ev:
+                if seen_e is None:
+                    seen_e = _keys(ledger)
+                added_e += _append(ledger, ev, seen_e)
+            if with_latency and lat:
+                by_month = {}
+                for r in lat:
+                    by_month.setdefault(_month(r.get("ts")), []).append(r)
+                for month, rows in by_month.items():
+                    path = latency_file(d, month)
+                    if start == 0:
+                        if month not in seen_l:
+                            seen_l[month] = _keys(path)
+                        added_l += _append(path, rows, seen_l[month])
+                    else:
+                        added_l += _append(path, rows, None)
             offsets[p] = start + len(buf)
             files += 1
-        tmp = offs.with_suffix(".tmp")
-        tmp.write_text(json.dumps(offsets), encoding="utf-8")
-        os.replace(tmp, offs)
+        if files:
+            tmp = offs.with_suffix(".tmp")
+            tmp.write_text(json.dumps(offsets), encoding="utf-8")
+            os.replace(tmp, offs)
     return {"events": added_e, "latency": added_l, "files": files, "pending": pending}
 
 
@@ -529,7 +563,16 @@ def read_ledger(since: str = "") -> list:
 
 
 def read_latency(since: str = "") -> list:
-    return [r for r in _read_jsonl(ledger_dir() / "latency.jsonl") if r.get("ts", "") >= since]
+    """Latency rows since `since`, reading only the monthly files that can hold them."""
+    d = ledger_dir()
+    lo = _month(since) if since else ""
+    rows = []
+    for f in sorted(d.glob("latency-*.jsonl")):
+        month = f.stem[len("latency-"):]
+        if lo and month != "unknown" and month < lo:
+            continue
+        rows += [r for r in _read_jsonl(f) if r.get("ts", "") >= since]
+    return rows
 
 
 # ── cli ─────────────────────────────────────────────────────────────────────

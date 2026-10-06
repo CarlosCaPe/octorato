@@ -37,9 +37,10 @@ inputs cut to 2,000 characters, assistant and operator text whole. The gate
 reads that window as its
 transcript_path.
 
-ISOLATION. Every case runs under a fresh temp HOME, with the operator-override
-env vars stripped and `CLAUDE_SESSION_ID=__selftest__`, which is the same
-isolation `gate_selftest.py` gives a fixture leg (and the same seam the
+ISOLATION. Every case runs under a fresh temp HOME, with an ALLOWLIST
+environment (PATH, LANG, LC_*, PYTHON*, TMPDIR; no token, no OCTO_* override)
+and `CLAUDE_SESSION_ID=__selftest__`, the session seam `gate_selftest.py` gives
+a fixture leg (and the same seam the
 outward-send gate uses to accept a seeded gate receipt, so the receipt check
 does not mask the checks behind it). What the replay therefore CANNOT see, and
 what makes a replayed decision differ from the historical one: receipts and
@@ -81,7 +82,6 @@ REPO = HERE.parent
 sys.path.insert(0, str(HERE))
 
 import friction_ledger  # noqa: E402
-import gate_selftest  # noqa: E402
 
 BASELINE = REPO / "registry" / "friction-baseline.json"
 HOOKS_JSON = REPO / "hooks.json"
@@ -489,6 +489,25 @@ def decide(rc: int, out: str, err: str) -> tuple[str, str]:
     return "allow", ""
 
 
+_ENV_KEEP = ("PATH", "LANG", "TMPDIR", "SYSTEMROOT", "PATHEXT", "COMSPEC")
+_ENV_KEEP_PREFIX = ("LC_", "PYTHON")
+
+
+def replay_env(sandbox: Path) -> dict:
+    """An ALLOWLIST environment for a replayed gate.
+
+    Copying os.environ and stripping a denylist let every credential of the
+    shell that ran the harness (a GitHub token, the harness messaging token and
+    socket) reach real gate code fed real traffic. Only what a Python gate
+    needs to start is kept; HOME and the session id are the sandbox's own. The
+    operator overrides (OCTO_*) are therefore gone by construction.
+    """
+    env = {k: v for k, v in os.environ.items()
+           if k in _ENV_KEEP or k.startswith(_ENV_KEEP_PREFIX)}
+    env.update(HOME=str(sandbox), USERPROFILE=str(sandbox), CLAUDE_SESSION_ID=SELFTEST_SESSION)
+    return env
+
+
 def run_case(cdir: Path, cid: str) -> dict:
     case = _read_case(cdir, cid)
     script = gate_path(case["gate"])
@@ -511,13 +530,7 @@ def run_case(cdir: Path, cid: str) -> dict:
             for r in case["window"]:
                 fh.write(json.dumps(r, ensure_ascii=False) + "\n")
         payload["transcript_path"] = str(tp)
-        env = dict(os.environ)
-        for k in gate_selftest._OVERRIDE_ENV:
-            env.pop(k, None)
-        for k in list(env):
-            if k.startswith("GIT_") or k in ("OCTO_FRICTION_DIR",):
-                env.pop(k, None)
-        env.update(HOME=str(sandbox), USERPROFILE=str(sandbox), CLAUDE_SESSION_ID=SELFTEST_SESSION)
+        env = replay_env(sandbox)
         t0 = time.monotonic()
         try:
             cp = subprocess.run([sys.executable, str(script)], input=json.dumps(payload),
@@ -550,29 +563,70 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+LOW_FIDELITY = 0.5
+
+
+def gate_stats(cases: dict) -> dict:
+    """Per gate, from the baseline cases: how far a replay can be trusted.
+
+    `agree` counts cases whose replayed decision matches history. Fidelity is
+    measured on each side separately, because the two failure modes differ: a
+    gate whose block depends on real-HOME state replays its historical denies
+    as allows (goal-anchor), and a gate whose allow depends on a block-once
+    sentinel replays its historical allows as denies (chat-context). Either
+    side under 50% marks the gate LOW-FIDELITY, and a before/after claim on it
+    is flagged wherever it is printed.
+    """
+    out = {}
+    for c in cases.values():
+        g = out.setdefault(c["g"], {"cases": 0, "historical_deny": 0, "replay_deny": 0, "agree": 0,
+                                    "hist_deny_reproduced": 0, "hist_allow_reproduced": 0,
+                                    "TP": 0, "FP": 0, "TP_FP_of_denies": [0, 0],
+                                    "labelled_denies": 0})
+        hd = c["h"] == "deny"
+        rd = c["d"] in BLOCKING
+        g["cases"] += 1
+        g["historical_deny"] += hd
+        g["replay_deny"] += rd
+        g["agree"] += (hd == rd)
+        g["hist_deny_reproduced"] += hd and rd
+        g["hist_allow_reproduced"] += (not hd) and (not rd)
+        if c["l"] in ("TP", "FP"):
+            g[c["l"]] += 1
+            if hd:
+                g["TP_FP_of_denies"][0 if c["l"] == "TP" else 1] += 1
+                g["labelled_denies"] += 1
+    for g in out.values():
+        hd, ha = g["historical_deny"], g["cases"] - g["historical_deny"]
+        dr = g["hist_deny_reproduced"] / hd if hd else None
+        ar = g["hist_allow_reproduced"] / ha if ha else None
+        g["deny_fidelity"] = None if dr is None else round(dr, 3)
+        g["allow_fidelity"] = None if ar is None else round(ar, 3)
+        g["low_fidelity"] = any(x is not None and x < LOW_FIDELITY for x in (dr, ar))
+    return dict(sorted(out.items()))
+
+
+def fidelity_label(g: dict) -> str:
+    """'agree a/n, deny r/h' plus the LOW-FIDELITY mark."""
+    if not g:
+        return "no baseline stats"
+    txt = (f"agree {g['agree']}/{g['cases']}, deny {g['replay_deny']}/{g['historical_deny']} "
+           f"(historical denies reproduced {g['hist_deny_reproduced']}/{g['historical_deny']})")
+    return txt + (" LOW-FIDELITY" if g.get("low_fidelity") else "")
+
+
 def write_baseline(cdir: Path, jobs: int) -> int:
     rows = _index(cdir)
     labels = _labels(cdir)
     t0 = time.monotonic()
     res = replay_all(cdir, jobs)
     secs = round(time.monotonic() - t0, 1)
-    cases, gates = {}, {}
+    cases = {}
     for r in rows:
         x = res.get(r["id"]) or {"d": "missing", "c": ""}
-        lab = labels.get(r["id"], "-")
-        cases[r["id"]] = {"g": r["gate"], "e": r["event"], "h": r["hist"], "d": x["d"], "c": x["c"], "l": lab}
-        g = gates.setdefault(r["gate"], {"cases": 0, "historical_deny": 0, "replay_deny": 0,
-                                         "agree": 0, "TP": 0, "FP": 0, "TP_FP_of_denies": [0, 0]})
-        g["cases"] += 1
-        hd = r["hist"] == "deny"
-        rd = x["d"] in BLOCKING
-        g["historical_deny"] += hd
-        g["replay_deny"] += rd
-        g["agree"] += (hd == rd)
-        if lab in ("TP", "FP"):
-            g[lab] += 1
-            if hd:
-                g["TP_FP_of_denies"][0 if lab == "TP" else 1] += 1
+        cases[r["id"]] = {"g": r["gate"], "e": r["event"], "h": r["hist"], "d": x["d"], "c": x["c"],
+                          "l": labels.get(r["id"], "-")}
+    gates = gate_stats(cases)
     meta = {}
     try:
         meta = json.loads((cdir / "meta.json").read_text(encoding="utf-8"))
@@ -588,13 +642,14 @@ def write_baseline(cdir: Path, jobs: int) -> int:
         "window": {"since": meta.get("since"), "until": meta.get("until")},
         "corpus_cases": len(rows),
         "replay_seconds": secs,
-        "gates": dict(sorted(gates.items())),
+        "gates": gates,
         "cases": dict(sorted(cases.items())),
     }
     BASELINE.write_text(json.dumps(doc, indent=1, sort_keys=False) + "\n", encoding="utf-8")
     agree = sum(g["agree"] for g in gates.values())
     print(json.dumps({"baseline": str(BASELINE.relative_to(REPO)), "cases": len(rows),
-                      "agree_with_history": agree, "replay_seconds": secs}))
+                      "agree_with_history": agree, "replay_seconds": secs,
+                      "low_fidelity": [k for k, g in gates.items() if g["low_fidelity"]]}))
     return 0
 
 
@@ -606,24 +661,32 @@ def load_baseline(path: Path = BASELINE) -> dict:
 
 
 def compare(base: dict, res: dict) -> dict:
-    """allow->deny, deny->allow and lost TPs, per case, against the baseline."""
-    a2d, d2a, lost, code_moves = [], [], [], []
+    """allow->deny, deny->allow, lost TPs, lost unlabelled historical denies and
+    gates that stopped denying altogether, against the baseline."""
+    a2d, d2a, lost, lost_unlab, code_moves = [], [], [], [], []
+    now_deny, base_deny = {}, {}
     for cid, now in res.items():
         b = (base.get("cases") or {}).get(cid)
         if not b:
             continue
         was, isn = b["d"] in BLOCKING, now["d"] in BLOCKING
+        base_deny[b["g"]] = base_deny.get(b["g"], 0) + was
+        now_deny[b["g"]] = now_deny.get(b["g"], 0) + isn
         row = {"id": cid, "gate": b["g"], "label": b["l"], "was": b["d"], "now": now["d"],
-               "code_was": b["c"], "code_now": now["c"]}
+               "code_was": b["c"], "code_now": now["c"], "hist": b["h"]}
         if was and not isn:
             d2a.append(row)
             if b["l"] == "TP":
                 lost.append(row)
+            elif b["l"] == "-" and b["h"] == "deny":
+                lost_unlab.append(row)
         elif isn and not was:
             a2d.append(row)
         elif was and isn and b["c"] != now["c"]:
             code_moves.append(row)
-    return {"allow_to_deny": a2d, "deny_to_allow": d2a, "lost_tp": lost, "code_moves": code_moves}
+    silenced = sorted(g for g, n in base_deny.items() if n and not now_deny.get(g))
+    return {"allow_to_deny": a2d, "deny_to_allow": d2a, "lost_tp": lost,
+            "lost_unlabelled_deny": lost_unlab, "silenced_gates": silenced, "code_moves": code_moves}
 
 
 def cmd_replay(args) -> int:
@@ -641,8 +704,10 @@ def cmd_replay(args) -> int:
     secs = round(time.monotonic() - t0, 1)
     missing = sorted(set(base["cases"]) - set(res)) if not args.gate else []
     diff = compare(base, res)
+    stats = gate_stats(base["cases"])
     if args.json:
         print(json.dumps({"cases": len(res), "seconds": secs, **diff,
+                          "low_fidelity": [g for g, v in stats.items() if v["low_fidelity"]],
                           "not_in_corpus": len(missing)}, indent=1))
     else:
         per = {}
@@ -655,22 +720,45 @@ def cmd_replay(args) -> int:
             p[1] += b["d"] in BLOCKING
             p[2] += now["d"] in BLOCKING
         print(f"replayed {len(res)} cases in {secs}s against the baseline of {base.get('generated')}")
-        print(f"{'gate':44s} {'cases':>6s} {'deny before':>12s} {'deny now':>9s}")
+        print(f"{'gate':40s} {'cases':>5s} {'deny before':>11s} {'deny now':>8s}  fidelity vs history")
         for g, (n, b, a) in sorted(per.items()):
-            print(f"{g:44s} {n:6d} {b:12d} {a:9d}")
+            print(f"{g:40s} {n:5d} {b:11d} {a:8d}  {fidelity_label(stats.get(g) or {})}")
         for name in ("allow_to_deny", "deny_to_allow", "code_moves"):
             rows = diff[name]
             print(f"{name.replace('_', ' ')}: {len(rows)}")
             for r in rows[:40]:
-                print(f"  {r['id']} {r['gate']} label={r['label']} {r['was']}({r['code_was']}) -> "
-                      f"{r['now']}({r['code_now']})")
+                flag = " [LOW-FIDELITY gate: not evidence]" if \
+                    (stats.get(r["gate"]) or {}).get("low_fidelity") else ""
+                print(f"  {r['id']} {r['gate']} label={r['label']} hist={r['hist']} "
+                      f"{r['was']}({r['code_was']}) -> {r['now']}({r['code_now']}){flag}")
+        low = sorted({r["gate"] for k in ("allow_to_deny", "deny_to_allow", "code_moves") for r in diff[k]
+                      if (stats.get(r["gate"]) or {}).get("low_fidelity")})
+        if low:
+            print("WARNING: before/after on LOW-FIDELITY gate(s); the replay does not reproduce their "
+                  "history, so these counts prove nothing about them: " + ", ".join(low))
         if missing:
             print(f"baseline cases absent from this corpus: {len(missing)} (corpus rebuilt or pruned)")
+    rc = 0
     if diff["lost_tp"]:
         print(f"FAIL: {len(diff['lost_tp'])} labelled true positive(s) no longer blocked: "
               + ", ".join(f"{r['gate']}:{r['id']}" for r in diff["lost_tp"][:10]), file=sys.stderr)
-        return 1
-    return 0
+        rc = 1
+    if diff["silenced_gates"]:
+        print("FAIL: gate(s) that denied in the baseline deny nothing now: "
+              + ", ".join(diff["silenced_gates"]), file=sys.stderr)
+        rc = 1
+    if diff["lost_unlabelled_deny"]:
+        n = len(diff["lost_unlabelled_deny"])
+        if getattr(args, "allow_unlabelled_loss", False):
+            print(f"note: {n} unlabelled historical deny(s) now allow, accepted by "
+                  "--allow-unlabelled-loss", file=sys.stderr)
+        else:
+            print(f"FAIL: {n} unlabelled historical deny(s) now allow (label them, or pass "
+                  "--allow-unlabelled-loss for an intended loosening): "
+                  + ", ".join(f"{r['gate']}:{r['id']}" for r in diff["lost_unlabelled_deny"][:10]),
+                  file=sys.stderr)
+            rc = 1
+    return rc
 
 
 def cmd_baseline(args) -> int:
@@ -692,14 +780,7 @@ def cmd_label(args) -> int:
         labels = _labels(cdir)
         for cid, c in base["cases"].items():
             c["l"] = labels.get(cid, "-")
-        for g in base.get("gates", {}).values():
-            g.update(TP=0, FP=0, TP_FP_of_denies=[0, 0])
-        for cid, c in base["cases"].items():
-            if c["l"] in ("TP", "FP"):
-                g = base["gates"][c["g"]]
-                g[c["l"]] += 1
-                if c["h"] == "deny":
-                    g["TP_FP_of_denies"][0 if c["l"] == "TP" else 1] += 1
+        base["gates"] = gate_stats(base["cases"])
         BASELINE.write_text(json.dumps(base, indent=1) + "\n", encoding="utf-8")
     return 0
 
@@ -721,6 +802,8 @@ def main(argv=None) -> int:
     r.add_argument("--gate", default="", help="only this gate script")
     r.add_argument("--baseline", default="")
     r.add_argument("--json", action="store_true")
+    r.add_argument("--allow-unlabelled-loss", action="store_true",
+                   help="accept unlabelled historical denies that now allow (an intended loosening)")
     sub.add_parser("baseline", help="replay and rewrite registry/friction-baseline.json")
     sub.add_parser("label", help="re-apply the private label rules")
     a = ap.parse_args(argv)

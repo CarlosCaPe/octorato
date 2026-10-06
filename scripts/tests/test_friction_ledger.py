@@ -167,6 +167,28 @@ class TestLedger(FrictionCase):
         self.assertGreater(calls, 2)
         self.assertEqual(sorted(r["key"] for r in self.ledger()), whole)
 
+    def test_latency_is_monthly_and_a_noop_stop_reads_no_ledger(self):
+        friction_ledger.ingest_paths([self.tp])
+        self.assertTrue((self.ldir / "latency-2026-09.jsonl").exists())
+        self.assertFalse((self.ldir / "latency.jsonl").exists())
+        with mock.patch.object(friction_ledger, "_keys", side_effect=AssertionError("read")):
+            res = friction_ledger.ingest_paths([self.tp])
+        self.assertEqual(res["files"], 0)
+
+    def test_appended_bytes_skip_latency_dedupe(self):
+        recs = _transcript()
+        _write(self.tp, recs[:6])
+        friction_ledger.ingest_paths([self.tp])
+        with open(self.tp, "a", encoding="utf-8") as fh:
+            for r in recs[6:]:
+                fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+        calls = []
+        real = friction_ledger._keys
+        with mock.patch.object(friction_ledger, "_keys", side_effect=lambda p: calls.append(p.name) or real(p)):
+            friction_ledger.ingest_paths([self.tp])
+        self.assertNotIn("latency-2026-09.jsonl", calls)  # past the offset: new by construction
+        self.assertEqual(len(friction_ledger.read_latency()), 3)
+
     def test_half_written_line_waits_for_its_newline(self):
         recs = _transcript()
         head = "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in recs[:3])
@@ -241,7 +263,7 @@ class TestReplayHarness(FrictionCase):
 
     def _mini_corpus(self) -> Path:
         cdir = self.tmp / "corpus"
-        (cdir / "cases").mkdir(parents=True)
+        (cdir / "cases").mkdir(parents=True, exist_ok=True)
         cases = [("c-deny", {"command": "grep -i token .env"}, "deny"),
                  ("c-allow", {"command": "ls -la"}, "allow")]
         with open(cdir / "index.jsonl", "w", encoding="utf-8") as idx:
@@ -309,10 +331,79 @@ class TestReplayHarness(FrictionCase):
         self.assertEqual(case["payload"]["tool_input"], DENY_INPUT)
         self.assertEqual(case["window"][-1]["uuid"], "a1")
 
-    def test_unlabelled_flip_is_reported_but_does_not_fail(self):
-        base = {"cases": {"x": {"g": "g.py", "e": "Stop", "h": "deny", "d": "deny", "c": "a", "l": "FP"}}}
-        diff = replay_harness.compare(base, {"x": {"id": "x", "d": "allow", "c": ""}})
-        self.assertEqual((len(diff["deny_to_allow"]), len(diff["lost_tp"])), (1, 0))
+    def test_fp_labelled_flip_is_reported_but_does_not_fail(self):
+        base = {"cases": {"x": {"g": "g.py", "e": "Stop", "h": "deny", "d": "deny", "c": "a", "l": "FP"},
+                          "y": {"g": "g.py", "e": "Stop", "h": "deny", "d": "deny", "c": "a", "l": "TP"}}}
+        diff = replay_harness.compare(base, {"x": {"id": "x", "d": "allow", "c": ""},
+                                             "y": {"id": "y", "d": "deny", "c": "a"}})
+        self.assertEqual(len(diff["deny_to_allow"]), 1)
+        self.assertEqual((diff["lost_tp"], diff["lost_unlabelled_deny"], diff["silenced_gates"]), ([], [], []))
+
+    def _run_replay(self, base: dict, now: dict, extra=()) -> int:
+        cdir = self._mini_corpus()
+        bpath = self.tmp / "baseline.json"
+        bpath.write_text(json.dumps(base), encoding="utf-8")
+        argv = ["--corpus", str(cdir), "replay", "--baseline", str(bpath), *extra]
+        with mock.patch.object(replay_harness, "replay_all", return_value=now), \
+                redirect_stdout(io.StringIO()) as self.out, mock.patch("sys.stderr", new=io.StringIO()):
+            return replay_harness.main(argv)
+
+    def test_gate_that_stops_denying_fails_even_without_labels(self):
+        # The mutant QA found: an all-FP/unlabelled gate disarmed to 0 denies exited 0.
+        base = {"cases": {"a": {"g": "s.py", "e": "PreToolUse", "h": "deny", "d": "deny", "c": "x", "l": "FP"},
+                          "b": {"g": "s.py", "e": "PreToolUse", "h": "deny", "d": "deny", "c": "x", "l": "FP"}}}
+        now = {"a": {"id": "a", "d": "allow", "c": ""}, "b": {"id": "b", "d": "allow", "c": ""}}
+        self.assertEqual(self._run_replay(base, now), 1)
+        self.assertEqual(self._run_replay(base, now, ["--allow-unlabelled-loss"]), 1)
+
+    def test_unlabelled_historical_deny_loss_needs_the_flag(self):
+        base = {"cases": {"a": {"g": "s.py", "e": "PreToolUse", "h": "deny", "d": "deny", "c": "x", "l": "-"},
+                          "b": {"g": "s.py", "e": "PreToolUse", "h": "deny", "d": "deny", "c": "x", "l": "-"}}}
+        now = {"a": {"id": "a", "d": "allow", "c": ""}, "b": {"id": "b", "d": "deny", "c": "x"}}
+        self.assertEqual(self._run_replay(base, now), 1)
+        self.assertEqual(self._run_replay(base, now, ["--allow-unlabelled-loss"]), 0)
+
+    def test_low_fidelity_is_measured_and_flagged(self):
+        cases = {}
+        for i in range(10):  # 10 historical denies, replay reproduces 1: LOW on the deny side
+            cases[f"d{i}"] = {"g": "low.py", "e": "Stop", "h": "deny", "d": "deny" if i == 0 else "allow",
+                              "c": "", "l": "-"}
+        for i in range(4):  # block-once shape: historical allows replayed as denies
+            cases[f"o{i}"] = {"g": "once.py", "e": "PreToolUse", "h": "allow", "d": "deny", "c": "", "l": "-"}
+        cases["o-d"] = {"g": "once.py", "e": "PreToolUse", "h": "deny", "d": "deny", "c": "", "l": "-"}
+        for i in range(3):
+            cases[f"k{i}"] = {"g": "ok.py", "e": "Stop", "h": "deny", "d": "deny", "c": "", "l": "-"}
+        st = replay_harness.gate_stats(cases)
+        self.assertTrue(st["low.py"]["low_fidelity"])
+        self.assertEqual((st["low.py"]["hist_deny_reproduced"], st["low.py"]["historical_deny"]), (1, 10))
+        self.assertTrue(st["once.py"]["low_fidelity"])
+        self.assertFalse(st["ok.py"]["low_fidelity"])
+        self.assertIn("LOW-FIDELITY", replay_harness.fidelity_label(st["low.py"]))
+        now = {"d0": {"id": "d0", "d": "allow", "c": ""}}
+        self._run_replay({"cases": cases}, now, ["--allow-unlabelled-loss"])
+        self.assertIn("LOW-FIDELITY", self.out.getvalue())
+        self.assertIn("not evidence", self.out.getvalue())
+
+    def test_replayed_gate_gets_an_allowlist_env_without_tokens(self):
+        probe = self.tmp / "probe_gate.py"
+        probe.write_text(
+            "import os, sys\n"
+            "leaked = [k for k in ('GH_TOKEN', 'GITHUB_PERSONAL_ACCESS_TOKEN', 'CLAUDE_CODE_MESSAGING_TOKEN',\n"
+            "                      'CLAUDE_CODE_MESSAGING_SOCKET', 'OCTO_MERGE_APPROVE', 'SENTINEL_X')\n"
+            "          if k in os.environ]\n"
+            "if leaked or 'PATH' not in os.environ or os.environ.get('CLAUDE_SESSION_ID') != '__selftest__':\n"
+            "    print('LEAK ' + ','.join(leaked), file=sys.stderr); sys.exit(2)\n", encoding="utf-8")
+        cdir = self._mini_corpus()
+        secrets = {"GH_TOKEN": "sentinel-a", "GITHUB_PERSONAL_ACCESS_TOKEN": "sentinel-b",
+                   "CLAUDE_CODE_MESSAGING_TOKEN": "sentinel-c", "CLAUDE_CODE_MESSAGING_SOCKET": "/tmp/s",
+                   "OCTO_MERGE_APPROVE": "1", "SENTINEL_X": "sentinel-d"}
+        with mock.patch.dict(os.environ, secrets), \
+                mock.patch.object(replay_harness, "gate_path", return_value=probe):
+            res = replay_harness.run_case(cdir, "c-allow")
+        self.assertEqual(res["d"], "allow")
+        env = replay_harness.replay_env(self.tmp)
+        self.assertNotIn("GH_TOKEN", env)
+        self.assertEqual(env["HOME"], str(self.tmp))
 
     def test_label_rules_first_match_wins(self):
         case = {"gate": "g.py", "hist": "deny", "hist_code": "send-ask", "sub": False,

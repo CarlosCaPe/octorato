@@ -1,325 +1,481 @@
 {
  "_comment": "v10 Replay_Harness baseline. Counts and per-case ids only: the corpus it was replayed from is private (company/friction-corpus/). Case fields: g gate, e event, h historical decision, d replayed decision, c reason code, l label (TP, FP, - unlabelled). Regenerate with `python3 scripts/replay_harness.py baseline` after an intended change.",
  "version": 1,
- "generated": "2026-10-06T15:38:36Z",
+ "generated": "2026-10-06T16:17:50Z",
  "window": {
   "since": "2026-09-06",
   "until": "2026-10-07"
  },
  "corpus_cases": 1654,
- "replay_seconds": 139.4,
+ "replay_seconds": 140.0,
  "gates": {
   "cadence-stop-hook.py": {
    "cases": 51,
    "historical_deny": 11,
    "replay_deny": 9,
    "agree": 47,
+   "hist_deny_reproduced": 8,
+   "hist_allow_reproduced": 39,
    "TP": 0,
    "FP": 0,
    "TP_FP_of_denies": [
     0,
     0
-   ]
+   ],
+   "labelled_denies": 0,
+   "deny_fidelity": 0.727,
+   "allow_fidelity": 0.975,
+   "low_fidelity": false
   },
   "claim-verify-stop.py": {
    "cases": 55,
    "historical_deny": 15,
    "replay_deny": 15,
    "agree": 51,
+   "hist_deny_reproduced": 13,
+   "hist_allow_reproduced": 38,
    "TP": 0,
    "FP": 0,
    "TP_FP_of_denies": [
     0,
     0
-   ]
+   ],
+   "labelled_denies": 0,
+   "deny_fidelity": 0.867,
+   "allow_fidelity": 0.95,
+   "low_fidelity": false
   },
   "config-ship-verify.py": {
    "cases": 40,
    "historical_deny": 0,
    "replay_deny": 0,
    "agree": 40,
+   "hist_deny_reproduced": 0,
+   "hist_allow_reproduced": 40,
    "TP": 0,
    "FP": 0,
    "TP_FP_of_denies": [
     0,
     0
-   ]
+   ],
+   "labelled_denies": 0,
+   "deny_fidelity": null,
+   "allow_fidelity": 1.0,
+   "low_fidelity": false
   },
   "d__stop__wa-guardia.py": {
    "cases": 78,
    "historical_deny": 38,
    "replay_deny": 0,
    "agree": 40,
+   "hist_deny_reproduced": 0,
+   "hist_allow_reproduced": 40,
    "TP": 0,
    "FP": 4,
    "TP_FP_of_denies": [
     0,
     4
-   ]
+   ],
+   "labelled_denies": 4,
+   "deny_fidelity": 0.0,
+   "allow_fidelity": 1.0,
+   "low_fidelity": true
   },
   "delegate-gate.py": {
    "cases": 80,
    "historical_deny": 0,
    "replay_deny": 0,
    "agree": 80,
+   "hist_deny_reproduced": 0,
+   "hist_allow_reproduced": 80,
    "TP": 0,
    "FP": 0,
    "TP_FP_of_denies": [
     0,
     0
-   ]
+   ],
+   "labelled_denies": 0,
+   "deny_fidelity": null,
+   "allow_fidelity": 1.0,
+   "low_fidelity": false
   },
   "dimension-awareness-hook.py": {
    "cases": 82,
    "historical_deny": 2,
    "replay_deny": 0,
    "agree": 80,
+   "hist_deny_reproduced": 0,
+   "hist_allow_reproduced": 80,
    "TP": 0,
    "FP": 0,
    "TP_FP_of_denies": [
     0,
     0
-   ]
+   ],
+   "labelled_denies": 0,
+   "deny_fidelity": 0.0,
+   "allow_fidelity": 1.0,
+   "low_fidelity": true
   },
   "g__pretool-bash__git-discipline.py": {
    "cases": 80,
    "historical_deny": 0,
    "replay_deny": 0,
    "agree": 80,
+   "hist_deny_reproduced": 0,
+   "hist_allow_reproduced": 80,
    "TP": 0,
    "FP": 0,
    "TP_FP_of_denies": [
     0,
     0
-   ]
+   ],
+   "labelled_denies": 0,
+   "deny_fidelity": null,
+   "allow_fidelity": 1.0,
+   "low_fidelity": false
   },
   "g__pretool-bash__tree-owner.py": {
    "cases": 46,
    "historical_deny": 6,
    "replay_deny": 0,
    "agree": 40,
+   "hist_deny_reproduced": 0,
+   "hist_allow_reproduced": 40,
    "TP": 0,
    "FP": 0,
    "TP_FP_of_denies": [
     0,
     0
-   ]
+   ],
+   "labelled_denies": 0,
+   "deny_fidelity": 0.0,
+   "allow_fidelity": 1.0,
+   "low_fidelity": true
   },
   "g__pretool-mcp__chat-context.py": {
    "cases": 33,
    "historical_deny": 9,
    "replay_deny": 33,
    "agree": 9,
+   "hist_deny_reproduced": 9,
+   "hist_allow_reproduced": 0,
    "TP": 0,
    "FP": 9,
    "TP_FP_of_denies": [
     0,
     9
-   ]
+   ],
+   "labelled_denies": 9,
+   "deny_fidelity": 1.0,
+   "allow_fidelity": 0.0,
+   "low_fidelity": true
   },
   "g__pretool-mcp__outward-send.py": {
    "cases": 134,
    "historical_deny": 94,
    "replay_deny": 94,
    "agree": 134,
+   "hist_deny_reproduced": 94,
+   "hist_allow_reproduced": 40,
    "TP": 6,
    "FP": 32,
    "TP_FP_of_denies": [
     6,
     32
-   ]
+   ],
+   "labelled_denies": 38,
+   "deny_fidelity": 1.0,
+   "allow_fidelity": 1.0,
+   "low_fidelity": false
   },
   "g__pretool-write__tree-owner.py": {
    "cases": 81,
    "historical_deny": 1,
    "replay_deny": 0,
    "agree": 80,
+   "hist_deny_reproduced": 0,
+   "hist_allow_reproduced": 80,
    "TP": 0,
    "FP": 0,
    "TP_FP_of_denies": [
     0,
     0
-   ]
+   ],
+   "labelled_denies": 0,
+   "deny_fidelity": 0.0,
+   "allow_fidelity": 1.0,
+   "low_fidelity": true
   },
   "g__pretool__arming-surface.py": {
    "cases": 41,
    "historical_deny": 1,
    "replay_deny": 0,
    "agree": 40,
+   "hist_deny_reproduced": 0,
+   "hist_allow_reproduced": 40,
    "TP": 0,
    "FP": 0,
    "TP_FP_of_denies": [
     0,
     0
-   ]
+   ],
+   "labelled_denies": 0,
+   "deny_fidelity": 0.0,
+   "allow_fidelity": 1.0,
+   "low_fidelity": true
   },
   "g__pretool__kernel.py": {
    "cases": 40,
    "historical_deny": 0,
    "replay_deny": 0,
    "agree": 40,
+   "hist_deny_reproduced": 0,
+   "hist_allow_reproduced": 40,
    "TP": 0,
    "FP": 0,
    "TP_FP_of_denies": [
     0,
     0
-   ]
+   ],
+   "labelled_denies": 0,
+   "deny_fidelity": null,
+   "allow_fidelity": 1.0,
+   "low_fidelity": false
   },
   "g__stop__defer-today.py": {
    "cases": 46,
    "historical_deny": 6,
    "replay_deny": 5,
    "agree": 43,
+   "hist_deny_reproduced": 4,
+   "hist_allow_reproduced": 39,
    "TP": 0,
    "FP": 0,
    "TP_FP_of_denies": [
     0,
     0
-   ]
+   ],
+   "labelled_denies": 0,
+   "deny_fidelity": 0.667,
+   "allow_fidelity": 0.975,
+   "low_fidelity": false
   },
   "g__stop__delegation-audit.py": {
    "cases": 105,
    "historical_deny": 65,
    "replay_deny": 0,
    "agree": 40,
+   "hist_deny_reproduced": 0,
+   "hist_allow_reproduced": 40,
    "TP": 0,
    "FP": 0,
    "TP_FP_of_denies": [
     0,
     0
-   ]
+   ],
+   "labelled_denies": 0,
+   "deny_fidelity": 0.0,
+   "allow_fidelity": 1.0,
+   "low_fidelity": true
   },
   "g__stop__draft-promise.py": {
    "cases": 40,
    "historical_deny": 0,
    "replay_deny": 0,
    "agree": 40,
+   "hist_deny_reproduced": 0,
+   "hist_allow_reproduced": 40,
    "TP": 0,
    "FP": 0,
    "TP_FP_of_denies": [
     0,
     0
-   ]
+   ],
+   "labelled_denies": 0,
+   "deny_fidelity": null,
+   "allow_fidelity": 1.0,
+   "low_fidelity": false
   },
   "g__stop__goal-anchor.py": {
    "cases": 143,
    "historical_deny": 103,
    "replay_deny": 9,
    "agree": 49,
+   "hist_deny_reproduced": 9,
+   "hist_allow_reproduced": 40,
    "TP": 0,
    "FP": 22,
    "TP_FP_of_denies": [
     0,
     22
-   ]
+   ],
+   "labelled_denies": 22,
+   "deny_fidelity": 0.087,
+   "allow_fidelity": 1.0,
+   "low_fidelity": true
   },
   "g__stop__paste-ready-raw.py": {
    "cases": 40,
    "historical_deny": 0,
    "replay_deny": 0,
    "agree": 40,
+   "hist_deny_reproduced": 0,
+   "hist_allow_reproduced": 40,
    "TP": 0,
    "FP": 0,
    "TP_FP_of_denies": [
     0,
     0
-   ]
+   ],
+   "labelled_denies": 0,
+   "deny_fidelity": null,
+   "allow_fidelity": 1.0,
+   "low_fidelity": false
   },
   "g__stop__unsourced-absence.py": {
    "cases": 40,
    "historical_deny": 0,
    "replay_deny": 0,
    "agree": 40,
+   "hist_deny_reproduced": 0,
+   "hist_allow_reproduced": 40,
    "TP": 0,
    "FP": 0,
    "TP_FP_of_denies": [
     0,
     0
-   ]
+   ],
+   "labelled_denies": 0,
+   "deny_fidelity": null,
+   "allow_fidelity": 1.0,
+   "low_fidelity": false
   },
   "g__stop__unsourced-attribute.py": {
    "cases": 54,
    "historical_deny": 14,
    "replay_deny": 16,
    "agree": 52,
+   "hist_deny_reproduced": 14,
+   "hist_allow_reproduced": 38,
    "TP": 0,
    "FP": 0,
    "TP_FP_of_denies": [
     0,
     0
-   ]
+   ],
+   "labelled_denies": 0,
+   "deny_fidelity": 1.0,
+   "allow_fidelity": 0.95,
+   "low_fidelity": false
   },
   "grafo-gate.py": {
    "cases": 41,
    "historical_deny": 1,
    "replay_deny": 1,
    "agree": 41,
+   "hist_deny_reproduced": 1,
+   "hist_allow_reproduced": 40,
    "TP": 0,
    "FP": 0,
    "TP_FP_of_denies": [
     0,
     0
-   ]
+   ],
+   "labelled_denies": 0,
+   "deny_fidelity": 1.0,
+   "allow_fidelity": 1.0,
+   "low_fidelity": false
   },
   "grafo-ledger-check.py": {
    "cases": 40,
    "historical_deny": 0,
    "replay_deny": 0,
    "agree": 40,
+   "hist_deny_reproduced": 0,
+   "hist_allow_reproduced": 40,
    "TP": 0,
    "FP": 0,
    "TP_FP_of_denies": [
     0,
     0
-   ]
+   ],
+   "labelled_denies": 0,
+   "deny_fidelity": null,
+   "allow_fidelity": 1.0,
+   "low_fidelity": false
   },
   "no-pause-suggestion.py": {
    "cases": 40,
    "historical_deny": 0,
    "replay_deny": 0,
    "agree": 40,
+   "hist_deny_reproduced": 0,
+   "hist_allow_reproduced": 40,
    "TP": 0,
    "FP": 0,
    "TP_FP_of_denies": [
     0,
     0
-   ]
+   ],
+   "labelled_denies": 0,
+   "deny_fidelity": null,
+   "allow_fidelity": 1.0,
+   "low_fidelity": false
   },
   "qa-merge-gate.py": {
    "cases": 107,
    "historical_deny": 67,
    "replay_deny": 65,
    "agree": 105,
+   "hist_deny_reproduced": 65,
+   "hist_allow_reproduced": 40,
    "TP": 12,
    "FP": 47,
    "TP_FP_of_denies": [
     12,
     47
-   ]
+   ],
+   "labelled_denies": 59,
+   "deny_fidelity": 0.97,
+   "allow_fidelity": 1.0,
+   "low_fidelity": false
   },
   "secrets-grep-guard.py": {
    "cases": 61,
    "historical_deny": 21,
    "replay_deny": 21,
    "agree": 61,
+   "hist_deny_reproduced": 21,
+   "hist_allow_reproduced": 40,
    "TP": 0,
-   "FP": 17,
+   "FP": 14,
    "TP_FP_of_denies": [
     0,
     14
-   ]
+   ],
+   "labelled_denies": 14,
+   "deny_fidelity": 1.0,
+   "allow_fidelity": 1.0,
+   "low_fidelity": false
   },
   "source-attribution-check.py": {
    "cases": 56,
    "historical_deny": 16,
    "replay_deny": 11,
    "agree": 49,
+   "hist_deny_reproduced": 10,
+   "hist_allow_reproduced": 39,
    "TP": 0,
    "FP": 0,
    "TP_FP_of_denies": [
     0,
     0
-   ]
+   ],
+   "labelled_denies": 0,
+   "deny_fidelity": 0.625,
+   "allow_fidelity": 0.975,
+   "low_fidelity": false
   }
  },
  "cases": {
@@ -6961,7 +7117,7 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "-"
   },
   "8086575551ee897d": {
    "g": "d__stop__wa-guardia.py",
@@ -9137,7 +9293,7 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "-"
   },
   "a949a8cd31b2f1dd": {
    "g": "delegate-gate.py",
@@ -10489,7 +10645,7 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "-"
   },
   "c532033b9224f9e7": {
    "g": "g__pretool-bash__tree-owner.py",
