@@ -35,12 +35,12 @@
    "hist_deny_reproduced": 13,
    "hist_allow_reproduced": 38,
    "TP": 0,
-   "FP": 0,
+   "FP": 8,
    "TP_FP_of_denies": [
     0,
-    0
+    8
    ],
-   "labelled_denies": 0,
+   "labelled_denies": 8,
    "deny_fidelity": 0.867,
    "allow_fidelity": 0.95,
    "low_fidelity": false
@@ -449,12 +449,12 @@
    "hist_deny_reproduced": 21,
    "hist_allow_reproduced": 40,
    "TP": 0,
-   "FP": 14,
+   "FP": 18,
    "TP_FP_of_denies": [
     0,
-    14
+    18
    ],
-   "labelled_denies": 14,
+   "labelled_denies": 18,
    "deny_fidelity": 1.0,
    "allow_fidelity": 1.0,
    "low_fidelity": false
@@ -1045,7 +1045,7 @@
    "h": "deny",
    "d": "deny",
    "c": "total-coverage",
-   "l": "-"
+   "l": "FP"
   },
   "0cf5fb34e6ec6e9c": {
    "g": "cadence-stop-hook.py",
@@ -1757,7 +1757,7 @@
    "h": "deny",
    "d": "deny",
    "c": "total-coverage",
-   "l": "-"
+   "l": "FP"
   },
   "1bb1fcb58856ddb4": {
    "g": "g__pretool__arming-surface.py",
@@ -1925,7 +1925,7 @@
    "h": "deny",
    "d": "deny",
    "c": "total-coverage",
-   "l": "-"
+   "l": "FP"
   },
   "1e99db8c20335573": {
    "g": "g__pretool-bash__git-discipline.py",
@@ -2949,7 +2949,7 @@
    "h": "deny",
    "d": "deny",
    "c": "total-coverage",
-   "l": "-"
+   "l": "FP"
   },
   "31252ccb85d13f48": {
    "g": "claim-verify-stop.py",
@@ -3957,7 +3957,7 @@
    "h": "deny",
    "d": "deny",
    "c": "secret-read",
-   "l": "-"
+   "l": "FP"
   },
   "44fdd3d1d7c98707": {
    "g": "qa-merge-gate.py",
@@ -6213,7 +6213,7 @@
    "h": "deny",
    "d": "deny",
    "c": "secret-read",
-   "l": "-"
+   "l": "FP"
   },
   "6fb3c29667e4e789": {
    "g": "g__stop__paste-ready-raw.py",
@@ -6661,7 +6661,7 @@
    "h": "deny",
    "d": "deny",
    "c": "total-coverage",
-   "l": "-"
+   "l": "FP"
   },
   "78d3d5cb9c19bf28": {
    "g": "cadence-stop-hook.py",
@@ -10605,7 +10605,7 @@
    "h": "deny",
    "d": "deny",
    "c": "secret-read",
-   "l": "-"
+   "l": "FP"
   },
   "c4df44184dcfa3d4": {
    "g": "qa-merge-gate.py",
@@ -10925,7 +10925,7 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "FP"
   },
   "ca600b2b2c605bf7": {
    "g": "g__stop__goal-anchor.py",
@@ -11677,7 +11677,7 @@
    "h": "deny",
    "d": "deny",
    "c": "secret-read",
-   "l": "-"
+   "l": "FP"
   },
   "d7ef6c1591013e73": {
    "g": "g__pretool-mcp__outward-send.py",
@@ -12477,7 +12477,7 @@
    "h": "deny",
    "d": "deny",
    "c": "total-coverage",
-   "l": "-"
+   "l": "FP"
   },
   "e6079dc59516cc83": {
    "g": "delegate-gate.py",
@@ -12789,7 +12789,7 @@
    "h": "deny",
    "d": "deny",
    "c": "total-coverage",
-   "l": "-"
+   "l": "FP"
   },
   "ec87f00551d04844": {
    "g": "dimension-awareness-hook.py",

@@ -113,6 +113,36 @@ _RE_COVERAGE_DECLARED = re.compile(
     re.IGNORECASE,
 )
 
+# A coverage claim is about a SWEEP the agent ran: "revisé todos los correos",
+# "checked every file". The v10 census found ~80% FP on replies that make no
+# such claim: a finding about the data ("todas las carpetas le dan control a
+# Everyone"), a standing setup ("vigía en todos los chats"), a schedule ("cada 5
+# minutos"), or the Provenance footer ("Gmail MCP → SEEK-COMPLETE"). So the
+# scope phrase must share its sentence with a first-person sweep verb, and the
+# footer is not prose. The verb-plus-"todo" form already names its sweep.
+_RE_SWEEP_VERB = re.compile(
+    r"\b(revis[eé]|revisad[oa]s|barr[ií]|barrid[oa]s|le[ií]|leid[oa]s|le[ií]d[oa]s|recorr[ií]"
+    r"|busqu[eé]|verifiqu[eé]|comprob[eé]|analic[eé]|cheque[eé]|examin[eé]|audit[eé]"
+    r"|reviewed|checked|scanned|swept|searched|read|went through|looked at|audited|inspected)\b",
+    re.IGNORECASE,
+)
+_RE_FOOTER_LINE = re.compile(r"^\W*(?:procedencia|provenance)\b", re.IGNORECASE)
+
+
+def coverage_claim(text: str) -> bool:
+    """True when a sentence of the reply (footer excluded) asserts total
+    coverage of a sweep the agent ran."""
+    lines = (text or "").splitlines()
+    for i, ln in enumerate(lines):
+        if _RE_FOOTER_LINE.match(ln):
+            lines = lines[:i]
+            break
+    for sentence in re.split(r"[.!?\n]", "\n".join(lines)):
+        if _RE_COVERAGE_CLAIM.search(sentence) and _RE_SWEEP_VERB.search(sentence):
+            return True
+    return False
+
+
 _BLOCK_REASON_COVERAGE = (
     "You asserted TOTAL coverage but this turn shows a truncation artifact "
     "(head/limit/top-N) and the reply never declares the cut. Either sweep "
@@ -216,7 +246,7 @@ def main() -> int:
         # Fires only when ALL hold: the reply asserts totality, it does NOT own
         # the cut, and the turn carries a truncation artifact. Conservative by
         # construction — a declared partial always passes.
-        if _RE_COVERAGE_CLAIM.search(last_text) and not _RE_COVERAGE_DECLARED.search(last_text):
+        if coverage_claim(last_text) and not _RE_COVERAGE_DECLARED.search(last_text):
             recent_wide = _recent_transcript_text(transcript, max_bytes=16384)
             if _RE_TRUNCATION.search(recent_wide):
                 print(json.dumps({"decision": "block", "reason": _BLOCK_REASON_COVERAGE}))

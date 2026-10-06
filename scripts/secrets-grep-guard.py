@@ -16,6 +16,7 @@ Exit:   always 0.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 # Force UTF-8 on stdout/stderr so the ✓ / ✗ / em-dash glyphs in reports
@@ -82,6 +83,88 @@ _DENY_REASON = (
 )
 
 
+# ── narrowing readers (v10): the reader that opens the file prints no value ──
+# The v10 census found 9 of 10 denies were reads that print only key NAMES or
+# counts: `grep -c`, `grep -l`, `grep -o '^[A-Z_]*='`, `awk -F= '{print $1}'`,
+# `cut -d= -f1 .env`. Those are already the redacted shape; the redactor rule
+# above only recognised them AFTER a pipe. A pipeline stage that names the
+# secret path passes when that stage itself can only emit names or counts.
+
+def _words(stage: str) -> list:
+    import shlex
+    try:
+        return shlex.split(stage, posix=True)
+    except ValueError:
+        return stage.split()
+
+
+def _grep_narrows(words: list) -> bool:
+    flags, pattern = set(), None
+    i = 1
+    while i < len(words):
+        w = words[i]
+        if w in ("-e", "--regexp") and i + 1 < len(words) and pattern is None:
+            pattern = words[i + 1]; i += 2; continue
+        if w.startswith("--"):
+            flags.add(w)
+        elif w.startswith("-") and len(w) > 1:
+            flags.update("-" + ch for ch in w[1:])
+        elif pattern is None:
+            pattern = w
+        i += 1
+    # count, list-files, list-non-matching and quiet print no line content
+    if flags & {"-c", "-l", "-L", "-q", "--count", "--files-with-matches",
+                "--files-without-match", "--quiet", "--silent"}:
+        return True
+    if ("-o" in flags or "--only-matching" in flags) and pattern:
+        # Anchored at line start, no wildcard that can cross into the value:
+        # no '.', no negated class, no \S/\s, and '=' only as the last char.
+        p = pattern
+        return (p.startswith("^") and "." not in p and "[^" not in p
+                and "\\S" not in p and "\\s" not in p and "=" not in p[:-1])
+    return False
+
+
+_RE_AWK_NAME_ONLY = re.compile(r"^-F\s*['\"]?=['\"]?$")
+
+
+def _awk_narrows(words: list) -> bool:
+    sep = any(_RE_AWK_NAME_ONLY.match(w) for w in words[1:]) or any(
+        w == "-F" and j + 1 < len(words) and words[j + 1] == "="
+        for j, w in enumerate(words))
+    prog = next((w for w in words[1:] if "print" in w), "")
+    if not sep or not prog:
+        return False
+    # every print/printf prints $1 and nothing else from the record
+    return "$0" not in prog and not re.search(r"\$(?:[2-9]|\d{2,}|NF|\()", prog) \
+        and "substr" not in prog and "getline" not in prog and "system" not in prog
+
+
+def _stage_narrows(stage: str) -> bool:
+    words = _words(stage.strip())
+    while words and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[0]):
+        words = words[1:]                               # VAR=x prefix
+    if not words:
+        return False
+    cmd = os.path.basename(words[0])
+    if cmd in ("grep", "egrep", "fgrep", "rg"):
+        return cmd != "rg" and _grep_narrows(words)
+    if cmd == "awk":
+        return _awk_narrows(words)
+    if cmd == "cut":
+        return any(w.startswith(("-f", "-c", "-b", "--fields")) for w in words[1:])
+    if cmd == "wc":
+        return True
+    return False
+
+
+def _narrowing_read(segment: str) -> bool:
+    """Every pipeline stage that names a secret path only emits names/counts."""
+    stages = [s for s in re.split(r"(?<!\|)\|(?!\|)", segment) if s.strip()]
+    hits = [s for s in stages if _has_secret_path(s)]
+    return bool(hits) and all(_stage_narrows(s) for s in hits)
+
+
 def _has_reader(command: str) -> bool:
     return bool(_READER_RE.search(command))
 
@@ -137,7 +220,8 @@ def main() -> int:
         # Evaluate per shell segment (split on ; && || newline), NOT on the whole
         # string: `cat .env; cat ok | jq .` must not pass on the unrelated jq.
         for seg in re.split(r"(?:&&|\|\||;|\n)", command):
-            if _has_reader(seg) and _has_secret_path(seg) and not _has_redactor(seg):
+            if _has_reader(seg) and _has_secret_path(seg) and not _has_redactor(seg) \
+                    and not _narrowing_read(seg):
                 print(json.dumps({
                     "hookSpecificOutput": {
                         "hookEventName": "PreToolUse",

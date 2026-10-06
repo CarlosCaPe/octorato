@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "grep -o '^TOKEN=' .env"
+  },
+  "cwd": "/home/user/project"
+}

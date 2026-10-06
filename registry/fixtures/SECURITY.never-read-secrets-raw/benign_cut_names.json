@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "cut -d= -f1 .env | grep -v '^#'"
+  },
+  "cwd": "/home/user/project"
+}

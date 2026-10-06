@@ -1,8 +1,8 @@
 {
   "stop_hook_active": false,
-  "session_id": "selftest-violation",
+  "session_id": "selftest-benign_no_send_in_turn",
   "wa_guardia_dbs": {
     "prueba": "~/.wa-fixture/con-espera.db"
   },
-  "transcript_path": "send_turn_transcript.jsonl"
+  "transcript_path": "read_turn_transcript.jsonl"
 }

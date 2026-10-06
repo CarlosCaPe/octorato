@@ -103,11 +103,20 @@ def _ledger_records(data: dict):
 _WRITE_VERBS = ("send", "create", "update", "delete", "revoke", "draft", "label")
 
 
+# Interactive browser driving is not a bulk fetch: the session lives in the
+# operator's own Chrome, a sub-agent cannot share it, and a click-by-click edit
+# of a web app is the work itself, not a sweep to digest. The v10 census found
+# 29 of 45 resolvable audit blocks were mostly these calls (~70% FP).
+_INTERACTIVE_PREFIXES = ("mcp__claude-in-chrome__",)
+
+
 def _is_fetch(tool: str) -> bool:
     """External read-shaped calls only; mcp write-verbs (sends etc.) never count."""
     if tool in FETCH_TOOLS:
         return True
     if not tool.startswith(FETCH_PREFIX):
+        return False
+    if tool.startswith(_INTERACTIVE_PREFIXES):
         return False
     action = tool.rsplit("__", 1)[-1]
     return not action.startswith(_WRITE_VERBS)
