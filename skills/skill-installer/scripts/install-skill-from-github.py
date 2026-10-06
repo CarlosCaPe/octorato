@@ -209,9 +209,15 @@ def _git_sparse_checkout(repo_url: str, ref: str, paths: list[str], dest_dir: st
     # which masked the real failure (auth, missing ref) behind a filesystem message.
     repo_dir = tempfile.mkdtemp(prefix="clone-", dir=dest_dir)
     os.rmdir(repo_dir)
+    # The checkout must hold the committed bytes. A machine-wide core.autocrlf=true
+    # (Git for Windows' default) rewrote every text file to CRLF, so a signed
+    # package's tree hash never matched its manifest there. `clone -c` persists the
+    # key in the clone, so the sparse-checkout and checkout below inherit it.
+    no_eol_rewrite = ["-c", "core.autocrlf=false"]
     clone_cmd = [
         "git",
         "clone",
+        *no_eol_rewrite,
         "--filter=blob:none",
         "--depth",
         "1",
@@ -232,6 +238,7 @@ def _git_sparse_checkout(repo_url: str, ref: str, paths: list[str], dest_dir: st
             [
                 "git",
                 "clone",
+                *no_eol_rewrite,
                 "--filter=blob:none",
                 "--depth",
                 "1",
