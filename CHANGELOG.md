@@ -15,6 +15,12 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-10-06]: v9.7.0
+### Features
+- feat(wa-latido): detect a rejected client version and relay bridge auto-update results (#375)
+### Other
+- docs(changelog): backfill v9.6.1 (#374)
+
 ## [2026-10-06]: v9.6.1
 ### Fixes
 - fix(gates): close three Windows path spellings the arming-surface gate allowed (#372)
