@@ -180,6 +180,42 @@ class BridgeArgs(unittest.TestCase):
         without = block.replace("PANEL-MENTION: a\n", "")
         self.assertNotEqual(pd.recompute_from_report(without)["digest"], m.digest)
 
+    def test_what_bash_would_expand_denies(self):
+        s = self.S
+        for cmd in (f"{s} --menciones {{A,G}} B hola", f"{s} {{A,G}} hola", f"{s} G hola *",
+                    f"{s} G hol?", f"{s} G [a-z]x", f"{s} G hola }}", f"{s} G ~ hola",
+                    f"{s} ~/x hola", f"{s} G hola --menciones ~a", f"{s} G a\\ b *",
+                    f'{s} G "quoted" {{a,b}}', f"{s} G 'a'*"):
+            with self.assertRaises(pd.PanelDigestError, msg=cmd):
+                pd.support_sends(cmd)
+
+    def test_quoted_or_escaped_expansion_characters_are_text(self):
+        s = self.S
+        for cmd, text in ((f'{s} G "sizes {{a,b}} and * and ~ and [x]?"', "sizes {a,b} and * and ~ and [x]?"),
+                          (f"{s} G 'a {{b,c}} *'", "a {b,c} *"),
+                          (f"{s} G a\\*b", "a*b"), (f"{s} G a~b mid~dle", "a~b mid~dle"),
+                          (f'{s} G "it\'s {{x}}"', "it's {x}"),
+                          (f'{s} G "say \\"hi\\" {{x}}"', 'say "hi" {x}')):
+            self.assertEqual(pd.support_sends(cmd)[0][:2], ("G", text), cmd)
+
+    def test_tilde_expands_only_where_the_reader_expands_it(self):
+        home_script = "~/.claude/scripts/" + self.S
+        with tempfile.TemporaryDirectory() as d:
+            old = os.environ.get("HOME")
+            os.environ["HOME"] = d
+            try:
+                (Path(d) / "f.txt").write_text("x", encoding="utf-8")
+                got = pd.message_parts("Bash", {"command": f'{home_script} G "hola" --archivo ~/f.txt'})[0]
+                self.assertEqual(got.attachments[0][0], pd.file_sha256(str(Path(d) / "f.txt")))
+                self.assertEqual(pd.support_sends(f'bash {home_script} G "hola"')[0][0], "G")
+                with self.assertRaises(pd.PanelDigestError):
+                    pd.support_sends(f"{home_script} ~/f.txt hola")
+            finally:
+                if old is None:
+                    os.environ.pop("HOME", None)
+                else:
+                    os.environ["HOME"] = old
+
     def test_inherited_mentions_with_no_flag_deny(self):
         os.environ[pd.MENTIONS_ENV] = "A"
         with self.assertRaises(pd.PanelDigestError):
