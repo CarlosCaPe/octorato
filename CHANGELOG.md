@@ -15,6 +15,12 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-10-06]: v9.6.1
+### Fixes
+- fix(gates): close three Windows path spellings the arming-surface gate allowed (#372)
+### Other
+- docs(changelog): backfill v9.6.0 (#373)
+
 ## [2026-10-06]: v9.6.0
 ### Features
 - feat(skills): add eleven role skills for everyday assistant jobs (#369)
