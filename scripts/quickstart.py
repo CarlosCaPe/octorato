@@ -183,6 +183,12 @@ def main(argv=None) -> int:
                     help="write the first spec into DIR/docs/specs/ instead of the brain's "
                          "gitignored company/ layer")
     args = ap.parse_args(argv)
+    # Child scripts write straight to the shared stdout; without line buffering a
+    # piped run (CI, a log file) prints every step header after all child output.
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except (AttributeError, OSError):
+        pass
     print(_c("1;35", "\n🐙  Octorato quickstart. Let's bring your brain to life.\n"))
     total = 8
     wiring_failures = []
