@@ -346,6 +346,11 @@
         {
           "command": "python3 ~/.claude/scripts/g__stop__goal-anchor.py",
           "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/r__stop__friction-ledger.py",
+          "timeout": 10,
+          "type": "command"
         }
       ]
     }

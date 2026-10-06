@@ -15,6 +15,12 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-10-06]: v9.8.0
+### Features
+- feat(friction): v10 phase 1, measure gate friction (T01-T03) (#380)
+### Other
+- docs(changelog): backfill v9.7.0 (#377)
+
 ## [2026-10-06]: v9.7.0
 ### Features
 - feat(wa-latido): detect a rejected client version and relay bridge auto-update results (#375)

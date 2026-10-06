@@ -1,12 +1,12 @@
 # Getting Started
 
-> **Organ:** embryology — the organism grows step by step, from a bare clone to a fully wired brain with sealed arms and cross-machine circulation.
+> **Organ:** embryology. The organism grows step by step, from a bare clone to a wired brain that writes its first spec.
 
-This is the install-and-first-run guide for adopting **Octorato** — the open-source AI-agent operating system that lives in `~/.claude/`. By the end you will have a working brain, a private company layer that never leaks to the public, your first client *arm*, multi-machine sync, and a feel for how the agent greets you and gates its first file change.
+This page installs **Octorato**, the open-source AI-agent operating system that lives in `~/.claude/`, and walks you to your first spec. The path is the same one the README shows: clone, then one command. Everything after that is optional and can wait.
 
-If you only read one thing: **the brain (`~/.claude/`) is a public git repo.** Everything in Step 2 and Step 3 exists to keep your private world out of it.
+One thing to know before you start: **the brain (`~/.claude/`) is a public git repo.** The install keeps your private files out of it, and the push guard it turns on blocks a secret before it can leave your machine.
 
-> **New here?** Start with [[Home]] for the one-paragraph pitch, then [[Architecture]] for the CLASS / OBJECT / ARM model this guide instantiates.
+> **New here?** [[Home]] has the one-paragraph pitch, and [[Architecture]] has the model behind it. You do not need either to install.
 
 ---
 
@@ -14,172 +14,80 @@ If you only read one thing: **the brain (`~/.claude/`) is a public git repo.** E
 
 | Tool | Required? | Why | Check |
 |---|---|---|---|
-| A **runtime** — [Claude Code](https://docs.anthropic.com/en/docs/claude-code) **or** [Cursor](https://cursor.com) | **Yes (one)** | The harness that loads `~/.claude/` and *runs* Octorato. Claude Code was first; Cursor is a **supported peer** (hooks projected by `merge-hooks-cursor.py`; see Honest gaps in `docs/architecture/multi-runtime.md`). More editors get a binding as they are used — see [[Architecture]] / `docs/architecture/multi-runtime.md` | `claude --version` **or** Cursor Agent with `CURSOR_AGENT=1` |
-| An **engine** the runtime can select (Claude family, Grok, GPT, Composer, …) | **Yes** | The model that reasons. Octorato is engine-agnostic; the ladder binds tiers to whatever the runtime exposes | Session model picker |
-| `git` | **Yes** | The brain is a git repo; sync is git push/pull | `git --version` |
-| GitHub account | **Yes** | To clone the public brain and (optionally) push your fork | `gh auth status` |
-| `python3` (3.10+) | **Yes** | The enforcement scripts — connectome query, delegate-check, gate-check | `python3 --version` |
-| `node` + `npm` | Optional | Only if an arm's stack needs it (Astro, Svelte, Workers, etc.) | `node --version` |
+| A **runtime**: [Claude Code](https://docs.anthropic.com/en/docs/claude-code) **or** [Cursor](https://cursor.com) | **Yes (one)** | The editor or CLI that loads `~/.claude/` and runs the assistant. Cursor is a supported peer; its limits are listed in `docs/architecture/multi-runtime.md` | `claude --version` **or** Cursor Agent with `CURSOR_AGENT=1` |
+| `git` | **Yes** | The brain is a git repo | `git --version` |
+| `python3` (3.10+) | **Yes** | The checks are Python scripts | `python3 --version` |
 
-A blank slate is fine. You do not need to know the architecture before starting — the first session teaches it. **Octorato is for all models and all editors**; it grows as new ones are known.
+> **Already have a `~/.claude/`?** Move it aside first (`mv ~/.claude ~/.claude.bak`), then clone. Copy any personal `settings.json` keys back in afterward; quickstart only replaces its `hooks` section.
 
 ---
 
-## Step 1 — Clone the brain to `~/.claude` (the central brain)
-
-The brain installs at `~/.claude/` — the historical path Claude Code reads natively. **Cursor and other runtimes load the same files** (project rules, arm `CLAUDE.md`, projected hooks). Cloning Octorato there is what turns a stock editor into an Octorato-powered agent OS, regardless of which engine (Claude, Grok, GPT, …) the operator picks.
+## Install: clone, then one command
 
 ```bash
 git clone https://github.com/CarlosCaPe/octorato.git ~/.claude
+python3 ~/.claude/scripts/quickstart.py
 ```
 
-> **Already have a `~/.claude/`?** Back it up first — `mv ~/.claude ~/.claude.bak` — then clone. Copy any personal `settings.json` back in afterward.
+That second command does every setup step, in this order, and is safe to run again:
 
-**Cursor operators (after clone):** project hooks into Cursor so fail-closed gates fire in the IDE too:
-
-```bash
-python3 ~/.claude/scripts/merge-hooks-cursor.py
-```
-
-Verify the clone landed and the scripts are present:
-
-```bash
-ls ~/.claude/CLAUDE.md ~/.claude/scripts/gate-check ~/.claude/.githooks/pre-push
-```
-
-All three paths should exist. `CLAUDE.md` is the constitution every runtime reads; `scripts/` holds the enforcement scripts; `.githooks/` is the secret guard you enable next.
-
----
-
-## Step 2 — Enable the push-time secret guard (the immune membrane)
-
-**Do this before you ever push.** The brain is published open-source, and git history is permanent and public. One leaked secret or client name in a commit lives on GitHub forever.
-
-Octorato ships a push-time hook that scans every commit you push against a policy file of secret patterns and forbidden paths. It is **not active until you point git at it**:
-
-```bash
-git -C ~/.claude config core.hooksPath .githooks
-```
-
-### Why this matters
-
-| Layer | Script | When it runs | What it blocks |
-|---|---|---|---|
-| Commit-time | `scripts/check-generic.py` | Called by `ai-push` before committing | Staged files + commit message vs your private blocklist (soft-fails if the blocklist is missing) |
-| **Push-time** | `.githooks/pre-push` | **Every** `git push` once `core.hooksPath` is set | Every pushed commit vs `.githooks/push-policy.txt` (universal secret patterns + paths) — **no soft-fail** |
-
-The push-time layer is the one that always runs and never skips. A blocklist hit blocks the push — no exceptions, no `--force`. If a leak ever reaches the remote: rewrite history (`git filter-repo` or squash), force-push immediately, and rotate the exposed credential. See [[Security]] and the in-repo `SECURITY.md` for the full protocol.
-
-Confirm the hook is wired:
-
-```bash
-git -C ~/.claude config --get core.hooksPath   # → .githooks
-```
-
----
-
-## Step 3 — Create your private company brain (the cortex, your private OBJECT)
-
-The public brain is the **CLASS** (generic DNA). Your **company brain** is the private **OBJECT** that instantiates it: your identity, your rates, your client/arm list, your voice, your connection configs. It lives at `~/.claude/company/` and is **gitignored** — nothing in it ever flows to the public repo.
-
-Scaffold it from the shipped template:
-
-```bash
-cp -r ~/.claude/templates/company/ ~/.claude/company/
-mv ~/.claude/company/COMPANY.md.template ~/.claude/company/COMPANY.md
-```
-
-Then edit `~/.claude/company/COMPANY.md` and replace the `{{PLACEHOLDERS}}` with your real details (name, business, the short codes you'll use for each client arm). Open it in your editor of choice:
-
-```bash
-${EDITOR:-nano} ~/.claude/company/COMPANY.md
-```
-
-**Verify it is actually gitignored** — this is the single most important safety check in the whole setup:
-
-```bash
-git -C ~/.claude check-ignore company/COMPANY.md   # → company/COMPANY.md  (means: ignored ✅)
-```
-
-If that command prints nothing, **stop** — `company/` is *not* ignored and you risk leaking private data. Confirm `company/` appears in `~/.claude/.gitignore` before continuing.
-
-> Your private blocklist lives here too: `company/brain-blocklist.txt` (also gitignored). Populate it with the client names, codenames, and internal URLs that must never appear in a public commit. `check-generic.py` reads it at commit-time.
-
----
-
-## Step 4 — Create your first client arm (the first limb, sealed)
-
-An **arm** is a sealed, per-client repo (a **PROPERTY** in the inheritance model). Arms never see each other — that is the core isolation guarantee. Each arm's single source of truth is its own `.claude/CLAUDE.md`, which inherits all brain rules and adds client-specific context.
-
-Quick scaffold for one arm (placeholder name `my-client`):
-
-```bash
-mkdir -p ~/projects/my-client/.claude
-cp ~/.claude/templates/arm/CLAUDE.md.template ~/projects/my-client/.claude/CLAUDE.md
-```
-
-Every arm also needs a `.gitignore` that excludes secrets (`.env`, `.env.*`, `.dev.vars`) and an `.env` for credentials that is **never** committed. The auto-synced AI-tool configs (`.github/copilot-instructions.md`, `.cursorrules`) are generated for you in Step 5.
-
-> **Full procedure** — README, AI-doc sync, the complete checklist — is in [[Arms-and-Sync]]. Do not improvise arm structure; the template encodes the isolation guarantees.
-
-The golden rule, restated: **what flows where.**
-
-| Direction | What flows | What NEVER flows |
+| # | Step | What it does |
 |---|---|---|
-| Arm → Brain | Generic patterns, anonymized skills, lessons | Client names, data, credentials |
-| Brain → Arm | Rules, paradigms, skills, identity | Other arms' data |
-| Arm → Arm | **Nothing** | Everything |
-| Human → Agent | Explicit cross-arm requests | (you decide) |
+| 1 | Prerequisites | Checks Python, git, and which runtime you have. |
+| 2 | Runners | Creates `ai-sync`, `ai-push`, `ai-pull`, `sync-ai-docs` and `octo` in `~/.local/bin/`. |
+| 3 | Connectome | Builds the index that matches a task to the right skill or agent. |
+| 4 | Claude Code hooks | Copies the automatic checks from `hooks.json` into `~/.claude/settings.json`, then reads the file back to confirm. |
+| 5 | Push guard | Sets `git config core.hooksPath .githooks`, so every `git push` from the brain is scanned for secrets. |
+| 6 | Cursor hooks | Projects the same checks into Cursor when `~/.cursor` exists. Skipped otherwise. |
+| 7 | Health check | Runs `brain_doctor.py --fast`, the quick profile (under 30 seconds on a populated machine). The full check, which proves every gate blocks, is `python3 ~/.claude/scripts/brain_doctor.py`. |
+| 8 | First spec | Writes an example spec and checks it with `spec_lint.py`. |
 
-Only you, the human operator, ever bridge knowledge between arms. The agent never does it autonomously.
+If step 4, 5 or 8 fails, quickstart says which one and exits non-zero. A health-check finding is reported but does not stop the install, because a fresh clone is expected to miss optional parts (a private blocklist, optional Python packages listed in `requirements.txt`).
 
 ---
 
-## Step 5 — Multi-machine sync (the glial layer)
+## Your first spec
 
-`~/.claude/` is a git repo, so syncing the brain across laptops is just push/pull — wrapped in three helper scripts that also regenerate the connectome and propagate brain rules down into every arm's AI-doc files.
-
-**One-time setup per machine** — run the installer to generate the helper thunks in `~/.local/bin/`:
+Quickstart writes it to `~/.claude/company/docs/specs/<date>-first-spec/`. The `company/` folder is your private layer and git ignores it, so the example never ends up in the public repo. To put it in your own project instead, which is where real specs belong:
 
 ```bash
-python3 ~/.claude/scripts/install-runners.py
+python3 ~/.claude/scripts/quickstart.py --project ~/projects/my-app
 ```
 
-This creates `ai-sync`, `ai-push`, `ai-pull`, `sync-ai-docs` and `octo` in `~/.local/bin/` for both POSIX and Windows.
+The folder holds two short files. Together they teach the four ideas you need on day one:
 
-**Daily workflow:**
+| Idea | What it is | Where |
+|---|---|---|
+| **Spec** | What must be true, one checkable sentence per requirement. | `feature.md` |
+| **Plan** | How you will get there, in steps. | `plan.md` |
+| **Tasks** | The plan's numbered lines. Each one names the requirements it serves and the files it touches. | `plan.md` |
+| **Verdict** | A second assistant that did not write the code reads the code and the tests and decides when it is done. | a receipt, recorded for you |
 
-| Command | What it does |
-|---|---|
-| `ai-sync ["msg"]` | **The canonical daily command.** Integrates first (`git pull --rebase --autostash`), then publishes (`push`), and retries the loop when a sibling machine pushed mid-flight. One command, race-safe and idempotent, built for running one brain across many machines at once |
-| `ai-push "msg"` | Primitive: the publish half only. Runs the generic-content check, commits + pushes `~/.claude/`, regenerates the neural connectome, syncs all arms |
-| `ai-pull` | Primitive: the integrate half only. Pulls the brain from the remote and syncs every arm down |
-| `ai-pull <arm-code>` | Pulls + syncs a single arm only |
-| `ai-pull --status` | Shows sync status without changing anything |
-| `sync-ai-docs` | Cascades brain rules into each arm's `.github/copilot-instructions.md` + `.cursorrules` |
+Check a spec any time:
 
-On a brand-new workstation the bootstrap is: clone the brain (Step 1), enable the hook (Step 2), run the installer (above), then run `ai-pull`. From then on, `ai-sync "..."` whenever you've improved the brain; reach for `ai-push` or `ai-pull` only when you want just one half of the cycle.
+```bash
+python3 ~/.claude/scripts/spec_lint.py ~/.claude/company/docs/specs/*-first-spec
+```
 
-> **Note:** episodic memory (`~/.claude/projects/`) is gitignored and stays per-machine by design — it contains absolute paths and arm context that must not go public. Brain stays generic; memory stays sovereign.
+Then open your runtime and ask it to build the example. The skills `sdd-feature`, `sdd-plan` and `sdd-converge` carry the rest of the method, and [[The-4D-Paradigm]] explains when a task is big enough to need a spec.
 
 ---
 
-## Your first session — a walkthrough
+## Your first session
 
-Open a terminal in your new arm and start Claude Code:
+Open a terminal in any folder and start Claude Code:
 
 ```bash
-cd ~/projects/my-client
 claude
 ```
 
 ### How the brain greets you
 
-On startup, Claude Code loads `~/.claude/CLAUDE.md` (the constitution), then the arm's `.claude/CLAUDE.md`, then your episodic `MEMORY.md`. You're now talking to Octorato operating *inside this arm's context* — it knows the generic rules, the client context, and nothing about any other arm.
+On startup, Claude Code loads `~/.claude/CLAUDE.md` (the constitution), then the folder's own `.claude/CLAUDE.md` when it has one (an arm), then your session memory `MEMORY.md`. Inside an arm, the assistant knows the generic rules and that client's context, and nothing about any other arm.
 
 ### How the 4D gate works on your first file change
 
-Ask for something concrete, e.g. *"add a README to this project."* Before writing a single byte, the agent runs the **2D Delegate** check (who knows? has it got an API? who does it?) and then presents a **Change Manifest** — think `terraform plan` before `terraform apply`:
+Ask for something concrete, e.g. *"add a README to this project."* Before writing a single byte, the agent runs the **2D Delegate** check (who knows? has it got an API? who does it?) and then presents a **Change Manifest**, the way `terraform plan` comes before `terraform apply`:
 
 ```
 ## Change Manifest
@@ -192,7 +100,75 @@ Impact: 1 file created.
 Confirm? (yes/no)
 ```
 
-Nothing is written until you reply `yes` (or `sí`, `ok`, `dale`). After the write, the agent runs **3D Diligent** — validates the result and reports PASS/FAIL with evidence — then **4D Disclose** — states the impact radius (everywhere the changed object is referenced). This four-phase cycle is mandatory on every action. Full protocol: [[The-4D-Paradigm]].
+Nothing is written until you reply `yes` (or `sí`, `ok`, `dale`). After the write, the agent runs **3D Diligent** (validates the result and reports PASS/FAIL with evidence), then **4D Disclose** (states the impact radius: everywhere the changed object is referenced). This four-phase cycle is mandatory on every action. Full protocol: [[The-4D-Paradigm]].
+
+### How to invoke a skill
+
+Skills are reusable techniques (the synapses). You usually don't have to name one, because the connectome picks them, but you can ask directly:
+
+```text
+Use the querymaster-postgresql skill to review this query.
+```
+
+Or peek at what *would* fire for a task, straight from the shell:
+
+```bash
+python3 ~/.claude/scripts/query_connectome.py query "deploy a Svelte app to Cloudflare Workers"
+```
+
+That ranks every agent and skill by similarity to your task, the same lookup the agent runs internally.
+
+### How to activate an agent
+
+Agents are specialist personas (the neurons). Activate one by name:
+
+```text
+Activate the Code Reviewer for this change.
+```
+
+The agent loads its persona (WHO), the connectome attaches the right skills (HOW), and everything runs scoped to the current arm (FOR WHOM). That three-layer stack (agent × skill × arm) is the core of how work gets done. See [[Architecture]] for the full activation model.
+
+---
+
+## Going further (optional, when you need it)
+
+None of this is part of the install. Come back when you have a reason.
+
+### Your private company brain
+
+The public brain is generic. Your own details (who you are, your clients' short codes, your voice) live in `~/.claude/company/`, which git ignores. Start it from the template:
+
+```bash
+cp -r ~/.claude/templates/company/ ~/.claude/company/
+mv ~/.claude/company/COMPANY.md.template ~/.claude/company/COMPANY.md
+git -C ~/.claude check-ignore company/COMPANY.md   # prints the path: ignored, as it should be
+```
+
+If `check-ignore` prints nothing, stop: `company/` is not ignored and private data could leak. Put the client names and internal URLs that must never appear in a public commit in `company/brain-blocklist.txt`; `check-generic.py` reads it before every `ai-push`.
+
+### Your first sealed arm
+
+An **arm** is one client, project or topic in its own folder, with its own `.claude/CLAUDE.md`. Arms never see each other.
+
+```bash
+mkdir -p ~/projects/my-client/.claude
+cp ~/.claude/templates/arm/CLAUDE.md.template ~/projects/my-client/.claude/CLAUDE.md
+```
+
+The full procedure (`.gitignore`, `.env`, AI-doc sync, the arm's own index) is on [[Arms-and-Sync]]. Do not improvise the structure; the template carries the isolation rules.
+
+### Several machines
+
+The runners quickstart installed keep every machine on the same brain:
+
+| Command | What it does |
+|---|---|
+| `ai-sync ["msg"]` | The daily command. Pulls first, then pushes, and retries if another machine pushed in between. |
+| `ai-push "msg"` | Publish only: checks for private content, commits, pushes, rebuilds the index, syncs your arms. |
+| `ai-pull [arm]` | Integrate only: pulls the brain and syncs every arm, or one. |
+| `sync-ai-docs` | Copies brain rules into each arm's `.github/copilot-instructions.md` and `.cursorrules`. |
+
+On a second machine: clone, run quickstart, then `ai-pull`. Session memory (`~/.claude/projects/`) stays on each machine by design.
 
 ### How to see what your agents did
 
@@ -210,23 +186,7 @@ Every session and every subagent runs as a kernel process: a pid, a parent, a wo
 
 `octo dash` writes one self-contained HTML page to `~/.claude/.cache/dash/index.html` and prints its path. It shows every spec with its status, task count and newest converge verdict, the open pull requests with their newest QA verdict and the head that verdict pinned next to the current head, the gate receipt, the live kernel processes and the friction report when one exists. Pull requests come only from a local snapshot, so the page opens offline and says how old that snapshot is; `octo dash --refresh` takes a new one with `gh`.
 
-The status line shows the same three things in one row at the bottom of Claude Code: the gate receipt (`ok`, `dirty`, `none`), the live process count, and the active spec (the one your cwd is in, otherwise the newest one not yet converged). `ai-pull` registers it through `scripts/merge-hooks.py` when you have no status line yet. Once one is set, the script only replaces a value it wrote itself, so a status line you configured, wrapped or re-padded stays as you left it.
-
-### How to invoke a skill
-
-Skills are reusable techniques (the synapses). You usually don't have to name one — the connectome auto-selects them — but you can ask directly:
-
-```text
-Use the querymaster-postgresql skill to review this query.
-```
-
-Or peek at what *would* fire for a task, straight from the shell:
-
-```bash
-python3 ~/.claude/scripts/query_connectome.py query "deploy a Svelte app to Cloudflare Workers"
-```
-
-That ranks every agent and skill by similarity to your task — the same lookup the agent runs internally.
+The status line shows the same three things in one row at the bottom of Claude Code: the gate receipt (`ok`, `dirty`, `none`), the live process count, and the active spec (the one your cwd is in, otherwise the newest one not yet converged). Quickstart and `ai-pull` register it through `scripts/merge-hooks.py` when you have no status line yet. Once one is set, the script only replaces a value it wrote itself, so a status line you configured, wrapped or re-padded stays as you left it.
 
 ### How to install a skill someone else wrote
 
@@ -312,16 +272,6 @@ principals in that private file rather than editing the tracked one.
 An unsigned third-party skill is still installable, on the Codex `--dest` path of the
 `skill-installer` skill, outside the lock and without any claim that it was verified.
 
-### How to activate an agent
-
-Agents are specialist personas (the neurons). Activate one by name:
-
-```text
-Activate the Database Optimizer for this audit.
-```
-
-The agent loads its persona (WHO), the connectome attaches the right skills (HOW), and everything runs scoped to the current arm (FOR WHOM). That three-layer stack — agent × skill × arm — is the core of how work gets done. See [[Architecture]] for the full activation model.
-
 ---
 
 ## Troubleshooting
@@ -329,11 +279,14 @@ The agent loads its persona (WHO), the connectome attaches the right skills (HOW
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `claude` doesn't pick up the rules | Brain not at `~/.claude/` | Confirm `ls ~/.claude/CLAUDE.md` resolves; re-clone if missing |
-| Push rejected by a hook | Secret/forbidden pattern detected (working as designed) | Remove the offending content; never `--force`. If already pushed, rewrite history + rotate the secret ([[Security]]) |
-| `check-generic.py` "soft-fails" / warns about missing blocklist | `company/brain-blocklist.txt` not created | Create it in Step 3; it's expected to be absent on a fresh clone |
-| `ai-push` / `ai-pull` "command not found" | Scripts not on `PATH` | Re-run the Step 5 copy + `chmod +x`; ensure `~/.local/bin` is on `PATH` |
-| `query_connectome.py` errors | Wrong Python or missing connectome | Use `python3` (3.10+); run `ai-push` once to regenerate `neural_map.json` |
-| `git push` succeeds but the hook never ran | `core.hooksPath` not set | Re-run Step 2: `git -C ~/.claude config core.hooksPath .githooks` |
+| Quickstart says "clone the brain to ~/.claude" | The checkout is somewhere else, and Claude Code only loads `~/.claude` | Clone to `~/.claude` and run quickstart from there |
+| Quickstart says a first spec path "is inside the brain and git does not ignore it" | `--project` pointed inside the brain repo | Point `--project` at your own project folder, or drop the flag |
+| Push rejected by a hook | Secret or forbidden pattern found (working as designed) | Remove the offending content; never `--force`. If it was already pushed, rewrite history and rotate the secret ([[Security]]) |
+| `check-generic.py` warns about a missing blocklist | `company/brain-blocklist.txt` not created yet | Expected on a fresh clone; see "Your private company brain" above |
+| `ai-push` / `ai-pull` "command not found" | `~/.local/bin` is not on `PATH` | Add `~/.local/bin` to `PATH`, or re-run quickstart, which recreates the runners |
+| `query_connectome.py` errors | Wrong Python or missing index | Use `python3` (3.10+) and re-run quickstart, which rebuilds `neural_map.json` |
+| `git push` succeeds but the hook never ran | `core.hooksPath` not set | Re-run quickstart, or `git -C ~/.claude config core.hooksPath .githooks` |
+| The health check reports missing packages | Optional Python packages not installed | `python3 -m pip install --user -r ~/.claude/requirements.txt` |
 | `origin` points at the old `dotclaude` repo | Repo was renamed | `git -C ~/.claude remote set-url origin https://github.com/CarlosCaPe/octorato.git` |
 
 ### Where to get help
@@ -346,18 +299,18 @@ The agent loads its persona (WHO), the connectome attaches the right skills (HOW
 
 ## Contributing
 
-The brain uses a **staged-promotion** branching model. All pull requests — community contributions, day-to-day work, and bot-authored skills — target **`test`**, the integration branch where changes are iterated and reviewed. **`master`** is the curated, public canonical and is **promotion-only**: it advances solely through a weekly, operator-reviewed `test → master` promotion (the `/promote-test` ritual).
+The brain uses a **staged-promotion** branching model. All pull requests (community contributions, day-to-day work, and bot-authored skills) target **`test`**, the integration branch where changes are iterated and reviewed. **`master`** is the curated, public canonical and is **promotion-only**: it advances solely through a weekly, operator-reviewed `test → master` promotion (the `/promote-test` ritual).
 
 ```
 fork → branch off test → PR against test → weekly /promote-test → master
 ```
 
-So: fork the repo, branch off `test`, and open your PR against `test` — never `master`. Full rules (generic-safety, agent/skill structure, commit format) are in the in-repo `CONTRIBUTING.md`. *(The daily dataqbs.com content feed is the exception — it ships to its own repo's `master` daily; staging is for the brain.)*
+So: fork the repo, branch off `test`, and open your PR against `test`, never `master`. Full rules (generic-safety, agent/skill structure, commit format) are in the in-repo `CONTRIBUTING.md`. *(The daily dataqbs.com content feed is the exception: it ships to its own repo's `master` daily; staging is for the brain.)*
 
 ---
 
 ## What you've built
 
-After these five steps you have: a public brain at `~/.claude/`, a secret guard that blocks leaks at push time, a private gitignored company layer, a first sealed client arm, and cross-machine sync. The first session showed you the 4D gate, skill invocation, and agent activation — the three reflexes you'll use every day.
+Two commands gave you a brain at `~/.claude/` with its checks wired into your runtime, a push guard that blocks secrets, and a first spec that shows the method: spec, plan, tasks, verdict. The first session showed the 4D gate, skills and agents.
 
-Next: read [[The-4D-Paradigm]] to understand *why* the agent stops before every write, and [[Arms-and-Sync]] to onboard your real clients. Back to [[Home]].
+Next: [[The-4D-Paradigm]] explains *why* the agent stops before every write, and [[Arms-and-Sync]] onboards your real clients. Back to [[Home]].
