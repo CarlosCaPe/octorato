@@ -75,4 +75,4 @@ If the child says or shows anything that suggests they are being hurt, bullied, 
 
 ## Related
 
-[[eli5]] for the plain-language explanation, [[source-citation-tagging]] when a fact is stated, [[daily-reflection]] for the closing note.
+[[eli5]] for the plain-language explanation, [[source-citation-tagging]] when a fact is stated.

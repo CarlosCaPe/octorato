@@ -3,5 +3,5 @@
   "name": "doctor-visit-prep",
   "version": "1.0.0",
   "license": "MIT",
-  "description": "Doctor Visit Prep: a helper that prepares a medical appointment and explains what was said after it"
+  "description": "Turns an assistant into a helper that prepares a medical appointment and explains what was said after it: a symptom timeline, a one-page note, questions to ask, and medical terms in plain words. It never diagnoses or changes a treatment. Use on 'tengo cita con el médico', 'prepare my appointment', 'qué significa este resultado'."
 }

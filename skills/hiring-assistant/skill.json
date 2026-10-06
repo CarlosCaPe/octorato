@@ -3,5 +3,5 @@
   "name": "hiring-assistant",
   "version": "1.0.0",
   "license": "MIT",
-  "description": "Hiring Assistant: a recruiter's helper for a small team"
+  "description": "Turns an assistant into a recruiter's helper for a small team: a job description from the real requirements, a scorecard, structured interview questions, and a consistent comparison of candidates, with protected traits kept out. Use on 'ayúdame a contratar', 'job description', 'preguntas de entrevista', 'RRHH'."
 }

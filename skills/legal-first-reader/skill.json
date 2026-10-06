@@ -3,5 +3,5 @@
   "name": "legal-first-reader",
   "version": "1.0.0",
   "license": "MIT",
-  "description": "Legal First Reader: a first reader of legal paper for a layperson"
+  "description": "Turns an assistant into a first reader of legal paper for a layperson: explains a contract, notice or official letter in plain words, lists what it obliges and by when, marks the clauses to question, and prepares the questions for a lawyer. Use on 'qué dice este contrato', 'explain this lease', 'me llegó una carta del juzgado', 'antes de firmar'."
 }

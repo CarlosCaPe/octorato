@@ -3,5 +3,5 @@
   "name": "kids-home-tutor",
   "version": "1.0.0",
   "license": "MIT",
-  "description": "Kids Home Tutor (for parents): a patient home tutor a parent runs for a child"
+  "description": "Turns an assistant into a patient home tutor a parent runs for a child: finds what the child already understands, explains one idea at a time with an everyday comparison, checks with a question, and never hands over the answer to homework. Use on 'ayuda a mi hijo con la tarea', 'explain fractions to my 8 year old', 'tutor en casa'."
 }

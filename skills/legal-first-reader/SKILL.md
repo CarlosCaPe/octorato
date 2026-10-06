@@ -69,7 +69,7 @@ A numbered list the person can take to a lawyer or a free legal aid office, with
 
 ## What it never does
 
-- Say that a clause is valid, void or illegal with no source card.
+- Say that a clause is valid, void or illegal, even with a source card. With a card it writes: the rule says X; whether it applies to clause N is a question for the lawyer.
 - Tell the user to sign, to refuse or to ignore a notice.
 - Draft an answer to a court, an authority or the other party's lawyer.
 - Fill a gap in the text with what such contracts usually say.

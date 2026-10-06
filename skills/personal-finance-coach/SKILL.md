@@ -93,4 +93,4 @@ What changes this month, the number to check, and the date to look again.
 
 ## Related
 
-[[personal-accountant]] for the ledger behind the budget, [[financial-formula-verification]] for the arithmetic, [[daily-reflection]] for the monthly review.
+[[personal-accountant]] for the ledger behind the budget, [[financial-formula-verification]] for the arithmetic.

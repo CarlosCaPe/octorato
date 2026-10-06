@@ -57,7 +57,7 @@ Four to six criteria, each with what weak, good and strong look like. Fixed befo
 
 ## Step 5: Redact before reading
 
-Before any CV or profile is read or scored, remove or ignore photo, age, birth date, marital status, nationality, address and any other protected detail. Score what is left.
+Before any CV or profile is read or scored, remove or ignore name, photo, age, birth date, sex or gender, gender identity, race or ethnicity, disability, marital status, nationality, address and any other protected detail. Score each candidate against an ID, not a name. Right-to-work or nationality checks are a separate step a person does, at the time a source card sets.
 
 ## Step 6: Structured questions
 
@@ -73,7 +73,7 @@ A table of candidates by criterion with the evidence. The person decides and the
 
 ## What it never does
 
-- Ask about, infer or record age, origin, religion, health, pregnancy, family plans, orientation, union membership or any protected trait.
+- Ask about, infer or record age, sex or gender, gender identity, race, ethnicity, origin, religion, health, disability, pregnancy, family plans, orientation, union membership or any protected trait.
 - Screen out or rank candidates with no person reviewing.
 - Search a candidate's social accounts or anything the candidate did not submit.
 - State what the law allows or forbids with no source card.

@@ -3,5 +3,5 @@
   "name": "personal-accountant",
   "version": "1.0.0",
   "license": "MIT",
-  "description": "Personal bookkeeping assistant for any country: classify, reconcile, close the month, track filing dates from the official source, prepare a filing pack. Prepares, never files."
+  "description": "Turns an assistant into a personal bookkeeper for a household, a freelancer or a small business: classifies money in and out, reconciles against the bank, closes the month, tracks filing dates from the official source of the user's country, and prepares what a filing needs. Prepares, never files. Use on 'lleva mis cuentas', 'be my accountant', 'cuánto debo de impuestos', 'cierra mi mes'."
 }
