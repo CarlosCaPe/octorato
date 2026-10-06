@@ -6,7 +6,7 @@
 
 | Metric | Count |
 |---|---|
-| Skills | 235 |
+| Skills | 246 |
 | Agents | 167 |
 | Divisions | 13 |
 | Scripts: wired | 124 |
@@ -14,7 +14,7 @@
 | Rules | 84 |
 | Hook entries | 53 |
 
-## Skills (235)
+## Skills (246)
 
 | Name | Description |
 |---|---|
@@ -72,6 +72,7 @@
 | do-not-ask-to-pause | Canonical mandate , never ask the operator "should we pause?" or "do we close the session?" when there is queued work, a... |
 | doc | Use when the task involves reading, creating, or editing `.docx` documents, especially when formatting or layout fidelit... |
 | doc-tree-consolidation | Collapse N fragmented markdown docs into a small canonical set without losing content or breaking cross-references. Dist... |
+| doctor-visit-prep | Turns an assistant into a helper that prepares a medical appointment and explains what was said after it: a symptom time... |
 | document-code-review | Document Code Review - Full QA Pass |
 | document-semantic-coherence | Document Semantic Coherence |
 | dry-run-gate-pattern | Dry-Run Gate Pattern |
@@ -105,6 +106,7 @@
 | gsap-timeline | Official GSAP skill for timelines , gsap.timeline(), position parameter, nesting, playback. Use when sequencing animatio... |
 | gsap-utils | Official GSAP skill for gsap.utils , clamp, mapRange, normalize, interpolate, random, snap, toArray, wrap, pipe. Use whe... |
 | harmonization-over-accretion | Reusable rebuttal pattern for "let's import all N items from competitor X" temptations. Explains why connectome-graph br... |
+| hiring-assistant | Turns an assistant into a recruiter's helper for a small team: a job description from the real requirements, a scorecard... |
 | hook-profile-gating | Runtime gate hooks via OCTO_HOOK_PROFILE (minimal|standard|strict) and OCTO_DISABLED_HOOKS (comma-separated ids) , disab... |
 | horizontal-scroll-html-vs-body | Android Chrome ignores overflow-x:hidden on <body> if <html> still allows it , clip the root, not just the body, to kill... |
 | human-cadence | The 10 no-rules that strip AI tells from any text so it reads like a person: no em-dash, no filler words, no forced tria... |
@@ -118,7 +120,9 @@
 | infinite-monitor | Builds AI dashboards on Infinite Monitor, an open-source Next.js app where you describe the widget in natural language a... |
 | investigate-before-asking | Canonical mandate , before asking the operator any clarifying question, spend 30-60 seconds doing read-only investigatio... |
 | jupyter-notebook | Use when the user asks to create, scaffold, or edit Jupyter notebooks (`.ipynb`) for experiments, explorations, or tutor... |
+| kids-home-tutor | Turns an assistant into a patient home tutor a parent runs for a child: finds what the child already understands, explai... |
 | knowledge-corpus | Build and query focused knowledge corpora from brain skills, git history, and workspace files. Use when users want to co... |
+| legal-first-reader | Turns an assistant into a first reader of legal paper for a layperson: explains a contract, notice or official letter in... |
 | lii5 | Explains any document, concept or architecture in plain adult language, with analogies and no jargon. Triggers on 'lii5'... |
 | linear | Manage issues, projects & team workflows in Linear. Use when the user wants to read, create or updates tickets in Linear... |
 | llm-system-prompt-engineering | Design, debug, and optimize LLM system prompts for production chatbots , especially smaller/medium models (7B-70B) that ... |
@@ -148,6 +152,8 @@
 | pdf | Use when tasks involve reading, creating, or reviewing PDF files where rendering and layout matter; prefer visual checks... |
 | peer-review-lifecycle | Peer Review Lifecycle for Technical Documents |
 | peripheral-parallel-dispatch | Decision rule for WHEN to fan work out to N parallel sub-agents/arms vs solve it centrally, and HOW the center reconcile... |
+| personal-accountant | Turns an assistant into a personal bookkeeper for a household, a freelancer or a small business: classifies money in and... |
+| personal-finance-coach | Turns an assistant into a personal finance coach: a monthly budget from real numbers, a debt payoff order, an emergency ... |
 | pg-cron-scheduled-maintenance | pg_cron Scheduled Maintenance |
 | pg-stat-statements-observability | pg_stat_statements Query Observability |
 | phi-aware-rag-ingestion | Multi-stage RAG ingestion pipeline for regulated content. Fetch → text-normalize → PHI-screen → chunk → embed → route → ... |
@@ -171,11 +177,13 @@
 | querymaster-sqlite | Child skill of querymaster for SQLite: local file databases, Optuna storage, analytical sweeps and embedded use, with WA... |
 | querymaster-sqlserver | Child skill of querymaster for SQL Server and Azure SQL (Database, Managed Instance, on-prem): pyodbc connection with an... |
 | range-partitioning-growth-tables | Range Partitioning for Growth Tables |
+| real-estate-listing-assistant | Turns an assistant into a listing and client helper for a real-estate professional or an owner selling or renting: a lis... |
 | reflexes-over-discipline | When a rule or gate is chronically ignored, when designing enforcement for a new policy, or when the operator says a rul... |
 | render-deploy | Deploy applications to Render by analyzing codebases, generating render.yaml Blueprints, and providing Dashboard deeplin... |
 | repo-deep-learn | Deep analysis of ONE GitHub repo: inventories the code, extracts patterns that could become a skill and writes a report ... |
 | repo-watch | Daily monitor over a watchlist of GitHub repos: compares the HEAD SHA against the previous snapshot and writes a digest ... |
 | repomix-codebase-packer | Packs a whole repo, local or remote, into a single LLM-optimized file, with Tree-sitter compression (~70% fewer tokens) ... |
+| research-assistant | Turns an assistant into a research helper for a thesis, a paper or a report: sharpens the question, builds a search plan... |
 | research-checklist-discipline | Research Checklist Discipline |
 | runtime-adaptation-over-source-edit | Decision rule for WHERE a new behavior or lesson belongs , the runtime layer (skill / memory / config / hook) vs the cor... |
 | sandbox-sdk | Build sandboxed applications for secure code execution. Load when building AI code execution, code interpreters, CI/CD s... |
@@ -208,6 +216,7 @@
 | skill-installer | Install Codex skills into $CODEX_HOME/skills from a curated list or a GitHub repo path. Use when a user asks to list ins... |
 | skillsmp | Searches, discovers and installs agent skills from skillsmp.com, the largest open collection of SKILL.md files. Triggers... |
 | slides | Create and edit presentation slide decks (`.pptx`) with PptxGenJS, bundled layout helpers, and render/validation utiliti... |
+| small-business-advisor | Turns an assistant into a working advisor for a small business owner: frames the one problem of the month, puts numbers ... |
 | snowflake-dbt-pitfalls | Snowflake and dbt traps that fail silently or destroy data: CREATE OR REPLACE, Dynamic Tables, PIVOT, sources.yml freshn... |
 | social-video-mining | Extracts insights from short video (TikTok, Shorts, Reels, Douyin) without paid speech-to-text: yt-dlp, ffmpeg and visio... |
 | sops-age-git-encryption | SOPS + age (per-user keys) as the default encryption stack for HIPAA / GDPR / SOC-2 / regulated-data git repos. Two-laye... |
@@ -222,11 +231,13 @@
 | stream-transcript-dom-scrape | When a Microsoft Stream recording is read-only and the transcript download says 'no permission', the player still render... |
 | stripe-payments | Pick and implement the right Stripe tier (Payment Link, Checkout, Elements, Connect, Billing), with MCP registration, lo... |
 | structural-completeness-verification | Structural Completeness Verification |
+| study-tutor | Turns an assistant into a personal study tutor: builds a plan back from the exam date, explains from the student's own c... |
 | submission-checklist-gate | Before sending a reply to a formal requirement (bank, government agency, any institution), build an explicit checklist o... |
 | summarize-100 | Compresses any topic, document or answer to ~100 words, the most semantically dense ones. Triggers on '100 palabras', 'v... |
 | svelte-tailwind-gotchas | Known gotchas and workarounds when combining Svelte (4/5) with Tailwind CSS. Use when Svelte template compilation fails ... |
 | table-normalization-1nf | Table Normalization (1NF Violations) |
 | tabularis-db-client | Open-source SQL client for PostgreSQL, MySQL and SQLite with a built-in MCP server, Apache 2.0. To recommend a database ... |
+| teacher-classroom-assistant | Turns an assistant into a classroom helper for a teacher: lesson plans tied to the official curriculum, materials at thr... |
 | teams-1on1-send-no-chat-read | Sends a Teams 1:1 message through the Graph API even when the token does NOT carry Chat.Read scopes: derives the chat ID... |
 | technical-document-craftsmanship | Skill #37 , Technical Document Craftsmanship |
 | theory-plus-practice-prompts | Any long technical document that explains a framework and demonstrates a case MUST carry runnable prompts with real data... |
