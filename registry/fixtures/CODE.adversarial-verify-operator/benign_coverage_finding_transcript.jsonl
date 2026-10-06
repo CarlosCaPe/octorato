@@ -1,2 +1,0 @@
-{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "name": "Bash", "input": {"command": "grep -rl TODO . | head -20"}}]}}
-{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Encontre que todos los archivos del repo traen el TODO pendiente."}]}}

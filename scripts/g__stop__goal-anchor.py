@@ -17,8 +17,17 @@ Per-turn cycle (all inside the same Stop; the payload carries transcript_path):
   2. Anchor. With no prior state: the operator prompt, cut to 240 chars.
      Re-anchors ONLY on a deterministic marker (prefix `objetivo:` / `goal:`, a
      pivot phrase, an already-closed anchor plus a new prompt, or since v10 a
-     TOPIC CHANGE: a goal-shaped prompt that shares no content word with the
-     root and is not an obstacle report). "no me deja entrar" or "sale
+     TOPIC CHANGE: TWO consecutive goal-shaped operator prompts that share no
+     content word with the root and are not obstacle reports; acks and bare
+     questions in between are neutral, a prompt on the root or an obstacle
+     report resets the streak, so one aside never retires the root). Only a
+     REAL operator prompt (origin.kind human, or no origin and no harness-echo
+     shape) can anchor, re-anchor or add silence: a pivot phrase quoted inside a
+     <task-notification> or a peer message is not the operator.
+     Residuals, stated: untagged pasted text is read as the operator's own words
+     (two pasted blocks on another subject in a row re-anchor); obstacle reports
+     are recognised by a fixed vocabulary, so one phrased without it counts as
+     a new-topic prompt. "no me deja entrar" or "sale
      AccessDenied" are the operator reacting to the obstacle, NOT new goals, and
      keep the root. An acknowledgement or a hatch token of at most three words
      ("dale", "send-ok", "continue") never anchors and never re-anchors (v10
@@ -344,6 +353,7 @@ _RE_HARNESS_ECHO = re.compile(
     r"|<function_(?:calls|results)>"
     r"|<local-command-(?:stdout|stderr)>"
     r"|<task-notification>"
+    r"|\A\s*\[Request interrupted by user"
     r"|^\s*(?:fatal|error|traceback|usage):",
     re.IGNORECASE | re.MULTILINE,
 )
@@ -411,9 +421,29 @@ def is_reanchor(prompt: str, state: dict) -> bool:
         return True
     if is_ack(prompt):
         return False                   # AC-09: un acuse conserva la raiz
-    if state.get("closed"):
-        return True
-    return is_topic_change(prompt, state["anchor"])
+    return bool(state.get("closed"))
+
+
+# Cambio de tema: hacen falta TOPIC_CHANGE_PROMPTS prompts reales seguidos del
+# operador sobre el tema nuevo (con al menos una palabra de contenido en comun
+# entre ellos). El QA del v10 mostro que con uno solo, un encargo suelto ("abre
+# la presentacion") o un texto pegado sin etiqueta retiraban la raiz real para
+# siempre; master la conservaba.
+TOPIC_CHANGE_PROMPTS = 2
+
+
+def _topic_step(state: dict, prompt: str) -> bool:
+    """Avanza la racha de cambio de tema con un prompt REAL del operador.
+    Devuelve True cuando la racha llega al umbral (hay que re-anclar)."""
+    if is_ack(prompt) or not is_anchorable(prompt):
+        return False                                   # acuse o pregunta: ni suma ni rompe
+    if not is_topic_change(prompt, state.get("anchor") or ""):
+        state.pop("topic_pending", None)               # volvio a la raiz o es obstaculo
+        return False
+    pending = state.setdefault("topic_pending", {"count": 0})
+    pending["count"] = int(pending.get("count", 0)) + 1
+    pending["anchor"] = extract_anchor(prompt)          # el ultimo encargo es la raiz nueva
+    return pending["count"] >= TOPIC_CHANGE_PROMPTS
 
 
 def is_topic_change(prompt: str, anchor: str) -> bool:
@@ -497,6 +527,7 @@ def _turn_pairs(lines: list) -> list:
     pairs = []
     prompt = None
     reply = None
+    real = False
     for line in lines:
         try:
             entry = json.loads(line)
@@ -514,45 +545,66 @@ def _turn_pairs(lines: list) -> list:
             text = _RE_COMMAND_TAG.sub(" ", text)
             if text.strip():
                 if prompt is not None:
-                    pairs.append((prompt, reply or ""))
+                    pairs.append((prompt, reply or "", real))
                 prompt = text.strip()
                 reply = None
+                real = is_operator_prompt(entry, prompt)
         elif entry.get("type") == "assistant" and prompt is not None:
             reply = _blocks_text(entry)
     if prompt is not None:
-        pairs.append((prompt, reply or ""))
+        pairs.append((prompt, reply or "", real))
     return pairs
 
 
-def _absorb(state: dict, prompt: str, reply: str) -> bool:
+def is_operator_prompt(entry: dict, text: str) -> bool:
+    """Solo un prompt REAL del operador puede anclar, re-anclar o contar como
+    silencio: origin.kind == "human", o sin origin y sin forma de eco del
+    harness. Un <task-notification>, un mensaje de un par o el eco de un
+    `!comando` no son el operador, aunque citen "forget that" o "switching to"
+    (el QA del v10 re-anclo una raiz desde el resumen de un monitor)."""
+    origin = entry.get("origin")
+    if isinstance(origin, dict) and origin.get("kind"):
+        return origin.get("kind") == "human" and not _RE_HARNESS_ECHO.search(text)
+    return not _RE_HARNESS_ECHO.search(text)
+
+
+def _set_anchor(state: dict, anchor: str) -> None:
+    state["anchor"] = anchor
+    state["anchor_ts"] = time.time()
+    state["anchor_turn"] = state["turn"]
+    state["turns_since_mention"] = 0
+    state["closed"] = False
+    state["fires"] = 0
+    state.pop("topic_pending", None)
+
+
+def _absorb(state: dict, prompt: str, reply: str, real: bool = True) -> bool:
     """Pasos 2 (anclaje) y 3 (mencion) de UN turno. No dispara ni persiste.
-    Devuelve si este turno re-anclo."""
+    Devuelve si este turno re-anclo. Solo un prompt real del operador (`real`)
+    puede anclar, re-anclar o sumar silencio."""
     state["turn"] = int(state.get("turn", 0)) + 1
 
     # 2. anclaje
     reanchored = False
-    if not state.get("anchor"):
+    if not real:
+        pass
+    elif not state.get("anchor"):
         # is_anchorable, no "if prompt": un eco del harness o una pregunta
         # suelta no son objetivos, y un ancla mala no se cae sola.
         if is_anchorable(prompt):
-            state["anchor"] = extract_anchor(prompt)
-            state["anchor_ts"] = time.time()
-            state["anchor_turn"] = state["turn"]
-            state["turns_since_mention"] = 0
-            state["closed"] = False
-            state["fires"] = 0
+            _set_anchor(state, extract_anchor(prompt))
     elif is_reanchor(prompt, state):
         # Ya cerrada se retiro con su razon; viva se retira como pivote.
         if not state.get("closed"):
-            _retire(state, "pivot" if not is_topic_change(prompt, state["anchor"]) else "superseded")
+            _retire(state, "pivot")
         # Un pivote hacia algo que no es objetivo retira el ancla vieja sin
         # poner una mala en su lugar: mejor sin raiz que con una falsa.
-        state["anchor"] = extract_anchor(prompt) if is_anchorable(prompt) else ""
-        state["anchor_ts"] = time.time()
-        state["anchor_turn"] = state["turn"]
-        state["turns_since_mention"] = 0
-        state["closed"] = False
-        state["fires"] = 0
+        _set_anchor(state, extract_anchor(prompt) if is_anchorable(prompt) else "")
+        reanchored = True
+    elif _topic_step(state, prompt):
+        first = state["topic_pending"]["anchor"]
+        _retire(state, "superseded")
+        _set_anchor(state, first)
         reanchored = True
 
     anchor = state.get("anchor") or ""
@@ -571,7 +623,7 @@ def _absorb(state: dict, prompt: str, reply: str) -> bool:
         # un comando local) no es silencio sobre la raiz: nadie pregunto nada.
         # En el census v10 la mitad del silencio acumulado venia de rafagas de
         # <task-notification> de vigias y QA corriendo.
-        if not _RE_HARNESS_ECHO.search(prompt):
+        if real:
             state["turns_since_mention"] = int(state.get("turns_since_mention", 0)) + 1
     return reanchored
 
@@ -604,11 +656,11 @@ def run_turn(data: dict) -> str:
     # reproduciendo los turnos previos. Sin esto el gate evalua solo el ultimo
     # turno y el contador de silencio nace en cero, asi que jamas dispararia.
     if not state.get("anchor") and not state.get("history") and len(pairs) > 1:
-        for past_prompt, past_reply in pairs[:-1]:
-            _absorb(state, past_prompt, past_reply)
+        for past_prompt, past_reply, past_real in pairs[:-1]:
+            _absorb(state, past_prompt, past_reply, past_real)
 
-    prompt, reply = pairs[-1]
-    reanchored = _absorb(state, prompt, reply)
+    prompt, reply, real = pairs[-1]
+    reanchored = _absorb(state, prompt, reply, real)
 
     anchor = state.get("anchor") or ""
     if not anchor:

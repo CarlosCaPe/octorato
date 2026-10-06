@@ -1,0 +1,6 @@
+{
+  "session_id": "sess-aside",
+  "transcript_path": "violation_single_aside_transcript.jsonl",
+  "stop_hook_active": false,
+  "cwd": "/tmp"
+}

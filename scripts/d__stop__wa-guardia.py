@@ -142,15 +142,79 @@ def salientes_recientes(puente, ruta, desde=None, ahora="now"):
 # puente de soporte) cuyo resultado no fue error. Sin eso no hay nada que
 # esperar de un tercero y el detector calla.
 
-_WA_SEND_TOOL = re.compile(r"whatsapp.*__send_(?:message|file|audio_message)$", re.IGNORECASE)
+#
+# Dos fuentes, cualquiera basta:
+#   1. el ledger de enviados (r__posttool__sent-ledger.py escribe una linea por
+#      mensaje que salio, con la sesion y la hora): cubre los envios hechos
+#      DENTRO de un subagente, que no aparecen en el transcript principal, y
+#      los acuses sin message_id (el ledger lo documenta como posiblemente "").
+#   2. el transcript del turno: una herramienta de envio, con el MISMO patron de
+#      nombres que usa el gate de envio (se importa, no se copia), o un Bash que
+#      nombra el puente y cuyo resultado trae el acuse {"success": true}.
+# Residual, declarado: un envio hecho fuera de esta sesion (otro proceso, el
+# telefono del operador) no arma la guardia desde aqui.
+
+_SEND_GATE = pathlib.Path(__file__).resolve().parent / "g__pretool-mcp__outward-send.py"
+_SEND_TOOL_CACHE = []
+
+
+def _send_tool_re():
+    """El regex de herramientas de envio del gate de envio. Si no carga, una
+    forma amplia (cualquier herramienta cuyo nombre lleve 'send'): de mas
+    antes que de menos, porque esta es solo una de las dos fuentes."""
+    if not _SEND_TOOL_CACHE:
+        try:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("_wa_guardia_send_gate", _SEND_GATE)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            _SEND_TOOL_CACHE.append(mod._SEND_TOOL)
+        except Exception:
+            _SEND_TOOL_CACHE.append(re.compile(r"send", re.IGNORECASE))
+    return _SEND_TOOL_CACHE[0]
 
 
 # Un Bash que nombra el puente puede ser solo una lectura del script (sed, grep,
 # un diff): lo que distingue un envio es el ACUSE que el puente devuelve,
-# {"success":true, ..., "message_id": "..."}. Se lee del resultado y no del
-# comando, porque el comando trae prefijos de entorno y expansiones que el
-# parser del panel rechaza aunque el mensaje haya salido.
-_RE_ACUSE_PUENTE = re.compile(r'"success"\s*:\s*true.*?"message_id"\s*:\s*"[^"]+"', re.DOTALL)
+# {"success": true, ...}. Se lee del resultado y no del comando, porque el
+# comando trae prefijos de entorno y expansiones que el parser del panel
+# rechaza aunque el mensaje haya salido.
+_RE_ACUSE_PUENTE = re.compile(r'"success"\s*:\s*true')
+
+
+def envios_en_ledger(sesion, desde_utc, ahora_utc=None):
+    """True si el ledger de enviados tiene un mensaje de esta sesion entre el
+    inicio del turno y ahora, y el canal no lo reporto fallido."""
+    if not sesion or not desde_utc:
+        return False
+    from datetime import datetime, timezone
+    try:
+        desde = datetime.strptime(desde_utc, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        hasta = (datetime.strptime(ahora_utc, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                 if ahora_utc else datetime.now(timezone.utc))
+    except ValueError:
+        return False
+    ruta = pathlib.Path.home() / ".claude" / ".cache" / "receipts" / "sent.jsonl"
+    try:
+        lineas = ruta.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return False
+    for linea in lineas:
+        try:
+            rec = json.loads(linea)
+        except ValueError:
+            continue
+        if rec.get("kind") != "sent" or rec.get("session_id") != sesion or rec.get("ok") is False:
+            continue
+        try:
+            t = datetime.fromisoformat(str(rec.get("ts", "")).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=timezone.utc)
+        if desde <= t <= hasta:
+            return True
+    return False
 
 
 def _texto(contenido):
@@ -162,7 +226,7 @@ def _texto(contenido):
 
 
 def _es_envio(nombre, entrada, resultado):
-    if _WA_SEND_TOOL.search(nombre or ""):
+    if nombre != "Bash" and _send_tool_re().search(nombre or ""):
         return True
     if nombre == "Bash" and "wa-soporte" in str((entrada or {}).get("command", "")):
         return bool(_RE_ACUSE_PUENTE.search(_texto(resultado)))
@@ -319,7 +383,8 @@ def _selftest() -> int:
 
     argv = sys.argv
     i = argv.index("--selftest")
-    fixture = argv[i + 1] if len(argv) > i + 1 else None
+    fixture = argv[i + 1] if len(argv) > i + 1 else str(
+        pathlib.Path(__file__).resolve().parent.parent / "registry" / "fixtures" / "FLOW.wa-guardia-on-pending")
     if fixture:
         _siembra_bases(pathlib.Path(fixture).resolve())
     return gate_selftest.run_gate_selftest(__file__, fixture)
@@ -338,6 +403,8 @@ def main():
     sesion = str(payload.get("session_id", "sin-sesion"))
 
     hubo_envio, inicio_turno = envios_del_turno(payload.get("transcript_path") or "")
+    if not hubo_envio:
+        hubo_envio = envios_en_ledger(sesion, inicio_turno)
     if not hubo_envio:
         return
 

@@ -1,7 +1,7 @@
 {
   "tool_name": "Bash",
   "tool_input": {
-    "command": "grep -o '^TOKEN=.*' .env"
+    "command": "awk -F= -v f=2 '{print $f}' .env"
   },
   "cwd": "/home/user/project"
 }

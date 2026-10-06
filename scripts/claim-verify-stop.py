@@ -113,34 +113,27 @@ _RE_COVERAGE_DECLARED = re.compile(
     re.IGNORECASE,
 )
 
-# A coverage claim is about a SWEEP the agent ran: "revisé todos los correos",
-# "checked every file". The v10 census found ~80% FP on replies that make no
-# such claim: a finding about the data ("todas las carpetas le dan control a
-# Everyone"), a standing setup ("vigía en todos los chats"), a schedule ("cada 5
-# minutos"), or the Provenance footer ("Gmail MCP → SEEK-COMPLETE"). So the
-# scope phrase must share its sentence with a first-person sweep verb, and the
-# footer is not prose. The verb-plus-"todo" form already names its sweep.
-_RE_SWEEP_VERB = re.compile(
-    r"\b(revis[eé]|revisad[oa]s|barr[ií]|barrid[oa]s|le[ií]|leid[oa]s|le[ií]d[oa]s|recorr[ií]"
-    r"|busqu[eé]|verifiqu[eé]|comprob[eé]|analic[eé]|cheque[eé]|examin[eé]|audit[eé]"
-    r"|reviewed|checked|scanned|swept|searched|read|went through|looked at|audited|inspected)\b",
-    re.IGNORECASE,
-)
+# The Provenance footer is a machine receipt, not prose: "Gmail MCP ->
+# SEEK-COMPLETE" or "Verified: 0 archivos en comun" there is not a claim of
+# total coverage. The v10 census found 3 of the 7 corpus coverage blocks came
+# only from the footer. Everything from the first footer line on is ignored.
+# A first attempt also required a first-person sweep verb in the sentence; QA
+# showed it missed the exact shape this check exists for ("Esos son todos los
+# correos del mes", "All 40 files are accounted for"), so it was reverted.
+# Residual, stated: a reply sentence that uses "todos/all + scope" to describe
+# the data or a standing setup ("todas las carpetas dan control a Everyone",
+# "vigia en todos los chats") still blocks when the turn also truncated.
 _RE_FOOTER_LINE = re.compile(r"^\W*(?:procedencia|provenance)\b", re.IGNORECASE)
 
 
 def coverage_claim(text: str) -> bool:
-    """True when a sentence of the reply (footer excluded) asserts total
-    coverage of a sweep the agent ran."""
+    """True when the reply, Provenance footer excluded, asserts total coverage."""
     lines = (text or "").splitlines()
     for i, ln in enumerate(lines):
         if _RE_FOOTER_LINE.match(ln):
             lines = lines[:i]
             break
-    for sentence in re.split(r"[.!?\n]", "\n".join(lines)):
-        if _RE_COVERAGE_CLAIM.search(sentence) and _RE_SWEEP_VERB.search(sentence):
-            return True
-    return False
+    return bool(_RE_COVERAGE_CLAIM.search("\n".join(lines)))
 
 
 _BLOCK_REASON_COVERAGE = (

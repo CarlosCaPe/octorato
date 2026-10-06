@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "grep -l KEY .env | xargs cat"
+  },
+  "cwd": "/home/user/project"
+}

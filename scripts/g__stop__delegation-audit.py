@@ -107,7 +107,16 @@ _WRITE_VERBS = ("send", "create", "update", "delete", "revoke", "draft", "label"
 # operator's own Chrome, a sub-agent cannot share it, and a click-by-click edit
 # of a web app is the work itself, not a sweep to digest. The v10 census found
 # 29 of 45 resolvable audit blocks were mostly these calls (~70% FP).
-_INTERACTIVE_PREFIXES = ("mcp__claude-in-chrome__",)
+# Only the INTERACTION tools are exempt (navigate, click/type, fill, find, tab
+# and shortcut handling, page scripting). The page READERS (get_page_text,
+# read_page) and every other browser tool still count as fetches, because
+# reading pages in bulk is exactly the sweep a sub-agent can do (QA of v10).
+# Residual, stated: a sweep driven through javascript_tool that returns page
+# text is exempt; anything else is counted.
+_CHROME = "mcp__claude-in-chrome__"
+_INTERACTIVE_TOOLS = {_CHROME + t for t in (
+    "navigate", "computer", "form_input", "find", "javascript_tool")}
+_INTERACTIVE_PREFIXES = (_CHROME + "tabs_", _CHROME + "shortcuts_")
 
 
 def _is_fetch(tool: str) -> bool:
@@ -116,7 +125,7 @@ def _is_fetch(tool: str) -> bool:
         return True
     if not tool.startswith(FETCH_PREFIX):
         return False
-    if tool.startswith(_INTERACTIVE_PREFIXES):
+    if tool in _INTERACTIVE_TOOLS or tool.startswith(_INTERACTIVE_PREFIXES):
         return False
     action = tool.rsplit("__", 1)[-1]
     return not action.startswith(_WRITE_VERBS)

@@ -1,7 +1,7 @@
 {
   "tool_name": "Bash",
   "tool_input": {
-    "command": "grep -o '^TOKEN=' .env"
+    "command": "cut -d= -f2 .env"
   },
   "cwd": "/home/user/project"
 }

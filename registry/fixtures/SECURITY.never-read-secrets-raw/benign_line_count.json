@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "wc -l .env"
+  },
+  "cwd": "/home/user/project"
+}

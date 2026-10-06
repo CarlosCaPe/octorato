@@ -33,7 +33,7 @@ for _stream in (sys.stdout, sys.stderr):
 # ── reader commands ──────────────────────────────────────────────────────────
 
 _READER_RE = re.compile(
-    r"\b(grep|cat|head|tail|less|rg|awk|sed\s+-n|xxd|strings)\b",
+    r"\b(grep|cat|head|tail|less|rg|awk|sed\s+-n|xxd|strings|cut)\b",
     re.IGNORECASE,
 )
 
@@ -83,86 +83,79 @@ _DENY_REASON = (
 )
 
 
-# ── narrowing readers (v10): the reader that opens the file prints no value ──
-# The v10 census found 9 of 10 denies were reads that print only key NAMES or
-# counts: `grep -c`, `grep -l`, `grep -o '^[A-Z_]*='`, `awk -F= '{print $1}'`,
-# `cut -d= -f1 .env`. Those are already the redacted shape; the redactor rule
-# above only recognised them AFTER a pipe. A pipeline stage that names the
-# secret path passes when that stage itself can only emit names or counts.
+# ── exact name-only reads (v10) ───────────────────────────────────────────────
+# The v10 census found most denies were reads that print only key NAMES. The
+# exemption is three EXACT shapes, never a parser of what a command "can" print:
+# QA of the first attempt (a grep/awk/cut flag reader) leaked values six ways
+# (`awk -F= '{print $1} 1'`, `-v f=2 '{print $f}'`, `grep -l | xargs cat`, a
+# second `-e '.*'`, ...) and turned `grep -c` / `grep -q` into a value oracle
+# (one probe per character). So: a single plain sub-command, no pipe, chain,
+# redirect, process or command substitution, one file operand, and exactly
+#   grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' <file>   (-o/-E in either order, or -oE/-Eo)
+#   awk -F= '{print $1}' <file>                   (exactly that program)
+#   wc -l <file>
+# Everything else that reads a secret file still needs a redactor.
+# Residual, stated: a key NAME is printed (names are not secrets here), and
+# `wc -l` prints a line count.
+_NAME_PATTERN = "^[A-Za-z_][A-Za-z0-9_]*="
+_RE_NOT_PLAIN = re.compile(r"[|<>`]|\$\(")
 
-def _words(stage: str) -> list:
+
+def _words(stage: str):
     import shlex
     try:
         return shlex.split(stage, posix=True)
     except ValueError:
-        return stage.split()
+        return None
 
 
-def _grep_narrows(words: list) -> bool:
-    flags, pattern = set(), None
-    i = 1
-    while i < len(words):
-        w = words[i]
-        if w in ("-e", "--regexp") and i + 1 < len(words) and pattern is None:
-            pattern = words[i + 1]; i += 2; continue
-        if w.startswith("--"):
-            flags.add(w)
-        elif w.startswith("-") and len(w) > 1:
-            flags.update("-" + ch for ch in w[1:])
-        elif pattern is None:
-            pattern = w
-        i += 1
-    # count, list-files, list-non-matching and quiet print no line content
-    if flags & {"-c", "-l", "-L", "-q", "--count", "--files-with-matches",
-                "--files-without-match", "--quiet", "--silent"}:
-        return True
-    if ("-o" in flags or "--only-matching" in flags) and pattern:
-        # Anchored at line start, no wildcard that can cross into the value:
-        # no '.', no negated class, no \S/\s, and '=' only as the last char.
-        p = pattern
-        return (p.startswith("^") and "." not in p and "[^" not in p
-                and "\\S" not in p and "\\s" not in p and "=" not in p[:-1])
+def _exact_name_read(segment: str) -> bool:
+    if _RE_NOT_PLAIN.search(segment):
+        return False
+    w = _words(segment.strip())
+    if not w:
+        return False
+    if w[0] == "grep" and len(w) in (4, 5):
+        flags, rest = w[1:-2], w[-2:]
+        if sorted(flags) not in (["-oE"], ["-Eo"], ["-E", "-o"]):
+            return False
+        pattern, path = rest
+        return pattern == _NAME_PATTERN and not path.startswith("-")
+    if w[0] == "awk":
+        if len(w) == 4 and w[1] == "-F=":
+            prog, path = w[2], w[3]
+        elif len(w) == 5 and w[1] == "-F" and w[2] == "=":
+            prog, path = w[3], w[4]
+        else:
+            return False
+        return prog == "{print $1}" and not path.startswith("-")
+    if w[0] == "wc" and len(w) == 3 and w[1] == "-l":
+        return not w[2].startswith("-")
     return False
 
 
-_RE_AWK_NAME_ONLY = re.compile(r"^-F\s*['\"]?=['\"]?$")
-
-
-def _awk_narrows(words: list) -> bool:
-    sep = any(_RE_AWK_NAME_ONLY.match(w) for w in words[1:]) or any(
-        w == "-F" and j + 1 < len(words) and words[j + 1] == "="
-        for j, w in enumerate(words))
-    prog = next((w for w in words[1:] if "print" in w), "")
-    if not sep or not prog:
-        return False
-    # every print/printf prints $1 and nothing else from the record
-    return "$0" not in prog and not re.search(r"\$(?:[2-9]|\d{2,}|NF|\()", prog) \
-        and "substr" not in prog and "getline" not in prog and "system" not in prog
-
-
-def _stage_narrows(stage: str) -> bool:
-    words = _words(stage.strip())
-    while words and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[0]):
-        words = words[1:]                               # VAR=x prefix
-    if not words:
-        return False
-    cmd = os.path.basename(words[0])
-    if cmd in ("grep", "egrep", "fgrep", "rg"):
-        return cmd != "rg" and _grep_narrows(words)
-    if cmd == "awk":
-        return _awk_narrows(words)
-    if cmd == "cut":
-        return any(w.startswith(("-f", "-c", "-b", "--fields")) for w in words[1:])
-    if cmd == "wc":
-        return True
-    return False
-
-
-def _narrowing_read(segment: str) -> bool:
-    """Every pipeline stage that names a secret path only emits names/counts."""
-    stages = [s for s in re.split(r"(?<!\|)\|(?!\|)", segment) if s.strip()]
-    hits = [s for s in stages if _has_secret_path(s)]
-    return bool(hits) and all(_stage_narrows(s) for s in hits)
+def _segments(command: str) -> list:
+    """Split on ; && || and newline OUTSIDE quotes. A plain re.split cut
+    `awk -F= '{print $1; print}' .env` inside its program, so neither half
+    carried both the reader and the path and the value printed (QA of v10)."""
+    out, cur, quote, i = [], [], None, 0
+    while i < len(command):
+        ch = command[i]
+        if quote:
+            if ch == quote:
+                quote = None
+            elif ch == "\\" and quote == '"' and i + 1 < len(command):
+                cur.append(ch); i += 1; ch = command[i]
+            cur.append(ch); i += 1; continue
+        if ch in "'\"":
+            quote = ch
+        elif ch == "\n" or ch == ";":
+            out.append("".join(cur)); cur = []; i += 1; continue
+        elif command.startswith(("&&", "||"), i):
+            out.append("".join(cur)); cur = []; i += 2; continue
+        cur.append(ch); i += 1
+    out.append("".join(cur))
+    return out
 
 
 def _has_reader(command: str) -> bool:
@@ -174,6 +167,12 @@ def _has_secret_path(command: str) -> bool:
 
 
 def _has_redactor(command: str) -> bool:
+    # A later pipeline stage that itself reads the secret file is not a
+    # redactor of the stage before it: `grep -c '' .env | grep -o '.*' .env`
+    # prints the file whole (QA of v10).
+    stages = re.split(r"(?<!\|)\|(?!\|)", command)
+    if any(_has_reader(st) and _has_secret_path(st) for st in stages[1:]):
+        return False
     return bool(_REDACTOR_RE.search(command))
 
 
@@ -219,9 +218,9 @@ def main() -> int:
 
         # Evaluate per shell segment (split on ; && || newline), NOT on the whole
         # string: `cat .env; cat ok | jq .` must not pass on the unrelated jq.
-        for seg in re.split(r"(?:&&|\|\||;|\n)", command):
+        for seg in _segments(command):
             if _has_reader(seg) and _has_secret_path(seg) and not _has_redactor(seg) \
-                    and not _narrowing_read(seg):
+                    and not _exact_name_read(seg):
                 print(json.dumps({
                     "hookSpecificOutput": {
                         "hookEventName": "PreToolUse",
