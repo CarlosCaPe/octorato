@@ -15,6 +15,12 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-10-06]: v9.9.0
+### Features
+- feat(v10): phase 3 entry, one-command install that wires hooks and writes a first spec (#379)
+### Other
+- docs(changelog): backfill v9.8.0 (#381)
+
 ## [2026-10-06]: v9.8.0
 ### Features
 - feat(friction): v10 phase 1, measure gate friction (T01-T03) (#380)
