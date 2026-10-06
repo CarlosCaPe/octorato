@@ -58,7 +58,16 @@ WHAT IT REQUIRES (docs/architecture/v7-nothing-ships-unverified.md)
      stated: a non-reader that merely names the script (`git log --
      <script>`, `vim <script>`, a commit message with the bare name as a
      word) is now judged as a send and denied without a panel; read it with
-     cat, grep, head or a plain `sed -n`. Residual, stated: a script copied in
+     cat, grep, head or a plain `sed -n`. A reader is exempt only on its own:
+     a pipeline with an interpreter or executor in any stage after the first
+     (panel_digest.EXECUTOR_NAMES: shells, python*, perl, ruby, node, php,
+     lua, awk with system or a quoted |, xargs, parallel, eval, source, .,
+     env, exec, nohup, timeout, sudo, doas) is a send whenever any stage
+     names the script, because `cat <script> | sh -s -- <jid> <msg>` and
+     its bash, head, tail and grep twins ran the bridge with no panel and no
+     ask. Residual, stated: a wrapper outside that set in front of the
+     shell (`| nice sh`, `| setsid sh`, `| command sh`, `| busybox sh`)
+     and a pipe into a function or an alias stay open. A script copied in
      one call and run in a later one (a config key that names the script is
      denied when it is SET, but one that points at a copy or a wrapper fires
      later from any `git log`), or a name the gate cannot see (alias,
@@ -601,7 +610,8 @@ def _send_recipient(tool_name: str, tool_input) -> str:
 def _bash_recipients(command: str, split=None) -> list:
     """Every support-bridge recipient in *command* under one reading."""
     import receipt_ledger
-    out = []
+    # A reader piped into an executor carries no recipient the gate can read.
+    out = [""] if _pipe_runs_script(command) else []
     for sc in receipt_ledger.subcommands(command, split):
         toks = receipt_ledger.tokens_of(sc)
         if toks and toks[0] in _READERS:
@@ -835,6 +845,16 @@ def support_script_plain_read(command: str) -> bool:
 _PROC_SUBST = re.compile(r"(?:[<>$]\(|`)[^)`]*(?:" + "|".join(re.escape(n) for n in _SEND_SCRIPTS) + r")")
 
 
+def _pipe_runs_script(command: str) -> bool:
+    """A reader whose output is piped into an executor (panel_digest.
+    pipe_runs_script, EXECUTOR_NAMES); with panel_digest unloadable, any pipe
+    in a command that names the script counts (fail closed)."""
+    try:
+        return _panel_digest.pipe_runs_script(command)
+    except Exception:
+        return "|" in str(command) and any(n in str(command) for n in _SEND_SCRIPTS)
+
+
 def _names_script(tok: str) -> bool:
     """The support script as a word anywhere in *tok*; with panel_digest
     unloadable, any substring counts (fail closed)."""
@@ -862,7 +882,7 @@ def _bash_is_send(command: str) -> bool:
     if support_script_plain_read(command):
         return False
     toks_list = [receipt_ledger.tokens_of(sc) for sc in receipt_ledger.subcommands(command)]
-    if _runs_script_behind_reader(command, toks_list):
+    if _runs_script_behind_reader(command, toks_list) or _pipe_runs_script(command):
         return True
     for toks in toks_list:
         if toks and toks[0] in _READERS:

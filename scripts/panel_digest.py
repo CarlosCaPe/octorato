@@ -277,6 +277,19 @@ def _readers():
 # send gate imports this set, so the two never drift.
 READER_NAMES = frozenset({"grep", "ag", "ls", "cat", "head", "tail", "wc",
                           "stat", "file", "diff", "chmod", "chown"})
+# A pipeline stage AFTER the first whose program is one of these runs what the
+# stages before it print: `cat <script> | sh -s -- <jid> <msg>` sends with no
+# panel while `cat` alone is a reader. Such a pipeline loses the reader
+# exemption whole and is a send whenever any of its stages names the script.
+# One shape, no reading of intent: `python*` is matched as a prefix, and the
+# awk family counts only when its stage carries `system` or a quoted `|`
+# (awk's pipe to a command). Shared with the outward-send gate, never copied.
+EXECUTOR_NAMES = frozenset({"sh", "bash", "dash", "zsh", "ksh", "fish", "python",
+                            "perl", "ruby", "node", "php", "lua", "awk", "gawk",
+                            "mawk", "nawk", "xargs", "parallel", "eval", "source",
+                            ".", "env", "exec", "nohup", "timeout", "sudo", "doas"})
+_AWK_NAMES = frozenset({"awk", "gawk", "mawk", "nawk"})
+_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _OPERATOR = re.compile(r"^[();<>|&]+$")
 # The script name standing as a WORD anywhere inside a token: the whole token,
 # a path ending in it, or a word of a command line carried inside one token
@@ -298,12 +311,121 @@ def names_script(tok: str) -> bool:
     return bool(SCRIPT_WORD.search(str(tok)))
 
 
+def pipelines(command: str) -> list:
+    """The pipelines of a shell string, each a list of stage strings. Cuts on
+    unquoted ; && || & and newline, and splits stages on unquoted | and |&.
+    A backslash escapes the next character outside single quotes, a `#` at a
+    word start runs to the newline, and an `&` inside a redirection (`2>&1`,
+    `&>`, `>&`) cuts nothing. Never raises."""
+    cmd = str(command or "")
+    out, stages, buf = [], [], []
+    sq = dq = False
+    i, n = 0, len(cmd)
+
+    def stage():
+        stages.append("".join(buf))
+        buf.clear()
+
+    def cut():
+        stage()
+        out.append(list(stages))
+        stages.clear()
+
+    while i < n:
+        ch = cmd[i]
+        if sq:
+            sq = ch != "'"
+            buf.append(ch)
+        elif ch == "\\" and i + 1 < n:
+            buf.append(cmd[i:i + 2])
+            i += 1
+        elif dq:
+            dq = ch != '"'
+            buf.append(ch)
+        elif ch == "'":
+            sq = True
+            buf.append(ch)
+        elif ch == '"':
+            dq = True
+            buf.append(ch)
+        elif ch == "#" and (not buf or buf[-1][-1:].isspace()):
+            while i < n and cmd[i] != "\n":
+                i += 1
+            continue
+        elif ch == "|":
+            if cmd[i + 1:i + 2] == "|":
+                cut()
+                i += 1
+            else:
+                stage()
+                if cmd[i + 1:i + 2] == "&":
+                    i += 1
+        elif ch == "&":
+            if cmd[i + 1:i + 2] == "&":
+                cut()
+                i += 1
+            elif (buf and buf[-1][-1:] in "<>") or cmd[i + 1:i + 2] == ">":
+                buf.append(ch)
+            else:
+                cut()
+        elif ch in ";\n":
+            cut()
+        else:
+            buf.append(ch)
+        i += 1
+    cut()
+    return [p for p in out if any(s.strip() for s in p)]
+
+
+def _stage_program(text: str) -> str:
+    """The program a pipeline stage runs: its first word after leading
+    assignments and grouping, basename only."""
+    try:
+        toks = shlex.split(text)
+    except ValueError:
+        toks = text.split()
+    for t in toks:
+        t = t.strip("(){}")
+        if not t or _ASSIGN.match(t):
+            continue
+        return t.rsplit("/", 1)[-1]
+    return ""
+
+
+def is_executor_stage(text: str) -> bool:
+    """True when a pipeline stage runs what it reads (EXECUTOR_NAMES)."""
+    prog = _stage_program(text)
+    if prog in _AWK_NAMES:
+        return "system" in text or "|" in text
+    return prog in EXECUTOR_NAMES or prog.startswith("python")
+
+
+def pipe_runs_script(command: str) -> bool:
+    """True when a pipeline of *command* has an executor in any stage after
+    the first and any of its stages names the bridge script as a word: the
+    reader exemption does not hold for that pipeline."""
+    for stages in pipelines(command):
+        if len(stages) < 2 or not any(is_executor_stage(s) for s in stages[1:]):
+            continue
+        for s in stages:
+            try:
+                toks = shlex.split(s)
+            except ValueError:
+                toks = s.split()
+            if any(names_script(t) for t in toks):
+                return True
+    return False
+
+
 def names_bridge(command: str) -> bool:
     """True when any token of any sub-command names the bridge script as a
     word, the first token not being a pure reader (`grep wa-soporte.sh`), or
-    when a substitution runs it behind any command."""
+    when a substitution runs it behind any command, or when a reader's output
+    is piped into an executor (pipe_runs_script)."""
     import receipt_ledger
     if SUBST_RUNS_SCRIPT.search(str(command or "")):
+        return True
+    if pipe_runs_script(command):
         return True
     for split in (None,) + tuple(_safe_readers()):
         for sc in receipt_ledger.subcommands(command, split):

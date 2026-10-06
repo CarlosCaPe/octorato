@@ -98,6 +98,21 @@ class Digest(unittest.TestCase):
         for name in ("git", "vim", "vi", "nvim", "nano", "code", "emacs", "less", "more", "man", "rg"):
             self.assertNotIn(name, pd.READER_NAMES)
 
+    def test_reader_piped_into_an_executor_is_no_exemption(self):
+        s = "~/.claude/scripts/wa-soporte" + ".sh"
+        for cmd in (f"cat {s} | sh -s -- 1 hola", f"cat {s} | bash -s -- 1 hola",
+                    f"head -n 500 {s} | sh -s --", f"tail -n +1 {s} | sh",
+                    f"grep -rn x {s} | sh -s -- 1 hola", f"cat {s} | python3 -",
+                    f"cat {s} |& /usr/bin/env bash", f"cat {s} | X=1 sh", f"cat {s} | (sh)",
+                    f"cat {s} | awk '{{system($0)}}'", f"cat {s} | tee /tmp/x | sh"):
+            self.assertTrue(pd.pipe_runs_script(cmd), cmd)
+            self.assertTrue(pd.names_bridge(cmd), cmd)
+        for cmd in (f"cat {s} | grep x", f"cat {s} 2>&1 | head", f"cat {s} | awk '{{print}}'",
+                    f"cat {s} || sh", f"cat {s} | wc -l; echo x | sh", f'grep "a|sh" {s}',
+                    f"grep x {s} # | sh", "cat notes.txt | sh"):
+            self.assertFalse(pd.pipe_runs_script(cmd), cmd)
+        self.assertTrue(pd.READER_NAMES.isdisjoint(pd.EXECUTOR_NAMES))
+
     def test_send_gate_shares_the_reader_set_and_rejects_meta_openers(self):
         import importlib.util
         spec = importlib.util.spec_from_file_location(
