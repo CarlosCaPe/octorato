@@ -1760,6 +1760,9 @@ rules:
   - method: EXIT_CODE
     locator: scripts/g__pretool-mcp__outward-send.py --selftest registry/fixtures/COMMS.outward-send-gate
     expect: 0
+  - method: FILE_EXISTS
+    locator: registry/send-ask.yaml
+    expect: present
   liveness_required: FIRES
   covers_memory:
   - feedback_no_direct_outbound_send.md
