@@ -11,6 +11,7 @@ Nothing could READ any of it. This is that half: five subcommands over the same
     octo replay <pid>        the run as it happened, refusals included
     octo journal <pid>       the raw lines, nothing interpreted
     octo bench               what the hot-path gate costs, measured
+    octo dash [--refresh]    one HTML page: specs, PRs, gate receipt, kernel, friction
 
 Two things are load-bearing and easy to miss.
 
@@ -855,6 +856,14 @@ def selftest(fixture_dir: str = None) -> int:
     return 0
 
 
+# ── dash ────────────────────────────────────────────────────────────────────
+
+def cmd_dash(args) -> int:
+    """`octo dash [--refresh]`: the page lives in octo_dash.py; this is the door."""
+    import octo_dash
+    return octo_dash.run(args)
+
+
 # ── cli ─────────────────────────────────────────────────────────────────────
 
 def build_parser() -> argparse.ArgumentParser:
@@ -890,6 +899,11 @@ def build_parser() -> argparse.ArgumentParser:
     bn.add_argument("--no-fail", action="store_true",
                     help="report the median without failing over the budget")
     bn.set_defaults(func=cmd_bench)
+
+    ds = sub.add_parser("dash", help="write one self-contained HTML page of specs, PRs, gate, kernel")
+    import octo_dash
+    octo_dash.add_arguments(ds)
+    ds.set_defaults(func=cmd_dash)
     return p
 
 

@@ -12,6 +12,10 @@ Merge strategy:
   - settings.json keeps all other keys untouched
   - If settings.json doesn't exist, creates it with just the hooks
   - Idempotent: safe to run multiple times
+  - statusLine: registers scripts/statusline.py when settings.json has no
+    statusLine, or when the one it has is already this brain's (so a moved
+    command is kept current). A statusLine the operator set to anything else
+    is left alone and named.
 """
 
 import json
@@ -35,6 +39,23 @@ if sys.platform == "win32":
 CLAUDE_DIR = os.path.expanduser("~/.claude")
 HOOKS_FILE = os.path.join(CLAUDE_DIR, "hooks.json")
 SETTINGS_FILE = os.path.join(CLAUDE_DIR, "settings.json")
+STATUSLINE_SCRIPT = os.path.join(CLAUDE_DIR, "scripts", "statusline.py")
+STATUSLINE = {"type": "command", "command": "python3 ~/.claude/scripts/statusline.py", "padding": 0}
+
+
+def _merge_statusline(settings):
+    """Return True when settings["statusLine"] was set or updated."""
+    if not os.path.isfile(STATUSLINE_SCRIPT):
+        return False
+    current = settings.get("statusLine")
+    ours = isinstance(current, dict) and "scripts/statusline.py" in str(current.get("command", ""))
+    if current is not None and not ours:
+        print("  statusLine: operator-defined one kept (not scripts/statusline.py)")
+        return False
+    if current == STATUSLINE:
+        return False
+    settings["statusLine"] = dict(STATUSLINE)
+    return True
 
 
 def _atomic_write_json(path, data):
@@ -129,9 +150,14 @@ def main():
     # Merge: replace the hooks section entirely (hooks.json is source of truth)
     old_hooks = settings.get("hooks", {})
     settings["hooks"] = hooks_config
+    status_changed = _merge_statusline(settings)
+    if status_changed:
+        print("  ✓ statusLine registered: scripts/statusline.py")
 
     # Check if anything changed
     if old_hooks == hooks_config:
+        if status_changed:
+            _atomic_write_json(SETTINGS_FILE, settings)
         print("  Hooks already in sync")
         return
 
@@ -156,13 +182,14 @@ def _selftest() -> int:
     """Prove the drift self-heal FIRES: project a temp hooks.json into a temp
     settings.json and assert the hooks section lands. Isolated in a temp dir, so
     the real per-machine settings.json is never touched."""
-    global HOOKS_FILE, SETTINGS_FILE
+    global HOOKS_FILE, SETTINGS_FILE, STATUSLINE_SCRIPT
     import tempfile
     sandbox = tempfile.mkdtemp(prefix="merge-hooks-selftest-")
-    saved = (HOOKS_FILE, SETTINGS_FILE)
+    saved = (HOOKS_FILE, SETTINGS_FILE, STATUSLINE_SCRIPT)
     try:
         HOOKS_FILE = os.path.join(sandbox, "hooks.json")
         SETTINGS_FILE = os.path.join(sandbox, "settings.json")
+        STATUSLINE_SCRIPT = os.path.abspath(__file__)  # any existing file stands in
         # reference an existing script (this file) so _validate_hooks keeps it
         with open(HOOKS_FILE, "w", encoding="utf-8") as f:
             json.dump({"SessionStart": [{"hooks": [
@@ -171,15 +198,24 @@ def _selftest() -> int:
         with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
             settings = json.load(f)
         ok = "SessionStart" in (settings.get("hooks") or {})
+        ok = ok and settings.get("statusLine") == STATUSLINE
+        # an operator-defined statusLine survives a second merge untouched
+        settings["statusLine"] = {"type": "command", "command": "my-own-line"}
+        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(settings, f)
+        main()
+        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+            ok = ok and json.load(f).get("statusLine", {}).get("command") == "my-own-line"
     except Exception as e:
         print(f"selftest FAIL: {e}", file=sys.stderr)
         ok = False
     finally:
-        HOOKS_FILE, SETTINGS_FILE = saved
+        HOOKS_FILE, SETTINGS_FILE, STATUSLINE_SCRIPT = saved
         import shutil
         shutil.rmtree(sandbox, ignore_errors=True)
     if ok:
-        print("selftest PASS: hooks.json projects into settings.json")
+        print("selftest PASS: hooks.json projects into settings.json, statusLine registered, "
+              "an operator statusLine is kept")
     return 0 if ok else 1
 
 
