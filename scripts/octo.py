@@ -11,6 +11,7 @@ Nothing could READ any of it. This is that half: five subcommands over the same
     octo replay <pid>        the run as it happened, refusals included
     octo journal <pid>       the raw lines, nothing interpreted
     octo bench               what the hot-path gate costs, measured
+    octo friction [--days N] per gate: denies, hook latency, labelled FP rate (v10)
 
 Two things are load-bearing and easy to miss.
 
@@ -855,6 +856,112 @@ def selftest(fixture_dir: str = None) -> int:
     return 0
 
 
+# ── friction (v10 FR-01, AC-02) ─────────────────────────────────────────────
+
+def _pct(values: list, q: float):
+    """Nearest-rank percentile; None for an empty list."""
+    if not values:
+        return None
+    v = sorted(values)
+    k = max(0, min(len(v) - 1, int(-(-q * len(v) // 1)) - 1))
+    return v[k]
+
+
+def _median(values: list):
+    if not values:
+        return None
+    v = sorted(values)
+    n = len(v)
+    return v[n // 2] if n % 2 else (v[n // 2 - 1] + v[n // 2]) / 2
+
+
+def friction_report(days: int, now: float = None) -> dict:
+    """Per gate: denies in the window, hook latency, labelled FP rate.
+
+    Denies come from the Friction_Ledger (`friction_ledger.py`), latency from
+    the durations the same reflex copied out of the transcripts, and the FP
+    rate from the labelled cases of `registry/friction-baseline.json` (its own
+    corpus window, printed with it, never the --days window).
+    """
+    import friction_ledger
+    now = time.time() if now is None else now
+    since = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(now - days * DAY))
+    rows = friction_ledger.read_ledger(since)
+    lat = friction_ledger.read_latency(since)
+    gates = {}
+    for r in rows:
+        g = gates.setdefault(r.get("gate") or "unattributed",
+                             {"denies": 0, "kinds": {}, "codes": {}, "sessions": set()})
+        g["denies"] += 1
+        g["kinds"][r.get("kind")] = g["kinds"].get(r.get("kind"), 0) + 1
+        g["codes"][r.get("code")] = g["codes"].get(r.get("code"), 0) + 1
+        g["sessions"].add(r.get("session"))
+    per_hook = {}
+    for x in lat:
+        h = per_hook.setdefault(x.get("hook") or "?", {"ms": [], "timeouts": 0})
+        if isinstance(x.get("ms"), (int, float)):
+            h["ms"].append(x["ms"])
+        h["timeouts"] += bool(x.get("timed_out"))
+    base = {}
+    try:
+        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                               "registry", "friction-baseline.json"), encoding="utf-8") as fh:
+            base = json.load(fh)
+    except (OSError, ValueError):
+        pass
+    labelled = {}
+    for g, b in (base.get("gates") or {}).items():
+        tp, fp = (b.get("TP_FP_of_denies") or [0, 0])[:2]
+        if tp + fp:
+            labelled[g] = {"tp": tp, "fp": fp, "fp_rate": round(fp / (tp + fp), 3)}
+    # Every gate that denied, plus every hook with a recorded duration: a hook
+    # that never denies can still be the costliest friction (budget-check).
+    names = sorted(set(gates) | {g for g in per_hook if g.endswith(".py")},
+                   key=lambda g: (-(gates.get(g) or {}).get("denies", 0),
+                                  -(_pct((per_hook.get(g) or {}).get("ms", []), 0.95) or 0), g))
+    out = []
+    for g in names:
+        d = gates.get(g) or {"denies": 0, "kinds": {}, "codes": {}, "sessions": set()}
+        h = per_hook.get(g) or {"ms": [], "timeouts": 0}
+        out.append({"gate": g, "denies": d["denies"], "sessions": len(d["sessions"]),
+                    "codes": dict(sorted(d["codes"].items(), key=lambda kv: -kv[1])),
+                    "latency_n": len(h["ms"]), "latency_p50_ms": _median(h["ms"]),
+                    "latency_p95_ms": _pct(h["ms"], 0.95), "timeouts": h["timeouts"],
+                    "labelled": labelled.get(g)})
+    return {"days": days, "since": since, "ledger_rows": len(rows), "latency_rows": len(lat),
+            "ledger_dir": str(friction_ledger.ledger_dir()),
+            "label_window": base.get("window"), "gates": out}
+
+
+def cmd_friction(args) -> int:
+    rep = friction_report(args.days)
+    if args.json:
+        print(json.dumps(rep, indent=1, sort_keys=True))
+        return 0
+    print(f"friction over the last {rep['days']} day(s) (since {rep['since']}Z), "
+          f"ledger {rep['ledger_dir']}: {rep['ledger_rows']} deny/block rows, "
+          f"{rep['latency_rows']} latency samples")
+    if not rep["ledger_rows"] and not rep["latency_rows"]:
+        print("  the ledger is empty. It fills at every Stop (r__stop__friction-ledger.py); for the "
+              "past, run: python3 ~/.claude/scripts/friction_ledger.py backfill --since YYYY-MM-DD")
+        return 0
+    lw = rep.get("label_window") or {}
+    print(f"{'gate or hook':40s} {'denies':>6s} {'top reason':>18s} {'p50 ms':>7s} {'p95 ms':>7s} "
+          f"{'n lat':>6s}  FP rate (labelled denies, corpus {lw.get('since')}..{lw.get('until')})")
+    for r in rep["gates"]:
+        p50 = "-" if r["latency_p50_ms"] is None else f"{r['latency_p50_ms']:.0f}"
+        p95 = "-" if r["latency_p95_ms"] is None else f"{r['latency_p95_ms']:.0f}"
+        top = next(iter(r["codes"].items()), None)
+        top = f"{top[0]} {top[1]}"[:18] if top else ""
+        lab = r["labelled"]
+        fp = f"{lab['fp_rate']:.0%} ({lab['fp']} FP / {lab['tp'] + lab['fp']})" if lab else "-"
+        print(f"{r['gate'][:40]:40s} {r['denies']:6d} {top:>18s} {p50:>7s} {p95:>7s} "
+              f"{r['latency_n']:6d}  {fp}")
+    print("latency: the harness records a duration only when a hook prints output, and a deny "
+          "leaves no duration at all, so '-' means not recorded, not fast.")
+    return 0
+
+
 # ── cli ─────────────────────────────────────────────────────────────────────
 
 def build_parser() -> argparse.ArgumentParser:
@@ -890,6 +997,11 @@ def build_parser() -> argparse.ArgumentParser:
     bn.add_argument("--no-fail", action="store_true",
                     help="report the median without failing over the budget")
     bn.set_defaults(func=cmd_bench)
+
+    fr = sub.add_parser("friction", help="gate denies, hook latency and labelled FP rate (v10)")
+    fr.add_argument("--days", type=int, default=7)
+    fr.add_argument("--json", action="store_true", help="machine-readable")
+    fr.set_defaults(func=cmd_friction)
     return p
 
 
