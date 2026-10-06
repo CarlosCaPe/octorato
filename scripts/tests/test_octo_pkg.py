@@ -183,6 +183,27 @@ class TestTreeHash(unittest.TestCase):
         (d / "extra.md").write_text("x\n", encoding="utf-8")
         self.assertNotEqual(before, octo_pkg.tree_sha256(d))
 
+    def test_order_is_the_posix_path_order_on_every_os(self):
+        """Pinned against an independent reference: sorted(PurePosixPath), the
+        order every POSIX-signed hash was computed in. Two traps in one tree: a
+        directory beside a sibling that extends its name (`examples/` and
+        `examples.md`, where a plain string sort flips them), and case (`SKILL.md`
+        before `reference.txt`, where WindowsPath flips them)."""
+        import hashlib
+        from pathlib import PurePosixPath
+        d = self.tmp / "nested"
+        (d / "examples").mkdir(parents=True)
+        files = {"SKILL.md": b"s\n", "reference.txt": b"r\n",
+                 "examples/a.md": b"a\n", "examples.md": b"e\n", "examples-b.md": b"b\n"}
+        for rel, body in files.items():
+            (d / rel).write_bytes(body)
+        ref = hashlib.sha256()
+        for rel in (str(p) for p in sorted(PurePosixPath(r) for r in files)):
+            ref.update(rel.encode() + b"\0")
+            ref.update(hashlib.sha256(files[rel]).hexdigest().encode() + b"\0")
+            ref.update(b"-\0")
+        self.assertEqual(octo_pkg.tree_sha256(d), ref.hexdigest())
+
     def test_symlink_inside_a_package_is_refused(self):
         d = self._pkg()
         os.symlink("/etc/passwd", d / "escape")
