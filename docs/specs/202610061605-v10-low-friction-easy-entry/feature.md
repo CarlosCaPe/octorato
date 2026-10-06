@@ -23,7 +23,7 @@ Working notes behind every number: the friction census, the entry and UI census 
 
 Every acceptance criterion names one of these components as its subject.
 
-- **Send_Ask**: an operator prompt that names a transmission verb from a tracked list (`registry/send-ask.yaml`: in Spanish `mándalo`, `envíalo`, `mándale`, `envíale`, `publícalo`, `avísale`; in English `send it`, `send`, `post it`), not negated. `dale` and other bare go-aheads count only when the same prompt also names the message or its recipient.
+- **Send_Ask**: an operator prompt that names a transmission verb from a tracked list (`registry/send-ask.yaml`: in Spanish `mándalo`, `envíalo`, `mándale`, `envíale`, `publícalo`, `avísale`; in English `send it`, `send`, `post it`), not negated and not deferred. Bare go-aheads such as `dale` or `adelante` never count: QA showed they read editing instructions ("dale una revisada al mensaje") as sends.
 - **Friction_Ledger**: a new append-only, gitignored JSONL file under `~/.claude/.cache/friction/`, one line per gate deny or Stop block, with gate name, session, tool, a reason code and a truncated input digest.
 - **Friction_Report**: a new `octo friction` subcommand that reads the Friction_Ledger and the replay corpus and prints denies, sampled false-positive rate and latency per gate.
 - **Replay_Harness**: a new script that replays a frozen corpus of real tool calls and prompts through a gate and reports allow/deny changes against a stored baseline. The corpus is private and gitignored (`company/friction-corpus/`); only the baseline counts and per-case hashes are tracked.
@@ -32,6 +32,7 @@ Every acceptance criterion names one of these components as its subject.
 - **Guard_Stop**: `scripts/d__stop__wa-guardia.py`.
 - **Budget_Check**: `scripts/budget-check.py`.
 - **Merge_Gate**: `scripts/qa-merge-gate.py`.
+- **Rebase_Verifier**: a QA subagent protocol, started by a new `/requa <pr>` command, that re-reviews a pull request whose head moved only because its base moved.
 - **Receipt_Ledger**: `scripts/receipt_ledger.py`.
 - **Quickstart**: `scripts/quickstart.py` and the README install section.
 - **Doctor**: `scripts/brain_doctor.py`.
@@ -65,9 +66,9 @@ The Goal_Anchor never anchors a prompt that is only a short acknowledgement or a
 
 A hook on the hot path finishes within a stated budget. Budget_Check answers from a cache refreshed out of band instead of recomputing on every spawn.
 
-### FR-05: A rebase does not void a review
+### FR-05: A rebase costs one short check, not a full review
 
-When a pull request's head changes only because its base moved, and its patch is identical to the reviewed one, the earlier QA verdict carries over. Any change to the patch itself still voids it.
+When a pull request's head changes only because its base moved, a verifier confirms against the remote master that the patch is identical and records the receipt for the new head. The merge gate itself does not change.
 
 ### FR-06: One install path that wires everything
 
@@ -94,8 +95,8 @@ The Constitution keeps the rules every session needs and moves the long mechanis
 - [ ] AC-09: IF a prompt consists only of an acknowledgement or a hatch token of at most three words, THEN THE Goal_Anchor SHALL keep the previous root goal instead of anchoring the prompt.
 - [ ] AC-10: WHEN the Replay_Harness replays the Stop-hook corpus, THE Goal_Anchor SHALL block on at most 25% of the turns it blocked on in the baseline, with every labelled true-positive case still blocked.
 - [ ] AC-11: THE Budget_Check SHALL answer a PreToolUse call in at most 300 ms at the median and 1 s at p95, measured over 100 consecutive calls on the operator's machine.
-- [ ] AC-12: WHEN a pull request's head changes, both the new head and the reviewed head are local objects, and the whitespace-sensitive hash of `git diff <merge-base>..<head>` with only `index` and `@@` lines removed is equal for both, THE Merge_Gate SHALL accept the QA PASS receipt of the reviewed head for the new head.
-- [ ] AC-13: IF the two diff hashes differ, or either commit is not a local object, THEN THE Merge_Gate SHALL deny the merge exactly as it does today.
+- [ ] AC-12: WHEN a pull request's head changes only by merging or rebasing onto master, THE Rebase_Verifier SHALL confirm, against the remote master read through `gh` and not a local ref, that the pull request's diff over its merge base is byte-identical to the diff of the head that holds the QA PASS, and SHALL record a QA receipt for the new head only when they match.
+- [ ] AC-13: THE Merge_Gate SHALL keep deciding on the receipt that names the pinned head, unchanged, with no carry of a PASS from one head to another.
 - [ ] AC-14: THE Quickstart SHALL, on a clean clone, wire the Claude Code hooks, set `core.hooksPath` to `.githooks` and finish with a first spec directory that `spec_lint.py` accepts, using one command after the clone.
 - [ ] AC-15: THE Doctor SHALL offer a fast profile that completes in at most 30 s on the operator's machine, and THE Quickstart SHALL use that profile.
 - [ ] AC-16: THE Fresh_Clone_Test SHALL run the Quickstart in a clean container on every pull request that touches the install path and SHALL fail if hooks are not wired or the run exceeds 5 minutes.
@@ -117,7 +118,7 @@ The Constitution keeps the rules every session needs and moves the long mechanis
 - No guarantee from v7, v8 or v9 is weakened: every labelled true positive in the corpus still blocks (AC-04, AC-08, AC-13).
 - Every number in a commit or doc carries its measurement mode and source.
 - The Friction_Ledger never holds a secret or a message body; the corpus stays private and gitignored.
-- AC-12 changes the merge contract from "a PASS approves the commit" to "a PASS approves the patch over its merge base". Residual, stated: a base change that alters behaviour without touching the patch is not re-reviewed; the branch protection's required checks re-run on the new head and are the bound.
+- The merge contract does not change: a PASS approves the commit it names. A carry inside the gate was tried and failed QA: its merge base came from a local ref the agent can move, so a carried PASS could land on unreviewed code. The re-review after a base update moves to a verifier that reads the remote, so the gate keeps no network call and no agent-owned input.
 
 ## Release Criterion
 
@@ -133,3 +134,4 @@ v10.0.0 ships when every criterion above has a CONVERGED verdict and the Frictio
 
 - 2026-10-06: draft from the friction, entry and UI censuses and the pull request triage.
 - 2026-10-06: analyze pass applied: whitespace-sensitive diff hash instead of patch-id, private corpus, PR snapshot for the dashboard, bounded send ask, Send_Ask defined, AC-08 widened to every send-gate check, AC-21 (guard stop) and AC-22 (stale budget cache) added, timing modes stated.
+- 2026-10-06: QA failed the in-gate receipt carry (local master ref is agent-writable). AC-12 and AC-13 now move the re-review to a remote-reading verifier and keep the merge gate unchanged. Send_Ask no longer accepts bare go-aheads.
