@@ -1,7 +1,0 @@
-{
-  "tool_name": "Bash",
-  "tool_input": {
-    "command": "awk -F= '{print $1}' .env"
-  },
-  "cwd": "/home/user/project"
-}

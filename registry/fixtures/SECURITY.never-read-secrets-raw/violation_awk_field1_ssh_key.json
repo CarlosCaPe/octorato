@@ -1,7 +1,7 @@
 {
   "tool_name": "Bash",
   "tool_input": {
-    "command": "grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' .env"
+    "command": "awk -F= '{print $1}' ~/.ssh/id_rsa"
   },
   "cwd": "/home/user/project"
 }

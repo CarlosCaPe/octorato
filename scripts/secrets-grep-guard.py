@@ -83,55 +83,14 @@ _DENY_REASON = (
 )
 
 
-# ── exact name-only reads (v10) ───────────────────────────────────────────────
-# The v10 census found most denies were reads that print only key NAMES. The
-# exemption is three EXACT shapes, never a parser of what a command "can" print:
-# QA of the first attempt (a grep/awk/cut flag reader) leaked values six ways
-# (`awk -F= '{print $1} 1'`, `-v f=2 '{print $f}'`, `grep -l | xargs cat`, a
-# second `-e '.*'`, ...) and turned `grep -c` / `grep -q` into a value oracle
-# (one probe per character). So: a single plain sub-command, no pipe, chain,
-# redirect, process or command substitution, one file operand, and exactly
-#   grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' <file>   (-o/-E in either order, or -oE/-Eo)
-#   awk -F= '{print $1}' <file>                   (exactly that program)
-#   wc -l <file>
-# Everything else that reads a secret file still needs a redactor.
-# Residual, stated: a key NAME is printed (names are not secrets here), and
-# `wc -l` prints a line count.
-_NAME_PATTERN = "^[A-Za-z_][A-Za-z0-9_]*="
-_RE_NOT_PLAIN = re.compile(r"[|<>`]|\$\(")
-
-
-def _words(stage: str):
-    import shlex
-    try:
-        return shlex.split(stage, posix=True)
-    except ValueError:
-        return None
-
-
-def _exact_name_read(segment: str) -> bool:
-    if _RE_NOT_PLAIN.search(segment):
-        return False
-    w = _words(segment.strip())
-    if not w:
-        return False
-    if w[0] == "grep" and len(w) in (4, 5):
-        flags, rest = w[1:-2], w[-2:]
-        if sorted(flags) not in (["-oE"], ["-Eo"], ["-E", "-o"]):
-            return False
-        pattern, path = rest
-        return pattern == _NAME_PATTERN and not path.startswith("-")
-    if w[0] == "awk":
-        if len(w) == 4 and w[1] == "-F=":
-            prog, path = w[2], w[3]
-        elif len(w) == 5 and w[1] == "-F" and w[2] == "=":
-            prog, path = w[3], w[4]
-        else:
-            return False
-        return prog == "{print $1}" and not path.startswith("-")
-    if w[0] == "wc" and len(w) == 3 and w[1] == "-l":
-        return not w[2].startswith("-")
-    return False
+# ── v10: this gate only TIGHTENS ─────────────────────────────────────────────
+# A name-only exemption was tried and removed: QA showed it was not scoped to
+# .env-shaped files (`awk -F= '{print $1}' ~/.ssh/id_rsa` prints the whole key,
+# since a line with no '=' is all field 1), and the replay showed it removed no
+# measured friction (none of its shapes occurs in the corpus). What stays are
+# three closures of holes that were already on master: segments split on
+# ; && || and newline only outside quotes, `cut` counted as a reader, and a
+# later pipe stage that re-reads the secret file not counted as a redactor.
 
 
 def _segments(command: str) -> list:
@@ -219,8 +178,7 @@ def main() -> int:
         # Evaluate per shell segment (split on ; && || newline), NOT on the whole
         # string: `cat .env; cat ok | jq .` must not pass on the unrelated jq.
         for seg in _segments(command):
-            if _has_reader(seg) and _has_secret_path(seg) and not _has_redactor(seg) \
-                    and not _exact_name_read(seg):
+            if _has_reader(seg) and _has_secret_path(seg) and not _has_redactor(seg):
                 print(json.dumps({
                     "hookSpecificOutput": {
                         "hookEventName": "PreToolUse",
