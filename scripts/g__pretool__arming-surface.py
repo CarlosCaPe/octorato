@@ -1622,6 +1622,15 @@ def _add_wrapper_rows(mod) -> None:
 # BODY, not the command, so it never changes what the shared parser sees.
 _PATH_NOISE = re.compile(r"/(?:\.?/)+")
 _PATH_UP = re.compile(r"/[^/]+/\.\./")
+# Windows only. A backslash run BETWEEN two path characters is a separator
+# (`.claude\settings.json`, or `\\` inside a non-raw string literal); one next
+# to a quote or a paren is shell or string escaping and is left alone, so the
+# call patterns that read quotes keep working. The drive colon counts as a
+# path character, or `C:\Users\...` folds to a half-converted `C:\Users/...`
+# that matches no needle. A `/c/` not preceded by a path character is Git
+# Bash's spelling of drive C:.
+_WIN_SEP = re.compile(r"(?<=[\w.~:-])\\{1,2}(?=[\w.~-])")
+_WIN_MSYS = re.compile(r"(?<![\w/.~:-])/([A-Za-z])/")
 
 
 def _normalize_paths(text: str) -> str:
@@ -1631,8 +1640,18 @@ def _normalize_paths(text: str) -> str:
     `open('~/.claude/scripts/../settings.json','w')` was a literal bypass of
     every needle with no variable and no unusual idiom in it, which put it
     outside the stated variable-expansion residual. The up-level pass runs to a
-    fixed point (bounded), because `a/b/../../c` needs two rounds."""
-    text = _PATH_NOISE.sub("/", text or "")
+    fixed point (bounded), because `a/b/../../c` needs two rounds.
+
+    On Windows two more spellings of one file were literal bypasses, measured
+    ALLOW against the live gate: mixed separators
+    (`C:/Users/<me>/.claude\\settings.json`) and the Git Bash drive form
+    (`/c/Users/<me>/.claude/settings.json`). Both fold to the forward-slash
+    needle `_os_spellings` already carries."""
+    text = text or ""
+    if os.name == "nt":
+        text = _WIN_SEP.sub("/", text)
+        text = _WIN_MSYS.sub(lambda m: m.group(1).upper() + ":/", text)
+    text = _PATH_NOISE.sub("/", text)
     for _ in range(8):
         folded = _PATH_UP.sub("/", text)
         if folded == text:
@@ -4315,6 +4334,11 @@ def _selftest(fdir: str = None) -> int:
             # so the leg's premise cannot be built here. Named, never passed.
             skipped.append(name)
             continue
+        if setup.get("os") and setup["os"] != os.name:
+            # A spelling that only names the live file on one OS (a Windows
+            # separator inside a path is an ordinary character on POSIX).
+            skipped.append(name)
+            continue
         sandbox = tempfile.mkdtemp(prefix="arming-selftest-")
         try:
             _build_sandbox(sandbox, setup)
@@ -4325,6 +4349,10 @@ def _selftest(fdir: str = None) -> int:
             # leg's path intact, since a shell reads a backslash as an escape.
             body = json.dumps(payload).replace(
                 "{{SANDBOX}}", json.dumps(_shell_path(sandbox))[1:-1])
+            # The Git Bash drive spelling of the same sandbox (`/c/Users/...`);
+            # identity on POSIX, so a fixture using it is a violation everywhere.
+            body = body.replace("{{SANDBOX_MSYS}}",
+                                json.dumps(_msys_path(sandbox))[1:-1])
             # {{PAD}} keeps an oversize fixture SMALL on disk: the cap is 64 KB
             # and a literal payload would be a 64 KB file in the repo for every
             # leg that needs one.
@@ -4952,6 +4980,15 @@ def _shell_path(path: str) -> str:
     """A sandbox path as a selftest leg writes it: forward slashes. Identity on
     POSIX; on Windows the one form a JSON payload and a Bash command both keep."""
     return path.replace(os.sep, "/") if os.sep != "/" else path
+
+
+def _msys_path(path: str) -> str:
+    """A sandbox path in Git Bash's drive spelling: `C:\\x` is `/c/x`. Identity
+    on POSIX."""
+    p = _shell_path(path)
+    if os.name == "nt" and len(p) > 1 and p[1] == ":":
+        return "/" + p[0].lower() + p[2:]
+    return p
 
 
 def _touch(path: str, body: str) -> None:
