@@ -13,8 +13,10 @@ ledger (FLOW.sent-message-ledger).
 
 Stdlib only:  python3 -m unittest scripts.tests.test_panel_receipt
 """
+import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -83,7 +85,175 @@ class Digest(unittest.TestCase):
                     f'{s} 1 "x"; echo done'):
             with self.assertRaises(pd.PanelDigestError):
                 pd.support_sends(cmd)
-        self.assertEqual(pd.support_sends(f'{s} 1 "a; b & c"'), [("1", "a; b & c", None)])
+        self.assertEqual(pd.support_sends(f'{s} 1 "a; b & c"'), [("1", "a; b & c", None, [])])
+
+
+class BridgeArgs(unittest.TestCase):
+    """One reader for the support script's arguments: the script strips its
+    value flags wherever they sit, and so must every reader of the line."""
+
+    S = "wa-soporte" + ".sh"
+
+    def setUp(self):
+        self._env = os.environ.pop(pd.MENTIONS_ENV, None)
+
+    def tearDown(self):
+        os.environ.pop(pd.MENTIONS_ENV, None)
+        if self._env is not None:
+            os.environ[pd.MENTIONS_ENV] = self._env
+
+    def test_flag_position_does_not_change_what_is_read(self):
+        want = ("G", "hola a todos", None, ["A"])
+        for rest in (["G", "hola a todos", "--menciones", "A"],
+                     ["--menciones", "A", "G", "hola a todos"],
+                     ["G", "--menciones", "A", "hola a todos"],
+                     ["G", "hola", "--menciones", "A", "a", "todos"]):
+            self.assertEqual(pd.parse_bridge_args(rest), want, rest)
+
+    def test_every_value_flag_of_the_script_is_known(self):
+        # The script's own case arms are the source of truth: a flag added
+        # there and not here is the bug this reader exists to prevent.
+        src = (Path(pd.__file__).parent / pd.SUPPORT_SCRIPT).read_text(encoding="utf-8")
+        arms = set(re.findall(r"^\s{4}(--[a-z-]+)\)\s*$", src, re.MULTILINE))
+        self.assertTrue(arms)
+        self.assertEqual(arms, set(pd.BRIDGE_VALUE_FLAGS))
+
+    def test_the_script_refuses_the_shapes_the_reader_refuses(self):
+        # Only shapes that exit in the argument loop, before anything is sent.
+        script = str(Path(pd.__file__).parent / pd.SUPPORT_SCRIPT)
+        self.assertEqual(subprocess.run(["bash", "-n", script]).returncode, 0)
+        for rest in (["G", "m", "--menciones", "A", "--menciones", "B"],
+                     ["G", "m", "--menciones", "--archivo", "f"], ["G", "m", "--menciones"],
+                     ["G", "m", "--menciones", ""]):
+            with self.assertRaises(pd.PanelDigestError, msg=rest):
+                pd.parse_bridge_args(rest)
+            done = subprocess.run(["bash", script, *rest], capture_output=True, text=True, timeout=20)
+            self.assertEqual(done.returncode, 64, (rest, done.stderr))
+
+    def test_mentions_are_split_like_the_script_splits_them(self):
+        self.assertEqual(pd.parse_bridge_args(["G", "m", "--menciones", " A ,,B, "])[3], ["A", "B"])
+
+    def test_lines_the_reader_cannot_be_sure_of_deny(self):
+        for rest in (["G", "m", "--menciones"], ["G", "m", "--menciones", ""],
+                     ["G", "m", "--menciones", ","], ["G", "m", "--menciones", "A", "--menciones", "B"],
+                     ["G", "m", "--archivo", "f", "--archivo", "g"],
+                     ["G", "m", "--menciones", "--archivo", "f"], ["G", "m", "--archivo", "--menciones"],
+                     ["G", "--menciones", "A"], ["--menciones", "A", "G"], ["G"], []):
+            with self.assertRaises(pd.PanelDigestError, msg=rest):
+                pd.parse_bridge_args(rest)
+            self.assertEqual(pd.bridge_recipient(rest), "", rest)
+
+    def test_recipient_is_never_a_flag_value(self):
+        self.assertEqual(pd.bridge_recipient(["--menciones", "A", "G", "m"]), "G")
+        self.assertEqual(pd.bridge_recipient(["--archivo", "f", "G", "m"]), "G")
+        self.assertEqual(pd.bridge_recipient(["G", "m"]), "G")
+
+    def test_mentions_are_part_of_the_digest(self):
+        base = pd.digests_for("Bash", {"command": f'{self.S} G "hola"'})
+        a = pd.digests_for("Bash", {"command": f'{self.S} G "hola" --menciones A'})
+        b = pd.digests_for("Bash", {"command": f'{self.S} G "hola" --menciones B'})
+        first = pd.digests_for("Bash", {"command": f'{self.S} --menciones A G "hola"'})
+        both = pd.digests_for("Bash", {"command": f'{self.S} G "hola" --menciones B,A'})
+        swapped = pd.digests_for("Bash", {"command": f'{self.S} G "hola" --menciones a,b'})
+        self.assertEqual(len({base[0], a[0], b[0], both[0]}), 4)
+        self.assertEqual(a, first)
+        self.assertEqual(both, swapped)
+
+    def test_a_send_without_mentions_keeps_its_old_digest(self):
+        old = hashlib.sha256(json.dumps(
+            {"text": "hola", "attachments": [], "recipients": ["g"]},
+            ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+        self.assertEqual(pd.digest("hola", [], ["G"]), old)
+        self.assertEqual(pd.digests_for("Bash", {"command": f'{self.S} G "hola"'}), [old])
+
+    def test_flag_text_is_not_message_text(self):
+        literal = pd.digests_for("Bash", {"command": f'{self.S} G "hola --menciones A"'})
+        flagged = pd.digests_for("Bash", {"command": f'{self.S} G hola --menciones A'})
+        self.assertNotEqual(literal, flagged)
+
+    def test_panel_block_carries_mentions_and_round_trips(self):
+        m = pd.message_parts("Bash", {"command": f'{self.S} G "hola" --menciones B,A'})[0]
+        block = m.panel_block()
+        self.assertIn("PANEL-MENTION: a\nPANEL-MENTION: b", block)
+        got = pd.recompute_from_report("ok\n" + block + "\nPANEL-VERDICT: PASS")
+        self.assertEqual((got["digest"], got["mentions"]), (m.digest, ["a", "b"]))
+        without = block.replace("PANEL-MENTION: a\n", "")
+        self.assertNotEqual(pd.recompute_from_report(without)["digest"], m.digest)
+
+    def test_inherited_mentions_with_no_flag_deny(self):
+        os.environ[pd.MENTIONS_ENV] = "A"
+        with self.assertRaises(pd.PanelDigestError):
+            pd.digests_for("Bash", {"command": f'{self.S} G "hola"'})
+        self.assertTrue(pd.digests_for("Bash", {"command": f'{self.S} G "hola" --menciones B'}))
+        os.environ[pd.MENTIONS_ENV] = "  "
+        self.assertTrue(pd.digests_for("Bash", {"command": f'{self.S} G "hola"'}))
+
+    def test_cli_mention_matches_the_bridge_reading(self):
+        with tempfile.TemporaryDirectory() as d:
+            body = Path(d) / "b.txt"
+            body.write_text("hola", encoding="utf-8")
+            out = subprocess.run([sys.executable, str(Path(pd.__file__)), "--body-file", str(body),
+                                  "--to", "G", "--mention", "A"], capture_output=True, text=True).stdout.strip()
+        self.assertEqual([out], pd.digests_for("Bash", {"command": f'{self.S} G "hola" --menciones A'}))
+
+
+
+def _gate():
+    import importlib.util
+    path = Path(pd.__file__).parent / "g__pretool-mcp__outward-send.py"
+    spec = importlib.util.spec_from_file_location("outward_send_gate", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class GateReadsTheSameRecipient(unittest.TestCase):
+    """The recipient a waiver is decided on is the one the panel digest binds."""
+
+    S = "~/.claude/scripts/wa-soporte" + ".sh"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.gate = _gate()
+
+    def _both(self, command):
+        one = self.gate._send_recipient("Bash", {"command": command})
+        many = self.gate._bash_recipients(command)
+        return one, many
+
+    def test_flag_first_does_not_make_the_mention_the_recipient(self):
+        one, many = self._both(f'{self.S} --menciones ALLOWED GROUP "hola"')
+        self.assertEqual((one, many), ("GROUP", ["GROUP"]))
+
+    def test_every_flag_position_agrees_with_the_digest(self):
+        for command in (f'{self.S} GROUP "hola" --menciones A', f'{self.S} --menciones A GROUP "hola"',
+                        f'{self.S} GROUP --archivo f.txt "hola" --menciones A',
+                        f'{self.S} --archivo f.txt --menciones A GROUP "hola"', f'{self.S} GROUP "hola"'):
+            one, many = self._both(command)
+            want = pd.support_sends(command)[0][0]
+            self.assertEqual((one, many), (want, [want]), command)
+
+    def test_a_line_the_reader_cannot_read_names_no_recipient(self):
+        for command in (f'{self.S} GROUP "hola" --menciones A --menciones B', f'{self.S} GROUP --menciones A',
+                        f'{self.S} GROUP "hola" --menciones --archivo f.txt', f'{self.S} GROUP'):
+            one, many = self._both(command)
+            self.assertEqual((one, many), ("", [""]), command)
+            self.assertFalse(self.gate._is_message_send("Bash", {"command": command}))
+
+    def test_an_allowlisted_mention_cannot_borrow_the_waiver(self):
+        gate = self.gate
+        original = gate._autonomous_cfg
+        gate._autonomous_cfg = lambda: [{"jid": "ALLOWED"}]
+        try:
+            self.assertTrue(gate.autonomous_chat("Bash", {"command": f'{self.S} ALLOWED "hola"'}))
+            self.assertTrue(gate.autonomous_chat(
+                "Bash", {"command": f'{self.S} --menciones X ALLOWED "hola"'}))
+            self.assertFalse(gate.autonomous_chat(
+                "Bash", {"command": f'{self.S} --menciones ALLOWED OTHER "hola"'}))
+            self.assertFalse(gate.autonomous_chat(
+                "Bash", {"command": f'{self.S} OTHER "hola" --menciones ALLOWED'}))
+        finally:
+            gate._autonomous_cfg = original
 
 
 class PanelLedger(unittest.TestCase):

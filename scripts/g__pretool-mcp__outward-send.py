@@ -272,18 +272,13 @@ def _send_recipient(tool_name: str, tool_input) -> str:
                 continue
             for i, t in enumerate(toks):
                 if any(receipt_ledger._is_script_token(t, n) for n in _SEND_SCRIPTS):
-                    # The script takes `--archivo <path>` anywhere and strips
-                    # it; the recipient is the first positional that is left.
-                    rest = toks[i + 1:]
-                    j = 0
-                    while j < len(rest):
-                        if rest[j] == "--archivo":
-                            j += 2
-                            continue
-                        if not rest[j].startswith("-"):
-                            return rest[j].strip()
-                        j += 1
-                    return ""
+                    # The script strips its value flags wherever they sit; the
+                    # recipient is the first token left. Read by the SAME
+                    # function the panel digest uses, so the recipient a waiver
+                    # is decided on is the one the panel receipt binds to. A
+                    # line that reader cannot read names no recipient.
+                    import panel_digest
+                    return panel_digest.bridge_recipient(toks[i + 1:])
     return ""
 
 
@@ -297,18 +292,8 @@ def _bash_recipients(command: str, split=None) -> list:
             continue
         for i, t in enumerate(toks):
             if any(receipt_ledger._is_script_token(t, n) for n in _SEND_SCRIPTS):
-                rest = toks[i + 1:]
-                j = 0
-                while j < len(rest):
-                    if rest[j] == "--archivo":
-                        j += 2
-                        continue
-                    if not rest[j].startswith("-"):
-                        out.append(rest[j].strip())
-                        break
-                    j += 1
-                else:
-                    out.append("")
+                import panel_digest
+                out.append(panel_digest.bridge_recipient(toks[i + 1:]))
                 break
     return out
 
@@ -1163,12 +1148,12 @@ def _panel_deny(data: dict) -> str:
             f"2026-10-02: no message leaves without a panel. Write this call's input to a JSON "
             f"file and run `python3 ~/.claude/scripts/panel_digest.py --tool-input <file.json> "
             f"--tool-name {tool_name} --panel-request`; it prints the panel block (PANEL-TO, "
-            f"PANEL-ATTACH, PANEL-BODY-BEGIN..END, PANEL-SHA256). Hand that block to a reviewer "
+            f"PANEL-MENTION, PANEL-ATTACH, PANEL-BODY-BEGIN..END, PANEL-SHA256). Hand that block to a reviewer "
             f"subagent (a reviewer persona: Reality Checker, Code Reviewer, ...) and have it end "
             f"its report with the same block plus 'PANEL-VERDICT: PASS' (or NEEDS-WORK). The "
             f"receipt records only when the digest recomputed from that block equals "
             f"PANEL-SHA256. It counts in this session for 120 minutes and for ONE send; a later "
-            f"NEEDS-WORK revokes it; an edited body, recipient or attachment is a new digest. "
+            f"NEEDS-WORK revokes it; an edited body, recipient, mention or attachment is a new digest. "
             f"No hatch: send-ok does not waive this.")
 
 

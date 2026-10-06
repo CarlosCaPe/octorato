@@ -22,12 +22,16 @@
 #   WA_MENCIONES=5215550001111 wa-soporte.sh 1203...@g.us "@5215550001111 buenos dias"
 # Or as a flag (preferred: the outward-send gate refuses env assignments before the bridge):
 #   wa-soporte.sh 1203...@g.us "@5215550001111 buenos dias" --menciones 5215550001111@lid
+# The mentions are part of what the panel approves: they print in the panel
+# block as PANEL-MENTION lines and a changed mention is a new digest. With
+# WA_MENCIONES inherited from the environment and no flag, the gate denies.
 set -euo pipefail
 
 PUERTO_SOPORTE=8081
 PUERTO_PERSONAL=8080
 
 archivo=""
+menciones_flag=""
 argumentos=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -40,11 +44,26 @@ while [ $# -gt 0 ]; do
       shift 2
       ;;
     --menciones)
-      # Same as WA_MENCIONES, as a literal flag so the send stays a plain call the panel gate can read.
+      # Same as WA_MENCIONES, as a literal flag so the send stays a plain call
+      # the panel gate can read. The gate reads this line with
+      # panel_digest.parse_bridge_args and denies a repeated flag or a flag
+      # where the value belongs, so this refuses the same two shapes: what the
+      # gate read and what leaves stay one thing.
       if [ -z "${2:-}" ]; then
         echo "--menciones necesita una lista separada por comas" >&2
         exit 64
       fi
+      if [ -n "$menciones_flag" ]; then
+        echo "--menciones va una sola vez" >&2
+        exit 64
+      fi
+      case "$2" in
+        --*)
+          echo "--menciones necesita una lista, no otra bandera: $2" >&2
+          exit 64
+          ;;
+      esac
+      menciones_flag=1
       export WA_MENCIONES="$2"
       shift 2
       ;;
@@ -57,7 +76,7 @@ done
 set -- "${argumentos[@]}"
 
 if [ $# -lt 2 ]; then
-  echo "uso: $(basename "$0") <destinatario> <mensaje> [--archivo <ruta>]" >&2
+  echo "uso: $(basename "$0") <destinatario> <mensaje> [--archivo <ruta>] [--menciones <a,b>]" >&2
   exit 64
 fi
 
