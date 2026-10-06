@@ -256,7 +256,10 @@ class BridgeArgs(unittest.TestCase):
                     f"{s} a b c ~ --archivo /etc/hostname", f"{s} G x\r--menciones\rA",
                     f"{s} G hola --menciones A\rB", f"{s} G señal", f"{s} G hola!", f"{s} G a\x0cb",
                     f"{s} G \"unterminated", f"{s} G hola\\", f"{s} G a\\é", f"{s} G a~b",
-                    f"{s} G mid~dle"):
+                    f"{s} G mid~dle", f"{s} G hola --archivo ~+/a.txt",
+                    f"{s} G hola --archivo ~-/a.txt", f"{s} G hola --archivo ~0/a.txt",
+                    f"{s} G hola --archivo ~root/a.txt", f"~+/x/{s} G hola",
+                    f"{s} G 'ho\x00la'", f'{s} G "a\rb"', f"{s} G 'del\x7f'"):
             with self.assertRaises(pd.PanelDigestError, msg=repr(cmd)):
                 pd.support_sends(cmd)
 
@@ -266,7 +269,7 @@ class BridgeArgs(unittest.TestCase):
         s = self.S
         lines = (f'{s} G "hola #1 ¿qué? a=~ {{x}} *"', f"{s} G 'it''s' \"x\\\"y\" a\\ b",
                  f"{s} G hola --menciones A,B", f"{s} --menciones A G \"hola\" --archivo /tmp/x",
-                 f"{s}\tG\thola\\#x", f'{s} G "a\rb" "c d"', f"{s} G a-b_c.d/e:f+g%h=i,j@k")
+                 f"{s}\tG\thola\\#x", f'{s} G "a b" "c d"', f"{s} G a-b_c.d/e:f+g%h=i,j@k")
         for line in lines:
             got = pd.support_sends(line)[0]
             rest = line[len(s):]
@@ -300,12 +303,18 @@ class NewBridgeFixturesFailForTheirOwnReason(unittest.TestCase):
     carry; a benign one reads to exactly the digest its receipt carries."""
 
     FDIR = Path(pd.__file__).resolve().parent.parent / "registry" / "fixtures" / "FLOW.panel-before-send"
-    READER_DENIES = {"violation_support_bridge_mention_repeated",
-                     "violation_support_bridge_mention_swallows_flag",
-                     "violation_support_bridge_mention_brace_moves_recipient",
-                     "violation_support_bridge_message_unquoted_glob",
-                     "violation_support_bridge_midword_hash_hides_mention",
-                     "violation_support_bridge_carriage_return_splits_words"}
+    # Each reader-denied fixture with the words its deny must carry, so a
+    # fixture denied for an unrelated reason fails here.
+    READER_DENY_REASON = {
+        "violation_support_bridge_mention_repeated": "given more than once",
+        "violation_support_bridge_mention_swallows_flag": "a flag where a value belongs",
+        "violation_support_bridge_mention_brace_moves_recipient": "'{' outside quotes",
+        "violation_support_bridge_message_unquoted_glob": "'*' outside quotes",
+        "violation_support_bridge_midword_hash_hides_mention": "'#' outside quotes",
+        "violation_support_bridge_carriage_return_splits_words": "control character '\\r'",
+        "violation_support_bridge_archivo_tilde_plus": "tilde prefix other than ~",
+    }
+    READER_DENIES = set(READER_DENY_REASON)
     DIGEST_DIFFERS = {"violation_support_bridge_mention_changed",
                       "violation_support_bridge_mention_added",
                       "violation_support_bridge_mention_flag_first_old_binding",
@@ -330,7 +339,8 @@ class NewBridgeFixturesFailForTheirOwnReason(unittest.TestCase):
 
     def test_every_new_fixture_is_classified(self):
         names = {p.stem for p in self.FDIR.glob("*support_bridge*.json")
-                 if any(k in p.stem for k in ("mention", "menciones", "quoted", "glob", "hash", "carriage"))}
+                 if any(k in p.stem for k in ("mention", "menciones", "quoted", "glob", "hash",
+                                              "carriage", "tilde"))}
         self.assertEqual(names, self.READER_DENIES | self.DIGEST_DIFFERS | self.BENIGN)
 
     def test_each_fixture_turns_on_its_own_check(self):
@@ -339,8 +349,9 @@ class NewBridgeFixturesFailForTheirOwnReason(unittest.TestCase):
         try:
             for name in sorted(self.READER_DENIES):
                 _, cmd = self._command(name)
-                with self.assertRaises(pd.PanelDigestError, msg=name):
+                with self.assertRaises(pd.PanelDigestError, msg=name) as caught:
                     pd.digests_for("Bash", {"command": cmd})
+                self.assertIn(self.READER_DENY_REASON[name], str(caught.exception), name)
             for name in sorted(self.DIGEST_DIFFERS | self.BENIGN):
                 session, cmd = self._command(name)
                 seeded = [r for r in receipts.get(session, []) if r.get("verdict") == "PASS"]

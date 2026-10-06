@@ -87,7 +87,11 @@ hold only ASCII letters and digits, `@ . _ , : / + % - =`, a space or a tab
 between words, and a backslash before a printable ASCII character. A `~` is
 allowed only as the first character of the script's own path or of the
 `--archivo` path, the two places this module applies the same expansion bash
-does. Anything else outside quotes denies: quote the message. Inside single
+does, and only as `~` alone or `~/...`: bash also expands `~+`, `~-`, `~N` and
+`~user`, which Python's expanduser reads differently or not at all. A control
+character (below a space, other than tab, or DEL) denies anywhere, quoted or
+not: a shell that reads its script from stdin drops a NUL, and shlex splits
+on a carriage return. Anything else outside quotes denies: quote the message. Inside single
 quotes every character is literal to all three readers; inside double quotes
 `$` and the backtick are refused above and a backslash escapes only a double quote
 and a backslash, for both bash and shlex. Then the words the scanner produced must equal
@@ -375,6 +379,9 @@ def _scan_words(command: str) -> list:
 
     while i < n:
         c = command[i]
+        if (c < " " and c != "\t") or c == "\x7f":
+            raise PanelDigestError(f"the bridge call carries the control character {c!r}: shells "
+                                   f"and this gate do not agree on it, quoted or not")
         if quote == "'":
             if c == "'":
                 quote = ""
@@ -417,6 +424,13 @@ def _scan_words(command: str) -> list:
             if in_word:
                 raise PanelDigestError("the bridge call carries an unquoted ~ inside a word: bash "
                                        "can expand it there. Quote it")
+            nxt = command[i + 1] if i + 1 < n else ""
+            if nxt and nxt not in "/" and nxt not in _WORD_GAP:
+                # bash expands ~+ (cwd), ~- (previous dir), ~N (dir stack) and
+                # ~user; Python's expanduser knows only the last, and only the
+                # plain home is needed. So a tilde is ~ alone or ~/...
+                raise PanelDigestError("the bridge call carries a tilde prefix other than ~ or ~/: "
+                                       "bash and this gate expand it differently. Write the path out")
             start_word(c)
             cur.append(c)
             i += 1
