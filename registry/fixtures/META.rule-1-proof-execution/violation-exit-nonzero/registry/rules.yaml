@@ -1,0 +1,16 @@
+version: 1
+rules:
+  - id: DEMO.proof-execution
+    title: "Fixture rule exercising all four proof methods"
+    category: FLOW
+    source: { file: CLAUDE.md, anchor: "## The Demo Rule" }
+    strength: REFLEX
+    firing_mode: [hook]
+    mechanism:
+      - { kind: Reflex, canonical_name: demo-reflex.py, firing_event: PostToolUse, firing_matcher: "Write|Edit" }
+    proof:
+      - { method: FILE_EXISTS, locator: scripts/demo_gate.py, expect: present }
+      - { method: ANCHOR_PRESENT, locator: "## The Demo Rule", expect: present }
+      - { method: IN_HOOKS_JSON, locator: "PostToolUse|Write|Edit|demo-reflex.py", expect: present }
+      - { method: EXIT_CODE, locator: "grep -qE '^[^#]*no_such_token_anywhere' .githooks/pre-push", expect: 0 }
+    liveness_required: FIRES

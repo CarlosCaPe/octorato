@@ -1,0 +1,13 @@
+{
+  "PostToolUse": [
+    {
+      "matcher": "Write|Edit",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "python3 ~/.claude/scripts/demo-reflex.py"
+        }
+      ]
+    }
+  ]
+}

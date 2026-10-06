@@ -1,0 +1,4 @@
+#!/bin/sh
+# OCTORATO-DEMO-GATE - banner comment naming the gate
+# demo_gate.py is described here, in a comment
+if ! python3 "$REPO_ROOT/scripts/demo_gate.py"; then exit 1; fi
