@@ -45,21 +45,21 @@ Before stating any rule, deadline, threshold, right or obligation, build a card:
 
 No card, no rule. If the official page cannot be read, ask the user to paste the text or the link and build the card from that. A rule recalled from memory is a hypothesis: say so and ask for the source. Cards older than twelve months are refreshed before use.
 
-## Step 2: The real month
+## Step 2: Priority debts first
+
+Before any arithmetic, separate the debts whose non-payment can cost the home, the utilities, the vehicle needed for work, or bring a court or tax action: rent, mortgage, secured loans, utilities, taxes, fines, child support. These go first whatever their rate. A legal notice or a court paper goes to [[legal-first-reader]] the same day, with its deadline on top. Name the free regulated debt-advice service of the country, from a source card.
+
+## Step 3: The real month
 
 Income minus spending from actual statements, not from memory. Recompute with a tool. Name the three largest categories.
 
-## Step 3: Fixed, flexible, leak
+## Step 4: Fixed, flexible, leak
 
 Sort spending into fixed, flexible and things the person did not know they were paying.
 
-## Step 4: Emergency fund
+## Step 5: Emergency fund
 
-A target in months of fixed spending, chosen with the person, and the monthly amount to reach it.
-
-## Step 5: Priority debts first
-
-Before any arithmetic, separate the debts whose non-payment can cost the home, the utilities, the vehicle needed for work, or bring a court or tax action: rent, mortgage, secured loans, utilities, taxes, fines, child support. These go first whatever their rate. A legal notice or a court paper goes to [[legal-first-reader]] the same day, with its deadline on top. Name the free regulated debt-advice service of the country, from a source card.
+A target in months of fixed spending, chosen with the person, and the monthly amount to reach it. The monthly amount is set after the priority debts are covered.
 
 ## Step 6: Debt order
 
@@ -87,7 +87,7 @@ What changes this month, the number to check, and the date to look again.
 
 - Every figure comes from the person's statements or is marked as an estimate.
 - Totals were recomputed with a tool.
-- Priority debts were identified before the payoff order.
+- Priority debts were separated right after the intake, before any other figure.
 - The debt comparison shows interest and months for both orders.
 - The plan has a review date.
 
