@@ -4,7 +4,7 @@ Plain answers to the questions people (and the AI agents that read this repo) ac
 
 ## What is Octorato?
 
-A folder of plain-text files that gives your AI coding assistant a lasting memory, house rules, and a receipt for everything it does. In its own vocabulary: an **open-source AI agent operating system**, one file-native "brain" (rules, 230+ skills, 160+ specialist agents, memory, all markdown under git) that one operator runs across many sealed client "arms", with per-client cost attribution (an estimate from local logs at list price) and budget halts that arm once you write a `budgets.yaml`. MIT licensed.
+A folder of plain-text files that gives your AI coding assistant a lasting memory, house rules, and a receipt for everything it does. In its own vocabulary: an **open-source AI agent operating system**, one file-native "brain" (rules, 240+ skills, 160+ specialist agents, memory, all markdown under git) that one operator runs across many sealed client "arms", with per-client cost attribution (an estimate from local logs at list price) and budget halts that arm once you write a `budgets.yaml`. MIT licensed.
 
 ## Are the agents people?
 

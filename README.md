@@ -18,7 +18,7 @@ Free and open source (MIT). Runs on Claude Code and Cursor today. No code to wri
 
 ## In plain words
 
-- **What it is.** A folder (`~/.claude`) of rules, how-to guides and role descriptions, all plain text. Your AI assistant reads it every time it starts. Today it holds <!--canon:skills.count-->230+<!--/canon--> skills (how-to guides) and <!--canon:agents.count-->160+<!--/canon--> agent personas (role cards).
+- **What it is.** A folder (`~/.claude`) of rules, how-to guides and role descriptions, all plain text. Your AI assistant reads it every time it starts. Today it holds <!--canon:skills.count-->240+<!--/canon--> skills (how-to guides) and <!--canon:agents.count-->160+<!--/canon--> agent personas (role cards).
 - **What it fixes.** Out of the box an AI assistant forgets you between sessions and mixes one project with another. With this folder it keeps who you are, how you work, and what it must never do.
 - **Who it is for.** Anyone who uses an AI assistant on more than one project or client: freelancers, small agencies, engineers, analysts, students. If you can edit a text file, you can use it.
 - **What it is not.** It is not a chatbot, and there are no people inside it. The "agents" are text files that describe a role (a code reviewer, a data engineer, a writer), the way a job description does. The assistant reads the card and works in that role. Octorato itself is a tool, not a person, and it never pretends to be one.
