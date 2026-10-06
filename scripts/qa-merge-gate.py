@@ -67,6 +67,16 @@ pin that is really the subject of the merge never counts. The newest receipt for
 that pull request and commit decides, by the harness timestamp of the transcript
 entry it was recorded from, so a NEEDS-WORK cannot be outvoted by an older PASS.
 The lookup makes no network call and is cut off after 3 seconds, which blocks.
+
+v10 (AC-12, AC-13): a PASS approves the PATCH over its merge base. When no
+receipt names the pinned head N, the newest receipt of the pull request at any
+commit is a PASS for R, both R and N are local commits (no partial clone), and
+the diff of each over its merge base with origin/master (else master), with only
+`index ` and `@@` lines removed, hashes the same, R's PASS is carried to N. Any
+FAIL or NEEDS-WORK of the pull request newer than that PASS denies the carry.
+Residual: a base change that alters behaviour without touching the patch is not
+re-reviewed; the required CI checks re-running on N are the bound. The carry
+fixtures live in <fixture>/carry and run in --selftest.
 While an approval is exported, a command that mentions a merge inside syntax
 this gate does not parse (backslash, heredoc, $'...', substitution, sh -c,
 eval) is blocked whole: on the approved path the gate reads plain commands only.
@@ -1419,10 +1429,21 @@ def _api_merge_matches(sub: str, pr_id: str) -> bool:
     return bool(m) and m.group(1) == pr_id and len(_ANY_PULLS_MERGE.findall(canon)) == 1
 
 
-def _qa_lookup_with_deadline(pr_id: str, pin: str):
+def _carry_repo(cmd: str, matched_sub: str, session_cwd: str) -> str:
+    """The one directory the merge runs in, for the base-only carry-over, or ""
+    (no carry) when the two readings disagree or a move is unreadable."""
+    try:
+        cwds = _effective_cwds(cmd, matched_sub, session_cwd)
+    except Exception:
+        return ""
+    return cwds[0] if len(cwds) == 1 and cwds[0] else ""
+
+
+def _qa_lookup_with_deadline(pr_id: str, pin: str, repo: str = ""):
     """('ok', receipt-or-None) or ('timeout', None). The lookup runs in a daemon
     thread joined for _LOOKUP_DEADLINE seconds: that pre-empts even a read that
-    blocks, and the thread dies with the process when the hook returns."""
+    blocks, and the thread dies with the process when the hook returns. The
+    deadline covers the base-only carry-over's local git reads too."""
     import threading
     box = {}
 
@@ -1430,7 +1451,7 @@ def _qa_lookup_with_deadline(pr_id: str, pin: str):
         try:
             sys.path.insert(0, str(Path(__file__).resolve().parent))
             import receipt_ledger
-            box["r"] = receipt_ledger.qa_latest_for(pr_id, pin)
+            box["r"] = receipt_ledger.qa_decide_for(pr_id, pin, repo)
         except Exception:
             box["r"] = None
 
@@ -1668,7 +1689,8 @@ def _decide(cmd: str, matched_sub: str, data: dict) -> int:
                     )
                     _journal_deny(f"merge of PR #{pr_id} blocked: no commit pin", data)
                     return 2
-                state, qa = _qa_lookup_with_deadline(pr_id, pin)
+                state, qa = _qa_lookup_with_deadline(
+                    pr_id, pin, _carry_repo(cmd, matched_sub, data.get("cwd") or ""))
                 if state == "timeout":
                     print(
                         f"✗ QA GATE (fail-closed): the QA receipt lookup for PR #{pr_id} did not finish\n"
@@ -1690,8 +1712,13 @@ def _decide(cmd: str, matched_sub: str, data: dict) -> int:
                     )
                     _journal_deny(f"merge of PR #{pr_id} blocked: no PASS for the pinned commit", data)
                     return 2
-                _nudge(f"✓ QA gate: QA PASS for PR #{pr_id} at {pin[:12]} "
-                       f"({qa.get('agent_type') or 'subagent'}, {qa.get('verdict_ts', '')}).")
+                if qa.get("carried_from"):
+                    _nudge(f"✓ QA gate: QA PASS for PR #{pr_id} at {qa['carried_from'][:12]} carried to "
+                           f"{pin[:12]}: same patch over {qa.get('carry_base', 'master')} "
+                           f"(base-only update; required CI re-runs on the new head).")
+                else:
+                    _nudge(f"✓ QA gate: QA PASS for PR #{pr_id} at {pin[:12]} "
+                           f"({qa.get('agent_type') or 'subagent'}, {qa.get('verdict_ts', '')}).")
             else:
                 try:
                     sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -1756,12 +1783,122 @@ def _decide(cmd: str, matched_sub: str, data: dict) -> int:
     return 2
 
 
+_CARRY_BASE_FILES = {"app.py": "def f():\n    return 0\n", "notes.txt": "a\n"}
+_CARRY_GONE = "0" * 39 + "1"   # a commit no fixture repository holds
+
+
+def _carry_git(repo: Path, *args) -> str:
+    import subprocess
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env.update({"GIT_AUTHOR_NAME": "fx", "GIT_AUTHOR_EMAIL": "fx@example.invalid",
+                "GIT_COMMITTER_NAME": "fx", "GIT_COMMITTER_EMAIL": "fx@example.invalid",
+                "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"})
+    cp = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True,
+                        env=env, timeout=20, check=True)
+    return cp.stdout.strip()
+
+
+def _carry_commit(repo: Path, files: dict, msg: str) -> str:
+    for name, body in files.items():
+        (repo / name).write_text(body, encoding="utf-8")
+    _carry_git(repo, "add", "-A")
+    _carry_git(repo, "commit", "-q", "-m", msg)
+    return _carry_git(repo, "rev-parse", "HEAD")
+
+
+def _carry_leg(scenario: dict, sandbox: Path) -> tuple:
+    """Build one carry scenario in `sandbox` (a repository, QA transcripts and
+    ledger rows), then run the real gate on an approved, pinned merge of the
+    updated head. Returns (returncode, stdout)."""
+    import subprocess
+    import uuid as _uuid
+    repo = sandbox / "repo"
+    repo.mkdir()
+    _carry_git(repo, "init", "-q", "-b", "master")
+    _carry_commit(repo, _CARRY_BASE_FILES, "base")
+    _carry_git(repo, "checkout", "-q", "-b", "feature")
+    heads = {"R": _carry_commit(repo, scenario["reviewed_edit"], "reviewed patch")}
+    _carry_git(repo, "checkout", "-q", "master")
+    _carry_commit(repo, scenario["master_edit"], "master moves on")
+    _carry_git(repo, "checkout", "-q", "feature")
+    _carry_git(repo, "merge", "-q", "--no-edit", "master")   # GitHub "Update branch"
+    if scenario.get("update_edit"):
+        _carry_commit(repo, scenario["update_edit"], "rides along with the update")
+    heads["N"] = _carry_git(repo, "rev-parse", "HEAD")
+    heads["GONE"] = _CARRY_GONE
+    pr = str(scenario.get("pr") or "500")
+    sid = "carry-session"
+    sub = sandbox / ".claude" / "projects" / "p" / sid / "subagents"
+    sub.mkdir(parents=True, exist_ok=True)
+    ledger = sandbox / ".claude" / ".cache" / "receipts" / "global.jsonl"
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    rows = []
+    for i, rc in enumerate(scenario["receipts"]):
+        head = heads[rc["head"]]
+        uid = str(_uuid.uuid4())
+        report = f"review\nQA-VERDICT: {rc['verdict']}\nQA-SCOPE: PR #{pr}\nQA-HEAD: {head}"
+        tp = sub / f"agent-carry{i}.jsonl"
+        entry = {"type": "assistant", "uuid": uid, "parentUuid": str(_uuid.uuid4()),
+                 "sessionId": sid, "timestamp": rc["ts"],
+                 "message": {"role": "assistant", "content": [{"type": "text", "text": report}]}}
+        tp.write_text(json.dumps(entry) + "\n", encoding="utf-8")
+        rows.append({"kind": "qa", "verdict": rc["verdict"], "scope": f"PR #{pr}", "head": head,
+                     "entry_uuid": uid, "agent_type": "Reality Checker", "agent_id": f"carry{i}",
+                     "agent_transcript_path": str(tp)})
+    ledger.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("OCTO_QA_OK", "OCTO_KERNEL_OPEN") and not k.startswith("GIT_")}
+    env.update({"HOME": str(sandbox), "USERPROFILE": str(sandbox),
+                "OCTO_MERGE_APPROVE": pr, "CLAUDE_SESSION_ID": "__selftest__"})
+    payload = json.dumps({"tool_name": "Bash", "session_id": "__selftest__", "cwd": str(repo),
+                          "tool_input": {"command": f"gh pr merge {pr} --squash --match-head-commit {heads['N']}"}})
+    cp = subprocess.run([sys.executable, str(Path(__file__).resolve())], input=payload,
+                        capture_output=True, text=True, cwd=str(repo), env=env, timeout=30)
+    return cp.returncode, cp.stdout
+
+
+def _carry_selftest(carry_dir: Path) -> int:
+    """Every carry violation*.json must block and every benign*.json must allow.
+    Each violation is the benign scenario with one key changed."""
+    import tempfile
+    import shutil
+    import gate_selftest
+    legs = sorted(carry_dir.glob("violation*.json")), sorted(carry_dir.glob("benign*.json"))
+    if not legs[0] or not legs[1]:
+        print(f"selftest FAIL: need violation*.json and benign*.json in {carry_dir}", file=sys.stderr)
+        return 1
+    failures = []
+    for must_block, files in ((True, legs[0]), (False, legs[1])):
+        for f in files:
+            sandbox = Path(tempfile.mkdtemp(prefix="carry-selftest-"))
+            try:
+                rc, out = _carry_leg(json.loads(f.read_text(encoding="utf-8")), sandbox)
+            except Exception as exc:  # a leg that cannot be built proves nothing
+                failures.append(f"{f.name} could not run: {exc}")
+                continue
+            finally:
+                shutil.rmtree(sandbox, ignore_errors=True)
+            if gate_selftest.emits_block(rc, out) != must_block:
+                failures.append(f"{f.name} {'did NOT block' if must_block else 'WAS blocked'} (rc={rc})")
+    if failures:
+        print("selftest FAIL (carry): " + "; ".join(failures), file=sys.stderr)
+        return 1
+    print(f"selftest PASS (carry): {len(legs[0])} block + {len(legs[1])} allow ({carry_dir.name})")
+    return 0
+
+
 def _selftest() -> int:
     import gate_selftest
     argv = sys.argv
     fixture = argv[argv.index("--selftest") + 1] if len(argv) > argv.index("--selftest") + 1 \
         else "registry/fixtures/CODE.qa-merge-gate"
-    return gate_selftest.run_gate_selftest(__file__, fixture)
+    rc = gate_selftest.run_gate_selftest(__file__, fixture)
+    fdir = Path(fixture)
+    if not fdir.is_absolute():
+        fdir = Path(__file__).resolve().parent.parent / fdir
+    if rc == 0 and (fdir / "carry").is_dir():
+        rc = _carry_selftest(fdir / "carry")
+    return rc
 
 
 if __name__ == "__main__":

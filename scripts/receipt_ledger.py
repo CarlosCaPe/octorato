@@ -1057,6 +1057,24 @@ def qa_latest_for(token: str, head: str) -> dict | None:
     head = str(head or "").lower()
     if not token or not _SHA40.fullmatch(head):
         return None
+    return _qa_decider(token, head)
+
+
+def qa_newest_for_pr(token: str) -> dict | None:
+    """The receipt that decides pull request `token` at ANY commit: the newest
+    anchored receipt of the pull request, whatever commit it names. A PASS
+    still needs a full commit and must stand in its own transcript for that
+    commit; a FAIL or NEEDS-WORK at any commit, or at none, counts. Used by the
+    base-only carry-over, where a revocation of ANY commit of the pull request
+    newer than the PASS denies the carry."""
+    if not token:
+        return None
+    return _qa_decider(token, "")
+
+
+def _qa_decider(token: str, head: str) -> dict | None:
+    """Shared body of qa_latest_for (head = one commit) and qa_newest_for_pr
+    (head = "": every commit of the pull request)."""
     cands = []
     for r in read_global():
         if r.get("kind") != "qa" or r.get("verdict") not in ("PASS", "FAIL", "NEEDS-WORK"):
@@ -1083,8 +1101,10 @@ def qa_latest_for(token: str, head: str) -> dict | None:
         # A revocation that names no valid commit revokes the whole pull
         # request: a reviewer who forgot or shortened QA-HEAD must not leave
         # an earlier PASS standing. A PASS always needs the exact commit.
-        if report_head != head and not (report_head == "" and verdict != "PASS"):
+        if head and report_head != head and not (report_head == "" and verdict != "PASS"):
             continue
+        if not head and verdict == "PASS" and not report_head:
+            continue  # a PASS always needs the exact commit
         if not scope_names(scope, token):
             continue
         key = _ts_key(ts)
@@ -1096,12 +1116,132 @@ def qa_latest_for(token: str, head: str) -> dict | None:
     cands.sort(key=lambda c: (c[0], c[1]), reverse=True)
     for key, is_revocation, r, tp, uuid, ts, scope in cands:
         if not is_revocation:
-            same = lambda rep_, sc=scope: (parse_verdict(rep_) == ("PASS", sc)
-                                           and parse_qa_head(rep_) == head)
-            if not _anchor_stands(tp, uuid, same, lambda rep_: _revokes_pass(rep_, token, head)):
+            at = head or str(r.get("head") or "")
+            same = lambda rep_, sc=scope, at=at: (parse_verdict(rep_) == ("PASS", sc)
+                                                  and parse_qa_head(rep_) == at)
+            if not _anchor_stands(tp, uuid, same, lambda rep_, at=at: _revokes_pass(rep_, token, at)):
+                if not head:
+                    return None  # any-commit mode: the newest receipt decides or nothing does
                 continue
         return dict(r, verdict_ts=ts)
     return None
+
+
+# --------------------------------------------------------------------------
+# Base-only carry-over (v10 AC-12, AC-13)
+# --------------------------------------------------------------------------
+# A QA PASS approves the PATCH over its merge base, not the commit object. When
+# GitHub's "Update branch" (or a rebase) moves a pull request from the reviewed
+# head R to a new head N and the patch is byte-for-byte the same, the PASS for R
+# is carried to N. Everything is local: both commits must already be objects in
+# the repository, and a partial clone (whose object reads can fetch) is refused.
+# Residual, stated: a base change that alters behaviour without touching the
+# patch is not re-reviewed; the required CI checks re-run on N and are the bound.
+
+CARRY_BASE_REFS = ("refs/remotes/origin/master", "refs/heads/master")
+_STRIPPED_DIFF_PREFIXES = (b"index ", b"@@")
+
+
+def _carry_env() -> dict:
+    env = scrubbed_env()
+    env.update({"GIT_NO_LAZY_FETCH": "1", "GIT_TERMINAL_PROMPT": "0",
+                "GIT_OPTIONAL_LOCKS": "0", "GIT_PAGER": "cat", "LC_ALL": "C"})
+    return env
+
+
+def _git_out(repo: str, *args, timeout: float = 2.5):
+    """stdout bytes of a local git read, or None on any failure."""
+    try:
+        cp = subprocess.run(["git", "-C", str(repo), *args], capture_output=True,
+                            timeout=timeout, env=_carry_env())
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return cp.stdout if cp.returncode == 0 else None
+
+
+def carry_base_ref(repo: str) -> str:
+    """The base the carry compares against: origin/master, else master; ""
+    when neither exists."""
+    for ref in CARRY_BASE_REFS:
+        if _git_out(repo, "rev-parse", "--verify", "--quiet", ref + "^{commit}") is not None:
+            return ref
+    return ""
+
+
+def is_local_commit(repo: str, sha: str) -> bool:
+    sha = str(sha or "").lower()
+    if not _SHA40.fullmatch(sha):
+        return False
+    return _git_out(repo, "cat-file", "-e", sha + "^{commit}") is not None
+
+
+def patch_hash(repo: str, base_ref: str, commit: str) -> str:
+    """sha256 of `git diff <merge-base(base_ref, commit)>..<commit>`, whitespace
+    sensitive, with only the `index ` and `@@` lines removed (they carry blob
+    ids and line numbers, which move when the base moves). Binary content is in
+    the hash (--binary), so a changed binary file is never "the same patch".
+    "" on any failure."""
+    import hashlib
+    mb = _git_out(repo, "merge-base", base_ref, commit)
+    mb = (mb or b"").decode("ascii", "replace").strip()
+    if not _SHA40.fullmatch(mb):
+        return ""
+    out = _git_out(repo, "-c", "core.quotePath=true", "diff", "--no-color", "--no-ext-diff",
+                   "--no-textconv", "--binary", "--no-renames", "--src-prefix=a/",
+                   "--dst-prefix=b/", f"{mb}..{commit}")
+    if out is None:
+        return ""
+    h = hashlib.sha256()
+    for line in out.splitlines(keepends=True):
+        if line.startswith(_STRIPPED_DIFF_PREFIXES):
+            continue
+        h.update(line)
+    return h.hexdigest()
+
+
+def qa_carry_for(token: str, pin: str, repo: str) -> dict | None:
+    """The PASS of the reviewed head R, carried to the pinned head N, or None.
+
+    Holds only when (1) the newest anchored receipt of the pull request, at any
+    commit, is a PASS for R != N, so no FAIL or NEEDS-WORK for N or for any
+    other commit of the pull request is newer; (2) the repository is not a
+    partial clone and both R and N are local commit objects; (3) the patch hash
+    of R over its merge base with the base ref equals that of N. No network
+    call: every git read is local, with lazy fetch and prompts off."""
+    pin = str(pin or "").lower()
+    if not token or not _SHA40.fullmatch(pin) or not repo:
+        return None
+    newest = qa_newest_for_pr(token)
+    if not newest or newest.get("verdict") != "PASS":
+        return None
+    reviewed = str(newest.get("head") or "").lower()
+    if not _SHA40.fullmatch(reviewed) or reviewed == pin:
+        return None
+    if _git_out(repo, "rev-parse", "--git-dir") is None:
+        return None
+    if (_git_out(repo, "config", "--get", "extensions.partialClone") or b"").strip():
+        return None  # an object read in a partial clone can fetch
+    if not (is_local_commit(repo, reviewed) and is_local_commit(repo, pin)):
+        return None
+    base = carry_base_ref(repo)
+    if not base:
+        return None
+    h_r = patch_hash(repo, base, reviewed)
+    if not h_r or h_r != patch_hash(repo, base, pin):
+        return None
+    return dict(newest, carried_from=reviewed, carried_to=pin, carry_base=base,
+                patch_sha256=h_r)
+
+
+def qa_decide_for(token: str, pin: str, repo: str = "") -> dict | None:
+    """What the merge gate reads: the receipt that decides `pin` directly, or,
+    when no receipt names `pin` at all, a PASS carried from the reviewed head
+    across a base-only update. A receipt that names `pin` (a PASS or a
+    revocation) always decides; the carry never overrides it."""
+    direct = qa_latest_for(token, pin)
+    if direct is not None:
+        return direct
+    return qa_carry_for(token, pin, repo) if repo else None
 
 
 # --------------------------------------------------------------------------
