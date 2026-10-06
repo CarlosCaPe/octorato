@@ -15,6 +15,12 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-10-06]: v9.5.0
+### Features
+- feat(commands): add /choice, carry one idea to a decision (#365)
+### Other
+- docs(changelog): backfill v9.4.0 (#366)
+
 ## [2026-10-06]: v9.4.0
 ### Features
 - feat(commands): add /next, a plain-language status of the session (#364)
