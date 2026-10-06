@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "research-assistant",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Research Assistant: a research helper for a thesis, a paper or a report"
+}

@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "small-business-advisor",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Small Business Advisor: a working advisor for a small business owner"
+}

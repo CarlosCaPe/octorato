@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "hiring-assistant",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Hiring Assistant: a recruiter's helper for a small team"
+}

@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "kids-home-tutor",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Kids Home Tutor (for parents): a patient home tutor a parent runs for a child"
+}

@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "teacher-classroom-assistant",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Teacher Classroom Assistant: a classroom helper for a teacher"
+}

@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "real-estate-listing-assistant",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Real Estate Listing Assistant: a listing and client helper for a real-estate professional or an owner selling or renting"
+}

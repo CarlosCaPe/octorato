@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "study-tutor",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Study Tutor: a personal study tutor"
+}

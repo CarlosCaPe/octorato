@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "doctor-visit-prep",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Doctor Visit Prep: a helper that prepares a medical appointment and explains what was said after it"
+}
