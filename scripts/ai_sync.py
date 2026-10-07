@@ -280,6 +280,10 @@ def sync(names=None) -> int:
     return 0
 
 
+PULL_DOCTOR_NOTE = ("  full doctor profile runs at pre-push and with "
+                    "`python3 scripts/brain_doctor.py`")
+
+
 # ── pull ────────────────────────────────────────────────────────────────────
 
 def pull(args) -> int:
@@ -333,7 +337,13 @@ def pull(args) -> int:
     # install-runners.py has run, and pull is the command that runs first.
     script_step("scripts/octo_pkg.py", "sync", label="\n=== Packages (octo pkg sync) ===")
 
-    script_step("scripts/brain_doctor.py", label="\n=== Brain doctor ===")
+    # The fast profile, not the full one: the full doctor took ~220 s on a populated
+    # machine (most of it enforcement-floor re-running every gate selftest) and a
+    # pull is a read path the operator waits on. The checks --fast skips are the
+    # ones that EXECUTE gates; pre-push still runs --registry and --gate-receipt on
+    # every push, so nothing leaves the machine on the fast profile alone.
+    script_step("scripts/brain_doctor.py", "--fast", label="\n=== Brain doctor (fast) ===")
+    info(PULL_DOCTOR_NOTE)
     return 0
 
 
