@@ -14,12 +14,12 @@
  "stateful_sessions": {
   "g__stop__goal-anchor.py": {
    "sessions": 24,
-   "stops": 2277,
-   "historical_deny": 111,
+   "stops": 2219,
+   "historical_deny": 109,
    "replay_deny": 70,
    "hist_deny_reproduced": 16,
-   "rev_replay_deny": 165,
-   "rev_hist_deny_reproduced": 41
+   "rev_replay_deny": 161,
+   "rev_hist_deny_reproduced": 39
   }
  },
  "gates": {

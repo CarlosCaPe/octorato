@@ -792,6 +792,14 @@ def run_session(sess: dict, gates: tuple, scripts: Path | None = None) -> dict:
         shutil.rmtree(sandbox, ignore_errors=True)
 
 
+def _stop_key(sess: dict, s: dict) -> str:
+    """The uuid of the assistant record a Stop cut after. A forked or resumed
+    session file copies its parent's records, uuids included, so the same Stop
+    can sit in two captured files; this key counts it once."""
+    recs, end = sess.get("records") or [], int(s.get("end") or 0)
+    return (recs[end - 1].get("uuid") or "") if 0 < end <= len(recs) else ""
+
+
 def _sessions(cdir: Path) -> list:
     return sorted((cdir / "sessions").glob("*.json.gz")) if (cdir / "sessions").is_dir() else []
 
@@ -813,6 +821,7 @@ def replay_all(cdir: Path, jobs: int, gate: str = "", scripts: Path | None = Non
             sess = _read_session(p)
             return sess, run_session(sess, sgates, scripts)
 
+        seen = set()
         with cf.ThreadPoolExecutor(max_workers=max(1, jobs)) as ex:
             for sess, res in ex.map(one, files):
                 out.update(res["cases"])
@@ -825,6 +834,10 @@ def replay_all(cdir: Path, jobs: int, gate: str = "", scripts: Path | None = Non
                     for s, row in zip(sess.get("stops") or [], res["stops"]):
                         if not s.get("in_window"):
                             continue
+                        k = _stop_key(sess, s)
+                        if k and (g, k) in seen:
+                            continue
+                        seen.add((g, k))
                         hd, rd = g in (s.get("hist") or []), row.get(g) in BLOCKING
                         st["stops"] += 1
                         st["historical_deny"] += hd
@@ -1069,8 +1082,11 @@ def cmd_replay(args) -> int:
     missing = sorted(set(base["cases"]) - set(res)) if not args.gate else []
     diff = compare(base, res)
     stats = gate_stats(base["cases"], base.get("fidelity_revs"))
+    methods = {"stateful": 0, "isolated-fallback": 0, "isolated": 0}
+    for r in res.values():
+        methods[r.get("m") or "isolated"] += 1
     if args.json:
-        print(json.dumps({"cases": len(res), "seconds": secs, **diff,
+        print(json.dumps({"cases": len(res), "seconds": secs, "methods": methods, **diff,
                           "low_fidelity": [g for g, v in stats.items() if v["low_fidelity"]],
                           "not_in_corpus": len(missing)}, indent=1))
     else:
@@ -1084,6 +1100,7 @@ def cmd_replay(args) -> int:
             p[1] += b["d"] in BLOCKING
             p[2] += now["d"] in BLOCKING
         print(f"replayed {len(res)} cases in {secs}s against the baseline of {base.get('generated')}")
+        print("method: " + ", ".join(f"{k} {v}" for k, v in methods.items()))
         print(f"{'gate':40s} {'cases':>5s} {'deny before':>11s} {'deny now':>8s}  fidelity vs history")
         for g, (n, b, a) in sorted(per.items()):
             print(f"{g:40s} {n:5d} {b:11d} {a:8d}  {fidelity_label(stats.get(g) or {})}")
