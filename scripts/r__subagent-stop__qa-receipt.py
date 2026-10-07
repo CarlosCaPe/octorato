@@ -16,6 +16,7 @@ or the v9 converge protocol (skills/sdd-converge)
 or the panel protocol (FLOW.panel-before-send)
 
     PANEL-TO: <recipient>        (one per recipient)
+    PANEL-MENTION: <who>         (one per person mentioned)
     PANEL-ATTACH: <sha256> <path> (one per attachment)
     PANEL-BODY-BEGIN / <exact text> / PANEL-BODY-END
     PANEL-VERDICT: PASS | NEEDS-WORK
