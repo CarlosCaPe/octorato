@@ -97,11 +97,21 @@ def emits_block(returncode: int, stdout: str) -> bool:
 #   - the deadline is the PARENT's, so a gate that installs its own SIGALRM
 #     handler or calls alarm(0) cannot disarm it, and on expiry the whole
 #     process group is killed and TimeoutExpired raised;
-#   - a leg ends when its child has exited, both pipes reached EOF (nothing it
-#     started still holds them, as subprocess.run reads to EOF) and nothing in
-#     its process group is still alive; this last part is stricter than
-#     subprocess.run, which would return while a grandchild that closed its
-#     pipes lingers;
+#   - the forked child is a small SUPERVISOR that leads the leg's process
+#     group, becomes a child subreaper and forks the gate. It exits, relaying
+#     the gate's exit status, only once the gate has exited and no live process
+#     of its group is left, so the parent never needs to scan for members. The
+#     parent sees that exit with waitid(WNOWAIT) and reaps the supervisor only
+#     after both pipes reached EOF (as subprocess.run reads to EOF) or after
+#     the group was killed: an unreaped leader keeps its pid, and so the group
+#     id, reserved, and a deadline kill can never land on a recycled group.
+#     Waiting for the group is stricter than subprocess.run, which would return
+#     while a grandchild that closed its pipes lingers. The one gate-visible
+#     difference is the gate's parent pid, which is the supervisor's;
+#   - a leg runs forked only while this interpreter starts like a fresh one:
+#     the same sys.flags (-O, -I, -s, -E, -X utf8, -X dev ...), warning options
+#     and -X options, read from the same one-time probe as the streams. If any
+#     differs, every leg is spawned;
 #   - non-daemon threads are joined and atexit runs before the exit, exit codes
 #     map as CPython maps them (exit(-1) is 255, an unhandled KeyboardInterrupt
 #     dies by SIGINT, a stdout closed by the gate is not a flush failure);
@@ -214,20 +224,55 @@ def _rebase_user_site(env: dict) -> None:
             pass
 
 
-def _fork_child(script: str, code, leg: dict, fds: tuple, close: list) -> None:
-    """Runs in the forked child and never returns."""
-    rc = 1
-    sigint = False
+_PR_SET_CHILD_SUBREAPER = 36
+_LIBC = None
+
+
+def _libc():
+    global _LIBC
+    if _LIBC is None:
+        try:
+            import ctypes
+            _LIBC = ctypes.CDLL(None, use_errno=True)
+        except Exception:
+            _LIBC = False
+    return _LIBC
+
+
+def _live_in_group(group: int) -> bool:
+    """Whether a live (non-zombie) process of `group` is still a child of this
+    supervisor. As a child subreaper it adopts every orphaned descendant, so its
+    own children list covers the leg's tree. One small /proc read, not a scan."""
+    me = os.getpid()
     try:
-        import atexit
-        import builtins
-        import importlib.machinery
-        import io
-        import signal
-        import traceback
-        import types
+        with open("/proc/%d/task/%d/children" % (me, me)) as fh:
+            kids = [int(x) for x in fh.read().split()]
+    except OSError:
+        kids = []
+        for name in os.listdir("/proc"):
+            if name.isdigit():
+                try:
+                    with open("/proc/%s/stat" % name, "rb") as fh:
+                        f = fh.read().rsplit(b")", 1)[1].split()
+                except OSError:
+                    continue
+                if int(f[1]) == me:
+                    kids.append(int(name))
+    for kid in kids:
+        try:
+            with open("/proc/%d/stat" % kid, "rb") as fh:
+                f = fh.read().rsplit(b")", 1)[1].split()
+        except OSError:
+            continue
+        if f[0] != b"Z" and int(f[2]) == group:
+            return True
+    return False
+
+
+def _fork_child(script: str, code, leg: dict, fds: tuple, close: list) -> None:
+    """Runs in the forked child, the leg's supervisor, and never returns."""
+    try:
         os.setpgid(0, 0)
-        atexit._clear()  # the parent's handlers are not this process's
         fin, fout, ferr = fds
         os.dup2(fin, 0)
         os.dup2(fout, 1)
@@ -238,6 +283,61 @@ def _fork_child(script: str, code, leg: dict, fds: tuple, close: list) -> None:
                     os.close(fd)
                 except OSError:
                     pass
+        libc = _libc()
+        if libc:
+            libc.prctl(_PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0)
+        gate = os.fork()
+        if gate == 0:
+            _gate_child(script, code, leg)
+        # Only the gate and what it starts may hold the leg's pipes.
+        for fd in (0, 1, 2):
+            os.close(fd)
+        group = os.getpgid(0)
+        status = None
+        while True:
+            try:
+                pid, st = os.waitpid(-1, 0)
+            except ChildProcessError:
+                break
+            except InterruptedError:
+                continue
+            if pid == gate:
+                status = st
+            if status is not None and not _live_in_group(group):
+                break
+        if status is None:
+            os._exit(1)
+        if os.WIFSIGNALED(status):
+            import resource
+            import signal
+            sig = os.WTERMSIG(status)
+            try:
+                resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+            except (ValueError, OSError):
+                pass
+            try:
+                signal.signal(sig, signal.SIG_DFL)
+            except (OSError, ValueError, RuntimeError):
+                pass
+            os.kill(os.getpid(), sig)
+        os._exit(os.WEXITSTATUS(status))
+    finally:
+        os._exit(1)
+
+
+def _gate_child(script: str, code, leg: dict) -> None:
+    """Runs the gate as `__main__` in the supervisor's child; never returns."""
+    rc = 1
+    sigint = False
+    try:
+        import atexit
+        import builtins
+        import importlib.machinery
+        import io
+        import signal
+        import traceback
+        import types
+        atexit._clear()  # the parent's handlers are not this process's
         # The gate's own streams are what a fresh interpreter would open,
         # whatever the leg says: a leg's encoding/errors describe how the
         # PARENT encodes the input and decodes the output, never how the gate
@@ -320,28 +420,45 @@ def _fork_child(script: str, code, leg: dict, fds: tuple, close: list) -> None:
         os._exit(rc & 0xFF)
 
 
-_STREAMS: dict = {}
+_PROBE: dict = {}
+_PROBE_SRC = (
+    "import sys, json; print(json.dumps({'streams': [[s.encoding, s.errors] "
+    "for s in (sys.stdin, sys.stdout, sys.stderr)], 'flags': list(sys.flags), "
+    "'warn': sys.warnoptions, 'x': sorted(map(str, sys._xoptions.items()))}))")
+
+
+def _fresh() -> dict:
+    """What a fresh `python3` started from this process's env looks like: the
+    std streams it opens when they are pipes, as they are for every leg, and its
+    interpreter flags. Asked of a real fresh interpreter once per process and
+    env, never read off this one: a module imported here may have called
+    `sys.stdout.reconfigure(errors="replace")` (many in scripts/ do), and this
+    process may run under -O or -I. A leg whose env changes PYTHONIOENCODING,
+    PYTHONUTF8 or the locale is spawned (_needs_spawn), so this process's env is
+    the one that decides."""
+    key = tuple(os.environ.get(k) for k in ("PYTHONIOENCODING", "PYTHONUTF8") + _START_ENV)
+    got = _PROBE.get(key)
+    if got is None:
+        cp = subprocess.run([sys.executable, "-c", _PROBE_SRC], stdin=subprocess.PIPE,
+                            capture_output=True, text=True, timeout=30)
+        got = _PROBE[key] = json.loads(cp.stdout)
+    return got
 
 
 def _text_io(name: str):
-    """(encoding, errors) a fresh interpreter opens this std stream with when it
-    is a pipe, as it is for every leg. Asked of a fresh interpreter once per
-    process, not read off this one: a module imported here (many in scripts/ do
-    it) may have called `sys.stdout.reconfigure(errors="replace")`, and a leg
-    must not inherit that. A leg whose env changes PYTHONIOENCODING, PYTHONUTF8
-    or the locale is spawned (_needs_spawn), so this process's env is the one
-    that decides."""
-    key = tuple(os.environ.get(k) for k in ("PYTHONIOENCODING", "PYTHONUTF8") + _START_ENV)
-    got = _STREAMS.get(key)
-    if got is None:
-        probe = ("import sys, json; print(json.dumps([[s.encoding, s.errors] "
-                 "for s in (sys.stdin, sys.stdout, sys.stderr)]))")
-        cp = subprocess.run([sys.executable, "-c", probe], stdin=subprocess.PIPE,
-                            capture_output=True, text=True, timeout=30)
-        rows = json.loads(cp.stdout)
-        got = _STREAMS[key] = dict(zip(("stdin", "stdout", "stderr"),
-                                       (tuple(r) for r in rows)))
-    return got[name]
+    """(encoding, errors) a fresh interpreter opens this std stream with."""
+    rows = _fresh()["streams"]
+    return tuple(rows[("stdin", "stdout", "stderr").index(name)])
+
+
+def _starts_like_fresh() -> bool:
+    """True when this interpreter's flags and options equal a fresh one's, so a
+    fork of it runs the gate as `python3 gate.py` would. Under `python3 -O` an
+    `assert` in a gate is compiled away here and kept there, and that is a
+    verdict, so any difference means every leg is spawned."""
+    f = _fresh()
+    return (list(sys.flags) == f["flags"] and list(sys.warnoptions) == f["warn"]
+            and sorted(map(str, sys._xoptions.items())) == f["x"])
 
 
 def _spawn(leg: dict) -> LegResult:
@@ -403,7 +520,9 @@ def run_scripts(legs: list, workers: int = 1) -> list:
     once, and is only for legs that share NOTHING a verdict reads; a leg that
     reads what an earlier one wrote must use 1. A leg past its timeout raises
     subprocess.TimeoutExpired, as subprocess.run does."""
-    if not _FORK_OK:
+    # Asked here, in the parent, so every fork inherits the answer instead of
+    # each child spawning its own probe interpreter.
+    if not _FORK_OK or not _starts_like_fresh():
         return [_spawn(leg) for leg in legs]
 
     import io
@@ -412,9 +531,7 @@ def run_scripts(legs: list, workers: int = 1) -> list:
     import time
 
     pg = _proc_group()
-    # Asked here, in the parent, so every fork inherits the answer instead of
-    # each child spawning its own probe interpreter.
-    _text_io("stdout")
+    _libc()
     results = [None] * len(legs)
     running = {}            # pid -> state dict
     sel = selectors.DefaultSelector()
@@ -427,7 +544,7 @@ def run_scripts(legs: list, workers: int = 1) -> list:
         out, err = (io.TextIOWrapper(io.BytesIO(bytes(st["buf"][fd])),
                                      encoding=enc, errors=errs).read()
                     for fd in st["order"])
-        status = st["status"]
+        _, status = os.waitpid(pid, 0)      # the leader is reaped only now
         rc = -os.WTERMSIG(status) if os.WIFSIGNALED(status) else os.WEXITSTATUS(status)
         results[st["i"]] = LegResult(rc, out, err)
 
@@ -435,16 +552,14 @@ def run_scripts(legs: list, workers: int = 1) -> list:
         st = running.get(pid)
         if st is None:
             return
-        # By the group id stored at fork time: once the pump has reaped the
-        # child, its pid no longer names the group, and a grandchild still in
-        # it would outlive the deadline.
-        pg.kill_group(_Leg(pid, st["status"] is not None), group=st["pgid"])
-        if st["status"] is None:
-            try:
-                os.waitpid(pid, 0)
-            except ChildProcessError:
-                pass
-            st["status"] = 0
+        # By the group id stored at fork time. The leader is never reaped
+        # before this point (only _finish reaps, and it removes the leg), so
+        # its pid, and with it the group id, cannot have been recycled.
+        pg.kill_group(_Leg(pid, False), group=st["pgid"])
+        try:
+            os.waitpid(pid, 0)
+        except ChildProcessError:
+            pass
         for fd in list(st["fds"]):
             try:
                 sel.unregister(fd)
@@ -473,12 +588,11 @@ def run_scripts(legs: list, workers: int = 1) -> list:
                 st["fds"].discard(fd)
         for pid in list(running):
             st = running[pid]
-            if st["status"] is None:
-                got, status = os.waitpid(pid, os.WNOHANG)
-                if got:
-                    st["status"] = status
-            if st["status"] is not None and not st["fds"] and \
-                    pg.group_gone(None, st["pgid"]):
+            if not st["exited"]:
+                # WNOWAIT: see the exit, leave the zombie, keep the pgid taken.
+                st["exited"] = os.waitid(
+                    os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None
+            if st["exited"] and not st["fds"]:
                 _finish(pid)
             elif time.monotonic() >= st["deadline"]:
                 leg = legs[st["i"]]
@@ -521,7 +635,7 @@ def run_scripts(legs: list, workers: int = 1) -> list:
                 os.close(err_w)
             timeout = leg.get("timeout")
             running[pid] = {
-                "i": i, "pgid": pid, "status": None,
+                "i": i, "pgid": pid, "exited": False,
                 "fds": {out_r, err_r}, "order": (out_r, err_r),
                 "buf": {out_r: bytearray(), err_r: bytearray()},
                 "deadline": time.monotonic() + timeout if timeout else float("inf"),

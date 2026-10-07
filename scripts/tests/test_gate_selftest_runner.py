@@ -31,6 +31,10 @@ import gate_selftest  # noqa: E402
 DENY = ('{"hookSpecificOutput": {"hookEventName": "PreToolUse", '
         '"permissionDecision": "deny", "permissionDecisionReason": "x"}}')
 LINUX = sys.platform.startswith("linux") and hasattr(os, "fork")
+# Whether legs actually fork here. Under LANG=C, say, this interpreter runs in
+# UTF-8 mode while a fresh one (handed the coerced LC_CTYPE) does not, so the
+# runner spawns every leg and the guarantees below are subprocess.run's.
+FORKS = LINUX and gate_selftest._starts_like_fresh()
 
 
 class _Base(unittest.TestCase):
@@ -65,15 +69,18 @@ class _Base(unittest.TestCase):
         return out
 
 
-@unittest.skipUnless(LINUX, "the fork path exists on Linux only")
+@unittest.skipUnless(FORKS, "legs are spawned here, not forked")
 class Deadline(_Base):
     """The deadline belongs to the PARENT: a gate cannot disarm it."""
 
-    def _assert_times_out(self, script, limit=1):
+    def _assert_times_out(self, script, limit=3):
+        # 3 s, not 1: under load a 1 s deadline could expire before the gate's
+        # grandchild had even written its pid. The bound only proves the
+        # deadline fired and nothing waited out the 30 s sleeps.
         t = time.monotonic()
         with self.assertRaises(subprocess.TimeoutExpired):
             gate_selftest.run_scripts([self.leg(script, timeout=limit)])
-        self.assertLess(time.monotonic() - t, limit + 4)
+        self.assertLess(time.monotonic() - t, limit + 20)
 
     def test_hang_with_its_own_sigalrm_handler(self):
         self._assert_times_out(self.gate("""
@@ -111,7 +118,7 @@ class Deadline(_Base):
     def _assert_grandchild_gone(self) -> None:
         with open(os.path.join(self.tmp, "gc.pid")) as fh:
             gc = int(fh.read())
-        deadline = time.monotonic() + 3
+        deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             try:
                 with open("/proc/%d/stat" % gc) as fh:
@@ -153,6 +160,47 @@ class Deadline(_Base):
         self._assert_grandchild_gone()
 
 
+    def test_the_group_leader_outlives_its_group(self):
+        # The leg's group id is its leader's pid. While any member is alive
+        # the leader must still exist (alive or an unreaped zombie), or the id
+        # could be handed to an unrelated group before the deadline kill.
+        seen = os.path.join(self.tmp, "seen")
+        script = self._gc_gate(
+            "time.sleep(0.5); "
+            "open(%r, 'w').write(str(os.path.exists('/proc/%%d' %% os.getpgid(0))))"
+            % seen, "pass")
+        r = gate_selftest.run_scripts([self.leg(script, timeout=20)])[0]
+        self.assertEqual(r.returncode, 0)
+        with open(seen) as fh:
+            self.assertEqual(fh.read(), "True",
+                             "the leader was reaped while its group still had a member")
+
+    def test_the_deadline_kill_never_targets_a_reaped_leader(self):
+        # A grandchild that leaves the group but keeps stdout open holds the
+        # leg past its deadline after the leader exited. The kill must land
+        # while the leader still exists, so its group id is still the leg's.
+        pg = gate_selftest._proc_group()
+        real = pg.kill_group
+        calls = []
+
+        def spy(proc, group=None):
+            calls.append(os.path.exists("/proc/%d" % (group if group else proc.pid)))
+            return real(proc, group=group)
+
+        pg.kill_group = spy
+        try:
+            self._assert_times_out(self._gc_gate("os.setsid(); time.sleep(30)", "pass"))
+        finally:
+            pg.kill_group = real
+            try:
+                with open(os.path.join(self.tmp, "gc.pid")) as fh:
+                    os.kill(int(fh.read()), 9)   # it left the group on purpose
+            except (OSError, ValueError):
+                pass
+        self.assertTrue(calls, "no group kill at the deadline")
+        self.assertTrue(all(calls), "a group kill was sent after its leader was reaped")
+
+
 @unittest.skipUnless(LINUX, "the fork path exists on Linux only")
 class Parity(_Base):
     def assertParity(self, body, want_rc=None):
@@ -186,9 +234,16 @@ class Parity(_Base):
         """ % DENY, want_rc=0)
         self.assertTrue(gate_selftest.emits_block(rc, out))
 
+    @staticmethod
+    def _fresh_rc_for_lone_surrogate() -> int:
+        """What `print("\\udcff")` exits with under a fresh interpreter here:
+        1 with a strict stdout (a UTF-8 locale), 0 with surrogateescape (the
+        C/POSIX locale and C.UTF-8 coerce to it)."""
+        return 1 if gate_selftest._text_io("stdout")[1] == "strict" else 0
+
     def test_unencodable_output_crashes_as_it_would_spawned(self):
-        # The leg's errors="replace" is how the PARENT decodes; the gate's own
-        # stdout is strict, so printing a lone surrogate is rc 1 (a block).
+        # The leg's errors= is how the PARENT decodes; the gate's own stdout is
+        # whatever a fresh interpreter opens, so the rc follows the locale.
         script = self.gate('import sys; sys.stdin.read(); print("ok \\udcff")\n')
         seen = []
         saved = gate_selftest._FORK_OK
@@ -201,22 +256,25 @@ class Parity(_Base):
         finally:
             gate_selftest._FORK_OK = saved
         self.assertEqual(seen[0], seen[1])
-        self.assertEqual(seen[0][0], 1)
+        self.assertEqual(seen[0][0], self._fresh_rc_for_lone_surrogate())
 
     def test_a_reconfigured_parent_stdout_does_not_reach_the_gate(self):
-        # Many scripts/ modules call sys.stdout.reconfigure(errors="replace")
-        # on import. The selftest process may carry that; a fresh interpreter
-        # does not, so the gate's stdout stays strict.
+        # Many scripts/ modules call sys.stdout.reconfigure(errors=...) on
+        # import. The parent's stdout is faked with the OTHER behaviour from a
+        # fresh interpreter's, so a child that copied it would get the rc wrong.
         import io
+        fresh = self._fresh_rc_for_lone_surrogate()
         script = self.gate('import sys; sys.stdin.read(); print("ok \\udcff")\n')
-        fake = io.TextIOWrapper(io.BytesIO(), encoding="utf-8", errors="replace")
+        fake = io.TextIOWrapper(io.BytesIO(), encoding="utf-8",
+                                errors="replace" if fresh == 1 else "strict")
         saved = sys.__stdout__
         sys.__stdout__ = fake
         try:
-            r = gate_selftest.run_scripts([self.leg(script)])[0]
+            leg = dict(self.leg(script), encoding="utf-8", errors="replace")
+            r = gate_selftest.run_scripts([leg])[0]
         finally:
             sys.__stdout__ = saved
-        self.assertEqual(r.returncode, 1)
+        self.assertEqual(r.returncode, fresh)
 
     def test_uncaught_exception_is_one(self):
         self.assertParity("raise RuntimeError('x')\n", want_rc=1)
@@ -304,6 +362,49 @@ class CallerSysPath(_Base):
         got = json.loads(cp.stdout.strip().splitlines()[-1])
         self.assertTrue(got["path_unchanged"], "run_scripts changed sys.path")
         self.assertEqual(got["spawn"][0], 1)
+        self.assertEqual(got["fork"], got["spawn"])
+
+
+_OPTIMIZE_DRIVER = r"""
+import importlib.util, json, os, sys
+spec = importlib.util.spec_from_file_location("gs_o", sys.argv[1])
+gs = importlib.util.module_from_spec(spec); spec.loader.exec_module(gs)
+leg = {"script": sys.argv[2], "input": "{}", "cwd": sys.argv[3],
+       "env": dict(os.environ), "timeout": 30}
+out = {"optimize": sys.flags.optimize}
+for fork in (True, False):
+    gs._FORK_OK = fork
+    r = gs.run_scripts([leg])[0]
+    out["fork" if fork else "spawn"] = [r.returncode, gs.emits_block(r.returncode, r.stdout)]
+print(json.dumps(out))
+"""
+
+
+@unittest.skipUnless(LINUX, "the fork path exists on Linux only")
+class ParentFlags(_Base):
+    def test_a_parent_under_dash_O_still_runs_the_gates_asserts(self):
+        # `python3 gate.py` keeps asserts. A selftest started with -O must not
+        # hand its optimize level to the gate: here the deny lives behind one.
+        gate = self.gate("""
+            import sys
+            sys.stdin.read()
+            try:
+                assert False
+            except AssertionError:
+                print(%r)
+        """ % DENY)
+        driver = os.path.join(self.tmp, "driver.py")
+        with open(driver, "w") as fh:
+            fh.write(_OPTIMIZE_DRIVER)
+        env = {k: v for k, v in os.environ.items() if k != "PYTHONOPTIMIZE"}
+        cp = subprocess.run([sys.executable, "-O", driver,
+                             str(SCRIPTS / "gate_selftest.py"), gate, self.tmp],
+                            capture_output=True, text=True, env=env, cwd=self.tmp,
+                            timeout=120)
+        self.assertEqual(cp.returncode, 0, cp.stderr)
+        got = json.loads(cp.stdout.strip().splitlines()[-1])
+        self.assertEqual(got["optimize"], 1)
+        self.assertEqual(got["spawn"], [0, True])
         self.assertEqual(got["fork"], got["spawn"])
 
 
