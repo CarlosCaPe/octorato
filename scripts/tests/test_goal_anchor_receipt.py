@@ -44,6 +44,34 @@ GATE = SCRIPTS / "g__stop__goal-anchor.py"
 GATE_NAME = GATE.name
 FIXTURES = REPO / "registry" / "fixtures" / "FLOW.root-goal-anchor"
 SID = "cccccccc-0000-4000-8000-000000000003"
+PRE_T19 = "0641797"   # master before the receipt existed: the timing reference for F2
+
+# Runs one gate file in-process with BUDGET_S=1 and is_closure_claim slowed by
+# NAP seconds, on the violation leg. Prints decision, elapsed and claim calls.
+ALARM_RUNNER = r'''
+import importlib.util, io, json, os, sys, time
+gate, nap, fix = sys.argv[1], float(sys.argv[2]), sys.argv[3]
+sys.path.insert(0, os.path.dirname(gate))
+spec = importlib.util.spec_from_file_location("ga", gate); m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+m.BUDGET_S = 1
+orig, calls = m.is_closure_claim, [0]
+def slow(r):
+    calls[0] += 1
+    time.sleep(nap)
+    return orig(r)
+m.is_closure_claim = slow
+d = json.load(open(os.path.join(fix, "violation.json")))
+d["transcript_path"] = os.path.join(fix, d["transcript_path"])
+sys.stdin = io.StringIO(json.dumps(d)); out = io.StringIO(); real = sys.stdout; sys.stdout = out
+t = time.time()
+try:
+    m.main()
+except Exception:
+    pass
+sys.stdout = real
+print(json.dumps({"block": "block" in out.getvalue(), "s": round(time.time() - t, 2), "calls": calls[0]}))
+'''
 
 ROOT = "objetivo: migrar el esquema de facturacion al ledger nuevo"
 OBSTACLES = ["no me deja entrar al servidor", "sigue fallando el acceso",
@@ -253,19 +281,78 @@ class TestGoalAnchorReceipt(unittest.TestCase):
             self.assertEqual(outs[0], outs[2], f"{leg}: disabling receipts changed the decision")
             self.assertEqual(bool(outs[0][1].strip()), leg.startswith("violation"))
 
-    def test_pass_code_names_fire_exactly_when_should_fire(self):
+    # -- F1: the receipt is inside the budget, and a FIFO costs nothing ----
+    def test_fifo_at_the_receipt_path_never_stalls_the_gate(self):
+        if not hasattr(os, "mkfifo"):
+            self.skipTest("no FIFOs on this platform")
+        p = json.loads((FIXTURES / "violation.json").read_text(encoding="utf-8"))
+        p["transcript_path"] = str(FIXTURES / p["transcript_path"])
+        ref = _run_gate(p, self._home("ref"))
+        for active in (True, False):
+            home = self._home(f"fifo-{active}")
+            rdir = home / ".claude" / ".cache" / "goal-anchor" / "receipts"
+            rdir.mkdir(parents=True)
+            os.mkfifo(rdir / f"{p['session_id']}.jsonl")
+            t0 = time.monotonic()
+            out = _run_gate(dict(p, stop_hook_active=active), home)
+            self.assertLess(time.monotonic() - t0, 5, "the gate must return inside BUDGET_S")
+            self.assertEqual(out, (0, "") if active else ref)
+
+    # -- F2: an alarm during the bookkeeping decides exactly as master ------
+    def test_alarm_timing_leaves_the_decision_equal_to_pre_t19(self):
+        tmp = self.tmp / "pre"
+        tmp.mkdir()
+        cp = subprocess.run(["git", "-C", str(REPO), "show", f"{PRE_T19}:scripts/{GATE_NAME}"],
+                            capture_output=True)
+        if cp.returncode != 0:
+            self.skipTest(f"{PRE_T19} not in this clone")
+        (tmp / GATE_NAME).write_bytes(cp.stdout)
+        for dep in ("claim_vocab.py", "kernel_proc.py"):
+            shutil.copy(SCRIPTS / dep, tmp / dep)
+        runner = self.tmp / "alarm_runner.py"
+        runner.write_text(ALARM_RUNNER, encoding="utf-8")
+
+        def run(gate, nap):
+            env = dict(os.environ, HOME=str(self._home(f"alarm-{gate.parent.name}-{nap}")))
+            out = subprocess.run([sys.executable, str(runner), str(gate), str(nap), str(FIXTURES)],
+                                 capture_output=True, text=True, env=env, timeout=60)
+            return json.loads(out.stdout.strip().splitlines()[-1])
+
+        for nap in (0.0, 0.7, 1.2):
+            old, new = run(tmp / GATE_NAME, nap), run(GATE, nap)
+            self.assertEqual(new["block"], old["block"], f"nap={nap}: {old} vs {new}")
+            self.assertEqual(new["calls"], old["calls"], f"nap={nap}: closure claim evaluated again")
+            self.assertLess(new["s"], 1.6, f"nap={nap}: the budget was overrun: {new}")
+
+    # -- F3: the verdict is flushed before the receipt is written -----------
+    def test_verdict_is_flushed_before_the_receipt(self):
         ga = _load_gate()
-        checked = 0
-        for tf in sorted(FIXTURES.glob("*_transcript.jsonl")) + [FIXTURES / "violation_transcript.jsonl"]:
-            pairs = ga._turn_pairs(tf.read_text(encoding="utf-8").splitlines())
-            state = {"history": []}
-            for prompt, reply, real in pairs:
-                re_ = ga._absorb(state, prompt, reply, real)
-                for active in (False, True):
-                    self.assertEqual(ga._pass_code(state, reply, re_, active) == "fire",
-                                     ga._should_fire(state, reply, re_, active), f"{tf.name}")
-                    checked += 1
-        self.assertGreater(checked, 20)
+        p = json.loads((FIXTURES / "violation.json").read_text(encoding="utf-8"))
+        p["transcript_path"] = str(FIXTURES / p["transcript_path"])
+
+        class Tracked(StringIO):
+            flushed = ""
+
+            def flush(self):
+                Tracked.flushed = self.getvalue()
+                super().flush()
+
+        seen = []
+        out = Tracked()
+        with mock.patch.dict(os.environ, {"HOME": str(self._home("flush"))}), \
+                mock.patch.object(ga, "_write_receipt", lambda d, r: seen.append(Tracked.flushed)), \
+                mock.patch.object(sys, "stdin", StringIO(json.dumps(p))), \
+                mock.patch.object(ga, "_signal_mod", mock.MagicMock()), \
+                mock.patch.object(sys, "stdout", out):
+            ga.main()
+        self.assertIn('"block"', out.getvalue())
+        self.assertEqual(len(seen), 1)
+        self.assertIn('"block"', seen[0], "the verdict was not flushed when the receipt began")
+
+    def _home(self, name: str) -> Path:
+        h = self.tmp / f"home-{name}"
+        h.mkdir(exist_ok=True)
+        return h
 
     def test_receipt_cut_falls_back_to_bytes_then_to_nothing(self):
         recs = [{"uuid": "a"}, {"uuid": "b"}, {"type": "queue"}, {"uuid": "d"}]
@@ -274,9 +361,49 @@ class TestGoalAnchorReceipt(unittest.TestCase):
         self.assertEqual(rh.receipt_cut({"last_uuid": "zz", "bytes": 36}, recs, sizes), (3, "receipt-bytes"))
         self.assertEqual(rh.receipt_cut({"last_uuid": None, "bytes": 0}, recs, sizes), (None, ""))
         self.assertEqual(rh.stop_cut({"end": 4, "active": False}), (4, False, "end-cut"))
-        s = {"end": 4, "active": False, "rcpt": {"end": 2, "by": "receipt-uuid", "code": "stop-hook-active"}}
+        s = {"end": 4, "active": True, "rcpt": {"end": 2, "by": "receipt-uuid", "code": "fire"}}
         self.assertEqual(rh.stop_cut(s), (2, True, "receipt-uuid"))
-        self.assertEqual(rh.stop_cut(s, use_receipts=False), (4, False, "end-cut"))
+        self.assertEqual(rh.stop_cut(s, use_receipts=False), (4, True, "end-cut"))
+        s = {"end": 4, "active": False, "rcpt": {"end": 2, "by": "receipt-skew"}}
+        self.assertEqual(rh.stop_cut(s), (4, False, "receipt-skew"))
+        self.assertEqual(rh.receipt_cut({"last_uuid": "zz", "bytes": 10 ** 9}, recs, sizes, hi=3),
+                         (3, "receipt-bytes"))
+
+    # -- F4: a receipt stays inside its own Stop's window ------------------
+    @staticmethod
+    def _points():
+        # records 0..9; Stop A's last record is 3, Stop B's is 8
+        recs = [{"uuid": f"r{i}"} for i in range(10)]
+        points = [{"end": 2, "at": 3, "ts": "2026-10-07T10:00:10.000Z"},
+                  {"end": 7, "at": 8, "ts": "2026-10-07T10:00:20.000Z"}]
+        return recs, [10] * 10, points
+
+    def test_receipts_pair_by_record_window_and_latest_timestamp(self):
+        recs, sizes, points = self._points()
+        a = {"ts": "2026-10-07T10:00:09.000Z", "last_uuid": "r1", "decision": "allow", "code": "x"}
+        b_old = {"ts": "2026-10-07T10:00:15.000Z", "last_uuid": "r5", "decision": "allow", "code": "old"}
+        b_new = {"ts": "2026-10-07T10:00:19.000Z", "last_uuid": "r6", "decision": "block", "code": "fire"}
+        got = rh.assign_receipts(points, [b_new, a, b_old], recs, sizes)   # file order scrambled
+        self.assertEqual((got[0]["end"], got[0]["by"]), (2, "receipt-uuid"))
+        self.assertEqual((got[1]["end"], got[1]["by"], got[1]["code"]), (7, "receipt-uuid", "fire"))
+
+    def test_receipt_cut_is_clamped_to_its_stop(self):
+        recs, sizes, points = self._points()
+        # resolves past every Stop record (bytes past EOF): placed by time, clamped to Stop A's record
+        r = {"ts": "2026-10-07T10:00:09.500Z", "last_uuid": None, "bytes": 10 ** 9, "decision": "allow"}
+        got = rh.assign_receipts(points, [r], recs, sizes)
+        self.assertEqual(got[0]["end"], 3)
+        self.assertLess(got[0]["end"], points[1]["end"])          # never into the next turn
+        self.assertIsNone(got[1])
+
+    def test_skewed_timestamp_is_labelled_and_falls_back(self):
+        recs, sizes, points = self._points()
+        # cut belongs to Stop A, but the gate's clock put it after Stop A's record
+        r = {"ts": "2026-10-07T10:00:10.500Z", "last_uuid": "r2", "decision": "block", "code": "fire"}
+        got = rh.assign_receipts(points, [r], recs, sizes)
+        self.assertEqual(got[0]["by"], "receipt-skew")
+        self.assertIsNone(got[1], "a skewed receipt is never shifted onto the next Stop")
+        self.assertEqual(rh.stop_cut({"end": 2, "active": False, "rcpt": got[0]}), (2, False, "receipt-skew"))
 
 
 if __name__ == "__main__":

@@ -75,13 +75,14 @@ the gate stays LOW-FIDELITY until a Stop payload carries what the gate read.
 READ RECEIPTS (v10 T19). Since T19 the goal-anchor gate appends, at every Stop,
 a receipt of what it read (`~/.claude/.cache/goal-anchor/receipts/<sid>.jsonl`:
 the uuid of the last record it parsed, the byte offset its read stopped at, its
-decision and reason code; never text). `capture_sessions` pairs each Stop with
-the receipt written between the previous Stop and it, and resolves the cut: the
-record after `last_uuid` (`receipt-uuid`), else the whole records inside
-`bytes` by the captured line sizes (`receipt-bytes`). The stateful replay cuts
-that Stop there, and takes stop_hook_active from the receipt's code, instead of
-the end cut (`end-cut`, the fallback for every Stop without a receipt,
-which is every Stop before T19). `replay` prints how many Stops replayed from a
+decision and reason code; never text). `capture_sessions` resolves each
+receipt's cut: the record after `last_uuid` (`receipt-uuid`), else the whole records inside
+`bytes` by the captured line sizes (`receipt-bytes`). A receipt belongs to the
+Stop whose record window holds its cut, and the cut is clamped to that window;
+a receipt whose timestamp disagrees with that window is kept as `receipt-skew`
+and its Stop falls back. The stateful replay cuts each Stop at its receipt
+instead of the end cut (`end-cut`, the fallback for every Stop without a
+receipt, which is every Stop before T19). `replay` prints how many Stops replayed from a
 receipt against the fallback, and how many receipt decisions the replay
 reproduced: that line is the fidelity measurement history cannot give, and it
 grows only as live receipts accumulate. `--no-receipts` ignores them, so the
@@ -480,8 +481,10 @@ def stop_points(recs: list) -> list:
         while end > 0 and recs[end - 1].get("type") != "assistant":
             end -= 1
         if end not in by_end:
-            by_end[end] = {"end": end, "ts": "", "sid": "", "cwd": "", "blocks": [], "summary": None}
+            by_end[end] = {"end": end, "at": i, "ts": "", "sid": "", "cwd": "", "blocks": [],
+                           "summary": None}
             order.append(end)
+        by_end[end]["at"] = max(by_end[end]["at"], i)   # index of the Stop's last record
         return by_end[end]
 
     for i, d in enumerate(recs):
@@ -533,10 +536,18 @@ def _session_file(root: Path, sid: str) -> str:
     return hits[0] if hits else ""
 
 
-def receipt_cut(rc: dict, recs: list, sizes: list) -> tuple:
+def receipt_cut(rc: dict, recs: list, sizes: list, hi: int | None = None) -> tuple:
     """(end, method) for a goal-anchor read receipt over one session's records:
     just after the record whose uuid the gate saw last, else the whole records
-    inside the byte offset its read stopped at. (None, "") when neither resolves."""
+    inside the byte offset its read stopped at. (None, "") when neither resolves.
+    With `hi`, the cut never passes it (a Stop's own record index)."""
+    end, how = _receipt_cut(rc, recs, sizes)
+    if end is not None and hi is not None:
+        end = min(end, hi)
+    return end, how
+
+
+def _receipt_cut(rc: dict, recs: list, sizes: list) -> tuple:
     uid = rc.get("last_uuid")
     if uid:
         for i in range(len(recs) - 1, -1, -1):
@@ -555,23 +566,69 @@ def receipt_cut(rc: dict, recs: list, sizes: list) -> tuple:
     return None, ""
 
 
-def _pair_receipts(stops: list, receipts: list) -> list:
-    """For each Stop (in order), the last receipt written after the previous
-    Stop's record and no later than its own, or None. No slack: the harness
-    writes a Stop's record after its hooks return, on the same clock."""
-    out, prev = [], None
-    for s in stops:
-        t = friction_ledger._epoch(s.get("ts") or "")
-        pick = None
-        if t is not None:
-            for r in receipts:
-                rt = friction_ledger._epoch(r.get("ts") or "")
-                if rt is None or rt > t or (prev is not None and rt <= prev):
-                    continue
-                pick = r
-        out.append(pick)
+def _time_window(tss: list, rt) -> int | None:
+    """Index of the Stop whose time window (previous Stop's record, own record]
+    holds `rt`. No slack: the harness writes a Stop's record after its hooks
+    return, on the same clock."""
+    if rt is None:
+        return None
+    prev = None
+    for k, t in enumerate(tss):
+        if t is not None and rt <= t and (prev is None or rt > prev):
+            return k
         prev = t if t is not None else prev
-    return out
+    return None
+
+
+def _pair_receipts(stops: list, receipts: list) -> list:
+    """For each Stop (in order), the receipt with the latest timestamp inside
+    its time window, or None. File order plays no part."""
+    tss = [friction_ledger._epoch(s.get("ts") or "") for s in stops]
+    best = {}
+    for r in receipts:
+        rt = friction_ledger._epoch(r.get("ts") or "")
+        k = _time_window(tss, rt)
+        if k is not None and (k not in best or rt >= best[k][0]):
+            best[k] = (rt, r)
+    return [best[k][1] if k in best else None for k in range(len(stops))]
+
+
+def assign_receipts(points: list, receipts: list, recs: list, sizes: list) -> list:
+    """For each Stop, the read receipt that belongs to it as a captured `rcpt`
+    ({end, by, decision, code}), or None.
+
+    A receipt belongs to the Stop whose RECORD window holds its cut: after the
+    previous Stop's last record, at or before its own (the gate reads before
+    its Stop's record is written). A cut that resolves past every Stop record
+    is placed by its timestamp instead. Either way the cut is clamped to that
+    window, so it never passes the Stop's own record and never reaches into the
+    next turn. When the timestamp window disagrees with the record window the
+    receipt is kept as `receipt-skew` and the Stop falls back to the end cut:
+    a clock or pairing problem is shown, never shifted silently onto a
+    neighbouring Stop. Several receipts in one window: the latest timestamp.
+    """
+    ats = [p.get("at", p["end"]) for p in points]
+    tss = [friction_ledger._epoch(p.get("ts") or "") for p in points]
+    best = {}
+    for rc in receipts:
+        cut, how = _receipt_cut(rc, recs, sizes)
+        if cut is None:
+            continue
+        rt = friction_ledger._epoch(rc.get("ts") or "")
+        k = next((i for i, a in enumerate(ats) if (ats[i - 1] if i else -1) < cut <= a), None)
+        kt = _time_window(tss, rt)
+        if k is None:
+            k = kt
+        if k is None:
+            continue
+        lo = ats[k - 1] + 1 if k else 0
+        cut = max(lo, min(cut, ats[k]))
+        key = rt if rt is not None else float("-inf")
+        if k in best and key < best[k][0]:
+            continue
+        best[k] = (key, {"end": cut, "by": how if kt == k else "receipt-skew",
+                         "decision": rc.get("decision") or "", "code": rc.get("code") or ""})
+    return [best[k][1] if k in best else None for k in range(len(points))]
 
 
 def capture_sessions(cdir: Path, root: Path, since: str, until: str,
@@ -591,7 +648,7 @@ def capture_sessions(cdir: Path, root: Path, since: str, until: str,
     shutil.rmtree(sdir, ignore_errors=True)
     mapped = set()
     n = 0
-    with_receipt = 0
+    with_receipt = skewed = 0
     for sid in sorted(sids):
         path = _session_file(root, sid)
         if not path:
@@ -599,7 +656,7 @@ def capture_sessions(cdir: Path, root: Path, since: str, until: str,
         recs, sizes = _load_sized(path)
         stops = []
         points = [s for s in stop_points(recs) if not (s["sid"] and s["sid"] != sid)]
-        paired = _pair_receipts(points, friction_ledger.read_receipts(sid, receipts_root))
+        paired = assign_receipts(points, friction_ledger.read_receipts(sid, receipts_root), recs, sizes)
         for s, rc in zip(points, paired):
             cases = {}
             for g in gates:
@@ -613,10 +670,10 @@ def capture_sessions(cdir: Path, root: Path, since: str, until: str,
                     "in_window": bool(since <= (s["ts"] or "")[:10] < until),
                     "hist": sorted({g for g, _ in s["blocks"]}), "cases": cases}
             if rc:
-                cut, how = receipt_cut(rc, recs, sizes)
-                if cut is not None:
-                    stop["rcpt"] = {"end": cut, "by": how, "decision": rc.get("decision") or "",
-                                    "code": rc.get("code") or ""}
+                stop["rcpt"] = rc
+                if rc["by"] == "receipt-skew":
+                    skewed += 1
+                else:
                     with_receipt += 1
             stops.append(stop)
         # Every record up to the last Stop: the ones a gate reads slimmed, the
@@ -634,7 +691,7 @@ def capture_sessions(cdir: Path, root: Path, since: str, until: str,
                       ensure_ascii=False)
         n += 1
     out = {"sessions": n, "cases_mapped": len(mapped), "cases_unmapped": len(want - mapped),
-           "stops_with_receipt": with_receipt}
+           "stops_with_receipt": with_receipt, "receipt_skew": skewed}
     print(json.dumps(out))
     return out
 
@@ -815,10 +872,13 @@ def _read_session(path: Path) -> dict:
 
 def stop_cut(s: dict, use_receipts: bool = True) -> tuple:
     """(end, stop_hook_active, method) for one captured Stop: the read
-    receipt's cut when there is one (and receipts are in use), else the end cut."""
+    receipt's cut when there is one (and receipts are in use), else the end cut.
+    A `receipt-skew` receipt is not trusted: end cut, labelled as such."""
     rc = s.get("rcpt") if use_receipts else None
+    if rc and rc.get("by") == "receipt-skew":
+        return int(s.get("end") or 0), bool(s.get("active")), "receipt-skew"
     if rc and isinstance(rc.get("end"), int):
-        return rc["end"], rc.get("code") == "stop-hook-active", rc.get("by") or "receipt"
+        return rc["end"], bool(s.get("active")), rc.get("by") or "receipt"
     return int(s.get("end") or 0), bool(s.get("active")), "end-cut"
 
 
@@ -870,7 +930,8 @@ def run_session(sess: dict, gates: tuple, scripts: Path | None = None, use_recei
                     row[g] = res["d"]
                     cid = (s.get("cases") or {}).get(g)
                     if cid:
-                        cases[cid] = dict(res, id=cid, m="stateful" if how == "end-cut" else "stateful-receipt")
+                        cases[cid] = dict(res, id=cid,
+                                          m="stateful" if how in ("end-cut", "receipt-skew") else "stateful-receipt")
                 per_stop.append(row)
                 methods.append(how)
         return {"cases": cases, "stops": per_stop, "methods": methods}
@@ -909,7 +970,7 @@ def replay_all(cdir: Path, jobs: int, gate: str = "", scripts: Path | None = Non
                     st = session_stats.setdefault(g, {"sessions": 0, "stops": 0, "historical_deny": 0,
                                                       "replay_deny": 0, "hist_deny_reproduced": 0})
                     st["sessions"] += 1
-                    for k in ("from_receipt", "end_cut", "receipt_decision_reproduced"):
+                    for k in ("from_receipt", "end_cut", "receipt_skew", "receipt_decision_reproduced"):
                         st.setdefault(k, 0)
                     for s, row, how in zip(sess.get("stops") or [], res["stops"], res["methods"]):
                         if not s.get("in_window"):
@@ -919,8 +980,9 @@ def replay_all(cdir: Path, jobs: int, gate: str = "", scripts: Path | None = Non
                         st["historical_deny"] += hd
                         st["replay_deny"] += rd
                         st["hist_deny_reproduced"] += hd and rd
-                        if how == "end-cut":
+                        if how in ("end-cut", "receipt-skew"):
                             st["end_cut"] += 1
+                            st["receipt_skew"] += how == "receipt-skew"
                         else:
                             st["from_receipt"] += 1
                             st["receipt_decision_reproduced"] += \
@@ -1152,7 +1214,8 @@ def receipt_line(g: str, st: dict) -> str:
     """How many in-window Stops of a stateful gate replayed from a read receipt."""
     n = st.get("from_receipt", 0)
     return (f"{g}: {st.get('stops', 0)} in-window Stops, {n} cut from a read receipt, "
-            f"{st.get('end_cut', 0)} by the fallback end cut; receipt decisions reproduced "
+            f"{st.get('end_cut', 0)} by the fallback end cut ({st.get('receipt_skew', 0)} of them a "
+            f"receipt-skew); receipt decisions reproduced "
             f"{st.get('receipt_decision_reproduced', 0)}/{n}")
 
 

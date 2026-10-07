@@ -144,7 +144,7 @@ class TestStatefulReplay(unittest.TestCase):
             out = rh.capture_sessions(self.cdir, self.root, "2026-09-01", "2026-10-01", gates=(TOY,),
                                   receipts_root=self.tmp / "no-receipts")
         self.assertEqual(out, {"sessions": 2, "cases_mapped": 2, "cases_unmapped": 0,
-                               "stops_with_receipt": 0})
+                               "stops_with_receipt": 0, "receipt_skew": 0})
 
     def test_isolated_misses_and_stateful_catches_the_block(self):
         with redirect_stdout(io.StringIO()):
@@ -159,7 +159,7 @@ class TestStatefulReplay(unittest.TestCase):
         self.assertEqual(st[self.case_b]["d"], "allow")            # one HOME per session
         self.assertEqual(stats[TOY], {"sessions": 2, "stops": 6, "historical_deny": 1,
                                       "replay_deny": 1, "hist_deny_reproduced": 1,
-                                      "from_receipt": 0, "end_cut": 6,
+                                      "from_receipt": 0, "end_cut": 6, "receipt_skew": 0,
                                       "receipt_decision_reproduced": 0})
 
     def test_uncaptured_session_falls_back_to_isolated(self):

@@ -506,25 +506,31 @@ def extract_anchor(prompt: str) -> str:
 
 # ── decision ─────────────────────────────────────────────────────────────────
 
-def _should_fire(state: dict, reply: str, reanchored: bool, stop_hook_active: bool) -> bool:
-    """Conjuncion completa. Falta una condicion y el turno pasa."""
+def _fire_code(state: dict, reply: str, reanchored: bool, stop_hook_active: bool) -> str:
+    """Conjuncion completa. Falta una condicion y el turno pasa. Devuelve "fire"
+    o el codigo de la primera condicion que falto: el recibo (v10 T19) guarda
+    ese codigo, asi que la misma evaluacion decide y se registra, sin repetirla."""
     if stop_hook_active:
-        return False                                    # contrato one-shot
+        return "stop-hook-active"                       # contrato one-shot
     if not state.get("anchor") or state.get("closed"):
-        return False                                    # nada abierto que anclar
+        return "closed"                                 # nada abierto que anclar
     if reanchored:
-        return False                                    # el objetivo acaba de cambiar
+        return "reanchored"                             # el objetivo acaba de cambiar
     if state.get("fires", 0) >= MAX_FIRES:
-        return False                                    # gobernador agotado
+        return "governor"                               # gobernador agotado
     if state.get("turns_since_mention", 0) < SILENCE_THRESHOLD:
-        return False                                    # la raiz sigue viva en la prosa
+        return "recent-mention"                         # la raiz sigue viva en la prosa
     if not is_closure_claim(reply):
-        return False                                    # no declaro cierre
+        return "no-closure"                             # no declaro cierre
     if anchor_mentioned(state["anchor"], reply):
-        return False                                    # si la nombro
+        return "mentioned"                              # si la nombro
     if any(ESCAPE_TOKEN in ln for ln in reply.splitlines()):
-        return False                                    # exencion deliberada
-    return True
+        return "escape-token"                           # exencion deliberada
+    return "fire"
+
+
+def _should_fire(state: dict, reply: str, reanchored: bool, stop_hook_active: bool) -> bool:
+    return _fire_code(state, reply, reanchored, stop_hook_active) == "fire"
 
 
 def build_reason(state: dict) -> str:
@@ -687,10 +693,12 @@ def run_turn(data: dict) -> str:
         save_state(session_id, state)
         return ""
 
-    _note_judged(state, reply, reanchored, bool(data.get("stop_hook_active")))
+    _note_judged(state)
     # 4. disparo + 6. gobernador
     reason = ""
-    if _should_fire(state, reply, reanchored, bool(data.get("stop_hook_active"))):
+    code = _fire_code(state, reply, reanchored, bool(data.get("stop_hook_active")))
+    _READ["code"] = code
+    if code == "fire":
         state["fires"] = int(state.get("fires", 0)) + 1
         reason = build_reason(state)
         if state["fires"] >= MAX_FIRES:
@@ -709,12 +717,6 @@ def main() -> int:
     except Exception:
         return 0
 
-    if data.get("stop_hook_active"):
-        # Ya bloqueamos este turno. Nunca ciclar.
-        _READ["code"] = "stop-hook-active"
-        _write_receipt(data, "")
-        return 0
-
     _signal = None
     try:
         def _bail(*_):
@@ -722,26 +724,35 @@ def main() -> int:
         _signal_mod.signal(_signal_mod.SIGALRM, _bail)
         _signal_mod.alarm(BUDGET_S)
         _signal = _signal_mod
+        _READ["deadline"] = time.monotonic() + BUDGET_S
     except Exception:
         pass
 
     reason = ""
     try:
-        reason = run_turn(data)
-        if reason:
-            print(json.dumps({"decision": "block", "reason": reason}))
-            _journal_deny(reason, data)
+        if data.get("stop_hook_active"):
+            # Ya bloqueamos este turno. Nunca ciclar. (La alarma ya esta armada:
+            # el recibo de este Stop tambien queda dentro del presupuesto.)
+            _READ["code"] = "stop-hook-active"
+        else:
+            reason = run_turn(data)
+            if reason:
+                print(json.dumps({"decision": "block", "reason": reason}))
+                sys.stdout.flush()
+                _journal_deny(reason, data)
     except Exception:
         pass  # fail-open: un gate roto jamas secuestra la conversacion
     finally:
         # Despues de imprimir y bajo la misma alarma: el recibo nunca cambia la
         # decision, y si falla o se agota solo se pierde el recibo.
-        _write_receipt(data, reason)
-        if _signal is not None:
-            try:
-                _signal.alarm(0)
-            except Exception:
-                pass
+        try:
+            _write_receipt(data, reason)
+        finally:
+            if _signal is not None:
+                try:
+                    _signal.alarm(0)
+                except Exception:
+                    pass
     return 0
 
 
@@ -766,36 +777,17 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _pass_code(state: dict, reply: str, reanchored: bool, stop_hook_active: bool) -> str:
-    """Which clause of _should_fire decided, as a short code. Same order as
-    _should_fire; a test pins that `fire` here is exactly _should_fire True."""
-    if stop_hook_active:
-        return "stop-hook-active"
-    if not state.get("anchor") or state.get("closed"):
-        return "closed"
-    if reanchored:
-        return "reanchored"
-    if state.get("fires", 0) >= MAX_FIRES:
-        return "governor"
-    if state.get("turns_since_mention", 0) < SILENCE_THRESHOLD:
-        return "recent-mention"
-    if not is_closure_claim(reply):
-        return "no-closure"
-    if anchor_mentioned(state["anchor"], reply):
-        return "mentioned"
-    if any(ESCAPE_TOKEN in ln for ln in reply.splitlines()):
-        return "escape-token"
-    return "fire"
-
-
-def _note_judged(state: dict, reply: str, reanchored: bool, stop_hook_active: bool) -> None:
-    """Snapshot, before the fire step mutates the state, what the gate judged."""
+def _note_judged(state: dict) -> None:
+    """Snapshot, before the fire step mutates the state, what the gate judged.
+    Reads only; the reason code comes from _fire_code's own evaluation. The
+    budget alarm is never swallowed here: it must reach main's fail-open."""
     try:
         _READ["anchor_id"] = _sha256((state.get("anchor") or "").encode("utf-8"))[:16]
         _READ["open_turns"] = int(state.get("turns_since_mention", 0))
         _READ["turn"] = int(state.get("turn", 0))
         _READ["fires_before"] = int(state.get("fires", 0))
-        _READ["code"] = _pass_code(state, reply, reanchored, stop_hook_active)
+    except TimeoutError:
+        raise
     except Exception:
         pass
 
@@ -809,6 +801,8 @@ def _last_uuid(lines: list) -> str:
     """uuid of the last whole record the tail held (a line still being written
     does not parse and is skipped, as the decision path skips it)."""
     for line in reversed(lines or []):
+        if '"uuid"' not in line:
+            continue                   # no uuid to find: skip the parse
         try:
             entry = json.loads(line)
         except ValueError:
@@ -825,6 +819,9 @@ def build_receipt(data: dict, reason: str) -> dict:
     if not session_id and transcript:
         session_id = Path(transcript).stem
     reply = _READ.get("reply")
+    whole = None if reply is None else _sha256(reply.encode("utf-8"))
+    cut = whole if reply is None or len(reply) <= RECEIPT_REPLY_CUT else \
+        _sha256(reply[:RECEIPT_REPLY_CUT].encode("utf-8"))
     now = time.time()
     rec = {
         "v": 1,
@@ -833,9 +830,8 @@ def build_receipt(data: dict, reason: str) -> dict:
         "bytes": _READ.get("bytes"),
         "tail_lines": len(_READ["lines"]) if "lines" in _READ else None,
         "last_uuid": _last_uuid(_READ.get("lines")) or None,
-        "reply_sha256": None if reply is None else _sha256(reply.encode("utf-8")),
-        "reply_digest": None if reply is None else
-        _sha256(reply[:RECEIPT_REPLY_CUT].encode("utf-8")),
+        "reply_sha256": whole,
+        "reply_digest": cut,
         "anchor_id": _READ.get("anchor_id"),
         "turn": _READ.get("turn"),
         "open_turns": _READ.get("open_turns"),
@@ -848,15 +844,33 @@ def build_receipt(data: dict, reason: str) -> dict:
 
 
 def _write_receipt(data: dict, reason: str) -> None:
-    """Append the receipt. FAIL-OPEN: any error loses the receipt and nothing else."""
+    """Append the receipt. FAIL-OPEN: any error loses the receipt and nothing else.
+
+    Runs after the verdict is printed and flushed. Skipped once the budget is
+    spent (the one-shot alarm may already have fired). Opened non-blocking and
+    written only to a regular file, so a FIFO or a device at the path costs
+    nothing; a hung mount is bounded by the alarm. The alarm's TimeoutError is
+    re-raised, never swallowed.
+    """
     try:
         if os.environ.get(RECEIPT_ENV, "1") == "0":
+            return
+        if time.monotonic() >= _READ.get("deadline", float("inf")):
             return
         rec = build_receipt(data, reason)
         path = _receipt_path(rec["session"] or "unknown")
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(rec, sort_keys=True) + "\n")
+        flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NONBLOCK", 0)
+        fd = os.open(str(path), flags, 0o600)
+        try:
+            import stat
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                return
+            os.write(fd, (json.dumps(rec, sort_keys=True) + "\n").encode("utf-8"))
+        finally:
+            os.close(fd)
+    except TimeoutError:
+        raise
     except Exception:
         pass
 
