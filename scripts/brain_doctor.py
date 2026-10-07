@@ -744,6 +744,29 @@ def check_finops_enforcement(fix: bool) -> Result:
         return Result(key, WARN,
                       "budgets.yaml absent — per-arm budget caps are NOT enforced (FinOps off)",
                       "cp budgets.yaml.example budgets.yaml, then set monthly_usd_cap per arm")
+    # Read it the way budget-check.py reads it: a file in a shape the gate does
+    # not read (an `arms:` map, say) enforced nothing while this line said ON.
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_budget_check_doctor", CLAUDE_DIR / "scripts" / "budget-check.py")
+        bc = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(bc)
+        try:
+            import yaml  # type: ignore[import-not-found]
+            loaded = yaml.safe_load(cfg.read_text(encoding="utf-8")) or {}
+            problems = bc.config_problems(loaded)
+        except ImportError:
+            problems = ["PyYAML is not installed, so budget-check cannot read budgets.yaml"]
+        except Exception as e:  # noqa: BLE001
+            problems = [f"budgets.yaml does not parse: {e}"]
+        fix = bc.CONFIG_FIX
+    except Exception as e:  # noqa: BLE001
+        problems, fix = [f"budget-check.py could not be loaded to read the config: {e}"], \
+            "convert to the budgets: list documented in budget-check.py"
+    if problems:
+        return Result(key, WARN, "budgets.yaml is present but budget-check cannot read it: "
+                      + "; ".join(problems), fix)
     n = cfg.read_text(encoding="utf-8", errors="ignore").count("monthly_usd_cap")
     return Result(key, PASS, f"FinOps enforcement ON — budgets.yaml present ({n} cap line(s))")
 
@@ -2745,12 +2768,33 @@ CHECKS = [
     ("spec-contract", check_spec_contract),
 ]
 
+# The --fast profile (v10, AC-15) skips the checks that EXECUTE other programs
+# or call the network, and runs every other check unchanged. It exists for the
+# first run after a clone, where a newcomer waits on the doctor. Measured on a
+# populated machine on 2026-10-06, read-only, wall time per check, one run: every
+# check except gate-liveness took 220 s together, 189 s of it enforcement-floor,
+# and gate-liveness runs the same selftests again; --fast took 16.7, 14.4 and
+# 13.7 s on three consecutive runs there. A fast PASS proves the brain is wired and its static
+# state is sound; it does NOT prove a gate blocks, so it never writes the gate
+# receipt (gate-liveness is skipped), and pre-push keeps calling the full checks
+# it always called (--registry, --gate-receipt). Keys only: a check added later
+# runs in --fast until someone measures it slow and lists it here.
+SLOW_CHECKS = {
+    "gate-liveness": "runs every fail-closed gate's --selftest and writes the gate receipt",
+    "enforcement-floor": "re-runs every gate selftest to compute the enforcement floor",
+    "kernel-isolation-gate": "runs the isolation gates' selftests",
+    "kernel-process-live": "verifies hash chains and replays the golden journal",
+    "stale-merged-branches": "calls GitHub through gh (network)",
+}
+
 STATUS_ICON = {PASS: "✓", WARN: "!", FAIL: "✗"}
 
 
-def run_all(fix: bool) -> list[Result]:
+def run_all(fix: bool, fast: bool = False) -> list[Result]:
     results: list[Result] = []
     for key, fn in CHECKS:
+        if fast and key in SLOW_CHECKS:
+            continue
         try:
             out = fn(fix)
         except Exception as e:  # one bad check never crashes the run
@@ -2794,7 +2838,12 @@ def main() -> int:
                     help="run ONLY the RULE #1 registry checks (for .githooks/pre-push)")
     ap.add_argument("--gate-receipt", action="store_true",
                     help="run ONLY gate-liveness and write the v7 gate receipt (pre-push, ai-pull)")
+    ap.add_argument("--fast", action="store_true",
+                    help="skip the checks that run gate selftests or call the network "
+                         "(see SLOW_CHECKS); used by quickstart, never by pre-push")
     args = ap.parse_args()
+    if args.fast and (args.gate_receipt or args.registry):
+        ap.error("--fast is a profile of the full run; it does not combine with --registry or --gate-receipt")
 
     if args.gate_receipt:
         try:
@@ -2808,8 +2857,9 @@ def main() -> int:
             results = [Result("rule-1-registry", FAIL, f"registry check crashed: {e}",
                               "fix registry/rules.yaml so it loads and validates")]
     else:
-        results = run_all(args.fix)
+        results = run_all(args.fix, fast=args.fast)
     fails = sum(1 for r in results if r.status == FAIL)
+    skipped = sorted(SLOW_CHECKS) if args.fast else []
 
     if args.json:
         warns = sum(1 for r in results if r.status == WARN)
@@ -2817,11 +2867,16 @@ def main() -> int:
         print(json.dumps({
             "claude_dir": str(CLAUDE_DIR),
             "interpreter": PYTHON,
+            "profile": "fast" if args.fast else "full",
+            "skipped": skipped,
             "summary": {"passed": passes, "warn": warns, "fail": fails},
             "checks": [r.to_dict() for r in results],
         }, indent=2))
     else:
         render_human(results)
+        if skipped:
+            print(f"  fast profile: skipped {len(skipped)} slow check(s): {', '.join(skipped)}")
+            print("  run `python3 scripts/brain_doctor.py` for the full profile, which proves every gate blocks")
 
     return 1 if fails else 0
 

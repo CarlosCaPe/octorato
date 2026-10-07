@@ -1448,12 +1448,33 @@ def candidates(target: str) -> list:
     if norm:
         out.append(norm)
         try:
-            real = kernel_proc.norm_path(os.path.realpath(norm))
+            real = _onto_brain(kernel_proc.norm_path(os.path.realpath(norm)))
         except Exception:
             real = ""
         if real and real != norm:
             out.append(real)
     return out
+
+
+def _onto_brain(real: str) -> str:
+    """A resolved path under the brain's OWN resolved root, re-spelled under
+    brain_root(). realpath resolves every link and every Windows 8.3 short name
+    on the way, the brain root is not resolved, and a link into a brain whose
+    root is itself spelled another way (`CARLOS~1`, a symlinked ~/.claude)
+    landed outside the protected set."""
+    broot = brain_root()
+    rroot = _CACHE.get("brain_real")
+    if rroot is None:
+        try:
+            rroot = kernel_proc.norm_path(os.path.realpath(broot))
+        except Exception:
+            rroot = broot
+        _CACHE["brain_real"] = rroot
+    if rroot and rroot != broot:
+        fr, fx = _fold(real), _fold(rroot)
+        if fr == fx or fr.startswith(fx + os.sep):
+            return broot + real[len(rroot):]
+    return real
 
 
 _HIT_CACHE = {}
@@ -1601,6 +1622,15 @@ def _add_wrapper_rows(mod) -> None:
 # BODY, not the command, so it never changes what the shared parser sees.
 _PATH_NOISE = re.compile(r"/(?:\.?/)+")
 _PATH_UP = re.compile(r"/[^/]+/\.\./")
+# Windows only. A backslash run BETWEEN two path characters is a separator
+# (`.claude\settings.json`, or `\\` inside a non-raw string literal); one next
+# to a quote or a paren is shell or string escaping and is left alone, so the
+# call patterns that read quotes keep working. The drive colon counts as a
+# path character, or `C:\Users\...` folds to a half-converted `C:\Users/...`
+# that matches no needle. A `/c/` not preceded by a path character is Git
+# Bash's spelling of drive C:.
+_WIN_SEP = re.compile(r"(?<=[\w.~:-])\\{1,2}(?=[\w.~-])")
+_WIN_MSYS = re.compile(r"(?<![\w/.~:-])/([A-Za-z])/")
 
 
 def _normalize_paths(text: str) -> str:
@@ -1610,8 +1640,18 @@ def _normalize_paths(text: str) -> str:
     `open('~/.claude/scripts/../settings.json','w')` was a literal bypass of
     every needle with no variable and no unusual idiom in it, which put it
     outside the stated variable-expansion residual. The up-level pass runs to a
-    fixed point (bounded), because `a/b/../../c` needs two rounds."""
-    text = _PATH_NOISE.sub("/", text or "")
+    fixed point (bounded), because `a/b/../../c` needs two rounds.
+
+    On Windows two more spellings of one file were literal bypasses, measured
+    ALLOW against the live gate: mixed separators
+    (`C:/Users/<me>/.claude\\settings.json`) and the Git Bash drive form
+    (`/c/Users/<me>/.claude/settings.json`). Both fold to the forward-slash
+    needle `_os_spellings` already carries."""
+    text = text or ""
+    if os.name == "nt":
+        text = _WIN_SEP.sub("/", text)
+        text = _WIN_MSYS.sub(lambda m: m.group(1).upper() + ":/", text)
+    text = _PATH_NOISE.sub("/", text)
     for _ in range(8):
         folded = _PATH_UP.sub("/", text)
         if folded == text:
@@ -1648,7 +1688,28 @@ def _needles() -> list:
             rel = os.path.relpath(path, brain).replace(os.sep, "/")
             out.append("~/.claude/" + rel)
     out.append("~/" + _USER_CONFIG_NAME)
+    out = _os_spellings(out)
     _CACHE["needles"] = out
+    return out
+
+
+def _os_spellings(paths: list) -> list:
+    """Every spelling one absolute literal takes in inline code on this OS.
+
+    On Windows the needles are native (`C:\\Users\\...`), and an interpreter
+    body names the same file as `C:/Users/...` or, in a non-raw string,
+    `C:\\\\Users\\\\...`. Only the native one was listed, so
+    `python -c "open('C:/Users/<me>/.claude/settings.json','w')"` and its
+    `node -e` twin were measured ALLOW against the live gate while `rm` on the
+    same path denied. Identity on POSIX."""
+    if os.sep == "/":
+        return list(paths)
+    out = []
+    for p in paths:
+        out.append(p)
+        if os.sep in p:
+            out.append(p.replace(os.sep, "/"))
+            out.append(p.replace(os.sep, os.sep * 2))
     return out
 
 
@@ -1682,7 +1743,7 @@ def _dir_needles() -> list:
             rel = os.path.relpath(path, brain).replace(os.sep, "/")
             spelled.append("~/.claude/" + rel)
     spelled.append("~/.claude")
-    _CACHE["dir_needles"] = out + spelled
+    _CACHE["dir_needles"] = _os_spellings(out) + spelled
     return _CACHE["dir_needles"]
 
 
@@ -1695,9 +1756,11 @@ def _needle_marker(body: str, needles: list):
     marker = next((m for m in _WRITE_MARKERS if m in body), None)
     if not marker:
         return None
-    flat = _normalize_paths(body)
+    # Case-folded, as every comparison in this gate is: `c:/users/...` is the
+    # same file as `C:/Users/...` on Windows and on a default macOS volume.
+    flat = _normalize_paths(body).casefold()
     for needle in needles:
-        if needle in flat:
+        if _fold(needle) in flat:
             return needle, marker
     return None
 
@@ -3456,7 +3519,7 @@ def _inside_write_dirs() -> set:
         if os.path.splitext(rel)[1]:
             continue                       # carries an extension: a file
         parts = rel.split("/")
-        out.add(os.path.join(brain, *parts))
+        out.update(_os_spellings([os.path.join(brain, *parts)]))
         out.add("~/" + "/".join([os.path.basename(brain)] + parts))
     _CACHE["inside_write_dirs"] = out
     return out
@@ -3479,10 +3542,13 @@ def _direct_hit(body: str, needles: list, extra=(), dirs=None):
     if order is None:
         order = sorted(set(list(needles) + list(dirs)), key=len, reverse=True)
         _CACHE[("needle_order", key)] = order
+    folded = flat.casefold()
     for needle in order:
-        if needle not in flat:
+        if _fold(needle) not in folded:
             continue              # cheap string test before any regex compile
-        quoted = re.escape(needle)
+        # The needle alone is case-insensitive (a path); the call patterns
+        # around it keep their case (`writeFileSync` is not `writefilesync`).
+        quoted = "(?i:" + re.escape(needle) + ")"
         is_dir_only = needle not in needles
         # Writing TO a directory is meaningless, which is why the write patterns
         # were skipped for a directory needle. Writing to a file INSIDE it is
@@ -4087,13 +4153,18 @@ def main() -> int:
             merged.update(own or {})
         kernel_proc.set_command_assignments(merged)
         try:
-            found = bash_targets(text, str(payload.get("cwd") or ""))
+            # The program-precise removal reader goes FIRST. Same hits, same
+            # verdict; only the label of the first deny changes. The shared
+            # parser tags every find `find -delete`, and where its glob survives
+            # (Windows, no lone-backslash lex failure) its hit named the wrong
+            # program ahead of the one that names `rm`.
+            found = indirect_removal_hits(text, here)
+            found.extend(bash_targets(text, str(payload.get("cwd") or "")))
             for root, verb in extra_tree_hits(text, here):
                 found.append(("tree", root, verb))
             found.extend(extra_git_hits(text, here))
             found.extend(extra_put_hits(text, here))
             found.extend(exotic_redirect_hits(text, here))
-            found.extend(indirect_removal_hits(text, here))
         except ParserUnavailable as exc:
             journal_deny(pid, {"why": "parser-unavailable", "detail": str(exc),
                                "command": command[:200]})
@@ -4252,16 +4323,36 @@ def _selftest(fdir: str = None) -> int:
         return 1
 
     import gate_selftest
-    failures, blocked, allowed = [], 0, 0
+    failures, blocked, allowed, skipped = [], 0, 0, []
     for path in fixtures:
         name = os.path.basename(path)
         with open(path, encoding="utf-8") as fh:
             payload = json.load(fh)
         setup = payload.pop("_setup", {}) or {}
+        if os.name == "nt" and setup.get("chmod"):
+            # chmod cannot seal a directory on Windows (listdir still answers),
+            # so the leg's premise cannot be built here. Named, never passed.
+            skipped.append(name)
+            continue
+        if setup.get("os") and setup["os"] != os.name:
+            # A spelling that only names the live file on one OS (a Windows
+            # separator inside a path is an ordinary character on POSIX).
+            skipped.append(name)
+            continue
         sandbox = tempfile.mkdtemp(prefix="arming-selftest-")
         try:
             _build_sandbox(sandbox, setup)
-            body = json.dumps(payload).replace("{{SANDBOX}}", sandbox)
+            # The sandbox lands INSIDE serialized JSON, and on Windows it carries
+            # backslashes: an unescaped `C:\Users` is an invalid JSON escape,
+            # the gate cannot parse its stdin, fails open by design, and every
+            # violation leg read as allowed. Forward slashes also keep a Bash
+            # leg's path intact, since a shell reads a backslash as an escape.
+            body = json.dumps(payload).replace(
+                "{{SANDBOX}}", json.dumps(_shell_path(sandbox))[1:-1])
+            # The Git Bash drive spelling of the same sandbox (`/c/Users/...`);
+            # identity on POSIX, so a fixture using it is a violation everywhere.
+            body = body.replace("{{SANDBOX_MSYS}}",
+                                json.dumps(_msys_path(sandbox))[1:-1])
             # {{PAD}} keeps an oversize fixture SMALL on disk: the cap is 64 KB
             # and a literal payload would be a 64 KB file in the repo for every
             # leg that needs one.
@@ -4311,7 +4402,11 @@ def _selftest(fdir: str = None) -> int:
                 continue
             blocked += 1
             want = setup.get("expect_names")
-            if want and want not in cp.stdout:
+            # The reason names the path natively, and a fixture names it with
+            # `/`; compared separator-blind so Windows does not read a correct
+            # deny as unnamed. stdout is JSON, so a backslash arrives doubled.
+            said = cp.stdout.replace("\\\\", "/").replace("\\", "/")
+            if want and want not in cp.stdout and want not in said:
                 failures.append(f"{name} blocked without naming {want}")
         else:
             if did_block:
@@ -4343,6 +4438,9 @@ def _selftest(fdir: str = None) -> int:
           f"or cannot run ANY of its three inline body readers denies instead "
           f"of allowing, proven by driving the real main() with each reader "
           f"replaced by a raise")
+    if skipped:
+        print(f"selftest SKIPPED on this OS (premise not buildable): "
+              f"{', '.join(skipped)}")
     return 0
 
 
@@ -4439,8 +4537,10 @@ def _assert_covered_verbs_deny() -> tuple:
     failed = []
     try:
         _build_sandbox(sandbox, {})
-        prot = os.path.join(sandbox, ".claude", "settings.json")
-        pdir = os.path.join(sandbox, ".claude", "scripts")
+        # Spelled the way a shell receives them: a native Windows path in a Bash
+        # command loses its backslashes to escaping and names another file.
+        prot = _shell_path(os.path.join(sandbox, ".claude", "settings.json"))
+        pdir = _shell_path(os.path.join(sandbox, ".claude", "scripts"))
         env = dict(os.environ)
         env["HOME"] = sandbox
         env["USERPROFILE"] = sandbox
@@ -4874,6 +4974,21 @@ def _build_sandbox(sandbox: str, setup: dict) -> None:
             os.symlink(dst, src)
         except (OSError, NotImplementedError):
             pass
+
+
+def _shell_path(path: str) -> str:
+    """A sandbox path as a selftest leg writes it: forward slashes. Identity on
+    POSIX; on Windows the one form a JSON payload and a Bash command both keep."""
+    return path.replace(os.sep, "/") if os.sep != "/" else path
+
+
+def _msys_path(path: str) -> str:
+    """A sandbox path in Git Bash's drive spelling: `C:\\x` is `/c/x`. Identity
+    on POSIX."""
+    p = _shell_path(path)
+    if os.name == "nt" and len(p) > 1 and p[1] == ":":
+        return "/" + p[0].lower() + p[2:]
+    return p
 
 
 def _touch(path: str, body: str) -> None:

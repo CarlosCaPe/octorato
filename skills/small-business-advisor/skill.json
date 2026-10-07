@@ -1,0 +1,7 @@
+{
+  "kind": "skill",
+  "name": "small-business-advisor",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "Turns an assistant into a working advisor for a small business owner: frames the one problem of the month, puts numbers on it from what the owner provides, lays out options with cost and risk, and leaves a short plan. Use on 'asesora mi negocio', 'my shop is losing money', 'cómo subo mis ventas', 'pyme'."
+}

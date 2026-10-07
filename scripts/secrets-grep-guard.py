@@ -16,6 +16,7 @@ Exit:   always 0.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 # Force UTF-8 on stdout/stderr so the ✓ / ✗ / em-dash glyphs in reports
@@ -32,7 +33,7 @@ for _stream in (sys.stdout, sys.stderr):
 # ── reader commands ──────────────────────────────────────────────────────────
 
 _READER_RE = re.compile(
-    r"\b(grep|cat|head|tail|less|rg|awk|sed\s+-n|xxd|strings)\b",
+    r"\b(grep|cat|head|tail|less|rg|awk|sed\s+-n|xxd|strings|cut)\b",
     re.IGNORECASE,
 )
 
@@ -82,6 +83,40 @@ _DENY_REASON = (
 )
 
 
+# ── v10: this gate only TIGHTENS ─────────────────────────────────────────────
+# A name-only exemption was tried and removed: QA showed it was not scoped to
+# .env-shaped files (`awk -F= '{print $1}' ~/.ssh/id_rsa` prints the whole key,
+# since a line with no '=' is all field 1), and the replay showed it removed no
+# measured friction (none of its shapes occurs in the corpus). What stays are
+# three closures of holes that were already on master: segments split on
+# ; && || and newline only outside quotes, `cut` counted as a reader, and a
+# later pipe stage that re-reads the secret file not counted as a redactor.
+
+
+def _segments(command: str) -> list:
+    """Split on ; && || and newline OUTSIDE quotes. A plain re.split cut
+    `awk -F= '{print $1; print}' .env` inside its program, so neither half
+    carried both the reader and the path and the value printed (QA of v10)."""
+    out, cur, quote, i = [], [], None, 0
+    while i < len(command):
+        ch = command[i]
+        if quote:
+            if ch == quote:
+                quote = None
+            elif ch == "\\" and quote == '"' and i + 1 < len(command):
+                cur.append(ch); i += 1; ch = command[i]
+            cur.append(ch); i += 1; continue
+        if ch in "'\"":
+            quote = ch
+        elif ch == "\n" or ch == ";":
+            out.append("".join(cur)); cur = []; i += 1; continue
+        elif command.startswith(("&&", "||"), i):
+            out.append("".join(cur)); cur = []; i += 2; continue
+        cur.append(ch); i += 1
+    out.append("".join(cur))
+    return out
+
+
 def _has_reader(command: str) -> bool:
     return bool(_READER_RE.search(command))
 
@@ -91,6 +126,12 @@ def _has_secret_path(command: str) -> bool:
 
 
 def _has_redactor(command: str) -> bool:
+    # A later pipeline stage that itself reads the secret file is not a
+    # redactor of the stage before it: `grep -c '' .env | grep -o '.*' .env`
+    # prints the file whole (QA of v10).
+    stages = re.split(r"(?<!\|)\|(?!\|)", command)
+    if any(_has_reader(st) and _has_secret_path(st) for st in stages[1:]):
+        return False
     return bool(_REDACTOR_RE.search(command))
 
 
@@ -136,7 +177,7 @@ def main() -> int:
 
         # Evaluate per shell segment (split on ; && || newline), NOT on the whole
         # string: `cat .env; cat ok | jq .` must not pass on the unrelated jq.
-        for seg in re.split(r"(?:&&|\|\||;|\n)", command):
+        for seg in _segments(command):
             if _has_reader(seg) and _has_secret_path(seg) and not _has_redactor(seg):
                 print(json.dumps({
                     "hookSpecificOutput": {

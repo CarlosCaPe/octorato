@@ -1,0 +1,8 @@
+{
+  "stop_hook_active": false,
+  "session_id": "selftest-violation_bridge_ack_no_id",
+  "wa_guardia_dbs": {
+    "prueba": "~/.wa-fixture/con-espera.db"
+  },
+  "transcript_path": "bridge_ack_no_id_transcript.jsonl"
+}

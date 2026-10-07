@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-t04-r1-v",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "sed -n 1,40p ~/.claude/scripts/wa-soporte.sh | bash"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_read_script_piped_to_shell_transcript.jsonl"
+}

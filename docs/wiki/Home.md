@@ -12,7 +12,7 @@
 - It is not a chatbot and there are no people in it. An "agent" here is a text file describing a role, the way a job description does.
 - It is free (MIT) and runs on Claude Code and Cursor today.
 
-**Live:** <!--canon:skills.count-->230+<!--/canon--> skills · <!--canon:agents.count-->160+<!--/canon--> agent personas across
+**Live:** <!--canon:skills.count-->240+<!--/canon--> skills · <!--canon:agents.count-->160+<!--/canon--> agent personas across
 13 divisions · hook-enforced gates · multi-machine sync · an index (the
 connectome) that learns which guide fits which task · a cost pipeline that tags
 every run with the client who incurred it · a generated capability manifest
@@ -48,7 +48,7 @@ Each page is an organ. This brain routes you to whichever one you need.
 
 1. **[[Architecture]]**: the anatomy atlas. CLASS / OBJECT / ARM, the activation stack, the v8 kernel, and why an octopus.
 2. **[[The-4D-Paradigm]]**: the nervous signal. Every action follows Describe → Delegate → Diligent → Disclose.
-3. **[[Skills]]**: the synapse catalog, <!--canon:skills.count-->230+<!--/canon--> learned techniques (the *HOW*).
+3. **[[Skills]]**: the synapse catalog, <!--canon:skills.count-->240+<!--/canon--> learned techniques (the *HOW*).
 4. **[[Agents]]**: the neuron roster, <!--canon:agents.count-->160+<!--/canon--> specialist personas (the *WHO*).
 5. **[[Self-Growth]]**: neurogenesis and pruning, the daily auto-curation loop.
 6. **[[Security]]**: the immune system, why the brain stays generic, and how that's enforced.

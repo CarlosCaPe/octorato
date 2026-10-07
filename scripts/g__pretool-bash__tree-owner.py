@@ -86,6 +86,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -268,6 +269,10 @@ def resolve(path: str, here: str) -> str:
     that goes with it."""
     path = kernel_proc.expand_env(os.path.expanduser(path),
                                   overrides={"PWD": here, "OLDPWD": None})
+    # After expansion and before `isabs`, for the same reason as `$VAR`: on
+    # Windows `/c/Users/...` is Git Bash's spelling of `C:/Users/...`, and read
+    # natively it landed on `<drive>:\c\Users\...`, matching nothing.
+    path = kernel_proc.msys_to_native(path)
     return kernel_proc.norm_path(path if os.path.isabs(path) else os.path.join(here, path))
 
 
@@ -648,20 +653,31 @@ def _split_words(text: str):
     tokenizes to `C:worktree`: every separator is eaten, the target resolves to
     a path that exists nowhere, and it matches no lane. The gate then denies
     nothing, which is how a rule labelled fail-closed goes silently inert on
-    Windows while the doctor still reports it wired. Doubling the backslashes
-    first restores them verbatim and changes no other POSIX rule (quoting, word
-    splitting, comments), so one command parses the same on both platforms.
+    Windows while the doctor still reports it wired. Doubling a backslash that
+    sits before a path character restores it verbatim and changes no other
+    POSIX rule (quoting, word splitting, comments).
 
-    A backslash that genuinely was an escape (`a\\ b`) survives as a literal
-    backslash inside the token. That token only ever reaches path matching,
-    where a literal backslash matches no lane either, so nothing loosens.
+    ONLY before a path character. Doubling every backslash also doubled the
+    ones that ARE escapes, and an escaped space is how a shell spells one word:
+    `rm -rf C:/Users/A\\ B/.claude/scripts` became `C:/Users/A\\` plus
+    `B/.claude/scripts`, two targets that match nothing, and the removal of
+    every gate body was measured ALLOW on a profile whose name has a space. A
+    backslash before a space, a quote, `$` or another backslash keeps the
+    meaning bash gives it.
 
     Raises ValueError exactly as `shlex.split` does, so each call site keeps the
     fallback it already chose.
     """
     import shlex
 
-    return shlex.split(text.replace("\\", "\\\\") if os.name == "nt" else text)
+    if os.name == "nt":
+        text = _PATH_BACKSLASH.sub(r"\\\\", text)
+    return shlex.split(text)
+
+
+# A backslash followed by a character that can continue a path segment is a
+# Windows separator; anything else is a shell escape.
+_PATH_BACKSLASH = re.compile(r"\\(?=[\w.~-])")
 
 
 def scan(command: str, cwd: str, depth: int = 0) -> list:

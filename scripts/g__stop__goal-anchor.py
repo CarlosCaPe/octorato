@@ -16,9 +16,27 @@ Per-turn cycle (all inside the same Stop; the payload carries transcript_path):
      transcript.
   2. Anchor. With no prior state: the operator prompt, cut to 240 chars.
      Re-anchors ONLY on a deterministic marker (prefix `objetivo:` / `goal:`, a
-     pivot phrase, or an already-closed anchor plus a new prompt). Outside that
-     the anchor is sticky for the whole session: "no me deja entrar" or "sale
-     AccessDenied" are the operator reacting to the obstacle, NOT new goals.
+     pivot phrase, an already-closed anchor plus a new prompt, or since v10 a
+     TOPIC CHANGE: TWO consecutive goal-shaped operator prompts that share no
+     content word with the root and are not obstacle reports; acks and bare
+     questions in between are neutral, a prompt on the root or an obstacle
+     report resets the streak, so one aside never retires the root). Only a
+     REAL operator prompt (origin.kind human, or no origin and no harness-echo
+     shape) can anchor, re-anchor or add silence: a pivot phrase quoted inside a
+     <task-notification> or a peer message is not the operator.
+     Residuals, stated: untagged pasted text is read as the operator's own words
+     (two pasted blocks on another subject in a row re-anchor); obstacle reports
+     are recognised by a fixed vocabulary, so one phrased without it counts as
+     a new-topic prompt. "no me deja entrar" or "sale
+     AccessDenied" are the operator reacting to the obstacle, NOT new goals, and
+     keep the root. An acknowledgement or a hatch token of at most three words
+     ("dale", "send-ok", "continue") never anchors and never re-anchors (v10
+     AC-09), and neither does a go-ahead whose content words are only "carry on"
+     vocabulary ("dale con tu recomendacion"). Pasted content and image markers
+     are stripped before any of these decisions.
+  3b. Silence counts only turns the operator opened: a turn opened by the
+     machine (<task-notification>, a `!command` echo, local command output) does
+     not add to turns_since_mention.
   3. Mention. Pull content words out of the anchor and look for them in the
      response. Two distinct ones are enough: turns_since_mention returns to 0.
   4. Fires only on the full conjunction (see _should_fire).
@@ -104,6 +122,59 @@ _RE_PIVOT = re.compile(
 # Ruido estructural del transcript que no es prosa del operador.
 _RE_SYSTEM_REMINDER = re.compile(r"<system-reminder>.*?</system-reminder>", re.DOTALL)
 _RE_COMMAND_TAG = re.compile(r"<command-(?:name|message|args)>.*?</command-\w+>", re.DOTALL)
+
+# Contenido pegado y marcadores de imagen: son material que el operador trae,
+# no la frase con la que pide algo. Un ancla hecha de 240 caracteres de una
+# pagina de GitHub pegada nunca se menciona en una respuesta y agota sus dos
+# disparos (census v10, 2026-10-06). Se quitan antes de decidir si el prompt es
+# un objetivo; el turno sigue contando como turno.
+_RE_PASTED = re.compile(r"<pasted_content\b[^>]*>.*?(?:</pasted_content[^>]*>|\Z)", re.DOTALL)
+_RE_IMAGE_TAG = re.compile(r"\[Image #\d+\]")
+
+# ── acuses y fichas de escape: nunca son objetivo (v10 AC-09) ───────────────
+# "dale", "send-ok", "continue", "ok mándalo": el operador autoriza o empuja el
+# trabajo que ya existe. Anclarlos como raiz fue la primera causa de falsos
+# positivos del census v10 (100 bloqueos, ~92% FP): la raiz quedaba en "dale con
+# tu recomendacion" y ninguna respuesta podia mencionarla. Un acuse conserva la
+# raiz anterior; no ancla ni re-ancla.
+MAX_ACK_WORDS = 3
+_RE_HATCH_TOKEN = re.compile(r"^[a-z]+(?:-[a-z]+)*-ok$")
+_ACK_WORDS = {
+    # español (sin acentos: se compara contra _normalize)
+    "ok", "oki", "okey", "va", "vale", "dale", "si", "sip", "claro", "listo", "lista",
+    "hecho", "ya", "sigue", "sigamos", "seguimos", "continua", "continuemos",
+    "adelante", "procede", "hazlo", "haz", "eso", "perfecto", "bien", "gracias",
+    "orale", "aja", "simon", "exacto", "correcto", "mandalo", "mandala", "envialo",
+    "tambien", "todo", "porfa", "y", "a", "con", "sin", "parar", "pares", "no",
+    "de", "nuevo", "tu", "asi", "esta", "como", "lo", "la", "el", "pues", "entonces",
+    # ingles
+    "okay", "yes", "yep", "yeah", "sure", "go", "ahead", "on", "continue", "proceed",
+    "done", "thanks", "please", "do", "it", "fine", "good", "right", "keep", "going",
+}
+# Palabras de contenido que solo dicen "sigue con lo que ya hay". Un prompt
+# cuyas palabras de contenido, quitadas estas, no llegan a MIN_MENTION_HITS
+# tampoco es objetivo: "dale con tu recomendacion" o "dale a lo pendiente" son
+# un acuse largo, no una tarea nueva.
+_GO_AHEAD_WORDS = {
+    "dale", "sigue", "sigamos", "continua", "continue", "continuemos", "adelante",
+    "procede", "proceed", "hazlo", "recomendacion", "recomendaciones",
+    "sugerencia", "sugerencias", "pendiente", "pendientes", "parar", "pares",
+    "mandalo", "mandala", "listo", "hecho", "done", "okay", "vale", "perfecto",
+    "gracias", "thanks", "ahead", "going", "keep",
+}
+
+
+def _strip_pasted(text: str) -> str:
+    return _RE_IMAGE_TAG.sub(" ", _RE_PASTED.sub(" ", text or ""))
+
+
+def is_ack(prompt: str) -> bool:
+    """True si el prompt es SOLO un acuse o una ficha de escape de a lo mas
+    tres palabras: "dale", "ok, sigue", "send-ok mándalo", "continue"."""
+    words = re.findall(r"[a-z0-9]+(?:-[a-z0-9]+)*", _normalize(_strip_pasted(prompt)))
+    if not words or len(words) > MAX_ACK_WORDS:
+        return False
+    return all(w in _ACK_WORDS or _RE_HATCH_TOKEN.match(w) for w in words)
 
 # Palabras vacias es/en. Solo se filtran palabras de >=4 chars, asi que la
 # lista cubre ese rango; los articulos cortos caen solos por longitud.
@@ -282,6 +353,7 @@ _RE_HARNESS_ECHO = re.compile(
     r"|<function_(?:calls|results)>"
     r"|<local-command-(?:stdout|stderr)>"
     r"|<task-notification>"
+    r"|\A\s*\[Request interrupted by user"
     r"|^\s*(?:fatal|error|traceback|usage):",
     re.IGNORECASE | re.MULTILINE,
 )
@@ -315,6 +387,13 @@ def is_anchorable(prompt: str) -> bool:
         return True
     if _RE_HARNESS_ECHO.search(text):
         return False
+    text = _strip_pasted(text).strip()
+    if not text or is_ack(text):
+        return False
+    # Acuse largo: quitadas las palabras de "sigue con lo que hay", no queda
+    # sustancia para un objetivo.
+    if len(content_words(text) - _GO_AHEAD_WORDS) < MIN_MENTION_HITS:
+        return False
     # Interrogativa sin verbo de encargo en ninguna parte del texto. El signo se
     # busca EN CUALQUIER POSICION, no solo al final: el caso real que fallo fue
     # "que no servian los sticky notes? tiene el svg up to date aqui", donde la
@@ -340,12 +419,70 @@ def is_reanchor(prompt: str, state: dict) -> bool:
         return False
     if _RE_GOAL_PREFIX.search(prompt) or _RE_PIVOT.search(prompt):
         return True
+    if is_ack(prompt):
+        return False                   # AC-09: un acuse conserva la raiz
     return bool(state.get("closed"))
+
+
+# Cambio de tema: hacen falta TOPIC_CHANGE_PROMPTS prompts reales seguidos del
+# operador sobre el tema nuevo (con al menos una palabra de contenido en comun
+# entre ellos). El QA del v10 mostro que con uno solo, un encargo suelto ("abre
+# la presentacion") o un texto pegado sin etiqueta retiraban la raiz real para
+# siempre; master la conservaba.
+TOPIC_CHANGE_PROMPTS = 2
+
+
+def _topic_step(state: dict, prompt: str) -> bool:
+    """Avanza la racha de cambio de tema con un prompt REAL del operador.
+    Devuelve True cuando la racha llega al umbral (hay que re-anclar)."""
+    if is_ack(prompt) or not is_anchorable(prompt):
+        return False                                   # acuse o pregunta: ni suma ni rompe
+    if not is_topic_change(prompt, state.get("anchor") or ""):
+        state.pop("topic_pending", None)               # volvio a la raiz o es obstaculo
+        return False
+    pending = state.setdefault("topic_pending", {"count": 0})
+    pending["count"] = int(pending.get("count", 0)) + 1
+    pending["anchor"] = extract_anchor(prompt)          # el ultimo encargo es la raiz nueva
+    return pending["count"] >= TOPIC_CHANGE_PROMPTS
+
+
+def is_topic_change(prompt: str, anchor: str) -> bool:
+    """Cambio de trabajo, deterministico: el operador escribe algo con sustancia
+    de objetivo (is_anchorable: ni acuse, ni eco del harness, ni pregunta suelta)
+    que no comparte una sola palabra de contenido con la raiz vigente, y que no
+    es un reporte de obstaculo.
+
+    Los reportes de obstaculo ("no me deja entrar", "sale AccessDenied otra
+    vez", "sigue fallando") conservan la raiz: son la clase que este gate existe
+    para atrapar, el operador reaccionando al tropiezo mientras la raiz se
+    erosiona. Todo lo demas sin traslape es trabajo nuevo: el census v10 encontro
+    raices de 30 a 80 turnos atras que el operador ya habia dejado por encargos
+    explicitos sobre otra cosa, y el gate le pedia cerrar esas.
+    """
+    if not is_anchorable(prompt):
+        return False
+    if _RE_OBSTACLE.search(_normalize(_strip_pasted(prompt))):
+        return False
+    new_words = content_words(_strip_pasted(prompt)) - _GO_AHEAD_WORDS
+    return not (new_words & content_words(anchor))
+
+
+# Reporte de obstaculo: negacion de capacidad o resultado, o vocabulario de
+# error. Se compara contra el texto normalizado (minusculas, sin acentos).
+_RE_OBSTACLE = re.compile(
+    r"\bno\s+(?:me\s+|nos\s+|te\s+|le\s+)?(?:deja|dejo|puedo|puede|pude|pudo|sirve|sirvio"
+    r"|funciona|funciono|jala|abre|carga|entra|conecta|arranca|sale|aparece)\b"
+    r"|\bsigue\s+(?:sin|fallando|igual)\b|\botra\s+vez\b|\bde\s+nuevo\s+(?:sale|falla)\b"
+    r"|\b(?:error|errores|falla|fallo|fallando|denied|accessdenied|forbidden|timeout"
+    r"|traceback|exception|unauthorized|rechaz\w*|bloquead\w*)\b"
+    r"|\b(?:doesn'?t|does not|can'?t|cannot|won'?t|still)\s+(?:work|open|load|connect|fail\w*)\b"
+    r"|\bfails?\b|\bfailing\b|\bbroken\b",
+)
 
 
 def extract_anchor(prompt: str) -> str:
     """El objetivo, sin el marcador que lo introduce, cortado a 240 chars."""
-    text = _RE_GOAL_PREFIX.sub("", prompt.strip(), count=1)
+    text = _RE_GOAL_PREFIX.sub("", _strip_pasted(prompt).strip(), count=1)
     text = re.sub(r"\s+", " ", text).strip()
     return text[:MAX_ANCHOR_CHARS]
 
@@ -390,6 +527,7 @@ def _turn_pairs(lines: list) -> list:
     pairs = []
     prompt = None
     reply = None
+    real = False
     for line in lines:
         try:
             entry = json.loads(line)
@@ -407,45 +545,66 @@ def _turn_pairs(lines: list) -> list:
             text = _RE_COMMAND_TAG.sub(" ", text)
             if text.strip():
                 if prompt is not None:
-                    pairs.append((prompt, reply or ""))
+                    pairs.append((prompt, reply or "", real))
                 prompt = text.strip()
                 reply = None
+                real = is_operator_prompt(entry, prompt)
         elif entry.get("type") == "assistant" and prompt is not None:
             reply = _blocks_text(entry)
     if prompt is not None:
-        pairs.append((prompt, reply or ""))
+        pairs.append((prompt, reply or "", real))
     return pairs
 
 
-def _absorb(state: dict, prompt: str, reply: str) -> bool:
+def is_operator_prompt(entry: dict, text: str) -> bool:
+    """Solo un prompt REAL del operador puede anclar, re-anclar o contar como
+    silencio: origin.kind == "human", o sin origin y sin forma de eco del
+    harness. Un <task-notification>, un mensaje de un par o el eco de un
+    `!comando` no son el operador, aunque citen "forget that" o "switching to"
+    (el QA del v10 re-anclo una raiz desde el resumen de un monitor)."""
+    origin = entry.get("origin")
+    if isinstance(origin, dict) and origin.get("kind"):
+        return origin.get("kind") == "human" and not _RE_HARNESS_ECHO.search(text)
+    return not _RE_HARNESS_ECHO.search(text)
+
+
+def _set_anchor(state: dict, anchor: str) -> None:
+    state["anchor"] = anchor
+    state["anchor_ts"] = time.time()
+    state["anchor_turn"] = state["turn"]
+    state["turns_since_mention"] = 0
+    state["closed"] = False
+    state["fires"] = 0
+    state.pop("topic_pending", None)
+
+
+def _absorb(state: dict, prompt: str, reply: str, real: bool = True) -> bool:
     """Pasos 2 (anclaje) y 3 (mencion) de UN turno. No dispara ni persiste.
-    Devuelve si este turno re-anclo."""
+    Devuelve si este turno re-anclo. Solo un prompt real del operador (`real`)
+    puede anclar, re-anclar o sumar silencio."""
     state["turn"] = int(state.get("turn", 0)) + 1
 
     # 2. anclaje
     reanchored = False
-    if not state.get("anchor"):
+    if not real:
+        pass
+    elif not state.get("anchor"):
         # is_anchorable, no "if prompt": un eco del harness o una pregunta
         # suelta no son objetivos, y un ancla mala no se cae sola.
         if is_anchorable(prompt):
-            state["anchor"] = extract_anchor(prompt)
-            state["anchor_ts"] = time.time()
-            state["anchor_turn"] = state["turn"]
-            state["turns_since_mention"] = 0
-            state["closed"] = False
-            state["fires"] = 0
+            _set_anchor(state, extract_anchor(prompt))
     elif is_reanchor(prompt, state):
         # Ya cerrada se retiro con su razon; viva se retira como pivote.
         if not state.get("closed"):
             _retire(state, "pivot")
         # Un pivote hacia algo que no es objetivo retira el ancla vieja sin
         # poner una mala en su lugar: mejor sin raiz que con una falsa.
-        state["anchor"] = extract_anchor(prompt) if is_anchorable(prompt) else ""
-        state["anchor_ts"] = time.time()
-        state["anchor_turn"] = state["turn"]
-        state["turns_since_mention"] = 0
-        state["closed"] = False
-        state["fires"] = 0
+        _set_anchor(state, extract_anchor(prompt) if is_anchorable(prompt) else "")
+        reanchored = True
+    elif _topic_step(state, prompt):
+        first = state["topic_pending"]["anchor"]
+        _retire(state, "superseded")
+        _set_anchor(state, first)
         reanchored = True
 
     anchor = state.get("anchor") or ""
@@ -459,7 +618,13 @@ def _absorb(state: dict, prompt: str, reply: str) -> bool:
             state["closed"] = True
             _retire(state, "done")
     else:
-        state["turns_since_mention"] = int(state.get("turns_since_mention", 0)) + 1
+        # Solo cuentan los turnos que abrio el operador. Un turno abierto por la
+        # maquina (aviso de tarea en segundo plano, eco de `!comando`, salida de
+        # un comando local) no es silencio sobre la raiz: nadie pregunto nada.
+        # En el census v10 la mitad del silencio acumulado venia de rafagas de
+        # <task-notification> de vigias y QA corriendo.
+        if real:
+            state["turns_since_mention"] = int(state.get("turns_since_mention", 0)) + 1
     return reanchored
 
 
@@ -491,11 +656,11 @@ def run_turn(data: dict) -> str:
     # reproduciendo los turnos previos. Sin esto el gate evalua solo el ultimo
     # turno y el contador de silencio nace en cero, asi que jamas dispararia.
     if not state.get("anchor") and not state.get("history") and len(pairs) > 1:
-        for past_prompt, past_reply in pairs[:-1]:
-            _absorb(state, past_prompt, past_reply)
+        for past_prompt, past_reply, past_real in pairs[:-1]:
+            _absorb(state, past_prompt, past_reply, past_real)
 
-    prompt, reply = pairs[-1]
-    reanchored = _absorb(state, prompt, reply)
+    prompt, reply, real = pairs[-1]
+    reanchored = _absorb(state, prompt, reply, real)
 
     anchor = state.get("anchor") or ""
     if not anchor:

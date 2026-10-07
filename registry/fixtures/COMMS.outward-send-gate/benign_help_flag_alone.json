@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-t04-r2-b",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "~/.claude/scripts/wa-soporte.sh --help"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "benign_help_flag_alone_transcript.jsonl"
+}
