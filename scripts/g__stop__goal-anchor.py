@@ -48,6 +48,20 @@ real work; a false negative only lets one turn through.
 
 State: ~/.claude/.cache/goal-anchor/<session_id>.json
 
+Read receipt (v10 T19, instrumentation only): at every Stop the gate appends one
+line to ~/.claude/.cache/goal-anchor/receipts/<session_id>.jsonl saying WHAT it
+read and what it decided: the byte offset it read the transcript up to, how
+many lines its tail held, the uuid of the last record it parsed, the sha256 of
+the reply it judged (whole, and cut to 1,200 chars the way the friction ledger
+digests a blocked reply), a 16-hex id of the root it held, the open-turn count,
+the decision and a reason code. It never holds text. The replay harness cuts
+each Stop at that uuid, because the recorded transcript is not what the live
+gate read at its Stop (the hook can read before the turn's last records land).
+The write runs after the decision is printed, swallows every error and loses
+only the receipt; `OCTO_GOAL_ANCHOR_RECEIPTS=0` turns it off. The hashes are
+unsalted, so a very short reply can be recovered by hashing guesses: the file
+is local and gitignored like the state beside it.
+
 Deliberate escape: any line of the response carrying `goal-anchor-ok` exempts
 the turn.
 
@@ -213,7 +227,10 @@ def _tail_lines(path: str, max_bytes: int = 262144) -> list:
         fh.seek(0, os.SEEK_END)
         size = fh.tell()
         fh.seek(max(0, size - max_bytes))
-        return fh.read().decode("utf-8", errors="replace").splitlines()
+        lines = fh.read().decode("utf-8", errors="replace").splitlines()
+        _READ["bytes"] = fh.tell()     # T19 receipt: where this read stopped
+    _READ["lines"] = lines
+    return lines
 
 
 def _blocks_text(entry: dict) -> str:
@@ -644,6 +661,7 @@ def run_turn(data: dict) -> str:
 
     pairs = _turn_pairs(lines)
     if not pairs:
+        _READ["code"] = "no-turns"
         return ""
 
     state = load_state(session_id)
@@ -661,12 +679,15 @@ def run_turn(data: dict) -> str:
 
     prompt, reply, real = pairs[-1]
     reanchored = _absorb(state, prompt, reply, real)
+    _READ["reply"] = reply
 
     anchor = state.get("anchor") or ""
     if not anchor:
+        _READ["code"] = "no-anchor"
         save_state(session_id, state)
         return ""
 
+    _note_judged(state, reply, reanchored, bool(data.get("stop_hook_active")))
     # 4. disparo + 6. gobernador
     reason = ""
     if _should_fire(state, reply, reanchored, bool(data.get("stop_hook_active"))):
@@ -690,6 +711,8 @@ def main() -> int:
 
     if data.get("stop_hook_active"):
         # Ya bloqueamos este turno. Nunca ciclar.
+        _READ["code"] = "stop-hook-active"
+        _write_receipt(data, "")
         return 0
 
     _signal = None
@@ -702,6 +725,7 @@ def main() -> int:
     except Exception:
         pass
 
+    reason = ""
     try:
         reason = run_turn(data)
         if reason:
@@ -710,12 +734,131 @@ def main() -> int:
     except Exception:
         pass  # fail-open: un gate roto jamas secuestra la conversacion
     finally:
+        # Despues de imprimir y bajo la misma alarma: el recibo nunca cambia la
+        # decision, y si falla o se agota solo se pierde el recibo.
+        _write_receipt(data, reason)
         if _signal is not None:
             try:
                 _signal.alarm(0)
             except Exception:
                 pass
     return 0
+
+
+# -- read receipt (v10 T19) ---------------------------------------------------
+# Instrumentation only. Nothing here feeds the decision: _READ is filled while
+# run_turn reads, and the receipt is written after the verdict is printed.
+
+_READ: dict = {}
+RECEIPT_ENV = "OCTO_GOAL_ANCHOR_RECEIPTS"
+RECEIPT_REPLY_CUT = 1200   # friction_ledger.INPUT_CUT: the ledger digests a blocked reply this way
+
+
+def _sha256(data: bytes) -> str:
+    """sha256 hex without importing hashlib: its OpenSSL backend costs ~4 ms of
+    import on every Stop, measured, while the builtin module costs ~0.1 ms."""
+    for name in ("_sha2", "_sha256"):          # 3.12+, then 3.11
+        try:
+            return __import__(name).sha256(data).hexdigest()
+        except (ImportError, AttributeError):
+            continue
+    import hashlib
+    return hashlib.sha256(data).hexdigest()
+
+
+def _pass_code(state: dict, reply: str, reanchored: bool, stop_hook_active: bool) -> str:
+    """Which clause of _should_fire decided, as a short code. Same order as
+    _should_fire; a test pins that `fire` here is exactly _should_fire True."""
+    if stop_hook_active:
+        return "stop-hook-active"
+    if not state.get("anchor") or state.get("closed"):
+        return "closed"
+    if reanchored:
+        return "reanchored"
+    if state.get("fires", 0) >= MAX_FIRES:
+        return "governor"
+    if state.get("turns_since_mention", 0) < SILENCE_THRESHOLD:
+        return "recent-mention"
+    if not is_closure_claim(reply):
+        return "no-closure"
+    if anchor_mentioned(state["anchor"], reply):
+        return "mentioned"
+    if any(ESCAPE_TOKEN in ln for ln in reply.splitlines()):
+        return "escape-token"
+    return "fire"
+
+
+def _note_judged(state: dict, reply: str, reanchored: bool, stop_hook_active: bool) -> None:
+    """Snapshot, before the fire step mutates the state, what the gate judged."""
+    try:
+        _READ["anchor_id"] = _sha256((state.get("anchor") or "").encode("utf-8"))[:16]
+        _READ["open_turns"] = int(state.get("turns_since_mention", 0))
+        _READ["turn"] = int(state.get("turn", 0))
+        _READ["fires_before"] = int(state.get("fires", 0))
+        _READ["code"] = _pass_code(state, reply, reanchored, stop_hook_active)
+    except Exception:
+        pass
+
+
+def _receipt_path(session_id: str) -> Path:
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", session_id)[:120] or "unknown"
+    return _state_dir() / "receipts" / f"{safe}.jsonl"
+
+
+def _last_uuid(lines: list) -> str:
+    """uuid of the last whole record the tail held (a line still being written
+    does not parse and is skipped, as the decision path skips it)."""
+    for line in reversed(lines or []):
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(entry, dict) and entry.get("uuid"):
+            return str(entry["uuid"])
+    return ""
+
+
+def build_receipt(data: dict, reason: str) -> dict:
+    """The receipt line: ids, sizes, digests and codes. Never text."""
+    transcript = data.get("transcript_path") or ""
+    session_id = data.get("session_id") or os.environ.get("CLAUDE_SESSION_ID") or ""
+    if not session_id and transcript:
+        session_id = Path(transcript).stem
+    reply = _READ.get("reply")
+    now = time.time()
+    rec = {
+        "v": 1,
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(now)) + f".{int(now * 1000) % 1000:03d}Z",
+        "session": session_id,
+        "bytes": _READ.get("bytes"),
+        "tail_lines": len(_READ["lines"]) if "lines" in _READ else None,
+        "last_uuid": _last_uuid(_READ.get("lines")) or None,
+        "reply_sha256": None if reply is None else _sha256(reply.encode("utf-8")),
+        "reply_digest": None if reply is None else
+        _sha256(reply[:RECEIPT_REPLY_CUT].encode("utf-8")),
+        "anchor_id": _READ.get("anchor_id"),
+        "turn": _READ.get("turn"),
+        "open_turns": _READ.get("open_turns"),
+        "fires_before": _READ.get("fires_before"),
+        "decision": "block" if reason else "allow",
+        "code": _READ.get("code") or ("no-transcript" if not transcript else
+                                      "unreadable" if "lines" not in _READ else "error"),
+    }
+    return rec
+
+
+def _write_receipt(data: dict, reason: str) -> None:
+    """Append the receipt. FAIL-OPEN: any error loses the receipt and nothing else."""
+    try:
+        if os.environ.get(RECEIPT_ENV, "1") == "0":
+            return
+        rec = build_receipt(data, reason)
+        path = _receipt_path(rec["session"] or "unknown")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec, sort_keys=True) + "\n")
+    except Exception:
+        pass
 
 
 # -- v8 kernel journal (Phase 4, v8-kernel.md) --------------------------------

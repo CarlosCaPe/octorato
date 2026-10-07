@@ -141,12 +141,15 @@ class TestStatefulReplay(unittest.TestCase):
 
     def test_capture_maps_every_case_to_a_stop(self):
         with redirect_stdout(io.StringIO()):
-            out = rh.capture_sessions(self.cdir, self.root, "2026-09-01", "2026-10-01", gates=(TOY,))
-        self.assertEqual(out, {"sessions": 2, "cases_mapped": 2, "cases_unmapped": 0})
+            out = rh.capture_sessions(self.cdir, self.root, "2026-09-01", "2026-10-01", gates=(TOY,),
+                                  receipts_root=self.tmp / "no-receipts")
+        self.assertEqual(out, {"sessions": 2, "cases_mapped": 2, "cases_unmapped": 0,
+                               "stops_with_receipt": 0})
 
     def test_isolated_misses_and_stateful_catches_the_block(self):
         with redirect_stdout(io.StringIO()):
-            rh.capture_sessions(self.cdir, self.root, "2026-09-01", "2026-10-01", gates=(TOY,))
+            rh.capture_sessions(self.cdir, self.root, "2026-09-01", "2026-10-01", gates=(TOY,),
+                                  receipts_root=self.tmp / "no-receipts")
         iso = rh.replay_all(self.cdir, 2, scripts=self.scripts, stateful=False)
         self.assertEqual(iso[self.case_a]["d"], "allow")           # turn-1 state is gone
         stats = {}
@@ -155,7 +158,9 @@ class TestStatefulReplay(unittest.TestCase):
         self.assertEqual(st[self.case_a]["m"], "stateful")
         self.assertEqual(st[self.case_b]["d"], "allow")            # one HOME per session
         self.assertEqual(stats[TOY], {"sessions": 2, "stops": 6, "historical_deny": 1,
-                                      "replay_deny": 1, "hist_deny_reproduced": 1})
+                                      "replay_deny": 1, "hist_deny_reproduced": 1,
+                                      "from_receipt": 0, "end_cut": 6,
+                                      "receipt_decision_reproduced": 0})
 
     def test_uncaptured_session_falls_back_to_isolated(self):
         st = rh.replay_all(self.cdir, 2, scripts=self.scripts)    # no sessions/ captured
