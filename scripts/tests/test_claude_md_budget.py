@@ -86,6 +86,15 @@ class ClaudeMdBudgetTest(unittest.TestCase):
         self.assertEqual([h for h, _, _ in hits], ["### Regla"])
         self.assertEqual(check_text(text).status, brain_doctor.FAIL)
 
+    def test_fixture_pair_selftest(self):
+        fx = ROOT / "registry" / "fixtures" / "META.constitution-budget"
+        self.assertEqual(brain_doctor.selftest_claude_md_budget(fx), 0)
+        # each benign file is its violation twin with one edit
+        over = (fx / "violation_over_budget.md").read_text(encoding="utf-8")
+        self.assertEqual(brain_doctor.estimate_tokens(over), 12001)
+        self.assertEqual(brain_doctor.estimate_tokens(
+            (fx / "benign_over_budget_minus_one_char.md").read_text(encoding="utf-8")), 12000)
+
     def test_runs_in_fast_and_registry_profiles(self):
         self.assertIn("claude-md-budget", dict(brain_doctor.CHECKS))
         self.assertNotIn("claude-md-budget", brain_doctor.SLOW_CHECKS)

@@ -2741,6 +2741,16 @@ def check_skill_manifests(fix: bool) -> Result:
 # 0.3%); master before #392 (b2c8b9a) reads 24,154 here against 24,000 cl100k
 # (154 high, 0.6%). So at master's text mix a file at the 12,000 ceiling here is
 # about 12,040 cl100k tokens; the ceiling is stated in this estimator's units.
+#
+# chars/4 is NOT an upper bound on cl100k. QA on PR #395 measured it under by 12%
+# on Spanish prose, 15% on YAML and 3.6x on glyph runs, so a file can pass here
+# and exceed 12,000 cl100k. Two cheap upper bounds were tried on 7 mixes (master,
+# pre-#392, Spanish prose, brain_doctor.py, CAPABILITIES.md, rules.yaml, a glyph
+# string): ceil(ASCII chars/k) + non-ASCII UTF-8 bytes bounds all 7 only at
+# k <= 3.5, where master reads 14,036; a pre-tokenizer split at ceil(len/8) per
+# piece bounds all 7 (worst ratio 1.013) with master at 12,884. Master is 11,920
+# cl100k, 80 under the ceiling, so any bound looser than 0.67% on it fails master.
+# An exact count needs tiktoken in the doctor, or more headroom in CLAUDE.md.
 CLAUDE_MD_TOKEN_CEILING = 12000
 
 # Spanish function words that English prose does not use. Ambiguous ones
@@ -2755,7 +2765,14 @@ era y cada siempre nunca solo sólo puede hacer tiene así
 """.split())
 # Measured on 2026-10-07 with the data spans below removed, heading included:
 # every section of master a741eff reads at most 0.010; the three Spanish
-# sections of b2c8b9a read 0.412, 0.448 and 0.452. 0.15 sits between them.
+# sections of b2c8b9a read 0.412, 0.448 and 0.452. QA on PR #395 measured
+# Portuguese prose at 0.19, Catalan at 0.22 and Spanish prose at 0.41 to 0.48,
+# and an English section quoting three Spanish operator phrases WITHOUT quote
+# marks at 0.134, close under a gate that blocks the push.
+#
+# AUTHORS: put every Spanish phrase you quote in backticks, double quotes or
+# parentheses. Those spans are data and are not counted; bare Spanish words in
+# English prose are, and a few of them push a short section toward 0.15.
 _ES_RATIO_MAX = 0.15
 _ES_MIN_WORDS = 30
 # Quoted data is not prose: trigger phrases a gate matches on (`pásame el
@@ -2827,10 +2844,37 @@ def check_claude_md_budget(fix: bool, path: Path | None = None) -> Result:
     if problems:
         return Result(key, FAIL, "; ".join(problems),
                       "move mechanism narrative into docs/architecture/ and translate the "
-                      "section (spec v10 AC-17)")
+                      "section; a Spanish phrase kept as data goes in backticks or quotes "
+                      "(spec v10 AC-17)")
     return Result(key, PASS,
                   f"{tokens:,} tokens (chars/4, ceiling {CLAUDE_MD_TOKEN_CEILING:,}); "
                   "every section reads as English")
+
+
+def selftest_claude_md_budget(fixtures: Path) -> int:
+    """Fixture proof for META.constitution-budget, run by gate-liveness: every
+    `violation_*.md` must FAIL the check and every `benign_*.md` must PASS. Each
+    benign file is its violation twin with one edit, so a check that fails
+    everything is caught as surely as one that passes everything."""
+    viol = sorted(fixtures.glob("violation_*.md"))
+    ben = sorted(fixtures.glob("benign_*.md"))
+    if not viol or not ben:
+        print(f"selftest: no violation_*/benign_* fixtures in {fixtures}")
+        return 1
+    bad = []
+    for f in viol:
+        r = check_claude_md_budget(False, path=f)
+        if r.status != FAIL:
+            bad.append(f"{f.name} should FAIL, got {r.status}: {r.message}")
+    for f in ben:
+        r = check_claude_md_budget(False, path=f)
+        if r.status != PASS:
+            bad.append(f"{f.name} should PASS, got {r.status}: {r.message}")
+    for b in bad:
+        print(f"selftest: {b}")
+    print(f"selftest claude-md-budget: {len(viol)} violation(s) fail, {len(ben)} benign pass"
+          if not bad else f"selftest claude-md-budget: {len(bad)} wrong verdict(s)")
+    return 1 if bad else 0
 
 
 CHECKS = [
@@ -2949,7 +2993,12 @@ def main() -> int:
                     help="skip the checks that run gate selftests or call the network "
                          "(see SLOW_CHECKS); used by quickstart and ai-pull, never by pre-push; "
                          "ai-pull follows it with --gate-receipt when the gate tree has no receipt")
+    ap.add_argument("--selftest", metavar="DIR",
+                    help="run ONLY the claude-md-budget fixture proof over DIR "
+                         "(violation_*.md must fail, benign_*.md must pass); used by gate-liveness")
     args = ap.parse_args()
+    if args.selftest:
+        return selftest_claude_md_budget(Path(args.selftest))
     if args.fast and (args.gate_receipt or args.registry):
         ap.error("--fast is a profile of the full run; it does not combine with --registry or --gate-receipt")
 

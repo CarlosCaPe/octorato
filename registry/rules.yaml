@@ -2370,9 +2370,12 @@ rules:
     locator: grep -q 'check_claude_md_budget(args.fix)' scripts/brain_doctor.py
     expect: 0
   - method: EXIT_CODE
+    locator: scripts/brain_doctor.py --selftest registry/fixtures/META.constitution-budget
+    expect: 0
+  - method: EXIT_CODE
     locator: python3 scripts/brain_doctor.py --registry
     expect: 0
   - method: ANCHOR_PRESENT
     locator: 'AC-17: THE Constitution SHALL contain no section written in a language other than English'
     expect: present
-  liveness_required: PRESENT
+  liveness_required: FIRES
