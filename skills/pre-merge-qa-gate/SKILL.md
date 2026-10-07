@@ -99,6 +99,8 @@ QA-HEAD: <the 40-digit commit it reviewed>
 
 If `✅ VERIFIED` → merge directly, pinned to that commit: `gh pr merge <N> --squash --delete-branch --match-head-commit <sha>`. GitHub refuses the merge when the head moved after the review. `--auto` is refused by `qa-merge-gate`, because whether GitHub re-checks the pin when an auto-merge fires is not established. A push after the review needs a new QA pass on the new commit; the newest verdict for a commit decides.
 
+When the head moved only because master was merged into the branch, `/requa <pr>` (`commands/requa.md`) is that new pass: a verifier proves against the remote master that the patch is the one that passed and records the receipt for the new head, and any content difference sends the PR back to a full QA.
+
 If `⚠️ PARTIAL` → decide whether to ship with caveats (document the unknown in the PR body) or wait for more evidence.
 
 If `🚨 NEEDS WORK` / `BROKEN` → fix the issues, rebuild, re-validate. Do not merge.
