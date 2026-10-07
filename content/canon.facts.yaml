@@ -133,23 +133,28 @@ facts:
   - id: v10.budget.live_p95
     kind: asserted
     value: "about 10.1 s"
-    citation: "Friction ledger latency rows on the operator's machine, read 2026-10-07: budget-check.py calls after PR #383 merged (2026-10-07T08:28Z), p95 10,089 to 10,104 ms depending on the percentile method"
-    note: "Before the merge: 52 calls, median 9,978 ms. The cause of the remaining tail is not verified."
+    citation: "Friction ledger latency rows on the operator's machine, read 2026-10-07, budget-check.py calls from 09:08:48Z (when PR #383 reached the live tree, per the reflog pull; the merge itself was 08:28:16Z) to 16:52:53Z: p95 10,059 ms by nearest rank"
 
   - id: v10.budget.live_calls
     kind: asserted
-    value: "79"
-    citation: "Same read: budget-check.py calls recorded after PR #383 merged, up to 2026-10-07T16:32Z"
+    value: "73"
+    citation: "Friction ledger latency rows on the operator's machine, read 2026-10-07, budget-check.py calls from 09:08:48Z (when PR #383 reached the live tree, per the reflog pull; the merge itself was 08:28:16Z) to 16:52:53Z"
+    note: "Splitting at the merge time instead counts 8 calls that still ran the old code."
 
   - id: v10.budget.live_median
     kind: asserted
-    value: "313 ms"
-    citation: "Same read: median of those 79 calls"
+    value: "311 ms"
+    citation: "Friction ledger latency rows on the operator's machine, read 2026-10-07, budget-check.py calls from 09:08:48Z (when PR #383 reached the live tree, per the reflog pull; the merge itself was 08:28:16Z) to 16:52:53Z: median of those 73 calls (252 ms over the 64 that did not time out)"
 
   - id: v10.budget.live_timeouts
     kind: asserted
-    value: "15 (19%)"
-    citation: "Same read: calls of those 79 that hit the 10 s hook timeout"
+    value: "9 (12%)"
+    citation: "Friction ledger latency rows on the operator's machine, read 2026-10-07, budget-check.py calls from 09:08:48Z (when PR #383 reached the live tree, per the reflog pull; the merge itself was 08:28:16Z) to 16:52:53Z: calls that hit the hook timeout. A read-only diagnosis (timeline of Agent calls and background refreshes against these rows) found every one came after the spend cache had gone more than 15 minutes without a completed refresh, so the check recomputed synchronously."
+
+  - id: v10.budget.recompute_time
+    kind: asserted
+    value: "about 24 s"
+    citation: "Same diagnosis: the spend profiler at --days 7 on the operator's machine, 3 runs of 23.9, 24.0 and 27.1 s at load average 9 to 11, reading about 875 MB of session logs"
 
   - id: v10.budget.hook_timeout
     kind: asserted
