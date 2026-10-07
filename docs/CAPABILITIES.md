@@ -9,9 +9,9 @@
 | Skills | 246 |
 | Agents | 167 |
 | Divisions | 13 |
-| Scripts: wired | 129 |
+| Scripts: wired | 130 |
 | Scripts: orphan | 7 |
-| Rules | 88 |
+| Rules | 90 |
 | Hook entries | 56 |
 
 ## Skills (246)
@@ -499,7 +499,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (136)
+## Scripts (137)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -620,6 +620,7 @@
 | receipt_ledger.py | receipt_ledger.py: the v7 receipt ledger (shared library, not a hook). | wired |
 | replay_harness.py | replay_harness.py: replay real tool calls and Stop turns through the gates (v10 FR-01, AC-03, AC-04)... | wired |
 | repo_watch.py | repo_watch.py , daily monitor for high-value GitHub repos. | wired |
+| requa.py | Base_Update_Verifier helper for `/requa <pr>` (spec v10, AC-12). | wired |
 | scan-external-refs | scan-external-refs , Scan reference repos for new skills, agents, and patterns | orphan |
 | secrets-grep-guard.py | secrets-grep-guard.py , PreToolUse:Bash hook: deny raw reads of secret-bearing files. | wired |
 | session-isolation-hook.py | session-isolation-hook.py , SessionStart hook: isolation by DEFAULT. | wired |
@@ -640,7 +641,7 @@
 | wa-soporte.sh | Sends a WhatsApp through the SUPPORT channel, never through the operator's personal number. | wired |
 | watchdog.py | watchdog.py , observability surface 4 anomaly detector. Reads the JSONL trace files written by trace... | wired |
 
-## Rules (88)
+## Rules (90)
 
 ### ARCHITECTURE
 
@@ -713,6 +714,7 @@
 - FLOW.prune-dead-cells
 - FLOW.qa-receipt
 - FLOW.receipt-ledger
+- FLOW.requa-base-update
 - FLOW.root-goal-anchor
 - FLOW.sent-message-ledger
 - FLOW.skill-first
@@ -746,6 +748,7 @@
 ### META
 
 - META.ai-sync-canonical
+- META.constitution-budget
 - META.kernel-package
 - META.multi-machine-sync
 - META.pre-push-gate
