@@ -84,15 +84,37 @@ def emits_block(returncode: int, stdout: str) -> bool:
 # fresh interpreter per leg re-ran startup, re-COMPILED the gate (a script run
 # as `__main__` never gets a .pyc, and the arming-surface gate is 5,000 lines)
 # and re-imported the stdlib, about 200 ms a leg before the gate read a byte.
-# On Linux a leg is now a fork of this process: the stdlib stays imported, the
-# gate's code object is compiled once, and the child still gets its own pid,
-# env, cwd, stdin and stdout, and re-imports every module from the gate's own
-# directory, so the gate's caches start empty in every leg as they did before.
+# On Linux a leg is now a fork of this process: the stdlib stays imported and
+# the gate's code object is compiled once. Everything else is held to what
+# `subprocess.run([python, gate])` did, and the parity cases live in
+# tests/test_gate_selftest_runner.py:
+#   - the child gets its own pid, process group, env, cwd, stdin and pipes,
+#     and re-imports every module from the gate's directory, so the gate's
+#     caches start empty in every leg;
+#   - its import path is the one a fresh interpreter computes under the LEG's
+#     env: the user site follows the leg's HOME/PYTHONUSERBASE, and a leg whose
+#     env changes any other PYTHON*/locale variable is spawned the old way;
+#   - the deadline is the PARENT's, so a gate that installs its own SIGALRM
+#     handler or calls alarm(0) cannot disarm it, and on expiry the whole
+#     process group is killed and TimeoutExpired raised;
+#   - a leg ends when its child has exited, both pipes reached EOF (nothing it
+#     started still holds them, as subprocess.run reads to EOF) and nothing in
+#     its process group is still alive; this last part is stricter than
+#     subprocess.run, which would return while a grandchild that closed its
+#     pipes lingers;
+#   - non-daemon threads are joined and atexit runs before the exit, exit codes
+#     map as CPython maps them (exit(-1) is 255, an unhandled KeyboardInterrupt
+#     dies by SIGINT, a stdout closed by the gate is not a flush failure);
+#   - only this runner's own children are waited on, never `waitpid(-1)`.
 # Anywhere else (Windows has no fork, and macOS forbids it after some system
 # frameworks load) the leg is the old `subprocess.run`, unchanged.
 # ---------------------------------------------------------------------------
 _FORK_OK = sys.platform.startswith("linux") and hasattr(os, "fork")
 _CODE_CACHE: dict = {}
+# Env names that change how a fresh interpreter starts. A leg that sets one of
+# these differently from this process is spawned, not forked. PYTHONUSERBASE
+# and HOME are handled in the child (they only move the user site).
+_START_ENV = ("LANG", "LC_ALL", "LC_CTYPE")
 
 
 class LegResult:
@@ -117,20 +139,85 @@ def _script_code(script: str):
     return code
 
 
-def _text_io(name: str):
-    """(encoding, errors) a fresh interpreter would pick for this std stream:
-    the same env decides it, so this process's own choice is the answer."""
-    import locale
-    stream = getattr(sys, "__%s__" % name, None)
-    enc = getattr(stream, "encoding", None) or locale.getpreferredencoding(False)
-    errs = getattr(stream, "errors", None) or "strict"
-    return enc, errs
+def _needs_spawn(env: dict) -> bool:
+    for k in set(env) | set(os.environ):
+        if (k.startswith("PYTHON") and k != "PYTHONUSERBASE") or k in _START_ENV:
+            if env.get(k) != os.environ.get(k):
+                return True
+    return False
 
 
-def _fork_child(script: str, code, cwd: str, env: dict, timeout: float,
-                fds: tuple) -> None:
+def _user_site_for(env: dict):
+    """The user site a fresh interpreter would use under `env`, or None.
+    Mirrors site._getuserbase on POSIX: PYTHONUSERBASE if set and non-empty,
+    else `~/.local` with `~` read from the env's HOME."""
+    import site
+    if not site.ENABLE_USER_SITE:
+        return None
+    base = env.get("PYTHONUSERBASE")
+    if not base:
+        home = env.get("HOME")
+        if home is None:
+            import pwd
+            home = pwd.getpwuid(os.getuid()).pw_dir
+        base = os.path.join(home, ".local")
+    getp = getattr(site, "_get_path", None)
+    if getp is not None:
+        return getp(base)
+    return os.path.join(base, "lib", "python%d.%d" % sys.version_info[:2],
+                        "site-packages")
+
+
+def _rebase_user_site(env: dict) -> None:
+    """In the child: swap this process's user site for the leg's."""
+    import site
+    if not site.ENABLE_USER_SITE:
+        return
+    mine = getattr(site, "USER_SITE", None)
+    theirs = _user_site_for(env)
+    if mine == theirs:
+        return
+    my_base = os.path.realpath(site.USER_BASE or "") if site.USER_BASE else None
+
+    def _mine(p: str) -> bool:
+        if not p or not my_base:
+            return False
+        rp = os.path.realpath(p)
+        return rp == my_base or rp.startswith(my_base + os.sep)
+
+    idx = None
+    kept = []
+    for p in sys.path:
+        if _mine(p):
+            if idx is None:
+                idx = len(kept)
+            continue
+        kept.append(p)
+    if idx is None:
+        # Where site.main() puts it: before the first system site dir.
+        sysdirs = set(site.getsitepackages()) if hasattr(site, "getsitepackages") else set()
+        idx = next((i for i, p in enumerate(kept) if p in sysdirs), len(kept))
+    for name, mod in list(sys.modules.items()):
+        f = getattr(mod, "__file__", None)
+        if f and _mine(f):
+            del sys.modules[name]
+    head, tail = kept[:idx], kept[idx:]
+    sys.path[:] = head
+    if theirs and os.path.isdir(theirs):
+        site.addsitedir(theirs)
+    sys.path.extend(p for p in tail if p not in sys.path)
+    site.USER_SITE = theirs
+    if theirs and os.path.isdir(theirs):
+        try:
+            import usercustomize  # noqa: F401  (site.main does this too)
+        except ImportError:
+            pass
+
+
+def _fork_child(script: str, code, leg: dict, fds: tuple, close: list) -> None:
     """Runs in the forked child and never returns."""
     rc = 1
+    sigint = False
     try:
         import atexit
         import builtins
@@ -139,16 +226,22 @@ def _fork_child(script: str, code, cwd: str, env: dict, timeout: float,
         import signal
         import traceback
         import types
+        os.setpgid(0, 0)
         atexit._clear()  # the parent's handlers are not this process's
-        signal.signal(signal.SIGALRM, signal.SIG_DFL)
-        if timeout:
-            signal.alarm(max(1, int(-(-timeout // 1))))
         fin, fout, ferr = fds
         os.dup2(fin, 0)
         os.dup2(fout, 1)
         os.dup2(ferr, 2)
-        in_enc, in_err = _text_io("stdin")
-        out_enc, out_err = _text_io("stdout")
+        for fd in set(close) | {fin, fout, ferr}:
+            if fd > 2:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+        enc = leg.get("encoding")
+        errs = leg.get("errors")
+        in_enc, in_err = (enc, errs or "strict") if enc else _text_io("stdin")
+        out_enc, out_err = (enc, errs or "strict") if enc else _text_io("stdout")
         sys.stdin = sys.__stdin__ = io.TextIOWrapper(
             io.FileIO(0, "r", closefd=False), encoding=in_enc, errors=in_err)
         sys.stdout = sys.__stdout__ = io.TextIOWrapper(
@@ -156,18 +249,21 @@ def _fork_child(script: str, code, cwd: str, env: dict, timeout: float,
         sys.stderr = sys.__stderr__ = io.TextIOWrapper(
             io.FileIO(2, "w", closefd=False), encoding=out_enc,
             errors="backslashreplace", line_buffering=True)
-        os.chdir(cwd)
+        os.chdir(leg["cwd"])
+        env = leg["env"]
         os.environ.clear()
         os.environ.update(env)
         # A fresh `python3 gate.py`: the script's directory first on sys.path,
-        # argv naming only the script, and NO module from that directory
-        # already imported, so every cache the gate keeps starts empty.
+        # argv naming only the script, the leg's own user site, and NO module
+        # from the script's directory already imported, so every cache the
+        # gate keeps starts empty.
+        _rebase_user_site(env)
         here = os.path.dirname(os.path.realpath(script))
         for name, mod in list(sys.modules.items()):
             f = getattr(mod, "__file__", None)
             if f and os.path.dirname(os.path.realpath(f)) == here:
                 del sys.modules[name]
-        if sys.path and sys.path[0] != here:
+        if not sys.path or sys.path[0] != here:
             sys.path.insert(0, here)
         sys.argv = [script]
         main = types.ModuleType("__main__")
@@ -187,20 +283,65 @@ def _fork_child(script: str, code, cwd: str, env: dict, timeout: float,
             else:
                 print(c, file=sys.stderr)
                 rc = 1
+        except KeyboardInterrupt:
+            traceback.print_exc()
+            rc, sigint = 1, True
         except BaseException:
             traceback.print_exc()
             rc = 1
+        # CPython's finalization order: join non-daemon threads, run atexit,
+        # flush the std streams. A stream the gate closed is not a failure.
+        try:
+            if "threading" in sys.modules:
+                sys.modules["threading"]._shutdown()
+        except BaseException:
+            pass
         try:
             atexit._run_exitfuncs()
         except BaseException:
             pass
         for s in (sys.stdout, sys.stderr):
             try:
-                s.flush()
+                if not s.closed:
+                    s.flush()
             except BaseException:
-                rc = rc or 120
+                if s is sys.stdout and rc == 0:
+                    rc = 120
+        if sigint:
+            signal.signal(signal.SIGINT, signal.SIG_DFL)
+            os.kill(os.getpid(), signal.SIGINT)
     finally:
-        os._exit(rc & 0xFF if rc >= 0 else 1)
+        os._exit(rc & 0xFF)
+
+
+def _text_io(name: str):
+    """(encoding, errors) a fresh interpreter would pick for this std stream:
+    the same env decides it, so this process's own choice is the answer."""
+    import locale
+    stream = getattr(sys, "__%s__" % name, None)
+    enc = getattr(stream, "encoding", None) or locale.getpreferredencoding(False)
+    errs = getattr(stream, "errors", None) or "strict"
+    return enc, errs
+
+
+def _spawn(leg: dict) -> LegResult:
+    kw = {}
+    if leg.get("encoding"):
+        kw = {"encoding": leg["encoding"], "errors": leg.get("errors") or "strict"}
+    cp = subprocess.run([sys.executable, leg["script"]], input=leg["input"],
+                        capture_output=True, text=True, cwd=leg["cwd"],
+                        env=leg["env"], timeout=leg["timeout"], **kw)
+    return LegResult(cp.returncode, cp.stdout, cp.stderr)
+
+
+def _group_alive(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def run_scripts(legs: list, workers: int = 1) -> list:
@@ -209,76 +350,137 @@ def run_scripts(legs: list, workers: int = 1) -> list:
     A leg is a dict: script, input (str), cwd, env, timeout, and optionally
     encoding/errors for the text streams (default: the locale's, as
     `subprocess.run(text=True)` uses). `workers` > 1 runs that many legs at
-    once, and is only for legs that share NOTHING on disk; a leg that reads what
-    an earlier one wrote must use 1. A leg past its timeout raises
+    once, and is only for legs that share NOTHING a verdict reads; a leg that
+    reads what an earlier one wrote must use 1. A leg past its timeout raises
     subprocess.TimeoutExpired, as subprocess.run does."""
     if not _FORK_OK:
-        out = []
-        for leg in legs:
-            kw = {}
-            if leg.get("encoding"):
-                kw = {"encoding": leg["encoding"], "errors": leg.get("errors") or "strict"}
-            cp = subprocess.run([sys.executable, leg["script"]], input=leg["input"],
-                                capture_output=True, text=True, cwd=leg["cwd"],
-                                env=leg["env"], timeout=leg["timeout"], **kw)
-            out.append(LegResult(cp.returncode, cp.stdout, cp.stderr))
-        return out
+        return [_spawn(leg) for leg in legs]
 
     import io
     import locale
-    results = [None] * len(legs)
-    running = {}
-    timed_out = []
+    import selectors
+    import signal
+    import time
 
-    def _reap(block: bool) -> bool:
-        pid, status = os.waitpid(-1, 0 if block else os.WNOHANG)
-        if pid == 0 or pid not in running:
-            return False
-        i, files = running.pop(pid)
-        leg = legs[i]
+    results = [None] * len(legs)
+    running = {}            # pid -> state dict
+    sel = selectors.DefaultSelector()
+
+    def _finish(pid: int) -> None:
+        st = running.pop(pid)
+        leg = legs[st["i"]]
         enc = leg.get("encoding") or locale.getpreferredencoding(False)
         errs = leg.get("errors") or "strict"
-        texts = []
-        for fh in files[1:]:
-            fh.seek(0)
-            texts.append(io.TextIOWrapper(io.BytesIO(fh.read()), encoding=enc,
-                                          errors=errs).read())
-        for fh in files:
-            fh.close()
-        if os.WIFSIGNALED(status):
-            rc = -os.WTERMSIG(status)
-            if os.WTERMSIG(status) == 14:  # SIGALRM: the leg's own timeout
-                timed_out.append(i)
-        else:
-            rc = os.WEXITSTATUS(status)
-        results[i] = LegResult(rc, texts[0], texts[1])
-        return True
+        out, err = (io.TextIOWrapper(io.BytesIO(bytes(st["buf"][fd])),
+                                     encoding=enc, errors=errs).read()
+                    for fd in st["order"])
+        status = st["status"]
+        rc = -os.WTERMSIG(status) if os.WIFSIGNALED(status) else os.WEXITSTATUS(status)
+        results[st["i"]] = LegResult(rc, out, err)
+
+    def _kill(pid: int) -> None:
+        st = running.get(pid)
+        if st is None:
+            return
+        try:
+            os.killpg(st["pgid"], signal.SIGKILL)
+        except OSError:
+            pass
+        if st["status"] is None:
+            try:
+                os.waitpid(pid, 0)
+            except ChildProcessError:
+                pass
+            st["status"] = 0
+        for fd in list(st["fds"]):
+            try:
+                sel.unregister(fd)
+            except (KeyError, ValueError):
+                pass
+            os.close(fd)
+        st["fds"].clear()
+        running.pop(pid, None)
+
+    def _pump() -> None:
+        now = time.monotonic()
+        nearest = min(st["deadline"] for st in running.values())
+        waiting_exit = any(not st["fds"] for st in running.values())
+        tick = 0.002 if waiting_exit else 0.05
+        events = sel.select(timeout=max(0.0, min(nearest - now, tick)))
+        for key, _mask in events:
+            fd = key.fd
+            pid = key.data
+            st = running[pid]
+            chunk = os.read(fd, 65536)
+            if chunk:
+                st["buf"][fd] += chunk
+            else:
+                sel.unregister(fd)
+                os.close(fd)
+                st["fds"].discard(fd)
+        for pid in list(running):
+            st = running[pid]
+            if st["status"] is None:
+                got, status = os.waitpid(pid, os.WNOHANG)
+                if got:
+                    st["status"] = status
+            if st["status"] is not None and not st["fds"] and \
+                    not _group_alive(st["pgid"]):
+                _finish(pid)
+            elif time.monotonic() >= st["deadline"]:
+                leg = legs[st["i"]]
+                _kill(pid)
+                raise subprocess.TimeoutExpired([sys.executable, leg["script"]],
+                                                leg["timeout"])
 
     sys.stdout.flush()
     sys.stderr.flush()
-    for i, leg in enumerate(legs):
-        while len(running) >= max(1, workers):
-            _reap(True)
-        script = leg["script"]
-        code = _script_code(script)
-        if not os.path.isdir(leg["cwd"]):
-            raise FileNotFoundError(2, "No such file or directory", leg["cwd"])
-        enc = leg.get("encoding") or locale.getpreferredencoding(False)
-        errs = leg.get("errors") or "strict"
-        fin, fout, ferr = (tempfile.TemporaryFile() for _ in range(3))
-        fin.write(leg["input"].encode(enc, errs))
-        fin.flush()
-        fin.seek(0)
-        pid = os.fork()
-        if pid == 0:
-            _fork_child(script, code, leg["cwd"], leg["env"], leg["timeout"],
-                        (fin.fileno(), fout.fileno(), ferr.fileno()))
-        running[pid] = (i, (fin, fout, ferr))
-    while running:
-        _reap(True)
-    if timed_out:
-        leg = legs[timed_out[0]]
-        raise subprocess.TimeoutExpired([sys.executable, leg["script"]], leg["timeout"])
+    try:
+        for i, leg in enumerate(legs):
+            while len(running) >= max(1, workers):
+                _pump()
+            if _needs_spawn(leg["env"]):
+                results[i] = _spawn(leg)
+                continue
+            script = leg["script"]
+            code = _script_code(script)
+            if not os.path.isdir(leg["cwd"]):
+                raise FileNotFoundError(2, "No such file or directory", leg["cwd"])
+            enc = leg.get("encoding") or locale.getpreferredencoding(False)
+            errs = leg.get("errors") or "strict"
+            with tempfile.TemporaryFile() as fin:
+                fin.write(leg["input"].encode(enc, errs))
+                fin.flush()
+                fin.seek(0)
+                out_r, out_w = os.pipe()
+                err_r, err_w = os.pipe()
+                close = [sel.fileno(), out_r, err_r]
+                for st in running.values():
+                    close.extend(st["fds"])
+                pid = os.fork()
+                if pid == 0:
+                    _fork_child(script, code, leg, (fin.fileno(), out_w, err_w), close)
+                try:
+                    os.setpgid(pid, pid)
+                except OSError:
+                    pass  # the child already did it, or already exited
+                os.close(out_w)
+                os.close(err_w)
+            timeout = leg.get("timeout")
+            running[pid] = {
+                "i": i, "pgid": pid, "status": None,
+                "fds": {out_r, err_r}, "order": (out_r, err_r),
+                "buf": {out_r: bytearray(), err_r: bytearray()},
+                "deadline": time.monotonic() + timeout if timeout else float("inf"),
+            }
+            sel.register(out_r, selectors.EVENT_READ, pid)
+            sel.register(err_r, selectors.EVENT_READ, pid)
+        while running:
+            _pump()
+    finally:
+        for pid in list(running):
+            _kill(pid)
+        sel.close()
     return results
 
 SELFTEST_SESSION = "__selftest__"
