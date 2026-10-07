@@ -34,7 +34,7 @@ LINUX = sys.platform.startswith("linux") and hasattr(os, "fork")
 # Whether legs actually fork here. Under LANG=C, say, this interpreter runs in
 # UTF-8 mode while a fresh one (handed the coerced LC_CTYPE) does not, so the
 # runner spawns every leg and the guarantees below are subprocess.run's.
-FORKS = LINUX and gate_selftest._starts_like_fresh()
+FORKS = LINUX and getattr(gate_selftest, "_starts_like_fresh", lambda: True)()
 
 
 class _Base(unittest.TestCase):
@@ -175,30 +175,49 @@ class Deadline(_Base):
             self.assertEqual(fh.read(), "True",
                              "the leader was reaped while its group still had a member")
 
-    def test_the_deadline_kill_never_targets_a_reaped_leader(self):
-        # A grandchild that leaves the group but keeps stdout open holds the
-        # leg past its deadline after the leader exited. The kill must land
-        # while the leader still exists, so its group id is still the leg's.
+    def _spy_kills(self, script):
+        """Run `script` to its deadline and return, per signal the runner sent
+        by id (a group kill or a per-pid kill), whether that id still named a
+        process at the moment it was sent."""
         pg = gate_selftest._proc_group()
-        real = pg.kill_group
+        real_group, real_pid = pg.kill_group, gate_selftest._Leg.kill
         calls = []
 
-        def spy(proc, group=None):
-            calls.append(os.path.exists("/proc/%d" % (group if group else proc.pid)))
-            return real(proc, group=group)
+        def spy_group(proc, group=None):
+            calls.append(("group", os.path.exists("/proc/%d" % (group or proc.pid))))
+            return real_group(proc, group=group)
 
-        pg.kill_group = spy
+        def spy_pid(leg):
+            calls.append(("pid", os.path.exists("/proc/%d" % leg.pid)))
+            return real_pid(leg)
+
+        pg.kill_group, gate_selftest._Leg.kill = spy_group, spy_pid
         try:
-            self._assert_times_out(self._gc_gate("os.setsid(); time.sleep(30)", "pass"))
+            self._assert_times_out(script)
         finally:
-            pg.kill_group = real
+            pg.kill_group, gate_selftest._Leg.kill = real_group, real_pid
             try:
                 with open(os.path.join(self.tmp, "gc.pid")) as fh:
                     os.kill(int(fh.read()), 9)   # it left the group on purpose
             except (OSError, ValueError):
                 pass
-        self.assertTrue(calls, "no group kill at the deadline")
-        self.assertTrue(all(calls), "a group kill was sent after its leader was reaped")
+        return calls
+
+    def test_the_deadline_kill_never_targets_a_reaped_leader(self):
+        # The gate exits at once; its grandchild leaves the group with setsid
+        # and keeps stdout open, so the leg runs into its deadline after the
+        # group emptied. Nothing may then be signalled by an id that could
+        # have been recycled: every id signalled must still exist.
+        calls = self._spy_kills(self._gc_gate("os.setsid(); time.sleep(30)", "pass"))
+        self.assertTrue(all(alive for _, alive in calls), calls)
+        self.assertNotIn("group", [k for k, _ in calls],
+                         "the group was signalled after it had emptied")
+
+    def test_the_deadline_kill_reaches_a_live_group(self):
+        calls = self._spy_kills(self._gc_gate("time.sleep(30)", "time.sleep(30)"))
+        self.assertIn(("group", True), calls)
+        self.assertTrue(all(alive for _, alive in calls), calls)
+        self._assert_grandchild_gone()
 
 
 @unittest.skipUnless(LINUX, "the fork path exists on Linux only")

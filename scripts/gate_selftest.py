@@ -97,17 +97,21 @@ def emits_block(returncode: int, stdout: str) -> bool:
 #   - the deadline is the PARENT's, so a gate that installs its own SIGALRM
 #     handler or calls alarm(0) cannot disarm it, and on expiry the whole
 #     process group is killed and TimeoutExpired raised;
-#   - the forked child is a small SUPERVISOR that leads the leg's process
-#     group, becomes a child subreaper and forks the gate. It exits, relaying
-#     the gate's exit status, only once the gate has exited and no live process
-#     of its group is left, so the parent never needs to scan for members. The
-#     parent sees that exit with waitid(WNOWAIT) and reaps the supervisor only
-#     after both pipes reached EOF (as subprocess.run reads to EOF) or after
-#     the group was killed: an unreaped leader keeps its pid, and so the group
-#     id, reserved, and a deadline kill can never land on a recycled group.
-#     Waiting for the group is stricter than subprocess.run, which would return
-#     while a grandchild that closed its pipes lingers. The one gate-visible
-#     difference is the gate's parent pid, which is the supervisor's;
+#   - the forked child is a small SUPERVISOR. It stays in this process's
+#     group (where a spawned gate's parent is), becomes a child subreaper and
+#     forks the gate as the leader of a new group, the leg's. It never reaps the
+#     gate, so the gate's pid, which IS the leg's group id, cannot be recycled
+#     while the supervisor lives. It exits, relaying the gate's exit status,
+#     once the gate has exited and no live process of the leg's group is left
+#     among its children (the subreaper adopts every orphan, so that is one
+#     /proc read, not a scan). The parent sees that exit with waitid(WNOWAIT)
+#     and reaps the supervisor after both pipes reached EOF (as subprocess.run
+#     reads to EOF). At the deadline it signals the group and the gate by id
+#     only while the supervisor is still alive; once the supervisor has exited
+#     the group was empty, and nothing is signalled by an id that could have
+#     been recycled. Waiting for the group is stricter than subprocess.run,
+#     which would return while a grandchild that closed its pipes lingers. The
+#     one gate-visible difference is the gate's parent pid, the supervisor's;
 #   - a leg runs forked only while this interpreter starts like a fresh one:
 #     the same sys.flags (-O, -I, -s, -E, -X utf8, -X dev ...), warning options
 #     and -X options, read from the same one-time probe as the streams. If any
@@ -269,10 +273,18 @@ def _live_in_group(group: int) -> bool:
     return False
 
 
-def _fork_child(script: str, code, leg: dict, fds: tuple, close: list) -> None:
-    """Runs in the forked child, the leg's supervisor, and never returns."""
+def _fork_child(script: str, code, leg: dict, fds: tuple, close: list,
+                info_w: int) -> None:
+    """Runs in the forked child, the leg's supervisor, and never returns.
+
+    The supervisor stays in THIS process's group, as a spawned gate's parent
+    would be, so a gate that reads or joins its parent's group sees what it saw
+    before. It forks the gate as the leader of a new group (the leg's), tells
+    the parent the gate's pid on `info_w`, and becomes a child subreaper so every
+    orphaned descendant of the gate is adopted here. It never reaps the gate:
+    the gate stays a zombie, which keeps its pid, and so the leg's group id,
+    from being recycled while this supervisor lives."""
     try:
-        os.setpgid(0, 0)
         fin, fout, ferr = fds
         os.dup2(fin, 0)
         os.dup2(fout, 1)
@@ -288,39 +300,41 @@ def _fork_child(script: str, code, leg: dict, fds: tuple, close: list) -> None:
             libc.prctl(_PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0)
         gate = os.fork()
         if gate == 0:
+            os.close(info_w)
+            os.setpgid(0, 0)
             _gate_child(script, code, leg)
+        try:
+            os.setpgid(gate, gate)
+        except OSError:
+            pass  # the gate already did it, or already left
+        os.write(info_w, str(gate).encode())
+        os.close(info_w)
         # Only the gate and what it starts may hold the leg's pipes.
         for fd in (0, 1, 2):
             os.close(fd)
-        group = os.getpgid(0)
-        status = None
         while True:
             try:
-                pid, st = os.waitpid(-1, 0)
-            except ChildProcessError:
+                info = os.waitid(os.P_PID, gate, os.WEXITED | os.WNOWAIT)
                 break
             except InterruptedError:
                 continue
-            if pid == gate:
-                status = st
-            if status is not None and not _live_in_group(group):
-                break
-        if status is None:
-            os._exit(1)
-        if os.WIFSIGNALED(status):
-            import resource
-            import signal
-            sig = os.WTERMSIG(status)
-            try:
-                resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-            except (ValueError, OSError):
-                pass
-            try:
-                signal.signal(sig, signal.SIG_DFL)
-            except (OSError, ValueError, RuntimeError):
-                pass
-            os.kill(os.getpid(), sig)
-        os._exit(os.WEXITSTATUS(status))
+        import time
+        while _live_in_group(gate):
+            time.sleep(0.01)
+        if info.si_code == os.CLD_EXITED:
+            os._exit(info.si_status & 0xFF)
+        import resource
+        import signal
+        sig = info.si_status
+        try:
+            resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+        except (ValueError, OSError):
+            pass
+        try:
+            signal.signal(sig, signal.SIG_DFL)
+        except (OSError, ValueError, RuntimeError):
+            pass
+        os.kill(os.getpid(), sig)
     finally:
         os._exit(1)
 
@@ -552,10 +566,20 @@ def run_scripts(legs: list, workers: int = 1) -> list:
         st = running.get(pid)
         if st is None:
             return
-        # By the group id stored at fork time. The leader is never reaped
-        # before this point (only _finish reaps, and it removes the leg), so
-        # its pid, and with it the group id, cannot have been recycled.
-        pg.kill_group(_Leg(pid, False), group=st["pgid"])
+        if not st["exited"]:
+            st["exited"] = os.waitid(
+                os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None
+        if not st["exited"] and st["gate"]:
+            # The supervisor is alive, so it has not exited and cannot have let
+            # the gate be reaped: the gate's pid, which is the leg's group id,
+            # still names THIS leg. Kill the group and the gate itself (it may
+            # have left its group, and a spawned leg's timeout killed it).
+            pg.kill_group(_Leg(st["gate"], False), group=st["gate"])
+            _Leg(st["gate"], False).kill()
+        # If the supervisor already exited, it saw the group empty and the gate
+        # may since have been reaped by init: nothing of the leg's is signalled
+        # by id any more. What still holds the pipes left the group on purpose.
+        _Leg(pid, False).kill()             # the supervisor, ours to reap
         try:
             os.waitpid(pid, 0)
         except ChildProcessError:
@@ -624,18 +648,26 @@ def run_scripts(legs: list, workers: int = 1) -> list:
                 close = [sel.fileno(), out_r, err_r]
                 for st in running.values():
                     close.extend(st["fds"])
+                info_r, info_w = os.pipe()
+                close.append(info_r)
                 pid = os.fork()
                 if pid == 0:
-                    _fork_child(script, code, leg, (fin.fileno(), out_w, err_w), close)
-                try:
-                    os.setpgid(pid, pid)
-                except OSError:
-                    pass  # the child already did it, or already exited
+                    _fork_child(script, code, leg, (fin.fileno(), out_w, err_w),
+                                close, info_w)
+                os.close(info_w)
                 os.close(out_w)
                 os.close(err_w)
+                raw = b""
+                while True:
+                    chunk = os.read(info_r, 32)
+                    if not chunk:
+                        break
+                    raw += chunk
+                os.close(info_r)
+                gate_pid = int(raw) if raw.strip().isdigit() else None
             timeout = leg.get("timeout")
             running[pid] = {
-                "i": i, "pgid": pid, "exited": False,
+                "i": i, "gate": gate_pid, "exited": False,
                 "fds": {out_r, err_r}, "order": (out_r, err_r),
                 "buf": {out_r: bytearray(), err_r: bytearray()},
                 "deadline": time.monotonic() + timeout if timeout else float("inf"),
