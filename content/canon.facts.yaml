@@ -44,6 +44,12 @@ meta:
     # canon-render. sync-readme still owns the ASCII-box / TOC-anchor / heading
     # counts it handles specially — coexistence, the converge-not-fork migration.
     - "README.md"
+    # FAQ.md and docs/ANATOMY.md joined 2026-10-07 for the v10 release figures:
+    # every measured number the README, FAQ and long tour state about v10 is a
+    # marker on one fact below, so the three cannot drift apart. Their skill and
+    # agent counts outside markers stay with sync-readme-counts.py, as for README.
+    - "FAQ.md"
+    - "docs/ANATOMY.md"
 
 facts:
   - id: repo.url
@@ -79,3 +85,96 @@ facts:
       brain-stats.py + sync-readme-counts.py + canon all agree now. (The connectome's
       ~183 is indexed agent-RELATED nodes for retrieval, a different metric from
       persona headcount — keep them distinct; the public count is brain-stats.)
+
+  # ── v10 "Low Friction, Easy Entry" (October 2026) ─────────────────────────
+  # Measured figures. Each carries the measurement mode in `note` and the
+  # place it can be re-read in `citation`. Edit the value only from a new
+  # measurement, and update the citation in the same change.
+
+  - id: v10.latest_tag
+    kind: asserted
+    value: "v9.13.1"
+    citation: "git tags on master, 2026-10-07: v10.0.0 is not cut; the release criterion in feature.md needs every criterion CONVERGED plus 7 days of friction data"
+
+  - id: v10.goal_anchor.target
+    kind: asserted
+    value: "25%"
+    citation: "feature.md AC-10: goal-anchor blocks on at most 25% of the turns it blocked on in the baseline"
+
+  - id: v10.goal_anchor.measured
+    kind: asserted
+    value: "42%"
+    citation: "PR #397: stateful replay, 24 sessions, 165 blocks before (gate at d5d609e) and 70 after"
+    note: "The replay is marked LOW-FIDELITY (it reproduces 38 of 103 historical blocks), so the figure is not proof either way. PR #398 adds a read receipt so live data can settle it."
+
+  - id: v10.budget.spawn_before
+    kind: asserted
+    value: "7.2 s"
+    citation: "feature.md Summary, friction census 2026-09-06..10-06: median added to every subagent spawn, 247 timeouts at 10 s"
+
+  - id: v10.budget.spawn_after
+    kind: asserted
+    value: "73 to 254 ms"
+    citation: "PR #383: median of 100 consecutive hook calls, sandbox HOME, quiet machine (73 ms) to load average 12 (254 ms)"
+
+  - id: v10.budget.live_p95
+    kind: asserted
+    value: "about 10 s"
+    citation: "octo friction --days 3 on the operator's machine, 2026-10-07: budget-check.py p95 10,135 ms over 127 recorded calls"
+    note: "The window starts before PR #383 merged, and a cache older than 15 minutes is recomputed synchronously (AC-22), so the slow tail is both old calls and cold-cache calls. Not yet separated."
+
+  - id: v10.constitution.tokens_before
+    kind: asserted
+    value: "24,000"
+    citation: "PR #392: CLAUDE.md at b2c8b9a, tiktoken cl100k_base over the whole file"
+
+  - id: v10.constitution.tokens_after
+    kind: asserted
+    value: "11,920"
+    citation: "PR #395: CLAUDE.md at a741eff, tiktoken cl100k_base (11,881 by the chars/4 estimator the doctor uses)"
+
+  - id: v10.constitution.ceiling
+    kind: asserted
+    value: "12,000"
+    citation: "feature.md AC-17; brain_doctor check claude-md-budget (PR #395) fails above it"
+
+  - id: v10.quickstart.measured
+    kind: asserted
+    value: "21 s"
+    citation: "PR #379: one run of quickstart.py on a clean clone in a throwaway HOME (283 s before the change, with the full doctor)"
+
+  - id: v10.quickstart.loaded
+    kind: asserted
+    value: "80 s"
+    citation: "Docs PR for v10, 2026-10-07: one run of quickstart.py on a fresh clone of master 0641797 in a sandbox HOME, load average 13.8 on 4 cores, exit 0, 8 hook events wired, first spec lints"
+
+  - id: v10.quickstart.ci_budget
+    kind: asserted
+    value: "5 minutes"
+    citation: ".github/workflows/fresh-clone.yml runs quickstart under `timeout 300` (feature.md AC-16)"
+
+  - id: v10.doctor.full
+    kind: asserted
+    value: "about 220 s"
+    citation: "PR #379 and PR #391: full brain_doctor profile on a populated machine, one read-only run"
+
+  - id: v10.doctor.fast_budget
+    kind: asserted
+    value: "30 s"
+    citation: "feature.md AC-15; PR #379 measured 13.7 to 16.7 s over 3 runs on a populated brain"
+
+  - id: v10.send_ask.census
+    kind: asserted
+    value: "64"
+    citation: "feature.md Summary: send-ask denies over 30 days of transcripts, about 71% false positives (10 of 14 sampled)"
+
+  - id: v10.send_ask.fp_rate
+    kind: asserted
+    value: "about 71%"
+    citation: "feature.md Summary: estimated false-positive rate of the send-ask refusals, 10 of 14 sampled"
+
+  - id: v10.replay.cases
+    kind: asserted
+    value: "1,654"
+    citation: "PR #380: private corpus from 2026-09-06..10-06 transcripts, 470 real denies plus 1,184 fixed-seed allow samples"
+
