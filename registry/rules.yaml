@@ -2313,3 +2313,69 @@ rules:
     locator: How to see the whole brain at a glance
     expect: present
   liveness_required: PRESENT
+- id: FLOW.requa-base-update
+  title: '/requa: a head that moved only by a merge of master keeps its QA PASS only on an identical normalized patch'
+  category: FLOW
+  source:
+    file: commands/requa.md
+    anchor: '# /requa <pr>: re-QA after a base update'
+  strength: DETECTOR
+  gateable: false
+  enforcement: n/a
+  v7_decision: 'v10 convergence 1 (2026-10-07): a verifier protocol by design, not a gate. A QA subagent runs it and writes the receipt lines; the merge gate keeps deciding on the newest receipt for the pinned head (AC-13). The decidable steps (parents, master membership, normalized patch compare) live in requa.py with every remote answer passed in, and test_requa_protocol.py pins them over a fixture repo in the CI suite.'
+  firing_mode:
+  - model
+  - cli
+  mechanism:
+  - kind: Detector
+    canonical_name: requa.py
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: scripts/requa.py
+    expect: present
+  - method: FILE_EXISTS
+    locator: scripts/tests/test_requa_protocol.py
+    expect: present
+  - method: EXIT_CODE
+    locator: python3 -m unittest scripts/tests/test_requa_protocol.py
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: '# /requa <pr>: re-QA after a base update'
+    expect: present
+  liveness_required: PRESENT
+- id: META.constitution-budget
+  title: 'CLAUDE.md loads at most 12,000 tokens (chars/4) and has no section in a language other than English'
+  category: META
+  source:
+    file: docs/specs/202610061605-v10-low-friction-easy-entry/feature.md
+    anchor: 'AC-17: THE Constitution SHALL contain no section written in a language other than English'
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - git-hook
+  - runner
+  mechanism:
+  - kind: Gate
+    canonical_name: brain_doctor.py
+    firing_event: PrePush
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: scripts/tests/test_claude_md_budget.py
+    expect: present
+  - method: EXIT_CODE
+    locator: grep -q 'check_claude_md_budget(args.fix)' scripts/brain_doctor.py
+    expect: 0
+  - method: EXIT_CODE
+    locator: scripts/brain_doctor.py --selftest registry/fixtures/META.constitution-budget
+    expect: 0
+  - method: EXIT_CODE
+    locator: python3 scripts/brain_doctor.py --registry
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: 'AC-17: THE Constitution SHALL contain no section written in a language other than English'
+    expect: present
+  liveness_required: FIRES
