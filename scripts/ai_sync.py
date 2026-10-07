@@ -280,8 +280,8 @@ def sync(names=None) -> int:
     return 0
 
 
-PULL_DOCTOR_NOTE = ("  full doctor profile runs at pre-push and with "
-                    "`python3 scripts/brain_doctor.py`")
+PULL_DOCTOR_NOTE = ("  full doctor profile runs with `python3 scripts/brain_doctor.py`; "
+                    "pre-push runs --registry and --gate-receipt")
 
 
 # ── pull ────────────────────────────────────────────────────────────────────
@@ -339,10 +339,15 @@ def pull(args) -> int:
 
     # The fast profile, not the full one: the full doctor took ~220 s on a populated
     # machine (most of it enforcement-floor re-running every gate selftest) and a
-    # pull is a read path the operator waits on. The checks --fast skips are the
-    # ones that EXECUTE gates; pre-push still runs --registry and --gate-receipt on
-    # every push, so nothing leaves the machine on the fast profile alone.
+    # pull is a read path the operator waits on. --fast skips gate-liveness, the
+    # ONLY writer of the gate receipt, and the outward-send gate denies every send
+    # without a receipt for the current gate tree. A pull that changes scripts/ or
+    # registry/ moves that tree, so a machine that pulls and never pushes would lose
+    # its sends. --gate-receipt runs gate-liveness alone and writes the receipt;
+    # the two flags do not combine, hence two runs.
     script_step("scripts/brain_doctor.py", "--fast", label="\n=== Brain doctor (fast) ===")
+    script_step("scripts/brain_doctor.py", "--gate-receipt",
+                label="\n=== Brain doctor (gate receipt) ===")
     info(PULL_DOCTOR_NOTE)
     return 0
 

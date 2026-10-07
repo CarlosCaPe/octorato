@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""ai_sync pull ends with the FAST doctor profile, push keeps the full gates.
+"""ai_sync pull ends with the FAST doctor profile plus the gate receipt.
 
 The full doctor took ~220 s on a populated machine, most of it the checks that
 execute every gate selftest, and pull is a read path the operator waits on. So
-pull runs `brain_doctor.py --fast` and prints where the full profile runs. The
+pull runs `brain_doctor.py --fast`, then `--gate-receipt` (the fast profile
+skips gate-liveness, the only writer of the receipt every send needs), and
+prints where the full profile runs. The
 push side is pinned too: .githooks/pre-push must still call --registry and
 --gate-receipt, or the fast pull would be the only doctor a change ever meets.
 
@@ -49,11 +51,19 @@ class PullDoctorProfile(unittest.TestCase):
         rc, calls, _ = self._run_pull()
         self.assertEqual(rc, 0)
         doctor = [args for rel, args in calls if rel == "scripts/brain_doctor.py"]
-        self.assertEqual(doctor, [("--fast",)])
+        self.assertEqual(doctor, [("--fast",), ("--gate-receipt",)])
+
+    def test_pull_writes_the_gate_receipt(self):
+        # --fast skips gate-liveness, the only writer of the gate receipt, and
+        # the outward-send gate denies every send without one. A pull that
+        # dropped --gate-receipt would leave a pull-only machine unable to send.
+        _, calls, _ = self._run_pull()
+        self.assertIn(("scripts/brain_doctor.py", ("--gate-receipt",)), calls)
 
     def test_pull_names_where_the_full_profile_runs(self):
         _, _, out = self._run_pull()
         self.assertIn("pre-push", out)
+        self.assertIn("--gate-receipt", out)
         self.assertIn("python3 scripts/brain_doctor.py", out)
 
     def test_pre_push_keeps_full_gate_checks(self):
