@@ -238,17 +238,21 @@ def _fork_child(script: str, code, leg: dict, fds: tuple, close: list) -> None:
                     os.close(fd)
                 except OSError:
                     pass
-        enc = leg.get("encoding")
-        errs = leg.get("errors")
-        in_enc, in_err = (enc, errs or "strict") if enc else _text_io("stdin")
-        out_enc, out_err = (enc, errs or "strict") if enc else _text_io("stdout")
+        # The gate's own streams are what a fresh interpreter would open,
+        # whatever the leg says: a leg's encoding/errors describe how the
+        # PARENT encodes the input and decodes the output, never how the gate
+        # writes. A gate printing an unencodable character must crash here as
+        # it crashes spawned.
+        in_enc, in_err = _text_io("stdin")
+        out_enc, out_err = _text_io("stdout")
+        err_enc, err_err = _text_io("stderr")
         sys.stdin = sys.__stdin__ = io.TextIOWrapper(
             io.FileIO(0, "r", closefd=False), encoding=in_enc, errors=in_err)
         sys.stdout = sys.__stdout__ = io.TextIOWrapper(
             io.FileIO(1, "w", closefd=False), encoding=out_enc, errors=out_err)
         sys.stderr = sys.__stderr__ = io.TextIOWrapper(
-            io.FileIO(2, "w", closefd=False), encoding=out_enc,
-            errors="backslashreplace", line_buffering=True)
+            io.FileIO(2, "w", closefd=False), encoding=err_enc,
+            errors=err_err, line_buffering=True)
         os.chdir(leg["cwd"])
         env = leg["env"]
         os.environ.clear()
@@ -266,8 +270,10 @@ def _fork_child(script: str, code, leg: dict, fds: tuple, close: list) -> None:
         if not sys.path or sys.path[0] != here:
             sys.path.insert(0, here)
         sys.argv = [script]
+        sys.orig_argv = [sys.executable, script]
         main = types.ModuleType("__main__")
         main.__file__ = script
+        main.__cached__ = None
         main.__builtins__ = builtins
         main.__loader__ = importlib.machinery.SourceFileLoader("__main__", script)
         sys.modules["__main__"] = main
@@ -314,14 +320,28 @@ def _fork_child(script: str, code, leg: dict, fds: tuple, close: list) -> None:
         os._exit(rc & 0xFF)
 
 
+_STREAMS: dict = {}
+
+
 def _text_io(name: str):
-    """(encoding, errors) a fresh interpreter would pick for this std stream:
-    the same env decides it, so this process's own choice is the answer."""
-    import locale
-    stream = getattr(sys, "__%s__" % name, None)
-    enc = getattr(stream, "encoding", None) or locale.getpreferredencoding(False)
-    errs = getattr(stream, "errors", None) or "strict"
-    return enc, errs
+    """(encoding, errors) a fresh interpreter opens this std stream with when it
+    is a pipe, as it is for every leg. Asked of a fresh interpreter once per
+    process, not read off this one: a module imported here (many in scripts/ do
+    it) may have called `sys.stdout.reconfigure(errors="replace")`, and a leg
+    must not inherit that. A leg whose env changes PYTHONIOENCODING, PYTHONUTF8
+    or the locale is spawned (_needs_spawn), so this process's env is the one
+    that decides."""
+    key = tuple(os.environ.get(k) for k in ("PYTHONIOENCODING", "PYTHONUTF8") + _START_ENV)
+    got = _STREAMS.get(key)
+    if got is None:
+        probe = ("import sys, json; print(json.dumps([[s.encoding, s.errors] "
+                 "for s in (sys.stdin, sys.stdout, sys.stderr)]))")
+        cp = subprocess.run([sys.executable, "-c", probe], stdin=subprocess.PIPE,
+                            capture_output=True, text=True, timeout=30)
+        rows = json.loads(cp.stdout)
+        got = _STREAMS[key] = dict(zip(("stdin", "stdout", "stderr"),
+                                       (tuple(r) for r in rows)))
+    return got[name]
 
 
 def _spawn(leg: dict) -> LegResult:
@@ -335,13 +355,18 @@ def _spawn(leg: dict) -> LegResult:
 
 
 class _Leg:
-    """What proc_group needs from a child: its pid and a per-pid kill."""
-    __slots__ = ("pid",)
+    """What proc_group needs from a child: its pid and a per-pid kill. Once the
+    child is reaped its pid may belong to someone else, so the per-pid kill
+    becomes a no-op."""
+    __slots__ = ("pid", "reaped")
 
-    def __init__(self, pid: int):
+    def __init__(self, pid: int, reaped: bool):
         self.pid = pid
+        self.reaped = reaped
 
     def kill(self) -> None:
+        if self.reaped:
+            return
         import signal
         try:
             os.kill(self.pid, signal.SIGKILL)
@@ -349,14 +374,24 @@ class _Leg:
             pass
 
 
+_PROC_GROUP = None
+
+
 def _proc_group():
-    # The one guarded group-kill implementation lives in proc_group.py; a second
-    # copy here is what its own test forbids.
-    here = os.path.dirname(os.path.abspath(__file__))
-    if here not in sys.path:
-        sys.path.insert(0, here)
-    import proc_group
-    return proc_group
+    """proc_group.py, loaded by path. The one guarded group-kill implementation
+    lives there (a second copy is what its own test forbids). Loaded WITHOUT
+    touching sys.path: every forked leg inherits this process's path, and a
+    scripts/ entry added here would let a gate outside scripts/ import what a
+    fresh interpreter could not."""
+    global _PROC_GROUP
+    if _PROC_GROUP is None:
+        import importlib.util
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "proc_group.py")
+        spec = importlib.util.spec_from_file_location("_gate_selftest_proc_group", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _PROC_GROUP = mod
+    return _PROC_GROUP
 
 
 def run_scripts(legs: list, workers: int = 1) -> list:
@@ -397,7 +432,10 @@ def run_scripts(legs: list, workers: int = 1) -> list:
         st = running.get(pid)
         if st is None:
             return
-        pg.kill_group(_Leg(pid))
+        # By the group id stored at fork time: once the pump has reaped the
+        # child, its pid no longer names the group, and a grandchild still in
+        # it would outlive the deadline.
+        pg.kill_group(_Leg(pid, st["status"] is not None), group=st["pgid"])
         if st["status"] is None:
             try:
                 os.waitpid(pid, 0)

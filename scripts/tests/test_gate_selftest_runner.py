@@ -89,29 +89,68 @@ class Deadline(_Base):
             time.sleep(8)
         """))
 
+    def _gc_gate(self, grandchild: str, child: str = "") -> str:
+        """A gate whose grandchild writes its pid to gc.pid, then runs
+        `grandchild`; the direct child then runs `child` and returns.
+        Both are `;`-separated statements on one line."""
+        pidfile = os.path.join(self.tmp, "gc.pid")
+        lines = [
+            "import os, sys, time",
+            "pidfile = %r" % pidfile,
+            "if os.fork() == 0:",
+            "    open(pidfile + '.tmp', 'w').write(str(os.getpid()))",
+            "    os.rename(pidfile + '.tmp', pidfile)",
+            "    " + grandchild,
+            "    os._exit(0)",
+            "while not os.path.exists(pidfile):",
+            "    time.sleep(0.01)",
+            child or "pass",
+        ]
+        return self.gate("\n".join(lines) + "\n")
+
+    def _assert_grandchild_gone(self) -> None:
+        with open(os.path.join(self.tmp, "gc.pid")) as fh:
+            gc = int(fh.read())
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            try:
+                with open("/proc/%d/stat" % gc) as fh:
+                    state = fh.read().rsplit(")", 1)[1].split()[0]
+            except FileNotFoundError:
+                return
+            if state == "Z":     # killed, waiting for init to reap it
+                return
+            time.sleep(0.05)
+        try:
+            os.kill(gc, 9)
+        except OSError:
+            pass
+        self.fail("the leg's grandchild %d outlived the deadline" % gc)
+
     def test_grandchild_holding_stdout(self):
         # subprocess.run reads to EOF, so a grandchild that keeps the write
-        # end open is a leg still running, and it times out.
-        script = self.gate("""
-            import os, time
-            if os.fork() == 0:
-                time.sleep(6)
-                os._exit(0)
-            print("done")
-        """)
-        self._assert_times_out(script)
+        # end open is a leg still running, and it times out. The direct child
+        # has already exited, so the kill must reach the group by its id.
+        self._assert_times_out(self._gc_gate("time.sleep(30)", 'print("done")'))
+        self._assert_grandchild_gone()
 
     def test_grandchild_in_the_group_with_stdout_closed(self):
         # Stricter than subprocess.run on purpose: a leg is finished only
-        # when nothing it started is still alive.
-        script = self.gate("""
-            import os, sys, time
-            if os.fork() == 0:
-                os.close(1); os.close(2)
-                time.sleep(6)
-                os._exit(0)
-        """)
-        self._assert_times_out(script)
+        # when nothing it started is still alive, and whatever it left is
+        # killed at the deadline.
+        self._assert_times_out(self._gc_gate(
+            "os.close(1); os.close(2); time.sleep(30)"))
+        self._assert_grandchild_gone()
+
+    def test_grandchild_after_a_deny_and_exit_two(self):
+        self._assert_times_out(self._gc_gate(
+            "os.close(1); os.close(2); time.sleep(30)",
+            "print(%r); sys.exit(2)" % DENY))
+        self._assert_grandchild_gone()
+
+    def test_grandchild_while_the_child_hangs_too(self):
+        self._assert_times_out(self._gc_gate("time.sleep(30)", "time.sleep(30)"))
+        self._assert_grandchild_gone()
 
 
 @unittest.skipUnless(LINUX, "the fork path exists on Linux only")
@@ -146,6 +185,38 @@ class Parity(_Base):
             sys.stdout.close()
         """ % DENY, want_rc=0)
         self.assertTrue(gate_selftest.emits_block(rc, out))
+
+    def test_unencodable_output_crashes_as_it_would_spawned(self):
+        # The leg's errors="replace" is how the PARENT decodes; the gate's own
+        # stdout is strict, so printing a lone surrogate is rc 1 (a block).
+        script = self.gate('import sys; sys.stdin.read(); print("ok \\udcff")\n')
+        seen = []
+        saved = gate_selftest._FORK_OK
+        try:
+            for fork in (True, False):
+                gate_selftest._FORK_OK = fork
+                leg = dict(self.leg(script), encoding="utf-8", errors="replace")
+                r = gate_selftest.run_scripts([leg])[0]
+                seen.append((r.returncode, r.stdout))
+        finally:
+            gate_selftest._FORK_OK = saved
+        self.assertEqual(seen[0], seen[1])
+        self.assertEqual(seen[0][0], 1)
+
+    def test_a_reconfigured_parent_stdout_does_not_reach_the_gate(self):
+        # Many scripts/ modules call sys.stdout.reconfigure(errors="replace")
+        # on import. The selftest process may carry that; a fresh interpreter
+        # does not, so the gate's stdout stays strict.
+        import io
+        script = self.gate('import sys; sys.stdin.read(); print("ok \\udcff")\n')
+        fake = io.TextIOWrapper(io.BytesIO(), encoding="utf-8", errors="replace")
+        saved = sys.__stdout__
+        sys.__stdout__ = fake
+        try:
+            r = gate_selftest.run_scripts([self.leg(script)])[0]
+        finally:
+            sys.__stdout__ = saved
+        self.assertEqual(r.returncode, 1)
 
     def test_uncaught_exception_is_one(self):
         self.assertParity("raise RuntimeError('x')\n", want_rc=1)
@@ -195,6 +266,45 @@ class OwnChildrenOnly(_Base):
         finally:
             rc = other.wait(timeout=10)
         self.assertEqual(rc, 7)
+
+
+_SYS_PATH_DRIVER = r"""
+import importlib.util, json, os, sys
+spec = importlib.util.spec_from_file_location("gs_isolated", sys.argv[1])
+gs = importlib.util.module_from_spec(spec); spec.loader.exec_module(gs)
+before = list(sys.path)
+leg = {"script": sys.argv[2], "input": "{}", "cwd": sys.argv[3],
+       "env": dict(os.environ), "timeout": 30}
+out = {}
+for fork in (True, False):
+    gs._FORK_OK = fork
+    r = gs.run_scripts([leg])[0]
+    out["fork" if fork else "spawn"] = [r.returncode, r.stdout]
+out["path_unchanged"] = before == sys.path
+print(json.dumps(out))
+"""
+
+
+@unittest.skipUnless(LINUX, "the fork path exists on Linux only")
+class CallerSysPath(_Base):
+    def test_run_scripts_leaves_the_callers_sys_path_alone(self):
+        # A gate OUTSIDE scripts/ that imports a scripts/ module crashes under
+        # a fresh interpreter. It must crash under a fork too, which it does
+        # only if run_scripts never put scripts/ on the caller's path.
+        gate = self.gate("import proc_group\nprint(%r)\n" % DENY)
+        driver = os.path.join(self.tmp, "driver.py")
+        with open(driver, "w") as fh:
+            fh.write(_SYS_PATH_DRIVER)
+        env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+        cp = subprocess.run([sys.executable, driver,
+                             str(SCRIPTS / "gate_selftest.py"), gate, self.tmp],
+                            capture_output=True, text=True, env=env, cwd=self.tmp,
+                            timeout=120)
+        self.assertEqual(cp.returncode, 0, cp.stderr)
+        got = json.loads(cp.stdout.strip().splitlines()[-1])
+        self.assertTrue(got["path_unchanged"], "run_scripts changed sys.path")
+        self.assertEqual(got["spawn"][0], 1)
+        self.assertEqual(got["fork"], got["spawn"])
 
 
 _USER_SITE_DRIVER = r"""
