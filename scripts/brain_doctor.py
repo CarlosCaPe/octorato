@@ -2853,9 +2853,13 @@ def check_claude_md_budget(fix: bool, path: Path | None = None) -> Result:
 
 def selftest_claude_md_budget(fixtures: Path) -> int:
     """Fixture proof for META.constitution-budget, run by gate-liveness: every
-    `violation_*.md` must FAIL the check and every `benign_*.md` must PASS. Each
-    benign file is its violation twin with one edit, so a check that fails
-    everything is caught as surely as one that passes everything."""
+    `violation_*.md` must FAIL the check and every `benign_*.md` must PASS. Two
+    benign files are their violation twin with one edit (one character under the
+    budget, the Spanish section quoted), so a check that fails everything is
+    caught as surely as one that passes everything. The third,
+    `benign_english_with_a_spanish_name.md`, is not a twin: it is an English
+    control that carries Spanish proper nouns, so a stopword ratio ceiling
+    mutated to 0.0 fails it and is caught."""
     viol = sorted(fixtures.glob("violation_*.md"))
     ben = sorted(fixtures.glob("benign_*.md"))
     if not viol or not ben:
