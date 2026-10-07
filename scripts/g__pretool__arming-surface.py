@@ -4324,96 +4324,72 @@ def _selftest(fdir: str = None) -> int:
 
     import gate_selftest
     failures, blocked, allowed, skipped = [], 0, 0, []
-    for path in fixtures:
-        name = os.path.basename(path)
-        with open(path, encoding="utf-8") as fh:
-            payload = json.load(fh)
-        setup = payload.pop("_setup", {}) or {}
-        if os.name == "nt" and setup.get("chmod"):
-            # chmod cannot seal a directory on Windows (listdir still answers),
-            # so the leg's premise cannot be built here. Named, never passed.
-            skipped.append(name)
-            continue
-        if setup.get("os") and setup["os"] != os.name:
-            # A spelling that only names the live file on one OS (a Windows
-            # separator inside a path is an ordinary character on POSIX).
-            skipped.append(name)
-            continue
-        sandbox = tempfile.mkdtemp(prefix="arming-selftest-")
+    # Legs run in batches of one per CPU. Every leg owns its sandbox, and the
+    # gate's one write (the kernel journal line of a deny, `journal_deny`) lands
+    # in that leg's own HOME, so no leg can see another. Results are judged in
+    # fixture order, so the verdicts and the failure text are the sequential ones.
+    workers = max(1, os.cpu_count() or 1)
+    todo = list(fixtures)
+    while todo:
+        batch = []          # (name, setup, sandbox) per leg in this batch
+        legs = []
         try:
-            _build_sandbox(sandbox, setup)
-            # The sandbox lands INSIDE serialized JSON, and on Windows it carries
-            # backslashes: an unescaped `C:\Users` is an invalid JSON escape,
-            # the gate cannot parse its stdin, fails open by design, and every
-            # violation leg read as allowed. Forward slashes also keep a Bash
-            # leg's path intact, since a shell reads a backslash as an escape.
-            body = json.dumps(payload).replace(
-                "{{SANDBOX}}", json.dumps(_shell_path(sandbox))[1:-1])
-            # The Git Bash drive spelling of the same sandbox (`/c/Users/...`);
-            # identity on POSIX, so a fixture using it is a violation everywhere.
-            body = body.replace("{{SANDBOX_MSYS}}",
-                                json.dumps(_msys_path(sandbox))[1:-1])
-            # {{PAD}} keeps an oversize fixture SMALL on disk: the cap is 64 KB
-            # and a literal payload would be a 64 KB file in the repo for every
-            # leg that needs one.
-            body = body.replace("{{PAD}}", "x" * int(setup.get("pad_bytes") or 0))
-            # {{TARGETS}} expands to N DISTINCT paths. The budget this pins
-            # counts distinct targets, not bytes, so a run of one repeated
-            # character cannot express it: `{{PAD}}` would be one target.
-            count = int(setup.get("target_count") or 0)
-            if count:
-                body = body.replace(
-                    "{{TARGETS}}",
-                    " ".join(f"/tmp/t{i}" for i in range(count)))
-            env = dict(os.environ)
-            for k in ("OCTO_MERGE_APPROVE", "OCTO_QA_OK", "OCTO_ALLOW_FORCE",
-                      "OCTO_LANE_OVERRIDE", "OCTO_GRAFO_OVERRIDE",
-                      "OCTO_KERNEL_OPEN", "GIT_DIR", "GIT_WORK_TREE",
-                      "GIT_INDEX_FILE", "GIT_PREFIX", "GIT_COMMON_DIR",
-                      "GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE",
-                      "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_QUARANTINE_PATH",
-                      # THE ONE RESERVED NAME. Since a DEFINED variable now
-                      # resolves, a benign fixture that means "this variable is
-                      # unknowable" is only benign while the name really is
-                      # undefined, and the operator's own shell decides that.
-                      # The corpus uses exactly this name for that, and the leg
-                      # unsets it, so the premise is the leg's and not the
-                      # shell's. One name, not a list of them.
-                      "OCTO_FIXTURE_UNDEFINED"):
-                env.pop(k, None)
-            env["HOME"] = sandbox
-            env["USERPROFILE"] = sandbox
-            env["CLAUDE_SESSION_ID"] = "__selftest__"
-            cp = subprocess.run([sys.executable, os.path.abspath(__file__)],
-                                input=body, capture_output=True, text=True,
-                                cwd=sandbox, env=env, timeout=30)
-            did_block = gate_selftest.emits_block(cp.returncode, cp.stdout)
+            while todo and len(legs) < workers:
+                path = todo.pop(0)
+                name = os.path.basename(path)
+                with open(path, encoding="utf-8") as fh:
+                    payload = json.load(fh)
+                setup = payload.pop("_setup", {}) or {}
+                if os.name == "nt" and setup.get("chmod"):
+                    # chmod cannot seal a directory on Windows (listdir still
+                    # answers), so the leg's premise cannot be built here.
+                    # Named, never passed.
+                    skipped.append(name)
+                    continue
+                if setup.get("os") and setup["os"] != os.name:
+                    # A spelling that only names the live file on one OS (a
+                    # Windows separator inside a path is an ordinary character
+                    # on POSIX).
+                    skipped.append(name)
+                    continue
+                sandbox = tempfile.mkdtemp(prefix="arming-selftest-")
+                batch.append((name, setup, sandbox))
+                _build_sandbox(sandbox, setup)
+                legs.append({"script": os.path.abspath(__file__),
+                             "input": _leg_body(payload, setup, sandbox),
+                             "cwd": sandbox, "env": _leg_env(sandbox),
+                             "timeout": 30})
+            results = gate_selftest.run_scripts(legs, workers)
         finally:
-            for rel, _mode in (setup.get("chmod") or []):
-                try:
-                    os.chmod(os.path.join(sandbox, *rel.split("/")), 0o755)
-                except OSError:
-                    pass
-            shutil.rmtree(sandbox, ignore_errors=True)
+            for _name, setup, sandbox in batch:
+                for rel, _mode in (setup.get("chmod") or []):
+                    try:
+                        os.chmod(os.path.join(sandbox, *rel.split("/")), 0o755)
+                    except OSError:
+                        pass
+                shutil.rmtree(sandbox, ignore_errors=True)
 
-        if name.startswith("violation"):
-            if not did_block:
-                failures.append(f"{name} did NOT block (rc={cp.returncode})")
-                continue
-            blocked += 1
-            want = setup.get("expect_names")
-            # The reason names the path natively, and a fixture names it with
-            # `/`; compared separator-blind so Windows does not read a correct
-            # deny as unnamed. stdout is JSON, so a backslash arrives doubled.
-            said = cp.stdout.replace("\\\\", "/").replace("\\", "/")
-            if want and want not in cp.stdout and want not in said:
-                failures.append(f"{name} blocked without naming {want}")
-        else:
-            if did_block:
-                failures.append(f"{name} WAS blocked (must allow): "
-                                f"{(cp.stdout or '').strip()[:160]}")
-                continue
-            allowed += 1
+        for (name, setup, _sb), cp in zip(batch, results):
+            did_block = gate_selftest.emits_block(cp.returncode, cp.stdout)
+            if name.startswith("violation"):
+                if not did_block:
+                    failures.append(f"{name} did NOT block (rc={cp.returncode})")
+                    continue
+                blocked += 1
+                want = setup.get("expect_names")
+                # The reason names the path natively, and a fixture names it
+                # with `/`; compared separator-blind so Windows does not read a
+                # correct deny as unnamed. stdout is JSON, so a backslash
+                # arrives doubled.
+                said = cp.stdout.replace("\\\\", "/").replace("\\", "/")
+                if want and want not in cp.stdout and want not in said:
+                    failures.append(f"{name} blocked without naming {want}")
+            else:
+                if did_block:
+                    failures.append(f"{name} WAS blocked (must allow): "
+                                    f"{(cp.stdout or '').strip()[:160]}")
+                    continue
+                allowed += 1
 
     for assertion in (_assert_parser_load_denies,
                       _assert_own_import_denies,
@@ -4442,6 +4418,57 @@ def _selftest(fdir: str = None) -> int:
         print(f"selftest SKIPPED on this OS (premise not buildable): "
               f"{', '.join(skipped)}")
     return 0
+
+
+def _leg_body(payload: dict, setup: dict, sandbox: str) -> str:
+    """The stdin of one selftest leg: the fixture with its placeholders filled."""
+    # The sandbox lands INSIDE serialized JSON, and on Windows it carries
+    # backslashes: an unescaped `C:\Users` is an invalid JSON escape, the gate
+    # cannot parse its stdin, fails open by design, and every violation leg
+    # read as allowed. Forward slashes also keep a Bash leg's path intact,
+    # since a shell reads a backslash as an escape.
+    body = json.dumps(payload).replace(
+        "{{SANDBOX}}", json.dumps(_shell_path(sandbox))[1:-1])
+    # The Git Bash drive spelling of the same sandbox (`/c/Users/...`);
+    # identity on POSIX, so a fixture using it is a violation everywhere.
+    body = body.replace("{{SANDBOX_MSYS}}",
+                        json.dumps(_msys_path(sandbox))[1:-1])
+    # {{PAD}} keeps an oversize fixture SMALL on disk: the cap is 64 KB and a
+    # literal payload would be a 64 KB file in the repo for every leg that
+    # needs one.
+    body = body.replace("{{PAD}}", "x" * int(setup.get("pad_bytes") or 0))
+    # {{TARGETS}} expands to N DISTINCT paths. The budget this pins counts
+    # distinct targets, not bytes, so a run of one repeated character cannot
+    # express it: `{{PAD}}` would be one target.
+    count = int(setup.get("target_count") or 0)
+    if count:
+        body = body.replace(
+            "{{TARGETS}}",
+            " ".join(f"/tmp/t{i}" for i in range(count)))
+    return body
+
+
+def _leg_env(sandbox: str) -> dict:
+    """The env of one fixture leg: ours, minus every override, HOME = sandbox."""
+    env = dict(os.environ)
+    for k in ("OCTO_MERGE_APPROVE", "OCTO_QA_OK", "OCTO_ALLOW_FORCE",
+              "OCTO_LANE_OVERRIDE", "OCTO_GRAFO_OVERRIDE",
+              "OCTO_KERNEL_OPEN", "GIT_DIR", "GIT_WORK_TREE",
+              "GIT_INDEX_FILE", "GIT_PREFIX", "GIT_COMMON_DIR",
+              "GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE",
+              "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_QUARANTINE_PATH",
+              # THE ONE RESERVED NAME. Since a DEFINED variable now resolves, a
+              # benign fixture that means "this variable is unknowable" is only
+              # benign while the name really is undefined, and the operator's
+              # own shell decides that. The corpus uses exactly this name for
+              # that, and the leg unsets it, so the premise is the leg's and
+              # not the shell's. One name, not a list of them.
+              "OCTO_FIXTURE_UNDEFINED"):
+        env.pop(k, None)
+    env["HOME"] = sandbox
+    env["USERPROFILE"] = sandbox
+    env["CLAUDE_SESSION_ID"] = "__selftest__"
+    return env
 
 
 # Probes. `{P}` is a protected FILE in the sandbox, `{D}` a protected DIRECTORY.
@@ -4549,6 +4576,11 @@ def _assert_covered_verbs_deny() -> tuple:
                   "GIT_WORK_TREE", "GIT_INDEX_FILE"):
             env.pop(k, None)
         import gate_selftest
+        # One sandbox for every probe, as before. The gate's only write there is
+        # the journal line of each deny, appended under the journal's own lock
+        # (hooks run concurrently in real use too) and never read by a verdict,
+        # so the probes run one per CPU and are judged in verb order.
+        probes, legs = [], []
         for verb in sorted(claimed):
             tmpl = _VERB_PROBES[verb]
             if tmpl is None:
@@ -4556,9 +4588,11 @@ def _assert_covered_verbs_deny() -> tuple:
             cmd = tmpl.replace("{P}", prot).replace("{D}", pdir)
             payload = json.dumps({"tool_name": "Bash", "cwd": sandbox,
                                   "tool_input": {"command": cmd}})
-            cp = subprocess.run([sys.executable, os.path.abspath(__file__)],
-                                input=payload, capture_output=True, text=True,
-                                cwd=sandbox, env=env, timeout=60)
+            probes.append((verb, cmd))
+            legs.append({"script": os.path.abspath(__file__), "input": payload,
+                         "cwd": sandbox, "env": env, "timeout": 60})
+        results = gate_selftest.run_scripts(legs, max(1, os.cpu_count() or 1))
+        for (verb, cmd), cp in zip(probes, results):
             if not gate_selftest.emits_block(cp.returncode, cp.stdout):
                 failed.append(f"{verb} ({cmd[:60]})")
     finally:
