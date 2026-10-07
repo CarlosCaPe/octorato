@@ -113,6 +113,29 @@ _RE_COVERAGE_DECLARED = re.compile(
     re.IGNORECASE,
 )
 
+# The Provenance footer is a machine receipt, not prose: "Gmail MCP ->
+# SEEK-COMPLETE" or "Verified: 0 archivos en comun" there is not a claim of
+# total coverage. The v10 census found 3 of the 7 corpus coverage blocks came
+# only from the footer. Everything from the first footer line on is ignored.
+# A first attempt also required a first-person sweep verb in the sentence; QA
+# showed it missed the exact shape this check exists for ("Esos son todos los
+# correos del mes", "All 40 files are accounted for"), so it was reverted.
+# Residual, stated: a reply sentence that uses "todos/all + scope" to describe
+# the data or a standing setup ("todas las carpetas dan control a Everyone",
+# "vigia en todos los chats") still blocks when the turn also truncated.
+_RE_FOOTER_LINE = re.compile(r"^\W*(?:procedencia|provenance)\b", re.IGNORECASE)
+
+
+def coverage_claim(text: str) -> bool:
+    """True when the reply, Provenance footer excluded, asserts total coverage."""
+    lines = (text or "").splitlines()
+    for i, ln in enumerate(lines):
+        if _RE_FOOTER_LINE.match(ln):
+            lines = lines[:i]
+            break
+    return bool(_RE_COVERAGE_CLAIM.search("\n".join(lines)))
+
+
 _BLOCK_REASON_COVERAGE = (
     "You asserted TOTAL coverage but this turn shows a truncation artifact "
     "(head/limit/top-N) and the reply never declares the cut. Either sweep "
@@ -216,7 +239,7 @@ def main() -> int:
         # Fires only when ALL hold: the reply asserts totality, it does NOT own
         # the cut, and the turn carries a truncation artifact. Conservative by
         # construction — a declared partial always passes.
-        if _RE_COVERAGE_CLAIM.search(last_text) and not _RE_COVERAGE_DECLARED.search(last_text):
+        if coverage_claim(last_text) and not _RE_COVERAGE_DECLARED.search(last_text):
             recent_wide = _recent_transcript_text(transcript, max_bytes=16384)
             if _RE_TRUNCATION.search(recent_wide):
                 print(json.dumps({"decision": "block", "reason": _BLOCK_REASON_COVERAGE}))
