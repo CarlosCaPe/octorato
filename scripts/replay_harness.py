@@ -50,6 +50,35 @@ process table, block-once sentinels), the operator's private config under
 window cut. The baseline records both decisions, so the agreement rate per gate
 is printed rather than assumed.
 
+STATEFUL STOP GATES. A gate that keeps per-session state on disk across turns
+(goal-anchor pins a root goal under ~/.claude/.cache/goal-anchor/) cannot be
+replayed one case at a time: its block on turn N depends on what it saw on
+turns 1..N-1. For those gates (STATEFUL_STOP_GATES) the corpus also holds, per
+session that carries one of their cases, the session transcript (records the
+gates read, slimmed like a window) and the list of its Stops: where each one
+cut the transcript, whether it ran with stop_hook_active (the Stop before it
+was blocked by any Stop hook and no operator prompt came between), which gates
+blocked it historically, and which corpus case it is. The stateful replay runs
+EVERY Stop of the session in order through ONE sandbox HOME, appending the
+transcript up to each cut before calling the gate, so the gate's own state
+carries across turns exactly as it did live. A case of a stateful Stop gate whose
+session was not captured falls back to the isolated replay and is counted.
+Residual, measured on goal-anchor: even replayed in order with the gate that
+produced history, most historical blocks do not reproduce, and the replay
+blocks on Stops history let through. The recorded transcript is not what the
+live gate read at its Stop: there are live blocks on a turn whose recorded
+final reply carries no closure claim, right after allows on turns whose final
+replies do, which fits a hook reading the file before the turn's last records
+were written. That write timing is in no record, so it cannot be rebuilt, and
+the gate stays LOW-FIDELITY until a Stop payload carries what the gate read.
+
+FIDELITY REVISION. History was produced by the gate as it was deployed then,
+not by this checkout. `baseline --fidelity-rev GATE=REV` replays that gate's
+cases a second time with `scripts/` taken from git at REV and stores that
+decision per case (`p`); deny/allow fidelity is then measured from `p` against
+history, and `before_after` reports blocks at REV against blocks now on the
+same cases. Without `p` fidelity is measured from `d`, as before.
+
 LABELS. `company/friction-corpus/label-rules.json` (private) holds ordered
 rules: {gate, code?, hist?, sub?, field: input|prompt|reason|blocked,
 pattern, label: TP|FP}. The first rule that matches a case labels it; every
@@ -98,6 +127,16 @@ CASE_TIMEOUT = 30
 # blocked nothing in the census window; reflexes and tracers decide nothing.
 SKIP_GATES = {"budget-check.py", "trace-hook.py"}
 SELFTEST_SESSION = "__selftest__"
+# Stop gates whose decision depends on state THEY wrote on earlier turns of the
+# same session. Not here, because their missing state is not their own:
+# d__stop__wa-guardia.py reads the live messaging-bridge store and the process
+# table, g__stop__delegation-audit.py reads a ledger a PostToolUse reflex
+# writes. Replaying the Stops in order gives neither of them that input.
+STATEFUL_STOP_GATES = ("g__stop__goal-anchor.py",)
+# Transcript record types a Stop gate reads. The rest is harness bookkeeping
+# (queue operations, titles, mode latches, file-history snapshots) and is
+# dropped from a captured session to keep it small.
+SESSION_TYPES = {"user", "assistant", "system", "attachment"}
 
 
 # ── locations ───────────────────────────────────────────────────────────────
@@ -400,10 +439,153 @@ def build(args) -> int:
             "scan_seconds": round(time.monotonic() - t0, 1)}
     (cdir / "meta.json").write_text(json.dumps(meta, indent=1), encoding="utf-8")
     print(json.dumps(meta))
+    capture_sessions(cdir, root, args.since, args.until)
     apply_labels(cdir)
     if args.no_baseline:
         return 0
-    return write_baseline(cdir, args.jobs)
+    return write_baseline(cdir, args.jobs, _parse_revs(getattr(args, "fidelity_rev", None)))
+
+
+# ── build: sessions of stateful Stop gates ──────────────────────────────────
+
+def stop_points(recs: list) -> list:
+    """Every main-loop Stop of one transcript, in order.
+
+    A Stop is identified by where it cut the transcript (`end`: just after the
+    last assistant record before it, the same cut `_payload` uses) and carries
+    the keys the corpus derives case ids from: the uuid of each blocking-error
+    attachment (with the gate it names) and the uuid of its stop_hook_summary.
+    `active` is the stop_hook_active the harness passed: the Stop before was
+    blocked by any Stop hook and no operator prompt came between.
+    """
+    by_end, order = {}, []
+
+    def at(i: int) -> dict:
+        end = i
+        while end > 0 and recs[end - 1].get("type") != "assistant":
+            end -= 1
+        if end not in by_end:
+            by_end[end] = {"end": end, "ts": "", "sid": "", "cwd": "", "blocks": [], "summary": None}
+            order.append(end)
+        return by_end[end]
+
+    for i, d in enumerate(recs):
+        a = d.get("attachment") or {}
+        if a.get("type") == "hook_blocking_error" and (a.get("hookEvent") or "Stop") == "Stop":
+            be = a.get("blockingError") or {}
+            gate, _ = friction_ledger.attribute_block(be.get("command") or "", be.get("blockingError") or "")
+            s = at(i)
+            s["blocks"].append([gate, d.get("uuid")])
+            s["ts"] = s["ts"] or d.get("timestamp") or ""
+            s["sid"] = s["sid"] or d.get("sessionId") or ""
+            s["cwd"] = s["cwd"] or d.get("cwd") or ""
+        elif d.get("subtype") == "stop_hook_summary":
+            s = at(i)
+            s["summary"] = {"key": d.get("uuid"),
+                            "clean": not d.get("preventedContinuation") and not d.get("hookErrors")}
+            s["ts"] = d.get("timestamp") or s["ts"]
+            s["sid"] = d.get("sessionId") or s["sid"]
+            s["cwd"] = d.get("cwd") or s["cwd"]
+    order.sort()
+    out, prev = [], None
+    for end in order:
+        s = by_end[end]
+        prompt_between = prev is not None and any(_is_prompt(r) for r in recs[prev["end"]:end])
+        s["active"] = bool(prev and prev["blocks"] and not prompt_between)
+        out.append(s)
+        prev = s
+    return out
+
+
+def _load_sized(path: str) -> tuple[list, list]:
+    """Like _load, plus each parsed line's byte length (newline included)."""
+    recs, sizes = [], []
+    try:
+        with open(path, "rb") as fh:
+            for raw in fh:
+                try:
+                    recs.append(json.loads(raw.decode("utf-8", errors="replace")))
+                except ValueError:
+                    continue
+                sizes.append(len(raw))
+    except OSError:
+        pass
+    return recs, sizes
+
+
+def _session_file(root: Path, sid: str) -> str:
+    hits = sorted(glob.glob(str(root / "*" / f"{glob.escape(sid)}.jsonl")))
+    return hits[0] if hits else ""
+
+
+def capture_sessions(cdir: Path, root: Path, since: str, until: str,
+                     gates: tuple = STATEFUL_STOP_GATES) -> dict:
+    """Freeze, under cdir/sessions/, the transcript and the Stops of every
+    session that holds a case of a stateful Stop gate. Private like the cases.
+    Returns {"sessions": n, "cases_mapped": n, "cases_unmapped": n}."""
+    rows = [r for r in _index(cdir) if r["gate"] in gates and r["event"] == "Stop"] \
+        if (cdir / "index.jsonl").exists() else []
+    want = {r["id"] for r in rows}
+    sids = {}
+    for r in rows:
+        sid = (_read_case(cdir, r["id"]).get("payload") or {}).get("session_id") or ""
+        if sid:
+            sids.setdefault(sid, set()).add(r["id"])
+    sdir = cdir / "sessions"
+    shutil.rmtree(sdir, ignore_errors=True)
+    mapped = set()
+    n = 0
+    for sid in sorted(sids):
+        path = _session_file(root, sid)
+        if not path:
+            continue
+        recs, sizes = _load_sized(path)
+        stops = []
+        for s in stop_points(recs):
+            if s["sid"] and s["sid"] != sid:
+                continue
+            cases = {}
+            for g in gates:
+                for bg, key in s["blocks"]:
+                    if bg == g and _case_id(g, key) in want:
+                        cases[g] = _case_id(g, key)
+                if s["summary"] and _case_id(g, s["summary"]["key"]) in want:
+                    cases[g] = _case_id(g, s["summary"]["key"])
+            mapped.update(cases.values())
+            stops.append({"end": s["end"], "ts": s["ts"], "cwd": s["cwd"], "active": s["active"],
+                          "in_window": bool(since <= (s["ts"] or "")[:10] < until),
+                          "hist": sorted({g for g, _ in s["blocks"]}), "cases": cases})
+        # Every record up to the last Stop: the ones a gate reads slimmed, the
+        # harness bookkeeping reduced to its type. `sizes` keeps each line's
+        # original byte length so the replay can pad it back: gates read only
+        # the last 256 KB of the transcript, and which turns fall inside that
+        # tail decides what a gate with no saved state rebuilds.
+        last = stops[-1]["end"] if stops else 0
+        keep = [_slim(d) if d.get("type") in SESSION_TYPES else {"type": d.get("type")}
+                for d in recs[:last]]
+        sdir.mkdir(parents=True, exist_ok=True)
+        with gzip.open(sdir / f"{_case_id('session', sid)}.json.gz", "wt", encoding="utf-8") as fh:
+            json.dump({"sid": sid, "records": keep, "sizes": sizes[:last], "stops": stops}, fh,
+                      ensure_ascii=False)
+        n += 1
+    out = {"sessions": n, "cases_mapped": len(mapped), "cases_unmapped": len(want - mapped)}
+    print(json.dumps(out))
+    return out
+
+
+def cmd_sessions(args) -> int:
+    cdir = corpus_dir(args.corpus)
+    if not (cdir / "index.jsonl").exists():
+        print(f"SKIP: private replay corpus not found at {cdir}.")
+        return 0
+    meta = {}
+    try:
+        meta = json.loads((cdir / "meta.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        pass
+    root = Path(args.root) if args.root else friction_ledger.projects_dir()
+    capture_sessions(cdir, root, meta.get("since") or "", meta.get("until") or "9999")
+    return 0
 
 
 # ── labels ──────────────────────────────────────────────────────────────────
@@ -508,54 +690,193 @@ def replay_env(sandbox: Path) -> dict:
     return env
 
 
-def run_case(cdir: Path, cid: str) -> dict:
+def _sandbox() -> Path:
+    """A fresh HOME holding only the seeded gate receipt."""
+    sandbox = Path(tempfile.mkdtemp(prefix="friction-replay-"))
+    rec = sandbox / ".claude" / ".cache" / "receipts"
+    rec.mkdir(parents=True)
+    (rec / "global.jsonl").write_text(json.dumps(
+        {"kind": "gate-liveness", "ok": True, "head": "SELFTEST", "gates": "SELFTEST",
+         "ts": "2026-01-01T00:00:00+00:00"}) + "\n", encoding="utf-8")
+    (sandbox / ".claude" / "projects" / "replay").mkdir(parents=True)
+    return sandbox
+
+
+def _run_gate(script: Path, payload: dict, sandbox: Path, gate: str) -> dict:
+    """One hook call, read the way the harness reads it."""
+    env = replay_env(sandbox)
+    t0 = time.monotonic()
+    try:
+        cp = subprocess.run([sys.executable, str(script)], input=json.dumps(payload),
+                            capture_output=True, text=True, encoding="utf-8", errors="replace",
+                            cwd=str(sandbox), env=env, timeout=CASE_TIMEOUT)
+        d, why = decide(cp.returncode, cp.stdout, cp.stderr)
+    except subprocess.TimeoutExpired:
+        d, why = "timeout", ""
+    ms = int((time.monotonic() - t0) * 1000)
+    code = ""
+    if d in BLOCKING:
+        g, code = friction_ledger.classify(why, payload.get("tool_name"))
+        if g != gate:
+            code = "block"
+    return {"d": d, "c": code, "ms": ms}
+
+
+def run_case(cdir: Path, cid: str, scripts: Path | None = None) -> dict:
+    """Isolated replay: one case, one fresh HOME, the case's own window."""
     case = _read_case(cdir, cid)
-    script = gate_path(case["gate"])
+    script = (scripts or HERE) / case["gate"]
     if not script.exists():
         return {"id": cid, "d": "missing", "c": "", "ms": 0}
-    sandbox = Path(tempfile.mkdtemp(prefix="friction-replay-"))
+    sandbox = _sandbox()
     try:
-        claude = sandbox / ".claude"
-        rec = claude / ".cache" / "receipts"
-        rec.mkdir(parents=True)
-        (rec / "global.jsonl").write_text(json.dumps(
-            {"kind": "gate-liveness", "ok": True, "head": "SELFTEST", "gates": "SELFTEST",
-             "ts": "2026-01-01T00:00:00+00:00"}) + "\n", encoding="utf-8")
-        tdir = claude / "projects" / "replay"
-        tdir.mkdir(parents=True)
         payload = dict(case["payload"])
         sid = payload.get("session_id") or "replay"
-        tp = tdir / f"{sid}.jsonl"
+        tp = sandbox / ".claude" / "projects" / "replay" / f"{sid}.jsonl"
         with open(tp, "w", encoding="utf-8") as fh:
             for r in case["window"]:
                 fh.write(json.dumps(r, ensure_ascii=False) + "\n")
         payload["transcript_path"] = str(tp)
-        env = replay_env(sandbox)
-        t0 = time.monotonic()
-        try:
-            cp = subprocess.run([sys.executable, str(script)], input=json.dumps(payload),
-                                capture_output=True, text=True, encoding="utf-8", errors="replace",
-                                cwd=str(sandbox), env=env, timeout=CASE_TIMEOUT)
-            d, why = decide(cp.returncode, cp.stdout, cp.stderr)
-        except subprocess.TimeoutExpired:
-            d, why = "timeout", ""
-        ms = int((time.monotonic() - t0) * 1000)
-        code = ""
-        if d in BLOCKING:
-            g, code = friction_ledger.classify(why, payload.get("tool_name"))
-            if g != case["gate"]:
-                code = "block"
-        return {"id": cid, "d": d, "c": code, "ms": ms}
+        return dict(_run_gate(script, payload, sandbox, case["gate"]), id=cid)
     finally:
         shutil.rmtree(sandbox, ignore_errors=True)
 
 
-def replay_all(cdir: Path, jobs: int, gate: str = "") -> dict:
+def _read_session(path: Path) -> dict:
+    with gzip.open(path, "rt", encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def run_session(sess: dict, gates: tuple, scripts: Path | None = None) -> dict:
+    """Stateful replay of one session: every Stop in order through ONE HOME.
+
+    The transcript file grows to each Stop's cut before the gates run, so each
+    call sees the transcript as it was at that turn, and whatever a gate saved
+    under HOME on an earlier turn is still there. Returns
+    {"cases": {case_id: result}, "stops": [{gate: decision}]}.
+    """
+    sandbox = _sandbox()
+    try:
+        sid = sess.get("sid") or "replay"
+        tp = sandbox / ".claude" / "projects" / "replay" / f"{sid}.jsonl"
+        recs = sess.get("records") or []
+        sizes = sess.get("sizes") or []
+        written = 0
+        cases, per_stop = {}, []
+        with open(tp, "wb") as fh:
+            for s in sess.get("stops") or []:
+                end = max(written, int(s.get("end") or 0))
+                for i in range(written, min(end, len(recs))):
+                    line = json.dumps(recs[i], ensure_ascii=False).encode("utf-8")
+                    pad = (sizes[i] if i < len(sizes) else 0) - len(line) - 1
+                    fh.write(line + b" " * max(0, pad) + b"\n")
+                fh.flush()
+                written = end
+                row = {}
+                for g in gates:
+                    script = (scripts or HERE) / g
+                    if not script.exists():
+                        res = {"d": "missing", "c": "", "ms": 0}
+                    else:
+                        payload = {"session_id": sid, "hook_event_name": "Stop",
+                                   "stop_hook_active": bool(s.get("active")),
+                                   "cwd": s.get("cwd") or "", "transcript_path": str(tp)}
+                        res = _run_gate(script, payload, sandbox, g)
+                    row[g] = res["d"]
+                    cid = (s.get("cases") or {}).get(g)
+                    if cid:
+                        cases[cid] = dict(res, id=cid, m="stateful")
+                per_stop.append(row)
+        return {"cases": cases, "stops": per_stop}
+    finally:
+        shutil.rmtree(sandbox, ignore_errors=True)
+
+
+def _sessions(cdir: Path) -> list:
+    return sorted((cdir / "sessions").glob("*.json.gz")) if (cdir / "sessions").is_dir() else []
+
+
+def replay_all(cdir: Path, jobs: int, gate: str = "", scripts: Path | None = None,
+               stateful: bool = True, session_stats: dict | None = None) -> dict:
+    """Replay every case (or one gate's). Cases of a stateful Stop gate are
+    decided by the stateful session replay when their session was captured,
+    and by the isolated replay otherwise. `session_stats`, when given, is
+    filled per stateful gate with counts over every in-window Stop of the
+    captured sessions (historical blocks, replayed blocks, reproduced)."""
     rows = [r for r in _index(cdir) if not gate or r["gate"] == gate]
     out = {}
+    sgates = tuple(g for g in STATEFUL_STOP_GATES if not gate or g == gate) if stateful else ()
+    if sgates and any(r["gate"] in sgates for r in rows):
+        files = _sessions(cdir)
+
+        def one(p):
+            sess = _read_session(p)
+            return sess, run_session(sess, sgates, scripts)
+
+        with cf.ThreadPoolExecutor(max_workers=max(1, jobs)) as ex:
+            for sess, res in ex.map(one, files):
+                out.update(res["cases"])
+                if session_stats is None:
+                    continue
+                for g in sgates:
+                    st = session_stats.setdefault(g, {"sessions": 0, "stops": 0, "historical_deny": 0,
+                                                      "replay_deny": 0, "hist_deny_reproduced": 0})
+                    st["sessions"] += 1
+                    for s, row in zip(sess.get("stops") or [], res["stops"]):
+                        if not s.get("in_window"):
+                            continue
+                        hd, rd = g in (s.get("hist") or []), row.get(g) in BLOCKING
+                        st["stops"] += 1
+                        st["historical_deny"] += hd
+                        st["replay_deny"] += rd
+                        st["hist_deny_reproduced"] += hd and rd
+    rest = [r for r in rows if r["id"] not in out]
+    fallback = {r["id"] for r in rest if r["gate"] in sgates}
     with cf.ThreadPoolExecutor(max_workers=max(1, jobs)) as ex:
-        for res in ex.map(lambda r: run_case(cdir, r["id"]), rows):
+        for res in ex.map(lambda r: run_case(cdir, r["id"], scripts), rest):
+            if res["id"] in fallback:
+                res["m"] = "isolated-fallback"
             out[res["id"]] = res
+    return out
+
+
+class scripts_at:
+    """`scripts/` as it was at a git revision, extracted to a temp dir.
+
+        with scripts_at("d8a3f51^") as sdir: replay_all(..., scripts=sdir)
+    """
+
+    def __init__(self, rev: str):
+        self.rev = rev
+        self.tmp = None
+
+    def __enter__(self) -> Path:
+        self.tmp = Path(tempfile.mkdtemp(prefix="friction-rev-"))
+        arc = subprocess.run(["git", "-C", str(REPO), "archive", "--format=tar", self.rev, "scripts"],
+                             capture_output=True)
+        if arc.returncode != 0:
+            shutil.rmtree(self.tmp, ignore_errors=True)
+            raise SystemExit(f"git archive {self.rev} failed: {arc.stderr.decode(errors='replace')[:200]}")
+        subprocess.run(["tar", "-x", "-C", str(self.tmp)], input=arc.stdout, check=True)
+        return self.tmp / "scripts"
+
+    def __exit__(self, *exc):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+        return False
+
+
+def _rev_sha(rev: str) -> str:
+    cp = subprocess.run(["git", "-C", str(REPO), "rev-parse", "--verify", f"{rev}^{{commit}}"],
+                        capture_output=True, text=True)
+    return cp.stdout.strip() if cp.returncode == 0 else rev
+
+
+def _parse_revs(items) -> dict:
+    out = {}
+    for it in items or []:
+        g, _, rev = it.partition("=")
+        if g and rev:
+            out[g] = rev
     return out
 
 
@@ -566,7 +887,7 @@ def _now() -> str:
 LOW_FIDELITY = 0.5
 
 
-def gate_stats(cases: dict) -> dict:
+def gate_stats(cases: dict, revs: dict | None = None) -> dict:
     """Per gate, from the baseline cases: how far a replay can be trusted.
 
     `agree` counts cases whose replayed decision matches history. Fidelity is
@@ -576,8 +897,14 @@ def gate_stats(cases: dict) -> dict:
     sentinel replays its historical allows as denies (chat-context). Either
     side under 50% marks the gate LOW-FIDELITY, and a before/after claim on it
     is flagged wherever it is printed.
+
+    When a gate's cases carry `p` (the decision of the gate revision that
+    produced history, see FIDELITY REVISION), fidelity is measured from `p`,
+    because the gate in this checkout may block less on purpose, and
+    `before_after` counts blocks at that revision against blocks now.
     """
     out = {}
+    with_p = {c["g"] for c in cases.values() if "p" in c}
     for c in cases.values():
         g = out.setdefault(c["g"], {"cases": 0, "historical_deny": 0, "replay_deny": 0, "agree": 0,
                                     "hist_deny_reproduced": 0, "hist_allow_reproduced": 0,
@@ -585,12 +912,17 @@ def gate_stats(cases: dict) -> dict:
                                     "labelled_denies": 0})
         hd = c["h"] == "deny"
         rd = c["d"] in BLOCKING
+        fd = (c.get("p") in BLOCKING) if c["g"] in with_p else rd
         g["cases"] += 1
         g["historical_deny"] += hd
         g["replay_deny"] += rd
         g["agree"] += (hd == rd)
-        g["hist_deny_reproduced"] += hd and rd
-        g["hist_allow_reproduced"] += (not hd) and (not rd)
+        g["hist_deny_reproduced"] += hd and fd
+        g["hist_allow_reproduced"] += (not hd) and (not fd)
+        if c["g"] in with_p:
+            ba = g.setdefault("before_after", {"rev": (revs or {}).get(c["g"], ""), "before": 0, "after": 0})
+            ba["before"] += fd
+            ba["after"] += rd
         if c["l"] in ("TP", "FP"):
             g[c["l"]] += 1
             if hd:
@@ -612,36 +944,68 @@ def fidelity_label(g: dict) -> str:
         return "no baseline stats"
     txt = (f"agree {g['agree']}/{g['cases']}, deny {g['replay_deny']}/{g['historical_deny']} "
            f"(historical denies reproduced {g['hist_deny_reproduced']}/{g['historical_deny']})")
+    ba = g.get("before_after")
+    if ba:
+        txt += f", measured at {str(ba.get('rev') or '?')[:7]}"
     return txt + (" LOW-FIDELITY" if g.get("low_fidelity") else "")
 
 
-def write_baseline(cdir: Path, jobs: int) -> int:
-    rows = _index(cdir)
+def write_baseline(cdir: Path, jobs: int, revs: dict | None = None, gate: str = "") -> int:
+    """Replay and write the baseline. `revs` maps a gate to the git revision
+    that produced its history (stored as `p` per case). With `gate`, only that
+    gate is replayed and merged into the existing baseline."""
+    rows = [r for r in _index(cdir) if not gate or r["gate"] == gate]
     labels = _labels(cdir)
+    prior = load_baseline() if gate else {}
+    revs = dict(prior.get("fidelity_revs") or {}, **(revs or {}))
     t0 = time.monotonic()
-    res = replay_all(cdir, jobs)
+    sstats = {}
+    res = replay_all(cdir, jobs, gate, session_stats=sstats)
+    pres = {}
+    for g, rev in sorted(revs.items()):
+        if gate and g != gate:
+            continue
+        sha = _rev_sha(rev)
+        revs[g] = sha
+        pstats = {}
+        with scripts_at(sha) as sdir:
+            pres.update(replay_all(cdir, jobs, g, scripts=sdir, session_stats=pstats))
+        if g in sstats and g in pstats:
+            sstats[g]["rev_replay_deny"] = pstats[g]["replay_deny"]
+            sstats[g]["rev_hist_deny_reproduced"] = pstats[g]["hist_deny_reproduced"]
     secs = round(time.monotonic() - t0, 1)
-    cases = {}
+    cases = dict(prior.get("cases") or {})
     for r in rows:
         x = res.get(r["id"]) or {"d": "missing", "c": ""}
+        # A one-gate merge keeps the reviewed labels already in the baseline;
+        # relabelling is `label`'s job.
+        lab = ((prior.get("cases") or {}).get(r["id"]) or {}).get("l") or labels.get(r["id"], "-")
         cases[r["id"]] = {"g": r["gate"], "e": r["event"], "h": r["hist"], "d": x["d"], "c": x["c"],
-                          "l": labels.get(r["id"], "-")}
-    gates = gate_stats(cases)
+                          "l": lab}
+        if r["gate"] in revs and r["id"] in pres:
+            cases[r["id"]]["p"] = pres[r["id"]]["d"]
+    gates = gate_stats(cases, revs)
     meta = {}
     try:
         meta = json.loads((cdir / "meta.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         pass
+    stateful = dict(prior.get("stateful_sessions") or {}, **sstats)
     doc = {
         "_comment": "v10 Replay_Harness baseline. Counts and per-case ids only: the corpus it was "
                     "replayed from is private (company/friction-corpus/). Case fields: g gate, e event, "
-                    "h historical decision, d replayed decision, c reason code, l label (TP, FP, - unlabelled). "
+                    "h historical decision, d replayed decision, c reason code, l label (TP, FP, - unlabelled), "
+                    "p decision of the gate revision in fidelity_revs (fidelity is measured from it). "
+                    "Stateful Stop gates are replayed session by session (stateful_sessions: counts over "
+                    "every in-window Stop of those sessions). "
                     "Regenerate with `python3 scripts/replay_harness.py baseline` after an intended change.",
         "version": 1,
         "generated": _now(),
         "window": {"since": meta.get("since"), "until": meta.get("until")},
-        "corpus_cases": len(rows),
+        "corpus_cases": len(_index(cdir)),
         "replay_seconds": secs,
+        "fidelity_revs": dict(sorted(revs.items())),
+        "stateful_sessions": dict(sorted(stateful.items())),
         "gates": gates,
         "cases": dict(sorted(cases.items())),
     }
@@ -700,11 +1064,11 @@ def cmd_replay(args) -> int:
         print("SKIP: no baseline at registry/friction-baseline.json; run `replay_harness.py baseline`.")
         return 0
     t0 = time.monotonic()
-    res = replay_all(cdir, args.jobs, args.gate)
+    res = replay_all(cdir, args.jobs, args.gate, stateful=not getattr(args, "isolated", False))
     secs = round(time.monotonic() - t0, 1)
     missing = sorted(set(base["cases"]) - set(res)) if not args.gate else []
     diff = compare(base, res)
-    stats = gate_stats(base["cases"])
+    stats = gate_stats(base["cases"], base.get("fidelity_revs"))
     if args.json:
         print(json.dumps({"cases": len(res), "seconds": secs, **diff,
                           "low_fidelity": [g for g, v in stats.items() if v["low_fidelity"]],
@@ -766,7 +1130,7 @@ def cmd_baseline(args) -> int:
     if not (cdir / "index.jsonl").exists():
         print(f"SKIP: private replay corpus not found at {cdir}.")
         return 0
-    return write_baseline(cdir, args.jobs)
+    return write_baseline(cdir, args.jobs, _parse_revs(args.fidelity_rev), args.gate)
 
 
 def cmd_label(args) -> int:
@@ -780,7 +1144,7 @@ def cmd_label(args) -> int:
         labels = _labels(cdir)
         for cid, c in base["cases"].items():
             c["l"] = labels.get(cid, "-")
-        base["gates"] = gate_stats(base["cases"])
+        base["gates"] = gate_stats(base["cases"], base.get("fidelity_revs"))
         BASELINE.write_text(json.dumps(base, indent=1) + "\n", encoding="utf-8")
     return 0
 
@@ -798,13 +1162,22 @@ def main(argv=None) -> int:
     b.add_argument("--seed", type=int, default=7)
     b.add_argument("--fresh", action="store_true", help="delete the corpus dir first")
     b.add_argument("--no-baseline", action="store_true")
+    b.add_argument("--fidelity-rev", action="append", default=[], metavar="GATE=REV",
+                   help="measure GATE's fidelity with scripts/ at git REV (the version that produced history)")
     r = sub.add_parser("replay", help="replay against the baseline; exit 1 on a lost TP")
     r.add_argument("--gate", default="", help="only this gate script")
     r.add_argument("--baseline", default="")
     r.add_argument("--json", action="store_true")
+    r.add_argument("--isolated", action="store_true",
+                   help="replay stateful Stop gates case by case too (the pre-session mode)")
     r.add_argument("--allow-unlabelled-loss", action="store_true",
                    help="accept unlabelled historical denies that now allow (an intended loosening)")
-    sub.add_parser("baseline", help="replay and rewrite registry/friction-baseline.json")
+    bl = sub.add_parser("baseline", help="replay and rewrite registry/friction-baseline.json")
+    bl.add_argument("--gate", default="", help="only this gate, merged into the existing baseline")
+    bl.add_argument("--fidelity-rev", action="append", default=[], metavar="GATE=REV",
+                    help="measure GATE's fidelity with scripts/ at git REV (the version that produced history)")
+    se = sub.add_parser("sessions", help="capture the sessions of stateful Stop gates into the corpus")
+    se.add_argument("--root", default="", help="projects dir (default ~/.claude/projects)")
     sub.add_parser("label", help="re-apply the private label rules")
     a = ap.parse_args(argv)
     if a.cmd == "build":
@@ -813,6 +1186,8 @@ def main(argv=None) -> int:
         return cmd_replay(a)
     if a.cmd == "baseline":
         return cmd_baseline(a)
+    if a.cmd == "sessions":
+        return cmd_sessions(a)
     if a.cmd == "label":
         return cmd_label(a)
     ap.print_help()
