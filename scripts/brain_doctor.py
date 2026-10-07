@@ -2729,6 +2729,154 @@ def check_skill_manifests(fix: bool) -> Result:
     return Result(key, status, data.get("detail", ""), data.get("fix", ""))
 
 
+# --- claude-md-budget (spec v10, AC-17) --------------------------------------
+# The constitution loads into every session, so its size and its language are
+# pinned here and not by memory of the PR that cut it.
+#
+# Estimator: characters / 4, floored, over the whole file read as UTF-8. It is
+# the estimator this check commits to, because the doctor runs on a bare
+# interpreter and tiktoken is not a dependency it can rely on. Its relation to
+# the cl100k_base count (tiktoken, measured via `uvx --with tiktoken` on
+# 2026-10-07): master a741eff reads 11,881 here against 11,920 cl100k (39 low,
+# 0.3%); master before #392 (b2c8b9a) reads 24,154 here against 24,000 cl100k
+# (154 high, 0.6%). So at master's text mix a file at the 12,000 ceiling here is
+# about 12,040 cl100k tokens; the ceiling is stated in this estimator's units.
+#
+# chars/4 is NOT an upper bound on cl100k. QA on PR #395 measured it under by 12%
+# on Spanish prose, 15% on YAML and 3.6x on glyph runs, so a file can pass here
+# and exceed 12,000 cl100k. Two cheap upper bounds were tried on 7 mixes (master,
+# pre-#392, Spanish prose, brain_doctor.py, CAPABILITIES.md, rules.yaml, a glyph
+# string): ceil(ASCII chars/k) + non-ASCII UTF-8 bytes bounds all 7 only at
+# k <= 3.5, where master reads 14,036; a pre-tokenizer split at ceil(len/8) per
+# piece bounds all 7 (worst ratio 1.013) with master at 12,884. Master is 11,920
+# cl100k, 80 under the ceiling, so any bound looser than 0.67% on it fails master.
+# An exact count needs tiktoken in the doctor, or more headroom in CLAUDE.md.
+CLAUDE_MD_TOKEN_CEILING = 12000
+
+# Spanish function words that English prose does not use. Ambiguous ones
+# ("a", "no", "me", "he", "e", "o", "son" excluded on purpose) stay out.
+_ES_STOPWORDS = frozenset("""
+de la que el en los del se las por un para con una su al lo como más pero sus le
+ya este porque esta entre cuando muy sin sobre también hasta hay donde quien desde
+todo nos durante todos uno les ni contra otros ese eso ante ellos esto antes
+algunos qué unos yo otro otras otra él tanto esa estos mucho quienes nada muchos
+cual poco ella estar estas algunas algo nosotros mi mis tú te ti tu tus es fue
+era y cada siempre nunca solo sólo puede hacer tiene así
+""".split())
+# Measured on 2026-10-07 with the data spans below removed, heading included:
+# every section of master a741eff reads at most 0.010; the three Spanish
+# sections of b2c8b9a read 0.412, 0.448 and 0.452. QA on PR #395 measured
+# Portuguese prose at 0.19, Catalan at 0.22 and Spanish prose at 0.41 to 0.48,
+# and an English section quoting three Spanish operator phrases WITHOUT quote
+# marks at 0.134, close under a gate that blocks the push.
+#
+# AUTHORS: put every Spanish phrase you quote in backticks, double quotes or
+# parentheses. Those spans are data and are not counted; bare Spanish words in
+# English prose are, and a few of them push a short section toward 0.15.
+_ES_RATIO_MAX = 0.15
+_ES_MIN_WORDS = 30
+# Quoted data is not prose: trigger phrases a gate matches on (`pásame el
+# mensaje`), the Spanish filler blocklists of Human Cadence (in parentheses) and
+# quoted operator words. Code fences, inline code, double quotes and
+# parentheses are removed before counting.
+_ES_DATA_SPANS = (
+    re.compile(r"```.*?```", re.S),
+    re.compile(r"`[^`\n]*`"),
+    re.compile(r'"[^"\n]*"'),
+    re.compile(r"“[^”\n]*”"),
+    re.compile(r"\([^)\n]*\)"),
+)
+_WORD_RE = re.compile(r"[a-záéíóúñü]+")
+
+
+def estimate_tokens(text: str) -> int:
+    return len(text) // 4
+
+
+def _md_sections(text: str) -> list:
+    """(heading, body) per `##`/`###` section; text before the first is '(preamble)'."""
+    out, head, buf, fence = [], "(preamble)", [], False
+    for ln in text.splitlines():
+        if ln.lstrip().startswith("```"):
+            fence = not fence
+        if not fence and re.match(r"#{2,3} ", ln):
+            out.append((head, "\n".join(buf)))
+            head, buf = ln.strip(), []
+        else:
+            buf.append(ln)
+    out.append((head, "\n".join(buf)))
+    return out
+
+
+def spanish_sections(text: str) -> list:
+    """[(heading, ratio, words)] for every section whose prose reads as Spanish."""
+    hits = []
+    for head, body in _md_sections(text):
+        prose = head.lstrip("# ") + "\n" + body
+        for rx in _ES_DATA_SPANS:
+            prose = rx.sub(" ", prose)
+        words = _WORD_RE.findall(prose.lower())
+        if len(words) < _ES_MIN_WORDS:
+            continue
+        ratio = sum(1 for w in words if w in _ES_STOPWORDS) / len(words)
+        if ratio > _ES_RATIO_MAX:
+            hits.append((head, round(ratio, 3), len(words)))
+    return hits
+
+
+def check_claude_md_budget(fix: bool, path: Path | None = None) -> Result:
+    """AC-17: CLAUDE.md loads at most 12,000 tokens (chars/4) and has no section
+    written in a language other than English (Spanish stopword ratio per section)."""
+    key = "claude-md-budget"
+    p = path or CLAUDE_MD
+    try:
+        text = p.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        return Result(key, FAIL, f"{p.name} unreadable: {e}", "restore CLAUDE.md")
+    tokens = estimate_tokens(text)
+    spanish = spanish_sections(text)
+    problems = []
+    if tokens > CLAUDE_MD_TOKEN_CEILING:
+        problems.append(f"{tokens:,} tokens (chars/4) over the {CLAUDE_MD_TOKEN_CEILING:,} ceiling")
+    if spanish:
+        problems.append(f"{len(spanish)} non-English section(s): "
+                        + "; ".join(f"'{h[:50]}' ({r:.2f})" for h, r, _ in spanish[:4]))
+    if problems:
+        return Result(key, FAIL, "; ".join(problems),
+                      "move mechanism narrative into docs/architecture/ and translate the "
+                      "section; a Spanish phrase kept as data goes in backticks or quotes "
+                      "(spec v10 AC-17)")
+    return Result(key, PASS,
+                  f"{tokens:,} tokens (chars/4, ceiling {CLAUDE_MD_TOKEN_CEILING:,}); "
+                  "every section reads as English")
+
+
+def selftest_claude_md_budget(fixtures: Path) -> int:
+    """Fixture proof for META.constitution-budget, run by gate-liveness: every
+    `violation_*.md` must FAIL the check and every `benign_*.md` must PASS. Each
+    benign file is its violation twin with one edit, so a check that fails
+    everything is caught as surely as one that passes everything."""
+    viol = sorted(fixtures.glob("violation_*.md"))
+    ben = sorted(fixtures.glob("benign_*.md"))
+    if not viol or not ben:
+        print(f"selftest: no violation_*/benign_* fixtures in {fixtures}")
+        return 1
+    bad = []
+    for f in viol:
+        r = check_claude_md_budget(False, path=f)
+        if r.status != FAIL:
+            bad.append(f"{f.name} should FAIL, got {r.status}: {r.message}")
+    for f in ben:
+        r = check_claude_md_budget(False, path=f)
+        if r.status != PASS:
+            bad.append(f"{f.name} should PASS, got {r.status}: {r.message}")
+    for b in bad:
+        print(f"selftest: {b}")
+    print(f"selftest claude-md-budget: {len(viol)} violation(s) fail, {len(ben)} benign pass"
+          if not bad else f"selftest claude-md-budget: {len(bad)} wrong verdict(s)")
+    return 1 if bad else 0
+
+
 CHECKS = [
     ("repo-identity", check_repo_identity),
     ("rule-1-registry", check_registry),
@@ -2766,6 +2914,7 @@ CHECKS = [
     ("packages-verified", check_packages_verified),
     ("skill-manifests", check_skill_manifests),
     ("spec-contract", check_spec_contract),
+    ("claude-md-budget", check_claude_md_budget),
 ]
 
 # The --fast profile (v10, AC-15) skips the checks that EXECUTE other programs
@@ -2836,7 +2985,7 @@ def main() -> int:
     ap.add_argument("--fix", action="store_true", help="perform idempotent repairs (opt-in)")
     ap.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     ap.add_argument("--registry", action="store_true",
-                    help="run ONLY the RULE #1 registry checks (for .githooks/pre-push)")
+                    help="run ONLY the RULE #1 registry checks and claude-md-budget (for .githooks/pre-push)")
     ap.add_argument("--gate-receipt", action="store_true",
                     help="run ONLY gate-liveness and write the v7 gate receipt "
                          "(pre-push, and ai-pull after --fast when no receipt covers the current gate tree)")
@@ -2844,7 +2993,12 @@ def main() -> int:
                     help="skip the checks that run gate selftests or call the network "
                          "(see SLOW_CHECKS); used by quickstart and ai-pull, never by pre-push; "
                          "ai-pull follows it with --gate-receipt when the gate tree has no receipt")
+    ap.add_argument("--selftest", metavar="DIR",
+                    help="run ONLY the claude-md-budget fixture proof over DIR "
+                         "(violation_*.md must fail, benign_*.md must pass); used by gate-liveness")
     args = ap.parse_args()
+    if args.selftest:
+        return selftest_claude_md_budget(Path(args.selftest))
     if args.fast and (args.gate_receipt or args.registry):
         ap.error("--fast is a profile of the full run; it does not combine with --registry or --gate-receipt")
 
@@ -2855,7 +3009,8 @@ def main() -> int:
             results = [Result("gate-liveness", FAIL, f"gate-liveness crashed: {e}", "report this bug")]
     elif args.registry:
         try:
-            results = check_registry(args.fix) + check_naming(args.fix) + check_orphan_hooks(args.fix)
+            results = (check_registry(args.fix) + check_naming(args.fix) + check_orphan_hooks(args.fix)
+                       + [check_claude_md_budget(args.fix)])
         except Exception as e:
             results = [Result("rule-1-registry", FAIL, f"registry check crashed: {e}",
                               "fix registry/rules.yaml so it loads and validates")]

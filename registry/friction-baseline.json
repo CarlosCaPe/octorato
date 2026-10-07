@@ -1,13 +1,27 @@
 {
- "_comment": "v10 Replay_Harness baseline. Counts and per-case ids only: the corpus it was replayed from is private (company/friction-corpus/). Case fields: g gate, e event, h historical decision, d replayed decision, c reason code, l label (TP, FP, - unlabelled). Regenerate with `python3 scripts/replay_harness.py baseline` after an intended change.",
+ "_comment": "v10 Replay_Harness baseline. Counts and per-case ids only: the corpus it was replayed from is private (company/friction-corpus/). Case fields: g gate, e event, h historical decision, d replayed decision, c reason code, l label (TP, FP, - unlabelled), p decision of the gate revision in fidelity_revs (fidelity is measured from it). Stateful Stop gates are replayed session by session (stateful_sessions: counts over every in-window Stop of those sessions). Regenerate with `python3 scripts/replay_harness.py baseline` after an intended change.",
  "version": 1,
- "generated": "2026-10-06T19:44:01Z",
+ "generated": "2026-10-07T13:26:00Z",
  "window": {
   "since": "2026-09-06",
   "until": "2026-10-07"
  },
  "corpus_cases": 1654,
- "replay_seconds": 140.0,
+ "replay_seconds": 224.3,
+ "fidelity_revs": {
+  "g__stop__goal-anchor.py": "d5d609e3441d2c3e488f1d4fb0429648af2b6d2e"
+ },
+ "stateful_sessions": {
+  "g__stop__goal-anchor.py": {
+   "sessions": 24,
+   "stops": 2277,
+   "historical_deny": 111,
+   "replay_deny": 70,
+   "hist_deny_reproduced": 16,
+   "rev_replay_deny": 165,
+   "rev_hist_deny_reproduced": 41
+  }
+ },
  "gates": {
   "cadence-stop-hook.py": {
    "cases": 51,
@@ -300,10 +314,10 @@
   "g__stop__goal-anchor.py": {
    "cases": 143,
    "historical_deny": 103,
-   "replay_deny": 9,
-   "agree": 49,
-   "hist_deny_reproduced": 9,
-   "hist_allow_reproduced": 40,
+   "replay_deny": 16,
+   "agree": 54,
+   "hist_deny_reproduced": 38,
+   "hist_allow_reproduced": 38,
    "TP": 0,
    "FP": 103,
    "TP_FP_of_denies": [
@@ -311,8 +325,13 @@
     103
    ],
    "labelled_denies": 103,
-   "deny_fidelity": 0.087,
-   "allow_fidelity": 1.0,
+   "before_after": {
+    "rev": "d5d609e3441d2c3e488f1d4fb0429648af2b6d2e",
+    "before": 40,
+    "after": 16
+   },
+   "deny_fidelity": 0.369,
+   "allow_fidelity": 0.95,
    "low_fidelity": true
   },
   "g__stop__paste-ready-raw.py": {
@@ -677,7 +696,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "deny"
   },
   "05acd3c4ce85c26c": {
    "g": "grafo-gate.py",
@@ -861,7 +881,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "deny"
   },
   "09a00722225c38a0": {
    "g": "g__stop__goal-anchor.py",
@@ -869,7 +890,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "09bd94f0e043712a": {
    "g": "g__stop__goal-anchor.py",
@@ -877,7 +899,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "09d63117015ea766": {
    "g": "g__stop__draft-promise.py",
@@ -909,7 +932,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "deny"
   },
   "0ae5b998ac846774": {
    "g": "d__stop__wa-guardia.py",
@@ -949,7 +973,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "0b815c88f71761b4": {
    "g": "g__stop__goal-anchor.py",
@@ -957,7 +982,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "0b9010ffb97196f8": {
    "g": "grafo-ledger-check.py",
@@ -1309,7 +1335,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "12e1f8e8dcd6831a": {
    "g": "g__stop__draft-promise.py",
@@ -1373,7 +1400,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "152a58568e9a602c": {
    "g": "cadence-stop-hook.py",
@@ -1389,7 +1417,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "152fedb22d6e72be": {
    "g": "cadence-stop-hook.py",
@@ -1411,9 +1440,10 @@
    "g": "g__stop__goal-anchor.py",
    "e": "Stop",
    "h": "deny",
-   "d": "allow",
-   "c": "",
-   "l": "FP"
+   "d": "deny",
+   "c": "root-goal-unnamed",
+   "l": "FP",
+   "p": "allow"
   },
   "15abf90a7b1ee580": {
    "g": "d__stop__wa-guardia.py",
@@ -1501,7 +1531,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "16ec84da90214add": {
    "g": "g__pretool-bash__git-discipline.py",
@@ -1525,7 +1556,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "17b9fdc371700bc4": {
    "g": "qa-merge-gate.py",
@@ -1629,7 +1661,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "19b2b13d799aa87d": {
    "g": "g__stop__draft-promise.py",
@@ -1805,7 +1838,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "1c50416957b12f42": {
    "g": "delegate-gate.py",
@@ -1861,7 +1895,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "deny"
   },
   "1d28d9c578ed8724": {
    "g": "g__pretool__arming-surface.py",
@@ -1907,9 +1942,10 @@
    "g": "g__stop__goal-anchor.py",
    "e": "Stop",
    "h": "deny",
-   "d": "allow",
-   "c": "",
-   "l": "FP"
+   "d": "deny",
+   "c": "root-goal-unnamed",
+   "l": "FP",
+   "p": "deny"
   },
   "1e4d50cbc2943cd8": {
    "g": "g__pretool__arming-surface.py",
@@ -1973,7 +2009,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "1f90e699a09f6d1a": {
    "g": "grafo-ledger-check.py",
@@ -2117,7 +2154,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "21e0732fda835520": {
    "g": "g__stop__unsourced-attribute.py",
@@ -2309,7 +2347,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "deny"
   },
   "25c1815353580556": {
    "g": "qa-merge-gate.py",
@@ -2339,9 +2378,10 @@
    "g": "g__stop__goal-anchor.py",
    "e": "Stop",
    "h": "deny",
-   "d": "allow",
-   "c": "",
-   "l": "FP"
+   "d": "deny",
+   "c": "root-goal-unnamed",
+   "l": "FP",
+   "p": "deny"
   },
   "2606804916993303": {
    "g": "claim-verify-stop.py",
@@ -2411,9 +2451,10 @@
    "g": "g__stop__goal-anchor.py",
    "e": "Stop",
    "h": "deny",
-   "d": "allow",
-   "c": "",
-   "l": "FP"
+   "d": "deny",
+   "c": "root-goal-unnamed",
+   "l": "FP",
+   "p": "allow"
   },
   "273df224e5b902ac": {
    "g": "g__pretool-mcp__outward-send.py",
@@ -2493,7 +2534,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "deny"
   },
   "2881865bed8d32f2": {
    "g": "g__stop__delegation-audit.py",
@@ -2525,7 +2567,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "2941c1e4e5cb2474": {
    "g": "cadence-stop-hook.py",
@@ -2589,7 +2632,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "deny"
   },
   "2a2a708c64abb27d": {
    "g": "config-ship-verify.py",
@@ -2613,7 +2657,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "2a3f4e22b645e02e": {
    "g": "g__stop__delegation-audit.py",
@@ -2645,7 +2690,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "2a9214fc967eeddf": {
    "g": "cadence-stop-hook.py",
@@ -2669,7 +2715,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "2b405656f60f0a26": {
    "g": "g__stop__draft-promise.py",
@@ -2733,7 +2780,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "deny"
   },
   "2d03b1819e9748bc": {
    "g": "g__pretool-bash__git-discipline.py",
@@ -2749,7 +2797,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "deny"
   },
   "2d646b0811037814": {
    "g": "g__pretool-mcp__outward-send.py",
@@ -2843,9 +2892,10 @@
    "g": "g__stop__goal-anchor.py",
    "e": "Stop",
    "h": "deny",
-   "d": "deny",
-   "c": "root-goal-unnamed",
-   "l": "FP"
+   "d": "allow",
+   "c": "",
+   "l": "FP",
+   "p": "deny"
   },
   "2f5aac7721392821": {
    "g": "g__pretool-mcp__outward-send.py",
@@ -2869,7 +2919,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "2fc862dfeabfd151": {
    "g": "g__pretool-mcp__chat-context.py",
@@ -3197,7 +3248,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "360dc30b261a4d82": {
    "g": "secrets-grep-guard.py",
@@ -3315,9 +3367,10 @@
    "g": "g__stop__goal-anchor.py",
    "e": "Stop",
    "h": "deny",
-   "d": "deny",
-   "c": "root-goal-unnamed",
-   "l": "FP"
+   "d": "allow",
+   "c": "",
+   "l": "FP",
+   "p": "deny"
   },
   "38b4c84d63702d3d": {
    "g": "g__stop__goal-anchor.py",
@@ -3325,7 +3378,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "38da99b7c6561667": {
    "g": "claim-verify-stop.py",
@@ -3493,7 +3547,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "deny"
   },
   "3bbecc2e065c74aa": {
    "g": "g__stop__goal-anchor.py",
@@ -3501,7 +3556,8 @@
    "h": "deny",
    "d": "deny",
    "c": "root-goal-unnamed",
-   "l": "FP"
+   "l": "FP",
+   "p": "deny"
   },
   "3bdf7986a167c40c": {
    "g": "g__stop__unsourced-attribute.py",
@@ -3645,7 +3701,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "3f4953003c6b636b": {
    "g": "g__stop__goal-anchor.py",
@@ -3653,7 +3710,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "3f53cbeb6edfa62a": {
    "g": "source-attribution-check.py",
@@ -3749,7 +3807,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "4018ffc13767a933": {
    "g": "g__stop__delegation-audit.py",
@@ -3763,9 +3822,10 @@
    "g": "g__stop__goal-anchor.py",
    "e": "Stop",
    "h": "deny",
-   "d": "deny",
-   "c": "root-goal-unnamed",
-   "l": "FP"
+   "d": "allow",
+   "c": "",
+   "l": "FP",
+   "p": "allow"
   },
   "40950a4abe03d66f": {
    "g": "g__stop__delegation-audit.py",
@@ -3851,9 +3911,10 @@
    "g": "g__stop__goal-anchor.py",
    "e": "Stop",
    "h": "deny",
-   "d": "allow",
-   "c": "",
-   "l": "FP"
+   "d": "deny",
+   "c": "root-goal-unnamed",
+   "l": "FP",
+   "p": "allow"
   },
   "431fd8d4a74ad65c": {
    "g": "qa-merge-gate.py",
@@ -3909,7 +3970,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "4496d9000e971c77": {
    "g": "grafo-gate.py",
@@ -4013,7 +4075,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "45b73a1ec9376229": {
    "g": "g__stop__delegation-audit.py",
@@ -4245,7 +4308,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "4a70ba7734c405da": {
    "g": "g__stop__unsourced-attribute.py",
@@ -4373,7 +4437,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "4d62ed5251136e0c": {
    "g": "g__pretool-write__tree-owner.py",
@@ -4477,7 +4542,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "deny"
   },
   "4f916e217eacfeac": {
    "g": "g__stop__defer-today.py",
@@ -4605,7 +4671,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "51d4e0b993bbaa71": {
    "g": "g__stop__delegation-audit.py",
@@ -4683,9 +4750,10 @@
    "g": "g__stop__goal-anchor.py",
    "e": "Stop",
    "h": "deny",
-   "d": "allow",
-   "c": "",
-   "l": "FP"
+   "d": "deny",
+   "c": "root-goal-unnamed",
+   "l": "FP",
+   "p": "allow"
   },
   "535896d775e54779": {
    "g": "qa-merge-gate.py",
@@ -4709,7 +4777,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "deny"
   },
   "537e9b6f13c4b657": {
    "g": "claim-verify-stop.py",
@@ -4765,7 +4834,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "548368fe1bc4e988": {
    "g": "claim-verify-stop.py",
@@ -4813,7 +4883,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "555b28fbfd961ef7": {
    "g": "grafo-gate.py",
@@ -4899,9 +4970,10 @@
    "g": "g__stop__goal-anchor.py",
    "e": "Stop",
    "h": "deny",
-   "d": "deny",
-   "c": "root-goal-unnamed",
-   "l": "FP"
+   "d": "allow",
+   "c": "",
+   "l": "FP",
+   "p": "deny"
   },
   "56e1f8f4e4d2c0d5": {
    "g": "g__pretool-bash__git-discipline.py",
@@ -5245,7 +5317,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "deny"
   },
   "5c60cba2fbcfaa14": {
    "g": "claim-verify-stop.py",
@@ -5261,7 +5334,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "5cc060ddbafb118d": {
    "g": "d__stop__wa-guardia.py",
@@ -5277,7 +5351,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "5ddebb129141dea7": {
    "g": "g__stop__goal-anchor.py",
@@ -5285,7 +5360,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "deny"
   },
   "5de513db2bc33273": {
    "g": "g__stop__goal-anchor.py",
@@ -5293,7 +5369,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "5e25de53f61abf6e": {
    "g": "g__stop__delegation-audit.py",
@@ -5355,9 +5432,10 @@
    "g": "g__stop__goal-anchor.py",
    "e": "Stop",
    "h": "allow",
-   "d": "allow",
-   "c": "",
-   "l": "-"
+   "d": "deny",
+   "c": "root-goal-unnamed",
+   "l": "-",
+   "p": "deny"
   },
   "5f1ecf372bd59965": {
    "g": "g__pretool-mcp__chat-context.py",
@@ -5531,9 +5609,10 @@
    "g": "g__stop__goal-anchor.py",
    "e": "Stop",
    "h": "deny",
-   "d": "deny",
-   "c": "root-goal-unnamed",
-   "l": "FP"
+   "d": "allow",
+   "c": "",
+   "l": "FP",
+   "p": "allow"
   },
   "626deb1b138750b1": {
    "g": "g__stop__delegation-audit.py",
@@ -5563,9 +5642,10 @@
    "g": "g__stop__goal-anchor.py",
    "e": "Stop",
    "h": "deny",
-   "d": "allow",
-   "c": "",
-   "l": "FP"
+   "d": "deny",
+   "c": "root-goal-unnamed",
+   "l": "FP",
+   "p": "deny"
   },
   "63662be228978231": {
    "g": "source-attribution-check.py",
@@ -5965,7 +6045,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "6b5523f6654d6bf7": {
    "g": "qa-merge-gate.py",
@@ -5989,7 +6070,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "6bea47605406cfa9": {
    "g": "g__pretool-mcp__outward-send.py",
@@ -6053,7 +6135,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "6d191edb3a54190b": {
    "g": "qa-merge-gate.py",
@@ -6101,7 +6184,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "6d6bac6a23c4bd7c": {
    "g": "g__pretool__arming-surface.py",
@@ -6181,7 +6265,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "6f28bdaee291f51c": {
    "g": "grafo-ledger-check.py",
@@ -6197,7 +6282,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "6f5fff55b2376abf": {
    "g": "cadence-stop-hook.py",
@@ -6323,9 +6409,10 @@
    "g": "g__stop__goal-anchor.py",
    "e": "Stop",
    "h": "deny",
-   "d": "deny",
-   "c": "root-goal-unnamed",
-   "l": "FP"
+   "d": "allow",
+   "c": "",
+   "l": "FP",
+   "p": "deny"
   },
   "72769c49b2beca2d": {
    "g": "g__stop__goal-anchor.py",
@@ -6333,7 +6420,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "728342d0bdb55cff": {
    "g": "g__pretool-write__tree-owner.py",
@@ -6509,7 +6597,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "7602cdde45ef89a4": {
    "g": "delegate-gate.py",
@@ -6837,7 +6926,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "7b1c7b59ec4812af": {
    "g": "delegate-gate.py",
@@ -7045,7 +7135,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "7f3c5b37b3554d5a": {
    "g": "g__stop__draft-promise.py",
@@ -7093,7 +7184,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "deny"
   },
   "8009a8d708403017": {
    "g": "g__stop__delegation-audit.py",
@@ -7141,7 +7233,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "80fd10a00e86e86f": {
    "g": "g__stop__draft-promise.py",
@@ -7301,7 +7394,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "83c1a6eb30cd39f7": {
    "g": "g__pretool-mcp__outward-send.py",
@@ -7389,7 +7483,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "85b218b04743ba6e": {
    "g": "g__stop__paste-ready-raw.py",
@@ -7405,7 +7500,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "8631b3f3c4ae85bf": {
    "g": "g__stop__paste-ready-raw.py",
@@ -7427,9 +7523,10 @@
    "g": "g__stop__goal-anchor.py",
    "e": "Stop",
    "h": "deny",
-   "d": "deny",
-   "c": "root-goal-unnamed",
-   "l": "FP"
+   "d": "allow",
+   "c": "",
+   "l": "FP",
+   "p": "allow"
   },
   "863ab7be674d22b2": {
    "g": "g__pretool-bash__tree-owner.py",
@@ -7445,7 +7542,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "86c7dcc1de9fa181": {
    "g": "g__stop__delegation-audit.py",
@@ -7629,7 +7727,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "deny"
   },
   "89b2ab4726df80eb": {
    "g": "cadence-stop-hook.py",
@@ -7741,7 +7840,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "8b46e6c17e881800": {
    "g": "no-pause-suggestion.py",
@@ -7813,15 +7913,17 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "8c696ee4cf67479b": {
    "g": "g__stop__goal-anchor.py",
    "e": "Stop",
    "h": "deny",
-   "d": "allow",
-   "c": "",
-   "l": "FP"
+   "d": "deny",
+   "c": "root-goal-unnamed",
+   "l": "FP",
+   "p": "deny"
   },
   "8c882a731378687d": {
    "g": "source-attribution-check.py",
@@ -8021,7 +8123,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "90308ff0f98e872e": {
    "g": "source-attribution-check.py",
@@ -8059,9 +8162,10 @@
    "g": "g__stop__goal-anchor.py",
    "e": "Stop",
    "h": "deny",
-   "d": "allow",
-   "c": "",
-   "l": "FP"
+   "d": "deny",
+   "c": "root-goal-unnamed",
+   "l": "FP",
+   "p": "allow"
   },
   "9080279be6f27ec9": {
    "g": "secrets-grep-guard.py",
@@ -8125,7 +8229,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "91fca9e608dcb3e0": {
    "g": "source-attribution-check.py",
@@ -8301,7 +8406,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "97805f1ae0343c10": {
    "g": "g__pretool__arming-surface.py",
@@ -8349,7 +8455,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "98f3bfe74eff3d12": {
    "g": "cadence-stop-hook.py",
@@ -8413,7 +8520,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "99a2ccacc6859c8a": {
    "g": "g__stop__delegation-audit.py",
@@ -8517,7 +8625,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "9b172d2e37dabe91": {
    "g": "config-ship-verify.py",
@@ -8685,7 +8794,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "deny"
   },
   "9e2525904d4f635a": {
    "g": "d__stop__wa-guardia.py",
@@ -8709,7 +8819,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "9e9c7c501e1c809f": {
    "g": "g__pretool-bash__git-discipline.py",
@@ -9005,7 +9116,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "a452b9a450e85ab5": {
    "g": "g__stop__unsourced-absence.py",
@@ -9085,7 +9197,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "deny"
   },
   "a5ec201ed87d6668": {
    "g": "config-ship-verify.py",
@@ -9237,7 +9350,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "deny"
   },
   "a8aa4c52542671ca": {
    "g": "secrets-grep-guard.py",
@@ -9253,7 +9367,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "deny"
   },
   "a8cf0292304cb4fb": {
    "g": "config-ship-verify.py",
@@ -9485,7 +9600,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "deny"
   },
   "aec75d6a89607c43": {
    "g": "g__pretool-mcp__outward-send.py",
@@ -9547,9 +9663,10 @@
    "g": "g__stop__goal-anchor.py",
    "e": "Stop",
    "h": "deny",
-   "d": "deny",
-   "c": "root-goal-unnamed",
-   "l": "FP"
+   "d": "allow",
+   "c": "",
+   "l": "FP",
+   "p": "allow"
   },
   "afdf911298360a0d": {
    "g": "g__pretool-bash__git-discipline.py",
@@ -9795,9 +9912,10 @@
    "g": "g__stop__goal-anchor.py",
    "e": "Stop",
    "h": "deny",
-   "d": "allow",
-   "c": "",
-   "l": "FP"
+   "d": "deny",
+   "c": "root-goal-unnamed",
+   "l": "FP",
+   "p": "allow"
   },
   "b5157d647e0d4fde": {
    "g": "g__stop__goal-anchor.py",
@@ -9805,7 +9923,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "b51f0db23477cdc9": {
    "g": "dimension-awareness-hook.py",
@@ -9869,7 +9988,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "b60246f0b56aeb89": {
    "g": "g__pretool-bash__git-discipline.py",
@@ -9899,9 +10019,10 @@
    "g": "g__stop__goal-anchor.py",
    "e": "Stop",
    "h": "deny",
-   "d": "allow",
-   "c": "",
-   "l": "FP"
+   "d": "deny",
+   "c": "root-goal-unnamed",
+   "l": "FP",
+   "p": "deny"
   },
   "b689a194068a1744": {
    "g": "secrets-grep-guard.py",
@@ -10069,7 +10190,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "ba2f04080dc68a4d": {
    "g": "delegate-gate.py",
@@ -10125,7 +10247,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "bae57ed6ae9dda40": {
    "g": "delegate-gate.py",
@@ -10173,7 +10296,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "bbbe59e85e81813d": {
    "g": "qa-merge-gate.py",
@@ -10205,7 +10329,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "bd27815e799fda97": {
    "g": "secrets-grep-guard.py",
@@ -10333,7 +10458,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "bf51c4aa77821bd4": {
    "g": "g__stop__unsourced-absence.py",
@@ -10365,7 +10491,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "bff757d77cd8b66c": {
    "g": "d__stop__wa-guardia.py",
@@ -10469,7 +10596,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "c2a3aa7fbfcc7734": {
    "g": "dimension-awareness-hook.py",
@@ -10501,7 +10629,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "c38336a39e3b1d5a": {
    "g": "delegate-gate.py",
@@ -10533,7 +10662,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "c3c40485c5d77763": {
    "g": "g__pretool-bash__git-discipline.py",
@@ -10629,7 +10759,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "deny"
   },
   "c52580ae9e228e32": {
    "g": "g__pretool-mcp__outward-send.py",
@@ -10669,7 +10800,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "c5adf7b0e5df8242": {
    "g": "g__stop__unsourced-attribute.py",
@@ -10693,7 +10825,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "c697a39d91886414": {
    "g": "claim-verify-stop.py",
@@ -10797,7 +10930,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "c7a2230d634d779f": {
    "g": "g__stop__delegation-audit.py",
@@ -10933,7 +11067,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "ca7424f2825d46d3": {
    "g": "g__stop__draft-promise.py",
@@ -11093,7 +11228,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "ccb22f9a2287e9cb": {
    "g": "g__stop__goal-anchor.py",
@@ -11101,7 +11237,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "deny"
   },
   "ccd1d895d741cfa8": {
    "g": "g__stop__draft-promise.py",
@@ -11133,7 +11270,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "deny"
   },
   "cd6cf6df61f4fffc": {
    "g": "dimension-awareness-hook.py",
@@ -11309,7 +11447,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "deny"
   },
   "cf69d562aa251c0f": {
    "g": "no-pause-suggestion.py",
@@ -11333,7 +11472,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "cf992350cb387097": {
    "g": "g__pretool__kernel.py",
@@ -11549,7 +11689,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "d5b15833da51a81a": {
    "g": "secrets-grep-guard.py",
@@ -11661,7 +11802,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "d7e397665b88d7f8": {
    "g": "g__pretool-mcp__outward-send.py",
@@ -11717,7 +11859,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "deny"
   },
   "d90aba328fa07037": {
    "g": "config-ship-verify.py",
@@ -11789,7 +11932,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "da12d07d02924e03": {
    "g": "cadence-stop-hook.py",
@@ -11997,7 +12141,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "dde26407718e4039": {
    "g": "g__pretool-bash__tree-owner.py",
@@ -12019,9 +12164,10 @@
    "g": "g__stop__goal-anchor.py",
    "e": "Stop",
    "h": "deny",
-   "d": "allow",
-   "c": "",
-   "l": "FP"
+   "d": "deny",
+   "c": "root-goal-unnamed",
+   "l": "FP",
+   "p": "deny"
   },
   "de081c6fd21297ca": {
    "g": "source-attribution-check.py",
@@ -12181,7 +12327,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "e13cc13c85bb5e21": {
    "g": "grafo-gate.py",
@@ -12229,15 +12376,17 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "e1b79e9778ef64b3": {
    "g": "g__stop__goal-anchor.py",
    "e": "Stop",
    "h": "deny",
-   "d": "allow",
-   "c": "",
-   "l": "FP"
+   "d": "deny",
+   "c": "root-goal-unnamed",
+   "l": "FP",
+   "p": "allow"
   },
   "e1bc7956f49de540": {
    "g": "g__stop__delegation-audit.py",
@@ -12341,7 +12490,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "e3d3e30e74f10dde": {
    "g": "g__pretool-write__tree-owner.py",
@@ -12405,7 +12555,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "e4e36120cd3a1a27": {
    "g": "grafo-ledger-check.py",
@@ -12453,7 +12604,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "e59cb0844ce2e409": {
    "g": "delegate-gate.py",
@@ -12557,7 +12709,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "e7f160e6d32f9d49": {
    "g": "config-ship-verify.py",
@@ -12877,7 +13030,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "ee08cf345212f5c5": {
    "g": "secrets-grep-guard.py",
@@ -12941,7 +13095,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "ef106b9ad691a814": {
    "g": "g__pretool-bash__tree-owner.py",
@@ -12989,7 +13144,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "deny"
   },
   "f0ca76060393c57d": {
    "g": "qa-merge-gate.py",
@@ -13149,7 +13305,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "f3b76538c94cad3b": {
    "g": "g__pretool-bash__tree-owner.py",
@@ -13197,7 +13354,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "f4c689accd9fc653": {
    "g": "g__stop__defer-today.py",
@@ -13485,7 +13643,8 @@
    "h": "allow",
    "d": "allow",
    "c": "",
-   "l": "-"
+   "l": "-",
+   "p": "allow"
   },
   "fb944f85d75f7f15": {
    "g": "g__stop__goal-anchor.py",
@@ -13493,7 +13652,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "fbd9f256a589e089": {
    "g": "delegate-gate.py",
@@ -13589,7 +13749,8 @@
    "h": "deny",
    "d": "allow",
    "c": "",
-   "l": "FP"
+   "l": "FP",
+   "p": "allow"
   },
   "fe531d1bcb9120d6": {
    "g": "g__pretool-mcp__outward-send.py",
@@ -13603,9 +13764,10 @@
    "g": "g__stop__goal-anchor.py",
    "e": "Stop",
    "h": "deny",
-   "d": "allow",
-   "c": "",
-   "l": "FP"
+   "d": "deny",
+   "c": "root-goal-unnamed",
+   "l": "FP",
+   "p": "deny"
   },
   "fe9b09181cb93728": {
    "g": "dimension-awareness-hook.py",

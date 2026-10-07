@@ -15,6 +15,39 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-10-07]: v9.12.0
+### Features
+- feat: ai-pull runs the fast doctor; /requa re-QA after a base update (v10 T08) (#391)
+
+## [2026-10-07]: v9.11.3
+### Other
+- docs(spec): v10, low friction and easy entry (#376)
+
+## [2026-10-07]: v9.11.2
+### Other
+- docs(claude-md): cut the constitution to 11.8k tokens, English-only (#392)
+
+## [2026-10-07]: v9.11.1
+### Fixes
+- fix(send-gate): one reader for the support script's arguments, mentions in the digest (#368)
+
+## [2026-10-07]: v9.11.0
+### Features
+- feat(octo): octo dash and the status line (v10 phase 4, visible) (#378)
+
+## [2026-10-07]: v9.10.4
+### Other
+- perf(v10): phase 2 friction, fast budget-check from a spend cache (T07) (#383)
+
+## [2026-10-07]: v9.10.3
+### Fixes
+- fix(stop-gates): v10 phase 2, cut Stop-gate friction (T05, T06) (#385)
+
+## [2026-10-07]: v9.10.2
+### Other
+- ci(version-bump): heal CHANGELOG daily instead of after every merge (#388)
+- docs(changelog): backfill v9.10.1 (#390)
+
 ## [2026-10-07]: v9.10.1
 ### Fixes
 - fix(send-gate): a command naming the support script is a send unless it is one plain read (#389)

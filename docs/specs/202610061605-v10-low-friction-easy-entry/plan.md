@@ -49,3 +49,9 @@ Four phases, one pull request each, every one from its own worktree. Measurement
 
 - Phase 2 edits sit on the arming surface: every one goes through a worktree and a pull, and its QA receipt pins its head.
 - The labels behind every false-positive rate are sampled judgment (±15 to 25 points in the census); the verifier review in T02 is what turns them into a regression set.
+
+## Convergence 1
+
+- [ ] T16 [AC-10] scripts/replay_harness.py, registry/friction-baseline.json: replay the Stop-gate cases of each session in order through one sandbox HOME per session so goal-anchor state carries across turns, and commit the resulting goal-anchor before/after block count; today the harness marks the gate LOW-FIDELITY (9 of 103 historical blocks reproduced, `replay` prints "these counts prove nothing") and the 21.4% figure lives only in the PR #385 body from a reconstruction script that is not in the repo.
+- [ ] T17 [AC-12] scripts/tests/test_requa_protocol.py, commands/requa.md: pin the Base_Update_Verifier with an executable test over a fixture repo (two-parent check with the reviewed head among the parents, remote-read merge bases, normalized patch compare that rejects any content difference and accepts a pure base update); today AC-12 is prose in commands/requa.md with no test, and `requa` carries no registry/rules.yaml entry.
+- [ ] T18 [AC-17] scripts/brain_doctor.py: add a check that estimates CLAUDE.md tokens with the committed estimator and fails above 12,000, plus a non-English section detector; today master measures 11,920 tiktoken cl100k tokens (11,881 by chars/4) with nothing pinning the ceiling or the language.
