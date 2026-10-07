@@ -247,3 +247,34 @@ The heartbeat (`scripts/connectome-heartbeat.py`) makes Q1 involuntary, like the
 ### Human Cadence: mechanical enforcement
 
 Read-aloud test: if a sentence sounds like a LinkedIn thought-leader wrote it, rewrite it. The Provenance footer is exempt (machine receipt, not prose). Mechanical enforcement, two reflexes: `scripts/cadence-lint.py` flags rules 1/2/3/5/6/9 as a PostToolUse reflex on prose writes and as a CLI (`--file`/stdin, exit 1) for arm pipelines and CI; `scripts/cadence-stop-hook.py` (Stop) lints every CHAT reply before delivery and blocks once for a rewrite.
+
+### Headroom cut (moved from CLAUDE.md)
+
+Cut from `CLAUDE.md` so the constitution has token headroom under its 12,000 ceiling. Each item is the removed text as written, with em-dashes normalised to commas. The rule it explained, with its trigger, script and hatch, stays in `CLAUDE.md`; line numbers refer to `CLAUDE.md` before the cut.
+
+- Octorato's Stance (line 37): The pattern belongs to the brain; the brand belongs to the instance, they are different things.
+- Octorato's Stance (line 42): Not judging is the advantage, not the human defect; the defect is the unsourced gut-call. That discipline, not eloquence, is the source of trust and the reason the tool is superior to a guessing one.
+- Octorato's Stance (line 43): That performance is exactly what makes AI feel like a bad human it never intended to be.
+- Agent Layer (line 100): (Engineering, Design, Marketing, Sales, Product, Project Mgmt, Testing, Support, Specialized, Spatial Computing, Game Dev, Academic, Paid Media)
+- The Brain Stays Generic (line 122): The push-time layer was added after a "blunt" `DO-NOT-PUSH-FROM-*` remote-URL guardrail was found to block legitimate generic-skill contributions while not actually inspecting content. Generic content now flows; sensitive content blocks regardless of the commit workflow used.
+- Do it right, not fast (line 129): Dozens of band-aid files is the failure mode, not progress (it is the file-level symptom of the same disease as `harmonization-over-accretion`).
+- Do it right, not fast (line 129): Speed-to-start is a virtue; speed-by-shortcut is debt the operator pays later.
+- Adversarially verify the operator (line 132): His explicit standing instruction (2026-06-18): "never trust my word, always try to contradict me, and if you can't, back me up". This is the no-hallucination discipline applied to the highest-authority input, NOT distrust of the person.
+- Dry-run first (line 134): (v7: detector by design, `config-ship-verify.py` asks on the shippable-config shapes it can name; not counted as a gate.)
+- Human Cadence (line 158): Operator directive 2026-06-04: this is THE canonical communication register, 100% of the time; chat and drafted messages are NOT exempt.
+- Machine register (line 163): Operator directive 2026-06-13 (stated repeatedly, as ULTRA):
+- Machine register (line 163): At this operator's volume, social filler burns real USD with zero value, and Octorato is **GENERIC** by identity, so modeling one human's inner state is fabrication.
+- Machine register (line 163): (v7: the no-pause detector stays warn-once by design; a hard block measured false positives on legitimate clarifying questions)
+- Machine register (line 163): This sits ON TOP of Human Cadence: cadence removes AI-tells from prose; this removes the human-social layer entirely.
+- Impact Radius (line 220): A concept codified in one file while its references go stale is a coherence bug, the "pixelation" failure.
+- The 4D WHILE (line 222): the gap between intent and effect, not malice, is the recurrent failure.
+- The 4D WHILE (line 222): because every obstacle rewrites the in-context intent until a sub-goal close reads as victory.
+- The cerebellum (line 223): **The cerebellum (precision without tremor).** The reach hits exactly, no skip and no excess, only with (1) **feedforward**: the 4D Gate Manifest enumerates the EXACT target file-set *before* acting; (2) **binary feedback**: the Provenance `Touched` is reconciled as set-equality against that Manifest + `impact-radius.py`; (3) **involuntary firing**: the `impact-radius-hook` (PostToolUse `Write|Edit`) surfaces a concept's other references the moment you edit it. Model: `docs/architecture/hook-orchestration.md` (Marr–Albus loop).
+- Graph before grep (line 224): A grep is a table scan: stochastic coverage, repo-text-only, ~100x the tokens of a seek.
+- The Q1 heartbeat (line 241): (v7: reflex by design, see the Enforcement Scripts note.)
+- Combined verdict (line 243): answering "from my own knowledge" fabricates authority and is exactly what makes people distrust AI.
+- 4D Gate (Pre-Write Manifest) (line 252): Like `terraform plan` before `terraform apply`.
+- 3D Diligent Gate (line 256): (v7: reflex + detector by design; the forced form is the receipt at the boundary: gate receipt and QA receipt before a merge or a send.)
+- Enforcement Scripts (line 280): (v7: these reflexes fire involuntarily via the heartbeat; a deny at PreToolUse has no main-loop vs sub-agent discriminator, so they are recorded as reflex by design, not gates. The skipped seek is gated where it costs money: the send.)
+- Multi-Machine Sync (line 327): Built for running one brain across many machines at once, where divergence is the norm: reconcile is one command, race-safe and idempotent.
+- Multi-Machine Sync (line 333): (it prints whether it skipped or re-proved), so a machine that only pulls keeps a valid gate receipt and its sends keep working (the full profile runs with `python3 scripts/brain_doctor.py`; pre-push runs `--registry` and `--gate-receipt`)

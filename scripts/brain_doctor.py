@@ -2733,24 +2733,34 @@ def check_skill_manifests(fix: bool) -> Result:
 # The constitution loads into every session, so its size and its language are
 # pinned here and not by memory of the PR that cut it.
 #
-# Estimator: characters / 4, floored, over the whole file read as UTF-8. It is
-# the estimator this check commits to, because the doctor runs on a bare
-# interpreter and tiktoken is not a dependency it can rely on. Its relation to
-# the cl100k_base count (tiktoken, measured via `uvx --with tiktoken` on
-# 2026-10-07): master a741eff reads 11,881 here against 11,920 cl100k (39 low,
-# 0.3%); master before #392 (b2c8b9a) reads 24,154 here against 24,000 cl100k
-# (154 high, 0.6%). So at master's text mix a file at the 12,000 ceiling here is
-# about 12,040 cl100k tokens; the ceiling is stated in this estimator's units.
+# Estimator: a per-piece bound over the cl100k_base pre-tokenizer, computed on
+# a bare interpreter because tiktoken is not a dependency the doctor can rely
+# on. The text is split the way cl100k splits it before BPE (`_PIECE_RE`, a
+# stdlib approximation of tiktoken's pattern: `\p{L}` becomes `[^\W\d_]`), and
+# each piece costs ceil(ASCII chars / 7) + ceil(2 * non-ASCII UTF-8 bytes / 3).
+# Any character the pattern does not match costs one token per byte.
 #
-# chars/4 is NOT an upper bound on cl100k. QA on PR #395 measured it under by 12%
-# on Spanish prose, 15% on YAML and 3.6x on glyph runs, so a file can pass here
-# and exceed 12,000 cl100k. Two cheap upper bounds were tried on 7 mixes (master,
-# pre-#392, Spanish prose, brain_doctor.py, CAPABILITIES.md, rules.yaml, a glyph
-# string): ceil(ASCII chars/k) + non-ASCII UTF-8 bytes bounds all 7 only at
-# k <= 3.5, where master reads 14,036; a pre-tokenizer split at ceil(len/8) per
-# piece bounds all 7 (worst ratio 1.013) with master at 12,884. Master is 11,920
-# cl100k, 80 under the ceiling, so any bound looser than 0.67% on it fails master.
-# An exact count needs tiktoken in the doctor, or more headroom in CLAUDE.md.
+# Measured against tiktoken cl100k_base (`uvx --with tiktoken`, 2026-10-07):
+#
+#   mix                               cl100k   bound   ratio  chars/4  ratio
+#   CLAUDE.md master 0641797          11,920  12,617   1.058   11,881  0.997
+#   CLAUDE.md after the headroom cut  10,944  11,518   1.052   10,812  0.988
+#   pre-#392 CLAUDE.md (b2c8b9a)      24,000  25,506   1.063   24,154  1.006
+#   its three Spanish sections         1,267   1,285   1.014    1,130  0.892
+#   scripts/brain_doctor.py           37,376  40,078   1.072   38,271  1.024
+#   docs/CAPABILITIES.md              17,462  18,954   1.085   19,451  1.114
+#   registry/rules.yaml               20,171  20,996   1.041   17,541  0.870
+#   symbol and emoji string            2,421   4,600   1.900      720  0.297
+#
+# So the bound sits at or above cl100k on all seven mixes, and chars/4, the
+# estimator this check used before, reads under on four of them. It is an
+# empirical bound over those mixes and over the whole file, not a proof. What
+# it does not see: a section dense in paths, table rules or ALL-CAPS words
+# reads under on its own (as low as 0.90 on `## Arm Onboarding`), and across
+# the repo's 1,526 text files of 2,000+ characters, 30 read under (worst 0.755,
+# a fixture of repeated upper-case tokens). A CLAUDE.md that grows mostly in
+# that kind of text can pass here and exceed 12,000 cl100k; re-run the table
+# above when the file's mix changes. The ceiling is stated in this bound's units.
 CLAUDE_MD_TOKEN_CEILING = 12000
 
 # Spanish function words that English prose does not use. Ambiguous ones
@@ -2789,8 +2799,27 @@ _ES_DATA_SPANS = (
 _WORD_RE = re.compile(r"[a-záéíóúñü]+")
 
 
+# cl100k_base pre-tokenizer, stdlib form: contractions, an optional non-letter
+# lead plus a letter run, 1-3 digits, a punctuation run, newlines, whitespace.
+_PIECE_RE = re.compile(
+    r"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\w]?[^\W\d_]+|\d{1,3}"
+    r"| ?(?:[^\s\w]|_)+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+")
+
+
 def estimate_tokens(text: str) -> int:
-    return len(text) // 4
+    """Per-piece upper bound on the cl100k_base token count (see the table above)."""
+    total, pos = 0, 0
+    for m in _PIECE_RE.finditer(text):
+        if m.start() > pos:  # unmatched gap: one token per byte
+            total += len(text[pos:m.start()].encode("utf-8"))
+        piece = m.group()
+        ascii_n = sum(1 for ch in piece if ch < "\x80")
+        wide = len(piece.encode("utf-8")) - ascii_n
+        total += -(-ascii_n // 7) + -(-2 * wide // 3)
+        pos = m.end()
+    if pos < len(text):
+        total += len(text[pos:].encode("utf-8"))
+    return total
 
 
 def _md_sections(text: str) -> list:
@@ -2825,7 +2854,7 @@ def spanish_sections(text: str) -> list:
 
 
 def check_claude_md_budget(fix: bool, path: Path | None = None) -> Result:
-    """AC-17: CLAUDE.md loads at most 12,000 tokens (chars/4) and has no section
+    """AC-17: CLAUDE.md loads at most 12,000 tokens (per-piece bound) and has no section
     written in a language other than English (Spanish stopword ratio per section)."""
     key = "claude-md-budget"
     p = path or CLAUDE_MD
@@ -2837,7 +2866,7 @@ def check_claude_md_budget(fix: bool, path: Path | None = None) -> Result:
     spanish = spanish_sections(text)
     problems = []
     if tokens > CLAUDE_MD_TOKEN_CEILING:
-        problems.append(f"{tokens:,} tokens (chars/4) over the {CLAUDE_MD_TOKEN_CEILING:,} ceiling")
+        problems.append(f"{tokens:,} tokens (per-piece bound) over the {CLAUDE_MD_TOKEN_CEILING:,} ceiling")
     if spanish:
         problems.append(f"{len(spanish)} non-English section(s): "
                         + "; ".join(f"'{h[:50]}' ({r:.2f})" for h, r, _ in spanish[:4]))
@@ -2847,7 +2876,7 @@ def check_claude_md_budget(fix: bool, path: Path | None = None) -> Result:
                       "section; a Spanish phrase kept as data goes in backticks or quotes "
                       "(spec v10 AC-17)")
     return Result(key, PASS,
-                  f"{tokens:,} tokens (chars/4, ceiling {CLAUDE_MD_TOKEN_CEILING:,}); "
+                  f"{tokens:,} tokens (per-piece bound, ceiling {CLAUDE_MD_TOKEN_CEILING:,}); "
                   "every section reads as English")
 
 

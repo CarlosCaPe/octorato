@@ -2346,7 +2346,7 @@ rules:
     expect: present
   liveness_required: PRESENT
 - id: META.constitution-budget
-  title: 'CLAUDE.md loads at most 12,000 tokens (chars/4) and has no section in a language other than English'
+  title: 'CLAUDE.md loads at most 12,000 tokens (per-piece bound) and has no section in a language other than English'
   category: META
   source:
     file: docs/specs/202610061605-v10-low-friction-easy-entry/feature.md

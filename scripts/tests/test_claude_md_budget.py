@@ -2,7 +2,8 @@
 """brain_doctor's claude-md-budget check (spec v10, AC-17).
 
 The constitution must load at most 12,000 tokens by the committed estimator
-(characters / 4) and carry no section written in Spanish. The pre-#392
+(a per-piece bound over the cl100k_base pre-tokenizer) and carry no section
+written in Spanish. The pre-#392
 CLAUDE.md (master b2c8b9a) is kept as a plain-text sample because CI checks
 out one commit and the historical blob is not reachable there; its sha256 is
 pinned below.
@@ -22,6 +23,15 @@ import brain_doctor  # noqa: E402
 PRE_392 = Path(__file__).resolve().parent / "claude-md-samples" / "pre-392-CLAUDE.md.txt"
 PRE_392_SHA256 = "585210a3bfd6eb617d7dc1a9e85cf7ad1798f2cab267216268fa764af17c4ea7"
 
+# cl100k_base counts measured with tiktoken (`uvx --with tiktoken`) on pinned
+# text. CI has no tiktoken, so the counts are pinned and the bound is checked
+# against them: the estimator must never read under.
+PRE_392_CL100K = 24000
+SPANISH_SECTIONS_CL100K = 1267
+GLYPHS = ("→ ✅ ❌ ☠ 💡 ♥ ♦ ⚠ ≠ ≤ ≥ ∞ ⇄ · \u2014 “ ” 🐙 🤖 📦 🔒 ✓ ✗ ★ ☆ ◆ ◇ ■ □ ▲ ▼ ← ↑ ↓ ↔ ⇒ "
+          "⇐ ∑ ∏ √ ∂ ∫ ≈ ± × ÷ ° € £ ¥ © ® ™ § ¶ † ‡ • … ‰ ′ ″ 😀 😂 🎉 🚀 🔥 👍 🙏 💯 ✨ 🌍 ") * 20
+GLYPHS_CL100K = 2421
+
 
 def check_text(text: str):
     with tempfile.TemporaryDirectory() as d:
@@ -39,10 +49,10 @@ class ClaudeMdBudgetTest(unittest.TestCase):
         raw = PRE_392.read_bytes()
         self.assertEqual(hashlib.sha256(raw).hexdigest(), PRE_392_SHA256)
         text = raw.decode("utf-8")
-        self.assertEqual(brain_doctor.estimate_tokens(text), 24154)
+        self.assertEqual(brain_doctor.estimate_tokens(text), 25506)
         r = check_text(text)
         self.assertEqual(r.status, brain_doctor.FAIL)
-        self.assertIn("24,154 tokens (chars/4) over the 12,000 ceiling", r.message)
+        self.assertIn("25,506 tokens (per-piece bound) over the 12,000 ceiling", r.message)
         heads = [h for h, _, _ in brain_doctor.spanish_sections(text)]
         self.assertEqual(len(heads), 3, heads)
         for start in ("### Unsourced-attribute (la circunstancia",
@@ -51,9 +61,22 @@ class ClaudeMdBudgetTest(unittest.TestCase):
             self.assertTrue(any(h.startswith(start) for h in heads), (start, heads))
         self.assertIn("3 non-English section(s)", r.message)
 
+    def test_bound_is_not_under_pinned_cl100k_counts(self):
+        text = PRE_392.read_text(encoding="utf-8")
+        self.assertGreaterEqual(brain_doctor.estimate_tokens(text), PRE_392_CL100K)
+        spanish = "\n\n".join(h + "\n" + b for h, b in brain_doctor._md_sections(text)
+                               if h.startswith(("### Unsourced-attribute", "### Unsourced-absence",
+                                                "### ULTRA RULE \u2014 Do-it-today")))
+        self.assertGreaterEqual(brain_doctor.estimate_tokens(spanish), SPANISH_SECTIONS_CL100K)
+        self.assertGreaterEqual(brain_doctor.estimate_tokens(GLYPHS), GLYPHS_CL100K)
+        # chars/4, the estimator this replaced, reads under on both of the last two
+        self.assertLess(len(spanish) // 4, SPANISH_SECTIONS_CL100K)
+        self.assertLess(len(GLYPHS) // 4, GLYPHS_CL100K)
+
     def test_one_token_over_the_ceiling_fails(self):
         ceiling = brain_doctor.CLAUDE_MD_TOKEN_CEILING
-        at = "## Rule\n" + "x" * (ceiling * 4 - len("## Rule\n") + 3)
+        head = "## Rule\n"
+        at = head + "x" * ((ceiling - brain_doctor.estimate_tokens(head)) * 7)
         self.assertEqual(brain_doctor.estimate_tokens(at), ceiling)
         self.assertEqual(check_text(at).status, brain_doctor.PASS)
         over = at + "x"
