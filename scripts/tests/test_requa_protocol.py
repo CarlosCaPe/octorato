@@ -51,7 +51,7 @@ class Fixture:
     hunk, so a clean merge shifts the hunk's line numbers and changes the blob
     hashes on the `index` line: exactly what normalization has to absorb."""
 
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, pr_blob: bytes | None = None):
         self.path = str(path)
         self.git("init", "-q", "-b", "master")
         self.write("f.py", module())
@@ -59,6 +59,8 @@ class Fixture:
         self.m0 = self.commit("base")
         self.git("checkout", "-q", "-b", "pr")
         self.write("f.py", module(a_y="20"))
+        if pr_blob is not None:
+            self.write("blob.bin", pr_blob)
         self.old = self.commit("pr: change a()")
         self.git("checkout", "-q", "master")
         self.write("notes.txt", "one\ntwo\n")
@@ -73,24 +75,31 @@ class Fixture:
                             text=True, env=env, check=True)
         return cp.stdout.strip()
 
-    def write(self, name: str, text: str) -> None:
-        Path(self.path, name).write_text(text, encoding="utf-8")
+    def write(self, name: str, text: str | bytes) -> None:
+        if isinstance(text, bytes):
+            Path(self.path, name).write_bytes(text)
+        else:
+            Path(self.path, name).write_text(text, encoding="utf-8", newline="")
 
     def commit(self, msg: str) -> str:
         self.git("add", "-A")
         self.git("commit", "-q", "-m", msg)
         return self.git("rev-parse", "HEAD")
 
-    def merge_commit(self, f_py: str | None = None) -> str:
+    def merge_commit(self, f_py: str | None = None, files: dict | None = None) -> str:
         """A merge of master (M1) into the PR head (OLD), parents [OLD, M1],
         whose tree is the clean merge unless f_py overrides f.py, which is how
         a conflict resolution or an extra edit rides inside a merge commit."""
         self.git("checkout", "-q", "pr")
         self.git("merge", "-q", "--no-ff", "--no-edit", "master")
-        if f_py is None:
+        files = dict(files or {})
+        if f_py is not None:
+            files["f.py"] = f_py
+        if not files:
             return self.git("rev-parse", "HEAD")
-        self.write("f.py", f_py)
-        self.git("add", "f.py")
+        for name, data in files.items():
+            self.write(name, data)
+        self.git("add", *files)
         self.git("commit", "-q", "--amend", "--no-edit")
         return self.git("rev-parse", "HEAD")
 
@@ -128,25 +137,60 @@ class RequaCompareTest(unittest.TestCase):
         new = self.fx.merge_commit(f_py=module(a_y="20", extra="# added in the merge", header=HEADER))
         same, diff = self.run_compare(new)
         self.assertFalse(same)
-        self.assertIn("+# added in the merge", diff)
+        self.assertIn(b"+# added in the merge", diff)
 
     def test_change_moved_to_another_function_with_identical_context_differs(self):
         new = self.fx.merge_commit(f_py=module(b_y="20", header=HEADER))
         same, diff = self.run_compare(new)
         self.assertFalse(same, "a hunk that moved from a() to b() must not read as identical")
-        self.assertIn("@@ def a():", diff)
-        self.assertIn("@@ def b():", diff)
+        self.assertIn(b"@@ def a():", diff)
+        self.assertIn(b"@@ def b():", diff)
         cp = subprocess.run([sys.executable, str(HELPER), "compare", "--repo", self.fx.path,
                              self.fx.m0, self.fx.old, self.fx.m1, new],
                             capture_output=True, text=True)
         self.assertEqual(cp.returncode, 1)
         self.assertEqual(cp.stdout.strip().splitlines()[-1], "DIFFERS")
 
+    def test_cr_only_edit_on_the_pr_hunk_differs(self):
+        # The merge ends the PR's changed line with \r\n instead of \n. Decoding
+        # the patch as text folds the \r away and reads IDENTICAL (QA, a4525d3).
+        f_py = module(a_y="20", header=HEADER).replace("y = 20\n", "y = 20\r\n")
+        new = self.fx.merge_commit(f_py=f_py)
+        same, diff = self.run_compare(new)
+        self.assertFalse(same, "a CR-only edit on the PR's hunk must not read as identical")
+        self.assertIn(b"y = 20\r\n", diff)
+
     def test_a_ref_name_is_refused_before_git_runs(self):
         new = self.fx.merge_commit()
         for ref in ("master", "HEAD", "origin/master", self.fx.m1[:12]):
             with self.assertRaises(ValueError):
                 requa.compare(self.fx.path, self.fx.m0, self.fx.old, ref, new)
+
+
+BLOB = bytes(range(256)) * 4
+
+
+class RequaBinaryTest(unittest.TestCase):
+    """The PR adds a binary file. Without --binary git prints only "Binary
+    files ... differ", and dropping the index line erased the one carrier of
+    its identity, so a swapped binary read IDENTICAL (QA, a4525d3)."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.fx = Fixture(Path(self._tmp.name), pr_blob=BLOB)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_pure_update_with_a_pr_binary_is_identical(self):
+        new = self.fx.merge_commit()
+        same, diff = requa.compare(self.fx.path, self.fx.m0, self.fx.old, self.fx.m1, new)
+        self.assertTrue(same, diff)
+
+    def test_merge_that_swaps_the_pr_binary_differs(self):
+        new = self.fx.merge_commit(files={"blob.bin": bytes(reversed(BLOB))})
+        same, diff = requa.compare(self.fx.path, self.fx.m0, self.fx.old, self.fx.m1, new)
+        self.assertFalse(same, "a swapped binary must not read as identical")
 
 
 OLD = "a" * 40

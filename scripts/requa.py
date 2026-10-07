@@ -31,10 +31,15 @@ import subprocess
 import sys
 
 SHA_RE = re.compile(r"\A(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
-_INDEX_RE = re.compile(r"^index [0-9a-f]+\.\.[0-9a-f]+")
+# Patches are handled as BYTES end to end: decoding with text=True folds
+# `\r\n` and `\r` into `\n`, so a CR-only edit would read as no edit.
+_INDEX_RE = re.compile(rb"^index [0-9a-f]+\.\.[0-9a-f]+")
 # Only the two line ranges go; the function-context text after the second @@
 # stays, because it names the function a hunk lands in.
-_HUNK_RE = re.compile(r"^@@ -[0-9]+(,[0-9]+)? \+[0-9]+(,[0-9]+)? @@")
+_HUNK_RE = re.compile(rb"^@@ -[0-9]+(,[0-9]+)? \+[0-9]+(,[0-9]+)? @@")
+_FILE_RE = re.compile(rb"^diff --git ")
+_BINARY_RE = re.compile(rb"^(GIT binary patch|Binary files .* differ)$")
+_LINE_RE = re.compile(rb"[^\n]*\n|[^\n]+\Z")
 ON_MASTER = ("identical", "ahead")
 
 
@@ -65,35 +70,56 @@ def on_master(status: str) -> bool:
     return status in ON_MASTER
 
 
-def normalize(patch: str) -> str:
+def _lines(patch: bytes) -> list[bytes]:
+    """Split on \\n only, keeping it; a \\r stays part of its line."""
+    return _LINE_RE.findall(patch)
+
+
+def normalize(patch: bytes) -> bytes:
+    """Drop the `index` line of each TEXT file block and the line numbers of
+    hunk headers. A BINARY block keeps its `index` line: with no hunks, the
+    blob hashes are its identity, and a base update cannot change them for a
+    file master did not touch."""
+    blocks: list[list[bytes]] = []
+    for line in _lines(patch):
+        if _FILE_RE.match(line) or not blocks:
+            blocks.append([])
+        blocks[-1].append(line)
     out = []
-    for line in patch.splitlines(keepends=True):
-        if _INDEX_RE.match(line):
-            continue
-        out.append(_HUNK_RE.sub("@@", line, count=1))
-    return "".join(out)
+    for block in blocks:
+        binary = any(_BINARY_RE.match(ln.rstrip(b"\n")) for ln in block)
+        for line in block:
+            if not binary and _INDEX_RE.match(line):
+                continue
+            out.append(_HUNK_RE.sub(b"@@", line, count=1))
+    return b"".join(out)
 
 
-def git_patch(repo: str, base: str, head: str) -> str:
+def git_patch(repo: str, base: str, head: str) -> bytes:
     for sha in (base, head):
         if not is_sha(sha):
             raise ValueError(f"{sha!r} is not a full commit SHA; read it from the remote with gh")
     cp = subprocess.run(
-        ["git", "-C", repo, "diff", "--no-color", "--no-ext-diff", f"{base}..{head}"],
-        capture_output=True, text=True, encoding="utf-8", errors="surrogateescape")
+        # --binary: a binary file's bytes travel in the patch instead of
+        # "Binary files ... differ". --no-textconv: a configured converter
+        # cannot stand in for the bytes.
+        ["git", "-C", repo, "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--binary",
+         f"{base}..{head}"],
+        capture_output=True)
     if cp.returncode != 0:
-        raise ValueError(f"git diff {base[:12]}..{head[:12]} failed: {cp.stderr.strip()}")
+        err = cp.stderr.decode("utf-8", "replace").strip()
+        raise ValueError(f"git diff {base[:12]}..{head[:12]} failed: {err}")
     return cp.stdout
 
 
-def compare(repo: str, mb_old: str, old: str, mb_new: str, new: str) -> tuple[bool, str]:
+def compare(repo: str, mb_old: str, old: str, mb_new: str, new: str) -> tuple[bool, bytes]:
     """(identical, unified diff of the two normalized patches)."""
     a = normalize(git_patch(repo, mb_old, old))
     b = normalize(git_patch(repo, mb_new, new))
     if a == b:
-        return True, ""
-    diff = "".join(difflib.unified_diff(a.splitlines(keepends=True), b.splitlines(keepends=True),
-                                        "old.patch", "new.patch"))
+        return True, b""
+    diff = b"".join(difflib.diff_bytes(difflib.unified_diff, _lines(a), _lines(b),
+                                       b"old.patch", b"new.patch"))
     return False, diff
 
 
@@ -134,7 +160,9 @@ def main(argv: list[str] | None = None) -> int:
     if same:
         print("IDENTICAL")
         return 0
-    sys.stdout.write(diff)
+    sys.stdout.flush()
+    sys.stdout.buffer.write(diff)
+    sys.stdout.buffer.flush()
     print("DIFFERS")
     return 1
 
