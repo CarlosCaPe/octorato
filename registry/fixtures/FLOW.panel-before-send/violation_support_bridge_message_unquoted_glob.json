@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-violation-support-bridge-message-unquoted-glob",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "~/.claude/scripts/wa-soporte.sh 120360000000000000@g.us the files are *"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_support_bridge_message_unquoted_glob_transcript.jsonl"
+}

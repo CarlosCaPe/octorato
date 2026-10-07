@@ -15,6 +15,36 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-10-07]: v9.10.1
+### Fixes
+- fix(send-gate): a command naming the support script is a send unless it is one plain read (#389)
+### Other
+- docs(changelog): backfill v9.10.0 (#386)
+
+## [2026-10-06]: v9.10.0
+### Features
+- feat(send-gate): read the send ask the way the operator writes it (v10 T04) (#382)
+### Other
+- docs(changelog): backfill v9.9.0 (#384)
+
+## [2026-10-06]: v9.9.0
+### Features
+- feat(v10): phase 3 entry, one-command install that wires hooks and writes a first spec (#379)
+### Other
+- docs(changelog): backfill v9.8.0 (#381)
+
+## [2026-10-06]: v9.8.0
+### Features
+- feat(friction): v10 phase 1, measure gate friction (T01-T03) (#380)
+### Other
+- docs(changelog): backfill v9.7.0 (#377)
+
+## [2026-10-06]: v9.7.0
+### Features
+- feat(wa-latido): detect a rejected client version and relay bridge auto-update results (#375)
+### Other
+- docs(changelog): backfill v9.6.1 (#374)
+
 ## [2026-10-06]: v9.6.1
 ### Fixes
 - fix(gates): close three Windows path spellings the arming-surface gate allowed (#372)

@@ -1,0 +1,11 @@
+# The shape budgets.yaml.example shipped until v10: an `arms:` map that
+# budget-check.py never read, so every cap in it was silently unenforced.
+arms:
+  example_arm:
+    monthly_usd_cap: 200.0
+    grace_pct: 110
+    action_on_breach: hard_stop
+  default:
+    monthly_usd_cap: 100.0
+    grace_pct: 110
+    action_on_breach: warn

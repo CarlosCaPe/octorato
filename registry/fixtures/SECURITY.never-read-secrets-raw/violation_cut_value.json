@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "cut -d= -f2 .env"
+  },
+  "cwd": "/home/user/project"
+}

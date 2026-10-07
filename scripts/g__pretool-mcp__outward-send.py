@@ -35,7 +35,35 @@ WHAT IT REQUIRES (docs/architecture/v7-nothing-ships-unverified.md)
      transmit only the message that was asked for). A non-negated send verb
      must stand in the operator's own prompt for the turn, outside quotes and
      code spans; `send-ok` is the standing hatch. Checked after 1-3, so every
-     earlier deny keeps its own name.
+     earlier deny keeps its own name. v10 (AC-05..07): the tracked
+     registry/send-ask.yaml adds the Send_Ask list, matched case- and
+     accent-insensitively, and a bare go-ahead never counts; only an operator
+     opener (origin.kind human, or no origin and neither a compact summary nor
+     isMeta) carries hatches and its own ask; a turn opened by a notification,
+     a peer message or a compact summary reads the ask from the operator's
+     latest real prompt, only when this send's panel receipt was recorded
+     after that prompt. A Bash command that names the support script
+     ANYWHERE (as a word in the raw text, in a substitution, or in any token
+     of any sub-command after quote removal) is a send unless the WHOLE
+     command is one plain read (panel_digest.plain_read): a READER_NAMES
+     program (cat, head, tail, grep, wc, stat, file, diff, ls, chmod, chown)
+     with plain words, `sed -n <range>p <script>`, or `<script> --help|-h`,
+     with no pipe, ; && || &, newline, redirect, $, backtick, ( ), braces,
+     glob, ! or #, and no quoted string holding $, backtick, a backslash or a
+     newline. There is no list of executors: text deny-lists did not converge
+     (`| sh`, then `| nice sh`, then `|<newline>sh`, `bash -c '...'`,
+     `> /tmp/f; sh /tmp/f`, `| $SHELL`, `| mksh`), so the exemption is the
+     one exact shape and everything else that names the script is judged as
+     a send. git, the editors, less, more, man, rg and ag are not readers,
+     because each has an option, config key or env var that runs a command.
+     Cost, stated: a pipe, a chain or a git or editor command that names the
+     script (`grep x <script> | head`, `git log -- <script>`, `cd d && cat
+     <script>`) is denied without a panel; read the script with one plain
+     command and no pipe. Measured on 26,933 real commands: 18 allow to
+     deny, 0 deny to allow. Residual, stated: a command that reaches the
+     script without its name (a glob `wa-sop*.sh`, a brace `{wa-soporte,x}`,
+     `find -name`, a variable, an alias, a function, a symlink, a copy made
+     in an earlier call) is not tied to the script.
   5. Panel receipt (FLOW.panel-before-send, operator directive 2026-10-02: no
      message leaves without a panel, however small). Every MESSAGE send (mail
      send/reply/forward, WhatsApp send_message/send_file/send_audio_message,
@@ -128,11 +156,15 @@ _SEND_TOOL = re.compile(
 # residual is indirection that hides the name from argv ($(echo ...),
 # python -c subprocess, find -exec), accepted as in qa-merge-gate.
 _SEND_SCRIPTS = ("wa-soporte.sh",)
-# A sub-command whose FIRST token is a reader never sends, whatever its argv
-# names: `grep -rn wa-soporte.sh scripts/` reads the name, it does not run
-# it (QA cycle 5 note). `find` is not here: `find -exec` runs things.
-_READERS = {"grep", "rg", "ag", "ls", "cat", "less", "more", "head", "tail", "wc",
-            "stat", "file", "diff", "vim", "nano", "code", "chmod", "chown", "git"}
+# panel_digest.READER_NAMES (one list, two consumers) is the program set of the
+# one plain-read shape, and the raw-send rules below skip those readers too.
+# An import failure leaves the set EMPTY and plain_read unreachable, so no
+# reader is exempt (fail closed).
+try:
+    import panel_digest as _panel_digest  # noqa: E402
+    _READERS = _panel_digest.READER_NAMES
+except Exception:
+    _READERS = frozenset()
 _BODY_KEYS = ("body", "message", "text", "content", "html", "snippet",
               "caption", "subject", "description", "title", "command")
 # A hatch counts only as a standalone word in the operator's prompt, outside
@@ -216,6 +248,282 @@ def explicit_send_ask(prompt: str) -> bool:
     return asked
 
 
+# v10 AC-05: the Send_Ask list. The verbs live in the tracked
+# registry/send-ask.yaml, not here, so the list is reviewed as data. Matching
+# folds case and accents (mándalo = MANDALO = mandalo) and reuses the clause
+# machinery above, so a listed verb counts only when nothing in its clause or
+# after it negates, defers or withdraws it. Spanish entries count anywhere in
+# the clause (a plural clitic too: avísales); English entries count at clause
+# start or after a frame word, like _EN_ASK. Only transmission verbs count: a
+# bare go-ahead (dale, adelante, go ahead) never does, because "dale formato
+# al mensaje" is an edit, not a send (QA of PR #382). The hatch token typed in
+# another case (Send-ok) counts as a send ask only: it lifts requirement 4,
+# never the checks the exact `send-ok` hatch skips.
+# Fail-closed: an unreadable list adds nothing; explicit_send_ask still runs.
+_SEND_ASK_FILE = _HERE.parent / "registry" / "send-ask.yaml"
+_FOLD = str.maketrans("áéíóúüÁÉÍÓÚÜàèìòùÀÈÌÒÙ", "aeiouuAEIOUUaeiouAEIOU")
+
+
+def _fold(text: str) -> str:
+    return (text or "").translate(_FOLD).casefold()
+
+
+def _load_send_ask(path: Path = _SEND_ASK_FILE) -> dict:
+    """The lists of registry/send-ask.yaml ({key: [items]}), {} when unreadable.
+    A two-level subset of YAML (`key:` then `  - item`), parsed here so the
+    gate needs no third-party module on the hot path."""
+    out, key = {}, None
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return {}
+    for raw in lines:
+        line = raw.split(" #", 1)[0].rstrip() if not raw.lstrip().startswith("#") else ""
+        if not line.strip():
+            continue
+        m = re.match(r"^([A-Za-z_][\w-]*):\s*$", line)
+        if m:
+            key = m.group(1)
+            out[key] = []
+            continue
+        m = re.match(r"^\s+-\s+(.+)$", line)
+        if m and key is not None:
+            out[key].append(_fold(m.group(1).strip().strip("'\"")))
+    return out
+
+
+def _alt(items) -> str:
+    return "|".join(re.escape(i) for i in sorted(items, key=len, reverse=True) if i)
+
+
+_EN_OBJECT = (r"(?=\s+(?:it|that|this|them|him|her|the|those|these|now|off|out|again|to|in|a|an|my|our|your"
+              r"|el|la|lo|ese|esa|eso)(?![\w-])|\s*$)")
+_EN_FRAME = (r"(?:^|(?<![\w-])(?:please|just|ok|okay|go ahead and|can you|could you|would you|you can"
+             r"|now|then|yes|yeah|sure|dale|si|and|y)\s+)")
+
+
+def _listed_matcher(cfg: dict):
+    """The ask regex of the Send_Ask list, or None when the list is empty."""
+    es = list(cfg.get("spanish", []))
+    en = list(cfg.get("english", []))
+    hatch = list(cfg.get("hatch_as_ask", []))
+    parts = []
+    if es:
+        parts.append(r"(?<![\w-])(?:" + _alt(es) + r")s?(?![\w-])")
+    multi = [i for i in en if " " in i]
+    single = [i for i in en if " " not in i]
+    if multi:
+        parts.append(_EN_FRAME + r"(?:" + _alt(multi) + r")(?![\w-])")
+    if single:
+        # A bare verb needs an object or the clause end after it, like _EN_ASK:
+        # "send it to her" asks, "send failed again" does not.
+        parts.append(_EN_FRAME + r"(?:" + _alt(single) + r")" + _EN_OBJECT)
+    if hatch:
+        parts.append(r"(?<![\w-])(?:" + _alt(hatch) + r")(?![\w-])")
+    return re.compile("|".join(parts)) if parts else None
+
+
+def listed_send_ask(prompt: str, cfg: dict | None = None) -> bool:
+    """True when the prompt carries a Send_Ask from registry/send-ask.yaml
+    that nothing in its clause or after it negates, defers or withdraws."""
+    ask = _listed_matcher(_load_send_ask() if cfg is None else cfg)
+    if ask is None:
+        return False
+    text = _fold(_QUOTE_SPAN.sub(" ", prompt or ""))
+    asked = False
+    for clause in (c.strip() for c in _CLAUSE.split(text) if c.strip()):
+        if asked:
+            if _LATER_BLOCK.search(clause):
+                return False
+            continue
+        if _ANY_BLOCK.search(clause):
+            continue
+        m = ask.search(clause)
+        if m and not _PRE_BLOCK.search(clause[:m.start()]):
+            asked = True
+    return asked
+
+
+def send_ask(prompt: str) -> bool:
+    """Requirement 4: the operator's prompt asks for this send (the original
+    matcher, or the tracked Send_Ask list)."""
+    return explicit_send_ask(prompt) or listed_send_ask(prompt)
+
+
+# v10 AC-06: who opened the turn. Markers measured on the operator's
+# transcripts (400 files, 2026-10-06), never guessed: a real prompt carries
+# origin.kind "human"; a task notification origin.kind "task-notification";
+# a subagent hand-back origin.kind "peer" with origin.handback true; a
+# cross-session message origin.kind "peer" without it; a compact summary
+# isCompactSummary. The opener is the OPERATOR only when origin.kind is
+# "human", or when it has no origin and is neither a compact summary nor an
+# isMeta entry (older prompts, interrupts, `!` commands), and it is a
+# harness-written, non-sidechain entry. Only an operator opener carries
+# hatches and its own send ask.
+#
+# A notification, peer or compact-summary opener carries no operator words,
+# so the send ask is read from the operator's latest real prompt: the walk
+# back skips only notifications, peer messages and isMeta entries and stops at
+# anything else (a compact summary, an interrupt, a `!` command, a sidechain
+# entry end it with no ask). Bounded twice: the prompt found is by
+# construction the latest operator prompt, and the panel receipt for THIS
+# send must be recorded after it (checked by the caller), so a reviewer that
+# ran before the ask cannot carry it. Any other non-operator opener (an isMeta
+# entry such as Stop-hook feedback) carries no ask at all.
+#
+# One read per call: the transcript is walked BACKWARDS in 1 MB chunks and the
+# walk stops at the first entry that decides (the operator opener, or the
+# human prompt behind a notification), so a long turn costs what its tail
+# costs. A walk that reads _PROMPT_MAX bytes without deciding finds no ask.
+_PROMPT_CHUNK = 1 << 20
+_PROMPT_MAX = 64 << 20
+_TURN_CACHE: dict = {}
+
+
+def _origin(entry: dict) -> dict:
+    o = entry.get("origin")
+    return o if isinstance(o, dict) else {}
+
+
+def _is_operator_opener(entry: dict) -> bool:
+    import receipt_ledger
+    if not receipt_ledger.harness_entry(entry) or entry.get("isSidechain"):
+        return False
+    o = entry.get("origin")
+    if isinstance(o, dict):
+        # isMeta is rejected here too: a harness meta entry never carries
+        # operator words, whatever origin it was stamped with.
+        return o.get("kind") == "human" and entry.get("isMeta") is not True
+    return o is None and not entry.get("isCompactSummary") and entry.get("isMeta") is not True
+
+
+def _walks_back(entry: dict) -> bool:
+    """A notification, a peer message (hand-back or cross-session) or a
+    compact summary opened the turn: read the ask from the operator's latest
+    prompt, under the two bounds above."""
+    return _origin(entry).get("kind") in ("task-notification", "peer") or bool(entry.get("isCompactSummary"))
+
+
+def _reversed_lines(path: str):
+    """The lines of a file, last first, read in chunks from the end."""
+    with open(path, "rb") as fh:
+        fh.seek(0, os.SEEK_END)
+        pos = fh.tell()
+        rest = b""
+        read = 0
+        while pos > 0 and read < _PROMPT_MAX:
+            step = min(_PROMPT_CHUNK, pos)
+            pos -= step
+            fh.seek(pos)
+            buf = fh.read(step) + rest
+            read += step
+            lines = buf.split(b"\n")
+            rest = lines[0]
+            for ln in reversed(lines[1:]):
+                yield ln
+        if pos == 0 and rest:
+            yield rest
+
+
+def _prompt_entries_reversed(path: str):
+    """User entries that are not tool results, last first."""
+    for raw in _reversed_lines(path):
+        if b'"user"' not in raw:
+            continue
+        try:
+            e = json.loads(raw.decode("utf-8", errors="replace"))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(e, dict) or e.get("type") != "user":
+            continue
+        c = (e.get("message") or {}).get("content")
+        if isinstance(c, list) and any(isinstance(b, dict) and b.get("type") == "tool_result" for b in c):
+            continue
+        yield e
+
+
+def _entry_text(entry: dict) -> str:
+    c = (entry.get("message") or {}).get("content")
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        return "\n".join(b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text")
+    return ""
+
+
+def turn_read(transcript: str) -> dict:
+    """{"hatch_text": the operator opener's words ("" when the opener is not
+    the operator), "ask_text", "ask_ts", "walked"}. One backward read per
+    transcript and call; fail-closed: any read error is no words at all."""
+    if transcript in _TURN_CACHE:
+        return _TURN_CACHE[transcript]
+    out = {"hatch_text": "", "ask_text": "", "ask_ts": "", "walked": False}
+    try:
+        it = _prompt_entries_reversed(transcript) if transcript else iter(())
+        opener = next(it, None)
+        if opener is not None:
+            if _is_operator_opener(opener):
+                text = _entry_text(opener)
+                out.update(hatch_text=text, ask_text=text, ask_ts=str(opener.get("timestamp") or ""))
+            elif _walks_back(opener):
+                out["walked"] = True
+                for e in it:
+                    o = _origin(e)
+                    if o.get("kind") == "human":
+                        if _is_operator_opener(e):
+                            out.update(ask_text=_entry_text(e), ask_ts=str(e.get("timestamp") or ""))
+                        break
+                    if not e.get("isSidechain") and (
+                            o.get("kind") in ("task-notification", "peer") or e.get("isMeta") is True):
+                        continue
+                    break
+    except OSError:
+        out = {"hatch_text": "", "ask_text": "", "ask_ts": "", "walked": False}
+    _TURN_CACHE[transcript] = out
+    return out
+
+
+def ask_source(transcript: str) -> tuple:
+    """(prompt text, prompt timestamp, walked_back) the send ask is read from."""
+    t = turn_read(transcript)
+    return t["ask_text"], t["ask_ts"], t["walked"]
+
+
+def _ts(value):
+    from datetime import datetime, timezone
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def _panel_after(data: dict, prompt_ts: str) -> bool:
+    """True when every message this call sends has a PASS panel receipt whose
+    report was written after the operator prompt at `prompt_ts`. A send with
+    no panel (a deploy, a release) never qualifies."""
+    import receipt_ledger
+    import panel_digest
+    tool_name = str(data.get("tool_name", ""))
+    tool_input = data.get("tool_input") or {}
+    after = _ts(prompt_ts)
+    if after is None or not _is_panel_send(tool_name, tool_input):
+        return False
+    try:
+        digests = panel_digest.digests_for(tool_name, tool_input)
+    except panel_digest.PanelDigestError:
+        return False
+    if not digests:
+        return False
+    session_id = data.get("session_id") or os.environ.get("CLAUDE_SESSION_ID") or ""
+    now = _now_for(str(data.get("transcript_path") or ""))
+    for d in digests:
+        r = receipt_ledger.panel_pass_for(d, session_id, now)
+        when = _ts((r or {}).get("verdict_ts"))
+        if when is None or when <= after:
+            return False
+    return True
+
+
 def _load(name: str):
     """Import a sibling gate by file name (hyphens are not identifiers)."""
     spec = importlib.util.spec_from_file_location(name.replace("-", "_"), _HERE / name)
@@ -268,22 +576,15 @@ def _send_recipient(tool_name: str, tool_input) -> str:
         import receipt_ledger
         for sc in receipt_ledger.subcommands(str(tool_input.get("command", ""))):
             toks = receipt_ledger.tokens_of(sc)
-            if toks and toks[0] in _READERS:
-                continue
             for i, t in enumerate(toks):
                 if any(receipt_ledger._is_script_token(t, n) for n in _SEND_SCRIPTS):
-                    # The script takes `--archivo <path>` anywhere and strips
-                    # it; the recipient is the first positional that is left.
-                    rest = toks[i + 1:]
-                    j = 0
-                    while j < len(rest):
-                        if rest[j] == "--archivo":
-                            j += 2
-                            continue
-                        if not rest[j].startswith("-"):
-                            return rest[j].strip()
-                        j += 1
-                    return ""
+                    # The script strips its value flags wherever they sit; the
+                    # recipient is the first token left. Read by the SAME
+                    # function the panel digest uses, so the recipient a waiver
+                    # is decided on is the one the panel receipt binds to. A
+                    # line that reader cannot read names no recipient.
+                    import panel_digest
+                    return panel_digest.bridge_recipient(toks[i + 1:])
     return ""
 
 
@@ -293,23 +594,16 @@ def _bash_recipients(command: str, split=None) -> list:
     out = []
     for sc in receipt_ledger.subcommands(command, split):
         toks = receipt_ledger.tokens_of(sc)
-        if toks and toks[0] in _READERS:
-            continue
         for i, t in enumerate(toks):
             if any(receipt_ledger._is_script_token(t, n) for n in _SEND_SCRIPTS):
-                rest = toks[i + 1:]
-                j = 0
-                while j < len(rest):
-                    if rest[j] == "--archivo":
-                        j += 2
-                        continue
-                    if not rest[j].startswith("-"):
-                        out.append(rest[j].strip())
-                        break
-                    j += 1
-                else:
-                    out.append("")
+                import panel_digest
+                out.append(panel_digest.bridge_recipient(toks[i + 1:]))
                 break
+        else:
+            # The script named inside a token (a pager, an alias, an editor
+            # command) has no recipient the gate can read: no waiver rests on it.
+            if any(_names_script(t) for t in toks):
+                out.append("")
     return out
 
 
@@ -466,14 +760,81 @@ def _deny(reason: str, payload: dict = None) -> None:
     _journal_deny(reason, payload)
 
 
+# The one exemption: a Bash command that names the support script anywhere is a
+# send unless the WHOLE command is one plain read (panel_digest.plain_read):
+#   <reader> <plain words>                  (READER_NAMES: cat, head, tail,
+#                                             grep, wc, stat, file, diff, ls,
+#                                             chmod, chown)
+#   sed -n <print-range> <script-path>      (print ranges only: GNU sed runs a
+#                                             shell with `e`, writes with `w`)
+#   <script-path> --help | -h                (the script has no help handler;
+#                                             with fewer than two arguments it
+#                                             prints its usage and exits 64)
+# with no pipe, no ; && || &, no newline, no redirect, no <( or >(, no $(,
+# backtick, braces, glob, ! or #, and no quoted string that holds $, backtick,
+# a backslash or a newline. There is no list of executors: everything else
+# that names the script is judged as a send.
+def support_script_plain_read(command: str) -> bool:
+    """True only for one plain read (panel_digest.plain_read); with
+    panel_digest unloadable, nothing is a plain read (fail closed)."""
+    try:
+        return _panel_digest.plain_read(command)
+    except Exception:
+        return False
+
+
+# Two shapes that RUN the support script while a reader or sed sits in
+# front: a substitution (`cat <(wa-soporte.sh ...)`, and its `$(...)` and
+# backtick twins) and a sed script that names it (`sed -n 'e wa-soporte.sh
+# ...' /dev/null`, GNU sed's `e` runs a shell). Both are also outside the
+# plain-read shape; this check stays as a substring floor under the word rule.
+_PROC_SUBST = re.compile(r"(?:[<>$]\(|`)[^)`]*(?:" + "|".join(re.escape(n) for n in _SEND_SCRIPTS) + r")")
+
+
+def _names_bridge(command: str) -> bool:
+    """The support script named anywhere in a command that is not one plain
+    read (panel_digest.names_bridge); with panel_digest unloadable, any
+    substring counts (fail closed)."""
+    try:
+        return _panel_digest.names_bridge(command)
+    except Exception:
+        return any(n in str(command) for n in _SEND_SCRIPTS)
+
+
+def _names_script(tok: str) -> bool:
+    """The support script as a word anywhere in *tok*; with panel_digest
+    unloadable, any substring counts (fail closed)."""
+    try:
+        return _panel_digest.names_script(tok)
+    except Exception:
+        return any(n in str(tok) for n in _SEND_SCRIPTS)
+
+
+def _runs_script_behind_reader(command: str, toks_list: list) -> bool:
+    if _PROC_SUBST.search(command):
+        return True
+    import receipt_ledger
+    for toks in toks_list:
+        if toks and os.path.basename(toks[0]) == "sed":
+            for t in toks[1:]:
+                if any(n in t for n in _SEND_SCRIPTS) and not any(
+                        receipt_ledger._is_script_token(t, n) for n in _SEND_SCRIPTS):
+                    return True
+    return False
+
+
 def _bash_is_send(command: str) -> bool:
     import receipt_ledger
-    for sc in receipt_ledger.subcommands(command):
-        toks = receipt_ledger.tokens_of(sc)
+    if support_script_plain_read(command):
+        return False
+    toks_list = [receipt_ledger.tokens_of(sc) for sc in receipt_ledger.subcommands(command)]
+    if _names_bridge(command) or _runs_script_behind_reader(command, toks_list):
+        return True
+    for toks in toks_list:
         if toks and toks[0] in _READERS:
             continue
         for i, t in enumerate(toks):
-            if any(receipt_ledger._is_script_token(t, n) for n in _SEND_SCRIPTS):
+            if _names_script(t):
                 return True
             if t.endswith("wrangler") and "deploy" in receipt_ledger.words_after(toks, i, 2):
                 return True
@@ -498,10 +859,20 @@ def is_send(tool_name: str, tool_input: dict) -> bool:
     return bool(_SEND_TOOL.search(tool_name))
 
 
-def _ask_deny(human: str) -> str:
-    """Requirement 4 as a deny reason, or "" when the operator asked for this send."""
-    if explicit_send_ask(human):
+def _ask_deny(data: dict) -> str:
+    """Requirement 4 as a deny reason, or "" when the operator asked for this
+    send: in the prompt of this turn, or (AC-06) in the latest operator prompt
+    when a notification or a hand-back opened the turn and this send's panel
+    receipt was recorded after that prompt."""
+    text, ts, walked = ask_source(str(data.get("transcript_path") or ""))
+    asked = send_ask(text)
+    if asked and (not walked or _panel_after(data, ts)):
         return ""
+    if asked:
+        return ("📬 ENVÍO SIN PEDIDO en este turno: lo abrió una notificación o un hand-back, y "
+                "el último mensaje del operador sí pide mandar, pero el recibo de panel de este "
+                "envío no es posterior a ese mensaje (o el envío no lleva panel). Pasa el mensaje "
+                "por panel después del pedido, o 'send-ok' en SU mensaje.")
     return ("📬 ENVÍO SIN PEDIDO: el mensaje del operador en este turno no pide mandar "
             "nada (directiva 2026-08-14: entregar paste-ready y transmitir solo a pedido "
             "explícito, por mensaje). Entrega el texto en el chat y espera el 'mándalo'; "
@@ -1163,12 +1534,12 @@ def _panel_deny(data: dict) -> str:
             f"2026-10-02: no message leaves without a panel. Write this call's input to a JSON "
             f"file and run `python3 ~/.claude/scripts/panel_digest.py --tool-input <file.json> "
             f"--tool-name {tool_name} --panel-request`; it prints the panel block (PANEL-TO, "
-            f"PANEL-ATTACH, PANEL-BODY-BEGIN..END, PANEL-SHA256). Hand that block to a reviewer "
+            f"PANEL-MENTION, PANEL-ATTACH, PANEL-BODY-BEGIN..END, PANEL-SHA256). Hand that block to a reviewer "
             f"subagent (a reviewer persona: Reality Checker, Code Reviewer, ...) and have it end "
             f"its report with the same block plus 'PANEL-VERDICT: PASS' (or NEEDS-WORK). The "
             f"receipt records only when the digest recomputed from that block equals "
             f"PANEL-SHA256. It counts in this session for 120 minutes and for ONE send; a later "
-            f"NEEDS-WORK revokes it; an edited body, recipient or attachment is a new digest. "
+            f"NEEDS-WORK revokes it; an edited body, recipient, mention or attachment is a new digest. "
             f"No hatch: send-ok does not waive this.")
 
 
@@ -1235,7 +1606,7 @@ def _receipt_checks(data: dict) -> str:
     # Stop gates treat them; a hatch token counts only in the operator's own
     # prompt for this turn, never inside the body (that would ship to the
     # recipient and be self-serve).
-    human = receipt_ledger.turn_last_human_text(transcript) if transcript else ""
+    human = turn_read(transcript)["hatch_text"] if transcript else ""
     ok = hatches(human)
     if "send-ok" in ok:
         return ""
@@ -1248,7 +1619,7 @@ def _receipt_checks(data: dict) -> str:
     if not body.strip():
         # Nothing to read for the phrase checks, but a file or an audio still
         # leaves: requirement 4 applies to it exactly as to a text body.
-        return "" if waive_ask else _ask_deny(human)
+        return "" if waive_ask else _ask_deny(data)
     # A send is the model's own text: a quotation inside it is the model
     # quoting itself, and a claim split across lines is still one claim.
     flat = re.sub(r"\s+", " ", body)
@@ -1299,7 +1670,7 @@ def _receipt_checks(data: dict) -> str:
     #    transmit only the message that was asked for, per message. send-ok is the
     #    standing hatch (returned above). Last, so earlier denies keep their name.
     #    A listed autonomous chat is the other standing hatch, per recipient.
-    return "" if waive_ask else _ask_deny(human)
+    return "" if waive_ask else _ask_deny(data)
 
 
 def main() -> int:

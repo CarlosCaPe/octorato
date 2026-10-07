@@ -117,11 +117,11 @@ def records_for(data: dict) -> list:
             return []
         ids = [o for o in objs if o.get("message_id")]
         out = []
-        for i, (recipient, message, archivo) in enumerate(sends):
+        for i, (recipient, message, archivo, mentions) in enumerate(sends):
             hit = ids[i] if len(ids) == len(sends) else (ids[-1] if len(sends) == 1 and ids else {})
             try:
                 d = panel_digest.digest(message, [panel_digest.file_sha256(archivo)] if archivo else [],
-                                        [recipient])
+                                        [recipient], mentions)
             except panel_digest.PanelDigestError:
                 d = ""
             out.append(dict(base, recipient=recipient, message_id=str(hit.get("message_id") or ""),

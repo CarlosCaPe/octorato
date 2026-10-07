@@ -17,6 +17,11 @@
           "command": "python3 ~/.claude/scripts/trace-hook.py",
           "timeout": 5,
           "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/budget-check.py --refresh --background",
+          "timeout": 5,
+          "type": "command"
         }
       ],
       "matcher": "Agent"
@@ -261,6 +266,11 @@
           "type": "command"
         },
         {
+          "command": "python3 ~/.claude/scripts/budget-check.py --refresh --background",
+          "timeout": 5,
+          "type": "command"
+        },
+        {
           "command": "python3 ~/.claude/scripts/r__session__proc-register.py",
           "statusMessage": "⚙ kernel: registering this process...",
           "timeout": 5,
@@ -345,6 +355,11 @@
         },
         {
           "command": "python3 ~/.claude/scripts/g__stop__goal-anchor.py",
+          "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/r__stop__friction-ledger.py",
+          "timeout": 10,
           "type": "command"
         }
       ]

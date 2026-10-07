@@ -1,0 +1,36 @@
+# Feature: Hello Script
+
+> **Status:** draft
+> **Spec-Format:** ears-1
+> **Date:** {{DATE}}
+
+## Summary
+
+Your first spec, written by `quickstart.py`. It describes a tiny script so you can see the shape before you write a real one. A spec says WHAT must be true, the plan says HOW and in which steps, and a reviewer that did not write the code gives the verdict. Edit it, or delete this folder and ask your assistant to write the next one with the `sdd-feature` skill.
+
+Check it any time with:
+
+```
+python3 ~/.claude/scripts/spec_lint.py {{SPEC_DIR}}
+```
+
+## Glossary
+
+Every acceptance criterion names one of these as its subject.
+
+- **Greeter**: the script `hello.py`.
+
+## User Stories
+
+- As a newcomer, I want a script that greets me by name, so that I can see a spec turn into code.
+
+## Acceptance Criteria
+
+- [ ] AC-01: WHEN the user passes a name, THE Greeter SHALL print `Hello, <name>!` on one line.
+- [ ] AC-02: IF no name is passed, THEN THE Greeter SHALL print `Hello, world!` and exit 0.
+
+## Revision History
+
+| Date | Change Summary |
+|------|----------------|
+| {{DATE}} | Written by quickstart.py as a first example |
