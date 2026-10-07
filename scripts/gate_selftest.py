@@ -356,12 +356,11 @@ def _run_leg(script: Path, payload: str, sandbox: Path) -> tuple[int, str]:
     env["HOME"] = str(sandbox)
     env["USERPROFILE"] = str(sandbox)
     env["CLAUDE_SESSION_ID"] = "__selftest__"
-    cp = subprocess.run(
-        [sys.executable, str(script)],
-        input=payload, capture_output=True, text=True,
-        encoding="utf-8", errors="replace",
-        cwd=str(sandbox), env=env, timeout=30,
-    )
+    # One leg at a time: every leg of a gate shares this sandbox, and a later
+    # leg reads what an earlier one left there (a spent receipt, a journal).
+    cp = run_scripts([{"script": str(script), "input": payload,
+                       "cwd": str(sandbox), "env": env, "timeout": 30,
+                       "encoding": "utf-8", "errors": "replace"}], workers=1)[0]
     return cp.returncode, cp.stdout
 
 
