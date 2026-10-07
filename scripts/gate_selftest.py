@@ -334,14 +334,29 @@ def _spawn(leg: dict) -> LegResult:
     return LegResult(cp.returncode, cp.stdout, cp.stderr)
 
 
-def _group_alive(pgid: int) -> bool:
-    try:
-        os.killpg(pgid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
+class _Leg:
+    """What proc_group needs from a child: its pid and a per-pid kill."""
+    __slots__ = ("pid",)
+
+    def __init__(self, pid: int):
+        self.pid = pid
+
+    def kill(self) -> None:
+        import signal
+        try:
+            os.kill(self.pid, signal.SIGKILL)
+        except OSError:
+            pass
+
+
+def _proc_group():
+    # The one guarded group-kill implementation lives in proc_group.py; a second
+    # copy here is what its own test forbids.
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    import proc_group
+    return proc_group
 
 
 def run_scripts(legs: list, workers: int = 1) -> list:
@@ -359,9 +374,9 @@ def run_scripts(legs: list, workers: int = 1) -> list:
     import io
     import locale
     import selectors
-    import signal
     import time
 
+    pg = _proc_group()
     results = [None] * len(legs)
     running = {}            # pid -> state dict
     sel = selectors.DefaultSelector()
@@ -382,10 +397,7 @@ def run_scripts(legs: list, workers: int = 1) -> list:
         st = running.get(pid)
         if st is None:
             return
-        try:
-            os.killpg(st["pgid"], signal.SIGKILL)
-        except OSError:
-            pass
+        pg.kill_group(_Leg(pid))
         if st["status"] is None:
             try:
                 os.waitpid(pid, 0)
@@ -425,7 +437,7 @@ def run_scripts(legs: list, workers: int = 1) -> list:
                 if got:
                     st["status"] = status
             if st["status"] is not None and not st["fds"] and \
-                    not _group_alive(st["pgid"]):
+                    pg.group_gone(None, st["pgid"]):
                 _finish(pid)
             elif time.monotonic() >= st["deadline"]:
                 leg = legs[st["i"]]
