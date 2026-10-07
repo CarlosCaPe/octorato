@@ -412,6 +412,9 @@ def run_scripts(legs: list, workers: int = 1) -> list:
     import time
 
     pg = _proc_group()
+    # Asked here, in the parent, so every fork inherits the answer instead of
+    # each child spawning its own probe interpreter.
+    _text_io("stdout")
     results = [None] * len(legs)
     running = {}            # pid -> state dict
     sel = selectors.DefaultSelector()
