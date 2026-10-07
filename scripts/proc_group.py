@@ -42,8 +42,14 @@ import time
 KILL_SIGNAL = getattr(signal, "SIGKILL", getattr(signal, "SIGTERM", 15))
 
 
-def kill_group(proc) -> bool:
+def kill_group(proc, group: int | None = None) -> bool:
     """SIGKILL the group of `proc`. True when the GROUP call is what landed.
+
+    `group` is the group id, when the caller read it before the child could be
+    reaped (`group_of`, or the pid of a child that called setpgid(0, 0)). Without
+    it the group is read from `proc.pid` now, which fails once the direct child is
+    reaped even though grandchildren may still be in its group. Either way the
+    same guard applies: never the caller's own group.
 
     False means the fallback ran: the caller's own group (see below), a platform with
     no killpg, or a pid already reaped. The caller should treat False as "the direct
@@ -51,7 +57,8 @@ def kill_group(proc) -> bool:
     """
     if hasattr(os, "killpg"):
         try:
-            group = os.getpgid(proc.pid)
+            if group is None:
+                group = os.getpgid(proc.pid)
             # The guard, and the reason this module exists. A group kill is safe only
             # because the spawner passed start_new_session=True and the child leads a
             # group of its own. If that ever comes off, the child shares OUR group and
