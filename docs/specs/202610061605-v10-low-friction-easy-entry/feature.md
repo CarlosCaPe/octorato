@@ -32,7 +32,7 @@ Every acceptance criterion names one of these components as its subject.
 - **Guard_Stop**: `scripts/d__stop__wa-guardia.py`.
 - **Budget_Check**: `scripts/budget-check.py`.
 - **Merge_Gate**: `scripts/qa-merge-gate.py`.
-- **Rebase_Verifier**: a QA subagent protocol, started by a new `/requa <pr>` command, that re-reviews a pull request whose head moved only because its base moved.
+- **Base_Update_Verifier**: a QA subagent protocol, started by a new `/requa <pr>` command, that re-reviews a pull request whose head moved only because master was merged into it. A rebase is out of its scope and gets a full QA.
 - **Receipt_Ledger**: `scripts/receipt_ledger.py`.
 - **Quickstart**: `scripts/quickstart.py` and the README install section.
 - **Doctor**: `scripts/brain_doctor.py`.
@@ -66,9 +66,9 @@ The Goal_Anchor never anchors a prompt that is only a short acknowledgement or a
 
 A hook on the hot path finishes within a stated budget. Budget_Check answers from a cache refreshed out of band instead of recomputing on every spawn.
 
-### FR-05: A rebase costs one short check, not a full review
+### FR-05: Merging master in costs one short check, not a full review
 
-When a pull request's head changes only because its base moved, a verifier confirms against the remote master that the patch is identical and records the receipt for the new head. The merge gate itself does not change.
+When a pull request's head changes only because master was merged into it, a verifier confirms against the remote master that the patch is identical and records the receipt for the new head. The merge gate itself does not change. A rebase rewrites the reviewed commits and gets a full QA.
 
 ### FR-06: One install path that wires everything
 
@@ -86,7 +86,7 @@ The Constitution keeps the rules every session needs and moves the long mechanis
 
 - [ ] AC-01: WHEN any PreToolUse deny or Stop block registered in `hooks.json` fires, THE Friction_Ledger SHALL receive one line carrying the gate name, session id, tool name, reason code and a digest of the input truncated to 1,200 characters.
 - [ ] AC-02: THE Friction_Report SHALL print, per gate, the deny count over a requested window, the median and p95 hook latency, and the false-positive rate of the labelled sample when one exists.
-- [ ] AC-03: THE Replay_Harness SHALL replay a private, gitignored corpus of at least 1,000 real tool calls and prompts drawn from the 2026-09-06 to 2026-10-06 transcripts, SHALL keep in the tracked repo only baseline counts and per-case hashes, and SHALL print allow-to-deny and deny-to-allow changes against that baseline.
+- [ ] AC-03: THE Replay_Harness SHALL replay a private, gitignored corpus of at least 1,000 real tool calls and prompts drawn from the transcripts since 2026-09-06, SHALL keep in the tracked repo only baseline counts and per-case hashes, gates, decisions, reason codes and labels, never prompt or command text, and SHALL print allow-to-deny and deny-to-allow changes against that baseline.
 - [ ] AC-04: IF a change to a gate script flips any labelled true-positive case from deny to allow on the Replay_Harness corpus, THEN THE Replay_Harness SHALL exit non-zero.
 - [ ] AC-05: WHEN the operator's prompt for the turn is a Send_Ask, THE Send_Gate SHALL lift the send ask without a separate hatch token.
 - [ ] AC-06: WHEN a turn is started by a task notification or a subagent hand-back, THE Send_Gate SHALL evaluate the send ask against the operator's latest prompt only if no operator prompt came after it and the panel receipt for the send was recorded after it.
@@ -95,7 +95,7 @@ The Constitution keeps the rules every session needs and moves the long mechanis
 - [ ] AC-09: IF a prompt consists only of an acknowledgement or a hatch token of at most three words, THEN THE Goal_Anchor SHALL keep the previous root goal instead of anchoring the prompt.
 - [ ] AC-10: WHEN the Replay_Harness replays the Stop-hook corpus, THE Goal_Anchor SHALL block on at most 25% of the turns it blocked on in the baseline, with every labelled true-positive case still blocked.
 - [ ] AC-11: THE Budget_Check SHALL answer a PreToolUse call in at most 300 ms at the median and 1 s at p95, measured over 100 consecutive calls on the operator's machine.
-- [ ] AC-12: WHEN a pull request's head changes only by merging master into it (a rebase is re-reviewed in full), THE Rebase_Verifier SHALL confirm, against the remote master read through `gh` and not a local ref, that the pull request's diff over its merge base is byte-identical to the diff of the head that holds the QA PASS, and SHALL record a QA receipt for the new head only when they match.
+- [ ] AC-12: WHEN a pull request's head changes only by merging master into it (a rebase is re-reviewed in full), THE Base_Update_Verifier SHALL confirm, against the remote master read through `gh` and not a local ref, that the pull request's diff over its merge base is byte-identical to the diff of the head that holds the QA PASS, and SHALL record a QA receipt for the new head only when they match.
 - [ ] AC-13: THE Merge_Gate SHALL keep deciding on the receipt that names the pinned head, unchanged, with no carry of a PASS from one head to another.
 - [ ] AC-14: THE Quickstart SHALL, on a clean clone, wire the Claude Code hooks, set `core.hooksPath` to `.githooks` and finish with a first spec directory that `spec_lint.py` accepts, using one command after the clone.
 - [ ] AC-15: THE Doctor SHALL offer a fast profile that completes in at most 30 s on the operator's machine, and THE Quickstart SHALL use that profile.
@@ -110,7 +110,7 @@ The Constitution keeps the rules every session needs and moves the long mechanis
 ## Technical Scope
 
 - New: `scripts/friction_ledger.py` (append helper imported by gates), `scripts/replay_harness.py`, `registry/fixtures/friction-corpus/` (redacted), `octo friction`, `octo dash`, a status line script, a CI workflow for the clean clone.
-- Changed: `g__pretool-mcp__outward-send.py` (send-ask reader), `g__stop__goal-anchor.py`, `d__stop__wa-guardia.py`, `budget-check.py`, `qa-merge-gate.py` and `receipt_ledger.py` (patch-id carry-over), `quickstart.py`, `brain_doctor.py` (fast profile), `README.md`, `docs/wiki/Getting-Started.md`, `CLAUDE.md`.
+- Changed: `g__pretool-mcp__outward-send.py` (send-ask reader), `g__stop__goal-anchor.py`, `d__stop__wa-guardia.py`, `budget-check.py`, `quickstart.py`, `brain_doctor.py` (fast profile), `README.md`, `docs/wiki/Getting-Started.md`, `CLAUDE.md`.
 - The gate edits touch the arming surface, so each is written in a worktree and reaches the live tree only by pull.
 
 ## Non-Functional Requirements
@@ -136,3 +136,4 @@ v10.0.0 ships when every criterion above has a CONVERGED verdict and the Frictio
 - 2026-10-06: analyze pass applied: whitespace-sensitive diff hash instead of patch-id, private corpus, PR snapshot for the dashboard, bounded send ask, Send_Ask defined, AC-08 widened to every send-gate check, AC-21 (guard stop) and AC-22 (stale budget cache) added, timing modes stated.
 - 2026-10-06: QA failed the in-gate receipt carry (local master ref is agent-writable). AC-12 and AC-13 now move the re-review to a remote-reading verifier and keep the merge gate unchanged. Send_Ask no longer accepts bare go-aheads.
 - 2026-10-07: AC-12 narrowed to merge-only base updates; a rebase rewrites the reviewed commits and gets a full QA.
+- 2026-10-07: QA consistency pass: Technical Scope no longer lists the rejected merge-gate carry, FR-05 and the verifier term say merge-only, AC-03 names what the tracked baseline holds.
