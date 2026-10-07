@@ -13,9 +13,9 @@ Merge strategy:
   - If settings.json doesn't exist, creates it with just the hooks
   - Idempotent: safe to run multiple times
   - statusLine: registers scripts/statusline.py when settings.json has no
-    statusLine, or when the one it has is already this brain's (so a moved
-    command is kept current). A statusLine the operator set to anything else
-    is left alone and named.
+    statusLine, and rewrites one only when it equals a value this script
+    wrote before (STATUSLINE_PREVIOUS). Any other statusLine, including one
+    that wraps scripts/statusline.py or changes its padding, is left alone.
 """
 
 import json
