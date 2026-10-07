@@ -42,7 +42,7 @@ That second command does every setup step, in this order, and is safe to run aga
 | 7 | Health check | Runs `brain_doctor.py --fast`, the quick profile (under 30 seconds on a populated machine). The full check, which proves every gate blocks, is `python3 ~/.claude/scripts/brain_doctor.py`. |
 | 8 | First spec | Writes an example spec and checks it with `spec_lint.py`. |
 
-On a clean clone the whole run took <!--canon:v10.quickstart.measured-->21 s<!--/canon--> when it was measured; a busy machine takes longer (one run at load average 13.8 took <!--canon:v10.quickstart.loaded-->80 s<!--/canon-->). A CI job runs it on a fresh clone for every change to the install path and fails past <!--canon:v10.quickstart.ci_budget-->5 minutes<!--/canon-->.
+One run on a clean clone took <!--canon:v10.quickstart.measured-->21 s<!--/canon-->; a busy machine takes longer (one run at load average 13.8 took <!--canon:v10.quickstart.loaded-->80 s<!--/canon-->). A CI job runs it on a fresh clone for every change to the install path and fails past <!--canon:v10.quickstart.ci_budget-->5 minutes<!--/canon-->.
 
 If step 4, 5 or 8 fails, quickstart says which one and exits non-zero. A health-check finding is reported but does not stop the install, because a fresh clone is expected to miss optional parts (a private blocklist, optional Python packages listed in `requirements.txt`).
 
