@@ -161,7 +161,7 @@ rules:
   category: FLOW
   source:
     file: CLAUDE.md
-    anchor: Do-it-today (no dejes para mañana lo que puedas hacer hoy)
+    anchor: Do-it-today (do not put off until tomorrow what you can do today)
   strength: GATE
   gateable: true
   enforcement: fail-closed

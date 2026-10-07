@@ -86,3 +86,18 @@ These are known, intentional, or pending, not silent failures:
 - `scripts/_pricing.py`: multi-vendor list prices
 - `scripts/merge-hooks-cursor.py`: Cursor hook projector
 - `docs/wiki/Getting-Started.md`: install for either runtime
+
+<!-- moved-from-claude-md v10-T13 -->
+## Constitution detail (moved from CLAUDE.md)
+
+These paragraphs were the constitution's own text until v10 (T13), moved here so `CLAUDE.md` keeps only what every session needs. They are kept as written, with em-dashes normalised; `CLAUDE.md` now carries a short paragraph pointing here.
+
+### 2D Q2: the MCP census
+
+| Q | Question | Tool |
+|---|---|---|
+| Q2 | Is there an MCP/API? (token-efficient access) | **Runtime-aware MCP census (not a mental check).** Claude Code → `claude mcp list` (+ `claude mcp add --transport http <name> <url>` to register). Cursor (`CURSOR_AGENT=1`) → inspect MCP via `GetMcpTools` / Cursor Settings → MCP (no `claude` CLI required). Priority on every runtime: registered MCP > **register a NEW MCP if an official one exists** > REST API > SDK > scraping (last resort). **"No MCP connected" ≠ "no MCP available".** Before dropping to scraping or hand-rolled REST, you MUST verify whether an official MCP server exists for this service (web-search "<service> MCP server") and register it on the active runtime. Skipping this check is a hard failure, not a shortcut. See `docs/architecture/multi-runtime.md`. |
+
+### Route work by complexity across the model ladder
+
+**Route work by complexity across the model ladder** (`model-routing-by-complexity`; architecture: `docs/architecture/multi-runtime.md`): tiers are **vendor-agnostic**, mechanical → bulk (conscious downgrade, never the default) → build DEFAULT → **judgment, no exceptions** (QA, code review, second opinion, adversarial verify). Bind to the active runtime: Claude Code → Haiku / Sonnet / Opus / **Fable**; Cursor+xAI → `composer-2.5-fast` / mid-Grok-or-GPT / `grok-4.5*` / strongest independent ≥ builder. Octorato is for **all models and all editors**, new engines get a binding row, not a fork. The invariant behind the pin: the verifier must run on a model at least as strong as the builder, because a weaker reviewer approves what it cannot see. Never burn the build-tier engine on what a cheaper tier does, delegating *is* Q3 (who does it?), not optional. Identity in chat = the engine the harness selected (Grok, Claude, GPT, …); the OS is Octorato. These verdicts are meant to fire as **reflexes via hooks**, not depend on discipline, see `docs/architecture/hook-orchestration.md` (the Reactive Control Architecture: ECA atoms · Behavior-Tree priority · Statechart 4D · Spreading-Activation recall · Bandit tier-routing). **A gate that depends on the model remembering it WILL be skipped under load** (Q2/Q3 were "mental checks" for too long, so an MCP went unregistered and days were burned on manual scraping); when a rule is chronically ignored, the fix is never "try harder": give the arm a ganglion (a hook that fires on its own). Full HOW in `skills/reflexes-over-discipline/SKILL.md`. Report the 3-line summary in every response that involves work. Full detail in `skills/4d-paradigm-protocol/SKILL.md`.
