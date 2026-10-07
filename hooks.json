@@ -17,6 +17,11 @@
           "command": "python3 ~/.claude/scripts/trace-hook.py",
           "timeout": 5,
           "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/budget-check.py --refresh --background",
+          "timeout": 5,
+          "type": "command"
         }
       ],
       "matcher": "Agent"
@@ -257,6 +262,11 @@
         {
           "command": "python3 ~/.claude/scripts/session-isolation-hook.py",
           "statusMessage": "♦ 4D: dimension isolation (auto-fork)...",
+          "timeout": 5,
+          "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/budget-check.py --refresh --background",
           "timeout": 5,
           "type": "command"
         },

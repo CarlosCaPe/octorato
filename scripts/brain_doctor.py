@@ -744,6 +744,29 @@ def check_finops_enforcement(fix: bool) -> Result:
         return Result(key, WARN,
                       "budgets.yaml absent — per-arm budget caps are NOT enforced (FinOps off)",
                       "cp budgets.yaml.example budgets.yaml, then set monthly_usd_cap per arm")
+    # Read it the way budget-check.py reads it: a file in a shape the gate does
+    # not read (an `arms:` map, say) enforced nothing while this line said ON.
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_budget_check_doctor", CLAUDE_DIR / "scripts" / "budget-check.py")
+        bc = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(bc)
+        try:
+            import yaml  # type: ignore[import-not-found]
+            loaded = yaml.safe_load(cfg.read_text(encoding="utf-8")) or {}
+            problems = bc.config_problems(loaded)
+        except ImportError:
+            problems = ["PyYAML is not installed, so budget-check cannot read budgets.yaml"]
+        except Exception as e:  # noqa: BLE001
+            problems = [f"budgets.yaml does not parse: {e}"]
+        fix = bc.CONFIG_FIX
+    except Exception as e:  # noqa: BLE001
+        problems, fix = [f"budget-check.py could not be loaded to read the config: {e}"], \
+            "convert to the budgets: list documented in budget-check.py"
+    if problems:
+        return Result(key, WARN, "budgets.yaml is present but budget-check cannot read it: "
+                      + "; ".join(problems), fix)
     n = cfg.read_text(encoding="utf-8", errors="ignore").count("monthly_usd_cap")
     return Result(key, PASS, f"FinOps enforcement ON — budgets.yaml present ({n} cap line(s))")
 

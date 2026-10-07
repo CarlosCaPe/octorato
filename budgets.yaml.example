@@ -16,14 +16,20 @@
 #   warn      — print a warning line, do not block (exit 0)
 #   hard_stop — refuse the expensive tool (exit 2) once spend ≥ cap × grace_pct/100
 
-arms:
-  example_arm:
+#
+# Shape: a `budgets:` LIST plus an optional top-level `default:`. These (and
+# `spend_json:`) are the only top-level keys budget-check.py reads; any other
+# key is ignored and reported as a WARN by budget-check and brain_doctor.
+
+budgets:
+  - arm: example_arm
     monthly_usd_cap: 200.0
     grace_pct: 110            # allow 10% over cap before hard_stop trips
     action_on_breach: hard_stop
+    # path: ~/Documents/github/example_arm   # optional: cap applies only under this dir
 
-  # Optional fallback for any arm not listed above:
-  default:
-    monthly_usd_cap: 100.0
-    grace_pct: 110
-    action_on_breach: warn
+# Optional fallback for any arm not listed above:
+default:
+  monthly_usd_cap: 100.0
+  grace_pct: 110
+  action_on_breach: warn
