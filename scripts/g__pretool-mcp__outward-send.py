@@ -1589,7 +1589,7 @@ def _receipt_checks(data: dict) -> str:
     if not receipt_ledger.gate_receipt_ok(gates):
         return ("🧾 SIN RECIBO DE GATES: ningún brain_doctor ha probado los gates en este "
                 "estado del brain. Corre `python3 ~/.claude/scripts/brain_doctor.py --gate-receipt` "
-                "(ai-pull, tras su perfil --fast, y todo push lo hacen solos) y reintenta el envío. v7: nada sale sin recibos.")
+                "(ai-pull lo hace solo cuando cambian los gates, y todo push también) y reintenta el envío. v7: nada sale sin recibos.")
 
     found: list = []
     if tool_name == "Bash":

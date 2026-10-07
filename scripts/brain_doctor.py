@@ -2776,9 +2776,9 @@ CHECKS = [
 # and gate-liveness runs the same selftests again; --fast took 16.7, 14.4 and
 # 13.7 s on three consecutive runs there. A fast PASS proves the brain is wired and its static
 # state is sound; it does NOT prove a gate blocks, so it never writes the gate
-# receipt (gate-liveness is skipped). Callers that need sends to keep working
-# follow it with --gate-receipt (ai-pull does), and pre-push keeps calling the
-# checks it always called (--registry, --gate-receipt). Keys only: a check added later
+# receipt (gate-liveness is skipped). ai-pull follows it with --gate-receipt
+# whenever no receipt covers the current gate tree, so sends keep working, and
+# pre-push keeps calling the checks it always called (--registry, --gate-receipt). Keys only: a check added later
 # runs in --fast until someone measures it slow and lists it here.
 SLOW_CHECKS = {
     "gate-liveness": "runs every fail-closed gate's --selftest and writes the gate receipt",
@@ -2839,11 +2839,11 @@ def main() -> int:
                     help="run ONLY the RULE #1 registry checks (for .githooks/pre-push)")
     ap.add_argument("--gate-receipt", action="store_true",
                     help="run ONLY gate-liveness and write the v7 gate receipt "
-                         "(pre-push, and ai-pull right after its --fast run)")
+                         "(pre-push, and ai-pull after --fast when no receipt covers the current gate tree)")
     ap.add_argument("--fast", action="store_true",
                     help="skip the checks that run gate selftests or call the network "
-                         "(see SLOW_CHECKS); used by quickstart and ai-pull, never by pre-push, and "
-                         "ai-pull follows it with --gate-receipt")
+                         "(see SLOW_CHECKS); used by quickstart and ai-pull, never by pre-push; "
+                         "ai-pull follows it with --gate-receipt when the gate tree has no receipt")
     args = ap.parse_args()
     if args.fast and (args.gate_receipt or args.registry):
         ap.error("--fast is a profile of the full run; it does not combine with --registry or --gate-receipt")

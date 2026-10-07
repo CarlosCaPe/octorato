@@ -284,6 +284,38 @@ PULL_DOCTOR_NOTE = ("  full doctor profile runs with `python3 scripts/brain_doct
                     "pre-push runs --registry and --gate-receipt")
 
 
+def gate_receipt_current() -> str:
+    """The gate tree hash when an existing gate receipt still covers this brain,
+    else "". It mirrors what the outward-send gate accepts: the tree of scripts/,
+    registry/ and hooks.json at HEAD has a gate-liveness receipt, and nothing
+    under those surfaces differs from HEAD. It only READS receipts the selftests
+    already wrote; any doubt (import or git failure) answers "" so pull re-proves."""
+    try:
+        sys.path.insert(0, str(CLAUDE / "scripts"))
+        import receipt_ledger
+        gates = receipt_ledger.gate_tree_hash(CLAUDE)
+        if (gates and not receipt_ledger.gate_surfaces_dirty(CLAUDE)
+                and receipt_ledger.gate_receipt_ok(gates)):
+            return gates
+    except Exception:
+        pass
+    return ""
+
+
+def gate_receipt_step() -> None:
+    """Run gate-liveness (brain_doctor --gate-receipt, ~150 s) only when the gate
+    surfaces changed since the last receipt. Most pulls leave scripts/, registry/
+    and hooks.json alone, and then the receipt already written for that exact
+    tree is still the one the outward-send gate will accept."""
+    gates = gate_receipt_current()
+    if gates:
+        info(f"\n=== Brain doctor (gate receipt) ===\n  gate receipt still valid for tree "
+             f"{gates[:12]}, skipped")
+        return
+    info("\n=== Brain doctor (gate receipt) ===\n  gate surfaces changed, re-proving")
+    script_step("scripts/brain_doctor.py", "--gate-receipt")
+
+
 # ── pull ────────────────────────────────────────────────────────────────────
 
 def pull(args) -> int:
@@ -341,13 +373,9 @@ def pull(args) -> int:
     # machine (most of it enforcement-floor re-running every gate selftest) and a
     # pull is a read path the operator waits on. --fast skips gate-liveness, the
     # ONLY writer of the gate receipt, and the outward-send gate denies every send
-    # without a receipt for the current gate tree. A pull that changes scripts/ or
-    # registry/ moves that tree, so a machine that pulls and never pushes would lose
-    # its sends. --gate-receipt runs gate-liveness alone and writes the receipt;
-    # the two flags do not combine, hence two runs.
+    # without a receipt for the current gate tree, so pull keeps that receipt valid.
     script_step("scripts/brain_doctor.py", "--fast", label="\n=== Brain doctor (fast) ===")
-    script_step("scripts/brain_doctor.py", "--gate-receipt",
-                label="\n=== Brain doctor (gate receipt) ===")
+    gate_receipt_step()
     info(PULL_DOCTOR_NOTE)
     return 0
 
