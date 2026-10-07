@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "awk -F= '{print $1}' ~/.ssh/id_rsa"
+  },
+  "cwd": "/home/user/project"
+}

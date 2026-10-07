@@ -17,23 +17,38 @@ name: Brain Version Bump
 # CHANGELOG self-heal (2026-09-06): master is protected (required PRs, required
 # checks, enforce_admins), so no job can commit the CHANGELOG entry directly and
 # every feat/fix merge left the tag one step ahead of CHANGELOG.md until a human
-# opened a docs PR. Now the same run that cuts the tag runs changelog-sync
-# --apply and, when it changed something, pushes a bot branch (with the
-# checkout's GITHUB_TOKEN credentials, contents: write) and opens a PR with
-# auto-merge armed through OCTORATO_PAT: the pull_request event is produced by
-# that API call, and a PAT-made PR triggers the required checks, which a
-# GITHUB_TOKEN-made one would not. When that PR merges, this job runs again,
-# sees changelog-only commits (brain-version-bump's guard), cuts no tag, and
-# changelog-sync finds nothing missing: the loop closes in one beat. Before
-# opening a new heal PR the step retires older bot/changelog-* branches (a
-# merged one is not deleted by `gh pr merge --auto`, and an open one from a
-# previous tag would only conflict, since the new heal carries every missing
-# entry). The heal is docs-only and machine-generated, so it merges on the
-# repo's required checks alone (the QA-receipt contract governs authored PRs).
+# opened a docs PR. The `heal` job runs changelog-sync --apply and, when it
+# changed something, pushes a bot branch (with the checkout's GITHUB_TOKEN
+# credentials, contents: write) and opens a PR with auto-merge armed through
+# OCTORATO_PAT: the pull_request event is produced by that API call, and a
+# PAT-made PR triggers the required checks, which a GITHUB_TOKEN-made one would
+# not. When that PR merges, the `bump` job runs, sees changelog-only commits
+# (brain-version-bump's guard) and cuts no tag. Before opening a new heal PR the
+# job retires older bot/changelog-* branches (a merged one is not deleted by
+# `gh pr merge --auto`, and an open one from a previous tag would only conflict,
+# since the new heal carries every missing entry). The heal is docs-only and
+# machine-generated, so it merges on the repo's required checks alone (the
+# QA-receipt contract governs authored PRs).
+#
+# Daily, not per merge (2026-10-06): master requires branches to be up to date
+# (strict status checks). A heal PR merged minutes after every feature merge
+# moved master again and left every other open PR BEHIND, each needing an
+# "Update branch" and a fresh QA pass on a new head. So the tag and the Release
+# are still cut on every push, while the heal runs once a day (plus
+# workflow_dispatch) and changelog-sync writes every tag cut since the last heal
+# into ONE PR. The documented lag: CHANGELOG.md may trail the newest tag by up
+# to a day; brain_doctor's release-drift only WARNs on that, and the Release
+# notes carry the entry in the meantime. The cron sits at 03:17 UTC, outside the
+# operator's working hours (UTC+1/+2), so the one daily re-stale lands before
+# the day's PRs are opened; minute 17 avoids the top-of-hour queue where GitHub
+# delays or drops scheduled runs.
 
 on:
   push:
     branches: [master]
+  schedule:
+    - cron: '17 3 * * *'   # daily CHANGELOG heal, see header
+  workflow_dispatch:       # manual heal
 
 permissions:
   contents: write   # push the annotated tag + create the Release; push the heal branch
@@ -44,6 +59,7 @@ concurrency:
 
 jobs:
   bump:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -59,6 +75,19 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 scripts/brain-version-bump.py --apply --push
+
+  heal:
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history + all tags, needed by changelog-sync
+
+      - name: Configure git identity for the heal commit
+        run: |
+          git config user.name "octorato-bot"
+          git config user.email "octorato-bot@users.noreply.github.com"
 
       - name: Heal CHANGELOG.md through a bot PR (auto-merge)
         env:
@@ -95,11 +124,11 @@ jobs:
           git checkout -q -b "$branch"
           git add CHANGELOG.md
           git commit -q -m "docs(changelog): backfill ${tag}" \
-            -m "Written by version-bump.yml right after cutting ${tag}: changelog-sync --apply promoted the Unreleased body or the Release notes into the dated entry. Docs-only; the bump's changelog-only guard cuts no new tag on merge."
+            -m "Written by the daily heal in version-bump.yml: changelog-sync --apply wrote every tag up to ${tag} that CHANGELOG.md was missing, promoting the Unreleased body or the Release notes into the dated entries. Docs-only; the bump's changelog-only guard cuts no new tag on merge."
           git push -q -u origin "$branch"
           gh pr create --repo "$GITHUB_REPOSITORY" --base master --head "$branch" \
             --title "docs(changelog): backfill ${tag}" \
-            --body "Automated by version-bump.yml after cutting ${tag}. Docs-only: the bump's changelog-only guard cuts no new tag when this merges, so release-drift converges and the loop closes." \
+            --body "Automated by the daily heal in version-bump.yml: every tag up to ${tag} missing from CHANGELOG.md, in one PR. Docs-only: the bump's changelog-only guard cuts no new tag when this merges, so release-drift converges and the loop closes." \
             || { echo "::warning::gh pr create failed (PAT lacks pull-requests:write?); branch $branch pushed, open the PR by hand"; exit 0; }
           gh pr merge --repo "$GITHUB_REPOSITORY" "$branch" --squash --auto --delete-branch \
             || echo "::warning::auto-merge could not be armed on $branch; merge it by hand once checks pass"

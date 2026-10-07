@@ -15,6 +15,12 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-10-07]: v9.10.1
+### Fixes
+- fix(send-gate): a command naming the support script is a send unless it is one plain read (#389)
+### Other
+- docs(changelog): backfill v9.10.0 (#386)
+
 ## [2026-10-06]: v9.10.0
 ### Features
 - feat(send-gate): read the send ask the way the operator writes it (v10 T04) (#382)
