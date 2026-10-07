@@ -9,9 +9,9 @@
 | Skills | 246 |
 | Agents | 167 |
 | Divisions | 13 |
-| Scripts: wired | 127 |
+| Scripts: wired | 129 |
 | Scripts: orphan | 7 |
-| Rules | 86 |
+| Rules | 88 |
 | Hook entries | 56 |
 
 ## Skills (246)
@@ -499,7 +499,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (134)
+## Scripts (136)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -597,6 +597,7 @@
 | no-pause-suggestion.py | Stop hook , block "let's pause / leave for tomorrow / take a break" framing. The operator has flagge... | wired |
 | octo-dim.py | octo-dim.py , 4D session dimension manager. | wired |
 | octo.py | octo.py: the terminal view of the v8 kernel (docs/architecture/v8-kernel.md). | wired |
+| octo_dash.py | octo_dash.py: one self-contained HTML page of what the brain already knows. | wired |
 | octo_pkg.py | octo_pkg.py: the PACKAGE primitive of the v8 kernel. | wired |
 | octorato-isomorphism.py | octorato-isomorphism , compute the invariant shared by the three Octorato anchors. | wired |
 | panel_digest.py | panel_digest.py: the digest a panel reviews and the outward-send gate checks. | wired |
@@ -627,6 +628,7 @@
 | social-video-digest.py | social-video-digest , daily triage of social-video creators for brain-worthy gems. What this DOES (c... | wired |
 | source-attribution-check.py | source-attribution-check.py: Stop hook, every answer MUST end with its provenance. | wired |
 | spec_lint.py | spec_lint.py: the deterministic reader of a v9 spec (Spec-Format: ears-1). | wired |
+| statusline.py | statusline.py: one short line for Claude Code's statusLine slot. | wired |
 | sync-ai-docs.ps1 |  | orphan |
 | sync-readme-counts.py | Sync the skill/agent counts cited in README.md + FAQ.md to the numbers on disk. | wired |
 | trace-hook.py | trace-hook.py , observability surface 1 , capture hook. Reads a Claude Code hook event from stdin an... | wired |
@@ -638,7 +640,7 @@
 | wa-soporte.sh | Sends a WhatsApp through the SUPPORT channel, never through the operator's personal number. | wired |
 | watchdog.py | watchdog.py , observability surface 4 anomaly detector. Reads the JSONL trace files written by trace... | wired |
 
-## Rules (86)
+## Rules (88)
 
 ### ARCHITECTURE
 
@@ -650,8 +652,10 @@
 - ARCHITECTURE.kernel-isolation
 - ARCHITECTURE.kernel-process
 - ARCHITECTURE.layers
+- ARCHITECTURE.octo-dash
 - ARCHITECTURE.octopus-architecture
 - ARCHITECTURE.session-isolation
+- ARCHITECTURE.status-line
 
 ### CODE
 

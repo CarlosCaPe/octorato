@@ -182,6 +182,12 @@ Every session and every subagent runs as a kernel process: a pid, a parent, a wo
 
 `octo journal <pid>` hands back the raw lines when you want the JSON rather than the reading, and `octo bench` measures what the journaling costs per tool call on your machine. Design and guarantees: [`docs/architecture/v8-kernel.md`](../architecture/v8-kernel.md).
 
+### How to see the whole brain at a glance
+
+`octo dash` writes one self-contained HTML page to `~/.claude/.cache/dash/index.html` and prints its path. It shows every spec with its status, task count and newest converge verdict, the open pull requests with their newest QA verdict and the head that verdict pinned next to the current head, the gate receipt, the live kernel processes and the friction report when one exists. Pull requests come only from a local snapshot, so the page opens offline and says how old that snapshot is; `octo dash --refresh` takes a new one with `gh`.
+
+The status line shows the same three things in one row at the bottom of Claude Code: the gate receipt (`ok`, `dirty`, `none`), the live process count, and the active spec (the one your cwd is in, otherwise the newest one not yet converged). Quickstart and `ai-pull` register it through `scripts/merge-hooks.py` when you have no status line yet. Once one is set, the script only replaces a value it wrote itself, so a status line you configured, wrapped or re-padded stays as you left it.
+
 ### How to install a skill someone else wrote
 
 Skills you install run on every prompt, so the brain treats one as a package, not as a

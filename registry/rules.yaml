@@ -2244,3 +2244,72 @@ rules:
     locator: Done is a verdict
     expect: present
   liveness_required: FIRES
+- id: ARCHITECTURE.octo-dash
+  title: 'VISIBLE: octo dash writes one offline HTML page of specs, PRs, gate receipt, kernel and friction'
+  category: ARCHITECTURE
+  source:
+    file: docs/wiki/Getting-Started.md
+    anchor: How to see the whole brain at a glance
+  strength: DETECTOR
+  gateable: false
+  enforcement: n/a
+  v7_decision: 'v10 phase 4 (2026-10-06): a reader by design. The page blocks nothing; it renders state other mechanisms own (receipt ledger, kernel ptable, friction ledger). Its proof is a hermetic selftest that every section renders and that injected markup stays inert.'
+  firing_mode:
+  - cli
+  mechanism:
+  - kind: Detector
+    canonical_name: octo_dash.py
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: scripts/octo_dash.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/octo_dash.py --selftest
+    expect: 0
+  - method: EXIT_CODE
+    locator: grep -q 'add_parser("dash"' scripts/octo.py
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: How to see the whole brain at a glance
+    expect: present
+  liveness_required: PRESENT
+- id: ARCHITECTURE.status-line
+  title: 'VISIBLE: the Claude Code status line shows gate receipt, live process count and active spec'
+  category: ARCHITECTURE
+  source:
+    file: docs/wiki/Getting-Started.md
+    anchor: How to see the whole brain at a glance
+  strength: DETECTOR
+  gateable: false
+  enforcement: n/a
+  v7_decision: 'v10 phase 4 (2026-10-06): a reader by design. statusLine is a settings key, not a hook event, so it is registered by merge-hooks.py (ai-pull and SessionStart) and proven by that script''s selftest; the line itself is proven by its own hermetic selftest.'
+  firing_mode:
+  - runner
+  mechanism:
+  - kind: Detector
+    canonical_name: statusline.py
+    firing_event: null
+    firing_matcher: null
+  - kind: Reflex
+    canonical_name: merge-hooks.py
+    firing_event: SessionStart
+    firing_matcher: '*'
+  proof:
+  - method: FILE_EXISTS
+    locator: scripts/statusline.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/statusline.py --selftest
+    expect: 0
+  - method: EXIT_CODE
+    locator: scripts/merge-hooks.py --selftest
+    expect: 0
+  - method: EXIT_CODE
+    locator: grep -q 'scripts/statusline.py' scripts/merge-hooks.py
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: How to see the whole brain at a glance
+    expect: present
+  liveness_required: PRESENT
