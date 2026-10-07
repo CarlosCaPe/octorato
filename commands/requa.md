@@ -40,7 +40,7 @@ heads = {r.get("head") for r in rl.read_global()
          if r.get("kind") == "qa" and r.get("verdict") == "PASS"
          and rl.scope_names(str(r.get("scope") or ""), pr) and r.get("head")}
 live = [d for d in (rl.qa_latest_for(pr, h) for h in heads) if d and d.get("verdict") == "PASS"]
-best = max(live, key=lambda d: rl._ts_key(d["verdict_ts"]), default=None)
+best = max(live, key=lambda d: d["verdict_ts"], default=None)  # ISO harness timestamp
 print(best["head"] if best else "NONE")
 EOF
 )
@@ -53,11 +53,14 @@ echo "$OLD"
 
 ```bash
 PARENTS=$(gh api "repos/$R/commits/$NEW" --jq '.parents[].sha'); echo "$PARENTS"
+if [ "$(printf '%s\n' "$PARENTS" | grep -c .)" -ne 2 ] || ! printf '%s\n' "$PARENTS" | grep -qx "$OLD"; then
+  echo "NEEDS-WORK: $NEW does not have exactly two parents with $OLD among them"; exit 1
+fi
 P2=$(printf '%s\n' "$PARENTS" | grep -vx "$OLD")
 gh api "repos/$R/compare/$P2...$MASTER" --jq .status
 ```
 
-The new head must have exactly two parents: `OLD` and a second parent `P2`. The compare of `P2` against remote master must return `identical` or `ahead`, which means `P2` is a commit of remote master. Any other shape (one parent, a rebase that rewrote `OLD`, a parent that is neither, a `P2` off master) is a head that did not move only by its base: verdict NEEDS-WORK, full QA.
+The new head must have exactly two parents: `OLD` and a second parent `P2`. The compare of `P2` against remote master must return `identical` or `ahead`, which means `P2` is a commit of remote master. Any other shape (one parent, a rebase that rewrote `OLD`, a parent that is neither, a `P2` off master) is a head that did not move only by its base: verdict NEEDS-WORK, full QA. `/requa` covers a merge of master into the branch only. A rebase rewrites every commit of the branch, so there is no reviewed parent to anchor to, and it always goes to a full QA.
 
 ### 4. Compare the two patches
 
@@ -66,13 +69,13 @@ Take each merge base from the remote, not from local git:
 ```bash
 MB_OLD=$(gh api "repos/$R/compare/$MASTER...$OLD" --jq .merge_base_commit.sha)
 MB_NEW=$(gh api "repos/$R/compare/$MASTER...$NEW" --jq .merge_base_commit.sha)
-norm() { sed -E -e '/^index [0-9a-f]+\.\.[0-9a-f]+/d' -e 's/^@@ -[0-9]+(,[0-9]+)? \+[0-9]+(,[0-9]+)? @@.*$/@@/'; }
+norm() { sed -E -e '/^index [0-9a-f]+\.\.[0-9a-f]+/d' -e 's/^@@ -[0-9]+(,[0-9]+)? \+[0-9]+(,[0-9]+)? @@/@@/'; }
 git diff --no-color --no-ext-diff "$MB_OLD..$OLD" | norm > old.patch
 git diff --no-color --no-ext-diff "$MB_NEW..$NEW" | norm > new.patch
 diff old.patch new.patch && echo IDENTICAL
 ```
 
-The normalization removes only what a base update changes by itself: the blob hashes on `index` lines and the hunk header (its line numbers, and the function-context text git copies from the nearest preceding base line, which a base update moves too). Every changed line and every context line inside a hunk must match byte for byte. A master edit right next to the PR's change alters those context lines and reads as a difference; that is deliberate, since the reviewer never saw the patch against that context. When `diff` prints anything, name each difference and say where it comes from (a conflict resolved in the merge commit, a hunk that changed size, a file only one side touches). Any content difference is NEEDS-WORK and a full QA, however small it looks.
+The normalization removes only what a base update changes by itself: the blob hashes on `index` lines and the line numbers in hunk headers. The function-context text after the second `@@` stays, because it names the function a hunk lands in: a merge that moves the PR's change into another function with identical surrounding lines reads as a difference (`@@ def a():` against `@@ def b():`). The cost is a false difference when master edits the line git picks as that context; that is a NEEDS-WORK and a full QA, never a silent pass. Every changed line and every context line inside a hunk must also match byte for byte, so a master edit right next to the PR's change reads as a difference too, since the reviewer never saw the patch against that context. Residual, not caught: a move WITHIN one function whose context lines and function-context text both stay the same, because the normalized patch is then identical. When `diff` prints anything, name each difference and say where it comes from (a conflict resolved in the merge commit, a hunk that changed size, a file only one side touches). Any content difference is NEEDS-WORK and a full QA, however small it looks.
 
 ### 5. Run the integrated tree's selftests for the overlapping files
 
