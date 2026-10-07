@@ -350,3 +350,12 @@ FORCED = fail-closed AND, when it carries a `--selftest` proof, that selftest pa
 💡 Unlock-suggestion: none - every artifact above is buildable on the operator's machine with existing tools (validate-skill-manifest engine, impact-radius, merge-hooks, .githooks/pre-push all verified present).
 
 ☠ Prune-suggestion: `check-hooks-drift.py` and `check-stats-drift.py` are not prunable while D5 delegates to `check-hooks-drift.py`. Once D5 generates hooks.json from the manifest itself, both become dead cells; flag for prune then, not now.
+
+<!-- moved-from-claude-md v10-T13 -->
+## RULE #1 in the constitution (moved from CLAUDE.md)
+
+These paragraphs were the constitution's own text until v10 (T13), moved here so `CLAUDE.md` keeps only what every session needs. They are kept as written, with em-dashes normalised; `CLAUDE.md` now carries a short paragraph pointing here.
+
+"Wired" means COVERED, not mechanically forced. A model-behavior rule (no-hallucination, connector-not-human, tone, register) is wired by a registered Detector or a brain_doctor presence-assert, never by bare prose. 100% wired = 100% COVERAGE of the rule corpus, which is achievable; it is NOT a claim of 100% behavioral enforcement, which is not. The Coverage Ledger prints enforcement strength per rule so presence-only is never misread as forced. Since v6 ("from coverage to enforcement"), brain_doctor also DEMONSTRATES the top tier rather than labeling it: a fixture-driven gate-liveness check runs every fail-closed gate's `--selftest` (its violation fixture must block AND its benign fixture must allow), and a computed enforcement-floor line prints FORCED-vs-gateable next to coverage, so coverage and enforcement are reported together and never conflated.
+
+This rule is self-wired: its own mechanism is brain_doctor (Registry `META.rule-1-wired-or-corrupt`), invoked from `.githooks/pre-push` (Registry `META.pre-push-gate`). Architecture, the label ontology, and the migration plan: `docs/architecture/wired-or-corrupt.md`. The rollout shipped in full: D0/D1/D2/D3 run fail-closed (the phantom-script class is dead), CLAUDE.md anchor coverage sits at 100%, the meta-gate blocks any new gateable rule left fail-open and unwaived, and the corpus-coverage ledger sits at an honest 100% (skills canon and memory directives wired via their live mechanisms), FAIL-armed on any uncovered rule, printing enforcement strength honestly (REFLEX/PRESENCE, coverage not forced).
