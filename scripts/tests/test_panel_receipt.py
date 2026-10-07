@@ -85,6 +85,51 @@ class Digest(unittest.TestCase):
                 pd.support_sends(cmd)
         self.assertEqual(pd.support_sends(f'{s} 1 "a; b & c"'), [("1", "a; b & c", None)])
 
+    def test_reader_that_runs_a_command_is_no_exemption(self):
+        s = "~/.claude/scripts/wa-soporte" + ".sh"
+        for cmd in (f"git -c alias.x=\\!{s} 1 hola x", f"git config alias.x '!{s} 1 hola' && git x",
+                    f"git -c core.pager='{s} 1 hola' log -1", f"GIT_PAGER='{s} 1 hola' git log -1",
+                    f"vim -es -c '!{s} 1 hola' -c q", f"less +'!{s} 1 hola' f", f"rg --pre {s} x .",
+                    f"cat $({s} 1 hola)", f"cat `{s} 1 hola`", f"cat <({s} 1 hola)"):
+            self.assertTrue(pd.names_bridge(cmd), cmd)
+        for cmd in (f"grep -n x {s}", 'git commit -m "wa-soporte.sh: fix quoting"',
+                    "git -c core.pager='true 1 hola' log -1", f"head -3 {s}.bak"):
+            self.assertFalse(pd.names_bridge(cmd), cmd)
+        for name in ("git", "vim", "vi", "nvim", "nano", "code", "emacs", "less", "more", "man", "rg"):
+            self.assertNotIn(name, pd.READER_NAMES)
+
+    def test_only_one_plain_read_is_exempt(self):
+        s = "~/.claude/scripts/wa-soporte" + ".sh"
+        for cmd in (f"cat {s} | sh -s -- 1 hola", f"cat {s} | bash -s -- 1 hola",
+                    f"head -n 500 {s} | sh -s --", f"tail -n +1 {s} | sh",
+                    f"grep -rn x {s} | sh -s -- 1 hola", f"cat {s} | nice sh -s -- 1 hola",
+                    f"cat {s} |\nsh -s -- 1 hola", f"bash -c 'cat {s} | sh -s -- 1 hola'",
+                    f"cat {s} > /tmp/f; sh /tmp/f 1 hola", f"cat {s} | $SHELL -s -- 1 hola",
+                    f"cat {s} | $(which sh)", f"cat {s} | /bin/s?", f"cat {s} | mksh",
+                    f"cat {s} | grep x", f"git log -- {s}", f"cat {s} 2>/dev/null",
+                    f'grep "$X" {s}', f"cat ~/.claude/scripts/wa-sop''orte.sh | sh",
+                    f"sed -n 'e {s} 1 hola' /dev/null", f"{s} 1 hola"):
+            self.assertTrue(pd.names_bridge(cmd), cmd)
+            self.assertFalse(pd.plain_read(cmd), cmd)
+        for cmd in (f"cat {s}", f"grep -n 'a|sh' {s}", f'grep -n "x y" {s}', f"head -3 {s}",
+                    f"sed -n '1,40p' {s}", f"sed -n 1,40p {s}", f"{s} --help", f"wc -l {s}",
+                    "cat /tmp/notes.txt | sh -s -- 1 hola", f"head -3 {s}.bak | sh"):
+            self.assertFalse(pd.names_bridge(cmd), cmd)
+        self.assertNotIn("ag", pd.READER_NAMES)
+
+    def test_send_gate_shares_the_reader_set_and_rejects_meta_openers(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "osg", SCRIPTS / "g__pretool-mcp__outward-send.py")
+        g = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(g)
+        self.assertIs(g._READERS, pd.READER_NAMES)
+        base = {"type": "user", "uuid": "u", "parentUuid": "p", "sessionId": "s",
+                "timestamp": "2026-10-06T10:00:00.000Z", "isSidechain": False,
+                "message": {"role": "user", "content": "x"}, "origin": {"kind": "human"}}
+        self.assertTrue(g._is_operator_opener(base))
+        self.assertFalse(g._is_operator_opener(dict(base, isMeta=True)))
+
 
 class PanelLedger(unittest.TestCase):
     def setUp(self):

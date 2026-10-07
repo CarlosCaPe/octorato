@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-rp4-v",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "tail -n +1 ~/.claude/scripts/wa-soporte.sh | sh"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_reader_pipe_tail_sh_transcript.jsonl"
+}
