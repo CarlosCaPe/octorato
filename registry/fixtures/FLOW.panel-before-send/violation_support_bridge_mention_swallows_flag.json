@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-violation-support-bridge-mention-swallows-flag",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "~/.claude/scripts/wa-soporte.sh 120360000000000000@g.us \"@5210000000001 the report is ready and the numbers match the invoice.\" --menciones --archivo ~/attach/doc.txt"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "violation_support_bridge_mention_swallows_flag_transcript.jsonl"
+}
