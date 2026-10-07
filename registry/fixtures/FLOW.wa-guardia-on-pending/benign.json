@@ -3,5 +3,6 @@
   "session_id": "selftest-benign",
   "wa_guardia_dbs": {
     "prueba": "~/.wa-fixture/sin-espera.db"
-  }
+  },
+  "transcript_path": "send_turn_transcript.jsonl"
 }
