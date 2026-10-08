@@ -30,17 +30,19 @@ import statusline  # noqa: E402
 
 class Sandbox(unittest.TestCase):
     def setUp(self):
-        self._home = os.environ.get("HOME")
+        # expanduser reads USERPROFILE on Windows, not HOME, so both are sandboxed.
+        self._env = {k: os.environ.get(k) for k in ("HOME", "USERPROFILE")}
         self.home = tempfile.mkdtemp(prefix="octo-dash-test-")
-        os.environ["HOME"] = self.home
+        os.environ["HOME"] = os.environ["USERPROFILE"] = self.home
         self.root = Path(self.home) / "brain"
         (self.root / "docs" / "specs").mkdir(parents=True)
 
     def tearDown(self):
-        if self._home is None:
-            os.environ.pop("HOME", None)
-        else:
-            os.environ["HOME"] = self._home
+        for k, v in self._env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
         shutil.rmtree(self.home, ignore_errors=True)
 
     def spec(self, name, status, plan="- [x] T01 a\n- [ ] T02 b\n"):
@@ -302,6 +304,7 @@ class StatusLine(Sandbox):
         out = statusline.line({"workspace": {"current_dir": str(self.root)}}, statusline.read_state())
         self.assertTrue(out.startswith("gate ok · 3 live · spec alpha draft 1/2"), out)
 
+    @unittest.skipIf(os.name == "nt", "NTFS refuses control bytes in a directory name, so this spec cannot exist")
     def test_ansi_and_control_bytes_stripped_from_spec_name(self):
         self.spec("200001010000-a\x1b[31mred\x1b]0;title\x07b\x07c", "draft")
         statusline.write_state({"ts": time.time(), "gate": "ok", "live": 1})

@@ -616,9 +616,10 @@ def selftest() -> int:
     import shutil
     import tempfile
     sandbox = tempfile.mkdtemp(prefix="octo-dash-selftest-")
-    saved = os.environ.get("HOME")
+    # expanduser reads USERPROFILE on Windows, not HOME, so both are sandboxed.
+    saved = {k: os.environ.get(k) for k in ("HOME", "USERPROFILE")}
     try:
-        os.environ["HOME"] = sandbox
+        os.environ["HOME"] = os.environ["USERPROFILE"] = sandbox
         root = Path(sandbox) / "brain"
         spec = root / "docs" / "specs" / "200001010000-synthetic"
         spec.mkdir(parents=True)
@@ -642,10 +643,11 @@ def selftest() -> int:
         print("selftest PASS: every section renders, injected markup stays inert")
         return 0
     finally:
-        if saved is None:
-            os.environ.pop("HOME", None)
-        else:
-            os.environ["HOME"] = saved
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
         shutil.rmtree(sandbox, ignore_errors=True)
 
 
