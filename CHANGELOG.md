@@ -15,6 +15,20 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-10-07]: v9.13.1
+### Other
+- v10 Convergence 1: executable /requa verifier (T17) and claude-md-budget (T18) (#395)
+
+## [2026-10-07]: v9.13.0
+### Features
+- feat(replay): stateful replay for Stop gates that keep session state (v10 T16) (#397)
+### Other
+- chore(brain): sync after daily reflection (#396)
+
+## [2026-10-07]: v9.12.1
+### Other
+- test(arming-surface): pin Write and Edit to the live hooks.json (#394)
+
 ## [2026-10-07]: v9.12.0
 ### Features
 - feat: ai-pull runs the fast doctor; /requa re-QA after a base update (v10 T08) (#391)
