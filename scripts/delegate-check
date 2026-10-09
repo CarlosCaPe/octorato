@@ -333,6 +333,14 @@ _OPINION_RE = re.compile(
 )
 
 
+# A SELF result is answered from recall or stored memory, which is usually
+# stale or wrong. The verdict therefore carries a demand for the live source.
+SELF_LIVE_SOURCE_LINE = (
+    "SELF = ~99% stale or hallucinated: name the live source you checked "
+    "(ls, git, chat, live system) before answering"
+)
+
+
 def is_opinion_request(task: str) -> bool:
     """Return True if the task is explicitly asking for the agent's personal opinion/judgment."""
     return bool(_OPINION_RE.search(task))
@@ -428,10 +436,33 @@ def print_report(task: str, task_tokens: set[str], agent_matches: list,
             print(f"    → Consider: {top[0]['emoji']} {top[0]['name']} (score: {top[2]:.2f})")
     else:
         print("    → Opinion/judgment requested with no graph match. Answer as sourced connector — cite the data.")
+        print(f"    → {SELF_LIVE_SOURCE_LINE}")
     print("=" * 60)
 
 
+def selftest() -> int:
+    """A SELF verdict prints the live-source demand; a LOAD verdict does not."""
+    import contextlib
+    import io
+    task = "what do you recommend?"
+    decision = make_decision(task, [], [])
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        print_report(task, tokenize(task), [], [], decision, 0, 0)
+    ok_self = decision == "SELF" and SELF_LIVE_SOURCE_LINE in buf.getvalue()
+    other = "list the files"
+    buf2 = io.StringIO()
+    with contextlib.redirect_stdout(buf2):
+        print_report(other, tokenize(other), [], [], make_decision(other, [], []), 0, 0)
+    ok_load = SELF_LIVE_SOURCE_LINE not in buf2.getvalue()
+    print(f"selftest self-live-source: {'PASS' if ok_self and ok_load else 'FAIL'}"
+          f" (self={ok_self}, load-clean={ok_load})")
+    return 0 if ok_self and ok_load else 1
+
+
 def main():
+    if sys.argv[1:] == ["--selftest"]:
+        sys.exit(selftest())
     if len(sys.argv) < 2 or sys.argv[1] in ("--help", "-h"):
         print(__doc__.strip())
         sys.exit(0 if sys.argv[1:] == ["--help"] or sys.argv[1:] == ["-h"] else 2)
