@@ -670,6 +670,21 @@ def es_autorespuesta(cabeceras, extracto):
     return any(f in t for f in FRASES_AUTO)
 
 
+DESCARTADOS = {"TRASH", "SPAM"}
+
+
+def sin_descartados(msgs):
+    """The thread without the client mails sent to Trash or Spam: nobody waits
+    on those. A reply of mine stays even when trashed: it was delivered, so it
+    still proves the thread was answered."""
+    salida = []
+    for m in msgs or []:
+        etiquetas = set(m.get("labelIds") or [])
+        if "SENT" in etiquetas or not DESCARTADOS & etiquetas:
+            salida.append(m)
+    return salida
+
+
 def arranca_hilo(msgs):
     """(mensaje donde arranco la espera, cuantos pendientes) de un hilo.
 
@@ -699,7 +714,10 @@ def hilos_gmail(remitente, dias, secretos=None):
     respuesta posterior no es silencio.
     """
     at = token_gmail(secretos)
-    q = f"in:all newer_than:{dias}d from:{remitente}"
+    # `in:all` does NOT leave out Trash and Spam on the API (measured Oct 9:
+    # 23 of the 25 results for one sender were in Trash). A trashed mail is a
+    # handled mail, and it also ate the 25 slots a real mail needed.
+    q = f"in:all -in:trash -in:spam newer_than:{dias}d from:{remitente}"
     d = gmail_get("messages", at, q=q, maxResults=25)
     hilos = {}
     for m in d.get("messages") or []:
@@ -708,7 +726,7 @@ def hilos_gmail(remitente, dias, secretos=None):
     for tid in hilos:
         th = gmail_get(f"threads/{tid}", at, format="metadata",
                        metadataHeaders="Auto-Submitted")
-        msgs = th.get("messages") or []
+        msgs = sin_descartados(th.get("messages") or [])
         if not msgs:
             continue
         ultimo_msg = msgs[-1]
@@ -1427,6 +1445,28 @@ def selftest():
     arranca, cuantos = arranca_hilo([m for m in hilo_insiste if "INBOX" in m["labelIds"]])
     if arranca["id"] != "m2" or cuantos != 3:
         fallos.append("un hilo sin respuesta mia deberia arrancar en el primero")
+    casos += 1
+    # a thread whose mails all went to Trash is handled: nothing left to wait on
+    if sin_descartados([{"id": "t1", "labelIds": ["UNREAD", "TRASH"]},
+                        {"id": "t2", "labelIds": ["SPAM"]}]):
+        fallos.append("a trashed or spam mail still counts as waiting")
+    casos += 1
+    # trash in the middle of a live thread is dropped, the inbox mails stay
+    vivos = sin_descartados(hilo_insiste + [{"id": "t3", "labelIds": ["TRASH"]}])
+    if [m["id"] for m in vivos] != ["m1", "m2", "m3", "m4"]:
+        fallos.append("dropping trash also dropped live mails")
+    casos += 1
+    # my reply was trashed afterwards: the thread is still answered
+    arranca, cuantos = arranca_hilo(sin_descartados(hilo_insiste + [
+        {"id": "m5", "internalDate": "500", "labelIds": ["SENT", "TRASH"]}]))
+    if cuantos != 0:
+        fallos.append("a trashed reply of mine reopened the thread")
+    casos += 1
+    # the client's last mail is trashed: the wait still starts at the first live one
+    arranca, cuantos = arranca_hilo(sin_descartados(hilo_insiste + [
+        {"id": "t4", "internalDate": "500", "labelIds": ["INBOX", "TRASH"]}]))
+    if arranca["id"] != "m2" or cuantos != 3:
+        fallos.append("a trashed client mail changed where the wait starts")
 
     # un remitente sin ningun hilo callado va SANO, en null. Sin esto no hay
     # verdes de correo.
