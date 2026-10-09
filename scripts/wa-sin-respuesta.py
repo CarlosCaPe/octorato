@@ -674,9 +674,15 @@ DESCARTADOS = {"TRASH", "SPAM"}
 
 
 def sin_descartados(msgs):
-    """The thread without the mails sent to Trash or Spam: nobody waits on those."""
-    return [m for m in msgs or []
-            if not DESCARTADOS & set(m.get("labelIds") or [])]
+    """The thread without the client mails sent to Trash or Spam: nobody waits
+    on those. A reply of mine stays even when trashed: it was delivered, so it
+    still proves the thread was answered."""
+    salida = []
+    for m in msgs or []:
+        etiquetas = set(m.get("labelIds") or [])
+        if "SENT" in etiquetas or not DESCARTADOS & etiquetas:
+            salida.append(m)
+    return salida
 
 
 def arranca_hilo(msgs):
@@ -1449,6 +1455,18 @@ def selftest():
     vivos = sin_descartados(hilo_insiste + [{"id": "t3", "labelIds": ["TRASH"]}])
     if [m["id"] for m in vivos] != ["m1", "m2", "m3", "m4"]:
         fallos.append("dropping trash also dropped live mails")
+    casos += 1
+    # my reply was trashed afterwards: the thread is still answered
+    arranca, cuantos = arranca_hilo(sin_descartados(hilo_insiste + [
+        {"id": "m5", "internalDate": "500", "labelIds": ["SENT", "TRASH"]}]))
+    if cuantos != 0:
+        fallos.append("a trashed reply of mine reopened the thread")
+    casos += 1
+    # the client's last mail is trashed: the wait still starts at the first live one
+    arranca, cuantos = arranca_hilo(sin_descartados(hilo_insiste + [
+        {"id": "t4", "internalDate": "500", "labelIds": ["INBOX", "TRASH"]}]))
+    if arranca["id"] != "m2" or cuantos != 3:
+        fallos.append("a trashed client mail changed where the wait starts")
 
     # un remitente sin ningun hilo callado va SANO, en null. Sin esto no hay
     # verdes de correo.
