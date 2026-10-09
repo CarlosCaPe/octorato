@@ -179,11 +179,13 @@ def _month_to_date_usd_by_arm() -> dict[str, float]:
 # never used: the check recomputes synchronously. The hard_stop decision is
 # taken on whatever spend the check answers from. Residual, stated: after an
 # idle spell the decision can rest on a number up to 24 hours old, so spend
-# made since then is caught one call later; a failed profiler run is not
+# made since then is caught by the first call after the background refresh
+# finishes (a profiler run, about 8 s measured); a failed profiler run is not
 # cached; the cache is a file under $HOME, as writable as budgets.yaml itself,
 # so this is a FinOps cap, not an agent-proof boundary.
 CACHE_MAX_AGE_S = 15 * 60
 CACHE_STALE_MAX_S = 24 * 60 * 60
+REFRESH_STALE_S = 180  # the profiler call times out at 120 s
 
 
 def cache_path() -> Path:
@@ -296,13 +298,40 @@ def _refresh_main(background: bool) -> int:
                 import fcntl
                 fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except ImportError:
-                pass  # no flock (Windows): a second runner only costs CPU
+                # No flock (Windows). Every stale PreToolUse call spawns a
+                # refresh, so an exclusive marker file serializes them; one
+                # older than the profiler's own timeout is a dead runner's.
+                marker = lock.with_name("refresh.running")
+                try:
+                    os.close(os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+                except FileExistsError:
+                    try:
+                        if _dt.datetime.now().timestamp() - marker.stat().st_mtime > REFRESH_STALE_S:
+                            marker.unlink()
+                    except OSError:
+                        pass
+                    return 0  # another refresh is running
+                try:
+                    _refresh_if_not_fresh()
+                finally:
+                    try:
+                        marker.unlink()
+                    except OSError:
+                        pass
+                return 0
             except OSError:
                 return 0  # another refresh is running
-            refresh_cache()
+            _refresh_if_not_fresh()
     except Exception:
         pass
     return 0
+
+
+def _refresh_if_not_fresh() -> None:
+    """Under the lock: a runner that queued behind one that just finished
+    finds a fresh cache and does not profile again."""
+    if _read_cache() is None:
+        refresh_cache()
 
 
 def evaluate(arm_filter: str | None = None, cwd: str | None = None) -> dict:

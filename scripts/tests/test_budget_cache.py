@@ -89,6 +89,31 @@ class BudgetCache(unittest.TestCase):
         self.assertEqual((v["status"], self.runs, popen.call_count), ("HARD_STOP", 1, 0))
         self.assertEqual(bc._read_cache(), {"hot": 50.0})       # rewritten
 
+    def test_a_queued_refresh_finds_the_cache_fresh_and_does_not_profile(self):
+        self.write({"hot": 1.0}, age_s=60)
+        with self.profiler({"hot": 9.0}):
+            self.assertEqual(bc._refresh_main(False), 0)
+        self.assertEqual((self.runs, bc._read_cache()), (0, {"hot": 1.0}))
+
+    def test_without_flock_a_running_marker_serializes_refreshes(self):
+        import sys
+        marker = bc.cache_path().with_name("refresh.running")
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        with mock.patch.dict(sys.modules, {"fcntl": None}):
+            marker.write_text("")                                   # a live runner
+            with self.profiler({"hot": 3.0}):
+                self.assertEqual(bc._refresh_main(False), 0)
+            self.assertEqual(self.runs, 0)
+            old = _dt.datetime.now().timestamp() - bc.REFRESH_STALE_S - 5
+            os.utime(marker, (old, old))                            # a dead runner's marker
+            with self.profiler({"hot": 3.0}):
+                bc._refresh_main(False)                             # clears it, still yields
+                self.assertEqual(self.runs, 0)
+                self.assertFalse(marker.exists())
+                self.assertEqual(bc._refresh_main(False), 0)        # next runner refreshes
+            self.assertEqual((self.runs, bc._read_cache()), (1, {"hot": 3.0}))
+            self.assertFalse(marker.exists())                       # released after the run
+
     def test_a_fresh_cache_starts_no_refresh(self):
         self.write({"hot": 1.0}, age_s=60)
         with self.profiler({"hot": 0.0}), mock.patch.object(bc.subprocess, "Popen") as popen:
