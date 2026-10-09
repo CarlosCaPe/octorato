@@ -10,6 +10,7 @@
 - It keeps each client or project in its own sealed folder, so work never leaks from one to another.
 - It records every run (on Claude Code; on Cursor, the main session only) and can cap how many steps and minutes a run may take (the v8 kernel; caps are opt-in).
 - It is not a chatbot and there are no people in it. An "agent" here is a text file describing a role, the way a job description does.
+- It counts its own refusals (`octo friction`) and shows its state on one page (`octo dash`) and in a status line (new in v10).
 - It is free (MIT) and runs on Claude Code and Cursor today.
 
 **Live:** <!--canon:skills.count-->240+<!--/canon--> skills · <!--canon:agents.count-->160+<!--/canon--> agent personas across
@@ -59,12 +60,15 @@ Each page is an organ. This brain routes you to whichever one you need.
 # 1. Clone the brain into ~/.claude
 git clone https://github.com/CarlosCaPe/octorato ~/.claude
 
-# 2. Enable the push-time secret guard
-cd ~/.claude && git config core.hooksPath .githooks
-
-# 3. Create your private company brain (gitignored, never public)
-#    and your first client "arm". See Architecture.
+# 2. One command wires the checks, turns on the push guard and writes a first spec
+python3 ~/.claude/scripts/quickstart.py
 ```
+
+Step by step, with what each part does: [[Getting-Started]]. Your private company brain and your first client "arm" come later, under "Going further" on that page.
+
+## What's new in v10 (in progress)
+
+Install is the clone plus one command. Checks count their own refusals (`octo friction`), a replay of real past cases guards every change to a check, and `octo dash` puts specs, reviews and live runs on one page. v10.0.0 is not released yet: the goal-anchor block count (AC-10) is still open. Details: [Roadmap](https://github.com/CarlosCaPe/octorato/blob/master/ROADMAP.md) and [v10 friction](https://github.com/CarlosCaPe/octorato/blob/master/docs/architecture/v10-friction.md).
 
 ---
 

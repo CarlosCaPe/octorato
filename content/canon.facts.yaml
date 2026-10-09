@@ -27,10 +27,10 @@
 meta:
   schema: 1
   # canon-render only ever touches files matching these globs (relative to the
-  # brain root). README.md / FAQ.md are intentionally ABSENT: their counts are
-  # still owned by the counts-triad (sync-readme-counts.py + brain-stats.py +
-  # check-stats-drift.py). Adding them here is the COORDINATED convergence step,
-  # not a unilateral one. See the PR coordination note.
+  # brain root). README.md, FAQ.md, docs/ANATOMY.md and ROADMAP.md are targets
+  # (see the notes below), but only for the spans inside markers. Their skill
+  # and agent counts outside markers are still owned by the counts-triad
+  # (sync-readme-counts.py + brain-stats.py + check-stats-drift.py).
   targets:
     - "content/*.md"
     # docs/wiki joined 2026-06-03 (doc-harmonization): Home/_Sidebar/Glossary/
@@ -44,6 +44,15 @@ meta:
     # canon-render. sync-readme still owns the ASCII-box / TOC-anchor / heading
     # counts it handles specially — coexistence, the converge-not-fork migration.
     - "README.md"
+    # FAQ.md and docs/ANATOMY.md joined 2026-10-07 for the v10 release figures:
+    # every measured number the README, FAQ and long tour state about v10 is a
+    # marker on one fact below, so the three cannot drift apart. Their skill and
+    # agent counts outside markers stay with sync-readme-counts.py, as for README.
+    - "FAQ.md"
+    - "docs/ANATOMY.md"
+    # ROADMAP.md joined 2026-10-07 for the same reason: its v10 table quotes
+    # the same figures.
+    - "ROADMAP.md"
 
 facts:
   - id: repo.url
@@ -79,3 +88,141 @@ facts:
       brain-stats.py + sync-readme-counts.py + canon all agree now. (The connectome's
       ~183 is indexed agent-RELATED nodes for retrieval, a different metric from
       persona headcount — keep them distinct; the public count is brain-stats.)
+
+  # ── v10 "Low Friction, Easy Entry" (October 2026) ─────────────────────────
+  # Measured figures. Each carries the measurement mode in `note` and the
+  # place it can be re-read in `citation`. Edit the value only from a new
+  # measurement, and update the citation in the same change.
+
+  - id: v10.latest_tag
+    kind: asserted
+    value: "v9.13.1"
+    citation: "git tags on master, 2026-10-07: v10.0.0 is not cut; the release criterion in feature.md needs every criterion CONVERGED plus 7 days of friction data"
+
+  - id: v10.goal_anchor.target
+    kind: asserted
+    value: "25%"
+    citation: "feature.md AC-10: goal-anchor blocks on at most 25% of the turns it blocked on in the baseline"
+
+  - id: v10.goal_anchor.measured
+    kind: asserted
+    value: "42%"
+    citation: "PR #397: stateful replay, 24 sessions, 165 blocks with the gate at d5d609e and 70 with the current gate (raw block count)"
+    note: "The replay is marked LOW-FIDELITY (it reproduces 38 of 103 historical blocks), so the figure is not evidence either way."
+
+  - id: v10.goal_anchor.raw
+    kind: asserted
+    value: "165 to 70"
+    citation: "PR #397: blocks over all 2,277 in-window Stops of the 24 replayed sessions, gate at d5d609e against the current gate"
+
+  - id: v10.goal_anchor.per_turn
+    kind: asserted
+    value: "39 of 165 (23.6%)"
+    citation: "PR #397: of the Stops the old gate blocked, the ones the current gate still blocks; the other 31 of its 70 blocks fall on Stops the old gate let through"
+
+  - id: v10.budget.spawn_before
+    kind: asserted
+    value: "7.2 s"
+    citation: "feature.md Summary, friction census 2026-09-06..10-06: median added to every subagent spawn, 247 timeouts at 10 s"
+
+  - id: v10.budget.spawn_after
+    kind: asserted
+    value: "85 to 254 ms"
+    citation: "PR #383: median of 100 consecutive hook calls, capped config with a warm cache, quiet machine (85 ms) to load average 12 (254 ms)"
+
+  - id: v10.budget.live_p95
+    kind: asserted
+    value: "about 10.1 s"
+    citation: "Friction ledger latency rows on the operator's machine, read 2026-10-07, budget-check.py calls from 09:08:48Z (when PR #383 reached the live tree, per the reflog pull; the merge itself was 08:28:16Z) to 16:52:53Z: p95 10,059 ms by nearest rank"
+
+  - id: v10.budget.live_calls
+    kind: asserted
+    value: "73"
+    citation: "Friction ledger latency rows on the operator's machine, read 2026-10-07, budget-check.py calls from 09:08:48Z (when PR #383 reached the live tree, per the reflog pull; the merge itself was 08:28:16Z) to 16:52:53Z"
+    note: "Splitting at the merge time instead counts 8 calls that still ran the old code."
+
+  - id: v10.budget.live_median
+    kind: asserted
+    value: "311 ms"
+    citation: "Friction ledger latency rows on the operator's machine, read 2026-10-07, budget-check.py calls from 09:08:48Z (when PR #383 reached the live tree, per the reflog pull; the merge itself was 08:28:16Z) to 16:52:53Z: median of those 73 calls (252 ms over the 64 that did not time out)"
+
+  - id: v10.budget.live_timeouts
+    kind: asserted
+    value: "9 (12%)"
+    citation: "Friction ledger latency rows on the operator's machine, read 2026-10-07, budget-check.py calls from 09:08:48Z (when PR #383 reached the live tree, per the reflog pull; the merge itself was 08:28:16Z) to 16:52:53Z: calls that hit the hook timeout. A read-only diagnosis (timeline of Agent calls and background refreshes against these rows) found every one came after the spend cache had gone more than 15 minutes without a completed refresh, so the check recomputed synchronously."
+
+  - id: v10.budget.recompute_time
+    kind: asserted
+    value: "about 24 s"
+    citation: "Same diagnosis: the spend profiler at --days 7 on the operator's machine, 3 runs of 23.9, 24.0 and 27.1 s at load average 9 to 11, reading about 875 MB of session logs"
+
+  - id: v10.budget.hook_timeout
+    kind: asserted
+    value: "10 s"
+    citation: "hooks.json: the PreToolUse budget-check.py --json entry carries timeout 10"
+
+  - id: v10.budget.stale_window
+    kind: asserted
+    value: "15 minutes"
+    citation: "feature.md AC-22; scripts/budget-check.py recomputes synchronously when the spend cache is older than this"
+
+  - id: v10.release.send_ask_fp_target
+    kind: asserted
+    value: "15%"
+    citation: "feature.md Release Criterion: send-ask false-positive rate on its labelled sample over the first 7 days after release"
+
+  - id: v10.constitution.tokens_before
+    kind: asserted
+    value: "24,000"
+    citation: "PR #392: CLAUDE.md at b2c8b9a, tiktoken cl100k_base over the whole file"
+
+  - id: v10.constitution.tokens_after
+    kind: asserted
+    value: "11,920"
+    citation: "PR #395: CLAUDE.md at a741eff, tiktoken cl100k_base (11,881 by the chars/4 estimator the doctor uses)"
+
+  - id: v10.constitution.ceiling
+    kind: asserted
+    value: "12,000"
+    citation: "feature.md AC-17; brain_doctor check claude-md-budget (PR #395) fails above it"
+
+  - id: v10.quickstart.measured
+    kind: asserted
+    value: "21 s"
+    citation: "PR #379: one run of quickstart.py on a clean clone in a throwaway HOME (283 s before the change, with the full doctor)"
+
+  - id: v10.quickstart.loaded
+    kind: asserted
+    value: "80 s"
+    citation: "Docs PR for v10, 2026-10-07: one run of quickstart.py on a fresh clone of master 0641797 in a sandbox HOME, load average 13.8 on 4 cores, exit 0, 8 hook events wired, first spec lints"
+
+  - id: v10.quickstart.ci_budget
+    kind: asserted
+    value: "5 minutes"
+    citation: ".github/workflows/fresh-clone.yml runs quickstart under `timeout 300` (feature.md AC-16)"
+
+  - id: v10.doctor.full
+    kind: asserted
+    value: "344 s"
+    citation: "PR #391: full brain_doctor.py, one run in a sandbox HOME (PR #379 measured about 220 s on a populated machine for every check except gate-liveness)"
+
+  - id: v10.doctor.fast_budget
+    kind: asserted
+    value: "30 s"
+    citation: "feature.md AC-15; PR #379 measured 13.7 to 16.7 s over 3 runs on a populated brain"
+
+  - id: v10.send_ask.census
+    kind: asserted
+    value: "64"
+    citation: "feature.md Summary: send-ask denies over 30 days of transcripts, about 71% false positives (10 of 14 sampled)"
+
+  - id: v10.send_ask.fp_rate
+    kind: asserted
+    value: "about 71%"
+    citation: "feature.md Summary: estimated false-positive rate of the send-ask refusals, 10 of 14 sampled"
+
+  - id: v10.replay.cases
+    kind: asserted
+    value: "1,654"
+    citation: "PR #380: private corpus from 2026-09-06..10-06 transcripts, 470 real denies plus 1,184 fixed-seed allow samples"
+

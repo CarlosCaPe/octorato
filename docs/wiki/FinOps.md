@@ -275,6 +275,10 @@ default:                           # applies to any arm not listed
 
 `budget-check.py` is wired as a `PreToolUse[Agent]` hook and registered as rule `FLOW.budget-halt` in `registry/rules.yaml`. This means `brain_doctor` asserts its presence on every `ai-push`; a push whose hook is missing or whose rule entry is absent is blocked by `.githooks/pre-push`. The budget halt is not advisory prose. It is a first-class registered mechanism, the same way RULE #1 itself is wired.
 
+### Answering from a spend cache (v10)
+
+When no cap can apply, the check answers OK without computing spend. When caps exist, it reads a spend cache that is refreshed in the background at SessionStart and after each `Agent` call. A cache older than <!--canon:v10.budget.stale_window-->15 minutes<!--/canon-->, from another month, stamped in the future or torn is recomputed on the spot, and the decision stays fail-closed. Before the cache the check added a median <!--canon:v10.budget.spawn_before-->7.2 s<!--/canon--> to every subagent spawn; with a warm cache it answers in <!--canon:v10.budget.spawn_after-->85 to 254 ms<!--/canon--> at the median (100 consecutive calls, quiet machine to load average 12). It still has a slow tail: once the cache reached the live tree, <!--canon:v10.budget.live_timeouts-->9 (12%)<!--/canon--> of <!--canon:v10.budget.live_calls-->73<!--/canon--> live calls hit the <!--canon:v10.budget.hook_timeout-->10 s<!--/canon--> hook timeout (median <!--canon:v10.budget.live_median-->311 ms<!--/canon-->, p95 <!--canon:v10.budget.live_p95-->about 10.1 s<!--/canon-->). Every one found a cache older than <!--canon:v10.budget.stale_window-->15 minutes<!--/canon--> and recomputed on the spot, and that recompute takes <!--canon:v10.budget.recompute_time-->about 24 s<!--/canon-->, so it cannot finish in time and the harness lets the call through unchecked. A faster, incremental recompute is being built in a separate change.
+
 ### Wiring the PreToolUse hook
 
 In `~/.claude/settings.json`, gate the expensive tools (`Agent`, subagent dispatch, browser automation) on the checker:

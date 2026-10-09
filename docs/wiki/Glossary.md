@@ -19,6 +19,7 @@ The A→Z below uses the brain's own vocabulary. If you only want the everyday m
 | Hook | An automatic check that runs before or after the assistant acts. It can refuse the action. |
 | Gate | A hook that refuses. Fail-closed means "when in doubt, refuse". |
 | Kernel | New in v8. The part that gives every run an identity, a journal and a cap on steps and minutes. |
+| Friction | New in v10. A check refusing legitimate work. The brain counts it per check (`octo friction`). |
 | Connectome | An index that finds the right skill or agent for a task. |
 | 4D | The four steps every action follows: describe, delegate, check, disclose. |
 | Provenance footer | The receipt at the end of every answer: basis, engine, files touched, how it was verified. |
@@ -58,6 +59,9 @@ The procedure for creating a new client arm: scaffold `.claude/CLAUDE.md` (sourc
 ---
 
 ## B
+
+### Base_Update_Verifier
+The re-review a pull request gets when its head moved only because master was merged into it. Started with `/requa <pr>` in Claude Code, it runs as a reviewer subagent, reads master from GitHub rather than a local branch, checks the new head's two parents, and compares the patch with the one that already passed QA (`scripts/requa.py`). Only an identical patch earns a QA receipt for the new head; a rebase or any other change gets a full review. The merge gate itself does not change. New in v10. See [[Getting-Started]].
 
 ### Brain
 The shared, open-source core: `~/.claude/` itself — *which IS the `octorato` repo*. It holds the rules (`CLAUDE.md`), the [[Skills]] (HOW), the [[Agents]] (WHO), the [[#Connectome (neural_map.json)]], the enforcement scripts, and templates. It is the **CLASS** (the DNA) in the [[#CLASS / OBJECT / ARM]] model and the central brain in the octopus metaphor: sets high-level intent, distributes generic knowledge down to arms. Octorato runs **1 + N brains** (applying the [[#8→∞ (lemniscate)]] anchor): one central brain here, plus one sealed [[#Arm memory]] brain per arm, N unbounded. It is *not* anyone's identity, client list, or credentials — those live in the [[#Company brain]].
@@ -124,6 +128,9 @@ The flow of **generic** brain knowledge (rules, paradigms, skills, identity) *do
 
 ## F
 
+### Friction_Ledger
+A local, gitignored log (`~/.claude/.cache/friction/ledger.jsonl`) with one line per check refusal or Stop block: check name, session, tool, reason code and a digest of the input. It never stores the prompt, the message or the reason text. A Stop reflex fills it from what the harness already wrote to the transcript, so no check had to change. `octo friction` reads it. New in v10. See [`docs/architecture/v10-friction.md`](../architecture/v10-friction.md).
+
 ### FinOps
 **Financial Operations for AI agents** — Octorato's commercial wedge. Three capabilities that observability tools (LangSmith, Datadog) lack: **per-arm cost attribution** (every [[#Trace event]] tags the client), **air-gapped multi-tenancy** ([[#Arm isolation]]), and **[[#Budget cap]]s that actually halt agents**. The pipeline tags every trace with the client who incurred it, rolls up USD per project/month/skill via a shared `_pricing.py` table, and reconciles estimated vs. billed cost against the Anthropic Enterprise Analytics API. Built so consultants can bill clients fairly per token.
 
@@ -179,6 +186,9 @@ The brain's **multi-engine database CLI** — `qm -e <engine> -c <conn> "<query>
 ---
 
 ## R
+
+### Replay_Harness
+`scripts/replay_harness.py`. It runs real past tool calls and turns through a check the way the harness would, and compares each decision with a stored baseline. A change that turns a refusal labelled correct into an allow fails. The cases hold real prompts, so they stay in the gitignored `company/friction-corpus/`; the tracked baseline (`registry/friction-baseline.json`) holds only counts, hashes, decisions and labels. Where a check depends on state the replay cannot rebuild, it is marked LOW-FIDELITY and its numbers are not treated as evidence. New in v10.
 
 ### RULE #1 (Wired or Corrupt)
 
