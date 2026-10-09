@@ -673,14 +673,17 @@ def es_autorespuesta(cabeceras, extracto):
 DESCARTADOS = {"TRASH", "SPAM"}
 
 
-def sin_descartados(msgs):
-    """The thread without the client mails sent to Trash or Spam: nobody waits
-    on those. A reply of mine stays even when trashed: it was delivered, so it
-    still proves the thread was answered."""
+def sin_descartados(msgs, invitaciones=frozenset()):
+    """The thread without the client mails nobody waits on: those sent to Trash
+    or Spam, and calendar invitations (their ids in `invitaciones`). A reply of
+    mine stays even when trashed: it was delivered, so it still proves the
+    thread was answered."""
     salida = []
     for m in msgs or []:
         etiquetas = set(m.get("labelIds") or [])
-        if "SENT" in etiquetas or not DESCARTADOS & etiquetas:
+        if "SENT" in etiquetas:
+            salida.append(m)
+        elif not DESCARTADOS & etiquetas and m.get("id") not in invitaciones:
             salida.append(m)
     return salida
 
@@ -722,11 +725,16 @@ def hilos_gmail(remitente, dias, secretos=None):
     hilos = {}
     for m in d.get("messages") or []:
         hilos[m["threadId"]] = None
+    # A calendar invitation asks for an RSVP, not an email reply. The metadata
+    # view does not show MIME parts, but search does: on Oct 9 `filename:ics`
+    # matched exactly the two invites among 17 mails of one sender.
+    inv = gmail_get("messages", at, q=f"{q} filename:ics", maxResults=25)
+    invitaciones = {m["id"] for m in inv.get("messages") or []}
     salida = []
     for tid in hilos:
         th = gmail_get(f"threads/{tid}", at, format="metadata",
                        metadataHeaders="Auto-Submitted")
-        msgs = sin_descartados(th.get("messages") or [])
+        msgs = sin_descartados(th.get("messages") or [], invitaciones)
         if not msgs:
             continue
         ultimo_msg = msgs[-1]
@@ -1467,6 +1475,16 @@ def selftest():
         {"id": "t4", "internalDate": "500", "labelIds": ["INBOX", "TRASH"]}]))
     if arranca["id"] != "m2" or cuantos != 3:
         fallos.append("a trashed client mail changed where the wait starts")
+    casos += 1
+    # a thread that is only a calendar invitation is not waiting on a reply
+    if sin_descartados([{"id": "i1", "labelIds": ["INBOX", "UNREAD"]}], {"i1"}):
+        fallos.append("a calendar invitation still counts as waiting")
+    casos += 1
+    # an invitation after a real question does not hide the question
+    arranca, cuantos = arranca_hilo(sin_descartados(hilo_insiste + [
+        {"id": "i2", "internalDate": "500", "labelIds": ["INBOX"]}], {"i2"}))
+    if arranca["id"] != "m2" or cuantos != 3:
+        fallos.append("an invitation changed where the wait starts")
 
     # un remitente sin ningun hilo callado va SANO, en null. Sin esto no hay
     # verdes de correo.
