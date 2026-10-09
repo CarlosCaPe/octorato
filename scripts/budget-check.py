@@ -170,31 +170,50 @@ def _month_to_date_usd_by_arm() -> dict[str, float]:
 # The profiler walks every session transcript of the month: a measured 7.2 s
 # median per call, with timeouts at the hook's 10 s, on every subagent spawn.
 # The PreToolUse check now answers from a cache that SessionStart and each
-# finished spawn refresh in the background. A cache older than 15 minutes, from
-# another month, stamped in the future or unreadable is never used: the check
-# then recomputes synchronously, exactly as before, so the hard_stop decision
-# never rests on a number older than 15 minutes. A failed profiler run is not
-# cached. Residual, stated: the cache is a file under $HOME, as writable as
-# budgets.yaml itself; this is a FinOps cap, not an agent-proof boundary.
+# finished spawn refresh in the background. A cache up to 15 minutes old is
+# fresh. A stale one, older than 15 minutes but from this month and at most 24
+# hours old, still answers at once and starts one background refresh (AC-22 as
+# amended 2026-10-09): recomputing synchronously cost a 10 s timeout on the
+# first spawn after an idle spell, which broke AC-11's 1 s p95. A cache from
+# another month, stamped in the future, unreadable or older than 24 hours is
+# never used: the check recomputes synchronously. The hard_stop decision is
+# taken on whatever spend the check answers from. Residual, stated: after an
+# idle spell the decision can rest on a number up to 24 hours old, so spend
+# made since then is caught by the first call after the background refresh
+# finishes (a profiler run, about 8 s measured); a failed profiler run is not
+# cached; the cache is a file under $HOME, as writable as budgets.yaml itself,
+# so this is a FinOps cap, not an agent-proof boundary.
 CACHE_MAX_AGE_S = 15 * 60
+CACHE_STALE_MAX_S = 24 * 60 * 60
+REFRESH_STALE_S = 180  # the profiler call times out at 120 s
 
 
 def cache_path() -> Path:
     return Path(os.path.expanduser("~")) / ".claude" / ".cache" / "budget" / "spend.json"
 
 
-def _read_cache(now: float | None = None) -> dict[str, float] | None:
+def _read_cache_aged(now: float | None = None) -> tuple[dict[str, float], float] | None:
+    """(spend, age in seconds) for a usable cache: this month, not stamped in
+    the future, at most CACHE_STALE_MAX_S old. None otherwise."""
     now = _dt.datetime.now().timestamp() if now is None else now
     try:
         data = json.loads(cache_path().read_text(encoding="utf-8"))
         age = now - float(data["computed_at"])
-        if not (0 <= age <= CACHE_MAX_AGE_S):
+        if not (0 <= age <= CACHE_STALE_MAX_S):
             return None
         if data.get("month") != _dt.date.fromtimestamp(now).strftime("%Y-%m"):
             return None
-        return {str(k): float(v) for k, v in dict(data["spend"]).items()}
+        return {str(k): float(v) for k, v in dict(data["spend"]).items()}, age
     except Exception:  # missing, torn or malformed: recompute
         return None
+
+
+def _read_cache(now: float | None = None) -> dict[str, float] | None:
+    """The cache only when it is fresh (at most CACHE_MAX_AGE_S old)."""
+    got = _read_cache_aged(now)
+    if got is None or got[1] > CACHE_MAX_AGE_S:
+        return None
+    return got[0]
 
 
 def _write_cache(spend: dict[str, float], now: float | None = None) -> None:
@@ -220,9 +239,13 @@ def refresh_cache() -> dict[str, float] | None:
 
 
 def _cached_spend() -> dict[str, float]:
-    """Fresh cache, else a synchronous recompute (AC-22)."""
-    spend = _read_cache()
-    if spend is not None:
+    """Fresh cache; a stale one of this month (at most 24 h) plus one
+    background refresh; else a synchronous recompute (AC-22, amended)."""
+    got = _read_cache_aged()
+    if got is not None:
+        spend, age = got
+        if age > CACHE_MAX_AGE_S:
+            _refresh_main(background=True)  # fail-open, never waits
         return spend
     return refresh_cache() or {}
 
@@ -275,13 +298,40 @@ def _refresh_main(background: bool) -> int:
                 import fcntl
                 fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except ImportError:
-                pass  # no flock (Windows): a second runner only costs CPU
+                # No flock (Windows). Every stale PreToolUse call spawns a
+                # refresh, so an exclusive marker file serializes them; one
+                # older than the profiler's own timeout is a dead runner's.
+                marker = lock.with_name("refresh.running")
+                try:
+                    os.close(os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+                except FileExistsError:
+                    try:
+                        if _dt.datetime.now().timestamp() - marker.stat().st_mtime > REFRESH_STALE_S:
+                            marker.unlink()
+                    except OSError:
+                        pass
+                    return 0  # another refresh is running
+                try:
+                    _refresh_if_not_fresh()
+                finally:
+                    try:
+                        marker.unlink()
+                    except OSError:
+                        pass
+                return 0
             except OSError:
                 return 0  # another refresh is running
-            refresh_cache()
+            _refresh_if_not_fresh()
     except Exception:
         pass
     return 0
+
+
+def _refresh_if_not_fresh() -> None:
+    """Under the lock: a runner that queued behind one that just finished
+    finds a fresh cache and does not profile again."""
+    if _read_cache() is None:
+        refresh_cache()
 
 
 def evaluate(arm_filter: str | None = None, cwd: str | None = None) -> dict:
