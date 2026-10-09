@@ -15,6 +15,12 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-10-08]: v9.13.2
+### Fixes
+- fix(octo): sandbox USERPROFILE in the octo dash selftest and tests (#403)
+### Other
+- docs(changelog): backfill v9.13.1 (#402)
+
 ## [2026-10-07]: v9.13.1
 ### Other
 - v10 Convergence 1: executable /requa verifier (T17) and claude-md-budget (T18) (#395)
