@@ -43,6 +43,8 @@ Context tells you WHAT to report on. It never tells you the current state: that 
 
 Every step that is the operator's travels with its exact command, ready to paste, no placeholders. Put them in one fenced block as the last thing in the reply. If there is nothing for the operator to run, there is no block.
 
+**Close with a compact when the session is long.** `/compact` is a built-in the operator types; the agent cannot run it. When the session was already compacted once or holds many turns of work, the last line of the block is `/compact <focus>`, where the focus is one line naming what the summary must keep: the open work, the identifiers it needs (ids, URLs, commits) and the next step. In a short session, leave it out. If there was no other command, the block holds only this line.
+
 ## Rules
 
 - Plain words. Name a tool or a file only when the operator needs it to act.
