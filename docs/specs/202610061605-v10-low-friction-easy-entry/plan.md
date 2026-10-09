@@ -47,8 +47,8 @@ Four phases, one pull request each, every one from its own worktree. Measurement
 
 ### Phase 5: live source
 
-- [ ] T19 [AC-23] scripts/delegate-check, registry/rules.yaml, CLAUDE.md: print the live-source demand on a SELF verdict or an opinion request, add `--selftest` with a negative control, register the rule and anchor it.
-- [ ] T20 [AC-24] scripts/connectome-heartbeat.py, registry/rules.yaml: put the live-source demand on every SELF lean of the beat, add `--selftest`, register it as a second mechanism and proof of the rule.
+- [ ] T21 [AC-23] scripts/delegate-check, registry/rules.yaml, CLAUDE.md: print the live-source demand on a SELF verdict or an opinion request, add `--selftest` with a negative control, register the rule and anchor it.
+- [ ] T22 [AC-24] scripts/connectome-heartbeat.py, registry/rules.yaml: put the live-source demand on every SELF lean of the beat, add `--selftest`, register it as a second mechanism and proof of the rule.
 
 ## Risks
 
