@@ -105,7 +105,7 @@ The Constitution keeps the rules every session needs and moves the long mechanis
 - [ ] AC-19: THE Dashboard SHALL write one self-contained HTML file showing specs with task and converge state, open pull requests with their newest QA verdict and pinned head, the gate receipt, live kernel processes and the friction report, reading pull requests only from a local snapshot that `octo dash --refresh` takes and printing that snapshot's age.
 - [ ] AC-20: THE Status_Line SHALL show the gate receipt state, the live process count and the active spec, and SHALL return in at most 200 ms at the median and 500 ms at p95 over 100 consecutive calls.
 - [ ] AC-21: THE Guard_Stop SHALL block only on a turn that itself made a message send.
-- [ ] AC-22: IF the Budget_Check cache is older than 15 minutes, THEN THE Budget_Check SHALL recompute synchronously and keep its current fail-closed decision.
+- [ ] AC-22: IF the Budget_Check cache is older than 15 minutes but from the current month and at most 24 hours old, THEN THE Budget_Check SHALL answer from that cache within the AC-11 bound, start one background refresh and keep its fail-closed decision on the cached spend; IF the cache is missing, from another month, stamped in the future, unreadable or older than 24 hours, THEN THE Budget_Check SHALL recompute synchronously.
 
 ## Technical Scope
 
@@ -137,3 +137,4 @@ v10.0.0 ships when every criterion above has a CONVERGED verdict and the Frictio
 - 2026-10-06: QA failed the in-gate receipt carry (local master ref is agent-writable). AC-12 and AC-13 now move the re-review to a remote-reading verifier and keep the merge gate unchanged. Send_Ask no longer accepts bare go-aheads.
 - 2026-10-07: AC-12 narrowed to merge-only base updates; a rebase rewrites the reviewed commits and gets a full QA.
 - 2026-10-07: QA consistency pass: Technical Scope no longer lists the rejected merge-gate carry, FR-05 and the verifier term say merge-only, AC-03 names what the tracked baseline holds.
+- 2026-10-09: AC-22 amended by the operator: the converge pass found AC-11 and AC-22 pulling against each other in live use (p95 10 s, 5 timeouts at 10 s on the first spawn after an idle spell). AC-11 keeps its 1 s p95; a stale cache of this month, at most 24 hours old, now answers at once and refreshes in the background, and only a missing, foreign-month, future-stamped, torn or 24-hour-old cache is recomputed synchronously.

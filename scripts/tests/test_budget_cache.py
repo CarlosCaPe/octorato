@@ -2,9 +2,11 @@
 """v10 T07 (AC-11, AC-22): budget-check answers from a spend cache.
 
 The PreToolUse check reads a cache that SessionStart and each finished spawn
-refresh. A cache older than 15 minutes, from another month, stamped in the
-future or unreadable is never used: the check recomputes synchronously and the
-hard_stop decision is unchanged.
+refresh. A cache up to 15 minutes old is fresh. A stale one of this month, at
+most 24 hours old, answers at once and starts one background refresh (AC-22 as
+amended 2026-10-09). A cache from another month, stamped in the future,
+unreadable or older than 24 hours is never used: the check recomputes
+synchronously. The hard_stop decision is taken on the spend it answers from.
 
 Stdlib only:  python3 -m unittest scripts.tests.test_budget_cache
 """
@@ -66,12 +68,32 @@ class BudgetCache(unittest.TestCase):
             v = bc.evaluate()
         self.assertEqual((v["status"], self.runs), ("HARD_STOP", 0))
 
-    def test_a_cache_older_than_15_minutes_is_recomputed_synchronously(self):
-        self.write({"hot": 0.0}, age_s=bc.CACHE_MAX_AGE_S + 5)
-        with self.profiler({"hot": 50.0}):
+    def test_a_stale_cache_of_this_month_answers_at_once_and_refreshes_in_background(self):
+        self.write({"hot": 50.0}, age_s=bc.CACHE_MAX_AGE_S + 5)
+        with self.profiler({"hot": 0.0}), mock.patch.object(bc.subprocess, "Popen") as popen:
             v = bc.evaluate()
-        self.assertEqual((v["status"], self.runs), ("HARD_STOP", 1))
+        self.assertEqual((v["status"], self.runs), ("HARD_STOP", 0))   # decided on the cache, no wait
+        self.assertEqual(popen.call_count, 1)                          # one background refresh
+        self.assertIn("--refresh", popen.call_args[0][0])
+
+    def test_a_stale_cache_under_the_cap_allows_and_still_refreshes(self):
+        self.write({"hot": 0.0}, age_s=6 * 3600)
+        with self.profiler({"hot": 50.0}), mock.patch.object(bc.subprocess, "Popen") as popen:
+            v = bc.evaluate()
+        self.assertEqual((v["status"], self.runs, popen.call_count), ("OK", 0, 1))
+
+    def test_a_cache_older_than_24_hours_is_recomputed_synchronously(self):
+        self.write({"hot": 0.0}, age_s=bc.CACHE_STALE_MAX_S + 5)
+        with self.profiler({"hot": 50.0}), mock.patch.object(bc.subprocess, "Popen") as popen:
+            v = bc.evaluate()
+        self.assertEqual((v["status"], self.runs, popen.call_count), ("HARD_STOP", 1, 0))
         self.assertEqual(bc._read_cache(), {"hot": 50.0})       # rewritten
+
+    def test_a_fresh_cache_starts_no_refresh(self):
+        self.write({"hot": 1.0}, age_s=60)
+        with self.profiler({"hot": 0.0}), mock.patch.object(bc.subprocess, "Popen") as popen:
+            bc.evaluate()
+        self.assertEqual((self.runs, popen.call_count), (0, 0))
 
     def test_a_future_or_other_month_or_torn_cache_is_not_trusted(self):
         for setup in (lambda: self.write({"hot": 0.0}, age_s=-3600),

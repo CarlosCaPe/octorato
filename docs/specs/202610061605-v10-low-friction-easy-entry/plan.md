@@ -44,6 +44,7 @@ Four phases, one pull request each, every one from its own worktree. Measurement
 
 - [ ] T14 [AC-19] scripts/octo_dash.py, scripts/octo.py, registry/rules.yaml: add `octo dash` and `octo dash --refresh` writing one self-contained HTML page from local state and a PR snapshot.
 - [ ] T15 [AC-20] scripts/statusline.py, scripts/merge-hooks.py, registry/rules.yaml: add the status line and register it, measured over 100 calls.
+- [ ] T23 [AC-22, AC-11] scripts/budget-check.py, scripts/tests/test_budget_cache.py: answer from a stale cache of this month (at most 24 hours old) and start one background refresh, recompute synchronously only for a missing, foreign-month, future-stamped, torn or 24-hour-old cache; measure 100 calls with a stale cache.
 
 ## Risks
 
