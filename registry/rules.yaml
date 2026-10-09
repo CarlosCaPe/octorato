@@ -475,10 +475,15 @@ rules:
   strength: DETECTOR
   firing_mode:
   - cli
+  - hook
   mechanism:
   - kind: Detector
     canonical_name: delegate-check
     firing_event: null
+    firing_matcher: null
+  - kind: Reflex
+    canonical_name: connectome-heartbeat.py
+    firing_event: UserPromptSubmit
     firing_matcher: null
   proof:
   - method: ANCHOR_PRESENT
@@ -486,6 +491,9 @@ rules:
     expect: present
   - method: EXIT_CODE
     locator: python3 scripts/delegate-check --selftest
+    expect: 0
+  - method: EXIT_CODE
+    locator: python3 scripts/connectome-heartbeat.py --selftest
     expect: 0
   liveness_required: PRESENT
 - id: FLOW.graph-before-grep

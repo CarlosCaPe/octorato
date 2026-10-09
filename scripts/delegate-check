@@ -436,6 +436,9 @@ def print_report(task: str, task_tokens: set[str], agent_matches: list,
             print(f"    → Consider: {top[0]['emoji']} {top[0]['name']} (score: {top[2]:.2f})")
     else:
         print("    → Opinion/judgment requested with no graph match. Answer as sourced connector — cite the data.")
+    # The opinion request is what invites an answer from recall, whatever the
+    # verdict: with a populated graph a SELF verdict is rare, so gate on both.
+    if decision == "SELF" or is_opinion_request(task):
         print(f"    → {SELF_LIVE_SOURCE_LINE}")
     print("=" * 60)
 
@@ -455,9 +458,18 @@ def selftest() -> int:
     with contextlib.redirect_stdout(buf2):
         print_report(other, tokenize(other), [], [], make_decision(other, [], []), 0, 0)
     ok_load = SELF_LIVE_SOURCE_LINE not in buf2.getvalue()
-    print(f"selftest self-live-source: {'PASS' if ok_self and ok_load else 'FAIL'}"
-          f" (self={ok_self}, load-clean={ok_load})")
-    return 0 if ok_self and ok_load else 1
+    # An opinion request that the graph routes to LOAD still carries the demand.
+    skill = {"name": "probe-skill"}
+    matches = [(skill, {"recommend"}, 0.5)]
+    decision3 = make_decision(task, [], matches)
+    buf3 = io.StringIO()
+    with contextlib.redirect_stdout(buf3):
+        print_report(task, tokenize(task), [], matches, decision3, 0, 1)
+    ok_opinion = decision3 == "LOAD" and SELF_LIVE_SOURCE_LINE in buf3.getvalue()
+    ok = ok_self and ok_load and ok_opinion
+    print(f"selftest self-live-source: {'PASS' if ok else 'FAIL'}"
+          f" (self={ok_self}, load-clean={ok_load}, opinion-load={ok_opinion})")
+    return 0 if ok else 1
 
 
 def main():

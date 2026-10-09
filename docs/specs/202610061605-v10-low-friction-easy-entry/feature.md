@@ -40,6 +40,7 @@ Every acceptance criterion names one of these components as its subject.
 - **Dashboard**: a new `octo dash` subcommand that writes one self-contained HTML page from local state.
 - **Status_Line**: a new status line script registered for Claude Code.
 - **Delegate_Check**: `scripts/delegate-check`, the 2D Q3 verdict (ACTIVATE, LOAD or SELF).
+- **Heartbeat**: `scripts/connectome-heartbeat.py`, the UserPromptSubmit reflex that injects the 2D Q1 lean on every prompt.
 - **Fresh_Clone_Test**: a new CI job that installs the brain from a clean clone in a container and times it.
 
 ## User Stories
@@ -85,7 +86,7 @@ The Constitution keeps the rules every session needs and moves the long mechanis
 
 ### FR-09: A SELF verdict asks for the live source
 
-A SELF answer comes from recall or stored memory, and recall is usually stale or wrong: an operator word that names a project gets matched to an old memory instead of the live tree. The Delegate_Check therefore never returns a bare SELF. It returns SELF with a demand to name the live source checked (the file listing, git, the chat, the live system) before the answer.
+A SELF answer comes from recall or stored memory, and recall is usually stale or wrong: an operator word that names a project gets matched to an old memory instead of the live tree. The Delegate_Check and the Heartbeat therefore never show a bare SELF. They carry a demand to name the live source checked (the file listing, git, the chat, the live system) before the answer. With a populated graph the Delegate_Check rarely returns SELF, so it also carries the demand on any explicit opinion request, and the Heartbeat, which runs on every prompt, carries it whenever it leans SELF.
 
 ## Acceptance Criteria
 
@@ -111,7 +112,8 @@ A SELF answer comes from recall or stored memory, and recall is usually stale or
 - [ ] AC-20: THE Status_Line SHALL show the gate receipt state, the live process count and the active spec, and SHALL return in at most 200 ms at the median and 500 ms at p95 over 100 consecutive calls.
 - [ ] AC-21: THE Guard_Stop SHALL block only on a turn that itself made a message send.
 - [ ] AC-22: IF the Budget_Check cache is older than 15 minutes, THEN THE Budget_Check SHALL recompute synchronously and keep its current fail-closed decision.
-- [ ] AC-23: WHEN the Delegate_Check returns SELF, THE Delegate_Check SHALL print a line that calls the verdict about 99% likely stale or hallucinated and asks for the live source checked, and SHALL NOT print it for ACTIVATE or LOAD; its `--selftest` SHALL fail when that line is removed.
+- [ ] AC-23: WHEN the Delegate_Check returns SELF or the task is an explicit opinion request, THE Delegate_Check SHALL print a line that calls the answer about 99% likely stale or hallucinated and asks for the live source checked, and SHALL NOT print it for an ACTIVATE or LOAD verdict on a task that is not an opinion request; its `--selftest` SHALL fail when that line is removed.
+- [ ] AC-24: WHEN the Heartbeat leans SELF, including when no neuron matches the prompt, THE Heartbeat SHALL include the same live-source line in its injected context, and SHALL NOT include it when it leans ACTIVATE or LOAD; its `--selftest` SHALL fail when that line is removed.
 
 ## Technical Scope
 
@@ -144,3 +146,4 @@ v10.0.0 ships when every criterion above has a CONVERGED verdict and the Frictio
 - 2026-10-07: AC-12 narrowed to merge-only base updates; a rebase rewrites the reviewed commits and gets a full QA.
 - 2026-10-07: QA consistency pass: Technical Scope no longer lists the rejected merge-gate carry, FR-05 and the verifier term say merge-only, AC-03 names what the tracked baseline holds.
 - 2026-10-09: FR-09 and AC-23 added: a SELF verdict carries a demand for the live source, after an answer built from a stale memory instead of the live tree.
+- 2026-10-09: QA found the Delegate_Check SELF branch unreachable against the live graph (every opinion phrasing tried returned LOAD). AC-23 now also fires on an explicit opinion request, and AC-24 puts the line on the Heartbeat, the path that reaches every prompt.
