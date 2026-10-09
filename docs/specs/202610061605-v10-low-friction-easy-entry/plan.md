@@ -46,6 +46,11 @@ Four phases, one pull request each, every one from its own worktree. Measurement
 - [ ] T15 [AC-20] scripts/statusline.py, scripts/merge-hooks.py, registry/rules.yaml: add the status line and register it, measured over 100 calls.
 - [ ] T23 [AC-22, AC-11] scripts/budget-check.py, scripts/tests/test_budget_cache.py: answer from a stale cache of this month (at most 24 hours old) and start one background refresh, recompute synchronously only for a missing, foreign-month, future-stamped, torn or 24-hour-old cache; measure 100 calls with a stale cache.
 
+### Phase 5: live source
+
+- [ ] T21 [AC-23] scripts/delegate-check, registry/rules.yaml, CLAUDE.md: print the live-source demand on a SELF verdict or an opinion request, add `--selftest` with a negative control, register the rule and anchor it.
+- [ ] T22 [AC-24] scripts/connectome-heartbeat.py, registry/rules.yaml: put the live-source demand on every SELF lean of the beat, add `--selftest`, register it as a second mechanism and proof of the rule.
+
 ## Risks
 
 - Phase 2 edits sit on the arming surface: every one goes through a worktree and a pull, and its QA receipt pins its head.

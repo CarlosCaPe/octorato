@@ -41,6 +41,28 @@ BRAIN = Path(__file__).resolve().parent.parent
 MAP = BRAIN / "neural_map.json"
 BUDGET_S = 3  # hard self-timeout, well under the 5s harness ceiling
 
+# A SELF lean means the answer would come from recall or stored memory, which is
+# usually stale or wrong. The beat is the path that actually reaches the model on
+# every prompt, so the demand for the live source rides on it (v10 FR-09).
+SELF_LIVE_SOURCE_LINE = (
+    "SELF = ~99% stale or hallucinated: name the live source you checked "
+    "(ls, git, chat, live system) before answering"
+)
+
+
+def no_match_text(reflex: str) -> str:
+    return ("♥ connectome heartbeat: no strong match for this prompt — "
+            "2D leans SELF; confirm with delegate-check before deciding.\n  "
+            + SELF_LIVE_SOURCE_LINE + "\n" + reflex)
+
+
+def lean_lines(lean: str) -> list:
+    lines = [f"  Heartbeat lean: {lean}. Still run Q2 (API?) + Q3 (delegate-check) "
+             "and state the verdict."]
+    if lean == "SELF":
+        lines.append("  " + SELF_LIVE_SOURCE_LINE)
+    return lines
+
 
 def emit(context: str) -> None:
     print(json.dumps({"hookSpecificOutput": {
@@ -104,8 +126,7 @@ def beat(prompt: str) -> str:
 
     scored = score(prompt, data, qc)
     if not scored:
-        return ("♥ connectome heartbeat: no strong match for this prompt — "
-                "2D leans SELF; confirm with delegate-check before deciding.\n" + reflex)
+        return no_match_text(reflex)
 
     agents = [(i, s) for i, k, s in scored if k == "agent"][:3]
     skills = [(i, s) for i, k, s in scored if k == "skill"][:5]
@@ -122,13 +143,26 @@ def beat(prompt: str) -> str:
                      + ", ".join(names[h] for h in hop))
     lean = ("ACTIVATE" if agents and agents[0][1] >= 0.15
             else "LOAD" if skills else "SELF")
-    lines.append(f"  Heartbeat lean: {lean}. Still run Q2 (API?) + Q3 (delegate-check) "
-                 "and state the verdict.")
+    lines.extend(lean_lines(lean))
     lines.append(reflex)
     return "\n".join(lines)
 
 
+def selftest() -> int:
+    """Every SELF path of the beat carries the live-source demand; ACTIVATE/LOAD do not."""
+    ok_none = SELF_LIVE_SOURCE_LINE in no_match_text("")
+    ok_self = any(SELF_LIVE_SOURCE_LINE in x for x in lean_lines("SELF"))
+    ok_clean = not any(SELF_LIVE_SOURCE_LINE in x
+                       for lean in ("ACTIVATE", "LOAD") for x in lean_lines(lean))
+    ok = ok_none and ok_self and ok_clean
+    print(f"selftest heartbeat-self-live-source: {'PASS' if ok else 'FAIL'}"
+          f" (no-match={ok_none}, self-lean={ok_self}, others-clean={ok_clean})")
+    return 0 if ok else 1
+
+
 def main() -> int:
+    if sys.argv[1:] == ["--selftest"]:
+        return selftest()
     prompt = read_prompt()
     # Skip slash-commands and trivially short prompts — no circulation needed.
     if not prompt or len(prompt.strip()) < 5 or prompt.lstrip().startswith("/"):
