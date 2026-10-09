@@ -45,6 +45,11 @@ Four phases, one pull request each, every one from its own worktree. Measurement
 - [ ] T14 [AC-19] scripts/octo_dash.py, scripts/octo.py, registry/rules.yaml: add `octo dash` and `octo dash --refresh` writing one self-contained HTML page from local state and a PR snapshot.
 - [ ] T15 [AC-20] scripts/statusline.py, scripts/merge-hooks.py, registry/rules.yaml: add the status line and register it, measured over 100 calls.
 
+### Phase 5: live source
+
+- [ ] T21 [AC-23] scripts/delegate-check, registry/rules.yaml, CLAUDE.md: print the live-source demand on a SELF verdict or an opinion request, add `--selftest` with a negative control, register the rule and anchor it.
+- [ ] T22 [AC-24] scripts/connectome-heartbeat.py, registry/rules.yaml: put the live-source demand on every SELF lean of the beat, add `--selftest`, register it as a second mechanism and proof of the rule.
+
 ## Risks
 
 - Phase 2 edits sit on the arming surface: every one goes through a worktree and a pull, and its QA receipt pins its head.
