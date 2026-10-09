@@ -22,6 +22,13 @@ Each event becomes one JSONL line in the gitignored
     {"v": 1, "key", "uuid", "ts", "session", "agent", "kind", "event", "gate",
      "code", "tool", "input_sha256", "input_chars"}
 
+A goal-anchor Stop block also carries `seen_uuid` and `seen_bytes` (v10 T19):
+the uuid of the last transcript record the gate read and the byte offset its
+read stopped at, taken from the gate's own read receipt
+(`~/.claude/.cache/goal-anchor/receipts/<session>.jsonl`), so a replay can cut
+that Stop exactly where the live gate did. Both are null when no receipt
+matches (every block from before the receipt existed).
+
 What is NEVER stored: the reason text, the tool input, a message body, a prompt.
 `input_sha256` is the sha256 of the input serialised as sorted-key JSON and cut
 to 1,200 characters (AC-01), so two identical denied calls share a digest and
@@ -58,6 +65,7 @@ Stdlib only. Library users: `ingest_paths()`, `read_ledger()`, `read_latency()`.
 from __future__ import annotations
 
 import argparse
+import calendar
 import glob
 import hashlib
 import json
@@ -167,6 +175,52 @@ def digest(obj) -> tuple[str | None, int]:
         return None, 0
     s = obj if isinstance(obj, str) else json.dumps(obj, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(s[:INPUT_CUT].encode("utf-8")).hexdigest(), len(s)
+
+
+# ── goal-anchor read receipts (v10 T19) ────────────────────────────────────
+
+GOAL_ANCHOR = "g__stop__goal-anchor.py"
+RECEIPT_MATCH_SECONDS = 120
+
+
+def receipts_dir() -> Path:
+    return Path(os.path.expanduser("~")) / ".claude" / ".cache" / "goal-anchor" / "receipts"
+
+
+def read_receipts(session: str, root: Path | None = None) -> list:
+    """The goal-anchor read receipts of one session, in file order."""
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", session or "")[:120] or "unknown"
+    return [r for r in _read_jsonl((root or receipts_dir()) / f"{safe}.jsonl") if isinstance(r, dict)]
+
+
+def _epoch(ts: str):
+    try:
+        return calendar.timegm(time.strptime((ts or "")[:19], "%Y-%m-%dT%H:%M:%S")) + \
+            (float("0" + ts[19:23]) if ts[19:20] == "." else 0.0)
+    except (ValueError, TypeError):
+        return None
+
+
+def match_block_receipt(receipts: list, digest_hex: str | None, ts: str) -> dict | None:
+    """The receipt of the gate run that produced a block recorded at `ts`.
+
+    Only `block` receipts written at or before the block's record qualify (the
+    harness writes the record after the hook returns). The one whose
+    `reply_digest` equals the ledger's digest of the refused reply wins; with
+    none, the latest block receipt within RECEIPT_MATCH_SECONDS. Else None.
+    """
+    t = _epoch(ts)
+    if t is None:
+        return None
+    cands = []
+    for r in receipts:
+        rt = _epoch(r.get("ts") or "")
+        if r.get("decision") == "block" and rt is not None and t - RECEIPT_MATCH_SECONDS <= rt <= t:
+            cands.append((rt, r))
+    if not cands:
+        return None
+    same = [c for c in cands if digest_hex and c[1].get("reply_digest") == digest_hex]
+    return max(same or cands, key=lambda c: c[0])[1]
 
 
 # ── hooks.json label map (latency) ──────────────────────────────────────────
@@ -318,9 +372,17 @@ def scan_bytes(buf: bytes, with_latency: bool = True) -> tuple[list, list]:
             reason = be.get("blockingError") or ""
             gate, code = attribute_block(be.get("command") or a.get("command") or "", reason)
             h, n = digest(_last_assistant_text(buf, pos) or None)
-            events.append({**base, "key": uuid, "kind": "stop-block",
-                           "event": a.get("hookEvent") or "Stop", "gate": gate, "code": code,
-                           "tool": None, "input_sha256": h, "input_chars": n})
+            row = {**base, "key": uuid, "kind": "stop-block",
+                   "event": a.get("hookEvent") or "Stop", "gate": gate, "code": code,
+                   "tool": None, "input_sha256": h, "input_chars": n}
+            if gate == GOAL_ANCHOR:
+                try:
+                    rc = match_block_receipt(read_receipts(base["session"]), h, base["ts"])
+                except Exception:  # a receipt is a bonus; the event is recorded anyway
+                    rc = None
+                row["seen_uuid"] = (rc or {}).get("last_uuid")
+                row["seen_bytes"] = (rc or {}).get("bytes")
+            events.append(row)
             continue
         if d.get("type") != "user":
             continue
