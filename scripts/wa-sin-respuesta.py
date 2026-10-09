@@ -635,7 +635,7 @@ def token_gmail(secretos=None, lector=None):
 def gmail_get(ruta, at, **params):
     url = f"{GMAIL_API}/{ruta}"
     if params:
-        url += "?" + urllib.parse.urlencode(params)
+        url += "?" + urllib.parse.urlencode(params, doseq=True)
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {at}"})
     with urllib.request.urlopen(req, timeout=30) as r:
         return json.loads(r.read().decode())
@@ -671,6 +671,25 @@ def es_autorespuesta(cabeceras, extracto):
 
 
 DESCARTADOS = {"TRASH", "SPAM"}
+
+
+SERIE_CALENDARIO = "x-ms-exchange-calendar-series-instance-id"
+ASUNTOS_INVITACION = ("invitation:", "updated invitation:", "invitación:",
+                      "invitación actualizada:")
+
+
+def es_invitacion(msg):
+    """True when the headers say this is a meeting request, not just a mail
+    with an .ics attached. A question that carries a calendar file must still
+    count as waiting: that false green is the worst failure of this sentry.
+    Exchange stamps meeting requests with a calendar series id (measured Oct 9:
+    present on both invites, absent on normal mails with attachments); Google
+    Calendar invites start their subject with "Invitation:"."""
+    cab = {h["name"].lower(): h["value"]
+           for h in (msg.get("payload") or {}).get("headers", [])}
+    if cab.get(SERIE_CALENDARIO):
+        return True
+    return cab.get("subject", "").strip().lower().startswith(ASUNTOS_INVITACION)
 
 
 def sin_descartados(msgs, invitaciones=frozenset()):
@@ -726,15 +745,26 @@ def hilos_gmail(remitente, dias, secretos=None):
     for m in d.get("messages") or []:
         hilos[m["threadId"]] = None
     # A calendar invitation asks for an RSVP, not an email reply. The metadata
-    # view does not show MIME parts, but search does: on Oct 9 `filename:ics`
-    # matched exactly the two invites among 17 mails of one sender.
-    inv = gmail_get("messages", at, q=f"{q} filename:ics", maxResults=25)
-    invitaciones = {m["id"] for m in inv.get("messages") or []}
+    # view does not show MIME parts, but search does: `filename:ics` gives the
+    # candidates, and `es_invitacion` keeps only real meeting requests. This
+    # search is an enrichment: if it fails, nothing is dropped (an extra alert
+    # is better than a blind sender).
+    try:
+        inv = gmail_get("messages", at, q=f"{q} filename:ics", maxResults=25)
+        candidatas = {m["id"] for m in inv.get("messages") or []}
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        print(f"AVISO: sin filtro de invitaciones para {remitente}: {e}",
+              file=sys.stderr)
+        candidatas = set()
     salida = []
     for tid in hilos:
         th = gmail_get(f"threads/{tid}", at, format="metadata",
-                       metadataHeaders="Auto-Submitted")
-        msgs = sin_descartados(th.get("messages") or [], invitaciones)
+                       metadataHeaders=["Auto-Submitted", "Subject",
+                                        "X-MS-Exchange-Calendar-Series-Instance-Id"])
+        crudos = th.get("messages") or []
+        invitaciones = {m["id"] for m in crudos
+                        if m.get("id") in candidatas and es_invitacion(m)}
+        msgs = sin_descartados(crudos, invitaciones)
         if not msgs:
             continue
         ultimo_msg = msgs[-1]
@@ -1485,6 +1515,25 @@ def selftest():
         {"id": "i2", "internalDate": "500", "labelIds": ["INBOX"]}], {"i2"}))
     if arranca["id"] != "m2" or cuantos != 3:
         fallos.append("an invitation changed where the wait starts")
+    casos += 1
+    # a reply of mine is kept even if its id were among the invitations
+    if not sin_descartados([{"id": "s1", "labelIds": ["SENT"]}], {"s1"}):
+        fallos.append("a reply of mine was dropped as an invitation")
+    casos += 1
+    # an Exchange meeting request is an invitation
+    if not es_invitacion({"payload": {"headers": [
+            {"name": "X-MS-Exchange-Calendar-Series-Instance-Id", "value": "BAAA"}]}}):
+        fallos.append("an Exchange meeting request was not seen as an invitation")
+    casos += 1
+    # a Google Calendar invite is an invitation
+    if not es_invitacion({"payload": {"headers": [
+            {"name": "Subject", "value": "Invitation: UAT @ Tue 13 Oct"}]}}):
+        fallos.append("a Google Calendar invite was not seen as an invitation")
+    casos += 1
+    # a real question with an .ics attached is NOT an invitation
+    if es_invitacion({"payload": {"headers": [
+            {"name": "Subject", "value": "RE: can you make this slot?"}]}}):
+        fallos.append("a question with an .ics was silenced as an invitation")
 
     # un remitente sin ningun hilo callado va SANO, en null. Sin esto no hay
     # verdes de correo.
