@@ -15,6 +15,20 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-10-09]: v9.14.1
+### Fixes
+- fix(budget): a stale cache of this month answers at once (v10 AC-22 amended, T23) (#408)
+
+## [2026-10-09]: v9.14.0
+### Features
+- feat(delegate): a SELF verdict demands the live source (v10 FR-09, AC-23) (#406)
+
+## [2026-10-09]: v9.13.3
+### Fixes
+- fix(silence-watcher): leave Trash and Spam out of the mail sensor (#407)
+### Other
+- docs(changelog): backfill v9.13.2 (#404)
+
 ## [2026-10-08]: v9.13.2
 ### Fixes
 - fix(octo): sandbox USERPROFILE in the octo dash selftest and tests (#403)
