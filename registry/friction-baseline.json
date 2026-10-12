@@ -1,13 +1,13 @@
 {
  "_comment": "v10 Replay_Harness baseline. Counts and per-case ids only: the corpus it was replayed from is private (company/friction-corpus/). Case fields: g gate, e event, h historical decision, d replayed decision, c reason code, l label (TP, FP, - unlabelled), p decision of the gate revision in fidelity_revs (fidelity is measured from it). Stateful Stop gates are replayed session by session (stateful_sessions: counts over every in-window Stop of those sessions). Regenerate with `python3 scripts/replay_harness.py baseline` after an intended change.",
  "version": 1,
- "generated": "2026-10-12T10:39:59Z",
+ "generated": "2026-10-12T11:56:50Z",
  "window": {
   "since": "2026-09-06",
   "until": "2026-10-08"
  },
  "corpus_cases": 1739,
- "replay_seconds": 262.9,
+ "replay_seconds": 344.5,
  "fidelity_revs": {
   "g__stop__goal-anchor.py": "d5d609e3441d2c3e488f1d4fb0429648af2b6d2e"
  },
@@ -16,8 +16,8 @@
    "sessions": 29,
    "stops": 2484,
    "historical_deny": 117,
-   "replay_deny": 26,
-   "hist_deny_reproduced": 5,
+   "replay_deny": 58,
+   "hist_deny_reproduced": 13,
    "from_receipt": 0,
    "end_cut": 2484,
    "receipt_skew": 0,
@@ -318,8 +318,8 @@
   "g__stop__goal-anchor.py": {
    "cases": 157,
    "historical_deny": 117,
-   "replay_deny": 5,
-   "agree": 45,
+   "replay_deny": 14,
+   "agree": 52,
    "hist_deny_reproduced": 43,
    "hist_allow_reproduced": 40,
    "TP": 0,
@@ -332,7 +332,7 @@
    "before_after": {
     "rev": "d5d609e3441d2c3e488f1d4fb0429648af2b6d2e",
     "before": 43,
-    "after": 5
+    "after": 14
    },
    "deny_fidelity": 0.368,
    "allow_fidelity": 1.0,
@@ -2335,8 +2335,8 @@
    "g": "g__stop__goal-anchor.py",
    "e": "Stop",
    "h": "allow",
-   "d": "allow",
-   "c": "",
+   "d": "deny",
+   "c": "root-goal-unnamed",
    "l": "-",
    "p": "allow"
   },
@@ -3835,8 +3835,8 @@
    "g": "g__stop__goal-anchor.py",
    "e": "Stop",
    "h": "deny",
-   "d": "allow",
-   "c": "",
+   "d": "deny",
+   "c": "root-goal-unnamed",
    "l": "FP",
    "p": "deny"
   },
@@ -4118,8 +4118,8 @@
    "g": "g__stop__goal-anchor.py",
    "e": "Stop",
    "h": "deny",
-   "d": "allow",
-   "c": "",
+   "d": "deny",
+   "c": "root-goal-unnamed",
    "l": "FP",
    "p": "allow"
   },
@@ -5127,8 +5127,8 @@
    "g": "g__stop__goal-anchor.py",
    "e": "Stop",
    "h": "deny",
-   "d": "allow",
-   "c": "",
+   "d": "deny",
+   "c": "root-goal-unnamed",
    "l": "FP",
    "p": "deny"
   },
@@ -9806,8 +9806,8 @@
    "g": "g__stop__goal-anchor.py",
    "e": "Stop",
    "h": "deny",
-   "d": "allow",
-   "c": "",
+   "d": "deny",
+   "c": "root-goal-unnamed",
    "l": "FP",
    "p": "deny"
   },
@@ -12764,8 +12764,8 @@
    "g": "g__stop__goal-anchor.py",
    "e": "Stop",
    "h": "deny",
-   "d": "allow",
-   "c": "",
+   "d": "deny",
+   "c": "root-goal-unnamed",
    "l": "FP",
    "p": "deny"
   },
@@ -12976,8 +12976,8 @@
    "g": "g__stop__goal-anchor.py",
    "e": "Stop",
    "h": "deny",
-   "d": "allow",
-   "c": "",
+   "d": "deny",
+   "c": "root-goal-unnamed",
    "l": "FP",
    "p": "allow"
   },
@@ -13347,8 +13347,8 @@
    "g": "g__stop__goal-anchor.py",
    "e": "Stop",
    "h": "deny",
-   "d": "allow",
-   "c": "",
+   "d": "deny",
+   "c": "root-goal-unnamed",
    "l": "FP",
    "p": "allow"
   },
@@ -14477,8 +14477,8 @@
    "g": "g__stop__goal-anchor.py",
    "e": "Stop",
    "h": "deny",
-   "d": "allow",
-   "c": "",
+   "d": "deny",
+   "c": "root-goal-unnamed",
    "l": "FP",
    "p": "deny"
   },
