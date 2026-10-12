@@ -1,0 +1,9 @@
+{
+  "session_id": "fx-p-benign-support-script-read-head",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "head -30 ~/.claude/scripts/wa-soporte.sh"
+  },
+  "cwd": "/home/user",
+  "transcript_path": "benign_support_script_read_head_transcript.jsonl"
+}

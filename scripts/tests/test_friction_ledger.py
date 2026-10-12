@@ -156,7 +156,7 @@ class TestLedger(FrictionCase):
 
     def test_byte_budget_catches_up_over_several_calls(self):
         friction_ledger.ingest_paths([self.tp])
-        whole = sorted(r["key"] for r in self.ledger())
+        whole = sorted((r["key"], r["input_sha256"]) for r in self.ledger())
         shutil.rmtree(self.ldir)
         calls = 0
         while True:
@@ -165,7 +165,40 @@ class TestLedger(FrictionCase):
             if not res["pending"] or calls > 50:
                 break
         self.assertGreater(calls, 2)
-        self.assertEqual(sorted(r["key"] for r in self.ledger()), whole)
+        self.assertEqual(sorted((r["key"], r["input_sha256"]) for r in self.ledger()), whole)
+
+    def test_stop_block_split_from_its_reply_keeps_the_digest(self):
+        """The reply a Stop refused is written before the block, so an
+        incremental read whose saved offset sits right before the
+        hook_blocking_error line must look back for it (v10 T24)."""
+        recs = _transcript()
+        cut = next(i for i, r in enumerate(recs)
+                   if (r.get("attachment") or {}).get("type") == "hook_blocking_error")
+        _write(self.tp, recs[:cut])
+        friction_ledger.ingest_paths([self.tp])
+        self.assertEqual([r for r in self.ledger() if r["kind"] == "stop-block"], [])
+        with open(self.tp, "a", encoding="utf-8") as fh:
+            for r in recs[cut:]:
+                fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+        friction_ledger.ingest_paths([self.tp])
+        blocks = [r for r in self.ledger() if r["kind"] == "stop-block"]
+        self.assertEqual(len(blocks), 1)
+        want = hashlib.sha256(STOP_TEXT[:1200].encode()).hexdigest()
+        self.assertEqual(blocks[0]["input_sha256"], want)
+        self.assertEqual(blocks[0]["input_chars"], len(STOP_TEXT))
+        n = len(self.ledger())
+        res = friction_ledger.ingest_paths([self.tp])
+        self.assertEqual((res["events"], len(self.ledger())), (0, n))
+        with mock.patch.object(friction_ledger, "LOOKBACK_BYTES", 8):
+            shutil.rmtree(self.ldir)
+            _write(self.tp, recs[:cut])
+            friction_ledger.ingest_paths([self.tp])
+            with open(self.tp, "a", encoding="utf-8") as fh:
+                for r in recs[cut:]:
+                    fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+            friction_ledger.ingest_paths([self.tp])
+        starved = [r for r in self.ledger() if r["kind"] == "stop-block"]
+        self.assertEqual((len(starved), starved[0]["input_sha256"]), (1, None))
 
     def test_latency_is_monthly_and_a_noop_stop_reads_no_ledger(self):
         friction_ledger.ingest_paths([self.tp])
