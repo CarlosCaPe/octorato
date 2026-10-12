@@ -106,35 +106,35 @@ facts:
 
   # Goal-anchor (T20, PR #411). Every value below is read from
   # registry/friction-baseline.json, never from PR prose. The baseline is
-  # regenerated when #411 merges; refresh these keys from the merged file and
-  # re-render. Semantics: stateful = every in-window Stop of the captured
+  # the file at the merge of #411; a new baseline means refreshing these keys
+  # and re-rendering. Semantics: stateful = every in-window Stop of the captured
   # sessions replayed in order; `rev_replay_deny` is the gate at d5d609e (the
   # fidelity revision, before v10), `replay_deny` the released gate.
   - id: v10.goal_anchor.measured
     kind: asserted
-    value: "14.7%"
-    citation: "registry/friction-baseline.json at PR #411 head fcff911; refresh at merge: stateful_sessions['g__stop__goal-anchor.py'].replay_deny (26) over .rev_replay_deny (177)"
-    note: "Like-for-like replay result, not a live count: the baseline still marks the gate LOW-FIDELITY (the d5d609e gate reproduces 43 of 117 historical blocks)."
+    value: "18.6%"
+    citation: "registry/friction-baseline.json at master a93e075 (PR #411): stateful_sessions['g__stop__goal-anchor.py'].replay_deny (33) over .rev_replay_deny (177)"
+    note: "Like-for-like replay result, not a live count: the baseline still marks the gate LOW-FIDELITY (the d5d609e gate reproduces 43 of 117 historical blocks: rev_hist_deny_reproduced over historical_deny)."
 
   - id: v10.goal_anchor.raw
     kind: asserted
-    value: "177 to 26"
-    citation: "registry/friction-baseline.json at PR #411 head fcff911; refresh at merge: stateful_sessions['g__stop__goal-anchor.py'].rev_replay_deny to .replay_deny, over its .stops"
+    value: "177 to 33"
+    citation: "registry/friction-baseline.json at master a93e075 (PR #411): stateful_sessions['g__stop__goal-anchor.py'].rev_replay_deny to .replay_deny, over its .stops"
 
   - id: v10.goal_anchor.per_case
     kind: asserted
-    value: "43 to 5 (11.6%)"
-    citation: "registry/friction-baseline.json at PR #411 head fcff911; refresh at merge: gates['g__stop__goal-anchor.py'].before_after.before to .after, the corpus cases decided by the stateful replay"
+    value: "43 to 7 (16.3%)"
+    citation: "registry/friction-baseline.json at master a93e075 (PR #411): gates['g__stop__goal-anchor.py'].before_after.before to .after, the corpus cases decided by the stateful replay"
 
   - id: v10.goal_anchor.stops
     kind: asserted
     value: "2,484"
-    citation: "registry/friction-baseline.json at PR #411 head fcff911; refresh at merge: stateful_sessions['g__stop__goal-anchor.py'].stops, in-window Stops of the captured sessions"
+    citation: "registry/friction-baseline.json at master a93e075 (PR #411): stateful_sessions['g__stop__goal-anchor.py'].stops, in-window Stops of the captured sessions"
 
   - id: v10.goal_anchor.sessions
     kind: asserted
     value: "29"
-    citation: "registry/friction-baseline.json at PR #411 head fcff911; refresh at merge: stateful_sessions['g__stop__goal-anchor.py'].sessions"
+    citation: "registry/friction-baseline.json at master a93e075 (PR #411): stateful_sessions['g__stop__goal-anchor.py'].sessions"
 
   - id: v10.budget.spawn_before
     kind: asserted
@@ -238,5 +238,5 @@ facts:
   - id: v10.replay.cases
     kind: asserted
     value: "1,739"
-    citation: "registry/friction-baseline.json at PR #411 head fcff911; refresh at merge: corpus_cases, the private corpus rebuilt from 2026-09-06..10-08 transcripts (PR #380 built the first one with 1,654 from the window to 10-06)"
+    citation: "registry/friction-baseline.json at master a93e075 (PR #411): corpus_cases, the private corpus rebuilt from 2026-09-06..10-08 transcripts (PR #380 built the first one with 1,654 from the window to 10-06)"
 
