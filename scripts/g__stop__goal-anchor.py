@@ -27,12 +27,14 @@ Per-turn cycle (all inside the same Stop; the payload carries transcript_path):
      "ok, avisame cuando termine"), satisfied in the very next reply with words
      the gate cannot match, so it sat open until the fourth turn of silence and
      the first "quedo" fired it; 55 of the 78 replayed blocks came from that
-     route and every labelled one is a false positive. After a close, a single
-     GOAL-SHAPED prompt anchors at once: no ack or go-ahead opener, not an
-     obstacle report, a task verb and at least three content words ("migra la
-     base de clientes a postgres y valida los conteos"). After a close, a steer
-     or an obstacle report anchors nothing, and the topic streak stays as the
-     second route for a goal the operator insists on. A STEER never anchors:
+     route and every labelled one is a false positive. A ROOT, virgin session
+     or after a close, is a single GOAL-SHAPED prompt: no ack or go-ahead
+     opener, not an obstacle report, a task verb and at least five content
+     words (MIN_GOAL_WORDS; "migra la base de clientes a postgres y valida los
+     conteos"). Residual, stated: a goal of three or four content words after
+     a close becomes the root only through the topic streak, when the operator
+     comes back to it. A steer or an obstacle report anchors nothing anywhere,
+     and the topic streak stays as the second route. A STEER never anchors:
      a prompt that opens with an ack or go-ahead word and goes on ("dale,
      borra las ramas", "si, arregla el recibo primero") approves the agent's
      own proposal, whose words the operator never typed. An OBSTACLE REPORT
@@ -213,10 +215,13 @@ _RE_STEER_OPEN = re.compile(
     r"|okay|yes|yep|yeah|sure|done|thanks|continue|proceed"
     r"|[a-z]+(?:-[a-z]+)*-ok)\b"
 )
-# Minimo de palabras de contenido para que UN prompt suelto sea raiz tras un
-# cierre (ver is_goal_shaped). Dos bastan para anclar en sesion virgen; tras un
-# cierre el prompt corto es casi siempre un steer o un encargo de una vuelta.
-MIN_GOAL_WORDS = 3
+# Minimo de palabras de contenido para que UN prompt suelto sea raiz (ver
+# is_goal_shaped), en sesion virgen o tras un cierre. Medido en el corpus de
+# repeticion (v10 T20): con 3 el encargo de una vuelta ("revisa correos",
+# "dame los comandos") anclaba y disparaba en falso; con 5 la raiz es un
+# objetivo con sustancia, y un encargo de 3 o 4 palabras llega a raiz solo si
+# el operador insiste en el (racha de tema). Ese es el residual declarado.
+MIN_GOAL_WORDS = 5
 
 
 def _strip_pasted(text: str) -> str:
@@ -439,6 +444,7 @@ _RE_TASK_VERB = re.compile(
     r"|limpia|limpiar|elimina|eliminar|mergea|mergear|fusiona|fusionar"
     r"|analiza|analizar|compacta|compactar|calcula|calcular|convierte|convertir"
     r"|traduce|traducir|resume|resumir|abre|abrir|cierra|cerrar|pasame|ponme"
+    r"|reescribe|reescribir|rewrite|renombra|renombrar|rename"
     r"|fix|repair|implement|write|create|add|remove|delete|update|publish"
     r"|send|review|verify|run|execute|investigate|document|build|make|refactor"
     r"|migrate|deploy|generate|merge|validate|install|configure|prepare|draft"
@@ -489,9 +495,10 @@ def is_anchorable(prompt: str) -> bool:
 
 
 def is_goal_shaped(prompt: str) -> bool:
-    """Un prompt suelto que puede ser raiz TRAS un cierre: anclable (ni acuse,
-    ni steer, ni obstaculo, ni pregunta suelta), con verbo de encargo y al menos
-    MIN_GOAL_WORDS palabras de contenido. Es la forma exacta del caso C3 del QA
+    """Un prompt suelto que puede ser raiz, en sesion virgen o TRAS un cierre:
+    anclable (ni acuse, ni steer, ni obstaculo, ni pregunta suelta), con verbo
+    de encargo y al menos MIN_GOAL_WORDS palabras de contenido. Es la forma
+    exacta del caso C3 del QA
     v10 T20: la raiz cerrada, un encargo nuevo plano, cuatro obstaculos y un
     cierre ajeno, que master bloqueaba y la racha sola dejaba pasar porque un
     reporte de obstaculo la reinicia."""
@@ -701,11 +708,12 @@ def _absorb(state: dict, prompt: str, reply: str, real: bool = True) -> bool:
     if not real:
         pass
     elif not state.get("anchor") and not state.get("history"):
-        # Estado virgen. is_anchorable, no "if prompt": un eco del harness o una
-        # pregunta suelta no son objetivos, y un ancla mala no se cae sola. Con
-        # historial (raiz retirada o cerrada) la raiz nueva llega por marcador
-        # o por racha, nunca por el primer prompt que pase.
-        if is_anchorable(prompt):
+        # Estado virgen. is_goal_shaped, no "if prompt": un eco del harness, una
+        # pregunta suelta, un steer o un encargo corto no son objetivos, y un
+        # ancla mala no se cae sola (10 de los 78 bloqueos repetidos en falso
+        # eran raices virgenes de 2 a 4 palabras). Con historial (raiz retirada
+        # o cerrada) la raiz nueva llega por forma de objetivo, marcador o racha.
+        if is_goal_shaped(prompt):
             _set_anchor(state, extract_anchor(prompt))
     elif is_reanchor(prompt, state):
         # Ya cerrada se retiro con su razon; viva se retira como pivote.

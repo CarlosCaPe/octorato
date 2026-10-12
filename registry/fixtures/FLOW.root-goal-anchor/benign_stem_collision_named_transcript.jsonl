@@ -1,4 +1,4 @@
-{"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "actualiza la configuracion del servidor de correo"}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "actualiza la configuracion del servidor de correo del cliente nuevo"}]}}
 {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Arranco."}]}}
 {"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "no me deja entrar, sale AccessDenied otra vez"}]}}
 {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Veo el rol y las politicas del bucket para ubicar de donde viene."}]}}
