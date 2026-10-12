@@ -1,0 +1,6 @@
+{
+  "session_id": "sess-stem",
+  "transcript_path": "benign_stem_mention_transcript.jsonl",
+  "stop_hook_active": false,
+  "cwd": "/tmp"
+}

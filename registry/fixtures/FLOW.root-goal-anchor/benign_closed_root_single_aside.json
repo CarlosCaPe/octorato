@@ -1,0 +1,6 @@
+{
+  "session_id": "sess-closed-aside",
+  "transcript_path": "benign_closed_root_single_aside_transcript.jsonl",
+  "stop_hook_active": false,
+  "cwd": "/tmp"
+}

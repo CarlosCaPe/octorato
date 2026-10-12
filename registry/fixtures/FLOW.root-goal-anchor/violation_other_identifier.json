@@ -1,0 +1,6 @@
+{
+  "session_id": "sess-ident-other",
+  "transcript_path": "violation_other_identifier_transcript.jsonl",
+  "stop_hook_active": false,
+  "cwd": "/tmp"
+}

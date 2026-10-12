@@ -16,11 +16,22 @@ Per-turn cycle (all inside the same Stop; the payload carries transcript_path):
      transcript.
   2. Anchor. With no prior state: the operator prompt, cut to 240 chars.
      Re-anchors ONLY on a deterministic marker (prefix `objetivo:` / `goal:`, a
-     pivot phrase, an already-closed anchor plus a new prompt, or since v10 a
-     TOPIC CHANGE: TWO consecutive goal-shaped operator prompts that share no
-     content word with the root and are not obstacle reports; acks and bare
+     pivot phrase, or since v10 a TOPIC CHANGE: TWO consecutive goal-shaped
+     operator prompts that share no content word with the root, share at least
+     one with each other, and are not obstacle reports; acks, steers and bare
      questions in between are neutral, a prompt on the root or an obstacle
-     report resets the streak, so one aside never retires the root). Only a
+     report resets the streak, so one aside never retires the root). A CLOSED
+     root is retired, never replaced by whatever prompt comes next (v10 T20):
+     the next prompt after a close is, measured over the replay corpus, the
+     operator steering the flow ("dale, arranca con los tres", "tu creala",
+     "ok, avisame cuando termine"), satisfied in the very next reply with words
+     the gate cannot match, so it sat open until the fourth turn of silence and
+     the first "quedo" fired it; 55 of the 78 replayed blocks came from that
+     route and every labelled one is a false positive. After a close the gate
+     holds no root until a marker or a topic streak sets one. A STEER never
+     anchors either: a prompt that opens with an ack or go-ahead word and goes
+     on ("dale, borra las ramas", "si, arregla el recibo primero") approves
+     the agent's own proposal, whose words the operator never typed. Only a
      REAL operator prompt (origin.kind human, or no origin and no harness-echo
      shape) can anchor, re-anchor or add silence: a pivot phrase quoted inside a
      <task-notification> or a peer message is not the operator.
@@ -39,6 +50,11 @@ Per-turn cycle (all inside the same Stop; the payload carries transcript_path):
      not add to turns_since_mention.
   3. Mention. Pull content words out of the anchor and look for them in the
      response. Two distinct ones are enough: turns_since_mention returns to 0.
+     Since v10 T20 a word matches by STEM as well as whole (the first five
+     letters: "mergea" is named by "mergeada", "publica" by "publicado"), and
+     one IDENTIFIER of the anchor (a PR or issue number, a SHA, a version tag)
+     found in the reply is a mention on its own: an id is not reinflected and
+     names one object.
   4. Fires only on the full conjunction (see _should_fire).
   5. Governor: hard ceiling of 2 interruptions per anchor; on the second one the
      anchor closes itself and the gate stops talking about it.
@@ -178,8 +194,35 @@ _GO_AHEAD_WORDS = {
 }
 
 
+# Un STEER: el operador aprueba o empuja lo que el agente propuso y le agrega
+# una instruccion ("dale, borra las ramas", "si, arregla el recibo primero",
+# "ok, avisame cuando termine el QA", "send-ok, mandalo por soporte"). La
+# primera palabra es el acuse; lo que sigue apunta a la propuesta del agente, que
+# el operador nunca escribio, asi que ninguna respuesta la va a nombrar con esas
+# palabras. Census v10 T20: 8 de los 48 anclas que dispararon en la repeticion
+# abrian con acuse. Un steer no ancla, no re-ancla y es neutro en la racha.
+_RE_STEER_OPEN = re.compile(
+    r"^\s*(?:ok|oki|okey|va|vale|dale|si|sip|claro|listo|hecho|ya|sigue|sigamos"
+    r"|adelante|procede|perfecto|bien|gracias|orale|exacto|correcto"
+    r"|okay|yes|yep|yeah|sure|done|thanks|continue|proceed"
+    r"|[a-z]+(?:-[a-z]+)*-ok)\b"
+)
+# Identificadores: un numero de PR o issue (3+ digitos: con dos, una hora o un
+# "20%" del ancla casarian con cualquier respuesta), un SHA, una etiqueta de
+# version, un token alfanumerico. No se reinflexionan y nombran UN objeto, asi
+# que uno solo basta como mencion.
+_RE_IDENT = re.compile(r"\b(?:[0-9]{3,}|v[0-9]+(?:\.[0-9]+)*|[0-9a-f]{7,40}|[a-z]+[0-9]+[a-z0-9]*)\b")
+STEM_LEN = 5            # "mergea" ~ "mergeada", "publica" ~ "publicado"
+
+
 def _strip_pasted(text: str) -> str:
     return _RE_IMAGE_TAG.sub(" ", _RE_PASTED.sub(" ", text or ""))
+
+
+def is_steer(prompt: str) -> bool:
+    """True si el prompt abre con un acuse o un empujon y sigue: "dale, borra
+    las ramas". Un acuse puro (is_ack) ya no ancla; esto cubre el acuse con cola."""
+    return bool(_RE_STEER_OPEN.match(_normalize(_strip_pasted(prompt)).strip()))
 
 
 def is_ack(prompt: str) -> bool:
@@ -295,14 +338,26 @@ def content_words(anchor: str) -> set:
     return {t for t in tokens if len(t) >= MIN_WORD_LEN and t not in _STOPWORDS}
 
 
+def identifiers(anchor: str) -> set:
+    """Identificadores del ancla: numeros de 3+ digitos, etiquetas vN, SHAs y
+    tokens alfanumericos con digitos. Un ancla "mergea la 398" se menciona con
+    un "#398" en la respuesta aunque "mergea" vuelva como "mergeada"."""
+    return set(_RE_IDENT.findall(_normalize(anchor)))
+
+
 def anchor_mentioned(anchor: str, reply: str) -> bool:
     """True si al menos MIN_MENTION_HITS palabras de contenido distintas del
-    ancla aparecen en la respuesta."""
+    ancla aparecen en la respuesta (entera o por raiz de STEM_LEN letras), o si
+    aparece UN identificador del ancla."""
     words = content_words(anchor)
     if not words:
         return False
     haystack = _normalize(reply)
-    hits = {w for w in words if re.search(r"\b" + re.escape(w) + r"\b", haystack)}
+    if any(re.search(r"\b" + re.escape(i) + r"\b", haystack) for i in identifiers(anchor)):
+        return True
+    reply_words = set(re.findall(r"[a-z0-9]+", haystack))
+    stems = {w[:STEM_LEN] for w in reply_words if len(w) >= STEM_LEN}
+    hits = {w for w in words if w in reply_words or (len(w) >= STEM_LEN and w[:STEM_LEN] in stems)}
     return len(hits) >= MIN_MENTION_HITS
 
 
@@ -405,7 +460,7 @@ def is_anchorable(prompt: str) -> bool:
     if _RE_HARNESS_ECHO.search(text):
         return False
     text = _strip_pasted(text).strip()
-    if not text or is_ack(text):
+    if not text or is_ack(text) or is_steer(text):
         return False
     # Acuse largo: quitadas las palabras de "sigue con lo que hay", no queda
     # sustancia para un objetivo.
@@ -430,15 +485,15 @@ def is_anchorable(prompt: str) -> bool:
 def is_reanchor(prompt: str, state: dict) -> bool:
     """Re-anclaje solo por marcador determinista. Sin estado no hay re-ancla:
     hay anclaje inicial, que es otra cosa."""
-    if not state.get("anchor"):
+    if not state.get("anchor") and not state.get("history"):
         return False
     if not prompt.strip():
         return False
-    if _RE_GOAL_PREFIX.search(prompt) or _RE_PIVOT.search(prompt):
-        return True
-    if is_ack(prompt):
-        return False                   # AC-09: un acuse conserva la raiz
-    return bool(state.get("closed"))
+    # Solo el prefijo y la frase de pivote. Un ancla CERRADA no es marcador:
+    # hasta v10 T20 "cerrada + prompt nuevo" re-anclaba, y ese prompt era casi
+    # siempre un steer del operador que ninguna respuesta podia nombrar; la
+    # raiz nueva llega por marcador o por racha de tema (_topic_step).
+    return bool(_RE_GOAL_PREFIX.search(prompt) or _RE_PIVOT.search(prompt))
 
 
 # Cambio de tema: hacen falta TOPIC_CHANGE_PROMPTS prompts reales seguidos del
@@ -451,15 +506,27 @@ TOPIC_CHANGE_PROMPTS = 2
 
 def _topic_step(state: dict, prompt: str) -> bool:
     """Avanza la racha de cambio de tema con un prompt REAL del operador.
-    Devuelve True cuando la racha llega al umbral (hay que re-anclar)."""
+    Devuelve True cuando la racha llega al umbral (hay que re-anclar).
+
+    Los prompts de la racha tienen que compartir una palabra de contenido entre
+    si: dos encargos seguidos sobre DOS cosas distintas son dos steers, no un
+    tema nuevo (v10 T20: la racha sin esta condicion re-anclo "mejorala como
+    sugieres y panel" tras "pasame los links", y disparo). Con la raiz cerrada
+    la racha se mide contra nada: cualquier tema insistido dos veces es raiz."""
     if is_ack(prompt) or not is_anchorable(prompt):
-        return False                                   # acuse o pregunta: ni suma ni rompe
-    if not is_topic_change(prompt, state.get("anchor") or ""):
+        return False                                   # acuse, steer o pregunta: ni suma ni rompe
+    root = "" if state.get("closed") else (state.get("anchor") or "")
+    if not is_topic_change(prompt, root):
         state.pop("topic_pending", None)               # volvio a la raiz o es obstaculo
         return False
-    pending = state.setdefault("topic_pending", {"count": 0})
+    pending = state.get("topic_pending") or {"count": 0}
+    words = content_words(_strip_pasted(prompt)) - _GO_AHEAD_WORDS
+    if pending.get("count") and not (words & set(pending.get("words") or [])):
+        pending = {"count": 0}                         # otro tema: la racha empieza aqui
     pending["count"] = int(pending.get("count", 0)) + 1
     pending["anchor"] = extract_anchor(prompt)          # el ultimo encargo es la raiz nueva
+    pending["words"] = sorted(words)
+    state["topic_pending"] = pending
     return pending["count"] >= TOPIC_CHANGE_PROMPTS
 
 
@@ -611,9 +678,11 @@ def _absorb(state: dict, prompt: str, reply: str, real: bool = True) -> bool:
     reanchored = False
     if not real:
         pass
-    elif not state.get("anchor"):
-        # is_anchorable, no "if prompt": un eco del harness o una pregunta
-        # suelta no son objetivos, y un ancla mala no se cae sola.
+    elif not state.get("anchor") and not state.get("history"):
+        # Estado virgen. is_anchorable, no "if prompt": un eco del harness o una
+        # pregunta suelta no son objetivos, y un ancla mala no se cae sola. Con
+        # historial (raiz retirada o cerrada) la raiz nueva llega por marcador
+        # o por racha, nunca por el primer prompt que pase.
         if is_anchorable(prompt):
             _set_anchor(state, extract_anchor(prompt))
     elif is_reanchor(prompt, state):
@@ -626,7 +695,8 @@ def _absorb(state: dict, prompt: str, reply: str, real: bool = True) -> bool:
         reanchored = True
     elif _topic_step(state, prompt):
         first = state["topic_pending"]["anchor"]
-        _retire(state, "superseded")
+        if not state.get("closed"):
+            _retire(state, "superseded")               # cerrada ya se retiro como "done"
         _set_anchor(state, first)
         reanchored = True
 

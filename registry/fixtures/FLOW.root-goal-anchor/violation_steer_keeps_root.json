@@ -1,0 +1,6 @@
+{
+  "session_id": "sess-steer",
+  "transcript_path": "violation_steer_keeps_root_transcript.jsonl",
+  "stop_hook_active": false,
+  "cwd": "/tmp"
+}
