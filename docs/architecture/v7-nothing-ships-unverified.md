@@ -122,3 +122,12 @@ Asserting outward that something **has no origin** (an "unrecognised" charge, "I
 ### Do-it-today (do not put off until tomorrow what you can do today)
 
 **Do-it-today.** Operator-canonical (2026-08-18, after reminding of it daily for weeks): work that I can execute is executed in the turn, not reported. The subtle form of deferral is not refusing, it is **reporting a pending item I could have closed myself** and leaving it in the operator's tray; at his volume, that turns every session into a list he has to manage. A pending item is legitimate in only two cases, and in both it travels **with its exact command to paste**: (1) it is an irreducible step of his (a consent click, a password, a permission only he grants), or (2) it is a MEASURED block, not an assumed one (the classifier denied it, the remote rejected it, the repo rule forbids it). This does NOT contradict `do-it-right-not-fast`: start today, do it right, don't rush it; what is forbidden is deferring it. Mechanism: `scripts/g__stop__defer-today.py` (Stop gate, blocks once), which fires when the turn's closing defers my own work in the first person without either of the two exits. It is quote-aware (repeating a client's "I hope you answer me tomorrow" does not trip it) and aware of dated facts; to keep a flagged line on purpose, put `defer-ok` on it. Full HOW in `skills/execution-bias/SKILL.md`.
+
+## Headroom cut (moved from CLAUDE.md)
+
+Cut from `CLAUDE.md` so the constitution has token headroom under its 12,000 ceiling. Each item is the removed text as written, with em-dashes normalised to commas. The rule it explained, with its trigger, script and hatch, stays in `CLAUDE.md`; line numbers refer to `CLAUDE.md` before the cut.
+
+- Deliverable-complete-before-send (line 166): Operator directive 2026-07-06:
+- Nothing ships unverified (line 181): Residual: transcripts are files under `$HOME`, so the promise is "visible and recorded", never "impossible"; only the harness environment is a boundary the model cannot cross.
+- Paste-ready message is the deliverable (line 192): Operator directive repeated daily:
+- Paste-ready message is the deliverable (line 192): anything behind it contaminates the copy and the operator cleans it by hand inside a client-facing window.
