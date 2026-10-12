@@ -192,6 +192,21 @@ class RequaBinaryTest(unittest.TestCase):
         same, diff = requa.compare(self.fx.path, self.fx.m0, self.fx.old, self.fx.m1, new)
         self.assertFalse(same, "a swapped binary must not read as identical")
 
+    def test_a_configured_textconv_cannot_hide_a_binary_swap(self):
+        # A textconv driver that prints the same text for every input turns
+        # both versions of blob.bin into "constant", so without --no-textconv
+        # the swap leaves no trace in either patch and reads IDENTICAL.
+        Path(self.fx.path, ".gitattributes").write_text("*.bin diff=x\n", encoding="utf-8")
+        self.fx.git("config", "diff.x.textconv", "echo constant #")
+        new = self.fx.merge_commit(files={"blob.bin": bytes(reversed(BLOB))})
+        same, diff = requa.compare(self.fx.path, self.fx.m0, self.fx.old, self.fx.m1, new)
+        self.assertFalse(same, "a textconv driver must not stand in for the binary's bytes")
+        cp = subprocess.run([sys.executable, str(HELPER), "compare", "--repo", self.fx.path,
+                             self.fx.m0, self.fx.old, self.fx.m1, new],
+                            capture_output=True, text=True)
+        self.assertEqual(cp.returncode, 1)
+        self.assertEqual(cp.stdout.strip().splitlines()[-1], "DIFFERS")
+
 
 OLD = "a" * 40
 X = "b" * 40

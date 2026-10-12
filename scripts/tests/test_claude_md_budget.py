@@ -89,7 +89,9 @@ class ClaudeMdBudgetTest(unittest.TestCase):
     def test_fixture_pair_selftest(self):
         fx = ROOT / "registry" / "fixtures" / "META.constitution-budget"
         self.assertEqual(brain_doctor.selftest_claude_md_budget(fx), 0)
-        # each benign file is its violation twin with one edit
+        # Two benign files are one-edit twins of a violation (one char under
+        # budget, the Spanish section quoted). The third is an English control
+        # carrying Spanish proper nouns, which kills the ratio=0.0 mutation.
         over = (fx / "violation_over_budget.md").read_text(encoding="utf-8")
         self.assertEqual(brain_doctor.estimate_tokens(over), 12001)
         self.assertEqual(brain_doctor.estimate_tokens(
