@@ -1,0 +1,6 @@
+{
+  "session_id": "sess-close-goal3",
+  "transcript_path": "violation_three_word_goal_after_close_transcript.jsonl",
+  "stop_hook_active": false,
+  "cwd": "/tmp"
+}

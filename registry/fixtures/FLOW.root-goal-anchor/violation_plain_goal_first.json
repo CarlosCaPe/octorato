@@ -1,0 +1,6 @@
+{
+  "session_id": "sess-c2-goal",
+  "transcript_path": "violation_plain_goal_first_transcript.jsonl",
+  "stop_hook_active": false,
+  "cwd": "/tmp"
+}

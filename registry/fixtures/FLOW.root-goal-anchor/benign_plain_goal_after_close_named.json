@@ -1,0 +1,6 @@
+{
+  "session_id": "sess-c3-named",
+  "transcript_path": "benign_plain_goal_after_close_named_transcript.jsonl",
+  "stop_hook_active": false,
+  "cwd": "/tmp"
+}

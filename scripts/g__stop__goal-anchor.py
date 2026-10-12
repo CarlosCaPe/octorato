@@ -27,11 +27,18 @@ Per-turn cycle (all inside the same Stop; the payload carries transcript_path):
      "ok, avisame cuando termine"), satisfied in the very next reply with words
      the gate cannot match, so it sat open until the fourth turn of silence and
      the first "quedo" fired it; 55 of the 78 replayed blocks came from that
-     route and every labelled one is a false positive. After a close the gate
-     holds no root until a marker or a topic streak sets one. A STEER never
-     anchors either: a prompt that opens with an ack or go-ahead word and goes
-     on ("dale, borra las ramas", "si, arregla el recibo primero") approves
-     the agent's own proposal, whose words the operator never typed. Only a
+     route and every labelled one is a false positive. After a close, a single
+     GOAL-SHAPED prompt anchors at once: no ack or go-ahead opener, not an
+     obstacle report, a task verb and at least three content words ("migra la
+     base de clientes a postgres y valida los conteos"). After a close, a steer
+     or an obstacle report anchors nothing, and the topic streak stays as the
+     second route for a goal the operator insists on. A STEER never anchors:
+     a prompt that opens with an ack or go-ahead word and goes on ("dale,
+     borra las ramas", "si, arregla el recibo primero") approves the agent's
+     own proposal, whose words the operator never typed. An OBSTACLE REPORT
+     ("no me deja entrar, sale AccessDenied otra vez") never anchors either,
+     virgin session included: it is the operator reacting to the obstacle, and
+     a root made of it is a root the agent can never name. Only a
      REAL operator prompt (origin.kind human, or no origin and no harness-echo
      shape) can anchor, re-anchor or add silence: a pivot phrase quoted inside a
      <task-notification> or a peer message is not the operator.
@@ -50,11 +57,10 @@ Per-turn cycle (all inside the same Stop; the payload carries transcript_path):
      not add to turns_since_mention.
   3. Mention. Pull content words out of the anchor and look for them in the
      response. Two distinct ones are enough: turns_since_mention returns to 0.
-     Since v10 T20 a word matches by STEM as well as whole (the first five
-     letters: "mergea" is named by "mergeada", "publica" by "publicado"), and
-     one IDENTIFIER of the anchor (a PR or issue number, a SHA, a version tag)
-     found in the reply is a mention on its own: an id is not reinflected and
-     names one object.
+     Whole words only: a stem match (first five letters) equated actualiza
+     with actualmente and servidor with servicio, and an identifier match let a
+     year or a "python3" in the root be named by any dated reply (QA of v10
+     T20); both closed real roots and were dropped.
   4. Fires only on the full conjunction (see _should_fire).
   5. Governor: hard ceiling of 2 interruptions per anchor; on the second one the
      anchor closes itself and the gate stops talking about it.
@@ -207,12 +213,10 @@ _RE_STEER_OPEN = re.compile(
     r"|okay|yes|yep|yeah|sure|done|thanks|continue|proceed"
     r"|[a-z]+(?:-[a-z]+)*-ok)\b"
 )
-# Identificadores: un numero de PR o issue (3+ digitos: con dos, una hora o un
-# "20%" del ancla casarian con cualquier respuesta), un SHA, una etiqueta de
-# version, un token alfanumerico. No se reinflexionan y nombran UN objeto, asi
-# que uno solo basta como mencion.
-_RE_IDENT = re.compile(r"\b(?:[0-9]{3,}|v[0-9]+(?:\.[0-9]+)*|[0-9a-f]{7,40}|[a-z]+[0-9]+[a-z0-9]*)\b")
-STEM_LEN = 5            # "mergea" ~ "mergeada", "publica" ~ "publicado"
+# Minimo de palabras de contenido para que UN prompt suelto sea raiz tras un
+# cierre (ver is_goal_shaped). Dos bastan para anclar en sesion virgen; tras un
+# cierre el prompt corto es casi siempre un steer o un encargo de una vuelta.
+MIN_GOAL_WORDS = 3
 
 
 def _strip_pasted(text: str) -> str:
@@ -338,26 +342,14 @@ def content_words(anchor: str) -> set:
     return {t for t in tokens if len(t) >= MIN_WORD_LEN and t not in _STOPWORDS}
 
 
-def identifiers(anchor: str) -> set:
-    """Identificadores del ancla: numeros de 3+ digitos, etiquetas vN, SHAs y
-    tokens alfanumericos con digitos. Un ancla "mergea la 398" se menciona con
-    un "#398" en la respuesta aunque "mergea" vuelva como "mergeada"."""
-    return set(_RE_IDENT.findall(_normalize(anchor)))
-
-
 def anchor_mentioned(anchor: str, reply: str) -> bool:
     """True si al menos MIN_MENTION_HITS palabras de contenido distintas del
-    ancla aparecen en la respuesta (entera o por raiz de STEM_LEN letras), o si
-    aparece UN identificador del ancla."""
+    ancla aparecen ENTERAS en la respuesta."""
     words = content_words(anchor)
     if not words:
         return False
     haystack = _normalize(reply)
-    if any(re.search(r"\b" + re.escape(i) + r"\b", haystack) for i in identifiers(anchor)):
-        return True
-    reply_words = set(re.findall(r"[a-z0-9]+", haystack))
-    stems = {w[:STEM_LEN] for w in reply_words if len(w) >= STEM_LEN}
-    hits = {w for w in words if w in reply_words or (len(w) >= STEM_LEN and w[:STEM_LEN] in stems)}
+    hits = {w for w in words if re.search(r"\b" + re.escape(w) + r"\b", haystack)}
     return len(hits) >= MIN_MENTION_HITS
 
 
@@ -439,9 +431,18 @@ _RE_TASK_VERB = re.compile(
     r"|actualiza|actualizar|publica|publicar|manda|mandar|envia|enviar"
     r"|revisa|revisar|verifica|verificar|corre|correr|ejecuta|ejecutar"
     r"|investiga|investigar|documenta|documentar|dame|damelo|necesito que"
+    # v10 T20: imperativos de encargo frecuentes que faltaban; sin "migra" o
+    # "valida" un encargo plano tras un cierre no tenia forma de objetivo.
+    r"|migra|migrar|valida|validar|despliega|desplegar|sube|subir|instala|instalar"
+    r"|configura|configurar|prepara|preparar|redacta|redactar|genera|generar"
+    r"|arma|armar|monta|montar|mueve|mover|cambia|cambiar|prueba|probar"
+    r"|limpia|limpiar|elimina|eliminar|mergea|mergear|fusiona|fusionar"
+    r"|analiza|analizar|compacta|compactar|calcula|calcular|convierte|convertir"
+    r"|traduce|traducir|resume|resumir|abre|abrir|cierra|cerrar|pasame|ponme"
     r"|fix|repair|implement|write|create|add|remove|delete|update|publish"
     r"|send|review|verify|run|execute|investigate|document|build|make|refactor"
-    r"|migrate|deploy|generate)\b",
+    r"|migrate|deploy|generate|merge|validate|install|configure|prepare|draft"
+    r"|analyze|analyse|convert|translate|summarize|open|close|move|change|test)\b",
     re.IGNORECASE,
 )
 
@@ -462,6 +463,11 @@ def is_anchorable(prompt: str) -> bool:
     text = _strip_pasted(text).strip()
     if not text or is_ack(text) or is_steer(text):
         return False
+    # Reporte de obstaculo: el operador reaccionando al tropiezo. Nunca es raiz,
+    # ni en sesion virgen: una raiz hecha de "sale AccessDenied otra vez" no la
+    # nombra ninguna respuesta y se agota en falso (QA v10 T20, caso C2).
+    if _RE_OBSTACLE.search(_normalize(text)):
+        return False
     # Acuse largo: quitadas las palabras de "sigue con lo que hay", no queda
     # sustancia para un objetivo.
     if len(content_words(text) - _GO_AHEAD_WORDS) < MIN_MENTION_HITS:
@@ -480,6 +486,22 @@ def is_anchorable(prompt: str) -> bool:
     if len(content_words(text)) < MIN_MENTION_HITS:
         return False
     return True
+
+
+def is_goal_shaped(prompt: str) -> bool:
+    """Un prompt suelto que puede ser raiz TRAS un cierre: anclable (ni acuse,
+    ni steer, ni obstaculo, ni pregunta suelta), con verbo de encargo y al menos
+    MIN_GOAL_WORDS palabras de contenido. Es la forma exacta del caso C3 del QA
+    v10 T20: la raiz cerrada, un encargo nuevo plano, cuatro obstaculos y un
+    cierre ajeno, que master bloqueaba y la racha sola dejaba pasar porque un
+    reporte de obstaculo la reinicia."""
+    text = _strip_pasted(prompt or "").strip()
+    if not is_anchorable(text):
+        return False
+    norm = _normalize(text)
+    if not _RE_TASK_VERB.search(norm):
+        return False
+    return len(content_words(text) - _GO_AHEAD_WORDS) >= MIN_GOAL_WORDS
 
 
 def is_reanchor(prompt: str, state: dict) -> bool:
@@ -692,6 +714,12 @@ def _absorb(state: dict, prompt: str, reply: str, real: bool = True) -> bool:
         # Un pivote hacia algo que no es objetivo retira el ancla vieja sin
         # poner una mala en su lugar: mejor sin raiz que con una falsa.
         _set_anchor(state, extract_anchor(prompt) if is_anchorable(prompt) else "")
+        reanchored = True
+    elif (state.get("closed") or not state.get("anchor")) and is_goal_shaped(prompt):
+        # Raiz cerrada o retirada y un encargo nuevo con forma de objetivo: es
+        # la raiz desde ya. Un steer, un obstaculo o un encargo corto no llegan
+        # aqui y, si el operador insiste en ellos, los recoge la racha.
+        _set_anchor(state, extract_anchor(prompt))
         reanchored = True
     elif _topic_step(state, prompt):
         first = state["topic_pending"]["anchor"]

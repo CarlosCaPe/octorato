@@ -1,6 +1,0 @@
-{
-  "session_id": "sess-ident",
-  "transcript_path": "benign_identifier_mention_transcript.jsonl",
-  "stop_hook_active": false,
-  "cwd": "/tmp"
-}
