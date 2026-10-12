@@ -97,7 +97,7 @@ facts:
   - id: v10.release.version
     kind: asserted
     value: "v10.0.0"
-    citation: "The tag is cut by .github/workflows/version-bump.yml from a commit carrying the Octorato-Major trailer (scripts/brain-version-bump.py BREAKING_RE; CHANGELOG.md header). This names the release, never the newest tag on master, so it cannot go stale"
+    citation: "The tag is cut by .github/workflows/version-bump.yml from a commit carrying the Octorato-Major trailer (scripts/brain-version-bump.py BREAKING_RE, line 47). This names the release, never the newest tag on master, so it cannot go stale"
 
   - id: v10.goal_anchor.target
     kind: asserted
