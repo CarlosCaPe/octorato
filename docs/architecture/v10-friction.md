@@ -40,17 +40,17 @@ What a replay cannot see, so a replayed decision can differ from the historical 
 
 ## Goal-anchor on the replay (T20)
 
-`scripts/g__stop__goal-anchor.py` holds one root per session. The root is set by the first goal-shaped operator prompt of a virgin session, by an explicit marker (`objetivo:` / `goal:`, a pivot phrase) or by a topic streak: two consecutive goal-shaped prompts that share no content word with the root and share at least one with each other. Three prompt shapes never anchor and are neutral in the streak: an acknowledgement or hatch token of at most three words (AC-09), a go-ahead whose content words are only carry-on vocabulary, and a steer, a prompt that opens with an acknowledgement and goes on ("dale, borra las ramas"). A closed root is retired, not replaced by the next prompt. A root counts as mentioned when two of its content words appear in the reply, whole or by their first five letters, or when one of its identifiers (a PR or issue number, a SHA, a version tag) does.
+`scripts/g__stop__goal-anchor.py` holds one root per session. The root is set by the first anchorable operator prompt of a virgin session, by an explicit marker (`objetivo:` / `goal:`, a pivot phrase), after a close by a single goal-shaped prompt (no acknowledgement opener, not an obstacle report, a task verb, at least three content words), or by a topic streak: two consecutive anchorable prompts that share no content word with the root and share at least one with each other. Three prompt shapes never anchor and are neutral in the streak: an acknowledgement or hatch token of at most three words (AC-09), a steer, a prompt that opens with an acknowledgement and goes on ("dale, borra las ramas"), and an obstacle report ("sale AccessDenied otra vez"). A closed root is retired, not replaced by the next prompt. A root counts as mentioned when two of its content words appear whole in the reply; stem and identifier matches were measured and dropped (a five-letter stem equates actualiza with actualmente, a year in the root is named by any dated reply).
 
 The reason for each rule is in the gate's docstring. The measurement is in `registry/friction-baseline.json` (`stateful_sessions` and `gates` for `g__stop__goal-anchor.py`), the single source for the numbers below; the gate revision that produced history is `fidelity_revs`.
 
 | Mode | Gate at d5d609e | Gate now | Share |
 |---|---|---|---|
-| Stateful, every in-window Stop of the captured sessions (`stateful_sessions.rev_replay_deny` / `replay_deny`) | 177 | 26 | 14.7% |
-| Per case, the corpus cases of the gate decided by the stateful replay (`gates.before_after`) | 43 | 5 | 11.6% |
-| Isolated, one fresh HOME per case (`replay --isolated`, not stored) | 13 | 4 | 30.8% |
+| Stateful, every in-window Stop of the captured sessions (`stateful_sessions.rev_replay_deny` / `replay_deny`) | 177 | 58 | 32.8% |
+| Per case, the corpus cases of the gate decided by the stateful replay (`gates.before_after`) | 43 | 14 | 32.6% |
+| Isolated, one fresh HOME per case (`replay --isolated`, not stored) | 13 | 7 | 53.8% |
 
-The corpus is the 2026-09-06..2026-10-08 window, 1,739 cases, 29 captured sessions, 2,484 in-window Stops, 117 historical goal-anchor blocks, 0 labelled true positives and 103 labelled false positives among them. The isolated mode stays above 25%: the gate reads only the last 256 KB of the transcript, so in a case window cut there the first prompt it sees is often a mid-session steer, which it anchors as a virgin root; live, the gate carries its state and that root never exists. `replay --isolated` is the pre-T16 comparison mode and the baseline does not store it.
+The corpus is the 2026-09-06..2026-10-08 window, 1,739 cases, 29 captured sessions, 2,484 in-window Stops, 117 historical goal-anchor blocks, 0 labelled true positives and 103 labelled false positives among them. The goal-shaped rule after a close costs 14 of the 58 stateful blocks (44 without it): the prompts it anchors are short one-turn requests ("revisa correos", "dame los comandos") whose replies do not repeat two of their words. The isolated mode reads only the last 256 KB of a case window, so its first prompt is often a mid-session request anchored as a virgin root; live, the gate carries its state. `replay --isolated` is the pre-T16 comparison mode and the baseline does not store it.
 
 ## Report
 
