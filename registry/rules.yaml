@@ -466,6 +466,36 @@ rules:
     locator: PreToolUse|Bash|delegate-gate.py
     expect: present
   liveness_required: FIRES
+- id: FLOW.self-verdict-live-source
+  title: A SELF verdict demands the live source before the answer
+  category: FLOW
+  source:
+    file: CLAUDE.md
+    anchor: A SELF verdict is ~99% stale or hallucinated
+  strength: DETECTOR
+  firing_mode:
+  - cli
+  - hook
+  mechanism:
+  - kind: Detector
+    canonical_name: delegate-check
+    firing_event: null
+    firing_matcher: null
+  - kind: Reflex
+    canonical_name: connectome-heartbeat.py
+    firing_event: UserPromptSubmit
+    firing_matcher: null
+  proof:
+  - method: ANCHOR_PRESENT
+    locator: A SELF verdict is ~99% stale or hallucinated
+    expect: present
+  - method: EXIT_CODE
+    locator: python3 scripts/delegate-check --selftest
+    expect: 0
+  - method: EXIT_CODE
+    locator: python3 scripts/connectome-heartbeat.py --selftest
+    expect: 0
+  liveness_required: PRESENT
 - id: FLOW.graph-before-grep
   title: Graph before grep; seek the lineage, do not scan
   category: FLOW
