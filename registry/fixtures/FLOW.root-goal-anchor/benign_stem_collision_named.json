@@ -1,0 +1,6 @@
+{
+  "session_id": "sess-b1-named",
+  "transcript_path": "benign_stem_collision_named_transcript.jsonl",
+  "stop_hook_active": false,
+  "cwd": "/tmp"
+}

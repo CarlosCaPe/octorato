@@ -1,0 +1,6 @@
+{
+  "session_id": "sess-steer-first",
+  "transcript_path": "benign_steer_never_anchors_transcript.jsonl",
+  "stop_hook_active": false,
+  "cwd": "/tmp"
+}

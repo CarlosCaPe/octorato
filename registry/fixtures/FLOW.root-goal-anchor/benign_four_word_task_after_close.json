@@ -1,0 +1,6 @@
+{
+  "session_id": "sess-close-task4",
+  "transcript_path": "benign_four_word_task_after_close_transcript.jsonl",
+  "stop_hook_active": false,
+  "cwd": "/tmp"
+}
