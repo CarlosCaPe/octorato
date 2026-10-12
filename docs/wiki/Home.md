@@ -66,9 +66,9 @@ python3 ~/.claude/scripts/quickstart.py
 
 Step by step, with what each part does: [[Getting-Started]]. Your private company brain and your first client "arm" come later, under "Going further" on that page.
 
-## What's new in v10 (in progress)
+## What's new in v10 (October 2026)
 
-Install is the clone plus one command. Checks count their own refusals (`octo friction`), a replay of real past cases guards every change to a check, and `octo dash` puts specs, reviews and live runs on one page. v10.0.0 is not released yet: the goal-anchor block count (AC-10) is still open. Details: [Roadmap](https://github.com/CarlosCaPe/octorato/blob/master/ROADMAP.md) and [v10 friction](https://github.com/CarlosCaPe/octorato/blob/master/docs/architecture/v10-friction.md).
+Install is the clone plus one command. Checks count their own refusals (`octo friction`), a replay of real past cases guards every change to a check, and `octo dash` puts specs, reviews and live runs on one page. Details: [Roadmap](https://github.com/CarlosCaPe/octorato/blob/master/ROADMAP.md) and [v10 friction](https://github.com/CarlosCaPe/octorato/blob/master/docs/architecture/v10-friction.md).
 
 ---
 
