@@ -671,3 +671,29 @@ edges:
       the schema doc says nothing consumes it. Integrity, not interpretation:
       the value is protected and unread, and what makes a wrong one matter is
       the public claim it makes, not a code path that would break.
+
+  - id: friction-baseline-generated
+    from: scripts/replay_harness.py
+    to:
+      - registry/friction-baseline.json
+    kind: generated_by
+    note: >-
+      The baseline is written by `replay_harness.py baseline` (and refreshed by
+      `label`); never hand-edit it. A harness change that alters what the
+      baseline records (a new gate stat, a fidelity rule) means regenerate.
+
+  - id: friction-baseline-facts
+    from: registry/friction-baseline.json
+    to:
+      - content/canon.facts.yaml
+      - FAQ.md
+      - docs/ANATOMY.md
+      - ROADMAP.md
+      - docs/architecture/v10-friction.md
+      - docs/specs/202610061605-v10-low-friction-easy-entry/plan.md
+    kind: appears_in
+    note: >-
+      The goal-anchor figures (v10.goal_anchor.* in canon.facts.yaml, rendered
+      into FAQ, ANATOMY and ROADMAP by scripts/canon-render.py) and the table in
+      v10-friction.md are read from this file. A new baseline means refreshing
+      the canon keys, re-rendering, and updating the friction doc's table.

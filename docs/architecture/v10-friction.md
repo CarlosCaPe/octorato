@@ -46,11 +46,11 @@ The reason for each rule is in the gate's docstring. The measurement is in `regi
 
 | Mode | Gate at d5d609e | Gate now | Share |
 |---|---|---|---|
-| Stateful, every in-window Stop of the captured sessions (`stateful_sessions.rev_replay_deny` / `replay_deny`) | 177 | 33 | 18.6% |
-| Per case, the corpus cases of the gate decided by the stateful replay (`gates.before_after`) | 43 | 7 | 16.3% |
+| Stateful, every in-window Stop of the captured sessions (`stateful_sessions.rev_replay_deny` / `replay_deny`) | 220 | 38 | 17.3% |
+| Per case, the corpus cases of the gate decided by the stateful replay (`gates.before_after`) | 51 | 7 | 13.7% |
 | Isolated, one fresh HOME per case (`replay --isolated`, not stored) | 13 | 2 | 15.4% |
 
-The corpus is the 2026-09-06..2026-10-08 window, 1,739 cases, 29 captured sessions, 2,484 in-window Stops, 117 historical goal-anchor blocks, 0 labelled true positives and 103 labelled false positives among them. With the floor at three content words the same gate reads 47 stateful blocks (26.6%), and with any anchorable prompt allowed as the virgin root 49 (27.7%): the roots those two settings add are one-turn requests of two to four content words whose replies do not repeat two of their words. `replay --isolated` is the pre-T16 comparison mode and the baseline does not store it.
+The corpus is the 2026-09-06..2026-10-13 window, 1,841 cases, 35 captured sessions, 2,974 in-window Stops, 130 historical goal-anchor blocks, 0 labelled true positives and 114 labelled false positives among them. Fidelity is rated on the receipt era (AC-10 as amended 2026-10-13): 146 of those Stops carry a read receipt the gate wrote (`gates.receipt_stops`), the replay reproduces the recorded decision on 145 of them (`receipt_fidelity` 0.993; floor 100 Stops and 0.9), so the gate is no longer marked LOW-FIDELITY; the pre-receipt rate (`deny_fidelity` 0.377) is still printed because history before 2026-10-12 cannot be rebuilt by any replay. The fixture violation legs stand in as the labelled true positives while the corpus holds none (`fixture_tp` 12 of 12, read from the gate selftest). With the floor at three content words the same gate reads 47 stateful blocks (26.6%), and with any anchorable prompt allowed as the virgin root 49 (27.7%): the roots those two settings add are one-turn requests of two to four content words whose replies do not repeat two of their words. `replay --isolated` is the pre-T16 comparison mode and the baseline does not store it.
 
 ## Report
 

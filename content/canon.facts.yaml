@@ -106,35 +106,50 @@ facts:
 
   # Goal-anchor (T20, PR #411). Every value below is read from
   # registry/friction-baseline.json, never from PR prose. The baseline is
-  # the file at the merge of #411; a new baseline means refreshing these keys
+  # the file at the merge of T28 (after #411); a new baseline means refreshing these keys
   # and re-rendering. Semantics: stateful = every in-window Stop of the captured
   # sessions replayed in order; `rev_replay_deny` is the gate at d5d609e (the
   # fidelity revision, before v10), `replay_deny` the released gate.
   - id: v10.goal_anchor.measured
     kind: asserted
-    value: "18.6%"
-    citation: "registry/friction-baseline.json at master a93e075 (PR #411): stateful_sessions['g__stop__goal-anchor.py'].replay_deny (33) over .rev_replay_deny (177)"
-    note: "Like-for-like replay result, not a live count: the baseline still marks the gate LOW-FIDELITY (the d5d609e gate reproduces 43 of 117 historical blocks: rev_hist_deny_reproduced over historical_deny)."
+    value: "17.3%"
+    citation: "registry/friction-baseline.json at the T28 merge (AC-10 amended 2026-10-13): stateful_sessions['g__stop__goal-anchor.py'].replay_deny (38) over .rev_replay_deny (220)"
+    note: "Like-for-like replay result, not a live count. The baseline rates the gate on its receipt-era Stops (receipt_fidelity, see v10.goal_anchor.receipt_fidelity) and no longer marks it LOW-FIDELITY; the pre-receipt history rate (49 of 130 blocks, 37.7%) is reported but does not decide the mark."
 
   - id: v10.goal_anchor.raw
     kind: asserted
-    value: "177 to 33"
-    citation: "registry/friction-baseline.json at master a93e075 (PR #411): stateful_sessions['g__stop__goal-anchor.py'].rev_replay_deny to .replay_deny, over its .stops"
+    value: "220 to 38"
+    citation: "registry/friction-baseline.json at the T28 merge: stateful_sessions['g__stop__goal-anchor.py'].rev_replay_deny to .replay_deny, over its .stops"
 
   - id: v10.goal_anchor.per_case
     kind: asserted
-    value: "43 to 7 (16.3%)"
-    citation: "registry/friction-baseline.json at master a93e075 (PR #411): gates['g__stop__goal-anchor.py'].before_after.before to .after, the corpus cases decided by the stateful replay"
+    value: "51 to 7 (13.7%)"
+    citation: "registry/friction-baseline.json at the T28 merge: gates['g__stop__goal-anchor.py'].before_after.before to .after, the corpus cases decided by the stateful replay"
 
   - id: v10.goal_anchor.stops
     kind: asserted
-    value: "2,484"
-    citation: "registry/friction-baseline.json at master a93e075 (PR #411): stateful_sessions['g__stop__goal-anchor.py'].stops, in-window Stops of the captured sessions"
+    value: "2,974"
+    citation: "registry/friction-baseline.json at the T28 merge: stateful_sessions['g__stop__goal-anchor.py'].stops, in-window Stops of the captured sessions"
 
   - id: v10.goal_anchor.sessions
     kind: asserted
-    value: "29"
-    citation: "registry/friction-baseline.json at master a93e075 (PR #411): stateful_sessions['g__stop__goal-anchor.py'].sessions"
+    value: "35"
+    citation: "registry/friction-baseline.json at the T28 merge: stateful_sessions['g__stop__goal-anchor.py'].sessions"
+
+  - id: v10.goal_anchor.receipt_fidelity
+    kind: asserted
+    value: "99.3%"
+    citation: "registry/friction-baseline.json at the T28 merge: gates['g__stop__goal-anchor.py'].receipt_fidelity, 145 of the 146 in-window Stops the gate recorded a read receipt for, replayed to the recorded decision (floor 100 Stops, 90%)"
+
+  - id: v10.goal_anchor.receipt_stops
+    kind: asserted
+    value: "146"
+    citation: "registry/friction-baseline.json at the T28 merge: gates['g__stop__goal-anchor.py'].receipt_stops"
+
+  - id: v10.goal_anchor.fixture_tp
+    kind: asserted
+    value: "12 of 12"
+    citation: "registry/friction-baseline.json at the T28 merge: gates['g__stop__goal-anchor.py'].fixture_tp, the violation legs of registry/fixtures/FLOW.root-goal-anchor the gate selftest blocks; they stand in as labelled true positives while the corpus holds none (AC-10 as amended)"
 
   - id: v10.budget.spawn_before
     kind: asserted
