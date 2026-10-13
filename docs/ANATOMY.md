@@ -195,16 +195,16 @@ No company brain, no sealed worlds, no config to write. Clone, run one command, 
 # 1. Clone the brain
 git clone https://github.com/CarlosCaPe/octorato.git ~/.claude
 
-# 2. Bring it to life (wires the runners, builds the connectome, health-checks)
+# 2. One command does the rest: runners, connectome, Claude Code hooks,
+#    the push guard, Cursor hooks when ~/.cursor exists, a fast health check
+#    and a first spec
 python3 ~/.claude/scripts/quickstart.py
 
-# 3a. Claude Code — open anywhere and ask it something real
-claude
-
-# 3b. Cursor — project fail-closed hooks, then open Agent (Claude, Grok, GPT, …)
-python3 ~/.claude/scripts/merge-hooks-cursor.py
-# …then start a Cursor Agent session on the engine you want
+# 3. Open a runtime anywhere and ask it something real
+claude            # or a Cursor Agent session on the engine you want
 ```
+
+One quickstart run on a clean clone took <!--canon:v10.quickstart.measured-->21 s<!--/canon-->, and the fresh-clone CI job fails it past <!--canon:v10.quickstart.ci_budget-->5 minutes<!--/canon-->. It runs `brain_doctor.py --fast`, which skips the slow checks and is held to <!--canon:v10.doctor.fast_budget-->30 s<!--/canon-->. The full profile, which proves every gate blocks, runs with `python3 ~/.claude/scripts/brain_doctor.py` and took <!--canon:v10.doctor.full-->344 s<!--/canon--> in one sandbox run. If wiring the hooks, the push guard or the first spec fails, quickstart says which and exits non-zero.
 
 Octorato is for **all models and all editors**: the brain is the same; the runtime and engine are bindings. See `docs/architecture/multi-runtime.md`.
 
@@ -522,7 +522,7 @@ Reflexes live in `CLAUDE.md` (constitutional, loaded before any task), not in `s
 
 The brain observes itself acting. Every skill activation, subagent spawn, and 4D phase boundary is captured as a structured JSONL event (`schemas/trace-event.schema.json`) in `~/.claude/traces/YYYY-MM-DD.jsonl` (gitignored, 30-day retention). The trace feeds back into the Hebbian connectome via `update_neural_activity.py`.
 
-Eight shipped surfaces:
+Ten shipped surfaces:
 
 | # | Surface | Script |
 |---|---------|--------|
@@ -534,12 +534,20 @@ Eight shipped surfaces:
 | 6 | Incident Capture (post-mortems) | `incident-capture.py` |
 | 7 | Brain Synthetics (per-arm health) | `arm-synthetics-runner.py` |
 | 8 | Brain Charts on Demand | `brain-chart.py` |
+| 9 | Friction report (v10): refusals and hook latency per check | `octo friction` · `friction_ledger.py` · `replay_harness.py` |
+| 10 | Dashboard and status line (v10) | `octo dash` · `statusline.py` |
 
 ```bash
 brain-trace.py grep --event phase_boundary --since 1h   # filter traces
 brain-trace.py top  --by name --window 7d               # top skills/agents
 brain-trace.py tail -n 20 -f                            # live tail
 ```
+
+**Friction, measured by the brain itself (v10).** A check that refuses legitimate work is a bug with a rate. At every Stop a reflex reads what the harness already wrote to the transcript and adds one line per refusal to a local, gitignored ledger: check name, session, tool, a reason code and a digest of the input, never the text. `octo friction [--days N]` prints per check the refusal count, the median and p95 hook latency, and the false-positive rate of the labelled sample. A private replay corpus of <!--canon:v10.replay.cases-->1,739<!--/canon--> real past cases runs every check change through the same inputs and fails when a refusal labelled correct turns into an allow. The census that started it counted <!--canon:v10.send_ask.census-->64<!--/canon--> send-check refusals in 30 days, an estimated <!--canon:v10.send_ask.fp_rate-->about 71%<!--/canon--> of them false. Method and limits: [`docs/architecture/v10-friction.md`](../docs/architecture/v10-friction.md).
+
+**What the release measured (v10).** The goal-anchor Stop check had to block at most <!--canon:v10.goal_anchor.target-->25%<!--/canon--> of its old count (AC-10). On a like-for-like replay, the gate before v10 against the released one over the same <!--canon:v10.goal_anchor.stops-->2,484<!--/canon--> Stops of <!--canon:v10.goal_anchor.sessions-->29<!--/canon--> recorded sessions, blocks went from <!--canon:v10.goal_anchor.raw-->177 to 33<!--/canon--> (<!--canon:v10.goal_anchor.measured-->18.6%<!--/canon-->), and <!--canon:v10.goal_anchor.per_case-->43 to 7 (16.3%)<!--/canon--> counted per case. The replay is marked low-fidelity, so the live count `octo friction` prints is what carries that criterion forward. The budget check answers in <!--canon:v10.budget.spawn_after-->85 to 254 ms<!--/canon--> at the median from a warm spend cache, down from <!--canon:v10.budget.spawn_before-->7.2 s<!--/canon--> per spawn. A cache up to <!--canon:v10.budget.stale_window-->15 minutes<!--/canon--> old is fresh; one from this month up to <!--canon:v10.budget.stale_max-->24 hours<!--/canon--> old answers at once and starts one background refresh; only a missing, foreign-month, future-stamped, torn or older cache is recomputed before the answer, and the hook entry in `hooks.json` carries a <!--canon:v10.budget.hook_timeout-->10 s<!--/canon--> timeout and is marked fail-open in its status message. Release <!--canon:v10.release.version-->v10.0.0<!--/canon-->. Goal-anchor replay detail: [`docs/architecture/v10-friction.md`](../docs/architecture/v10-friction.md).
+
+**One page to look at (v10).** `octo dash` writes a single self-contained HTML file to `~/.claude/.cache/dash/index.html`: specs with their task count and converge verdict, open pull requests with the newest QA verdict and the head it pinned, the gate receipt, live kernel processes and the friction report. It reads pull requests from a local snapshot, prints its age, and `octo dash --refresh` takes a new one. The status line shows the short form in Claude Code: gate receipt, live process count, active spec.
 
 The daily digest is scheduled per machine by a `systemd --user` timer (`scripts/install-observability-timer.py`), not by CI: it reads local session data, and `Persistent=true` recovers a run missed while the laptop slept.
 
@@ -669,6 +677,8 @@ ai-pull
 # Check if updates available
 ai-pull --status
 ```
+
+Since v10, `ai-pull` ends with the fast health check instead of the full one, which took <!--canon:v10.doctor.full-->344 s<!--/canon--> in one sandbox run. It re-runs the gate selftests only when the gate files changed since the last proof, and otherwise reuses the receipt already written for that exact tree. The full profile still runs with `python3 ~/.claude/scripts/brain_doctor.py`, and pre-push still runs its own checks.
 
 ---
 

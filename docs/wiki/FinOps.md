@@ -275,6 +275,10 @@ default:                           # applies to any arm not listed
 
 `budget-check.py` is wired as a `PreToolUse[Agent]` hook and registered as rule `FLOW.budget-halt` in `registry/rules.yaml`. This means `brain_doctor` asserts its presence on every `ai-push`; a push whose hook is missing or whose rule entry is absent is blocked by `.githooks/pre-push`. The budget halt is not advisory prose. It is a first-class registered mechanism, the same way RULE #1 itself is wired.
 
+### Answering from a spend cache (v10)
+
+When no cap can apply, the check answers OK without computing spend. When caps exist, it reads a spend cache that is refreshed in the background at SessionStart and after each `Agent` call. A cache up to <!--canon:v10.budget.stale_window-->15 minutes<!--/canon--> old is fresh. A cache from this month that is older than that but at most <!--canon:v10.budget.stale_max-->24 hours<!--/canon--> old answers at once and starts one background refresh, and the fail-closed decision is taken on the cached spend. A cache that is missing, from another month, stamped in the future, torn or older than <!--canon:v10.budget.stale_max-->24 hours<!--/canon--> is never used: the check recomputes before answering. Before the cache the check added a median <!--canon:v10.budget.spawn_before-->7.2 s<!--/canon--> to every subagent spawn; with a warm cache it answers in <!--canon:v10.budget.spawn_after-->85 to 254 ms<!--/canon--> at the median (100 consecutive calls, quiet machine to load average 12). The residual, stated in the code: after an idle spell the decision can rest on spend up to <!--canon:v10.budget.stale_max-->24 hours<!--/canon--> old, and spend made since is caught by the first call after the background refresh finishes.
+
 ### Wiring the PreToolUse hook
 
 In `~/.claude/settings.json`, gate the expensive tools (`Agent`, subagent dispatch, browser automation) on the checker:
