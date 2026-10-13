@@ -14,6 +14,18 @@ machine-generated growth ledger lives at
 `knowledge/repo-watch/<date>.md` (daily watchlist digests).
 
 ## [Unreleased]
+### Octorato v10: low friction, easy entry
+Every check from v7 to v9 stays; v10 makes them cheaper to live with and easier to start.
+- **One-command install**: `python3 ~/.claude/scripts/quickstart.py` after the clone wires the Claude Code hooks, sets `core.hooksPath`, runs the fast doctor and writes a first spec; a fresh-clone CI job fails the run past 5 minutes (#379).
+- **Friction ledger and replay**: every refusal is counted from the transcript and `octo friction` reports it per check with median and p95 latency; a private replay corpus of 1,841 real cases (2026-09-06 to 2026-10-13) blocks a change that drops a refusal that was right (#380, #397, #401, #414).
+- **Send check reads the ask**: "send it" counts in English or Spanish, a task notification after an ask still carries it, and a plain read of the support script is not a send (#382, #389, #412).
+- **Fewer false Stop blocks**: goal-anchor retires a closed root, never anchors a steer, an ack or an obstacle report, and counts a mention by whole words. Like for like on the same 2,974 Stops of 35 recorded sessions, its blocks went from 220 to 38 (17.3%, target at most 25%); the gate writes a read receipt per Stop and the replay reproduces 145 of the 146 receipt-era decisions (99.3%), so the figure is rated on what the gate recorded, not on history no replay can rebuild (#385, #398, #411, #414).
+- **Faster budget check**: a spend cache answers in 85 to 254 ms at the median instead of 7.2 s per spawn; a cache up to 15 minutes old is fresh, one from this month up to 24 hours old answers at once and refreshes in the background (#383, #408).
+- **A visible brain**: `octo dash` writes one offline HTML page of specs, reviews and live runs; a status line shows the gate receipt, live processes and the active spec (#378).
+- **Shorter constitution**: `CLAUDE.md` went from 25,506 to 11,551 tokens by the doctor's own estimator, English only, failing above 12,000 (#392, #395, #400).
+- **Re-review after a base update**: `/requa <pr>` confirms a pull request changed only by merging master and records a QA receipt for the new head (#391, #395, #401).
+- **A SELF verdict demands the live source**: `delegate-check` and the heartbeat print, on every SELF lean, the line that asks for the live source before answering (#406).
+- Read after the cut, not before: over the first 7 days of friction data after release the send check's false-positive rate on its labelled sample must stay under 15%; `octo friction` prints it per check.
 
 ## [2026-10-12]: v9.14.6
 ### Other
