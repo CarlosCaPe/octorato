@@ -1055,9 +1055,15 @@ def _now() -> str:
 
 
 LOW_FIDELITY = 0.5
+# Receipt-era fidelity (AC-10 as amended 2026-10-13): once a stateful gate has
+# recorded what it read at enough Stops, its fidelity is the share of those
+# recorded decisions the replay reproduces, and pre-receipt history (which the
+# replay cannot rebuild) stops deciding the LOW-FIDELITY mark.
+RECEIPT_FLOOR = 100
+RECEIPT_FIDELITY = 0.9
 
 
-def gate_stats(cases: dict, revs: dict | None = None) -> dict:
+def gate_stats(cases: dict, revs: dict | None = None, stateful: dict | None = None) -> dict:
     """Per gate, from the baseline cases: how far a replay can be trusted.
 
     `agree` counts cases whose replayed decision matches history. Fidelity is
@@ -1072,6 +1078,12 @@ def gate_stats(cases: dict, revs: dict | None = None) -> dict:
     produced history, see FIDELITY REVISION), fidelity is measured from `p`,
     because the gate in this checkout may block less on purpose, and
     `before_after` counts blocks at that revision against blocks now.
+
+    `stateful` is the per-gate session stats of the stateful replay. A gate
+    with at least RECEIPT_FLOOR in-window Stops cut from a read receipt is
+    rated on those alone (`receipt_fidelity`, LOW-FIDELITY below
+    RECEIPT_FIDELITY); its historical deny fidelity is still reported but no
+    longer decides the mark.
     """
     out = {}
     with_p = {c["g"] for c in cases.values() if "p" in c}
@@ -1105,6 +1117,16 @@ def gate_stats(cases: dict, revs: dict | None = None) -> dict:
         g["deny_fidelity"] = None if dr is None else round(dr, 3)
         g["allow_fidelity"] = None if ar is None else round(ar, 3)
         g["low_fidelity"] = any(x is not None and x < LOW_FIDELITY for x in (dr, ar))
+    for name, g in out.items():
+        st = (stateful or {}).get(name) or {}
+        n = int(st.get("from_receipt") or 0)
+        g["receipt_stops"] = n
+        if n >= RECEIPT_FLOOR:
+            rf = int(st.get("receipt_decision_reproduced") or 0) / n
+            g["receipt_fidelity"] = round(rf, 3)
+            g["low_fidelity"] = rf < RECEIPT_FIDELITY
+        else:
+            g["receipt_fidelity"] = None
     return dict(sorted(out.items()))
 
 
@@ -1117,7 +1139,32 @@ def fidelity_label(g: dict) -> str:
     ba = g.get("before_after")
     if ba:
         txt += f", measured at {str(ba.get('rev') or '?')[:7]}"
+    if g.get("receipt_fidelity") is not None:
+        txt += f", receipt-era {g['receipt_fidelity']:.0%} of {g['receipt_stops']} Stops"
+    ft = g.get("fixture_tp")
+    if ft:
+        txt += f", fixture TP {ft.get('blocked', 0)}/{ft.get('legs', 0)}"
     return txt + (" LOW-FIDELITY" if g.get("low_fidelity") else "")
+
+
+def fixture_tp(gate: str, scripts: Path | None = None) -> dict | None:
+    """The gate's fixture violation legs are its labelled true positives when
+    the corpus holds none: run the gate's own `--selftest` and read how many
+    block legs it still blocks ({"legs": n, "blocked": n, "pass": bool})."""
+    script = (scripts or HERE) / gate
+    if not script.exists():
+        return None
+    try:
+        r = subprocess.run([sys.executable, str(script), "--selftest"], capture_output=True,
+                           text=True, timeout=300)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = re.search(r"selftest (PASS|FAIL): (\d+) block", (r.stdout or "") + (r.stderr or ""))
+    if not m:
+        return None
+    legs = int(m.group(2))
+    ok = r.returncode == 0 and m.group(1) == "PASS"
+    return {"legs": legs, "blocked": legs if ok else 0, "pass": ok}
 
 
 def write_baseline(cdir: Path, jobs: int, revs: dict | None = None, gate: str = "") -> int:
@@ -1154,13 +1201,16 @@ def write_baseline(cdir: Path, jobs: int, revs: dict | None = None, gate: str = 
                           "l": lab}
         if r["gate"] in revs and r["id"] in pres:
             cases[r["id"]]["p"] = pres[r["id"]]["d"]
-    gates = gate_stats(cases, revs)
+    stateful = dict(prior.get("stateful_sessions") or {}, **sstats)
+    gates = gate_stats(cases, revs, stateful)
+    for g in STATEFUL_STOP_GATES:
+        if g in gates and (not gate or g == gate):
+            gates[g]["fixture_tp"] = fixture_tp(g)
     meta = {}
     try:
         meta = json.loads((cdir / "meta.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         pass
-    stateful = dict(prior.get("stateful_sessions") or {}, **sstats)
     doc = {
         "_comment": "v10 Replay_Harness baseline. Counts and per-case ids only: the corpus it was "
                     "replayed from is private (company/friction-corpus/). Case fields: g gate, e event, "
@@ -1249,7 +1299,8 @@ def cmd_replay(args) -> int:
     secs = round(time.monotonic() - t0, 1)
     missing = sorted(set(base["cases"]) - set(res)) if not args.gate else []
     diff = compare(base, res)
-    stats = gate_stats(base["cases"], base.get("fidelity_revs"))
+    stats = gate_stats(base["cases"], base.get("fidelity_revs"),
+                       dict(base.get("stateful_sessions") or {}, **(sstats or {})))
     methods = {"stateful": 0, "isolated-fallback": 0, "isolated": 0}
     for r in res.values():
         methods[r.get("m") or "isolated"] += 1
@@ -1331,7 +1382,8 @@ def cmd_label(args) -> int:
         labels = _labels(cdir)
         for cid, c in base["cases"].items():
             c["l"] = labels.get(cid, "-")
-        base["gates"] = gate_stats(base["cases"], base.get("fidelity_revs"))
+        base["gates"] = gate_stats(base["cases"], base.get("fidelity_revs"),
+                                   base.get("stateful_sessions"))
         BASELINE.write_text(json.dumps(base, indent=1) + "\n", encoding="utf-8")
     return 0
 

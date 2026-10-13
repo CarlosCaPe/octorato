@@ -176,7 +176,65 @@ class TestStatefulReplay(unittest.TestCase):
         self.assertEqual(g["before_after"], {"rev": "abc1234", "before": 1, "after": 0})
         del cases["x1"]["p"], cases["x2"]["p"]
         self.assertTrue(rh.gate_stats(cases)[TOY]["low_fidelity"])
+class ReceiptEraFidelity(unittest.TestCase):
+    """AC-10 as amended: a stateful gate with enough receipt-era Stops is rated
+    on the recorded decisions it reproduces, not on pre-receipt history."""
+
+    CASES = {
+        "a": {"g": "g__stop__goal-anchor.py", "e": "Stop", "h": "deny", "d": "allow", "c": "", "l": "-"},
+        "b": {"g": "g__stop__goal-anchor.py", "e": "Stop", "h": "deny", "d": "allow", "c": "", "l": "-"},
+        "c": {"g": "g__stop__goal-anchor.py", "e": "Stop", "h": "deny", "d": "deny", "c": "", "l": "-"},
+    }
+
+    def test_history_alone_marks_low_fidelity(self):
+        g = rh.gate_stats(self.CASES)["g__stop__goal-anchor.py"]
+        self.assertTrue(g["low_fidelity"])
+        self.assertIsNone(g["receipt_fidelity"])
+        self.assertEqual(g["receipt_stops"], 0)
+
+    def test_receipt_era_at_floor_decides_the_mark(self):
+        st = {"g__stop__goal-anchor.py": {"from_receipt": rh.RECEIPT_FLOOR,
+                                          "receipt_decision_reproduced": rh.RECEIPT_FLOOR - 1}}
+        g = rh.gate_stats(self.CASES, None, st)["g__stop__goal-anchor.py"]
+        self.assertFalse(g["low_fidelity"])
+        self.assertEqual(g["receipt_stops"], rh.RECEIPT_FLOOR)
+        self.assertGreaterEqual(g["receipt_fidelity"], rh.RECEIPT_FIDELITY)
+        self.assertEqual(g["deny_fidelity"], 0.333)  # history is still reported
+
+    def test_receipt_era_below_floor_keeps_history_rule(self):
+        st = {"g__stop__goal-anchor.py": {"from_receipt": rh.RECEIPT_FLOOR - 1,
+                                          "receipt_decision_reproduced": rh.RECEIPT_FLOOR - 1}}
+        g = rh.gate_stats(self.CASES, None, st)["g__stop__goal-anchor.py"]
+        self.assertTrue(g["low_fidelity"])
+        self.assertIsNone(g["receipt_fidelity"])
+
+    def test_receipt_era_poor_reproduction_is_low_fidelity(self):
+        n = rh.RECEIPT_FLOOR * 2
+        st = {"g__stop__goal-anchor.py": {"from_receipt": n,
+                                          "receipt_decision_reproduced": int(n * rh.RECEIPT_FIDELITY) - 1}}
+        g = rh.gate_stats(self.CASES, None, st)["g__stop__goal-anchor.py"]
+        self.assertTrue(g["low_fidelity"])
+
+    def test_fixture_tp_reads_the_gate_selftest(self):
+        fake = {"ok": "selftest PASS: 12 block + 23 allow (x vs y)\n", "rc": 0}
+
+        class R:
+            def __init__(self, stdout, returncode):
+                self.stdout, self.stderr, self.returncode = stdout, "", returncode
+        with tempfile.TemporaryDirectory() as td:
+            (Path(td) / "g.py").write_text("", encoding="utf-8")
+            with mock.patch.object(rh.subprocess, "run", return_value=R(fake["ok"], 0)):
+                self.assertEqual(rh.fixture_tp("g.py", Path(td)),
+                                 {"legs": 12, "blocked": 12, "pass": True})
+            with mock.patch.object(rh.subprocess, "run",
+                                   return_value=R("selftest FAIL: 12 block + 23 allow (x vs y)\n", 1)):
+                self.assertEqual(rh.fixture_tp("g.py", Path(td)),
+                                 {"legs": 12, "blocked": 0, "pass": False})
+            self.assertIsNone(rh.fixture_tp("missing.py", Path(td)))
+            self.assertIn("fixture TP 12/12", rh.fidelity_label(
+                {"agree": 1, "cases": 1, "replay_deny": 0, "historical_deny": 0,
+                 "hist_deny_reproduced": 0, "fixture_tp": {"legs": 12, "blocked": 12}}))
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     unittest.main()
