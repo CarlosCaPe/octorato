@@ -923,7 +923,8 @@ def friction_report(days: int, now: float = None) -> dict:
     labelled, fidelity = {}, {}
     if base.get("cases"):
         import replay_harness
-        for g, b in replay_harness.gate_stats(base["cases"]).items():
+        for g, b in replay_harness.gate_stats(base["cases"], base.get("fidelity_revs"),
+                                              base.get("stateful_sessions")).items():
             fidelity[g] = {"agree": b["agree"], "cases": b["cases"],
                            "replay_deny": b["replay_deny"], "historical_deny": b["historical_deny"],
                            "low_fidelity": b["low_fidelity"]}
