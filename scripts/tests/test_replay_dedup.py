@@ -65,12 +65,12 @@ class TestStatefulDedup(unittest.TestCase):
             with redirect_stdout(out):
                 rh.cmd_replay(args)
             self.assertEqual(json.loads(out.getvalue())["methods"],
-                             {"stateful": 2, "isolated-fallback": 0, "isolated": 0})
+                             {"stateful": 2, "stateful-receipt": 0, "isolated-fallback": 0, "isolated": 0})
             args.json = False
             out = io.StringIO()
             with redirect_stdout(out):
                 rh.cmd_replay(args)
-            self.assertIn("method: stateful 2, isolated-fallback 0, isolated 0", out.getvalue())
+            self.assertIn("method: stateful 2, stateful-receipt 0, isolated-fallback 0, isolated 0", out.getvalue())
         finally:
             rh.replay_all = real
 

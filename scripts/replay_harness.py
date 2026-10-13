@@ -1079,11 +1079,12 @@ def gate_stats(cases: dict, revs: dict | None = None, stateful: dict | None = No
     because the gate in this checkout may block less on purpose, and
     `before_after` counts blocks at that revision against blocks now.
 
-    `stateful` is the per-gate session stats of the stateful replay. A gate
-    with at least RECEIPT_FLOOR in-window Stops cut from a read receipt is
-    rated on those alone (`receipt_fidelity`, LOW-FIDELITY below
-    RECEIPT_FIDELITY); its historical deny fidelity is still reported but no
-    longer decides the mark.
+    `stateful` is the per-gate session stats of the stateful replay. A
+    stateful Stop gate (STATEFUL_STOP_GATES) is rated on the in-window Stops
+    cut from a read receipt alone: LOW-FIDELITY while it has fewer than
+    RECEIPT_FLOOR of them or reproduces fewer than RECEIPT_FIDELITY of their
+    recorded decisions (AC-25). Its historical deny fidelity is still reported
+    but never decides the mark, because pre-receipt history cannot be rebuilt.
     """
     out = {}
     with_p = {c["g"] for c in cases.values() if "p" in c}
@@ -1121,12 +1122,9 @@ def gate_stats(cases: dict, revs: dict | None = None, stateful: dict | None = No
         st = (stateful or {}).get(name) or {}
         n = int(st.get("from_receipt") or 0)
         g["receipt_stops"] = n
-        if n >= RECEIPT_FLOOR:
-            rf = int(st.get("receipt_decision_reproduced") or 0) / n
-            g["receipt_fidelity"] = round(rf, 3)
-            g["low_fidelity"] = rf < RECEIPT_FIDELITY
-        else:
-            g["receipt_fidelity"] = None
+        g["receipt_fidelity"] = round(int(st.get("receipt_decision_reproduced") or 0) / n, 3) if n else None
+        if name in STATEFUL_STOP_GATES:
+            g["low_fidelity"] = n < RECEIPT_FLOOR or g["receipt_fidelity"] < RECEIPT_FIDELITY
     return dict(sorted(out.items()))
 
 
@@ -1246,7 +1244,8 @@ def write_baseline(cdir: Path, jobs: int, revs: dict | None = None, gate: str = 
     }
     BASELINE.write_text(json.dumps(doc, indent=1, sort_keys=False) + "\n", encoding="utf-8")
     agree = sum(g["agree"] for g in gates.values())
-    print(json.dumps({"baseline": str(BASELINE.relative_to(REPO)), "cases": len(rows),
+    shown = str(BASELINE.relative_to(REPO)) if BASELINE.is_relative_to(REPO) else str(BASELINE)
+    print(json.dumps({"baseline": shown, "cases": len(rows),
                       "agree_with_history": agree, "replay_seconds": secs,
                       "low_fidelity": [k for k, g in gates.items() if g["low_fidelity"]]}))
     return 0
@@ -1316,9 +1315,10 @@ def cmd_replay(args) -> int:
     diff = compare(base, res)
     stats = gate_stats(base["cases"], base.get("fidelity_revs"),
                        dict(base.get("stateful_sessions") or {}, **(sstats or {})))
-    methods = {"stateful": 0, "isolated-fallback": 0, "isolated": 0}
+    methods = {"stateful": 0, "stateful-receipt": 0, "isolated-fallback": 0, "isolated": 0}
     for r in res.values():
-        methods[r.get("m") or "isolated"] += 1
+        m = r.get("m") or "isolated"
+        methods[m] = methods.get(m, 0) + 1
     if args.json:
         print(json.dumps({"cases": len(res), "seconds": secs, "methods": methods, **diff,
                           "low_fidelity": [g for g, v in stats.items() if v["low_fidelity"]],

@@ -279,6 +279,54 @@ class DashFriction(Sandbox):
         self.assertIn("75%", page)
 
 
+class DashCells(Sandbox):
+    """AC-19: the cells the dashboard must show, each read from a sandbox
+    ledger under HOME (receipt ledger, kernel ptable), never from this tree."""
+
+    def _agent_transcript(self, name, text, sid="sess-1"):
+        d = Path(self.home) / ".claude" / "projects" / "p" / sid / "subagents"
+        d.mkdir(parents=True, exist_ok=True)
+        entries = [{"type": "assistant", "uuid": f"u-{name}", "parentUuid": "p0", "sessionId": sid,
+                    "timestamp": "2026-10-01T10:00:00.000Z",
+                    "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}}]
+        (d / name).write_text("\n".join(json.dumps(e) for e in entries) + "\n", encoding="utf-8")
+        return str(d / name), f"u-{name}"
+
+    def test_qa_converge_gate_and_kernel_cells(self):
+        import receipt_ledger as rl
+        import kernel_proc
+        head = "c" * 40
+        tp, uid = self._agent_transcript("agent-q1.jsonl",
+                                         f"review\nQA-VERDICT: PASS\nQA-SCOPE: PR #77\nQA-HEAD: {head}")
+        rl.append_global({"kind": "qa", "verdict": "PASS", "scope": "PR #77", "head": head,
+                          "entry_uuid": uid, "entry_ts": "2026-10-01T10:00:00.000Z",
+                          "agent_type": "Reality Checker", "agent_id": "q1", "agent_transcript_path": tp})
+        sd = self.spec("202610010000-toy", "approved")
+        scope = f"docs/specs/{sd.name}"
+        tp2, uid2 = self._agent_transcript("agent-c1.jsonl",
+                                           f"judged\nCONVERGE-VERDICT: CONVERGED\nCONVERGE-SCOPE: {scope}")
+        rl.append_global({"kind": "converge", "verdict": "CONVERGED", "scope": scope, "entry_uuid": uid2,
+                          "agent_type": "Reality Checker", "agent_id": "c1", "agent_transcript_path": tp2})
+        kernel_proc.register("sess-live", {"kind": "main", "worktree": "/w", "source": "startup"})
+        kernel_proc.append("sess-live", {"kind": "tool", "tool_name": "Read", "tool_use_id": "t1"})
+        self.snapshot([{"number": 77, "title": "t", "headRefName": "b", "isDraft": False,
+                        "url": "https://github.com/o/r/pull/77", "headRefOid": head},
+                       {"number": 78, "title": "t2", "headRefName": "b2", "isDraft": False,
+                        "url": "https://github.com/o/r/pull/78", "headRefOid": "d" * 40}])
+        data = octo_dash.collect(self.root, now=time.time())
+        pr = {r["number"]: r for r in data["pulls"]["rows"]}
+        self.assertEqual((pr["77"]["qa"], pr["77"]["qa_head"], pr["77"]["decides"]), ("PASS", head, "PASS"))
+        self.assertEqual((pr["78"]["qa"], pr["78"]["decides"]), (None, None))
+        spec = {r["name"]: r for r in data["specs"]["rows"]}[sd.name]
+        self.assertEqual((spec["converge"], spec["status"], spec["done"], spec["total"]),
+                         ("CONVERGED", "approved", 1, 2))
+        self.assertEqual(data["gate"]["state"], "unknown")      # the sandbox root is not a git tree
+        self.assertEqual([r["pid"] for r in data["kernel"]["rows"]], ["sess-live"])
+        page = octo_dash.render(data)
+        for cell in ("PASS", "pinned = head", head[:7], "CONVERGED", "sess-live", "1 live of 1 registered"):
+            self.assertIn(cell, page)
+
+
 class StatusLine(Sandbox):
     def run_line(self, payload):
         return subprocess.run([sys.executable, str(SCRIPTS / "statusline.py")],
