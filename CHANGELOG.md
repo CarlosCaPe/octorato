@@ -15,6 +15,27 @@ machine-generated growth ledger lives at
 
 ## [Unreleased]
 
+## [2026-10-12]: v9.14.6
+### Other
+- v10 Convergence 3: T24 Stop digest lookback, T25-T27 send-gate fixtures (#412)
+
+## [2026-10-12]: v9.14.5
+### Fixes
+- fix(goal-anchor): T20, blocks to 14.7% of the d5d609e baseline on a like-for-like replay (#411)
+
+## [2026-10-12]: v9.14.4
+### Other
+- docs(claude-md): cut 976 tokens and bound the budget estimator above cl100k (#400)
+
+## [2026-10-12]: v9.14.3
+### Fixes
+- fix: close the minor v10 QA follow-ups (requa textconv, budget fixtures, replay dedup) (#401)
+
+## [2026-10-12]: v9.14.2
+### Other
+- v10 Convergence 2: plan section and goal-anchor read receipt (T19) (#398)
+- docs(changelog): backfill v9.14.1 (#410)
+
 ## [2026-10-09]: v9.14.1
 ### Fixes
 - fix(budget): a stale cache of this month answers at once (v10 AC-22 amended, T23) (#408)

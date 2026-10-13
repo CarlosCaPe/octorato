@@ -36,6 +36,9 @@ nothing about the call can be read back from the line alone. The digest is
 UNSALTED: a short input (`ls`, `git status`) can be recovered by hashing
 guesses, so the ledger is a local, gitignored file and never leaves the
 machine. `input_chars` is the length before the cut. For a Stop block the "input" is the assistant text the block refused.
+That text was written BEFORE the block, so an incremental read carries a bounded
+lookback (`LOOKBACK_BYTES` before the saved offset, whole lines) as context: the
+digest and the tool_use lookup may search it, but no event is emitted from it.
 
 Hook latency rides along in monthly `latency-YYYY-MM.jsonl` files beside it: the harness writes a
 `durationMs` on a hook attachment and on `stop_hook_summary.hookInfos`, but only
@@ -85,6 +88,10 @@ REPO = HERE.parent
 SIGNATURES = REPO / "registry" / "friction-signatures.json"
 HOOKS_JSON = REPO / "hooks.json"
 INPUT_CUT = 1200
+# Context read before the saved offset on an incremental ingest. The assistant
+# text a Stop refused sat at most 342 KB before the block on every live Stop of
+# 2026-10-12 (median 7 KB), so 1 MiB covers the walk-back with room.
+LOOKBACK_BYTES = 1024 * 1024
 
 _PRE_RE = re.compile(r"^PreToolUse:(\S+) hook error: ?(.*)", re.S)
 _CMD_RE = re.compile(r"^\[([^\]]+)\]: ?(.*)", re.S)
@@ -354,10 +361,16 @@ def _last_assistant_text(buf: bytes, before: int) -> str:
     return ""
 
 
-def scan_bytes(buf: bytes, with_latency: bool = True) -> tuple[list, list]:
-    """(events, latency samples) from a chunk of whole transcript lines."""
+def scan_bytes(buf: bytes, with_latency: bool = True, skip: int = 0) -> tuple[list, list]:
+    """(events, latency samples) from a chunk of whole transcript lines.
+
+    The first `skip` bytes are context already ingested: the Stop digest and the
+    tool_use lookup may read them, but no event or latency row comes from them.
+    """
     events, pending = [], {}
     for pos, line in _lines_with(buf, _EVENT_MARKERS):
+        if pos < skip:
+            continue
         try:
             d = json.loads(line)
         except ValueError:
@@ -421,13 +434,15 @@ def scan_bytes(buf: bytes, with_latency: bool = True) -> tuple[list, list]:
                 e["tool"] = name
             h, n = digest(inp)
             e["input_sha256"], e["input_chars"] = h, n
-    lat = scan_latency(buf) if with_latency else []
+    lat = scan_latency(buf, skip) if with_latency else []
     return events, lat
 
 
-def scan_latency(buf: bytes) -> list:
+def scan_latency(buf: bytes, skip: int = 0) -> list:
     out = []
-    for _, line in _lines_with(buf, [_LATENCY_MARKER]):
+    for pos, line in _lines_with(buf, [_LATENCY_MARKER]):
+        if pos < skip:
+            continue
         try:
             d = json.loads(line)
         except ValueError:
@@ -559,6 +574,13 @@ def ingest_paths(paths, incremental: bool = True, with_latency: bool = True,
                 if want > budget:
                     want, pending = budget, True
             with open(p, "rb") as fh:
+                ctx = b""
+                if start > 0:  # bounded lookback, whole lines, never re-ledgered
+                    lb = min(start, LOOKBACK_BYTES)
+                    fh.seek(start - lb)
+                    ctx = fh.read(lb)
+                    if lb < start:
+                        ctx = ctx[ctx.find(b"\n") + 1:]
                 fh.seek(start)
                 buf = fh.read(want)
                 cut = buf.rfind(b"\n")
@@ -570,7 +592,7 @@ def ingest_paths(paths, incremental: bool = True, with_latency: bool = True,
             if cut == -1:
                 continue  # no whole line yet
             buf = buf[:cut + 1]
-            ev, lat = scan_bytes(buf, with_latency)
+            ev, lat = scan_bytes(ctx + buf, with_latency, skip=len(ctx))
             if ev:
                 if seen_e is None:
                     seen_e = _keys(ledger)
