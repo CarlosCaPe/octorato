@@ -226,14 +226,25 @@ class ReceiptEraFidelity(unittest.TestCase):
             with mock.patch.object(rh.subprocess, "run", return_value=R(fake["ok"], 0)):
                 self.assertEqual(rh.fixture_tp("g.py", Path(td)),
                                  {"legs": 12, "blocked": 12, "pass": True})
-            with mock.patch.object(rh.subprocess, "run",
-                                   return_value=R("selftest FAIL: 12 block + 23 allow (x vs y)\n", 1)):
+            fail = ("selftest FAIL: 12 block + 23 allow (x vs y): violation_a.json did NOT block "
+                    "(rc=0); violation_b.json did NOT block (rc=0); benign_c.json WAS blocked "
+                    "(must allow, rc=2)\n")
+            with mock.patch.object(rh.subprocess, "run", return_value=R(fail, 1)):
                 self.assertEqual(rh.fixture_tp("g.py", Path(td)),
-                                 {"legs": 12, "blocked": 0, "pass": False})
+                                 {"legs": 12, "blocked": 10, "pass": False})
+            with mock.patch.object(rh.subprocess, "run",
+                                   return_value=R("selftest FAIL: fixture dir missing: x\n", 1)):
+                self.assertIsNone(rh.fixture_tp("g.py", Path(td)))
             self.assertIsNone(rh.fixture_tp("missing.py", Path(td)))
             self.assertIn("fixture TP 12/12", rh.fidelity_label(
                 {"agree": 1, "cases": 1, "replay_deny": 0, "historical_deny": 0,
                  "hist_deny_reproduced": 0, "fixture_tp": {"legs": 12, "blocked": 12}}))
+
+    def test_carry_fixture_tp_survives_a_recompute(self):
+        prior = {"gates": {"g": {"fixture_tp": {"legs": 12, "blocked": 12, "pass": True}}}}
+        fresh = {"g": {"cases": 1}, "h": {"cases": 1}}
+        self.assertEqual(rh.carry_fixture_tp(prior, fresh)["g"]["fixture_tp"]["legs"], 12)
+        self.assertNotIn("fixture_tp", fresh["h"])
 
 
 if __name__ == "__main__":  # pragma: no cover

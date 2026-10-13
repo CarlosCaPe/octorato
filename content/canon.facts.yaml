@@ -252,6 +252,6 @@ facts:
 
   - id: v10.replay.cases
     kind: asserted
-    value: "1,739"
-    citation: "registry/friction-baseline.json at master a93e075 (PR #411): corpus_cases, the private corpus rebuilt from 2026-09-06..10-08 transcripts (PR #380 built the first one with 1,654 from the window to 10-06)"
+    value: "1,841"
+    citation: "registry/friction-baseline.json at the T28 merge: corpus_cases, the private corpus rebuilt from the 2026-09-06..2026-10-13 transcripts (until bound 2026-10-14, exclusive; PR #411 had 1,739 to 10-08, PR #380 1,654 to 10-06)"
 

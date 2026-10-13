@@ -686,9 +686,11 @@ edges:
     from: registry/friction-baseline.json
     to:
       - content/canon.facts.yaml
+      - README.md
       - FAQ.md
       - docs/ANATOMY.md
       - ROADMAP.md
+      - scripts/octo.py
       - docs/architecture/v10-friction.md
       - docs/specs/202610061605-v10-low-friction-easy-entry/plan.md
     kind: appears_in

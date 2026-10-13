@@ -1159,12 +1159,26 @@ def fixture_tp(gate: str, scripts: Path | None = None) -> dict | None:
                            text=True, timeout=300)
     except (OSError, subprocess.SubprocessError):
         return None
-    m = re.search(r"selftest (PASS|FAIL): (\d+) block", (r.stdout or "") + (r.stderr or ""))
+    text = (r.stdout or "") + (r.stderr or "")
+    m = re.search(r"selftest (PASS|FAIL): (\d+) block", text)
     if not m:
         return None
     legs = int(m.group(2))
     ok = r.returncode == 0 and m.group(1) == "PASS"
-    return {"legs": legs, "blocked": legs if ok else 0, "pass": ok}
+    # On FAIL gate_selftest names each violation leg that did not block; the
+    # legs it does not name blocked (a journaling or benign failure fails the
+    # selftest without un-blocking a leg).
+    blocked = legs - len(re.findall(r"did NOT block", text)) if not ok else legs
+    return {"legs": legs, "blocked": max(0, blocked), "pass": ok}
+
+
+def carry_fixture_tp(prior: dict | None, gates: dict) -> dict:
+    """`gate_stats` never computes `fixture_tp`; a recompute from the cases
+    (`label`, a one-gate merge) keeps the value the baseline already holds."""
+    for g, st in ((prior or {}).get("gates") or {}).items():
+        if g in gates and "fixture_tp" not in gates[g] and st.get("fixture_tp") is not None:
+            gates[g]["fixture_tp"] = st["fixture_tp"]
+    return gates
 
 
 def write_baseline(cdir: Path, jobs: int, revs: dict | None = None, gate: str = "") -> int:
@@ -1206,6 +1220,7 @@ def write_baseline(cdir: Path, jobs: int, revs: dict | None = None, gate: str = 
     for g in STATEFUL_STOP_GATES:
         if g in gates and (not gate or g == gate):
             gates[g]["fixture_tp"] = fixture_tp(g)
+    carry_fixture_tp(prior, gates)
     meta = {}
     try:
         meta = json.loads((cdir / "meta.json").read_text(encoding="utf-8"))
@@ -1382,8 +1397,8 @@ def cmd_label(args) -> int:
         labels = _labels(cdir)
         for cid, c in base["cases"].items():
             c["l"] = labels.get(cid, "-")
-        base["gates"] = gate_stats(base["cases"], base.get("fidelity_revs"),
-                                   base.get("stateful_sessions"))
+        base["gates"] = carry_fixture_tp(base, gate_stats(base["cases"], base.get("fidelity_revs"),
+                                                          base.get("stateful_sessions")))
         BASELINE.write_text(json.dumps(base, indent=1) + "\n", encoding="utf-8")
     return 0
 
