@@ -146,6 +146,33 @@ class TestStatefulReplay(unittest.TestCase):
         self.assertEqual(out, {"sessions": 2, "cases_mapped": 2, "cases_unmapped": 0,
                                "stops_with_receipt": 0, "receipt_skew": 0})
 
+    def test_replay_cli_counts_a_receipt_era_stop(self):
+        recs = rh._load(str(self.root / "proj" / f"{SID_A}.jsonl"))
+        stop = rh.stop_points(recs)[2]                        # the blocked turn
+        rroot = self.tmp / "receipts"
+        rroot.mkdir()
+        (rroot / f"{SID_A}.jsonl").write_text(json.dumps(
+            {"v": 1, "session": SID_A, "decision": "block", "code": "fire", "ts": stop["ts"],
+             "last_uuid": recs[stop["end"] - 1]["uuid"], "bytes": None}) + "\n", encoding="utf-8")
+        with redirect_stdout(io.StringIO()):
+            out = rh.capture_sessions(self.cdir, self.root, "2026-09-01", "2026-10-01", gates=(TOY,),
+                                      receipts_root=rroot)
+        self.assertEqual(out["stops_with_receipt"], 1)
+        base = self.tmp / "baseline.json"
+        with mock.patch.object(rh, "BASELINE", base), mock.patch.object(rh, "HERE", self.scripts), \
+                mock.patch.object(rh, "fixture_tp", lambda *a, **k: None):
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(rh.main(["--corpus", str(self.cdir), "--jobs", "1", "baseline"]), 0)
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                rc = rh.main(["--corpus", str(self.cdir), "--jobs", "1", "replay", "--json"])
+        self.assertEqual(rc, 0)
+        rep = json.loads(buf.getvalue())
+        self.assertEqual(rep["methods"]["stateful-receipt"], 1)
+        self.assertEqual(rep["methods"]["stateful"], 1)
+        st = rep["stateful_sessions"][TOY]
+        self.assertEqual((st["from_receipt"], st["receipt_decision_reproduced"]), (1, 1))
+
     def test_isolated_misses_and_stateful_catches_the_block(self):
         with redirect_stdout(io.StringIO()):
             rh.capture_sessions(self.cdir, self.root, "2026-09-01", "2026-10-01", gates=(TOY,),
@@ -172,10 +199,16 @@ class TestStatefulReplay(unittest.TestCase):
                  "x2": {"g": TOY, "e": "Stop", "h": "allow", "d": "allow", "p": "allow", "c": "", "l": "-"}}
         g = rh.gate_stats(cases, {TOY: "abc1234"})[TOY]
         self.assertEqual(g["deny_fidelity"], 1.0)
-        self.assertFalse(g["low_fidelity"])
+        # A stateful Stop gate is rated on receipt-era Stops (T30): with none
+        # it is LOW-FIDELITY however well history replays. Taken off the
+        # stateful list, history decides and this case set is high-fidelity.
+        self.assertTrue(g["low_fidelity"])
+        with mock.patch.object(rh, "STATEFUL_STOP_GATES", ()):
+            self.assertFalse(rh.gate_stats(cases, {TOY: "abc1234"})[TOY]["low_fidelity"])
         self.assertEqual(g["before_after"], {"rev": "abc1234", "before": 1, "after": 0})
         del cases["x1"]["p"], cases["x2"]["p"]
-        self.assertTrue(rh.gate_stats(cases)[TOY]["low_fidelity"])
+        with mock.patch.object(rh, "STATEFUL_STOP_GATES", ()):
+            self.assertTrue(rh.gate_stats(cases)[TOY]["low_fidelity"])
 class ReceiptEraFidelity(unittest.TestCase):
     """AC-10 as amended: a stateful gate with enough receipt-era Stops is rated
     on the recorded decisions it reproduces, not on pre-receipt history."""
@@ -201,12 +234,17 @@ class ReceiptEraFidelity(unittest.TestCase):
         self.assertGreaterEqual(g["receipt_fidelity"], rh.RECEIPT_FIDELITY)
         self.assertEqual(g["deny_fidelity"], 0.333)  # history is still reported
 
-    def test_receipt_era_below_floor_keeps_history_rule(self):
+    def test_receipt_era_below_floor_is_low_fidelity_whatever_history_says(self):
+        agreeing = {k: dict(v, d="deny") for k, v in self.CASES.items()}  # history fully reproduced
+        self.assertFalse(rh.gate_stats({"x": dict(agreeing["a"], g="other.py")})["other.py"]["low_fidelity"])
+        g = rh.gate_stats(agreeing)["g__stop__goal-anchor.py"]
+        self.assertTrue(g["low_fidelity"])                    # 0 receipt Stops
+        self.assertEqual(g["deny_fidelity"], 1.0)
         st = {"g__stop__goal-anchor.py": {"from_receipt": rh.RECEIPT_FLOOR - 1,
                                           "receipt_decision_reproduced": rh.RECEIPT_FLOOR - 1}}
-        g = rh.gate_stats(self.CASES, None, st)["g__stop__goal-anchor.py"]
-        self.assertTrue(g["low_fidelity"])
-        self.assertIsNone(g["receipt_fidelity"])
+        g = rh.gate_stats(agreeing, None, st)["g__stop__goal-anchor.py"]
+        self.assertTrue(g["low_fidelity"])                    # 99 of 99, still under the floor
+        self.assertEqual(g["receipt_fidelity"], 1.0)
 
     def test_receipt_era_poor_reproduction_is_low_fidelity(self):
         n = rh.RECEIPT_FLOOR * 2

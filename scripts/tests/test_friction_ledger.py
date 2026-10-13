@@ -462,6 +462,25 @@ class TestOctoFriction(FrictionCase):
         old = octo.friction_report(7, now=now + 30 * 86400)
         self.assertEqual(old["ledger_rows"], 0)
 
+    def test_report_labelled_fp_rate_from_the_baseline(self):
+        friction_ledger.ingest_paths([self.tp])
+        base = self.tmp / "baseline.json"
+        case = lambda g, l, h="deny": {"g": g, "e": "Stop", "h": h, "d": "deny", "c": "", "l": l}
+        base.write_text(json.dumps({"window": {"since": "2026-09-01", "until": "2026-09-02"},
+                                    "cases": {"1": case("g__stop__goal-anchor.py", "FP"),
+                                              "2": case("g__stop__goal-anchor.py", "FP"),
+                                              "3": case("g__stop__goal-anchor.py", "TP"),
+                                              "4": case("g__stop__goal-anchor.py", "-"),
+                                              "5": case("qa-merge-gate.py", "-")}}), encoding="utf-8")
+        rep = octo.friction_report(7, now=1789056000.0, baseline_path=str(base))
+        g = {r["gate"]: r for r in rep["gates"]}
+        self.assertEqual(g["g__stop__goal-anchor.py"]["labelled"],
+                         {"tp": 1, "fp": 2, "fp_rate": 0.667, "labelled": 3, "historical_deny": 4})
+        self.assertIsNone(g["qa-merge-gate.py"]["labelled"])
+        self.assertEqual(rep["label_window"], {"since": "2026-09-01", "until": "2026-09-02"})
+        self.assertIsNone(octo.friction_report(7, now=1789056000.0,
+                                               baseline_path=str(base) + ".missing")["label_window"])
+
     def test_percentiles(self):
         vals = list(range(1, 101))
         self.assertEqual(octo._pct(vals, 0.95), 95)

@@ -884,7 +884,7 @@ def _median(values: list):
     return v[n // 2] if n % 2 else (v[n // 2 - 1] + v[n // 2]) / 2
 
 
-def friction_report(days: int, now: float = None) -> dict:
+def friction_report(days: int, now: float = None, baseline_path: str = None) -> dict:
     """Per gate: denies in the window, hook latency, labelled FP rate.
 
     Denies come from the Friction_Ledger (`friction_ledger.py`), latency from
@@ -912,9 +912,10 @@ def friction_report(days: int, now: float = None) -> dict:
             h["ms"].append(x["ms"])
         h["timeouts"] += bool(x.get("timed_out"))
     base = {}
+    baseline_path = baseline_path or os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "registry", "friction-baseline.json")
     try:
-        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                               "registry", "friction-baseline.json"), encoding="utf-8") as fh:
+        with open(baseline_path, encoding="utf-8") as fh:
             base = json.load(fh)
     except (OSError, ValueError):
         pass
