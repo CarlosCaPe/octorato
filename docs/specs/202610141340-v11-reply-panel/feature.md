@@ -1,6 +1,6 @@
 # Feature: v11, No Reply Unreviewed
 
-> **Status:** approved
+> **Status:** converged
 > **Spec-Format:** ears-1
 > **Date:** 2026-10-14
 > **Classification:** LARGE (score 9: 4-10 files, new feature, architectural decision, multiple modules)
