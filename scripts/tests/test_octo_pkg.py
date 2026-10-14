@@ -38,6 +38,13 @@ FIXTURE = BRAIN / "registry" / "fixtures" / "META.kernel-package"
 # module that leaves HOME pointing at its own deleted sandbox would otherwise be
 # what a child process here inherits, and the child loses its pip --user imports.
 _REAL_HOME = os.environ.get("HOME")
+# The other half of "home" on Windows. Path.home() and os.path.expanduser read
+# USERPROFILE there and ignore HOME (octo_pkg's own selftest sandbox sets both for
+# that reason), so a sandbox that moved HOME alone left octo_pkg resolving the
+# operator's real profile: arms registered as "AppData/Local/Temp/.../home/..."
+# relative to it. Unset on POSIX, where this is an empty dict and changes nothing.
+_REAL_PROFILE = os.environ.get("USERPROFILE")
+_REAL_PROFILE_ENV = {} if _REAL_PROFILE is None else {"USERPROFILE": _REAL_PROFILE}
 
 
 def _load(name: str, path: Path):
@@ -111,12 +118,16 @@ class SandboxCase(unittest.TestCase):
             json.dumps({"version": 1, "packages": []}, indent=2) + "\n", encoding="utf-8")
         _sp(["git", "init", "-q", str(self.root)], check=True)
         os.environ["HOME"] = str(home)
+        if _REAL_PROFILE is not None:
+            os.environ["USERPROFILE"] = str(home)
         self.addCleanup(self._restore_home)
         self.brain = octo_pkg.Brain(self.root)
 
     def _restore_home(self):
         if self._home is not None:
             os.environ["HOME"] = self._home
+        if _REAL_PROFILE is not None:
+            os.environ["USERPROFILE"] = _REAL_PROFILE
 
     def mint_key(self, principal: str = "octorato-release") -> Path:
         key = self.tmp / f"key-{principal}"
@@ -738,7 +749,7 @@ class TestLockIntegrity(SandboxCase):
             # CHILD re-derives its user site-packages from HOME, so it would lose
             # jsonschema. The brain is pinned by --brain, not by HOME.
             stdin=subprocess.DEVNULL,
-            env={**os.environ, "HOME": self._home or os.environ["HOME"]}) for d in srcs]
+            env={**os.environ, "HOME": self._home or os.environ["HOME"], **_REAL_PROFILE_ENV}) for d in srcs]
         # Bounded: these two children race for the lock, and a lock bug is exactly the
         # shape that would make one of them wait forever on the other.
         outs = [pr.communicate(timeout=300) for pr in procs]
@@ -1870,7 +1881,7 @@ class TestQaCycle11(ArmFixture):
                 "install", "--kind", "arm", "--dest", str(dest), str(src)]
         # See the concurrent-install test: a CHILD re-derives user site-packages from
         # HOME and would lose jsonschema. The brain is pinned by --brain.
-        env = {**os.environ, "HOME": self._home or os.environ["HOME"]}
+        env = {**os.environ, "HOME": self._home or os.environ["HOME"], **_REAL_PROFILE_ENV}
         proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 env=env)
         try:
@@ -2076,7 +2087,7 @@ class TestQaCycle11(ArmFixture):
         cp = _sp([sys.executable, str(SCRIPTS / "octo_pkg.py"),
                              "--brain", str(self.root), "verify", "--all", "--json"],
                             capture_output=True, text=True, timeout=180,
-                            env={**os.environ, "HOME": self._home or os.environ["HOME"]})
+                            env={**os.environ, "HOME": self._home or os.environ["HOME"], **_REAL_PROFILE_ENV})
         self.assertNotIn("Traceback", cp.stderr)
         payload = json.loads(cp.stdout.strip().splitlines()[-1])
         self.assertIn(os.fsdecode(b"stray\xff"), " ".join(payload["fail"]),
@@ -3991,7 +4002,7 @@ class TestNoChildWaitsForAHuman(SandboxCase):
         return subprocess.Popen(
             [sys.executable, "-c", prog], stdin=subprocess.PIPE,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            env={**os.environ, "HOME": self._home or os.environ["HOME"]})
+            env={**os.environ, "HOME": self._home or os.environ["HOME"], **_REAL_PROFILE_ENV})
 
     def _finish(self, proc, what: str) -> str:
         """Wait for a child, and FAIL by name if it is still waiting on a human."""
