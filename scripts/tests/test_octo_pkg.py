@@ -162,6 +162,20 @@ def _mode_000_denies() -> bool:
         shutil.rmtree(d, ignore_errors=True)
 
 
+def _process_groups_ok() -> bool:
+    """Whether this platform has the process groups proc_group kills.
+
+    The deadline's reach is the child's process GROUP: os.getpgid to read it,
+    os.killpg to kill it, SIGKILL so a trap cannot outlive it. Windows has none of
+    the three (measured on this Python: all three attributes absent), and there
+    proc_group falls back to killing the direct child and says so, by design. The
+    tests guarded by this assert the group behaviour itself: a grandchild found
+    dead by pgrep, a group id read before the kill, the guard against our own
+    group. Probed, not assumed."""
+    import signal
+    return all(hasattr(os, n) for n in ("getpgid", "killpg")) and hasattr(signal, "SIGKILL")
+
+
 def _fcntl_ok() -> bool:
     """Whether lock_held takes its POSIX branch here. The Windows branch already
     honoured its timeout; the test below is about the one that was ignoring it."""
@@ -4213,6 +4227,7 @@ class TestNoChildWaitsForAHuman(SandboxCase):
         self.assertEqual(cp.returncode, 0, (cp.stderr or b"").decode())
         self.assertIn(b"done", cp.stdout or b"")
 
+    @unittest.skipUnless(_process_groups_ok(), "no POSIX process groups (getpgid/killpg/SIGKILL) on this platform")
     def test_the_deadline_ends_the_whole_tree_not_just_the_child(self):
         """A timeout that reports a kill it did not perform is worse than no timeout:
         the caller believes the wedge is over and the process is still on the prompt.
@@ -4309,6 +4324,7 @@ class TestNoChildWaitsForAHuman(SandboxCase):
                 pass
         return alive
 
+    @unittest.skipUnless(_process_groups_ok(), "no POSIX process groups (getpgid/killpg/SIGKILL) on this platform")
     def test_the_installers_deadline_ends_the_whole_tree_too(self):
         """The installer is the spawner that clones over ssh, so it is the one where an
         orphaned grandchild matters most, and it had no grandchild test at all: the
@@ -4394,6 +4410,7 @@ class TestNoChildWaitsForAHuman(SandboxCase):
             "child was SIGKILLed and left unreaped, and a zombie still answers "
             f"killpg(group, 0). Message was {message!r}")
 
+    @unittest.skipUnless(_process_groups_ok(), "no POSIX process groups (getpgid/killpg/SIGKILL) on this platform")
     def test_the_kill_is_a_signal_a_child_cannot_ignore(self):
         """Which signal is not a detail: a shell that traps TERM outlives it and the
         call still reports a kill. Pinned with a child that traps exactly that."""
@@ -4517,6 +4534,7 @@ class TestNoChildWaitsForAHuman(SandboxCase):
             f"{text!r}, stderr {err.decode('utf-8', 'replace')[-200:]!r}")
         return text
 
+    @unittest.skipUnless(_process_groups_ok(), "no POSIX process groups (getpgid/killpg/SIGKILL) on this platform")
     def test_the_group_kill_refuses_to_kill_its_own_group(self):
         """The guard, tested from BOTH process states, because one of them cannot see it.
 
@@ -4559,6 +4577,7 @@ class TestNoChildWaitsForAHuman(SandboxCase):
                          "the two probes did not actually run in different process "
                          "states, so the pair proves no more than one of them would")
 
+    @unittest.skipUnless(_process_groups_ok(), "no POSIX process groups (getpgid/killpg/SIGKILL) on this platform")
     def test_a_clean_kill_says_nothing_about_leftovers(self):
         """A warning that fires on correct behaviour is worse than none, because it
         trains the reader to skip it.
@@ -4588,6 +4607,7 @@ class TestNoChildWaitsForAHuman(SandboxCase):
                          f"{noisy} of 8 clean kills warned about leftovers; the check "
                          f"is answering before the group has been reaped")
 
+    @unittest.skipUnless(_process_groups_ok(), "no POSIX process groups (getpgid/killpg/SIGKILL) on this platform")
     def test_the_leftover_warning_is_wired_to_the_check_and_reads_it_in_order(self):
         """The consumer of group_gone, which nothing anchored.
 
@@ -4627,6 +4647,7 @@ class TestNoChildWaitsForAHuman(SandboxCase):
                       "group_gone said the group was still alive and the caller said "
                       "nothing about it")
 
+    @unittest.skipUnless(_process_groups_ok(), "no POSIX process groups (getpgid/killpg/SIGKILL) on this platform")
     def test_a_group_with_a_live_member_is_not_reported_as_gone(self):
         """The survivor check, which decides whether a timeout warns or stays quiet.
 
@@ -4728,6 +4749,7 @@ class TestNoChildWaitsForAHuman(SandboxCase):
             "the escaper produced a warning: the docstring says such a survivor comes "
             "back as an ordinary timeout with nothing said, and it no longer does")
 
+    @unittest.skipUnless(_process_groups_ok(), "no POSIX process groups (getpgid/killpg/SIGKILL) on this platform")
     def test_an_unanswerable_group_check_does_not_become_a_warning(self):
         """The "do not cry wolf" clause of group_gone, which nothing anchored.
 
