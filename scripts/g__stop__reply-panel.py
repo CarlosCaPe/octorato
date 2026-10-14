@@ -37,8 +37,9 @@ THE DECISION (FR-03, checked in this order; the first that holds exits 0)
      verdict_ts is strictly newer than the operator prompt, and PASS receipts
      newer than the prompt come from at least QUORUM distinct reviewer agent
      ids: 3 for a SELF reply, 1 for a SOURCED one (FR-06). A reply is SOURCED
-     only when its last Provenance / Procedencia / Herkunft line has a Basis
-     field naming something other than SELF or own reasoning.
+     only when it has a Provenance / Procedencia / Herkunft line and EVERY
+     such line has a Basis that is not empty, not only none / n/a / -, and
+     contains neither `self` (any case, as a substring) nor own reasoning.
 Otherwise exit 2, stderr naming the source class, the quorum, the digest, the
 panel-request command and the
 accepted reviewer types. stop_hook_active changes nothing: no block-once.
@@ -340,21 +341,28 @@ QUORUM = {"SELF": 3, "SOURCED": 1}
 # markdown emphasis around the label are tolerated ("**Provenance:**").
 _PROVENANCE = re.compile(r"^[ \t>]*[*_]*(?:Provenance|Procedencia|Herkunft)[*_]*:(.*)$", re.MULTILINE)
 _BASIS = re.compile(r"(?:^|·|\|)\s*[*_]*Basis[*_]*\s*:\s*([^·|]*)", re.IGNORECASE)
-_SELF_BASIS = re.compile(r"(?<![\w-])self(?![\w-])|own reasoning|razonamiento propio|eigene Überlegung",
-                         re.IGNORECASE)
+# A plain case-insensitive substring: `myself`, `self-evident` and a path such
+# as `selftest.py` are SELF too. Over-matching costs two more reviewers, never
+# a weaker check.
+_SELF_BASIS = re.compile(r"self|own reasoning|razonamiento propio|eigene Überlegung", re.IGNORECASE)
+_NO_BASIS = {"none", "n/a", "-"}
+
+
+def _line_is_self(line: str) -> bool:
+    m = _BASIS.search(line.strip().lstrip("*_ "))
+    if not m:
+        return True
+    basis = m.group(1).strip().strip("*_ ")
+    return not basis or basis.lower() in _NO_BASIS or bool(_SELF_BASIS.search(basis))
 
 
 def source_class(text: str) -> str:
-    """SELF unless the LAST provenance line has a Basis field whose value
-    names something other than the model's own reasoning."""
+    """SELF when the reply has no provenance line or when ANY provenance line
+    is SELF (no Basis field, an empty Basis, a Basis of only none / n/a / -,
+    or a Basis containing self or own reasoning in EN, ES or DE). A later
+    SOURCED line, a code block included, never lifts an earlier SELF line."""
     lines = _PROVENANCE.findall(text or "")
-    if not lines:
-        return "SELF"
-    m = _BASIS.search(lines[-1].strip().lstrip("*_ "))
-    if not m:
-        return "SELF"
-    basis = m.group(1).strip().strip("*_ ")
-    if not basis or _SELF_BASIS.search(basis):
+    if not lines or any(_line_is_self(ln) for ln in lines):
         return "SELF"
     return "SOURCED"
 
@@ -408,8 +416,8 @@ def decide(data: dict) -> tuple:
         f"REPLY PANEL (FLOW.panel-before-reply): this reply is {cls} (source class) and "
         f"needs PASS receipts from {need} distinct reviewer(s) for its exact text, newer "
         f"than the operator's prompt, with a PASS deciding; it has {have} of {need}. "
-        f"A reply is SOURCED only when its last Provenance line has a Basis that names a "
-        f"source other than own reasoning. Digest: {digest}. "
+        f"A reply is SOURCED only when every Provenance line has a Basis that names a "
+        f"source other than self or own reasoning. Digest: {digest}. "
         f"Write the reply to a file, run `{_REQUEST_CMD}`, and hand that block to "
         f"{need} reviewer subagent(s) whose agent type matches "
         f"qa|review|reality|evidence|checker|verif|audit|panel (Reality Checker, Code "
