@@ -35,7 +35,7 @@ Every acceptance criterion names one of these components as its subject.
 - **Rule_Text**: the "Nothing ships unverified" section of `CLAUDE.md`, paragraph anchor "Reply panel".
 - **Doctor**: `scripts/brain_doctor.py`.
 - **Architecture_Doc**: `docs/architecture/v11-reply-panel.md`.
-- **Source_Class**: SELF or SOURCED, read from `last_assistant_message`. The reply is SELF when it has no provenance line (a line starting with `Provenance:`, `Procedencia:` or `Herkunft:`), when that line has no `Basis` field, or when the Basis field contains `SELF`, `own reasoning`, `razonamiento propio` or `eigene Überlegung` (case-insensitive). Otherwise it is SOURCED.
+- **Source_Class**: SELF or SOURCED, read from `last_assistant_message`. Every line starting with `Provenance:`, `Procedencia:` or `Herkunft:` (after optional leading blanks, `>` and `*`/`_` around the label) is a provenance line. The reply is SELF when it has no provenance line, when ANY provenance line has no `Basis` field, an empty Basis, or a Basis that is only `none`, `n/a` or `-`, or when ANY Basis contains, as a case-insensitive substring, `self`, `own reasoning`, `razonamiento propio` or `eigene Überlegung`. Otherwise it is SOURCED. A Basis naming a path that contains `self` (for example `selftest.py`) is therefore SELF: the cost is two more reviewers, never a weaker check.
 - **Panel_Quorum**: the number of distinct Panel_Reviewer agent ids that must each hold a PASS receipt for the Reply_Digest newer than the Operator_Prompt: 3 for a SELF reply, 1 for a SOURCED reply.
 
 ## User Stories
