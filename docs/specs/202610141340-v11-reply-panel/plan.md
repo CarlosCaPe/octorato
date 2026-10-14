@@ -45,3 +45,7 @@ The worktree is `~/.octorato/wt/v11-reply-panel`; the live `~/.claude` copy is n
 ## Convergence 4
 
 - [x] T23 [AC-20, AC-21] registry/fixtures/FLOW.panel-before-reply/: pin the two dash boundaries of the widened empty-Basis set: an en-dash-only Basis (`–`) is SELF and exits 2 on one reviewer (dropping the en dash from `_DASHES` passes the selftest today), and a Basis that starts with a dash but names a source (`- docs/a.md`) is SOURCED and exits 0 on one reviewer (removing the `^...$` anchors from `_DASHES` makes it SELF and also passes today).
+
+## Convergence 5
+
+- [x] T26 [AC-22] registry/fixtures/FLOW.panel-before-reply/: pin the three summary-anchor boundaries the selftest does not hold: a compact summary followed by a newer human prompt with a PASS receipt between the two (exit 2, the human prompt anchors; a mutation that anchors on the newest summary anywhere passes today), a compact summary without uuid or timestamp (exit 2, "no operator prompt"; dropping the `harness_entry` check passes today), and a summary-opened turn whose only panel `Agent` call precedes the summary plus a status line of at most 30 words (exit 2; returning an empty uuid for the summary, so `turn_after` reads the whole file, passes today).

@@ -11,7 +11,7 @@ Builder's record of what shipped and what was run. It is not a verdict: `sdd-con
 | Task | Files |
 |---|---|
 | T01-T04 | `scripts/g__stop__reply-panel.py` (new), `scripts/panel_fixture_seed.py` (`seed_reply_receipt`) |
-| T05 | `registry/fixtures/FLOW.panel-before-reply/` (83 cases: 61 `violation_*`, 22 `benign_*`, each with its transcript; 6 added by Convergence 1, 12 by FR-06, 11 by Convergence 2, 10 by Convergence 3, 2 by Convergence 4, 6 by QA 1) |
+| T05 | `registry/fixtures/FLOW.panel-before-reply/` (88 cases: 65 `violation_*`, 23 `benign_*`, each with its transcript; 6 added by Convergence 1, 12 by FR-06, 11 by Convergence 2, 10 by Convergence 3, 2 by Convergence 4, 6 by QA 1, 5 by Convergence 5) |
 | T06 | `registry/rules.yaml` (`FLOW.panel-before-reply`) |
 | T07 | `hooks.json` (Stop, timeout 20), `docs/CAPABILITIES.md` (regenerated) |
 | T08 | `scripts/brain_doctor.py` (`reply-panel-arm-env`) |
@@ -798,5 +798,141 @@ absent_is_empty: selftest exit 1 -> KILLED :: violation_ac10_payload_without_mes
 unknown_origin_skipped: selftest exit 1 -> KILLED :: violation_ac12_unknown_origin_ends_walk.json: exit 0, want 2 ()
 operator_opener_any: selftest exit 1 -> KILLED :: violation_ac07_skip_in_forged_human_entry.json: exit 0, want 2 ()
 31/31 mutations killed
+exit=0
+```
+
+## Convergence 5
+
+| Boundary | Fixtures | Mutation killed |
+|---|---|---|
+| (a) a stale summary deeper in history, then a newer human prompt: the prompt anchors | `violation_ac22_stale_summary_then_human_receipt_between` (PASS at 09:50, summary 09:40, prompt 10:00: exit 2), `benign_ac22_stale_summary_then_human_with_skip` (`panel-skip` in the prompt: exit 0) | `stale_summary_wins` |
+| (b) a summary without harness fields ends the walk | `violation_ac22_summary_without_uuid`, `violation_ac22_summary_without_timestamp` (each with a PASS newer than the summary; exit 2, "no operator prompt") | `harness_entry_check_dropped` |
+| (c) a panel call made before the compaction is not pending | `violation_ac22_panel_call_before_summary_status_line` (the only Agent call precedes the summary, then a status line under 30 words: exit 2) | `summary_uuid_empty` |
+
+No code change: all five fixtures passed against the gate as it stood. Status stays approved.
+
+```
+$ python3 scripts/g__stop__reply-panel.py --selftest registry/fixtures/FLOW.panel-before-reply
+selftest PASS: 65 block + 23 allow + 2 unit checks (g__stop__reply-panel.py vs FLOW.panel-before-reply)
+exit=0
+
+$ python3 scripts/g__pretool-mcp__outward-send.py --selftest registry/fixtures/FLOW.panel-before-send
+selftest PASS: 96 block + 34 allow (g__pretool-mcp__outward-send.py vs FLOW.panel-before-send)
+exit=0
+
+$ python3 scripts/r__posttool__sent-ledger.py --selftest registry/fixtures/FLOW.sent-message-ledger
+selftest PASS: 4 case(s) (r__posttool__sent-ledger.py vs FLOW.sent-message-ledger)
+exit=0
+
+$ python3 scripts/brain_doctor.py --registry
+  [PASS] ✓ registry-bootstrap          rules.yaml loads (92 rules); pre-push gate present
+  [PASS] ✓ registry-schema             rules.yaml valid vs schema
+  [PASS] ✓ registry-wiring             all 92 rules wired (disk + hooks.json)
+  [PASS] ✓ registry-anchors            all rule anchors present in their source file
+  [PASS] ✓ registry-coverage           Coverage 100% of CLAUDE.md anchors (43/43); 0 prose anchors unwired
+  [PASS] ✓ registry-anchor-ambiguity   every registered anchor maps to exactly one anchor line, unshadowed
+  [PASS] ✓ registry-failclosed         every gateable rule is fail-closed (zero left at model discretion)
+  [PASS] ✓ registry-gateable-coverage  every gate-shaped rule carries an explicit gateable flag
+  [PASS] ✓ registry-naming             26 grandfathered; new hook scripts follow the canonical scheme
+  [PASS] ✓ registry-orphans            all 52 live hooks claimed by a registry rule
+  [PASS] ✓ claude-md-budget            11,724 tokens (per-piece bound, ceiling 12,000); every section reads as English
+  11 passed, 0 warn, 0 fail
+exit=0
+
+$ python3 scripts/spec_lint.py docs/specs/202610141340-v11-reply-panel
+ok docs\specs\202610141340-v11-reply-panel\feature.md
+exit=0
+
+$ python3 -m unittest scripts/tests/test_reply_panel_arm_env.py -v
+test_listed_arm_that_sets_the_switch_is_named ... ok
+test_no_arms_file_scans_nothing ... ok
+test_unlisted_directory_is_not_scanned ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.035s
+
+OK
+exit=0
+
+$ python3 -m unittest scripts.tests.test_panel_receipt.PanelLedger -v
+test_anchor_check_that_raises_counts_as_not_standing ... ok
+test_malformed_digest_records_nothing ... ok
+test_newest_decides_and_revokes ... ok
+test_other_session_and_stale_never_count ... ok
+test_receipt_is_single_use ... ok
+test_reflex_records_anchored_panel_row ... ok
+test_reflex_refuses_stated_digest_that_does_not_recompute ... ok
+
+----------------------------------------------------------------------
+Ran 7 tests in 0.334s
+
+OK
+exit=0
+
+$ python3 -m unittest scripts/tests/test_tree_owner.py
+----------------------------------------------------------------------
+Ran 66 tests in 42.471s
+
+OK
+exit=0
+
+$ python3 scripts/cadence-lint.py --file docs/architecture/v11-reply-panel.md
+✓ cadence clean [docs\architecture\v11-reply-panel.md]
+exit=0
+$ python3 scripts/cadence-lint.py --file <CLAUDE.md "Reply panel" line, extracted>
+✓ cadence clean [<scratch>/para7.md]
+exit=0
+```
+
+Each T26 mutation, with every T26 fixture that fails under it:
+
+```
+$ python3 <scratch>/c5_targeted.py <worktree>   # every T26 fixture that fails under each T26 mutation
+stale_summary_wins: selftest exit 1; T26 fixtures failing: ['benign_ac22_stale_summary_then_human_with_skip.json', 'violation_ac22_stale_summary_then_human_receipt_between.json']
+harness_entry_check_dropped: selftest exit 1; T26 fixtures failing: ['violation_ac22_summary_without_timestamp.json', 'violation_ac22_summary_without_uuid.json']
+summary_uuid_empty: selftest exit 1; T26 fixtures failing: ['violation_ac22_panel_call_before_summary_status_line.json']
+all three killed by a T26 fixture
+exit=0
+```
+
+Mutations of the reply gate, each applied to a temp copy of `scripts/` and `registry/` (every set so far):
+
+```
+$ python3 <scratch>/mutate_c5.py <worktree>   # each mutation on a temp copy of scripts/ + registry/
+quorum_hardcoded_1: selftest exit 1 -> KILLED :: violation_ac18_self_de_eigene_ueberlegung.json: exit 0, want 2 ()
+distinct_id_dropped: selftest exit 1 -> KILLED :: violation_ac18_self_one_reviewer_recorded_three_times.json: exit 0, want 2 ()
+sourced_as_self: selftest exit 1 -> KILLED :: benign_ac01_whitespace_reflow.json: exit 2, want 0 (REPLY PANEL (FLOW.panel-before-reply): this reply is SELF (source class) and needs PASS receipts f
+missing_footer_as_sourced: selftest exit 1 -> KILLED :: violation_ac21_no_footer_is_self.json: exit 0, want 2 ()
+missing_basis_as_sourced: selftest exit 1 -> KILLED :: violation_ac21_no_basis_field_is_self.json: exit 0, want 2 ()
+deciding_receipt_ignored: selftest exit 1 -> KILLED :: violation_ac05_needs_work_newer_than_pass.json: exit 0, want 2 ()
+newer_filter_dropped: selftest exit 1 -> KILLED :: violation_ac18_self_three_one_pass_older_than_prompt.json: exit 0, want 2 ()
+pass_filter_dropped: selftest exit 1 -> KILLED :: violation_ac18_self_three_one_older_needs_work.json: exit 0, want 2 ()
+word_bounded_self: selftest exit 1 -> KILLED :: violation_ac21_basis_myself.json: exit 0, want 2 ()
+last_line_only: selftest exit 1 -> KILLED :: violation_ac21_self_line_then_sourced_line.json: exit 0, want 2 ()
+none_basis_sourced: selftest exit 1 -> KILLED :: violation_ac21_basis_dash.json: exit 0, want 2 ()
+first_line_only: selftest exit 1 -> KILLED :: violation_ac21_quoted_self_line_after_sourced_footer.json: exit 0, want 2 ()
+empty_basis_dropped: selftest exit 1 -> KILLED :: violation_ac21_basis_empty.json: exit 0, want 2 ()
+ignorecase_dropped: selftest exit 1 -> KILLED :: violation_ac21_basis_uppercase_self.json: exit 0, want 2 ()
+quote_tolerance_dropped: selftest exit 1 -> KILLED :: violation_ac21_quoted_self_line_after_sourced_footer.json: exit 0, want 2 ()
+trailing_punct_kept: selftest exit 1 -> KILLED :: violation_ac21_basis_none_period.json: exit 0, want 2 ()
+em_dash_dropped: selftest exit 1 -> KILLED :: violation_ac21_basis_em_dash.json: exit 0, want 2 ()
+hyphen_run_dropped: selftest exit 1 -> KILLED :: violation_ac21_basis_double_hyphen.json: exit 0, want 2 ()
+nothing_dropped: selftest exit 1 -> KILLED :: violation_ac21_basis_nothing.json: exit 0, want 2 ()
+na_dropped: selftest exit 1 -> KILLED :: violation_ac21_basis_uppercase_na.json: exit 0, want 2 ()
+ueberlegung_dropped: selftest exit 1 -> KILLED :: violation_ac21_basis_eigene_ueberlegung.json: exit 0, want 2 ()
+en_dash_dropped: selftest exit 1 -> KILLED :: violation_ac21_basis_en_dash_only.json: exit 0, want 2 ()
+dash_anchors_dropped: selftest exit 1 -> KILLED :: benign_ac20_basis_dash_then_source_one_reviewer.json: exit 2, want 0 (REPLY PANEL (FLOW.panel-before-reply): this reply is SELF (source class) and nee
+summary_skipped: selftest exit 1 -> KILLED :: violation_ac22_panel_call_before_summary_status_line.json: exit 0, want 2 ()
+summary_text_kept: selftest exit 1 -> KILLED :: violation_ac22_summary_text_skip_word_is_not_operator_words.json: exit 0, want 2 ()
+stale_summary_wins: selftest exit 1 -> KILLED :: violation_ac03_no_receipt.json: stderr lacks 'fc82b8eb6c9a8c1f99552ebfa9a8f4357905998fdda8b9040cdc4b1f78d36733'
+harness_entry_check_dropped: selftest exit 1 -> KILLED :: violation_ac22_summary_without_timestamp.json: stderr lacks 'no operator prompt'
+summary_uuid_empty: selftest exit 1 -> KILLED :: violation_ac22_panel_call_before_summary_status_line.json: exit 0, want 2 ()
+skip_also_in_msg: selftest exit 1 -> KILLED :: violation_ac07_skip_only_in_reply.json: exit 0, want 2 ()
+ledger_raise_swallowed: selftest exit 1 -> KILLED :: violation_ac09_ledger_raises.json: stderr lacks 'receipt ledger raised: TypeError'
+receipt_time_ge: selftest exit 1 -> KILLED :: violation_ac04_receipt_equal_to_prompt.json: exit 0, want 2 ()
+absent_is_empty: selftest exit 1 -> KILLED :: violation_ac10_payload_without_message.json: exit 0, want 2 ()
+unknown_origin_skipped: selftest exit 1 -> KILLED :: violation_ac12_unknown_origin_ends_walk.json: exit 0, want 2 ()
+operator_opener_any: selftest exit 1 -> KILLED :: violation_ac07_skip_in_forged_human_entry.json: exit 0, want 2 ()
+34/34 mutations killed
 exit=0
 ```
