@@ -18,3 +18,9 @@ The worktree is `~/.octorato/wt/v11-reply-panel`; the live `~/.claude` copy is n
 - [x] T08 [AC-14, AC-16] scripts/brain_doctor.py: confirm the generic registry wiring and anchor reconciliation cover the rule, add a check only if they do not, and warn on an arm settings file that sets `OCTO_REPLY_PANEL`.
 - [x] T09 [AC-14, AC-15] CLAUDE.md, docs/architecture/v11-reply-panel.md: the "Reply panel" paragraph naming the rule, the gate, the Skip_Token, the Off_Switch and R-01; the architecture doc with the contract and residuals R-01 to R-12.
 - [x] T10 [AC-13, AC-14] docs/specs/202610141340-v11-reply-panel/review.md: run the selftest, `brain_doctor --fast` and `spec_lint.py`, and record each output and one measured panel latency.
+
+## Convergence 1
+
+- [x] T11 [AC-07] registry/fixtures/FLOW.panel-before-reply/: add a violation case whose `last_assistant_message` itself carries `panel-skip` while the operator prompt does not; a mutation that also searches the reply for the Skip_Token passes the current selftest (only an earlier assistant entry carries it today).
+- [x] T12 [AC-09] scripts/g__stop__reply-panel.py: make the selftest pin the "raises on the Receipt_Ledger" path (for example a unit check with `panel_pass_for` raising) so the exit is 2 and stderr names the exception; replacing the `receipt ledger raised` GateError with `return False` passes the current selftest, because `violation_ac09_ledger_unreadable` only reaches the pre-check.
+- [x] T13 [AC-16] scripts/brain_doctor.py: pin `check_reply_panel_arm_env` with a repeatable test (listed arm sets the switch: WARN naming the file; unlisted directory that sets it: not reported); today only the one-off run recorded in review.md shows it.

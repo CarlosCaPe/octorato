@@ -11,7 +11,7 @@ Builder's record of what shipped and what was run. It is not a verdict: `sdd-con
 | Task | Files |
 |---|---|
 | T01-T04 | `scripts/g__stop__reply-panel.py` (new), `scripts/panel_fixture_seed.py` (`seed_reply_receipt`) |
-| T05 | `registry/fixtures/FLOW.panel-before-reply/` (36 cases: 23 `violation_*`, 13 `benign_*`, each with its transcript) |
+| T05 | `registry/fixtures/FLOW.panel-before-reply/` (42 cases: 29 `violation_*`, 13 `benign_*`, each with its transcript; 6 added by Convergence 1) |
 | T06 | `registry/rules.yaml` (`FLOW.panel-before-reply`) |
 | T07 | `hooks.json` (Stop, timeout 20), `docs/CAPABILITIES.md` (regenerated) |
 | T08 | `scripts/brain_doctor.py` (`reply-panel-arm-env`) |
@@ -171,3 +171,74 @@ One measured run, 2026-10-14: a Reality Checker subagent (background) reviewing 
 
 - No push, no PR, no merge (out of the builder's scope). The live copy does not run the gate until the branch is merged and `ai-pull` syncs it.
 - The Stop-hook behaviour inside a real Claude Code session was not exercised: the gate is proven on fixtures shaped from the measured transcript fields, not on a live stop.
+
+## Convergence 1 (T11 to T13 and the operator decisions)
+
+| Item | Change | Proof |
+|---|---|---|
+| T11 [AC-07] | none in the gate; new fixture | `violation_ac07_skip_only_in_reply`; mutation `skip_also_in_msg` killed |
+| T12 [AC-09] | `_fixture` receipts take `corrupt_report`, which makes `receipt_ledger.report_at` raise TypeError past the readability check | `violation_ac09_ledger_raises` asserts stderr `receipt ledger raised: TypeError`; mutation `ledger_raise_swallowed` killed |
+| T13 [AC-16] | `scripts/tests/test_reply_panel_arm_env.py` (3 tests, temp HOME, `brain_doctor.HOME` patched) | unittest output below |
+| (a) absent reply key | exit 2, "payload has no last_assistant_message"; empty string still exits 0; a non-string value also exits 2 | `violation_ac10_payload_without_message`, `benign_ac10_empty_message`; mutation `absent_is_empty` killed |
+| (b) unknown origin kind | ends the walk with no prompt (exit 2) | `violation_ac12_unknown_origin_ends_walk`; mutation `unknown_origin_skipped` killed |
+| (c) strictly newer | receipt `verdict_ts` equal to the prompt's exits 2 | `violation_ac04_receipt_equal_to_prompt`; mutation `receipt_time_ge` killed |
+| extra | a mutation run by the converge (`operator_opener_any`, accept any human-kind entry) survived; new fixture with the skip word in a human entry missing its `uuid` | `violation_ac07_skip_in_forged_human_entry`; mutation killed |
+| R-11 | feature.md and the architecture doc add that a spent id re-exempts a second status stop in the same operator turn while `stop_hook_active` is true | text |
+
+```
+$ python3 scripts/g__stop__reply-panel.py --selftest registry/fixtures/FLOW.panel-before-reply
+selftest PASS: 29 block + 13 allow + 2 unit checks (g__stop__reply-panel.py vs FLOW.panel-before-reply)
+exit=0
+
+$ python3 scripts/g__pretool-mcp__outward-send.py --selftest registry/fixtures/FLOW.panel-before-send
+selftest PASS: 96 block + 34 allow (g__pretool-mcp__outward-send.py vs FLOW.panel-before-send)
+exit=0
+
+$ python3 scripts/brain_doctor.py --registry
+  [PASS] ✓ registry-bootstrap          rules.yaml loads (92 rules); pre-push gate present
+  [PASS] ✓ registry-schema             rules.yaml valid vs schema
+  [PASS] ✓ registry-wiring             all 92 rules wired (disk + hooks.json)
+  [PASS] ✓ registry-anchors            all rule anchors present in their source file
+  [PASS] ✓ registry-coverage           Coverage 100% of CLAUDE.md anchors (43/43); 0 prose anchors unwired
+  [PASS] ✓ registry-anchor-ambiguity   every registered anchor maps to exactly one anchor line, unshadowed
+  [PASS] ✓ registry-failclosed         every gateable rule is fail-closed (zero left at model discretion)
+  [PASS] ✓ registry-gateable-coverage  every gate-shaped rule carries an explicit gateable flag
+  [PASS] ✓ registry-naming             26 grandfathered; new hook scripts follow the canonical scheme
+  [PASS] ✓ registry-orphans            all 52 live hooks claimed by a registry rule
+  [PASS] ✓ claude-md-budget            11,702 tokens (per-piece bound, ceiling 12,000); every section reads as English
+  11 passed, 0 warn, 0 fail
+exit=0
+
+$ python3 scripts/spec_lint.py docs/specs/202610141340-v11-reply-panel
+ok docs\specs\202610141340-v11-reply-panel\feature.md
+exit=0
+
+$ python3 -m unittest scripts/tests/test_reply_panel_arm_env.py -v
+test_listed_arm_that_sets_the_switch_is_named ... ok
+test_no_arms_file_scans_nothing ... ok
+test_unlisted_directory_is_not_scanned ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.046s
+
+OK
+exit=0
+
+$ python3 scripts/cadence-lint.py --file docs/architecture/v11-reply-panel.md
+✓ cadence clean [docs\architecture\v11-reply-panel.md]
+exit=0
+```
+
+Mutations, each applied to a temp copy of `scripts/` and `registry/`, never to the worktree:
+
+```
+$ python3 <scratch>/mutate_c1.py <worktree>   # each mutation on a temp copy of scripts/ + registry/
+skip_also_in_msg: selftest exit 1 -> KILLED :: violation_ac07_skip_only_in_reply.json: exit 0, want 2 ()
+ledger_raise_swallowed: selftest exit 1 -> KILLED :: violation_ac09_ledger_raises.json: stderr lacks 'receipt ledger raised: TypeError'
+receipt_time_ge: selftest exit 1 -> KILLED :: violation_ac04_receipt_equal_to_prompt.json: exit 0, want 2 ()
+absent_is_empty: selftest exit 1 -> KILLED :: violation_ac10_payload_without_message.json: exit 0, want 2 ()
+unknown_origin_skipped: selftest exit 1 -> KILLED :: violation_ac12_unknown_origin_ends_walk.json: exit 0, want 2 ()
+operator_opener_any: selftest exit 1 -> KILLED :: violation_ac07_skip_in_forged_human_entry.json: exit 0, want 2 ()
+6/6 mutations killed
+exit=0
+```
