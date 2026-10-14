@@ -21,6 +21,8 @@ The worktree is `~/.octorato/wt/v11-reply-panel`; the live `~/.claude` copy is n
 - [x] T14 [AC-18, AC-19, AC-20, AC-21] scripts/g__stop__reply-panel.py, scripts/receipt_ledger.py: read the Source_Class from `last_assistant_message`, and count distinct PASS reviewers through a new `receipt_ledger` reader built from the same validation `panel_latest_for` applies (refactor, no copy; `panel_pass_for` and the send gate keep their behaviour).
 - [x] T15 [AC-18, AC-19, AC-20, AC-21] registry/fixtures/FLOW.panel-before-reply/: SELF with 1 and 2 reviewers (exit 2), SELF with 3 (exit 0), SELF with 3 where the deciding receipt is NEEDS-WORK (exit 2), SOURCED with 1 (exit 0), footer missing and Basis missing (classified SELF).
 - [x] T16 [AC-15] docs/architecture/v11-reply-panel.md, CLAUDE.md: the quorum rule and residual R-13; keep CLAUDE.md under its token ceiling.
+- [ ] T24 [AC-22] scripts/g__stop__reply-panel.py, registry/fixtures/FLOW.panel-before-reply/: anchor the Prompt_Reader on a compact summary when no human entry precedes it, with fixtures for a summary-opened transcript (PASS newer than the summary: exit 0; no receipt: exit 2; a status line with a Pending_Panel: exit 0), and correct the architecture doc's recovery sentence.
+- [ ] T25 [AC-13] scripts/tests/test_tree_owner.py: restore a single-quoted `sh -c` body and a single-quoted nested `bash -c` body as regression cases, built from a path that needs no quoting so they stay single-quoted on every OS.
 
 ## Convergence 1
 

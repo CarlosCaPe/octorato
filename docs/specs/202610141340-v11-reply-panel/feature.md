@@ -26,7 +26,7 @@ Every acceptance criterion names one of these components as its subject.
 - **Panel_Reviewer**: a reviewer subagent whose agent type matches `receipt_ledger.PANEL_AGENT_TYPE` (QA set plus `panel`; general-purpose, claude and fork do not match).
 - **Receipt_Ledger**: `scripts/receipt_ledger.py`, read through `panel_pass_for`.
 - **Prompt_Reader**: a reader of the session transcript that walks backwards from the newest entry, skipping task notifications, peer messages and hand-backs, compact summaries and `isMeta` entries (Stop-hook feedback, hook-injected text), and returns the text and timestamp of the newest entry whose `origin.kind` is `human` (or that has no origin and is none of the skipped kinds). It reuses the backward reader and origin helpers of `g__pretool-mcp__outward-send.py`; it does not copy them.
-- **Operator_Prompt**: what the Prompt_Reader returns.
+- **Operator_Prompt**: what the Prompt_Reader returns. When the walk reaches a compact summary (`isCompactSummary: true`) before any human entry, the turn was opened by a context continuation and has no operator words: the Operator_Prompt is then that compact summary, with empty text (so it carries no Skip_Token) and the summary's own timestamp as the newer-than bound.
 - **Skip_Token**: the literal word `panel-skip` inside the Operator_Prompt.
 - **Pending_Panel**: an `Agent` tool use in the current turn, after the Operator_Prompt, whose `subagent_type` matches `PANEL_AGENT_TYPE` and whose `input.prompt` carries a panel block (`PANEL-TO: operator`, `PANEL-BODY-BEGIN` ... `PANEL-BODY-END`) that `panel_digest.recompute_from_report` accepts, and which has not completed. It completes when a task notification naming its tool use id arrives, or when its own `tool_result` arrives and that entry's `toolUseResult.isAsync` is not true (an entry with `isAsync: true` is the background-launch acknowledgment, not a completion). Each Pending_Panel exempts at most one stop chain: the Reply_Gate records the tool use id it spent in `~/.claude/.cache/receipts/reply-pending.jsonl`, and a spent id still exempts while `stop_hook_active` is true, because another Stop gate running in parallel may have blocked the same stop. A failed write to that file is an FR-04 error and exits 2.
 - **Status_Cap**: 30 words, counted on whitespace-split `last_assistant_message`.
@@ -99,6 +99,7 @@ The rule `FLOW.panel-before-reply` is registered in the Rule_Registry with stren
 - [ ] AC-19: WHEN the reply is SELF and 3 distinct Panel_Reviewer agent ids hold such PASS receipts and the deciding receipt is PASS, THE Reply_Gate SHALL exit 0.
 - [ ] AC-20: WHEN the reply is SOURCED and one PASS receipt meets FR-02, THE Reply_Gate SHALL exit 0.
 - [ ] AC-21: IF the reply has no provenance line or no Basis field, THEN THE Reply_Gate SHALL classify it as SELF.
+- [ ] AC-22: WHEN the newest human-or-summary entry behind the turn is a compact summary, THE Reply_Gate SHALL anchor FR-02 on the summary's timestamp, SHALL exit 0 for a reply that holds a PASS receipt newer than it and SHALL exit 2 for a reply that holds none.
 - [ ] AC-15: THE Architecture_Doc SHALL list residuals R-01 to R-13 with their source.
 
 ## Residuals
