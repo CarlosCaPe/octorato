@@ -588,6 +588,11 @@ class TestQaCycle2(SandboxCase):
         shutil.copytree(FIXTURE / "signed", repo / "skills" / "pdf")
         run = lambda *c: _sp(c, check=True, capture_output=True)
         run("git", "init", "-q", "-b", branch, str(repo))
+        # The installer checks out with core.autocrlf=false, so the repo must commit
+        # the bytes the test hashed. Under a machine-wide autocrlf=true (the Git for
+        # Windows default) `add` stored LF for the CRLF that write_text puts on disk
+        # there, and the install refused the pinned tree as a tree_sha256 mismatch.
+        run("git", "-C", str(repo), "config", "core.autocrlf", "false")
         run("git", "-C", str(repo), "add", "-A")
         run("git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t",
             "commit", "-q", "-m", "seed")
