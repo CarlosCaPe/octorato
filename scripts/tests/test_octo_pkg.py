@@ -110,6 +110,23 @@ def _bytes_names_ok() -> bool:
         shutil.rmtree(d, ignore_errors=True)
 
 
+def _exec_bit_ok() -> bool:
+    """Whether chmod can set the owner execute bit that tree_sha256 hashes.
+
+    False on Windows, measured: after os.chmod(f, 0o755) a .txt file stats as
+    0o100666. chmod there only toggles the read-only attribute and st_mode's x
+    bits come from the file extension, so the material change these tests make
+    cannot be made. Probed, not assumed."""
+    d = tempfile.mkdtemp(prefix="octo-exec-probe-")
+    try:
+        f = os.path.join(d, "probe.txt")
+        open(f, "w").close()
+        os.chmod(f, 0o755)
+        return bool(os.stat(f).st_mode & 0o100)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def _fcntl_ok() -> bool:
     """Whether lock_held takes its POSIX branch here. The Windows branch already
     honoured its timeout; the test below is about the one that was ignoring it."""
@@ -1108,6 +1125,7 @@ class TestQaCycle3(SandboxCase):
 
     # -- F3 ---------------------------------------------------------------
     @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    @unittest.skipUnless(_exec_bit_ok(), "chmod cannot set the owner execute bit on this platform")
     def test_f3_chmod_x_changes_the_tree_hash_and_turns_verify_fail(self):
         """A shipped script silently becoming executable is a material change to code
         that sits in the always-on discovery path."""
@@ -1121,6 +1139,7 @@ class TestQaCycle3(SandboxCase):
         self.assertEqual(octo_pkg.main(["--brain", str(self.root), "verify", "--all"]), 0,
                          "and dropping the bit again restores the original hash")
 
+    @unittest.skipUnless(_exec_bit_ok(), "chmod cannot set the owner execute bit on this platform")
     def test_f3_only_the_owner_execute_bit_moves_the_hash(self):
         """Group and other bits are properties of the copy and of the publisher's
         umask, not of the package. Hashing them would make the same bytes hash
