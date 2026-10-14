@@ -3,7 +3,7 @@
   "hook_event_name": "Stop",
   "cwd": "/home/user",
   "stop_hook_active": false,
-  "last_assistant_message": "The migration ran on the staging copy and the row counts match the source table. Two warnings remain, both about deprecated flags, and neither blocks the release. The rollback script is untested.",
+  "last_assistant_message": "The migration ran on the staging copy and the row counts match the source table. Two warnings remain, both about deprecated flags, and neither blocks the release. The rollback script is untested.\n\nProvenance: Basis: migration.log, row_counts.csv \u00b7 Engine: main loop",
   "transcript_path": "violation_ac05_needs_work_newer_than_pass_transcript.jsonl",
   "_fixture": {
     "receipts": [

@@ -32,10 +32,15 @@ THE DECISION (FR-03, checked in this order; the first that holds exits 0)
      toolUseResult.isAsync is not true). Each one exempts ONE stop chain: its
      id is recorded in ~/.claude/.cache/receipts/reply-pending.jsonl, and a
      recorded id still exempts while stop_hook_active is true.
-  5. receipt_ledger.panel_pass_for(digest(reply, recipients=["operator"]),
-     session) returns a PASS whose verdict_ts is strictly newer than the
-     operator prompt.
-Otherwise exit 2, stderr naming the digest, the panel-request command and the
+  5. For digest(reply, recipients=["operator"]) in this session, the deciding
+     receipt (receipt_ledger.panel_receipts_for, first entry) is a PASS whose
+     verdict_ts is strictly newer than the operator prompt, and PASS receipts
+     newer than the prompt come from at least QUORUM distinct reviewer agent
+     ids: 3 for a SELF reply, 1 for a SOURCED one (FR-06). A reply is SOURCED
+     only when its last Provenance / Procedencia / Herkunft line has a Basis
+     field naming something other than SELF or own reasoning.
+Otherwise exit 2, stderr naming the source class, the quorum, the digest, the
+panel-request command and the
 accepted reviewer types. stop_hook_active changes nothing: no block-once.
 
 THE OPERATOR PROMPT
@@ -295,7 +300,11 @@ def _now(ctx, newest_ts: str):
     return datetime.now(timezone.utc)
 
 
-def receipt_after(ctx, digest: str, session_id: str, prompt_ts: str, now) -> bool:
+def pass_reviewers(ctx, digest: str, session_id: str, prompt_ts: str, now) -> int:
+    """Distinct reviewer agent ids holding a PASS for `digest` newer than the
+    operator prompt, or 0 when the deciding receipt is missing, is not a PASS,
+    or is not newer than the prompt (FR-02, FR-06). Every receipt is validated
+    by receipt_ledger.panel_receipts_for, the reader panel_latest_for uses."""
     g = ctx.rl.global_path()
     if g.exists():
         if not g.is_file():
@@ -306,13 +315,48 @@ def receipt_after(ctx, digest: str, session_id: str, prompt_ts: str, now) -> boo
         except OSError as e:
             raise GateError(f"receipt ledger unreadable: {g} ({type(e).__name__})")
     try:
-        r = ctx.rl.panel_pass_for(digest, session_id, now)
+        got = ctx.rl.panel_receipts_for(digest, session_id, now)
     except Exception as e:
         raise GateError(f"receipt ledger raised: {type(e).__name__}: {e}")
-    if not r:
-        return False
-    when, after = ctx.send._ts(r.get("verdict_ts")), ctx.send._ts(prompt_ts)
-    return when is not None and after is not None and when > after
+    after = ctx.send._ts(prompt_ts)
+    if not got or after is None:
+        return 0
+
+    def newer(r) -> bool:
+        when = ctx.send._ts(r.get("verdict_ts"))
+        return when is not None and when > after
+
+    if got[0].get("verdict") != "PASS" or not newer(got[0]):
+        return 0
+    return len({str(r.get("agent_id") or "") for r in got
+                if r.get("verdict") == "PASS" and newer(r) and r.get("agent_id")})
+
+
+# ---------------------------------------------------------------------------
+# Source_Class (FR-06)
+# ---------------------------------------------------------------------------
+QUORUM = {"SELF": 3, "SOURCED": 1}
+# A line that starts with the label; leading blanks, a quote marker and
+# markdown emphasis around the label are tolerated ("**Provenance:**").
+_PROVENANCE = re.compile(r"^[ \t>]*[*_]*(?:Provenance|Procedencia|Herkunft)[*_]*:(.*)$", re.MULTILINE)
+_BASIS = re.compile(r"(?:^|·|\|)\s*[*_]*Basis[*_]*\s*:\s*([^·|]*)", re.IGNORECASE)
+_SELF_BASIS = re.compile(r"(?<![\w-])self(?![\w-])|own reasoning|razonamiento propio|eigene Überlegung",
+                         re.IGNORECASE)
+
+
+def source_class(text: str) -> str:
+    """SELF unless the LAST provenance line has a Basis field whose value
+    names something other than the model's own reasoning."""
+    lines = _PROVENANCE.findall(text or "")
+    if not lines:
+        return "SELF"
+    m = _BASIS.search(lines[-1].strip().lstrip("*_ "))
+    if not m:
+        return "SELF"
+    basis = m.group(1).strip().strip("*_ ")
+    if not basis or _SELF_BASIS.search(basis):
+        return "SELF"
+    return "SOURCED"
 
 
 # ---------------------------------------------------------------------------
@@ -355,17 +399,23 @@ def decide(data: dict) -> tuple:
                 spend(ctx, fresh[-1], session_id)
                 return 0, ""
     digest = ctx.pd.digest(msg, recipients=["operator"])
-    if receipt_after(ctx, digest, session_id, prompt["ts"], _now(ctx, newest)):
+    cls = source_class(msg)
+    need = QUORUM[cls]
+    have = pass_reviewers(ctx, digest, session_id, prompt["ts"], _now(ctx, newest))
+    if have >= need:
         return 0, ""
     return 2, (
-        f"REPLY PANEL (FLOW.panel-before-reply): this reply has no PASS panel receipt "
-        f"for its exact text, newer than the operator's prompt. Digest: {digest}. "
-        f"Write the reply to a file, run `{_REQUEST_CMD}`, and hand that block to a "
-        f"reviewer subagent whose agent type matches "
+        f"REPLY PANEL (FLOW.panel-before-reply): this reply is {cls} (source class) and "
+        f"needs PASS receipts from {need} distinct reviewer(s) for its exact text, newer "
+        f"than the operator's prompt, with a PASS deciding; it has {have} of {need}. "
+        f"A reply is SOURCED only when its last Provenance line has a Basis that names a "
+        f"source other than own reasoning. Digest: {digest}. "
+        f"Write the reply to a file, run `{_REQUEST_CMD}`, and hand that block to "
+        f"{need} reviewer subagent(s) whose agent type matches "
         f"qa|review|reality|evidence|checker|verif|audit|panel (Reality Checker, Code "
         f"Reviewer, Evidence Collector; general-purpose, claude and fork do not count). "
-        f"The reviewer ends its report with the block, PANEL-VERDICT and PANEL-SHA256. "
-        f"Then emit exactly the reviewed text. While the reviewer runs, a status line of "
+        f"Each reviewer ends its report with the block, PANEL-VERDICT and PANEL-SHA256. "
+        f"Then emit exactly the reviewed text. While a reviewer runs, a status line of "
         f"at most {STATUS_CAP} words may end the turn."
     )
 
@@ -428,6 +478,12 @@ def _seed_case(sandbox: Path, session: str, msg: str, fx: dict) -> None:
         panel_fixture_seed.seed_reply_receipt(
             sandbox, session, r.get("text", msg), r["verdict"], r["ts"], agent_id,
             r.get("agent_type", "Reality Checker"))
+        if int(r.get("ledger_copies", 1)) > 1:
+            # The same reviewer's row recorded several times: still one reviewer.
+            ledger = sandbox / ".claude" / ".cache" / "receipts" / "global.jsonl"
+            last = ledger.read_text(encoding="utf-8").splitlines()[-1]
+            with ledger.open("a", encoding="utf-8") as fh:
+                fh.write((last + "\n") * (int(r["ledger_copies"]) - 1))
         if r.get("corrupt_report"):
             # A text block whose text is not a string: the ledger's own report
             # reader raises TypeError on it, past the gate's readability check.
