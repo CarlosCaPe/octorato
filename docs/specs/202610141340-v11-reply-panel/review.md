@@ -11,7 +11,7 @@ Builder's record of what shipped and what was run. It is not a verdict: `sdd-con
 | Task | Files |
 |---|---|
 | T01-T04 | `scripts/g__stop__reply-panel.py` (new), `scripts/panel_fixture_seed.py` (`seed_reply_receipt`) |
-| T05 | `registry/fixtures/FLOW.panel-before-reply/` (42 cases: 29 `violation_*`, 13 `benign_*`, each with its transcript; 6 added by Convergence 1) |
+| T05 | `registry/fixtures/FLOW.panel-before-reply/` (54 cases: 37 `violation_*`, 17 `benign_*`, each with its transcript; 6 added by Convergence 1, 12 by FR-06) |
 | T06 | `registry/rules.yaml` (`FLOW.panel-before-reply`) |
 | T07 | `hooks.json` (Stop, timeout 20), `docs/CAPABILITIES.md` (regenerated) |
 | T08 | `scripts/brain_doctor.py` (`reply-panel-arm-env`) |
@@ -240,5 +240,89 @@ absent_is_empty: selftest exit 1 -> KILLED :: violation_ac10_payload_without_mes
 unknown_origin_skipped: selftest exit 1 -> KILLED :: violation_ac12_unknown_origin_ends_walk.json: exit 0, want 2 ()
 operator_opener_any: selftest exit 1 -> KILLED :: violation_ac07_skip_in_forged_human_entry.json: exit 0, want 2 ()
 6/6 mutations killed
+exit=0
+```
+
+## FR-06
+
+| Task | Change | Proof |
+|---|---|---|
+| T14 | `receipt_ledger.panel_receipts_for` holds the per-receipt validation and returns every validated receipt, deciding first; `panel_latest_for` returns its first entry. The gate reads the Source_Class from the last Provenance / Procedencia / Herkunft line and counts distinct PASS reviewer agent ids newer than the prompt, with a PASS deciding. stderr names the class and "it has N of Q". | send gate selftest unchanged at 96 block + 34 allow |
+| T15 | 12 fixtures; the 42 earlier cases now carry a sourced footer (`Basis: migration.log, row_counts.csv`), since they test other criteria. | see the AC table below |
+| T16 | Architecture doc: the quorum rule, how the class is read, R-13. CLAUDE.md "Reply panel" bullet names the quorum; claude-md-budget 11,724 of 12,000. | cadence-lint and doctor below |
+
+| AC | Fixtures |
+|---|---|
+| AC-18 | `violation_ac18_self_one_reviewer`, `violation_ac18_self_two_reviewers`, `violation_ac18_self_one_reviewer_recorded_three_times` (one reviewer, three ledger rows), `violation_ac18_self_es_razonamiento_propio`, `violation_ac18_self_de_eigene_ueberlegung`; stderr asserts "is SELF (source class)", "from 3 distinct reviewer(s)", "it has N of 3", and lacks `panel-skip` |
+| AC-19 | `benign_ac19_self_three_reviewers`; `violation_ac19_self_three_but_needs_work_decides` (a NEEDS-WORK newer than the three PASS) |
+| AC-20 | `benign_ac20_sourced_one_reviewer`, `benign_ac20_sourced_bold_label_one_reviewer` |
+| AC-21 | `violation_ac21_no_footer_is_self`, `violation_ac21_no_basis_field_is_self`; `benign_ac21_no_footer_three_reviewers` |
+
+`scripts/tests/test_panel_receipt.py` (the ledger's own tests) gives 43 tests, 1 failure and 2 errors, all in `BridgeArgs` (bash word splitting and `~` expansion of the support-bridge reader on this Windows host). The same three fail with HEAD's `receipt_ledger.py` and gate restored in a temp copy, so they predate this change and touch no panel reader.
+
+```
+$ python3 scripts/g__stop__reply-panel.py --selftest registry/fixtures/FLOW.panel-before-reply
+selftest PASS: 37 block + 17 allow + 2 unit checks (g__stop__reply-panel.py vs FLOW.panel-before-reply)
+exit=0
+
+$ python3 scripts/g__pretool-mcp__outward-send.py --selftest registry/fixtures/FLOW.panel-before-send
+selftest PASS: 96 block + 34 allow (g__pretool-mcp__outward-send.py vs FLOW.panel-before-send)
+exit=0
+
+$ python3 scripts/brain_doctor.py --registry
+  [PASS] ✓ registry-bootstrap          rules.yaml loads (92 rules); pre-push gate present
+  [PASS] ✓ registry-schema             rules.yaml valid vs schema
+  [PASS] ✓ registry-wiring             all 92 rules wired (disk + hooks.json)
+  [PASS] ✓ registry-anchors            all rule anchors present in their source file
+  [PASS] ✓ registry-coverage           Coverage 100% of CLAUDE.md anchors (43/43); 0 prose anchors unwired
+  [PASS] ✓ registry-anchor-ambiguity   every registered anchor maps to exactly one anchor line, unshadowed
+  [PASS] ✓ registry-failclosed         every gateable rule is fail-closed (zero left at model discretion)
+  [PASS] ✓ registry-gateable-coverage  every gate-shaped rule carries an explicit gateable flag
+  [PASS] ✓ registry-naming             26 grandfathered; new hook scripts follow the canonical scheme
+  [PASS] ✓ registry-orphans            all 52 live hooks claimed by a registry rule
+  [PASS] ✓ claude-md-budget            11,724 tokens (per-piece bound, ceiling 12,000); every section reads as English
+  11 passed, 0 warn, 0 fail
+exit=0
+
+$ python3 scripts/spec_lint.py docs/specs/202610141340-v11-reply-panel
+ok docs\specs\202610141340-v11-reply-panel\feature.md
+exit=0
+
+$ python3 -m unittest scripts/tests/test_reply_panel_arm_env.py -v
+test_listed_arm_that_sets_the_switch_is_named ... ok
+test_no_arms_file_scans_nothing ... ok
+test_unlisted_directory_is_not_scanned ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.047s
+
+OK
+exit=0
+
+$ python3 scripts/cadence-lint.py --file docs/architecture/v11-reply-panel.md
+✓ cadence clean [docs\architecture\v11-reply-panel.md]
+exit=0
+$ python3 scripts/cadence-lint.py --file <CLAUDE.md "Reply panel" line, extracted>
+✓ cadence clean [<scratch>/para2.md]
+exit=0
+```
+
+Mutations, each applied to a temp copy of `scripts/` and `registry/`; the four the coordinator named first, then the Convergence 1 set re-checked on the refactored code:
+
+```
+$ python3 <scratch>/mutate_fr06.py <worktree>   # each mutation on a temp copy of scripts/ + registry/
+quorum_hardcoded_1: selftest exit 1 -> KILLED :: violation_ac18_self_de_eigene_ueberlegung.json: exit 0, want 2 ()
+distinct_id_dropped: selftest exit 1 -> KILLED :: violation_ac18_self_one_reviewer_recorded_three_times.json: exit 0, want 2 ()
+sourced_as_self: selftest exit 1 -> KILLED :: benign_ac01_whitespace_reflow.json: exit 2, want 0 (REPLY PANEL (FLOW.panel-before-reply): this reply is SELF (source class) and needs PASS receipts f
+missing_footer_as_sourced: selftest exit 1 -> KILLED :: violation_ac21_no_footer_is_self.json: exit 0, want 2 ()
+missing_basis_as_sourced: selftest exit 1 -> KILLED :: violation_ac21_no_basis_field_is_self.json: exit 0, want 2 ()
+deciding_receipt_ignored: selftest exit 1 -> KILLED :: violation_ac05_needs_work_newer_than_pass.json: exit 0, want 2 ()
+skip_also_in_msg: selftest exit 1 -> KILLED :: violation_ac07_skip_only_in_reply.json: exit 0, want 2 ()
+ledger_raise_swallowed: selftest exit 1 -> KILLED :: violation_ac09_ledger_raises.json: stderr lacks 'receipt ledger raised: TypeError'
+receipt_time_ge: selftest exit 1 -> KILLED :: violation_ac04_receipt_equal_to_prompt.json: exit 0, want 2 ()
+absent_is_empty: selftest exit 1 -> KILLED :: violation_ac10_payload_without_message.json: exit 0, want 2 ()
+unknown_origin_skipped: selftest exit 1 -> KILLED :: violation_ac12_unknown_origin_ends_walk.json: exit 0, want 2 ()
+operator_opener_any: selftest exit 1 -> KILLED :: violation_ac07_skip_in_forged_human_entry.json: exit 0, want 2 ()
+12/12 mutations killed
 exit=0
 ```

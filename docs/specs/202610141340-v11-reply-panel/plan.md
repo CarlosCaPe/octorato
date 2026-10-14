@@ -18,9 +18,9 @@ The worktree is `~/.octorato/wt/v11-reply-panel`; the live `~/.claude` copy is n
 - [x] T08 [AC-14, AC-16] scripts/brain_doctor.py: confirm the generic registry wiring and anchor reconciliation cover the rule, add a check only if they do not, and warn on an arm settings file that sets `OCTO_REPLY_PANEL`.
 - [x] T09 [AC-14, AC-15] CLAUDE.md, docs/architecture/v11-reply-panel.md: the "Reply panel" paragraph naming the rule, the gate, the Skip_Token, the Off_Switch and R-01; the architecture doc with the contract and residuals R-01 to R-13.
 - [x] T10 [AC-13, AC-14] docs/specs/202610141340-v11-reply-panel/review.md: run the selftest, `brain_doctor --fast` and `spec_lint.py`, and record each output and one measured panel latency.
-- [ ] T14 [AC-18, AC-19, AC-20, AC-21] scripts/g__stop__reply-panel.py, scripts/receipt_ledger.py: read the Source_Class from `last_assistant_message`, and count distinct PASS reviewers through a new `receipt_ledger` reader built from the same validation `panel_latest_for` applies (refactor, no copy; `panel_pass_for` and the send gate keep their behaviour).
-- [ ] T15 [AC-18, AC-19, AC-20, AC-21] registry/fixtures/FLOW.panel-before-reply/: SELF with 1 and 2 reviewers (exit 2), SELF with 3 (exit 0), SELF with 3 where the deciding receipt is NEEDS-WORK (exit 2), SOURCED with 1 (exit 0), footer missing and Basis missing (classified SELF).
-- [ ] T16 [AC-15] docs/architecture/v11-reply-panel.md, CLAUDE.md: the quorum rule and residual R-13; keep CLAUDE.md under its token ceiling.
+- [x] T14 [AC-18, AC-19, AC-20, AC-21] scripts/g__stop__reply-panel.py, scripts/receipt_ledger.py: read the Source_Class from `last_assistant_message`, and count distinct PASS reviewers through a new `receipt_ledger` reader built from the same validation `panel_latest_for` applies (refactor, no copy; `panel_pass_for` and the send gate keep their behaviour).
+- [x] T15 [AC-18, AC-19, AC-20, AC-21] registry/fixtures/FLOW.panel-before-reply/: SELF with 1 and 2 reviewers (exit 2), SELF with 3 (exit 0), SELF with 3 where the deciding receipt is NEEDS-WORK (exit 2), SOURCED with 1 (exit 0), footer missing and Basis missing (classified SELF).
+- [x] T16 [AC-15] docs/architecture/v11-reply-panel.md, CLAUDE.md: the quorum rule and residual R-13; keep CLAUDE.md under its token ceiling.
 
 ## Convergence 1
 
