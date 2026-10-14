@@ -724,6 +724,42 @@ def check_sync_targets(fix: bool) -> list[Result]:
     return results
 
 
+def check_reply_panel_arm_env(fix: bool, arms_file: Path | None = None) -> Result:
+    """v11 (FLOW.panel-before-reply, AC-16, residual R-10): OCTO_REPLY_PANEL in
+    an arm's `.claude/settings*.json` env block switches the reply panel off
+    for every later session launched in that arm, and the arming surface does
+    not see those scopes. Warn, naming the file; never block. Only the arm
+    paths listed in arms-paths.json are scanned."""
+    key = "reply-panel-arm-env"
+    p = arms_file or (CLAUDE_DIR / "company" / "config" / "arms-paths.json")
+    if not p.exists():
+        return Result(key, PASS, "arms-paths.json absent; no arm settings scanned")
+    try:
+        arms = json.loads(p.read_text(encoding="utf-8"))
+    except Exception as e:
+        return Result(key, WARN, f"arms-paths.json unreadable, arm settings not scanned: {e}",
+                      "fix arms-paths.json")
+    hits, scanned = [], 0
+    for value in (arms.values() if isinstance(arms, dict) else []):
+        repo = resolve_home_relative(value)
+        if repo is None:
+            continue
+        for f in sorted((repo / ".claude").glob("settings*.json")):
+            scanned += 1
+            try:
+                env = json.loads(f.read_text(encoding="utf-8")).get("env")
+            except Exception:
+                continue
+            if isinstance(env, dict) and "OCTO_REPLY_PANEL" in env:
+                hits.append(str(f))
+    if hits:
+        return Result(key, WARN, f"{len(hits)} arm settings file(s) set OCTO_REPLY_PANEL in env: "
+                      + "; ".join(hits[:5]),
+                      "the off switch belongs to the shell that launches Claude Code; "
+                      "remove it from these files unless the operator put it there")
+    return Result(key, PASS, f"no arm settings file sets OCTO_REPLY_PANEL ({scanned} scanned)")
+
+
 def check_blocklist(fix: bool) -> Result:
     key = "blocklist"
     p = CLAUDE_DIR / "company" / "brain-blocklist.txt"
@@ -2938,6 +2974,7 @@ CHECKS = [
     ("connectome-fresh", check_connectome_fresh),
     ("arms-config", check_arms_config),
     ("sync-targets", check_sync_targets),
+    ("reply-panel-arm-env", check_reply_panel_arm_env),
     ("blocklist", check_blocklist),
     ("finops-enforcement", check_finops_enforcement),
     ("lineage-sound", check_lineage_sound),
