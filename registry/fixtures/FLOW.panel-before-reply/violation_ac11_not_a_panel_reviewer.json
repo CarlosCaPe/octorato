@@ -1,0 +1,8 @@
+{
+  "session_id": "fx-rp-violation-ac11-not-a-panel-reviewer",
+  "hook_event_name": "Stop",
+  "cwd": "/home/user",
+  "stop_hook_active": false,
+  "last_assistant_message": "Panel running on the draft, the reply follows when it returns.",
+  "transcript_path": "violation_ac11_not_a_panel_reviewer_transcript.jsonl"
+}

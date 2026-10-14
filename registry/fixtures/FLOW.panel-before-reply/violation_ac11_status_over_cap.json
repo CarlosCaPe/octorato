@@ -1,0 +1,8 @@
+{
+  "session_id": "fx-rp-violation-ac11-status-over-cap",
+  "hook_event_name": "Stop",
+  "cwd": "/home/user",
+  "stop_hook_active": false,
+  "last_assistant_message": "Panel running on the draft. While it runs I note that While it runs I note that While it runs I note that While it runs I note that While it runs I note that While it runs I note that nothing else changed.",
+  "transcript_path": "violation_ac11_status_over_cap_transcript.jsonl"
+}

@@ -1,0 +1,20 @@
+{
+  "session_id": "fx-rp-violation-ac05-needs-work-newer-than-pass",
+  "hook_event_name": "Stop",
+  "cwd": "/home/user",
+  "stop_hook_active": false,
+  "last_assistant_message": "The migration ran on the staging copy and the row counts match the source table. Two warnings remain, both about deprecated flags, and neither blocks the release. The rollback script is untested.",
+  "transcript_path": "violation_ac05_needs_work_newer_than_pass_transcript.jsonl",
+  "_fixture": {
+    "receipts": [
+      {
+        "verdict": "PASS",
+        "ts": "2026-10-14T10:03:00.000Z"
+      },
+      {
+        "verdict": "NEEDS-WORK",
+        "ts": "2026-10-14T10:04:00.000Z"
+      }
+    ]
+  }
+}

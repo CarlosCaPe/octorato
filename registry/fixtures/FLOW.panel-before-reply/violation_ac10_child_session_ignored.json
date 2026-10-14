@@ -1,0 +1,13 @@
+{
+  "session_id": "fx-rp-violation-ac10-child-session-ignored",
+  "hook_event_name": "Stop",
+  "cwd": "/home/user",
+  "stop_hook_active": false,
+  "last_assistant_message": "The migration ran on the staging copy and the row counts match the source table. Two warnings remain, both about deprecated flags, and neither blocks the release. The rollback script is untested.",
+  "transcript_path": "violation_ac10_child_session_ignored_transcript.jsonl",
+  "_fixture": {
+    "env": {
+      "CLAUDE_CODE_CHILD_SESSION": "1"
+    }
+  }
+}
