@@ -11,7 +11,7 @@ Builder's record of what shipped and what was run. It is not a verdict: `sdd-con
 | Task | Files |
 |---|---|
 | T01-T04 | `scripts/g__stop__reply-panel.py` (new), `scripts/panel_fixture_seed.py` (`seed_reply_receipt`) |
-| T05 | `registry/fixtures/FLOW.panel-before-reply/` (77 cases: 58 `violation_*`, 19 `benign_*`, each with its transcript; 6 added by Convergence 1, 12 by FR-06, 11 by Convergence 2, 10 by Convergence 3, 2 by Convergence 4) |
+| T05 | `registry/fixtures/FLOW.panel-before-reply/` (83 cases: 61 `violation_*`, 22 `benign_*`, each with its transcript; 6 added by Convergence 1, 12 by FR-06, 11 by Convergence 2, 10 by Convergence 3, 2 by Convergence 4, 6 by QA 1) |
 | T06 | `registry/rules.yaml` (`FLOW.panel-before-reply`) |
 | T07 | `hooks.json` (Stop, timeout 20), `docs/CAPABILITIES.md` (regenerated) |
 | T08 | `scripts/brain_doctor.py` (`reply-panel-arm-env`) |
@@ -650,5 +650,153 @@ absent_is_empty: selftest exit 1 -> KILLED :: violation_ac10_payload_without_mes
 unknown_origin_skipped: selftest exit 1 -> KILLED :: violation_ac12_unknown_origin_ends_walk.json: exit 0, want 2 ()
 operator_opener_any: selftest exit 1 -> KILLED :: violation_ac07_skip_in_forged_human_entry.json: exit 0, want 2 ()
 29/29 mutations killed
+exit=0
+```
+
+## QA 1
+
+Blocker from the PR QA: a turn opened by a compact summary with no human entry after it made `prompt_read` return None, and `decide` exited 2 with "no operator prompt found" before any receipt or skip was read.
+
+| Task | Change | Proof |
+|---|---|---|
+| T24 [AC-22] | `prompt_read` no longer passes over a compact summary: reached before any human entry, it is the anchor, with empty text and its own timestamp; one without harness fields still ends the walk with no prompt. Architecture doc: the walk, and the recovery sentence now says `panel-skip` cannot apply to a summary-opened turn | `benign_ac22_summary_only_transcript_pass` (the QA's shape: no human entry anywhere), `benign_ac22_summary_opened_pass_newer_than_summary`, `violation_ac22_summary_opened_no_receipt`, `violation_ac22_summary_opened_receipt_older_than_summary` (newer than the earlier human prompt, older than the summary), `violation_ac22_summary_text_skip_word_is_not_operator_words`, `benign_ac22_summary_opened_pending_status_line`; mutations `summary_skipped` and `summary_text_kept` killed; on the QA's `cs.jsonl`, `prompt_read` now returns the summary (`ts` 2026-10-07T14:36:09.954Z, empty text) |
+| T25 [AC-13] | `test_a_single_quoted_shell_c_body_is_rescanned` in `scripts/tests/test_tree_owner.py`: `sh -c 'git checkout -- pkg/a.py'`, `bash -c 'rm -rf pkg'`, and both nestings of `bash -c`, with paths relative to the payload cwd so nothing needs quoting | test passes; fails with both `-c` rescans disabled (below) |
+
+feature.md Status stays approved.
+
+The gate before T24, on a temp copy with the new fixtures, reproduces the blocker:
+
+```
+$ # temp copy: scripts/ + registry/ of the worktree, with the gate restored from HEAD (before T24)
+$ python3 <copy>/scripts/g__stop__reply-panel.py --selftest registry/fixtures/FLOW.panel-before-reply
+selftest FAIL: 61 block + 22 allow (g__stop__reply-panel.py vs FLOW.panel-before-reply): violation_ac22_summary_opened_receipt_older_than_summary.json: exit 0, want 2 ()
+violation_ac22_summary_opened_receipt_older_than_summary.json: blocked but nothing journaled under FLOW.panel-before-reply
+benign_ac22_summary_only_transcript_pass.json: exit 2, want 0 (REPLY PANEL (FLOW.panel-before-reply) cannot decide: no operator prompt found in the transcript)
+exit=1
+```
+
+```
+$ python3 scripts/g__stop__reply-panel.py --selftest registry/fixtures/FLOW.panel-before-reply
+selftest PASS: 61 block + 22 allow + 2 unit checks (g__stop__reply-panel.py vs FLOW.panel-before-reply)
+exit=0
+
+$ python3 scripts/g__pretool-mcp__outward-send.py --selftest registry/fixtures/FLOW.panel-before-send
+selftest PASS: 96 block + 34 allow (g__pretool-mcp__outward-send.py vs FLOW.panel-before-send)
+exit=0
+
+$ python3 scripts/r__posttool__sent-ledger.py --selftest registry/fixtures/FLOW.sent-message-ledger
+selftest PASS: 4 case(s) (r__posttool__sent-ledger.py vs FLOW.sent-message-ledger)
+exit=0
+
+$ python3 scripts/brain_doctor.py --registry
+  [PASS] ✓ registry-bootstrap          rules.yaml loads (92 rules); pre-push gate present
+  [PASS] ✓ registry-schema             rules.yaml valid vs schema
+  [PASS] ✓ registry-wiring             all 92 rules wired (disk + hooks.json)
+  [PASS] ✓ registry-anchors            all rule anchors present in their source file
+  [PASS] ✓ registry-coverage           Coverage 100% of CLAUDE.md anchors (43/43); 0 prose anchors unwired
+  [PASS] ✓ registry-anchor-ambiguity   every registered anchor maps to exactly one anchor line, unshadowed
+  [PASS] ✓ registry-failclosed         every gateable rule is fail-closed (zero left at model discretion)
+  [PASS] ✓ registry-gateable-coverage  every gate-shaped rule carries an explicit gateable flag
+  [PASS] ✓ registry-naming             26 grandfathered; new hook scripts follow the canonical scheme
+  [PASS] ✓ registry-orphans            all 52 live hooks claimed by a registry rule
+  [PASS] ✓ claude-md-budget            11,724 tokens (per-piece bound, ceiling 12,000); every section reads as English
+  11 passed, 0 warn, 0 fail
+exit=0
+
+$ python3 scripts/spec_lint.py docs/specs/202610141340-v11-reply-panel
+ok docs\specs\202610141340-v11-reply-panel\feature.md
+exit=0
+
+$ python3 -m unittest scripts/tests/test_reply_panel_arm_env.py -v
+test_listed_arm_that_sets_the_switch_is_named ... ok
+test_no_arms_file_scans_nothing ... ok
+test_unlisted_directory_is_not_scanned ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.037s
+
+OK
+exit=0
+
+$ python3 -m unittest scripts.tests.test_panel_receipt.PanelLedger -v
+test_anchor_check_that_raises_counts_as_not_standing ... ok
+test_malformed_digest_records_nothing ... ok
+test_newest_decides_and_revokes ... ok
+test_other_session_and_stale_never_count ... ok
+test_receipt_is_single_use ... ok
+test_reflex_records_anchored_panel_row ... ok
+test_reflex_refuses_stated_digest_that_does_not_recompute ... ok
+
+----------------------------------------------------------------------
+Ran 7 tests in 0.386s
+
+OK
+exit=0
+
+$ python3 -m unittest scripts/tests/test_tree_owner.py
+----------------------------------------------------------------------
+Ran 66 tests in 42.890s
+
+OK
+exit=0
+
+$ python3 scripts/cadence-lint.py --file docs/architecture/v11-reply-panel.md
+✓ cadence clean [docs\architecture\v11-reply-panel.md]
+exit=0
+$ python3 scripts/cadence-lint.py --file <CLAUDE.md "Reply panel" line, extracted>
+✓ cadence clean [<scratch>/para6.md]
+exit=0
+```
+
+The whole `scripts/tests/test_panel_receipt.py` now passes (44 tests, OK): the three `BridgeArgs` failures recorded in earlier rounds are gone with the merged Windows fixes.
+
+T25 regression cases against a gate whose `-c` rescans are disabled:
+
+```
+$ # temp copy of scripts/ with both -c rescans disabled in g__pretool-bash__tree-owner.py (shell_c = None; the _C_HOSTS branch -> if False)
+$ python3 -m unittest scripts.tests.test_tree_owner.ShellCBodies.test_a_single_quoted_shell_c_body_is_rescanned
+FAIL: test_a_single_quoted_shell_c_body_is_rescanned (scripts.tests.test_tree_owner.ShellCBodies.test_a_single_quoted_shell_c_body_is_rescanned)
+AssertionError: False is not true : sh -c 'git checkout -- pkg/a.py'
+Ran 1 test in 0.262s
+FAILED (failures=1)
+exit=1
+```
+
+Mutations of the reply gate, each applied to a temp copy of `scripts/` and `registry/` (every set so far):
+
+```
+$ python3 <scratch>/mutate_qa1.py <worktree>   # each mutation on a temp copy of scripts/ + registry/
+quorum_hardcoded_1: selftest exit 1 -> KILLED :: violation_ac18_self_de_eigene_ueberlegung.json: exit 0, want 2 ()
+distinct_id_dropped: selftest exit 1 -> KILLED :: violation_ac18_self_one_reviewer_recorded_three_times.json: exit 0, want 2 ()
+sourced_as_self: selftest exit 1 -> KILLED :: benign_ac01_whitespace_reflow.json: exit 2, want 0 (REPLY PANEL (FLOW.panel-before-reply): this reply is SELF (source class) and needs PASS receipts f
+missing_footer_as_sourced: selftest exit 1 -> KILLED :: violation_ac21_no_footer_is_self.json: exit 0, want 2 ()
+missing_basis_as_sourced: selftest exit 1 -> KILLED :: violation_ac21_no_basis_field_is_self.json: exit 0, want 2 ()
+deciding_receipt_ignored: selftest exit 1 -> KILLED :: violation_ac05_needs_work_newer_than_pass.json: exit 0, want 2 ()
+newer_filter_dropped: selftest exit 1 -> KILLED :: violation_ac18_self_three_one_pass_older_than_prompt.json: exit 0, want 2 ()
+pass_filter_dropped: selftest exit 1 -> KILLED :: violation_ac18_self_three_one_older_needs_work.json: exit 0, want 2 ()
+word_bounded_self: selftest exit 1 -> KILLED :: violation_ac21_basis_myself.json: exit 0, want 2 ()
+last_line_only: selftest exit 1 -> KILLED :: violation_ac21_self_line_then_sourced_line.json: exit 0, want 2 ()
+none_basis_sourced: selftest exit 1 -> KILLED :: violation_ac21_basis_dash.json: exit 0, want 2 ()
+first_line_only: selftest exit 1 -> KILLED :: violation_ac21_quoted_self_line_after_sourced_footer.json: exit 0, want 2 ()
+empty_basis_dropped: selftest exit 1 -> KILLED :: violation_ac21_basis_empty.json: exit 0, want 2 ()
+ignorecase_dropped: selftest exit 1 -> KILLED :: violation_ac21_basis_uppercase_self.json: exit 0, want 2 ()
+quote_tolerance_dropped: selftest exit 1 -> KILLED :: violation_ac21_quoted_self_line_after_sourced_footer.json: exit 0, want 2 ()
+trailing_punct_kept: selftest exit 1 -> KILLED :: violation_ac21_basis_none_period.json: exit 0, want 2 ()
+em_dash_dropped: selftest exit 1 -> KILLED :: violation_ac21_basis_em_dash.json: exit 0, want 2 ()
+hyphen_run_dropped: selftest exit 1 -> KILLED :: violation_ac21_basis_double_hyphen.json: exit 0, want 2 ()
+nothing_dropped: selftest exit 1 -> KILLED :: violation_ac21_basis_nothing.json: exit 0, want 2 ()
+na_dropped: selftest exit 1 -> KILLED :: violation_ac21_basis_uppercase_na.json: exit 0, want 2 ()
+ueberlegung_dropped: selftest exit 1 -> KILLED :: violation_ac21_basis_eigene_ueberlegung.json: exit 0, want 2 ()
+en_dash_dropped: selftest exit 1 -> KILLED :: violation_ac21_basis_en_dash_only.json: exit 0, want 2 ()
+dash_anchors_dropped: selftest exit 1 -> KILLED :: benign_ac20_basis_dash_then_source_one_reviewer.json: exit 2, want 0 (REPLY PANEL (FLOW.panel-before-reply): this reply is SELF (source class) and nee
+summary_skipped: selftest exit 1 -> KILLED :: violation_ac22_summary_opened_receipt_older_than_summary.json: exit 0, want 2 ()
+summary_text_kept: selftest exit 1 -> KILLED :: violation_ac22_summary_text_skip_word_is_not_operator_words.json: exit 0, want 2 ()
+skip_also_in_msg: selftest exit 1 -> KILLED :: violation_ac07_skip_only_in_reply.json: exit 0, want 2 ()
+ledger_raise_swallowed: selftest exit 1 -> KILLED :: violation_ac09_ledger_raises.json: stderr lacks 'receipt ledger raised: TypeError'
+receipt_time_ge: selftest exit 1 -> KILLED :: violation_ac04_receipt_equal_to_prompt.json: exit 0, want 2 ()
+absent_is_empty: selftest exit 1 -> KILLED :: violation_ac10_payload_without_message.json: exit 0, want 2 ()
+unknown_origin_skipped: selftest exit 1 -> KILLED :: violation_ac12_unknown_origin_ends_walk.json: exit 0, want 2 ()
+operator_opener_any: selftest exit 1 -> KILLED :: violation_ac07_skip_in_forged_human_entry.json: exit 0, want 2 ()
+31/31 mutations killed
 exit=0
 ```
