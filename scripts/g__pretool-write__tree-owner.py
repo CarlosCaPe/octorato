@@ -277,6 +277,27 @@ def _sandbox_in_json(sandbox: str) -> str:
     return json.dumps(sandbox)[1:-1]
 
 
+def _quote_sandbox_in_command(payload: dict, sandbox: str) -> dict:
+    """Put the sandbox into a Bash leg's COMMAND as one shell word.
+
+    A fixture writes `rm -rf {{SANDBOX}}/work/tree/pkg`. Substituted raw, a
+    sandbox holding a space (a Windows profile such as `C:\\Users\\First Last`)
+    splits into two words, and a Windows backslash is an escape bash drops, so
+    the command names no tree in bash and the gate is RIGHT to allow it: every
+    violation leg then reads as a gate failure. `shlex.quote` makes the word the
+    one a shell would need; `'<sandbox>'/work/tree/pkg` is a single word, also
+    inside a `bash -c "..."` body. A plain POSIX mkdtemp path needs no quoting,
+    so on Linux the command is unchanged. `cwd` and file paths are not shell
+    text and keep the JSON-escaped substitution below."""
+    import shlex
+    ti = payload.get("tool_input")
+    cmd = ti.get("command") if isinstance(ti, dict) else None
+    if isinstance(cmd, str) and SANDBOX_TOKEN in cmd:
+        payload = dict(payload, tool_input=dict(
+            ti, command=cmd.replace(SANDBOX_TOKEN, shlex.quote(sandbox))))
+    return payload
+
+
 def build_sandbox(fdir: str, sandbox: str, age_pids=()) -> None:
     """Materialize the fixture world in a throwaway HOME.
 
@@ -374,6 +395,7 @@ def run_isolation_selftest(script: str, fdir: str, my_tools, label: str) -> int:
         sandbox = tempfile.mkdtemp(prefix="kernel-iso-selftest-")
         try:
             build_sandbox(fdir, sandbox, setup.get("age_pids") or ())
+            payload = _quote_sandbox_in_command(payload, sandbox)
             body = json.dumps(payload).replace(SANDBOX_TOKEN,
                                                _sandbox_in_json(sandbox))
             env = dict(os.environ)
