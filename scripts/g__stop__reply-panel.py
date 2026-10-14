@@ -48,9 +48,12 @@ accepted reviewer types. stop_hook_active changes nothing: no block-once.
 
 THE OPERATOR PROMPT
 The newest user entry, walking back over tool results, task notifications,
-peer messages and hand-backs, compact summaries and isMeta entries (Stop-hook
-feedback, hook-injected text), whose origin.kind is human (or that has no
-origin). Any other origin kind ends the walk with no prompt. It is read with the backward reader and origin helpers of
+peer messages and hand-backs and isMeta entries (Stop-hook feedback,
+hook-injected text), whose origin.kind is human (or that has no origin). Any
+other origin kind ends the walk with no prompt. A compact summary reached
+first anchors the turn instead, with empty text and its own timestamp
+(AC-22): a context continuation carries no operator words, so the skip word
+cannot apply to it. It is read with the backward reader and origin helpers of
 g__pretool-mcp__outward-send.py, loaded by file name, never copied; a helper
 that is missing there is an error that names it.
 
@@ -160,7 +163,7 @@ _WALK_PAST = ("task-notification", "peer")
 
 def _skipped(ctx, entry: dict) -> bool:
     """Entries the walk passes over to reach the operator's own prompt."""
-    if entry.get("isMeta") is True or entry.get("isCompactSummary") or entry.get("isSidechain"):
+    if entry.get("isMeta") is True or entry.get("isSidechain"):
         return True
     return ctx.send._origin(entry).get("kind") in _WALK_PAST
 
@@ -170,11 +173,23 @@ def prompt_read(ctx, transcript: str) -> dict | None:
     when the walk meets an entry it cannot place: an origin kind it does not
     know, or a human-shaped entry the harness did not write. Either ends the
     walk with no prompt (fail closed), as the send gate's turn_read does.
+
+    A compact summary reached before any human entry (AC-22) means the turn
+    was opened by a context continuation: it carries no operator words, so
+    the anchor is the summary itself with EMPTY text (no skip word can come
+    from it) and its own timestamp as the newer-than bound. A summary the
+    harness did not write (no uuid or timestamp) ends the walk like any
+    entry the gate cannot place.
+
     OSError propagates: an unreadable transcript is an error, not an empty
     turn."""
     for e in ctx.send._prompt_entries_reversed(transcript):
         if _skipped(ctx, e):
             continue
+        if e.get("isCompactSummary"):
+            if not ctx.rl.harness_entry(e):
+                return None
+            return {"text": "", "ts": str(e.get("timestamp") or ""), "uuid": str(e.get("uuid") or "")}
         kind = ctx.send._origin(e).get("kind")
         if kind is not None and kind != "human":
             return None
