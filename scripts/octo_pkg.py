@@ -603,7 +603,12 @@ class Brain:
                         os.close(fd)
                         break
                     except FileExistsError:
-                        if time.monotonic() > deadline:
+                        # >=, not >. Windows' monotonic clock is GetTickCount64 at
+                        # 15.625ms resolution, so a check made in the same tick as the
+                        # deadline reads EQUAL to it: measured, 1000 of 1000 immediate
+                        # checks against a 0.0 deadline were "not past", and every
+                        # timeout=0.0 acquire slept 50ms before refusing.
+                        if time.monotonic() >= deadline:
                             raise PkgError(f"could not acquire {sentinel} within {timeout}s")
                         time.sleep(0.05)
                 try:
