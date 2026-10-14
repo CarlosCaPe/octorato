@@ -38,8 +38,10 @@ THE DECISION (FR-03, checked in this order; the first that holds exits 0)
      newer than the prompt come from at least QUORUM distinct reviewer agent
      ids: 3 for a SELF reply, 1 for a SOURCED one (FR-06). A reply is SOURCED
      only when it has a Provenance / Procedencia / Herkunft line and EVERY
-     such line has a Basis that is not empty, not only none / n/a / -, and
-     contains neither `self` (any case, as a substring) nor own reasoning.
+     such line has a Basis that names something: not empty and not only
+     none / nothing / n/a / na / a run of dashes (any case, trailing
+     punctuation ignored), and containing neither `self` (any case, as a
+     substring) nor own reasoning (EN, ES, DE with or without the umlaut).
 Otherwise exit 2, stderr naming the source class, the quorum, the digest, the
 panel-request command and the
 accepted reviewer types. stop_hook_active changes nothing: no block-once.
@@ -344,8 +346,17 @@ _BASIS = re.compile(r"(?:^|·|\|)\s*[*_]*Basis[*_]*\s*:\s*([^·|]*)", re.IGNOREC
 # A plain case-insensitive substring: `myself`, `self-evident` and a path such
 # as `selftest.py` are SELF too. Over-matching costs two more reviewers, never
 # a weaker check.
-_SELF_BASIS = re.compile(r"self|own reasoning|razonamiento propio|eigene Überlegung", re.IGNORECASE)
-_NO_BASIS = {"none", "n/a", "-"}
+_SELF_BASIS = re.compile(r"self|own reasoning|razonamiento propio|eigene Überlegung|eigene Ueberlegung",
+                         re.IGNORECASE)
+# A Basis that names nothing: compared after lower-casing and stripping blanks
+# and trailing punctuation. Any run of hyphens, en dashes or em dashes too.
+_NO_BASIS = {"none", "nothing", "n/a", "na"}
+_DASHES = re.compile("^[-–—]+$")
+
+
+def _empty_basis(basis: str) -> bool:
+    b = basis.strip().lower().rstrip(".,;:!? \t").strip()
+    return not b or b in _NO_BASIS or bool(_DASHES.match(b))
 
 
 def _line_is_self(line: str) -> bool:
@@ -353,12 +364,12 @@ def _line_is_self(line: str) -> bool:
     if not m:
         return True
     basis = m.group(1).strip().strip("*_ ")
-    return not basis or basis.lower() in _NO_BASIS or bool(_SELF_BASIS.search(basis))
+    return _empty_basis(basis) or bool(_SELF_BASIS.search(basis))
 
 
 def source_class(text: str) -> str:
     """SELF when the reply has no provenance line or when ANY provenance line
-    is SELF (no Basis field, an empty Basis, a Basis of only none / n/a / -,
+    is SELF (no Basis field, a Basis that names nothing (see _empty_basis),
     or a Basis containing self or own reasoning in EN, ES or DE). A later
     SOURCED line, a code block included, never lifts an earlier SELF line."""
     lines = _PROVENANCE.findall(text or "")
