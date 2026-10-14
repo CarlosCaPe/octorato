@@ -4852,8 +4852,12 @@ class TestNoChildWaitsForAHuman(SandboxCase):
         (planted / "benign.py").write_text(
             "import os\nos.kill(pid, 9)\n", encoding="utf-8")
         hits, planted_read = self._scan_group_kills([planted.parent])
+        # A hit is "<path>:<line>: <code>". Split at the ": " that ends the location
+        # and then at the LAST colon: a Windows path carries its own "C:" and a split
+        # at the first colon named every hit "C".
         self.assertEqual(
-            sorted(Path(h.split(":")[0]).name for h in hits), ["obvious.py", "sneaky.py"],
+            sorted(Path(h.split(": ", 1)[0].rsplit(":", 1)[0]).name for h in hits),
+            ["obvious.py", "sneaky.py"],
             f"the scan did not flag both hand-written spellings, or flagged the plain "
             f"per-pid kill that is not a group kill: {hits!r}")
         self.assertEqual(len(planted_read), 3, planted_read)
