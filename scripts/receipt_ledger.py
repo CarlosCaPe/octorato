@@ -1207,8 +1207,16 @@ def panel_receipts_for(digest: str, session_id: str, now=None,
     revokes = lambda rep_: parse_panel(rep_) == ("NEEDS-WORK", want)
     out = []
     for key, is_revocation, r, tp, uuid, ts in cands:
-        if not is_revocation and not _anchor_stands(tp, uuid, same, revokes):
-            continue
+        if not is_revocation:
+            # A malformed reviewer transcript must not raise out of here for
+            # the send gate or the sent ledger: a PASS whose anchor cannot be
+            # checked does not stand.
+            try:
+                stands = _anchor_stands(tp, uuid, same, revokes)
+            except Exception:
+                stands = False
+            if not stands:
+                continue
         out.append(dict(r, verdict_ts=ts))
     return out
 

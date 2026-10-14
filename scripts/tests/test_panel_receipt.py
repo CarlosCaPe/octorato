@@ -536,6 +536,27 @@ class PanelLedger(unittest.TestCase):
         seed.seed_receipt(self.home, "s1", self.m, "PASS", iso(T - dt.timedelta(minutes=121)), "b2")
         self.assertIsNone(rl.panel_pass_for(self.d, "s1", T))
 
+    def test_anchor_check_that_raises_counts_as_not_standing(self):
+        # T20: a PASS whose _anchor_stands raises is dropped, never raised out.
+        seed.seed_receipt(self.home, "s1", self.m, "PASS", iso(T - dt.timedelta(minutes=10)), "old1")
+        seed.seed_receipt(self.home, "s1", self.m, "PASS", iso(T - dt.timedelta(minutes=2)), "new1")
+        bad = {r["entry_uuid"] for r in rl.read_global() if r.get("agent_id") == "new1"}
+        real = rl._anchor_stands
+
+        def flaky(tp, uuid, same, revokes):
+            if uuid in bad:
+                raise TypeError("malformed reviewer transcript")
+            return real(tp, uuid, same, revokes)
+
+        from unittest import mock
+        with mock.patch.object(rl, "_anchor_stands", flaky):
+            got = rl.panel_receipts_for(self.d, "s1", T)
+            self.assertEqual([r["agent_id"] for r in got], ["old1"])
+            self.assertEqual(rl.panel_latest_for(self.d, "s1", T)["agent_id"], "old1")
+        with mock.patch.object(rl, "_anchor_stands", side_effect=TypeError("boom")):
+            self.assertEqual(rl.panel_receipts_for(self.d, "s1", T), [])
+            self.assertIsNone(rl.panel_pass_for(self.d, "s1", T))
+
 
 class Selftests(unittest.TestCase):
     def _run(self, *args):
