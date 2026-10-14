@@ -74,13 +74,14 @@ def make_brain(home: Path) -> Path:
 
 def run_quickstart(home: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run([sys.executable, str(home / ".claude" / "scripts" / "quickstart.py"), *args],
-                          env=_clean_env(home), capture_output=True, text=True, timeout=120,
+                          env=_clean_env(home), capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", timeout=120,
                           stdin=subprocess.DEVNULL)
 
 
 def git_out(home: Path, *args: str) -> str:
     return subprocess.run(["git", "-C", str(home / ".claude"), *args], env=_clean_env(home),
-                          capture_output=True, text=True).stdout.strip()
+                          capture_output=True, text=True, encoding="utf-8").stdout.strip()
 
 
 class QuickstartWiringTest(unittest.TestCase):
