@@ -4904,6 +4904,7 @@ class TestNoChildWaitsForAHuman(SandboxCase):
                          "which is where the one guarded implementation lives:\n"
                          + "\n".join(offenders))
 
+    @unittest.skipUnless(_pty_ok(), "no pty/SIGKILL on this platform")
     def test_neither_spawner_gives_its_child_a_controlling_terminal(self):
         """What start_new_session buys, tested as the property and not as a side effect.
 
