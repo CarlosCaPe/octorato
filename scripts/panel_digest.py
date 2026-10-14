@@ -188,8 +188,22 @@ def norm_mentions(mentions) -> list:
     return sorted({str(m).strip().lower() for m in mentions if str(m).strip()})
 
 
+def _bash_tilde(path: str) -> str:
+    """Expand a leading `~` or `~/` to $HOME, the way bash does.
+
+    The scanner lets only those two prefixes through, and bash reads both from
+    $HOME. Python's expanduser agrees on POSIX, but on Windows it reads
+    USERPROFILE and ignores HOME, so under Git Bash with HOME pointed elsewhere
+    the gate hashed a different file than the one the script would attach.
+    Every other form goes to expanduser unchanged."""
+    home = os.environ.get("HOME")
+    if home is not None and (path == "~" or path.startswith("~/")):
+        return home + path[1:]          # bash: HOME set (even empty) wins
+    return os.path.expanduser(path)
+
+
 def file_sha256(path: str) -> str:
-    p = Path(os.path.expanduser(str(path)))
+    p = Path(_bash_tilde(str(path)))
     try:
         st = os.stat(p)
     except OSError as e:
