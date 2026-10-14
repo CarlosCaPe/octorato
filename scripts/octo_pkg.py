@@ -177,6 +177,7 @@ import os
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -602,7 +603,12 @@ class Brain:
                         os.close(fd)
                         break
                     except FileExistsError:
-                        if time.monotonic() > deadline:
+                        # >=, not >. Windows' monotonic clock is GetTickCount64 at
+                        # 15.625ms resolution, so a check made in the same tick as the
+                        # deadline reads EQUAL to it: measured, 1000 of 1000 immediate
+                        # checks against a 0.0 deadline were "not past", and every
+                        # timeout=0.0 acquire slept 50ms before refusing.
+                        if time.monotonic() >= deadline:
                             raise PkgError(f"could not acquire {sentinel} within {timeout}s")
                         time.sleep(0.05)
                 try:
@@ -1108,6 +1114,38 @@ def _is_git_repo(path: Path) -> bool:
     return (path / ".git").exists() or ((path / "HEAD").is_file() and (path / "objects").is_dir())
 
 
+def _discard_clone(target: Path) -> None:
+    """Remove a git checkout this module created, as completely as the OS allows.
+
+    `shutil.rmtree(ignore_errors=True)` alone is not that on Windows: git writes its
+    object and pack files READ-ONLY, and on Windows the read-only attribute is what
+    refuses the unlink ("Access is denied"), so the walk stopped at .git/objects and
+    left the whole clone behind while reporting nothing. Measured on a one-commit
+    clone: two read-only objects, two PermissionError, and the directory still there
+    after the call. Every unwind that "removes the clone" was a no-op there, and the
+    retry was then blocked by "destination already exists".
+
+    The handler clears that attribute and retries the one entry, and only on Windows:
+    on POSIX the permission to unlink belongs to the parent directory, a chmod of the
+    file cannot change the outcome, and the behaviour there stays exactly
+    ignore_errors=True. Errors are still swallowed on both, because every caller is a
+    cleanup path that must not mask the failure that brought it here.
+    """
+    def _clear_readonly(func, path, _exc):
+        if os.name != "nt":
+            return
+        try:
+            os.chmod(path, stat.S_IWRITE)
+            func(path)
+        except OSError:
+            pass
+
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(target, onexc=_clear_readonly)
+    else:                                   # onerror: deprecated in 3.12, same call
+        shutil.rmtree(target, onerror=_clear_readonly)
+
+
 def _is_local_source(source: str) -> bool:
     """A LOCAL PACKAGE directory: a directory that is not itself a git repository.
 
@@ -1511,7 +1549,7 @@ def install_arm(brain: Brain, source: str, dest: str | None) -> int:
         # every retry with "destination path already exists". Measured on the kill path
         # (rc 124): the target survived holding a .git. The manifest branch below has
         # always cleaned up after itself; this one had not.
-        shutil.rmtree(target, ignore_errors=True)
+        _discard_clone(target)
         raise PkgError("clone failed: " + (cp.stderr or b"").decode("utf-8", "replace").strip())
 
     try:
@@ -1520,7 +1558,7 @@ def install_arm(brain: Brain, source: str, dest: str | None) -> int:
         if manifest.get("kind") != "arm":
             raise PkgError("arm.json must declare kind: arm")
     except PkgError:
-        shutil.rmtree(target, ignore_errors=True)
+        _discard_clone(target)
         raise
 
     name = manifest["name"]
@@ -1611,7 +1649,7 @@ def install_arm(brain: Brain, source: str, dest: str | None) -> int:
             })
             brain.save_lock(lock)
     except BaseException as e:
-        shutil.rmtree(target, ignore_errors=True)
+        _discard_clone(target)
         try:
             # cfg_known, not `cfg_before is None`, decides. The read itself can fail
             # now that it lives inside the protected region, and "I could not read

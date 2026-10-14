@@ -17,6 +17,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -88,6 +89,14 @@ class Digest(unittest.TestCase):
         self.assertEqual(pd.support_sends(f'{s} 1 "a; b & c"'), [("1", "a; b & c", None, [])])
 
 
+# The bash a shell user gets: the first one on PATH. A bare "bash" handed to
+# subprocess on Windows goes through CreateProcess, which searches System32
+# BEFORE PATH and finds the WSL launcher there (measured: "execvpe(/bin/bash)
+# failed" on a host with no distro, rc 1 for `bash -n`). On POSIX this is the
+# same binary execvp would pick.
+BASH = shutil.which("bash")
+
+
 class BridgeArgs(unittest.TestCase):
     """One reader for the support script's arguments: the script strips its
     value flags wherever they sit, and so must every reader of the line."""
@@ -152,16 +161,17 @@ class BridgeArgs(unittest.TestCase):
         self.assertTrue(arms)
         self.assertEqual(arms, set(pd.BRIDGE_VALUE_FLAGS))
 
+    @unittest.skipUnless(BASH, "no bash on PATH")
     def test_the_script_refuses_the_shapes_the_reader_refuses(self):
         # Only shapes that exit in the argument loop, before anything is sent.
         script = str(Path(pd.__file__).parent / pd.SUPPORT_SCRIPT)
-        self.assertEqual(subprocess.run(["bash", "-n", script]).returncode, 0)
+        self.assertEqual(subprocess.run([BASH, "-n", script]).returncode, 0)
         for rest in (["G", "m", "--menciones", "A", "--menciones", "B"],
                      ["G", "m", "--menciones", "--archivo", "f"], ["G", "m", "--menciones"],
                      ["G", "m", "--menciones", ""]):
             with self.assertRaises(pd.PanelDigestError, msg=rest):
                 pd.parse_bridge_args(rest)
-            done = subprocess.run(["bash", script, *rest], capture_output=True, text=True, timeout=20)
+            done = subprocess.run([BASH, script, *rest], capture_output=True, text=True, timeout=20)
             self.assertEqual(done.returncode, 64, (rest, done.stderr))
 
     def test_mentions_are_split_like_the_script_splits_them(self):
@@ -263,6 +273,7 @@ class BridgeArgs(unittest.TestCase):
             with self.assertRaises(pd.PanelDigestError, msg=repr(cmd)):
                 pd.support_sends(cmd)
 
+    @unittest.skipUnless(BASH, "no bash on PATH")
     def test_scanner_words_equal_bash_words_on_accepted_lines(self):
         # For every line the reader accepts, bash must hand over the same
         # words. bash is run on a harmless stand-in, never the send script.
@@ -273,7 +284,7 @@ class BridgeArgs(unittest.TestCase):
         for line in lines:
             got = pd.support_sends(line)[0]
             rest = line[len(s):]
-            out = subprocess.run(["bash", "-c", "printf '%s\\0' X" + rest], capture_output=True,
+            out = subprocess.run([BASH, "-c", "printf '%s\\0' X" + rest], capture_output=True,
                                  timeout=10).stdout.decode("utf-8").split("\0")[1:-1]
             self.assertEqual(pd.parse_bridge_args(out), got, repr(line))
 
