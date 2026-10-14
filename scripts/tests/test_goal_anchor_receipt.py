@@ -94,6 +94,8 @@ def _now_ts() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(t)) + f".{int(t * 1000) % 1000:03d}Z"
 
 
+# os.path.expanduser reads USERPROFILE on Windows and ignores HOME, so every
+# fake home below is named through both; HOME alone reaches the real one.
 def _run_gate(payload: dict, home: Path, extra_env: dict | None = None) -> tuple[int, str]:
     env = {k: v for k, v in os.environ.items() if k in ("PATH", "LANG") or k.startswith(("LC_", "PYTHON"))}
     env.update(HOME=str(home), USERPROFILE=str(home), **(extra_env or {}))
@@ -233,7 +235,7 @@ class TestGoalAnchorReceipt(unittest.TestCase):
     def test_ledger_block_line_carries_the_last_uuid_the_gate_read(self):
         live = _build_live(self.tmp)
         closure = [r for r in live.recs if r.get("type") == "assistant"][-2]  # the claim, before the late record
-        with mock.patch.dict(os.environ, {"HOME": str(live.home),
+        with mock.patch.dict(os.environ, {"HOME": str(live.home), "USERPROFILE": str(live.home),
                                           "OCTO_FRICTION_DIR": str(self.tmp / "friction")}):
             friction_ledger.ingest_paths([str(live.path)], with_latency=False)
             rows = friction_ledger.read_ledger()
@@ -313,7 +315,8 @@ class TestGoalAnchorReceipt(unittest.TestCase):
         runner.write_text(ALARM_RUNNER, encoding="utf-8")
 
         def run(gate, nap):
-            env = dict(os.environ, HOME=str(self._home(f"alarm-{gate.parent.name}-{nap}")))
+            h = str(self._home(f"alarm-{gate.parent.name}-{nap}"))
+            env = dict(os.environ, HOME=h, USERPROFILE=h)
             out = subprocess.run([sys.executable, str(runner), str(gate), str(nap), str(FIXTURES)],
                                  capture_output=True, text=True, env=env, timeout=60)
             return json.loads(out.stdout.strip().splitlines()[-1])
@@ -339,7 +342,8 @@ class TestGoalAnchorReceipt(unittest.TestCase):
 
         seen = []
         out = Tracked()
-        with mock.patch.dict(os.environ, {"HOME": str(self._home("flush"))}), \
+        with mock.patch.dict(os.environ, {"HOME": str(self._home("flush")),
+                                          "USERPROFILE": str(self._home("flush"))}), \
                 mock.patch.object(ga, "_write_receipt", lambda d, r: seen.append(Tracked.flushed)), \
                 mock.patch.object(sys, "stdin", StringIO(json.dumps(p))), \
                 mock.patch.object(ga, "_signal_mod", mock.MagicMock()), \

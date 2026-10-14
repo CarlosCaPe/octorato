@@ -42,6 +42,9 @@ def _clean_env(home: Path) -> dict:
     env = {k: v for k, v in os.environ.items()
            if not k.startswith(("GIT_", "OCTO_", "CLAUDE"))}
     env["HOME"] = str(home)
+    # Path.home() and os.path.expanduser() read USERPROFILE on Windows and
+    # ignore HOME, so the fake home must be named through both.
+    env["USERPROFILE"] = str(home)
     env["GIT_CONFIG_NOSYSTEM"] = "1"
     return env
 
@@ -134,7 +137,8 @@ class QuickstartWiringTest(unittest.TestCase):
     def test_a_checkout_outside_home_claude_is_not_wired(self):
         other = Path(self.tmp.name) / "elsewhere"
         shutil.copytree(self.brain, other)
-        with mock.patch.dict(os.environ, {"HOME": str(self.home)}):
+        with mock.patch.dict(os.environ, {"HOME": str(self.home),
+                                         "USERPROFILE": str(self.home)}):
             ok, detail = quickstart.wire_claude_hooks(other)
         self.assertFalse(ok)
         self.assertIn("clone the brain to ~/.claude", detail)
