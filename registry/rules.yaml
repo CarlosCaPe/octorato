@@ -1827,6 +1827,37 @@ rules:
     locator: scripts/g__pretool-mcp__outward-send.py --selftest registry/fixtures/FLOW.panel-before-send
     expect: 0
   liveness_required: FIRES
+- id: FLOW.panel-before-reply
+  title: 'Panel before reply: no reply to the operator ends a turn without a PASS panel receipt for its exact text'
+  category: FLOW
+  source:
+    file: CLAUDE.md
+    anchor: Reply panel
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Gate
+    canonical_name: g__stop__reply-panel.py
+    firing_event: Stop
+    firing_matcher: '*'
+  - kind: Reflex
+    canonical_name: r__subagent-stop__qa-receipt.py
+    firing_event: SubagentStop
+    firing_matcher: '*'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: Stop|*|g__stop__reply-panel.py
+    expect: present
+  - method: IN_HOOKS_JSON
+    locator: SubagentStop|*|r__subagent-stop__qa-receipt.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/g__stop__reply-panel.py --selftest registry/fixtures/FLOW.panel-before-reply
+    expect: 0
+  liveness_required: FIRES
 - id: FLOW.sent-message-ledger
   title: 'Sent-message ledger: every message that left is recorded with its channel id, digest and panel receipt'
   category: FLOW

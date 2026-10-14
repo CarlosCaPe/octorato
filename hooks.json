@@ -361,6 +361,12 @@
           "command": "python3 ~/.claude/scripts/r__stop__friction-ledger.py",
           "timeout": 10,
           "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/g__stop__reply-panel.py",
+          "statusMessage": "🧾 reply panel (PASS receipt for this exact reply)...",
+          "timeout": 20,
+          "type": "command"
         }
       ]
     }
