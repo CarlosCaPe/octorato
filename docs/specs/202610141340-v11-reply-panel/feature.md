@@ -35,6 +35,8 @@ Every acceptance criterion names one of these components as its subject.
 - **Rule_Text**: the "Nothing ships unverified" section of `CLAUDE.md`, paragraph anchor "Reply panel".
 - **Doctor**: `scripts/brain_doctor.py`.
 - **Architecture_Doc**: `docs/architecture/v11-reply-panel.md`.
+- **Source_Class**: SELF or SOURCED, read from `last_assistant_message`. The reply is SELF when it has no provenance line (a line starting with `Provenance:`, `Procedencia:` or `Herkunft:`), when that line has no `Basis` field, or when the Basis field contains `SELF`, `own reasoning`, `razonamiento propio` or `eigene Überlegung` (case-insensitive). Otherwise it is SOURCED.
+- **Panel_Quorum**: the number of distinct Panel_Reviewer agent ids that must each hold a PASS receipt for the Reply_Digest newer than the Operator_Prompt: 3 for a SELF reply, 1 for a SOURCED reply.
 
 ## User Stories
 
@@ -67,6 +69,10 @@ Otherwise it exits 2 with a stderr message naming the Reply_Digest, the `panel_d
 
 The Off_Switch is read before any import that can fail, so it recovers from an import error. When the Reply_Gate cannot decide (unreadable transcript, ledger or import error) it exits 2 with the error named. A missing receipts directory is not an error: it reads as no receipt. The recovery paths are the Skip_Token for one turn and the Off_Switch for a session, both operator actions. The gate is registered with a 20-second timeout; a timeout lets the stop through (R-07).
 
+### FR-06: The panel scales with the source
+
+Operator directive 2026-10-14: a reply whose basis is SELF is treated as a likely hallucination and needs a panel of three; a reply that names a source needs one reviewer. FR-02 counts a receipt only when the deciding receipt for the Reply_Digest says PASS and the Panel_Quorum is met. A footer that names a source is still model-written, so the single reviewer of a SOURCED reply is the check on that source (R-13).
+
 ### FR-05: Wiring
 
 The rule `FLOW.panel-before-reply` is registered in the Rule_Registry with strength GATE, enforcement fail-closed, firing_mode hook, source anchor "Reply panel", a `--selftest` proof over its fixtures and `liveness_required: FIRES`. The Reply_Gate is registered on Stop in `hooks.json`. Stop hooks run in parallel and no gate may assume array order (`docs/architecture/hook-orchestration.md`), so the position in the array carries no meaning. The Rule_Text gains the "Reply panel" paragraph. `docs/architecture/v11-reply-panel.md` states the contract and every residual.
@@ -89,7 +95,11 @@ The rule `FLOW.panel-before-reply` is registered in the Rule_Registry with stren
 - [ ] AC-14: THE Doctor SHALL report the rule wired only when the Reply_Gate is registered on Stop, its selftest passes and the Rule_Text holds the "Reply panel" anchor.
 - [ ] AC-16: IF any arm settings file listed in the operator's arm paths sets `OCTO_REPLY_PANEL` in its `env` block, THEN THE Doctor SHALL report it as a warning naming the file; directories outside the arm paths are not scanned (R-10).
 - [ ] AC-17: THE Reply_Gate SHALL exit 2 with the missing name when a helper it loads from the send gate is absent, and its selftest SHALL fail in that case.
-- [ ] AC-15: THE Architecture_Doc SHALL list residuals R-01 to R-12 with their source.
+- [ ] AC-18: WHEN the reply is SELF and fewer than 3 distinct Panel_Reviewer agent ids hold a PASS receipt for the Reply_Digest newer than the Operator_Prompt, THE Reply_Gate SHALL exit 2 and print the Source_Class and the quorum count.
+- [ ] AC-19: WHEN the reply is SELF and 3 distinct Panel_Reviewer agent ids hold such PASS receipts and the deciding receipt is PASS, THE Reply_Gate SHALL exit 0.
+- [ ] AC-20: WHEN the reply is SOURCED and one PASS receipt meets FR-02, THE Reply_Gate SHALL exit 0.
+- [ ] AC-21: IF the reply has no provenance line or no Basis field, THEN THE Reply_Gate SHALL classify it as SELF.
+- [ ] AC-15: THE Architecture_Doc SHALL list residuals R-01 to R-13 with their source.
 
 ## Residuals
 
@@ -105,3 +115,4 @@ The rule `FLOW.panel-before-reply` is registered in the Rule_Registry with stren
 - R-10: Any `.claude/settings*.json` outside the live root (an arm's, or one the main loop writes in another directory) can set the Off_Switch for later sessions launched there; the arming surface does not see those scopes. The Doctor warns (AC-16); it does not block. Same residual as `OCTO_MERGE_APPROVE`.
 - R-11: Every throwaway panel request with a dummy body buys one stop chain of at most 30 unreviewed words, repeatable every turn. Each costs a reviewer run and is visible in the transcript. A spent id also re-exempts a second status stop inside the same operator turn while `stop_hook_active` is true.
 - R-12: Unattended top-level `claude -p` runs pay up to 8 continuations per reply unless launched with the Off_Switch.
+- R-13: The Source_Class is read from a footer the main loop writes. A reply can name a source it never opened and drop to a quorum of one; that one reviewer is the check on the source. Three PASS receipts from three runs of the same model are independent in context only (R-05).
