@@ -127,6 +127,41 @@ def _exec_bit_ok() -> bool:
         shutil.rmtree(d, ignore_errors=True)
 
 
+def _mode_000_denies() -> bool:
+    """Whether chmod 000 takes read access away from the caller.
+
+    False on Windows, measured: a file at mode 000 still opens for reading and a
+    directory at mode 000 still lists, because chmod there only sets the
+    read-only attribute and access is decided by ACLs. Also False for a POSIX
+    root, which reads through any mode. The tests guarded by this build their
+    unreadable input with chmod 000, so without it they assert on a tree that
+    reads cleanly. Probed, not assumed."""
+    d = tempfile.mkdtemp(prefix="octo-mode-probe-")
+    f, sub = os.path.join(d, "probe.txt"), os.path.join(d, "sub")
+    try:
+        open(f, "w").close()
+        os.mkdir(sub)
+        os.chmod(f, 0o000)
+        os.chmod(sub, 0o000)
+        try:
+            open(f, "rb").close()
+            return False
+        except PermissionError:
+            pass
+        try:
+            os.listdir(sub)
+            return False
+        except PermissionError:
+            return True
+    finally:
+        for path, mode in ((f, 0o644), (sub, 0o755)):
+            try:
+                os.chmod(path, mode)
+            except OSError:
+                pass
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def _fcntl_ok() -> bool:
     """Whether lock_held takes its POSIX branch here. The Windows branch already
     honoured its timeout; the test below is about the one that was ignoring it."""
@@ -1329,6 +1364,7 @@ class TestQaCycle4(SandboxCase):
                     octo_pkg.main(["--brain", str(self.root), "uninstall", name])
 
     @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    @unittest.skipUnless(_mode_000_denies(), "chmod 000 does not deny reads here")
     def test_an_unreadable_package_directory_does_not_raise(self):
         """QA cycle 4, finding 3. `Path.is_file` swallows ENOENT and ENOTDIR, not
         EACCES, so a mode-000 package DIRECTORY raised from the stat itself, outside
@@ -1386,6 +1422,7 @@ class TestQaCycle4(SandboxCase):
                     self.brain.load_lock()
 
     @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    @unittest.skipUnless(_mode_000_denies(), "chmod 000 does not deny reads here")
     def test_an_unreadable_file_in_the_tree_does_not_raise(self):
         """tree_sha256 reads every file; a mode-000 one raises PermissionError, which
         is an OSError and was not caught next to PkgError."""
@@ -1451,6 +1488,7 @@ class TestQaCycle5(SandboxCase):
         self.assertIn("allowed-signers", buf.getvalue())
 
     @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    @unittest.skipUnless(_mode_000_denies(), "chmod 000 does not deny reads here")
     def test_an_unreadable_vendor_container_does_not_abort_any_verb(self):
         """The EACCES guard went onto `is_file` inside load_manifest, but the same
         stat happens one frame earlier whenever skills/vendor ITSELF is unreadable,
@@ -1786,6 +1824,7 @@ class TestQaCycle5(SandboxCase):
         self.assertEqual(self.brain.load_lock()["packages"], [])
 
     @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    @unittest.skipUnless(_mode_000_denies(), "chmod 000 does not deny reads here")
     def test_an_unreadable_skills_dir_is_reported_not_raised(self):
         """The guard went onto the vendor loop and stopped there, so the second loop
         over skills/ kept the shape the first one had just lost."""
