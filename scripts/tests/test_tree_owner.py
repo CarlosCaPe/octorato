@@ -16,6 +16,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -553,11 +554,31 @@ class QaCycle1(IsolationCase):
                         f"xargs rm -f {self.a_py}",
                         # a variable THE COMMAND ITSELF assigns is knowable, and
                         # this one moved OUT of the residual list below when
-                        # `resolve` started expanding what this process can read
-                        f"DIR={self.tree}/pkg && rm -rf $DIR",
-                        f"export DIR={self.tree}/pkg && rm -rf ${{DIR}}"):
+                        # `resolve` started expanding what this process can read.
+                        # Quoted as a shell would need it: unquoted, the
+                        # backslashes of a Windows path are escapes that bash
+                        # drops, so the assignment names no tree at all.
+                        f"DIR={shlex.quote(self.tree + '/pkg')} && rm -rf $DIR",
+                        f"export DIR={shlex.quote(self.tree + '/pkg')} && rm -rf ${{DIR}}"):
             rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", command))
             self.assertTrue(self.denied(out), command)
+
+    @unittest.skipUnless(os.name == "nt", "drive-letter and Git Bash path spellings exist only on Windows")
+    def test_windows_spellings_of_an_assigned_dir_are_denied(self):
+        """Every spelling with which Git Bash's `rm` reaches the tree is denied:
+        quoted backslashes, forward slashes and `/c/...`. An UNQUOTED backslash
+        path is not among them: bash drops those backslashes as escapes
+        (`DIR=C:\\Users\\x` holds `C:Usersx`, measured in Git Bash), so the gate
+        allowing it matches what the shell would do."""
+        self.hold()
+        native = os.path.join(self.tree, "pkg")
+        fwd = native.replace("\\", "/")
+        msys = "/" + fwd[0].lower() + fwd[2:]
+        for value in (f"'{native}'", f'"{native}"', fwd, msys):
+            for command in (f"DIR={value} && rm -rf $DIR",
+                            f"export DIR={value} && rm -rf ${{DIR}}"):
+                rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", command))
+                self.assertTrue(self.denied(out), command)
 
     def test_a_prefix_assignment_is_not_a_statement(self):
         """`DIR=x rm -rf $DIR` is not `DIR=x; rm -rf $DIR`. Bash puts a PREFIX
