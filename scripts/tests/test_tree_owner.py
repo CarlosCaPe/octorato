@@ -285,6 +285,19 @@ class ShellCBodies(IsolationCase):
             rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", command))
             self.assertTrue(self.denied(out), command)
 
+    def test_a_single_quoted_shell_c_body_is_rescanned(self):
+        """The single-quoted spellings, kept as regression cases. They name the
+        tree through paths relative to the payload cwd (the tree itself), so
+        no path needs quoting and the bodies stay single-quoted on every OS,
+        whatever the temp directory holds (a space, a backslash)."""
+        self.run_gate(WRITE_GATE, self.write_payload("agent-a", self.a_py))
+        for command in ("sh -c 'git checkout -- pkg/a.py'",
+                        "bash -c 'rm -rf pkg'",
+                        "bash -c \"bash -c 'rm -rf pkg'\"",
+                        "bash -c 'bash -c \"rm -rf pkg\"'"):
+            rc, out = self.run_gate(BASH_GATE, self.bash_payload("agent-b", command, cwd=self.tree))
+            self.assertTrue(self.denied(out), command)
+
     def test_a_python_c_body_gets_a_best_effort_pass(self):
         self.run_gate(WRITE_GATE, self.write_payload("agent-a", self.a_py))
         rc, out = self.run_gate(
