@@ -90,6 +90,26 @@ def _pty_ok() -> bool:
     return hasattr(signal, "SIGKILL")
 
 
+def _bytes_names_ok() -> bool:
+    """Whether a file name can be a byte string that is not UTF-8.
+
+    True on POSIX, where a name is bytes. False on Windows, where a name is UTF-16
+    and Python decodes a bytes path as strict UTF-8 (fs encoding utf-8,
+    surrogatepass): measured, open(b"evil\\xff.md") raises UnicodeDecodeError
+    before reaching the filesystem, so the file these tests plant cannot exist
+    there and the guard they pin has no input to guard against. Probed, not
+    assumed."""
+    d = tempfile.mkdtemp(prefix="octo-bytes-probe-")
+    try:
+        with open(os.path.join(os.fsencode(d), b"probe\xff"), "wb"):
+            pass
+        return True
+    except (UnicodeDecodeError, UnicodeEncodeError, OSError):
+        return False
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def _fcntl_ok() -> bool:
     """Whether lock_held takes its POSIX branch here. The Windows branch already
     honoured its timeout; the test below is about the one that was ignoring it."""
@@ -1452,6 +1472,7 @@ class TestQaCycle5(SandboxCase):
             octo_pkg.tree_sha256(dest, "skill")
         self.assertIn("cannot be read", str(caught.exception))
 
+    @unittest.skipUnless(_bytes_names_ok(), "file names are not bytes here: a non-UTF-8 name cannot be created")
     def test_a_name_that_is_not_utf8_is_refused_by_the_digest(self):
         """The fix that closed the fourth crossing family shipped with NO test, in a
         commit whose message says the family closes. Nothing in this file built a
@@ -1474,6 +1495,7 @@ class TestQaCycle5(SandboxCase):
                          "removing it restores the original digest")
 
     @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    @unittest.skipUnless(_bytes_names_ok(), "file names are not bytes here: a non-UTF-8 name cannot be created")
     def test_one_unnameable_file_does_not_take_the_whole_sweep_down(self):
         """The security half. `verify --all` used to abort with empty stdout, so
         anyone able to tamper with a vendored tree could suppress detection of that
@@ -1495,6 +1517,7 @@ class TestQaCycle5(SandboxCase):
         self.assertIn("1 verified", out, "the sweep finished")
 
     @unittest.skipUnless(_ssh_ok(), "ssh-keygen -Y unavailable")
+    @unittest.skipUnless(_bytes_names_ok(), "file names are not bytes here: a non-UTF-8 name cannot be created")
     def test_a_stray_with_an_unnameable_name_is_still_reported(self):
         """The SECOND encode crossing, which the digest refusal never sees: a vendor
         directory whose own name is not UTF-8 reaches the stray-scan print directly.
@@ -2072,6 +2095,7 @@ class TestQaCycle11(ArmFixture):
         self.assertTrue(cfg.exists(),
                         "a file this could not READ is a file it must not delete")
 
+    @unittest.skipUnless(_bytes_names_ok(), "file names are not bytes here: a non-UTF-8 name cannot be created")
     def test_verify_json_carries_a_non_utf8_name_through_a_real_stdout(self):
         """The test gap, and it is the same sin twice in one diff: the ensure_ascii
         fix shipped with no test, and none was possible on the surface it was written
