@@ -14,6 +14,8 @@ machine-generated growth ledger lives at
 `knowledge/repo-watch/<date>.md` (daily watchlist digests).
 
 ## [Unreleased]
+
+## [2026-10-13]: v10.0.0
 ### Octorato v10: low friction, easy entry
 Every check from v7 to v9 stays; v10 makes them cheaper to live with and easier to start.
 - **One-command install**: `python3 ~/.claude/scripts/quickstart.py` after the clone wires the Claude Code hooks, sets `core.hooksPath`, runs the fast doctor and writes a first spec; a fresh-clone CI job fails the run past 5 minutes (#379).
@@ -26,6 +28,15 @@ Every check from v7 to v9 stays; v10 makes them cheaper to live with and easier 
 - **Re-review after a base update**: `/requa <pr>` confirms a pull request changed only by merging master and records a QA receipt for the new head (#391, #395, #401).
 - **A SELF verdict demands the live source**: `delegate-check` and the heartbeat print, on every SELF lean, the line that asks for the live source before answering (#406).
 - Read after the cut, not before: over the first 7 days of friction data after release the send check's false-positive rate on its labelled sample must stay under 15%; `octo friction` prints it per check.
+
+## [2026-10-13]: v9.15.0
+### Features
+- feat(replay): rate goal-anchor fidelity on receipt-era Stops and close T28 (AC-10 amended) (#414)
+
+## [2026-10-13]: v9.14.7
+### Other
+- docs(v10): release docs for v10.0.0 across README, FAQ, roadmap, tour and wiki (#399)
+- docs(changelog): backfill v9.14.6 (#413)
 
 ## [2026-10-12]: v9.14.6
 ### Other
