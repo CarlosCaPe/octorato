@@ -20,7 +20,8 @@ v11-reply-panel.md.
 THE DECISION (FR-03, checked in this order; the first that holds exits 0)
   1. OCTO_REPLY_PANEL=off in this hook's own environment (the shell that
      launched Claude Code). Read before any import that can fail.
-  2. last_assistant_message is empty (or absent).
+  2. last_assistant_message is empty or whitespace. An ABSENT key is not
+     empty: the gate cannot decide and exits 2.
   3. The operator's own prompt for this turn carries the word `panel-skip`
      (never printed by this gate, so its own feedback cannot read as a waiver).
   4. A Pending_Panel exists and the reply is at most 30 words: an `Agent` call
@@ -41,12 +42,13 @@ THE OPERATOR PROMPT
 The newest user entry, walking back over tool results, task notifications,
 peer messages and hand-backs, compact summaries and isMeta entries (Stop-hook
 feedback, hook-injected text), whose origin.kind is human (or that has no
-origin). It is read with the backward reader and origin helpers of
+origin). Any other origin kind ends the walk with no prompt. It is read with the backward reader and origin helpers of
 g__pretool-mcp__outward-send.py, loaded by file name, never copied; a helper
 that is missing there is an error that names it.
 
 FAIL-CLOSED
-Anything that keeps the gate from deciding (unparseable payload, unreadable
+Anything that keeps the gate from deciding (unparseable payload, a payload
+without last_assistant_message, no operator prompt, unreadable
 transcript, an import error, a missing helper, a ledger that cannot be read,
 a spent record that cannot be written) exits 2 with the error named. A
 missing receipts directory is not an error: it reads as no receipt. The
@@ -145,22 +147,29 @@ def load() -> _Ctx:
 # Prompt_Reader
 # ---------------------------------------------------------------------------
 
+_WALK_PAST = ("task-notification", "peer")
+
+
 def _skipped(ctx, entry: dict) -> bool:
     """Entries the walk passes over to reach the operator's own prompt."""
     if entry.get("isMeta") is True or entry.get("isCompactSummary") or entry.get("isSidechain"):
         return True
-    kind = ctx.send._origin(entry).get("kind")
-    return kind is not None and kind != "human"
+    return ctx.send._origin(entry).get("kind") in _WALK_PAST
 
 
 def prompt_read(ctx, transcript: str) -> dict | None:
     """{"text", "ts", "uuid"} of the operator prompt behind this turn, or None
-    when the walk meets a human-shaped entry the harness did not write (a
-    forged or partial entry ends the walk: no prompt, fail closed). OSError
-    propagates: an unreadable transcript is an error, not an empty turn."""
+    when the walk meets an entry it cannot place: an origin kind it does not
+    know, or a human-shaped entry the harness did not write. Either ends the
+    walk with no prompt (fail closed), as the send gate's turn_read does.
+    OSError propagates: an unreadable transcript is an error, not an empty
+    turn."""
     for e in ctx.send._prompt_entries_reversed(transcript):
         if _skipped(ctx, e):
             continue
+        kind = ctx.send._origin(e).get("kind")
+        if kind is not None and kind != "human":
+            return None
         if ctx.send._is_operator_opener(e):
             return {"text": ctx.send._entry_text(e), "ts": str(e.get("timestamp") or ""),
                     "uuid": str(e.get("uuid") or "")}
@@ -314,8 +323,12 @@ def decide(data: dict) -> tuple:
     """(exit_code, stderr_message)."""
     if _off():
         return 0, ""
-    msg = data.get("last_assistant_message")
-    if not isinstance(msg, str) or not msg.strip():
+    if "last_assistant_message" not in data:
+        raise GateError("payload has no last_assistant_message")
+    msg = data["last_assistant_message"]
+    if not isinstance(msg, str):
+        raise GateError("last_assistant_message is not text")
+    if not msg.strip():
         return 0, ""
     ctx = load()
     transcript = str(data.get("transcript_path") or "")
@@ -411,10 +424,20 @@ def _seed_case(sandbox: Path, session: str, msg: str, fx: dict) -> None:
     import hashlib
     import panel_fixture_seed
     for i, r in enumerate(fx.get("receipts") or []):
+        agent_id = r.get("agent_id") or hashlib.sha256(f"{session}:{i}".encode()).hexdigest()[:17]
         panel_fixture_seed.seed_reply_receipt(
-            sandbox, session, r.get("text", msg), r["verdict"], r["ts"],
-            r.get("agent_id") or hashlib.sha256(f"{session}:{i}".encode()).hexdigest()[:17],
+            sandbox, session, r.get("text", msg), r["verdict"], r["ts"], agent_id,
             r.get("agent_type", "Reality Checker"))
+        if r.get("corrupt_report"):
+            # A text block whose text is not a string: the ledger's own report
+            # reader raises TypeError on it, past the gate's readability check.
+            tp = (sandbox / ".claude" / "projects" / "fx" / session / "subagents"
+                  / f"agent-{agent_id}.jsonl")
+            rows = [json.loads(ln) for ln in tp.read_text(encoding="utf-8").splitlines() if ln]
+            for row in rows:
+                if row.get("type") == "assistant":
+                    row["message"]["content"].append({"type": "text", "text": 404})
+            tp.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
     rdir = sandbox / ".claude" / ".cache" / "receipts"
     if fx.get("spent"):
         rdir.mkdir(parents=True, exist_ok=True)

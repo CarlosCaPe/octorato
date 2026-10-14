@@ -1,0 +1,19 @@
+{
+  "session_id": "fx-rp-violation-ac04-receipt-equal-to-prompt",
+  "hook_event_name": "Stop",
+  "cwd": "/home/user",
+  "stop_hook_active": false,
+  "last_assistant_message": "The migration ran on the staging copy and the row counts match the source table. Two warnings remain, both about deprecated flags, and neither blocks the release. The rollback script is untested.",
+  "transcript_path": "violation_ac04_receipt_equal_to_prompt_transcript.jsonl",
+  "_fixture": {
+    "receipts": [
+      {
+        "verdict": "PASS",
+        "ts": "2026-10-14T10:00:00.000Z"
+      }
+    ],
+    "stderr_lacks": [
+      "cannot decide"
+    ]
+  }
+}
