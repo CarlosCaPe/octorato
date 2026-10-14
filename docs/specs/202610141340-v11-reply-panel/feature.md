@@ -103,5 +103,5 @@ The rule `FLOW.panel-before-reply` is registered in the Rule_Registry with stren
 - R-08: A reply that itself contains a `PANEL-BODY-END` line cannot be matched by any receipt (the block parser stops there). The Skip_Token is the way through.
 - R-09: A status line under the Status_Cap while a Pending_Panel runs is unreviewed by design.
 - R-10: Any `.claude/settings*.json` outside the live root (an arm's, or one the main loop writes in another directory) can set the Off_Switch for later sessions launched there; the arming surface does not see those scopes. The Doctor warns (AC-16); it does not block. Same residual as `OCTO_MERGE_APPROVE`.
-- R-11: Every throwaway panel request with a dummy body buys one stop chain of at most 30 unreviewed words, repeatable every turn. Each costs a reviewer run and is visible in the transcript.
+- R-11: Every throwaway panel request with a dummy body buys one stop chain of at most 30 unreviewed words, repeatable every turn. Each costs a reviewer run and is visible in the transcript. A spent id also re-exempts a second status stop inside the same operator turn while `stop_hook_active` is true.
 - R-12: Unattended top-level `claude -p` runs pay up to 8 continuations per reply unless launched with the Off_Switch.

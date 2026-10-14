@@ -26,20 +26,20 @@ It exits 0 when the first of these holds, in this order:
 | # | Condition |
 |---|---|
 | 1 | `OCTO_REPLY_PANEL=off` in the hook's own environment. Read before any import that can fail. |
-| 2 | `last_assistant_message` is empty or absent. |
+| 2 | `last_assistant_message` is an empty or whitespace string. An absent key is not empty: the gate cannot decide and exits 2 ("payload has no last_assistant_message"). |
 | 3 | The operator's own prompt for the turn carries the word `panel-skip`. |
 | 4 | A pending panel reviewer exists and the reply is at most 30 whitespace-split words. |
 | 5 | `receipt_ledger.panel_pass_for(digest, session)` returns a PASS whose `verdict_ts` is strictly newer than the operator's prompt. |
 
 Otherwise it exits 2. Its stderr names the digest, the panel-request command and the accepted reviewer types, and never the skip word, so its own feedback cannot read as a waiver. `stop_hook_active` changes nothing: there is no block-once.
 
-**The operator's prompt.** The gate walks the transcript backwards with the send gate's `_prompt_entries_reversed`, `_origin`, `_is_operator_opener` and `_entry_text`, loaded by file name. It passes over tool results, task notifications, peer messages and hand-backs, compact summaries, sidechain entries and every `isMeta` entry (Stop-hook feedback lands as a user entry with `isMeta: true`). The first entry whose `origin.kind` is `human`, or that has no origin, is the prompt; if that entry is not harness-written (`_is_operator_opener` fails), there is no prompt and the gate exits 2. A helper missing from the send gate is an error that names it.
+**The operator's prompt.** The gate walks the transcript backwards with the send gate's `_prompt_entries_reversed`, `_origin`, `_is_operator_opener` and `_entry_text`, loaded by file name. It passes over tool results, task notifications, peer messages and hand-backs, compact summaries, sidechain entries and every `isMeta` entry (Stop-hook feedback lands as a user entry with `isMeta: true`). The first entry whose `origin.kind` is `human`, or that has no origin, is the prompt; if that entry is not harness-written (`_is_operator_opener` fails), there is no prompt and the gate exits 2. An entry with any other origin kind also ends the walk with no prompt, as the send gate's `turn_read` does. A helper missing from the send gate is an error that names it.
 
 **A receipt is not spent.** It is bound to one exact text and one operator turn. A receipt from an earlier turn never covers this one, and a NEEDS-WORK newer than the PASS revokes it (the ledger's own rule). Repeating the identical text in the same turn is the same reply.
 
 **Pending reviewer.** An `Agent` call in this turn, after the operator's prompt, whose `subagent_type` matches `PANEL_AGENT_TYPE` and whose `input.prompt` holds a block that `panel_digest.recompute_from_report` accepts with `operator` as its only recipient. It completes when a user entry carries `<tool-use-id>` with its id (a task notification) or when its own `tool_result` arrives with `toolUseResult.isAsync` not true; the `isAsync: true` result is the background-launch acknowledgment. Each pending reviewer exempts one stop chain: the gate appends its id to `~/.claude/.cache/receipts/reply-pending.jsonl`, and a recorded id still exempts while `stop_hook_active` is true, because another Stop gate running in parallel may have blocked the same stop.
 
-**Fail-closed.** An unparseable payload, an unreadable transcript, an import error, a missing helper, a receipt ledger that is not a readable file, an unreadable or unwritable `reply-pending.jsonl`, or an exception from the ledger exits 2 with the error named. A missing receipts directory is no receipt, not an error. The way out is the operator's: `panel-skip` for one turn, `OCTO_REPLY_PANEL=off` in the launching shell for the session. The main loop cannot set the second one: a Bash export does not reach hook processes. The harness sets `CLAUDE_CODE_CHILD_SESSION=1` in hook commands; the gate ignores it.
+**Fail-closed.** An unparseable payload, a payload without `last_assistant_message`, no operator prompt, an unreadable transcript, an import error, a missing helper, a receipt ledger that is not a readable file, an unreadable or unwritable `reply-pending.jsonl`, or an exception from the ledger exits 2 with the error named. A missing receipts directory is no receipt, not an error. The way out is the operator's: `panel-skip` for one turn, `OCTO_REPLY_PANEL=off` in the launching shell for the session. The main loop cannot set the second one: a Bash export does not reach hook processes. The harness sets `CLAUDE_CODE_CHILD_SESSION=1` in hook commands; the gate ignores it.
 
 ## Proof
 
@@ -61,7 +61,5 @@ Otherwise it exits 2. Its stderr names the digest, the panel-request command and
 | R-08 | A reply that itself contains a `PANEL-BODY-END` line cannot be matched by any receipt (the block parser stops there). `panel-skip` is the way through. | scripts/panel_digest.py `_BLOCK` |
 | R-09 | A status line under 30 words while a reviewer runs is unreviewed by design. | feature.md FR-03 step 4 |
 | R-10 | Any `.claude/settings*.json` outside the live root (an arm's, or one the main loop writes in another directory) can set the off switch for later sessions launched there; the arming surface does not see those scopes. The doctor warns for the arm paths in arms-paths.json; it does not block. Same residual as `OCTO_MERGE_APPROVE`. | docs/architecture/v8-arming-surface.md, brain_doctor `reply-panel-arm-env` |
-| R-11 | Every throwaway panel request with a dummy body buys one stop chain of at most 30 unreviewed words, repeatable every turn. Each costs a reviewer run and is visible in the transcript. | feature.md R-11 |
+| R-11 | Every throwaway panel request with a dummy body buys one stop chain of at most 30 unreviewed words, repeatable every turn. Each costs a reviewer run and is visible in the transcript. A spent id also re-exempts a second status stop inside the same operator turn while `stop_hook_active` is true. | feature.md R-11 |
 | R-12 | Unattended top-level `claude -p` runs pay up to 8 continuations per reply unless launched with the off switch. | feature.md R-12 (follows from R-02) |
-
-Two behaviours that follow from the spec text, stated so nobody reads them as accidents: an absent `last_assistant_message` counts as empty and exits 0 (a harness that does not send the field is not gated), and an entry with an origin kind other than `human` is passed over by the walk.
