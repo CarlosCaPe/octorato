@@ -39,3 +39,7 @@ The worktree is `~/.octorato/wt/v11-reply-panel`; the live `~/.claude` copy is n
 
 - [x] T21 [AC-18, AC-21] registry/fixtures/FLOW.panel-before-reply/: pin four Source_Class glossary cases the selftest does not hold today: a SOURCED provenance line followed by a SELF line (exit 2 on one reviewer; `_line_is_self(lines[0])` survives), an empty `Basis:` value (SELF; dropping `not basis` survives), an uppercase `Basis: SELF` (removing `re.IGNORECASE` from `_SELF_BASIS` survives), and a `>`-quoted provenance line (removing `>` from the label prefix survives).
 - [x] T22 [AC-21] scripts/g__stop__reply-panel.py, registry/fixtures/FLOW.panel-before-reply/: widen the empty-Basis set and the German spelling per the refined Source_Class glossary, with fixtures for `none.`, an em dash, `--`, `nothing`, `NA` and `eigene Ueberlegung`.
+
+## Convergence 4
+
+- [x] T23 [AC-20, AC-21] registry/fixtures/FLOW.panel-before-reply/: pin the two dash boundaries of the widened empty-Basis set: an en-dash-only Basis (`–`) is SELF and exits 2 on one reviewer (dropping the en dash from `_DASHES` passes the selftest today), and a Basis that starts with a dash but names a source (`- docs/a.md`) is SOURCED and exits 0 on one reviewer (removing the `^...$` anchors from `_DASHES` makes it SELF and also passes today).
