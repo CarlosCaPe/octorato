@@ -190,7 +190,12 @@ class SandboxCase(unittest.TestCase):
     """A brain checkout in a temp dir, with a key minted per test class."""
 
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="test-octo-pkg-"))
+        # Resolved, because octo_pkg resolves every path it records and prints, and the
+        # tests compare against paths built from self.tmp. A TEMP spelled with a Windows
+        # 8.3 short name (C:\Users\FIRSTN~1\..., which Windows hands a process when the
+        # profile path has a space) resolves to the long name, so the two spellings of
+        # one directory compared unequal. On POSIX this is the same path.
+        self.tmp = Path(tempfile.mkdtemp(prefix="test-octo-pkg-")).resolve()
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         self._home = _REAL_HOME or os.environ.get("HOME")
         home = self.tmp / "home"
