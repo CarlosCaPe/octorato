@@ -42,6 +42,9 @@ def _clean_env(home: Path) -> dict:
     env = {k: v for k, v in os.environ.items()
            if not k.startswith(("GIT_", "OCTO_", "CLAUDE"))}
     env["HOME"] = str(home)
+    # Path.home() and os.path.expanduser() read USERPROFILE on Windows and
+    # ignore HOME, so the fake home must be named through both.
+    env["USERPROFILE"] = str(home)
     env["GIT_CONFIG_NOSYSTEM"] = "1"
     return env
 
@@ -71,13 +74,14 @@ def make_brain(home: Path) -> Path:
 
 def run_quickstart(home: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run([sys.executable, str(home / ".claude" / "scripts" / "quickstart.py"), *args],
-                          env=_clean_env(home), capture_output=True, text=True, timeout=120,
+                          env=_clean_env(home), capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", timeout=120,
                           stdin=subprocess.DEVNULL)
 
 
 def git_out(home: Path, *args: str) -> str:
     return subprocess.run(["git", "-C", str(home / ".claude"), *args], env=_clean_env(home),
-                          capture_output=True, text=True).stdout.strip()
+                          capture_output=True, text=True, encoding="utf-8").stdout.strip()
 
 
 class QuickstartWiringTest(unittest.TestCase):
@@ -134,7 +138,8 @@ class QuickstartWiringTest(unittest.TestCase):
     def test_a_checkout_outside_home_claude_is_not_wired(self):
         other = Path(self.tmp.name) / "elsewhere"
         shutil.copytree(self.brain, other)
-        with mock.patch.dict(os.environ, {"HOME": str(self.home)}):
+        with mock.patch.dict(os.environ, {"HOME": str(self.home),
+                                         "USERPROFILE": str(self.home)}):
             ok, detail = quickstart.wire_claude_hooks(other)
         self.assertFalse(ok)
         self.assertIn("clone the brain to ~/.claude", detail)
