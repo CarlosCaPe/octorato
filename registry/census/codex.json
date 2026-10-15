@@ -1,0 +1,332 @@
+{
+  "block_fixtures": {
+    "file_edit": {
+      "benign": "ARCHITECTURE.arming-surface/benign_gate_body_edit.json",
+      "gate": "ARCHITECTURE.arming-surface",
+      "violation": "ARCHITECTURE.arming-surface/violation_gate_body_edit.json"
+    },
+    "file_write": {
+      "benign": "ARCHITECTURE.arming-surface/benign_settings_write.json",
+      "gate": "ARCHITECTURE.arming-surface",
+      "violation": "ARCHITECTURE.arming-surface/violation_settings_write.json"
+    },
+    "mcp": {
+      "benign": "COMMS.outward-send-gate/benign_hatch_in_prompt.json",
+      "gate": "COMMS.outward-send-gate",
+      "violation": "COMMS.outward-send-gate/violation_absence_assert_then_ask.json"
+    },
+    "shell": {
+      "benign": "SEC.prod-write-gate/benign.json",
+      "gate": "SEC.prod-write-gate",
+      "violation": "SEC.prod-write-gate/violation.json"
+    }
+  },
+  "contract": {
+    "binary": "codex",
+    "block_contract": [
+      "JSON hookSpecificOutput.permissionDecision = deny with permissionDecisionReason",
+      "older JSON {\"decision\": \"block\", \"reason\": \"...\"}",
+      "exit 2 with the reason on stderr"
+    ],
+    "config_paths": [
+      "~/.codex/hooks.json",
+      "~/.codex/config.toml [hooks]",
+      ".codex/hooks.json",
+      ".codex/config.toml [hooks]"
+    ],
+    "hook_event": "PreToolUse",
+    "name": "Codex CLI",
+    "source": "learn.chatgpt.com/docs/hooks",
+    "tool_map": {
+      "Bash": "Bash",
+      "Edit": "apply_patch",
+      "Write": "apply_patch",
+      "mcp": "mcp__<server>__<tool>"
+    },
+    "trust_step": "non-managed hooks run only after /hooks trust, recorded against the hook's hash; --dangerously-bypass-hook-trust skips it once"
+  },
+  "generated_by": "scripts/runtime_census.py",
+  "harness": "codex",
+  "live": {
+    "account": "Logged in using ChatGPT",
+    "attempts": [
+      {
+        "elapsed_s": 4.2,
+        "error_class": null,
+        "exit_code": 0,
+        "mode": "codex exec --skip-git-repo-check <prompt>, cwd = empty sandbox",
+        "outcome": "success",
+        "reason": "expected token in stdout",
+        "started": "2026-10-15T12:08:51Z",
+        "stderr_tail": "r\nsandbox: read-only\nreasoning effort: none\nreasoning summaries: none\nsession id: 01a13f77-17fe-7a83-afa2-bdba81f09710\n--------\nuser\nReply with exactly the word OCTORATO-CENSUS-OK and nothing else.\ncodex\nOCTORATO-CENSUS-OK\ntokens used\n1,843"
+      }
+    ],
+    "binary": {
+      "name": "codex",
+      "path": "~/.nvm/versions/node/v24.15.0/bin/codex",
+      "version": "codex-cli 0.159.3"
+    },
+    "measured": "2026-10-15T12:08:56Z",
+    "outcome": "success",
+    "reason": "expected token in stdout",
+    "trust_step_note": "not measured: no Octorato hook is projected yet; the docs state non-managed hooks need /hooks trust per hook hash",
+    "trust_step_scriptable": null
+  },
+  "name": "Codex CLI",
+  "status": "measured",
+  "support_note": "measurements only; `supported` needs blocking evidence through projected hooks, which this record does not hold",
+  "tool_classes": {
+    "file_edit": {
+      "blocking_note": "not measured: no projected hook or shim exists for this harness yet",
+      "gate": "ARCHITECTURE.arming-surface",
+      "harness_allowed_benign": null,
+      "harness_blocked_violation": null,
+      "harness_tool_name": "apply_patch",
+      "legs": [
+        {
+          "fixture": "ARCHITECTURE.arming-surface/violation_gate_body_edit.json",
+          "harness_tool_name": "apply_patch",
+          "leg": "violation",
+          "rendered_payload": {
+            "cwd": "{{SANDBOX}}/wt/state-gate",
+            "hook_event_name": "PreToolUse",
+            "model": "census",
+            "permission_mode": "default",
+            "session_id": "sess-arming",
+            "tool_input": {
+              "command": "*** Begin Patch\n*** Update File: {{SANDBOX}}/.claude/scripts/qa-merge-gate.py\n@@\n-a\n+b\n*** End Patch\n"
+            },
+            "tool_name": "apply_patch",
+            "tool_use_id": "toolu_arm",
+            "transcript_path": null,
+            "turn_id": "census"
+          },
+          "round_trip_lossless": true,
+          "status": "measured",
+          "tool_input_keys": [
+            "command"
+          ],
+          "translatable": true
+        },
+        {
+          "fixture": "ARCHITECTURE.arming-surface/benign_gate_body_edit.json",
+          "harness_tool_name": "apply_patch",
+          "leg": "benign",
+          "rendered_payload": {
+            "cwd": "{{SANDBOX}}/wt/state-gate",
+            "hook_event_name": "PreToolUse",
+            "model": "census",
+            "permission_mode": "default",
+            "session_id": "sess-arming",
+            "tool_input": {
+              "command": "*** Begin Patch\n*** Update File: {{SANDBOX}}/wt/state-gate/scripts/qa-merge-gate.py\n@@\n-a\n+b\n*** End Patch\n"
+            },
+            "tool_name": "apply_patch",
+            "tool_use_id": "toolu_arm",
+            "transcript_path": null,
+            "turn_id": "census"
+          },
+          "round_trip_lossless": true,
+          "status": "measured",
+          "tool_input_keys": [
+            "command"
+          ],
+          "translatable": true
+        }
+      ],
+      "translatable": true
+    },
+    "file_write": {
+      "blocking_note": "not measured: no projected hook or shim exists for this harness yet",
+      "gate": "ARCHITECTURE.arming-surface",
+      "harness_allowed_benign": null,
+      "harness_blocked_violation": null,
+      "harness_tool_name": "apply_patch",
+      "legs": [
+        {
+          "fixture": "ARCHITECTURE.arming-surface/violation_settings_write.json",
+          "harness_tool_name": "apply_patch",
+          "leg": "violation",
+          "rendered_payload": {
+            "cwd": "{{SANDBOX}}/wt/state-gate",
+            "hook_event_name": "PreToolUse",
+            "model": "census",
+            "permission_mode": "default",
+            "session_id": "sess-arming",
+            "tool_input": {
+              "command": "*** Begin Patch\n*** Add File: {{SANDBOX}}/.claude/settings.json\n+x\n*** End Patch\n"
+            },
+            "tool_name": "apply_patch",
+            "tool_use_id": "toolu_arm",
+            "transcript_path": null,
+            "turn_id": "census"
+          },
+          "round_trip_lossless": true,
+          "status": "measured",
+          "tool_input_keys": [
+            "command"
+          ],
+          "translatable": true
+        },
+        {
+          "fixture": "ARCHITECTURE.arming-surface/benign_settings_write.json",
+          "harness_tool_name": "apply_patch",
+          "leg": "benign",
+          "rendered_payload": {
+            "cwd": "{{SANDBOX}}/wt/state-gate",
+            "hook_event_name": "PreToolUse",
+            "model": "census",
+            "permission_mode": "default",
+            "session_id": "sess-arming",
+            "tool_input": {
+              "command": "*** Begin Patch\n*** Add File: {{SANDBOX}}/wt/state-gate/settings.json\n+x\n*** End Patch\n"
+            },
+            "tool_name": "apply_patch",
+            "tool_use_id": "toolu_arm",
+            "transcript_path": null,
+            "turn_id": "census"
+          },
+          "round_trip_lossless": true,
+          "status": "measured",
+          "tool_input_keys": [
+            "command"
+          ],
+          "translatable": true
+        }
+      ],
+      "translatable": true
+    },
+    "mcp": {
+      "blocking_note": "not measured: no projected hook or shim exists for this harness yet",
+      "gate": "COMMS.outward-send-gate",
+      "harness_allowed_benign": null,
+      "harness_blocked_violation": null,
+      "harness_tool_name": "mcp__<server>__<tool>",
+      "legs": [
+        {
+          "fixture": "COMMS.outward-send-gate/violation_absence_assert_then_ask.json",
+          "harness_tool_name": "mcp__gmail__send_email",
+          "leg": "violation",
+          "rendered_payload": {
+            "cwd": "<str>",
+            "hook_event_name": "<str>",
+            "model": "<str>",
+            "permission_mode": "<str>",
+            "session_id": "<str>",
+            "tool_input": {
+              "body": "<str>",
+              "subject": "<str>",
+              "to": [
+                "<str>"
+              ]
+            },
+            "tool_name": "<str>",
+            "tool_use_id": "<str>",
+            "transcript_path": "<str>",
+            "turn_id": "<str>"
+          },
+          "round_trip_lossless": true,
+          "status": "measured",
+          "tool_input_keys": [
+            "body",
+            "subject",
+            "to"
+          ],
+          "translatable": true
+        },
+        {
+          "fixture": "COMMS.outward-send-gate/benign_hatch_in_prompt.json",
+          "harness_tool_name": "mcp__gmail__send_email",
+          "leg": "benign",
+          "rendered_payload": {
+            "cwd": "<str>",
+            "hook_event_name": "<str>",
+            "model": "<str>",
+            "permission_mode": "<str>",
+            "session_id": "<str>",
+            "tool_input": {
+              "body": "<str>",
+              "subject": "<str>",
+              "to": [
+                "<str>"
+              ]
+            },
+            "tool_name": "<str>",
+            "tool_use_id": "<str>",
+            "transcript_path": "<str>",
+            "turn_id": "<str>"
+          },
+          "round_trip_lossless": true,
+          "status": "measured",
+          "tool_input_keys": [
+            "body",
+            "subject",
+            "to"
+          ],
+          "translatable": true
+        }
+      ],
+      "translatable": true
+    },
+    "shell": {
+      "blocking_note": "not measured: no projected hook or shim exists for this harness yet",
+      "gate": "SEC.prod-write-gate",
+      "harness_allowed_benign": null,
+      "harness_blocked_violation": null,
+      "harness_tool_name": "Bash",
+      "legs": [
+        {
+          "fixture": "SEC.prod-write-gate/violation.json",
+          "harness_tool_name": "Bash",
+          "leg": "violation",
+          "rendered_payload": {
+            "cwd": "/home/user/project",
+            "hook_event_name": "PreToolUse",
+            "model": "census",
+            "permission_mode": "default",
+            "session_id": "census",
+            "tool_input": {
+              "command": "aws ssm send-command --instance-ids i-0abc123def456789 --document-name AWS-RunShellScript --parameters 'commands=[\"aws s3 cp s3://bucket/octorato /opt/octorato/bin/octorato\",\"chmod +x /opt/octorato/bin/octorato\"]'"
+            },
+            "tool_name": "Bash",
+            "tool_use_id": "census",
+            "transcript_path": null,
+            "turn_id": "census"
+          },
+          "round_trip_lossless": true,
+          "status": "measured",
+          "tool_input_keys": [
+            "command"
+          ],
+          "translatable": true
+        },
+        {
+          "fixture": "SEC.prod-write-gate/benign.json",
+          "harness_tool_name": "Bash",
+          "leg": "benign",
+          "rendered_payload": {
+            "cwd": "/home/user/project",
+            "hook_event_name": "PreToolUse",
+            "model": "census",
+            "permission_mode": "default",
+            "session_id": "census",
+            "tool_input": {
+              "command": "git status"
+            },
+            "tool_name": "Bash",
+            "tool_use_id": "census",
+            "transcript_path": null,
+            "turn_id": "census"
+          },
+          "round_trip_lossless": true,
+          "status": "measured",
+          "tool_input_keys": [
+            "command"
+          ],
+          "translatable": true
+        }
+      ],
+      "translatable": true
+    }
+  }
+}

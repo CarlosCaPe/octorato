@@ -1,0 +1,353 @@
+{
+  "block_fixtures": {
+    "file_edit": {
+      "benign": "ARCHITECTURE.arming-surface/benign_gate_body_edit.json",
+      "gate": "ARCHITECTURE.arming-surface",
+      "violation": "ARCHITECTURE.arming-surface/violation_gate_body_edit.json"
+    },
+    "file_write": {
+      "benign": "ARCHITECTURE.arming-surface/benign_settings_write.json",
+      "gate": "ARCHITECTURE.arming-surface",
+      "violation": "ARCHITECTURE.arming-surface/violation_settings_write.json"
+    },
+    "mcp": {
+      "benign": "COMMS.outward-send-gate/benign_hatch_in_prompt.json",
+      "gate": "COMMS.outward-send-gate",
+      "violation": "COMMS.outward-send-gate/violation_absence_assert_then_ask.json"
+    },
+    "shell": {
+      "benign": "SEC.prod-write-gate/benign.json",
+      "gate": "SEC.prod-write-gate",
+      "violation": "SEC.prod-write-gate/violation.json"
+    }
+  },
+  "contract": {
+    "binary": "gemini",
+    "block_contract": [
+      "exit 2 with the reason on stderr",
+      "JSON {\"decision\": \"deny\", \"reason\": \"...\"} on stdout"
+    ],
+    "config_paths": [
+      ".gemini/settings.json",
+      "~/.gemini/settings.json"
+    ],
+    "hook_event": "BeforeTool",
+    "name": "Gemini CLI",
+    "source": "geminicli.com/docs/hooks/reference, docs/tools/shell, docs/tools/file-system",
+    "tool_map": {
+      "Bash": "run_shell_command",
+      "Edit": "replace",
+      "Write": "write_file",
+      "mcp": "mcp_<server>_<tool>"
+    },
+    "trust_step": "none documented; hooks load from settings.json"
+  },
+  "generated_by": "scripts/runtime_census.py",
+  "harness": "gemini",
+  "live": {
+    "account": null,
+    "attempts": [
+      {
+        "account": "google-account",
+        "elapsed_s": 7.2,
+        "error_class": "TerminalQuotaError",
+        "exit_code": 1,
+        "mode": "gemini -p <prompt>, Google account (no GEMINI_API_KEY), cwd = empty sandbox",
+        "outcome": "failure",
+        "reason": "429 quota exhausted at the service",
+        "started": "2026-10-15T12:09:19Z",
+        "stderr_tail": "el: gemini-3.8-flash\\n' +\n      'Please retry in 11h50m33.611664357s.',\n    details: [ [Object], [Object], [Object] ]\n  },\n  retryDelayMs: undefined,\n  reason: undefined,\n  status: 429\n}\nAn unexpected critical error occurred:[object Object]"
+      },
+      {
+        "account": "api-key",
+        "elapsed_s": 7.2,
+        "error_class": "TerminalQuotaError",
+        "exit_code": 1,
+        "mode": "gemini -p <prompt>, GEMINI_API_KEY from ~/.env, GEMINI_CLI_TRUST_WORKSPACE=true, cwd = empty sandbox",
+        "outcome": "failure",
+        "reason": "429 quota exhausted at the service",
+        "started": "2026-10-15T12:09:26Z",
+        "stderr_tail": "del: gemini-3.8-flash\\n' +\n      'Please retry in 11h50m26.38674383s.',\n    details: [ [Object], [Object], [Object] ]\n  },\n  retryDelayMs: undefined,\n  reason: undefined,\n  status: 429\n}\nAn unexpected critical error occurred:[object Object]"
+      }
+    ],
+    "binary": {
+      "name": "gemini",
+      "path": "~/.nvm/versions/node/v24.15.0/bin/gemini",
+      "version": "0.62.0"
+    },
+    "google_account_evidence": {
+      "error_class": "TerminalQuotaError",
+      "measured": "2026-10-15T12:09:19Z",
+      "prior_measurement": {
+        "date": "2026-10-15",
+        "error_class": "IneligibleTierError",
+        "message_prefix": "This client is no longer supported for Gemini Code Assist for individuals",
+        "version": "0.62.0"
+      }
+    },
+    "measured": "2026-10-15T12:09:33Z",
+    "outcome": "failure",
+    "reason": "429 quota exhausted at the service"
+  },
+  "name": "Gemini CLI",
+  "status": "measured",
+  "support_note": "measurements only; `supported` needs blocking evidence through projected hooks, which this record does not hold",
+  "tool_classes": {
+    "file_edit": {
+      "blocking_note": "not measured: no projected hook or shim exists for this harness yet",
+      "gate": "ARCHITECTURE.arming-surface",
+      "harness_allowed_benign": null,
+      "harness_blocked_violation": null,
+      "harness_tool_name": "replace",
+      "legs": [
+        {
+          "fixture": "ARCHITECTURE.arming-surface/violation_gate_body_edit.json",
+          "harness_tool_name": "replace",
+          "leg": "violation",
+          "rendered_payload": {
+            "cwd": "{{SANDBOX}}/wt/state-gate",
+            "hook_event_name": "BeforeTool",
+            "session_id": "sess-arming",
+            "timestamp": "1970-01-01T00:00:00Z",
+            "tool_input": {
+              "allow_multiple": false,
+              "file_path": "{{SANDBOX}}/.claude/scripts/qa-merge-gate.py",
+              "instruction": "census",
+              "new_string": "b",
+              "old_string": "a"
+            },
+            "tool_name": "replace",
+            "transcript_path": ""
+          },
+          "round_trip_lossless": true,
+          "status": "measured",
+          "tool_input_keys": [
+            "allow_multiple",
+            "file_path",
+            "instruction",
+            "new_string",
+            "old_string"
+          ],
+          "translatable": true
+        },
+        {
+          "fixture": "ARCHITECTURE.arming-surface/benign_gate_body_edit.json",
+          "harness_tool_name": "replace",
+          "leg": "benign",
+          "rendered_payload": {
+            "cwd": "{{SANDBOX}}/wt/state-gate",
+            "hook_event_name": "BeforeTool",
+            "session_id": "sess-arming",
+            "timestamp": "1970-01-01T00:00:00Z",
+            "tool_input": {
+              "allow_multiple": false,
+              "file_path": "{{SANDBOX}}/wt/state-gate/scripts/qa-merge-gate.py",
+              "instruction": "census",
+              "new_string": "b",
+              "old_string": "a"
+            },
+            "tool_name": "replace",
+            "transcript_path": ""
+          },
+          "round_trip_lossless": true,
+          "status": "measured",
+          "tool_input_keys": [
+            "allow_multiple",
+            "file_path",
+            "instruction",
+            "new_string",
+            "old_string"
+          ],
+          "translatable": true
+        }
+      ],
+      "translatable": true
+    },
+    "file_write": {
+      "blocking_note": "not measured: no projected hook or shim exists for this harness yet",
+      "gate": "ARCHITECTURE.arming-surface",
+      "harness_allowed_benign": null,
+      "harness_blocked_violation": null,
+      "harness_tool_name": "write_file",
+      "legs": [
+        {
+          "fixture": "ARCHITECTURE.arming-surface/violation_settings_write.json",
+          "harness_tool_name": "write_file",
+          "leg": "violation",
+          "rendered_payload": {
+            "cwd": "{{SANDBOX}}/wt/state-gate",
+            "hook_event_name": "BeforeTool",
+            "session_id": "sess-arming",
+            "timestamp": "1970-01-01T00:00:00Z",
+            "tool_input": {
+              "content": "x\n",
+              "file_path": "{{SANDBOX}}/.claude/settings.json"
+            },
+            "tool_name": "write_file",
+            "transcript_path": ""
+          },
+          "round_trip_lossless": true,
+          "status": "measured",
+          "tool_input_keys": [
+            "content",
+            "file_path"
+          ],
+          "translatable": true
+        },
+        {
+          "fixture": "ARCHITECTURE.arming-surface/benign_settings_write.json",
+          "harness_tool_name": "write_file",
+          "leg": "benign",
+          "rendered_payload": {
+            "cwd": "{{SANDBOX}}/wt/state-gate",
+            "hook_event_name": "BeforeTool",
+            "session_id": "sess-arming",
+            "timestamp": "1970-01-01T00:00:00Z",
+            "tool_input": {
+              "content": "x\n",
+              "file_path": "{{SANDBOX}}/wt/state-gate/settings.json"
+            },
+            "tool_name": "write_file",
+            "transcript_path": ""
+          },
+          "round_trip_lossless": true,
+          "status": "measured",
+          "tool_input_keys": [
+            "content",
+            "file_path"
+          ],
+          "translatable": true
+        }
+      ],
+      "translatable": true
+    },
+    "mcp": {
+      "blocking_note": "not measured: no projected hook or shim exists for this harness yet",
+      "gate": "COMMS.outward-send-gate",
+      "harness_allowed_benign": null,
+      "harness_blocked_violation": null,
+      "harness_tool_name": "mcp_<server>_<tool>",
+      "legs": [
+        {
+          "fixture": "COMMS.outward-send-gate/violation_absence_assert_then_ask.json",
+          "harness_tool_name": "mcp_gmail_send_email",
+          "leg": "violation",
+          "rendered_payload": {
+            "cwd": "<str>",
+            "hook_event_name": "<str>",
+            "mcp_context": {
+              "server_name": "<str>",
+              "tool_name": "<str>"
+            },
+            "session_id": "<str>",
+            "timestamp": "<str>",
+            "tool_input": {
+              "body": "<str>",
+              "subject": "<str>",
+              "to": [
+                "<str>"
+              ]
+            },
+            "tool_name": "<str>",
+            "transcript_path": "<str>"
+          },
+          "round_trip_lossless": true,
+          "status": "measured",
+          "tool_input_keys": [
+            "body",
+            "subject",
+            "to"
+          ],
+          "translatable": true
+        },
+        {
+          "fixture": "COMMS.outward-send-gate/benign_hatch_in_prompt.json",
+          "harness_tool_name": "mcp_gmail_send_email",
+          "leg": "benign",
+          "rendered_payload": {
+            "cwd": "<str>",
+            "hook_event_name": "<str>",
+            "mcp_context": {
+              "server_name": "<str>",
+              "tool_name": "<str>"
+            },
+            "session_id": "<str>",
+            "timestamp": "<str>",
+            "tool_input": {
+              "body": "<str>",
+              "subject": "<str>",
+              "to": [
+                "<str>"
+              ]
+            },
+            "tool_name": "<str>",
+            "transcript_path": "<str>"
+          },
+          "round_trip_lossless": true,
+          "status": "measured",
+          "tool_input_keys": [
+            "body",
+            "subject",
+            "to"
+          ],
+          "translatable": true
+        }
+      ],
+      "translatable": true
+    },
+    "shell": {
+      "blocking_note": "not measured: no projected hook or shim exists for this harness yet",
+      "gate": "SEC.prod-write-gate",
+      "harness_allowed_benign": null,
+      "harness_blocked_violation": null,
+      "harness_tool_name": "run_shell_command",
+      "legs": [
+        {
+          "fixture": "SEC.prod-write-gate/violation.json",
+          "harness_tool_name": "run_shell_command",
+          "leg": "violation",
+          "rendered_payload": {
+            "cwd": "/home/user/project",
+            "hook_event_name": "BeforeTool",
+            "session_id": "census",
+            "timestamp": "1970-01-01T00:00:00Z",
+            "tool_input": {
+              "command": "aws ssm send-command --instance-ids i-0abc123def456789 --document-name AWS-RunShellScript --parameters 'commands=[\"aws s3 cp s3://bucket/octorato /opt/octorato/bin/octorato\",\"chmod +x /opt/octorato/bin/octorato\"]'"
+            },
+            "tool_name": "run_shell_command",
+            "transcript_path": ""
+          },
+          "round_trip_lossless": true,
+          "status": "measured",
+          "tool_input_keys": [
+            "command"
+          ],
+          "translatable": true
+        },
+        {
+          "fixture": "SEC.prod-write-gate/benign.json",
+          "harness_tool_name": "run_shell_command",
+          "leg": "benign",
+          "rendered_payload": {
+            "cwd": "/home/user/project",
+            "hook_event_name": "BeforeTool",
+            "session_id": "census",
+            "timestamp": "1970-01-01T00:00:00Z",
+            "tool_input": {
+              "command": "git status"
+            },
+            "tool_name": "run_shell_command",
+            "transcript_path": ""
+          },
+          "round_trip_lossless": true,
+          "status": "measured",
+          "tool_input_keys": [
+            "command"
+          ],
+          "translatable": true
+        }
+      ],
+      "translatable": true
+    }
+  }
+}
