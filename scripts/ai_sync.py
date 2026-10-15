@@ -400,11 +400,20 @@ def sync(names=None) -> int:
     for name in targets:
         repo = arms.get(name)
         src = repo / ".claude" / "CLAUDE.md" if repo else None
-        if not src or not src.exists():
+        if not src or not os.path.lexists(src):
             print(f"  SKIP {name} — no .claude/CLAUDE.md")
             skipped += 1
             continue
-        content = src.read_bytes()
+        # Read side of the same guard: a linked source (to ~/.ssh/id_rsa, a
+        # brain secret) would be copied into mirrors the arm commits and pushes.
+        why = mirror_refusal(repo, ".claude/CLAUDE.md")
+        content = None if why else _read_nofollow(src)
+        if content is None:
+            warn(f"  ⚠ {name}: SKIPPED, source not read: "
+                 f"{why or '.claude/CLAUDE.md is unreadable'} (the source must be a regular "
+                 "file inside the arm)")
+            skipped += 1
+            continue
         written, refused = [], []
         for rel in mirrors:
             try:

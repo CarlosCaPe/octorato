@@ -238,6 +238,30 @@ class MirrorNeverFollowsALink(unittest.TestCase):
                 self.assertTrue(link.is_symlink())
                 link.unlink()
 
+    def _assert_no_mirror(self, out: str, why: str):
+        for rel in ALL_MIRRORS:
+            self.assertFalse(os.path.lexists(self.arm / rel), rel)
+        self.assertIn("SKIPPED, source not read", out)
+        self.assertIn(why, out)
+
+    def test_symlinked_source_file_is_not_read(self):
+        secret = self.outside / "id_rsa"
+        secret.write_bytes(b"PRIVATE KEY")
+        src = self.arm / ".claude" / "CLAUDE.md"
+        src.unlink()
+        os.symlink(secret, src)
+        self._assert_no_mirror(self._sync(), ".claude/CLAUDE.md is a symlink")
+
+    def test_symlinked_claude_dir_is_not_read(self):
+        secret_dir = self.outside / "brain"
+        secret_dir.mkdir()
+        (secret_dir / "CLAUDE.md").write_bytes(b"brain secret")
+        real = self.arm / ".claude"
+        (real / "CLAUDE.md").unlink()
+        real.rmdir()
+        os.symlink(secret_dir, real, target_is_directory=True)
+        self._assert_no_mirror(self._sync(), ".claude is a symlink")
+
     def test_regular_files_are_replaced_in_place_not_followed(self):
         self._sync()
         for rel in ALL_MIRRORS:
