@@ -1,0 +1,14 @@
+{
+  "session_id": "fx-rp-violation-ac11-spent-ledger-unwritable",
+  "hook_event_name": "Stop",
+  "cwd": "/home/user",
+  "stop_hook_active": false,
+  "last_assistant_message": "Panel running on the draft, the reply follows when it returns.",
+  "transcript_path": "violation_ac11_spent_ledger_unwritable_transcript.jsonl",
+  "_fixture": {
+    "receipts_dir": "file",
+    "stderr_has": [
+      "spent ledger not writable"
+    ]
+  }
+}

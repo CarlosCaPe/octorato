@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """panel_fixture_seed.py: seed panel receipts into an outward-send fixture home.
 
+seed_reply_receipt is the same seed for a reply to the operator; the reply
+panel gate (g__stop__reply-panel.py) calls it per case inside its selftest.
+
 Requirement 5 of g__pretool-mcp__outward-send.py denies every message send that
 carries no PASS panel receipt for its exact digest. A fixture that exists to
 prove ANOTHER check (an absence claim, a promise, a missing send ask) must not
@@ -91,6 +94,15 @@ def seed_receipt(home: Path, session: str, msg, verdict: str, ts: str, agent_id:
     with ledger.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(row, ensure_ascii=False) + "\n")
     return True
+
+
+def seed_reply_receipt(home: Path, session: str, text: str, verdict: str, ts: str,
+                       agent_id: str, agent_type: str = "Reality Checker") -> bool:
+    """A Stop case (FLOW.panel-before-reply): the reviewed message is a reply
+    to the operator, so its only recipient is "operator" and it has no
+    attachment. Same files and row as seed_receipt."""
+    msg = panel_digest.Message(text, [], ["operator"])
+    return seed_receipt(home, session, msg, verdict, ts, agent_id, agent_type)
 
 
 def _with_home(home: Path, fn):

@@ -99,7 +99,10 @@ class GateReceiptCurrent(unittest.TestCase):
         subprocess.run(git[:3] + ["init", "-q"], check=True)
         subprocess.run(git + ["add", "scripts", "registry", "hooks.json"], check=True)
         subprocess.run(git + ["commit", "-q", "-m", "base"], check=True)
-        self.env = mock.patch.dict(os.environ, {"HOME": str(self.home)})
+        # os.path.expanduser reads USERPROFILE on Windows and ignores HOME; both
+        # must name the fake home or the ledger lands in the real one.
+        self.env = mock.patch.dict(os.environ, {"HOME": str(self.home),
+                                                "USERPROFILE": str(self.home)})
         self.env.start()
         self.claude = mock.patch.object(ai_sync, "CLAUDE", self.brain)
         self.claude.start()

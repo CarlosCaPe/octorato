@@ -1149,10 +1149,11 @@ def parse_panel(text: str) -> tuple:
     return verdict, (sha if _SHA64.fullmatch(sha) else "")
 
 
-def panel_latest_for(digest: str, session_id: str, now=None,
-                     window_minutes: float = PANEL_WINDOW_MINUTES) -> dict | None:
-    """The panel receipt that decides `digest` in session `session_id`,
-    whatever its verdict, or None.
+def panel_receipts_for(digest: str, session_id: str, now=None,
+                       window_minutes: float = PANEL_WINDOW_MINUTES) -> list:
+    """Every panel receipt for `digest` in session `session_id` that passes
+    validation, deciding first (newest; on an equal time a NEEDS-WORK first).
+    Each is the ledger row plus `verdict_ts`, the harness time of its entry.
 
     A ledger row counts only when it was written for a reviewer persona, points
     at a harness-shaped agent transcript of THIS session and agent id, names the
@@ -1166,7 +1167,7 @@ def panel_latest_for(digest: str, session_id: str, now=None,
     so a revocation can be missing from the ledger)."""
     want = str(digest or "").lower()
     if not _SHA64.fullmatch(want) or not session_id:
-        return None
+        return []
     now = now or _dt.datetime.now(_dt.timezone.utc)
     cands = []
     for r in read_global():
@@ -1204,11 +1205,28 @@ def panel_latest_for(digest: str, session_id: str, now=None,
     cands.sort(key=lambda c: (c[0], c[1]), reverse=True)
     same = lambda rep_: parse_panel(rep_) == ("PASS", want) and panel_recompute(rep_) == want
     revokes = lambda rep_: parse_panel(rep_) == ("NEEDS-WORK", want)
+    out = []
     for key, is_revocation, r, tp, uuid, ts in cands:
-        if not is_revocation and not _anchor_stands(tp, uuid, same, revokes):
-            continue
-        return dict(r, verdict_ts=ts)
-    return None
+        if not is_revocation:
+            # A malformed reviewer transcript must not raise out of here for
+            # the send gate or the sent ledger: a PASS whose anchor cannot be
+            # checked does not stand.
+            try:
+                stands = _anchor_stands(tp, uuid, same, revokes)
+            except Exception:
+                stands = False
+            if not stands:
+                continue
+        out.append(dict(r, verdict_ts=ts))
+    return out
+
+
+def panel_latest_for(digest: str, session_id: str, now=None,
+                     window_minutes: float = PANEL_WINDOW_MINUTES) -> dict | None:
+    """The panel receipt that decides `digest` in session `session_id`,
+    whatever its verdict, or None: the first of panel_receipts_for."""
+    got = panel_receipts_for(digest, session_id, now, window_minutes)
+    return got[0] if got else None
 
 
 def panel_pass_for(digest: str, session_id: str, now=None) -> dict | None:
