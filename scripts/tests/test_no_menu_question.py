@@ -264,6 +264,66 @@ class QaRoundTwoTest(unittest.TestCase):
                 self.assertLess(time.perf_counter() - t0, 1.0)
 
 
+class QaRoundThreeTest(unittest.TestCase):
+    """QA NEEDS-WORK on fc8e107: a second-person diagnostic "A or B" question
+    about the operator's world passes; a preference verb or an agent action
+    in the same question still blocks. Twins are one edit apart."""
+
+    def setUp(self):
+        self.g = _load_gate()
+        self.cfg = self.g._load_config()
+
+    def _menu(self, text):
+        return self.g.find_menu(text, self.cfg)[1]
+
+    def _twins(self, pairs):
+        for menu, info in pairs:
+            with self.subTest(menu=menu):
+                self.assertTrue(self._menu("Listo. " + menu))
+            with self.subTest(info=info):
+                self.assertEqual(self._menu("Listo. " + info), "")
+
+    def test_second_person_diagnostics_pass(self):
+        self._twins([
+            ("¿Te pongo el error 403 o el 401?", "¿Te sale el error 403 o el 401?"),
+            ("¿Uso el banner rojo o el amarillo?", "¿Ves el banner rojo o el amarillo?"),
+            ("Do you prefer the red banner or the yellow one?",
+             "Do you see the red banner or the yellow one?"),
+            ("Do you want a 403 or a 401?", "Do you get a 403 or a 401?"),
+            ("Do you prefer the CSV or the Excel?", "Do you need the CSV or the Excel?"),
+            ("Do you want the old repo or the new one?", "Do you mean the old repo or the new one?"),
+            ("¿Te muevo al repo viejo o al nuevo?", "¿Te refieres al repo viejo o al nuevo?"),
+            ("¿Prefieres el CSV o el Excel?", "¿Necesitas el CSV o el Excel?"),
+            ("¿Abro en Chrome o en Safari?", "¿Abre en Chrome o en Safari?"),
+        ])
+
+    def test_agent_action_or_preference_still_blocks(self):
+        for menu in ("¿Prefieres A o B?", "¿Ves el banner rojo o lo cambio?",
+                     "Do you need the CSV or should I build the Excel?",
+                     "Do you think A or B?", "Do you like A or B?",
+                     "Do you need me to ship A or B?", "¿Stop o PreToolUse?"):
+            with self.subTest(menu=menu):
+                self.assertTrue(self._menu("Listo. " + menu))
+
+    def test_solicit_after_alternatives(self):
+        self._twins([
+            ("Desplegué hoy o avisé a QA. ¿Tú qué dices?", "Desplegué hoy y avisé a QA. ¿Tú qué dices?"),
+            ("Desplegué hoy o avisé a QA. ¿Qué opinas?", "Desplegué hoy y avisé a QA. ¿Qué opinas?"),
+            ("I deployed now or told QA. Your call?", "I deployed now and told QA. Your call?"),
+            ("Desplegué hoy o avisé a QA. Tú qué dices.", "Desplegué hoy y avisé a QA. Tú qué dices."),
+        ])
+
+    def test_near_miss_inputs_stay_linear(self):
+        import time
+        for txt in ("¿te " + "a" * 20000 + " o b?", "do you " + "x" * 20000 + " or y?",
+                    "¿ves " + "a o " * 5000 + "b?", "do you " + "see " * 5000 + "or b?",
+                    "¿se " + "se " * 7000 + "abre o b?"):
+            with self.subTest(n=len(txt)):
+                t0 = time.perf_counter()
+                self.g.find_menu("Listo. " + txt, self.cfg)
+                self.assertLess(time.perf_counter() - t0, 0.2)
+
+
 class ConfigTest(unittest.TestCase):
     def setUp(self):
         self.g = _load_gate()
@@ -336,7 +396,10 @@ class WiringTest(unittest.TestCase):
                   "diag_env_en", "select_con", "select_uso", "select_por", "statement_en",
                   "statement_es", "solicit", "good_to_merge", "objection",
                   "irreducible_noun", "irreducible_login", "irreducible_pay",
-                  "irreducible_approve", "pay_first_person"):
+                  "irreducible_approve", "pay_first_person", "diag2p_sale_es",
+                  "diag2p_ves_es", "diag2p_see_en", "diag2p_get_en", "diag2p_need_en",
+                  "diag2p_mean_en", "diag2p_refieres_es", "diag2p_necesitas_es",
+                  "diag2p_abre_es", "solicit_tu_es"):
             self.assertIn(f"violation_{v}.json", names)
             self.assertIn(f"benign_{v}.json", names)
 

@@ -32,8 +32,12 @@ WHAT DOES NOT FIRE.
   - A diagnostic "X o Y" question about the operator's world with no agent
     action: a verb about state or the operator's past ("¿La compilación quedó
     verde o sigue fallando?", "¿El token expiró o lo revocaste?", "Is it on
-    staging or prod?"), an interrogative lead ("¿Cuál es la ruta o el
-    puerto...?") or the operator's things ("tu servidor").
+    staging or prod?"), a second-person or environment verb that is not a
+    preference ("¿Ves el banner rojo o el amarillo?", "¿Te sale el 403 o el
+    401?", "Do you need the CSV or the Excel?"), an interrogative lead
+    ("¿Cuál es la ruta o el puerto...?") or the operator's things ("tu
+    servidor"). "¿Prefieres A o B?" / "Do you want A or B?" still block: the
+    answer picks the agent's next step.
   - A question whose irreducible step (send-ok, OCTO_MERGE_APPROVE, a
     password, a login, a payment, a version cut; whole words, as the object)
     is the action the OPERATOR performs: no agent action in the question
@@ -222,7 +226,7 @@ _DEFAULT_STATEMENT_MENU = [
 # before it: "I can deploy now, or wait for QA. Thoughts?". Blocks only when
 # the previous sentence carries alternatives. Regexes on the folded body.
 _DEFAULT_SOLICIT = [
-    r"^(thoughts|opinions?|preferences?|ideas|objections?|your call|up to you|what do you think|what do you say|any thoughts|que opinas|que piensas|que dices|tu decides|tu dime|como prefieras|como veas|opiniones|ideas)$",
+    r"^(thoughts|opinions?|preferences?|ideas|objections?|your call|up to you|what do you think|what do you say|any thoughts|que opinas|que piensas|que dices|tu que dices|tu que opinas|tu que piensas|que me dices|tu decides|tu dime|como prefieras|como veas|opiniones|ideas)$",
 ]
 # The irreducible exemption holds inside an agent choice only for the
 # alternative where the OPERATOR is the one acting: a second-person verb or an
@@ -233,6 +237,19 @@ _DEFAULT_OPERATOR_ACTION = [
     r"^(please|por favor)\b",
     r"\b(can|could|will|would) you\b",
     r"^(approve|confirm|export|enter|type|paste|sign|log in|aprueba|confirma|exporta|escribe|pega|firma|inicia|dame|da)\b",
+]
+
+# Second-person diagnostic questions about the operator's world: "¿Ves el
+# banner rojo o el amarillo?", "¿Te sale el 403 o el 401?", "¿Abre en Chrome o
+# en Safari?", "Do you need the CSV or the Excel?". With no agent action they
+# are information, not a menu. Preference verbs (prefer, want, like, rather,
+# quieres, prefieres) are excluded: their answer picks the agent's next step.
+# Regexes on the lower-cased body, accents KEPT.
+_DEFAULT_DIAGNOSTIC = [
+    r"^((te|se|me)\s+)?(ves|viste|veías|necesitas|necesitabas|necesitaste|ocupas|tienes|tenías|usas|usabas|buscas|recibes|obtienes|abres|cargas|entras|corres|lees|notas|encuentras|sabes|recuerdas|puedes|estás|eres|trabajas|ejecutas|escribes|refieres|acuerdas|conectas|quedas|sientes|ubicas|identificas)\b",
+    r"^(te|le|les)\s+(?!(lo|la|los|las|le|les)\b)[a-zñáéíóú]{2,}(a|e|an|en|as|es)\b",
+    r"^(se\s+)?(abre|abren|carga|cargan|sale|salen|aparece|aparecen|marca|muestra|truena|responde|regresa|devuelve|arranca|compila|conecta|pasa|llega|salta|dice|pide|da|tarda|jala|sirve|cae|levanta|termina|imprime)\b",
+    r"^(do|did|are|were|have|had)\s+you\s+(?!(want|wanna|prefer|like|wish|mind|rather|think|feel|agree|approve|ok|okay|fine|good|happy|comfortable|need me|want me|lean|leaning)\b)[a-z]{2,}\b",
 ]
 
 _KEYS = {
@@ -251,6 +268,7 @@ _KEYS = {
     "statement_menu_patterns": _DEFAULT_STATEMENT_MENU,
     "solicit_patterns": _DEFAULT_SOLICIT,
     "operator_action_patterns": _DEFAULT_OPERATOR_ACTION,
+    "diagnostic_patterns": _DEFAULT_DIAGNOSTIC,
 }
 
 
@@ -490,7 +508,7 @@ def is_choice_question(sentence: str, cfg: dict, prose: str = "", prev: str = ""
         # the same way a question does.
         if _match_any(cfg.get("statement_menu_patterns", ()), body):
             return "statement"
-        if prev and _match_any(cfg.get("solicit_patterns", ()), body) \
+        if prev and _match_any(cfg.get("solicit_patterns", ()), body.rstrip(".!¡ ")) \
                 and _ALTERNATIVES.search(" " + _fold(prev) + " "):
             return "solicit"
         return ""
@@ -514,7 +532,8 @@ def is_choice_question(sentence: str, cfg: dict, prose: str = "", prev: str = ""
         # A bare "X o Y" with no agent action is a menu only when it is a
         # verbless fragment ("¿Stop o PreToolUse?"); a verb about the
         # operator's world or state makes it a diagnostic question.
-        info_verb = _match_any(cfg.get("info_verbs", ()), raw_body)
+        info_verb = _match_any(cfg.get("info_verbs", ()), raw_body) \
+            or _match_any(cfg.get("diagnostic_patterns", ()), raw_body)
         if not wh and not info_marker and not info_verb:
             return "alternatives"
     if action in ("permission", "selection"):

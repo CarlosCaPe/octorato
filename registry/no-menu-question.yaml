@@ -287,10 +287,11 @@ statement_menu_patterns:
   - ^(pick|choose|elige|escoge|decide entre|choose between|pick between)\b
 
 # A bare solicitation that hands back the choice offered in the sentence
-# before it: "I can deploy now, or wait for QA. Thoughts?". Blocks only when
-# the previous sentence carries alternatives (regexes on the folded body).
+# before it: "I can deploy now, or wait for QA. Thoughts?", "¿Tú qué dices?".
+# Blocks only when the previous sentence carries alternatives (regexes on
+# the folded body).
 solicit_patterns:
-  - ^(thoughts|opinions?|preferences?|ideas|objections?|your call|up to you|what do you think|what do you say|any thoughts|que opinas|que piensas|que dices|tu decides|tu dime|como prefieras|como veas|opiniones|ideas)$
+  - ^(thoughts|opinions?|preferences?|ideas|objections?|your call|up to you|what do you think|what do you say|any thoughts|que opinas|que piensas|que dices|tu que dices|tu que opinas|tu que piensas|que me dices|tu decides|tu dime|como prefieras|como veas|opiniones|ideas)$
 
 # Inside an agent choice, an irreducible term exempts the question only in the
 # alternative where the OPERATOR acts: a second-person verb or an imperative
@@ -303,3 +304,16 @@ operator_action_patterns:
   - ^(please|por favor)\b
   - \b(can|could|will|would) you\b
   - ^(approve|confirm|export|enter|type|paste|sign|log in|aprueba|confirma|exporta|escribe|pega|firma|inicia|dame|da)\b
+
+# Second-person diagnostic questions about the operator's world (regexes on
+# the lower-cased body, accents kept): a bare "X o Y" carrying one and no
+# agent action is information. "¿Ves el banner rojo o el amarillo?", "¿Te
+# sale el 403 o el 401?", "¿Abre en Chrome o en Safari?", "Do you need the
+# CSV or the Excel?". Preference verbs (prefer, want, like, rather, quieres,
+# prefieres) are left out on purpose: "¿Prefieres A o B?" and "Do you want A
+# or B?" still block, since the answer picks the agent's next step.
+diagnostic_patterns:
+  - ^((te|se|me)\s+)?(ves|viste|veías|necesitas|necesitabas|necesitaste|ocupas|tienes|tenías|usas|usabas|buscas|recibes|obtienes|abres|cargas|entras|corres|lees|notas|encuentras|sabes|recuerdas|puedes|estás|eres|trabajas|ejecutas|escribes|refieres|acuerdas|conectas|quedas|sientes|ubicas|identificas)\b
+  - ^(te|le|les)\s+(?!(lo|la|los|las|le|les)\b)[a-zñáéíóú]{2,}(a|e|an|en|as|es)\b
+  - ^(se\s+)?(abre|abren|carga|cargan|sale|salen|aparece|aparecen|marca|muestra|truena|responde|regresa|devuelve|arranca|compila|conecta|pasa|llega|salta|dice|pide|da|tarda|jala|sirve|cae|levanta|termina|imprime)\b
+  - ^(do|did|are|were|have|had)\s+you\s+(?!(want|wanna|prefer|like|wish|mind|rather|think|feel|agree|approve|ok|okay|fine|good|happy|comfortable|need me|want me|lean|leaning)\b)[a-z]{2,}\b
