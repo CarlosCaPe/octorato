@@ -101,8 +101,12 @@ runtimes:
     tool_map: {Bash: run_shell_command, Write: write_file, Edit: replace, mcp: "mcp_<server>_<tool>"}
     # source: AC-08 binds tiers only for a supported harness (T10).
     tiers: null
-    # source: no projector exists yet (T06); every hooks.json event is unprojected.
-    unprojected: {events: ["*"], matchers: ["*"]}
+    # source: scripts/merge-hooks-gemini.py --update-registry, generated from hooks.json;
+    # do not edit by hand. `*` is projected narrowed to the tools the shim
+    # translates; every other tool is the residual of `*`.
+    unprojected:
+      events: [PermissionDenied, PostToolUse, SessionStart, Stop, SubagentStart, SubagentStop, UserPromptSubmit]
+      matchers: [Agent, MultiEdit, NotebookEdit]
 
   codex-cli:
     name: Codex CLI
@@ -126,5 +130,9 @@ runtimes:
     trust_step: non-managed hooks run only after /hooks trust, recorded against the hook's hash
     # source: AC-08 binds tiers only for a supported harness (T10).
     tiers: null
-    # source: no projector exists yet (T07); every hooks.json event is unprojected.
-    unprojected: {events: ["*"], matchers: ["*"]}
+    # source: scripts/merge-hooks-codex.py --update-registry, generated from hooks.json;
+    # do not edit by hand. `*` is projected narrowed to the tools the shim
+    # translates; every other tool is the residual of `*`.
+    unprojected:
+      events: [PermissionDenied, PostToolUse, SessionStart, Stop, SubagentStart, SubagentStop, UserPromptSubmit]
+      matchers: [Agent, MultiEdit, NotebookEdit]

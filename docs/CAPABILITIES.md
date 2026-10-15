@@ -9,7 +9,7 @@
 | Skills | 246 |
 | Agents | 167 |
 | Divisions | 13 |
-| Scripts: wired | 134 |
+| Scripts: wired | 137 |
 | Scripts: orphan | 7 |
 | Rules | 96 |
 | Hook entries | 58 |
@@ -499,7 +499,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (141)
+## Scripts (144)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -581,6 +581,7 @@
 | grafo-ledger-check.py | Stop hook , the graph-before-grep teeth (turn-scoped). | wired |
 | grafo-turn-reset.py | UserPromptSubmit hook , reset the per-turn graph ledger. | wired |
 | harmony-check.py | harmony-check.py , Octorato Harmony drift checker (the octopus moves as one). | wired |
+| hook_projector.py | hook_projector.py: the shared core of the second-harness Hook_Projectors. | wired |
 | impact-radius-hook.py | impact-radius-hook , PostToolUse Write|Edit reflex (the cerebellum's feedback arm). | wired |
 | impact-radius.py | impact-radius.py , SEEK the lineage graph; do not SCAN (grep) the repo. | wired |
 | inbox-sweep-reflex.py | inbox-sweep-reflex.py - UserPromptSubmit hook. | wired |
@@ -593,7 +594,9 @@
 | mail-guardia.py | Mail watch: what arrived and we have not answered. Sibling of wa-guardia.py. | wired |
 | memory_lexicon_es_en.json |  | orphan |
 | memory_sync.py | memory_sync , sync the brain's private memory store to a standalone remote. | wired |
+| merge-hooks-codex.py | merge-hooks-codex.py: project hooks.json into a Codex CLI hooks.json. | wired |
 | merge-hooks-cursor.py | merge-hooks-cursor.py , project hooks.json into Cursor's native ~/.cursor/hooks.json. | wired |
+| merge-hooks-gemini.py | merge-hooks-gemini.py: project hooks.json into a Gemini CLI settings.json `hooks` block. | wired |
 | merge-hooks.py | merge-hooks.py , Merge shared hooks.json into local settings.json Called by ai-pull after pulling th... | wired |
 | migrate-octorato.sh | migrate-octorato.sh , One-shot migration after the dotclaude → octorato rebrand (May 2026). | wired |
 | news_article_digest.py | AI News & Blogs Daily Curation , feeds the brain (sibling of github_trending_digest). Pulls recent i... | wired |
