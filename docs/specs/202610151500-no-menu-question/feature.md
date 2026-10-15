@@ -15,9 +15,11 @@ The gate reads the last assistant reply, discards the Provenance footer, the Dis
 
 - **Menu_Gate**: `scripts/g__stop__no-menu-question.py`, a Stop hook.
 - **Closing_Sentence**: the last sentence of the reply's prose after the Menu_Gate discards the Provenance footer, lines starting with the Disclose markers (`💡 Unlock-suggestion`, `☠ Prune-suggestion`), fenced and inline code, lines starting with `>`, lines carrying the Hatch, and spans inside double, curly or guillemet quotes.
-- **Choice_Question**: a Closing_Sentence that ends in `?` once trailing emphasis, brackets, emoji and a `(y/n)` suffix are trimmed, and that opens with an entry of `openers`, matches a `permission_patterns` regex, contains a whole-word `o`, `u` or `or` between alternatives the agent could choose (not an information question led by an `info_interrogatives` entry or naming an `info_markers` entry without a choice verb), or matches a `selection_patterns` regex after a list of two or more items. Short `filler` after a question does not hide it.
-- **Irreducible_Step**: an entry of the `irreducible` list, matched case- and accent-folded as a whole word of the Closing_Sentence and only as its object: the question ends, punctuation follows, or the next word is in `object_followers`.
-- **Config**: `registry/no-menu-question.yaml`, a two-level YAML subset (`key:` then `  - item`) with the keys `openers`, `permission_patterns`, `selection_patterns`, `info_interrogatives`, `choice_verbs`, `info_markers`, `filler`, `irreducible` and `object_followers`, parsed by the Menu_Gate itself.
+- **Choice_Question**: a Closing_Sentence that asks the operator to choose. Ending in `?` once trailing emphasis, brackets, emoji and a `(y/n)` suffix are trimmed, it opens with an entry of `openers`, matches a `permission_patterns` or `selection_openers` regex, contains a whole-word `o`, `u` or `or` between alternatives the agent could choose, or matches a `selection_patterns` regex after a list of two or more items. Without `?`, it matches a `statement_menu_patterns` regex, or a `solicit_patterns` regex right after a sentence that carries alternatives. Short `filler` after a question does not hide it.
+- **Agent_Action**: an `openers` entry, a `permission_patterns` or `selection_openers` regex, a whole-word `choice_verbs` entry, or an `agent_action_patterns` regex (a clitic plus a first-person verb) in the Closing_Sentence.
+- **Diagnostic_Question**: an `o`/`or` Closing_Sentence with no Agent_Action that carries an `info_verbs` regex (a verb about state or the operator's past: "quedó", "revocaste", "está", "is"), opens with an `info_interrogatives` entry or names an `info_markers` entry. It is information, not a menu. A bare `o`/`or` fragment with no verb ("¿Stop o PreToolUse?") stays a Choice_Question.
+- **Irreducible_Step**: an entry of the `irreducible` list, matched case- and accent-folded as a whole word of the Closing_Sentence and only as its object: the question ends, punctuation follows, or the next word is in `object_followers`. It exempts the question only when the operator performs it: the question carries no Agent_Action ("¿Me das el login?", "¿Confirmas el pago?"), or the alternative holding the term matches an `operator_action_patterns` regex (a second-person verb or an imperative: "¿Exportas OCTO_MERGE_APPROVE=417 o lo dejo en la rama?"). Inside an agent choice the term is a noun and the question still blocks ("Should I ship the login or the cart fix?"). Decision on "¿Hago el pago hoy o mañana?": the first-person "hago" makes the payment the agent's act, so it blocks; the operator's payment is phrased "¿Haces el pago hoy o mañana?" and passes. A verbless "¿Pago hoy o mañana?" carries no detectable Agent_Action (the gate cannot tell the noun "pago" from the verb) and passes as the operator's step.
+- **Config**: `registry/no-menu-question.yaml`, a two-level YAML subset (`key:` then `  - item`) with the keys `openers`, `permission_patterns`, `selection_patterns`, `info_interrogatives`, `choice_verbs`, `info_markers`, `filler`, `irreducible`, `object_followers`, `info_verbs`, `agent_action_patterns`, `selection_openers`, `statement_menu_patterns`, `solicit_patterns` and `operator_action_patterns`, parsed by the Menu_Gate itself.
 - **Hatch**: the literal `menu-ok` on a line of the reply.
 - **Rule_Registry**: `registry/rules.yaml` with fixtures under `registry/fixtures/COMMS.no-menu-question/`.
 - **Rule_Text**: the `CLAUDE.md` paragraph with anchor "No menu questions".
@@ -31,7 +33,7 @@ The Menu_Gate blocks when the Closing_Sentence is a Choice_Question and names no
 
 ### FR-02: What does not fire
 
-A quoted question, a question inside a code block or a blockquote, a question followed by a decision, an information question without alternatives or an opener, a question naming an Irreducible_Step, a line carrying the Hatch, and an empty reply all pass.
+A quoted question, a question inside a code block or a blockquote, a question followed by a decision, an information question without alternatives or an opener, a Diagnostic_Question, a question whose Irreducible_Step the operator performs, a line carrying the Hatch, and an empty reply all pass.
 
 ### FR-03: Block once, fail open
 
@@ -60,6 +62,7 @@ The rule `COMMS.no-menu-question` is registered in the Rule_Registry with streng
 
 ## Residuals
 
-- R-01: A menu phrased without `?`, or without alternatives or an opener (a bullet list of options ending in a period), is not seen. Widening the net would block every information question.
+- R-01: A menu phrased without `?` is seen only through `statement_menu_patterns` and `solicit_patterns`; a bullet list of options ending in a plain period, or a request phrased outside those patterns, is not. Widening the net would block every information question.
 - R-02: The Spanish `o` as a whole word can appear inside a non-menu question ("¿Está bien el nombre A o B del archivo?"); the Hatch covers it.
 - R-03: Like every Stop gate, the harness cap on consecutive continuations and the parallel run with the other Stop gates apply (see `docs/architecture/v11-reply-panel.md` R-02, R-04).
+- R-04: The Diagnostic_Question test reads verbs from a lexicon plus preterite endings; a state verb outside `info_verbs` in a bare `o`/`or` question still blocks, and a verbless agent menu with an `info_verbs` word in it passes. Every regex is linear; a 20k-character near-miss runs in under 0.2 s.

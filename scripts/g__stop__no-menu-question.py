@@ -10,28 +10,37 @@ that replaces the menu already exists: `/choice` (commands/choice.md, "From an
 Idea to a Decision") develops, debates, weighs, defends and DECIDES. The gate
 makes skipping it cost a rewrite turn.
 
-WHEN IT FIRES. In the last assistant reply, the closing question (footer,
+WHEN IT FIRES. In the last assistant reply, the closing sentence (footer,
 Disclose one-liners, fenced code, inline code, blockquotes and quoted spans
 discarded; trailing emphasis, brackets, emoji and "(y/n)" trimmed; short
-courtesy filler after a question such as "I'll wait." skipped) ends in `?`
-and has one of four shapes, all read from `registry/no-menu-question.yaml`:
+courtesy filler after a question such as "I'll wait." skipped) has one of
+these shapes, all read from `registry/no-menu-question.yaml`:
   - opener: a go-ahead or preference ask ("¿Dale", "¿Procedo", "Shall I");
   - alternatives: "X o Y" / "A or B" where the agent is the one choosing
-    (a bare "¿Stop o PreToolUse?", or a choice verb such as "¿Cuál uso");
+    (an agent-action verb such as "¿Cuál uso", "lo revoco", "Do I put", or a
+    verbless fragment such as "¿Stop o PreToolUse?");
   - permission: a short yes/no permission ask ("¿Lo lanzo?", "¿Va?",
-    "¿Merge?", "Ready to merge?", "Should we ship it?", "Can I ...");
-  - selection: "¿Cuál?" / "Which one?" right after a list of two or more items.
+    "Ready to merge?", "Good to merge?", "Any objection to merging?");
+  - selection: "¿Cuál uso?", "¿Con cuál sigo?", "¿Por cuál empiezo?", or a
+    bare "¿Cuál?" / "Which one?" right after a list of two or more items;
+  - statement: an imperative ask-for-choice with no "?" ("Let me know which
+    you prefer: A or B.", "Dime cuál prefieres: A o B.");
+  - solicit: "Thoughts?" / "Your call." right after a sentence that offered
+    alternatives ("I can deploy now, or wait for QA. Thoughts?").
 
 WHAT DOES NOT FIRE.
-  - A question whose OBJECT is an irreducible operator step, listed in
-    `registry/no-menu-question.yaml` (send-ok, OCTO_MERGE_APPROVE, a password,
-    a login, a payment, a version cut). Whole words only, and only when the
-    term is not modifying a following noun ("login refactor" still blocks).
-    Those steps are his by construction; the rule asks that they travel as a
-    step with its command, and the gate lets the question through rather
-    than guess at the wording.
-  - An information question with "o"/"or" about the operator's world
-    ("¿Cuál es la ruta o el puerto que usa tu servidor?").
+  - A diagnostic "X o Y" question about the operator's world with no agent
+    action: a verb about state or the operator's past ("¿La compilación quedó
+    verde o sigue fallando?", "¿El token expiró o lo revocaste?", "Is it on
+    staging or prod?"), an interrogative lead ("¿Cuál es la ruta o el
+    puerto...?") or the operator's things ("tu servidor").
+  - A question whose irreducible step (send-ok, OCTO_MERGE_APPROVE, a
+    password, a login, a payment, a version cut; whole words, as the object)
+    is the action the OPERATOR performs: no agent action in the question
+    ("¿Me das el login?", "¿Confirmas el pago?"), or the alternative where
+    he acts ("¿Exportas OCTO_MERGE_APPROVE=417 o lo dejo en la rama?"). The
+    same term as a noun inside the agent's own choice ("Should I ship the
+    login or the cart fix?", "¿Hago el pago hoy o mañana?") still blocks.
   - A quoted question (someone else's words), a question inside a code block
     or a blockquote (a draft, a transcript), a line carrying `menu-ok`.
   - A reply whose last sentence is a decision, even when a question sits
@@ -120,6 +129,10 @@ _DEFAULT_PERMISSION = [
     r"^(is it |are you )?ok(ay)? (to|if i|if we|with)\b",
     r"^proceed\b",
     r"^(merge|ship|deploy|release|push)( it| this| now)?$",
+    r"^(good|ok|okay|safe|fine|alright|all right|clear) to (merge|ship|deploy|go|proceed|push|release|land)\b",
+    r"^(any )?objections? (to|if)\b",
+    r"^alg[uú]na? (objeci[oó]n|inconveniente|problema) (con|en|si|para)\b",
+    r"^confirmo\b",
 ]
 # A numbered or bulleted list followed by one of these closing questions is a
 # menu: "1. A / 2. B / ¿Cuál?".
@@ -139,7 +152,8 @@ _DEFAULT_CHOICE_VERBS = [
     "uso", "elijo", "escojo", "tomo", "hago", "pongo", "dejo", "mando", "aplico",
     "prefieres", "quieres", "eliges", "escoges", "usamos", "elegimos", "hacemos",
     "should i", "should we", "shall i", "shall we", "do i", "do we", "do you prefer",
-    "do you want", "would you like", "would you prefer",
+    "do you want", "would you like", "would you prefer", "you want", "you prefer",
+    "you'd prefer", "mejor", "better", "conviene",
 ]
 # An "A o B" question that only asks about the operator's things ("tu
 # servidor", "your server") is an information question unless it also carries
@@ -171,6 +185,56 @@ _DEFAULT_OBJECT_FOLLOWERS = [
     "now", "today", "tomorrow", "the", "el", "la", "lo", "los", "las", "one",
 ]
 
+# Second-person questions about the operator's world and state ("¿El token
+# expiró o lo revocaste?", "¿Está en staging o en producción?", "Is it on
+# staging or prod?"): a bare "X o Y" carrying one of these and no agent action
+# is information, not a menu. Regexes on the lower-cased body, accents KEPT so
+# the preterite "quedó" is not the first-person "quedo".
+_DEFAULT_INFO_VERBS = [
+    r"\b(está|están|estás|es|son|eres|era|eran|fue|fueron|hay|había|sigue|siguen|queda|quedan|tiene|tienen|corre|corren|falla|fallan|existe|existen|funciona|funcionan|apunta|apuntan)\b",
+    r"\b[a-zñáéíóú]{2,}(aste|iste|asteis|isteis|aron|ieron)\b",
+    r"\b[a-zñáéíú]{2,}ó\b",
+    r"\b(is|are|was|were|did|does|has|had|isn't|aren't|wasn't|weren't|didn't|doesn't|hasn't|it's)\b",
+]
+# A first-person agent action anywhere in the question, beyond the openers,
+# permission patterns and choice verbs: a clitic plus a first-person verb in
+# the second alternative ("¿El token expiró o lo revoco?"). Third-person
+# irregular preterites and neuter "lo + adjective" are excluded.
+_DEFAULT_AGENT_ACTION = [
+    r"(?<!\w)(lo|los|las|le|les|me|te|se|nos)\s+(?!(hizo|puso|tuvo|quiso|dijo|trajo|supo|pudo|vino|anduvo|condujo|produjo|propuso|supuso|nuevo|viejo|mismo|bueno|malo|otro|correcto|primero|segundo|tercero|ultimo|unico|necesario|cierto|propio|contrario|demas|largo|justo)\b)[a-zñ]{2,}(o|amos|emos|imos)\b",
+]
+# Selection asks that are a menu even with no list before them: "¿Cuál uso?",
+# "¿Con cuál sigo?", "¿Por cuál empiezo?", "Which one should I take?".
+# Regexes on the folded body.
+_DEFAULT_SELECTION_OPENERS = [
+    r"^((con|por|en|de|para|a)\s+)?(cual|cuales|que opcion|cual opcion)\s+([\w-]+\s+){0,3}?(sigo|uso|empiezo|elijo|escojo|tomo|arranco|hago|aplico|voy|agarro|priorizo|mando|despliego|lanzo|mergeo|dejo|pongo|seguimos|usamos|empezamos|arrancamos|elegimos|hacemos|aplicamos|vamos|priorizamos)\b",
+    r"^((with|from|on)\s+)?which( one| option)?\s+(should|shall|do|would|can)\s+(i|we)\b",
+    r"^((with|from)\s+)?which( one| option)?\s+(do|would) you (prefer|want|like)\b",
+]
+# A closing STATEMENT that asks the operator to choose is a menu without the
+# "?": "Let me know which you prefer: A or B.", "Dime cuál prefieres: A o B.",
+# "Pick one: A or B.". Regexes on the folded sentence.
+_DEFAULT_STATEMENT_MENU = [
+    r"^(let me know|tell me|dime|avisame|me dices|me avisas|decide|tu decides|you decide)\b.*\b(prefer|prefers|prefieres|want|quieres|go with|vamos con|vas con|should i|should we|do i|elijo|uso|sigo)\b",
+    r"^(pick|choose|elige|escoge|decide entre|choose between|pick between)\b",
+]
+# A closing solicitation that hands back a choice offered in the sentence
+# before it: "I can deploy now, or wait for QA. Thoughts?". Blocks only when
+# the previous sentence carries alternatives. Regexes on the folded body.
+_DEFAULT_SOLICIT = [
+    r"^(thoughts|opinions?|preferences?|ideas|objections?|your call|up to you|what do you think|what do you say|any thoughts|que opinas|que piensas|que dices|tu decides|tu dime|como prefieras|como veas|opiniones|ideas)$",
+]
+# The irreducible exemption holds inside an agent choice only for the
+# alternative where the OPERATOR is the one acting: a second-person verb or an
+# imperative ("¿Exportas OCTO_MERGE_APPROVE=417 o lo dejo?", "Can you do the
+# login now or after lunch?"). Regexes on the folded alternative.
+_DEFAULT_OPERATOR_ACTION = [
+    r"^((me|nos|te)\s+)?[a-zn]{1,}(as|es)\b",
+    r"^(please|por favor)\b",
+    r"\b(can|could|will|would) you\b",
+    r"^(approve|confirm|export|enter|type|paste|sign|log in|aprueba|confirma|exporta|escribe|pega|firma|inicia|dame|da)\b",
+]
+
 _KEYS = {
     "openers": _DEFAULT_OPENERS,
     "permission_patterns": _DEFAULT_PERMISSION,
@@ -181,6 +245,12 @@ _KEYS = {
     "filler": _DEFAULT_FILLER,
     "irreducible": _DEFAULT_IRREDUCIBLE,
     "object_followers": _DEFAULT_OBJECT_FOLLOWERS,
+    "info_verbs": _DEFAULT_INFO_VERBS,
+    "agent_action_patterns": _DEFAULT_AGENT_ACTION,
+    "selection_openers": _DEFAULT_SELECTION_OPENERS,
+    "statement_menu_patterns": _DEFAULT_STATEMENT_MENU,
+    "solicit_patterns": _DEFAULT_SOLICIT,
+    "operator_action_patterns": _DEFAULT_OPERATOR_ACTION,
 }
 
 
@@ -280,15 +350,19 @@ def _is_emoji(ch: str) -> bool:
 def _trim_tail(sentence: str) -> str:
     """Drop trailing decoration so `**¿Lo lanzo?** 🚀`, `Proceed? (y/n)` and
     `(¿Va?)` all end in their `?`: whitespace, markdown emphasis, closing
-    brackets and quotes, emoji, and a (y/n)-style suffix."""
+    brackets and quotes, emoji, and a (y/n)-style suffix. Index-based, so a
+    long decorated tail costs linear time."""
     s = sentence
     while True:
         before = s
         s = _YN_SUFFIX.sub("", s).rstrip()
-        while s and (s[-1] in _TAIL_PUNCT or s[-1].isspace() or _is_emoji(s[-1])):
-            if s[-1] == "." and not s.endswith("?."):
+        end = len(s)
+        while end and (s[end - 1] in _TAIL_PUNCT or s[end - 1].isspace()
+                       or _is_emoji(s[end - 1])):
+            if s[end - 1] == "." and not s[:end].endswith("?."):
                 break
-            s = s[:-1]
+            end -= 1
+        s = s[:end]
         if s == before:
             return s
 
@@ -365,40 +439,89 @@ def _irreducible_object(folded: str, cfg: dict) -> bool:
     return False
 
 
+def _operator_owns_irreducible(body: str, cfg: dict) -> bool:
+    """Inside an agent choice, the irreducible exemption holds only for an
+    alternative where the operator is the one acting ("¿Exportas
+    OCTO_MERGE_APPROVE=417 o lo dejo en la rama?"). A login, a payment or a
+    password that is only a noun inside the agent's own choice ("Should I ship
+    the login or the cart fix?") does not exempt the menu."""
+    for seg in _ALTERNATIVES.split(" " + body + " "):
+        seg = seg.strip(" ,;:")
+        if seg.lower() in ("o", "u", "or") or not seg:
+            continue
+        if _irreducible_object(seg, cfg) and _match_any(
+                cfg.get("operator_action_patterns", ()), seg):
+            return True
+    return False
+
+
 def _body(sentence: str) -> str:
     return _trim_tail(sentence).strip().lstrip("¿¡*_([ \t").rstrip("?").strip()
 
 
-def is_choice_question(sentence: str, cfg: dict, prose: str = "") -> str:
-    """Return why the sentence is a menu ('opener', 'alternatives',
-    'permission', 'selection'), or '' when it is not a choice question or its
-    object is an irreducible operator step."""
-    trimmed = _trim_tail(sentence.strip())
-    if not trimmed.endswith("?"):
-        return ""
-    folded = _fold(trimmed)
-    if _irreducible_object(folded, cfg):
-        return ""
-    body = _fold(_body(trimmed))
-    # permission patterns read the accented text: "¿Te llegó?" is not "llego"
-    raw_body = _body(trimmed).lower()
+def _agent_action(body: str, raw_body: str, cfg: dict) -> str:
+    """Which agent-action marker the question carries, or ''."""
     for opener in cfg.get("openers", ()):
         op = _fold(opener)
         if body == op or body.startswith(op + " ") or body.startswith(op + ","):
             return "opener"
-    permission = _match_any(cfg.get("permission_patterns", ()), raw_body)
-    agent_action = (permission
-                    or any(_word_in(_fold(v), body) for v in cfg.get("choice_verbs", ())))
+    if _match_any(cfg.get("permission_patterns", ()), raw_body):
+        return "permission"
+    if _match_any(cfg.get("selection_openers", ()), body):
+        return "selection"
+    if any(_word_in(_fold(v), body) for v in cfg.get("choice_verbs", ())):
+        return "choice"
+    if _match_any(cfg.get("agent_action_patterns", ()), raw_body):
+        return "choice"
+    return ""
+
+
+def is_choice_question(sentence: str, cfg: dict, prose: str = "", prev: str = "") -> str:
+    """Return why the sentence is a menu ('opener', 'alternatives',
+    'permission', 'selection', 'statement', 'solicit'), or '' when it is not a
+    choice ask or its object is an irreducible step the operator performs.
+
+    `prev` is the sentence before the closing one; a bare solicitation
+    ("Thoughts?") is a menu only when `prev` offered alternatives."""
+    trimmed = _trim_tail(sentence.strip())
+    body = _fold(_body(trimmed))
+    if not trimmed.endswith("?"):
+        # Statement-form menus: an imperative ask-for-choice closes the turn
+        # the same way a question does.
+        if _match_any(cfg.get("statement_menu_patterns", ()), body):
+            return "statement"
+        if prev and _match_any(cfg.get("solicit_patterns", ()), body) \
+                and _ALTERNATIVES.search(" " + _fold(prev) + " "):
+            return "solicit"
+        return ""
+    folded = _fold(trimmed)
+    # permission patterns read the accented text: "¿Te llegó?" is not "llego"
+    raw_body = _body(trimmed).lower()
+    action = _agent_action(body, raw_body, cfg)
+    if _irreducible_object(folded, cfg):
+        # The operator's own step (no agent action at all, or the alternative
+        # he performs) passes; a noun inside the agent's choice does not.
+        if not action or _operator_owns_irreducible(body, cfg):
+            return ""
+    if action == "opener":
+        return action
     if _ALTERNATIVES.search(" " + body + " "):
-        if agent_action:
+        if action:
             return "alternatives"
         wh = next((w for w in cfg.get("info_interrogatives", ())
                    if body == _fold(w) or body.startswith(_fold(w) + " ")), None)
         info_marker = any(_word_in(_fold(m), body) for m in cfg.get("info_markers", ()))
-        if not wh and not info_marker:
+        # A bare "X o Y" with no agent action is a menu only when it is a
+        # verbless fragment ("¿Stop o PreToolUse?"); a verb about the
+        # operator's world or state makes it a diagnostic question.
+        info_verb = _match_any(cfg.get("info_verbs", ()), raw_body)
+        if not wh and not info_marker and not info_verb:
             return "alternatives"
-    if permission:
-        return "permission"
+    if action in ("permission", "selection"):
+        return action
+    if prev and _match_any(cfg.get("solicit_patterns", ()), body) \
+            and _ALTERNATIVES.search(" " + _fold(prev) + " "):
+        return "solicit"
     if prose and _match_any(cfg.get("selection_patterns", ()), body):
         items = sum(1 for ln in prose.splitlines() if _LIST_ITEM.match(ln))
         if items >= 2:
@@ -407,12 +530,17 @@ def is_choice_question(sentence: str, cfg: dict, prose: str = "") -> str:
 
 
 def find_menu(raw: str, cfg: dict) -> tuple:
-    """(sentence, reason) when the reply closes on a choice question, else ('', '')."""
+    """(sentence, reason) when the reply closes on a choice ask, else ('', '')."""
     prose = _strip_non_prose(raw)
     if not prose.strip():
         return "", ""
     sentence = closing_question(prose, cfg)
-    reason = is_choice_question(sentence, cfg, prose)
+    sentences = _sentences(prose)
+    prev = ""
+    if sentence in sentences:
+        idx = len(sentences) - 1 - sentences[::-1].index(sentence)
+        prev = sentences[idx - 1] if idx > 0 else ""
+    reason = is_choice_question(sentence, cfg, prose, prev)
     return (sentence, reason) if reason else ("", "")
 
 

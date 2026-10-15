@@ -99,7 +99,9 @@ class MatcherTest(unittest.TestCase):
     def test_irreducible_step_is_let_through(self):
         self.assertEqual(self._menu("Listo. ¿Exportas OCTO_MERGE_APPROVE=417 o lo dejo en la rama?"), "")
         self.assertEqual(self._menu("Done. Which password, the old one or the new one?"), "")
-        self.assertEqual(self._menu("Listo. ¿Hago el pago hoy o mañana?"), "")
+        # First-person "hago": the agent's act, so the payment is a noun in its choice.
+        self.assertEqual(self._menu("Listo. ¿Hago el pago hoy o mañana?"), "opener")
+        self.assertEqual(self._menu("Listo. ¿Haces el pago hoy o mañana?"), "")
 
     def test_information_question_is_not_a_menu(self):
         self.assertEqual(self._menu("Export listo. ¿Qué correo del cliente uso?"), "")
@@ -158,11 +160,12 @@ class StructuralRuleTest(unittest.TestCase):
         self.assertEqual(self._menu("Listo. ¿Apago hoy o mañana?"), "alternatives")
         self.assertEqual(self._menu("Listo. ¿Pago hoy o mañana?"), "")
         self.assertEqual(self._menu("Listo. ¿Consentimos el flujo A o el B?"), "alternatives")
-        self.assertEqual(self._menu("Done. Should I ask for consent now or later?"), "")
+        self.assertEqual(self._menu("Done. Can you give consent now or later?"), "")
 
     def test_irreducible_must_be_the_object(self):
         self.assertTrue(self._menu("Done. Should I do the login refactor now or after lunch?"))
-        self.assertEqual(self._menu("Done. Should I do the login now or after lunch?"), "")
+        self.assertEqual(self._menu("Done. Can you do the login now or after lunch?"), "")
+        self.assertTrue(self._menu("Done. Should I do the login now or after lunch?"))
         self.assertTrue(self._menu("Done. Should I ship the login refactor or the cart fix?"))
 
     def test_info_question_with_or_allows(self):
@@ -191,6 +194,74 @@ class StructuralRuleTest(unittest.TestCase):
         text = (ROOT / "registry" / "no-menu-question.yaml").read_text(encoding="utf-8")
         for key in self.g._KEYS:
             self.assertIn(f"\n{key}:\n", text)
+
+
+class QaRoundTwoTest(unittest.TestCase):
+    """QA NEEDS-WORK on 90d843e: diagnostic questions are information,
+    selection openers and statement menus block, and an irreducible term
+    exempts only the step the operator performs. Twins are one edit apart."""
+
+    def setUp(self):
+        self.g = _load_gate()
+        self.cfg = self.g._load_config()
+
+    def _menu(self, text):
+        return self.g.find_menu(text, self.cfg)[1]
+
+    def _twins(self, pairs):
+        for menu, info in pairs:
+            with self.subTest(menu=menu):
+                self.assertTrue(self._menu("Listo. " + menu))
+            with self.subTest(info=info):
+                self.assertEqual(self._menu("Listo. " + info), "")
+
+    def test_diagnostic_questions_are_information(self):
+        self._twins([
+            ("¿La compilación la dejo verde o sigue fallando?",
+             "¿La compilación quedó verde o sigue fallando?"),
+            ("¿El token expiró o lo revoco?", "¿El token expiró o lo revocaste?"),
+            ("¿Lo dejo en staging o en producción?", "¿Está en staging o en producción?"),
+            ("Do I put it on staging or prod?", "Is it on staging or prod?"),
+        ])
+
+    def test_verbless_fragment_is_still_a_menu(self):
+        self.assertEqual(self._menu("Listo. ¿Stop o PreToolUse?"), "alternatives")
+        self.assertEqual(self._menu("Listo. Is it better to use A or B?"), "alternatives")
+
+    def test_selection_openers_block_without_a_list(self):
+        self._twins([("¿Con cuál sigo?", "¿Con cuál sigue?"), ("¿Cuál uso?", "¿Cuál usas?"),
+                     ("¿Por cuál empiezo?", "¿Por cuál empezaste?")])
+
+    def test_statement_menus_block(self):
+        self._twins([
+            ("Let me know which you prefer: A or B.", "Let me know which you ran: A or B."),
+            ("Dime cuál prefieres: A o B.", "Dime cuál corriste: A o B."),
+            ("I can deploy now, or wait for QA. Thoughts?",
+             "I can deploy now, and wait for QA. Thoughts?"),
+            ("Good to merge?", "Good to merge."),
+            ("Any objection to merging?", "No objection to merging."),
+        ])
+
+    def test_irreducible_only_when_the_operator_acts(self):
+        self._twins([
+            ("Should I ship the login or the cart fix?", "Could you ship the login or the cart fix?"),
+            ("¿Te paso el login?", "¿Me das el login?"),
+            ("¿Confirmo el pago?", "¿Confirmas el pago?"),
+            ("Should I approve the merge?", "Please approve the merge."),
+            ("¿Hago el pago hoy o mañana?", "¿Haces el pago hoy o mañana?"),
+        ])
+        self.assertEqual(
+            self._menu("Listo. ¿Exportas OCTO_MERGE_APPROVE=417 o lo dejo en la rama?"), "")
+
+    def test_near_miss_inputs_stay_linear(self):
+        import time
+        for txt in ("¿" + "a o " * 5000 + "b", "lo " * 7000 + "x?",
+                    "let me know " + "x " * 10000 + ".", "¿Lo lanzo?" + " 🚀" * 10000,
+                    "¿cual " + "abc " * 5000 + "?", "(" * 20000 + "?"):
+            with self.subTest(n=len(txt)):
+                t0 = time.perf_counter()
+                self.g.find_menu("Listo. " + txt, self.cfg)
+                self.assertLess(time.perf_counter() - t0, 1.0)
 
 
 class ConfigTest(unittest.TestCase):
@@ -261,7 +332,11 @@ class WiringTest(unittest.TestCase):
         for v in ("es", "en", "opener", "quoted", "codeblock", "blockquote", "merge",
                   "short_es", "short_en", "one_word", "numbered_list", "decorated",
                   "yn_suffix", "word_boundary", "irreducible_object", "info_or",
-                  "trailing_filler"):
+                  "trailing_filler", "diag_build", "diag_token", "diag_env_es",
+                  "diag_env_en", "select_con", "select_uso", "select_por", "statement_en",
+                  "statement_es", "solicit", "good_to_merge", "objection",
+                  "irreducible_noun", "irreducible_login", "irreducible_pay",
+                  "irreducible_approve", "pay_first_person"):
             self.assertIn(f"violation_{v}.json", names)
             self.assertIn(f"benign_{v}.json", names)
 

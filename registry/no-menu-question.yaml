@@ -77,6 +77,10 @@ permission_patterns:
   - ^(is it |are you )?ok(ay)? (to|if i|if we|with)\b
   - ^proceed\b
   - ^(merge|ship|deploy|release|push)( it| this| now)?$
+  - ^(good|ok|okay|safe|fine|alright|all right|clear) to (merge|ship|deploy|go|proceed|push|release|land)\b
+  - ^(any )?objections? (to|if)\b
+  - ^alg[uú]na? (objeci[oó]n|inconveniente|problema) (con|en|si|para)\b
+  - ^confirmo\b
 
 # Selection questions (regexes on folded text). They block only after a
 # numbered or bulleted list of at least two items: "1. A / 2. B / ¿Cuál?".
@@ -138,6 +142,12 @@ choice_verbs:
   - do you want
   - would you like
   - would you prefer
+  - you want
+  - you prefer
+  - you'd prefer
+  - mejor
+  - better
+  - conviene
 
 # An "A o B" question that names the operator's things and carries no agent
 # action is an information question ("¿Corre en tu Linux o en tu Windows?").
@@ -241,3 +251,55 @@ object_followers:
   - los
   - las
   - one
+
+# A bare "X o Y" question with no agent action is a menu only when it is a
+# verbless fragment ("¿Stop o PreToolUse?"). A verb about the operator's world
+# or state makes it a diagnostic question: "¿La compilación quedó verde o
+# sigue fallando?", "¿El token expiró o lo revocaste?", "Is it on staging or
+# prod?". Regexes on the lower-cased body with accents KEPT, so the preterite
+# "quedó" is not the first-person "quedo".
+info_verbs:
+  - \b(está|están|estás|es|son|eres|era|eran|fue|fueron|hay|había|sigue|siguen|queda|quedan|tiene|tienen|corre|corren|falla|fallan|existe|existen|funciona|funcionan|apunta|apuntan)\b
+  - \b[a-zñáéíóú]{2,}(aste|iste|asteis|isteis|aron|ieron)\b
+  - \b[a-zñáéíú]{2,}ó\b
+  - \b(is|are|was|were|did|does|has|had|isn't|aren't|wasn't|weren't|didn't|doesn't|hasn't|it's)\b
+
+# A first-person agent action anywhere in the question (regexes on the
+# lower-cased body, accents kept): a clitic plus a first-person verb in a later
+# alternative ("¿El token expiró o lo revoco?"). Irregular third-person
+# preterites and neuter "lo + adjective" are excluded.
+agent_action_patterns:
+  - (?<!\w)(lo|los|las|le|les|me|te|se|nos)\s+(?!(hizo|puso|tuvo|quiso|dijo|trajo|supo|pudo|vino|anduvo|condujo|produjo|propuso|supuso|nuevo|viejo|mismo|bueno|malo|otro|correcto|primero|segundo|tercero|ultimo|unico|necesario|cierto|propio|contrario|demas|largo|justo)\b)[a-zñ]{2,}(o|amos|emos|imos)\b
+
+# Selection asks that are a menu with no list before them (regexes on the
+# folded body): "¿Cuál uso?", "¿Con cuál sigo?", "¿Por cuál empiezo?",
+# "Which one should I take?". "¿Cuál usas?" asks about the operator and passes.
+selection_openers:
+  - ^((con|por|en|de|para|a)\s+)?(cual|cuales|que opcion|cual opcion)\s+([\w-]+\s+){0,3}?(sigo|uso|empiezo|elijo|escojo|tomo|arranco|hago|aplico|voy|agarro|priorizo|mando|despliego|lanzo|mergeo|dejo|pongo|seguimos|usamos|empezamos|arrancamos|elegimos|hacemos|aplicamos|vamos|priorizamos)\b
+  - ^((with|from|on)\s+)?which( one| option)?\s+(should|shall|do|would|can)\s+(i|we)\b
+  - ^((with|from)\s+)?which( one| option)?\s+(do|would) you (prefer|want|like)\b
+
+# A closing STATEMENT that asks the operator to choose is a menu without the
+# "?" (regexes on the folded sentence): "Let me know which you prefer: A or
+# B.", "Dime cuál prefieres: A o B.", "Pick one: A or B.".
+statement_menu_patterns:
+  - ^(let me know|tell me|dime|avisame|me dices|me avisas|decide|tu decides|you decide)\b.*\b(prefer|prefers|prefieres|want|quieres|go with|vamos con|vas con|should i|should we|do i|elijo|uso|sigo)\b
+  - ^(pick|choose|elige|escoge|decide entre|choose between|pick between)\b
+
+# A bare solicitation that hands back the choice offered in the sentence
+# before it: "I can deploy now, or wait for QA. Thoughts?". Blocks only when
+# the previous sentence carries alternatives (regexes on the folded body).
+solicit_patterns:
+  - ^(thoughts|opinions?|preferences?|ideas|objections?|your call|up to you|what do you think|what do you say|any thoughts|que opinas|que piensas|que dices|tu decides|tu dime|como prefieras|como veas|opiniones|ideas)$
+
+# Inside an agent choice, an irreducible term exempts the question only in the
+# alternative where the OPERATOR acts: a second-person verb or an imperative
+# ("¿Exportas OCTO_MERGE_APPROVE=417 o lo dejo en la rama?", "Can you do the
+# login now or after lunch?"). "Should I ship the login or the cart fix?"
+# names a login as a noun inside the agent's own choice and still blocks.
+# Regexes on the folded alternative.
+operator_action_patterns:
+  - ^((me|nos|te)\s+)?[a-zn]{1,}(as|es)\b
+  - ^(please|por favor)\b
+  - \b(can|could|will|would) you\b
+  - ^(approve|confirm|export|enter|type|paste|sign|log in|aprueba|confirma|exporta|escribe|pega|firma|inicia|dame|da)\b
