@@ -19,6 +19,7 @@ Every arm MUST have:
 | `.claude/CLAUDE.md` | Single source of truth for the arm — project stack, connections, conventions | Edit this one only; sync propagates the rest |
 | `.github/copilot-instructions.md` | Auto-synced copy of `.claude/CLAUDE.md` | NEVER edit directly. `sync-ai-docs` overwrites it |
 | `.cursorrules` | Auto-synced copy for Cursor editor | NEVER edit directly. `sync-ai-docs` overwrites it |
+| `AGENTS.md`, `GEMINI.md` | Auto-synced copy for Codex CLI and Gemini CLI, written only while that harness is `supported` in `registry/runtimes.yaml` | NEVER edit directly. `sync-ai-docs` overwrites it; a hand-written file of the same name is replaced |
 | `README.md` | Human-readable repo intro | Project overview + quick-start |
 | `.gitignore` | Must include `.env`, `.env.*`, `.dev.vars` | Belt-and-suspenders against secret leaks |
 | `.env` | Local secrets, never committed | Gitignored — only on operator's machine |

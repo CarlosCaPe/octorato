@@ -32,8 +32,8 @@ Each row has an entry in `registry/runtimes.yaml` (the Runtime_Registry), and `b
 |---|---|---|---|---|---|
 | **Claude Code** | `supported` | Reads `~/.claude/CLAUDE.md` natively | `~/.claude/hooks.json` | `claude mcp list` / `claude mcp add` | `claude` CLI present, no `CURSOR_AGENT` |
 | **Cursor** | `supported` | Project/user rules + arm `CLAUDE.md`; skills from brain + arm | `scripts/merge-hooks-cursor.py` → `~/.cursor/hooks.json` | Cursor MCP panel / `GetMcpTools` (no `claude` CLI) | `CURSOR_AGENT=1` |
-| **Gemini CLI** | `gap` | `GEMINI.md` per arm (not written yet) | `.gemini/settings.json` `BeforeTool` (not projected yet) | `gemini mcp list` / `gemini mcp add` | not recorded yet |
-| **Codex CLI** | `gap` | `AGENTS.md` per arm (not written yet) | `~/.codex/hooks.json` `PreToolUse`, after `/hooks` trust (not projected yet) | `codex mcp list` / `codex mcp add` | not recorded yet |
+| **Gemini CLI** | `gap` | `GEMINI.md` per arm, written by `sync-ai-docs` only while `supported` | `.gemini/settings.json` `BeforeTool` (not projected yet) | `gemini mcp list` / `gemini mcp add` | not recorded yet |
+| **Codex CLI** | `gap` | `AGENTS.md` per arm, written by `sync-ai-docs` only while `supported` | `~/.codex/hooks.json` `PreToolUse`, after `/hooks` trust (not projected yet) | `codex mcp list` / `codex mcp add` | not recorded yet |
 
 The two `gap` rows have a census record (`registry/census/gemini.json`, `registry/census/codex.json`) that translates every fixture but holds no blocking measurement yet, so no class is shown blocked.
 

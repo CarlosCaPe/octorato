@@ -39,6 +39,7 @@ Onboarding a new client = creating a new isolated repo with a brain-aware struct
 | `.claude/CLAUDE.md` | **Single source of truth** — project stack, DB connections, conventions, arm-specific security notes | ✅ Yes — this is the *only* file you edit |
 | `.github/copilot-instructions.md` | Auto-synced copy of `.claude/CLAUDE.md` for GitHub Copilot | ❌ Never — `sync-ai-docs` overwrites it |
 | `.cursorrules` | Auto-synced copy of `.claude/CLAUDE.md` for the Cursor editor | ❌ Never — `sync-ai-docs` overwrites it |
+| `AGENTS.md`, `GEMINI.md` | Auto-synced copy for Codex CLI and Gemini CLI, written only while that harness is `supported` in `registry/runtimes.yaml` | ❌ Never: `sync-ai-docs` overwrites it |
 | `README.md` | Human-readable repo intro + quick-start | ✅ Yes |
 | `.gitignore` | Must include `.env`, `.env.*`, `.dev.vars` | ✅ Yes |
 | `.env` | Local secrets — **never committed**, lives only on the operator's machine | ✅ Yes (locally only) |

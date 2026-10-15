@@ -19,7 +19,10 @@ Verbs:
                            branch protection requiring PR), auto-creates a feature
                            branch, opens a PR via gh, waits for required checks,
                            squash-merges, and returns to the protected branch.
-  sync   [arm…]            project CLAUDE.md -> copilot-instructions.md + .cursorrules
+  sync   [arm…]            project CLAUDE.md -> copilot-instructions.md + .cursorrules,
+                           plus the instruction file of every `supported` harness in
+                           registry/runtimes.yaml (AGENTS.md, GEMINI.md); unchanged
+                           files are not rewritten
   status                   alias for `pull --status`
   cycle  ["msg"]           ai-sync: integrate (pull --rebase --autostash) THEN publish
                            (push), retrying the loop when a sibling machine pushes
@@ -55,6 +58,12 @@ CLAUDE = Path(__file__).resolve().parent.parent
 HOME = Path.home()
 ARMS_CFG = CLAUDE / "company" / "config" / "arms-paths.json"
 POLICY = CLAUDE / ".githooks" / "push-policy.txt"
+RUNTIMES = CLAUDE / "registry" / "runtimes.yaml"
+
+# The two mirrors every arm gets whatever the Runtime_Registry says. Each harness
+# entry's `instruction_file` adds one more mirror only while that harness is
+# `supported` (v11 spec 202610141000, AC-07, T09).
+BASE_MIRRORS = (".github/copilot-instructions.md", ".cursorrules")
 
 # Staged on push — allowlist, never `git add -A`, so personal files never slip in.
 # Top-level governance docs (CHANGELOG, SUPPORT, etc.) must be listed explicitly;
@@ -254,13 +263,67 @@ def scan_staged_secrets() -> bool:
 
 # ── sync ──────────────────────────────────────────────────────────────────────
 
+def harness_instruction_files(registry: Path | None = None) -> list[str]:
+    """Arm-relative instruction files of the `supported` harnesses in
+    registry/runtimes.yaml, beyond BASE_MIRRORS (AC-07).
+
+    A harness asks for an arm file when its `instruction_file` is a plain
+    relative path: `AGENTS.md` (Codex CLI), `GEMINI.md` (Gemini CLI). A home
+    path (`~/.claude/CLAUDE.md`, Claude Code, which reads the arm's
+    `.claude/CLAUDE.md` natively), an absolute path or one that climbs out of
+    the arm (`..`) is never written. A `gap` harness gets nothing: the spec
+    writes the file only for a harness the census shows blocking. A registry
+    that is absent or unreadable adds nothing and says so, so a broken registry
+    can only ever write FEWER files into an arm, never other ones."""
+    path = registry or RUNTIMES
+    try:
+        import yaml  # type: ignore[import-not-found]
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        runtimes = data.get("runtimes") or {}
+        if not isinstance(runtimes, dict):
+            raise ValueError("`runtimes` is not a mapping")
+    except Exception as e:  # ImportError, OSError, YAML error, shape error
+        warn(f"  ⚠ {path.name} unreadable ({type(e).__name__}: {e}); "
+             "only the base mirrors are written")
+        return []
+    out: list[str] = []
+    for entry in runtimes.values():
+        if not isinstance(entry, dict) or entry.get("status") != "supported":
+            continue
+        rel = entry.get("instruction_file")
+        if not isinstance(rel, str) or not rel.strip():
+            continue
+        rel = rel.strip().replace("\\", "/")
+        parts = rel.split("/")
+        if rel.startswith(("~", "/")) or re.match(r"^[A-Za-z]:", rel) or ".." in parts:
+            continue
+        if rel in BASE_MIRRORS or rel in out:
+            continue
+        out.append(rel)
+    return out
+
+
+def _write_if_changed(path: Path, content: bytes) -> bool:
+    """Write `content` only when the file is absent or differs, so a second sync
+    with no source change touches nothing (same bytes, same mtime)."""
+    try:
+        if path.read_bytes() == content:
+            return False
+    except OSError:
+        pass
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+    return True
+
+
 def sync(names=None) -> int:
     arms = load_arms()
     if not arms:
         warn("  no arms registered (company/config/arms-paths.json absent) — nothing to sync")
         return 0
     targets = names or list(arms)
-    print("=== Syncing .claude/CLAUDE.md → copilot-instructions.md + .cursorrules ===")
+    mirrors = [*BASE_MIRRORS, *harness_instruction_files()]
+    print(f"=== Syncing .claude/CLAUDE.md → {' + '.join(mirrors)} ===")
     synced = skipped = 0
     for name in targets:
         repo = arms.get(name)
@@ -270,11 +333,9 @@ def sync(names=None) -> int:
             skipped += 1
             continue
         content = src.read_bytes()
-        copilot = repo / ".github" / "copilot-instructions.md"
-        copilot.parent.mkdir(parents=True, exist_ok=True)
-        copilot.write_bytes(content)
-        (repo / ".cursorrules").write_bytes(content)
-        info(f"  ✓ {name}: CLAUDE.md → copilot + cursor")
+        written = [rel for rel in mirrors if _write_if_changed(repo / rel, content)]
+        info(f"  ✓ {name}: CLAUDE.md → {len(mirrors)} mirror(s), "
+             f"{len(written)} rewritten{': ' + ', '.join(written) if written else ''}")
         synced += 1
     print(f"\nDone. Synced: {synced} | Skipped: {skipped}")
     return 0
