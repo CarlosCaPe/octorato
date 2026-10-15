@@ -2956,13 +2956,43 @@ RUNTIME_STATUSES = ("supported", "gap")
 # Harnesses whose `supported` status must come from a census record, and the
 # tool classes that record must show blocked with the benign twin allowed.
 CENSUS_HARNESSES = ("gemini-cli", "codex-cli")
-# Harnesses whose `supported` status rests on a named brain_doctor check instead
-# of a census record. Any registry key outside these two tuples fails closed.
-EVIDENCE_HARNESSES = ("claude-code", "cursor")
+# Harnesses whose `supported` status rests on a brain_doctor check instead of a
+# census record, pinned to the ONE check that measures that harness: the
+# registry's `evidence` must name exactly this check (self-reference or any other
+# check FAILs). Sources: check_gate_liveness runs every fail-closed gate's
+# --selftest against registry/fixtures, written for Claude Code; check_cursor_hooks_sync
+# compares ~/.cursor/hooks.json with the projection of hooks.json
+# (scripts/merge-hooks-cursor.py). Any registry key outside CENSUS_HARNESSES and
+# these keys fails closed.
+EVIDENCE_HARNESSES = {"claude-code": "gate-liveness", "cursor": "cursor-hooks-sync"}
+# A census harness's evidence is its census record, which runtime-census-evidence
+# itself reads, so its `evidence` must name that check and nothing else.
+CENSUS_EVIDENCE_CHECK = "runtime-census-evidence"
 CENSUS_REQUIRED_CLASSES = ("shell", "file_write", "file_edit")
 _EVIDENCE_CHECK_RE = re.compile(r"\bbrain_doctor\s+([a-z0-9][a-z0-9-]*)")
 _RUNTIME_FIELDS = ("name", "status", "instruction_file", "hook_config",
                    "block_contract", "tool_map", "tiers", "unprojected")
+
+
+def _yaml_load_unique(text: str):
+    """yaml.safe_load, except a mapping that repeats a key raises instead of the
+    last value silently winning (a second `cursor:` would override the first)."""
+    import yaml  # type: ignore[import-not-found]
+
+    class _UniqueKeyLoader(yaml.SafeLoader):
+        pass
+
+    def _construct(loader, node, deep=False):
+        seen = set()
+        for key_node, _ in node.value:
+            k = loader.construct_object(key_node, deep=deep)
+            if k in seen:
+                raise ValueError(f"duplicate key {k!r} at line {key_node.start_mark.line + 1}")
+            seen.add(k)
+        return yaml.SafeLoader.construct_mapping(loader, node, deep=deep)
+
+    _UniqueKeyLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct)
+    return yaml.load(text, Loader=_UniqueKeyLoader)  # noqa: S506 (SafeLoader subclass)
 
 
 def load_runtime_registry(path: Path | None = None):
@@ -2972,8 +3002,7 @@ def load_runtime_registry(path: Path | None = None):
     if not p.exists():
         return None, [f"{p.name} is missing"]
     try:
-        import yaml  # type: ignore[import-not-found]
-        data = yaml.safe_load(p.read_text(encoding="utf-8"))
+        data = _yaml_load_unique(p.read_text(encoding="utf-8"))
     except Exception as e:
         return None, [f"{p.name} does not parse: {e}"]
     runtimes = data.get("runtimes") if isinstance(data, dict) else None
@@ -3102,8 +3131,10 @@ def _evidence_result(name: str):
 def check_runtime_census_evidence(fix: bool, path: Path | None = None,
                                   root: Path | None = None) -> Result:
     """AC-03, fail closed. Every census harness has an entry; no other harness id
-    than the census and evidence allowlists appears; every `supported` entry names
-    a brain_doctor check in `evidence`, and that check's current result is not
+    than the census and evidence allowlists appears; every status is exactly
+    `supported` or `gap`; every `supported` entry's `evidence` names the check
+    pinned for that harness (EVIDENCE_HARNESSES, or this check for a census
+    harness), and for an evidence harness that check's current result is not
     FAIL (WARN or not run under --fast degrades this check to WARN, never PASS);
     a census harness is `supported` only when its record shows shell, file write
     and file edit blocked with the benign twins allowed; a `gap` entry lists
@@ -3126,15 +3157,22 @@ def check_runtime_census_evidence(fix: bool, path: Path | None = None,
             continue
         checked += 1
         status = entry.get("status")
+        if status not in RUNTIME_STATUSES:
+            bad.append(f"{rid}: status {status!r} is not one of {', '.join(RUNTIME_STATUSES)} "
+                       "(exact, lower case)")
         if status == "supported":
             ev = entry.get("evidence")
             m = _EVIDENCE_CHECK_RE.search(ev) if isinstance(ev, str) else None
             named = m.group(1) if m else None
+            pinned = EVIDENCE_HARNESSES.get(rid, CENSUS_EVIDENCE_CHECK)
             if named is None:
                 bad.append(f"{rid} is supported with no `evidence` naming a brain_doctor check")
-            elif named not in check_keys:
+            elif named != pinned:
+                bad.append(f"{rid} evidence names {named!r}; the only check that evidences "
+                           f"{rid} is {pinned!r}")
+            elif pinned not in check_keys:
                 bad.append(f"{rid} evidence names unknown doctor check {named!r}")
-            elif named != key:
+            elif rid in EVIDENCE_HARNESSES:
                 res = _evidence_result(named)
                 if res is None:
                     warn.append(f"{rid} evidence {named} not verified (not run in this profile)")

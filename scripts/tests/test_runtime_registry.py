@@ -4,8 +4,9 @@
 runtime-registry         registry/runtimes.yaml present, parseable, complete.
 runtime-doc-agreement    same harnesses and statuses as the doc's Runtimes table.
 runtime-census-evidence  fail closed: every census harness present, no unknown
-                         harness id, every `supported` names a doctor check in
-                         `evidence` that does not FAIL, and a Gemini/Codex
+                         harness id, no repeated key, exact statuses, every
+                         `supported` names its PINNED doctor check in
+                         `evidence` and that check does not FAIL, and a Gemini/Codex
                          `supported` needs a census record that shows shell,
                          file write and file edit blocked.
 """
@@ -88,6 +89,8 @@ class RuntimeRegistryTest(unittest.TestCase):
         self.census.write_text(json.dumps(_census(None)), encoding="utf-8")
         (self.root / "census" / "codex.json").write_text(json.dumps(_census(None)), encoding="utf-8")
         for patcher in (mock.patch.object(brain_doctor, "CHECKS", list(brain_doctor.CHECKS) + FAKE_CHECKS),
+                        mock.patch.object(brain_doctor, "EVIDENCE_HARNESSES",
+                                          {"claude-code": "fake-ok", "cursor": "fake-ok"}),
                         mock.patch.object(brain_doctor, "SLOW_CHECKS",
                                           {**brain_doctor.SLOW_CHECKS, "fake-slow": "fixture"})):
             patcher.start()
@@ -245,9 +248,62 @@ class RuntimeRegistryTest(unittest.TestCase):
         d = self.mutated()
         d["runtimes"]["claude-code"]["evidence"] = "brain_doctor no-such-check"
         self.write(d)
+        self.assertCensusFails("claude-code evidence names 'no-such-check'")
+        # a pin that names an unregistered check is itself a FAIL
+        self.pin(claude_code="no-such-check")
         self.assertCensusFails("unknown doctor check 'no-such-check'")
 
+    # (e) pinned evidence, unique keys, exact statuses: QA NEEDS-WORK on c21f1eb
+    def test_evidence_self_reference_fails(self):
+        d = self.mutated()
+        d["runtimes"]["claude-code"]["evidence"] = "brain_doctor runtime-census-evidence"
+        d["runtimes"]["cursor"] = _entry("Cursor", "supported",
+                                         evidence="brain_doctor runtime-census-evidence")
+        self.write(d)
+        self.assertCensusFails("claude-code evidence names 'runtime-census-evidence'",
+                               "cursor evidence names 'runtime-census-evidence'")
+
+    def test_evidence_naming_unrelated_passing_check_fails(self):
+        for other in ("runtime-registry", "repo-identity"):
+            d = self.mutated()
+            d["runtimes"]["claude-code"]["evidence"] = f"brain_doctor {other}"
+            self.write(d)
+            self.assertCensusFails(f"claude-code evidence names {other!r}; the only check "
+                                   "that evidences claude-code is 'fake-ok'")
+
+    def test_census_harness_evidence_must_be_its_census_check(self):
+        self.census.write_text(json.dumps(_census(True)), encoding="utf-8")
+        d = self.mutated()
+        d["runtimes"]["gemini-cli"].update(status="supported", evidence="brain_doctor fake-ok")
+        d["runtimes"]["gemini-cli"].pop("classes_not_blocked")
+        self.write(d)
+        self.assertCensusFails("gemini-cli evidence names 'fake-ok'")
+
+    def test_duplicate_key_fails_with_the_key_name(self):
+        e = _entry("Cursor", "supported", evidence="brain_doctor fake-ok")
+        body = yaml.safe_dump({"cursor": e}).replace("\n", "\n  ")
+        gap = yaml.safe_dump({"cursor": _entry("Cursor", "gap")}).replace("\n", "\n  ")
+        rest = yaml.safe_dump(self.mutated()["runtimes"]).replace("\n", "\n  ")
+        # the second `cursor:` used to win silently and turn the first one into `gap`
+        self.reg.write_text(f"schema: 1\nruntimes:\n  {rest}{body}{gap}", encoding="utf-8")
+        for fn in (brain_doctor.check_runtime_registry, brain_doctor.check_runtime_census_evidence):
+            r = fn(False, self.reg)
+            self.assertEqual(r.status, FAIL, f"{r.key}: {r.message}")
+            self.assertIn("duplicate key 'cursor'", r.message)
+
+    def test_status_casing_and_unknown_status_fail_census_check(self):
+        for status in ("Supported", "GAP", "partial"):
+            d = self.mutated()
+            d["runtimes"]["gemini-cli"]["status"] = status
+            self.write(d)
+            self.assertCensusFails(f"gemini-cli: status {status!r} is not one of supported, gap")
+            self.assertEqual(brain_doctor.check_runtime_registry(False, self.reg).status, FAIL)
+
+    def pin(self, **pins):
+        brain_doctor.EVIDENCE_HARNESSES.update({k.replace("_", "-"): v for k, v in pins.items()})
+
     def test_supported_whose_evidence_check_fails_fails(self):
+        self.pin(cursor="fake-fail")
         d = self.mutated()
         d["runtimes"]["cursor"] = _entry("Cursor", "supported", evidence="brain_doctor fake-fail (projection)")
         self.write(d)
@@ -267,6 +323,7 @@ class RuntimeRegistryTest(unittest.TestCase):
             self.assertEqual(r.status, FAIL, r.message)
 
     def test_evidence_warn_degrades_to_warn(self):
+        self.pin(cursor="fake-warn")
         d = self.mutated()
         d["runtimes"]["cursor"] = _entry("Cursor", "supported", evidence="brain_doctor fake-warn")
         self.write(d)
@@ -275,6 +332,7 @@ class RuntimeRegistryTest(unittest.TestCase):
         self.assertIn("cursor evidence fake-warn is WARN: drift", r.message)
 
     def test_slow_evidence_not_run_is_not_verified(self):
+        self.pin(claude_code="fake-slow")
         d = self.mutated()
         d["runtimes"]["claude-code"]["evidence"] = "brain_doctor fake-slow"
         self.write(d)
@@ -287,6 +345,7 @@ class RuntimeRegistryTest(unittest.TestCase):
 
     # the tracked brain itself
     def test_live_registry_and_doc_pass_all_three(self):
+        mock.patch.stopall()  # the live registry is checked against the real pins
         for fn in (brain_doctor.check_runtime_registry, brain_doctor.check_runtime_doc_agreement):
             r = fn(False)
             self.assertEqual(r.status, PASS, f"{r.key}: {r.message}")
