@@ -16,12 +16,12 @@ machine-generated growth ledger lives at
 ## [Unreleased]
 ### Octorato v11: no reply unreviewed
 v7 made an unverified send impossible; v11 moves that boundary to the operator. Every reply the main loop gives the operator now needs a PASS panel receipt for its exact text, recorded by a hook from an independent reviewer subagent, or the Stop gate sends the turn back (#417).
-- **Reply gate**: `scripts/g__stop__reply-panel.py`, rule `FLOW.panel-before-reply`, fail-closed, selftest of 58 block and 19 allow cases plus 2 unit checks.
+- **Reply gate**: `scripts/g__stop__reply-panel.py`, rule `FLOW.panel-before-reply`, fail-closed, selftest of 65 block and 23 allow cases plus 2 unit checks.
 - **Quorum by source**: a reply whose Basis is SELF, or that names no source, needs 3 distinct reviewers; a sourced reply needs 1.
 - **Operator-only hatches**: `panel-skip` in the operator's own prompt waives one turn; `OCTO_REPLY_PANEL=off` in the launching shell waives the session.
 - **Shared receipt reader**: `receipt_ledger.panel_receipts_for` returns every validated receipt; the send gate's behaviour is unchanged (96 block and 34 allow cases).
 - **Windows test suite**: 50 tests that failed on a Windows host are fixed at the root cause, with no deleted tests and every skip a measured probe.
-- Contract and residuals R-01 to R-13: `docs/architecture/v11-reply-panel.md`. Spec: `docs/specs/202610141340-v11-reply-panel/`, CONVERGED on converge pass 7 with 21 of 21 acceptance criteria met.
+- Contract and residuals R-01 to R-13: `docs/architecture/v11-reply-panel.md`. Spec: `docs/specs/202610141340-v11-reply-panel/`, CONVERGED on converge pass 9 with 22 of 22 acceptance criteria met.
 
 ## [2026-10-13]: v10.0.0
 ### Octorato v10: low friction, easy entry

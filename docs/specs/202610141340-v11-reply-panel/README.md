@@ -2,7 +2,7 @@
 
 Implemented on: 2026-10-15
 
-v7 made an unverified send impossible; v11 moves that boundary to the operator. Every reply the main loop gives the operator carries a PASS panel receipt for its exact text, recorded by a hook from an independent reviewer subagent, or the Stop gate sends the turn back. Spec `feature.md` (21 acceptance criteria, `Spec-Format: ears-1`), plan `plan.md`, builder's record `review.md`. The converge verdict that closes it is the CONVERGED result of converge pass 7 on commit 07c91cbd, merged in #417.
+v7 made an unverified send impossible; v11 moves that boundary to the operator. Every reply the main loop gives the operator carries a PASS panel receipt for its exact text, recorded by a hook from an independent reviewer subagent, or the Stop gate sends the turn back. Spec `feature.md` (22 acceptance criteria, `Spec-Format: ears-1`), plan `plan.md`, builder's record `review.md`. The converge verdict that closes it is the CONVERGED result of converge pass 9, after the last code commit of #417.
 
 Key files: `scripts/g__stop__reply-panel.py` (the reply gate), `scripts/receipt_ledger.py` (`panel_receipts_for`), `scripts/panel_digest.py` (the digest and the reviewer block), `registry/fixtures/FLOW.panel-before-reply/` (selftest fixtures), `docs/architecture/v11-reply-panel.md` (contract and residuals R-01 to R-13).
 
