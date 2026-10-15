@@ -23,7 +23,10 @@ passes --fail-open) the shim BLOCKS when:
     file operation);
   - the gate crashes, times out, or cannot be found;
   - the harness is not `supported` in registry/runtimes.yaml (always, see below).
-An unreadable payload never becomes an allow: a harness upgrade that changes
+Every relative tool path is joined to the payload cwd, which must be absolute,
+so the gate never resolves it against the shim's own directory. A payload
+with a repeated key blocks, and a gate's `ask` or `continue: false` reads as
+a refusal. An unreadable payload never becomes an allow: a harness upgrade that changes
 the payload shape turns into loud blocks, not silent passes.
 
 Status. The harness id must be an entry of registry/runtimes.yaml (read next to
@@ -55,7 +58,10 @@ of scripts/runtime_census.py):
       no translation and a fail-closed gate blocks it.
 
   Codex CLI (PreToolUse)
-    Bash {command}                         -> Bash {command}
+    Bash {command, workdir?}               -> Bash {command}; cwd joins workdir;
+      PLUS, when a command segment's argv0 is apply_patch/applypatch (Codex
+      applies those itself), every file operation of its inline patch, read
+      as below; an invocation with no inline patch body blocks
     apply_patch {command: <patch text>}    -> one gate call PER file operation:
       *** Add File: p      -> Write {p, content}
       *** Update File: p   -> Edit {p, old_string, new_string} (context kept)
@@ -93,7 +99,13 @@ RUNTIMES = os.path.join(BRAIN, "registry", "runtimes.yaml")
 DEFAULT_FIXTURES = os.path.join("registry", "fixtures", "ARCHITECTURE.hook-shim")
 
 BLOCK_EXIT = 2
-GATE_TIMEOUT_S = 60
+# Wall-clock budget for ALL gate runs of one hook call (a multi-file patch runs
+# the gate once per file). It must stay strictly below the harness's own hook
+# timeout: a harness that kills the shim first reads that as a non-blocking
+# failure, never as a block. Neither census record (registry/census/gemini.json,
+# codex.json) holds a hook timeout, so the projectors (T06, T07) must write one
+# explicitly and above this budget: at least 60 s per projected hook entry.
+GATE_BUDGET_S = 45
 _GATE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*\.py")
 _CLAUDE_MCP = re.compile(r"mcp__([^_]+(?:_[^_]+)*)__(.+)")
 
@@ -166,11 +178,36 @@ def _base(p: dict, event: str) -> dict:
              f"hook_event_name {p.get('hook_event_name')!r} is not {event}")
     cwd = p.get("cwd")
     _require(isinstance(cwd, str) and cwd != "", "payload has no cwd")
+    # Every relative path below is joined to this cwd; a relative cwd would
+    # leave the gate resolving against wherever the shim happens to run.
+    _require(os.path.isabs(cwd), f"payload cwd {cwd[:80]!r} is not an absolute path")
     out = {"hook_event_name": "PreToolUse", "cwd": cwd}
     for k in ("session_id", "transcript_path", "tool_use_id", "permission_mode"):
         if isinstance(p.get(k), str) and p.get(k):
             out[k] = p[k]
     return out
+
+
+def _path(cwd: str, path, why: str) -> str:
+    """A tool path as the gate must see it: absolute, joined to the payload cwd.
+
+    A gate resolves a relative path against its OWN process cwd, which is not
+    the harness's, so a relative path passed through is a path the gate checks
+    in the wrong directory. `~` is left for the gate to expand: joining it to
+    the cwd would hide a home path from every gate that reads `~` as home.
+    """
+    _require(isinstance(path, str) and path.strip() != "", why)
+    if path.startswith("~") or os.path.isabs(path):
+        return path if path.startswith("~") else os.path.normpath(path)
+    return os.path.normpath(os.path.join(cwd, path))
+
+
+def _shell_cwd(base: dict, ti: dict, key: str) -> str:
+    d = ti.get(key)
+    if d is None:
+        return base["cwd"]
+    _require(isinstance(d, str) and d != "", f"{key} is not a path")
+    return _path(base["cwd"], d, f"{key} is not a path")
 
 
 def _call(base: dict, tool: str, tool_input: dict, **extra) -> dict:
@@ -189,21 +226,16 @@ def translate_gemini(p: dict) -> list[dict]:
              "missing tool_name or tool_input")
     if tool == "run_shell_command":
         cmd = _str_field(ti, "command", "run_shell_command without command")
-        d = ti.get("dir_path")
-        cwd = base["cwd"]
-        if d is not None:
-            _require(isinstance(d, str) and d != "", "dir_path is not a path")
-            cwd = os.path.normpath(os.path.join(cwd, d))
-        return [_call(base, "Bash", {"command": cmd}, cwd=cwd)]
+        return [_call(base, "Bash", {"command": cmd}, cwd=_shell_cwd(base, ti, "dir_path"))]
     if tool == "write_file":
         return [_call(base, "Write", {
-            "file_path": _str_field(ti, "file_path", "write_file without file_path"),
+            "file_path": _path(base["cwd"], ti.get("file_path"), "write_file without file_path"),
             "content": _str_field(ti, "content", "write_file without content")})]
     if tool == "replace":
         am = ti.get("allow_multiple", False)
         _require(isinstance(am, bool), "allow_multiple is not a boolean")
         return [_call(base, "Edit", {
-            "file_path": _str_field(ti, "file_path", "replace without file_path"),
+            "file_path": _path(base["cwd"], ti.get("file_path"), "replace without file_path"),
             "old_string": _str_field(ti, "old_string", "replace without old_string"),
             "new_string": _str_field(ti, "new_string", "replace without new_string"),
             "replace_all": am})]
@@ -231,26 +263,30 @@ def parse_apply_patch(text, cwd: str) -> list[tuple[str, dict]]:
     does not understand blocks rather than being half-read.
     """
     _require(isinstance(text, str), "apply_patch command is not text")
-    lines = text.split("\n")
-    while lines and lines[-1] == "":
+    lines = [ln[:-1] if ln.endswith("\r") else ln for ln in text.split("\n")]
+    while lines and lines[-1].strip() == "":
         lines.pop()
-    _require(len(lines) >= 2 and lines[0] == "*** Begin Patch" and lines[-1] == "*** End Patch",
+    _require(len(lines) >= 2 and lines[0].strip() == "*** Begin Patch"
+             and lines[-1].strip() == "*** End Patch",
              "apply_patch without Begin/End Patch")
     body = lines[1:-1]
 
     def _abs(path: str) -> str:
-        path = path.strip()
-        _require(path != "", "apply_patch file header without a path")
-        return os.path.normpath(path if os.path.isabs(path) else os.path.join(cwd, path))
+        return _path(cwd, path.strip(), "apply_patch file header without a path")
+
+    def _header(line: str):
+        # Matched on the stripped line: an indented header is still a file
+        # operation to a lenient applier, so it is read as one, never as context.
+        return _PATCH_OP.match(line.strip())
 
     ops, i = [], 0
     while i < len(body):
-        m = _PATCH_OP.match(body[i])
+        m = _header(body[i])
         _require(bool(m), f"apply_patch line {i + 2} is not a file header: {body[i][:60]!r}")
         kind, path = m.group(1), _abs(m.group(2))
         i += 1
         chunk = []
-        while i < len(body) and not _PATCH_OP.match(body[i]):
+        while i < len(body) and not _header(body[i]):
             chunk.append(body[i])
             i += 1
         if kind == "Add":
@@ -262,13 +298,17 @@ def parse_apply_patch(text, cwd: str) -> list[tuple[str, dict]]:
             ops.append(("Write", {"file_path": path, "content": ""}))
         else:
             move = None
-            if chunk and _MOVE_TO.match(chunk[0]):
-                move = _abs(_MOVE_TO.match(chunk[0]).group(1))
+            if chunk and _MOVE_TO.match(chunk[0].strip()):
+                move = _abs(_MOVE_TO.match(chunk[0].strip()).group(1))
                 chunk = chunk[1:]
             old, new = [], []
             for ln in chunk:
-                if ln.startswith("@@") or ln == "*** End of File":
+                if ln.startswith("@@") or ln.strip() == "*** End of File":
                     continue
+                # any other `***` directive here (a second Move to, a marker this
+                # reader does not know) is grammar it cannot place: block.
+                _require(not ln.strip().startswith("*** "),
+                         f"Update File hunk with a directive line: {ln[:60]!r}")
                 if ln == "" or ln[0] == " ":
                     old.append(ln[1:])
                     new.append(ln[1:])
@@ -287,6 +327,35 @@ def parse_apply_patch(text, cwd: str) -> list[tuple[str, dict]]:
     return ops
 
 
+# Codex intercepts a shell command whose argv0 is apply_patch / applypatch and
+# applies its patch as a file write, so the Bash call is ALSO a file operation.
+# argv0 is found after any command separator or quote (conservative: a quoted
+# mention counts, so `echo "apply_patch"` without a patch body blocks).
+_APPLY_PATCH_ARGV0 = re.compile(
+    r"""(?:^|[\n;&|(){}`'"])\s*"""
+    r"""(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*"""
+    r"""(?:(?:command|exec|env|sudo|time|nohup|builtin)\s+)*"""
+    r"""(?:\S*/)?(?:apply_patch|applypatch)(?=$|[\s<>;&|)'"`])""")
+_PATCH_SPAN = re.compile(r"\*\*\* Begin Patch.*?\*\*\* End Patch", re.S)
+
+
+def shell_patch_ops(cmd: str, cwd: str) -> list[tuple[str, dict]]:
+    """File operations of every apply_patch a shell command runs; [] when none.
+
+    The patch body is taken from the command text itself (a heredoc or a quoted
+    argument both carry it verbatim). An invocation with no readable body, a
+    patch read from a file or a pipe, has no path to show the gate and fails.
+    """
+    if not _APPLY_PATCH_ARGV0.search(cmd):
+        return []
+    spans = _PATCH_SPAN.findall(cmd)
+    _require(bool(spans), "shell command runs apply_patch with no inline patch body")
+    ops = []
+    for span in spans:
+        ops.extend(parse_apply_patch(span, cwd))
+    return ops
+
+
 def translate_codex(p: dict) -> list[dict]:
     base = _base(p, "PreToolUse")
     tool = p.get("tool_name")
@@ -294,7 +363,11 @@ def translate_codex(p: dict) -> list[dict]:
     _require(isinstance(tool, str) and isinstance(ti, dict),
              "missing tool_name or tool_input")
     if tool == "Bash":
-        return [_call(base, "Bash", {"command": _str_field(ti, "command", "Bash without command")})]
+        cmd = _str_field(ti, "command", "Bash without command")
+        cwd = _shell_cwd(base, ti, "workdir")
+        calls = [_call(base, "Bash", {"command": cmd}, cwd=cwd)]
+        calls += [_call(base, t, i, cwd=cwd) for t, i in shell_patch_ops(cmd, cwd)]
+        return calls
     if tool == "apply_patch":
         return [_call(base, t, i) for t, i in parse_apply_patch(ti.get("command"), base["cwd"])]
     if tool.startswith("mcp__"):
@@ -306,10 +379,22 @@ def translate_codex(p: dict) -> list[dict]:
 TRANSLATORS = {"gemini-cli": translate_gemini, "codex-cli": translate_codex}
 
 
+def _no_duplicate_keys(pairs):
+    # Two readers of one payload can disagree on a repeated key (first wins
+    # in one parser, last in another): the gate could check one file_path
+    # while the harness writes the other. A repeated key is unreadable.
+    out = {}
+    for k, v in pairs:
+        if k in out:
+            raise TranslationError(f"payload repeats key {k!r}")
+        out[k] = v
+    return out
+
+
 def translate(harness: str, raw: str) -> list[dict]:
     """Claude-shaped gate payloads for one harness payload; raises when unreadable."""
     try:
-        payload = json.loads(raw)
+        payload = json.loads(raw, object_pairs_hook=_no_duplicate_keys)
     except (ValueError, TypeError) as exc:
         raise TranslationError(f"payload is not JSON: {exc}") from exc
     _require(isinstance(payload, dict), "payload is not a JSON object")
@@ -333,8 +418,16 @@ def _gate_verdict(rc: int, stdout: str, stderr: str) -> tuple[bool, str]:
         hso = obj.get("hookSpecificOutput")
         if isinstance(hso, dict) and hso.get("permissionDecision") == "deny":
             return True, str(hso.get("permissionDecisionReason") or "")
+        if isinstance(hso, dict) and hso.get("permissionDecision") == "ask":
+            # Claude Code would stop and ask the operator; the block contract the
+            # shim speaks has no ask, so the safe reading is a refusal.
+            return True, ("the gate asked for the operator's confirmation, which this "
+                          "harness contract cannot carry: " +
+                          str(hso.get("permissionDecisionReason") or ""))
         if obj.get("decision") == "block":
             return True, str(obj.get("reason") or "")
+        if obj.get("continue") is False:
+            return True, str(obj.get("stopReason") or "the gate stopped the run")
     if rc != 0:
         reason = (stderr or "").strip() or out
         return True, reason
@@ -342,14 +435,19 @@ def _gate_verdict(rc: int, stdout: str, stderr: str) -> tuple[bool, str]:
 
 
 def run_gate(gate_path: str, call: dict, env: dict | None, cwd: str | None,
-             fail_closed: bool) -> tuple[bool, str]:
+             fail_closed: bool, timeout_s: float = GATE_BUDGET_S) -> tuple[bool, str]:
     body = json.dumps(call, ensure_ascii=True)
+    # The gate runs where the harness says the tool runs, as Claude Code runs a
+    # hook in the session's directory; the caller's cwd only when that is gone.
+    run_cwd = call.get("cwd") if os.path.isdir(call.get("cwd") or "") else cwd
+    if timeout_s <= 0:
+        return fail_closed, f"gate budget of {GATE_BUDGET_S}s spent before this call"
     try:
         cp = subprocess.run([sys.executable, gate_path], input=body,
                             capture_output=True, text=True, encoding="utf-8",
-                            errors="replace", env=env, cwd=cwd, timeout=GATE_TIMEOUT_S)
+                            errors="replace", env=env, cwd=run_cwd, timeout=timeout_s)
     except subprocess.TimeoutExpired:
-        return fail_closed, f"gate timed out after {GATE_TIMEOUT_S}s"
+        return fail_closed, f"gate timed out inside the {GATE_BUDGET_S}s budget"
     except OSError as exc:
         return fail_closed, f"gate could not start: {exc}"
     blocked, reason = _gate_verdict(cp.returncode, cp.stdout, cp.stderr)
@@ -393,9 +491,12 @@ def decide(harness: str, gate: str, raw: str, *, fail_closed: bool = True,
             return BLOCK_EXIT, f"{tag}: blocked (fail-closed): {why}"
         return 0, f"{tag}: skipped (fail-open gate): {why}"
 
+    import time
+    deadline = time.monotonic() + GATE_BUDGET_S
     for call in calls:
         try:
-            blocked, reason = run_gate(gate_path, call, env, cwd, fail_closed)
+            blocked, reason = run_gate(gate_path, call, env, cwd, fail_closed,
+                                       deadline - time.monotonic())
         except Exception as exc:
             blocked, reason = fail_closed, f"{type(exc).__name__}: {exc}"
         if blocked:
@@ -450,6 +551,8 @@ def _selftest(fdir: str | None = None) -> int:
        "payload": {...} | "payload_raw": "<text>",
        "status": "supported" (default) | "gap" | null,
        "fail_open": false, "home_from": "<other fixture dir with home/>",
+       "neutral_cwd": false (true: the shim runs from the filesystem root, so a
+                      relative path the shim failed to join is checked there),
        "_setup": {"expect_reason": "<substring>" | ["<substring>", ...]}}
     A leg the GATE must deny carries ": denied" in expect_reason, so a payload the
     shim failed to translate cannot pass for a gate's refusal.
@@ -507,7 +610,8 @@ def _selftest(fdir: str | None = None) -> int:
             rc, msg = decide(fx["harness"], fx["gate"], raw,
                              fail_closed=not fx.get("fail_open", False),
                              status_of=lambda _h, _s=status: _s,
-                             env=env, cwd=sandbox)
+                             env=env,
+                             cwd=os.path.abspath(os.sep) if fx.get("neutral_cwd") else sandbox)
         except Exception as exc:
             failures.append(f"{name}: leg raised {type(exc).__name__}: {exc}")
             continue

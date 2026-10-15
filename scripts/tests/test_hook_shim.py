@@ -71,6 +71,29 @@ class Translation(unittest.TestCase):
                                  os.path.normpath(os.path.join("/w", "d.txt"))])
 
 
+    def test_relative_gemini_path_joins_cwd(self):
+        calls = shim.translate("gemini-cli", json.dumps({
+            "hook_event_name": "BeforeTool", "cwd": os.path.abspath(os.sep + "w"),
+            "tool_name": "write_file", "tool_input": {"file_path": "a/../b.txt", "content": ""}}))
+        self.assertEqual(calls[0]["tool_input"]["file_path"],
+                         os.path.normpath(os.path.join(os.path.abspath(os.sep + "w"), "b.txt")))
+
+    def test_shell_apply_patch_argv0_only(self):
+        body = "*** Begin Patch\n*** Delete File: /x/y\n*** End Patch"
+        self.assertEqual(len(shim.shell_patch_ops("cd /w && apply_patch <<'E'\n" + body + "\nE", "/w")), 1)
+        self.assertEqual(shim.shell_patch_ops("grep -n apply_patch notes.txt", "/w"), [])
+        with self.assertRaises(shim.TranslationError):
+            shim.shell_patch_ops("applypatch < change.patch", "/w")
+
+
+class GateVerdict(unittest.TestCase):
+    def test_ask_and_stop_block(self):
+        ask = json.dumps({"hookSpecificOutput": {"permissionDecision": "ask"}})
+        self.assertTrue(shim._gate_verdict(0, ask, "")[0])
+        self.assertTrue(shim._gate_verdict(0, json.dumps({"continue": False}), "")[0])
+        self.assertFalse(shim._gate_verdict(0, "", "")[0])
+
+
 class Selftest(unittest.TestCase):
     def test_selftest_passes(self):
         cp = subprocess.run([sys.executable, str(SCRIPTS / "g__shim__hook.py"), "--selftest"],
