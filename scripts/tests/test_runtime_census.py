@@ -148,7 +148,23 @@ class RecordTest(unittest.TestCase):
         # Authorization pattern; the assembled string still does.
         "bearer": ("Authorization: " + "Bearer " + "eyJ" + "hbGciOiJIUzI1NiJ9.payload",
                    "eyJ" + "hbGciOiJIUzI1NiJ9.payload"),
+        # Python repr of a dict in a traceback: single quotes on key and value
+        "repr_api_key": ("{" + "'api_key'" + ": " + "'ABCDEFGHIJKLM'" + "}", "ABCDEFGHIJKLM"),
+        "repr_token_double_value": ("'token'" + ': "' + "tok-abcdef" + '"', "tok-abcdef"),
+        "google_access_token": ("ya29" + "." + "a1" * 15, "ya29" + "." + "a1" * 15),
+        "google_refresh_token": ("1//0" + "r" * 24, "1//0" + "r" * 24),
+        "github_pat": ("ghp" + "_" + "G" * 36, "ghp" + "_" + "G" * 36),
+        "aws_access_key_id": ("AK" + "IA" + "Q" * 16, "AK" + "IA" + "Q" * 16),
+        "jwt": ("ey" + "J" + "h" * 12 + "." + "p" * 12 + "." + "s" * 12,
+                "ey" + "J" + "h" * 12 + "." + "p" * 12 + "." + "s" * 12),
     }
+
+    def test_secret_patterns_are_linear_on_a_long_near_miss(self):
+        import time
+        near_miss = "ey" + "J" + "x" * 5000 + "." + "y" * 5000 + "!" + "ya29" + "." + "z" * 5000 + "!"
+        t0 = time.monotonic()
+        rc.redact_secrets(near_miss)
+        self.assertLess(time.monotonic() - t0, 1.0)
 
     def test_stderr_tail_secrets_end_redacted_in_the_written_record(self):
         for name, (raw, literal) in self._SECRETS.items():
@@ -203,6 +219,48 @@ class RecordTest(unittest.TestCase):
                 self.assertEqual(got["date"], rc._GOOGLE_ACCOUNT_SEED["date"])
                 self.assertEqual(got["error_class"], rc._GOOGLE_ACCOUNT_SEED["error_class"])
                 self.assertEqual(got["source"], rc._PRIOR_SOURCE_SEED)
+
+    def test_prior_measurement_origin_survives_hops(self):
+        # seed -> hop 1 -> hop 2: source flips to "previous record", origin stays "seed"
+        first = self._fake_gemini(None)["google_account_evidence"]["prior_measurement"]
+        self.assertEqual(first["origin"], rc._PRIOR_ORIGIN_SEED)
+        hop1 = self._fake_gemini({"live": {"google_account_evidence": {"prior_measurement": first}}})
+        hop1 = hop1["google_account_evidence"]["prior_measurement"]
+        self.assertEqual(hop1["source"], rc._PRIOR_SOURCE_PREVIOUS)
+        self.assertEqual(hop1["origin"], rc._PRIOR_ORIGIN_SEED)
+        hop2 = self._fake_gemini({"live": {"google_account_evidence": {"prior_measurement": hop1}}})
+        hop2 = hop2["google_account_evidence"]["prior_measurement"]
+        self.assertEqual(hop2["origin"], rc._PRIOR_ORIGIN_SEED)
+        # a measured prior without the field yet: origin is its own date, then sticks
+        measured = {"date": "2000-01-01", "version": "0.0.1", "error_class": "MeasuredError",
+                    "message_prefix": "measured by test"}
+        got = self._fake_gemini({"live": {"google_account_evidence": {"prior_measurement": measured}}})
+        got = got["google_account_evidence"]["prior_measurement"]
+        self.assertEqual(got["origin"], "2000-01-01")
+        again = self._fake_gemini({"live": {"google_account_evidence": {"prior_measurement": got}}})
+        self.assertEqual(again["google_account_evidence"]["prior_measurement"]["origin"], "2000-01-01")
+
+    def test_legacy_prior_equal_to_the_seed_is_labeled_seed_origin(self):
+        legacy = dict(rc._GOOGLE_ACCOUNT_SEED)
+        legacy["source"] = rc._PRIOR_SOURCE_PREVIOUS
+        got = self._fake_gemini({"live": {"google_account_evidence": {"prior_measurement": legacy}}})
+        self.assertEqual(got["google_account_evidence"]["prior_measurement"]["origin"],
+                         rc._PRIOR_ORIGIN_SEED)
+
+    def test_deterministic_run_carries_origin_across_hops(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            rc.main(["--out", str(out), "--harness", "gemini"])
+            path = out / "gemini.json"
+            data = json.loads(path.read_text(encoding="utf-8"))
+            data["live"] = {"google_account_evidence": {"prior_measurement": {"date": "2000-01-01"}}}
+            path.write_text(json.dumps(data), encoding="utf-8")
+            for _ in range(2):
+                rc.main(["--out", str(out), "--harness", "gemini"])
+                prior = json.loads(path.read_text(encoding="utf-8"))
+                prior = prior["live"]["google_account_evidence"]["prior_measurement"]
+                self.assertEqual(prior["origin"], "2000-01-01")
+                self.assertEqual(prior["source"], rc._PRIOR_SOURCE_PREVIOUS)
 
     def test_deterministic_run_labels_a_carried_prior_measurement(self):
         with tempfile.TemporaryDirectory() as tmp:

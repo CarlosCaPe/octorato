@@ -82,6 +82,7 @@
         "date": "2026-10-15",
         "error_class": "IneligibleTierError",
         "message_prefix": "This client is no longer supported for Gemini Code Assist for individuals",
+        "origin": "seed",
         "source": "previous record live.google_account_evidence.prior_measurement",
         "version": "0.62.0"
       }

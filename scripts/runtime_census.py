@@ -519,14 +519,25 @@ def _now() -> str:
 # the same list redacts a raw stderr and re-checks the dumped record.
 _REDACTED = "[REDACTED]"
 _SECRET_PATTERNS = (
-    # JSON-style key with a value: "api_key": "...", "token": "...", "GEMINI_API_KEY": "..."
-    (re.compile(r'(?i)(\\?"[A-Za-z0-9_.-]*(?:api[_-]?key|token|secret|password)\\?"\s*:\s*\\?")'
-                r'(?!\[REDACTED\])[^"]+(\\?")'), r"\1" + _REDACTED + r"\2"),
+    # Quoted key with a quoted value, JSON or Python repr: "api_key": "...",
+    # 'token': '...', "GEMINI_API_KEY": "...". Either quote on either side.
+    (re.compile(r'(?i)(\\?["\'][A-Za-z0-9_.-]*(?:api[_-]?key|token|secret|password)\\?["\']\s*:\s*\\?["\'])'
+                r'(?!\[REDACTED\])[^"\']+(\\?["\'])'), r"\1" + _REDACTED + r"\2"),
     # key=value or key: value with a long opaque value
     (re.compile(r'(?i)((?:api[_-]?key|token|secret|password)\s*[:=]\s*["\']?)[A-Za-z0-9_\-]{16,}'),
      r"\1" + _REDACTED),
     # Google API key
     (re.compile(r"AIza[0-9A-Za-z_-]{35}"), _REDACTED),
+    # Google OAuth access token and refresh token
+    (re.compile(r"ya29\.[0-9A-Za-z_-]{20,}"), _REDACTED),
+    (re.compile(r"1//0[0-9A-Za-z_-]{20,}"), _REDACTED),
+    # GitHub personal access token
+    (re.compile(r"ghp_[A-Za-z0-9]{36}"), _REDACTED),
+    # AWS access key id
+    (re.compile(r"AKIA[0-9A-Z]{16}"), _REDACTED),
+    # JWT: three dot-separated segments, each class excludes the dot so the
+    # match is linear
+    (re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"), _REDACTED),
     # OpenAI-style key
     (re.compile(r"sk-[A-Za-z0-9_-]{20,}"), _REDACTED),
     # Bearer token
@@ -637,6 +648,22 @@ _GOOGLE_ACCOUNT_SEED = {
 }
 _PRIOR_SOURCE_SEED = "seed in scripts/runtime_census.py (no previous record)"
 _PRIOR_SOURCE_PREVIOUS = "previous record live.google_account_evidence.prior_measurement"
+# `source` says where THIS run read the value (seed or previous record) and
+# changes on every hop; `origin` says where the value was first measured and
+# never changes: "seed" for the code seed, else the date of the measurement.
+_PRIOR_ORIGIN_SEED = "seed"
+
+
+def _prior_origin(prior: dict) -> str | None:
+    """Origin of a carried prior_measurement that may predate the field."""
+    origin = prior.get("origin")
+    if isinstance(origin, str) and origin:
+        return origin
+    seed_fields = {k: prior.get(k) for k in _GOOGLE_ACCOUNT_SEED}
+    if seed_fields == _GOOGLE_ACCOUNT_SEED:
+        return _PRIOR_ORIGIN_SEED
+    date = prior.get("date")
+    return date if isinstance(date, str) and date else None
 
 
 def prior_google_evidence(previous: dict | None) -> dict:
@@ -647,9 +674,11 @@ def prior_google_evidence(previous: dict | None) -> dict:
     if isinstance(prior, dict) and prior:
         out = dict(prior)
         out["source"] = _PRIOR_SOURCE_PREVIOUS
+        out["origin"] = _prior_origin(prior)
         return out
     out = dict(_GOOGLE_ACCOUNT_SEED)
     out["source"] = _PRIOR_SOURCE_SEED
+    out["origin"] = _PRIOR_ORIGIN_SEED
     return out
 
 
