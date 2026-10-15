@@ -9,9 +9,9 @@
 | Skills | 246 |
 | Agents | 167 |
 | Divisions | 13 |
-| Scripts: wired | 131 |
+| Scripts: wired | 132 |
 | Scripts: orphan | 7 |
-| Rules | 92 |
+| Rules | 95 |
 | Hook entries | 57 |
 
 ## Skills (246)
@@ -499,7 +499,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (138)
+## Scripts (139)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -622,6 +622,7 @@
 | replay_harness.py | replay_harness.py: replay real tool calls and Stop turns through the gates (v10 FR-01, AC-03, AC-04)... | wired |
 | repo_watch.py | repo_watch.py , daily monitor for high-value GitHub repos. | wired |
 | requa.py | Base_Update_Verifier helper for `/requa <pr>` (spec v10, AC-12). | wired |
+| runtime_census.py | runtime_census.py: measure a harness before the brain calls it supported. | wired |
 | scan-external-refs | scan-external-refs , Scan reference repos for new skills, agents, and patterns | orphan |
 | secrets-grep-guard.py | secrets-grep-guard.py , PreToolUse:Bash hook: deny raw reads of secret-bearing files. | wired |
 | session-isolation-hook.py | session-isolation-hook.py , SessionStart hook: isolation by DEFAULT. | wired |
@@ -642,7 +643,7 @@
 | wa-soporte.sh | Sends a WhatsApp through the SUPPORT channel, never through the operator's personal number. | wired |
 | watchdog.py | watchdog.py , observability surface 4 anomaly detector. Reads the JSONL trace files written by trace... | wired |
 
-## Rules (92)
+## Rules (95)
 
 ### ARCHITECTURE
 
@@ -656,6 +657,9 @@
 - ARCHITECTURE.layers
 - ARCHITECTURE.octo-dash
 - ARCHITECTURE.octopus-architecture
+- ARCHITECTURE.runtime-census
+- ARCHITECTURE.runtime-census-evidence
+- ARCHITECTURE.runtime-registry
 - ARCHITECTURE.session-isolation
 - ARCHITECTURE.status-line
 

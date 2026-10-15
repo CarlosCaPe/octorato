@@ -2946,6 +2946,272 @@ def selftest_claude_md_budget(fixtures: Path) -> int:
     return 1 if bad else 0
 
 
+# ---------------------------------------------------------------------------
+# Runtime_Registry (v11 spec 202610141000, AC-01, AC-03)
+# ---------------------------------------------------------------------------
+
+RUNTIMES_PATH = CLAUDE_DIR / "registry" / "runtimes.yaml"
+RUNTIMES_DOC = CLAUDE_DIR / "docs" / "architecture" / "multi-runtime.md"
+RUNTIME_STATUSES = ("supported", "gap")
+# Harnesses whose `supported` status must come from a census record, and the
+# tool classes that record must show blocked with the benign twin allowed.
+CENSUS_HARNESSES = ("gemini-cli", "codex-cli")
+# Harnesses whose `supported` status rests on a brain_doctor check instead of a
+# census record, pinned to the ONE check that measures that harness: the
+# registry's `evidence` must name exactly this check (self-reference or any other
+# check FAILs). Sources: check_gate_liveness runs every fail-closed gate's
+# --selftest against registry/fixtures, written for Claude Code; check_cursor_hooks_sync
+# compares ~/.cursor/hooks.json with the projection of hooks.json
+# (scripts/merge-hooks-cursor.py). Any registry key outside CENSUS_HARNESSES and
+# these keys fails closed.
+EVIDENCE_HARNESSES = {"claude-code": "gate-liveness", "cursor": "cursor-hooks-sync"}
+# A census harness's evidence is its census record, which runtime-census-evidence
+# itself reads, so its `evidence` must name that check and nothing else.
+CENSUS_EVIDENCE_CHECK = "runtime-census-evidence"
+CENSUS_REQUIRED_CLASSES = ("shell", "file_write", "file_edit")
+_EVIDENCE_CHECK_RE = re.compile(r"\bbrain_doctor\s+([a-z0-9][a-z0-9-]*)")
+_RUNTIME_FIELDS = ("name", "status", "instruction_file", "hook_config",
+                   "block_contract", "tool_map", "tiers", "unprojected")
+
+
+def _yaml_load_unique(text: str):
+    """yaml.safe_load, except a mapping that repeats a key raises instead of the
+    last value silently winning (a second `cursor:` would override the first)."""
+    import yaml  # type: ignore[import-not-found]
+
+    class _UniqueKeyLoader(yaml.SafeLoader):
+        pass
+
+    def _construct(loader, node, deep=False):
+        seen = set()
+        for key_node, _ in node.value:
+            k = loader.construct_object(key_node, deep=deep)
+            if k in seen:
+                raise ValueError(f"duplicate key {k!r} at line {key_node.start_mark.line + 1}")
+            seen.add(k)
+        return yaml.SafeLoader.construct_mapping(loader, node, deep=deep)
+
+    _UniqueKeyLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct)
+    return yaml.load(text, Loader=_UniqueKeyLoader)  # noqa: S506 (SafeLoader subclass)
+
+
+def load_runtime_registry(path: Path | None = None):
+    """Returns (runtimes dict, problem list). A problem means the file is absent,
+    does not parse, or an entry lacks a field or carries an unknown status."""
+    p = path or RUNTIMES_PATH
+    if not p.exists():
+        return None, [f"{p.name} is missing"]
+    try:
+        data = _yaml_load_unique(p.read_text(encoding="utf-8"))
+    except Exception as e:
+        return None, [f"{p.name} does not parse: {e}"]
+    runtimes = data.get("runtimes") if isinstance(data, dict) else None
+    if not isinstance(runtimes, dict) or not runtimes:
+        return None, [f"{p.name} has no `runtimes` mapping"]
+    problems = []
+    for rid, entry in runtimes.items():
+        if not isinstance(entry, dict):
+            problems.append(f"{rid}: entry is not a mapping")
+            continue
+        missing = [f for f in _RUNTIME_FIELDS if f not in entry]
+        if missing:
+            problems.append(f"{rid}: missing {', '.join(missing)}")
+        if entry.get("status") not in RUNTIME_STATUSES:
+            problems.append(f"{rid}: status {entry.get('status')!r} is not one of "
+                            f"{', '.join(RUNTIME_STATUSES)}")
+        if entry.get("status") == "supported" and not entry.get("evidence"):
+            problems.append(f"{rid}: supported with no `evidence` naming a brain_doctor check")
+    return runtimes, problems
+
+
+def runtime_doc_rows(text: str) -> dict:
+    """{runtime name: status} from the table under the doc's `## Runtimes` heading.
+    The name cell drops bold markers, the status cell drops backticks."""
+    rows, in_section, header = {}, False, None
+    for ln in text.splitlines():
+        if ln.startswith("## "):
+            if in_section:
+                break
+            in_section = ln.strip() == "## Runtimes"
+            continue
+        if not in_section or not ln.lstrip().startswith("|"):
+            continue
+        cells = [c.strip() for c in ln.strip().strip("|").split("|")]
+        if header is None:
+            header = [c.lower() for c in cells]
+            continue
+        if all(set(c) <= set("-: ") for c in cells):
+            continue
+        if "runtime" not in header or "status" not in header:
+            break
+        name = cells[header.index("runtime")].replace("*", "").strip()
+        status = cells[header.index("status")].replace("`", "").strip()
+        rows[name] = status
+    return rows
+
+
+def census_blocking_gaps(record) -> list:
+    """The required classes a census record does NOT show blocked with the benign
+    twin allowed. Only literal `true` counts: null (not measured) is not evidence."""
+    classes = (record or {}).get("tool_classes") or {}
+    gaps = []
+    for cls in CENSUS_REQUIRED_CLASSES:
+        c = classes.get(cls) or {}
+        if c.get("harness_blocked_violation") is not True or c.get("harness_allowed_benign") is not True:
+            gaps.append(cls)
+    return gaps
+
+
+def check_runtime_registry(fix: bool, path: Path | None = None) -> Result:
+    """AC-01: registry/runtimes.yaml is present, parses, and every entry carries
+    the Runtime_Registry fields with a status of `supported` or `gap`."""
+    key = "runtime-registry"
+    runtimes, problems = load_runtime_registry(path)
+    if problems:
+        return Result(key, FAIL, "; ".join(problems[:4]),
+                      "restore registry/runtimes.yaml (v11 spec 202610141000, T02)")
+    counts = {s: sum(1 for e in runtimes.values() if e.get("status") == s) for s in RUNTIME_STATUSES}
+    return Result(key, PASS, f"{len(runtimes)} runtime(s): {counts['supported']} supported, "
+                  f"{counts['gap']} gap")
+
+
+def check_runtime_doc_agreement(fix: bool, path: Path | None = None,
+                                doc: Path | None = None) -> Result:
+    """AC-01: the registry and the doc's Runtimes table hold the same harnesses
+    with the same status."""
+    key = "runtime-doc-agreement"
+    runtimes, problems = load_runtime_registry(path)
+    if runtimes is None:
+        return Result(key, FAIL, "; ".join(problems), "restore registry/runtimes.yaml")
+    d = doc or RUNTIMES_DOC
+    try:
+        rows = runtime_doc_rows(d.read_text(encoding="utf-8"))
+    except OSError as e:
+        return Result(key, FAIL, f"{d.name} unreadable: {e}", "restore the multi-runtime doc")
+    if not rows:
+        return Result(key, FAIL, f"{d.name} has no `## Runtimes` table with Runtime and Status columns",
+                      "restore the Runtimes table in docs/architecture/multi-runtime.md")
+    reg = {e.get("name"): e.get("status") for e in runtimes.values() if isinstance(e, dict)}
+    diffs = [f"{n} only in registry" for n in sorted(set(reg) - set(rows))]
+    diffs += [f"{n} only in doc" for n in sorted(set(rows) - set(reg))]
+    diffs += [f"{n}: registry {reg[n]}, doc {rows[n]}"
+              for n in sorted(set(reg) & set(rows)) if reg[n] != rows[n]]
+    if diffs:
+        return Result(key, FAIL, "; ".join(diffs[:4]),
+                      "edit registry/runtimes.yaml and the Runtimes table together")
+    return Result(key, PASS, f"{len(rows)} runtime(s) agree between registry and doc")
+
+
+# Results of the run in progress, by CHECKS key, so an `evidence` check named by
+# a runtime entry is read, not executed a second time (run_all fills it).
+_CURRENT_RUN: dict = {}
+
+
+def _worst(out) -> "Result":
+    if isinstance(out, list):
+        order = {PASS: 0, WARN: 1, FAIL: 2}
+        return max(out, key=lambda r: order.get(r.status, 2)) if out else Result("?", FAIL, "no result")
+    return out
+
+
+def _evidence_result(name: str):
+    """The current result of the doctor check `name`, or None when it was not run
+    (a SLOW_CHECKS member outside a full run, i.e. --fast or a standalone call)."""
+    if name in _CURRENT_RUN:
+        return _CURRENT_RUN[name]
+    if name in SLOW_CHECKS:
+        return None
+    fn = dict(CHECKS).get(name)
+    try:
+        return _worst(fn(False))
+    except Exception as e:
+        return Result(name, FAIL, f"check crashed: {e}")
+
+
+def check_runtime_census_evidence(fix: bool, path: Path | None = None,
+                                  root: Path | None = None) -> Result:
+    """AC-03, fail closed. Every census harness has an entry; no other harness id
+    than the census and evidence allowlists appears; every status is exactly
+    `supported` or `gap`; every `supported` entry's `evidence` names the check
+    pinned for that harness (EVIDENCE_HARNESSES, or this check for a census
+    harness), and for an evidence harness that check's current result is not
+    FAIL (WARN or not run under --fast degrades this check to WARN, never PASS);
+    a census harness is `supported` only when its record shows shell, file write
+    and file edit blocked with the benign twins allowed; a `gap` entry lists
+    exactly the classes its record does not show."""
+    key = "runtime-census-evidence"
+    runtimes, problems = load_runtime_registry(path)
+    if runtimes is None:
+        return Result(key, FAIL, "; ".join(problems), "restore registry/runtimes.yaml")
+    base = root or CLAUDE_DIR
+    known = set(CENSUS_HARNESSES) | set(EVIDENCE_HARNESSES)
+    check_keys = {k for k, _ in CHECKS}
+    bad, warn, checked = [], [], 0
+    for rid in CENSUS_HARNESSES:
+        if not isinstance(runtimes.get(rid), dict):
+            bad.append(f"{rid} has no registry entry (census harnesses are required)")
+    for rid in sorted(set(runtimes) - known):
+        bad.append(f"{rid} is not a known harness id ({', '.join(sorted(known))})")
+    for rid, entry in runtimes.items():
+        if rid not in known or not isinstance(entry, dict):
+            continue
+        checked += 1
+        status = entry.get("status")
+        if status not in RUNTIME_STATUSES:
+            bad.append(f"{rid}: status {status!r} is not one of {', '.join(RUNTIME_STATUSES)} "
+                       "(exact, lower case)")
+        if status == "supported":
+            ev = entry.get("evidence")
+            m = _EVIDENCE_CHECK_RE.search(ev) if isinstance(ev, str) else None
+            named = m.group(1) if m else None
+            pinned = EVIDENCE_HARNESSES.get(rid, CENSUS_EVIDENCE_CHECK)
+            if named is None:
+                bad.append(f"{rid} is supported with no `evidence` naming a brain_doctor check")
+            elif named != pinned:
+                bad.append(f"{rid} evidence names {named!r}; the only check that evidences "
+                           f"{rid} is {pinned!r}")
+            elif pinned not in check_keys:
+                bad.append(f"{rid} evidence names unknown doctor check {named!r}")
+            elif rid in EVIDENCE_HARNESSES:
+                res = _evidence_result(named)
+                if res is None:
+                    warn.append(f"{rid} evidence {named} not verified (not run in this profile)")
+                elif res.status == FAIL:
+                    bad.append(f"{rid} is supported but its evidence {named} FAILs: {res.message}")
+                elif res.status == WARN:
+                    warn.append(f"{rid} evidence {named} is WARN: {res.message}")
+        if rid not in CENSUS_HARNESSES:
+            continue
+        rel = entry.get("census")
+        record = None
+        if rel:
+            try:
+                record = json.loads((base / rel).read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                record = None
+        gaps = census_blocking_gaps(record) if record is not None else list(CENSUS_REQUIRED_CLASSES)
+        if status == "supported":
+            if record is None:
+                bad.append(f"{rid} is supported with no readable census record ({rel or 'none named'})")
+            elif gaps:
+                bad.append(f"{rid} is supported but its census shows no block for {', '.join(gaps)}")
+        elif status == "gap":
+            listed = entry.get("classes_not_blocked") or []
+            if sorted(listed) != sorted(gaps):
+                bad.append(f"{rid} lists classes_not_blocked {sorted(listed)}, census says {sorted(gaps)}")
+    if checked == 0 and not bad:
+        bad.append("no known harness entry was checked")
+    if bad:
+        return Result(key, FAIL, "; ".join(bad + warn),
+                      "keep every census harness in registry/runtimes.yaml, use only known ids, "
+                      "name a passing brain_doctor check in `evidence` for each `supported`, and "
+                      "mark a census harness `gap` until registry/census/<harness>.json shows the blocks")
+    if warn:
+        return Result(key, WARN, "; ".join(warn),
+                      "run the full profile, or fix the named evidence check")
+    return Result(key, PASS, f"{checked} runtime(s) match their evidence or census record")
+
+
 CHECKS = [
     ("repo-identity", check_repo_identity),
     ("rule-1-registry", check_registry),
@@ -2970,6 +3236,9 @@ CHECKS = [
     ("hooks-runtime-sync", check_hooks_runtime_sync),
     ("hooks-merge-fresh", check_hooks_merge_fresh),
     ("cursor-hooks-sync", check_cursor_hooks_sync),
+    ("runtime-registry", check_runtime_registry),
+    ("runtime-doc-agreement", check_runtime_doc_agreement),
+    ("runtime-census-evidence", check_runtime_census_evidence),
     ("leak-guard", check_leak_guard),
     ("connectome-fresh", check_connectome_fresh),
     ("arms-config", check_arms_config),
@@ -3012,6 +3281,7 @@ STATUS_ICON = {PASS: "✓", WARN: "!", FAIL: "✗"}
 
 def run_all(fix: bool, fast: bool = False) -> list[Result]:
     results: list[Result] = []
+    _CURRENT_RUN.clear()
     for key, fn in CHECKS:
         if fast and key in SLOW_CHECKS:
             continue
@@ -3019,7 +3289,9 @@ def run_all(fix: bool, fast: bool = False) -> list[Result]:
             out = fn(fix)
         except Exception as e:  # one bad check never crashes the run
             results.append(Result(key, FAIL, f"check crashed: {e}", "report this bug"))
+            _CURRENT_RUN[key] = results[-1]
             continue
+        _CURRENT_RUN[key] = _worst(out)
         if isinstance(out, list):
             results.extend(out)
         else:

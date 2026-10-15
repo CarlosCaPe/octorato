@@ -24,14 +24,20 @@ When a new editor or model shows up in real operator use:
 
 Unknown engine today ≠ unsupported forever. Unknown = "binding not yet written"; the OS still runs on whatever the harness selected.
 
-## Supported runtimes (known as of 2026-09-06, v7.2.0)
+## Runtimes
 
-| Runtime | How the brain is loaded | How hooks fire | How MCP is listed | Detect |
-|---|---|---|---|---|
-| **Claude Code** | Reads `~/.claude/CLAUDE.md` natively | `~/.claude/hooks.json` | `claude mcp list` / `claude mcp add` | `claude` CLI present, no `CURSOR_AGENT` |
-| **Cursor** | Project/user rules + arm `CLAUDE.md`; skills from brain + arm | `scripts/merge-hooks-cursor.py` → `~/.cursor/hooks.json` | Cursor MCP panel / `GetMcpTools` (no `claude` CLI) | `CURSOR_AGENT=1` |
+Each row has an entry in `registry/runtimes.yaml` (the Runtime_Registry), and `brain_doctor` fails when a harness is in one and not the other or when the Status cells disagree (`runtime-doc-agreement`). Claude Code is `supported` on the gate selftests (`gate-liveness`), Cursor on the hook projection check (`cursor-hooks-sync`). Gemini CLI and Codex CLI become `supported` only when their record in `registry/census/` shows shell, file write and file edit blocked with the benign twins allowed; the doctor fails a `supported` entry without that record (`runtime-census-evidence`).
 
-Next candidates (binding TBD when first used in anger): Windsurf, Continue, Aider, OpenAI Codex CLI, JetBrains AI: same four columns, new row.
+| Runtime | Status | How the brain is loaded | How hooks fire | How MCP is listed | Detect |
+|---|---|---|---|---|---|
+| **Claude Code** | `supported` | Reads `~/.claude/CLAUDE.md` natively | `~/.claude/hooks.json` | `claude mcp list` / `claude mcp add` | `claude` CLI present, no `CURSOR_AGENT` |
+| **Cursor** | `supported` | Project/user rules + arm `CLAUDE.md`; skills from brain + arm | `scripts/merge-hooks-cursor.py` → `~/.cursor/hooks.json` | Cursor MCP panel / `GetMcpTools` (no `claude` CLI) | `CURSOR_AGENT=1` |
+| **Gemini CLI** | `gap` | `GEMINI.md` per arm (not written yet) | `.gemini/settings.json` `BeforeTool` (not projected yet) | `gemini mcp list` / `gemini mcp add` | not recorded yet |
+| **Codex CLI** | `gap` | `AGENTS.md` per arm (not written yet) | `~/.codex/hooks.json` `PreToolUse`, after `/hooks` trust (not projected yet) | `codex mcp list` / `codex mcp add` | not recorded yet |
+
+The two `gap` rows have a census record (`registry/census/gemini.json`, `registry/census/codex.json`) that translates every fixture but holds no blocking measurement yet, so no class is shown blocked.
+
+Next candidates (binding TBD when first used in anger): Windsurf, Continue, Aider, JetBrains AI: same columns, new row.
 
 ## Model ladder is tier-first, vendor-second
 

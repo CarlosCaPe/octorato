@@ -16,7 +16,7 @@ is the brain, which is what `ai-push` does, loads `~/.claude/.claude/settings.js
 and that file was writable while the user-scope one was denied), `hooks.json`,
 `~/.claude.json` (the harness user config, the one member of the set outside the live root: it carries
 `mcpServers`, so a write there hands the next session a `command` to run at startup, and a PreToolUse hook never
-sees the harness write its own state file, only the agent's), `registry/rules.yaml`, `.githooks/pre-push`, any
+sees the harness write its own state file, only the agent's), `registry/rules.yaml`, `registry/runtimes.yaml` (v11 AC-17: the record of which harness is guarded; its census records under `registry/census/` are not in the set), `.githooks/pre-push`, any
 `scripts/g__pretool*.py` or `scripts/g__stop__*.py`,
 `qa-merge-gate.py`, `gate_selftest.py`, `brain_doctor.py`, `receipt_ledger.py`, `kernel_proc.py`,
 `merge-hooks.py` (the sanctioned writer of settings.json: edit it and the next legitimate run writes what you put
