@@ -1,0 +1,123 @@
+# Runtime_Registry (v11 spec 202610141000, AC-01, AC-03).
+#
+# One entry per harness that loads the brain. Each entry mirrors one row of the
+# "Runtimes" table in docs/architecture/multi-runtime.md, and brain_doctor fails
+# when the two disagree on the set of harnesses or on a status
+# (check `runtime-doc-agreement`).
+#
+# status:
+#   supported  Claude Code and Cursor: on the evidence named in `evidence`.
+#              Gemini CLI and Codex CLI: only when their `census` record shows the
+#              shell, file_write and file_edit classes blocked and their benign
+#              twins allowed (harness_blocked_violation and harness_allowed_benign
+#              both true). brain_doctor fails a `supported` entry without that
+#              record (check `runtime-census-evidence`).
+#   gap        anything else; `classes_not_blocked` lists the required classes
+#              the census record does not show blocking.
+#
+# Every field cites its source in the comment beside it.
+
+schema: 1
+
+runtimes:
+  claude-code:
+    name: Claude Code
+    status: supported
+    # evidence: brain_doctor `gate-liveness` runs every fail-closed gate's
+    # --selftest against its registry/fixtures (scripts/brain_doctor.py,
+    # check_gate_liveness); Claude Code is the harness those fixtures are written for.
+    evidence: brain_doctor gate-liveness (every fail-closed gate --selftest)
+    # source: CLAUDE.md "Self-Awareness"; multi-runtime.md "Runtimes" row.
+    instruction_file: ~/.claude/CLAUDE.md
+    # source: hooks.json is the single hook source; scripts/merge-hooks.py
+    # projects it into the per-machine settings.json (merge-hooks-cursor.py docstring).
+    hook_config: ~/.claude/hooks.json
+    # source: gates emit hookSpecificOutput.permissionDecision = deny with
+    # permissionDecisionReason (scripts/g__pretool__arming-surface.py) or exit 2.
+    block_contract:
+      - JSON hookSpecificOutput.permissionDecision = deny with permissionDecisionReason
+      - exit 2 with the reason on stderr
+    # source: hooks.json matchers are written in Claude Code tool names.
+    tool_map: {Bash: Bash, Write: Write, Edit: Edit, Skill: Skill, Agent: Agent, mcp: "mcp__<server>__<tool>"}
+    # source: CLAUDE.md "Route work by complexity"; multi-runtime.md ladder table.
+    tiers: {mechanical: haiku, bulk: sonnet, build: opus, judgment: fable}
+    # source: hooks.json is native to this harness; nothing is dropped.
+    unprojected: {events: [], matchers: []}
+
+  cursor:
+    name: Cursor
+    status: supported
+    # evidence: brain_doctor `cursor-hooks-sync` compares ~/.cursor/hooks.json with
+    # the projection of hooks.json (scripts/brain_doctor.py, check_cursor_hooks_sync).
+    evidence: brain_doctor cursor-hooks-sync (projection of hooks.json)
+    # source: multi-runtime.md "Runtimes" row (project/user rules + arm CLAUDE.md;
+    # .cursorrules mirrored by sync-ai-docs, CLAUDE.md "Arm Onboarding").
+    instruction_file: .cursorrules
+    # source: scripts/merge-hooks-cursor.py CURSOR_HOOKS_FILE.
+    hook_config: ~/.cursor/hooks.json
+    # source: merge-hooks-cursor.py projects the gate commands unchanged, so the
+    # gate's own deny output is what Cursor reads; no Cursor-specific contract is
+    # recorded in this repo yet.
+    block_contract:
+      - the gate's own deny output, passed through by scripts/merge-hooks-cursor.py
+    # source: scripts/merge-hooks-cursor.py _TOOL_MAP.
+    tool_map: {Bash: Shell, Write: Write, Edit: Write, Skill: null, Agent: null}
+    # source: skills/model-routing-by-complexity/SKILL.md "Cursor + xAI Grok" table.
+    tiers:
+      mechanical: composer-2.5-fast
+      bulk: gpt-5.5-medium
+      build: grok-4.5-fast-xhigh
+      judgment: strongest independent engine at least as strong as the builder
+    # source: merge-hooks-cursor.py _UNPROJECTABLE_EVENTS and the None entries of
+    # _TOOL_MAP; multi-runtime.md "Honest gaps" item 1.
+    unprojected:
+      events: [SubagentStart, PermissionDenied]
+      matchers: [Skill, Agent]
+
+  gemini-cli:
+    name: Gemini CLI
+    status: gap
+    # source: registry/census/gemini.json (scripts/runtime_census.py, T01).
+    census: registry/census/gemini.json
+    # source: census tool_classes.*.harness_blocked_violation is null for every
+    # class; blocking is measured in T08 through the T05 shim.
+    classes_not_blocked: [shell, file_write, file_edit]
+    # source: feature.md Glossary, Instruction_Sync (GEMINI.md per arm, T09).
+    instruction_file: GEMINI.md
+    # source: census contract.config_paths.
+    hook_config: .gemini/settings.json
+    # source: census contract.block_contract.
+    block_contract:
+      - exit 2 with the reason on stderr
+      - 'JSON {"decision": "deny", "reason": "..."} on stdout'
+    # source: census contract.tool_map.
+    tool_map: {Bash: run_shell_command, Write: write_file, Edit: replace, mcp: "mcp_<server>_<tool>"}
+    # source: AC-08 binds tiers only for a supported harness (T10).
+    tiers: null
+    # source: no projector exists yet (T06); every hooks.json event is unprojected.
+    unprojected: {events: ["*"], matchers: ["*"]}
+
+  codex-cli:
+    name: Codex CLI
+    status: gap
+    # source: registry/census/codex.json (scripts/runtime_census.py, T01).
+    census: registry/census/codex.json
+    # source: census tool_classes.*.harness_blocked_violation is null for every class.
+    classes_not_blocked: [shell, file_write, file_edit]
+    # source: feature.md Glossary, Instruction_Sync (AGENTS.md per arm, T09).
+    instruction_file: AGENTS.md
+    # source: census contract.config_paths.
+    hook_config: ~/.codex/hooks.json
+    # source: census contract.block_contract.
+    block_contract:
+      - JSON hookSpecificOutput.permissionDecision = deny with permissionDecisionReason
+      - 'older JSON {"decision": "block", "reason": "..."}'
+      - exit 2 with the reason on stderr
+    # source: census contract.tool_map.
+    tool_map: {Bash: Bash, Write: apply_patch, Edit: apply_patch, mcp: "mcp__<server>__<tool>"}
+    # source: census contract.trust_step; scriptability is measured in T08.
+    trust_step: non-managed hooks run only after /hooks trust, recorded against the hook's hash
+    # source: AC-08 binds tiers only for a supported harness (T10).
+    tiers: null
+    # source: no projector exists yet (T07); every hooks.json event is unprojected.
+    unprojected: {events: ["*"], matchers: ["*"]}

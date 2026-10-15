@@ -2946,6 +2946,168 @@ def selftest_claude_md_budget(fixtures: Path) -> int:
     return 1 if bad else 0
 
 
+# ---------------------------------------------------------------------------
+# Runtime_Registry (v11 spec 202610141000, AC-01, AC-03)
+# ---------------------------------------------------------------------------
+
+RUNTIMES_PATH = CLAUDE_DIR / "registry" / "runtimes.yaml"
+RUNTIMES_DOC = CLAUDE_DIR / "docs" / "architecture" / "multi-runtime.md"
+RUNTIME_STATUSES = ("supported", "gap")
+# Harnesses whose `supported` status must come from a census record, and the
+# tool classes that record must show blocked with the benign twin allowed.
+CENSUS_HARNESSES = ("gemini-cli", "codex-cli")
+CENSUS_REQUIRED_CLASSES = ("shell", "file_write", "file_edit")
+_RUNTIME_FIELDS = ("name", "status", "instruction_file", "hook_config",
+                   "block_contract", "tool_map", "tiers", "unprojected")
+
+
+def load_runtime_registry(path: Path | None = None):
+    """Returns (runtimes dict, problem list). A problem means the file is absent,
+    does not parse, or an entry lacks a field or carries an unknown status."""
+    p = path or RUNTIMES_PATH
+    if not p.exists():
+        return None, [f"{p.name} is missing"]
+    try:
+        import yaml  # type: ignore[import-not-found]
+        data = yaml.safe_load(p.read_text(encoding="utf-8"))
+    except Exception as e:
+        return None, [f"{p.name} does not parse: {e}"]
+    runtimes = data.get("runtimes") if isinstance(data, dict) else None
+    if not isinstance(runtimes, dict) or not runtimes:
+        return None, [f"{p.name} has no `runtimes` mapping"]
+    problems = []
+    for rid, entry in runtimes.items():
+        if not isinstance(entry, dict):
+            problems.append(f"{rid}: entry is not a mapping")
+            continue
+        missing = [f for f in _RUNTIME_FIELDS if f not in entry]
+        if missing:
+            problems.append(f"{rid}: missing {', '.join(missing)}")
+        if entry.get("status") not in RUNTIME_STATUSES:
+            problems.append(f"{rid}: status {entry.get('status')!r} is not one of "
+                            f"{', '.join(RUNTIME_STATUSES)}")
+    return runtimes, problems
+
+
+def runtime_doc_rows(text: str) -> dict:
+    """{runtime name: status} from the table under the doc's `## Runtimes` heading.
+    The name cell drops bold markers, the status cell drops backticks."""
+    rows, in_section, header = {}, False, None
+    for ln in text.splitlines():
+        if ln.startswith("## "):
+            if in_section:
+                break
+            in_section = ln.strip() == "## Runtimes"
+            continue
+        if not in_section or not ln.lstrip().startswith("|"):
+            continue
+        cells = [c.strip() for c in ln.strip().strip("|").split("|")]
+        if header is None:
+            header = [c.lower() for c in cells]
+            continue
+        if all(set(c) <= set("-: ") for c in cells):
+            continue
+        if "runtime" not in header or "status" not in header:
+            break
+        name = cells[header.index("runtime")].replace("*", "").strip()
+        status = cells[header.index("status")].replace("`", "").strip()
+        rows[name] = status
+    return rows
+
+
+def census_blocking_gaps(record) -> list:
+    """The required classes a census record does NOT show blocked with the benign
+    twin allowed. Only literal `true` counts: null (not measured) is not evidence."""
+    classes = (record or {}).get("tool_classes") or {}
+    gaps = []
+    for cls in CENSUS_REQUIRED_CLASSES:
+        c = classes.get(cls) or {}
+        if c.get("harness_blocked_violation") is not True or c.get("harness_allowed_benign") is not True:
+            gaps.append(cls)
+    return gaps
+
+
+def check_runtime_registry(fix: bool, path: Path | None = None) -> Result:
+    """AC-01: registry/runtimes.yaml is present, parses, and every entry carries
+    the Runtime_Registry fields with a status of `supported` or `gap`."""
+    key = "runtime-registry"
+    runtimes, problems = load_runtime_registry(path)
+    if problems:
+        return Result(key, FAIL, "; ".join(problems[:4]),
+                      "restore registry/runtimes.yaml (v11 spec 202610141000, T02)")
+    counts = {s: sum(1 for e in runtimes.values() if e.get("status") == s) for s in RUNTIME_STATUSES}
+    return Result(key, PASS, f"{len(runtimes)} runtime(s): {counts['supported']} supported, "
+                  f"{counts['gap']} gap")
+
+
+def check_runtime_doc_agreement(fix: bool, path: Path | None = None,
+                                doc: Path | None = None) -> Result:
+    """AC-01: the registry and the doc's Runtimes table hold the same harnesses
+    with the same status."""
+    key = "runtime-doc-agreement"
+    runtimes, problems = load_runtime_registry(path)
+    if runtimes is None:
+        return Result(key, FAIL, "; ".join(problems), "restore registry/runtimes.yaml")
+    d = doc or RUNTIMES_DOC
+    try:
+        rows = runtime_doc_rows(d.read_text(encoding="utf-8"))
+    except OSError as e:
+        return Result(key, FAIL, f"{d.name} unreadable: {e}", "restore the multi-runtime doc")
+    if not rows:
+        return Result(key, FAIL, f"{d.name} has no `## Runtimes` table with Runtime and Status columns",
+                      "restore the Runtimes table in docs/architecture/multi-runtime.md")
+    reg = {e.get("name"): e.get("status") for e in runtimes.values() if isinstance(e, dict)}
+    diffs = [f"{n} only in registry" for n in sorted(set(reg) - set(rows))]
+    diffs += [f"{n} only in doc" for n in sorted(set(rows) - set(reg))]
+    diffs += [f"{n}: registry {reg[n]}, doc {rows[n]}"
+              for n in sorted(set(reg) & set(rows)) if reg[n] != rows[n]]
+    if diffs:
+        return Result(key, FAIL, "; ".join(diffs[:4]),
+                      "edit registry/runtimes.yaml and the Runtimes table together")
+    return Result(key, PASS, f"{len(rows)} runtime(s) agree between registry and doc")
+
+
+def check_runtime_census_evidence(fix: bool, path: Path | None = None,
+                                  root: Path | None = None) -> Result:
+    """AC-03: a Gemini CLI or Codex CLI entry marked `supported` needs a census
+    record showing shell, file write and file edit blocked with the benign twins
+    allowed; a `gap` entry lists exactly the classes its record does not show."""
+    key = "runtime-census-evidence"
+    runtimes, problems = load_runtime_registry(path)
+    if runtimes is None:
+        return Result(key, FAIL, "; ".join(problems), "restore registry/runtimes.yaml")
+    base = root or CLAUDE_DIR
+    bad, checked = [], 0
+    for rid in CENSUS_HARNESSES:
+        entry = runtimes.get(rid)
+        if not isinstance(entry, dict):
+            continue
+        checked += 1
+        rel = entry.get("census")
+        record = None
+        if rel:
+            try:
+                record = json.loads((base / rel).read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                record = None
+        gaps = census_blocking_gaps(record) if record is not None else list(CENSUS_REQUIRED_CLASSES)
+        status = entry.get("status")
+        if status == "supported":
+            if record is None:
+                bad.append(f"{rid} is supported with no readable census record ({rel or 'none named'})")
+            elif gaps:
+                bad.append(f"{rid} is supported but its census shows no block for {', '.join(gaps)}")
+        elif status == "gap":
+            listed = entry.get("classes_not_blocked") or []
+            if sorted(listed) != sorted(gaps):
+                bad.append(f"{rid} lists classes_not_blocked {sorted(listed)}, census says {sorted(gaps)}")
+    if bad:
+        return Result(key, FAIL, "; ".join(bad),
+                      "mark the harness `gap` until registry/census/<harness>.json shows the "
+                      "blocks (AC-03), and list the classes that did not block")
+    return Result(key, PASS, f"{checked} census-backed runtime(s) match their census record")
+
+
 CHECKS = [
     ("repo-identity", check_repo_identity),
     ("rule-1-registry", check_registry),
@@ -2970,6 +3132,9 @@ CHECKS = [
     ("hooks-runtime-sync", check_hooks_runtime_sync),
     ("hooks-merge-fresh", check_hooks_merge_fresh),
     ("cursor-hooks-sync", check_cursor_hooks_sync),
+    ("runtime-registry", check_runtime_registry),
+    ("runtime-doc-agreement", check_runtime_doc_agreement),
+    ("runtime-census-evidence", check_runtime_census_evidence),
     ("leak-guard", check_leak_guard),
     ("connectome-fresh", check_connectome_fresh),
     ("arms-config", check_arms_config),
