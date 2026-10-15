@@ -109,6 +109,90 @@ class MatcherTest(unittest.TestCase):
         self.assertEqual(self._menu("Listo. ¿Cuál prefieres?"), "opener")
 
 
+class StructuralRuleTest(unittest.TestCase):
+    """QA findings 3-7 and the trailing-filler case: the closing question is
+    judged by its shape, not by a fixed opener list."""
+
+    def setUp(self):
+        self.g = _load_gate()
+        self.cfg = self.g._load_config()
+
+    def _menu(self, text):
+        return self.g.find_menu(text, self.cfg)[1]
+
+    def test_short_permission_questions_block(self):
+        for q in ("¿Lo lanzo?", "¿Lo despliego?", "¿Merge?", "¿Va?", "Ready to merge?",
+                  "Should we ship it?", "¿Te lo mando?", "¿Lo envío?", "¿Continúo?",
+                  "Can I delete the branch?", "OK to merge?", "Want me to open the PR?"):
+            with self.subTest(q=q):
+                self.assertTrue(self._menu("Listo. " + q))
+
+    def test_short_permission_twins_allow(self):
+        for d in ("Lo lanzo.", "Lo despliego.", "Merge hecho.", "Va.", "Ready to merge.",
+                  "We ship it today."):
+            with self.subTest(d=d):
+                self.assertEqual(self._menu("Listo. " + d), "")
+
+    def test_third_person_and_info_yes_no_questions_allow(self):
+        self.assertEqual(self._menu("Listo. ¿Te llegó el correo?"), "")
+        self.assertEqual(self._menu("Listo. ¿Lo tienes a mano?"), "")
+
+    def test_numbered_list_then_selection_blocks(self):
+        text = "Opciones:\n1. Stop gate\n2. PreToolUse\n¿Cuál?"
+        self.assertEqual(self._menu(text), "selection")
+        self.assertEqual(self._menu("Opciones:\n- Stop gate\n- PreToolUse\nWhich?"), "selection")
+        self.assertEqual(self._menu("Opciones:\n1. Stop gate\n2. PreToolUse\nVa la 1."), "")
+
+    def test_selection_without_a_list_allows(self):
+        self.assertEqual(self._menu("Revisé el hilo. ¿Cuál?"), "")
+
+    def test_trailing_decoration_is_trimmed(self):
+        for q in ("**¿Lo lanzo?**", "¿Lo lanzo? 🚀", "(¿Lo lanzo?)", "_Shall I merge it?_ ",
+                  "Proceed? (y/n)", "Proceed? [Y/n]", "¿Sigo? (s/n)"):
+            with self.subTest(q=q):
+                self.assertTrue(self._menu("Listo. " + q))
+        self.assertEqual(self._menu("Listo. **Lo lanzo.** 🚀"), "")
+        self.assertEqual(self._menu("Listo. Proceeding. (y/n)"), "")
+
+    def test_irreducible_matches_whole_words_only(self):
+        self.assertEqual(self._menu("Listo. ¿Apago hoy o mañana?"), "alternatives")
+        self.assertEqual(self._menu("Listo. ¿Pago hoy o mañana?"), "")
+        self.assertEqual(self._menu("Listo. ¿Consentimos el flujo A o el B?"), "alternatives")
+        self.assertEqual(self._menu("Done. Should I ask for consent now or later?"), "")
+
+    def test_irreducible_must_be_the_object(self):
+        self.assertTrue(self._menu("Done. Should I do the login refactor now or after lunch?"))
+        self.assertEqual(self._menu("Done. Should I do the login now or after lunch?"), "")
+        self.assertTrue(self._menu("Done. Should I ship the login refactor or the cart fix?"))
+
+    def test_info_question_with_or_allows(self):
+        self.assertEqual(self._menu("Listo. ¿Cuál es la ruta o el puerto que usa tu servidor?"), "")
+        self.assertEqual(self._menu("Listo. ¿El servidor corre en tu Linux o en tu Windows?"), "")
+        self.assertEqual(self._menu("Listo. ¿Cuál uso, la ruta o el puerto que usa tu servidor?"),
+                         "alternatives")
+        self.assertEqual(self._menu("Listo. ¿Stop o PreToolUse?"), "alternatives")
+
+    def test_menu_ok_still_escapes_structural_hits(self):
+        self.assertEqual(self._menu("Listo. ¿Lo lanzo? menu-ok"), "")
+
+    def test_short_filler_after_the_question_does_not_hide_it(self):
+        self.assertTrue(self._menu("Both builds pass. Should I use A or B? I'll wait."))
+        self.assertTrue(self._menu("Listo. ¿Lo lanzo? Quedo atento."))
+        self.assertEqual(self._menu("Both builds pass. Should I use A or B? I'll use A."), "")
+        self.assertEqual(
+            self._menu("Should I use A or B? I use A, it is merged and deployed now."), "")
+
+    def test_invalid_regex_in_config_is_skipped(self):
+        cfg = dict(self.cfg)
+        cfg["permission_patterns"] = ["(unclosed"] + list(self.cfg["permission_patterns"])
+        self.assertTrue(self.g.find_menu("Listo. ¿Lo lanzo?", cfg)[1])
+
+    def test_shipped_config_lists_every_key(self):
+        text = (ROOT / "registry" / "no-menu-question.yaml").read_text(encoding="utf-8")
+        for key in self.g._KEYS:
+            self.assertIn(f"\n{key}:\n", text)
+
+
 class ConfigTest(unittest.TestCase):
     def setUp(self):
         self.g = _load_gate()
@@ -174,7 +258,10 @@ class WiringTest(unittest.TestCase):
         names = {p.name for p in FIXTURES.glob("*.json")}
         self.assertIn("violation.json", names)
         self.assertIn("benign.json", names)
-        for v in ("es", "en", "opener", "quoted", "codeblock", "blockquote", "merge"):
+        for v in ("es", "en", "opener", "quoted", "codeblock", "blockquote", "merge",
+                  "short_es", "short_en", "one_word", "numbered_list", "decorated",
+                  "yn_suffix", "word_boundary", "irreducible_object", "info_or",
+                  "trailing_filler"):
             self.assertIn(f"violation_{v}.json", names)
             self.assertIn(f"benign_{v}.json", names)
 

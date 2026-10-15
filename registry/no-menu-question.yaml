@@ -1,25 +1,26 @@
 # No-menu-question config (rule COMMS.no-menu-question).
 #
 # Read by scripts/g__stop__no-menu-question.py. The gate blocks a reply that
-# CLOSES on a choice question to the operator ("¿Dale a X o Y?", "Shall I
-# proceed?"); the decision belongs to /choice. This file lists the two things
-# the gate reads from config: the question openers that mark a go-ahead or
-# preference ask, and the irreducible operator steps a question may still
-# name (those are his by construction and the question passes).
+# CLOSES on a choice question to the operator ("¿Dale a X o Y?", "¿Lo lanzo?",
+# "Ready to merge?", a numbered list ending "¿Cuál?"); the decision belongs to
+# /choice. The closing question is the last prose sentence after the footer,
+# code, quotes and blockquotes are dropped, trailing decoration (emphasis,
+# brackets, emoji, "(y/n)") is trimmed, and short filler after a question
+# ("I'll wait.") is skipped.
 #
 # Format: a two-level subset of YAML, `key:` then `  - item`, parsed by the
 # gate itself with no third-party module, same as registry/send-ask.yaml.
-# Matching folds case and accents (cuál and cual are one entry). A key with
-# no items keeps the gate's built-in default for that key.
+# Word lists match on folded text (case and accents folded, so cuál and cual
+# are one entry). A key with no items keeps the gate's built-in default for
+# that key. Regex items are Python `re` patterns; an invalid one is skipped.
 
-# A question that opens with one of these (right after an optional ¿) is a
-# go-ahead or preference ask. Alternatives ("X o Y", "A or B") inside the
-# closing question are detected by the gate itself and need no entry here.
+# A closing question that opens with one of these (after an optional ¿) is a
+# go-ahead or preference ask.
 openers:
-  # Spanish
   - dale
   - le doy
   - procedo
+  - proceso
   - sigo
   - avanzo
   - lo hago
@@ -35,13 +36,20 @@ openers:
   - prefieres
   - te parece
   - te late
+  - te va
   - cuál prefieres
+  - cual prefieres
   - cuál quieres
+  - cual quieres
   - cuál elijo
+  - cual elijo
   - cuál tomo
-  # English
+  - cual tomo
+  - qué prefieres
   - shall i
+  - shall we
   - should i
+  - should we
   - do you want
   - would you like
   - want me to
@@ -54,14 +62,128 @@ openers:
   - ok to
   - okay to
 
-# A closing question that names one of these is about an irreducible operator
-# step (money, consent, an outward send, a merge approval, a version cut, a
-# login) and is let through. The rule still asks that it travel as a step
-# with its command; the gate does not police the wording of that step.
+# Short yes/no permission questions: regexes on the lower-cased question
+# with the leading ¿ removed and accents KEPT, so the Spanish clitic +
+# first-person form ("¿Lo lanzo?", "¿Te lo mando?") does not catch a
+# third-person information question ("¿Te llegó el correo?").
+permission_patterns:
+  - ^((se|te|me|le|les)\s+)?(lo|la|los|las|le|les|te)\s+[a-zñáéíóú]{2,}(o|amos|emos|imos|oy)\b
+  - ^(sigo|arranco|lanzo|agrego|abro|procedo|continuo|continúo|empiezo|comienzo|aplico|subo|mando|envío|envio|corro|ejecuto|borro|elimino|despliego|mergeo|cierro|reinicio|instalo|publico|pusheo|commiteo|cambio|activo|desactivo|seguimos|arrancamos|avanzamos|procedemos|lanzamos|hacemos|desplegamos|mergeamos)\b
+  - ^(va|dale|ok|okay|sale|listo|merge|mergeo|ship|ship it|go|continue|seguimos|procedo|lo hago|good to go|lgtm|green light)$
+  - ^(should|shall|can|could|may) (i|we)\b
+  - ^(want|would you like|do you want) me to\b
+  - ^(do|would) you (want|like)\b
+  - ^ready to\b
+  - ^(is it |are you )?ok(ay)? (to|if i|if we|with)\b
+  - ^proceed\b
+  - ^(merge|ship|deploy|release|push)( it| this| now)?$
+
+# Selection questions (regexes on folded text). They block only after a
+# numbered or bulleted list of at least two items: "1. A / 2. B / ¿Cuál?".
+selection_patterns:
+  - ^(cual|cuales|que opcion|cual opcion|cual de (estas|esas|ellas|los|las|estos|esos))\b
+  - ^(which|which one|which option|which of (these|those|them)|what option|pick one|number)\b
+
+# An "A o B" question led by one of these is an information question
+# ("¿Cuál es la ruta o el puerto que usa tu servidor?") unless it carries an
+# agent action: a permission pattern or a choice verb ("¿Cuál uso, A o B?").
+info_interrogatives:
+  - que
+  - cual
+  - cuales
+  - donde
+  - cuando
+  - quien
+  - quienes
+  - como
+  - cuanto
+  - cuantos
+  - cuanta
+  - cuantas
+  - por que
+  - what
+  - where
+  - when
+  - who
+  - whose
+  - how
+  - why
+  - which
+
+# Choice verbs that turn an "A o B" question into a menu wherever they appear.
+choice_verbs:
+  - uso
+  - elijo
+  - escojo
+  - tomo
+  - hago
+  - pongo
+  - dejo
+  - mando
+  - aplico
+  - prefieres
+  - quieres
+  - eliges
+  - escoges
+  - usamos
+  - elegimos
+  - hacemos
+  - should i
+  - should we
+  - shall i
+  - shall we
+  - do i
+  - do we
+  - do you prefer
+  - do you want
+  - would you like
+  - would you prefer
+
+# An "A o B" question that names the operator's things and carries no agent
+# action is an information question ("¿Corre en tu Linux o en tu Windows?").
+info_markers:
+  - tu
+  - tus
+  - tienes
+  - usas
+  - your
+  - you use
+  - do you have
+  - you have
+
+# Courtesy after the closing question, under 8 words, that does not hide it:
+# "Should I use A or B? I'll wait."
+filler:
+  - i'll wait
+  - i will wait
+  - waiting
+  - standing by
+  - let me know
+  - your call
+  - up to you
+  - thanks
+  - thank you
+  - espero
+  - quedo atento
+  - quedo atenta
+  - quedo pendiente
+  - avisame
+  - tu dime
+  - dime
+  - me dices
+  - gracias
+  - tu decides
+  - como prefieras
+  - lo que digas
+
+# A closing question whose OBJECT is one of these is about an irreducible
+# operator step (money, consent, an outward send, a merge approval, a version
+# cut, a login) and is let through. Whole-word match only: "apago" is not
+# "pago", "consentimos" is not "consent".
 irreducible:
   - send-ok
-  - OCTO_MERGE_APPROVE
-  - OCTO_QA_OK
+  - octo_merge_approve
+  - octo_qa_ok
   - contraseña
   - password
   - login
@@ -69,12 +191,53 @@ irreducible:
   - pago
   - pagar
   - payment
+  - pay
   - cobro
   - consentimiento
   - consent
   - corte de versión
   - version cut
   - release tag
+  - clic de consentimiento
   - 2fa
   - otp
   - código de verificación
+
+# The irreducible term counts as the object only when the question ends,
+# punctuation follows, or the next word is one of these. "login refactor"
+# is a refactor, not a login, and the question is still a menu.
+object_followers:
+  - de
+  - del
+  - a
+  - al
+  - para
+  - por
+  - con
+  - en
+  - o
+  - u
+  - y
+  - e
+  - ya
+  - hoy
+  - manana
+  - ahora
+  - of
+  - for
+  - to
+  - with
+  - on
+  - in
+  - or
+  - and
+  - now
+  - today
+  - tomorrow
+  - the
+  - el
+  - la
+  - lo
+  - los
+  - las
+  - one

@@ -9,15 +9,15 @@ Operator directive 2026-10-15, verbatim: "cada que termines en pregunta de opci�
 
 ## Summary
 
-The gate reads the last assistant reply, discards the Provenance footer, the Disclose one-liners, fenced and inline code, blockquotes and quoted spans, and takes the closing sentence. When that sentence ends in `?` and either offers alternatives or opens with a go-ahead or preference ask, the gate blocks once and tells the model to run `/choice` and return the decision. A question naming an irreducible operator step (money, consent, an outward send, a merge approval, a version cut, a login) passes. Openers and irreducible steps are config in `registry/no-menu-question.yaml`.
+The gate reads the last assistant reply, discards the Provenance footer, the Disclose one-liners, fenced and inline code, blockquotes and quoted spans, and takes the closing sentence. When that sentence ends in `?` (after trimming trailing emphasis, brackets, emoji and "(y/n)") and is a go-ahead ask, a short yes/no permission ask, an alternatives menu the agent could choose, or a selection after a list, the gate blocks once and tells the model to run `/choice` and return the decision. A question naming an irreducible operator step (money, consent, an outward send, a merge approval, a version cut, a login) passes. Openers and irreducible steps are config in `registry/no-menu-question.yaml`.
 
 ## Glossary
 
 - **Menu_Gate**: `scripts/g__stop__no-menu-question.py`, a Stop hook.
 - **Closing_Sentence**: the last sentence of the reply's prose after the Menu_Gate discards the Provenance footer, lines starting with the Disclose markers (`💡 Unlock-suggestion`, `☠ Prune-suggestion`), fenced and inline code, lines starting with `>`, lines carrying the Hatch, and spans inside double, curly or guillemet quotes.
-- **Choice_Question**: a Closing_Sentence that ends in `?` and either contains a whole-word `o`, `u` or `or` between alternatives, or opens (after an optional `¿`) with an entry of the `openers` list.
-- **Irreducible_Step**: an entry of the `irreducible` list, matched case- and accent-folded as a substring of the Closing_Sentence.
-- **Config**: `registry/no-menu-question.yaml`, a two-level YAML subset (`key:` then `  - item`) with the keys `openers` and `irreducible`, parsed by the Menu_Gate itself.
+- **Choice_Question**: a Closing_Sentence that ends in `?` once trailing emphasis, brackets, emoji and a `(y/n)` suffix are trimmed, and that opens with an entry of `openers`, matches a `permission_patterns` regex, contains a whole-word `o`, `u` or `or` between alternatives the agent could choose (not an information question led by an `info_interrogatives` entry or naming an `info_markers` entry without a choice verb), or matches a `selection_patterns` regex after a list of two or more items. Short `filler` after a question does not hide it.
+- **Irreducible_Step**: an entry of the `irreducible` list, matched case- and accent-folded as a whole word of the Closing_Sentence and only as its object: the question ends, punctuation follows, or the next word is in `object_followers`.
+- **Config**: `registry/no-menu-question.yaml`, a two-level YAML subset (`key:` then `  - item`) with the keys `openers`, `permission_patterns`, `selection_patterns`, `info_interrogatives`, `choice_verbs`, `info_markers`, `filler`, `irreducible` and `object_followers`, parsed by the Menu_Gate itself.
 - **Hatch**: the literal `menu-ok` on a line of the reply.
 - **Rule_Registry**: `registry/rules.yaml` with fixtures under `registry/fixtures/COMMS.no-menu-question/`.
 - **Rule_Text**: the `CLAUDE.md` paragraph with anchor "No menu questions".
