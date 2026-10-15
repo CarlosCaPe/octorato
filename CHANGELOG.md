@@ -24,6 +24,9 @@ v7 made an unverified send impossible; v11 moves that boundary to the operator. 
 - **Hook stdin as UTF-8**: Claude Code writes the hook payload as UTF-8 JSON, but on Windows Python reads stdin in the ANSI code page, so the reply gate digested any reply with an accent or a middle dot to a hash no panel receipt could match. 53 of the 54 hook scripts that read the payload with `sys.stdin.read()` or `json.load(sys.stdin)` now reconfigure stdin to UTF-8 at module level. `scripts/tests/test_hook_stdin_utf8.py` pipes UTF-8 bytes into the reply gate with `PYTHONUTF8` and `PYTHONIOENCODING` unset and checks the reported digest against `panel_digest`, and checks every stdin reader for the reconfigure. Known gap: `g__pretool__arming-surface.py`, left for the operator's own edit and listed in the test so it cannot pass silently.
 - Contract and residuals R-01 to R-13: `docs/architecture/v11-reply-panel.md`. Spec: `docs/specs/202610141340-v11-reply-panel/`, CONVERGED on converge pass 9 with 22 of 22 acceptance criteria met.
 
+### Features
+- feat(gates): `COMMS.no-menu-question`: fail-closed Stop gate against closing a reply on a choice question; `/choice` decides, only the irreducible operator step remains, as a step with its command. Config in `registry/no-menu-question.yaml`, hatch `menu-ok`.
+
 ## [2026-10-13]: v10.0.0
 ### Octorato v10: low friction, easy entry
 Every check from v7 to v9 stays; v10 makes them cheaper to live with and easier to start.

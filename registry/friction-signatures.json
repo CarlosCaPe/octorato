@@ -35,6 +35,7 @@
     {"gate": "claim-verify-stop.py", "code": "total-coverage", "pattern": "asserted TOTAL coverage"},
     {"gate": "claim-verify-stop.py", "code": "unverified-claim", "pattern": "claimed verified/done"},
     {"gate": "g__stop__defer-today.py", "code": "defer", "pattern": "HOY-NO-MAÑANA"},
+    {"gate": "g__stop__no-menu-question.py", "code": "menu-question", "pattern": "SIN-MENÚ"},
     {"gate": "grafo-ledger-check.py", "code": "graph-before-grep", "pattern": "graph-before-grep"},
     {"gate": "harness:auto-mode", "code": "classifier", "pattern": "denied by the Claude Code auto mode|built-in Claude Code safet|denied by a built-|^Permission for this"},
     {"gate": "harness:sleep", "code": "sleep", "pattern": "Blocked: sleep"}

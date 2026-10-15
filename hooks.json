@@ -319,6 +319,12 @@
           "type": "command"
         },
         {
+          "command": "python3 ~/.claude/scripts/g__stop__no-menu-question.py",
+          "statusMessage": "🔀 sin-menú (decide con /choice, no preguntes opción múltiple)...",
+          "timeout": 5,
+          "type": "command"
+        },
+        {
           "command": "python3 ~/.claude/scripts/source-attribution-check.py",
           "timeout": 5,
           "type": "command"

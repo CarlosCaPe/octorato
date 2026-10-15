@@ -1,0 +1,80 @@
+# No-menu-question config (rule COMMS.no-menu-question).
+#
+# Read by scripts/g__stop__no-menu-question.py. The gate blocks a reply that
+# CLOSES on a choice question to the operator ("¿Dale a X o Y?", "Shall I
+# proceed?"); the decision belongs to /choice. This file lists the two things
+# the gate reads from config: the question openers that mark a go-ahead or
+# preference ask, and the irreducible operator steps a question may still
+# name (those are his by construction and the question passes).
+#
+# Format: a two-level subset of YAML, `key:` then `  - item`, parsed by the
+# gate itself with no third-party module, same as registry/send-ask.yaml.
+# Matching folds case and accents (cuál and cual are one entry). A key with
+# no items keeps the gate's built-in default for that key.
+
+# A question that opens with one of these (right after an optional ¿) is a
+# go-ahead or preference ask. Alternatives ("X o Y", "A or B") inside the
+# closing question are detected by the gate itself and need no entry here.
+openers:
+  # Spanish
+  - dale
+  - le doy
+  - procedo
+  - sigo
+  - avanzo
+  - lo hago
+  - hago
+  - lo cableo
+  - lo mando
+  - lo aplico
+  - lo cierro
+  - lo subo
+  - lo dejo
+  - quieres
+  - quieren
+  - prefieres
+  - te parece
+  - te late
+  - cuál prefieres
+  - cuál quieres
+  - cuál elijo
+  - cuál tomo
+  # English
+  - shall i
+  - should i
+  - do you want
+  - would you like
+  - want me to
+  - do you prefer
+  - which do you prefer
+  - which one
+  - which would
+  - go ahead
+  - proceed
+  - ok to
+  - okay to
+
+# A closing question that names one of these is about an irreducible operator
+# step (money, consent, an outward send, a merge approval, a version cut, a
+# login) and is let through. The rule still asks that it travel as a step
+# with its command; the gate does not police the wording of that step.
+irreducible:
+  - send-ok
+  - OCTO_MERGE_APPROVE
+  - OCTO_QA_OK
+  - contraseña
+  - password
+  - login
+  - inicia sesión
+  - pago
+  - pagar
+  - payment
+  - cobro
+  - consentimiento
+  - consent
+  - corte de versión
+  - version cut
+  - release tag
+  - 2fa
+  - otp
+  - código de verificación
