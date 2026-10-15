@@ -84,10 +84,10 @@ runtimes:
   gemini-cli:
     name: Gemini CLI
     status: gap
-    # source: registry/census/gemini.json (scripts/runtime_census.py, T01).
+    # source: registry/census/gemini.json (scripts/runtime_census.py, T01, T08).
     census: registry/census/gemini.json
     # source: census tool_classes.*.harness_blocked_violation is null for every
-    # class; blocking is measured in T08 through the T05 shim.
+    # class: the T08 live leg is unmeasured (live_block.reason, 429 quota).
     classes_not_blocked: [shell, file_write, file_edit]
     # source: feature.md Glossary, Instruction_Sync (GEMINI.md per arm, T09).
     instruction_file: GEMINI.md
@@ -110,11 +110,14 @@ runtimes:
 
   codex-cli:
     name: Codex CLI
+    # status stays gap: the census never flips a harness; `supported` is the
+    # operator's decision on the evidence in the census record (AC-03).
     status: gap
-    # source: registry/census/codex.json (scripts/runtime_census.py, T01).
+    # source: registry/census/codex.json (scripts/runtime_census.py, T01, T08).
     census: registry/census/codex.json
-    # source: census tool_classes.*.harness_blocked_violation is null for every class.
-    classes_not_blocked: [shell, file_write, file_edit]
+    # source: census tool_classes.{shell,file_write,file_edit} harness_blocked_violation
+    # and harness_allowed_benign are true (live_block, runtime_census.py --gates, T08).
+    classes_not_blocked: []
     # source: feature.md Glossary, Instruction_Sync (AGENTS.md per arm, T09).
     instruction_file: AGENTS.md
     # source: census contract.config_paths.
@@ -126,7 +129,10 @@ runtimes:
       - exit 2 with the reason on stderr
     # source: census contract.tool_map.
     tool_map: {Bash: Bash, Write: apply_patch, Edit: apply_patch, mcp: "mcp__<server>__<tool>"}
-    # source: census contract.trust_step; scriptability is measured in T08.
+    # source: census contract.trust_step; measured in T08 (census live_block.trust_step):
+    # an untrusted hook does not run and the call goes through (fail-open), a
+    # session-flag hooks.state trusted_hash is ignored, and persisting trust
+    # means writing config.toml (/hooks, or app-server config/batchWrite).
     trust_step: non-managed hooks run only after /hooks trust, recorded against the hook's hash
     # source: AC-08 binds tiers only for a supported harness (T10).
     tiers: null
