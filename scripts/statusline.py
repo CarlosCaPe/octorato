@@ -38,6 +38,13 @@ import subprocess
 import sys
 import time
 
+# Hook payloads are UTF-8 JSON; the Windows default (cp1252) mangles any
+# non-ASCII character before it is read.
+try:
+    sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+except (AttributeError, ValueError):
+    pass
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
 BRAIN = os.path.dirname(_HERE)
 TTL = 20                 # seconds a cached gate/live reading is shown as current

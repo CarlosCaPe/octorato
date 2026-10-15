@@ -90,7 +90,7 @@ import json  # noqa: E402
 import re  # noqa: E402
 from pathlib import Path  # noqa: E402
 
-for _stream in (sys.stdout, sys.stderr):
+for _stream in (sys.stdin, sys.stdout, sys.stderr):
     try:
         _stream.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError):

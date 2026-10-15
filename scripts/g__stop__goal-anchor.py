@@ -107,7 +107,7 @@ from pathlib import Path
 # Fuerza UTF-8 en stdout/stderr para que ⚓ y los acentos sobrevivan en shells
 # de Windows que arrancan en cp1252. Sin esto el script hace bien su trabajo y
 # aun asi truena con UnicodeEncodeError al imprimir.
-for _stream in (sys.stdout, sys.stderr):
+for _stream in (sys.stdin, sys.stdout, sys.stderr):
     try:
         _stream.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError):
