@@ -786,6 +786,13 @@ _EXACT = {
         "multiplier are read from here, so a rewrite lifts every cap for the "
         "next process. Same standing as registry/rules.yaml, which is already "
         "in this set: a policy file whose LIVE copy is what the mechanism reads",
+    "registry/runtimes.yaml":
+        "the Runtime_Registry (v11 AC-17): which harness is `supported` and on "
+        "what evidence. The hook projectors read it to decide where gates are "
+        "installed, and brain_doctor's runtime checks read it, so a rewrite "
+        "here marks a harness as guarded that no census proved. Its census "
+        "records under registry/census/ are NOT in this set: AC-17 names the "
+        "registry only, and the doctor recomputes a `supported` status from them",
     ".cache/receipts":
         "the receipt ledger v7 requires before an outward send or a merge: the "
         "gate receipt, the seek receipts and the QA verdicts. GITIGNORED, so "
