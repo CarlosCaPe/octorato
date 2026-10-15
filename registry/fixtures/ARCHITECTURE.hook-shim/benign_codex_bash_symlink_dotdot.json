@@ -4,7 +4,7 @@
   "payload": {
     "session_id": "sess-shim",
     "transcript_path": null,
-    "cwd": "{{SANDBOX}}/.claude",
+    "cwd": "{{SANDBOX}}/wt/shim/proj",
     "hook_event_name": "PreToolUse",
     "model": "fixture",
     "permission_mode": "default",
@@ -12,13 +12,15 @@
     "tool_use_id": "toolu_shim",
     "tool_name": "Bash",
     "tool_input": {
-      "command": "apply_patch <<'EOF'\n*** Begin Patch\n*** Add File: hooks.json\n+x\n*** End Patch\nEOF\n"
+      "command": "apply_patch <<'EOF'\n*** Begin Patch\n*** Add File: {{SANDBOX}}/wt/shim/proj/lnk/../hooks.json\n+x\n*** End Patch\nEOF\n"
     }
   },
   "_setup": {
-    "expect_reason": [
-      ": denied",
-      "hooks.json"
+    "symlinks": [
+      [
+        "wt/shim/proj/lnk",
+        "wt/shim/scripts"
+      ]
     ]
   }
 }

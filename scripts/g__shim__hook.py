@@ -194,11 +194,13 @@ def _path(cwd: str, path, why: str) -> str:
     the harness's, so a relative path passed through is a path the gate checks
     in the wrong directory. `~` is left for the gate to expand: joining it to
     the cwd would hide a home path from every gate that reads `~` as home.
+    Not normalized here: `..` after a symlink must survive until
+    with_real_paths resolves it.
     """
     _require(isinstance(path, str) and path.strip() != "", why)
     if path.startswith("~") or os.path.isabs(path):
-        return path if path.startswith("~") else os.path.normpath(path)
-    return os.path.normpath(os.path.join(cwd, path))
+        return path
+    return os.path.join(cwd, path)
 
 
 def _shell_cwd(base: dict, ti: dict, key: str) -> str:
@@ -207,6 +209,35 @@ def _shell_cwd(base: dict, ti: dict, key: str) -> str:
         return base["cwd"]
     _require(isinstance(d, str) and d != "", f"{key} is not a path")
     return _path(base["cwd"], d, f"{key} is not a path")
+
+
+def with_real_paths(calls: list[dict], home: str | None) -> list[dict]:
+    """Each call, plus a twin with every path resolved through symlinks.
+
+    `proj/lnk/../x` normalizes to `proj/x` but the kernel walks `lnk` first,
+    so the real target can be elsewhere. The twin is ADDED, never swapped in:
+    a gate compares against its own spelling of the live root, and a realpath
+    can move a path out of that spelling (a symlinked HOME) as easily as into
+    it. Any twin that denies blocks.
+    """
+    out = []
+    for call in calls:
+        norm, twin = json.loads(json.dumps(call)), json.loads(json.dumps(call))
+        for n, t in ((norm, twin), (norm.get("tool_input") or {}, twin.get("tool_input") or {})):
+            for key in ("cwd", "file_path"):
+                v = n.get(key)
+                if not isinstance(v, str) or not v:
+                    continue
+                if os.path.isabs(v):
+                    n[key] = os.path.normpath(v)
+                if v.startswith("~") and home and (v == "~" or v[1] in "/\\"):
+                    v = home + v[1:]
+                if os.path.isabs(v):
+                    t[key] = os.path.realpath(v)
+        out.append(norm)
+        if twin != norm:
+            out.append(twin)
+    return out
 
 
 def _call(base: dict, tool: str, tool_input: dict, **extra) -> dict:
@@ -255,7 +286,7 @@ _PATCH_OP = re.compile(r"^\*\*\* (Add|Update|Delete) File: (.+)$")
 _MOVE_TO = re.compile(r"^\*\*\* Move to: (.+)$")
 
 
-def parse_apply_patch(text, cwd: str, relative_ok: bool = True) -> list[tuple[str, dict]]:
+def parse_apply_patch(text, cwd: str, in_shell: bool = False) -> list[tuple[str, dict]]:
     """Every file operation of an apply_patch body as (tool_name, tool_input).
 
     Strict: a line outside the grammar fails the parse, so a patch this reader
@@ -272,15 +303,15 @@ def parse_apply_patch(text, cwd: str, relative_ok: bool = True) -> list[tuple[st
 
     def _abs(path: str) -> str:
         path = path.strip()
-        if not relative_ok:
+        if in_shell:
             # Inside a shell command the directory the patch applies in is
             # whatever the command made it (cd, pushd, a subshell, `-C`), and
             # a path the shell may expand is not the path written here.
             _require(not any(c in path for c in "$`\\"),
                      f"patch path {path[:80]!r} holds shell expansion")
             _require(os.path.isabs(path) or path.startswith("~"),
-                     f"relative patch path {path[:80]!r} in a shell command that "
-                     "is not one bare apply_patch invocation")
+                     f"relative patch path {path[:80]!r} in a shell command: the "
+                     "command can change directory before the patch applies")
         return _path(cwd, path, "apply_patch file header without a path")
 
     def _header(line: str):
@@ -344,17 +375,12 @@ def parse_apply_patch(text, cwd: str, relative_ok: bool = True) -> list[tuple[st
 # Codex boundary is capability (sandbox writable roots), see
 # docs/architecture/v8-arming-surface.md "Second harnesses".
 _PATCH_SPAN = re.compile(r"\*\*\* Begin Patch.*?\*\*\* End Patch", re.S)
-# The one shape where a relative path has a known base: the whole command is a
-# single apply_patch with a QUOTED heredoc delimiter (no expansion in the body).
-_SOLE_APPLY_PATCH = re.compile(r"\s*apply_patch[ \t]+<<(['\"])(\w+)\1[ \t]*\n.*\n\2\s*", re.S)
-
-
 def shell_patch_ops(cmd: str, cwd: str) -> list[tuple[str, dict]]:
     """File operations of every patch span in a shell command; [] when none.
 
     Blocks (TranslationError) on a `Begin Patch` or `End Patch` mention that
-    does not pair into a span, and on a relative path anywhere except the
-    sole-invocation shape, where the payload cwd is the base.
+    does not pair into a span, and on any relative path in a span: no shape of
+    the command is trusted to keep the payload cwd as the base.
     """
     if "Begin Patch" not in cmd and "End Patch" not in cmd:
         return []
@@ -362,10 +388,9 @@ def shell_patch_ops(cmd: str, cwd: str) -> list[tuple[str, dict]]:
     _require(bool(spans) and cmd.count("Begin Patch") == len(spans)
              and cmd.count("End Patch") == len(spans),
              "shell command holds a Begin/End Patch marker that is not one closed span")
-    sole = len(spans) == 1 and bool(_SOLE_APPLY_PATCH.fullmatch(cmd))
     ops = []
     for span in spans:
-        ops.extend(parse_apply_patch(span, cwd, relative_ok=sole))
+        ops.extend(parse_apply_patch(span, cwd, in_shell=True))
     return ops
 
 
@@ -504,6 +529,7 @@ def decide(harness: str, gate: str, raw: str, *, fail_closed: bool = True,
             return BLOCK_EXIT, f"{tag}: blocked (fail-closed): {why}"
         return 0, f"{tag}: skipped (fail-open gate): {why}"
 
+    calls = with_real_paths(calls, (env if env is not None else os.environ).get("HOME"))
     import time
     deadline = time.monotonic() + GATE_BUDGET_S
     for call in calls:
@@ -564,6 +590,7 @@ def _selftest(fdir: str | None = None) -> int:
        "payload": {...} | "payload_raw": "<text>",
        "status": "supported" (default) | "gap" | null,
        "fail_open": false, "home_from": "<other fixture dir with home/>",
+       "symlinks": [["<link rel. to HOME>", "<target dir rel. to HOME>"]] in _setup,
        "neutral_cwd": false (true: the shim runs from the filesystem root, so a
                       relative path the shim failed to join is checked there),
        "_setup": {"expect_reason": "<substring>" | ["<substring>", ...]}}
@@ -595,7 +622,7 @@ def _selftest(fdir: str | None = None) -> int:
              "OCTO_GRAFO_OVERRIDE", "OCTO_KERNEL_OPEN", "GIT_DIR", "GIT_WORK_TREE",
              "GIT_INDEX_FILE", "GIT_PREFIX", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
              "GIT_NAMESPACE", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_QUARANTINE_PATH")
-    failures, blocked, allowed = [], 0, 0
+    failures, blocked, allowed, skipped = [], 0, 0, []
     for path, name in zip(files, names):
         with open(path, encoding="utf-8") as fh:
             fx = json.load(fh)
@@ -604,6 +631,11 @@ def _selftest(fdir: str | None = None) -> int:
         try:
             os.makedirs(os.path.join(sandbox, ".claude", "scripts"), exist_ok=True)
             os.makedirs(os.path.join(sandbox, "wt", "shim", "scripts"), exist_ok=True)
+            for link, target in setup.get("symlinks") or []:
+                lp = os.path.join(sandbox, *link.split("/"))
+                os.makedirs(os.path.dirname(lp), exist_ok=True)
+                os.symlink(os.path.join(sandbox, *target.split("/")), lp,
+                           target_is_directory=True)  # OSError: skipped, below
             if fx.get("home_from"):
                 seed = os.path.join(os.path.dirname(fdir), fx["home_from"], "home")
                 if os.path.isdir(seed):
@@ -625,6 +657,12 @@ def _selftest(fdir: str | None = None) -> int:
                              status_of=lambda _h, _s=status: _s,
                              env=env,
                              cwd=os.path.abspath(os.sep) if fx.get("neutral_cwd") else sandbox)
+        except OSError as exc:
+            if setup.get("symlinks"):
+                skipped.append(name)  # no symlink privilege (Windows): named, never passed
+            else:
+                failures.append(f"{name}: leg raised {type(exc).__name__}: {exc}")
+            continue
         except Exception as exc:
             failures.append(f"{name}: leg raised {type(exc).__name__}: {exc}")
             continue
@@ -687,6 +725,8 @@ def _selftest(fdir: str | None = None) -> int:
           f"(g__shim__hook.py vs {os.path.basename(fdir)}); every block is exit 2 with "
           f"the reason on stderr, an unreadable payload blocks, and a harness not "
           f"`supported` in registry/runtimes.yaml is refused")
+    if skipped:
+        print(f"selftest SKIPPED on this OS (no symlinks): {', '.join(skipped)}")
     return 0
 
 

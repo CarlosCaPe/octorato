@@ -65,7 +65,7 @@ class Translation(unittest.TestCase):
         calls = shim.translate("codex-cli", json.dumps({
             "hook_event_name": "PreToolUse", "cwd": "/w", "tool_name": "apply_patch",
             "tool_input": {"command": patch}}))
-        paths = [c["tool_input"]["file_path"] for c in calls]
+        paths = [os.path.normpath(c["tool_input"]["file_path"]) for c in calls]
         self.assertEqual(paths, [os.path.normpath(os.path.join("/w", "a.txt")), os.path.normpath("/abs/b.py"),
                                  os.path.normpath(os.path.join("/w", "c.py")),
                                  os.path.normpath(os.path.join("/w", "d.txt"))])
@@ -75,7 +75,7 @@ class Translation(unittest.TestCase):
         calls = shim.translate("gemini-cli", json.dumps({
             "hook_event_name": "BeforeTool", "cwd": os.path.abspath(os.sep + "w"),
             "tool_name": "write_file", "tool_input": {"file_path": "a/../b.txt", "content": ""}}))
-        self.assertEqual(calls[0]["tool_input"]["file_path"],
+        self.assertEqual(os.path.normpath(calls[0]["tool_input"]["file_path"]),
                          os.path.normpath(os.path.join(os.path.abspath(os.sep + "w"), "b.txt")))
 
     def test_shell_patch_spans_ignore_argv0(self):
@@ -85,10 +85,26 @@ class Translation(unittest.TestCase):
         with self.assertRaises(shim.TranslationError):
             shim.shell_patch_ops("echo '*** Begin Patch'", "/w")
         rel = "*** Begin Patch\n*** Delete File: y\n*** End Patch"
-        self.assertEqual(len(shim.shell_patch_ops("apply_patch <<'E'\n" + rel + "\nE\n", "/w")), 1)
+        with self.assertRaises(shim.TranslationError):
+            shim.shell_patch_ops("apply_patch <<'E'\n" + rel + "\nE\n", "/w")
         with self.assertRaises(shim.TranslationError):
             shim.shell_patch_ops("cd .. && apply_patch <<'E'\n" + rel + "\nE\n", "/w")
 
+
+    def test_real_path_twin_added_not_swapped(self):
+        with tempfile.TemporaryDirectory() as d:
+            real = os.path.join(d, "real")
+            os.makedirs(os.path.join(real, "sub"))
+            os.makedirs(os.path.join(d, "proj"))
+            try:
+                os.symlink(os.path.join(real, "sub"), os.path.join(d, "proj", "lnk"))
+            except OSError:
+                self.skipTest("no symlink privilege")
+            call = {"cwd": d, "tool_name": "Write",
+                    "tool_input": {"file_path": os.path.join(d, "proj", "lnk", "..", "x")}}
+            got = [c["tool_input"]["file_path"] for c in shim.with_real_paths([call], None)]
+            self.assertEqual(got, [os.path.join(d, "proj", "x"),
+                                   os.path.join(os.path.realpath(real), "x")])
 
 class GateVerdict(unittest.TestCase):
     def test_ask_and_stop_block(self):

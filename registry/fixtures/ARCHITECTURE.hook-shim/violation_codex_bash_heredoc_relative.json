@@ -4,7 +4,7 @@
   "payload": {
     "session_id": "sess-shim",
     "transcript_path": null,
-    "cwd": "{{SANDBOX}}/wt/shim",
+    "cwd": "{{SANDBOX}}/.claude",
     "hook_event_name": "PreToolUse",
     "model": "fixture",
     "permission_mode": "default",
@@ -14,5 +14,8 @@
     "tool_input": {
       "command": "apply_patch <<'EOF'\n*** Begin Patch\n*** Add File: hooks.json\n+x\n*** End Patch\nEOF\n"
     }
+  },
+  "_setup": {
+    "expect_reason": "relative patch path"
   }
 }
