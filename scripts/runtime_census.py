@@ -121,10 +121,13 @@ TOOL_CLASSES = ("shell", "file_write", "file_edit", "mcp")
 # One Block_Fixture pair per tool class: a violation its gate must deny and the
 # benign twin one edit away, both already tracked under registry/fixtures/.
 BLOCK_FIXTURES = {
+    # Every class names a PROJECTED gate's pair, so the live verdict filed under
+    # a class is a verdict on that class's own gate (prod-write is not in
+    # hooks.json and is never projected).
     "shell": {
-        "gate": "SEC.prod-write-gate",
-        "violation": "SEC.prod-write-gate/violation.json",
-        "benign": "SEC.prod-write-gate/benign.json",
+        "gate": "ARCHITECTURE.arming-surface",
+        "violation": "ARCHITECTURE.arming-surface/violation_hooks_redirect.json",
+        "benign": "ARCHITECTURE.arming-surface/benign_hooks_redirect.json",
     },
     "file_write": {
         "gate": "ARCHITECTURE.arming-surface",
@@ -741,9 +744,7 @@ def live_codex(sandbox: str, previous: dict | None = None) -> dict:
     rec["attempts"].append(attempt)
     rec["outcome"] = attempt["outcome"]
     rec["reason"] = attempt["reason"]
-    rec["trust_step_scriptable"] = None
-    rec["trust_step_note"] = ("not measured: no Octorato hook is projected yet; the docs state "
-                              "non-managed hooks need /hooks trust per hook hash")
+    # The trust step is measured by the --gates live leg (live_block.trust_step).
     return rec
 
 
@@ -1066,6 +1067,12 @@ def run_selftest_through_shim(harness: str, gate: str, matcher: str, locator: li
     elif routed == 0:
         # Nothing reached the shim: the selftest proved the gate, not the route.
         rec["result"] = "not_routed"
+    elif route.legs["shim_denied"] == 0 or route.legs["shim_allowed"] == 0:
+        # A pass needs both legs through the shim: a selftest that only ever
+        # allowed (or only denied) there proves one side of the gate for this
+        # harness; the other side ran natively or never reached the hook.
+        rec["result"] = "one_sided"
+        rec["one_sided_missing"] = ("deny" if route.legs["shim_denied"] == 0 else "allow")
     else:
         rec["result"] = "pass"
     return rec
@@ -1086,7 +1093,7 @@ def gates_offline(harness: str, hooks_path: Path = HOOKS_JSON,
         for loc in locs:
             runs.append(run_selftest_through_shim(harness, gate, matcher, loc))
     summary = {"projected_gates": len(gates), "selftests": len(runs)}
-    for key in ("pass", "fail", "not_routed"):
+    for key in ("pass", "fail", "not_routed", "one_sided"):
         summary[key] = sum(1 for r in runs if r["result"] == key)
     for key in ("shim_denied", "shim_allowed", "shim_untranslatable"):
         summary[key] = sum(r["legs_through_shim"][key] for r in runs)
@@ -1095,6 +1102,8 @@ def gates_offline(harness: str, hooks_path: Path = HOOKS_JSON,
     # gate, not this harness: named here, never counted as a pass or a fail.
     summary["not_routed_selftests"] = sorted(r["locator"] for r in runs
                                             if r["result"] == "not_routed")
+    summary["one_sided_selftests"] = sorted(f"{r['locator']} (no shim {r['one_sided_missing']})"
+                                           for r in runs if r["result"] == "one_sided")
     ok = summary["fail"] == 0 and not missing and summary["shim_untranslatable"] == 0
     return {
         "mode": ("offline: each projected fail-closed gate's own --selftest run in process, "
@@ -1123,6 +1132,8 @@ def class_selftest_evidence(gates: dict | None) -> dict:
 # --- gates: live leg (AC-02 one live end-to-end call) ---------------------------
 
 LIVE_GATE = "g__pretool__arming-surface.py"
+# Rule id (registry/fixtures directory) of each gate the live leg can measure.
+_LIVE_RULE = {LIVE_GATE: "ARCHITECTURE.arming-surface"}
 _GATES_LIVE_TIMEOUT_S = 300
 _LIVE_CLASSES = ("shell", "file_write", "file_edit")
 _EDIT_BEFORE = '{"census": 1}\n'
@@ -1512,6 +1523,63 @@ def codex_sandbox_boundary(home: str, work: str, targets: dict) -> dict:
     return out
 
 
+def codex_account_tier() -> dict:
+    """AC-02 account tier, from `codex app-server` account/read (codex reads its
+    own credentials; the census never opens them). Only `type` and `planType`
+    are kept: the email the reply also carries is never stored."""
+    import select
+    out = {"source": "codex app-server account/read (type and planType only)",
+           "model": None,
+           "model_gap": ("not recorded: the T08 live leg did not keep the `model` field of "
+                         "the hook payload; the next live run of --gates can record it")}
+    try:
+        p = subprocess.Popen(["codex", "app-server"], stdin=subprocess.PIPE,
+                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+                             encoding="utf-8", errors="replace")
+    except OSError as exc:
+        out.update(measured=False, reason=f"app-server did not start: {type(exc).__name__}")
+        return out
+    def send(obj):
+        p.stdin.write(json.dumps(obj) + "\n")
+        p.stdin.flush()
+
+    def recv(want, timeout=30):
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            ready, _, _ = select.select([p.stdout], [], [], 1)
+            if not ready:
+                continue
+            line = p.stdout.readline()
+            if not line:
+                return None
+            try:
+                obj = json.loads(line)
+            except ValueError:
+                continue
+            if obj.get("id") == want:
+                return obj
+        return None
+
+    resp = None
+    try:
+        send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+              "params": {"clientInfo": {"name": "octorato-census", "version": "0"}}})
+        if recv(1) is not None:
+            send({"jsonrpc": "2.0", "method": "initialized"})
+            send({"jsonrpc": "2.0", "id": 2, "method": "account/read",
+                  "params": {"refreshToken": False}})
+            resp = recv(2)
+    finally:
+        p.kill()
+        p.wait(timeout=10)
+    acct = ((resp or {}).get("result") or {}).get("account")
+    if not isinstance(acct, dict):
+        out.update(measured=False, reason="account/read returned no account")
+        return out
+    out.update(measured=True, type=acct.get("type"), planType=acct.get("planType"))
+    return out
+
+
 def gates_live_codex(root: str) -> dict:
     binary = _binary_record("codex")
     rec = {"binary": binary, "gate": LIVE_GATE, "runs": {}}
@@ -1587,7 +1655,9 @@ def gates_live_codex(root: str) -> dict:
         ignored = any("is ignored" in e and "hooks.state" in e for e in run2.get("error_items") or [])
         trust.update(session_flag_trust_ignored=ignored)
         if run2["outcome"] == "ran":
-            trust["untrusted_hook_ran"] = new_denies > 0
+            # Denies journaled, not "ran": a hook that ran and allowed would
+            # also leave none. What is measured is whether it blocked.
+            trust["untrusted_hook_blocked"] = new_denies > 0
             trust["untrusted_violation_written"] = written
     rec["trust_step"] = trust
 
@@ -1664,6 +1734,15 @@ def gates_live_gemini(root: str) -> dict:
 GATES_LIVE = {"codex": gates_live_codex, "gemini": gates_live_gemini}
 
 
+def gemini_account_tier() -> dict:
+    return {"measured": False, "source": None,
+            "gap": ("not measured: the census has no tier query for Gemini CLI, and the T08 "
+                    "live leg (GEMINI_API_KEY route) ended in 429 before any session ran")}
+
+
+ACCOUNT_TIER = {"codex": codex_account_tier, "gemini": gemini_account_tier}
+
+
 def _fold_paths(obj, root: str):
     variants = tuple(v for v in {root, os.path.realpath(root)} if v)
     if isinstance(obj, str):
@@ -1705,7 +1784,16 @@ def apply_gate_evidence(classes: dict, gates: dict | None, live_block: dict | No
             slot["shim_selftest_legs"] = shim_ev.get(tc, {"denied": 0, "allowed": 0,
                                                           "untranslatable": 0})
         lc = live_classes.get(tc)
-        if lc is not None:
+        measured_rule = _LIVE_RULE.get(str((live_block or {}).get("gate")))
+        if lc is not None and measured_rule != slot.get("gate"):
+            # The live leg measured another gate than this class's fixture:
+            # its verdict is not this class's evidence.
+            slot["harness_blocked_violation"] = None
+            slot["harness_allowed_benign"] = None
+            slot["blocking_note"] = (f"unmeasured: the live leg measured {measured_rule}, "
+                                     f"not this class's Block_Fixture gate {slot.get('gate')}")
+        elif lc is not None:
+            slot["live_measured_gate"] = (live_block or {}).get("gate")
             slot["harness_blocked_violation"] = lc.get("harness_blocked_violation")
             slot["harness_allowed_benign"] = lc.get("harness_allowed_benign")
             slot["blocking_note"] = (f"live leg ({(live_block or {}).get('measured')}): "
@@ -1737,15 +1825,28 @@ def _scrub(obj):
     return text
 
 
+def _refile_live_block(lb):
+    """A carried live_block with a legacy key renamed to what it measured:
+    `untrusted_hook_ran` was computed as `journaled denies > 0`, a block."""
+    if not isinstance(lb, dict):
+        return lb
+    lb = json.loads(json.dumps(lb))
+    trust = lb.get("trust_step")
+    if isinstance(trust, dict) and "untrusted_hook_ran" in trust:
+        trust["untrusted_hook_blocked"] = trust.pop("untrusted_hook_ran")
+    return lb
+
+
 def build_record(harness: str, live: dict | None, previous: dict | None,
                  root: Path = FIXTURES_ROOT, gates: dict | None = None,
-                 live_block: dict | None = None) -> dict:
+                 live_block: dict | None = None, account_tier: dict | None = None) -> dict:
     """The record; a gates or live_block section not measured in this run is
     carried from the previous record unchanged."""
     contract = CONTRACTS[harness]
     prev = previous or {}
     gates = gates if gates is not None else prev.get("gates")
-    live_block = live_block if live_block is not None else prev.get("live_block")
+    live_block = live_block if live_block is not None else _refile_live_block(prev.get("live_block"))
+    account_tier = account_tier if account_tier is not None else prev.get("account_tier")
     classes = census_deterministic(harness, root)
     apply_gate_evidence(classes, gates, live_block)
     rec = {
@@ -1766,12 +1867,17 @@ def build_record(harness: str, live: dict | None, previous: dict | None,
         rec["gates"] = gates
     if live_block is not None:
         rec["live_block"] = live_block
+    if account_tier is not None:
+        rec["account_tier"] = account_tier
     return rec
 
 
 def _carry_live(previous: dict | None) -> dict:
     """The previous live section, with a carried prior_measurement labeled."""
     live = json.loads(json.dumps((previous or {}).get("live") or {}))
+    # T01 placeholders superseded by live_block.trust_step (T08).
+    live.pop("trust_step_scriptable", None)
+    live.pop("trust_step_note", None)
     evidence = live.get("google_account_evidence")
     if isinstance(evidence, dict) and isinstance(evidence.get("prior_measurement"), dict):
         evidence["prior_measurement"] = prior_google_evidence(previous)
@@ -1813,7 +1919,9 @@ def main(argv: list[str] | None = None) -> int:
         live = census_live(h, previous) if args.live else None
         gates = gates_offline(h) if args.gates else None
         live_block = gates_live(h) if args.gates and not args.offline else None
-        rec = build_record(h, live, previous, root, gates=gates, live_block=live_block)
+        tier = ACCOUNT_TIER[h]() if args.gates else None
+        rec = build_record(h, live, previous, root, gates=gates, live_block=live_block,
+                           account_tier=tier)
         path = write_record(h, rec, out_dir)
         classes = rec["tool_classes"]
         ok = [c for c in TOOL_CLASSES if classes[c]["translatable"]]
@@ -1824,7 +1932,8 @@ def main(argv: list[str] | None = None) -> int:
         if gates is not None:
             s = gates["summary"]
             line += (f"; gates offline {gates['result']} ({s['pass']}/{s['selftests']} selftests "
-                     f"pass, {s['shim_denied']} denied + {s['shim_allowed']} allowed through the "
+                     f"pass, {s['one_sided']} one-sided, {s['not_routed']} not routed, "
+                     f"{s['shim_denied']} denied + {s['shim_allowed']} allowed through the "
                      f"shim, {s['shim_untranslatable']} untranslatable)")
             if gates["result"] != "pass":
                 rc = 1

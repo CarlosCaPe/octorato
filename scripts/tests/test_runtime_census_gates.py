@@ -96,6 +96,7 @@ class OfflineLegTest(unittest.TestCase):
     def test_record_carries_gates_and_live_block_forward(self):
         gates = rc.gates_offline("codex", only=["secrets-grep-guard.py"])
         live_block = {"measured": "2026-01-01T00:00:00Z", "outcome": "ran", "reason": "exit 0",
+                      "gate": rc.LIVE_GATE,
                       "classes": {c: {"harness_blocked_violation": True,
                                       "harness_allowed_benign": True,
                                       "violation_evidence": "t", "benign_evidence": "t"}
@@ -113,6 +114,60 @@ class OfflineLegTest(unittest.TestCase):
             self.assertIsNone(data["tool_classes"]["mcp"]["harness_blocked_violation"])
             self.assertEqual(data["tool_classes"]["shell"]["shim_selftest_legs"]["denied"],
                              gates["summary"]["shim_denied"])
+
+
+class AttributionTest(unittest.TestCase):
+    def _iso(self, gate):
+        return ["scripts/" + gate, "--selftest", "registry/fixtures/ARCHITECTURE.kernel-isolation"]
+
+    def test_a_selftest_that_only_allowed_through_the_shim_is_one_sided(self):
+        gate = "g__pretool-write__tree-owner.py"
+        run = rc.run_selftest_through_shim("codex", gate, rc.projected_gates("codex")[gate],
+                                           self._iso(gate))
+        self.assertEqual(run["legs_through_shim"]["shim_denied"], 0)
+        self.assertEqual(run["result"], "one_sided")
+        self.assertEqual(run["one_sided_missing"], "deny")
+
+    def test_a_selftest_that_only_denied_through_the_shim_is_one_sided(self):
+        gate = "g__pretool-bash__tree-owner.py"
+        run = rc.run_selftest_through_shim("codex", gate, rc.projected_gates("codex")[gate],
+                                           self._iso(gate))
+        self.assertEqual(run["legs_through_shim"]["shim_allowed"], 0)
+        self.assertEqual(run["result"], "one_sided")
+        self.assertEqual(run["one_sided_missing"], "allow")
+
+    def test_every_block_fixture_names_a_gate_the_live_leg_can_measure_or_mcp(self):
+        for tc in ("shell", "file_write", "file_edit"):
+            self.assertEqual(rc.BLOCK_FIXTURES[tc]["gate"], rc._LIVE_RULE[rc.LIVE_GATE])
+
+    def _classes(self):
+        return {tc: {"gate": rc.BLOCK_FIXTURES[tc]["gate"]} for tc in rc.TOOL_CLASSES}
+
+    def test_a_live_verdict_on_another_gate_is_not_filed_under_the_class(self):
+        classes = self._classes()
+        classes["shell"]["gate"] = "SEC.prod-write-gate"
+        lb = {"gate": rc.LIVE_GATE, "classes": {"shell": {
+            "harness_blocked_violation": True, "harness_allowed_benign": True}}}
+        rc.apply_gate_evidence(classes, None, lb)
+        self.assertIsNone(classes["shell"]["harness_blocked_violation"])
+        self.assertIn("unmeasured", classes["shell"]["blocking_note"])
+
+    def test_a_live_verdict_on_the_class_gate_is_filed_with_its_gate(self):
+        classes = self._classes()
+        lb = {"gate": rc.LIVE_GATE, "classes": {"shell": {
+            "harness_blocked_violation": True, "harness_allowed_benign": True}}}
+        rc.apply_gate_evidence(classes, None, lb)
+        self.assertIs(classes["shell"]["harness_blocked_violation"], True)
+        self.assertEqual(classes["shell"]["live_measured_gate"], rc.LIVE_GATE)
+
+    def test_carried_records_refile_legacy_trust_keys(self):
+        prev = {"live": {"trust_step_note": "x", "trust_step_scriptable": None, "outcome": "ok"},
+                "live_block": {"gate": rc.LIVE_GATE,
+                               "trust_step": {"untrusted_hook_ran": False}}}
+        rec = rc.build_record("codex", None, prev)
+        self.assertNotIn("trust_step_note", rec["live"])
+        self.assertNotIn("trust_step_scriptable", rec["live"])
+        self.assertEqual(rec["live_block"]["trust_step"], {"untrusted_hook_blocked": False})
 
 
 class LiveLegPiecesTest(unittest.TestCase):
