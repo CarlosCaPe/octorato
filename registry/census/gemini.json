@@ -82,6 +82,7 @@
         "date": "2026-10-15",
         "error_class": "IneligibleTierError",
         "message_prefix": "This client is no longer supported for Gemini Code Assist for individuals",
+        "source": "previous record live.google_account_evidence.prior_measurement",
         "version": "0.62.0"
       }
     },
@@ -293,6 +294,8 @@
           "translatable": true
         }
       ],
+      "payload_shape": "assumed",
+      "payload_shape_note": "mcp_context = {server_name, tool_name} is assumed: the Gemini CLI docs only say \"Optional metadata for MCP-based tools\"; the translator reads that shape and fails closed on any other",
       "translatable": true
     },
     "shell": {

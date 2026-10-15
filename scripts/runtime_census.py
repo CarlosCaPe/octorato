@@ -39,7 +39,9 @@ Gemini CLI, per geminicli.com/docs/hooks/reference and docs/tools/*:
   {command, description?, dir_path?}, write_file {file_path, content},
   replace {file_path, instruction, old_string, new_string, allow_multiple?};
   MCP tools are named mcp_<server>_<tool>; block = exit 2 with stderr reason,
-  or JSON {"decision": "deny", "reason": ...}.
+  or JSON {"decision": "deny", "reason": ...}. The mcp_context shape
+  {server_name, tool_name} is ASSUMED: the docs only say "Optional metadata
+  for MCP-based tools", so the record marks that class payload_shape: assumed.
 
 Codex CLI, per learn.chatgpt.com/docs/hooks:
   event PreToolUse; stdin {session_id, transcript_path, cwd, hook_event_name,
@@ -480,6 +482,12 @@ def census_deterministic(harness: str, root: Path = FIXTURES_ROOT) -> dict:
             "harness_allowed_benign": None,
             "blocking_note": "not measured: no projected hook or shim exists for this harness yet",
         }
+        if harness == "gemini" and tc == "mcp":
+            classes[tc]["payload_shape"] = "assumed"
+            classes[tc]["payload_shape_note"] = (
+                "mcp_context = {server_name, tool_name} is assumed: the Gemini CLI docs only "
+                "say \"Optional metadata for MCP-based tools\"; the translator reads that "
+                "shape and fails closed on any other")
     return classes
 
 
@@ -504,6 +512,56 @@ def _env_value_from_dotenv(name: str) -> str | None:
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+# Secret shapes a record must never carry. Each pair is (pattern, replacement);
+# the patterns tolerate the backslash-escaped quotes of a JSON-dumped string so
+# the same list redacts a raw stderr and re-checks the dumped record.
+_REDACTED = "[REDACTED]"
+_SECRET_PATTERNS = (
+    # JSON-style key with a value: "api_key": "...", "token": "...", "GEMINI_API_KEY": "..."
+    (re.compile(r'(?i)(\\?"[A-Za-z0-9_.-]*(?:api[_-]?key|token|secret|password)\\?"\s*:\s*\\?")'
+                r'(?!\[REDACTED\])[^"]+(\\?")'), r"\1" + _REDACTED + r"\2"),
+    # key=value or key: value with a long opaque value
+    (re.compile(r'(?i)((?:api[_-]?key|token|secret|password)\s*[:=]\s*["\']?)[A-Za-z0-9_\-]{16,}'),
+     r"\1" + _REDACTED),
+    # Google API key
+    (re.compile(r"AIza[0-9A-Za-z_-]{35}"), _REDACTED),
+    # OpenAI-style key
+    (re.compile(r"sk-[A-Za-z0-9_-]{20,}"), _REDACTED),
+    # Bearer token
+    (re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]{16,}"), r"\1" + _REDACTED),
+)
+
+# Free-text fields the record may carry after redaction in place. A secret in
+# any other field refuses the whole write: those fields never hold one.
+_REDACTABLE_TEXT_FIELDS = frozenset({"stderr_tail"})
+
+
+def redact_secrets(text: str) -> str:
+    """Replace every secret-shaped span in free text with [REDACTED]."""
+    out = text
+    for pattern, repl in _SECRET_PATTERNS:
+        out = pattern.sub(repl, out)
+    return out
+
+
+def find_secret(text: str) -> str | None:
+    """Name of the first secret pattern that still matches, else None."""
+    for pattern, _ in _SECRET_PATTERNS:
+        if pattern.search(text):
+            return pattern.pattern
+    return None
+
+
+def _redact_text_fields(obj, key=None):
+    if isinstance(obj, dict):
+        return {k: _redact_text_fields(v, k) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_redact_text_fields(v, key) for v in obj]
+    if isinstance(obj, str) and key in _REDACTABLE_TEXT_FIELDS:
+        return redact_secrets(obj)
+    return obj
 
 
 def _run(cmd: list[str], cwd: str, env: dict, stdin_text: str | None = None) -> dict:
@@ -537,7 +595,8 @@ def _run(cmd: list[str], cwd: str, env: dict, stdin_text: str | None = None) -> 
     else:
         rec.update(outcome="failure", reason="exit 0 but expected token missing from stdout")
     rec["error_class"] = _error_class(combined)
-    rec["stderr_tail"] = err.strip()[-240:]
+    # Redacted before the tail is cut so a key split at the boundary cannot survive.
+    rec["stderr_tail"] = redact_secrets(err.strip())[-240:]
     return rec
 
 
@@ -569,7 +628,32 @@ def _clean_env() -> dict:
     return env
 
 
-def live_codex(sandbox: str) -> dict:
+# Seed for google_account_evidence.prior_measurement: used only when no previous
+# record carries one. Measured by hand on 2026-10-15; every later run carries
+# the previous record's value forward and labels its source.
+_GOOGLE_ACCOUNT_SEED = {
+    "date": "2026-10-15", "version": "0.62.0", "error_class": "IneligibleTierError",
+    "message_prefix": "This client is no longer supported for Gemini Code Assist for individuals",
+}
+_PRIOR_SOURCE_SEED = "seed in scripts/runtime_census.py (no previous record)"
+_PRIOR_SOURCE_PREVIOUS = "previous record live.google_account_evidence.prior_measurement"
+
+
+def prior_google_evidence(previous: dict | None) -> dict:
+    """prior_measurement for this run: the previous record's value, else the seed."""
+    live = (previous or {}).get("live") or {}
+    evidence = live.get("google_account_evidence") or {}
+    prior = evidence.get("prior_measurement")
+    if isinstance(prior, dict) and prior:
+        out = dict(prior)
+        out["source"] = _PRIOR_SOURCE_PREVIOUS
+        return out
+    out = dict(_GOOGLE_ACCOUNT_SEED)
+    out["source"] = _PRIOR_SOURCE_SEED
+    return out
+
+
+def live_codex(sandbox: str, previous: dict | None = None) -> dict:
     binary = _binary_record("codex")
     rec = {"binary": binary, "account": None, "attempts": []}
     if not binary["path"]:
@@ -596,7 +680,7 @@ def live_codex(sandbox: str) -> dict:
     return rec
 
 
-def live_gemini(sandbox: str) -> dict:
+def live_gemini(sandbox: str, previous: dict | None = None) -> dict:
     binary = _binary_record("gemini")
     rec = {"binary": binary, "account": None, "attempts": []}
     if not binary["path"]:
@@ -631,10 +715,7 @@ def live_gemini(sandbox: str) -> dict:
     rec["google_account_evidence"] = {
         "error_class": acct.get("error_class"),
         "measured": acct["started"],
-        "prior_measurement": {
-            "date": "2026-10-15", "version": "0.62.0", "error_class": "IneligibleTierError",
-            "message_prefix": "This client is no longer supported for Gemini Code Assist for individuals",
-        },
+        "prior_measurement": prior_google_evidence(previous),
     }
     return rec
 
@@ -642,10 +723,10 @@ def live_gemini(sandbox: str) -> dict:
 LIVE = {"gemini": live_gemini, "codex": live_codex}
 
 
-def census_live(harness: str) -> dict:
+def census_live(harness: str, previous: dict | None = None) -> dict:
     sandbox = tempfile.mkdtemp(prefix="octorato-census-")
     try:
-        rec = LIVE[harness](sandbox)
+        rec = LIVE[harness](sandbox, previous)
     finally:
         shutil.rmtree(sandbox, ignore_errors=True)
     rec["measured"] = _now()
@@ -655,13 +736,20 @@ def census_live(harness: str) -> dict:
 # --- record -------------------------------------------------------------------
 
 def _scrub(obj):
-    """Fold every path and refuse to write a home path or a known secret name."""
-    text = json.dumps(_fold_obj(obj), indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    """Fold every path, redact free text, refuse a home path or a secret elsewhere.
+
+    stderr_tail is redacted in place (the rest of the tail is evidence); a
+    secret-shaped value in any other field refuses the whole write.
+    """
+    text = json.dumps(_redact_text_fields(_fold_obj(obj)), indent=2, sort_keys=True,
+                      ensure_ascii=False) + "\n"
     home = os.path.expanduser("~")
     if home and home != "~" and home in text:
         raise RuntimeError("census record would carry a $HOME path; refusing to write")
-    if re.search(r"(?i)(api[_-]?key|token|secret)\s*[:=]\s*[\"']?[A-Za-z0-9_\-]{16,}", text):
-        raise RuntimeError("census record would carry a secret-shaped value; refusing to write")
+    hit = find_secret(text)
+    if hit:
+        raise RuntimeError("census record would carry a secret-shaped value "
+                           f"(pattern {hit}); refusing to write")
     return text
 
 
@@ -677,10 +765,19 @@ def build_record(harness: str, live: dict | None, previous: dict | None,
         "contract": contract,
         "block_fixtures": BLOCK_FIXTURES,
         "tool_classes": census_deterministic(harness, root),
-        "live": live if live is not None else (previous or {}).get("live", {}),
+        "live": live if live is not None else _carry_live(previous),
         "generated_by": "scripts/runtime_census.py",
     }
     return rec
+
+
+def _carry_live(previous: dict | None) -> dict:
+    """The previous live section, with a carried prior_measurement labeled."""
+    live = json.loads(json.dumps((previous or {}).get("live") or {}))
+    evidence = live.get("google_account_evidence")
+    if isinstance(evidence, dict) and isinstance(evidence.get("prior_measurement"), dict):
+        evidence["prior_measurement"] = prior_google_evidence(previous)
+    return live
 
 
 def write_record(harness: str, rec: dict, out_dir: Path = CENSUS_DIR) -> Path:
@@ -711,7 +808,7 @@ def main(argv: list[str] | None = None) -> int:
     rc = 0
     for h in args.harness or HARNESSES:
         previous = read_record(h, out_dir)
-        live = census_live(h) if args.live else None
+        live = census_live(h, previous) if args.live else None
         rec = build_record(h, live, previous, root)
         path = write_record(h, rec, out_dir)
         classes = rec["tool_classes"]

@@ -53,3 +53,7 @@ Three phases, one pull request each, every one from a worktree. The census comes
 - **Plugin packaging.** `octo pkg` installs skills and arms today (`--kind skill|arm`); kind `plugin` is new work in T15. Claude Code enables a plugin through `enabledPlugins` in `settings.json`, which the Arming_Gate protects, so the install is the operator's terminal step and the Arming_Gate is not loosened. If the plugin loader cannot be pointed at a signed tree, the spec returns to the operator before any other route.
 - **Arm settings are not on the arming surface.** The arming-surface gate leaves an arm's own `.claude/` settings to the arm, so an agent can set the tracing switch there. The guard makes that switch inert for a `deny` arm, the Doctor detects it, and the flip of `telemetry.export` itself is gated (AC-16). An agent editing `arm.json` by a route the flip gate does not parse is the accepted residual.
 - **Redaction is not a guarantee.** The vendor calls it a safety net; that is why `allow` is a per-arm decision of the operator and not a default.
+
+## Notes
+
+- T01 records translation only; AC-02 (violation blocked, benign allowed) and the Codex `/hooks` trust scriptability close in T08 once T05's shim exists.

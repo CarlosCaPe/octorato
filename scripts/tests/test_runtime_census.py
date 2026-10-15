@@ -72,6 +72,14 @@ class TranslationTest(unittest.TestCase):
         self.assertEqual(cx["tool_name"], "apply_patch")
         self.assertIn("*** Update File: /p/f.py", cx["tool_input"]["command"])
 
+    def test_gemini_mcp_class_marks_its_payload_shape_assumed(self):
+        classes = rc.census_deterministic("gemini")
+        self.assertEqual(classes["mcp"]["payload_shape"], "assumed")
+        self.assertIn("Optional metadata for MCP-based tools", classes["mcp"]["payload_shape_note"])
+        for tc in ("shell", "file_write", "file_edit"):
+            self.assertNotIn("payload_shape", classes[tc])
+        self.assertNotIn("payload_shape", rc.census_deterministic("codex")["mcp"])
+
     def test_mcp_class_records_keys_not_bodies(self):
         for harness in rc.HARNESSES:
             classes = rc.census_deterministic(harness)
@@ -128,6 +136,87 @@ class RecordTest(unittest.TestCase):
             rc._scrub({"x": {"nested": "api_key=ABCDEFGHIJKLMNOPQRSTUV"}})
         # a home path is folded, not refused, when it is the plain home
         self.assertIn('"~/x"', rc._scrub({"p": home + "/x"}))
+
+    # Each literal below is a secret shape the old _scrub let through; the
+    # written record must carry [REDACTED] in its place.
+    _SECRETS = {
+        "json_api_key": ('{"api_key": "ABCDEFGHIJKLMNOPQRSTUVWXYZ"}', "ABCDEFGHIJKLMNOPQRSTUVWXYZ"),
+        "json_token": ('{"token": "tok-0123456789abcdef"}', "tok-0123456789abcdef"),
+        "google_key": ("key AIza" + "A" * 35 + " end", "AIza" + "A" * 35),
+        "openai_key": ("sk-" + "a" * 24, "sk-" + "a" * 24),
+        # Built from parts so the source line never matches the push policy's
+        # Authorization pattern; the assembled string still does.
+        "bearer": ("Authorization: " + "Bearer " + "eyJ" + "hbGciOiJIUzI1NiJ9.payload",
+                   "eyJ" + "hbGciOiJIUzI1NiJ9.payload"),
+    }
+
+    def test_stderr_tail_secrets_end_redacted_in_the_written_record(self):
+        for name, (raw, literal) in self._SECRETS.items():
+            with self.subTest(shape=name):
+                rec = {"harness": "x", "live": {"attempts": [{"stderr_tail": raw}]}}
+                text = rc._scrub(rec)
+                self.assertNotIn(literal, text)
+                self.assertIn("[REDACTED]", text)
+
+    def test_stderr_tail_is_redacted_when_stored_not_only_when_written(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env = dict(os.environ)
+            for name, (raw, literal) in self._SECRETS.items():
+                with self.subTest(shape=name):
+                    code = "import sys; sys.stderr.write(%r)" % raw
+                    r = rc._run([sys.executable, "-c", code], tmp, env)
+                    self.assertNotIn(literal, r["stderr_tail"])
+                    self.assertIn("[REDACTED]", r["stderr_tail"])
+
+    def test_secret_in_a_structured_field_still_refuses_the_write(self):
+        for name, (raw, _) in self._SECRETS.items():
+            with self.subTest(shape=name):
+                with self.assertRaises(RuntimeError):
+                    rc._scrub({"live": {"binary": {"path": raw}}})
+
+    def _fake_gemini(self, previous):
+        """Drive live_gemini with no binary and no network."""
+        saved = (rc._binary_record, rc._run, rc._env_value_from_dotenv)
+        rc._binary_record = lambda name: {"name": name, "path": "~/bin/gemini", "version": "t"}
+        rc._run = lambda cmd, cwd, env, stdin_text=None: {
+            "started": "2026-01-01T00:00:00Z", "elapsed_s": 0.0, "exit_code": 1,
+            "outcome": "failure", "reason": "exit 1", "error_class": None, "stderr_tail": ""}
+        rc._env_value_from_dotenv = lambda name: None
+        try:
+            return rc.live_gemini("/nonexistent", previous)
+        finally:
+            rc._binary_record, rc._run, rc._env_value_from_dotenv = saved
+
+    def test_prior_measurement_is_carried_from_the_previous_record(self):
+        prior = {"date": "2000-01-01", "version": "0.0.1", "error_class": "SeededError",
+                 "message_prefix": "seeded by test"}
+        previous = {"live": {"google_account_evidence": {"prior_measurement": prior}}}
+        got = self._fake_gemini(previous)["google_account_evidence"]["prior_measurement"]
+        self.assertEqual(got["date"], "2000-01-01")
+        self.assertEqual(got["error_class"], "SeededError")
+        self.assertEqual(got["source"], rc._PRIOR_SOURCE_PREVIOUS)
+
+    def test_prior_measurement_without_a_previous_record_is_the_labeled_seed(self):
+        for previous in (None, {}, {"live": {}}):
+            with self.subTest(previous=previous):
+                got = self._fake_gemini(previous)["google_account_evidence"]["prior_measurement"]
+                self.assertEqual(got["date"], rc._GOOGLE_ACCOUNT_SEED["date"])
+                self.assertEqual(got["error_class"], rc._GOOGLE_ACCOUNT_SEED["error_class"])
+                self.assertEqual(got["source"], rc._PRIOR_SOURCE_SEED)
+
+    def test_deterministic_run_labels_a_carried_prior_measurement(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            rc.main(["--out", str(out), "--harness", "gemini"])
+            path = out / "gemini.json"
+            data = json.loads(path.read_text(encoding="utf-8"))
+            data["live"] = {"google_account_evidence": {"prior_measurement": {"date": "2000-01-01"}}}
+            path.write_text(json.dumps(data), encoding="utf-8")
+            rc.main(["--out", str(out), "--harness", "gemini"])
+            again = json.loads(path.read_text(encoding="utf-8"))
+            prior = again["live"]["google_account_evidence"]["prior_measurement"]
+            self.assertEqual(prior["date"], "2000-01-01")
+            self.assertEqual(prior["source"], rc._PRIOR_SOURCE_PREVIOUS)
 
     def test_live_outcome_classes_503_and_timeout_as_failure(self):
         with tempfile.TemporaryDirectory() as tmp:
