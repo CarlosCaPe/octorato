@@ -43,6 +43,13 @@ import re
 import sys
 from pathlib import Path
 
+# Hook payloads are UTF-8 JSON; the Windows default (cp1252) mangles any
+# non-ASCII character before it is read.
+try:
+    sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+except (AttributeError, ValueError):
+    pass
+
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))
 

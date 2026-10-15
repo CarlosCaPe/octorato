@@ -38,7 +38,7 @@ import tempfile
 import time
 from pathlib import Path
 
-for _stream in (sys.stdout, sys.stderr):
+for _stream in (sys.stdin, sys.stdout, sys.stderr):
     try:
         _stream.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError):
