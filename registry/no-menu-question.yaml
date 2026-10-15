@@ -148,6 +148,14 @@ choice_verbs:
   - mejor
   - better
   - conviene
+  - te gusta
+  - te gustan
+  - te late
+  - te laten
+  - te convence
+  - te convencen
+  - you like
+  - you'd like
 
 # An "A o B" question that names the operator's things and carries no agent
 # action is an information question ("¿Corre en tu Linux o en tu Windows?").
@@ -286,12 +294,19 @@ statement_menu_patterns:
   - ^(let me know|tell me|dime|avisame|me dices|me avisas|decide|tu decides|you decide)\b.*\b(prefer|prefers|prefieres|want|quieres|go with|vamos con|vas con|should i|should we|do i|elijo|uso|sigo)\b
   - ^(pick|choose|elige|escoge|decide entre|choose between|pick between)\b
 
-# A bare solicitation that hands back the choice offered in the sentence
-# before it: "I can deploy now, or wait for QA. Thoughts?", "¿Tú qué dices?".
-# Blocks only when the previous sentence carries alternatives (regexes on
-# the folded body).
+# A bare or open-ended solicitation that hands back a choice offered before
+# it: "I can deploy now, or wait for QA. Thoughts?", "¿Tú qué dices?", "Any
+# preference?", "How would you like to proceed?", "Let me know how you'd like
+# to proceed.". Blocks only when the sentence before it, an earlier sentence
+# of the final paragraph, or a list right before carries alternatives
+# (regexes on the folded body).
 solicit_patterns:
   - ^(thoughts|opinions?|preferences?|ideas|objections?|your call|up to you|what do you think|what do you say|any thoughts|que opinas|que piensas|que dices|tu que dices|tu que opinas|tu que piensas|que me dices|tu decides|tu dime|como prefieras|como veas|opiniones|ideas)$
+  - ^(any|a) (preference|preferences|favorite|favourite|pick)$
+  - ^(alguna )?(preferencia|opinion)$
+  - ^(so )?how (would|do) you (like|want) (us )?to (proceed|continue|go|move forward)( (from here|here|now|next))?$
+  - ^(let me know|tell me|dime|avisame|me dices) (how|como) (you(?:'|\u2019)?d like|you would like|you want|quieres|prefieres) (to )?(proceed|continue|go|move forward|seguir|proceder|continuar|avanzar)\b
+  - ^(y )?(como|por donde) (quieres|prefieres|quieren) (seguir|proceder|continuar|avanzar|ir)( (ahora|entonces|aqui|con esto))?$
 
 # Inside an agent choice, an irreducible term exempts the question only in the
 # alternative where the OPERATOR acts: a second-person verb or an imperative
@@ -313,7 +328,25 @@ operator_action_patterns:
 # prefieres) are left out on purpose: "¿Prefieres A o B?" and "Do you want A
 # or B?" still block, since the answer picks the agent's next step.
 diagnostic_patterns:
-  - ^((te|se|me)\s+)?(ves|viste|veías|necesitas|necesitabas|necesitaste|ocupas|tienes|tenías|usas|usabas|buscas|recibes|obtienes|abres|cargas|entras|corres|lees|notas|encuentras|sabes|recuerdas|puedes|estás|eres|trabajas|ejecutas|escribes|refieres|acuerdas|conectas|quedas|sientes|ubicas|identificas)\b
+  - ^((te|se|me|lo|la|los|las)\s+)?(ves|viste|veías|necesitas|necesitabas|necesitaste|ocupas|tienes|tenías|usas|usabas|buscas|recibes|obtienes|abres|cargas|entras|corres|corriste|recibiste|lees|notas|encuentras|sabes|recuerdas|puedes|estás|eres|trabajas|ejecutas|escribes|refieres|acuerdas|conectas|quedas|sientes|ubicas|identificas)\b
   - ^(te|le|les)\s+(?!(lo|la|los|las|le|les)\b)[a-zñáéíóú]{2,}(a|e|an|en|as|es)\b
   - ^(se\s+)?(abre|abren|carga|cargan|sale|salen|aparece|aparecen|marca|muestra|truena|responde|regresa|devuelve|arranca|compila|conecta|pasa|llega|salta|dice|pide|da|tarda|jala|sirve|cae|levanta|termina|imprime)\b
   - ^(do|did|are|were|have|had)\s+you\s+(?!(want|wanna|prefer|like|wish|mind|rather|think|feel|agree|approve|ok|okay|fine|good|happy|comfortable|need me|want me|lean|leaning)\b)[a-z]{2,}\b
+
+# First-person asks for direction, blocked with or without options before
+# them (regexes on the folded body): "¿Qué hago?", "¿Cómo sigo?", "What would
+# you like me to do?", "How should I proceed?".
+direction_asks:
+  - ^(y |entonces |ahora )?(que|como) (hago|hacemos|sigo|seguimos|procedo|procedemos|continuo|continuamos|le hago|le hacemos)( (ahora|entonces|aqui|con esto|con eso))?$
+  - ^(que|como) (quieres|prefieres|quieren) que (haga|hagamos|siga|sigamos|proceda|procedamos|continue|continuemos)\b
+  - ^(so |then |and )?(what|how) (should|shall|do|can) (i|we) (do|proceed|continue|go|move forward)( (now|next|here|then|from here|with (this|that)))?$
+  - ^(so |then )?what (would|do) you (like|want) (me|us) to do\b
+  - ^(so |then )?how (would|do) you (like|want) (me|us) to (proceed|continue|go|move forward)\b
+
+# Inline option markers (regexes on the folded sentence). A sentence with two
+# or more of them offers alternatives with no "o"/"or" ("Opciones: A) migrar
+# ya, B) esperar."), so a solicitation after it ("How would you like to
+# proceed?") is a menu.
+offer_markers:
+  - (?:^|\s)\(?[a-d1-4][).](?=\s)
+  - \b(?:opcion|option|plan|alternativa|alternative) [a-d1-4]\b

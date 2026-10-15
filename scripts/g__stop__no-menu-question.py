@@ -25,8 +25,12 @@ these shapes, all read from `registry/no-menu-question.yaml`:
     bare "¿Cuál?" / "Which one?" right after a list of two or more items;
   - statement: an imperative ask-for-choice with no "?" ("Let me know which
     you prefer: A or B.", "Dime cuál prefieres: A o B.");
-  - solicit: "Thoughts?" / "Your call." right after a sentence that offered
-    alternatives ("I can deploy now, or wait for QA. Thoughts?").
+  - direction: a first-person ask for direction, with or without options
+    ("¿Qué hago?", "¿Cómo sigo?", "What would you like me to do?");
+  - solicit: "Thoughts?", "Any preference?", "How would you like to
+    proceed?", "Let me know how you'd like to proceed." once alternatives
+    were offered earlier in the final paragraph or in a list right before
+    ("Opciones: A) migrar ya, B) esperar. How would you like to proceed?").
 
 WHAT DOES NOT FIRE.
   - A diagnostic "X o Y" question about the operator's world with no agent
@@ -158,6 +162,9 @@ _DEFAULT_CHOICE_VERBS = [
     "should i", "should we", "shall i", "shall we", "do i", "do we", "do you prefer",
     "do you want", "would you like", "would you prefer", "you want", "you prefer",
     "you'd prefer", "mejor", "better", "conviene",
+    # preference asks: "¿Cuál te gusta más, A o B?", "¿Qué opción te late más?"
+    "te gusta", "te gustan", "te late", "te laten", "te convence", "te convencen",
+    "you like", "you'd like",
 ]
 # An "A o B" question that only asks about the operator's things ("tu
 # servidor", "your server") is an information question unless it also carries
@@ -227,6 +234,30 @@ _DEFAULT_STATEMENT_MENU = [
 # the previous sentence carries alternatives. Regexes on the folded body.
 _DEFAULT_SOLICIT = [
     r"^(thoughts|opinions?|preferences?|ideas|objections?|your call|up to you|what do you think|what do you say|any thoughts|que opinas|que piensas|que dices|tu que dices|tu que opinas|tu que piensas|que me dices|tu decides|tu dime|como prefieras|como veas|opiniones|ideas)$",
+    r"^(any|a) (preference|preferences|favorite|favourite|pick)$",
+    r"^(alguna )?(preferencia|opinion)$",
+    r"^(so )?how (would|do) you (like|want) (us )?to (proceed|continue|go|move forward)( (from here|here|now|next))?$",
+    r"^(let me know|tell me|dime|avisame|me dices) (how|como) (you(?:'|\u2019)?d like|you would like|you want|quieres|prefieres) (to )?(proceed|continue|go|move forward|seguir|proceder|continuar|avanzar)\b",
+    r"^(y )?(como|por donde) (quieres|prefieres|quieren) (seguir|proceder|continuar|avanzar|ir)( (ahora|entonces|aqui|con esto))?$",
+]
+# First-person asks for direction: the agent hands the next step back with no
+# options at all ("¿Qué hago?", "What would you like me to do?", "How should I
+# proceed?", "¿Cómo sigo?"). They block with or without alternatives before
+# them. Regexes on the folded body.
+_DEFAULT_DIRECTION = [
+    r"^(y |entonces |ahora )?(que|como) (hago|hacemos|sigo|seguimos|procedo|procedemos|continuo|continuamos|le hago|le hacemos)( (ahora|entonces|aqui|con esto|con eso))?$",
+    r"^(que|como) (quieres|prefieres|quieren) que (haga|hagamos|siga|sigamos|proceda|procedamos|continue|continuemos)\b",
+    r"^(so |then |and )?(what|how) (should|shall|do|can) (i|we) (do|proceed|continue|go|move forward)( (now|next|here|then|from here|with (this|that)))?$",
+    r"^(so |then )?what (would|do) you (like|want) (me|us) to do\b",
+    r"^(so |then )?how (would|do) you (like|want) (me|us) to (proceed|continue|go|move forward)\b",
+]
+# Inline option markers: a sentence (or list) that carries two or more of
+# them offers alternatives even with no "o"/"or" ("Opciones: A) migrar ya,
+# B) esperar."). Counted per sentence, never matched across it, so the scan
+# stays linear. Regexes on the folded sentence.
+_DEFAULT_OFFER_MARKERS = [
+    r"(?:^|\s)\(?[a-d1-4][).](?=\s)",
+    r"\b(?:opcion|option|plan|alternativa|alternative) [a-d1-4]\b",
 ]
 # The irreducible exemption holds inside an agent choice only for the
 # alternative where the OPERATOR is the one acting: a second-person verb or an
@@ -246,7 +277,7 @@ _DEFAULT_OPERATOR_ACTION = [
 # quieres, prefieres) are excluded: their answer picks the agent's next step.
 # Regexes on the lower-cased body, accents KEPT.
 _DEFAULT_DIAGNOSTIC = [
-    r"^((te|se|me)\s+)?(ves|viste|veías|necesitas|necesitabas|necesitaste|ocupas|tienes|tenías|usas|usabas|buscas|recibes|obtienes|abres|cargas|entras|corres|lees|notas|encuentras|sabes|recuerdas|puedes|estás|eres|trabajas|ejecutas|escribes|refieres|acuerdas|conectas|quedas|sientes|ubicas|identificas)\b",
+    r"^((te|se|me|lo|la|los|las)\s+)?(ves|viste|veías|necesitas|necesitabas|necesitaste|ocupas|tienes|tenías|usas|usabas|buscas|recibes|obtienes|abres|cargas|entras|corres|corriste|recibiste|lees|notas|encuentras|sabes|recuerdas|puedes|estás|eres|trabajas|ejecutas|escribes|refieres|acuerdas|conectas|quedas|sientes|ubicas|identificas)\b",
     r"^(te|le|les)\s+(?!(lo|la|los|las|le|les)\b)[a-zñáéíóú]{2,}(a|e|an|en|as|es)\b",
     r"^(se\s+)?(abre|abren|carga|cargan|sale|salen|aparece|aparecen|marca|muestra|truena|responde|regresa|devuelve|arranca|compila|conecta|pasa|llega|salta|dice|pide|da|tarda|jala|sirve|cae|levanta|termina|imprime)\b",
     r"^(do|did|are|were|have|had)\s+you\s+(?!(want|wanna|prefer|like|wish|mind|rather|think|feel|agree|approve|ok|okay|fine|good|happy|comfortable|need me|want me|lean|leaning)\b)[a-z]{2,}\b",
@@ -269,6 +300,8 @@ _KEYS = {
     "solicit_patterns": _DEFAULT_SOLICIT,
     "operator_action_patterns": _DEFAULT_OPERATOR_ACTION,
     "diagnostic_patterns": _DEFAULT_DIAGNOSTIC,
+    "direction_asks": _DEFAULT_DIRECTION,
+    "offer_markers": _DEFAULT_OFFER_MARKERS,
 }
 
 
@@ -479,6 +512,8 @@ def _body(sentence: str) -> str:
 
 def _agent_action(body: str, raw_body: str, cfg: dict) -> str:
     """Which agent-action marker the question carries, or ''."""
+    if _match_any(cfg.get("direction_asks", ()), body):
+        return "direction"
     for opener in cfg.get("openers", ()):
         op = _fold(opener)
         if body == op or body.startswith(op + " ") or body.startswith(op + ","):
@@ -494,22 +529,58 @@ def _agent_action(body: str, raw_body: str, cfg: dict) -> str:
     return ""
 
 
+def _offers(sentence: str, cfg: dict) -> bool:
+    """True when a sentence lays out alternatives: a whole-word o/u/or, or two
+    or more inline option markers ("A) migrar ya, B) esperar")."""
+    folded = _fold(sentence)
+    if _ALTERNATIVES.search(" " + folded + " "):
+        return True
+    count = 0
+    for pat in cfg.get("offer_markers", ()):
+        try:
+            count += len(re.findall(pat, folded))
+        except re.error:
+            continue
+    return count >= 2
+
+
+def _offered_before(prose: str, sentence: str, cfg: dict) -> bool:
+    """Whether alternatives were offered before the closing sentence: in an
+    earlier sentence of the same final paragraph, or in a list of two or more
+    items right before (inside that paragraph or as the paragraph before)."""
+    paragraphs = [p for p in re.split(r"\n\s*\n", prose) if p.strip()]
+    for k in range(len(paragraphs) - 1, -1, -1):
+        sents = _sentences(paragraphs[k])
+        if sentence not in sents:
+            continue
+        idx = len(sents) - 1 - sents[::-1].index(sentence)
+        if any(_offers(s, cfg) for s in sents[:idx]):
+            return True
+        lines = paragraphs[k].splitlines()
+        if k > 0:
+            lines = paragraphs[k - 1].splitlines() + lines
+        return sum(1 for ln in lines if _LIST_ITEM.match(ln)) >= 2
+    return False
+
+
 def is_choice_question(sentence: str, cfg: dict, prose: str = "", prev: str = "") -> str:
     """Return why the sentence is a menu ('opener', 'alternatives',
     'permission', 'selection', 'statement', 'solicit'), or '' when it is not a
     choice ask or its object is an irreducible step the operator performs.
 
     `prev` is the sentence before the closing one; a bare solicitation
-    ("Thoughts?") is a menu only when `prev` offered alternatives."""
+    ("Thoughts?", "How would you like to proceed?") is a menu only when `prev`,
+    an earlier sentence of the final paragraph or a list right before offered
+    alternatives."""
     trimmed = _trim_tail(sentence.strip())
     body = _fold(_body(trimmed))
+    offered = bool(prev) and _offers(prev, cfg) or bool(prose) and _offered_before(prose, sentence, cfg)
     if not trimmed.endswith("?"):
         # Statement-form menus: an imperative ask-for-choice closes the turn
         # the same way a question does.
         if _match_any(cfg.get("statement_menu_patterns", ()), body):
             return "statement"
-        if prev and _match_any(cfg.get("solicit_patterns", ()), body.rstrip(".!¡ ")) \
-                and _ALTERNATIVES.search(" " + _fold(prev) + " "):
+        if _match_any(cfg.get("solicit_patterns", ()), body.rstrip(".!¡ ")) and offered:
             return "solicit"
         return ""
     folded = _fold(trimmed)
@@ -521,7 +592,7 @@ def is_choice_question(sentence: str, cfg: dict, prose: str = "", prev: str = ""
         # he performs) passes; a noun inside the agent's choice does not.
         if not action or _operator_owns_irreducible(body, cfg):
             return ""
-    if action == "opener":
+    if action in ("opener", "direction"):
         return action
     if _ALTERNATIVES.search(" " + body + " "):
         if action:
@@ -538,8 +609,7 @@ def is_choice_question(sentence: str, cfg: dict, prose: str = "", prev: str = ""
             return "alternatives"
     if action in ("permission", "selection"):
         return action
-    if prev and _match_any(cfg.get("solicit_patterns", ()), body) \
-            and _ALTERNATIVES.search(" " + _fold(prev) + " "):
+    if _match_any(cfg.get("solicit_patterns", ()), body) and offered:
         return "solicit"
     if prose and _match_any(cfg.get("selection_patterns", ()), body):
         items = sum(1 for ln in prose.splitlines() if _LIST_ITEM.match(ln))
