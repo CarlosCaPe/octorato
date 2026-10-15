@@ -15,6 +15,12 @@
 #   gap        anything else; `classes_not_blocked` lists the required classes
 #              the census record does not show blocking.
 #
+# tiers (AC-08): a `supported` entry maps all four tiers (mechanical, bulk,
+# build, judgment) to that harness's model slugs, each with a source; brain_doctor
+# `runtime-registry` fails one that does not. A `gap` entry holds `tiers: null`
+# and its comment names what is unmeasured. Mirrored, with sources, in the
+# "Tier bindings per runtime" table of docs/architecture/multi-runtime.md.
+#
 # Ids are fail-closed (check `runtime-census-evidence`): gemini-cli and codex-cli
 # must both be present, only those two plus claude-code and cursor are known, a
 # repeated key fails the load, and every `supported` entry's `evidence` names the
@@ -99,7 +105,11 @@ runtimes:
       - 'JSON {"decision": "deny", "reason": "..."} on stdout'
     # source: census contract.tool_map.
     tool_map: {Bash: run_shell_command, Write: write_file, Edit: replace, mcp: "mcp_<server>_<tool>"}
-    # source: AC-08 binds tiers only for a supported harness (T10).
+    # source: AC-08 binds tiers only for a supported harness (T10); brain_doctor
+    # `runtime-registry` fails a supported entry without all four. Unmeasured: the
+    # model list of the account tier (census account_tier.measured false). The only
+    # slug in the census is gemini-3.8-flash, named by the 429 of the live call
+    # (census live.attempts[].stderr_tail): it exists, its tier is not measured.
     tiers: null
     # source: scripts/merge-hooks-gemini.py --update-registry, generated from hooks.json;
     # do not edit by hand. `*` is projected narrowed to the tools the shim
@@ -139,7 +149,10 @@ runtimes:
     # session-flag hooks.state trusted_hash is ignored, and persisting trust
     # means writing config.toml (/hooks, or app-server config/batchWrite).
     trust_step: non-managed hooks run only after /hooks trust, recorded against the hook's hash
-    # source: AC-08 binds tiers only for a supported harness (T10).
+    # source: AC-08 binds tiers only for a supported harness (T10); brain_doctor
+    # `runtime-registry` fails a supported entry without all four. Unmeasured: the
+    # session model (census account_tier.model null, model_gap) and the slugs the
+    # plan offers (account_tier.planType free); the census names no Codex slug.
     tiers: null
     # source: scripts/merge-hooks-codex.py --update-registry, generated from hooks.json;
     # do not edit by hand. `*` is projected narrowed to the tools the shim

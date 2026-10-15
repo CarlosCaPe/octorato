@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """brain_doctor's Runtime_Registry checks (v11 spec 202610141000, AC-01, AC-03).
 
-runtime-registry         registry/runtimes.yaml present, parseable, complete.
+runtime-registry         registry/runtimes.yaml present, parseable, complete;
+                         a `supported` entry maps the four tiers (AC-08).
 runtime-doc-agreement    same harnesses and statuses as the doc's Runtimes table.
 runtime-census-evidence  fail closed: every census harness present, no unknown
                          harness id, no repeated key, exact statuses, every
@@ -36,9 +37,13 @@ FAKE_CHECKS = [
 ]
 
 
+TIERS = {"mechanical": "m-slug", "bulk": "b-slug", "build": "x-slug", "judgment": "j-slug"}
+
+
 def _entry(name, status, **extra):
     e = {"name": name, "status": status, "instruction_file": "X.md", "hook_config": "h.json",
-         "block_contract": ["exit 2"], "tool_map": {"Bash": "Bash"}, "tiers": None,
+         "block_contract": ["exit 2"], "tool_map": {"Bash": "Bash"},
+         "tiers": dict(TIERS) if status == "supported" else None,
          "unprojected": {"events": [], "matchers": []}}
     e.update(extra)
     return e
@@ -130,6 +135,38 @@ class RuntimeRegistryTest(unittest.TestCase):
         self.assertEqual(r.status, FAIL)
         self.assertIn("partial", r.message)
         self.assertIn("tool_map", r.message)
+
+    # (a2) AC-08: a supported entry maps the four tiers; a gap entry is not bound
+    def test_supported_without_tiers_fails(self):
+        d = self.mutated()
+        d["runtimes"]["claude-code"]["tiers"] = None
+        self.write(d)
+        r = brain_doctor.check_runtime_registry(False, self.reg)
+        self.assertEqual(r.status, FAIL)
+        self.assertIn("claude-code", r.message)
+        self.assertIn("AC-08", r.message)
+
+    def test_supported_missing_or_empty_tier_fails(self):
+        d = self.mutated()
+        del d["runtimes"]["claude-code"]["tiers"]["judgment"]
+        d["runtimes"]["claude-code"]["tiers"]["bulk"] = " "
+        self.write(d)
+        r = brain_doctor.check_runtime_registry(False, self.reg)
+        self.assertEqual(r.status, FAIL)
+        self.assertIn("bulk, judgment", r.message)
+
+    def test_supported_with_fifth_tier_fails(self):
+        d = self.mutated()
+        d["runtimes"]["claude-code"]["tiers"]["vendor-special"] = "x"
+        self.write(d)
+        r = brain_doctor.check_runtime_registry(False, self.reg)
+        self.assertEqual(r.status, FAIL)
+        self.assertIn("vendor-special", r.message)
+
+    def test_gap_entry_with_null_tiers_passes(self):
+        self.assertIsNone(BASE["runtimes"]["gemini-cli"]["tiers"])
+        r = brain_doctor.check_runtime_registry(False, self.reg)
+        self.assertEqual(r.status, PASS, r.message)
 
     # (b) agreement with the doc
     def test_doc_agreement_passes_and_ignores_later_tables(self):

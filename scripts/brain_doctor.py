@@ -2972,6 +2972,27 @@ CENSUS_REQUIRED_CLASSES = ("shell", "file_write", "file_edit")
 _EVIDENCE_CHECK_RE = re.compile(r"\bbrain_doctor\s+([a-z0-9][a-z0-9-]*)")
 _RUNTIME_FIELDS = ("name", "status", "instruction_file", "hook_config",
                    "block_contract", "tool_map", "tiers", "unprojected")
+# AC-08: a `supported` harness maps exactly these four tiers to its model slugs.
+RUNTIME_TIERS = ("mechanical", "bulk", "build", "judgment")
+
+
+def runtime_tier_problems(rid: str, entry: dict) -> list:
+    """AC-08, for a `supported` entry: `tiers` is a mapping of exactly the four
+    tiers, each a non-empty string. A `gap` entry is not bound and not checked."""
+    if entry.get("status") != "supported":
+        return []
+    tiers = entry.get("tiers")
+    if not isinstance(tiers, dict):
+        return [f"{rid}: supported with `tiers` {tiers!r}, not a mapping of "
+                f"{', '.join(RUNTIME_TIERS)} (AC-08)"]
+    missing = [t for t in RUNTIME_TIERS if not isinstance(tiers.get(t), str) or not tiers[t].strip()]
+    extra = sorted(str(k) for k in tiers if k not in RUNTIME_TIERS)
+    out = []
+    if missing:
+        out.append(f"{rid}: supported with no model slug for tier(s) {', '.join(missing)} (AC-08)")
+    if extra:
+        out.append(f"{rid}: unknown tier(s) {', '.join(extra)}; the ladder has four (AC-08)")
+    return out
 
 
 def _yaml_load_unique(text: str):
@@ -3021,6 +3042,7 @@ def load_runtime_registry(path: Path | None = None):
                             f"{', '.join(RUNTIME_STATUSES)}")
         if entry.get("status") == "supported" and not entry.get("evidence"):
             problems.append(f"{rid}: supported with no `evidence` naming a brain_doctor check")
+        problems.extend(runtime_tier_problems(rid, entry))
     return runtimes, problems
 
 
@@ -3064,7 +3086,8 @@ def census_blocking_gaps(record) -> list:
 
 def check_runtime_registry(fix: bool, path: Path | None = None) -> Result:
     """AC-01: registry/runtimes.yaml is present, parses, and every entry carries
-    the Runtime_Registry fields with a status of `supported` or `gap`."""
+    the Runtime_Registry fields with a status of `supported` or `gap`. AC-08: every
+    `supported` entry maps the four tiers to model slugs."""
     key = "runtime-registry"
     runtimes, problems = load_runtime_registry(path)
     if problems:
