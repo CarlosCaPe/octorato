@@ -59,9 +59,8 @@ of scripts/runtime_census.py):
 
   Codex CLI (PreToolUse)
     Bash {command, workdir?}               -> Bash {command}; cwd joins workdir;
-      PLUS, when a command segment's argv0 is apply_patch/applypatch (Codex
-      applies those itself), every file operation of its inline patch, read
-      as below; an invocation with no inline patch body blocks
+      PLUS every `*** Begin Patch` ... `*** End Patch` span in the command
+      text, whatever runs it, read as below (see shell_patch_ops)
     apply_patch {command: <patch text>}    -> one gate call PER file operation:
       *** Add File: p      -> Write {p, content}
       *** Update File: p   -> Edit {p, old_string, new_string} (context kept)
@@ -256,7 +255,7 @@ _PATCH_OP = re.compile(r"^\*\*\* (Add|Update|Delete) File: (.+)$")
 _MOVE_TO = re.compile(r"^\*\*\* Move to: (.+)$")
 
 
-def parse_apply_patch(text, cwd: str) -> list[tuple[str, dict]]:
+def parse_apply_patch(text, cwd: str, relative_ok: bool = True) -> list[tuple[str, dict]]:
     """Every file operation of an apply_patch body as (tool_name, tool_input).
 
     Strict: a line outside the grammar fails the parse, so a patch this reader
@@ -272,7 +271,17 @@ def parse_apply_patch(text, cwd: str) -> list[tuple[str, dict]]:
     body = lines[1:-1]
 
     def _abs(path: str) -> str:
-        return _path(cwd, path.strip(), "apply_patch file header without a path")
+        path = path.strip()
+        if not relative_ok:
+            # Inside a shell command the directory the patch applies in is
+            # whatever the command made it (cd, pushd, a subshell, `-C`), and
+            # a path the shell may expand is not the path written here.
+            _require(not any(c in path for c in "$`\\"),
+                     f"patch path {path[:80]!r} holds shell expansion")
+            _require(os.path.isabs(path) or path.startswith("~"),
+                     f"relative patch path {path[:80]!r} in a shell command that "
+                     "is not one bare apply_patch invocation")
+        return _path(cwd, path, "apply_patch file header without a path")
 
     def _header(line: str):
         # Matched on the stripped line: an indented header is still a file
@@ -327,32 +336,36 @@ def parse_apply_patch(text, cwd: str) -> list[tuple[str, dict]]:
     return ops
 
 
-# Codex intercepts a shell command whose argv0 is apply_patch / applypatch and
-# applies its patch as a file write, so the Bash call is ALSO a file operation.
-# argv0 is found after any command separator or quote (conservative: a quoted
-# mention counts, so `echo "apply_patch"` without a patch body blocks).
-_APPLY_PATCH_ARGV0 = re.compile(
-    r"""(?:^|[\n;&|(){}`'"])\s*"""
-    r"""(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*"""
-    r"""(?:(?:command|exec|env|sudo|time|nohup|builtin)\s+)*"""
-    r"""(?:\S*/)?(?:apply_patch|applypatch)(?=$|[\s<>;&|)'"`])""")
+# Codex applies a patch a shell command hands to apply_patch as a file write.
+# Which word runs it is NOT read: argv0 has endless spellings (`\apply_patch`,
+# `env -i`, `${a}_patch`, xargs), so every patch span in the command text is
+# gated, whoever would run it. This is a speed bump for honest accidents, not a
+# boundary: a patch read from a file under any spelling has no text here. The
+# Codex boundary is capability (sandbox writable roots), see
+# docs/architecture/v8-arming-surface.md "Second harnesses".
 _PATCH_SPAN = re.compile(r"\*\*\* Begin Patch.*?\*\*\* End Patch", re.S)
+# The one shape where a relative path has a known base: the whole command is a
+# single apply_patch with a QUOTED heredoc delimiter (no expansion in the body).
+_SOLE_APPLY_PATCH = re.compile(r"\s*apply_patch[ \t]+<<(['\"])(\w+)\1[ \t]*\n.*\n\2\s*", re.S)
 
 
 def shell_patch_ops(cmd: str, cwd: str) -> list[tuple[str, dict]]:
-    """File operations of every apply_patch a shell command runs; [] when none.
+    """File operations of every patch span in a shell command; [] when none.
 
-    The patch body is taken from the command text itself (a heredoc or a quoted
-    argument both carry it verbatim). An invocation with no readable body, a
-    patch read from a file or a pipe, has no path to show the gate and fails.
+    Blocks (TranslationError) on a `Begin Patch` or `End Patch` mention that
+    does not pair into a span, and on a relative path anywhere except the
+    sole-invocation shape, where the payload cwd is the base.
     """
-    if not _APPLY_PATCH_ARGV0.search(cmd):
+    if "Begin Patch" not in cmd and "End Patch" not in cmd:
         return []
     spans = _PATCH_SPAN.findall(cmd)
-    _require(bool(spans), "shell command runs apply_patch with no inline patch body")
+    _require(bool(spans) and cmd.count("Begin Patch") == len(spans)
+             and cmd.count("End Patch") == len(spans),
+             "shell command holds a Begin/End Patch marker that is not one closed span")
+    sole = len(spans) == 1 and bool(_SOLE_APPLY_PATCH.fullmatch(cmd))
     ops = []
     for span in spans:
-        ops.extend(parse_apply_patch(span, cwd))
+        ops.extend(parse_apply_patch(span, cwd, relative_ok=sole))
     return ops
 
 

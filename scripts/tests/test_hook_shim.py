@@ -78,12 +78,16 @@ class Translation(unittest.TestCase):
         self.assertEqual(calls[0]["tool_input"]["file_path"],
                          os.path.normpath(os.path.join(os.path.abspath(os.sep + "w"), "b.txt")))
 
-    def test_shell_apply_patch_argv0_only(self):
+    def test_shell_patch_spans_ignore_argv0(self):
         body = "*** Begin Patch\n*** Delete File: /x/y\n*** End Patch"
-        self.assertEqual(len(shim.shell_patch_ops("cd /w && apply_patch <<'E'\n" + body + "\nE", "/w")), 1)
+        self.assertEqual(len(shim.shell_patch_ops("${a}_patch <<'E'\n" + body + "\nE", "/w")), 1)
         self.assertEqual(shim.shell_patch_ops("grep -n apply_patch notes.txt", "/w"), [])
         with self.assertRaises(shim.TranslationError):
-            shim.shell_patch_ops("applypatch < change.patch", "/w")
+            shim.shell_patch_ops("echo '*** Begin Patch'", "/w")
+        rel = "*** Begin Patch\n*** Delete File: y\n*** End Patch"
+        self.assertEqual(len(shim.shell_patch_ops("apply_patch <<'E'\n" + rel + "\nE\n", "/w")), 1)
+        with self.assertRaises(shim.TranslationError):
+            shim.shell_patch_ops("cd .. && apply_patch <<'E'\n" + rel + "\nE\n", "/w")
 
 
 class GateVerdict(unittest.TestCase):

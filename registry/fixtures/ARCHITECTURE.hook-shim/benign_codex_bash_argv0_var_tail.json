@@ -12,10 +12,7 @@
     "tool_use_id": "toolu_shim",
     "tool_name": "Bash",
     "tool_input": {
-      "command": "apply_patch < change.patch"
+      "command": "x=apply_patc; ${x}h <<'EOF'\n*** Begin Patch\n*** Add File: {{SANDBOX}}/wt/shim/hooks.json\n+x\n*** End Patch\nEOF\n"
     }
-  },
-  "_setup": {
-    "expect_reason": "no inline patch body"
   }
 }

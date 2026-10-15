@@ -12,7 +12,7 @@
     "tool_use_id": "toolu_shim",
     "tool_name": "Bash",
     "tool_input": {
-      "command": "true && apply_patch <<'EOF'\n*** Begin Patch\n*** Add File: hooks.json\n+x\n*** End Patch\nEOF\n"
+      "command": "$(printf apply_patch) <<'EOF'\n*** Begin Patch\n*** Add File: {{SANDBOX}}/wt/shim/hooks.json\n+x\n*** End Patch\nEOF\n"
     }
   }
 }
