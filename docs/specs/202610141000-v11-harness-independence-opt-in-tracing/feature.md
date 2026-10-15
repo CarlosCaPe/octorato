@@ -1,4 +1,4 @@
-# Feature: harness independence and opt-in tracing (next v10 minor)
+# Feature: harness independence and opt-in tracing (next v11 minor)
 
 > **Status:** draft
 > **Spec-Format:** ears-1
@@ -86,14 +86,14 @@ An arm that says nothing is `deny`. The upstream tracing hook runs only for a se
 
 ## Non-Functional Requirements
 
-- No guarantee from v7 to v10 is weakened on Claude Code: every existing gate keeps its fixtures and its decisions.
+- No guarantee from v7 to v11 is weakened on Claude Code: every existing gate keeps its fixtures and its decisions.
 - No census, fixture or test reads client data; tracked census records and fixtures carry no arm name and no `$HOME` path, and guard fixtures use synthetic arm roots under the temporary HOME that `gate_selftest.py` already isolates.
 - No secret, API key or message body is written to any tracked file.
 - Every number in a commit or doc carries its measurement mode and source.
 
 ## Release Criterion
 
-The minor release ships when every criterion has a CONVERGED verdict. If the Runtime_Census marks both new harnesses as `gap`, the release ships the registry, the census and the whole tracing track, with both gaps documented, and adds no harness.
+The minor release ships when every criterion has a CONVERGED verdict, and only after v11.0.0 is cut, so the version bump lands on v11.1.0. It becomes a major release (v12, cut with the `Octorato-Major:` trailer) only if the `plugin` kind or the census changes the schema of `packages.lock.json` or the block contract of an existing gate; an additive change stays minor (`docs/wiki/Self-Growth.md`). If the Runtime_Census marks both new harnesses as `gap`, the release ships the registry, the census and the whole tracing track, with both gaps documented, and adds no harness.
 
 ## Out of Scope
 
@@ -101,10 +101,11 @@ The minor release ships when every criterion has a CONVERGED verdict. If the Run
 - LangSmith Deployment and any self-hosted LangSmith.
 - The OpenTelemetry route to LangSmith. LangSmith documents only OTLP traces, and Claude Code's trace export is beta; revisit when both are stable.
 - Hosted tools in Codex CLI, which its `PreToolUse` does not cover.
-- Any work of the major version in progress in another session.
+- The v11 work merged in #417 (no reply unreviewed); this spec builds on it and does not change it.
 
 ## Revision History
 
+- 2026-10-15: rebased on master after v11 (#417, `e3b5141`); retargeted from the next v10 minor to the next v11 minor; Release Criterion states when it would become v12.
 - 2026-10-14: draft from the LangChain and LangGraph deep research, the Gemini CLI and Codex CLI hook documentation, and the LangSmith Claude Code plugin documentation.
 - 2026-10-14: analyze pass (A01 to A18) applied. The tracer is a signed wrapper plugin whose guard decides whether the upstream hook process starts; octo pkg gains kind `plugin`; the flip to `allow` gets its own gate; shim, guard and registry join the arming surface; Gemini and Codex facts restated from primary pages, the unsupported Enterprise and experimental-flag claims removed; Claude Code and Cursor keep status on existing evidence; census method made deterministic plus one live call; failure modes for the latency bound named.
 - 2026-10-14: analyze pass 2 (B01 to B07) applied. The installed wrapper and the plugin registration files join the arming surface and the Doctor hashes the wrapper against its lock; the plugin install is an operator terminal step; the latency bound covers every event the wrapper registers; the guard's no-arm and deny exit is a no-op; the Doctor recomputes a `supported` status from its census record.
