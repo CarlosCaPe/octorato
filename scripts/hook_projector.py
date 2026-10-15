@@ -31,13 +31,21 @@ block every read. `*` becomes the tools the shim translates (shell, file write,
 file edit, MCP). The tools outside that set are the residual of `*`; this is
 printed on every run.
 
+Matchers are derived from the shim's own table, g__shim__hook.TOOL_YIELDS:
+a hooks.json token (a Claude tool name) projects to EVERY harness tool the
+shim can translate into it. A Codex Bash call can carry a `*** Begin Patch`
+span that the shim turns into Write/Edit calls, so a Write|Edit gate projects
+on Codex as `^(apply_patch|Bash)$`. A future translation added to the shim
+widens the projection with it instead of drifting from it.
+
 Matchers are anchored `^(a|b)$`. Gemini CLI tests a matcher with
 `new RegExp(matcher).test(toolName)` (bundle source, matchesToolName), a
 substring search, so an unanchored `replace` would also fire on any MCP tool
-whose name contains it; a matcher that is not a valid regex is compared by
-equality, so a bare `*` would match nothing. Codex CLI compiles its matcher
-(its binary carries "invalid matcher"); whether it searches or full-matches is
-not documented locally, and an anchored regex reads the same either way.
+whose name contains it. Gemini does match every tool for a `*` matcher
+(matchesContext); `*` is narrowed anyway because the fail-closed shim blocks a
+tool it cannot translate. Codex CLI compiles its matcher (its binary carries
+"invalid matcher"); whether it searches or full-matches is not documented
+locally, and an anchored regex reads the same either way.
 
 Every projected hook carries an explicit timeout of HOOK_TIMEOUT_S, above the
 shim's GATE_BUDGET_S: a harness that kills the shim first reads it as a
@@ -122,6 +130,36 @@ class Plan:
     skipped: list = field(default_factory=list)      # [(command, matcher, reason)]
     unprojected_events: list = field(default_factory=list)
     unprojected_matchers: list = field(default_factory=list)
+
+
+_CLASS_OF_TOKEN = {"Bash": "shell", "Write": "file_write", "Edit": "file_edit"}
+
+
+def shim_table(harness_id: str) -> dict:
+    """g__shim__hook.TOOL_YIELDS[harness_id]: harness tool regex -> Claude tools."""
+    sys.path.insert(0, str(HERE))
+    import g__shim__hook  # noqa: E402
+    return g__shim__hook.TOOL_YIELDS[harness_id]
+
+
+def _piece_class(tool_re: str, yields, token: str, shell_tool: str) -> str:
+    if tool_re == shell_tool:
+        return "shell"
+    if "mcp" in yields:
+        return "mcp"
+    return _CLASS_OF_TOKEN.get(token) or _CLASS_OF_TOKEN.get(yields[0], "other")
+
+
+def table_pieces(harness_id: str, token: str, shell_tool: str) -> list:
+    """Every harness tool the shim can translate into the Claude tool `token`."""
+    return [Piece(t, _piece_class(t, y, token, shell_tool))
+            for t, y in shim_table(harness_id).items() if token in y]
+
+
+def table_wildcard(harness_id: str, shell_tool: str) -> list:
+    """`*` narrowed: every harness tool the shim translates at all."""
+    return [Piece(t, _piece_class(t, y, y[0], shell_tool))
+            for t, y in shim_table(harness_id).items()]
 
 
 # --- sources ----------------------------------------------------------------
@@ -438,16 +476,26 @@ def run(spec: HarnessSpec, argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     try:
+        entry = registry_entry(args.registry, spec.id)
+    except Exception as exc:
+        print(f"  ✗ {spec.script}: cannot read {args.registry}: {type(exc).__name__}: {exc}",
+              file=sys.stderr)
+        return 2
+    status = entry.get("status")
+    if not args.check and not args.update_registry and status != "supported":
+        print(f"  ✗ {spec.script}: refused. {spec.id} is `{status}` in {args.registry}, not "
+              "`supported`: no census record shows it blocking the shell, file write and file "
+              "edit classes (AC-03, AC-04), so no hook config is written. Run with --check for "
+              "the dry-run projection.", file=sys.stderr)
+        return 2
+    try:
         hooks = load_json(args.hooks)
         if hooks is None:
-            print(f"  no {args.hooks}: nothing to project")
-            return 0
+            raise FileNotFoundError(f"{args.hooks} is missing; there is no source to project")
         gates = fail_closed_gates(args.rules)
-        entry = registry_entry(args.registry, spec.id)
     except Exception as exc:
         print(f"  ✗ {spec.script}: cannot read sources: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
-    status = entry.get("status")
     census = args.census
     if census is None and isinstance(entry.get("census"), str):
         census = args.registry.resolve().parent.parent / entry["census"]
@@ -507,12 +555,6 @@ def run(spec: HarnessSpec, argv: list[str] | None = None) -> int:
             print(f"  {args.registry}: {spec.id} unprojected lists already in sync")
         return 0
 
-    if not supported:
-        print(f"  ✗ {spec.script}: refused. {spec.id} is `{status}` in {args.registry}, not "
-              "`supported`: no census record shows it blocking the shell, file write and file "
-              "edit classes (AC-03, AC-04), so no hook config is written. Run with --check for "
-              "the dry-run projection.", file=sys.stderr)
-        return 2
     if args.out is None:
         print(f"  ✗ {spec.script}: --out is required to write (no default target)", file=sys.stderr)
         return 2

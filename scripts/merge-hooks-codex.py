@@ -21,10 +21,11 @@ Shape written (census contract, learn.chatgpt.com/docs/hooks; field names
                  "command": "python3 <shim-dir>/g__shim__hook.py --harness codex-cli --gate <gate>.py",
                  "timeout": 60}]}]}}
 
-Tool-name map (registry/census/codex.json contract.tool_map):
-  Bash  -> Bash         (shell)
-  Write -> apply_patch  (file_write)
-  Edit  -> apply_patch  (file_edit)
+Tool-name map, derived from g__shim__hook.TOOL_YIELDS["codex-cli"] (every
+Codex tool the shim can translate into the Claude tool):
+  Bash  -> Bash               (shell)
+  Write -> Bash, apply_patch  (a `*** Begin Patch` span in a shell command is a write)
+  Edit  -> Bash, apply_patch
   mcp__<server>__<tool> -> unchanged (mcp)
   *     -> Bash, apply_patch, mcp__.+
   anything else (Agent, Skill, NotebookEdit, MultiEdit): unprojected.
@@ -60,17 +61,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import hook_projector as hp  # noqa: E402
 
-_BUILTIN = {
-    "Bash": hp.Piece("Bash", "shell"),
-    "Write": hp.Piece("apply_patch", "file_write"),
-    "Edit": hp.Piece("apply_patch", "file_edit"),
-}
-WILDCARD = [_BUILTIN["Bash"], _BUILTIN["Write"], _BUILTIN["Edit"], hp.Piece("mcp__.+", "mcp")]
+_SHELL_TOOL = "Bash"
+WILDCARD = hp.table_wildcard("codex-cli", _SHELL_TOOL)
 
 
 def translate(token: str):
-    if token in _BUILTIN:
-        return [_BUILTIN[token]]
+    pieces = hp.table_pieces("codex-cli", token, _SHELL_TOOL)
+    if pieces:
+        return pieces
     if hp._CLAUDE_MCP.match(token):
         return [hp.Piece(re.escape(token), "mcp")]
     return None

@@ -9,6 +9,7 @@ runtimes.yaml and census record; no real home config is read or written.
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import json
 import os
 import shutil
@@ -173,7 +174,9 @@ class TestShapeAndBudget(_Env):
         groups = json.loads(self.out().read_text(encoding="utf-8"))["hooks"]["PreToolUse"]
         matchers = [g["matcher"] for g in groups]
         self.assertIn("^(Bash)$", matchers)
-        self.assertIn("^(apply_patch)$", matchers)
+        # a shell call can carry a patch the shim turns into Write/Edit
+        self.assertIn("^(Bash|apply_patch)$", matchers)
+        self.assertNotIn("^(apply_patch)$", matchers)
         self.assertIn("^(mcp__mail__send|Bash)$", matchers)
         self.assertIn("^(Bash|apply_patch|mcp__.+)$", matchers)
         for g in groups:
@@ -320,6 +323,133 @@ class TestCodexSandbox(_Env):
         r = self.run_proj(CODEX, "--out", str(self.out()))
         self.assertEqual(r.returncode, 2)
         self.assertNotIn("sandbox_mode", r.stdout + r.stderr)
+
+
+def _load_spec(path):
+    spec_obj = importlib.util.spec_from_file_location(path.stem.replace("-", "_"), path)
+    mod = importlib.util.module_from_spec(spec_obj)
+    spec_obj.loader.exec_module(mod)
+    return mod
+
+
+def _harness_name(harness_id, claude_mcp):
+    m = hp._CLAUDE_MCP.match(claude_mcp)
+    return f"mcp_{m.group(1)}_{m.group(2)}" if harness_id == "gemini-cli" else claude_mcp
+
+
+def uncovered(spec, hooks, gates, scripts_dir):
+    """(gate, harness tool) pairs where the shim can translate the harness tool
+    into a Claude tool the gate's hooks.json matcher names, but the projected
+    matcher does not fire on that harness tool."""
+    import re as _re
+    table = importlib.import_module("g__shim__hook").TOOL_YIELDS[spec.id]
+    plan = hp.build_plan(hooks, gates, spec, scripts_dir)
+    groups = hp.render(plan, spec, "/x", None)
+    misses = []
+    for (src, _pieces, served), grp in zip(plan.groups, groups):
+        tokens = hp._tokens(src)
+        mcp_tokens = [t for t in tokens if hp._CLAUDE_MCP.match(t)]
+        for tool_re, yields in table.items():
+            if "mcp" in yields:
+                names = [_harness_name(spec.id, t) for t in mcp_tokens]
+                if "*" in tokens:
+                    names.append(_harness_name(spec.id, "mcp__srv__tool"))
+            elif "*" in tokens or set(yields) & set(tokens):
+                names = [tool_re]
+            else:
+                names = []
+            for n in names:
+                if not _re.fullmatch(grp["matcher"], n):
+                    misses.extend((g, n) for g in served)
+    return misses
+
+
+class TestMatcherCoversShimTranslation(unittest.TestCase):
+    """Every harness tool the shim can translate into a gate's Claude tool is
+    covered by that gate's projected matcher, for every projected gate."""
+
+    def setUp(self):
+        self.hooks = json.loads((ROOT / "hooks.json").read_text(encoding="utf-8"))
+        self.gates = hp.fail_closed_gates(ROOT / "registry" / "rules.yaml")
+
+    def test_both_harnesses_cover(self):
+        for path in (GEMINI, CODEX):
+            spec = _load_spec(path).SPEC
+            plan = hp.build_plan(self.hooks, self.gates, spec, SCRIPTS)
+            self.assertGreater(len(plan.projected), 0)
+            self.assertEqual(uncovered(spec, self.hooks, self.gates, SCRIPTS), [], spec.id)
+
+    def test_reverted_codex_matcher_is_caught(self):
+        mod = _load_spec(CODEX)
+        legacy = {"Bash": hp.Piece("Bash", "shell"), "Write": hp.Piece("apply_patch", "file_write"),
+                  "Edit": hp.Piece("apply_patch", "file_edit")}
+
+        def old_translate(tok):
+            return [legacy[tok]] if tok in legacy else mod.translate(tok)
+
+        import dataclasses
+        reverted = dataclasses.replace(mod.SPEC, translate=old_translate)
+        misses = uncovered(reverted, self.hooks, self.gates, SCRIPTS)
+        self.assertIn(("g__pretool-write__tree-owner.py", "Bash"), misses)
+
+
+class TestShimTableMatchesTranslators(unittest.TestCase):
+    """TOOL_YIELDS lists every Claude tool the shim's translators produce."""
+
+    def _yields(self, harness, payload):
+        shim = importlib.import_module("g__shim__hook")
+        out = set()
+        for call in shim.translate(harness, json.dumps(payload)):
+            name = call["tool_name"]
+            out.add("mcp" if name.startswith("mcp__") else name)
+        return out
+
+    def _check(self, harness, tool, payload, must):
+        import re as _re
+        shim = importlib.import_module("g__shim__hook")
+        got = self._yields(harness, payload)
+        self.assertTrue(must <= got, (tool, got))
+        keys = [k for k in shim.TOOL_YIELDS[harness] if _re.fullmatch(k, tool)]
+        self.assertEqual(len(keys), 1, (harness, tool))
+        self.assertTrue(got <= set(shim.TOOL_YIELDS[harness][keys[0]]), (harness, tool, got))
+
+    def test_codex(self):
+        base = {"hook_event_name": "PreToolUse", "cwd": "/w", "session_id": "s"}
+        patch = ("*** Begin Patch\n*** Add File: /w/a.txt\n+x\n*** Update File: /w/b.txt\n"
+                 "@@\n-a\n+b\n*** End Patch")
+        self._check("codex-cli", "Bash", dict(base, tool_name="Bash", tool_input={
+            "command": "apply_patch <<'EOF'\n" + patch + "\nEOF"}), {"Bash", "Write", "Edit"})
+        self._check("codex-cli", "apply_patch", dict(base, tool_name="apply_patch",
+                    tool_input={"command": patch}), {"Write", "Edit"})
+        self._check("codex-cli", "mcp__srv__tool", dict(base, tool_name="mcp__srv__tool",
+                    tool_input={}), {"mcp"})
+
+    def test_gemini(self):
+        base = {"hook_event_name": "BeforeTool", "cwd": "/w", "session_id": "s"}
+        self._check("gemini-cli", "run_shell_command", dict(base, tool_name="run_shell_command",
+                    tool_input={"command": "ls"}), {"Bash"})
+        self._check("gemini-cli", "write_file", dict(base, tool_name="write_file",
+                    tool_input={"file_path": "/w/a", "content": ""}), {"Write"})
+        self._check("gemini-cli", "replace", dict(base, tool_name="replace", tool_input={
+            "file_path": "/w/a", "old_string": "a", "new_string": "b"}), {"Edit"})
+        self._check("gemini-cli", "mcp_srv_tool", dict(base, tool_name="mcp_srv_tool", tool_input={},
+                    mcp_context={"server_name": "srv", "tool_name": "tool"}), {"mcp"})
+
+
+class TestMissingSources(_Env):
+    def test_missing_hooks_is_an_error(self):
+        self.hooks.unlink()
+        self.set_status("supported", "gap")
+        r = self.run_proj(GEMINI, "--out", str(self.out()))
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("missing", r.stderr)
+        self.assertEqual(self.run_proj(GEMINI, "--check").returncode, 2)
+
+    def test_gap_refusal_precedes_missing_hooks(self):
+        self.hooks.unlink()
+        r = self.run_proj(CODEX, "--out", str(self.out()))
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("refused", r.stderr)
 
 
 class TestRealRegistryInSync(unittest.TestCase):

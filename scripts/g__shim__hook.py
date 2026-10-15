@@ -416,6 +416,28 @@ def translate_codex(p: dict) -> list[dict]:
 
 TRANSLATORS = {"gemini-cli": translate_gemini, "codex-cli": translate_codex}
 
+# Which Claude tool names each harness tool can be translated into, as the
+# translators above produce them. The projectors (scripts/hook_projector.py)
+# derive every matcher from this table, so a gate on Write sees every harness
+# tool that can become a Write here. Keys are anchored-regex alternatives of
+# the harness tool name; "mcp" stands for any mcp__<server>__<tool>.
+# scripts/tests/test_hook_projectors.py drives the translators and fails when
+# one yields a tool this table does not list.
+TOOL_YIELDS = {
+    "gemini-cli": {
+        "run_shell_command": ("Bash",),
+        "write_file": ("Write",),
+        "replace": ("Edit",),
+        "mcp_.+": ("mcp",),
+    },
+    "codex-cli": {
+        # a `*** Begin Patch` span in the command becomes Write/Edit calls
+        "Bash": ("Bash", "Write", "Edit"),
+        "apply_patch": ("Write", "Edit"),
+        "mcp__.+": ("mcp",),
+    },
+}
+
 
 def _no_duplicate_keys(pairs):
     # Two readers of one payload can disagree on a repeated key (first wins

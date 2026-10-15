@@ -21,7 +21,8 @@ Shape written (bundle docs/hooks/reference.md, "Configuration schema"):
 so 60 s is written as 60000. Foreign keys and foreign hooks are kept; only the
 hooks whose command runs the shim with `--harness gemini-cli` are managed.
 
-Tool-name map (registry/census/gemini.json contract.tool_map, docs/tools/*):
+Tool-name map, derived from g__shim__hook.TOOL_YIELDS["gemini-cli"] (every
+Gemini tool the shim can translate into the Claude tool; census contract.tool_map):
   Bash  -> run_shell_command (shell)
   Write -> write_file        (file_write)
   Edit  -> replace           (file_edit)
@@ -50,17 +51,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import hook_projector as hp  # noqa: E402
 
 _GEMINI_MCP_MAX = 63
-_BUILTIN = {
-    "Bash": hp.Piece("run_shell_command", "shell"),
-    "Write": hp.Piece("write_file", "file_write"),
-    "Edit": hp.Piece("replace", "file_edit"),
-}
-WILDCARD = [_BUILTIN["Bash"], _BUILTIN["Write"], _BUILTIN["Edit"], hp.Piece("mcp_.+", "mcp")]
+_SHELL_TOOL = "run_shell_command"
+WILDCARD = hp.table_wildcard("gemini-cli", _SHELL_TOOL)
 
 
 def translate(token: str):
-    if token in _BUILTIN:
-        return [_BUILTIN[token]]
+    pieces = hp.table_pieces("gemini-cli", token, _SHELL_TOOL)
+    if pieces:
+        return pieces
     m = hp._CLAUDE_MCP.match(token)
     if m:
         name = f"mcp_{m.group(1)}_{m.group(2)}"
