@@ -464,12 +464,23 @@ def _journal_deny(reason, payload=None) -> None:
         pass
 
 
+def _read_payload(stream) -> str:
+    """The Stop payload as UTF-8, whatever the locale. The harness writes
+    UTF-8 JSON, but on Windows sys.stdin decodes with the ANSI code page
+    (cp1252), so every non-ASCII reply digested to a different hash than the
+    reviewer's receipt and a reviewed reply could never pass."""
+    buf = getattr(stream, "buffer", None)
+    if buf is None:
+        return stream.read()
+    return buf.read().decode("utf-8", errors="replace")
+
+
 def main() -> int:
     if _off():
         return 0
     data = None
     try:
-        data = json.loads(sys.stdin.read())
+        data = json.loads(_read_payload(sys.stdin))
         if not isinstance(data, dict):
             raise GateError("the Stop payload is not a JSON object")
         code, message = decide(data)
@@ -605,6 +616,12 @@ def _unit_checks() -> list:
     c = panel_digest.digest("The fix is out. Tests pass.", recipients=["operator"])
     if a != b or a == c:
         fails.append("AC-01: whitespace changed the digest or a changed word did not")
+    import io
+    accented = "¿Te armo la respuesta? Procedencia: Basis: x · Engine: y"
+    raw = json.dumps({"last_assistant_message": accented}, ensure_ascii=False).encode("utf-8")
+    got = json.loads(_read_payload(io.TextIOWrapper(io.BytesIO(raw), encoding="cp1252")))
+    if got.get("last_assistant_message") != accented:
+        fails.append("stdin: a UTF-8 payload read through a cp1252 stdin lost its accents")
     stub = types.SimpleNamespace(**{n: (lambda *x: None) for n in _HELPERS if n != "_origin"})
     try:
         check_helpers(stub)
@@ -660,7 +677,7 @@ def _selftest() -> int:
         print(f"selftest FAIL: {nv} block + {len(cases) - nv} allow "
               f"({Path(__file__).name} vs {fdir.name}): " + "; ".join(fails), file=sys.stderr)
         return 1
-    print(f"selftest PASS: {nv} block + {len(cases) - nv} allow + 2 unit checks "
+    print(f"selftest PASS: {nv} block + {len(cases) - nv} allow + 3 unit checks "
           f"({Path(__file__).name} vs {fdir.name})")
     return 0
 
