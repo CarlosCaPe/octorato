@@ -573,6 +573,26 @@ edges:
       artifact proves nothing. Edge added 2026-08-18 when the blind spot was
       found and closed.
 
+  - id: no-menu-question-gate
+    concept: "no-menu-question / a reply never closes on a choice question the agent could decide with /choice"
+    appears_in:
+      - CLAUDE.md                                       # anchor "No menu questions"
+      - commands/choice.md                              # the method that replaces the menu
+      - scripts/g__stop__no-menu-question.py            # the Stop gate (the mechanism)
+      - registry/no-menu-question.yaml                  # openers + irreducible operator steps (config-first)
+      - registry/rules.yaml                             # COMMS.no-menu-question
+      - registry/fixtures/COMMS.no-menu-question        # the liveness proof (violation/benign twins)
+      - hooks.json                                      # the Stop wiring
+      - docs/architecture/v7-nothing-ships-unverified.md # full text under "The draft gates in full"
+      - skills/ask-with-recommendation/SKILL.md         # the one remaining question still carries its recommendation
+    kind: appears_in
+    note: >-
+      The gate reads the SHAPE of the closing sentence (a trailing question
+      with alternatives or a go-ahead opener), so it is coupled to the config
+      lists: add an opener or an irreducible step in the YAML and add the
+      fixture twin in the same commit, or the selftest proves nothing about
+      the new entry. Edge added 2026-10-15 with the operator directive.
+
   - id: wa-guardia-gate
     concept: "guardia armada al cerrar un turno esperando respuesta de un tercero"
     appears_in:

@@ -180,6 +180,31 @@ rules:
     locator: scripts/g__stop__defer-today.py --selftest registry/fixtures/FLOW.do-it-today
     expect: 0
   liveness_required: FIRES
+- id: COMMS.no-menu-question
+  title: No menu questions — a reply never closes on a choice question the agent
+    could decide with /choice; only the irreducible operator step remains, as a step
+  category: COMMS
+  source:
+    file: CLAUDE.md
+    anchor: No menu questions
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Gate
+    canonical_name: g__stop__no-menu-question.py
+    firing_event: Stop
+    firing_matcher: '*'
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: Stop|*|g__stop__no-menu-question.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/g__stop__no-menu-question.py --selftest registry/fixtures/COMMS.no-menu-question
+    expect: 0
+  liveness_required: FIRES
 - id: COMMS.paste-ready-raw-message
   title: Paste-ready message ships raw, no markdown, and its block is the last thing
     in the reply

@@ -1,0 +1,1 @@
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "The fix is merged to the branch. I can deploy now, or wait for QA. Thoughts?\n\nProvenance: Basis: scripts/g__stop__defer-today.py · Engine: build · Touched: none · Verified: selftest"}]}}

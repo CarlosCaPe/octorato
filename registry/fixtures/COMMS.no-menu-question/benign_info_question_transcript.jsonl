@@ -1,0 +1,1 @@
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "El export quedó en /tmp/out.csv. ¿Qué correo del cliente uso para el envío?\n\nProvenance: Basis: scripts/g__stop__defer-today.py · Engine: build · Touched: none · Verified: selftest"}]}}
