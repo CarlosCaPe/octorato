@@ -348,6 +348,20 @@ def pull(args) -> int:
         else:
             info("✓ Already up to date")
 
+    post_integrate(args.arms or None)
+    post_integrate_doctor()
+    return 0
+
+
+def post_integrate(arms=None, *, sync_arms=True) -> None:
+    """Project what an integrate just brought in onto this machine.
+
+    Shared by `pull` and `cycle`. A pull that lands a hooks.json change and stops
+    there leaves the harness running the OLD hook set while the sync reports
+    success, and the doctor then fails hooks-runtime-sync. `cycle` used to skip
+    all of this, which is exactly that failure. `sync_arms=False` is for cycle,
+    whose push() already projects CLAUDE.md into every arm on every exit path.
+    """
     script_step("scripts/merge-hooks.py", label="=== Merging shared hooks ===")
     script_step("scripts/merge-hooks-cursor.py", label="=== Projecting hooks → Cursor ===")
     ensure_hooks_path()
@@ -359,8 +373,9 @@ def pull(args) -> int:
         script_step("scripts/generate_memory_map.py",
                     label="🧠 Memory index stale — regenerating")
 
-    print()
-    sync(args.arms or None)
+    if sync_arms:
+        print()
+        sync(arms)
 
     # Packages before the doctor: a machine that just pulled a new lock entry has
     # the entry and not the tree, and the doctor's packages-verified would report a
@@ -369,6 +384,11 @@ def pull(args) -> int:
     # install-runners.py has run, and pull is the command that runs first.
     script_step("scripts/octo_pkg.py", "sync", label="\n=== Packages (octo pkg sync) ===")
 
+
+def post_integrate_doctor() -> None:
+    """The doctor that closes an integrate. Split from post_integrate so cycle can
+    run it AFTER its push: pre-push writes the gate receipt for the new tree, and
+    gate_receipt_step then finds it valid instead of re-proving it a second time."""
     # The fast profile, not the full one: the full doctor took ~220 s on a populated
     # machine (most of it enforcement-floor re-running every gate selftest) and a
     # pull is a read path the operator waits on. --fast skips gate-liveness, the
@@ -377,7 +397,6 @@ def pull(args) -> int:
     script_step("scripts/brain_doctor.py", "--fast", label="\n=== Brain doctor (fast) ===")
     gate_receipt_step()
     info(PULL_DOCTOR_NOTE)
-    return 0
 
 
 # ── push ──────────────────────────────────────────────────────────────────────
@@ -860,7 +879,8 @@ def cycle(args) -> int:
 
     Per attempt:
       pull --rebase --autostash   integrate remote, keep local (committed + uncommitted)
-      push(args)                  commit dirty + publish (direct or PR flow), all guards
+      post_integrate()            HEAD moved: re-project hooks, regen, packages (as pull)
+      push(args)                 commit dirty + publish (direct or PR flow), all guards
       still-unpushed?             a race or the pre-committed-skip case → re-integrate, retry
     """
     if not _is_repo():
@@ -888,12 +908,14 @@ def cycle(args) -> int:
         return 1
 
     attempts = 3
+    integrated = False   # did any attempt bring remote commits in?
     for attempt in range(1, attempts + 1):
         print(f"━━ ai-sync: reconcile ~/.claude (attempt {attempt}/{attempts}) ━━")
 
         # 1. INTEGRATE — bring the remote in and replay local work on top.
         #    --autostash protects uncommitted edits across the rebase; --rebase keeps
         #    history linear so the publish below is a clean fast-forward.
+        _, pre, _ = git("rev-parse", "HEAD")
         code, out, e = git("pull", "--rebase", "--autostash")
         # --autostash has TWO failure modes with DIFFERENT exit codes:
         #   (a) the rebase itself conflicts (a local commit vs the remote on the same
@@ -921,6 +943,16 @@ def cycle(args) -> int:
             if tail:
                 err(f"   {tail[-1]}")
             return 1
+
+        # 1b. PROJECT what the integrate brought in, the same steps `pull` runs.
+        #     Without it a cycle that pulled a hooks.json change exits 0 while the
+        #     harness keeps the old hook set. It runs BEFORE push on purpose: push's
+        #     FATAL hooks-drift guard would otherwise abort on the drift the pull
+        #     itself created. Arm sync is left to push(), which always runs it.
+        _, post, _ = git("rev-parse", "HEAD")
+        if pre != post:
+            integrated = True
+            post_integrate(sync_arms=False)
 
         # 2. PUBLISH — commit any local changes and push (direct, or via the PR flow
         #    for a protected master). push() carries every guard: generic, secrets,
@@ -960,6 +992,11 @@ def cycle(args) -> int:
     else:
         err(f"✗ ai-sync: still racing after {attempts} attempts — try again in a moment.")
         return 1
+
+    # The doctor closes an integrate, as in `pull`, and runs after the publish so a
+    # gate receipt pre-push just wrote for this tree is reused, not re-proven.
+    if integrated:
+        post_integrate_doctor()
 
     info("\n✓ ai-sync complete — brain reconciled (pull --rebase + push).")
     return 0
