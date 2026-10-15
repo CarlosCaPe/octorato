@@ -67,7 +67,8 @@ class HookStdinUtf8(unittest.TestCase):
         missing = []
         for f in sorted(SCRIPTS.glob("*.py")):
             src = f.read_text(encoding="utf-8")
-            if "sys.stdin.read()" in src and not _reconfigures_stdin(src):
+            reads = "sys.stdin.read()" in src or "json.load(sys.stdin)" in src
+            if reads and not _reconfigures_stdin(src):
                 missing.append(f.name)
         self.assertEqual(sorted(set(missing) - KNOWN_GAPS), [])
 

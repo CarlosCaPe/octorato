@@ -25,7 +25,7 @@ import os
 import re
 import sys
 # Force UTF-8 on stdout/stderr so glyphs survive on Windows shells (cp1252).
-for _stream in (sys.stdout, sys.stderr):
+for _stream in (sys.stdin, sys.stdout, sys.stderr):
     try:
         _stream.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError):
