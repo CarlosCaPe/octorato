@@ -7,6 +7,12 @@ registry/runtimes.yaml and adds, beside `.github/copilot-instructions.md` and
 `supported`, from the arm's own `.claude/CLAUDE.md`. A second run with no
 source change leaves every file byte-identical and unwritten (same mtime).
 
+Security (every mirror, the two base ones included): a mirror that is a
+symlink, or sits under a symlinked directory, is never written, even when the
+link points inside the arm; only a plain file name is accepted from the
+registry; and an instruction file of a harness that is not `supported` is left
+in place with a stale-mirror warning, never deleted.
+
 Every case runs on a temp arm and a temp registry; load_arms is stubbed, so no
 arms-paths.json and no real arm is read or written.
 """
@@ -150,6 +156,134 @@ class InstructionSync(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             got = sorted(ai_sync.harness_instruction_files(ROOT / "registry" / "runtimes.yaml"))
         self.assertEqual(got, expect)
+
+
+def _can_symlink() -> bool:
+    with tempfile.TemporaryDirectory() as d:
+        try:
+            os.symlink(os.path.join(d, "t"), os.path.join(d, "l"))
+            return True
+        except (OSError, NotImplementedError):
+            return False
+
+
+ALL_MIRRORS = (".github/copilot-instructions.md", ".cursorrules", "AGENTS.md", "GEMINI.md")
+BOTH = registry_text(gemini="supported", codex="supported")
+
+
+@unittest.skipUnless(_can_symlink(), "this OS user cannot create symlinks")
+class MirrorNeverFollowsALink(unittest.TestCase):
+    """QA reproduction: AGENTS.md in the arm linked to a file outside it, codex
+    flipped to supported, and sync overwrote the outside file. Each case turns
+    red when mirror_refusal is bypassed."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        base = Path(self.tmp.name)
+        self.arm = base / "arm"
+        (self.arm / ".claude").mkdir(parents=True)
+        (self.arm / ".claude" / "CLAUDE.md").write_bytes(SOURCE)
+        self.outside = base / "outside"
+        self.outside.mkdir()
+        self.registry = base / "runtimes.yaml"
+        self.registry.write_text(BOTH, encoding="utf-8")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _sync(self) -> str:
+        out = io.StringIO()
+        with mock.patch.object(ai_sync, "RUNTIMES", self.registry), \
+                mock.patch.object(ai_sync, "load_arms", return_value={"arm": self.arm}), \
+                redirect_stdout(out), redirect_stderr(io.StringIO()):
+            self.assertEqual(ai_sync.sync(None), 0)
+        return out.getvalue()
+
+    def test_symlinked_mirror_file_outside_the_arm_is_not_written(self):
+        for rel in ALL_MIRRORS:
+            with self.subTest(rel=rel):
+                victim = self.outside / f"victim-{rel.replace('/', '_')}"
+                victim.write_bytes(b"precious")
+                link = self.arm / rel
+                link.parent.mkdir(parents=True, exist_ok=True)
+                if os.path.lexists(link):
+                    link.unlink()
+                os.symlink(victim, link)
+                out = self._sync()
+                self.assertEqual(victim.read_bytes(), b"precious")
+                self.assertTrue(link.is_symlink(), "the link itself must be left alone")
+                self.assertIn(f"{rel} NOT written", out)
+                link.unlink()
+
+    def test_symlinked_github_dir_is_not_written_through(self):
+        os.symlink(self.outside, self.arm / ".github", target_is_directory=True)
+        out = self._sync()
+        self.assertFalse((self.outside / "copilot-instructions.md").exists())
+        self.assertIn(".github is a symlink", out)
+        for rel in (".cursorrules", "AGENTS.md", "GEMINI.md"):
+            self.assertEqual((self.arm / rel).read_bytes(), SOURCE, rel)
+
+    def test_symlink_pointing_inside_the_arm_is_still_refused(self):
+        for rel in ALL_MIRRORS:
+            with self.subTest(rel=rel):
+                inside = self.arm / "notes.txt"
+                inside.write_bytes(b"arm notes")
+                link = self.arm / rel
+                link.parent.mkdir(parents=True, exist_ok=True)
+                if os.path.lexists(link):
+                    link.unlink()
+                os.symlink(inside, link)
+                self._sync()
+                self.assertEqual(inside.read_bytes(), b"arm notes")
+                self.assertTrue(link.is_symlink())
+                link.unlink()
+
+    def test_regular_files_are_replaced_in_place_not_followed(self):
+        self._sync()
+        for rel in ALL_MIRRORS:
+            p = self.arm / rel
+            self.assertFalse(p.is_symlink())
+            self.assertEqual(p.read_bytes(), SOURCE, rel)
+        leftovers = [q.name for q in self.arm.rglob(".*.tmp")]
+        self.assertEqual(leftovers, [])
+
+
+class RegistryValuesAreFileNames(unittest.TestCase):
+    def test_only_a_plain_file_name_is_accepted(self):
+        bad = [".git/config", "./AGENTS.md", ".", "..", "a/b.md", "a\\b.md", ".hidden",
+               "~/x.md", "/abs.md", "C:x.md", "", " AGENTS.md"]
+        for rel in bad:
+            self.assertFalse(ai_sync.plain_filename(rel), rel)
+        for rel in ("AGENTS.md", "GEMINI.md", "X_1-a.md"):
+            self.assertTrue(ai_sync.plain_filename(rel), rel)
+
+    def test_registry_with_bad_names_writes_nothing_extra(self):
+        with tempfile.TemporaryDirectory() as d:
+            reg = Path(d) / "runtimes.yaml"
+            extra = "".join(f"""  bad-{i}:
+    name: Bad {i}
+    status: supported
+    instruction_file: '{v}'
+""" for i, v in enumerate((".git/config", "./AGENTS.md", "..", ".")))
+            reg.write_text(registry_text(extra=extra), encoding="utf-8")
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(ai_sync.harness_instruction_files(reg), [])
+            self.assertIn("not a plain file name", out.getvalue())
+
+
+class StaleMirror(InstructionSync):
+    """A harness flipped back to gap: its file stays (never deleted in an arm)
+    and sync warns that it no longer tracks CLAUDE.md."""
+
+    def test_flip_to_gap_leaves_the_file_and_warns(self):
+        self._sync(registry_text(codex="supported"))
+        self.assertEqual((self.arm / "AGENTS.md").read_bytes(), SOURCE)
+        (self.arm / ".claude" / "CLAUDE.md").write_bytes(SOURCE + b"newer\n")
+        out = self._sync(registry_text(codex="gap"))
+        self.assertEqual((self.arm / "AGENTS.md").read_bytes(), SOURCE, "never rewritten or deleted")
+        self.assertIn("AGENTS.md is a stale mirror", out)
+        self.assertNotIn("GEMINI.md is a stale mirror", out)
 
 
 if __name__ == "__main__":

@@ -163,6 +163,15 @@ class RuntimeRegistryTest(unittest.TestCase):
         self.assertEqual(r.status, FAIL)
         self.assertIn("vendor-special", r.message)
 
+    def test_gap_entry_with_tiers_fails(self):
+        d = self.mutated()
+        d["runtimes"]["codex-cli"]["tiers"] = dict(TIERS)
+        self.write(d)
+        r = brain_doctor.check_runtime_registry(False, self.reg)
+        self.assertEqual(r.status, FAIL)
+        self.assertIn("codex-cli", r.message)
+        self.assertIn("tiers: null", r.message)
+
     def test_gap_entry_with_null_tiers_passes(self):
         self.assertIsNone(BASE["runtimes"]["gemini-cli"]["tiers"])
         r = brain_doctor.check_runtime_registry(False, self.reg)

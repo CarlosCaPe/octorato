@@ -263,18 +263,30 @@ def scan_staged_secrets() -> bool:
 
 # ── sync ──────────────────────────────────────────────────────────────────────
 
-def harness_instruction_files(registry: Path | None = None) -> list[str]:
-    """Arm-relative instruction files of the `supported` harnesses in
-    registry/runtimes.yaml, beyond BASE_MIRRORS (AC-07).
+_PLAIN_FILENAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
-    A harness asks for an arm file when its `instruction_file` is a plain
-    relative path: `AGENTS.md` (Codex CLI), `GEMINI.md` (Gemini CLI). A home
-    path (`~/.claude/CLAUDE.md`, Claude Code, which reads the arm's
-    `.claude/CLAUDE.md` natively), an absolute path or one that climbs out of
-    the arm (`..`) is never written. A `gap` harness gets nothing: the spec
-    writes the file only for a harness the census shows blocking. A registry
-    that is absent or unreadable adds nothing and says so, so a broken registry
-    can only ever write FEWER files into an arm, never other ones."""
+
+def plain_filename(rel) -> bool:
+    """A registry `instruction_file` an arm may receive: one file name at the arm
+    root. No `/` or `\\`, no leading dot (so never `.git/...`, `./AGENTS.md`,
+    `.` or `..`), no home or drive prefix."""
+    return isinstance(rel, str) and bool(_PLAIN_FILENAME.fullmatch(rel))
+
+
+def harness_instruction_files(registry: Path | None = None, *, supported: bool = True,
+                              quiet: bool = False) -> list[str]:
+    """Arm-root instruction files named by registry/runtimes.yaml, beyond
+    BASE_MIRRORS (AC-07). `supported=True` (what sync writes): the harnesses whose
+    status is `supported`. `supported=False`: every other harness, whose file in an
+    arm is a stale mirror sync no longer updates (brain_doctor sync-targets WARNs).
+
+    Only a plain file name is accepted (`AGENTS.md`, `GEMINI.md`, see
+    plain_filename); Claude Code's `~/.claude/CLAUDE.md` (it reads the arm's
+    `.claude/CLAUDE.md` natively) and Cursor's `.cursorrules` (a base mirror) add
+    nothing, and any other value is refused with a warning. A registry that is
+    absent or unreadable adds nothing and says so, so a broken registry can only
+    ever write FEWER files into an arm, never other ones."""
+    say = (lambda _m: None) if quiet else warn
     path = registry or RUNTIMES
     try:
         import yaml  # type: ignore[import-not-found]
@@ -283,36 +295,96 @@ def harness_instruction_files(registry: Path | None = None) -> list[str]:
         if not isinstance(runtimes, dict):
             raise ValueError("`runtimes` is not a mapping")
     except Exception as e:  # ImportError, OSError, YAML error, shape error
-        warn(f"  ⚠ {path.name} unreadable ({type(e).__name__}: {e}); "
-             "only the base mirrors are written")
+        say(f"  ⚠ {path.name} unreadable ({type(e).__name__}: {e}); "
+            "only the base mirrors are written")
         return []
     out: list[str] = []
-    for entry in runtimes.values():
-        if not isinstance(entry, dict) or entry.get("status") != "supported":
+    for rid, entry in runtimes.items():
+        if not isinstance(entry, dict) or (entry.get("status") == "supported") != supported:
             continue
         rel = entry.get("instruction_file")
-        if not isinstance(rel, str) or not rel.strip():
+        if not isinstance(rel, str) or rel in BASE_MIRRORS or rel.startswith("~/"):
             continue
-        rel = rel.strip().replace("\\", "/")
-        parts = rel.split("/")
-        if rel.startswith(("~", "/")) or re.match(r"^[A-Za-z]:", rel) or ".." in parts:
+        if not plain_filename(rel):
+            say(f"  ⚠ {rid}: instruction_file {rel!r} is not a plain file name; not written")
             continue
-        if rel in BASE_MIRRORS or rel in out:
-            continue
-        out.append(rel)
+        if rel not in out:
+            out.append(rel)
     return out
 
 
-def _write_if_changed(path: Path, content: bytes) -> bool:
-    """Write `content` only when the file is absent or differs, so a second sync
-    with no source change touches nothing (same bytes, same mtime)."""
+def mirror_refusal(repo: Path, rel: str) -> str | None:
+    """Why `rel` must not be written in `repo`, or None when it may.
+
+    A mirror is written by a plain process the arming-surface gate never sees,
+    and the arm controls both the link and the content, so a mirror that is a
+    symlink (or sits under a symlinked directory) could aim the write at
+    ~/.claude/hooks.json or ~/.bashrc. Refused, even when the link points inside
+    the arm: the simplest rule leaves nothing to reason about. Also refused: a
+    path whose resolution leaves the arm."""
+    cur = repo
+    for part in rel.split("/"):
+        cur = cur / part
+        if cur.is_symlink():
+            return f"{cur.relative_to(repo).as_posix()} is a symlink"
     try:
-        if path.read_bytes() == content:
-            return False
+        cur.resolve().relative_to(repo.resolve())
+    except ValueError:
+        return f"{rel} resolves outside the arm"
+    except OSError as e:
+        return f"{rel} cannot be resolved: {e}"
+    return None
+
+
+def _read_nofollow(path: Path) -> bytes | None:
+    """The file's bytes without following a final symlink (O_NOFOLLOW where the
+    OS has it; elsewhere mirror_refusal's is_symlink check stands in)."""
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0))
     except OSError:
-        pass
+        return None
+    with os.fdopen(fd, "rb") as fh:
+        return fh.read()
+
+
+def _write_if_changed(repo: Path, rel: str, content: bytes) -> bool:
+    """Write `content` to repo/rel only when it is absent or differs, so a second
+    sync with no source change touches nothing (same bytes, same mtime).
+
+    Never through a link: mirror_refusal is checked before and after creating
+    the parent directories, the bytes go to a fresh file made with O_EXCL in the
+    same directory (mkstemp, which cannot open an existing link), and os.replace
+    renames it over the target, which replaces a directory entry and never
+    follows one. A refused mirror raises PermissionError with the reason."""
+    import tempfile
+    why = mirror_refusal(repo, rel)
+    if why:
+        raise PermissionError(why)
+    path = repo / rel
+    if _read_nofollow(path) == content:
+        return False
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(content)
+    why = mirror_refusal(repo, rel)
+    if why:
+        raise PermissionError(why)
+    try:
+        mode = path.lstat().st_mode & 0o777
+    except OSError:
+        umask = os.umask(0)
+        os.umask(umask)
+        mode = 0o666 & ~umask
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(content)
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
     return True
 
 
@@ -333,9 +405,22 @@ def sync(names=None) -> int:
             skipped += 1
             continue
         content = src.read_bytes()
-        written = [rel for rel in mirrors if _write_if_changed(repo / rel, content)]
-        info(f"  ✓ {name}: CLAUDE.md → {len(mirrors)} mirror(s), "
+        written, refused = [], []
+        for rel in mirrors:
+            try:
+                if _write_if_changed(repo, rel, content):
+                    written.append(rel)
+            except PermissionError as e:
+                refused.append(rel)
+                warn(f"  ⚠ {name}: {rel} NOT written, {e} (a mirror is never written "
+                     "through a link); replace it with a regular file")
+        info(f"  ✓ {name}: CLAUDE.md → {len(mirrors) - len(refused)} mirror(s), "
              f"{len(written)} rewritten{': ' + ', '.join(written) if written else ''}")
+        stale = [rel for rel in harness_instruction_files(supported=False, quiet=True)
+                 if os.path.lexists(repo / rel)]
+        for rel in stale:
+            warn(f"  ⚠ {name}: {rel} is a stale mirror: its harness is not `supported` in "
+                 "registry/runtimes.yaml, so sync no longer updates it (left in place)")
         synced += 1
     print(f"\nDone. Synced: {synced} | Skipped: {skipped}")
     return 0

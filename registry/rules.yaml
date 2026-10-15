@@ -2748,6 +2748,17 @@ rules:
   - method: EXIT_CODE
     locator: grep -q 'def harness_instruction_files' scripts/ai_sync.py
     expect: 0
+  # QA fix on T11: no mirror is written through a symlink, registry values are
+  # plain file names, and a stale mirror of a non-supported harness WARNs.
+  - method: EXIT_CODE
+    locator: grep -q 'def mirror_refusal' scripts/ai_sync.py
+    expect: 0
+  - method: FILE_EXISTS
+    locator: scripts/tests/test_doctor_sync_targets.py
+    expect: present
+  - method: EXIT_CODE
+    locator: python3 -m unittest scripts/tests/test_doctor_sync_targets.py
+    expect: 0
   - method: ANCHOR_PRESENT
     locator: 'AC-07: THE Instruction_Sync SHALL read the Runtime_Registry and write `AGENTS.md`'
     expect: present
