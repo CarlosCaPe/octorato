@@ -9,7 +9,7 @@
 | Skills | 246 |
 | Agents | 167 |
 | Divisions | 13 |
-| Scripts: wired | 133 |
+| Scripts: wired | 134 |
 | Scripts: orphan | 7 |
 | Rules | 96 |
 | Hook entries | 58 |
@@ -499,7 +499,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (140)
+## Scripts (141)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -559,6 +559,7 @@
 | g__pretool-write__tree-owner.py | g__pretool-write__tree-owner.py: one writer per tree and per lane (Write side). | wired |
 | g__pretool__arming-surface.py | g__pretool__arming-surface.py: the LIVE files that decide whether gates run. | wired |
 | g__pretool__kernel.py | g__pretool__kernel.py: PreToolUse `*` gate. No tool call runs unjournaled. | wired |
+| g__shim__hook.py | g__shim__hook.py: run an Octorato gate under a second harness (v11 AC-05). | wired |
 | g__stop__defer-today.py | g__stop__defer-today.py: Stop gate: "no dejes para mañana lo que puedas hacer hoy" (do not put off u... | wired |
 | g__stop__delegation-audit.py | g__stop__delegation-audit.py: Stop gate for FLOW.bulk-fetch-delegation. | wired |
 | g__stop__draft-promise.py | g__stop__draft-promise.py , Stop gate: no future-tense promises in paste-ready drafts. | wired |
