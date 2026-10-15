@@ -15,6 +15,10 @@
 #   gap        anything else; `classes_not_blocked` lists the required classes
 #              the census record does not show blocking.
 #
+# Ids are fail-closed (check `runtime-census-evidence`): gemini-cli and codex-cli
+# must both be present, only those two plus claude-code and cursor are known, and
+# every `supported` entry names a brain_doctor check in `evidence` that does not FAIL.
+#
 # Every field cites its source in the comment beside it.
 
 schema: 1

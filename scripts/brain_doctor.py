@@ -2956,7 +2956,11 @@ RUNTIME_STATUSES = ("supported", "gap")
 # Harnesses whose `supported` status must come from a census record, and the
 # tool classes that record must show blocked with the benign twin allowed.
 CENSUS_HARNESSES = ("gemini-cli", "codex-cli")
+# Harnesses whose `supported` status rests on a named brain_doctor check instead
+# of a census record. Any registry key outside these two tuples fails closed.
+EVIDENCE_HARNESSES = ("claude-code", "cursor")
 CENSUS_REQUIRED_CLASSES = ("shell", "file_write", "file_edit")
+_EVIDENCE_CHECK_RE = re.compile(r"\bbrain_doctor\s+([a-z0-9][a-z0-9-]*)")
 _RUNTIME_FIELDS = ("name", "status", "instruction_file", "hook_config",
                    "block_contract", "tool_map", "tiers", "unprojected")
 
@@ -2986,6 +2990,8 @@ def load_runtime_registry(path: Path | None = None):
         if entry.get("status") not in RUNTIME_STATUSES:
             problems.append(f"{rid}: status {entry.get('status')!r} is not one of "
                             f"{', '.join(RUNTIME_STATUSES)}")
+        if entry.get("status") == "supported" and not entry.get("evidence"):
+            problems.append(f"{rid}: supported with no `evidence` naming a brain_doctor check")
     return runtimes, problems
 
 
@@ -3067,22 +3073,77 @@ def check_runtime_doc_agreement(fix: bool, path: Path | None = None,
     return Result(key, PASS, f"{len(rows)} runtime(s) agree between registry and doc")
 
 
+# Results of the run in progress, by CHECKS key, so an `evidence` check named by
+# a runtime entry is read, not executed a second time (run_all fills it).
+_CURRENT_RUN: dict = {}
+
+
+def _worst(out) -> "Result":
+    if isinstance(out, list):
+        order = {PASS: 0, WARN: 1, FAIL: 2}
+        return max(out, key=lambda r: order.get(r.status, 2)) if out else Result("?", FAIL, "no result")
+    return out
+
+
+def _evidence_result(name: str):
+    """The current result of the doctor check `name`, or None when it was not run
+    (a SLOW_CHECKS member outside a full run, i.e. --fast or a standalone call)."""
+    if name in _CURRENT_RUN:
+        return _CURRENT_RUN[name]
+    if name in SLOW_CHECKS:
+        return None
+    fn = dict(CHECKS).get(name)
+    try:
+        return _worst(fn(False))
+    except Exception as e:
+        return Result(name, FAIL, f"check crashed: {e}")
+
+
 def check_runtime_census_evidence(fix: bool, path: Path | None = None,
                                   root: Path | None = None) -> Result:
-    """AC-03: a Gemini CLI or Codex CLI entry marked `supported` needs a census
-    record showing shell, file write and file edit blocked with the benign twins
-    allowed; a `gap` entry lists exactly the classes its record does not show."""
+    """AC-03, fail closed. Every census harness has an entry; no other harness id
+    than the census and evidence allowlists appears; every `supported` entry names
+    a brain_doctor check in `evidence`, and that check's current result is not
+    FAIL (WARN or not run under --fast degrades this check to WARN, never PASS);
+    a census harness is `supported` only when its record shows shell, file write
+    and file edit blocked with the benign twins allowed; a `gap` entry lists
+    exactly the classes its record does not show."""
     key = "runtime-census-evidence"
     runtimes, problems = load_runtime_registry(path)
     if runtimes is None:
         return Result(key, FAIL, "; ".join(problems), "restore registry/runtimes.yaml")
     base = root or CLAUDE_DIR
-    bad, checked = [], 0
+    known = set(CENSUS_HARNESSES) | set(EVIDENCE_HARNESSES)
+    check_keys = {k for k, _ in CHECKS}
+    bad, warn, checked = [], [], 0
     for rid in CENSUS_HARNESSES:
-        entry = runtimes.get(rid)
-        if not isinstance(entry, dict):
+        if not isinstance(runtimes.get(rid), dict):
+            bad.append(f"{rid} has no registry entry (census harnesses are required)")
+    for rid in sorted(set(runtimes) - known):
+        bad.append(f"{rid} is not a known harness id ({', '.join(sorted(known))})")
+    for rid, entry in runtimes.items():
+        if rid not in known or not isinstance(entry, dict):
             continue
         checked += 1
+        status = entry.get("status")
+        if status == "supported":
+            ev = entry.get("evidence")
+            m = _EVIDENCE_CHECK_RE.search(ev) if isinstance(ev, str) else None
+            named = m.group(1) if m else None
+            if named is None:
+                bad.append(f"{rid} is supported with no `evidence` naming a brain_doctor check")
+            elif named not in check_keys:
+                bad.append(f"{rid} evidence names unknown doctor check {named!r}")
+            elif named != key:
+                res = _evidence_result(named)
+                if res is None:
+                    warn.append(f"{rid} evidence {named} not verified (not run in this profile)")
+                elif res.status == FAIL:
+                    bad.append(f"{rid} is supported but its evidence {named} FAILs: {res.message}")
+                elif res.status == WARN:
+                    warn.append(f"{rid} evidence {named} is WARN: {res.message}")
+        if rid not in CENSUS_HARNESSES:
+            continue
         rel = entry.get("census")
         record = None
         if rel:
@@ -3091,7 +3152,6 @@ def check_runtime_census_evidence(fix: bool, path: Path | None = None,
             except (OSError, ValueError):
                 record = None
         gaps = census_blocking_gaps(record) if record is not None else list(CENSUS_REQUIRED_CLASSES)
-        status = entry.get("status")
         if status == "supported":
             if record is None:
                 bad.append(f"{rid} is supported with no readable census record ({rel or 'none named'})")
@@ -3101,11 +3161,17 @@ def check_runtime_census_evidence(fix: bool, path: Path | None = None,
             listed = entry.get("classes_not_blocked") or []
             if sorted(listed) != sorted(gaps):
                 bad.append(f"{rid} lists classes_not_blocked {sorted(listed)}, census says {sorted(gaps)}")
+    if checked == 0 and not bad:
+        bad.append("no known harness entry was checked")
     if bad:
-        return Result(key, FAIL, "; ".join(bad),
-                      "mark the harness `gap` until registry/census/<harness>.json shows the "
-                      "blocks (AC-03), and list the classes that did not block")
-    return Result(key, PASS, f"{checked} census-backed runtime(s) match their census record")
+        return Result(key, FAIL, "; ".join(bad + warn),
+                      "keep every census harness in registry/runtimes.yaml, use only known ids, "
+                      "name a passing brain_doctor check in `evidence` for each `supported`, and "
+                      "mark a census harness `gap` until registry/census/<harness>.json shows the blocks")
+    if warn:
+        return Result(key, WARN, "; ".join(warn),
+                      "run the full profile, or fix the named evidence check")
+    return Result(key, PASS, f"{checked} runtime(s) match their evidence or census record")
 
 
 CHECKS = [
@@ -3177,6 +3243,7 @@ STATUS_ICON = {PASS: "✓", WARN: "!", FAIL: "✗"}
 
 def run_all(fix: bool, fast: bool = False) -> list[Result]:
     results: list[Result] = []
+    _CURRENT_RUN.clear()
     for key, fn in CHECKS:
         if fast and key in SLOW_CHECKS:
             continue
@@ -3184,7 +3251,9 @@ def run_all(fix: bool, fast: bool = False) -> list[Result]:
             out = fn(fix)
         except Exception as e:  # one bad check never crashes the run
             results.append(Result(key, FAIL, f"check crashed: {e}", "report this bug"))
+            _CURRENT_RUN[key] = results[-1]
             continue
+        _CURRENT_RUN[key] = _worst(out)
         if isinstance(out, list):
             results.extend(out)
         else:
