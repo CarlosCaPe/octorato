@@ -347,6 +347,22 @@ def _read_nofollow(path: Path) -> bytes | None:
         return fh.read()
 
 
+def _read_source(path: Path) -> tuple[bytes | None, str | None]:
+    """(bytes, None) for a regular single-link file, else (None, why). A hard
+    link has no symlink to see: the open file's link count is the only trace
+    that `.claude/CLAUDE.md` is another name for a file outside the arm (a key,
+    a token), so a count above 1 is refused like a symlink."""
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0))
+    except OSError as e:
+        return None, f".claude/CLAUDE.md is unreadable: {e}"
+    with os.fdopen(fd, "rb") as fh:
+        st = os.fstat(fh.fileno())
+        if st.st_nlink > 1:
+            return None, f".claude/CLAUDE.md has {st.st_nlink} hard links"
+        return fh.read(), None
+
+
 def _write_if_changed(repo: Path, rel: str, content: bytes) -> bool:
     """Write `content` to repo/rel only when it is absent or differs, so a second
     sync with no source change touches nothing (same bytes, same mtime).
@@ -407,11 +423,12 @@ def sync(names=None) -> int:
         # Read side of the same guard: a linked source (to ~/.ssh/id_rsa, a
         # brain secret) would be copied into mirrors the arm commits and pushes.
         why = mirror_refusal(repo, ".claude/CLAUDE.md")
-        content = None if why else _read_nofollow(src)
+        content = None
+        if not why:
+            content, why = _read_source(src)
         if content is None:
-            warn(f"  ⚠ {name}: SKIPPED, source not read: "
-                 f"{why or '.claude/CLAUDE.md is unreadable'} (the source must be a regular "
-                 "file inside the arm)")
+            warn(f"  ⚠ {name}: SKIPPED, source not read: {why} (the source must be a "
+                 "regular, single-link file inside the arm)")
             skipped += 1
             continue
         written, refused = [], []

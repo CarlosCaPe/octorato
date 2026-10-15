@@ -262,6 +262,17 @@ class MirrorNeverFollowsALink(unittest.TestCase):
         os.symlink(secret_dir, real, target_is_directory=True)
         self._assert_no_mirror(self._sync(), ".claude is a symlink")
 
+    def test_hardlinked_source_is_not_read(self):
+        secret = self.outside / "token"
+        secret.write_bytes(("gh" + "p_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8").encode())
+        src = self.arm / ".claude" / "CLAUDE.md"
+        src.unlink()
+        try:
+            os.link(secret, src)
+        except OSError as e:
+            self.skipTest(f"hard links unavailable: {e}")
+        self._assert_no_mirror(self._sync(), "hard links")
+
     def test_regular_files_are_replaced_in_place_not_followed(self):
         self._sync()
         for rel in ALL_MIRRORS:

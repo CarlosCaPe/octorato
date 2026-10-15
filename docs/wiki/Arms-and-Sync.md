@@ -106,7 +106,7 @@ The arm's source-of-truth file declares only **client-specific** context. Univer
 
 ### The One-File Rule
 
-**Mirrors are regular files, never symlinks.** `sync-ai-docs` refuses to write a mirror that is a symlink or sits under a symlinked directory (such as `.github`), even one pointing inside the arm, and warns instead.
+**Mirrors are regular files, never symlinks.** `sync-ai-docs` refuses to write a mirror that is a symlink or sits under a symlinked directory (such as `.github`), even one pointing inside the arm, and warns instead. It also skips an arm whose `.claude` or `.claude/CLAUDE.md` is a symlink or a hard-linked file. Residual: a process swapping a parent directory for a symlink between sync's check and its write can still redirect that write (a `dir_fd` walk with `O_NOFOLLOW|O_DIRECTORY` would close it).
 
 **Edit ONLY `.claude/CLAUDE.md`.** Never hand-edit `.github/copilot-instructions.md` or `.cursorrules` — they are generated artifacts, and the next `sync-ai-docs` run silently overwrites your changes. After *every* edit to `.claude/CLAUDE.md`:
 
