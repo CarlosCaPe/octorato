@@ -661,6 +661,17 @@ def _cotenants_on_tree(ttl: int, tree: str) -> list:
         return []  # fail-open: unreadable registry → no guard, never brick ai-push
 
 
+def hooks_drift_ok(verb: str) -> bool:
+    """FATAL hooks-drift guard shared by push and cycle. False (with the
+    adopt/discard message) when settings.json hooks diverged from hooks.json,
+    i.e. a hook authored in settings.json that nobody adopted yet."""
+    if script_step("scripts/check-hooks-drift.py", fatal=True):
+        return True
+    err(f"⚠ {verb} aborted: settings.json hooks diverged from hooks.json.")
+    err("   Run merge-hooks.py (discard) or check-hooks-drift.py --adopt (publish), then retry.")
+    return False
+
+
 def push(args) -> int:
     # Co-tenancy guard: never commit in a tree another session shares. ai-push stages
     # whole BRAIN_PATHS dirs and then commits the entire index, so a second writer's
@@ -753,9 +764,7 @@ def push(args) -> int:
             return 1
 
     # Hooks drift guard (FATAL) — the recurring "brain never sticks" bug
-    if not script_step("scripts/check-hooks-drift.py", fatal=True):
-        err("⚠ ai-push aborted: settings.json hooks diverged from hooks.json.")
-        err("   Run merge-hooks.py (discard) or check-hooks-drift.py --adopt (publish), then retry.")
+    if not hooks_drift_ok("ai-push"):
         return 1
 
     # In-script secret scan (E) — fail-closed even if core.hooksPath isn't set / --no-verify
@@ -915,6 +924,12 @@ def cycle(args) -> int:
         # 1. INTEGRATE — bring the remote in and replay local work on top.
         #    --autostash protects uncommitted edits across the rebase; --rebase keeps
         #    history linear so the publish below is a clean fast-forward.
+        # 0. GUARD unadopted hooks against the PRE-pull hooks.json. post_integrate
+        #    runs merge-hooks.py, which REPLACES settings.json hooks wholesale; a
+        #    hook authored in settings.json and not yet adopted would vanish
+        #    silently. push() refuses that case, so cycle refuses it first.
+        if not hooks_drift_ok("ai-sync"):
+            return 1
         _, pre, _ = git("rev-parse", "HEAD")
         code, out, e = git("pull", "--rebase", "--autostash")
         # --autostash has TWO failure modes with DIFFERENT exit codes:

@@ -15,7 +15,7 @@ import argparse
 import io
 import sys
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -25,7 +25,7 @@ import ai_sync  # noqa: E402
 
 
 class CyclePostIntegrate(unittest.TestCase):
-    def _run_cycle(self, head_moves: bool):
+    def _run_cycle(self, head_moves: bool, drift: bool = False):
         events = []
         heads = iter(["a" * 40, ("b" if head_moves else "a") * 40])
 
@@ -40,6 +40,9 @@ class CyclePostIntegrate(unittest.TestCase):
             return 0, "", ""
 
         def fake_step(rel, *args, fatal=False, label=""):
+            if rel == "scripts/check-hooks-drift.py":
+                events.append(("drift-check", fatal))
+                return not drift
             events.append(("step", rel, args))
             return True
 
@@ -63,7 +66,7 @@ class CyclePostIntegrate(unittest.TestCase):
                 mock.patch.object(ai_sync, "connectome_stale", return_value=False), \
                 mock.patch.object(ai_sync, "memory_map_stale", return_value=False), \
                 mock.patch.object(ai_sync, "gate_receipt_current", return_value="c" * 40), \
-                redirect_stdout(io.StringIO()):
+                redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             rc = ai_sync.cycle(ns)
         return rc, events
 
@@ -105,6 +108,21 @@ class CyclePostIntegrate(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual([e for e in events if e[0] == "step"], [])
         self.assertIn(("push",), events)
+
+    def test_drift_check_runs_before_the_integrate(self):
+        _, events = self._run_cycle(head_moves=True)
+        check = self._index(events, lambda e: e[0] == "drift-check")
+        pull = self._index(events, lambda e: e[0] == "git" and e[1][:1] == ("pull",))
+        self.assertGreaterEqual(check, 0, events)
+        self.assertLess(check, pull)
+        self.assertEqual(events[check], ("drift-check", True))
+
+    def test_unadopted_settings_hook_aborts_before_merge_hooks(self):
+        rc, events = self._run_cycle(head_moves=True, drift=True)
+        self.assertNotEqual(rc, 0)
+        self.assertNotIn(("step", "scripts/merge-hooks.py", ()), events)
+        self.assertNotIn(("push",), events)
+        self.assertFalse([e for e in events if e[0] == "git"], events)
 
 
 if __name__ == "__main__":
