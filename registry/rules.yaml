@@ -2108,6 +2108,17 @@ rules:
   - method: EXIT_CODE
     locator: grep -q '"registry/runtimes.yaml":' scripts/g__pretool__arming-surface.py
     expect: 0
+  # v11 spec 202610141000, T05 [AC-17], registered in T11: the Hook_Shim joined
+  # the live set as `g__shim__*.py`; its pair is in the same selftest corpus.
+  - method: FILE_EXISTS
+    locator: registry/fixtures/ARCHITECTURE.arming-surface/violation_surface_shim_hook.json
+    expect: present
+  - method: FILE_EXISTS
+    locator: registry/fixtures/ARCHITECTURE.arming-surface/benign_surface_shim_hook.json
+    expect: present
+  - method: EXIT_CODE
+    locator: grep -q '"g__shim__\*.py"' scripts/g__pretool__arming-surface.py
+    expect: 0
   liveness_required: FIRES
 - id: FLOW.kernel-journal
   title: 'Kernel JOURNAL: no tool call runs unjournaled (append-only, hash-chained, per process)'
@@ -2552,6 +2563,14 @@ rules:
   - method: ANCHOR_PRESENT
     locator: 'AC-01: THE Runtime_Registry SHALL hold one entry per row'
     expect: present
+  # v11 T10 [AC-08], registered in T11: `runtime-registry` also fails a supported
+  # entry whose tiers do not map all four tiers to model slugs.
+  - method: EXIT_CODE
+    locator: grep -q 'problems.extend(runtime_tier_problems(rid, entry))' scripts/brain_doctor.py
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: 'AC-08: WHERE a harness is `supported`, THE Runtime_Registry SHALL map the four tiers'
+    expect: present
   liveness_required: FIRES
 - id: ARCHITECTURE.runtime-census-evidence
   title: 'A census harness is supported only on a census record that shows it blocking'
@@ -2587,3 +2606,149 @@ rules:
     locator: 'AC-03: THE Runtime_Registry SHALL mark Gemini CLI or Codex CLI `supported` only when'
     expect: present
   liveness_required: FIRES
+# v11 spec 202610141000 (harness independence), T11 [AC-15]: phase 2 of the
+# spec. Same convention as T04: each rule anchors in the spec's own acceptance
+# criterion, so CLAUDE.md gains no prose and registry-coverage is unchanged.
+# The tier check (T10, AC-08) lives in the `runtime-registry` doctor check and
+# is proven on ARCHITECTURE.runtime-registry.
+- id: ARCHITECTURE.hook-shim
+  title: 'Hook shim: a gate runs under a second harness only through a translation that blocks when it cannot read'
+  category: ARCHITECTURE
+  source:
+    file: docs/specs/202610141000-v11-harness-independence-opt-in-tracing/feature.md
+    anchor: 'AC-05: WHEN a projected fail-closed gate denies, THE Hook_Shim SHALL make the harness block'
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  # Fires as the hook command a projector writes into a SECOND harness's config
+  # (Gemini CLI BeforeTool, Codex CLI PreToolUse), never in hooks.json, so
+  # firing_event is null and the liveness proof is its fixture selftest, which
+  # gate-liveness runs: 65 block and 34 allow on registry/fixtures/ARCHITECTURE.hook-shim.
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Gate
+    canonical_name: g__shim__hook.py
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: scripts/g__shim__hook.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/g__shim__hook.py --selftest registry/fixtures/ARCHITECTURE.hook-shim
+    expect: 0
+  - method: EXIT_CODE
+    locator: python3 -m unittest scripts/tests/test_hook_shim.py
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: 'AC-05: WHEN a projected fail-closed gate denies, THE Hook_Shim SHALL make the harness block'
+    expect: present
+  liveness_required: FIRES
+- id: ARCHITECTURE.hook-projectors
+  title: 'Hook projectors: hooks.json reaches Gemini CLI and Codex CLI through the shim, unprojected tokens written to the registry'
+  category: ARCHITECTURE
+  source:
+    file: docs/specs/202610141000-v11-harness-independence-opt-in-tracing/feature.md
+    anchor: 'AC-04: WHERE a harness is `supported`, THE Hook_Projector SHALL write'
+  strength: REFLEX
+  gateable: false
+  enforcement: n/a
+  v7_decision: 'v11 T11: a projector writes a harness hook config and decides no allow or deny; the deny is the shim''s (ARCHITECTURE.hook-shim). It refuses to write for a `gap` harness (exit 2), and --check exits 1 when the registry unprojected lists drift from hooks.json.'
+  firing_mode:
+  - cli
+  mechanism:
+  - kind: Reflex
+    canonical_name: merge-hooks-gemini.py
+    firing_event: null
+    firing_matcher: null
+  - kind: Reflex
+    canonical_name: merge-hooks-codex.py
+    firing_event: null
+    firing_matcher: null
+  - kind: Reflex
+    canonical_name: hook_projector.py
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: scripts/tests/test_hook_projectors.py
+    expect: present
+  - method: EXIT_CODE
+    locator: python3 -m unittest scripts/tests/test_hook_projectors.py
+    expect: 0
+  - method: EXIT_CODE
+    locator: python3 scripts/merge-hooks-gemini.py --check
+    expect: 0
+  - method: EXIT_CODE
+    locator: python3 scripts/merge-hooks-codex.py --check
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: 'AC-04: WHERE a harness is `supported`, THE Hook_Projector SHALL write'
+    expect: present
+  liveness_required: PRESENT
+- id: ARCHITECTURE.runtime-census-gates
+  title: 'Census --gates: every projected fail-closed gate selftest run through the shim, recorded per harness'
+  category: ARCHITECTURE
+  source:
+    file: docs/specs/202610141000-v11-harness-independence-opt-in-tracing/feature.md
+    anchor: 'AC-06: WHEN the `--selftest` of a projected fail-closed gate runs through the Hook_Shim'
+  strength: DETECTOR
+  gateable: false
+  enforcement: n/a
+  v7_decision: 'v11 T11: evidence, not a gate. `runtime_census.py --gates` writes the `gates` and `live_block` sections of registry/census/<harness>.json; the decision on that evidence is ARCHITECTURE.runtime-census-evidence at push time, and the flip to `supported` is the operator''s.'
+  firing_mode:
+  - cli
+  mechanism:
+  - kind: Detector
+    canonical_name: runtime_census.py
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: scripts/tests/test_runtime_census_gates.py
+    expect: present
+  - method: EXIT_CODE
+    locator: python3 -m unittest scripts/tests/test_runtime_census_gates.py
+    expect: 0
+  - method: EXIT_CODE
+    locator: 'grep -q ''"shim_harness": "codex-cli"'' registry/census/codex.json'
+    expect: 0
+  - method: EXIT_CODE
+    locator: 'grep -q ''"shim_harness": "gemini-cli"'' registry/census/gemini.json'
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: 'AC-06: WHEN the `--selftest` of a projected fail-closed gate runs through the Hook_Shim'
+    expect: present
+  liveness_required: PRESENT
+- id: ARCHITECTURE.instruction-sync
+  title: 'Instruction sync: each supported harness reads the arm instructions in its own file'
+  category: ARCHITECTURE
+  source:
+    file: docs/specs/202610141000-v11-harness-independence-opt-in-tracing/feature.md
+    anchor: 'AC-07: THE Instruction_Sync SHALL read the Runtime_Registry and write `AGENTS.md`'
+  strength: REFLEX
+  gateable: false
+  enforcement: n/a
+  v7_decision: 'v11 T11: a runner step (sync-ai-docs, run by ai-pull and ai-push) that mirrors a file; it decides no allow or deny. Only `supported` harnesses get a file, and an unchanged source rewrites nothing.'
+  firing_mode:
+  - runner
+  mechanism:
+  - kind: Reflex
+    canonical_name: ai_sync.py
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: scripts/tests/test_ai_sync_instruction_files.py
+    expect: present
+  - method: EXIT_CODE
+    locator: python3 -m unittest scripts/tests/test_ai_sync_instruction_files.py
+    expect: 0
+  - method: EXIT_CODE
+    locator: grep -q 'def harness_instruction_files' scripts/ai_sync.py
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: 'AC-07: THE Instruction_Sync SHALL read the Runtime_Registry and write `AGENTS.md`'
+    expect: present
+  liveness_required: PRESENT

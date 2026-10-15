@@ -11,7 +11,7 @@
 | Divisions | 13 |
 | Scripts: wired | 137 |
 | Scripts: orphan | 7 |
-| Rules | 96 |
+| Rules | 100 |
 | Hook entries | 58 |
 
 ## Skills (246)
@@ -648,7 +648,7 @@
 | wa-soporte.sh | Sends a WhatsApp through the SUPPORT channel, never through the operator's personal number. | wired |
 | watchdog.py | watchdog.py , observability surface 4 anomaly detector. Reads the JSONL trace files written by trace... | wired |
 
-## Rules (96)
+## Rules (100)
 
 ### ARCHITECTURE
 
@@ -656,7 +656,10 @@
 - ARCHITECTURE.arming-surface
 - ARCHITECTURE.core-principles
 - ARCHITECTURE.drift-self-heal
+- ARCHITECTURE.hook-projectors
+- ARCHITECTURE.hook-shim
 - ARCHITECTURE.information-flow
+- ARCHITECTURE.instruction-sync
 - ARCHITECTURE.kernel-isolation
 - ARCHITECTURE.kernel-process
 - ARCHITECTURE.layers
@@ -664,6 +667,7 @@
 - ARCHITECTURE.octopus-architecture
 - ARCHITECTURE.runtime-census
 - ARCHITECTURE.runtime-census-evidence
+- ARCHITECTURE.runtime-census-gates
 - ARCHITECTURE.runtime-registry
 - ARCHITECTURE.session-isolation
 - ARCHITECTURE.status-line
