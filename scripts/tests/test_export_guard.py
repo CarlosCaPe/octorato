@@ -85,6 +85,19 @@ class ExportGuard(unittest.TestCase):
         cp, _raw, got = self._cli(open_root, project_dir=closed)
         self.assertEqual((cp.returncode, cp.stdout, got), (0, b"", None))
 
+    def test_unregistered_deny_arm_inside_an_allow_arm(self):
+        # QA probe: a client repo cloned into an allow arm's tree before it is
+        # registered carries its own deny. Red without the walk to the root.
+        root = self._arm("open", {"kind": "arm", "telemetry": {"export": "allow"}})
+        inner = os.path.join(root, "vendor", "client")
+        os.makedirs(inner)
+        Path(inner, "arm.json").write_text(
+            json.dumps({"kind": "arm", "telemetry": {"export": "deny"}}), encoding="utf-8")
+        with self.assertRaises(guard.Deny):
+            guard.decide(json.dumps({"cwd": inner}).encode(), home=self.home, project_dir=None)
+        cp, _raw, got = self._cli(os.path.join(inner))
+        self.assertEqual((cp.returncode, cp.stdout, got), (0, b"", None))
+
     def test_no_arms_config_is_deny(self):
         with self.assertRaises(guard.Deny):
             guard.decide(json.dumps({"cwd": self.home}).encode(), home=self.home,

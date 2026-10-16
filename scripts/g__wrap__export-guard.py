@@ -41,6 +41,10 @@ ARM_RESOLUTION, as implemented.
      containing either directory read `telemetry.export` == "allow". A nested
      arm inside a `deny` arm inherits the deny, because the outer arm's
      commitment covers its whole tree.
+  5b. Every `arm.json` on the walk from each directory up to and including its
+     arm root must read `allow`, registered or not: a client repo cloned into
+     an allow arm's tree before it was registered keeps its own deny. A
+     symlinked, unreadable or invalid one on the way is deny like any other.
   6. The Export_Policy of an arm is read from `<real root>/arm.json`, opened
      with O_NOFOLLOW: a symlinked arm.json is refused, so a deny arm cannot
      borrow another arm's `allow`. It must be a regular file of at most 1 MiB,
@@ -218,8 +222,26 @@ def export_policy(root: str) -> str:
     finally:
         os.close(fd)
     try:
-        man = _loads_object(b"".join(chunks).decode("utf-8"), "arm.json")
-    except (Deny, UnicodeDecodeError):
+        text = b"".join(chunks).decode("utf-8")
+    except UnicodeDecodeError:
+        return "deny"
+    return policy_of_text(text)
+
+
+def policy_of_text(text) -> str:
+    """'allow' or 'deny' for the bytes of an arm.json, read as the guard reads them.
+
+    The ONE strict reader: one JSON object, no repeated key at any level,
+    `telemetry` an object whose `export` is exactly "allow". Everything else,
+    an absent field included (AC-09), is deny. g__pretool__export-flip.py
+    imports this function, so the gate and the guard can never disagree on
+    what a file means.
+    """
+    if not isinstance(text, str):
+        return "deny"
+    try:
+        man = _loads_object(text, "arm.json")
+    except Deny:
         return "deny"
     tel = man.get("telemetry")
     if not isinstance(tel, dict):
@@ -261,6 +283,24 @@ def decide(raw: bytes, *, home: str, project_dir: str | None) -> str:
     for root in sorted(containing):
         if export_policy(root) != ALLOW:
             raise Deny(f"Export_Policy of the arm at {root} is deny")
+    # An arm.json BETWEEN a session directory and its arm root is an arm too,
+    # registered or not: a client repo cloned into another arm's tree before
+    # anyone registered it carries its own deny. Walk from each directory up to
+    # and including its arm root; any arm.json present on the way (lexists, so a
+    # dangling or looping symlink counts) must read allow.
+    for d in dirs:
+        root = max((r for _n, r in roots if _contains(r, d)), key=len)
+        p = d
+        while True:
+            if os.path.lexists(os.path.join(p, "arm.json")) and export_policy(p) != ALLOW:
+                raise Deny(f"Export_Policy of the arm.json at {p} is deny "
+                           f"(inside the arm at {root})")
+            if p == root:
+                break
+            parent = os.path.dirname(p)
+            if parent == p or not _contains(root, parent):
+                break
+            p = parent
     return session_arm
 
 

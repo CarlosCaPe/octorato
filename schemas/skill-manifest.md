@@ -29,7 +29,7 @@ A skill that wants to be installable by a stranger ships a `skill.json` alongsid
 | `capabilities` | — | privileged tools the skill declares it needs (blast radius) |
 | `dependencies` | — | `{ skill-slug: semver-range }` |
 | `author` / `homepage` | — | attribution / source URL |
-| `telemetry.export` | — | arm only: `deny` or `allow`, absent means `deny` (see below) |
+| `telemetry.export` | — | arm only (refused unless `kind` is `arm`): `deny` or `allow`, absent means `deny` (see below) |
 
 Validate a manifest:
 

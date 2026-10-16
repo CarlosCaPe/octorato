@@ -66,12 +66,28 @@ class ExportFlip(unittest.TestCase):
                             "old_string": '"kind": "arm"', "new_string": '"kind": "arm", "v": 2'}}
         self.assertEqual(run(p, self.d), "allow")
 
-    def test_sets_allow_counts_every_repeated_key(self):
-        self.assertTrue(gate.sets_allow('{"telemetry": {"export": "allow", "export": "deny"}}'))
-        self.assertTrue(gate.sets_allow('{"telemetry": {}, "telemetry": {"export": "allow"}}'))
-        self.assertFalse(gate.sets_allow('{"telemetry": {"export": "Allow"}}'))
-        self.assertFalse(gate.sets_allow('{"other": {"export": "allow"}}'))
-        self.assertFalse(gate.sets_allow("not json"))
+    def test_gate_reads_with_the_guard_reader(self):
+        self.assertFalse(gate.allowed_by_guard('{"telemetry": {"export": "allow", "export": "deny"}}'))
+        self.assertFalse(gate.allowed_by_guard('{"telemetry": {"export": "Allow"}}'))
+        self.assertFalse(gate.allowed_by_guard("not json"))
+        self.assertFalse(gate.allowed_by_guard(None))
+        self.assertTrue(gate.allowed_by_guard('{"telemetry": {"export": "allow"}}'))
+
+    def test_edit_dropping_a_repeated_key_is_a_flip(self):
+        # Before: the guard refuses the repeated key, so the arm reads deny.
+        # After: one clean `allow`. The old reader called the BEFORE allow too
+        # and let this pass.
+        Path(self.d, "arm.json").write_text(
+            '{"kind": "arm", "telemetry": {"export": "deny", "export": "allow"}}', encoding="utf-8")
+        p = {"tool_name": "Edit", "cwd": self.d,
+             "tool_input": {"file_path": "arm.json", "old_string": '"export": "deny", ',
+                            "new_string": ""}}
+        self.assertEqual(run(p, self.d), "deny")
+
+    def test_windows_aliases_are_manifests(self):
+        for name in ("arm.json.", "arm.json. .", "ARM.JSON::$DATA", "arm.json:x"):
+            self.assertTrue(gate._is_manifest(os.path.join(self.d, name)), name)
+        self.assertFalse(gate._is_manifest(os.path.join(self.d, "arm.jsonx")))
 
     def test_shell_reads_pass(self):
         for cmd in ("cat arm.json", "jq .telemetry arm.json 2>/dev/null",

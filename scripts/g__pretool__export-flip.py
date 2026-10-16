@@ -13,12 +13,14 @@ WHAT IT DECIDES ON, by tool:
     The target is an arm manifest when its basename, or the basename of its
     real path (a symlink named anything that points at one), is `arm.json` or
     `arm.json.template` (the template seeds every new arm), compared
-    case-folded. For such a target the gate computes the file AS IT WOULD BE
+    case-folded and with the Windows aliases folded in (`arm.json.`,
+    `arm.json::$DATA`). For such a target the gate computes the file AS IT WOULD BE
     AFTER the call (Write: the content; Edit and MultiEdit: the current file
     with every replacement applied in order, `replace_all` honoured) and
-    parses it with the same strict JSON the guard uses. It denies when the
-    result has `telemetry.export == "allow"` (any occurrence, a repeated key
-    included) and the file as it is NOW does not. Keeping an `allow` the
+    reads it with the guard's own strict reader (`policy_of_text` in
+    g__wrap__export-guard.py, imported, not copied). It denies when the guard
+    would read the result as `allow` and would not read the file as it is NOW
+    as `allow`: removing a repeated key the guard refuses is a flip too. Keeping an `allow` the
     operator already wrote (a version bump in an open arm) is not a flip and
     passes; so does writing `deny`, removing the field, or any other file.
     An Edit or MultiEdit of an arm manifest the gate cannot read denies: the
@@ -100,31 +102,41 @@ def _deny(reason: str, payload=None) -> None:
     }}, ensure_ascii=False))
 
 
+def _alias(name: str) -> str:
+    """A basename as Windows resolves it: an NTFS stream suffix (`:...`, as in
+    `arm.json::$DATA`) dropped, trailing dots and spaces stripped (`arm.json.`
+    names the same file), case-folded."""
+    return name.split(":", 1)[0].rstrip(". ").casefold()
+
+
 def _is_manifest(path: str) -> bool:
-    names = {os.path.basename(path).casefold()}
+    names = {_alias(os.path.basename(path))}
     try:
-        names.add(os.path.basename(os.path.realpath(path)).casefold())
+        names.add(_alias(os.path.basename(os.path.realpath(path))))
     except (OSError, ValueError):
         pass
     return bool(names & _MANIFESTS)
 
 
-def sets_allow(text) -> bool:
-    """True when `text` parses as JSON whose top-level telemetry carries
-    export == "allow", counting every repeated key (no last-wins)."""
-    if not isinstance(text, str):
-        return False
-    try:
-        tree = json.loads(text, object_pairs_hook=lambda pairs: ("__pairs__", pairs))
-    except ValueError:
-        return False
-    if not (isinstance(tree, tuple) and tree[0] == "__pairs__"):
-        return False
-    for key, val in tree[1]:
-        if key == "telemetry" and isinstance(val, tuple) and val[0] == "__pairs__":
-            if any(k == "export" and v == "allow" for k, v in val[1]):
-                return True
-    return False
+def _guard_policy():
+    """The Export_Guard's own strict reader (`policy_of_text`), loaded by path.
+
+    One function decides what an arm.json means for both scripts, so a file the
+    guard reads as deny (a repeated key, say) is deny here too, before and after.
+    Loaded lazily: only a write to an arm manifest needs it, and a guard that
+    cannot be loaded makes that write deny (fail-closed), never allow.
+    """
+    import importlib.util
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "g__wrap__export-guard.py")
+    spec = importlib.util.spec_from_file_location("_export_guard_reader", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.policy_of_text
+
+
+def allowed_by_guard(text) -> bool:
+    """True when the guard would read these bytes as `allow`."""
+    return text is not None and _guard_policy()(text) == "allow"
 
 
 def _read(path: str):
@@ -190,7 +202,7 @@ def decide_write(tool: str, ti: dict, cwd: str):
             after = _apply(before, edits)
         except ValueError as exc:
             return f"{tool} of the arm manifest {raw}: {exc}"
-    if sets_allow(after) and not sets_allow(before):
+    if allowed_by_guard(after) and not allowed_by_guard(before):
         return f"{tool} would set telemetry.export to `allow` in {raw}"
     return None
 

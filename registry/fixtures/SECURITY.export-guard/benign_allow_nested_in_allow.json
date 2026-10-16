@@ -1,0 +1,30 @@
+{
+  "_comment": "An unregistered allow arm.json nested in an allow arm: every arm.json on the walk allows.",
+  "arms_paths": {
+    "open": "arms/open"
+  },
+  "files": {
+    "arms/open/arm.json": {
+      "kind": "arm",
+      "name": "open",
+      "telemetry": {
+        "export": "allow"
+      }
+    },
+    "arms/open/vendor/lib/arm.json": {
+      "kind": "arm",
+      "name": "lib",
+      "telemetry": {
+        "export": "allow"
+      }
+    }
+  },
+  "dirs": [
+    "arms/open/vendor/lib/src"
+  ],
+  "payload": {
+    "session_id": "sess-guard",
+    "hook_event_name": "Stop",
+    "cwd": "{{SANDBOX}}/arms/open/vendor/lib/src"
+  }
+}

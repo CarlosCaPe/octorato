@@ -1,0 +1,33 @@
+{
+  "_comment": "The cwd is two levels below an unregistered deny arm.json inside the allow arm.",
+  "_setup": {
+    "expect_reason": "Export_Policy of the arm.json at"
+  },
+  "arms_paths": {
+    "open": "arms/open"
+  },
+  "files": {
+    "arms/open/arm.json": {
+      "kind": "arm",
+      "name": "open",
+      "telemetry": {
+        "export": "allow"
+      }
+    },
+    "arms/open/vendor/client/arm.json": {
+      "kind": "arm",
+      "name": "client",
+      "telemetry": {
+        "export": "deny"
+      }
+    }
+  },
+  "dirs": [
+    "arms/open/vendor/client/src/deep"
+  ],
+  "payload": {
+    "session_id": "sess-guard",
+    "hook_event_name": "Stop",
+    "cwd": "{{SANDBOX}}/arms/open/vendor/client/src/deep"
+  }
+}
