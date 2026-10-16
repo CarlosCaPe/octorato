@@ -1212,8 +1212,8 @@ def panel_receipts_for(digest: str, session_id: str, now=None,
             if age < 0 or age > window_minutes:
                 continue
         cands.append((key, verdict != "PASS", r, tp, uuid, ts))
-    seen_ext = set()
-    for r in read_global():
+    seen_ext, ledger = set(), read_global()
+    for r in ledger:
         if r.get("kind") != "external" or r.get("state") != "complete":
             continue
         if str(r.get("panel_digest") or "").lower() != want:
@@ -1223,7 +1223,7 @@ def panel_receipts_for(digest: str, session_id: str, now=None,
             continue
         seen_ext.add(tid)
         try:
-            got = external_panel_view(r, session_id, want, now, window_minutes)
+            got = external_panel_view(r, session_id, want, now, window_minutes, ledger)
         except Exception:
             got = None
         if got is None:
@@ -1374,10 +1374,12 @@ def bash_tool_use(tp: str, tool_use_id: str, session_id: str):
     return commands.pop(), result_ts
 
 
-def session_arm_allows(cwd: str) -> bool:
-    """AC-27 through the Export_Guard's own Arm_Resolution: True when the
-    session's directory resolves to no arm (a brain session, or a directory
-    under no registered arm) or to an arm whose Export_Policy is `allow`.
+def session_arm_allows(cwd: str, project_dir: str = "") -> bool:
+    """AC-27 through the Export_Guard's own Arm_Resolution: True when neither
+    the call's cwd nor the session's CLAUDE_PROJECT_DIR resolves to an arm (a
+    brain session, or directories under no registered arm), or when the
+    guard's decide() accepts both together, which refuses a cwd and project
+    dir in different arms or a cwd moved out of a deny arm (`cd /tmp`).
     Anything unreadable is False."""
     try:
         spec = importlib.util.spec_from_file_location(
@@ -1386,20 +1388,24 @@ def session_arm_allows(cwd: str) -> bool:
         spec.loader.exec_module(g)
         home = os.path.expanduser("~")
         real = g._real_dir(os.path.expanduser(str(cwd or "")), "cwd")
+        proj = None
+        if project_dir:
+            proj = g._real_dir(os.path.expanduser(str(project_dir)), "CLAUDE_PROJECT_DIR")
         brains = g.brain_paths(home)
-        if any(g._contains(b, real) for b in brains):
-            return True
         roots = g.load_arm_roots(home, brains)
-        if not any(g._contains(r, real) for _n, r in roots):
+        dirs = [d for d in (real, proj) if d]
+        in_arm = [d for d in dirs if not any(g._contains(b, d) for b in brains)
+                  and any(g._contains(r, d) for _n, r in roots)]
+        if not in_arm:
             return True
-        g.decide(json.dumps({"cwd": real}).encode(), home=home, project_dir=None)
+        g.decide(json.dumps({"cwd": real}).encode(), home=home, project_dir=proj)
         return True
     except Exception:
         return False
 
 
 def external_checked(r: dict, session_id: str, now=None,
-                     window_minutes: float = PANEL_WINDOW_MINUTES):
+                     window_minutes: float = PANEL_WINDOW_MINUTES, rows=None):
     """The AC-24 checks of one complete external row OTHER than the digest
     match, plus AC-27. Returns {output, verdict_ts, engine, requested_model,
     tool_use_id} or None."""
@@ -1419,13 +1425,14 @@ def external_checked(r: dict, session_id: str, now=None,
     er = _external_lib()
     if engine not in er.ENGINES or not er.reviewer_allowed(engine, model):
         return None
-    pend = [p for p in read_global() if p.get("kind") == "external"
+    pend = [p for p in (read_global() if rows is None else rows) if p.get("kind") == "external"
             and p.get("state") == "pending" and p.get("tool_use_id") == tid
             and p.get("session_id") == sid]
     if not pend or pend[-1].get("pre_problems") != [] or any(
             pend[-1].get(k) != r.get(k) for k in ("engine", "requested_model", "prompt_sha256",
                                                    "interpreter", "script", "cwd",
-                                                   "transcript_path", "agent_id")):
+                                                   "project_dir", "transcript_path",
+                                                   "agent_id")):
         return None
     out_path = receipts_dir() / "external" / f"{_safe(tid)}.out"
     if not _regular_file(out_path):
@@ -1456,7 +1463,7 @@ def external_checked(r: dict, session_id: str, now=None,
     age = (now - key).total_seconds() / 60.0
     if age < 0 or age > window_minutes:
         return None
-    if not session_arm_allows(str(r.get("cwd") or "")):
+    if not session_arm_allows(str(r.get("cwd") or ""), str(r.get("project_dir") or "")):
         return None
     return {"output": raw.decode("utf-8", errors="replace"), "verdict_ts": ts,
             "engine": engine, "requested_model": model, "tool_use_id": tid}
@@ -1469,10 +1476,11 @@ def _ends_on_panel(output: str) -> bool:
 
 
 def external_panel_view(r: dict, session_id: str, want: str, now=None,
-                        window_minutes: float = PANEL_WINDOW_MINUTES):
+                        window_minutes: float = PANEL_WINDOW_MINUTES, rows=None):
     """A complete external row as a panel reviewer for digest `want` (AC-24),
-    or None. Its reviewer id is its tool_use_id."""
-    v = external_checked(r, session_id, now, window_minutes)
+    or None. Its reviewer id is its tool_use_id. `rows` is the ledger already
+    read by the caller, so one Stop reads it once."""
+    v = external_checked(r, session_id, now, window_minutes, rows)
     if v is None:
         return None
     out = v["output"]
@@ -1508,12 +1516,12 @@ def external_reviewers_for(report: str, session_id: str, kind: str, verdict: str
     passes every AC-24 check other than the digest match and AC-27, and whose
     stored output ends on the same verdict as the report (`kind` qa or
     panel). The harness receipt that carries this list is unchanged."""
-    out = []
+    out, ledger = [], read_global()
     for tid in parse_review_external(report):
-        rows = [r for r in read_global() if r.get("kind") == "external"
+        rows = [r for r in ledger if r.get("kind") == "external"
                 and r.get("state") == "complete" and r.get("tool_use_id") == tid]
         for r in reversed(rows):
-            v = external_checked(r, session_id, now)
+            v = external_checked(r, session_id, now, rows=ledger)
             if v is None:
                 continue
             said = (parse_verdict(v["output"])[0] if kind == "qa"
@@ -1589,6 +1597,11 @@ def _selftest_external() -> int:
          [("h", "PASS", 2), ("ext", "PASS", 4)], "h", 0),
         ("forged-passes-complete-self-quorum-beside-harness", selfish,
          [("h", "PASS", 2), ("ext", "PASS", 3), ("ext", "PASS", 4)], "h", 0),
+        ("forged-pass-after-revoked-harness-pass-sourced", sourced,
+         [("h", "PASS", 2), ("h", "NEEDS-WORK", 3), ("ext", "PASS", 4)], None, 2),
+        ("three-forged-passes-after-revoked-harness-pass-self", selfish,
+         [("h", "PASS", 1), ("h", "NEEDS-WORK", 2), ("ext", "PASS", 3), ("ext", "PASS", 4),
+          ("ext", "PASS", 4)], None, 2),
     ]
     fails = []
     old_home = os.environ.get("HOME")

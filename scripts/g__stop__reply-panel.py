@@ -43,9 +43,10 @@ THE DECISION (FR-03, checked in this order; the first that holds exits 0)
      ids: 3 for a SELF reply, 1 for a SOURCED or INPUT one (FR-06). An
      External_Review_Receipt (a review run on another engine through a
      pinned call, v11 phase 4) counts as one reviewer by its tool_use_id, and
-     the quorum is met only when at least one of those PASS receipts comes
-     from a harness reviewer subagent (AC-25): an external receipt adds to a
-     quorum and never forms one. An INPUT
+     the quorum is counted only when, with every external PASS set aside,
+     the newest receipt left is a harness reviewer's PASS newer than the
+     prompt (AC-25, the order panel_pass_for uses): an external receipt adds
+     to a quorum, never forms one, and never stands in for a revoked PASS. An INPUT
      reply only asks the operator for a fact (input_needed). A reply is SOURCED
      only when it has a Provenance / Procedencia / Herkunft line and EVERY
      such line has a Basis that names something: `Basis` (any case) then a
@@ -472,17 +473,21 @@ def pass_reviewers(ctx, digest: str, session_id: str, prompt_ts: str, now) -> in
         when = ctx.send._ts(r.get("verdict_ts"))
         return when is not None and when > after
 
+    # v11 AC-25, in panel_pass_for's order (AC-26): every external PASS is
+    # dropped, and the newest remaining receipt (harness PASS, harness
+    # NEEDS-WORK, external NEEDS-WORK) must be a harness PASS newer than the
+    # prompt. Only then does the quorum count, where an External_Review_Receipt
+    # (receipt_ledger.external_panel_view) adds one distinct reviewer by its
+    # tool_use_id. A harness PASS that a newer NEEDS-WORK revoked therefore
+    # never lets external receipts form a quorum around it.
+    deciding = [r for r in got if not (r.get("external") and r.get("verdict") == "PASS")]
+    head = deciding[0] if deciding else None
+    if not head or head.get("external") or head.get("verdict") != "PASS" or not newer(head):
+        return 0
     if got[0].get("verdict") != "PASS" or not newer(got[0]):
         return 0
-    passes = [r for r in got if r.get("verdict") == "PASS" and newer(r) and r.get("agent_id")]
-    # v11 AC-25: an External_Review_Receipt (a review on another engine,
-    # receipt_ledger.external_panel_view) counts as one distinct reviewer by
-    # its tool_use_id, but a quorum is met only when at least one counted PASS
-    # comes from a harness reviewer subagent. External receipts add to a
-    # quorum; they never form one.
-    if not any(not r.get("external") for r in passes):
-        return 0
-    return len({str(r.get("agent_id")) for r in passes})
+    return len({str(r.get("agent_id")) for r in got
+                if r.get("verdict") == "PASS" and newer(r) and r.get("agent_id")})
 
 
 # ---------------------------------------------------------------------------
@@ -773,14 +778,21 @@ def _seed_case(sandbox: Path, session: str, msg: str, fx: dict) -> None:
             # result in the session transcript, output copy, ledger rows and a
             # Reviewer_Registry pair, allowed unless the fixture says not.
             import panel_digest
-            cwd = "~/.claude"
+            cwd, project = "~/.claude", ""
             if ext.get("arm"):
                 cwd = panel_fixture_seed.seed_arm(sandbox, "fx-arm", ext["arm"])
+                project = cwd if ext.get("with_project") else ""
+            if ext.get("project_arm"):
+                # The call ran from a directory under no arm (`cd` out of the
+                # session's arm); the session's project dir is the arm.
+                (sandbox / "elsewhere").mkdir(exist_ok=True)
+                cwd = "~/elsewhere"
+                project = panel_fixture_seed.seed_arm(sandbox, "fx-arm", ext["project_arm"])
             panel_fixture_seed.seed_external_receipt(
                 sandbox, session, panel_digest.Message(r.get("text", msg), [], ["operator"]),
                 r["verdict"], r["ts"], ext.get("tool_use_id") or f"toolu_fx_ext_{i}",
                 ext.get("engine", "codex"), ext.get("model", "fx-review-model"), cwd,
-                ext.get("allowed", True))
+                ext.get("allowed", True), project)
             continue
         agent_id = r.get("agent_id") or hashlib.sha256(f"{session}:{i}".encode()).hexdigest()[:17]
         panel_fixture_seed.seed_reply_receipt(

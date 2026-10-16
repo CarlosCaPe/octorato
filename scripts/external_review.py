@@ -76,7 +76,29 @@ CONFIG_FILES = {"codex": "~/.codex/config.toml", "gemini": "~/.gemini/settings.j
 PINNED_FILES = STARTUP_FILES + tuple(CONFIG_FILES[e] for e in ENGINES)
 # Each of these, set in the hook's own environment, can make the call load
 # code the pins do not cover (a sourced script, a preloaded module).
-POISON_ENV = ("BASH_ENV", "ENV", "NODE_OPTIONS", "NODE_PATH")
+POISON_ENV = ("BASH_ENV", "ENV", "NODE_OPTIONS", "NODE_PATH",
+              # Each of these points a CLI at another config home, settings
+              # file or endpoint than the pinned one. Measured as strings in
+              # the installed CLIs (codex-cli 0.159.3 vendor binary, gemini
+              # 0.62.0 bundle/), plus the OpenAI and Gemini base-URL names the
+              # vendors document for compatible endpoints.
+              "CODEX_HOME", "CODEX_EXEC_SERVER_URL", "OPENAI_BASE_URL", "OPENAI_API_BASE",
+              "GOOGLE_GEMINI_BASE_URL", "GOOGLE_VERTEX_BASE_URL", "GEMINI_API_BASE",
+              "GEMINI_CLI_HOME", "GEMINI_CLI_SYSTEM_SETTINGS_PATH",
+              "GEMINI_CLI_SYSTEM_DEFAULTS_PATH")
+# Workspace config the CLIs read from the call's directory and its parents.
+# None is pinned, so a receipt is refused while any of them exists between the
+# call's cwd and its project dir (the user-level copies under $HOME are pinned
+# above and excluded from this walk).
+WORKSPACE_CONFIG = (".gemini/settings.json", ".gemini/.env", ".codex")
+# `codex exec <word>`: a word in the prompt slot that codex reads as a
+# subcommand (codex --help and codex exec --help, codex-cli 0.159.3) makes
+# the call something other than a review of the prompt.
+CODEX_SUBCOMMANDS = frozenset((
+    "agents", "exec", "e", "review", "login", "logout", "mcp", "plugin", "app-server",
+    "remote-control", "completion", "update", "doctor", "sandbox", "debug", "apply", "a",
+    "resume", "queue", "archive", "delete", "migrate-rollouts", "unarchive", "fork", "cloud",
+    "exec-server", "features", "help", "proto"))
 PINS_REL = ("company", "config", "reviewer-pins.json")
 REVIEWERS_REL = ("registry", "reviewers.yaml")
 
@@ -207,6 +229,8 @@ def _parse_codex(rest: list) -> tuple:
             i += 1
     if prompt is None:
         raise ValueError("no prompt argument (a stdin prompt is not accepted)")
+    if prompt in CODEX_SUBCOMMANDS:
+        raise ValueError(f"prompt {prompt!r} is a codex subcommand name")
     return model, prompt, pidx
 
 
@@ -449,6 +473,33 @@ def check_problems(pins, engine: str, env=None, home_dir: str | None = None) -> 
     return probs
 
 
+def workspace_problems(cwd: str, project_dir: str = "", home_dir: str | None = None) -> list:
+    """Unpinned workspace config between the call's cwd and its project dir:
+    from cwd up to and including the project dir when it contains cwd,
+    otherwise up to the filesystem root, never $HOME itself (its copies are
+    pinned). An unreadable or relative cwd is a problem too."""
+    home_dir = os.path.realpath(home_dir or home())
+    if not cwd or not os.path.isabs(cwd):
+        return ["the call names no absolute cwd"]
+    cur = os.path.realpath(cwd)
+    stop = os.path.realpath(project_dir) if project_dir and os.path.isabs(project_dir) else ""
+    if stop and not _contains(stop, cur):
+        stop = ""
+    probs = []
+    while True:
+        if cur != home_dir:
+            for rel in WORKSPACE_CONFIG:
+                if os.path.lexists(os.path.join(cur, rel)):
+                    probs.append(f"unpinned workspace config {os.path.join(cur, rel)}")
+        if stop and cur == stop:
+            break
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            break
+        cur = parent
+    return probs
+
+
 # ---------------------------------------------------------------------------
 # Reviewer_Registry (AC-24, AC-29)
 # ---------------------------------------------------------------------------
@@ -535,6 +586,9 @@ def pre_hook(data: dict, env=None) -> dict | None:
         if not call:
             return None
         rl = _load_ledger()
+        env_now = os.environ if env is None else env
+        project = str(env_now.get("CLAUDE_PROJECT_DIR") or "")
+        cwd = str(data.get("cwd") or "")
         record = {
             "kind": "external", "state": "pending", "engine": call["engine"],
             "interpreter": call["interpreter"], "script": call["script"],
@@ -542,8 +596,9 @@ def pre_hook(data: dict, env=None) -> dict | None:
             "prompt_sha256": call["prompt_sha256"], "tool_use_id": tid,
             "session_id": session, "agent_id": str(data.get("agent_id") or ""),
             "transcript_path": str(data.get("transcript_path") or ""),
-            "cwd": str(data.get("cwd") or ""),
-            "pre_problems": check_problems(pins, call["engine"], env),
+            "cwd": cwd, "project_dir": project,
+            "pre_problems": check_problems(pins, call["engine"], env)
+            + workspace_problems(cwd, project),
         }
         rl.append_global(record)
         return record
@@ -601,7 +656,8 @@ def post_hook(data: dict, env=None) -> dict | None:
         if not call or call["prompt_sha256"] != p.get("prompt_sha256") \
                 or call["requested_model"] != p.get("requested_model"):
             return None
-        if check_problems(pins, p["engine"], env):
+        if check_problems(pins, p["engine"], env) or workspace_problems(
+                str(p.get("cwd") or ""), str(p.get("project_dir") or "")):
             return None
         code, out = _exit_and_output(data.get("tool_response"))
         raw = out.encode("utf-8", "surrogateescape")
@@ -905,7 +961,8 @@ def _expand_cmd(text: str, p: dict) -> str:
 
 
 def _hook_env(sb: str, extra: dict | None) -> dict:
-    env = {k: v for k, v in os.environ.items() if k not in POISON_ENV}
+    env = {k: v for k, v in os.environ.items()
+           if k not in POISON_ENV and k != "CLAUDE_PROJECT_DIR"}
     for k in ("OCTO_MERGE_APPROVE", "OCTO_QA_OK", "OCTO_KERNEL_OPEN"):
         env.pop(k, None)
     env["HOME"] = env["USERPROFILE"] = sb
@@ -969,8 +1026,22 @@ def _run_fixture(path: str) -> list:
             _mutate(sb, p, op)
         command = _expand_cmd(fx["command"], p)
         tid = fx.get("tool_use_id", "toolu_fx_external_1")
+        work = os.path.join(sb, "work")
+        cwd = os.path.join(work, fx.get("cwd_rel", ""))
+        os.makedirs(cwd, exist_ok=True)
+        for rel in fx.get("workspace_files") or []:
+            full = os.path.join(work, rel)
+            if rel.endswith("/"):
+                os.makedirs(full, exist_ok=True)
+            else:
+                os.makedirs(os.path.dirname(full), exist_ok=True)
+                with open(full, "w", encoding="utf-8") as fh:
+                    fh.write("{}\n")
+        env_fx = dict(fx.get("env") or {})
+        env_fx.setdefault("CLAUDE_PROJECT_DIR", work)
+        fx = dict(fx, env=env_fx)
         payload = {"session_id": "fx-external", "tool_name": "Bash", "tool_use_id": tid,
-                   "tool_input": {"command": command}, "cwd": sb,
+                   "tool_input": {"command": command}, "cwd": cwd,
                    "transcript_path": os.path.join(sb, ".claude", "projects", "fx",
                                                    "fx-external.jsonl")}
         _run_hook(PRE_HOOK, payload, _hook_env(sb, fx.get("env")), sb)

@@ -174,7 +174,8 @@ class HookPairSeam(HomeCase):
         self.session, self.tid = "sess-seam", "toolu_seam_1"
         self.msg = pd.Message("The fix is in.", [], ["operator"])
         self.cmd = f"{self.p['node']} {self.p['codex']} exec -m m1 'Review the block.'"
-        self.env = {k: v for k, v in os.environ.items() if k not in er.POISON_ENV}
+        self.env = {k: v for k, v in os.environ.items()
+                    if k not in er.POISON_ENV and k != "CLAUDE_PROJECT_DIR"}
         self.now = T + dt.timedelta(minutes=10)
 
     def run_pair(self, verdict="PASS", cwd=None, write_session=True, mutate=None):
@@ -237,6 +238,30 @@ class HookPairSeam(HomeCase):
         (self.home / "arms" / "client" / "arm.json").write_text(
             json.dumps({"telemetry": {"export": "allow"}}), encoding="utf-8")
         self.assertEqual(len(rl.panel_receipts_for(self.msg.digest, self.session, self.now)), 1)
+
+
+    def test_ac27_cwd_moved_out_of_a_deny_arm_project_does_not_count(self):
+        arm = os.path.expanduser(seed.seed_arm(self.home, "client", "deny"))
+        (self.home / "elsewhere").mkdir()
+        self.env["CLAUDE_PROJECT_DIR"] = arm
+        self.assertIsNotNone(self.run_pair(cwd=str(self.home / "elsewhere")))
+        self.assertEqual(rl.panel_receipts_for(self.msg.digest, self.session, self.now), [])
+
+    def test_workspace_config_in_cwd_leaves_no_receipt(self):
+        work = self.home / "work"
+        (work / ".gemini").mkdir(parents=True)
+        (work / ".gemini" / "settings.json").write_text("{}", encoding="utf-8")
+        self.env["CLAUDE_PROJECT_DIR"] = str(work)
+        payload = {"session_id": self.session, "tool_name": "Bash", "tool_use_id": self.tid,
+                   "tool_input": {"command": self.cmd}, "cwd": str(work),
+                   "transcript_path": str(self.home / "t.jsonl")}
+        pend = er.pre_hook(payload, self.env)
+        self.assertTrue(any("workspace config" in p for p in pend["pre_problems"]))
+
+    def test_codex_subcommand_in_prompt_slot_is_refused(self):
+        call, why = er.parse_call(f"{N} {CJS} exec resume", ENGINES)
+        self.assertIsNone(call)
+        self.assertIn("subcommand", why)
 
 
 class QaReflex(HomeCase):

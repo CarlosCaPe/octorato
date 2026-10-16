@@ -112,7 +112,8 @@ EXTERNAL_SCRIPTS = {"codex": "/opt/fx-node/lib/node_modules/@openai/codex/bin/co
 
 def seed_external_receipt(home: Path, session: str, msg, verdict: str, ts: str,
                           tool_use_id: str, engine: str = "codex", model: str = "fx-review-model",
-                          cwd: str = "~/.claude", allowed: bool = True) -> None:
+                          cwd: str = "~/.claude", allowed: bool = True,
+                          project_dir: str = "") -> None:
     """An External_Review_Receipt (v11 phase 4) for message `msg` (a
     panel_digest.Message), written the way the Bash hook pair writes one: the
     session transcript's harness Bash tool_use and its tool result (at `ts`),
@@ -156,7 +157,8 @@ def seed_external_receipt(home: Path, session: str, msg, verdict: str, ts: str,
     base = {"kind": "external", "engine": engine, "interpreter": EXTERNAL_INTERPRETER,
             "script": EXTERNAL_SCRIPTS[engine], "requested_model": model,
             "prompt_sha256": er.prompt_digest(prompt), "tool_use_id": tool_use_id,
-            "session_id": session, "transcript_path": "~/" + rel_tp.as_posix(), "cwd": cwd}
+            "session_id": session, "transcript_path": "~/" + rel_tp.as_posix(), "cwd": cwd,
+            "project_dir": project_dir}
     rows = [dict(base, state="pending", pre_problems=[], ts=use_ts),
             dict(base, state="complete", exit_code=0, output_sha256=er.sha256_bytes(raw),
                  output_path=f"~/.claude/.cache/receipts/external/{tool_use_id}.out",
