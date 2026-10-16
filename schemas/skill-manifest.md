@@ -29,6 +29,7 @@ A skill that wants to be installable by a stranger ships a `skill.json` alongsid
 | `capabilities` | — | privileged tools the skill declares it needs (blast radius) |
 | `dependencies` | — | `{ skill-slug: semver-range }` |
 | `author` / `homepage` | — | attribution / source URL |
+| `kind` | — | `skill` (absent means skill), `arm`, or `plugin`: a signed Claude Code plugin whose every hook runs through `scripts/g__wrap__export-guard.py`, installed by `octo_pkg.py install --kind plugin` under `plugins/octorato-local/<name>` (v11 AC-13) |
 | `telemetry.export` | — | arm only (refused unless `kind` is `arm`): `deny` or `allow`, absent means `deny` (see below) |
 
 Validate a manifest:

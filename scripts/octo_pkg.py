@@ -10,7 +10,8 @@ into the always-on context and hope".
 Subcommands (named so `octo pkg <verb>` can delegate here verbatim once the `octo`
 thunk lands in Phase 1b):
 
-  install <source> [--kind skill|arm] [--path P] [--ref R] [--name N] [--dest D]
+  install <source> [--kind skill|arm|plugin] [--path P] [--ref R] [--name N] [--dest D]
+  wrap-plugin <upstream-dir> --out <dir> [--name N]
   verify [<name> ...] [--all] [--json]
   uninstall <name>
   list [--json]
@@ -48,6 +49,20 @@ did to the BRAIN: the arms-paths registration and the lock entry go together, un
 one lock, and the clone stays where it is. Deleting the operator's own repo is not
 this primitive's to do, and removing only the lock entry (what it used to do) leaves
 an arm registered with no lock entry, which is the one state verify cannot see.
+
+Plugins (kind `plugin`, v11 tracing spec AC-13) are the Tracing_Wrapper: a Claude Code
+plugin whose every hook command is EXACTLY the Export_Guard around one upstream command
+(wrap_command), built from a local upstream directory by `wrap-plugin`, signed like a
+skill, and installed by the operator in a terminal outside any session (`install
+--kind plugin` refuses when CLAUDECODE is set) under `plugins/octorato-local/<name>`
+beside a local marketplace manifest generated from the lock. Install writes no settings
+file and enables nothing, so the plugin is disabled for every arm until the operator
+enables it per arm with the harness's own command. Its layout (check_plugin_layout) is
+checked in staging between the manifest and the tree hash: no component path in its
+plugin.json, no `.mcp.json`, and `hooks/hooks.json` equal to the guarded form of the
+upstream's `hooks/upstream-hooks.json`. verify adds the plugin tree, every harness copy
+of it under plugins/ (its cache), any unlocked tree under plugins/octorato-local, and
+the upstream `langsmith-tracing` installed outside the wrapper (scan_plugins).
 
 Verify ladder (`verify --all` exits 1 only on the FAIL tier):
   PASS  present, tree hash matches, signature verifies, symlink resolves
@@ -175,6 +190,7 @@ import io
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import stat
@@ -207,7 +223,10 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 SIG_NAMESPACE = "octorato-pkg"
-MANIFEST_NAME = {"skill": "skill.json", "arm": "arm.json"}
+# A plugin carries the same octo manifest a skill does (`skill.json` beside its detached
+# `skill.json.sig`), so the tree hash, the signature and the publisher flow are the
+# skill ones byte for byte; what differs is where it lands and what its layout must be.
+MANIFEST_NAME = {"skill": "skill.json", "arm": "arm.json", "plugin": "skill.json"}
 SIG_NAME = "skill.json.sig"
 LOCK_REL = "packages.lock.json"
 PUBLIC_SIGNERS_REL = "registry/pkg-signers.pub"
@@ -225,6 +244,41 @@ SKILLS_REL = "skills"
 MANIFEST_SKIP_DIRS = {"vendor", "learned"}
 
 PASS, WARN, FAIL = "PASS", "WARN", "FAIL"
+
+# ---- kind `plugin` (v11 tracing spec, AC-13) ---------------------------------------
+# A plugin installs under `<brain>/plugins/octorato-local/<name>`, the brain being
+# `~/.claude`, beside a generated `.claude-plugin/marketplace.json` that lists every
+# locked plugin, so the operator can add the directory as a local marketplace. Nothing
+# here writes a settings file, registers the marketplace or enables a plugin: install
+# leaves it disabled for every arm, and enabling it is the operator's, per arm.
+PLUGINS_REL = "plugins"
+PLUGIN_MARKET = "octorato-local"
+PLUGIN_MANIFEST_REL = ".claude-plugin/plugin.json"
+PLUGIN_UPSTREAM_MANIFEST_REL = ".claude-plugin/upstream-plugin.json"
+PLUGIN_HOOKS_REL = "hooks/hooks.json"
+PLUGIN_UPSTREAM_HOOKS_REL = "hooks/upstream-hooks.json"
+# The keys a wrapper's own plugin.json may carry. `hooks`, `mcpServers`, `lspServers`,
+# `commands`, `agents` and every other component path are refused: a component the
+# manifest points at runs without passing through the guard.
+PLUGIN_JSON_KEYS = frozenset({"name", "version", "description", "author", "homepage",
+                              "repository", "license", "keywords"})
+# The upstream plugin the Tracing_Wrapper wraps (feature.md, Summary). Installed on its
+# own, outside the wrapper, its hooks would run for every arm with no guard at all.
+UPSTREAM_TRACING_PLUGIN = "langsmith-tracing"
+DEFAULT_WRAPPER_NAME = "octorato-tracing"
+# Every hook command of a plugin package is EXACTLY this argv followed by one argument,
+# the upstream command, which `sh -c` then runs: one shape, compared by re-rendering,
+# never a parser that tries to tell a guarded command from an unguarded one. `-I -S`
+# keep the interpreter from importing site or user code before the guard decides (the
+# guard imports nothing from the brain); the guard passes os.environ through unchanged.
+GUARD_ARGV = ("python3", "-I", "-S", "${HOME}/.claude/scripts/g__wrap__export-guard.py",
+              "--", "sh", "-c")
+GUARD_PREFIX = 'python3 -I -S "${HOME}/.claude/scripts/g__wrap__export-guard.py" -- sh -c'
+# Claude Code exports CLAUDECODE=1 to every tool call it runs. A plugin install from
+# inside a session is refused: the install is the operator's terminal step (AC-13).
+SESSION_ENV = "CLAUDECODE"
+_HOOK_ENTRY_KEYS = frozenset({"matcher", "hooks"})
+_HOOK_KEYS = frozenset({"type", "command", "timeout", "statusMessage"})
 
 # The schema's own name pattern. Every package name is matched against it at BOTH
 # ends: when a manifest is read, and when the lockfile is read. The lock is a tracked
@@ -443,6 +497,17 @@ class Brain:
     def vendor_path(self, name: str) -> Path:
         return self.vendor_dir / name
 
+    @property
+    def plugins_dir(self) -> Path:
+        return self.root / PLUGINS_REL
+
+    @property
+    def plugin_market_dir(self) -> Path:
+        return self.plugins_dir / PLUGIN_MARKET
+
+    def plugin_path(self, name: str) -> Path:
+        return self.plugin_market_dir / name
+
     # ---- git exclude -----------------------------------------------------
     def _exclude_file(self) -> Path | None:
         """`.git/info/exclude` of the COMMON dir. In a worktree `.git` is a file, so
@@ -657,8 +722,8 @@ class Brain:
             if name in seen:
                 raise PkgError(f"{LOCK_REL} names {name!r} twice")
             seen.add(name)
-            if entry.get("kind") not in (None, "skill", "arm"):
-                raise PkgError(f"{LOCK_REL} entry {name}: kind must be skill or arm")
+            if entry.get("kind") not in (None, "skill", "arm", "plugin"):
+                raise PkgError(f"{LOCK_REL} entry {name}: kind must be skill, arm or plugin")
             # Every field a consumer treats as a string is type-checked HERE, at the
             # one place the file is read, rather than at each use. `signer` reached a
             # set membership test and a list value raised TypeError; `source` reached
@@ -1082,11 +1147,155 @@ def _verify_signature(brain: Brain, mpath: Path, sig_path: Path) -> str:
                    f"({', '.join(sorted(principals))}): {last}")
 
 
+# --------------------------------------------------------------------------
+# plugin layout (kind `plugin`, v11 AC-13)
+# --------------------------------------------------------------------------
+
+def wrap_command(upstream: str) -> str:
+    """The one hook command shape a plugin package may carry: the guard, `--`,
+    `sh -c` and the upstream command as ONE argument. `sh -c` keeps the upstream
+    command's own shell syntax (quotes, `${CLAUDE_PLUGIN_ROOT}`, operators) intact
+    instead of splitting it into argv the guard would run without a shell."""
+    return f"{GUARD_PREFIX} {shlex.quote(upstream)}"
+
+
+def unwrap_command(command) -> str | None:
+    """The upstream command inside a guarded hook command, or None.
+
+    Exact by construction, never a parser over adversary text: the candidate is
+    split once, and accepted only when re-rendering its last argument with
+    wrap_command gives back the identical string. Anything else (a second command
+    after `;`, a redirect, another interpreter, a different guard path, an
+    `env X=1` in front) re-renders differently and is None."""
+    if not isinstance(command, str) or not command.startswith(GUARD_PREFIX + " "):
+        return None
+    try:
+        toks = shlex.split(command)
+    except ValueError:
+        return None
+    if len(toks) != len(GUARD_ARGV) + 1 or tuple(toks[:len(GUARD_ARGV)]) != GUARD_ARGV:
+        return None
+    inner = toks[-1]
+    return inner if wrap_command(inner) == command else None
+
+
+def hook_lists(data, label: str) -> dict:
+    """Validate a Claude Code hooks file and return its `hooks` mapping.
+
+    Only the shape this module can reason about is accepted: `{"hooks": {Event:
+    [{"matcher"?: str, "hooks": [{"type": "command", "command": str, "timeout"?,
+    "statusMessage"?}]}]}}`, plus an optional top-level `description`. Any other
+    key or hook type (an http or prompt hook, say) is refused, because a hook this
+    cannot read is a hook nobody can say runs through the guard."""
+    if not isinstance(data, dict) or not isinstance(data.get("hooks"), dict):
+        raise PkgError(f"{label}: not a hooks file (an object with a `hooks` object)")
+    extra = set(data) - {"hooks", "description"}
+    if extra:
+        raise PkgError(f"{label}: unexpected top-level key(s) {sorted(extra)}")
+    for event, entries in data["hooks"].items():
+        if not isinstance(event, str) or not isinstance(entries, list) or not entries:
+            raise PkgError(f"{label}: event {event!r} is not a non-empty list")
+        for i, entry in enumerate(entries):
+            if not isinstance(entry, dict) or set(entry) - _HOOK_ENTRY_KEYS:
+                raise PkgError(f"{label}: {event}[{i}] carries keys outside "
+                               f"{sorted(_HOOK_ENTRY_KEYS)}")
+            if "matcher" in entry and not isinstance(entry["matcher"], str):
+                raise PkgError(f"{label}: {event}[{i}].matcher is not a string")
+            hooks = entry.get("hooks")
+            if not isinstance(hooks, list) or not hooks:
+                raise PkgError(f"{label}: {event}[{i}].hooks is not a non-empty list")
+            for j, h in enumerate(hooks):
+                where = f"{label}: {event}[{i}].hooks[{j}]"
+                if not isinstance(h, dict) or set(h) - _HOOK_KEYS:
+                    raise PkgError(f"{where} carries keys outside {sorted(_HOOK_KEYS)}")
+                if h.get("type") != "command":
+                    raise PkgError(f"{where} is a {h.get('type')!r} hook; only `command` "
+                                   f"hooks can be routed through the guard")
+                if not isinstance(h.get("command"), str) or not h["command"].strip():
+                    raise PkgError(f"{where} has no command string")
+                t = h.get("timeout")
+                if t is not None and (isinstance(t, bool) or not isinstance(t, (int, float))):
+                    raise PkgError(f"{where}.timeout is not a number")
+    return data["hooks"]
+
+
+def wrap_hooks(upstream: dict) -> dict:
+    """The wrapper's hooks file: the upstream's, every command guarded, nothing else
+    changed (events, matchers, order, timeouts and status messages kept)."""
+    lists = hook_lists(upstream, PLUGIN_UPSTREAM_HOOKS_REL)
+    out = {}
+    for event, entries in lists.items():
+        out[event] = []
+        for entry in entries:
+            e = {k: v for k, v in entry.items() if k != "hooks"}
+            e["hooks"] = [{**h, "command": wrap_command(h["command"])} for h in entry["hooks"]]
+            out[event].append(e)
+    return {"description": "Octorato Tracing_Wrapper: every hook command runs through "
+                           "scripts/g__wrap__export-guard.py, which starts the upstream "
+                           "command only for an arm whose telemetry.export is allow",
+            "hooks": out}
+
+
+def check_plugin_layout(pkg_dir: Path, manifest: dict) -> dict:
+    """Every structural rule a plugin package must meet, checked on the bytes in the
+    staging area (or on an installed tree), before any signature is looked at.
+
+    Returns {"upstream_name", "upstream_version", "events"} for the caller to print.
+    The rules, each a refusal:
+      - the octo manifest declares `kind: plugin`;
+      - `.claude-plugin/plugin.json` is an object naming the same plugin, with no key
+        outside PLUGIN_JSON_KEYS (no component path the guard would not see);
+      - no `.mcp.json` (an MCP server starts with the session, guard or not);
+      - `hooks/upstream-hooks.json` is the upstream's hook list and
+        `hooks/hooks.json` is EXACTLY wrap_hooks() of it: same events, matchers,
+        order and timeouts, every command guarded. So every event the wrapper
+        registers is an upstream event and every upstream command it runs is run by
+        the guard; a wrapper that dropped, added or rewrote one is refused;
+      - `.claude-plugin/upstream-plugin.json` names the upstream plugin.
+    """
+    if not isinstance(manifest, dict) or manifest.get("kind") != "plugin":
+        raise PkgError("skill.json does not declare `kind: plugin`")
+    name = manifest.get("name")
+    pj = read_json(pkg_dir / PLUGIN_MANIFEST_REL, PLUGIN_MANIFEST_REL)
+    if not isinstance(pj, dict):
+        raise PkgError(f"{PLUGIN_MANIFEST_REL} is not a JSON object")
+    if pj.get("name") != name:
+        raise PkgError(f"{PLUGIN_MANIFEST_REL} names {pj.get('name')!r}, the package is {name!r}")
+    extra = set(pj) - PLUGIN_JSON_KEYS
+    if extra:
+        raise PkgError(f"{PLUGIN_MANIFEST_REL} carries {sorted(extra)}: a plugin package "
+                       f"declares no component path, so nothing it loads bypasses the guard")
+    if stat_ok(lambda: (pkg_dir / ".mcp.json").exists(), False, ".mcp.json"):
+        raise PkgError("the package ships .mcp.json: an MCP server starts with the session "
+                       "and never passes through the guard")
+    up_manifest = read_json(pkg_dir / PLUGIN_UPSTREAM_MANIFEST_REL, PLUGIN_UPSTREAM_MANIFEST_REL)
+    if not isinstance(up_manifest, dict) or not isinstance(up_manifest.get("name"), str):
+        raise PkgError(f"{PLUGIN_UPSTREAM_MANIFEST_REL} does not name the upstream plugin")
+    upstream = read_json(pkg_dir / PLUGIN_UPSTREAM_HOOKS_REL, PLUGIN_UPSTREAM_HOOKS_REL)
+    wrapped = read_json(pkg_dir / PLUGIN_HOOKS_REL, PLUGIN_HOOKS_REL)
+    lists = hook_lists(wrapped, PLUGIN_HOOKS_REL)
+    for event, entries in lists.items():
+        for i, entry in enumerate(entries):
+            for j, h in enumerate(entry["hooks"]):
+                if unwrap_command(h["command"]) is None:
+                    raise PkgError(f"{PLUGIN_HOOKS_REL}: {event}[{i}].hooks[{j}] does not "
+                                   f"run through the Export_Guard: {h['command'][:120]!r}")
+    if lists != wrap_hooks(upstream)["hooks"]:
+        raise PkgError(f"{PLUGIN_HOOKS_REL} is not the guarded form of "
+                       f"{PLUGIN_UPSTREAM_HOOKS_REL}: an event, a matcher, an order, a "
+                       f"timeout or a command differs")
+    return {"upstream_name": up_manifest["name"],
+            "upstream_version": str(up_manifest.get("version") or "unversioned"),
+            "events": sorted(lists)}
+
+
 def check_package(brain: Brain, pkg_dir: Path, kind: str) -> dict:
     """Run the three pre-copy checks in order and return the manifest.
 
     Order is load-and-validate, then tree, then signature. A tampered tree is
-    refused with no key involved at all.
+    refused with no key involved at all. A plugin adds its layout check between
+    the validation and the tree, for the same reason: a fact about the bytes needs
+    no key.
     """
     mpath, manifest = load_manifest(pkg_dir, kind)
     validate_manifest(brain, mpath)
@@ -1094,10 +1303,17 @@ def check_package(brain: Brain, pkg_dir: Path, kind: str) -> dict:
         # arms are validated, not signed: the operator's own repo, not a third
         # party's package. A hash over a live working tree would be meaningless.
         return manifest
+    if kind == "plugin":
+        manifest["_plugin"] = check_plugin_layout(pkg_dir, manifest)
+    elif isinstance(manifest, dict) and manifest.get("kind") == "plugin":
+        # A plugin is never installed into skills/vendor: its hooks would load from
+        # the skill discovery path as plain files while the plugin loader never saw
+        # them, and its layout rules would never run.
+        raise PkgError("this package declares kind plugin: install it with --kind plugin")
     embedded = manifest.get("tree_sha256")
     if not embedded:
         raise PkgError(f"{mpath.name} carries no tree_sha256; an unhashed tree cannot be verified")
-    actual = tree_sha256(pkg_dir, "skill")
+    actual = tree_sha256(pkg_dir, kind)
     if actual != embedded:
         raise PkgError(f"tree_sha256 mismatch: manifest says {embedded[:12]}, "
                        f"tree hashes to {actual[:12]}")
@@ -1428,6 +1644,138 @@ def install_skill(brain: Brain, source: str, subpath: str | None, ref: str,
     else:
         print("  note: .git/info/exclude not written (not a git checkout); "
               "the symlink will show in git status")
+    return 0
+
+
+def marketplace_payload(lock: dict) -> dict:
+    """The local marketplace manifest, derived from the lock and nothing else, so it
+    can never list a plugin the lock does not pin, and a rewrite is idempotent."""
+    plugins = []
+    for entry in sorted(lock.get("packages", []), key=lambda p: str(p.get("name"))):
+        if lock_kind(entry) != "plugin":
+            continue
+        plugins.append({"name": entry["name"], "source": f"./{entry['name']}",
+                        "version": entry.get("version"),
+                        "description": "signed Octorato plugin package; every hook runs "
+                                       "through the Export_Guard"})
+    return {"name": PLUGIN_MARKET,
+            "owner": {"name": "octorato"},
+            "description": "Plugins installed by octo pkg (kind plugin). Adding this "
+                           "marketplace enables nothing: a plugin is enabled per arm, "
+                           "by the operator.",
+            "plugins": plugins}
+
+
+def write_marketplace(brain: Brain, lock: dict) -> tuple[Path, bytes | None]:
+    """Write `.claude-plugin/marketplace.json` from the lock, atomically. Returns the
+    path and its previous bytes (None when it did not exist) so a caller whose later
+    step fails can put it back."""
+    path = brain.plugin_market_dir / ".claude-plugin" / "marketplace.json"
+    before = None
+    if stat_ok(path.exists, False, str(path)):
+        before = read_bytes(path, str(path))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(marketplace_payload(lock), indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+    return path, before
+
+
+def _restore_marketplace(path: Path, before: bytes | None) -> None:
+    try:
+        if before is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.write_bytes(before)
+    except OSError:
+        pass
+
+
+def operator_install_command(source: str) -> str:
+    return (f"python3 ~/.claude/scripts/{Path(__file__).name} install --kind plugin "
+            f"{shlex.quote(source)}")
+
+
+def install_plugin(brain: Brain, source: str, subpath: str | None, ref: str,
+                   name_override: str | None) -> int:
+    """Install a signed plugin package, DISABLED for every arm (v11 AC-13).
+
+    The same staging discipline as install_skill: manifest, plugin layout, tree hash
+    and signature are all checked before anything is copied, and every write after
+    that is unwound on any failure. What lands: the tree at
+    plugins/octorato-local/<name>, the regenerated local marketplace manifest and
+    one lock row of kind `plugin`. What does not: any settings file, any
+    `enabledPlugins` key, any marketplace registration. Turning the plugin on is a
+    harness command the operator runs per arm, printed at the end.
+
+    Refused inside a Claude Code session (CLAUDECODE set): the install is the
+    operator's terminal step, and an agent that wants one prints this command for
+    him. That is a speed bump on the honest route, not a boundary: an agent that
+    unsets the variable runs it anyway. The boundary is downstream of it: the
+    package must carry a signature from an allowed signer, every hook it ships is
+    guarded, and the guard starts nothing for an arm that does not allow export.
+    """
+    if os.environ.get(SESSION_ENV):
+        raise PkgError(
+            "a plugin is installed by the operator in a terminal outside any session "
+            f"({SESSION_ENV} is set here). Run it there: {operator_install_command(source)}")
+    with tempfile.TemporaryDirectory(prefix="octo-pkg-") as td:
+        tmp = Path(td)
+        pkg, norm_source = fetch_source(source, subpath, ref, tmp)
+        manifest = check_package(brain, pkg, "plugin")
+        name = valid_name(name_override or manifest["name"])
+        if name != manifest["name"]:
+            raise PkgError(f"--name cannot rename a plugin: its {PLUGIN_MANIFEST_REL} "
+                           f"name {manifest['name']!r} is signed")
+        dest = brain.plugin_path(name)
+        if stat_ok(lambda: dest.exists() or dest.is_symlink(), False, str(dest)):
+            raise PkgError(f"already installed: {dest} (uninstall first)")
+        if stat_ok(lambda: brain.vendor_path(name).exists(), False, VENDOR_REL):
+            raise PkgError(f"{VENDOR_REL}/{name} exists; a plugin never shares a name "
+                           f"with a vendored skill")
+        mpath, before = None, None
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(pkg, dest, symlinks=False)
+            with brain.lock_held():
+                lock = brain.load_lock()
+                lock["packages"] = [p for p in lock["packages"] if p.get("name") != name]
+                lock["packages"].append({
+                    "name": name,
+                    "kind": "plugin",
+                    "version": manifest["version"],
+                    "tree_sha256": manifest["tree_sha256"],
+                    "signer": manifest["_signer"],
+                    "source": norm_source,
+                    "installed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                })
+                mpath, before = write_marketplace(brain, lock)
+                brain.save_lock(lock)
+        except BaseException as e:
+            # Same width and same reason as install_skill's unwind: a tree on disk
+            # with no lock row is the unlocked stray verify FAILs on.
+            try:
+                if dest.exists():
+                    shutil.rmtree(dest, ignore_errors=True)
+                if mpath is not None:
+                    _restore_marketplace(mpath, before)
+            except (OSError, PkgError):
+                pass
+            if not isinstance(e, Exception):
+                raise
+            raise PkgError(f"install of plugin {name} rolled back: {type(e).__name__}: {e}")
+
+    info = manifest["_plugin"]
+    print(f"installed plugin {name} {manifest['version']} (signer {manifest['_signer']})")
+    print(f"  tree        {dest}")
+    print(f"  wraps       {info['upstream_name']} {info['upstream_version']}, "
+          f"events {', '.join(info['events'])}, every command through the Export_Guard")
+    print(f"  marketplace {mpath}")
+    print("  disabled for every arm: no settings file was written and nothing was enabled")
+    print("  operator steps, in a terminal outside any session:")
+    print(f"    claude plugin marketplace add {brain.plugin_market_dir}")
+    print(f"    then, inside an arm whose arm.json says telemetry.export allow:")
+    print(f"    claude plugin install {name}@{PLUGIN_MARKET} --scope project")
     return 0
 
 
@@ -1870,6 +2218,226 @@ def entry_identity(entry: dict) -> tuple[str, str, str, str, str]:
             str(entry.get("tree_sha256") or ""), str(entry.get("signer") or ""))
 
 
+# Directories the plugin sweeps never descend into. `marketplaces/` holds catalogs the
+# harness clones (a listing, not an install); `.git` and `node_modules` are content
+# no plugin manifest lives in, and pruning them keeps the walk bounded.
+_PLUGIN_WALK_SKIP = frozenset({"marketplaces", ".git", "node_modules"})
+_PLUGIN_WALK_DEPTH = 6
+
+
+def _plugin_manifests(brain: Brain) -> list[tuple[Path, object]]:
+    """[(plugin root, parsed plugin.json or the PkgError reading it)] for every
+    directory under plugins/ that carries `.claude-plugin/plugin.json`, outside the
+    catalogs. Bounded by depth, never follows a symlink, never raises."""
+    out: list[tuple[Path, object]] = []
+    base = brain.plugins_dir
+    try:
+        if not base.is_dir():
+            return out
+    except OSError as e:
+        return [(base, PkgError(f"{PLUGINS_REL}/ cannot be read: {e}"))]
+    problems: list[OSError] = []
+    for dirpath, dirnames, _files in os.walk(base, onerror=problems.append, followlinks=False):
+        here = Path(dirpath)
+        depth = len(here.relative_to(base).parts)
+        dirnames[:] = [d for d in dirnames if d not in _PLUGIN_WALK_SKIP
+                       and depth < _PLUGIN_WALK_DEPTH]
+        if here.name == ".claude-plugin":
+            dirnames[:] = []
+            continue
+        mf = here / PLUGIN_MANIFEST_REL
+        try:
+            present = mf.is_file()
+        except OSError as e:
+            out.append((here, PkgError(f"{mf} cannot be read: {e}")))
+            continue
+        if present:
+            try:
+                out.append((here, read_json(mf, str(mf))))
+            except PkgError as e:
+                out.append((here, e))
+    for e in problems:
+        out.append((Path(str(getattr(e, "filename", base) or base)),
+                    PkgError(f"cannot be listed: {e}")))
+    return out
+
+
+def plugin_copies(brain: Brain, name: str) -> list[Path]:
+    """Every OTHER directory under plugins/ whose plugin.json names `name`: the copy
+    the harness makes when the operator installs the plugin from the local
+    marketplace (its cache), and any copy planted beside it. The installed tree at
+    plugins/octorato-local/<name> is not a copy and is not returned."""
+    own = brain.plugin_path(name)
+    return [d for d, pj in _plugin_manifests(brain)
+            if d != own and isinstance(pj, dict) and pj.get("name") == name]
+
+
+def _plugin_ladder(brain: Brain, entry: dict, dest: Path) -> list[str]:
+    """Every check a PRESENT installed plugin tree must pass, problems as a list."""
+    problems: list[str] = []
+    signer = entry.get("signer")
+    if not signer:
+        problems.append("lock entry carries no signer")
+    elif signer not in brain.known_principals():
+        problems.append(f"signer '{signer}' is in no allowed-signers file")
+    on_disk = installed_kind(dest)
+    if on_disk != "plugin":
+        problems.append(f"the installed manifest says kind {on_disk!r}, "
+                        f"{LOCK_REL} says 'plugin'")
+    try:
+        actual = tree_sha256(dest, "plugin")
+    except (PkgError, OSError) as e:
+        problems.append(str(e))
+        return problems
+    if actual != entry.get("tree_sha256"):
+        problems.append(f"tree changed since install "
+                        f"(lock {str(entry.get('tree_sha256'))[:12]}, disk {actual[:12]})")
+    try:
+        mpath, manifest = load_manifest(dest, "plugin")
+        if not isinstance(manifest, dict):
+            problems.append("installed manifest is not a JSON object")
+            return problems
+        if manifest.get("tree_sha256") != actual:
+            problems.append("installed manifest tree_sha256 does not match its own tree")
+        check_plugin_layout(dest, manifest)
+        got = _verify_signature(brain, mpath, dest / SIG_NAME)
+        if got != signer:
+            problems.append(f"signed by '{got}', lock says '{signer}'")
+    except (PkgError, OSError, UnicodeError) as e:
+        problems.append(str(e))
+    return problems
+
+
+def _verify_plugin_entry(brain: Brain, entry: dict) -> tuple[str, str]:
+    """verify_entry for a lock row of kind `plugin`. Never raises.
+
+    Three places are looked at, because a plugin's code can load from any of them:
+    the installed tree, any copy of it elsewhere under plugins/ (the harness's own
+    install copies it), and skills/vendor/<name>, where a plugin must never be."""
+    name = str(entry.get("name") or "?")
+    problems: list[str] = []
+    vdest = brain.vendor_path(name)
+    try:
+        v_link, v_there = vdest.is_symlink(), vdest.exists()
+    except OSError as e:
+        return FAIL, f"{name}: {VENDOR_REL}/{name} cannot be read: {e}"
+    if v_link or v_there:
+        problems.append(f"{LOCK_REL} says plugin, yet {VENDOR_REL}/{name} exists; a "
+                        f"plugin is never vendored into the skill discovery path")
+        if v_there and not v_link:
+            problems += _skill_ladder(brain, entry, vdest)
+    dest = brain.plugin_path(name)
+    try:
+        d_link, d_there = dest.is_symlink(), dest.exists()
+    except OSError as e:
+        return FAIL, f"{name}: {dest} cannot be read: {e}"
+    if d_link:
+        problems.append(f"{dest} is a symlink, not the package tree")
+    elif d_there:
+        problems += _plugin_ladder(brain, entry, dest)
+    for copy in plugin_copies(brain, name):
+        try:
+            got = tree_sha256(copy, "plugin")
+        except (PkgError, OSError) as e:
+            problems.append(f"the copy at {copy}: {e}")
+            continue
+        if got != entry.get("tree_sha256"):
+            problems.append(f"the copy at {copy} does not hash to its lock entry "
+                            f"(lock {str(entry.get('tree_sha256'))[:12]}, copy {got[:12]})")
+    if problems:
+        return FAIL, f"{name}: " + "; ".join(problems)
+    if not d_there:
+        signer = entry.get("signer")
+        if not signer:
+            return FAIL, f"{name}: lock entry carries no signer"
+        if signer not in brain.known_principals():
+            return FAIL, f"{name}: signer '{signer}' is in no allowed-signers file"
+        # Its own fix, so cmd_verify does not print "run sync" under it: sync never
+        # restores a plugin, because installing one is the operator's terminal step.
+        return WARN, (f"{name}: plugin absent on disk; fix: the operator reinstalls it "
+                      f"from a terminal outside any session: "
+                      f"{operator_install_command('<signed package dir>')}")
+    return PASS, f"{name} {entry.get('version')}: plugin tree, layout and signature match"
+
+
+def scan_plugins(brain: Brain, locked: set[str]) -> list[tuple[str, str]]:
+    """The disk half of the plugin ladder, run on `verify --all` (and so on push).
+
+      FAIL  a directory under plugins/octorato-local with no lock row: a plugin
+            tree nobody signed for, listed by nothing, loadable once enabled.
+      FAIL  the upstream tracing plugin installed outside the wrapper (AC-13): a
+            plugin.json naming it anywhere under plugins/ outside the catalogs, or
+            an `installed_plugins.json` key for it. Its hooks would run for every
+            arm with no guard. The wrapper keeps the upstream's manifest as
+            `.claude-plugin/upstream-plugin.json`, which this never reads as a
+            plugin, so the wrapper itself is not a hit.
+      FAIL  a plugins/ entry this cannot read: a blind spot is not a clean bill.
+
+    NOT seen, named: a catalog under plugins/marketplaces/ (a listing, not an
+    install); a plugin loaded from outside plugins/ (`--plugin-dir`, a project's
+    own plugin directory); a name other than the upstream's for the same code.
+    """
+    results: list[tuple[str, str]] = []
+    market = brain.plugin_market_dir
+    try:
+        entries = sorted(market.iterdir()) if market.is_dir() else []
+    except OSError as e:
+        entries = []
+        results.append((FAIL, f"{market} cannot be listed ({e}); an unlocked plugin "
+                              f"there would be invisible"))
+    for p in entries:
+        if p.name == ".claude-plugin" or p.name in locked:
+            continue
+        if p.is_dir() or p.is_symlink():
+            results.append((FAIL, f"{p.name}: {p} is a plugin tree with no {LOCK_REL} "
+                                  f"entry (unlocked plugin)"))
+    for d, pj in _plugin_manifests(brain):
+        if isinstance(pj, PkgError):
+            results.append((FAIL, f"{d}: {pj}"))
+            continue
+        name = pj.get("name") if isinstance(pj, dict) else None
+        rel_parts = d.relative_to(brain.plugins_dir).parts if d != brain.plugins_dir else ()
+        if (PLUGIN_MARKET in rel_parts[:-1] and d.parent != market
+                and name not in locked):
+            # A copy the harness made from THIS marketplace (its cache path names the
+            # marketplace) of a plugin no lock row pins any more: nothing can say
+            # what those bytes are, and they still load where it was enabled.
+            results.append((FAIL, f"{name}: {d} is a copy of a plugin from "
+                                  f"{PLUGIN_MARKET} with no {LOCK_REL} entry; fix: "
+                                  f"claude plugin uninstall {name}@{PLUGIN_MARKET}"))
+        if name == UPSTREAM_TRACING_PLUGIN:
+            results.append((FAIL, f"{UPSTREAM_TRACING_PLUGIN}: the upstream tracing "
+                                  f"plugin is installed at {d}, outside the "
+                                  f"Tracing_Wrapper, so its hooks run for every arm "
+                                  f"unguarded; fix: claude plugin uninstall "
+                                  f"{UPSTREAM_TRACING_PLUGIN}"))
+    registry = brain.plugins_dir / "installed_plugins.json"
+    try:
+        there = registry.is_file()
+    except OSError as e:
+        there = False
+        results.append((FAIL, f"{registry} cannot be read: {e}"))
+    if there:
+        try:
+            data = read_json(registry, str(registry))
+        except PkgError as e:
+            data = None
+            results.append((FAIL, f"{e}; an upstream install recorded there is invisible"))
+        if data is not None:
+            keys = set(data) if isinstance(data, dict) else set()
+            inner = data.get("plugins") if isinstance(data, dict) else None
+            if isinstance(inner, dict):
+                keys |= set(inner)
+            hits = sorted(k for k in keys if isinstance(k, str)
+                          and k.split("@", 1)[0] == UPSTREAM_TRACING_PLUGIN)
+            if hits:
+                results.append((FAIL, f"{UPSTREAM_TRACING_PLUGIN}: {registry.name} records "
+                                      f"{', '.join(hits)}, an install outside the "
+                                      f"Tracing_Wrapper; fix: claude plugin uninstall "
+                                      f"{UPSTREAM_TRACING_PLUGIN}"))
+    return results
+
+
 def verify_entry(brain: Brain, entry: dict) -> tuple[str, str]:
     """Return (status, message) for one lock entry. Never raises.
 
@@ -1890,6 +2458,10 @@ def verify_entry(brain: Brain, entry: dict) -> tuple[str, str]:
     """
     name = str(entry.get("name") or "?")
     declared_kind = lock_kind(entry)
+    if declared_kind == "plugin":
+        # Not a short-circuit around the skill ladder: _verify_plugin_entry runs it
+        # on any tree at skills/vendor/<name> too (rule 1 above).
+        return _verify_plugin_entry(brain, entry)
     dest = brain.vendor_path(name)
 
     try:
@@ -2079,6 +2651,12 @@ def cmd_verify(brain: Brain, names: list[str], all_: bool, as_json: bool) -> int
     # about that name, and turning it into a whole-brain audit would make the doctor's
     # scoped calls report failures the caller never asked about.
     strays = scan_unlocked(brain, {str(p.get("name")) for p in lock["packages"]}) if all_ and not names else []
+    # The plugin sweep counts only PLUGIN rows as locked: a tree under
+    # plugins/octorato-local that shares its name with a locked skill is still a
+    # plugin nobody signed for.
+    if all_ and not names:
+        strays += scan_plugins(brain, {str(p.get("name")) for p in lock["packages"]
+                                       if lock_kind(p) == "plugin"})
     results.extend(strays)
 
     # Not conditional on the lock having entries. The doctor reports the probe as FAIL
@@ -2139,6 +2717,10 @@ def cmd_uninstall(brain: Brain, name: str) -> int:
     valid_name(name)
     lock = brain.load_lock()
     entry = next((p for p in lock["packages"] if p.get("name") == name), None)
+    pdest = brain.plugin_path(name)
+    if (entry is not None and lock_kind(entry) == "plugin") or \
+            stat_ok(lambda: pdest.exists() or pdest.is_symlink(), False, str(pdest)):
+        return _uninstall_plugin(brain, name)
     dest, link = brain.vendor_path(name), brain.link_path(name)
     try:
         tree_there = dest.exists()
@@ -2299,6 +2881,58 @@ def cmd_uninstall(brain: Brain, name: str) -> int:
         # registry was already inconsistent (QA cycle 12).
         print(f"  {name} was not in {ARMS_PATHS_REL}; if its clone is on disk it is "
               f"your own repo and was left in place")
+    return 0
+
+
+def _uninstall_plugin(brain: Brain, name: str) -> int:
+    """Remove a plugin: its tree, its lock row, and its line in the local marketplace.
+
+    Allowed inside a session, unlike install: removing the tracer is the safe
+    direction. The tree goes first, for the reason cmd_uninstall gives for skills: a
+    removal that cannot finish leaves the lock row standing and verify names it. A
+    copy the harness made from the marketplace (its cache) is the harness's state and
+    is not deleted here: the receipt names it with the harness command that removes
+    it, and scan_plugins FAILs on it while it sits under a path naming this
+    marketplace with no lock row to hash it against.
+    """
+    dest = brain.plugin_path(name)
+    removed: list[str] = []
+    if stat_ok(dest.is_symlink, False, str(dest)):
+        dest.unlink()
+        removed.append("symlink")
+    elif stat_ok(dest.exists, False, str(dest)):
+        try:
+            shutil.rmtree(dest)
+        except OSError as e:
+            raise PkgError(f"{dest} could not be removed ({e}); the install is left as "
+                           f"it was, run verify to see it")
+        removed.append("plugin tree")
+    mpath, before = None, None
+    with brain.lock_held():
+        lock = brain.load_lock()
+        try:
+            if any(p.get("name") == name for p in lock["packages"]):
+                lock["packages"] = [p for p in lock["packages"] if p.get("name") != name]
+                removed.append("lock entry")
+            mpath, before = write_marketplace(brain, lock)
+            brain.save_lock(lock)
+        except BaseException as e:
+            if mpath is not None:
+                _restore_marketplace(mpath, before)
+            if isinstance(e, PkgError) or not isinstance(e, Exception):
+                raise
+            raise PkgError(f"uninstall of plugin {name} stopped at the {LOCK_REL} write: "
+                           f"{type(e).__name__}: {e}; the marketplace was put back and "
+                           f"{LOCK_REL} is unchanged"
+                           + (f", but the {' and '.join(removed)} had already been "
+                              f"removed; run verify" if removed else ""))
+    print(f"uninstalled plugin {name}: " + (", ".join(removed) + " removed" if removed
+                                             else "nothing was there to remove"))
+    copies = plugin_copies(brain, name)
+    if copies:
+        print(f"  the harness still holds {len(copies)} copy(ies) of it "
+              f"({', '.join(str(c) for c in copies[:3])}); remove them with: "
+              f"claude plugin uninstall {name}@{PLUGIN_MARKET}")
     return 0
 
 
@@ -2526,6 +3160,101 @@ def cmd_hash(brain: Brain, target: str, write: bool) -> int:
         sig.unlink()
         print(f"removed stale {sig.name}: it signed the previous manifest")
     print(f"next: ssh-keygen -Y sign -f <your-key> -n {SIG_NAMESPACE} {mpath}")
+    return 0
+
+
+_SEMVER_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+                        r"(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$")
+
+
+def cmd_wrap_plugin(brain: Brain, upstream: str, out: str, name: str) -> int:
+    """Build the Tracing_Wrapper package around an upstream plugin directory.
+
+    The publisher's step before `sign`, the plugin counterpart of `hash --write`. The
+    upstream tree is copied UNMODIFIED except for two moves and three new files:
+      .claude-plugin/plugin.json  -> .claude-plugin/upstream-plugin.json (bytes kept)
+      hooks/hooks.json            -> hooks/upstream-hooks.json           (bytes kept)
+      new hooks/hooks.json         wrap_hooks() of the upstream list: every command
+                                   runs through the Export_Guard, nothing else moves
+      new .claude-plugin/plugin.json  names the wrapper, declares no component path
+      new skill.json               the octo manifest, kind plugin, tree_sha256 embedded
+    Every upstream script stays where it was, so `${CLAUDE_PLUGIN_ROOT}` resolves the
+    paths the upstream expects. The result passes check_plugin_layout or nothing is
+    left behind. Reads only local files: this never fetches the upstream.
+    """
+    valid_name(name)
+    src = resolve_or_fail(Path(os.path.expanduser(upstream)), upstream)
+    if not stat_ok(src.is_dir, False, str(src)):
+        raise PkgError(f"not a directory: {src}")
+    dst = Path(os.path.expanduser(out)).absolute()
+    if stat_ok(lambda: dst.exists() or dst.is_symlink(), False, str(dst)):
+        raise PkgError(f"{dst} exists; the wrapper is built into a new directory")
+    up_manifest = read_json(src / PLUGIN_MANIFEST_REL, f"upstream {PLUGIN_MANIFEST_REL}")
+    if not isinstance(up_manifest, dict) or not isinstance(up_manifest.get("name"), str):
+        raise PkgError(f"upstream {PLUGIN_MANIFEST_REL} does not name a plugin")
+    version = up_manifest.get("version")
+    if not isinstance(version, str) or not _SEMVER_RE.match(version):
+        raise PkgError(f"upstream version {version!r} is not semver; the wrapper carries "
+                       f"the upstream version as its own")
+    if (src / ".mcp.json").exists() or "mcpServers" in up_manifest:
+        raise PkgError("the upstream ships MCP servers; the Tracing_Wrapper carries hooks "
+                       "only, and an MCP server would never pass through the guard")
+    for reserved in (MANIFEST_NAME["plugin"], SIG_NAME, PLUGIN_UPSTREAM_HOOKS_REL,
+                     PLUGIN_UPSTREAM_MANIFEST_REL):
+        if (src / reserved).exists():
+            raise PkgError(f"the upstream already has {reserved}, a path the wrapper owns")
+    hooks_file = src / PLUGIN_HOOKS_REL
+    declared = up_manifest.get("hooks")
+    if stat_ok(hooks_file.is_file, False, str(hooks_file)):
+        up_bytes = read_bytes(hooks_file, str(hooks_file))
+    elif isinstance(declared, str):
+        ref = resolve_or_fail(src / declared, declared)
+        if not str(ref).startswith(str(src) + os.sep):
+            raise PkgError(f"upstream hooks path {declared!r} leaves the plugin tree")
+        up_bytes = read_bytes(ref, declared)
+    elif isinstance(declared, dict):
+        up_bytes = (json.dumps(declared if "hooks" in declared else {"hooks": declared},
+                               indent=2) + "\n").encode("utf-8")
+    else:
+        raise PkgError("the upstream declares no hooks (no hooks/hooks.json, no `hooks` "
+                       "in its plugin.json): there is nothing to wrap")
+    try:
+        up_hooks = json.loads(up_bytes.decode("utf-8"))
+    except (ValueError, RecursionError) as e:
+        raise PkgError(f"upstream hooks do not parse: {e}")
+    wrapped = wrap_hooks(up_hooks)
+    tree_sha256(src, "plugin")        # refuses a symlink, a FIFO or an unreadable file
+    try:
+        shutil.copytree(src, dst, symlinks=False)
+        (dst / "hooks").mkdir(exist_ok=True)
+        (dst / PLUGIN_UPSTREAM_HOOKS_REL).write_bytes(up_bytes)
+        (dst / PLUGIN_HOOKS_REL).write_text(json.dumps(wrapped, indent=2) + "\n",
+                                            encoding="utf-8")
+        os.replace(dst / PLUGIN_MANIFEST_REL, dst / PLUGIN_UPSTREAM_MANIFEST_REL)
+        (dst / PLUGIN_MANIFEST_REL).write_text(json.dumps({
+            "name": name, "version": version,
+            "description": f"Octorato Tracing_Wrapper around {up_manifest['name']} "
+                           f"{version}: every hook runs through the Export_Guard",
+            "author": {"name": "octorato"}}, indent=2) + "\n", encoding="utf-8")
+        manifest = {"name": name, "version": version, "kind": "plugin",
+                    "license": str(up_manifest.get("license") or "NOASSERTION")[:64],
+                    "description": f"Tracing_Wrapper around the upstream plugin "
+                                   f"{up_manifest['name']} {version} (v11 AC-13)"}
+        mpath = dst / MANIFEST_NAME["plugin"]
+        mpath.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        manifest["tree_sha256"] = tree_sha256(dst, "plugin")
+        mpath.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        validate_manifest(brain, mpath)
+        info = check_plugin_layout(dst, manifest)
+    except BaseException:
+        shutil.rmtree(dst, ignore_errors=True)
+        raise
+    print(f"wrapped {info['upstream_name']} {info['upstream_version']} as {name} at {dst}")
+    print(f"  events  {', '.join(info['events'])}, every command through the Export_Guard")
+    print(f"  tree    {manifest['tree_sha256']}")
+    print(f"next: ssh-keygen -Y sign -f <your-key> -n {SIG_NAMESPACE} {mpath}")
+    print(f"then, the operator in a terminal outside any session: "
+          f"{operator_install_command(str(dst))}")
     return 0
 
 
@@ -3042,6 +3771,149 @@ def _tree_diff(a: Path, b: Path) -> list[str]:
     return sorted(set(rb) - set(ra)) + sorted(k for k in set(ra) & set(rb) if ra[k] != rb[k])
 
 
+def _selftest_plugin_legs(brain: Brain, key: Path, upstream: Path, tmp: Path, check) -> None:
+    """The plugin half of the PACKAGE contract, on the stub upstream of the fixture.
+
+    Each leg is a refusal or a FAIL this kind exists for, proven against the code
+    that refuses it: a leg that could pass with the check deleted is not here."""
+    root = str(brain.root)
+    saved_session = os.environ.pop(SESSION_ENV, None)
+    sink = io.StringIO()
+    try:
+        wrapper = tmp / "wrapper"
+        with contextlib.redirect_stdout(sink):
+            rc = main(["--brain", root, "wrap-plugin", str(upstream), "--out", str(wrapper)])
+        check("wrap-plugin builds the wrapper around the stub upstream", rc == 0)
+        up_hooks = json.loads((upstream / PLUGIN_HOOKS_REL).read_text(encoding="utf-8"))
+        wr_hooks = json.loads((wrapper / PLUGIN_HOOKS_REL).read_text(encoding="utf-8"))
+        pairs = [(h["command"], u["command"])
+                 for ev in up_hooks["hooks"]
+                 for we, ue in zip(wr_hooks["hooks"][ev], up_hooks["hooks"][ev])
+                 for h, u in zip(we["hooks"], ue["hooks"])]
+        check("every wrapper hook command is the guard around the upstream command",
+              bool(pairs) and all(unwrap_command(w) == u for w, u in pairs)
+              and set(wr_hooks["hooks"]) == set(up_hooks["hooks"]))
+        check("the upstream hook list is kept byte for byte",
+              (wrapper / PLUGIN_UPSTREAM_HOOKS_REL).read_bytes()
+              == (upstream / PLUGIN_HOOKS_REL).read_bytes())
+        check("the upstream script is carried unmodified",
+              (wrapper / "hooks" / "trace.py").read_bytes()
+              == (upstream / "hooks" / "trace.py").read_bytes())
+        _sign(key, wrapper / "skill.json")
+        pname = json.loads((wrapper / "skill.json").read_text(encoding="utf-8"))["name"]
+        pdest = brain.plugin_path(pname)
+
+        os.environ[SESSION_ENV] = "1"
+        with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
+            rc = main(["--brain", root, "install", "--kind", "plugin", str(wrapper)])
+        del os.environ[SESSION_ENV]
+        check("a plugin install inside a session is refused and copies nothing",
+              rc == 1 and not pdest.exists())
+
+        with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
+            rc = main(["--brain", root, "install", "--kind", "plugin", str(wrapper)])
+        check("the signed wrapper installs as kind plugin", rc == 0 and pdest.is_dir())
+        rows = brain.load_lock()["packages"]
+        check("one lock row of kind plugin",
+              [(p["name"], p.get("kind")) for p in rows] == [(pname, "plugin")])
+        market = json.loads((brain.plugin_market_dir / ".claude-plugin"
+                             / "marketplace.json").read_text(encoding="utf-8"))
+        check("the local marketplace lists it", [p["name"] for p in market["plugins"]] == [pname])
+        home = Path(os.environ["HOME"])
+        check("installed disabled for every arm: no settings file was written",
+              not any((home / ".claude" / f).exists()
+                      for f in ("settings.json", "settings.local.json")))
+        check("verify --all is green with the plugin installed",
+              main(["--brain", root, "verify", "--all"]) == 0)
+
+        script = pdest / "hooks" / "trace.py"
+        keep = script.read_bytes()
+        script.write_bytes(keep + b"# tampered\n")
+        check("a tampered byte in the installed plugin turns verify FAIL",
+              main(["--brain", root, "verify", "--all"]) == 1)
+        script.write_bytes(keep)
+
+        cache = brain.plugins_dir / "cache" / PLUGIN_MARKET / pname / "1"
+        shutil.copytree(pdest, cache)
+        check("an identical harness copy of the plugin verifies",
+              main(["--brain", root, "verify", "--all"]) == 0)
+        (cache / "hooks" / "trace.py").write_bytes(keep + b"# tampered copy\n")
+        check("a tampered harness copy turns verify FAIL",
+              main(["--brain", root, "verify", "--all"]) == 1)
+        shutil.rmtree(brain.plugins_dir / "cache")
+
+        outside = brain.plugins_dir / "cache" / "elsewhere" / UPSTREAM_TRACING_PLUGIN / "1"
+        shutil.copytree(upstream, outside)
+        check("the upstream installed outside the wrapper turns verify FAIL",
+              main(["--brain", root, "verify", "--all"]) == 1)
+        shutil.rmtree(brain.plugins_dir / "cache")
+        reg = brain.plugins_dir / "installed_plugins.json"
+        reg.write_text(json.dumps({"version": 2, "plugins": {
+            f"{UPSTREAM_TRACING_PLUGIN}@langchain": []}}), encoding="utf-8")
+        check("an installed_plugins.json record of the upstream turns verify FAIL",
+              main(["--brain", root, "verify", "--all"]) == 1)
+        reg.unlink()
+        check("green again once the upstream is gone",
+              main(["--brain", root, "verify", "--all"]) == 0)
+
+        # A wrapper with ONE hook command not routed through the guard, re-hashed and
+        # validly signed: the layout check refuses it before the signature is asked.
+        bad = tmp / "wrapper-unguarded"
+        shutil.copytree(wrapper, bad)
+        bh = json.loads((bad / PLUGIN_HOOKS_REL).read_text(encoding="utf-8"))
+        first = next(iter(bh["hooks"]))
+        bh["hooks"][first][0]["hooks"][0]["command"] = \
+            unwrap_command(bh["hooks"][first][0]["hooks"][0]["command"])
+        (bad / PLUGIN_HOOKS_REL).write_text(json.dumps(bh, indent=2) + "\n", encoding="utf-8")
+        with contextlib.redirect_stdout(sink):
+            main(["--brain", root, "hash", str(bad), "--write"])
+        _sign(key, bad / "skill.json")
+        main(["--brain", root, "uninstall", pname])
+        global SIG_VERIFY_CALLS
+        SIG_VERIFY_CALLS = 0
+        with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
+            rc = main(["--brain", root, "install", "--kind", "plugin", str(bad)])
+        check("a signed wrapper with one unguarded hook command is refused before its signature is read",
+              rc == 1 and SIG_VERIFY_CALLS == 0 and not pdest.exists())
+
+        # Every command guarded, but the list is not the upstream's: one event is
+        # added. Guarded is not enough; the wrapper must BE the upstream list, so a
+        # hook the upstream never had cannot ride in under the guard's name.
+        extra = tmp / "wrapper-extra-event"
+        shutil.copytree(wrapper, extra)
+        eh = json.loads((extra / PLUGIN_HOOKS_REL).read_text(encoding="utf-8"))
+        eh["hooks"]["SessionStart"] = [{"hooks": [{"type": "command",
+                                                   "command": wrap_command("true")}]}]
+        (extra / PLUGIN_HOOKS_REL).write_text(json.dumps(eh, indent=2) + "\n", encoding="utf-8")
+        with contextlib.redirect_stdout(sink):
+            main(["--brain", root, "hash", str(extra), "--write"])
+        _sign(key, extra / "skill.json")
+        with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
+            rc = main(["--brain", root, "install", "--kind", "plugin", str(extra)])
+        check("a signed, fully guarded wrapper that is not the upstream hook list is refused",
+              rc == 1 and not pdest.exists())
+
+        with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
+            main(["--brain", root, "install", "--kind", "plugin", str(wrapper)])
+            lock_json = json.loads(brain.lock_path.read_text(encoding="utf-8"))
+        brain.lock_path.write_text(json.dumps({"version": 1, "packages": []}) + "\n",
+                                   encoding="utf-8")
+        check("a plugin tree with no lock row is FAIL, not invisible",
+              main(["--brain", root, "verify", "--all"]) == 1)
+        brain.lock_path.write_text(json.dumps(lock_json, indent=2) + "\n", encoding="utf-8")
+        with contextlib.redirect_stdout(sink):
+            rc = main(["--brain", root, "uninstall", pname])
+        market = json.loads((brain.plugin_market_dir / ".claude-plugin"
+                             / "marketplace.json").read_text(encoding="utf-8"))
+        check("uninstall removes the tree, the lock row and the marketplace line",
+              rc == 0 and not pdest.exists() and brain.load_lock()["packages"] == []
+              and market["plugins"] == [])
+    finally:
+        os.environ.pop(SESSION_ENV, None)
+        if saved_session is not None:
+            os.environ[SESSION_ENV] = saved_session
+
+
 def selftest(fixture: Path, real: Brain) -> int:
     """Every leg of the PACKAGE contract, under a throwaway HOME and a key minted at
     run time. No private key ever lives in the repo (push-policy.txt blocks key
@@ -3401,6 +4273,10 @@ def selftest(fixture: Path, real: Brain) -> int:
               not dest.exists() and not link.is_symlink()
               and not brain.exclude_has(f"skills/{name}"))
         main(["--brain", str(brain.root), "uninstall", name])
+
+        # ---- the PLUGIN leg (kind plugin, v11 AC-13) ---------------------------
+        if (src / "plugin-upstream").is_dir():
+            _selftest_plugin_legs(brain, key, src / "plugin-upstream", tmp, check)
     finally:
         for k, v in (("HOME", saved_home), ("USERPROFILE", saved_profile)):
             if v is None:
@@ -3413,8 +4289,8 @@ def selftest(fixture: Path, real: Brain) -> int:
         print(f"selftest FAILED: {len(failures)} leg(s): " + "; ".join(failures), file=sys.stderr)
         return 1
     print("selftest OK: install, refusal, tamper-before-signature, verify ladder, "
-          "sync, uninstall, the arm install/verify/deregister leg and the raced "
-          "identity re-check all proven")
+          "sync, uninstall, the arm install/verify/deregister leg, the raced "
+          "identity re-check and the plugin legs all proven")
     return 0
 
 
@@ -3425,7 +4301,7 @@ def selftest(fixture: Path, real: Brain) -> int:
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="octo pkg",
-        description="Install, verify and lock Octorato packages (skills and arms).",
+        description="Install, verify and lock Octorato packages (skills, arms and plugins).",
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--brain", help="brain checkout to operate on (default: CLAUDE_DIR, "
                                     "else this script's repo)")
@@ -3435,7 +4311,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("install", help="install a package after validating, hashing and verifying it")
     p.add_argument("source", help="local directory, GitHub URL, or owner/repo")
-    p.add_argument("--kind", choices=["skill", "arm"], default="skill")
+    p.add_argument("--kind", choices=["skill", "arm", "plugin"], default="skill",
+                   help="plugin: a signed Tracing_Wrapper, installed disabled under "
+                        "plugins/octorato-local by the operator outside any session")
     p.add_argument("--path", help="package path inside the repo")
     p.add_argument("--ref", default=None,
                    help="branch or tag; unset tries main then master")
@@ -3460,6 +4338,13 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("manifests",
                        help="report skill.json coverage over the brain's own skills")
     p.add_argument("--json", action="store_true")
+
+    p = sub.add_parser("wrap-plugin",
+                       help="build the Tracing_Wrapper package around an upstream plugin dir")
+    p.add_argument("upstream", help="the upstream plugin directory (local; never fetched)")
+    p.add_argument("--out", required=True, help="a new directory for the wrapper package")
+    p.add_argument("--name", default=DEFAULT_WRAPPER_NAME,
+                   help=f"the wrapper's plugin name (default {DEFAULT_WRAPPER_NAME})")
 
     sub.add_parser("lock", help="recompute tree hash and signer for installed packages")
     sub.add_parser("sync", help="install from the lock what is missing, then verify")
@@ -3490,6 +4375,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.cmd == "install":
             if args.kind == "arm":
                 return install_arm(brain, args.source, args.dest)
+            if args.kind == "plugin":
+                return install_plugin(brain, args.source, args.path, args.ref, args.name)
             return install_skill(brain, args.source, args.path, args.ref, args.name)
         if args.cmd == "verify":
             if not args.names and not args.all:
@@ -3503,6 +4390,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_manifests(brain, args.json)
         if args.cmd == "hash":
             return cmd_hash(brain, args.dir, args.write)
+        if args.cmd == "wrap-plugin":
+            return cmd_wrap_plugin(brain, args.upstream, args.out, args.name)
         if args.cmd == "lock":
             return cmd_lock(brain)
         if args.cmd == "sync":

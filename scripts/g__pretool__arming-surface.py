@@ -793,6 +793,17 @@ _EXACT = {
         "here marks a harness as guarded that no census proved. Its census "
         "records under registry/census/ are NOT in this set: AC-17 names the "
         "registry only, and the doctor recomputes a `supported` status from them",
+    "plugins":
+        "the harness's plugin state (v11 AC-17): `known_marketplaces.json` and "
+        "`installed_plugins.json` say which plugin trees load, `cache/` holds "
+        "the trees the harness installed, and `octorato-local/` holds the "
+        "signed Tracing_Wrapper octo pkg installed. A write here adds or "
+        "rewrites hooks the next session runs, or registers the upstream "
+        "tracer outside the wrapper. The DIRECTORY and not those names, for "
+        "the reason `.githooks` is one: a set named by filename cannot cover "
+        "a registration file the harness has not created yet. GITIGNORED, so "
+        "there is no development copy; its benign twin writes the same "
+        "relative path under the temporary HOME",
     ".cache/receipts":
         "the receipt ledger v7 requires before an outward send or a merge: the "
         "gate receipt, the seek receipts and the QA verdicts. GITIGNORED, so "
