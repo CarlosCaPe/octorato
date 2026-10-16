@@ -536,6 +536,26 @@ edges:
       file name, so renaming g__stop__unsourced-absence.py,
       g__stop__unsourced-attribute.py or g__stop__draft-promise.py breaks it.
 
+
+  - id: reply-panel-v11
+    concept: "reply panel: no reply to the operator ends a turn without a PASS panel receipt for its exact text; quorum by source class (SELF 3, SOURCED 1, INPUT 1), status-line exemption, preflight"
+    appears_in:
+      - CLAUDE.md                                        # anchor "Reply panel"
+      - docs/architecture/v11-reply-panel.md             # contract, cost controls, residuals
+      - scripts/g__stop__reply-panel.py                  # the gate (source_class, input_needed, pending_agents, status_claim)
+      - scripts/panel_preflight.py                       # runs the reply-text Stop gates on the draft
+      - scripts/panel_digest.py                          # --panel-request / --preflight
+      - scripts/g__stop__no-menu-question.py             # loaded by file name for the INPUT class; reads past `input-needed:`
+      - registry/rules.yaml                              # FLOW.panel-before-reply
+      - registry/fixtures/FLOW.panel-before-reply        # liveness proof
+      - scripts/tests/test_reply_panel_source_class.py
+      - scripts/tests/test_reply_panel_status_line.py
+      - scripts/tests/test_panel_preflight.py
+    kind: appears_in
+    note: >-
+      The reply gate imports the no-menu gate's is_choice_question and
+      _irreducible_object by file name, and the preflight names Stop gates
+      by file name in its SKIP list: renaming either gate touches this edge.
   - id: unsourced-absence-gate
     concept: "an absence claim (no origin / not recognized / never contracted) never ships outward without a seek receipt in the same turn"
     appears_in:
