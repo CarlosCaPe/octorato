@@ -9,7 +9,7 @@
 | Skills | 246 |
 | Agents | 167 |
 | Divisions | 13 |
-| Scripts: wired | 139 |
+| Scripts: wired | 140 |
 | Scripts: orphan | 7 |
 | Rules | 105 |
 | Hook entries | 59 |
@@ -499,7 +499,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (146)
+## Scripts (147)
 
 | Script | Purpose | Status |
 |---|---|---|
