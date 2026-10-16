@@ -3270,6 +3270,208 @@ def check_runtime_census_evidence(fix: bool, path: Path | None = None,
     return Result(key, PASS, f"{checked} runtime(s) match their evidence or census record")
 
 
+# ---------------------------------------------------------------------------
+# v11 opt-in tracing (spec 202610141000, T16): AC-12 and AC-13
+# ---------------------------------------------------------------------------
+
+# The upstream tracer's documented switch (docs.langchain.com/langsmith/trace-claude-code):
+# an `env` entry in a project's .claude/settings.local.json or the global
+# ~/.claude/settings.json, or a shell export.
+TRACING_SWITCH = "TRACE_TO_LANGSMITH"
+_SWITCH_OFF = ("", "0", "false", "no", "off")
+
+
+def _switch_on(value) -> bool:
+    """A value the upstream could read as on. Fail-closed: anything that is not a
+    recognisable OFF counts as set, so a typo is reported rather than trusted."""
+    if value is None or value is False:
+        return False
+    if value is True:
+        return True
+    return str(value).strip().lower() not in _SWITCH_OFF
+
+
+def _settings_switch(f: Path) -> str | None:
+    """'set', 'unreadable' or None for one settings file. A file that does not parse
+    but names the switch is 'unreadable': it cannot be proven off."""
+    try:
+        raw = f.read_bytes()
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return "unreadable"
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (ValueError, RecursionError):
+        return "unreadable" if TRACING_SWITCH.encode() in raw else None
+    env = data.get("env") if isinstance(data, dict) else None
+    if isinstance(env, dict) and TRACING_SWITCH in env and _switch_on(env[TRACING_SWITCH]):
+        return "set"
+    return None
+
+
+def _load_by_path(modname: str, path: Path):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(modname, path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+ARM_SETTINGS_DEPTH = 6
+_ARM_WALK_SKIP = frozenset({"node_modules", ".git"})
+
+
+def _arm_settings_files(root: Path) -> list:
+    """Every `.claude/settings*.json` under an arm, to ARM_SETTINGS_DEPTH directories,
+    skipping node_modules and .git, never following a symlink. Sorted."""
+    out = []
+    for dirpath, dirnames, _files in os.walk(root, followlinks=False):
+        here = Path(dirpath)
+        depth = len(here.relative_to(root).parts)
+        dirnames[:] = [d for d in dirnames if d not in _ARM_WALK_SKIP
+                       and (d == ".claude" or not d.startswith("."))
+                       and depth < ARM_SETTINGS_DEPTH]
+        if here.name == ".claude":
+            out += [f for f in here.glob("settings*.json") if not f.is_symlink()]
+            dirnames[:] = []
+    return sorted(out)
+
+
+def _effective_policy(guard, root: str, d: str) -> str:
+    """The guard's verdict for a session in directory `d` of the arm at `root`: the
+    arm's own policy and every arm.json from `d` up to the root must read allow."""
+    if guard.export_policy(root) != "allow":
+        return "deny"
+    p = os.path.realpath(d)
+    while True:
+        if os.path.lexists(os.path.join(p, "arm.json")) and guard.export_policy(p) != "allow":
+            return "deny"
+        if p == root:
+            return "allow"
+        parent = os.path.dirname(p)
+        if parent == p or not guard._contains(root, parent):
+            return "allow"
+        p = parent
+
+
+def check_tracing_switch(fix: bool, home: Path | None = None,
+                         brain: Path | None = None) -> Result:
+    """AC-12: FAIL when the tracing switch is on in the project settings of an arm
+    whose Export_Policy is `deny` or absent, or in the global settings while any
+    registered arm is `deny` or absent.
+
+    The arms and their policies are read with the Export_Guard's OWN functions
+    (`load_arm_roots`, `export_policy` in scripts/g__wrap__export-guard.py, loaded by
+    path), so this check and the guard cannot disagree on which arm a root is or
+    what its arm.json says. An arms-paths.json the guard cannot read is a FAIL: the
+    global half cannot be decided without the arm list.
+
+    The guard already makes the switch inert in a deny arm (no upstream process is
+    started), so a hit here is a misconfiguration that would export the moment the
+    guard were bypassed, and the Doctor is the detector the plan names for it. A
+    shell export is reported as WARN: AC-12 names settings files, and the doctor's
+    own environment is the only shell it can see.
+
+    Every `.claude/settings*.json` under a registered arm is read, not only the
+    root's: a session started in a subdirectory loads that subdirectory's project
+    settings (QA probe on 5845c59: `arm/sub/.claude/settings.local.json` in a deny
+    arm reported PASS). Its policy is the guard's walk: the arm's own and every
+    `arm.json` between the subdirectory and the arm root must say allow.
+
+    NOT seen, named: the settings of a project directory ARM_SETTINGS_DEPTH or more
+    levels below the arm root (its `.claude/` is past the walk's last level), or a file
+    under `node_modules/`, a hidden directory other than `.claude/`, or a symlinked
+    directory (the walk never follows a
+    link); and a settings file of an arm not on this machine.
+    """
+    key = "tracing-switch"
+    home = Path(home) if home is not None else HOME
+    brain = Path(brain) if brain is not None else CLAUDE_DIR
+    try:
+        guard = _load_by_path("_export_guard_for_doctor",
+                              brain / "scripts" / "g__wrap__export-guard.py")
+    except Exception as e:
+        return Result(key, FAIL, f"the Export_Guard cannot be loaded: {type(e).__name__}: {e}",
+                      "restore scripts/g__wrap__export-guard.py")
+    try:
+        arms = guard.load_arm_roots(str(home), guard.brain_paths(str(home)))
+    except guard.Deny as e:
+        return Result(key, FAIL, f"the arm list cannot be read the way the guard reads it: {e}",
+                      "fix company/config/arms-paths.json")
+    fails, deny_arms = [], []
+    for name, root in arms:
+        policy = guard.export_policy(root)
+        if policy != "allow":
+            deny_arms.append(name)
+        for f in _arm_settings_files(Path(root)):
+            state = _settings_switch(f)
+            if not state:
+                continue
+            here = _effective_policy(guard, root, str(f.parent.parent))
+            if here != "allow":
+                fails.append(f"{f} ({state}; arm {name}, here {here})")
+    global_hits = []
+    for f in (home / ".claude" / "settings.json", home / ".claude" / "settings.local.json"):
+        state = _settings_switch(f)
+        if state:
+            global_hits.append(f"{f} ({state})")
+    if global_hits and deny_arms:
+        fails += [f"{g} while {len(deny_arms)} arm(s) are deny or absent "
+                  f"({', '.join(sorted(deny_arms)[:4])})" for g in global_hits]
+    if fails:
+        return Result(key, FAIL, f"{TRACING_SWITCH} is on where export is not allowed: "
+                      + "; ".join(fails[:5]),
+                      f"remove {TRACING_SWITCH} from those files; it belongs only in the "
+                      f"project settings of an arm whose arm.json says telemetry.export allow")
+    if _switch_on(os.environ.get(TRACING_SWITCH)) and deny_arms:
+        return Result(key, WARN, f"{TRACING_SWITCH} is exported in this shell while "
+                      f"{len(deny_arms)} arm(s) are deny or absent; the guard still keeps "
+                      f"their sessions untraced",
+                      f"unset {TRACING_SWITCH} in the shell profile")
+    return Result(key, PASS, f"{TRACING_SWITCH} is off wherever export is not allowed "
+                  f"({len(arms)} arm(s), {len(deny_arms)} deny or absent"
+                  + (", global switch on with every arm allow" if global_hits else "") + ")")
+
+
+def check_tracing_plugins(fix: bool, brain: Path | None = None) -> Result:
+    """AC-13: FAIL when an installed Tracing_Wrapper tree (or any copy the harness
+    made of it under plugins/) does not hash to its lock entry, or when the upstream
+    `langsmith-tracing` plugin is installed under plugins/ outside the wrapper.
+
+    One implementation: octo_pkg's plugin ladder (`_verify_plugin_entry` and
+    `scan_plugins`), loaded by path, which `verify --all` also runs at push time.
+    This check is that ladder alone, under its own name, so a doctor reader meets
+    the tracing verdict in one line rather than inside the package count.
+    """
+    key = "tracing-plugins"
+    brain = Path(brain) if brain is not None else CLAUDE_DIR
+    try:
+        pkg = _load_by_path("_octo_pkg_for_doctor", brain / "scripts" / "octo_pkg.py")
+        b = pkg.Brain(brain)
+        lock = b.load_lock()
+    except Exception as e:
+        return Result(key, FAIL, f"the package lock cannot be read: {type(e).__name__}: {e}",
+                      "python3 scripts/octo_pkg.py verify --all")
+    rows = [p for p in lock["packages"] if pkg.lock_kind(p) == "plugin"]
+    results = [pkg._verify_plugin_entry(b, p) for p in rows]
+    results += pkg.scan_plugins(b, {str(p.get("name")) for p in rows})
+    fails = [m for s, m in results if s == FAIL]
+    warns = [m for s, m in results if s == WARN]
+    if fails:
+        return Result(key, FAIL, f"{len(fails)} plugin problem(s): " + "; ".join(fails[:3]),
+                      "inspect the tree; reinstall the signed wrapper from a terminal, "
+                      "or remove the upstream with: claude plugin uninstall "
+                      f"{pkg.UPSTREAM_TRACING_PLUGIN}")
+    if warns:
+        return Result(key, WARN, "; ".join(warns[:3]), "see the fix in the message")
+    if not rows:
+        return Result(key, PASS, "no Tracing_Wrapper installed and no upstream tracer "
+                      "under plugins/")
+    return Result(key, PASS, f"{len(rows)} plugin(s) match their lock entry, every harness "
+                  f"copy included; no upstream tracer outside the wrapper")
+
+
 CHECKS = [
     ("repo-identity", check_repo_identity),
     ("rule-1-registry", check_registry),
@@ -3309,6 +3511,8 @@ CHECKS = [
     ("stale-merged-branches", check_stale_merged_branches),
     ("capability-manifest-fresh", check_capability_manifest),
     ("packages-verified", check_packages_verified),
+    ("tracing-switch", check_tracing_switch),
+    ("tracing-plugins", check_tracing_plugins),
     ("skill-manifests", check_skill_manifests),
     ("spec-contract", check_spec_contract),
     ("claude-md-budget", check_claude_md_budget),

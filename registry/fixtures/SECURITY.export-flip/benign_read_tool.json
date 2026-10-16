@@ -1,0 +1,8 @@
+{
+  "session_id": "sess-flip",
+  "tool_name": "Read",
+  "tool_use_id": "toolu_flip",
+  "tool_input": {
+    "file_path": "arms/open/arm.json"
+  }
+}

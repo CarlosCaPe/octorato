@@ -29,3 +29,22 @@ go red.
 `tampered/` is `signed/` with a different name and its `tree_sha256` zeroed. That
 single field is the whole violation, so the pair stays one edit apart: put the real
 hash back and it is a benign package again.
+
+## `plugin-upstream/`: a STUB upstream for kind `plugin` (v11 AC-13)
+
+The Tracing_Wrapper wraps the upstream LangSmith Claude Code plugin
+(`langsmith-tracing`). That plugin is not vendored and is not available offline, so
+this directory stands in for it: a `plugin.json` carrying the upstream's name and
+version `0.0.0-stub`, a five-event hook list, and `hooks/trace.py`, which POSTs a
+two-field summary to `LANGSMITH_ENDPOINT` (default `127.0.0.1:9`, never a remote
+host) and always exits 0. It is not the vendor's code and claims nothing about the
+vendor's event list.
+
+The selftest builds the wrapper from it with `wrap-plugin`, signs it with the
+throwaway key, and proves the plugin legs: refused inside a session, installed
+disabled (no settings file written), verified, a tampered byte and a tampered cache
+copy FAIL, a wrapper with one unguarded hook command is refused even when signed,
+the upstream installed on its own under `plugins/` FAILs, and uninstall removes the
+tree, the lock row and the marketplace line. `g__wrap__export-guard.py --bench` runs
+the same stub for the AC-14 latency measurement; the numbers it gives are the stub's,
+recorded as such, until the real upstream is wrapped.

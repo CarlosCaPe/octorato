@@ -1,0 +1,32 @@
+{
+  "arms_paths_raw": "{\"open\": \"arms/closed\", \"open\": \"arms/open\"}",
+  "files": {
+    "arms/open/arm.json": {
+      "kind": "arm",
+      "name": "open",
+      "version": "1.0.0",
+      "license": "proprietary",
+      "telemetry": {
+        "export": "allow"
+      }
+    },
+    "arms/closed/arm.json": {
+      "kind": "arm",
+      "name": "closed",
+      "version": "1.0.0",
+      "license": "proprietary",
+      "telemetry": {
+        "export": "deny"
+      }
+    }
+  },
+  "payload": {
+    "session_id": "sess-guard",
+    "hook_event_name": "Stop",
+    "cwd": "{{SANDBOX}}/arms/open"
+  },
+  "_comment": "arms-paths.json repeating a name.",
+  "_setup": {
+    "expect_reason": "repeated key"
+  }
+}

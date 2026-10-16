@@ -1,0 +1,35 @@
+{
+  "arms_paths": {
+    "open": "arms/open",
+    "closed": "arms/closed"
+  },
+  "files": {
+    "arms/open/arm.json": {
+      "kind": "arm",
+      "name": "open",
+      "version": "1.0.0",
+      "license": "proprietary",
+      "telemetry": {
+        "export": "allow"
+      }
+    },
+    "arms/closed/arm.json": {
+      "kind": "arm",
+      "name": "closed",
+      "version": "1.0.0",
+      "license": "proprietary",
+      "telemetry": {
+        "export": "deny"
+      }
+    }
+  },
+  "payload": {
+    "session_id": "sess-guard",
+    "hook_event_name": "Stop",
+    "cwd": "{{SANDBOX}}/arms/open/nope"
+  },
+  "_comment": "A cwd that does not exist.",
+  "_setup": {
+    "expect_reason": "not an existing directory"
+  }
+}
