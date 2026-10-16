@@ -113,6 +113,34 @@ class TestTracingSwitch(SwitchCase):
             "{broken", encoding="utf-8")
         self.assertEqual(self.check().status, bd.FAIL)
 
+    def test_qa_probe_switch_in_a_subdirectory_of_a_deny_arm_fails(self):
+        """QA probe on 5845c59: only <arm>/.claude was read, so this was PASS."""
+        root = self.arm("closed", "deny")
+        self.settings(root / "sub" / ".claude" / "settings.local.json",
+                      {"TRACE_TO_LANGSMITH": "true"})
+        r = self.check()
+        self.assertEqual(r.status, bd.FAIL, r.message)
+        self.assertIn("sub", r.message)
+
+    def test_subdirectory_of_an_allow_arm_follows_the_guard_walk(self):
+        root = self.arm("open", "allow")
+        self.settings(root / "sub" / ".claude" / "settings.local.json",
+                      {"TRACE_TO_LANGSMITH": "true"})
+        self.assertEqual(self.check().status, bd.PASS)
+        # one edit: a client repo inside it with its own deny arm.json
+        (root / "sub" / "arm.json").write_text(json.dumps(
+            {"kind": "arm", "name": "inner", "telemetry": {"export": "deny"}}), encoding="utf-8")
+        self.assertEqual(self.check().status, bd.FAIL)
+
+    def test_walk_skips_node_modules_and_symlinks(self):
+        root = self.arm("closed", "deny")
+        self.settings(root / "node_modules" / "x" / ".claude" / "settings.json",
+                      {"TRACE_TO_LANGSMITH": "true"})
+        outside = self.home / "elsewhere"
+        self.settings(outside / ".claude" / "settings.json", {"TRACE_TO_LANGSMITH": "true"})
+        os.symlink(outside, root / "linked")
+        self.assertEqual(self.check().status, bd.PASS)
+
     def test_shell_export_is_warn(self):
         self.arm("closed", "deny")
         os.environ[bd.TRACING_SWITCH] = "true"

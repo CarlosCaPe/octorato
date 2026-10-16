@@ -3318,6 +3318,43 @@ def _load_by_path(modname: str, path: Path):
     return mod
 
 
+ARM_SETTINGS_DEPTH = 6
+_ARM_WALK_SKIP = frozenset({"node_modules", ".git"})
+
+
+def _arm_settings_files(root: Path) -> list:
+    """Every `.claude/settings*.json` under an arm, to ARM_SETTINGS_DEPTH directories,
+    skipping node_modules and .git, never following a symlink. Sorted."""
+    out = []
+    for dirpath, dirnames, _files in os.walk(root, followlinks=False):
+        here = Path(dirpath)
+        depth = len(here.relative_to(root).parts)
+        dirnames[:] = [d for d in dirnames if d not in _ARM_WALK_SKIP
+                       and (d == ".claude" or not d.startswith("."))
+                       and depth < ARM_SETTINGS_DEPTH]
+        if here.name == ".claude":
+            out += [f for f in here.glob("settings*.json") if not f.is_symlink()]
+            dirnames[:] = []
+    return sorted(out)
+
+
+def _effective_policy(guard, root: str, d: str) -> str:
+    """The guard's verdict for a session in directory `d` of the arm at `root`: the
+    arm's own policy and every arm.json from `d` up to the root must read allow."""
+    if guard.export_policy(root) != "allow":
+        return "deny"
+    p = os.path.realpath(d)
+    while True:
+        if os.path.lexists(os.path.join(p, "arm.json")) and guard.export_policy(p) != "allow":
+            return "deny"
+        if p == root:
+            return "allow"
+        parent = os.path.dirname(p)
+        if parent == p or not guard._contains(root, parent):
+            return "allow"
+        p = parent
+
+
 def check_tracing_switch(fix: bool, home: Path | None = None,
                          brain: Path | None = None) -> Result:
     """AC-12: FAIL when the tracing switch is on in the project settings of an arm
@@ -3336,9 +3373,16 @@ def check_tracing_switch(fix: bool, home: Path | None = None,
     shell export is reported as WARN: AC-12 names settings files, and the doctor's
     own environment is the only shell it can see.
 
-    NOT seen, named: a nested client repo inside a registered arm (the guard denies
-    it at run time; this check reads registered roots only), and a settings file of
-    an arm not on this machine.
+    Every `.claude/settings*.json` under a registered arm is read, not only the
+    root's: a session started in a subdirectory loads that subdirectory's project
+    settings (QA probe on 5845c59: `arm/sub/.claude/settings.local.json` in a deny
+    arm reported PASS). Its policy is the guard's walk: the arm's own and every
+    `arm.json` between the subdirectory and the arm root must say allow.
+
+    NOT seen, named: a settings file deeper than ARM_SETTINGS_DEPTH directories, or
+    under `node_modules/`, a hidden directory other than `.claude/`, or a symlinked
+    directory (the walk never follows a
+    link); and a settings file of an arm not on this machine.
     """
     key = "tracing-switch"
     home = Path(home) if home is not None else HOME
@@ -3359,10 +3403,13 @@ def check_tracing_switch(fix: bool, home: Path | None = None,
         policy = guard.export_policy(root)
         if policy != "allow":
             deny_arms.append(name)
-        for f in sorted(Path(root, ".claude").glob("settings*.json")):
+        for f in _arm_settings_files(Path(root)):
             state = _settings_switch(f)
-            if state and policy != "allow":
-                fails.append(f"{f} ({state}; arm {name} is {policy})")
+            if not state:
+                continue
+            here = _effective_policy(guard, root, str(f.parent.parent))
+            if here != "allow":
+                fails.append(f"{f} ({state}; arm {name}, here {here})")
     global_hits = []
     for f in (home / ".claude" / "settings.json", home / ".claude" / "settings.local.json"):
         state = _settings_switch(f)
