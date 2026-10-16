@@ -105,6 +105,9 @@ NOT_INPUT = [
     "Provenance: Basis: x\n" + Q,                                   # footer before the question
     "One value is missing.\n\ninput-needed: the host name",          # no question mark
     "Q?\n" + Q + "\nProvenance: a\nProvenance: b",                  # two provenance lines
+    "The bug was the parser and the branch now carries the fix for staging and production alike.\n\n" + Q,  # long context
+    "The parser bug is gone.\nThe rollback needs one value.\n\n" + Q,  # two context lines
+    "One value.\n\ninput-needed: Now that I merged the fix, what is the host?",  # claim in question
 ]
 
 
@@ -119,6 +122,10 @@ class InputNeededTests(unittest.TestCase):
         for text in NOT_INPUT:
             with self.subTest(text=text[:50]):
                 self.assertNotEqual(RP.source_class(text), "INPUT")
+
+    def test_explicit_self_basis_wins(self):
+        self.assertEqual(RP.source_class("One value.\n\n" + Q + "\n\nProvenance: Basis: self"), "SELF")
+        self.assertEqual(RP.source_class("One value.\n\n" + Q + "\n\nProvenance: Basis:"), "SELF")
 
     def test_long_reply_with_trailing_line_keeps_self(self):
         self.assertEqual(RP.source_class(NOT_INPUT[0]), "SELF")

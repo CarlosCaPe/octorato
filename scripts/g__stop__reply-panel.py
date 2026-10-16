@@ -556,6 +556,7 @@ def _line_is_self(line: str) -> bool:
 # input-needed: a short reply that ends on ONE question for a fact only the
 # operator holds. The line names the unknown and ends with the question mark.
 INPUT_CAP = 60
+INPUT_CONTEXT_WORDS = 15
 _INPUT_LINE = re.compile(r"^[ \t]*[*_]*input-needed[*_]*[ \t]*:[ \t]*(?P<q>.*\S.*\?)[*_ \t]*$",
                          re.IGNORECASE)
 _NO_MENU = "g__stop__no-menu-question.py"
@@ -580,38 +581,54 @@ def _menu_or_consent(question: str) -> bool:
 
 
 def input_needed(text: str) -> bool:
-    """True for a reply that only asks the operator for a fact: at most
-    INPUT_CAP words outside its provenance lines, at most one provenance
-    line and it comes after the question, the last other non-empty line
-    starts `input-needed:` and ends with `?`, no other `?` in the reply, no
-    claim marker (status_claim) in the rest of the body, and the question is
-    neither a menu nor a consent ask (_menu_or_consent)."""
+    """True for a reply that only asks the operator for a fact. Outside the
+    footer (at most one provenance line, after the question) the reply is
+    exactly the `input-needed:` line, ending with the only `?` of the reply,
+    plus at most one context line before it of at most INPUT_CONTEXT_WORDS
+    words. Neither line carries a claim marker (status_claim), and the
+    question is neither a menu nor a consent ask (_menu_or_consent). The
+    marker check is a speed bump; the INPUT reply still has its reviewer."""
     lines = (text or "").splitlines()
     prov = [i for i, ln in enumerate(lines) if _PROVENANCE.match(ln)]
     body = [(i, ln) for i, ln in enumerate(lines) if ln.strip() and i not in prov]
-    if not body or len(prov) > 1:
+    if not body or len(body) > 2 or len(prov) > 1:
         return False
     qi, qline = body[-1]
     m = _INPUT_LINE.match(qline)
     if not m or (prov and prov[0] < qi):
         return False
+    if len(body) == 2 and len(body[0][1].split()) > INPUT_CONTEXT_WORDS:
+        return False
     if sum(len(ln.split()) for _, ln in body) > INPUT_CAP:
         return False
     if sum(ln.count("?") for _, ln in body) != 1:
         return False
-    if status_claim("\n".join(ln for _, ln in body[:-1])):
+    if status_claim("\n".join(ln for _, ln in body)):
         return False
     return not _menu_or_consent(m.group("q"))
 
 
+def _explicit_self_basis(text: str) -> bool:
+    """True when a provenance line carries a Basis field that is empty or
+    names self (the stricter reading wins over INPUT)."""
+    for ln in _PROVENANCE.findall(text or ""):
+        m = _BASIS.search(ln.strip().lstrip("*_ "))
+        if m:
+            basis = m.group(1).strip().strip("*_ ")
+            if _empty_basis(basis) or _self_basis(basis):
+                return True
+    return False
+
+
 def source_class(text: str) -> str:
-    """INPUT for an input-needed reply (input_needed), quorum 1 like SOURCED.
+    """INPUT for an input-needed reply (input_needed) whose footer, if any,
+    does not name self or an empty Basis; quorum 1 like SOURCED.
     Otherwise SELF when the reply has no provenance line or when ANY
     provenance line is SELF (no Basis field, a Basis that names nothing (see
     _empty_basis), or a Basis that names self or own reasoning in EN, ES or
     DE, see _self_basis). A later SOURCED line, a code block included, never
     lifts an earlier SELF line."""
-    if input_needed(text):
+    if input_needed(text) and not _explicit_self_basis(text):
         return "INPUT"
     lines = _PROVENANCE.findall(text or "")
     if not lines or any(_line_is_self(ln) for ln in lines):
