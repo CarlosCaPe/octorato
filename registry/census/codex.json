@@ -1,4 +1,12 @@
 {
+  "account_tier": {
+    "measured": true,
+    "model": null,
+    "model_gap": "not recorded: the T08 live leg did not keep the `model` field of the hook payload; the next live run of --gates can record it",
+    "planType": "free",
+    "source": "codex app-server account/read (type and planType only)",
+    "type": "chatgpt"
+  },
   "block_fixtures": {
     "file_edit": {
       "benign": "ARCHITECTURE.arming-surface/benign_gate_body_edit.json",
@@ -16,9 +24,9 @@
       "violation": "COMMS.outward-send-gate/violation_absence_assert_then_ask.json"
     },
     "shell": {
-      "benign": "SEC.prod-write-gate/benign.json",
-      "gate": "SEC.prod-write-gate",
-      "violation": "SEC.prod-write-gate/violation.json"
+      "benign": "ARCHITECTURE.arming-surface/benign_hooks_redirect.json",
+      "gate": "ARCHITECTURE.arming-surface",
+      "violation": "ARCHITECTURE.arming-surface/violation_hooks_redirect.json"
     }
   },
   "contract": {
@@ -45,6 +53,384 @@
     },
     "trust_step": "non-managed hooks run only after /hooks trust, recorded against the hook's hash; --dangerously-bypass-hook-trust skips it once"
   },
+  "gates": {
+    "mode": "offline: each projected fail-closed gate's own --selftest run in process, every spawn of the gate rendered as this harness's documented hook payload and decided by g__shim__hook.decide() with status `supported` supplied in process (the shim's command line refuses a `gap` harness); a tool the projected matcher does not match is answered as the harness would, allow",
+    "result": "pass",
+    "selftests": [
+      {
+        "exit_code": 0,
+        "gate": "dimension-awareness-hook.py",
+        "legs_native_claude_only_field": {},
+        "legs_native_no_harness_tool": {},
+        "legs_native_not_a_payload": 0,
+        "legs_not_matched_by_projection": {},
+        "legs_through_shim": {
+          "shim_allowed": 1,
+          "shim_denied": 1,
+          "shim_untranslatable": 0
+        },
+        "legs_through_shim_by_class": {
+          "shell:allowed": 1,
+          "shell:denied": 1
+        },
+        "locator": "scripts/dimension-awareness-hook.py --selftest",
+        "matcher": "^(Bash|apply_patch)$",
+        "result": "pass",
+        "selftest_lines": [
+          "selftest PASS: broad-stage denies, explicit pathspec allows (dimension-awareness-hook.py)"
+        ]
+      },
+      {
+        "exit_code": 0,
+        "gate": "g__pretool-bash__git-discipline.py",
+        "legs_native_claude_only_field": {},
+        "legs_native_no_harness_tool": {},
+        "legs_native_not_a_payload": 0,
+        "legs_not_matched_by_projection": {},
+        "legs_through_shim": {
+          "shim_allowed": 3,
+          "shim_denied": 3,
+          "shim_untranslatable": 0
+        },
+        "legs_through_shim_by_class": {
+          "file_write:allowed": 1,
+          "file_write:denied": 1,
+          "shell:allowed": 2,
+          "shell:denied": 2
+        },
+        "locator": "scripts/g__pretool-bash__git-discipline.py --selftest registry/fixtures/GIT.version-control",
+        "matcher": "^(Bash|apply_patch)$",
+        "result": "pass",
+        "selftest_lines": [
+          "selftest PASS: 3 block + 3 allow (g__pretool-bash__git-discipline.py vs GIT.version-control)"
+        ]
+      },
+      {
+        "exit_code": 0,
+        "gate": "g__pretool-bash__tree-owner.py",
+        "legs_native_claude_only_field": {
+          "agent_id": 32
+        },
+        "legs_native_no_harness_tool": {
+          "Agent": 1
+        },
+        "legs_native_not_a_payload": 0,
+        "legs_not_matched_by_projection": {},
+        "legs_through_shim": {
+          "shim_allowed": 0,
+          "shim_denied": 1,
+          "shim_untranslatable": 0
+        },
+        "legs_through_shim_by_class": {
+          "shell:denied": 1
+        },
+        "locator": "scripts/g__pretool-bash__tree-owner.py --selftest registry/fixtures/ARCHITECTURE.kernel-isolation",
+        "matcher": "^(Bash)$",
+        "one_sided_missing": "allow",
+        "result": "one_sided",
+        "selftest_lines": [
+          "selftest PASS: 16 block + 13 allow, 5 foreign payload(s) untouched (g__pretool-bash__tree-owner.py vs ARCHITECTURE.kernel-isolation); every deny names its holder"
+        ]
+      },
+      {
+        "exit_code": 0,
+        "gate": "g__pretool-mcp__chat-context.py",
+        "legs_native_claude_only_field": {},
+        "legs_native_no_harness_tool": {},
+        "legs_native_not_a_payload": 0,
+        "legs_not_matched_by_projection": {
+          "mcp__whatsapp__send_file as mcp__whatsapp__send_file": 1
+        },
+        "legs_through_shim": {
+          "shim_allowed": 1,
+          "shim_denied": 3,
+          "shim_untranslatable": 0
+        },
+        "legs_through_shim_by_class": {
+          "mcp:allowed": 1,
+          "mcp:denied": 3
+        },
+        "locator": "scripts/g__pretool-mcp__chat-context.py --selftest registry/fixtures/COMMS.chat-context-before-send",
+        "matcher": "^(mcp__whatsapp__send_message)$",
+        "result": "pass",
+        "selftest_lines": [
+          "selftest PASS: 2 block + 2 allow (g__pretool-mcp__chat-context.py vs COMMS.chat-context-before-send)",
+          "selftest PASS: lid_tail content assertion (seeded tail present, no crash marker)"
+        ]
+      },
+      {
+        "exit_code": 0,
+        "gate": "g__pretool-mcp__outward-send.py",
+        "legs_native_claude_only_field": {},
+        "legs_native_no_harness_tool": {},
+        "legs_native_not_a_payload": 0,
+        "legs_not_matched_by_projection": {
+          "mcp__gmail__draft_email as mcp__gmail__draft_email": 1
+        },
+        "legs_through_shim": {
+          "shim_allowed": 60,
+          "shim_denied": 90,
+          "shim_untranslatable": 0
+        },
+        "legs_through_shim_by_class": {
+          "mcp:allowed": 28,
+          "mcp:denied": 45,
+          "shell:allowed": 32,
+          "shell:denied": 45
+        },
+        "locator": "scripts/g__pretool-mcp__outward-send.py --selftest registry/fixtures/COMMS.outward-send-gate",
+        "matcher": "^(mcp__gmail__send_email|mcp__claude_ai_Gmail__send_message|mcp__claude_ai_Gmail__reply|mcp__claude_ai_Gmail__forward|mcp__whatsapp__send_message|mcp__whatsapp__send_file|mcp__whatsapp__send_audio_message|Bash)$",
+        "result": "pass",
+        "selftest_lines": [
+          "selftest PASS: 90 block + 61 allow (g__pretool-mcp__outward-send.py vs COMMS.outward-send-gate)"
+        ]
+      },
+      {
+        "exit_code": 0,
+        "gate": "g__pretool-mcp__outward-send.py",
+        "legs_native_claude_only_field": {},
+        "legs_native_no_harness_tool": {},
+        "legs_native_not_a_payload": 0,
+        "legs_not_matched_by_projection": {},
+        "legs_through_shim": {
+          "shim_allowed": 34,
+          "shim_denied": 96,
+          "shim_untranslatable": 0
+        },
+        "legs_through_shim_by_class": {
+          "mcp:allowed": 8,
+          "mcp:denied": 24,
+          "shell:allowed": 26,
+          "shell:denied": 72
+        },
+        "locator": "scripts/g__pretool-mcp__outward-send.py --selftest registry/fixtures/FLOW.panel-before-send",
+        "matcher": "^(mcp__gmail__send_email|mcp__claude_ai_Gmail__send_message|mcp__claude_ai_Gmail__reply|mcp__claude_ai_Gmail__forward|mcp__whatsapp__send_message|mcp__whatsapp__send_file|mcp__whatsapp__send_audio_message|Bash)$",
+        "result": "pass",
+        "selftest_lines": [
+          "selftest PASS: 96 block + 34 allow (g__pretool-mcp__outward-send.py vs FLOW.panel-before-send)"
+        ]
+      },
+      {
+        "exit_code": 0,
+        "gate": "g__pretool-write__tree-owner.py",
+        "legs_native_claude_only_field": {
+          "agent_id": 32
+        },
+        "legs_native_no_harness_tool": {
+          "Agent": 1
+        },
+        "legs_native_not_a_payload": 0,
+        "legs_not_matched_by_projection": {},
+        "legs_through_shim": {
+          "shim_allowed": 1,
+          "shim_denied": 0,
+          "shim_untranslatable": 0
+        },
+        "legs_through_shim_by_class": {
+          "shell:allowed": 1
+        },
+        "locator": "scripts/g__pretool-write__tree-owner.py --selftest registry/fixtures/ARCHITECTURE.kernel-isolation",
+        "matcher": "^(Bash|apply_patch)$",
+        "one_sided_missing": "deny",
+        "result": "one_sided",
+        "selftest_lines": [
+          "selftest PASS: 3 block + 2 allow, 29 foreign payload(s) untouched (g__pretool-write__tree-owner.py vs ARCHITECTURE.kernel-isolation); every deny names its holder"
+        ]
+      },
+      {
+        "exit_code": 0,
+        "gate": "g__pretool__arming-surface.py",
+        "legs_native_claude_only_field": {},
+        "legs_native_no_harness_tool": {
+          "MultiEdit": 2
+        },
+        "legs_native_not_a_payload": 0,
+        "legs_not_matched_by_projection": {},
+        "legs_through_shim": {
+          "shim_allowed": 293,
+          "shim_denied": 340,
+          "shim_untranslatable": 0
+        },
+        "legs_through_shim_by_class": {
+          "file_edit:allowed": 3,
+          "file_edit:denied": 4,
+          "file_write:allowed": 35,
+          "file_write:denied": 33,
+          "mcp:allowed": 1,
+          "shell:allowed": 254,
+          "shell:denied": 303
+        },
+        "locator": "scripts/g__pretool__arming-surface.py --selftest registry/fixtures/ARCHITECTURE.arming-surface",
+        "matcher": "^(Bash|apply_patch|mcp__.+)$",
+        "result": "pass",
+        "selftest_lines": [
+          "selftest PASS: 295 block + 294 allow (g__pretool__arming-surface.py vs ARCHITECTURE.arming-surface); every deny names its live file, the same edit in a worktree allows, and a gate that cannot import kernel_proc, cannot load its parser, or cannot run ANY of its three inline body readers denies instead of allowing, proven by driving the real main() with each reader replaced by a raise",
+          "selftest SKIPPED on this OS (premise not buildable): violation_mixed_separator_interp.json"
+        ]
+      },
+      {
+        "exit_code": 0,
+        "gate": "g__pretool__kernel.py",
+        "legs_native_claude_only_field": {
+          "agent_id": 1
+        },
+        "legs_native_no_harness_tool": {},
+        "legs_native_not_a_payload": 0,
+        "legs_not_matched_by_projection": {},
+        "legs_through_shim": {
+          "shim_allowed": 1,
+          "shim_denied": 1,
+          "shim_untranslatable": 0
+        },
+        "legs_through_shim_by_class": {
+          "shell:allowed": 1,
+          "shell:denied": 1
+        },
+        "locator": "scripts/g__pretool__kernel.py --selftest registry/fixtures/FLOW.kernel-journal",
+        "matcher": "^(Bash|apply_patch|mcp__.+)$",
+        "result": "pass",
+        "selftest_lines": [
+          "selftest PASS: 1 block + 2 allow (g__pretool__kernel.py vs FLOW.kernel-journal); every allowed call journaled"
+        ]
+      },
+      {
+        "exit_code": 0,
+        "gate": "g__pretool__kernel.py",
+        "legs_native_claude_only_field": {
+          "agent_id": 3
+        },
+        "legs_native_no_harness_tool": {
+          "Read": 2
+        },
+        "legs_native_not_a_payload": 0,
+        "legs_not_matched_by_projection": {},
+        "legs_through_shim": {
+          "shim_allowed": 0,
+          "shim_denied": 0,
+          "shim_untranslatable": 0
+        },
+        "legs_through_shim_by_class": {},
+        "locator": "scripts/g__pretool__kernel.py --selftest registry/fixtures/FLOW.kernel-quota",
+        "matcher": "^(Bash|apply_patch|mcp__.+)$",
+        "result": "not_routed",
+        "selftest_lines": [
+          "selftest PASS: 3 block + 2 allow (g__pretool__kernel.py vs FLOW.kernel-quota)"
+        ]
+      },
+      {
+        "exit_code": 0,
+        "gate": "grafo-gate.py",
+        "legs_native_claude_only_field": {},
+        "legs_native_no_harness_tool": {},
+        "legs_native_not_a_payload": 0,
+        "legs_not_matched_by_projection": {},
+        "legs_through_shim": {
+          "shim_allowed": 3,
+          "shim_denied": 1,
+          "shim_untranslatable": 0
+        },
+        "legs_through_shim_by_class": {
+          "shell:allowed": 3,
+          "shell:denied": 1
+        },
+        "locator": "scripts/grafo-gate.py --selftest registry/fixtures/FLOW.graph-before-grep",
+        "matcher": "^(Bash)$",
+        "result": "pass",
+        "selftest_lines": [
+          "selftest PASS: 1 block + 3 allow (grafo-gate.py vs FLOW.graph-before-grep)"
+        ]
+      },
+      {
+        "exit_code": 0,
+        "gate": "qa-merge-gate.py",
+        "legs_native_claude_only_field": {},
+        "legs_native_no_harness_tool": {},
+        "legs_native_not_a_payload": 0,
+        "legs_not_matched_by_projection": {},
+        "legs_through_shim": {
+          "shim_allowed": 3,
+          "shim_denied": 13,
+          "shim_untranslatable": 0
+        },
+        "legs_through_shim_by_class": {
+          "shell:allowed": 3,
+          "shell:denied": 13
+        },
+        "locator": "scripts/qa-merge-gate.py --selftest registry/fixtures/CODE.qa-merge-gate",
+        "matcher": "^(Bash)$",
+        "result": "pass",
+        "selftest_lines": [
+          "selftest PASS: 13 block + 3 allow (qa-merge-gate.py vs CODE.qa-merge-gate)"
+        ]
+      },
+      {
+        "exit_code": 0,
+        "gate": "secrets-grep-guard.py",
+        "legs_native_claude_only_field": {},
+        "legs_native_no_harness_tool": {},
+        "legs_native_not_a_payload": 0,
+        "legs_not_matched_by_projection": {},
+        "legs_through_shim": {
+          "shim_allowed": 1,
+          "shim_denied": 13,
+          "shim_untranslatable": 0
+        },
+        "legs_through_shim_by_class": {
+          "shell:allowed": 1,
+          "shell:denied": 13
+        },
+        "locator": "scripts/secrets-grep-guard.py --selftest registry/fixtures/SECURITY.never-read-secrets-raw",
+        "matcher": "^(Bash)$",
+        "result": "pass",
+        "selftest_lines": [
+          "selftest PASS: 13 block + 1 allow (secrets-grep-guard.py vs SECURITY.never-read-secrets-raw)"
+        ]
+      },
+      {
+        "exit_code": 0,
+        "gate": "secrets-grep-guard.py",
+        "legs_native_claude_only_field": {},
+        "legs_native_no_harness_tool": {},
+        "legs_native_not_a_payload": 0,
+        "legs_not_matched_by_projection": {},
+        "legs_through_shim": {
+          "shim_allowed": 1,
+          "shim_denied": 1,
+          "shim_untranslatable": 0
+        },
+        "legs_through_shim_by_class": {
+          "shell:allowed": 1,
+          "shell:denied": 1
+        },
+        "locator": "scripts/secrets-grep-guard.py --selftest registry/fixtures/SECURITY.baseline",
+        "matcher": "^(Bash)$",
+        "result": "pass",
+        "selftest_lines": [
+          "selftest PASS: 1 block + 1 allow (secrets-grep-guard.py vs SECURITY.baseline)"
+        ]
+      }
+    ],
+    "shim_harness": "codex-cli",
+    "summary": {
+      "fail": 0,
+      "gates_without_selftest_fixtures": [],
+      "not_routed": 1,
+      "not_routed_selftests": [
+        "scripts/g__pretool__kernel.py --selftest registry/fixtures/FLOW.kernel-quota"
+      ],
+      "one_sided": 2,
+      "one_sided_selftests": [
+        "scripts/g__pretool-bash__tree-owner.py --selftest registry/fixtures/ARCHITECTURE.kernel-isolation (no shim allow)",
+        "scripts/g__pretool-write__tree-owner.py --selftest registry/fixtures/ARCHITECTURE.kernel-isolation (no shim deny)"
+      ],
+      "pass": 11,
+      "projected_gates": 11,
+      "selftests": 14,
+      "shim_allowed": 402,
+      "shim_denied": 563,
+      "shim_untranslatable": 0
+    }
+  },
   "generated_by": "scripts/runtime_census.py",
   "harness": "codex",
   "live": {
@@ -68,19 +454,148 @@
     },
     "measured": "2026-10-15T12:08:56Z",
     "outcome": "success",
-    "reason": "expected token in stdout",
-    "trust_step_note": "not measured: no Octorato hook is projected yet; the docs state non-managed hooks need /hooks trust per hook hash",
-    "trust_step_scriptable": null
+    "reason": "expected token in stdout"
+  },
+  "live_block": {
+    "auth": "codex's own auth.json read in place from the real CODEX_HOME; not opened, copied or printed by the census; --ignore-user-config and --ephemeral; hooks passed as -c session flags, no config file written",
+    "binary": {
+      "name": "codex",
+      "path": "~/.nvm/versions/node/v24.15.0/bin/codex",
+      "version": "codex-cli 0.159.3"
+    },
+    "classes": {
+      "file_edit": {
+        "benign_evidence": "benign target was written",
+        "harness_allowed_benign": true,
+        "harness_blocked_violation": true,
+        "violation_evidence": "target unchanged and the gate journaled a Edit deny for it"
+      },
+      "file_write": {
+        "benign_evidence": "benign target was written",
+        "harness_allowed_benign": true,
+        "harness_blocked_violation": true,
+        "violation_evidence": "target unchanged and the gate journaled a Write deny for it"
+      },
+      "shell": {
+        "benign_evidence": "benign target was written",
+        "harness_allowed_benign": true,
+        "harness_blocked_violation": true,
+        "violation_evidence": "target unchanged and the gate journaled a Bash deny for it"
+      }
+    },
+    "gate": "g__pretool__arming-surface.py",
+    "measured": "2026-10-15T19:39:19Z",
+    "note": "one live session through the real binary; the hook is the projected g__pretool__arming-surface.py entry run by a sandbox copy of the shim whose registry marks this harness supported; verdicts come from the files and the gate's deny journal; MCP is not exercised live (no MCP server in the sandbox)",
+    "outcome": "ran",
+    "precheck_through_sandbox_shim_cli": {
+      "file_edit:benign": "allowed",
+      "file_edit:violation": "blocked",
+      "file_write:benign": "allowed",
+      "file_write:violation": "blocked",
+      "shell:benign": "allowed",
+      "shell:violation": "blocked"
+    },
+    "projected_hook": {
+      "command": [
+        "python3 <sandbox>/brain/scripts/g__shim__hook.py --harness codex-cli --gate g__pretool__arming-surface.py"
+      ],
+      "matcher": [
+        "^(Bash|apply_patch|mcp__.+)$"
+      ],
+      "source": "scripts/merge-hooks-codex.py plan, gate g__pretool__arming-surface.py only, shim dir = sandbox copy"
+    },
+    "reason": "exit 0",
+    "runs": {
+      "hooked_trust_bypassed": {
+        "command_results": [
+          {
+            "exit_code": 0,
+            "output_tail": "",
+            "status": "completed"
+          }
+        ],
+        "elapsed_s": 15.7,
+        "error_items": [
+          "`--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run without review for this invocation."
+        ],
+        "exit_code": 0,
+        "flags": "-s workspace-write --add-dir <sandbox>/home/.claude --dangerously-bypass-hook-trust -c hooks.PreToolUse=<projected>",
+        "journal_denies": 3,
+        "outcome": "ran",
+        "reason": "exit 0",
+        "started": "2026-10-15T19:38:56Z",
+        "stderr_tail": "urpose: the variable that lifted it would be writable from the very file this protects.. Command: *** Begin Patch\n*** Update File: <sandbox>/home/.claude/settings.json\n@@\n-{\"census\": 1}\n+{\"census\": 2}\n*** End Patch",
+        "tool_items": {
+          "command_execution:completed": 1,
+          "file_change:completed": 2
+        }
+      },
+      "hooked_untrusted_session_flag_trust": {
+        "command_results": [
+          {
+            "exit_code": 0,
+            "output_tail": "",
+            "status": "completed"
+          }
+        ],
+        "elapsed_s": 6.6,
+        "error_items": [
+          "Codex is ignoring 1 unrecognized configuration setting. Check for typos or deprecated settings.\n  session-flags: `hooks.state.\"/<session-flags>/config.toml:pre_tool_use:0:0\"` is ignored."
+        ],
+        "exit_code": 0,
+        "flags": "-s workspace-write --add-dir <sandbox>/home/.claude -c hooks.PreToolUse=<projected> -c hooks.state.<key>.trusted_hash=<currentHash> (no --dangerously-bypass-hook-trust)",
+        "journal_denies": 0,
+        "outcome": "ran",
+        "reason": "exit 0",
+        "started": "2026-10-15T19:39:12Z",
+        "stderr_tail": "Reading additional input from stdin...",
+        "tool_items": {
+          "command_execution:completed": 1
+        },
+        "violation_written": true
+      }
+    },
+    "sandbox_boundary": {
+      "benign": {
+        "exit_code": 0,
+        "landed": true,
+        "stderr_tail": ""
+      },
+      "mode": "codex sandbox -c sandbox_mode=\"workspace-write\" -c sandbox_workspace_write.exclude_slash_tmp=true -c sandbox_workspace_write.exclude_tmpdir_env_var=true -- sh -c \"printf '{}\\n' > <target>\", cwd = <sandbox>/work",
+      "refused_outside_roots": true,
+      "violation": {
+        "exit_code": 2,
+        "landed": false,
+        "stderr_tail": "sh: 1: cannot create <sandbox>/home/.claude/sandbox-probe.json: Read-only file system"
+      }
+    },
+    "trust_bypass_used": true,
+    "trust_step": {
+      "hooks_list": {
+        "hooks": [
+          {
+            "currentHash": "sha256:41aaf8d8916a366c9853f9c91391c7a272f9be451df1cc15386aa1cfff3292e0",
+            "key": "/<session-flags>/config.toml:pre_tool_use:0:0",
+            "source": "sessionFlags",
+            "trustStatus": "untrusted"
+          }
+        ],
+        "measured": true
+      },
+      "session_flag_trust_ignored": true,
+      "untrusted_hook_blocked": false,
+      "untrusted_violation_written": true
+    }
   },
   "name": "Codex CLI",
   "status": "measured",
-  "support_note": "measurements only; `supported` needs blocking evidence through projected hooks, which this record does not hold",
+  "support_note": "measurements only; this script never writes `supported`. Flipping registry/runtimes.yaml is the operator's decision on the evidence here (AC-03: shell, file_write and file_edit blocked live with the benign twins allowed)",
   "tool_classes": {
     "file_edit": {
-      "blocking_note": "not measured: no projected hook or shim exists for this harness yet",
+      "blocking_note": "live leg (2026-10-15T19:39:19Z): violation: target unchanged and the gate journaled a Edit deny for it; benign: benign target was written",
       "gate": "ARCHITECTURE.arming-surface",
-      "harness_allowed_benign": null,
-      "harness_blocked_violation": null,
+      "harness_allowed_benign": true,
+      "harness_blocked_violation": true,
       "harness_tool_name": "apply_patch",
       "legs": [
         {
@@ -134,13 +649,19 @@
           "translatable": true
         }
       ],
+      "live_measured_gate": "g__pretool__arming-surface.py",
+      "shim_selftest_legs": {
+        "allowed": 3,
+        "denied": 4,
+        "untranslatable": 0
+      },
       "translatable": true
     },
     "file_write": {
-      "blocking_note": "not measured: no projected hook or shim exists for this harness yet",
+      "blocking_note": "live leg (2026-10-15T19:39:19Z): violation: target unchanged and the gate journaled a Write deny for it; benign: benign target was written",
       "gate": "ARCHITECTURE.arming-surface",
-      "harness_allowed_benign": null,
-      "harness_blocked_violation": null,
+      "harness_allowed_benign": true,
+      "harness_blocked_violation": true,
       "harness_tool_name": "apply_patch",
       "legs": [
         {
@@ -194,10 +715,16 @@
           "translatable": true
         }
       ],
+      "live_measured_gate": "g__pretool__arming-surface.py",
+      "shim_selftest_legs": {
+        "allowed": 36,
+        "denied": 34,
+        "untranslatable": 0
+      },
       "translatable": true
     },
     "mcp": {
-      "blocking_note": "not measured: no projected hook or shim exists for this harness yet",
+      "blocking_note": "not measured live: no MCP server in the census sandbox",
       "gate": "COMMS.outward-send-gate",
       "harness_allowed_benign": null,
       "harness_blocked_violation": null,
@@ -266,30 +793,35 @@
           "translatable": true
         }
       ],
+      "shim_selftest_legs": {
+        "allowed": 38,
+        "denied": 72,
+        "untranslatable": 0
+      },
       "translatable": true
     },
     "shell": {
-      "blocking_note": "not measured: no projected hook or shim exists for this harness yet",
-      "gate": "SEC.prod-write-gate",
-      "harness_allowed_benign": null,
-      "harness_blocked_violation": null,
+      "blocking_note": "live leg (2026-10-15T19:39:19Z): violation: target unchanged and the gate journaled a Bash deny for it; benign: benign target was written",
+      "gate": "ARCHITECTURE.arming-surface",
+      "harness_allowed_benign": true,
+      "harness_blocked_violation": true,
       "harness_tool_name": "Bash",
       "legs": [
         {
-          "fixture": "SEC.prod-write-gate/violation.json",
+          "fixture": "ARCHITECTURE.arming-surface/violation_hooks_redirect.json",
           "harness_tool_name": "Bash",
           "leg": "violation",
           "rendered_payload": {
-            "cwd": "/home/user/project",
+            "cwd": "{{SANDBOX}}/wt/state-gate",
             "hook_event_name": "PreToolUse",
             "model": "census",
             "permission_mode": "default",
-            "session_id": "census",
+            "session_id": "sess-arming",
             "tool_input": {
-              "command": "aws ssm send-command --instance-ids i-0abc123def456789 --document-name AWS-RunShellScript --parameters 'commands=[\"aws s3 cp s3://bucket/octorato /opt/octorato/bin/octorato\",\"chmod +x /opt/octorato/bin/octorato\"]'"
+              "command": "echo '{}' > {{SANDBOX}}/.claude/hooks.json"
             },
             "tool_name": "Bash",
-            "tool_use_id": "census",
+            "tool_use_id": "toolu_arm",
             "transcript_path": null,
             "turn_id": "census"
           },
@@ -301,20 +833,20 @@
           "translatable": true
         },
         {
-          "fixture": "SEC.prod-write-gate/benign.json",
+          "fixture": "ARCHITECTURE.arming-surface/benign_hooks_redirect.json",
           "harness_tool_name": "Bash",
           "leg": "benign",
           "rendered_payload": {
-            "cwd": "/home/user/project",
+            "cwd": "{{SANDBOX}}/wt/state-gate",
             "hook_event_name": "PreToolUse",
             "model": "census",
             "permission_mode": "default",
-            "session_id": "census",
+            "session_id": "sess-arming",
             "tool_input": {
-              "command": "git status"
+              "command": "echo '{}' > {{SANDBOX}}/wt/state-gate/hooks.json"
             },
             "tool_name": "Bash",
-            "tool_use_id": "census",
+            "tool_use_id": "toolu_arm",
             "transcript_path": null,
             "turn_id": "census"
           },
@@ -326,6 +858,12 @@
           "translatable": true
         }
       ],
+      "live_measured_gate": "g__pretool__arming-surface.py",
+      "shim_selftest_legs": {
+        "allowed": 325,
+        "denied": 453,
+        "untranslatable": 0
+      },
       "translatable": true
     }
   }

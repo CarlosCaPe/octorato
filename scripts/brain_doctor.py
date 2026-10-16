@@ -677,9 +677,15 @@ def check_arms_config(fix: bool) -> Result:
     return Result(key, PASS, "arms-paths.json present and valid JSON")
 
 
-def check_sync_targets(fix: bool) -> list[Result]:
+def check_sync_targets(fix: bool, arms_file: Path | None = None,
+                       registry: Path | None = None) -> list[Result]:
+    """Every arm's mirrors equal its .claude/CLAUDE.md: the two base mirrors plus
+    the instruction file of every `supported` harness (v11 AC-07). WARN, never
+    FAIL: a mirror that is a symlink (sync refuses to write through it), and an
+    instruction file of a harness that is NOT supported, which sync leaves in
+    place and no longer updates (a stale mirror)."""
     key = "sync-targets"
-    p = CLAUDE_DIR / "company" / "config" / "arms-paths.json"
+    p = arms_file or (CLAUDE_DIR / "company" / "config" / "arms-paths.json")
     if not p.exists():
         return [Result(key, WARN, "arms-paths.json absent — skipping sync-target verification",
                        "create arms-paths.json to enable")]
@@ -688,7 +694,21 @@ def check_sync_targets(fix: bool) -> list[Result]:
     except Exception as e:
         return [Result(key, FAIL, f"arms-paths.json unreadable: {e}", "fix JSON")]
 
+    try:
+        sys.path.insert(0, str(CLAUDE_DIR / "scripts"))
+        import ai_sync
+        mirrors = [*ai_sync.BASE_MIRRORS,
+                   *ai_sync.harness_instruction_files(registry, quiet=True)]
+        stale_names = ai_sync.harness_instruction_files(registry, supported=False, quiet=True)
+        refusal = ai_sync.mirror_refusal
+    except Exception as e:  # keep the base check alive if ai_sync cannot load
+        mirrors, stale_names, refusal = [".github/copilot-instructions.md", ".cursorrules"], [], None
+        results_note = f"ai_sync unavailable ({type(e).__name__}); base mirrors only"
+    else:
+        results_note = None
     results = []
+    if results_note:
+        results.append(Result(key, WARN, results_note, "fix scripts/ai_sync.py"))
     checked = 0
     for arm, value in arms.items():
         repo = resolve_home_relative(value)
@@ -702,8 +722,14 @@ def check_sync_targets(fix: bool) -> list[Result]:
                                   "ensure arm has .claude/CLAUDE.md"))
             continue
         src_bytes = read_bytes(source)
-        for mirror_rel in (".github/copilot-instructions.md", ".cursorrules"):
+        for mirror_rel in mirrors:
             mirror = repo / mirror_rel
+            why = refusal(repo, mirror_rel) if refusal else None
+            if why:
+                results.append(Result(f"{key}:{arm}", WARN,
+                                      f"{arm}: {mirror_rel} not synced, {why}",
+                                      "replace it with a regular file; sync never writes through a link"))
+                continue
             if not mirror.exists():
                 results.append(Result(f"{key}:{arm}", WARN,
                                       f"{arm}: {mirror_rel} missing",
@@ -713,7 +739,13 @@ def check_sync_targets(fix: bool) -> list[Result]:
                 results.append(Result(f"{key}:{arm}", WARN,
                                       f"{arm}: {mirror_rel} differs from .claude/CLAUDE.md",
                                       "run sync-ai-docs to re-sync mirror"))
-        # if both mirrors matched, no per-mirror result emitted; add a PASS marker
+        for stale_rel in stale_names:
+            if os.path.lexists(repo / stale_rel):
+                results.append(Result(f"{key}:{arm}", WARN,
+                                      f"{arm}: {stale_rel} is a stale mirror; its harness is not "
+                                      "`supported` in registry/runtimes.yaml, so sync no longer updates it",
+                                      "delete it in the arm, or keep it knowing it will not track CLAUDE.md"))
+        # if every mirror matched, no per-mirror result emitted; add a PASS marker
         arm_problems = [r for r in results if r.key == f"{key}:{arm}"]
         if not arm_problems:
             results.append(Result(f"{key}:{arm}", PASS, f"{arm}: mirrors in sync"))
@@ -2972,6 +3004,30 @@ CENSUS_REQUIRED_CLASSES = ("shell", "file_write", "file_edit")
 _EVIDENCE_CHECK_RE = re.compile(r"\bbrain_doctor\s+([a-z0-9][a-z0-9-]*)")
 _RUNTIME_FIELDS = ("name", "status", "instruction_file", "hook_config",
                    "block_contract", "tool_map", "tiers", "unprojected")
+# AC-08: a `supported` harness maps exactly these four tiers to its model slugs.
+RUNTIME_TIERS = ("mechanical", "bulk", "build", "judgment")
+
+
+def runtime_tier_problems(rid: str, entry: dict) -> list:
+    """AC-08, for a `supported` entry: `tiers` is a mapping of exactly the four
+    tiers, each a non-empty string. Any other entry is unbound: `tiers: null`."""
+    tiers = entry.get("tiers")
+    if entry.get("status") != "supported":
+        if tiers is not None:
+            return [f"{rid}: `{entry.get('status')}` with tiers {tiers!r}; an unbound "
+                    "harness holds `tiers: null` (AC-08)"]
+        return []
+    if not isinstance(tiers, dict):
+        return [f"{rid}: supported with `tiers` {tiers!r}, not a mapping of "
+                f"{', '.join(RUNTIME_TIERS)} (AC-08)"]
+    missing = [t for t in RUNTIME_TIERS if not isinstance(tiers.get(t), str) or not tiers[t].strip()]
+    extra = sorted(str(k) for k in tiers if k not in RUNTIME_TIERS)
+    out = []
+    if missing:
+        out.append(f"{rid}: supported with no model slug for tier(s) {', '.join(missing)} (AC-08)")
+    if extra:
+        out.append(f"{rid}: unknown tier(s) {', '.join(extra)}; the ladder has four (AC-08)")
+    return out
 
 
 def _yaml_load_unique(text: str):
@@ -3021,6 +3077,7 @@ def load_runtime_registry(path: Path | None = None):
                             f"{', '.join(RUNTIME_STATUSES)}")
         if entry.get("status") == "supported" and not entry.get("evidence"):
             problems.append(f"{rid}: supported with no `evidence` naming a brain_doctor check")
+        problems.extend(runtime_tier_problems(rid, entry))
     return runtimes, problems
 
 
@@ -3064,7 +3121,8 @@ def census_blocking_gaps(record) -> list:
 
 def check_runtime_registry(fix: bool, path: Path | None = None) -> Result:
     """AC-01: registry/runtimes.yaml is present, parses, and every entry carries
-    the Runtime_Registry fields with a status of `supported` or `gap`."""
+    the Runtime_Registry fields with a status of `supported` or `gap`. AC-08: every
+    `supported` entry maps the four tiers to model slugs."""
     key = "runtime-registry"
     runtimes, problems = load_runtime_registry(path)
     if problems:

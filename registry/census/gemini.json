@@ -1,4 +1,9 @@
 {
+  "account_tier": {
+    "gap": "not measured: the census has no tier query for Gemini CLI, and the T08 live leg (GEMINI_API_KEY route) ended in 429 before any session ran",
+    "measured": false,
+    "source": null
+  },
   "block_fixtures": {
     "file_edit": {
       "benign": "ARCHITECTURE.arming-surface/benign_gate_body_edit.json",
@@ -16,9 +21,9 @@
       "violation": "COMMS.outward-send-gate/violation_absence_assert_then_ask.json"
     },
     "shell": {
-      "benign": "SEC.prod-write-gate/benign.json",
-      "gate": "SEC.prod-write-gate",
-      "violation": "SEC.prod-write-gate/violation.json"
+      "benign": "ARCHITECTURE.arming-surface/benign_hooks_redirect.json",
+      "gate": "ARCHITECTURE.arming-surface",
+      "violation": "ARCHITECTURE.arming-surface/violation_hooks_redirect.json"
     }
   },
   "contract": {
@@ -41,6 +46,383 @@
       "mcp": "mcp_<server>_<tool>"
     },
     "trust_step": "none documented; hooks load from settings.json"
+  },
+  "gates": {
+    "mode": "offline: each projected fail-closed gate's own --selftest run in process, every spawn of the gate rendered as this harness's documented hook payload and decided by g__shim__hook.decide() with status `supported` supplied in process (the shim's command line refuses a `gap` harness); a tool the projected matcher does not match is answered as the harness would, allow",
+    "result": "pass",
+    "selftests": [
+      {
+        "exit_code": 0,
+        "gate": "dimension-awareness-hook.py",
+        "legs_native_claude_only_field": {},
+        "legs_native_no_harness_tool": {},
+        "legs_native_not_a_payload": 0,
+        "legs_not_matched_by_projection": {},
+        "legs_through_shim": {
+          "shim_allowed": 1,
+          "shim_denied": 1,
+          "shim_untranslatable": 0
+        },
+        "legs_through_shim_by_class": {
+          "shell:allowed": 1,
+          "shell:denied": 1
+        },
+        "locator": "scripts/dimension-awareness-hook.py --selftest",
+        "matcher": "^(write_file|replace|run_shell_command)$",
+        "result": "pass",
+        "selftest_lines": [
+          "selftest PASS: broad-stage denies, explicit pathspec allows (dimension-awareness-hook.py)"
+        ]
+      },
+      {
+        "exit_code": 0,
+        "gate": "g__pretool-bash__git-discipline.py",
+        "legs_native_claude_only_field": {},
+        "legs_native_no_harness_tool": {},
+        "legs_native_not_a_payload": 0,
+        "legs_not_matched_by_projection": {},
+        "legs_through_shim": {
+          "shim_allowed": 3,
+          "shim_denied": 3,
+          "shim_untranslatable": 0
+        },
+        "legs_through_shim_by_class": {
+          "file_write:allowed": 1,
+          "file_write:denied": 1,
+          "shell:allowed": 2,
+          "shell:denied": 2
+        },
+        "locator": "scripts/g__pretool-bash__git-discipline.py --selftest registry/fixtures/GIT.version-control",
+        "matcher": "^(write_file|replace|run_shell_command)$",
+        "result": "pass",
+        "selftest_lines": [
+          "selftest PASS: 3 block + 3 allow (g__pretool-bash__git-discipline.py vs GIT.version-control)"
+        ]
+      },
+      {
+        "exit_code": 0,
+        "gate": "g__pretool-bash__tree-owner.py",
+        "legs_native_claude_only_field": {
+          "agent_id": 32
+        },
+        "legs_native_no_harness_tool": {
+          "Agent": 1
+        },
+        "legs_native_not_a_payload": 0,
+        "legs_not_matched_by_projection": {},
+        "legs_through_shim": {
+          "shim_allowed": 0,
+          "shim_denied": 1,
+          "shim_untranslatable": 0
+        },
+        "legs_through_shim_by_class": {
+          "shell:denied": 1
+        },
+        "locator": "scripts/g__pretool-bash__tree-owner.py --selftest registry/fixtures/ARCHITECTURE.kernel-isolation",
+        "matcher": "^(run_shell_command)$",
+        "one_sided_missing": "allow",
+        "result": "one_sided",
+        "selftest_lines": [
+          "selftest PASS: 16 block + 13 allow, 5 foreign payload(s) untouched (g__pretool-bash__tree-owner.py vs ARCHITECTURE.kernel-isolation); every deny names its holder"
+        ]
+      },
+      {
+        "exit_code": 0,
+        "gate": "g__pretool-mcp__chat-context.py",
+        "legs_native_claude_only_field": {},
+        "legs_native_no_harness_tool": {},
+        "legs_native_not_a_payload": 0,
+        "legs_not_matched_by_projection": {
+          "mcp__whatsapp__send_file as mcp_whatsapp_send_file": 1
+        },
+        "legs_through_shim": {
+          "shim_allowed": 1,
+          "shim_denied": 3,
+          "shim_untranslatable": 0
+        },
+        "legs_through_shim_by_class": {
+          "mcp:allowed": 1,
+          "mcp:denied": 3
+        },
+        "locator": "scripts/g__pretool-mcp__chat-context.py --selftest registry/fixtures/COMMS.chat-context-before-send",
+        "matcher": "^(mcp_whatsapp_send_message)$",
+        "result": "pass",
+        "selftest_lines": [
+          "selftest PASS: 2 block + 2 allow (g__pretool-mcp__chat-context.py vs COMMS.chat-context-before-send)",
+          "selftest PASS: lid_tail content assertion (seeded tail present, no crash marker)"
+        ]
+      },
+      {
+        "exit_code": 0,
+        "gate": "g__pretool-mcp__outward-send.py",
+        "legs_native_claude_only_field": {},
+        "legs_native_no_harness_tool": {},
+        "legs_native_not_a_payload": 0,
+        "legs_not_matched_by_projection": {
+          "mcp__gmail__draft_email as mcp_gmail_draft_email": 1
+        },
+        "legs_through_shim": {
+          "shim_allowed": 60,
+          "shim_denied": 90,
+          "shim_untranslatable": 0
+        },
+        "legs_through_shim_by_class": {
+          "mcp:allowed": 28,
+          "mcp:denied": 45,
+          "shell:allowed": 32,
+          "shell:denied": 45
+        },
+        "locator": "scripts/g__pretool-mcp__outward-send.py --selftest registry/fixtures/COMMS.outward-send-gate",
+        "matcher": "^(mcp_gmail_send_email|mcp_claude_ai_Gmail_send_message|mcp_claude_ai_Gmail_reply|mcp_claude_ai_Gmail_forward|mcp_whatsapp_send_message|mcp_whatsapp_send_file|mcp_whatsapp_send_audio_message|run_shell_command)$",
+        "result": "pass",
+        "selftest_lines": [
+          "selftest PASS: 90 block + 61 allow (g__pretool-mcp__outward-send.py vs COMMS.outward-send-gate)"
+        ]
+      },
+      {
+        "exit_code": 0,
+        "gate": "g__pretool-mcp__outward-send.py",
+        "legs_native_claude_only_field": {},
+        "legs_native_no_harness_tool": {},
+        "legs_native_not_a_payload": 0,
+        "legs_not_matched_by_projection": {},
+        "legs_through_shim": {
+          "shim_allowed": 34,
+          "shim_denied": 96,
+          "shim_untranslatable": 0
+        },
+        "legs_through_shim_by_class": {
+          "mcp:allowed": 8,
+          "mcp:denied": 24,
+          "shell:allowed": 26,
+          "shell:denied": 72
+        },
+        "locator": "scripts/g__pretool-mcp__outward-send.py --selftest registry/fixtures/FLOW.panel-before-send",
+        "matcher": "^(mcp_gmail_send_email|mcp_claude_ai_Gmail_send_message|mcp_claude_ai_Gmail_reply|mcp_claude_ai_Gmail_forward|mcp_whatsapp_send_message|mcp_whatsapp_send_file|mcp_whatsapp_send_audio_message|run_shell_command)$",
+        "result": "pass",
+        "selftest_lines": [
+          "selftest PASS: 96 block + 34 allow (g__pretool-mcp__outward-send.py vs FLOW.panel-before-send)"
+        ]
+      },
+      {
+        "exit_code": 0,
+        "gate": "g__pretool-write__tree-owner.py",
+        "legs_native_claude_only_field": {
+          "agent_id": 32
+        },
+        "legs_native_no_harness_tool": {
+          "Agent": 1
+        },
+        "legs_native_not_a_payload": 0,
+        "legs_not_matched_by_projection": {
+          "Bash as run_shell_command": 1
+        },
+        "legs_through_shim": {
+          "shim_allowed": 0,
+          "shim_denied": 0,
+          "shim_untranslatable": 0
+        },
+        "legs_through_shim_by_class": {},
+        "locator": "scripts/g__pretool-write__tree-owner.py --selftest registry/fixtures/ARCHITECTURE.kernel-isolation",
+        "matcher": "^(write_file|replace)$",
+        "result": "not_routed",
+        "selftest_lines": [
+          "selftest PASS: 3 block + 2 allow, 29 foreign payload(s) untouched (g__pretool-write__tree-owner.py vs ARCHITECTURE.kernel-isolation); every deny names its holder"
+        ]
+      },
+      {
+        "exit_code": 0,
+        "gate": "g__pretool__arming-surface.py",
+        "legs_native_claude_only_field": {},
+        "legs_native_no_harness_tool": {
+          "MultiEdit": 2
+        },
+        "legs_native_not_a_payload": 0,
+        "legs_not_matched_by_projection": {},
+        "legs_through_shim": {
+          "shim_allowed": 293,
+          "shim_denied": 340,
+          "shim_untranslatable": 0
+        },
+        "legs_through_shim_by_class": {
+          "file_edit:allowed": 3,
+          "file_edit:denied": 4,
+          "file_write:allowed": 35,
+          "file_write:denied": 33,
+          "mcp:allowed": 1,
+          "shell:allowed": 254,
+          "shell:denied": 303
+        },
+        "locator": "scripts/g__pretool__arming-surface.py --selftest registry/fixtures/ARCHITECTURE.arming-surface",
+        "matcher": "^(run_shell_command|write_file|replace|mcp_.+)$",
+        "result": "pass",
+        "selftest_lines": [
+          "selftest PASS: 295 block + 294 allow (g__pretool__arming-surface.py vs ARCHITECTURE.arming-surface); every deny names its live file, the same edit in a worktree allows, and a gate that cannot import kernel_proc, cannot load its parser, or cannot run ANY of its three inline body readers denies instead of allowing, proven by driving the real main() with each reader replaced by a raise",
+          "selftest SKIPPED on this OS (premise not buildable): violation_mixed_separator_interp.json"
+        ]
+      },
+      {
+        "exit_code": 0,
+        "gate": "g__pretool__kernel.py",
+        "legs_native_claude_only_field": {
+          "agent_id": 1
+        },
+        "legs_native_no_harness_tool": {},
+        "legs_native_not_a_payload": 0,
+        "legs_not_matched_by_projection": {},
+        "legs_through_shim": {
+          "shim_allowed": 1,
+          "shim_denied": 1,
+          "shim_untranslatable": 0
+        },
+        "legs_through_shim_by_class": {
+          "shell:allowed": 1,
+          "shell:denied": 1
+        },
+        "locator": "scripts/g__pretool__kernel.py --selftest registry/fixtures/FLOW.kernel-journal",
+        "matcher": "^(run_shell_command|write_file|replace|mcp_.+)$",
+        "result": "pass",
+        "selftest_lines": [
+          "selftest PASS: 1 block + 2 allow (g__pretool__kernel.py vs FLOW.kernel-journal); every allowed call journaled"
+        ]
+      },
+      {
+        "exit_code": 0,
+        "gate": "g__pretool__kernel.py",
+        "legs_native_claude_only_field": {
+          "agent_id": 3
+        },
+        "legs_native_no_harness_tool": {
+          "Read": 2
+        },
+        "legs_native_not_a_payload": 0,
+        "legs_not_matched_by_projection": {},
+        "legs_through_shim": {
+          "shim_allowed": 0,
+          "shim_denied": 0,
+          "shim_untranslatable": 0
+        },
+        "legs_through_shim_by_class": {},
+        "locator": "scripts/g__pretool__kernel.py --selftest registry/fixtures/FLOW.kernel-quota",
+        "matcher": "^(run_shell_command|write_file|replace|mcp_.+)$",
+        "result": "not_routed",
+        "selftest_lines": [
+          "selftest PASS: 3 block + 2 allow (g__pretool__kernel.py vs FLOW.kernel-quota)"
+        ]
+      },
+      {
+        "exit_code": 0,
+        "gate": "grafo-gate.py",
+        "legs_native_claude_only_field": {},
+        "legs_native_no_harness_tool": {},
+        "legs_native_not_a_payload": 0,
+        "legs_not_matched_by_projection": {},
+        "legs_through_shim": {
+          "shim_allowed": 3,
+          "shim_denied": 1,
+          "shim_untranslatable": 0
+        },
+        "legs_through_shim_by_class": {
+          "shell:allowed": 3,
+          "shell:denied": 1
+        },
+        "locator": "scripts/grafo-gate.py --selftest registry/fixtures/FLOW.graph-before-grep",
+        "matcher": "^(run_shell_command)$",
+        "result": "pass",
+        "selftest_lines": [
+          "selftest PASS: 1 block + 3 allow (grafo-gate.py vs FLOW.graph-before-grep)"
+        ]
+      },
+      {
+        "exit_code": 0,
+        "gate": "qa-merge-gate.py",
+        "legs_native_claude_only_field": {},
+        "legs_native_no_harness_tool": {},
+        "legs_native_not_a_payload": 0,
+        "legs_not_matched_by_projection": {},
+        "legs_through_shim": {
+          "shim_allowed": 3,
+          "shim_denied": 13,
+          "shim_untranslatable": 0
+        },
+        "legs_through_shim_by_class": {
+          "shell:allowed": 3,
+          "shell:denied": 13
+        },
+        "locator": "scripts/qa-merge-gate.py --selftest registry/fixtures/CODE.qa-merge-gate",
+        "matcher": "^(run_shell_command)$",
+        "result": "pass",
+        "selftest_lines": [
+          "selftest PASS: 13 block + 3 allow (qa-merge-gate.py vs CODE.qa-merge-gate)"
+        ]
+      },
+      {
+        "exit_code": 0,
+        "gate": "secrets-grep-guard.py",
+        "legs_native_claude_only_field": {},
+        "legs_native_no_harness_tool": {},
+        "legs_native_not_a_payload": 0,
+        "legs_not_matched_by_projection": {},
+        "legs_through_shim": {
+          "shim_allowed": 1,
+          "shim_denied": 13,
+          "shim_untranslatable": 0
+        },
+        "legs_through_shim_by_class": {
+          "shell:allowed": 1,
+          "shell:denied": 13
+        },
+        "locator": "scripts/secrets-grep-guard.py --selftest registry/fixtures/SECURITY.never-read-secrets-raw",
+        "matcher": "^(run_shell_command)$",
+        "result": "pass",
+        "selftest_lines": [
+          "selftest PASS: 13 block + 1 allow (secrets-grep-guard.py vs SECURITY.never-read-secrets-raw)"
+        ]
+      },
+      {
+        "exit_code": 0,
+        "gate": "secrets-grep-guard.py",
+        "legs_native_claude_only_field": {},
+        "legs_native_no_harness_tool": {},
+        "legs_native_not_a_payload": 0,
+        "legs_not_matched_by_projection": {},
+        "legs_through_shim": {
+          "shim_allowed": 1,
+          "shim_denied": 1,
+          "shim_untranslatable": 0
+        },
+        "legs_through_shim_by_class": {
+          "shell:allowed": 1,
+          "shell:denied": 1
+        },
+        "locator": "scripts/secrets-grep-guard.py --selftest registry/fixtures/SECURITY.baseline",
+        "matcher": "^(run_shell_command)$",
+        "result": "pass",
+        "selftest_lines": [
+          "selftest PASS: 1 block + 1 allow (secrets-grep-guard.py vs SECURITY.baseline)"
+        ]
+      }
+    ],
+    "shim_harness": "gemini-cli",
+    "summary": {
+      "fail": 0,
+      "gates_without_selftest_fixtures": [],
+      "not_routed": 2,
+      "not_routed_selftests": [
+        "scripts/g__pretool-write__tree-owner.py --selftest registry/fixtures/ARCHITECTURE.kernel-isolation",
+        "scripts/g__pretool__kernel.py --selftest registry/fixtures/FLOW.kernel-quota"
+      ],
+      "one_sided": 1,
+      "one_sided_selftests": [
+        "scripts/g__pretool-bash__tree-owner.py --selftest registry/fixtures/ARCHITECTURE.kernel-isolation (no shim allow)"
+      ],
+      "pass": 11,
+      "projected_gates": 11,
+      "selftests": 14,
+      "shim_allowed": 401,
+      "shim_denied": 563,
+      "shim_untranslatable": 0
+    }
   },
   "generated_by": "scripts/runtime_census.py",
   "harness": "gemini",
@@ -91,12 +473,95 @@
     "outcome": "failure",
     "reason": "429 quota exhausted at the service"
   },
+  "live_block": {
+    "auth": "GEMINI_API_KEY read from ~/.env into the child env at run time, never written; HOME is the sandbox, so no Google account credentials are used",
+    "binary": {
+      "name": "gemini",
+      "path": "~/.nvm/versions/node/v24.15.0/bin/gemini",
+      "version": "0.62.0"
+    },
+    "classes": {
+      "file_edit": {
+        "benign_evidence": "unmeasured: 429 quota exhausted at the service",
+        "harness_allowed_benign": null,
+        "harness_blocked_violation": null,
+        "violation_evidence": "unmeasured: 429 quota exhausted at the service"
+      },
+      "file_write": {
+        "benign_evidence": "unmeasured: 429 quota exhausted at the service",
+        "harness_allowed_benign": null,
+        "harness_blocked_violation": null,
+        "violation_evidence": "unmeasured: 429 quota exhausted at the service"
+      },
+      "shell": {
+        "benign_evidence": "unmeasured: 429 quota exhausted at the service",
+        "harness_allowed_benign": null,
+        "harness_blocked_violation": null,
+        "violation_evidence": "unmeasured: 429 quota exhausted at the service"
+      }
+    },
+    "gate": "g__pretool__arming-surface.py",
+    "measured": "2026-10-15T19:34:48Z",
+    "note": "one live session through the real binary; the hook is the projected g__pretool__arming-surface.py entry run by a sandbox copy of the shim whose registry marks this harness supported; verdicts come from the files and the gate's deny journal; MCP is not exercised live (no MCP server in the sandbox)",
+    "outcome": "unmeasured",
+    "partial_trace_not_counted": {
+      "file_edit": {
+        "benign_evidence": "benign target unchanged with no deny: not attempted",
+        "harness_allowed_benign": null,
+        "harness_blocked_violation": null,
+        "violation_evidence": "target unchanged with no journaled deny: no Edit call for it reached the hook (not attempted)"
+      },
+      "file_write": {
+        "benign_evidence": "benign target unchanged with no deny: not attempted",
+        "harness_allowed_benign": null,
+        "harness_blocked_violation": null,
+        "violation_evidence": "target unchanged with no journaled deny: no Write call for it reached the hook (not attempted)"
+      },
+      "shell": {
+        "benign_evidence": "benign target unchanged with no deny: not attempted",
+        "harness_allowed_benign": null,
+        "harness_blocked_violation": null,
+        "violation_evidence": "target unchanged with no journaled deny: no Bash call for it reached the hook (not attempted)"
+      }
+    },
+    "precheck_through_sandbox_shim_cli": {
+      "file_edit:benign": "allowed",
+      "file_edit:violation": "blocked",
+      "file_write:benign": "allowed",
+      "file_write:violation": "blocked",
+      "shell:benign": "allowed",
+      "shell:violation": "blocked"
+    },
+    "projected_hook": {
+      "command": [
+        "python3 <sandbox>/brain/scripts/g__shim__hook.py --harness gemini-cli --gate g__pretool__arming-surface.py"
+      ],
+      "matcher": [
+        "^(run_shell_command|write_file|replace|mcp_.+)$"
+      ],
+      "source": "scripts/merge-hooks-gemini.py plan, gate g__pretool__arming-surface.py only, project .gemini/settings.json in the sandbox"
+    },
+    "reason": "429 quota exhausted at the service",
+    "runs": {
+      "hooked": {
+        "elapsed_s": 11.5,
+        "error_class": "TerminalQuotaError",
+        "exit_code": 1,
+        "journal_denies": 0,
+        "mode": "gemini -p <prompt> --approval-mode yolo, project hooks, one attempt",
+        "outcome": "failure",
+        "reason": "429 quota exhausted at the service",
+        "started": "2026-10-15T19:34:37Z",
+        "stderr_tail": "del: gemini-3.8-flash\\n' +\n      'Please retry in 4h25m11.236254034s.',\n    details: [ [Object], [Object], [Object] ]\n  },\n  retryDelayMs: undefined,\n  reason: undefined,\n  status: 429\n}\nAn unexpected critical error occurred:[object Object]"
+      }
+    }
+  },
   "name": "Gemini CLI",
   "status": "measured",
-  "support_note": "measurements only; `supported` needs blocking evidence through projected hooks, which this record does not hold",
+  "support_note": "measurements only; this script never writes `supported`. Flipping registry/runtimes.yaml is the operator's decision on the evidence here (AC-03: shell, file_write and file_edit blocked live with the benign twins allowed)",
   "tool_classes": {
     "file_edit": {
-      "blocking_note": "not measured: no projected hook or shim exists for this harness yet",
+      "blocking_note": "live leg (2026-10-15T19:34:48Z): violation: unmeasured: 429 quota exhausted at the service; benign: unmeasured: 429 quota exhausted at the service",
       "gate": "ARCHITECTURE.arming-surface",
       "harness_allowed_benign": null,
       "harness_blocked_violation": null,
@@ -163,10 +628,16 @@
           "translatable": true
         }
       ],
+      "live_measured_gate": "g__pretool__arming-surface.py",
+      "shim_selftest_legs": {
+        "allowed": 3,
+        "denied": 4,
+        "untranslatable": 0
+      },
       "translatable": true
     },
     "file_write": {
-      "blocking_note": "not measured: no projected hook or shim exists for this harness yet",
+      "blocking_note": "live leg (2026-10-15T19:34:48Z): violation: unmeasured: 429 quota exhausted at the service; benign: unmeasured: 429 quota exhausted at the service",
       "gate": "ARCHITECTURE.arming-surface",
       "harness_allowed_benign": null,
       "harness_blocked_violation": null,
@@ -221,10 +692,16 @@
           "translatable": true
         }
       ],
+      "live_measured_gate": "g__pretool__arming-surface.py",
+      "shim_selftest_legs": {
+        "allowed": 36,
+        "denied": 34,
+        "untranslatable": 0
+      },
       "translatable": true
     },
     "mcp": {
-      "blocking_note": "not measured: no projected hook or shim exists for this harness yet",
+      "blocking_note": "not measured live: no MCP server in the census sandbox",
       "gate": "COMMS.outward-send-gate",
       "harness_allowed_benign": null,
       "harness_blocked_violation": null,
@@ -297,26 +774,31 @@
       ],
       "payload_shape": "assumed",
       "payload_shape_note": "mcp_context = {server_name, tool_name} is assumed: the Gemini CLI docs only say \"Optional metadata for MCP-based tools\"; the translator reads that shape and fails closed on any other",
+      "shim_selftest_legs": {
+        "allowed": 38,
+        "denied": 72,
+        "untranslatable": 0
+      },
       "translatable": true
     },
     "shell": {
-      "blocking_note": "not measured: no projected hook or shim exists for this harness yet",
-      "gate": "SEC.prod-write-gate",
+      "blocking_note": "live leg (2026-10-15T19:34:48Z): violation: unmeasured: 429 quota exhausted at the service; benign: unmeasured: 429 quota exhausted at the service",
+      "gate": "ARCHITECTURE.arming-surface",
       "harness_allowed_benign": null,
       "harness_blocked_violation": null,
       "harness_tool_name": "run_shell_command",
       "legs": [
         {
-          "fixture": "SEC.prod-write-gate/violation.json",
+          "fixture": "ARCHITECTURE.arming-surface/violation_hooks_redirect.json",
           "harness_tool_name": "run_shell_command",
           "leg": "violation",
           "rendered_payload": {
-            "cwd": "/home/user/project",
+            "cwd": "{{SANDBOX}}/wt/state-gate",
             "hook_event_name": "BeforeTool",
-            "session_id": "census",
+            "session_id": "sess-arming",
             "timestamp": "1970-01-01T00:00:00Z",
             "tool_input": {
-              "command": "aws ssm send-command --instance-ids i-0abc123def456789 --document-name AWS-RunShellScript --parameters 'commands=[\"aws s3 cp s3://bucket/octorato /opt/octorato/bin/octorato\",\"chmod +x /opt/octorato/bin/octorato\"]'"
+              "command": "echo '{}' > {{SANDBOX}}/.claude/hooks.json"
             },
             "tool_name": "run_shell_command",
             "transcript_path": ""
@@ -329,16 +811,16 @@
           "translatable": true
         },
         {
-          "fixture": "SEC.prod-write-gate/benign.json",
+          "fixture": "ARCHITECTURE.arming-surface/benign_hooks_redirect.json",
           "harness_tool_name": "run_shell_command",
           "leg": "benign",
           "rendered_payload": {
-            "cwd": "/home/user/project",
+            "cwd": "{{SANDBOX}}/wt/state-gate",
             "hook_event_name": "BeforeTool",
-            "session_id": "census",
+            "session_id": "sess-arming",
             "timestamp": "1970-01-01T00:00:00Z",
             "tool_input": {
-              "command": "git status"
+              "command": "echo '{}' > {{SANDBOX}}/wt/state-gate/hooks.json"
             },
             "tool_name": "run_shell_command",
             "transcript_path": ""
@@ -351,6 +833,12 @@
           "translatable": true
         }
       ],
+      "live_measured_gate": "g__pretool__arming-surface.py",
+      "shim_selftest_legs": {
+        "allowed": 324,
+        "denied": 453,
+        "untranslatable": 0
+      },
       "translatable": true
     }
   }

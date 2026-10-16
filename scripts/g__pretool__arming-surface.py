@@ -839,10 +839,17 @@ _EXACT = {
 # glob, not the three names, for the same reason `g__pretool*.py` is a glob: a
 # recorder added to the live tree is covered the moment it exists.
 #
+# `g__shim__*.py` (v11 AC-17) is the Hook_Shim every gate runs through under a
+# second harness: it translates that harness's payload into the fields a gate
+# reads and the gate's deny into the harness's block. Rewrite it to return 0
+# and every projected gate under that harness allows while each gate body, and
+# this set, stays untouched. A glob for the same reason as the others.
+#
 # `d__*.py` is deliberately NOT here. A detector warns; nothing fail-closed
 # consumes its output as a receipt, so it is out of the set by the same
 # criterion that puts the recorders in.
 _SCRIPT_PATTERNS = ("g__pretool*.py", "g__stop__*.py", "r__*.py",
+                    "g__shim__*.py",
                     "qa-merge-gate.py",
                     "gate_selftest.py", "brain_doctor.py", "receipt_ledger.py",
                     "kernel_proc.py", "dimension-awareness-hook.py",

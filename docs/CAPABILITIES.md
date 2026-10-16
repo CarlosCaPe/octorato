@@ -9,9 +9,9 @@
 | Skills | 246 |
 | Agents | 167 |
 | Divisions | 13 |
-| Scripts: wired | 133 |
+| Scripts: wired | 137 |
 | Scripts: orphan | 7 |
-| Rules | 96 |
+| Rules | 100 |
 | Hook entries | 58 |
 
 ## Skills (246)
@@ -499,7 +499,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (140)
+## Scripts (144)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -559,6 +559,7 @@
 | g__pretool-write__tree-owner.py | g__pretool-write__tree-owner.py: one writer per tree and per lane (Write side). | wired |
 | g__pretool__arming-surface.py | g__pretool__arming-surface.py: the LIVE files that decide whether gates run. | wired |
 | g__pretool__kernel.py | g__pretool__kernel.py: PreToolUse `*` gate. No tool call runs unjournaled. | wired |
+| g__shim__hook.py | g__shim__hook.py: run an Octorato gate under a second harness (v11 AC-05). | wired |
 | g__stop__defer-today.py | g__stop__defer-today.py: Stop gate: "no dejes para mañana lo que puedas hacer hoy" (do not put off u... | wired |
 | g__stop__delegation-audit.py | g__stop__delegation-audit.py: Stop gate for FLOW.bulk-fetch-delegation. | wired |
 | g__stop__draft-promise.py | g__stop__draft-promise.py , Stop gate: no future-tense promises in paste-ready drafts. | wired |
@@ -580,6 +581,7 @@
 | grafo-ledger-check.py | Stop hook , the graph-before-grep teeth (turn-scoped). | wired |
 | grafo-turn-reset.py | UserPromptSubmit hook , reset the per-turn graph ledger. | wired |
 | harmony-check.py | harmony-check.py , Octorato Harmony drift checker (the octopus moves as one). | wired |
+| hook_projector.py | hook_projector.py: the shared core of the second-harness Hook_Projectors. | wired |
 | impact-radius-hook.py | impact-radius-hook , PostToolUse Write|Edit reflex (the cerebellum's feedback arm). | wired |
 | impact-radius.py | impact-radius.py , SEEK the lineage graph; do not SCAN (grep) the repo. | wired |
 | inbox-sweep-reflex.py | inbox-sweep-reflex.py - UserPromptSubmit hook. | wired |
@@ -592,7 +594,9 @@
 | mail-guardia.py | Mail watch: what arrived and we have not answered. Sibling of wa-guardia.py. | wired |
 | memory_lexicon_es_en.json |  | orphan |
 | memory_sync.py | memory_sync , sync the brain's private memory store to a standalone remote. | wired |
+| merge-hooks-codex.py | merge-hooks-codex.py: project hooks.json into a Codex CLI hooks.json. | wired |
 | merge-hooks-cursor.py | merge-hooks-cursor.py , project hooks.json into Cursor's native ~/.cursor/hooks.json. | wired |
+| merge-hooks-gemini.py | merge-hooks-gemini.py: project hooks.json into a Gemini CLI settings.json `hooks` block. | wired |
 | merge-hooks.py | merge-hooks.py , Merge shared hooks.json into local settings.json Called by ai-pull after pulling th... | wired |
 | migrate-octorato.sh | migrate-octorato.sh , One-shot migration after the dotclaude → octorato rebrand (May 2026). | wired |
 | news_article_digest.py | AI News & Blogs Daily Curation , feeds the brain (sibling of github_trending_digest). Pulls recent i... | wired |
@@ -644,7 +648,7 @@
 | wa-soporte.sh | Sends a WhatsApp through the SUPPORT channel, never through the operator's personal number. | wired |
 | watchdog.py | watchdog.py , observability surface 4 anomaly detector. Reads the JSONL trace files written by trace... | wired |
 
-## Rules (96)
+## Rules (100)
 
 ### ARCHITECTURE
 
@@ -652,7 +656,10 @@
 - ARCHITECTURE.arming-surface
 - ARCHITECTURE.core-principles
 - ARCHITECTURE.drift-self-heal
+- ARCHITECTURE.hook-projectors
+- ARCHITECTURE.hook-shim
 - ARCHITECTURE.information-flow
+- ARCHITECTURE.instruction-sync
 - ARCHITECTURE.kernel-isolation
 - ARCHITECTURE.kernel-process
 - ARCHITECTURE.layers
@@ -660,6 +667,7 @@
 - ARCHITECTURE.octopus-architecture
 - ARCHITECTURE.runtime-census
 - ARCHITECTURE.runtime-census-evidence
+- ARCHITECTURE.runtime-census-gates
 - ARCHITECTURE.runtime-registry
 - ARCHITECTURE.session-isolation
 - ARCHITECTURE.status-line

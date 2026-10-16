@@ -1,0 +1,23 @@
+{
+  "harness": "gemini-cli",
+  "gate": "g__pretool__arming-surface.py",
+  "payload": {
+    "session_id": "sess-shim",
+    "transcript_path": "",
+    "cwd": "{{SANDBOX}}/wt/shim/proj/lnk",
+    "hook_event_name": "BeforeTool",
+    "timestamp": "1970-01-01T00:00:00Z",
+    "tool_name": "run_shell_command",
+    "tool_input": {
+      "command": "rm -f ../hooks.json"
+    }
+  },
+  "_setup": {
+    "symlinks": [
+      [
+        "wt/shim/proj/lnk",
+        "wt/shim/scripts"
+      ]
+    ]
+  }
+}

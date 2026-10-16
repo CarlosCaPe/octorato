@@ -1,0 +1,21 @@
+{
+  "harness": "codex-cli",
+  "gate": "g__pretool__arming-surface.py",
+  "payload": {
+    "session_id": "sess-shim",
+    "transcript_path": null,
+    "cwd": "{{SANDBOX}}/wt/shim",
+    "hook_event_name": "PreToolUse",
+    "model": "fixture",
+    "permission_mode": "default",
+    "turn_id": "fixture",
+    "tool_use_id": "toolu_shim",
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "apply_patch '*** Begin Patch\n*** Add File: {{SANDBOX}}/wt/shim/x\n+x\n'"
+    }
+  },
+  "_setup": {
+    "expect_reason": "not one closed span"
+  }
+}
