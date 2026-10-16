@@ -2811,7 +2811,8 @@ rules:
   # SECURITY.tracing-wrapper-package), never from hooks.json, so firing_event is
   # null. Closed means NO EXPORT: every read or parse error is a silent deny and
   # the upstream process is never started. Liveness is its fixture selftest,
-  # which gate-liveness runs: 45 not spawned and 9 spawned.
+  # which gate-liveness runs: 45 not spawned and 19 spawned (benign legs on both
+  # spawn paths, plus the signal-disposition leg on each).
   firing_mode:
   - hook
   mechanism:

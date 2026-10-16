@@ -335,13 +335,25 @@ def _inherited_fds() -> list[int] | None:
     return fds
 
 
+def _restored_signals() -> tuple:
+    """The signals the interpreter IGNORES at startup and subprocess resets to their
+    default in the child (restore_signals=True): SIGPIPE, and SIGXFZ/SIGXFSZ where
+    the platform has them. Without the reset the upstream inherits SIG_IGN, so a
+    shell pipeline in it prints "Broken pipe" and exits 1 instead of dying quietly
+    with 141 (QA probe on 9d92cf1: SigIgn 0x1001000 against 0x0)."""
+    import signal
+    return tuple(getattr(signal, n) for n in ("SIGPIPE", "SIGXFZ", "SIGXFSZ")
+                 if hasattr(signal, n))
+
+
 def _spawn_posix(argv: list[str], raw: bytes, env: dict) -> bool:
     """The allow path where the platform allows it: one posix_spawn, no subprocess
     import (measured: the import is ~8 ms of the guard's ~47 ms on its own).
 
     The same contract subprocess.run(input=raw, stdout=DEVNULL) keeps, spelled out:
     stdin is a pipe fed the original bytes, stdout is /dev/null, stderr is
-    inherited, the exit code is read and dropped, and EVERY other inherited
+    inherited, the signals subprocess restores are reset to their default
+    (_restored_signals), the exit code is read and dropped, and EVERY other inherited
     descriptor is closed in the child (subprocess's close_fds=True). That last one
     is why the descriptors are enumerated: a harness pipe left open in a tracer
     that outlives its hook can keep the harness waiting on an EOF.
@@ -361,7 +373,8 @@ def _spawn_posix(argv: list[str], raw: bytes, env: dict) -> bool:
             actions = [(os.POSIX_SPAWN_DUP2, r, 0), (os.POSIX_SPAWN_DUP2, null, 1)]
             actions += [(os.POSIX_SPAWN_CLOSE, fd) for fd in fds]
             try:
-                pid = os.posix_spawnp(argv[0], argv, env, file_actions=actions)
+                pid = os.posix_spawnp(argv[0], argv, env, file_actions=actions,
+                                      setsigdef=_restored_signals())
             except Exception:
                 pass          # nothing started; the same silence subprocess gives
     finally:
@@ -800,6 +813,34 @@ def _selftest(fdir: str | None = None) -> int:
                     pass
             shutil.rmtree(sandbox, ignore_errors=True)
     refused, spawned = counts["refused"], counts["spawned"]
+
+    # Signal dispositions: the upstream must start with SIGPIPE and SIGXFSZ at their
+    # default on BOTH paths, as subprocess leaves them. Read by a non-Python child
+    # (grep), since a Python child re-ignores SIGPIPE itself at startup.
+    if os.path.exists("/proc/self/status"):
+        mask = 0
+        for sig in _restored_signals():
+            mask |= 1 << (int(sig) - 1)
+        sandbox = os.path.realpath(tempfile.mkdtemp(prefix="export-guard-sig-"))
+        try:
+            for fallback in (False, True):
+                out = os.path.join(sandbox, f"sig-{fallback}.txt")
+                run_upstream(["sh", "-c", f"grep '^SigIgn:' /proc/self/status > '{out}'"],
+                             b"", dict(os.environ), fallback)
+                label = "subprocess fallback" if fallback else "posix_spawn"
+                try:
+                    with open(out, encoding="utf-8") as fh:
+                        ign = int(fh.read().split()[1], 16)
+                except (OSError, ValueError, IndexError) as exc:
+                    failures.append(f"signal leg ({label}): no SigIgn read: {exc}")
+                    continue
+                if ign & mask:
+                    failures.append(f"signal leg ({label}): the upstream starts with "
+                                    f"SigIgn {ign:#x}, SIGPIPE/SIGXFSZ still ignored")
+                else:
+                    spawned += 1
+        finally:
+            shutil.rmtree(sandbox, ignore_errors=True)
 
     # CLI legs: the real argv and stdin path, an allow arm in a sandbox HOME, and a
     # stub that would print a block and exit 2. The guard must print nothing and

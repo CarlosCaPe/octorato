@@ -132,6 +132,19 @@ class TestTracingSwitch(SwitchCase):
             {"kind": "arm", "name": "inner", "telemetry": {"export": "deny"}}), encoding="utf-8")
         self.assertEqual(self.check().status, bd.FAIL)
 
+    def test_depth_bound_matches_the_docstring(self):
+        """A project directory ARM_SETTINGS_DEPTH - 1 levels down is read; one at
+        ARM_SETTINGS_DEPTH levels is past the walk, as the docstring names."""
+        root = self.arm("closed", "deny")
+        n = bd.ARM_SETTINGS_DEPTH
+        seen = root.joinpath(*["d"] * (n - 1))
+        self.settings(seen / ".claude" / "settings.json", {"TRACE_TO_LANGSMITH": "1"})
+        self.assertEqual(self.check().status, bd.FAIL)
+        (seen / ".claude" / "settings.json").unlink()
+        unseen = root.joinpath(*["d"] * n)
+        self.settings(unseen / ".claude" / "settings.json", {"TRACE_TO_LANGSMITH": "1"})
+        self.assertEqual(self.check().status, bd.PASS)
+
     def test_walk_skips_node_modules_and_symlinks(self):
         root = self.arm("closed", "deny")
         self.settings(root / "node_modules" / "x" / ".claude" / "settings.json",

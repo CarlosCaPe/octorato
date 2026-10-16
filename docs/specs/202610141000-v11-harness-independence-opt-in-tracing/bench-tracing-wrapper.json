@@ -18,95 +18,95 @@
       "commands": 1,
       "runs": 100,
       "without": {
-        "median_ms": 96.01,
-        "p95_ms": 104.66
+        "median_ms": 95.38,
+        "p95_ms": 106.15
       },
       "with_allow": {
-        "median_ms": 128.02,
-        "p95_ms": 142.65
+        "median_ms": 127.62,
+        "p95_ms": 153.01
       },
       "with_deny": {
-        "median_ms": 30.25,
-        "p95_ms": 35.09
+        "median_ms": 30.76,
+        "p95_ms": 38.34
       },
-      "added_median_ms": 32.01,
-      "added_p95_ms": 37.99,
+      "added_median_ms": 32.24,
+      "added_p95_ms": 46.86,
       "within_bound": true
     },
     "PreCompact": {
       "commands": 1,
       "runs": 100,
       "without": {
-        "median_ms": 100.83,
-        "p95_ms": 110.59
+        "median_ms": 98.5,
+        "p95_ms": 105.31
       },
       "with_allow": {
-        "median_ms": 130.06,
-        "p95_ms": 141.78
+        "median_ms": 130.08,
+        "p95_ms": 136.97
       },
       "with_deny": {
-        "median_ms": 31.72,
-        "p95_ms": 37.64
+        "median_ms": 31.57,
+        "p95_ms": 36.97
       },
-      "added_median_ms": 29.23,
-      "added_p95_ms": 31.19,
+      "added_median_ms": 31.58,
+      "added_p95_ms": 31.66,
       "within_bound": true
     },
     "Stop": {
       "commands": 1,
       "runs": 100,
       "without": {
-        "median_ms": 101.28,
-        "p95_ms": 125.07
+        "median_ms": 100.1,
+        "p95_ms": 111.72
       },
       "with_allow": {
-        "median_ms": 134.79,
-        "p95_ms": 147.23
+        "median_ms": 133.14,
+        "p95_ms": 144.46
       },
       "with_deny": {
-        "median_ms": 32.37,
-        "p95_ms": 39.2
+        "median_ms": 31.72,
+        "p95_ms": 37.69
       },
-      "added_median_ms": 33.51,
-      "added_p95_ms": 22.16,
+      "added_median_ms": 33.04,
+      "added_p95_ms": 32.74,
       "within_bound": true
     },
     "SubagentStop": {
       "commands": 1,
       "runs": 100,
       "without": {
-        "median_ms": 102.27,
-        "p95_ms": 112.87
+        "median_ms": 99.31,
+        "p95_ms": 105.74
       },
       "with_allow": {
-        "median_ms": 134.04,
-        "p95_ms": 150.59
+        "median_ms": 133.84,
+        "p95_ms": 141.33
       },
       "with_deny": {
-        "median_ms": 32.25,
-        "p95_ms": 37.02
+        "median_ms": 32.39,
+        "p95_ms": 36.78
       },
-      "added_median_ms": 31.77,
-      "added_p95_ms": 37.72,
+      "added_median_ms": 34.53,
+      "added_p95_ms": 35.59,
       "within_bound": true
     },
     "UserPromptSubmit": {
       "commands": 1,
       "runs": 100,
       "without": {
-        "median_ms": 102.43,
-        "p95_ms": 112.99
+        "median_ms": 100.46,
+        "p95_ms": 107.85
       },
       "with_allow": {
-        "median_ms": 134.13,
-        "p95_ms": 155.22
+        "median_ms": 133.44,
+        "p95_ms": 142.25
       },
       "with_deny": {
-        "median_ms": 32.44,
-        "p95_ms": 38.34
+        "median_ms": 32.25,
+        "p95_ms": 35.96
       },
-      "added_median_ms": 31.7,
-      "added_p95_ms": 42.23,
+      "added_median_ms": 32.98,
+      "added_p95_ms": 34.4,
       "within_bound": true
     }
   },
@@ -116,10 +116,32 @@
   "platform": "linux",
   "cpus": 4,
   "load_average_1m": {
-    "start": 1.43,
-    "end": 1.36
+    "start": 2.38,
+    "end": 1.33
   },
   "earlier_runs": [
+    {
+      "when": "fb2ff03, posix_spawn without setsigdef, 2026-10-16",
+      "load_average_1m": {
+        "start": 1.43,
+        "end": 1.36
+      },
+      "added_median_ms": {
+        "PostToolUse": 32.01,
+        "PreCompact": 29.23,
+        "Stop": 33.51,
+        "SubagentStop": 31.77,
+        "UserPromptSubmit": 31.7
+      },
+      "added_p95_ms": {
+        "PostToolUse": 37.99,
+        "PreCompact": 31.19,
+        "Stop": 22.16,
+        "SubagentStop": 37.72,
+        "UserPromptSubmit": 42.23
+      },
+      "within_bound": true
+    },
     {
       "when": "T17, spawn via subprocess, 2026-10-16",
       "load_average_1m": {

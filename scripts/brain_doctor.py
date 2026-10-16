@@ -3379,7 +3379,8 @@ def check_tracing_switch(fix: bool, home: Path | None = None,
     arm reported PASS). Its policy is the guard's walk: the arm's own and every
     `arm.json` between the subdirectory and the arm root must say allow.
 
-    NOT seen, named: a settings file deeper than ARM_SETTINGS_DEPTH directories, or
+    NOT seen, named: the settings of a project directory ARM_SETTINGS_DEPTH or more
+    levels below the arm root (its `.claude/` is past the walk's last level), or a file
     under `node_modules/`, a hidden directory other than `.claude/`, or a symlinked
     directory (the walk never follows a
     link); and a settings file of an arm not on this machine.
