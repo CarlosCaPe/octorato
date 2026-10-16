@@ -238,6 +238,17 @@
     {
       "hooks": [
         {
+          "command": "python3 ~/.claude/scripts/g__pretool__export-flip.py",
+          "statusMessage": "🔒 export-flip (telemetry.export allow is the operator's)...",
+          "timeout": 5,
+          "type": "command"
+        }
+      ],
+      "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash"
+    },
+    {
+      "hooks": [
+        {
           "command": "python3 ~/.claude/scripts/g__pretool__kernel.py",
           "timeout": 5,
           "type": "command"
