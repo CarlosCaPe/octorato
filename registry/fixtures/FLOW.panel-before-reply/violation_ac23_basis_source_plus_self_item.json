@@ -1,0 +1,24 @@
+{
+  "session_id": "fx-rp-violation-ac23-basis-source-plus-self-item",
+  "hook_event_name": "Stop",
+  "cwd": "/home/user",
+  "stop_hook_active": false,
+  "last_assistant_message": "The migration ran on the staging copy and the row counts match the source table. Two warnings remain, both about deprecated flags, and neither blocks the release. The rollback script is untested.\n\nProvenance: Basis migration.log, myself",
+  "transcript_path": "violation_ac23_basis_source_plus_self_item_transcript.jsonl",
+  "_fixture": {
+    "receipts": [
+      {
+        "verdict": "PASS",
+        "ts": "2026-10-14T10:04:00.000Z"
+      }
+    ],
+    "stderr_has": [
+      "is SELF (source class)",
+      "it has 1 of 3"
+    ],
+    "stderr_lacks": [
+      "panel-skip",
+      "cannot decide"
+    ]
+  }
+}

@@ -38,10 +38,13 @@ THE DECISION (FR-03, checked in this order; the first that holds exits 0)
      newer than the prompt come from at least QUORUM distinct reviewer agent
      ids: 3 for a SELF reply, 1 for a SOURCED one (FR-06). A reply is SOURCED
      only when it has a Provenance / Procedencia / Herkunft line and EVERY
-     such line has a Basis that names something: not empty and not only
-     none / nothing / n/a / na / a run of dashes (any case, trailing
-     punctuation ignored), and containing neither `self` (any case, as a
-     substring) nor own reasoning (EN, ES, DE with or without the umlaut).
+     such line has a Basis that names something: `Basis` (any case) then a
+     colon or whitespace, not empty and not only none / nothing / n/a / na /
+     a run of dashes (any case, trailing punctuation ignored), with no
+     standalone `self` or own reasoning word (EN, ES, DE with or without the
+     umlaut) and no item that is only a self source (`myself`,
+     `self-evident`). `self` inside a longer token (`selftest.py`,
+     `self-review of <path>`) is not a self source.
 Otherwise exit 2, stderr naming the source class, the quorum, the digest, the
 panel-request command and the
 accepted reviewer types. stop_hook_active changes nothing: no block-once.
@@ -355,14 +358,28 @@ def pass_reviewers(ctx, digest: str, session_id: str, prompt_ts: str, now) -> in
 # ---------------------------------------------------------------------------
 QUORUM = {"SELF": 3, "SOURCED": 1}
 # A line that starts with the label; leading blanks, a quote marker and
-# markdown emphasis around the label are tolerated ("**Provenance:**").
-_PROVENANCE = re.compile(r"^[ \t>]*[*_]*(?:Provenance|Procedencia|Herkunft)[*_]*:(.*)$", re.MULTILINE)
-_BASIS = re.compile(r"(?:^|·|\|)\s*[*_]*Basis[*_]*\s*:\s*([^·|]*)", re.IGNORECASE)
-# A plain case-insensitive substring: `myself`, `self-evident` and a path such
-# as `selftest.py` are SELF too. Over-matching costs two more reviewers, never
-# a weaker check.
-_SELF_BASIS = re.compile(r"self|own reasoning|razonamiento propio|eigene Überlegung|eigene Ueberlegung",
-                         re.IGNORECASE)
+# markdown emphasis around the label are tolerated ("**Provenance:**"). The
+# label is followed by a colon or by a `·` field separator
+# ("Procedencia · Basis: ...").
+_PROVENANCE = re.compile(r"^[ \t>]*[*_]*(?:Provenance|Procedencia|Herkunft)[*_]*(?::|(?=[ \t]*·))(.*)$",
+                         re.MULTILINE)
+# The Basis field: the word Basis (any case) at the start of the line or of a
+# `·` / `|` field, then a colon or whitespace, then what it names. `Basis /path`
+# and `Basis: /path` are the same field; a bare `Basis` names nothing.
+_BASIS = re.compile(r"(?:^|·|\|)\s*[*_]*Basis[*_]*(?:\s*:|(?=\s)|$)\s*([^·|]*)", re.IGNORECASE)
+# A self source written as its own word: `self`, `SELF`, own reasoning (EN, ES,
+# DE). Bounded so that a longer token that merely contains it (`selftest.py`,
+# `self-review`, `myself`, `scripts/self_check`) does not match.
+_SELF_WORD = re.compile(
+    r"(?<![\w./\\-])(?:self|own reasoning|razonamiento propio|eigene Überlegung|eigene Ueberlegung)"
+    r"(?![\w./\\-])", re.IGNORECASE)
+# A Basis item that is nothing but a self source: `myself`, `self-evident`,
+# `my own reasoning`, `reasoning`. Compared whole, after trimming.
+_SELF_ITEM = re.compile(
+    r"(?:my\s+)?(?:own\s+)?(?:self|myself|self[- ]evident|reasoning|razonamiento(?: propio)?|"
+    r"eigene (?:Überlegung|Ueberlegung))", re.IGNORECASE)
+# Items of a Basis: separated by , ; + & or the word and / y / und.
+_ITEM_SPLIT = re.compile(r"\s*(?:[,;+&]|\band\b|\by\b|\bund\b)\s*", re.IGNORECASE)
 # A Basis that names nothing: compared after lower-casing and stripping blanks
 # and trailing punctuation. Any run of hyphens, en dashes or em dashes too.
 _NO_BASIS = {"none", "nothing", "n/a", "na"}
@@ -374,18 +391,32 @@ def _empty_basis(basis: str) -> bool:
     return not b or b in _NO_BASIS or bool(_DASHES.match(b))
 
 
+def _self_basis(basis: str) -> bool:
+    """True when the Basis names self or own reasoning as a source: a
+    standalone self word anywhere, or any item that is only a self source.
+    A word that merely contains `self` inside a longer token is not one."""
+    if _SELF_WORD.search(basis):
+        return True
+    for item in _ITEM_SPLIT.split(basis):
+        it = item.strip().strip("*_`()[]\"' ").rstrip(".,;:!? \t").strip()
+        if it and _SELF_ITEM.fullmatch(it):
+            return True
+    return False
+
+
 def _line_is_self(line: str) -> bool:
     m = _BASIS.search(line.strip().lstrip("*_ "))
     if not m:
         return True
     basis = m.group(1).strip().strip("*_ ")
-    return _empty_basis(basis) or bool(_SELF_BASIS.search(basis))
+    return _empty_basis(basis) or _self_basis(basis)
 
 
 def source_class(text: str) -> str:
     """SELF when the reply has no provenance line or when ANY provenance line
     is SELF (no Basis field, a Basis that names nothing (see _empty_basis),
-    or a Basis containing self or own reasoning in EN, ES or DE). A later
+    or a Basis that names self or own reasoning in EN, ES or DE, see
+    _self_basis). A later
     SOURCED line, a code block included, never lifts an earlier SELF line."""
     lines = _PROVENANCE.findall(text or "")
     if not lines or any(_line_is_self(ln) for ln in lines):
