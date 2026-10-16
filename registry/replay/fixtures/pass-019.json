@@ -1,0 +1,11 @@
+{
+  "id": "pass-019",
+  "expected": "PASS",
+  "reply": "Q2 availability was 99.95% with 2 incidents.\nThey lasted 38 minutes on 2026-04-09 and 7 minutes on 2026-06-21.",
+  "excerpts": [
+    {
+      "source": "monitoring/uptime-q2.txt",
+      "text": "Q2 availability: 99.95%. Incidents: 2 (2026-04-09, 38 min; 2026-06-21, 7 min)."
+    }
+  ]
+}

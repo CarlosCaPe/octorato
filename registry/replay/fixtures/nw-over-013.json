@@ -1,0 +1,13 @@
+{
+  "id": "nw-over-013",
+  "expected": "NEEDS-WORK",
+  "defect_class": "overstatement",
+  "defect_line": "The image scan is clean, with no findings at all.",
+  "reply": "The image scan is clean, with no findings at all.",
+  "excerpts": [
+    {
+      "source": "security/scan-result.txt",
+      "text": "Container image scan: 0 critical, 2 high in base image packages not used at runtime."
+    }
+  ]
+}

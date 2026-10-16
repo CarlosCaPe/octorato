@@ -1,0 +1,13 @@
+{
+  "id": "nw-fact-010",
+  "expected": "NEEDS-WORK",
+  "defect_class": "wrong-fact",
+  "defect_line": "They lasted 38 minutes on 2026-04-09 and 17 minutes on 2026-06-21.",
+  "reply": "Q2 availability was 99.95% with 2 incidents.\nThey lasted 38 minutes on 2026-04-09 and 17 minutes on 2026-06-21.",
+  "excerpts": [
+    {
+      "source": "monitoring/uptime-q2.txt",
+      "text": "Q2 availability: 99.95%. Incidents: 2 (2026-04-09, 38 min; 2026-06-21, 7 min)."
+    }
+  ]
+}

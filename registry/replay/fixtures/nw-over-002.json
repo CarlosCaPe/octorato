@@ -1,0 +1,13 @@
+{
+  "id": "nw-over-002",
+  "expected": "NEEDS-WORK",
+  "defect_class": "overstatement",
+  "defect_line": "The doc requires 30s on every role, so the batch roles are misconfigured.",
+  "reply": "statement_timeout defaults to 0, which disables it.\nThe doc requires 30s on every role, so the batch roles are misconfigured.",
+  "excerpts": [
+    {
+      "source": "docs/config-reference.md",
+      "text": "statement_timeout: default 0 (disabled). Recommended 30s for interactive roles; batch roles may keep it disabled."
+    }
+  ]
+}

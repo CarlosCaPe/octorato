@@ -1,0 +1,13 @@
+{
+  "id": "nw-fact-002",
+  "expected": "NEEDS-WORK",
+  "defect_class": "wrong-fact",
+  "defect_line": "The default for max_connections is 200.",
+  "reply": "The default for max_connections is 200.\nGoing above 500 needs shared_buffers of at least 2 GB.",
+  "excerpts": [
+    {
+      "source": "docs/config-reference.md",
+      "text": "max_connections: default 100. Raising it above 500 requires shared_buffers of at least 2 GB."
+    }
+  ]
+}

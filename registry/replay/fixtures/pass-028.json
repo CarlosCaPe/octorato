@@ -1,0 +1,11 @@
+{
+  "id": "pass-028",
+  "expected": "PASS",
+  "reply": "The upgrade was rehearsed once on staging.\nThe rollback was not rehearsed.",
+  "excerpts": [
+    {
+      "source": "schedule/maintenance.txt",
+      "text": "The upgrade was rehearsed on staging once; rollback was not rehearsed."
+    }
+  ]
+}

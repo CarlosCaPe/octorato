@@ -1,0 +1,11 @@
+{
+  "id": "pass-001",
+  "expected": "PASS",
+  "reply": "Run 418 finished in 6m 41s.\n212 tests passed and 3 failed: test_cache_expiry, test_retry_backoff and test_locale_parse.",
+  "excerpts": [
+    {
+      "source": "ci/build-summary.txt",
+      "text": "Pipeline run 418: 212 tests passed, 3 failed (test_cache_expiry, test_retry_backoff, test_locale_parse). Duration 6m 41s."
+    }
+  ]
+}

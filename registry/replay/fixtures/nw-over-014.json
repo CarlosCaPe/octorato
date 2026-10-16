@@ -1,0 +1,13 @@
+{
+  "id": "nw-over-014",
+  "expected": "NEEDS-WORK",
+  "defect_class": "overstatement",
+  "defect_line": "Both the upgrade and the rollback were rehearsed on staging.",
+  "reply": "The upgrade was rehearsed once on staging.\nBoth the upgrade and the rollback were rehearsed on staging.",
+  "excerpts": [
+    {
+      "source": "schedule/maintenance.txt",
+      "text": "The upgrade was rehearsed on staging once; rollback was not rehearsed."
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "id": "pass-026",
+  "expected": "PASS",
+  "reply": "The image scan shows 0 critical and 2 high, both in base image packages not used at runtime.",
+  "excerpts": [
+    {
+      "source": "security/scan-result.txt",
+      "text": "Container image scan: 0 critical, 2 high in base image packages not used at runtime."
+    }
+  ]
+}

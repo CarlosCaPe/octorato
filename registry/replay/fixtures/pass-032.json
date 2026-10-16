@@ -1,0 +1,11 @@
+{
+  "id": "pass-032",
+  "expected": "PASS",
+  "reply": "41 of 64 respondents rated onboarding 4 or 5.",
+  "excerpts": [
+    {
+      "source": "survey/feedback-summary.txt",
+      "text": "Responses: 64. 41 rated onboarding 4 or 5."
+    }
+  ]
+}

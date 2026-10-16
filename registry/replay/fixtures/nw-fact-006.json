@@ -1,0 +1,13 @@
+{
+  "id": "nw-fact-006",
+  "expected": "NEEDS-WORK",
+  "defect_class": "wrong-fact",
+  "defect_line": "Step 4 updates DNS, and the TTL is 300 seconds.",
+  "reply": "Step 3 promotes the replica with pg_ctl promote.\nStep 4 updates DNS, and the TTL is 300 seconds.",
+  "excerpts": [
+    {
+      "source": "runbook/failover.md",
+      "text": "Step 3: promote the replica with `pg_ctl promote`. Step 4: update the DNS record; TTL is 60 seconds."
+    }
+  ]
+}

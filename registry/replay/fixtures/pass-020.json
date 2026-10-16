@@ -1,0 +1,11 @@
+{
+  "id": "pass-020",
+  "expected": "PASS",
+  "reply": "Q2 consumed 45 minutes against a 21.6-minute error budget.",
+  "excerpts": [
+    {
+      "source": "monitoring/uptime-q2.txt",
+      "text": "Q2 error budget: 21.6 min allowed, 45 min consumed."
+    }
+  ]
+}

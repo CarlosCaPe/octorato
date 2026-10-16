@@ -1,0 +1,11 @@
+{
+  "id": "pass-037",
+  "expected": "PASS",
+  "reply": "With idx_events_ts the query went from a 2.8 s seq scan to a 41 ms index scan.\nThat was measured on staging, 12M rows.",
+  "excerpts": [
+    {
+      "source": "perf/query-plan.txt",
+      "text": "Before: seq scan, 2.8 s. After adding idx_events_ts: index scan, 41 ms, on the staging dataset (12M rows)."
+    }
+  ]
+}

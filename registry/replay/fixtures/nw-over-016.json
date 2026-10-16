@@ -1,0 +1,13 @@
+{
+  "id": "nw-over-016",
+  "expected": "NEEDS-WORK",
+  "defect_class": "overstatement",
+  "defect_line": "Almost everyone loves onboarding: 41 of 64 gave it top marks, so it needs no work.",
+  "reply": "Almost everyone loves onboarding: 41 of 64 gave it top marks, so it needs no work.",
+  "excerpts": [
+    {
+      "source": "survey/feedback-summary.txt",
+      "text": "Responses: 64. 41 rated onboarding 4 or 5."
+    }
+  ]
+}

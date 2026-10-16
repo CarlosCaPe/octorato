@@ -1,0 +1,11 @@
+{
+  "id": "pass-034",
+  "expected": "PASS",
+  "reply": "The plan changes 2 resources: a security group ingress rule and instance tags.\nNothing is added or destroyed.",
+  "excerpts": [
+    {
+      "source": "infra/terraform-plan.txt",
+      "text": "Plan: 0 to add, 2 to change, 0 to destroy. Changed: security group ingress rule, instance tags."
+    }
+  ]
+}

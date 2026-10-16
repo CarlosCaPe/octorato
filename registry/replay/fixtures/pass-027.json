@@ -1,0 +1,11 @@
+{
+  "id": "pass-027",
+  "expected": "PASS",
+  "reply": "The window is Sunday 02:00 to 04:00 UTC.\nThe API may be down for up to 20 minutes; the dashboard stays up.",
+  "excerpts": [
+    {
+      "source": "schedule/maintenance.txt",
+      "text": "Maintenance window: Sunday 02:00-04:00 UTC. Expected downtime: up to 20 minutes for the API; the dashboard stays up."
+    }
+  ]
+}

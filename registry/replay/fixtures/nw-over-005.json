@@ -1,0 +1,13 @@
+{
+  "id": "nw-over-005",
+  "expected": "NEEDS-WORK",
+  "defect_class": "overstatement",
+  "defect_line": "POST /v2/refunds is always idempotent, so retries are safe in every case.",
+  "reply": "POST /v2/refunds is always idempotent, so retries are safe in every case.\nWithout the header a retry can create a duplicate refund.",
+  "excerpts": [
+    {
+      "source": "api/openapi-excerpt.yaml",
+      "text": "POST /v2/refunds: idempotent when the Idempotency-Key header is sent. Without it, a retry may create a duplicate refund."
+    }
+  ]
+}

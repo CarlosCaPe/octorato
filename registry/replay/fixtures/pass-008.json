@@ -1,0 +1,11 @@
+{
+  "id": "pass-008",
+  "expected": "PASS",
+  "reply": "cache-1 is at 92% on /data, above the 90% alert threshold.\nThe rotation job last ran on 2026-06-01 and freed 4 GB.",
+  "excerpts": [
+    {
+      "source": "ops/disk-report.txt",
+      "text": "Host cache-1: /data 92% used. Alert threshold 90%. Rotation job last ran 2026-06-01 and freed 4 GB."
+    }
+  ]
+}

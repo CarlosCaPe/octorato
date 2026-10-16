@@ -1,0 +1,11 @@
+{
+  "id": "pass-012",
+  "expected": "PASS",
+  "reply": "The 2026-02-17 drill took 4 minutes.\nTwo of the three application pools reconnected without a restart.",
+  "excerpts": [
+    {
+      "source": "runbook/failover.md",
+      "text": "The last failover drill (2026-02-17) completed in 4 minutes. Two of the three application pools reconnected without a restart."
+    }
+  ]
+}
