@@ -102,7 +102,6 @@ from __future__ import annotations
 import json
 import os
 import stat
-import subprocess
 import sys
 
 for _stream in (sys.stdin, sys.stdout, sys.stderr):
@@ -311,17 +310,99 @@ def decide(raw: bytes, *, home: str, project_dir: str | None) -> str:
     return session_arm
 
 
-def run_upstream(argv: list[str], raw: bytes, env: dict | None = None) -> None:
-    """Start the upstream hook with the original stdin bytes; never raises."""
+def _inherited_fds() -> list[int] | None:
+    """Every open descriptor above 2 in this process, or None when it cannot be
+    enumerated (no /proc/self/fd: Windows, macOS). The listing's own descriptor is
+    open while it is read and closed after, so each entry is re-checked with fstat
+    and a closed one is dropped: closing it in the child would fail the spawn."""
     try:
-        subprocess.run(argv, input=raw, stdout=subprocess.DEVNULL,
-                       env=env if env is not None else dict(os.environ))
+        names = os.listdir("/proc/self/fd")
+    except OSError:
+        return None
+    fds = []
+    for name in names:
+        try:
+            fd = int(name)
+        except ValueError:
+            continue
+        if fd <= 2:
+            continue
+        try:
+            os.fstat(fd)
+        except OSError:
+            continue
+        fds.append(fd)
+    return fds
+
+
+def _spawn_posix(argv: list[str], raw: bytes, env: dict) -> bool:
+    """The allow path where the platform allows it: one posix_spawn, no subprocess
+    import (measured: the import is ~8 ms of the guard's ~47 ms on its own).
+
+    The same contract subprocess.run(input=raw, stdout=DEVNULL) keeps, spelled out:
+    stdin is a pipe fed the original bytes, stdout is /dev/null, stderr is
+    inherited, the exit code is read and dropped, and EVERY other inherited
+    descriptor is closed in the child (subprocess's close_fds=True). That last one
+    is why the descriptors are enumerated: a harness pipe left open in a tracer
+    that outlives its hook can keep the harness waiting on an EOF.
+
+    Returns False, having started nothing, when the descriptors cannot be
+    enumerated, so the caller takes the subprocess path. Once a spawn is attempted
+    it returns True whatever happens: falling back after an attempt could start the
+    upstream twice."""
+    if not hasattr(os, "posix_spawnp") or not hasattr(os, "POSIX_SPAWN_CLOSE"):
+        return False
+    r, w = os.pipe()
+    null = os.open(os.devnull, os.O_WRONLY)
+    fds, pid = None, None
+    try:
+        fds = _inherited_fds()
+        if fds is not None:
+            actions = [(os.POSIX_SPAWN_DUP2, r, 0), (os.POSIX_SPAWN_DUP2, null, 1)]
+            actions += [(os.POSIX_SPAWN_CLOSE, fd) for fd in fds]
+            try:
+                pid = os.posix_spawnp(argv[0], argv, env, file_actions=actions)
+            except Exception:
+                pass          # nothing started; the same silence subprocess gives
+    finally:
+        os.close(r)
+        os.close(null)
+    if pid is None:
+        os.close(w)
+        return fds is not None
+    try:
+        view = memoryview(raw)
+        while view:
+            view = view[os.write(w, view):]
+    except OSError:
+        pass                  # the upstream stopped reading; it still runs to the end
+    finally:
+        os.close(w)
+    try:
+        os.waitpid(pid, 0)
+    except ChildProcessError:
+        pass
+    return True
+
+
+def run_upstream(argv: list[str], raw: bytes, env: dict | None = None,
+                 fallback: bool = False) -> None:
+    """Start the upstream hook with the original stdin bytes; never raises.
+
+    posix_spawn where the descriptors can be enumerated (Linux), subprocess
+    otherwise, or when `fallback` forces it (the selftest proves both paths)."""
+    env = env if env is not None else dict(os.environ)
+    try:
+        if not fallback and _spawn_posix(argv, raw, env):
+            return
+        import subprocess
+        subprocess.run(argv, input=raw, stdout=subprocess.DEVNULL, env=env)
     except Exception:
         pass  # a tracing failure never blocks a turn
 
 
 def guard(raw: bytes, upstream: list[str], *, home: str, project_dir: str | None,
-          env: dict | None = None) -> tuple[bool, str]:
+          env: dict | None = None, fallback: bool = False) -> tuple[bool, str]:
     """(spawned, reason). Spawns only on allow."""
     try:
         root = decide(raw, home=home, project_dir=project_dir)
@@ -331,7 +412,7 @@ def guard(raw: bytes, upstream: list[str], *, home: str, project_dir: str | None
         return False, f"internal error: {type(exc).__name__}: {exc}"
     if not upstream:
         return False, "no upstream command after `--`"
-    run_upstream(upstream, raw, env)
+    run_upstream(upstream, raw, env, fallback)
     return True, f"allow: arm at {root}"
 
 
@@ -406,6 +487,7 @@ def _bench(argv: list[str]) -> int:
     import shutil
     import socket
     import statistics
+    import subprocess
     import tempfile
     import time
 
@@ -476,6 +558,7 @@ def _bench(argv: list[str]) -> int:
                 ok = ok and cp.returncode == 0 and cp.stdout == b""
             return (time.perf_counter() - t0) * 1000.0, ok
 
+        load_start = os.getloadavg() if hasattr(os, "getloadavg") else None
         events, unfinished, all_within = {}, 0, True
         for event in sorted(upstream):
             u_cmds, w_cmds = commands(upstream, event), commands(wrapped, event)
@@ -521,6 +604,10 @@ def _bench(argv: list[str]) -> int:
             "within_bound": all_within and unfinished == 0,
             "python": sys.version.split()[0],
             "platform": sys.platform,
+            "cpus": os.cpu_count(),
+            "load_average_1m": {
+                "start": round(load_start[0], 2) if load_start else None,
+                "end": round(os.getloadavg()[0], 2) if load_start else None},
         }
     finally:
         shutil.rmtree(sandbox, ignore_errors=True)
@@ -534,7 +621,20 @@ def _bench(argv: list[str]) -> int:
 
 # --- selftest -------------------------------------------------------------------------
 
-_STUB = r"""import os, sys
+_STUB = r"""import json, os, sys
+fds = []
+try:
+    for n in os.listdir("/proc/self/fd"):
+        try:
+            os.fstat(int(n))
+        except OSError:
+            continue
+        if int(n) > 2:
+            fds.append(int(n))
+except OSError:
+    fds = None
+with open(sys.argv[1] + ".fds", "w", encoding="utf-8") as fh:
+    json.dump(fds, fh)
 data = sys.stdin.buffer.read()
 with open(sys.argv[1], "wb") as fh:
     fh.write(data)
@@ -543,6 +643,44 @@ with open(sys.argv[1] + ".env", "w", encoding="utf-8") as fh:
 print('{"decision": "block", "reason": "an upstream stdout the guard must discard"}')
 sys.exit(2)
 """
+
+
+def _check_leg(label, name, did, reason, marker, raw, setup, sandbox, probe_fd,
+               failures, counts) -> None:
+    """One selftest leg's verdict: spawned exactly when the guard says so, a
+    refusal for the reason the fixture names, and on a spawn the payload bytes,
+    the environment, and NOT the inheritable descriptor `probe_fd`."""
+    really = os.path.exists(marker)
+    if did != really:
+        failures.append(f"{label}: guard said spawned={did} but the stub "
+                        f"{'ran' if really else 'did not run'}")
+    elif name.startswith("violation"):
+        if really:
+            failures.append(f"{label}: upstream WAS spawned ({reason})")
+        else:
+            want = setup.get("expect_reason") or ""
+            if want and want not in reason.replace("\\", "/").replace(sandbox, "{{SANDBOX}}"):
+                failures.append(f"{label}: refused without {want!r}: {reason}")
+            else:
+                counts["refused"] += 1
+    elif not really:
+        failures.append(f"{label}: upstream NOT spawned ({reason})")
+    else:
+        with open(marker, "rb") as fh:
+            got = fh.read()
+        with open(marker + ".env", encoding="utf-8") as fh:
+            got_env = fh.read()
+        with open(marker + ".fds", encoding="utf-8") as fh:
+            got_fds = json.load(fh)
+        if got != raw:
+            failures.append(f"{label}: upstream stdin differs from the payload")
+        elif got_env != "env-" + name:
+            failures.append(f"{label}: upstream environment was not passed")
+        elif got_fds is not None and probe_fd in got_fds:
+            failures.append(f"{label}: upstream inherited descriptor {probe_fd} "
+                            f"(open in the child: {got_fds})")
+        else:
+            counts["spawned"] += 1
 
 
 def _selftest(fdir: str | None = None) -> int:
@@ -563,6 +701,7 @@ def _selftest(fdir: str | None = None) -> int:
     """
     import glob as _glob
     import shutil
+    import subprocess
     import tempfile
 
     fdir = fdir or DEFAULT_FIXTURES
@@ -584,7 +723,8 @@ def _selftest(fdir: str | None = None) -> int:
     def sub(s: str, sandbox: str) -> str:
         return s.replace("{{SANDBOX}}", sandbox.replace("\\", "/"))
 
-    failures, refused, spawned, skipped = [], 0, 0, []
+    failures, skipped = [], []
+    counts = {"refused": 0, "spawned": 0}
     for path, name in zip(files, names):
         with open(path, encoding="utf-8") as fh:
             fx = json.load(fh)
@@ -626,35 +766,25 @@ def _selftest(fdir: str | None = None) -> int:
                 fh.write(_STUB)
             marker = os.path.join(sandbox, "spawned.bin")
             env = dict(os.environ, EXPORT_GUARD_SELFTEST_MARK="env-" + name)
-            did, reason = guard(raw, [sys.executable, stub, marker], home=sandbox,
-                                project_dir=pd, env=env)
-            really = os.path.exists(marker)
-            if did != really:
-                failures.append(f"{name}: guard said spawned={did} but the stub "
-                                f"{'ran' if really else 'did not run'}")
-            elif name.startswith("violation"):
-                if really:
-                    failures.append(f"{name}: upstream WAS spawned ({reason})")
-                else:
-                    want = setup.get("expect_reason") or ""
-                    if want and want not in reason.replace("\\", "/").replace(sandbox, "{{SANDBOX}}"):
-                        failures.append(f"{name}: refused without {want!r}: {reason}")
-                    else:
-                        refused += 1
-            else:
-                if not really:
-                    failures.append(f"{name}: upstream NOT spawned ({reason})")
-                else:
-                    with open(marker, "rb") as fh:
-                        got = fh.read()
-                    with open(marker + ".env", encoding="utf-8") as fh:
-                        got_env = fh.read()
-                    if got != raw:
-                        failures.append(f"{name}: upstream stdin differs from the payload")
-                    elif got_env != "env-" + name:
-                        failures.append(f"{name}: upstream environment was not passed")
-                    else:
-                        spawned += 1
+            # A benign leg runs on BOTH spawn paths (posix_spawn, and the forced
+            # subprocess fallback), each with an inheritable descriptor open that
+            # the upstream must not receive.
+            paths = (False, True) if name.startswith("benign") else (False,)
+            for fallback in paths:
+                for f in (marker, marker + ".env", marker + ".fds"):
+                    if os.path.exists(f):
+                        os.unlink(f)
+                probe_r, probe_w = os.pipe()
+                os.set_inheritable(probe_r, True)
+                try:
+                    did, reason = guard(raw, [sys.executable, stub, marker], home=sandbox,
+                                        project_dir=pd, env=env, fallback=fallback)
+                finally:
+                    os.close(probe_w)
+                    os.close(probe_r)
+                label = name + (" [subprocess fallback]" if fallback else "")
+                _check_leg(label, name, did, reason, marker, raw, setup, sandbox,
+                           probe_r, failures, counts)
         except OSError as exc:
             if fx.get("symlinks") and os.name == "nt":
                 skipped.append(name)
@@ -669,6 +799,7 @@ def _selftest(fdir: str | None = None) -> int:
                 except OSError:
                     pass
             shutil.rmtree(sandbox, ignore_errors=True)
+    refused, spawned = counts["refused"], counts["spawned"]
 
     # CLI legs: the real argv and stdin path, an allow arm in a sandbox HOME, and a
     # stub that would print a block and exit 2. The guard must print nothing and

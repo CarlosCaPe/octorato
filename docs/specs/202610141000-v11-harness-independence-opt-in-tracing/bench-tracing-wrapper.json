@@ -18,100 +18,130 @@
       "commands": 1,
       "runs": 100,
       "without": {
-        "median_ms": 127.04,
-        "p95_ms": 177.08
+        "median_ms": 96.01,
+        "p95_ms": 104.66
       },
       "with_allow": {
-        "median_ms": 187.7,
-        "p95_ms": 259.41
+        "median_ms": 128.02,
+        "p95_ms": 142.65
       },
       "with_deny": {
-        "median_ms": 46.84,
-        "p95_ms": 73.14
+        "median_ms": 30.25,
+        "p95_ms": 35.09
       },
-      "added_median_ms": 60.66,
-      "added_p95_ms": 82.33,
-      "within_bound": false
+      "added_median_ms": 32.01,
+      "added_p95_ms": 37.99,
+      "within_bound": true
     },
     "PreCompact": {
       "commands": 1,
       "runs": 100,
       "without": {
-        "median_ms": 141.82,
-        "p95_ms": 215.07
+        "median_ms": 100.83,
+        "p95_ms": 110.59
       },
       "with_allow": {
-        "median_ms": 219.44,
-        "p95_ms": 299.23
+        "median_ms": 130.06,
+        "p95_ms": 141.78
       },
       "with_deny": {
-        "median_ms": 55.51,
-        "p95_ms": 77.81
+        "median_ms": 31.72,
+        "p95_ms": 37.64
       },
-      "added_median_ms": 77.62,
-      "added_p95_ms": 84.16,
-      "within_bound": false
+      "added_median_ms": 29.23,
+      "added_p95_ms": 31.19,
+      "within_bound": true
     },
     "Stop": {
       "commands": 1,
       "runs": 100,
       "without": {
-        "median_ms": 147.36,
-        "p95_ms": 186.84
+        "median_ms": 101.28,
+        "p95_ms": 125.07
       },
       "with_allow": {
-        "median_ms": 213.6,
-        "p95_ms": 281.71
+        "median_ms": 134.79,
+        "p95_ms": 147.23
       },
       "with_deny": {
-        "median_ms": 59.41,
-        "p95_ms": 76.19
+        "median_ms": 32.37,
+        "p95_ms": 39.2
       },
-      "added_median_ms": 66.24,
-      "added_p95_ms": 94.87,
-      "within_bound": false
+      "added_median_ms": 33.51,
+      "added_p95_ms": 22.16,
+      "within_bound": true
     },
     "SubagentStop": {
       "commands": 1,
       "runs": 100,
       "without": {
-        "median_ms": 166.28,
-        "p95_ms": 206.11
+        "median_ms": 102.27,
+        "p95_ms": 112.87
       },
       "with_allow": {
-        "median_ms": 233.62,
-        "p95_ms": 304.13
+        "median_ms": 134.04,
+        "p95_ms": 150.59
       },
       "with_deny": {
-        "median_ms": 61.92,
-        "p95_ms": 87.07
+        "median_ms": 32.25,
+        "p95_ms": 37.02
       },
-      "added_median_ms": 67.34,
-      "added_p95_ms": 98.02,
-      "within_bound": false
+      "added_median_ms": 31.77,
+      "added_p95_ms": 37.72,
+      "within_bound": true
     },
     "UserPromptSubmit": {
       "commands": 1,
       "runs": 100,
       "without": {
-        "median_ms": 153.11,
-        "p95_ms": 246.98
+        "median_ms": 102.43,
+        "p95_ms": 112.99
       },
       "with_allow": {
-        "median_ms": 216.04,
-        "p95_ms": 374.66
+        "median_ms": 134.13,
+        "p95_ms": 155.22
       },
       "with_deny": {
-        "median_ms": 59.33,
-        "p95_ms": 87.45
+        "median_ms": 32.44,
+        "p95_ms": 38.34
       },
-      "added_median_ms": 62.93,
-      "added_p95_ms": 127.68,
-      "within_bound": false
+      "added_median_ms": 31.7,
+      "added_p95_ms": 42.23,
+      "within_bound": true
     }
   },
   "wrapped_runs_not_finished": 0,
-  "within_bound": false,
+  "within_bound": true,
   "python": "3.12.3",
-  "platform": "linux"
+  "platform": "linux",
+  "cpus": 4,
+  "load_average_1m": {
+    "start": 1.43,
+    "end": 1.36
+  },
+  "earlier_runs": [
+    {
+      "when": "T17, spawn via subprocess, 2026-10-16",
+      "load_average_1m": {
+        "start": 1.85,
+        "end": 5.08
+      },
+      "added_median_ms": {
+        "PostToolUse": 60.66,
+        "PreCompact": 77.62,
+        "Stop": 66.24,
+        "SubagentStop": 67.34,
+        "UserPromptSubmit": 62.93
+      },
+      "added_p95_ms": {
+        "PostToolUse": 82.33,
+        "PreCompact": 84.16,
+        "Stop": 94.87,
+        "SubagentStop": 98.02,
+        "UserPromptSubmit": 127.68
+      },
+      "within_bound": false,
+      "note": "same stub and method; kept so the load sensitivity of the median stays visible"
+    }
+  ]
 }
