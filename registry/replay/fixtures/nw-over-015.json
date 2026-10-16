@@ -1,0 +1,13 @@
+{
+  "id": "nw-over-015",
+  "expected": "NEEDS-WORK",
+  "defect_class": "overstatement",
+  "defect_line": "Backups are kept forever in object storage, so any past state can be restored.",
+  "reply": "Backups are kept forever in object storage, so any past state can be restored.",
+  "excerpts": [
+    {
+      "source": "storage/backup-log.txt",
+      "text": "Backups retained 14 days locally and 90 days in object storage."
+    }
+  ]
+}

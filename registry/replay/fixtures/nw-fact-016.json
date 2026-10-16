@@ -1,0 +1,13 @@
+{
+  "id": "nw-fact-016",
+  "expected": "NEEDS-WORK",
+  "defect_class": "wrong-fact",
+  "defect_line": "64 people answered and 48 rated onboarding 4 or 5.",
+  "reply": "64 people answered and 48 rated onboarding 4 or 5.\nThe top complaint, with 18 mentions, is a slow first sync.",
+  "excerpts": [
+    {
+      "source": "survey/feedback-summary.txt",
+      "text": "Responses: 64. Rated onboarding 4 or 5: 41. Main complaint: slow first sync (18 mentions)."
+    }
+  ]
+}

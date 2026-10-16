@@ -9,9 +9,10 @@
 # `allowed` pair makes an External_Review_Receipt count toward a panel quorum
 # (receipt_ledger.panel_receipts_for, AC-24), and even then it never forms a
 # quorum alone and never clears a send (AC-25, AC-26). A pair becomes
-# `allowed` only from a Replay_Record measured against the baseline (AC-35,
-# task T20); until those records exist the list is empty and brain_doctor's
-# `reviewer-registry` check fails any `allowed` entry.
+# `allowed` only from a Replay_Record measured against the baseline (AC-35):
+# `scripts/review_replay.py qualify --write` sets every status from the
+# records, and brain_doctor's `reviewer-registry` check recomputes each
+# `allowed` entry from its record and fails one without a valid record (AC-36).
 #
 # This file says nothing about runtime support: Codex CLI and Gemini CLI stay
 # `gap` in registry/runtimes.yaml until their census records show the blocks

@@ -1,0 +1,13 @@
+{
+  "id": "nw-fact-015",
+  "expected": "NEEDS-WORK",
+  "defect_class": "wrong-fact",
+  "defect_line": "A restore test ran this week and passed.",
+  "reply": "The 2026-07-14 nightly backup completed at 01:42 and is 58 GB.\nA restore test ran this week and passed.",
+  "excerpts": [
+    {
+      "source": "storage/backup-log.txt",
+      "text": "Nightly backup 2026-07-14: completed 01:42, size 58 GB, restore test not run this week."
+    }
+  ]
+}

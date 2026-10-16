@@ -1,0 +1,11 @@
+{
+  "id": "pass-014",
+  "expected": "PASS",
+  "reply": "On one 8-core host the benchmark shows p50 12 ms and p99 41 ms at 2,000 rps.",
+  "excerpts": [
+    {
+      "source": "release/notes-draft.md",
+      "text": "Benchmark (single host, 8 cores): p50 latency 12 ms, p99 41 ms under 2,000 requests per second."
+    }
+  ]
+}

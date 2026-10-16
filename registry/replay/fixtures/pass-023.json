@@ -1,0 +1,11 @@
+{
+  "id": "pass-023",
+  "expected": "PASS",
+  "reply": "September used 1,240 compute hours and 3.1 TB of egress.\nThe invoice total is 412.80 EUR.",
+  "excerpts": [
+    {
+      "source": "billing/usage-sept.txt",
+      "text": "September usage: 1,240 compute hours, 3.1 TB egress. Invoice total 412.80 EUR."
+    }
+  ]
+}

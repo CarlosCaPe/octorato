@@ -1,0 +1,11 @@
+{
+  "id": "pass-035",
+  "expected": "PASS",
+  "reply": "Week 32 on-call: engineer-a primary, engineer-b secondary.\nHandover is Monday at 09:00 CET.",
+  "excerpts": [
+    {
+      "source": "hr/oncall-rota.txt",
+      "text": "On-call week 32: primary engineer-a, secondary engineer-b. Handover Monday 09:00 CET."
+    }
+  ]
+}

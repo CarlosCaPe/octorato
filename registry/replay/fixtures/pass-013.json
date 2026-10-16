@@ -1,0 +1,11 @@
+{
+  "id": "pass-013",
+  "expected": "PASS",
+  "reply": "Supported: Linux x86_64, Linux arm64 and macOS arm64.\nWindows support is experimental.",
+  "excerpts": [
+    {
+      "source": "release/notes-draft.md",
+      "text": "Supported platforms: Linux x86_64, Linux arm64, macOS arm64. Windows support is experimental."
+    }
+  ]
+}

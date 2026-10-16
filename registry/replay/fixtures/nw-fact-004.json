@@ -1,0 +1,13 @@
+{
+  "id": "nw-fact-004",
+  "expected": "NEEDS-WORK",
+  "defect_class": "wrong-fact",
+  "defect_line": "db-b is at 74%, 150 GB of 203 GB.",
+  "reply": "db-a has /var at 81%, 164 GB of 203 GB.\ndb-b is at 74%, 150 GB of 203 GB.",
+  "excerpts": [
+    {
+      "source": "ops/disk-report.txt",
+      "text": "Host db-a: /var 81% used (164 GB of 203 GB). Host db-b: /var 47% used (95 GB of 203 GB)."
+    }
+  ]
+}

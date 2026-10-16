@@ -9,9 +9,9 @@
 | Skills | 246 |
 | Agents | 167 |
 | Divisions | 13 |
-| Scripts: wired | 143 |
+| Scripts: wired | 144 |
 | Scripts: orphan | 7 |
-| Rules | 106 |
+| Rules | 108 |
 | Hook entries | 61 |
 
 ## Skills (246)
@@ -499,7 +499,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (150)
+## Scripts (151)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -633,6 +633,7 @@
 | replay_harness.py | replay_harness.py: replay real tool calls and Stop turns through the gates (v10 FR-01, AC-03, AC-04)... | wired |
 | repo_watch.py | repo_watch.py , daily monitor for high-value GitHub repos. | wired |
 | requa.py | Base_Update_Verifier helper for `/requa <pr>` (spec v10, AC-12). | wired |
+| review_replay.py | review_replay.py: the replay that qualifies an external reviewer (v11 phase 4). | wired |
 | runtime_census.py | runtime_census.py: measure a harness before the brain calls it supported. | wired |
 | scan-external-refs | scan-external-refs , Scan reference repos for new skills, agents, and patterns | orphan |
 | secrets-grep-guard.py | secrets-grep-guard.py , PreToolUse:Bash hook: deny raw reads of secret-bearing files. | wired |
@@ -654,7 +655,7 @@
 | wa-soporte.sh | Sends a WhatsApp through the SUPPORT channel, never through the operator's personal number. | wired |
 | watchdog.py | watchdog.py , observability surface 4 anomaly detector. Reads the JSONL trace files written by trace... | wired |
 
-## Rules (106)
+## Rules (108)
 
 ### ARCHITECTURE
 
@@ -671,6 +672,7 @@
 - ARCHITECTURE.layers
 - ARCHITECTURE.octo-dash
 - ARCHITECTURE.octopus-architecture
+- ARCHITECTURE.reviewer-qualification
 - ARCHITECTURE.runtime-census
 - ARCHITECTURE.runtime-census-evidence
 - ARCHITECTURE.runtime-census-gates
@@ -739,6 +741,7 @@
 - FLOW.qa-receipt
 - FLOW.receipt-ledger
 - FLOW.requa-base-update
+- FLOW.review-replay
 - FLOW.root-goal-anchor
 - FLOW.self-verdict-live-source
 - FLOW.sent-message-ledger
