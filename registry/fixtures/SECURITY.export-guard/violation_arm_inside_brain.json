@@ -1,0 +1,28 @@
+{
+  "arms_paths": {
+    "x": ".claude/sub"
+  },
+  "files": {
+    ".claude/sub/arm.json": {
+      "kind": "arm",
+      "name": "x",
+      "version": "1.0.0",
+      "license": "proprietary",
+      "telemetry": {
+        "export": "allow"
+      }
+    }
+  },
+  "dirs": [
+    "elsewhere"
+  ],
+  "payload": {
+    "session_id": "sess-guard",
+    "hook_event_name": "Stop",
+    "cwd": "{{SANDBOX}}/elsewhere"
+  },
+  "_comment": "An arm whose real root is inside the brain is dropped; cwd outside it finds no arm.",
+  "_setup": {
+    "expect_reason": "no arm registered"
+  }
+}

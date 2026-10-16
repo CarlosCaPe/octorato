@@ -1,0 +1,23 @@
+{
+  "arms_paths": {
+    "a": "arms/a"
+  },
+  "files": {
+    "arms/a/arm.json": [
+      {
+        "telemetry": {
+          "export": "allow"
+        }
+      }
+    ]
+  },
+  "payload": {
+    "session_id": "sess-guard",
+    "hook_event_name": "Stop",
+    "cwd": "{{SANDBOX}}/arms/a"
+  },
+  "_comment": "arm.json holding a list reads as deny.",
+  "_setup": {
+    "expect_reason": "Export_Policy of the arm"
+  }
+}

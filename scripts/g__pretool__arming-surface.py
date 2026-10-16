@@ -845,11 +845,16 @@ _EXACT = {
 # and every projected gate under that harness allows while each gate body, and
 # this set, stays untouched. A glob for the same reason as the others.
 #
+# `g__wrap__*.py` (v11 AC-17) is the Export_Guard every Tracing_Wrapper hook
+# command runs through: it starts the upstream tracing hook only for an arm
+# whose `telemetry.export` is `allow`. Rewrite it to always start the upstream
+# and every `deny` arm exports its sessions while each arm.json still says deny.
+#
 # `d__*.py` is deliberately NOT here. A detector warns; nothing fail-closed
 # consumes its output as a receipt, so it is out of the set by the same
 # criterion that puts the recorders in.
 _SCRIPT_PATTERNS = ("g__pretool*.py", "g__stop__*.py", "r__*.py",
-                    "g__shim__*.py",
+                    "g__shim__*.py", "g__wrap__*.py",
                     "qa-merge-gate.py",
                     "gate_selftest.py", "brain_doctor.py", "receipt_ledger.py",
                     "kernel_proc.py", "dimension-awareness-hook.py",

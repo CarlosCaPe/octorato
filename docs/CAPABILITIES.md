@@ -569,6 +569,7 @@
 | g__stop__reply-panel.py | g__stop__reply-panel.py: no reply to the operator leaves the turn unreviewed (v11). | wired |
 | g__stop__unsourced-absence.py | g__stop__unsourced-absence.py: Stop gate: no "this has no origin" claim ships | wired |
 | g__stop__unsourced-attribute.py | g__stop__unsourced-attribute.py , Stop gate: no unsourced classifying attribute | wired |
+| g__wrap__export-guard.py | g__wrap__export-guard.py: start a tracing hook only for an arm that allows export. | wired |
 | gap-capture.py | gap-capture.py , capture 2D-Delegate SELF misses as a gap backlog. When the delegate gate finds no a... | wired |
 | gate-check | gate-check , 4D Gate Enforcement Validator for the Octopus brain. Validates that the 4D paradigm pha... | wired |
 | gate_selftest.py | gate_selftest.py: shared fixture-driven liveness harness for fail-closed gates. | wired |
