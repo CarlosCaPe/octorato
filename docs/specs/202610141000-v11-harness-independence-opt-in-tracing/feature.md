@@ -15,6 +15,8 @@ Octorato's brain is plain files, but today it runs on two harnesses: Claude Code
 
 **Why tracing, and why off.** LangSmith ships an official Claude Code plugin (`langsmith-tracing`) that sends each turn as a trace: user messages, tool calls, compaction and subagent runs. It is switched on by `TRACE_TO_LANGSMITH` in a project's `.claude/settings.local.json`, in the global `~/.claude/settings.json`, or as a shell export. Secret redaction is on by default, and the same page calls it "a safety net rather than a guarantee" (docs.langchain.com/langsmith/trace-claude-code). Arms hold client data, and at least one arm has a signed commitment not to export real data outside the client's tenant. So tracing must be off unless an arm explicitly allows it, the decision must be read from the arm at send time, and the upstream hook must not run at all when the arm says no.
 
+**Why reviewers on other engines, and why a receipt (phase 4).** The judgment tier prefers "a **different vendor** than the builder when available" (`docs/architecture/multi-runtime.md`, judgment row), yet every receipt the ledger honours is written for a harness subagent: a panel receipt needs an agent type matching `PANEL_AGENT_TYPE` and a harness-shaped agent transcript of the same session (`scripts/receipt_ledger.py`, `panel_receipts_for`), and a QA receipt is written by `scripts/r__subagent-stop__qa-receipt.py` from a subagent's final report. A review run through `codex exec` or `gemini -p` counts today only when a Claude subagent quotes it, so the receipt belongs to the Claude subagent; the v11 reply panel states the gap as R-05, "The reviewer is independent in context, not in model" (`docs/architecture/v11-reply-panel.md`). Phase 4 adds a receipt written by a Bash hook pair around the external call, so a verdict can name a non-Claude engine. It does not trust a cheaper engine by assumption: the local ledger holds 127 panel NEEDS-WORK and 470 panel PASS receipts (read-only count of the gitignored `~/.claude/.cache/receipts/global.jsonl`, 2026-10-16), and the v11 cost measurement credits NEEDS-WORK receipts with 6 wrong facts and 7 overstatements caught over 103 replies. An engine that misses those is cheaper only on paper, so it joins a quorum only on a replayed catch rate. Both CLIs are installed on the measuring machine (`codex-cli 0.159.3`, `gemini 0.62.0`, `--version` on 2026-10-16); in `codex exec` the flag `-m` names the model and `-p` a config profile, while for `gemini` `-p` is the prompt, so the command parser is per engine. Codex CLI and Gemini CLI stay `gap` as runtimes (AC-03): reviewing text is not running Octorato's gates.
+
 ## Glossary
 
 Every acceptance criterion names one of these components as its subject.
@@ -33,6 +35,15 @@ Every acceptance criterion names one of these components as its subject.
 - **Arming_Gate**: `scripts/g__pretool__arming-surface.py`, the v8 gate that denies writes to the live copy of the files that arm the gates.
 - **Package_Installer**: `scripts/octo_pkg.py`.
 - **Doctor**: `scripts/brain_doctor.py`.
+- **External_Reviewer_CLI**: a command listed in the Reviewer_Registry with its engine, its command-boundary pattern (`codex exec`; `gemini` with `-p` or `--prompt`), its model argument and the prompt sources it reads (argv, stdin).
+- **External_Review_Reflex**: a new hook pair, `scripts/r__pretool-bash__external-review.py` (PreToolUse Bash) and `scripts/r__posttool-bash__external-review.py` (PostToolUse Bash), that never blocks and fails open, like `scripts/r__subagent-stop__qa-receipt.py`.
+- **External_Review_Receipt**: a ledger line of kind `external` in `~/.claude/.cache/receipts/global.jsonl`, written only by the External_Review_Reflex around one Bash call to an External_Reviewer_CLI.
+- **Reviewer_Registry**: a new tracked file `registry/reviewers.yaml`: the External_Reviewer_CLI entries, and one entry per engine and model pair with a quorum status of `allowed` or `not-allowed` and the Replay_Record it rests on.
+- **Panel_Ledger**: the panel functions of `scripts/receipt_ledger.py` (`panel_receipts_for`, `panel_latest_for`, `panel_pass_for`) that the send gate and the reply-panel gate read.
+- **QA_Receipt_Reflex**: `scripts/r__subagent-stop__qa-receipt.py`, the SubagentStop reflex that writes `qa`, `converge` and `panel` receipts.
+- **Replay_Fixture_Set**: a new tracked directory `registry/replay/fixtures/` of synthetic panel cases with a known expected verdict.
+- **Replay_Harness**: a new script `scripts/review_replay.py` that runs the Replay_Fixture_Set through one engine and model.
+- **Replay_Record**: a tracked file `registry/replay/records/<engine>-<model>.json` written by the Replay_Harness.
 
 ## User Stories
 
@@ -58,6 +69,18 @@ The Instruction_Sync writes the arm instructions to the file each supported harn
 
 An arm that says nothing is `deny`. The upstream tracing hook runs only for a session whose arm is `allow`; only the operator flips an arm to `allow`; and a tracing failure never blocks a turn and stays within a measured bound.
 
+### FR-05: A non-Claude reviewer is receipted by a hook
+
+A review run through an external CLI leaves a receipt that a hook wrote, binding the engine, the model, the exact prompt and the exact output, so a panel or QA verdict can name that engine without a Claude subagent owning the receipt.
+
+### FR-06: An engine joins a quorum on a measured catch rate
+
+An engine and model pair counts toward a panel quorum only when its catch rate on a tracked, synthetic replay set is within a stated bound of the judgment-tier baseline, and never forms a quorum alone.
+
+### FR-07: Reviewing is not running
+
+Phase 4 changes no runtime status. Codex CLI and Gemini CLI stay `gap` until their census records show shell, file write and file edit blocked (FR-01); a reviewer receipt or a replay record is not evidence for that.
+
 ## Acceptance Criteria
 
 - [ ] AC-01: THE Runtime_Registry SHALL hold one entry per row of the "Runtimes" table of `docs/architecture/multi-runtime.md`, and THE Doctor SHALL fail when a harness appears in one and not the other or when their statuses disagree.
@@ -77,12 +100,28 @@ An arm that says nothing is `deny`. The upstream tracing hook runs only for a se
 - [ ] AC-15: WHEN a pull request of this spec merges, THE Doctor SHALL report the brain WIRED, with every new script, gate and reflex it ships registered in `registry/rules.yaml`.
 - [ ] AC-16: IF a write would set an arm's `telemetry.export` to `allow`, THEN THE Export_Flip_Gate SHALL deny it, leaving the flip to the operator's own hand.
 - [ ] AC-17: THE Arming_Gate SHALL treat `scripts/g__shim__hook.py`, `scripts/g__wrap__export-guard.py`, `registry/runtimes.yaml`, the installed Tracing_Wrapper tree and the plugin registration files under `~/.claude/plugins/` (including `known_marketplaces.json`) as live arming files, with a violation fixture writing the live copy and a benign fixture writing a worktree copy, or, for the gitignored paths under `~/.claude/plugins/`, writing the same relative path under the temporary HOME that `gate_selftest.py` provides.
+- [ ] AC-18: WHEN a Bash tool call's command invokes an External_Reviewer_CLI at a command boundary, THE External_Review_Reflex SHALL append from PreToolUse a pending External_Review_Receipt with the engine, the model, the SHA-256 of the exact prompt, the harness `tool_use_id` and the session id, and SHALL complete it from PostToolUse for the same `tool_use_id` with the SHA-256 of the full output, the exit code and a copy of the output at `~/.claude/.cache/receipts/external/<tool_use_id>.out`, without ever blocking the call.
+- [ ] AC-19: THE External_Review_Reflex SHALL record the model named by the command's explicit model argument (`-m`, `--model`, or a Codex `-c model=` override) and SHALL record `unknown` when the command names none.
+- [ ] AC-20: IF the prompt of the call is not readable whole from its argv text or from a stdin redirection of a named file (a pipe and a command substitution are not), THEN THE External_Review_Reflex SHALL record an empty prompt digest.
+- [ ] AC-21: THE Panel_Ledger SHALL count an External_Review_Receipt as one distinct reviewer for a digest, keyed by its `tool_use_id`, only when it is complete with exit code 0, a model other than `unknown` and a non-empty prompt digest, its stored output re-hashes to its output digest and ends on a panel block whose recomputed digest equals that digest, its `tool_use_id` is a Bash `tool_use` in this session's transcript, its PostToolUse time is inside the 120-minute window, and the Reviewer_Registry marks its engine and model `allowed`, with the newest-decides and NEEDS-WORK-revokes rules unchanged.
+- [ ] AC-22: THE Panel_Ledger SHALL report a quorum as met only when at least one of its receipts comes from a harness reviewer subagent, so an External_Review_Receipt adds to a quorum and never forms one alone.
+- [ ] AC-23: IF the Arm_Resolution of the session finds an arm whose Export_Policy is not `allow`, THEN THE Panel_Ledger SHALL count no External_Review_Receipt of that session.
+- [ ] AC-24: WHEN a reviewer subagent's final report carries a `REVIEW-EXTERNAL: <tool_use_id>` line naming a complete External_Review_Receipt of the same session whose stored output ends on the same verdict, THE QA_Receipt_Reflex SHALL add that receipt's engine and model to the `qa` or `panel` receipt it writes as `external_reviewers`, leaving the receipt's agent type, verdict and every qa-merge-gate requirement unchanged.
+- [ ] AC-25: THE Doctor SHALL derive the Runtime_Registry status of Codex CLI and Gemini CLI only from their census records as AC-03 states, so an `allowed` Reviewer_Registry entry or a Replay_Record for either engine leaves its runtime status `gap` until its census record shows shell, file write and file edit blocked.
+- [ ] AC-26: THE Replay_Fixture_Set SHALL hold at least 40 cases whose expected verdict is NEEDS-WORK, at least 15 of them wrong facts and at least 15 overstatements (the two classes the v11 cost measurement names), and at least 40 cases whose expected verdict is PASS, each with a synthetic reply body, the source excerpts the reviewer is given, the expected verdict and, for a NEEDS-WORK case, its defect class and the line that carries the defect, written from the defect classes of historical NEEDS-WORK receipts and never copied from a transcript, an arm or the ledger.
+- [ ] AC-27: THE Doctor SHALL fail when a file of the Replay_Fixture_Set or a Replay_Record holds an absolute user path, a `$HOME` path or a hit of `scripts/check-generic.py`.
+- [ ] AC-28: WHEN the Replay_Harness runs for an engine and model, THE Replay_Harness SHALL give each case to the reviewer as the block `panel_digest.py --panel-request` prints plus its source excerpts, read the verdict with `receipt_ledger.parse_panel`, count an unparseable, failed or timed-out answer as a miss on a NEEDS-WORK case and as a false alarm on a PASS case, and write a Replay_Record with the catch rate (NEEDS-WORK cases answered NEEDS-WORK over all NEEDS-WORK cases), the false-alarm rate (PASS cases not answered PASS over all PASS cases), the counts, the engine, the model, the CLI version, the git tree hash of the Replay_Fixture_Set and the date.
+- [ ] AC-29: THE Replay_Harness SHALL run the baseline on Fable, fall back to Opus only when the Fable call is refused for quota or credits, and record in the baseline Replay_Record which model ran and why.
+- [ ] AC-30: THE Reviewer_Registry SHALL mark an engine and model `allowed` only when its Replay_Record and the baseline Replay_Record carry the same fixture tree hash, its catch rate is at least the baseline catch rate minus 0.05, and its false-alarm rate is at most the baseline false-alarm rate plus 0.10.
+- [ ] AC-31: THE Doctor SHALL recompute every `allowed` entry of the Reviewer_Registry from its Replay_Record and the baseline Replay_Record, and fail when the AC-30 bound does not hold or when either record's fixture tree hash differs from the tracked Replay_Fixture_Set.
+- [ ] AC-32: THE Arming_Gate SHALL treat both External_Review_Reflex scripts, `registry/reviewers.yaml` and `registry/replay/` as live arming files, with a violation fixture writing the live copy and a benign fixture writing a worktree copy.
 
 ## Technical Scope
 
 - New: `registry/runtimes.yaml`, `registry/census/`, `scripts/runtime_census.py`, `scripts/g__shim__hook.py`, `scripts/merge-hooks-gemini.py`, `scripts/merge-hooks-codex.py` (only if Codex is `supported`), `scripts/g__wrap__export-guard.py`, `scripts/g__pretool__export-flip.py`, the Tracing_Wrapper package.
 - Changed: `scripts/octo_pkg.py` (kind `plugin`), `scripts/brain_doctor.py` (registry, export and plugin checks), `scripts/ai_sync.py` (Instruction_Sync), `scripts/g__pretool__arming-surface.py` (new arming files), `templates/arm/arm.json.template` (`telemetry.export`), `docs/architecture/multi-runtime.md`, `registry/rules.yaml`, `hooks.json`.
 - `hooks.json`, gate scripts, `brain_doctor.py` and `registry/rules.yaml` are on the arming surface: every edit is written in a worktree and reaches the live tree only by pull.
+- Phase 4, new: `scripts/r__pretool-bash__external-review.py`, `scripts/r__posttool-bash__external-review.py`, `registry/reviewers.yaml`, `registry/replay/fixtures/`, `registry/replay/records/`, `scripts/review_replay.py`. Changed: `scripts/receipt_ledger.py` (Panel_Ledger), `scripts/r__subagent-stop__qa-receipt.py`, `scripts/brain_doctor.py`, `scripts/g__pretool__arming-surface.py`, `hooks.json`, `registry/rules.yaml`, `docs/architecture/v11-reply-panel.md` (R-05 restated against AC-21 and AC-22).
 
 ## Non-Functional Requirements
 
@@ -102,6 +141,9 @@ The minor release ships when every criterion has a CONVERGED verdict, and only a
 - The OpenTelemetry route to LangSmith. LangSmith documents only OTLP traces, and Claude Code's trace export is beta; revisit when both are stable.
 - Hosted tools in Codex CLI, which its `PreToolUse` does not cover.
 - The v11 work merged in #417 (no reply unreviewed); this spec builds on it and does not change it.
+- Phase 4: an external engine forming a quorum alone, replacing the judgment-tier reviewer, or acting as a QA reviewer that qa-merge-gate honours without a harness QA subagent.
+- Phase 4: any runtime status change for Codex CLI or Gemini CLI; FR-01 and AC-03 stay the only route to `supported`.
+- Phase 4: replaying real panel bodies; the ledger stores digests, and the bodies live in private transcripts, so the replay set is synthetic.
 
 ## Revision History
 
@@ -110,3 +152,4 @@ The minor release ships when every criterion has a CONVERGED verdict, and only a
 - 2026-10-14: analyze pass (A01 to A18) applied. The tracer is a signed wrapper plugin whose guard decides whether the upstream hook process starts; octo pkg gains kind `plugin`; the flip to `allow` gets its own gate; shim, guard and registry join the arming surface; Gemini and Codex facts restated from primary pages, the unsupported Enterprise and experimental-flag claims removed; Claude Code and Cursor keep status on existing evidence; census method made deterministic plus one live call; failure modes for the latency bound named.
 - 2026-10-14: analyze pass 2 (B01 to B07) applied. The installed wrapper and the plugin registration files join the arming surface and the Doctor hashes the wrapper against its lock; the plugin install is an operator terminal step; the latency bound covers every event the wrapper registers; the guard's no-arm and deny exit is a no-op; the Doctor recomputes a `supported` status from its census record.
 - 2026-10-14: analyze pass 3 PASS; wording fixes C01 (table name) and C02 (benign fixture for gitignored plugin paths) applied.
+- 2026-10-16: phase 4 appended, LLM independence for reviewers (FR-05 to FR-07, AC-18 to AC-32, T19 and T20); no earlier criterion or task changed. Grounded in `scripts/receipt_ledger.py`, `scripts/r__subagent-stop__qa-receipt.py`, `scripts/panel_digest.py` and `docs/architecture/v11-reply-panel.md` R-05.
