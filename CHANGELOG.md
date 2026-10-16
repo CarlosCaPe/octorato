@@ -14,6 +14,8 @@ machine-generated growth ledger lives at
 `knowledge/repo-watch/<date>.md` (daily watchlist digests).
 
 ## [Unreleased]
+
+## [2026-10-15]: v11.1.2
 ### Octorato v11: no reply unreviewed
 v7 made an unverified send impossible; v11 moves that boundary to the operator. Every reply the main loop gives the operator now needs a PASS panel receipt for its exact text, recorded by a hook from an independent reviewer subagent, or the Stop gate sends the turn back (#417).
 - **Reply gate**: `scripts/g__stop__reply-panel.py`, rule `FLOW.panel-before-reply`, fail-closed, selftest of 65 block and 23 allow cases plus 2 unit checks.
@@ -29,6 +31,82 @@ v7 made an unverified send impossible; v11 moves that boundary to the operator. 
 
 ### Features
 - feat(gates): `COMMS.no-menu-question`: fail-closed Stop gate against closing a reply on a choice question; `/choice` decides, only the irreducible operator step remains, as a step with its command. Config in `registry/no-menu-question.yaml`, hatch `menu-ok`.
+
+## [2026-10-15]: v11.1.1
+### Octorato v11: no reply unreviewed
+v7 made an unverified send impossible; v11 moves that boundary to the operator. Every reply the main loop gives the operator now needs a PASS panel receipt for its exact text, recorded by a hook from an independent reviewer subagent, or the Stop gate sends the turn back (#417).
+- **Reply gate**: `scripts/g__stop__reply-panel.py`, rule `FLOW.panel-before-reply`, fail-closed, selftest of 65 block and 23 allow cases plus 2 unit checks.
+- **Quorum by source**: a reply whose Basis is SELF, or that names no source, needs 3 distinct reviewers; a sourced reply needs 1.
+- **Operator-only hatches**: `panel-skip` in the operator's own prompt waives one turn; `OCTO_REPLY_PANEL=off` in the launching shell waives the session.
+- **Shared receipt reader**: `receipt_ledger.panel_receipts_for` returns every validated receipt; the send gate's behaviour is unchanged (96 block and 34 allow cases on `registry/fixtures/FLOW.panel-before-send`; its default selftest, against `registry/fixtures/COMMS.outward-send-gate`, prints 90 block and 61 allow).
+- **Windows test suite**: 50 tests that failed on a Windows host are fixed at the root cause, with no deleted tests and every skip a measured probe.
+- **Hook stdin as UTF-8**: Claude Code writes the hook payload as UTF-8 JSON, but on Windows Python reads stdin in the ANSI code page, so the reply gate digested any reply with an accent or a middle dot to a hash no panel receipt could match. 53 of the 54 hook scripts that read the payload with `sys.stdin.read()` or `json.load(sys.stdin)` now reconfigure stdin to UTF-8 at module level. `scripts/tests/test_hook_stdin_utf8.py` pipes UTF-8 bytes into the reply gate with `PYTHONUTF8` and `PYTHONIOENCODING` unset and checks the reported digest against `panel_digest`, and checks every stdin reader for the reconfigure. Known gap: `g__pretool__arming-surface.py`, left for the operator's own edit and listed in the test so it cannot pass silently.
+- Contract and residuals R-01 to R-13: `docs/architecture/v11-reply-panel.md`. Spec: `docs/specs/202610141340-v11-reply-panel/`, CONVERGED on converge pass 9 with 22 of 22 acceptance criteria met.
+
+### Features
+- feat(gates): `COMMS.no-menu-question`: fail-closed Stop gate against closing a reply on a choice question; `/choice` decides, only the irreducible operator step remains, as a step with its command. Config in `registry/no-menu-question.yaml`, hatch `menu-ok`.
+
+---
+
+### Other
+- chore(gitignore): ignore skills/.trash, the harness parking dir for removed skills (#425)
+
+## [2026-10-15]: v11.1.0
+### Octorato v11: no reply unreviewed
+v7 made an unverified send impossible; v11 moves that boundary to the operator. Every reply the main loop gives the operator now needs a PASS panel receipt for its exact text, recorded by a hook from an independent reviewer subagent, or the Stop gate sends the turn back (#417).
+- **Reply gate**: `scripts/g__stop__reply-panel.py`, rule `FLOW.panel-before-reply`, fail-closed, selftest of 65 block and 23 allow cases plus 2 unit checks.
+- **Quorum by source**: a reply whose Basis is SELF, or that names no source, needs 3 distinct reviewers; a sourced reply needs 1.
+- **Operator-only hatches**: `panel-skip` in the operator's own prompt waives one turn; `OCTO_REPLY_PANEL=off` in the launching shell waives the session.
+- **Shared receipt reader**: `receipt_ledger.panel_receipts_for` returns every validated receipt; the send gate's behaviour is unchanged (96 block and 34 allow cases on `registry/fixtures/FLOW.panel-before-send`; its default selftest, against `registry/fixtures/COMMS.outward-send-gate`, prints 90 block and 61 allow).
+- **Windows test suite**: 50 tests that failed on a Windows host are fixed at the root cause, with no deleted tests and every skip a measured probe.
+- **Hook stdin as UTF-8**: Claude Code writes the hook payload as UTF-8 JSON, but on Windows Python reads stdin in the ANSI code page, so the reply gate digested any reply with an accent or a middle dot to a hash no panel receipt could match. 53 of the 54 hook scripts that read the payload with `sys.stdin.read()` or `json.load(sys.stdin)` now reconfigure stdin to UTF-8 at module level. `scripts/tests/test_hook_stdin_utf8.py` pipes UTF-8 bytes into the reply gate with `PYTHONUTF8` and `PYTHONIOENCODING` unset and checks the reported digest against `panel_digest`, and checks every stdin reader for the reconfigure. Known gap: `g__pretool__arming-surface.py`, left for the operator's own edit and listed in the test so it cannot pass silently.
+- Contract and residuals R-01 to R-13: `docs/architecture/v11-reply-panel.md`. Spec: `docs/specs/202610141340-v11-reply-panel/`, CONVERGED on converge pass 9 with 22 of 22 acceptance criteria met.
+
+### Features
+- feat(gates): `COMMS.no-menu-question`: fail-closed Stop gate against closing a reply on a choice question; `/choice` decides, only the irreducible operator step remains, as a step with its command. Config in `registry/no-menu-question.yaml`, hatch `menu-ok`.
+
+---
+
+### Features
+- feat(gates): no-menu-question, decide with /choice instead of asking (#422)
+
+## [2026-10-15]: v11.0.1
+### Octorato v11: no reply unreviewed
+v7 made an unverified send impossible; v11 moves that boundary to the operator. Every reply the main loop gives the operator now needs a PASS panel receipt for its exact text, recorded by a hook from an independent reviewer subagent, or the Stop gate sends the turn back (#417).
+- **Reply gate**: `scripts/g__stop__reply-panel.py`, rule `FLOW.panel-before-reply`, fail-closed, selftest of 65 block and 23 allow cases plus 2 unit checks.
+- **Quorum by source**: a reply whose Basis is SELF, or that names no source, needs 3 distinct reviewers; a sourced reply needs 1.
+- **Operator-only hatches**: `panel-skip` in the operator's own prompt waives one turn; `OCTO_REPLY_PANEL=off` in the launching shell waives the session.
+- **Shared receipt reader**: `receipt_ledger.panel_receipts_for` returns every validated receipt; the send gate's behaviour is unchanged (96 block and 34 allow cases on `registry/fixtures/FLOW.panel-before-send`; its default selftest, against `registry/fixtures/COMMS.outward-send-gate`, prints 90 block and 61 allow).
+- **Windows test suite**: 50 tests that failed on a Windows host are fixed at the root cause, with no deleted tests and every skip a measured probe.
+- **Hook stdin as UTF-8**: Claude Code writes the hook payload as UTF-8 JSON, but on Windows Python reads stdin in the ANSI code page, so the reply gate digested any reply with an accent or a middle dot to a hash no panel receipt could match. 53 of the 54 hook scripts that read the payload with `sys.stdin.read()` or `json.load(sys.stdin)` now reconfigure stdin to UTF-8 at module level. `scripts/tests/test_hook_stdin_utf8.py` pipes UTF-8 bytes into the reply gate with `PYTHONUTF8` and `PYTHONIOENCODING` unset and checks the reported digest against `panel_digest`, and checks every stdin reader for the reconfigure. Known gap: `g__pretool__arming-surface.py`, left for the operator's own edit and listed in the test so it cannot pass silently.
+- Contract and residuals R-01 to R-13: `docs/architecture/v11-reply-panel.md`. Spec: `docs/specs/202610141340-v11-reply-panel/`, CONVERGED on converge pass 9 with 22 of 22 acceptance criteria met.
+
+---
+
+### Other
+- docs(spec): harness independence and opt-in tracing (next v11 minor) (#418)
+
+## [2026-10-15]: v11.0.0
+### Octorato v11: no reply unreviewed
+v7 made an unverified send impossible; v11 moves that boundary to the operator. Every reply the main loop gives the operator now needs a PASS panel receipt for its exact text, recorded by a hook from an independent reviewer subagent, or the Stop gate sends the turn back (#417).
+- **Reply gate**: `scripts/g__stop__reply-panel.py`, rule `FLOW.panel-before-reply`, fail-closed, selftest of 65 block and 23 allow cases plus 2 unit checks.
+- **Quorum by source**: a reply whose Basis is SELF, or that names no source, needs 3 distinct reviewers; a sourced reply needs 1.
+- **Operator-only hatches**: `panel-skip` in the operator's own prompt waives one turn; `OCTO_REPLY_PANEL=off` in the launching shell waives the session.
+- **Shared receipt reader**: `receipt_ledger.panel_receipts_for` returns every validated receipt; the send gate's behaviour is unchanged (96 block and 34 allow cases on `registry/fixtures/FLOW.panel-before-send`; its default selftest, against `registry/fixtures/COMMS.outward-send-gate`, prints 90 block and 61 allow).
+- **Windows test suite**: 50 tests that failed on a Windows host are fixed at the root cause, with no deleted tests and every skip a measured probe.
+- **Hook stdin as UTF-8**: Claude Code writes the hook payload as UTF-8 JSON, but on Windows Python reads stdin in the ANSI code page, so the reply gate digested any reply with an accent or a middle dot to a hash no panel receipt could match. 53 of the 54 hook scripts that read the payload with `sys.stdin.read()` or `json.load(sys.stdin)` now reconfigure stdin to UTF-8 at module level. `scripts/tests/test_hook_stdin_utf8.py` pipes UTF-8 bytes into the reply gate with `PYTHONUTF8` and `PYTHONIOENCODING` unset and checks the reported digest against `panel_digest`, and checks every stdin reader for the reconfigure. Known gap: `g__pretool__arming-surface.py`, left for the operator's own edit and listed in the test so it cannot pass silently.
+- Contract and residuals R-01 to R-13: `docs/architecture/v11-reply-panel.md`. Spec: `docs/specs/202610141340-v11-reply-panel/`, CONVERGED on converge pass 9 with 22 of 22 acceptance criteria met.
+
+---
+
+### Other
+- release(v11): cut Octorato v11.0.0, no reply unreviewed (#419)
+
+## [2026-10-15]: v10.1.0
+### Features
+- feat(v11): no reply unreviewed, panel quorum by source; Windows test-suite fixes (#417)
+### Other
+- docs(changelog): backfill v10.0.0 (#416)
 
 ## [2026-10-13]: v10.0.0
 ### Octorato v10: low friction, easy entry
