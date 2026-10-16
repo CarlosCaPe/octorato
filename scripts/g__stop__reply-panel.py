@@ -39,7 +39,8 @@ THE DECISION (FR-03, checked in this order; the first that holds exits 0)
      receipt (receipt_ledger.panel_receipts_for, first entry) is a PASS whose
      verdict_ts is strictly newer than the operator prompt, and PASS receipts
      newer than the prompt come from at least QUORUM distinct reviewer agent
-     ids: 3 for a SELF reply, 1 for a SOURCED one (FR-06). A reply is SOURCED
+     ids: 3 for a SELF reply, 1 for a SOURCED or INPUT one (FR-06). An INPUT
+     reply only asks the operator for a fact (input_needed). A reply is SOURCED
      only when it has a Provenance / Procedencia / Herkunft line and EVERY
      such line has a Basis that names something: `Basis` (any case) then a
      colon or whitespace, not empty and not only none / nothing / n/a / na /
@@ -411,7 +412,7 @@ def pass_reviewers(ctx, digest: str, session_id: str, prompt_ts: str, now) -> in
 # ---------------------------------------------------------------------------
 # Source_Class (FR-06)
 # ---------------------------------------------------------------------------
-QUORUM = {"SELF": 3, "SOURCED": 1}
+QUORUM = {"SELF": 3, "SOURCED": 1, "INPUT": 1}
 # A line that starts with the label; leading blanks, a quote marker and
 # markdown emphasis around the label are tolerated ("**Provenance:**"). The
 # label is followed by a colon or by a `·` field separator
@@ -467,12 +468,66 @@ def _line_is_self(line: str) -> bool:
     return _empty_basis(basis) or _self_basis(basis)
 
 
+# input-needed: a short reply that ends on ONE question for a fact only the
+# operator holds. The line names the unknown and ends with the question mark.
+INPUT_CAP = 60
+_INPUT_LINE = re.compile(r"^[ \t]*[*_]*input-needed[*_]*[ \t]*:[ \t]*(?P<q>.*\S.*\?)[*_ \t]*$",
+                         re.IGNORECASE)
+_NO_MENU = "g__stop__no-menu-question.py"
+
+
+def _menu_or_consent(question: str) -> bool:
+    """True when the no-menu gate reads the question as a menu, a permission
+    or direction ask, or an irreducible operator step (consent, payment,
+    login, send-ok). An error loading it reads as True: the reply then keeps
+    its normal class, the stricter outcome."""
+    try:
+        nm = _load_file(_NO_MENU)
+        cfg = nm._load_config()
+        q = question.strip()
+        if not q.lstrip("¿").strip(" ?"):
+            return True
+        if nm.is_choice_question(q, cfg):
+            return True
+        return bool(nm._irreducible_object(nm._fold(nm._trim_tail(q)), cfg))
+    except Exception:
+        return True
+
+
+def input_needed(text: str) -> bool:
+    """True for a reply that only asks the operator for a fact: at most
+    INPUT_CAP words outside its provenance lines, at most one provenance
+    line and it comes after the question, the last other non-empty line
+    starts `input-needed:` and ends with `?`, no other `?` in the reply, no
+    claim marker (status_claim) in the rest of the body, and the question is
+    neither a menu nor a consent ask (_menu_or_consent)."""
+    lines = (text or "").splitlines()
+    prov = [i for i, ln in enumerate(lines) if _PROVENANCE.match(ln)]
+    body = [(i, ln) for i, ln in enumerate(lines) if ln.strip() and i not in prov]
+    if not body or len(prov) > 1:
+        return False
+    qi, qline = body[-1]
+    m = _INPUT_LINE.match(qline)
+    if not m or (prov and prov[0] < qi):
+        return False
+    if sum(len(ln.split()) for _, ln in body) > INPUT_CAP:
+        return False
+    if sum(ln.count("?") for _, ln in body) != 1:
+        return False
+    if status_claim("\n".join(ln for _, ln in body[:-1])):
+        return False
+    return not _menu_or_consent(m.group("q"))
+
+
 def source_class(text: str) -> str:
-    """SELF when the reply has no provenance line or when ANY provenance line
-    is SELF (no Basis field, a Basis that names nothing (see _empty_basis),
-    or a Basis that names self or own reasoning in EN, ES or DE, see
-    _self_basis). A later
-    SOURCED line, a code block included, never lifts an earlier SELF line."""
+    """INPUT for an input-needed reply (input_needed), quorum 1 like SOURCED.
+    Otherwise SELF when the reply has no provenance line or when ANY
+    provenance line is SELF (no Basis field, a Basis that names nothing (see
+    _empty_basis), or a Basis that names self or own reasoning in EN, ES or
+    DE, see _self_basis). A later SOURCED line, a code block included, never
+    lifts an earlier SELF line."""
+    if input_needed(text):
+        return "INPUT"
     lines = _PROVENANCE.findall(text or "")
     if not lines or any(_line_is_self(ln) for ln in lines):
         return "SELF"
@@ -527,7 +582,9 @@ def decide(data: dict) -> tuple:
         f"needs PASS receipts from {need} distinct reviewer(s) for its exact text, newer "
         f"than the operator's prompt, with a PASS deciding; it has {have} of {need}. "
         f"A reply is SOURCED only when every Provenance line has a Basis that names a "
-        f"source other than self or own reasoning. Digest: {digest}. "
+        f"source other than self or own reasoning; an INPUT reply only asks, on a last "
+        f"line starting `input-needed:`, for a fact only the operator holds, and its "
+        f"reviewer confirms that fact is not available from context. Digest: {digest}. "
         f"Write the reply to a file, run `{_REQUEST_CMD}` (it runs the other Stop gates on "
         f"the draft first and prints no block when one would change the text), and hand that block to "
         f"{need} reviewer subagent(s) whose agent type matches "

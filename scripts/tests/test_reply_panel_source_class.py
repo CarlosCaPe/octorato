@@ -82,5 +82,43 @@ class SourceClassTests(unittest.TestCase):
         self.assertEqual(RP.source_class("Done."), "SELF")
 
 
+Q = "input-needed: What is the name of the standby database host?"
+INPUT = [
+    "The rollback needs one value that is not in the log.\n\n" + Q,
+    "Falta un dato.\n\ninput-needed: ¿Cuál es el RFC del cliente?\n\nProcedencia: Basis: la orden",
+    "**input-needed:** What is the tenant id of the staging workspace?",
+]
+NOT_INPUT = [
+    ("word " * 70) + "\n" + Q,                                      # over the word cap
+    "One value is missing.\n\ninput-needed: Do you want it today or tomorrow?",   # menu
+    "Falta un paso.\n\ninput-needed: ¿Confirmas el pago?",          # consent (irreducible)
+    "Falta un dato.\n\ninput-needed: ¿Lo mando así?",               # permission
+    "Falta un dato.\n\ninput-needed: ¿Procedo?",                    # opener
+    "Merged the fix to master.\n\n" + Q,                           # a claim in the body
+    "Waiting on 2 reviewers.\n\n" + Q,                             # a digit in the body
+    "Is the log complete?\n\n" + Q,                                # two questions
+    "One value is missing.\n\n" + Q + "\n\nThen I run the rollback.",  # not last
+    "Provenance: Basis: x\n" + Q,                                   # footer before the question
+    "One value is missing.\n\ninput-needed: the host name",          # no question mark
+    "Q?\n" + Q + "\nProvenance: a\nProvenance: b",                  # two provenance lines
+]
+
+
+class InputNeededTests(unittest.TestCase):
+    def test_input_class_quorum_one(self):
+        self.assertEqual(RP.QUORUM["INPUT"], 1)
+        for text in INPUT:
+            with self.subTest(text=text[:50]):
+                self.assertEqual(RP.source_class(text), "INPUT")
+
+    def test_not_input(self):
+        for text in NOT_INPUT:
+            with self.subTest(text=text[:50]):
+                self.assertNotEqual(RP.source_class(text), "INPUT")
+
+    def test_long_reply_with_trailing_line_keeps_self(self):
+        self.assertEqual(RP.source_class(NOT_INPUT[0]), "SELF")
+
+
 if __name__ == "__main__":
     unittest.main()
