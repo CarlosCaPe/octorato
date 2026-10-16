@@ -804,6 +804,24 @@ _EXACT = {
         "a registration file the harness has not created yet. GITIGNORED, so "
         "there is no development copy; its benign twin writes the same "
         "relative path under the temporary HOME",
+    "registry/reviewers.yaml":
+        "the Reviewer_Registry (v11 AC-37): which engine and model pairs are "
+        "`allowed`, read by receipt_ledger before an External_Review_Receipt "
+        "counts toward a panel quorum. A rewrite here admits an engine no "
+        "replay measured",
+    "registry/replay":
+        "the replay fixture set and records (v11 AC-37) an `allowed` reviewer "
+        "pair rests on: an edited fixture or record qualifies an engine the "
+        "measurement never qualified. The DIRECTORY, so a record not written "
+        "yet is covered too",
+    "company/config/reviewer-pins.json":
+        "the Reviewer_Pins (v11 AC-37), the first `company/` path in this set: "
+        "the interpreter, launcher and engine hashes, realpaths and pin roots "
+        "and the startup and config file hashes an External_Review_Receipt is "
+        "checked against. A rewrite pins whatever binary sits there now. "
+        "GITIGNORED and written only by the operator in a terminal from the "
+        "command `external_review.py pin-command` prints; its benign twin "
+        "writes the same relative path under the temporary HOME",
     ".cache/receipts":
         "the receipt ledger v7 requires before an outward send or a merge: the "
         "gate receipt, the seek receipts and the QA verdicts. GITIGNORED, so "
@@ -861,6 +879,11 @@ _EXACT = {
 # whose `telemetry.export` is `allow`. Rewrite it to always start the upstream
 # and every `deny` arm exports its sessions while each arm.json still says deny.
 #
+# `external_review.py` (v11 AC-37) is the parser and pin checker both
+# External_Review_Reflex scripts (`r__*-bash__external-review.py`, already in
+# the `r__*.py` glob) run and receipt_ledger re-parses with: rewrite it to
+# accept any command and every review on any binary leaves a receipt.
+#
 # `d__*.py` is deliberately NOT here. A detector warns; nothing fail-closed
 # consumes its output as a receipt, so it is out of the set by the same
 # criterion that puts the recorders in.
@@ -868,6 +891,7 @@ _SCRIPT_PATTERNS = ("g__pretool*.py", "g__stop__*.py", "r__*.py",
                     "g__shim__*.py", "g__wrap__*.py",
                     "qa-merge-gate.py",
                     "gate_selftest.py", "brain_doctor.py", "receipt_ledger.py",
+                    "external_review.py",
                     "kernel_proc.py", "dimension-awareness-hook.py",
                     "merge-hooks.py", "check-generic.py",
                     "commit_msg_language_gate.py")

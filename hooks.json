@@ -66,6 +66,11 @@
           "statusMessage": "✍ client-doc-lint (entregable cliente)...",
           "timeout": 20,
           "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/r__posttool-bash__external-review.py",
+          "timeout": 30,
+          "type": "command"
         }
       ],
       "matcher": "Bash"
@@ -208,6 +213,11 @@
           "command": "python3 ~/.claude/scripts/g__pretool-bash__tree-owner.py",
           "statusMessage": "⚙ kernel: one writer per tree...",
           "timeout": 5,
+          "type": "command"
+        },
+        {
+          "command": "python3 ~/.claude/scripts/r__pretool-bash__external-review.py",
+          "timeout": 30,
           "type": "command"
         }
       ],

@@ -40,7 +40,13 @@ THE DECISION (FR-03, checked in this order; the first that holds exits 0)
      receipt (receipt_ledger.panel_receipts_for, first entry) is a PASS whose
      verdict_ts is strictly newer than the operator prompt, and PASS receipts
      newer than the prompt come from at least QUORUM distinct reviewer agent
-     ids: 3 for a SELF reply, 1 for a SOURCED or INPUT one (FR-06). An INPUT
+     ids: 3 for a SELF reply, 1 for a SOURCED or INPUT one (FR-06). An
+     External_Review_Receipt (a review run on another engine through a
+     pinned call, v11 phase 4) counts as one reviewer by its tool_use_id, and
+     the quorum is counted only when, with every external PASS set aside,
+     the newest receipt left is a harness reviewer's PASS newer than the
+     prompt (AC-25, the order panel_pass_for uses): an external receipt adds
+     to a quorum, never forms one, and never stands in for a revoked PASS. An INPUT
      reply only asks the operator for a fact (input_needed). A reply is SOURCED
      only when it has a Provenance / Procedencia / Herkunft line and EVERY
      such line has a Basis that names something: `Basis` (any case) then a
@@ -467,9 +473,20 @@ def pass_reviewers(ctx, digest: str, session_id: str, prompt_ts: str, now) -> in
         when = ctx.send._ts(r.get("verdict_ts"))
         return when is not None and when > after
 
+    # v11 AC-25, in panel_pass_for's order (AC-26): every external PASS is
+    # dropped, and the newest remaining receipt (harness PASS, harness
+    # NEEDS-WORK, external NEEDS-WORK) must be a harness PASS newer than the
+    # prompt. Only then does the quorum count, where an External_Review_Receipt
+    # (receipt_ledger.external_panel_view) adds one distinct reviewer by its
+    # tool_use_id. A harness PASS that a newer NEEDS-WORK revoked therefore
+    # never lets external receipts form a quorum around it.
+    deciding = [r for r in got if not (r.get("external") and r.get("verdict") == "PASS")]
+    head = deciding[0] if deciding else None
+    if not head or head.get("external") or head.get("verdict") != "PASS" or not newer(head):
+        return 0
     if got[0].get("verdict") != "PASS" or not newer(got[0]):
         return 0
-    return len({str(r.get("agent_id") or "") for r in got
+    return len({str(r.get("agent_id")) for r in got
                 if r.get("verdict") == "PASS" and newer(r) and r.get("agent_id")})
 
 
@@ -693,6 +710,8 @@ def decide(data: dict) -> tuple:
         f"qa|review|reality|evidence|checker|verif|audit|panel (Reality Checker, Code "
         f"Reviewer, Evidence Collector; general-purpose, claude and fork do not count). "
         f"Each reviewer ends its report with the block, PANEL-VERDICT and PANEL-SHA256. "
+        f"A receipted review on another engine counts as one more reviewer, never as the "
+        f"only one: at least one PASS must come from a harness reviewer subagent. "
         f"Then emit exactly the reviewed text. While a subagent runs, a status line of "
         f"at most {STATUS_CAP} words with no result in it (no outcome word, no digit) may "
         f"end the turn."
@@ -753,6 +772,28 @@ def _seed_case(sandbox: Path, session: str, msg: str, fx: dict) -> None:
     import hashlib
     import panel_fixture_seed
     for i, r in enumerate(fx.get("receipts") or []):
+        ext = r.get("external")
+        if ext:
+            # An External_Review_Receipt (v11 AC-24 to AC-27): Bash tool_use and
+            # result in the session transcript, output copy, ledger rows and a
+            # Reviewer_Registry pair, allowed unless the fixture says not.
+            import panel_digest
+            cwd, project = "~/.claude", ""
+            if ext.get("arm"):
+                cwd = panel_fixture_seed.seed_arm(sandbox, "fx-arm", ext["arm"])
+                project = cwd if ext.get("with_project") else ""
+            if ext.get("project_arm"):
+                # The call ran from a directory under no arm (`cd` out of the
+                # session's arm); the session's project dir is the arm.
+                (sandbox / "elsewhere").mkdir(exist_ok=True)
+                cwd = "~/elsewhere"
+                project = panel_fixture_seed.seed_arm(sandbox, "fx-arm", ext["project_arm"])
+            panel_fixture_seed.seed_external_receipt(
+                sandbox, session, panel_digest.Message(r.get("text", msg), [], ["operator"]),
+                r["verdict"], r["ts"], ext.get("tool_use_id") or f"toolu_fx_ext_{i}",
+                ext.get("engine", "codex"), ext.get("model", "fx-review-model"), cwd,
+                ext.get("allowed", True), project)
+            continue
         agent_id = r.get("agent_id") or hashlib.sha256(f"{session}:{i}".encode()).hexdigest()[:17]
         panel_fixture_seed.seed_reply_receipt(
             sandbox, session, r.get("text", msg), r["verdict"], r["ts"], agent_id,

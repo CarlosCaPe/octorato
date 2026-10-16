@@ -33,6 +33,16 @@ proof:
                    from the block equals the stated one, in THIS session, a
                    reviewer persona, inside 120 minutes; the newest decides,
                    and a receipt spent by a send (sent.jsonl) is spent.
+  external receipt written by the Bash hook pair r__pretool-bash__external-review.py
+                   and r__posttool-bash__external-review.py around one pinned
+                   call to another engine's CLI (v11 phase 4, AC-18 to AC-28).
+                   Anchor: its tool_use_id is a harness Bash tool_use of THIS
+                   session's transcript whose command re-parses to the same
+                   engine, model and prompt digest; the stored output re-hashes;
+                   the output ENDS on a panel block that recomputes to the
+                   digest; the Reviewer_Registry allows the engine and model;
+                   the session's arm allows export. It adds a vote, never forms
+                   a quorum, and never clears a send (panel_pass_for).
   sent record      written by r__posttool__sent-ledger.py after a message send
                    left (sent.jsonl): channel, recipient, message id, digest,
                    panel receipt id. A trail for a later recall step, not a gate.
@@ -1202,11 +1212,32 @@ def panel_receipts_for(digest: str, session_id: str, now=None,
             if age < 0 or age > window_minutes:
                 continue
         cands.append((key, verdict != "PASS", r, tp, uuid, ts))
+    seen_ext, ledger = set(), read_global()
+    for r in ledger:
+        if r.get("kind") != "external" or r.get("state") != "complete":
+            continue
+        if str(r.get("panel_digest") or "").lower() != want:
+            continue
+        tid = str(r.get("tool_use_id") or "")
+        if not tid or tid in seen_ext:
+            continue
+        seen_ext.add(tid)
+        try:
+            got = external_panel_view(r, session_id, want, now, window_minutes, ledger)
+        except Exception:
+            got = None
+        if got is None:
+            continue
+        cands.append((_ts_key(got["verdict_ts"]), got["verdict"] != "PASS", got, None, None,
+                      got["verdict_ts"]))
     cands.sort(key=lambda c: (c[0], c[1]), reverse=True)
     same = lambda rep_: parse_panel(rep_) == ("PASS", want) and panel_recompute(rep_) == want
     revokes = lambda rep_: parse_panel(rep_) == ("NEEDS-WORK", want)
     out = []
     for key, is_revocation, r, tp, uuid, ts in cands:
+        if r.get("external"):
+            out.append(r)  # validated by external_panel_view; no agent transcript
+            continue
         if not is_revocation:
             # A malformed reviewer transcript must not raise out of here for
             # the send gate or the sent ledger: a PASS whose anchor cannot be
@@ -1230,9 +1261,276 @@ def panel_latest_for(digest: str, session_id: str, now=None,
 
 
 def panel_pass_for(digest: str, session_id: str, now=None) -> dict | None:
-    """The deciding panel receipt for `digest`, only when it says PASS."""
-    r = panel_latest_for(digest, session_id, now)
-    return r if r and r.get("verdict") == "PASS" else None
+    """The deciding panel receipt for `digest`, only when it is a HARNESS
+    reviewer's PASS (v11 AC-26). Every external PASS is dropped first; then the
+    newest of what remains decides (harness PASS, harness NEEDS-WORK, external
+    NEEDS-WORK; a NEEDS-WORK wins an equal or unreadable time, the order
+    panel_receipts_for already gives). So an external receipt can revoke a
+    send's PASS but never clear one: the send gate and the sent-message ledger
+    read only this function."""
+    got = [r for r in panel_receipts_for(digest, session_id, now)
+           if not (r.get("external") and r.get("verdict") == "PASS")]
+    r = got[0] if got else None
+    return r if r and r.get("verdict") == "PASS" and not r.get("external") else None
+
+
+# --------------------------------------------------------------------------
+# External receipt (v11 phase 4: a review on another engine)
+# --------------------------------------------------------------------------
+# Written by the Bash hook pair around one Accepted_Review_Call
+# (scripts/external_review.py). The ledger line is a pointer; every field that
+# matters is re-derived here from things the line does not own: the stored
+# output's bytes, the session transcript's harness Bash entry and its tool
+# result, the Reviewer_Registry and the arm's Export_Policy.
+
+EXTERNAL_MAX_OUTPUT = 4 << 20
+
+
+def _external_lib():
+    """scripts/external_review.py, the parser and registry reader the hook
+    pair uses, loaded from beside this file whatever sys.path holds."""
+    import sys
+    mod = sys.modules.get("external_review")
+    if mod is None:
+        spec = importlib.util.spec_from_file_location("external_review",
+                                                      _HERE / "external_review.py")
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["external_review"] = mod
+        try:
+            spec.loader.exec_module(mod)
+        except Exception:
+            sys.modules.pop("external_review", None)
+            raise
+    return mod
+
+
+def _session_transcript_ok(tp: str, session_id: str) -> bool:
+    """A transcript of THIS session, where the harness writes one: the main
+    loop's <projects>/<slug>/<session_id>.jsonl, or a subagent's
+    <projects>/<slug>/<session_id>/subagents/agent-<id>.jsonl (a reviewer
+    subagent runs the external call itself, AC-28). A regular file."""
+    try:
+        rp = Path(tp).resolve()
+        rel = rp.relative_to(harness_projects_dir().resolve())
+    except (ValueError, OSError):
+        return False
+    parts = rel.parts
+    main = len(parts) == 2 and parts[1] == f"{session_id}.jsonl"
+    sub = (len(parts) == 4 and parts[1] == session_id and parts[2] == "subagents"
+           and bool(_AGENT_FILE.match(parts[3])))
+    return (main or sub) and _regular_file(rp)
+
+
+def _external_transcripts(r: dict, session_id: str) -> list:
+    """Where the Bash tool_use of an external row can live: the transcript the
+    hook payload named and, when the call came from a subagent, that agent's
+    own transcript beside it."""
+    tp = os.path.expanduser(str(r.get("transcript_path") or ""))
+    out = [tp] if tp else []
+    agent = str(r.get("agent_id") or "")
+    if tp and agent and re.fullmatch(r"[A-Za-z0-9]+", agent):
+        out.append(str(Path(tp).parent / session_id / "subagents" / f"agent-{agent}.jsonl"))
+    return out
+
+
+def bash_tool_use(tp: str, tool_use_id: str, session_id: str):
+    """(command, tool_result timestamp) of the harness Bash tool_use with this
+    id in the session transcript, or None. Every line that carries the id must
+    agree on the command, and the harness must have written its result."""
+    if not tool_use_id or not _session_transcript_ok(tp, session_id):
+        return None
+    needle = tool_use_id.encode()
+    commands, result_ts = set(), ""
+    try:
+        with open(tp, "rb") as fh:
+            for raw in fh:
+                if needle not in raw:
+                    continue
+                try:
+                    entry = json.loads(raw.decode("utf-8", errors="replace"))
+                except json.JSONDecodeError:
+                    continue
+                if not harness_entry(entry) or entry.get("sessionId") != session_id:
+                    continue
+                content = (entry.get("message") or {}).get("content") or []
+                if not isinstance(content, list):
+                    continue
+                for b in content:
+                    if not isinstance(b, dict):
+                        continue
+                    if entry.get("type") == "assistant" and b.get("type") == "tool_use" \
+                            and b.get("id") == tool_use_id:
+                        inp = b.get("input") if isinstance(b.get("input"), dict) else {}
+                        cmd = inp.get("command")
+                        commands.add(cmd if b.get("name") == "Bash" and isinstance(cmd, str)
+                                     else None)
+                    elif entry.get("type") == "user" and b.get("type") == "tool_result" \
+                            and b.get("tool_use_id") == tool_use_id:
+                        result_ts = str(entry.get("timestamp") or "")
+    except OSError:
+        return None
+    if len(commands) != 1 or None in commands or not result_ts:
+        return None
+    return commands.pop(), result_ts
+
+
+def session_arm_allows(cwd: str, project_dir: str = "") -> bool:
+    """AC-27 through the Export_Guard's own Arm_Resolution: True when neither
+    the call's cwd nor the session's CLAUDE_PROJECT_DIR resolves to an arm (a
+    brain session, or directories under no registered arm), or when the
+    guard's decide() accepts both together, which refuses a cwd and project
+    dir in different arms or a cwd moved out of a deny arm (`cd /tmp`).
+    Anything unreadable is False."""
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "_export_guard_for_ledger", _HERE / "g__wrap__export-guard.py")
+        g = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(g)
+        home = os.path.expanduser("~")
+        real = g._real_dir(os.path.expanduser(str(cwd or "")), "cwd")
+        proj = None
+        if project_dir:
+            proj = g._real_dir(os.path.expanduser(str(project_dir)), "CLAUDE_PROJECT_DIR")
+        brains = g.brain_paths(home)
+        roots = g.load_arm_roots(home, brains)
+        dirs = [d for d in (real, proj) if d]
+        in_arm = [d for d in dirs if not any(g._contains(b, d) for b in brains)
+                  and any(g._contains(r, d) for _n, r in roots)]
+        if not in_arm:
+            return True
+        g.decide(json.dumps({"cwd": real}).encode(), home=home, project_dir=proj)
+        return True
+    except Exception:
+        return False
+
+
+def external_checked(r: dict, session_id: str, now=None,
+                     window_minutes: float = PANEL_WINDOW_MINUTES, rows=None):
+    """The AC-24 checks of one complete external row OTHER than the digest
+    match, plus AC-27. Returns {output, verdict_ts, engine, requested_model,
+    tool_use_id} or None."""
+    if r.get("kind") != "external" or r.get("state") != "complete":
+        return None
+    tid, sid = str(r.get("tool_use_id") or ""), str(r.get("session_id") or "")
+    if not tid or not session_id or sid != session_id:
+        return None
+    code = r.get("exit_code")
+    if not isinstance(code, int) or isinstance(code, bool) or code != 0:
+        return None
+    engine, model = r.get("engine"), r.get("requested_model")
+    psha = str(r.get("prompt_sha256") or "")
+    if not isinstance(model, str) or not model or model == "unknown" \
+            or not _SHA64.fullmatch(psha):
+        return None
+    er = _external_lib()
+    if engine not in er.ENGINES or not er.reviewer_allowed(engine, model):
+        return None
+    pend = [p for p in (read_global() if rows is None else rows) if p.get("kind") == "external"
+            and p.get("state") == "pending" and p.get("tool_use_id") == tid
+            and p.get("session_id") == sid]
+    if not pend or pend[-1].get("pre_problems") != [] or any(
+            pend[-1].get(k) != r.get(k) for k in ("engine", "requested_model", "prompt_sha256",
+                                                   "interpreter", "script", "cwd",
+                                                   "project_dir", "transcript_path",
+                                                   "agent_id")):
+        return None
+    out_path = receipts_dir() / "external" / f"{_safe(tid)}.out"
+    if not _regular_file(out_path):
+        return None
+    try:
+        if out_path.stat().st_size > EXTERNAL_MAX_OUTPUT:
+            return None
+        raw = out_path.read_bytes()
+    except OSError:
+        return None
+    if er.sha256_bytes(raw) != r.get("output_sha256"):
+        return None
+    got = None
+    for tp in _external_transcripts(r, session_id):
+        got = bash_tool_use(tp, tid, session_id)
+        if got is not None:
+            break
+    if got is None:
+        return None
+    command, ts = got
+    call, _why = er.parse_call(command, {engine: (r.get("interpreter"), r.get("script"))})
+    if not call or call["prompt_sha256"] != psha or call["requested_model"] != model:
+        return None
+    key = _ts_key(ts)
+    if key is None:
+        return None
+    now = now or _dt.datetime.now(_dt.timezone.utc)
+    age = (now - key).total_seconds() / 60.0
+    if age < 0 or age > window_minutes:
+        return None
+    if not session_arm_allows(str(r.get("cwd") or ""), str(r.get("project_dir") or "")):
+        return None
+    return {"output": raw.decode("utf-8", errors="replace"), "verdict_ts": ts,
+            "engine": engine, "requested_model": model, "tool_use_id": tid}
+
+
+def _ends_on_panel(output: str) -> bool:
+    """Nothing but whitespace after the output's last PANEL-SHA256 line."""
+    ms = list(_PANEL_SHA.finditer(output or ""))
+    return bool(ms) and not output[ms[-1].end():].strip()
+
+
+def external_panel_view(r: dict, session_id: str, want: str, now=None,
+                        window_minutes: float = PANEL_WINDOW_MINUTES, rows=None):
+    """A complete external row as a panel reviewer for digest `want` (AC-24),
+    or None. Its reviewer id is its tool_use_id. `rows` is the ledger already
+    read by the caller, so one Stop reads it once."""
+    v = external_checked(r, session_id, now, window_minutes, rows)
+    if v is None:
+        return None
+    out = v["output"]
+    verdict, sha = parse_panel(out)
+    if verdict not in ("PASS", "NEEDS-WORK") or sha != want or verdict != r.get("panel_verdict"):
+        return None
+    if not _ends_on_panel(out) or panel_recompute(out) != want:
+        return None
+    return {"kind": "external", "external": True, "verdict": verdict, "digest": want,
+            "agent_id": v["tool_use_id"], "agent_type": f"external:{v['engine']}",
+            "engine": v["engine"], "requested_model": v["requested_model"],
+            "tool_use_id": v["tool_use_id"], "session_id": session_id,
+            "verdict_ts": v["verdict_ts"]}
+
+
+_REVIEW_EXTERNAL = re.compile(r"REVIEW-EXTERNAL\s*:\s*(\S+)", re.IGNORECASE)
+
+
+def parse_review_external(text: str) -> list:
+    """Every tool_use_id a reviewer's report names on a `REVIEW-EXTERNAL:` line."""
+    out = []
+    for m in _REVIEW_EXTERNAL.finditer(text or ""):
+        tid = m.group(1).strip("`'\".,;")
+        if tid and tid not in out:
+            out.append(tid)
+    return out
+
+
+def external_reviewers_for(report: str, session_id: str, kind: str, verdict: str,
+                           now=None) -> list:
+    """AC-28: [{tool_use_id, engine, requested_model}] for each REVIEW-EXTERNAL
+    line of `report` naming a complete external receipt of this session that
+    passes every AC-24 check other than the digest match and AC-27, and whose
+    stored output ends on the same verdict as the report (`kind` qa or
+    panel). The harness receipt that carries this list is unchanged."""
+    out, ledger = [], read_global()
+    for tid in parse_review_external(report):
+        rows = [r for r in ledger if r.get("kind") == "external"
+                and r.get("state") == "complete" and r.get("tool_use_id") == tid]
+        for r in reversed(rows):
+            v = external_checked(r, session_id, now, rows=ledger)
+            if v is None:
+                continue
+            said = (parse_verdict(v["output"])[0] if kind == "qa"
+                    else parse_panel(v["output"])[0] if kind == "panel" else "")
+            if said and said == verdict:
+                out.append({"tool_use_id": tid, "engine": v["engine"],
+                            "requested_model": v["requested_model"]})
+            break
+    return out
 
 
 def panel_receipt_consumed(entry_uuid: str) -> bool:
@@ -1259,3 +1557,118 @@ def append_sent(record: dict) -> None:
 
 def read_sent() -> list:
     return _read(sent_path())
+
+
+# --------------------------------------------------------------------------
+# Selftest: forged external receipts are bounded (v11 AC-38)
+# --------------------------------------------------------------------------
+
+def _selftest_external() -> int:
+    """Seed FORGED complete external receipts (written by hand, every anchor
+    consistent, the strongest forgery the residuals allow: a swap between
+    check and exec, a shell environment no hook sees) and show, through
+    panel_pass_for and through the Reply_Panel_Gate itself, that a forged
+    PASS never meets a quorum without a harness PASS (AC-25) and never makes
+    panel_pass_for return a PASS (AC-26), and that a forged NEEDS-WORK only
+    revokes. Exit 0 when every case holds."""
+    import shutil
+    import subprocess
+    import sys
+    import tempfile
+    sys.path.insert(0, str(_HERE))
+    import panel_digest
+    import panel_fixture_seed as pfs
+
+    sourced = ("The fix is in and the suite passes.\n\n"
+               "Provenance: Basis: scripts/tests run log \u00b7 Engine: main loop")
+    selfish = ("The fix is in and the suite passes.\n\n"
+               "Provenance: Basis: own reasoning \u00b7 Engine: main loop")
+    t = lambda m: f"2026-10-14T10:0{m}:00.000Z"
+    # (name, reply text, [(who, verdict, minute)], panel_pass_for wants, gate exit)
+    cases = [
+        ("forged-pass-alone-sourced", sourced, [("ext", "PASS", 4)], None, 2),
+        ("three-forged-passes-self", selfish,
+         [("ext", "PASS", 2), ("ext", "PASS", 3), ("ext", "PASS", 4)], None, 2),
+        ("forged-needs-work-revokes", sourced, [("h", "PASS", 2), ("ext", "NEEDS-WORK", 4)],
+         None, 2),
+        ("forged-needs-work-older-cannot-revoke", sourced,
+         [("ext", "NEEDS-WORK", 1), ("h", "PASS", 3)], "h", 0),
+        ("forged-pass-adds-one-vote-beside-harness", sourced,
+         [("h", "PASS", 2), ("ext", "PASS", 4)], "h", 0),
+        ("forged-passes-complete-self-quorum-beside-harness", selfish,
+         [("h", "PASS", 2), ("ext", "PASS", 3), ("ext", "PASS", 4)], "h", 0),
+        ("forged-pass-after-revoked-harness-pass-sourced", sourced,
+         [("h", "PASS", 2), ("h", "NEEDS-WORK", 3), ("ext", "PASS", 4)], None, 2),
+        ("three-forged-passes-after-revoked-harness-pass-self", selfish,
+         [("h", "PASS", 1), ("h", "NEEDS-WORK", 2), ("ext", "PASS", 3), ("ext", "PASS", 4),
+          ("ext", "PASS", 4)], None, 2),
+    ]
+    fails = []
+    old_home = os.environ.get("HOME")
+    for name, text, seeds, want_pass, want_exit in cases:
+        sb = Path(tempfile.mkdtemp(prefix="ledger-external-selftest-"))
+        session = f"fx-ledger-{name}"
+        try:
+            os.environ["HOME"] = str(sb)
+            msg = panel_digest.Message(text, [], ["operator"])
+            for i, (who, verdict, minute) in enumerate(seeds):
+                if who == "ext":
+                    pfs.seed_external_receipt(sb, session, msg, verdict, t(minute),
+                                              f"toolu_forged_{i}")
+                else:
+                    pfs.seed_receipt(sb, session, msg, verdict, t(minute), f"harness{i}")
+            now = _dt.datetime(2026, 10, 14, 10, 6, tzinfo=_dt.timezone.utc)
+            got = panel_pass_for(msg.digest, session, now)
+            if want_pass is None and got is not None:
+                fails.append(f"{name}: panel_pass_for returned {got.get('agent_id')}")
+            if want_pass == "h" and (got is None or got.get("external")):
+                fails.append(f"{name}: panel_pass_for did not return the harness PASS")
+            tp = sb / "stop-transcript.jsonl"
+            rows = [
+                {"type": "user", "message": {"role": "user", "content": "Is the fix in?"},
+                 "uuid": "00000000-0000-4000-8000-000000000001", "parentUuid": None,
+                 "sessionId": session, "timestamp": "2026-10-14T10:00:00.000Z",
+                 "origin": {"kind": "human"}},
+                {"type": "assistant", "message": {"role": "assistant",
+                                                  "content": [{"type": "text", "text": text}]},
+                 "uuid": "00000000-0000-4000-8000-000000000002",
+                 "parentUuid": "00000000-0000-4000-8000-000000000001",
+                 "sessionId": session, "timestamp": "2026-10-14T10:05:00.000Z"},
+            ]
+            tp.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+            env = {k: v for k, v in os.environ.items()
+                   if k not in ("OCTO_REPLY_PANEL", "OCTO_MERGE_APPROVE", "OCTO_QA_OK")}
+            env.update({"HOME": str(sb), "USERPROFILE": str(sb),
+                        "CLAUDE_SESSION_ID": SELFTEST_SESSION})
+            payload = {"session_id": session, "transcript_path": str(tp),
+                       "stop_hook_active": False, "last_assistant_message": text,
+                       "hook_event_name": "Stop"}
+            cp = subprocess.run([sys.executable, str(_HERE / "g__stop__reply-panel.py")],
+                                input=json.dumps(payload), capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", cwd=str(sb), env=env,
+                                timeout=60)
+            if cp.returncode != want_exit:
+                fails.append(f"{name}: reply gate exit {cp.returncode}, want {want_exit} "
+                             f"({(cp.stderr or '').strip()[:120]})")
+        finally:
+            if old_home is None:
+                os.environ.pop("HOME", None)
+            else:
+                os.environ["HOME"] = old_home
+            shutil.rmtree(sb, ignore_errors=True)
+    if fails:
+        print("selftest FAIL (receipt_ledger external, AC-38): " + "; ".join(fails),
+              file=sys.stderr)
+        return 1
+    print(f"selftest PASS: {len(cases)} forged-receipt cases bounded "
+          "(panel_pass_for and g__stop__reply-panel.py, AC-25, AC-26, AC-38)")
+    return 0
+
+
+if __name__ == "__main__":
+    import sys as _sys
+    if "--selftest-external" in _sys.argv:
+        _sys.exit(_selftest_external())
+    print("receipt_ledger.py is a library; --selftest-external runs the AC-38 selftest",
+          file=_sys.stderr)
+    _sys.exit(2)

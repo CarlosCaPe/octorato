@@ -1883,6 +1883,47 @@ rules:
     locator: scripts/g__stop__reply-panel.py --selftest registry/fixtures/FLOW.panel-before-reply
     expect: 0
   liveness_required: FIRES
+- id: FLOW.external-review-receipt
+  title: 'External review receipt: a review on another engine counts only through a pinned, hook-written receipt, adds to a quorum and never clears a send'
+  category: FLOW
+  source:
+    file: docs/architecture/v11-reply-panel.md
+    anchor: '## External reviewers'
+  strength: REFLEX
+  gateable: false
+  enforcement: n/a
+  firing_mode:
+  - hook
+  - cli
+  mechanism:
+  - kind: Reflex
+    canonical_name: r__pretool-bash__external-review.py
+    firing_event: PreToolUse
+    firing_matcher: Bash
+  - kind: Reflex
+    canonical_name: r__posttool-bash__external-review.py
+    firing_event: PostToolUse
+    firing_matcher: Bash
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: PreToolUse|Bash|r__pretool-bash__external-review.py
+    expect: present
+  - method: IN_HOOKS_JSON
+    locator: PostToolUse|Bash|r__posttool-bash__external-review.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/external_review.py --selftest registry/fixtures/FLOW.external-review-receipt
+    expect: 0
+  - method: EXIT_CODE
+    locator: scripts/receipt_ledger.py --selftest-external
+    expect: 0
+  - method: FILE_EXISTS
+    locator: registry/reviewers.yaml
+    expect: present
+  - method: ANCHOR_PRESENT
+    locator: '## External reviewers'
+    expect: present
+  liveness_required: FIRES
 - id: FLOW.sent-message-ledger
   title: 'Sent-message ledger: every message that left is recorded with its channel id, digest and panel receipt'
   category: FLOW

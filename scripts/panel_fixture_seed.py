@@ -105,6 +105,104 @@ def seed_reply_receipt(home: Path, session: str, text: str, verdict: str, ts: st
     return seed_receipt(home, session, msg, verdict, ts, agent_id, agent_type)
 
 
+EXTERNAL_INTERPRETER = "/opt/fx-node/bin/node"
+EXTERNAL_SCRIPTS = {"codex": "/opt/fx-node/lib/node_modules/@openai/codex/bin/codex.js",
+                    "gemini": "/opt/fx-node/lib/node_modules/@google/gemini-cli/bundle/gemini.js"}
+
+
+def seed_external_receipt(home: Path, session: str, msg, verdict: str, ts: str,
+                          tool_use_id: str, engine: str = "codex", model: str = "fx-review-model",
+                          cwd: str = "~/.claude", allowed: bool = True,
+                          project_dir: str = "") -> None:
+    """An External_Review_Receipt (v11 phase 4) for message `msg` (a
+    panel_digest.Message), written the way the Bash hook pair writes one: the
+    session transcript's harness Bash tool_use and its tool result (at `ts`),
+    the output copy ending on the panel block, the pending and complete ledger
+    rows, and a Reviewer_Registry pair for (engine, model), `allowed` or not.
+    The pinned paths are fixed fake paths: the ledger re-parses the command
+    against the paths the receipt recorded and never opens them."""
+    import external_review as er
+    prompt = "Review the panel block and end with PANEL-VERDICT and PANEL-SHA256."
+    model_arg = f" -m {model}" if model != "unknown" else ""
+    if engine == "codex":
+        command = f"{EXTERNAL_INTERPRETER} {EXTERNAL_SCRIPTS[engine]} exec{model_arg} '{prompt}'"
+    else:
+        command = f"{EXTERNAL_INTERPRETER} {EXTERNAL_SCRIPTS[engine]}{model_arg} -p '{prompt}'"
+    rel_tp = Path(".claude") / "projects" / "fx" / f"{session}.jsonl"
+    tp = home / rel_tp
+    tp.parent.mkdir(parents=True, exist_ok=True)
+    t = _dt.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    use_ts = (t - _dt.timedelta(seconds=20)).isoformat().replace("+00:00", "Z")
+    a_uuid, u_uuid = _uuid(tool_use_id + "a"), _uuid(tool_use_id + "u")
+    block = msg.panel_block().rsplit("\nPANEL-SHA256:", 1)[0]
+    output = f"Reviewed the message.\n{block}\nPANEL-VERDICT: {verdict}\nPANEL-SHA256: {msg.digest}\n"
+    entries = [
+        {"type": "assistant", "message": {"role": "assistant", "id": f"msg_{tool_use_id}",
+                                          "content": [{"type": "tool_use", "id": tool_use_id,
+                                                       "name": "Bash",
+                                                       "input": {"command": command}}]},
+         "uuid": a_uuid, "parentUuid": None, "sessionId": session, "timestamp": use_ts},
+        {"type": "user", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": tool_use_id, "content": output}]},
+         "uuid": u_uuid, "parentUuid": a_uuid, "sessionId": session, "timestamp": ts,
+         "toolUseResult": {"stdout": output, "stderr": "", "interrupted": False}},
+    ]
+    with tp.open("a", encoding="utf-8") as fh:
+        for e in entries:
+            fh.write(json.dumps(e, ensure_ascii=False) + "\n")
+    rdir = home / ".claude" / ".cache" / "receipts"
+    (rdir / "external").mkdir(parents=True, exist_ok=True)
+    raw = output.encode("utf-8")
+    (rdir / "external" / f"{tool_use_id}.out").write_bytes(raw)
+    base = {"kind": "external", "engine": engine, "interpreter": EXTERNAL_INTERPRETER,
+            "script": EXTERNAL_SCRIPTS[engine], "requested_model": model,
+            "prompt_sha256": er.prompt_digest(prompt), "tool_use_id": tool_use_id,
+            "session_id": session, "transcript_path": "~/" + rel_tp.as_posix(), "cwd": cwd,
+            "project_dir": project_dir}
+    rows = [dict(base, state="pending", pre_problems=[], ts=use_ts),
+            dict(base, state="complete", exit_code=0, output_sha256=er.sha256_bytes(raw),
+                 output_path=f"~/.claude/.cache/receipts/external/{tool_use_id}.out",
+                 panel_verdict=verdict, panel_digest=msg.digest, qa_verdict="", ts=ts)]
+    with (rdir / "global.jsonl").open("a", encoding="utf-8") as fh:
+        for r in rows:
+            fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+    seed_reviewer_pair(home, engine, model, "allowed" if allowed else "not-allowed")
+
+
+def seed_reviewer_pair(home: Path, engine: str, model: str, status: str) -> None:
+    """Add (engine, model, status) to the Reviewer_Registry of a fixture home,
+    written as JSON, which is YAML."""
+    path = home / ".claude" / "registry" / "reviewers.yaml"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {"schema": 1, "reviewers": {}, "pairs": []}
+    pairs = [p for p in data["pairs"] if (p.get("engine"), p.get("model")) != (engine, model)]
+    pairs.append({"engine": engine, "model": model, "status": status,
+                  "replay_record": None, "baseline_model": None})
+    data["pairs"] = pairs
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
+def seed_arm(home: Path, name: str, policy: str) -> str:
+    """Register arm `name` at ~/arms/<name> with telemetry.export `policy`;
+    return its `~` path for a receipt's cwd."""
+    cfg = home / ".claude" / "company" / "config" / "arms-paths.json"
+    try:
+        arms = json.loads(cfg.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        arms = {}
+    arms[name] = f"arms/{name}"
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text(json.dumps(arms) + "\n", encoding="utf-8")
+    root = home / "arms" / name
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "arm.json").write_text(json.dumps({"telemetry": {"export": policy}}) + "\n",
+                                   encoding="utf-8")
+    return f"~/arms/{name}"
+
+
 def _with_home(home: Path, fn):
     """Run fn with HOME pointed at the fixture home, so `~` attachments resolve
     exactly as they will inside the selftest sandbox."""
@@ -124,10 +222,11 @@ def reset_dir(fdir: Path) -> None:
     import shutil
     home = fdir / "home"
     shutil.rmtree(home / ".claude" / "projects" / "fx", ignore_errors=True)
+    shutil.rmtree(home / ".claude" / ".cache" / "receipts" / "external", ignore_errors=True)
     ledger = home / ".claude" / ".cache" / "receipts" / "global.jsonl"
     if ledger.exists():
         keep = [ln for ln in ledger.read_text(encoding="utf-8").splitlines()
-                if ln.strip() and json.loads(ln).get("kind") != "panel"]
+                if ln.strip() and json.loads(ln).get("kind") not in ("panel", "external")]
         ledger.write_text("".join(ln + "\n" for ln in keep), encoding="utf-8")
 
 
