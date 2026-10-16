@@ -1,0 +1,117 @@
+{
+  "measures": "AC-14: wall time each hook event's list gains from the Tracing_Wrapper",
+  "upstream": {
+    "name": "langsmith-tracing",
+    "version": "0.0.0-stub"
+  },
+  "endpoint": {
+    "closed_local_port": "measured: LANGSMITH_ENDPOINT on a closed 127.0.0.1 port, TRACE_TO_LANGSMITH on",
+    "nonroutable_address": "not measured: it sends packets off this machine, and this mode reaches nothing beyond localhost"
+  },
+  "method": "per event, N interleaved runs of three variants; wall time of the whole list through /bin/sh -c; nearest-rank p95",
+  "bound_ms": {
+    "median": 50.0,
+    "p95": 200.0
+  },
+  "events": {
+    "PostToolUse": {
+      "commands": 1,
+      "runs": 100,
+      "without": {
+        "median_ms": 127.04,
+        "p95_ms": 177.08
+      },
+      "with_allow": {
+        "median_ms": 187.7,
+        "p95_ms": 259.41
+      },
+      "with_deny": {
+        "median_ms": 46.84,
+        "p95_ms": 73.14
+      },
+      "added_median_ms": 60.66,
+      "added_p95_ms": 82.33,
+      "within_bound": false
+    },
+    "PreCompact": {
+      "commands": 1,
+      "runs": 100,
+      "without": {
+        "median_ms": 141.82,
+        "p95_ms": 215.07
+      },
+      "with_allow": {
+        "median_ms": 219.44,
+        "p95_ms": 299.23
+      },
+      "with_deny": {
+        "median_ms": 55.51,
+        "p95_ms": 77.81
+      },
+      "added_median_ms": 77.62,
+      "added_p95_ms": 84.16,
+      "within_bound": false
+    },
+    "Stop": {
+      "commands": 1,
+      "runs": 100,
+      "without": {
+        "median_ms": 147.36,
+        "p95_ms": 186.84
+      },
+      "with_allow": {
+        "median_ms": 213.6,
+        "p95_ms": 281.71
+      },
+      "with_deny": {
+        "median_ms": 59.41,
+        "p95_ms": 76.19
+      },
+      "added_median_ms": 66.24,
+      "added_p95_ms": 94.87,
+      "within_bound": false
+    },
+    "SubagentStop": {
+      "commands": 1,
+      "runs": 100,
+      "without": {
+        "median_ms": 166.28,
+        "p95_ms": 206.11
+      },
+      "with_allow": {
+        "median_ms": 233.62,
+        "p95_ms": 304.13
+      },
+      "with_deny": {
+        "median_ms": 61.92,
+        "p95_ms": 87.07
+      },
+      "added_median_ms": 67.34,
+      "added_p95_ms": 98.02,
+      "within_bound": false
+    },
+    "UserPromptSubmit": {
+      "commands": 1,
+      "runs": 100,
+      "without": {
+        "median_ms": 153.11,
+        "p95_ms": 246.98
+      },
+      "with_allow": {
+        "median_ms": 216.04,
+        "p95_ms": 374.66
+      },
+      "with_deny": {
+        "median_ms": 59.33,
+        "p95_ms": 87.45
+      },
+      "added_median_ms": 62.93,
+      "added_p95_ms": 127.68,
+      "within_bound": false
+    }
+  },
+  "wrapped_runs_not_finished": 0,
+  "within_bound": false,
+  "python": "3.12.3",
+  "platform": "linux"
+}

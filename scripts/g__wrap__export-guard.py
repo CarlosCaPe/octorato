@@ -8,6 +8,7 @@ command after `--`:
   python3 ~/.claude/scripts/g__wrap__export-guard.py -- <upstream hook argv...>
   python3 g__wrap__export-guard.py --explain        # decide only, reason on stderr
   python3 g__wrap__export-guard.py --selftest [fixture_dir]
+  python3 g__wrap__export-guard.py --bench <wrapper dir> [--events N] [--out FILE]
 
 The guard reads the hook payload on stdin, finds the session's arm, reads that
 arm's Export_Policy (`telemetry.export` in its `arm.json`) and starts the
@@ -87,8 +88,14 @@ NAMED RESIDUALS, deliberately not covered here:
   - A session that starts in an allow arm and reads a deny arm's files by
     absolute path (cwd never moves) is traced as the allow arm it runs in. The
     guard decides by where the session is, not by what it reads.
-  - Latency and timeouts of the upstream are T17's measurement, not bounded
-    here; the harness hook timeout is the only cap today.
+  - Latency: `--bench` (T17, AC-14) measures what the guard adds to each hook
+    event's list. Recorded in the spec directory
+    (bench-tracing-wrapper.json) against the STUB upstream on a closed local
+    port: an allow arm pays the interpreter start, the json import and one
+    spawn, measured above the 50 ms median bound on that host, while a deny arm
+    (every arm's default) is faster than the bare upstream because nothing is
+    started. The upstream's own timeout is not bounded here; the harness hook
+    timeout is the only cap.
 """
 from __future__ import annotations
 
@@ -331,6 +338,8 @@ def guard(raw: bytes, upstream: list[str], *, home: str, project_dir: str | None
 def main(argv: list[str]) -> int:
     if argv and argv[0] == "--selftest":
         return _selftest(argv[1] if len(argv) > 1 else None)
+    if argv and argv[0] == "--bench":
+        return _bench(argv[1:])
     explain = bool(argv) and argv[0] == "--explain"
     upstream = argv[argv.index("--") + 1:] if "--" in argv else []
     try:
@@ -348,6 +357,179 @@ def main(argv: list[str]) -> int:
         return 0
     guard(raw, upstream, home=home, project_dir=project_dir)
     return 0
+
+
+# --- bench (T17, AC-14) ----------------------------------------------------------------
+
+BOUND_MEDIAN_MS = 50.0
+BOUND_P95_MS = 200.0
+
+
+def _quantile(values: list, q: float) -> float:
+    """Nearest-rank quantile: the smallest sample with at least q of the samples at
+    or below it. No interpolation, so p95 of 100 samples is the 95th sorted one."""
+    import math
+    s = sorted(values)
+    return s[max(0, math.ceil(q * len(s)) - 1)]
+
+
+def _bench(argv: list[str]) -> int:
+    """Measure what the Tracing_Wrapper adds to each hook event it registers (AC-14).
+
+      g__wrap__export-guard.py --bench <installed or built wrapper dir>
+                                [--events N] [--out FILE]
+
+    For EVERY event in the upstream's hook list (`hooks/upstream-hooks.json`, read
+    now, at measurement time), N consecutive runs of three variants of that event's
+    hook list, interleaved so drift lands on all three alike:
+      without     the upstream commands as the upstream registers them
+      with-allow  the wrapper's commands, session in an arm that allows export, so
+                  the guard decides AND starts the upstream: the worst case
+      with-deny   the wrapper's commands, session in a deny arm: the guard decides
+                  and starts nothing (every arm's default)
+    Each run is the wall time of the whole list, commands run one after the other
+    through `/bin/sh -c` as the harness runs them, with the event's payload on stdin.
+
+    Unreachable endpoint: LANGSMITH_ENDPOINT points at a CLOSED port on 127.0.0.1
+    (bound, read, released: nothing listens), and TRACE_TO_LANGSMITH is on. The
+    non-routable-address case of AC-14 is NOT run: it sends packets off this
+    machine, and this mode reaches nothing beyond localhost. The record says so.
+
+    Verdict, per event: added median = median(with-allow) - median(without) and
+    added p95 = p95(with-allow) - p95(without), against 50 ms and 200 ms; and the
+    turn finishes: every wrapped run exits 0 with nothing on stdout, whatever the
+    upstream did. Exit 0 when every event is within both bounds and every run
+    finished, else 1. The record carries the upstream's name and version from its
+    own manifest and no path under HOME.
+    """
+    import argparse
+    import shutil
+    import socket
+    import statistics
+    import tempfile
+    import time
+
+    ap = argparse.ArgumentParser(prog="g__wrap__export-guard.py --bench")
+    ap.add_argument("plugin_dir", help="a Tracing_Wrapper package directory")
+    ap.add_argument("--events", type=int, default=100,
+                    help="consecutive runs per event and variant (default 100)")
+    ap.add_argument("--out", help="also write the JSON record here")
+    args = ap.parse_args(argv)
+    if args.events < 1:
+        ap.error("--events must be at least 1")
+    plugin = os.path.realpath(args.plugin_dir)
+
+    def load(rel: str):
+        with open(os.path.join(plugin, *rel.split("/")), encoding="utf-8") as fh:
+            return json.load(fh)
+
+    try:
+        wrapped = load("hooks/hooks.json")["hooks"]
+        upstream = load("hooks/upstream-hooks.json")["hooks"]
+        up_manifest = load(".claude-plugin/upstream-plugin.json")
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        print(f"bench: not a Tracing_Wrapper package: {exc}", file=sys.stderr)
+        return 2
+    if set(wrapped) != set(upstream):
+        print(f"bench: the wrapper registers {sorted(wrapped)} but the upstream lists "
+              f"{sorted(upstream)}", file=sys.stderr)
+        return 2
+
+    def commands(lists, event):
+        return [h["command"] for entry in lists[event] for h in entry["hooks"]]
+
+    sandbox = os.path.realpath(tempfile.mkdtemp(prefix="export-guard-bench-"))
+    try:
+        scripts = os.path.join(sandbox, ".claude", "scripts")
+        os.makedirs(scripts)
+        shutil.copy2(os.path.abspath(__file__),
+                     os.path.join(scripts, "g__wrap__export-guard.py"))
+        os.makedirs(os.path.join(sandbox, ".claude", "company", "config"))
+        arms = {}
+        for name, policy in (("open", "allow"), ("closed", "deny")):
+            root = os.path.join(sandbox, "arms", name)
+            os.makedirs(root)
+            with open(os.path.join(root, "arm.json"), "w", encoding="utf-8") as fh:
+                json.dump({"kind": "arm", "name": name,
+                           "telemetry": {"export": policy}}, fh)
+            arms[name] = root
+        with open(os.path.join(sandbox, ".claude", ARMS_REL), "w", encoding="utf-8") as fh:
+            json.dump({"open": "arms/open", "closed": "arms/closed"}, fh)
+
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+        probe.close()
+
+        env = {k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"}
+        env.update(HOME=sandbox, USERPROFILE=sandbox, CLAUDE_PLUGIN_ROOT=plugin,
+                   LANGSMITH_ENDPOINT=f"http://127.0.0.1:{port}",
+                   TRACE_TO_LANGSMITH="true")
+
+        def run_list(cmds, payload):
+            ok = True
+            t0 = time.perf_counter()
+            for c in cmds:
+                cp = subprocess.run(c, shell=True, input=payload, env=env,
+                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                    timeout=120)
+                ok = ok and cp.returncode == 0 and cp.stdout == b""
+            return (time.perf_counter() - t0) * 1000.0, ok
+
+        events, unfinished, all_within = {}, 0, True
+        for event in sorted(upstream):
+            u_cmds, w_cmds = commands(upstream, event), commands(wrapped, event)
+
+            def payload(arm):
+                return json.dumps({"hook_event_name": event, "session_id": "bench",
+                                   "cwd": arms[arm], "transcript_path": ""}).encode("utf-8")
+
+            variants = {"without": (u_cmds, payload("open")),
+                        "with_allow": (w_cmds, payload("open")),
+                        "with_deny": (w_cmds, payload("closed"))}
+            times = {k: [] for k in variants}
+            order = list(variants)
+            for i in range(args.events):
+                for k in order[i % 3:] + order[:i % 3]:
+                    ms, ok = run_list(*variants[k])
+                    times[k].append(ms)
+                    if k != "without" and not ok:
+                        unfinished += 1
+            stats = {k: {"median_ms": round(statistics.median(v), 2),
+                         "p95_ms": round(_quantile(v, 0.95), 2)} for k, v in times.items()}
+            added_med = round(stats["with_allow"]["median_ms"] - stats["without"]["median_ms"], 2)
+            added_p95 = round(stats["with_allow"]["p95_ms"] - stats["without"]["p95_ms"], 2)
+            within = added_med <= BOUND_MEDIAN_MS and added_p95 <= BOUND_P95_MS
+            all_within = all_within and within
+            events[event] = {"commands": len(u_cmds), "runs": args.events, **stats,
+                             "added_median_ms": added_med, "added_p95_ms": added_p95,
+                             "within_bound": within}
+        record = {
+            "measures": "AC-14: wall time each hook event's list gains from the Tracing_Wrapper",
+            "upstream": {"name": up_manifest.get("name"),
+                         "version": up_manifest.get("version")},
+            "endpoint": {"closed_local_port": "measured: LANGSMITH_ENDPOINT on a closed "
+                                              "127.0.0.1 port, TRACE_TO_LANGSMITH on",
+                         "nonroutable_address": "not measured: it sends packets off this "
+                                                "machine, and this mode reaches nothing "
+                                                "beyond localhost"},
+            "method": "per event, N interleaved runs of three variants; wall time of the "
+                      "whole list through /bin/sh -c; nearest-rank p95",
+            "bound_ms": {"median": BOUND_MEDIAN_MS, "p95": BOUND_P95_MS},
+            "events": events,
+            "wrapped_runs_not_finished": unfinished,
+            "within_bound": all_within and unfinished == 0,
+            "python": sys.version.split()[0],
+            "platform": sys.platform,
+        }
+    finally:
+        shutil.rmtree(sandbox, ignore_errors=True)
+    text = json.dumps(record, indent=2) + "\n"
+    sys.stdout.write(text)
+    if args.out:
+        with open(args.out, "w", encoding="utf-8") as fh:
+            fh.write(text)
+    return 0 if record["within_bound"] else 1
 
 
 # --- selftest -------------------------------------------------------------------------
