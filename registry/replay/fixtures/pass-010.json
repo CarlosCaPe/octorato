@@ -1,0 +1,11 @@
+{
+  "id": "pass-010",
+  "expected": "PASS",
+  "reply": "POST /v2/refunds is idempotent only when the Idempotency-Key header is sent.\nWithout the header a retry can create a duplicate refund.",
+  "excerpts": [
+    {
+      "source": "api/openapi-excerpt.yaml",
+      "text": "POST /v2/refunds: idempotent when the Idempotency-Key header is sent. Without it, a retry may create a duplicate refund."
+    }
+  ]
+}

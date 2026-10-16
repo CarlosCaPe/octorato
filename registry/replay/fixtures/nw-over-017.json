@@ -1,0 +1,13 @@
+{
+  "id": "nw-over-017",
+  "expected": "NEEDS-WORK",
+  "defect_class": "overstatement",
+  "defect_line": "The plan only changes tags, so it is cosmetic and carries no risk.",
+  "reply": "The plan only changes tags, so it is cosmetic and carries no risk.\nNothing is added or destroyed.",
+  "excerpts": [
+    {
+      "source": "infra/terraform-plan.txt",
+      "text": "Plan: 0 to add, 2 to change, 0 to destroy. Changed: security group ingress rule, instance tags."
+    }
+  ]
+}

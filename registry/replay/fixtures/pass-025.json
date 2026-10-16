@@ -1,0 +1,11 @@
+{
+  "id": "pass-025",
+  "expected": "PASS",
+  "reply": "The scan found 1 high and 4 medium findings.\nThe high one is in the xml parser, fixed in 2.4.1; we run 2.3.9.",
+  "excerpts": [
+    {
+      "source": "security/scan-result.txt",
+      "text": "Dependency scan: 1 high (CVE in xml parser, fixed in 2.4.1), 4 medium. Current version 2.3.9."
+    }
+  ]
+}

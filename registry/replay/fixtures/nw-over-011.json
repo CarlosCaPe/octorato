@@ -1,0 +1,13 @@
+{
+  "id": "nw-over-011",
+  "expected": "NEEDS-WORK",
+  "defect_class": "overstatement",
+  "defect_line": "Reviewer A approved, CI passes and coverage went up, so the PR is ready to merge.",
+  "reply": "Reviewer A approved, CI passes and coverage went up, so the PR is ready to merge.",
+  "excerpts": [
+    {
+      "source": "pr/review-thread.txt",
+      "text": "Reviewer A: approve. CI: passing. Coverage: 71% (unchanged)."
+    }
+  ]
+}

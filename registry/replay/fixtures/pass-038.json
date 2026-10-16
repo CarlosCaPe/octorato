@@ -1,0 +1,11 @@
+{
+  "id": "pass-038",
+  "expected": "PASS",
+  "reply": "The 41 ms figure is from staging only.\nProduction has 4x the rows and a different autovacuum setting.",
+  "excerpts": [
+    {
+      "source": "perf/query-plan.txt",
+      "text": "Measured on staging only. Production has 4x the rows and a different autovacuum setting."
+    }
+  ]
+}

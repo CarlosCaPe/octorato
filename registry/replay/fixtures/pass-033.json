@@ -1,0 +1,11 @@
+{
+  "id": "pass-033",
+  "expected": "PASS",
+  "reply": "The plan adds 3 resources, changes 1 and destroys none.",
+  "excerpts": [
+    {
+      "source": "infra/terraform-plan.txt",
+      "text": "Plan: 3 to add, 1 to change, 0 to destroy."
+    }
+  ]
+}

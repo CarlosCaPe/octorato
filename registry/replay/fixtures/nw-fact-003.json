@@ -1,0 +1,13 @@
+{
+  "id": "nw-fact-003",
+  "expected": "NEEDS-WORK",
+  "defect_class": "wrong-fact",
+  "defect_line": "Version 4.2.0 shipped on 2026-04-03.",
+  "reply": "Version 4.2.0 shipped on 2026-04-03.\nIt added --dry-run to export and fixed exporting empty tables.",
+  "excerpts": [
+    {
+      "source": "CHANGELOG.md",
+      "text": "## 4.2.0 - 2026-03-04\n- Added: --dry-run flag to the export command.\n- Fixed: export of empty tables."
+    }
+  ]
+}

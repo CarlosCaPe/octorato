@@ -1,0 +1,13 @@
+{
+  "id": "nw-over-008",
+  "expected": "NEEDS-WORK",
+  "defect_class": "overstatement",
+  "defect_line": "The 3 old keys were rotated, so no service account key is older than a year now.",
+  "reply": "9 service accounts were reviewed.\nThe 3 old keys were rotated, so no service account key is older than a year now.",
+  "excerpts": [
+    {
+      "source": "audit/access-review.csv",
+      "text": "Service accounts reviewed: 9. Keys older than 365 days: 3, rotation scheduled."
+    }
+  ]
+}

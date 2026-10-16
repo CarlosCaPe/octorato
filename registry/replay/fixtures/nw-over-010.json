@@ -1,0 +1,13 @@
+{
+  "id": "nw-over-010",
+  "expected": "NEEDS-WORK",
+  "defect_class": "overstatement",
+  "defect_line": "Q2 stayed comfortably inside its error budget.",
+  "reply": "Q2 stayed comfortably inside its error budget.",
+  "excerpts": [
+    {
+      "source": "monitoring/uptime-q2.txt",
+      "text": "Q2 error budget: 21.6 min allowed, 45 min consumed."
+    }
+  ]
+}

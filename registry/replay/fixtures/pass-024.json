@@ -1,0 +1,11 @@
+{
+  "id": "pass-024",
+  "expected": "PASS",
+  "reply": "The committed-use discount applies to compute; egress is billed at list price.",
+  "excerpts": [
+    {
+      "source": "billing/usage-sept.txt",
+      "text": "Committed-use discount applied to compute only. Egress billed at list price."
+    }
+  ]
+}

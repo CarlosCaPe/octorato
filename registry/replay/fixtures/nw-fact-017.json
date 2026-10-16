@@ -1,0 +1,13 @@
+{
+  "id": "nw-fact-017",
+  "expected": "NEEDS-WORK",
+  "defect_class": "wrong-fact",
+  "defect_line": "The plan adds 3 resources, changes 1 and destroys 1.",
+  "reply": "The plan adds 3 resources, changes 1 and destroys 1.",
+  "excerpts": [
+    {
+      "source": "infra/terraform-plan.txt",
+      "text": "Plan: 3 to add, 1 to change, 0 to destroy."
+    }
+  ]
+}
