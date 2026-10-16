@@ -1,0 +1,15 @@
+{
+  "session_id": "fx-rp-benign-ac24-spin-reused-seats-second-round",
+  "hook_event_name": "Stop",
+  "cwd": "/home/user",
+  "stop_hook_active": false,
+  "last_assistant_message": "Esperando la segunda ronda de los revisores.",
+  "transcript_path": "benign_ac24_spin_reused_seats_second_round_transcript.jsonl",
+  "_fixture": {
+    "spent": [
+      "toolu_r1",
+      "toolu_r2",
+      "toolu_r3"
+    ]
+  }
+}

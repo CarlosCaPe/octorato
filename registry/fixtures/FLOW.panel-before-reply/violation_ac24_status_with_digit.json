@@ -1,0 +1,13 @@
+{
+  "session_id": "fx-rp-violation-ac24-status-with-digit",
+  "hook_event_name": "Stop",
+  "cwd": "/home/user",
+  "stop_hook_active": false,
+  "last_assistant_message": "Waiting on 2 reviewers for the reply.",
+  "transcript_path": "violation_ac24_status_with_digit_transcript.jsonl",
+  "_fixture": {
+    "stderr_lacks": [
+      "cannot decide"
+    ]
+  }
+}

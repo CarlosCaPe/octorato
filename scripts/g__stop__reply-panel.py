@@ -24,24 +24,32 @@ THE DECISION (FR-03, checked in this order; the first that holds exits 0)
      empty: the gate cannot decide and exits 2.
   3. The operator's own prompt for this turn carries the word `panel-skip`
      (never printed by this gate, so its own feedback cannot read as a waiver).
-  4. A Pending_Panel exists and the reply is at most 30 words: an `Agent` call
-     in this turn, after the operator prompt, whose subagent_type is a panel
-     reviewer, whose prompt carries a `PANEL-TO: operator` block that
-     panel_digest.recompute_from_report accepts, and which has not completed
-     (no task notification naming its tool use id, no tool_result for it whose
-     toolUseResult.isAsync is not true). Each one exempts ONE stop chain: its
-     id is recorded in ~/.claude/.cache/receipts/reply-pending.jsonl, and a
-     recorded id still exempts while stop_hook_active is true.
+  4. A status line: the reply is at most 30 words, a subagent launched or
+     messaged AFTER the operator prompt is still running, and fewer than
+     STATUS_STOPS_MAX (3) status stops were already exempted for this
+     prompt. Running (pending_agents): an Agent or Task call acknowledged as
+     a background launch, or an agent resumed by SendMessage, with no
+     hand-back, task notification, TaskStop or kernel `exit` line since,
+     launched or messaged within PENDING_MAX_MINUTES (30). Those two are the
+     boundary. The claim-word check (status_claim: an outcome word such as
+     passed / merged / arreglé / erledigt, or a digit outside a provenance
+     line) is an extra speed bump, not a boundary. Each exempted stop is
+     appended to ~/.claude/.cache/receipts/reply-pending.jsonl with the
+     prompt uuid; a ledger that cannot be read or written is an error.
   5. For digest(reply, recipients=["operator"]) in this session, the deciding
      receipt (receipt_ledger.panel_receipts_for, first entry) is a PASS whose
      verdict_ts is strictly newer than the operator prompt, and PASS receipts
      newer than the prompt come from at least QUORUM distinct reviewer agent
-     ids: 3 for a SELF reply, 1 for a SOURCED one (FR-06). A reply is SOURCED
+     ids: 3 for a SELF reply, 1 for a SOURCED or INPUT one (FR-06). An INPUT
+     reply only asks the operator for a fact (input_needed). A reply is SOURCED
      only when it has a Provenance / Procedencia / Herkunft line and EVERY
-     such line has a Basis that names something: not empty and not only
-     none / nothing / n/a / na / a run of dashes (any case, trailing
-     punctuation ignored), and containing neither `self` (any case, as a
-     substring) nor own reasoning (EN, ES, DE with or without the umlaut).
+     such line has a Basis that names something: `Basis` (any case) then a
+     colon or whitespace, not empty and not only none / nothing / n/a / na /
+     a run of dashes (any case, trailing punctuation ignored), with no
+     standalone `self` or own reasoning word (EN, ES, DE with or without the
+     umlaut) and no item that is only a self source (`myself`,
+     `self-evident`). `self` inside a longer token (`selftest.py`,
+     `self-review of <path>`) is not a self source.
 Otherwise exit 2, stderr naming the source class, the quorum, the digest, the
 panel-request command and the
 accepted reviewer types. stop_hook_active changes nothing: no block-once.
@@ -222,7 +230,7 @@ def turn_after(ctx, transcript: str, prompt_uuid: str) -> tuple:
 
 
 # ---------------------------------------------------------------------------
-# Pending_Panel
+# Pending subagents and the status line
 # ---------------------------------------------------------------------------
 
 def _blocks(entry: dict) -> list:
@@ -230,70 +238,185 @@ def _blocks(entry: dict) -> list:
     return [b for b in c if isinstance(b, dict)] if isinstance(c, list) else []
 
 
-def _valid_panel_call(ctx, block: dict) -> bool:
-    if block.get("type") != "tool_use" or block.get("name") not in _AGENT_TOOLS:
-        return False
-    tin = block.get("input")
-    if not isinstance(tin, dict):
-        return False
-    stype, prompt = tin.get("subagent_type"), tin.get("prompt")
-    if not isinstance(stype, str) or not ctx.rl.PANEL_AGENT_TYPE.search(stype):
-        return False
-    if not isinstance(prompt, str):
-        return False
-    rec = ctx.pd.recompute_from_report(prompt)
-    return bool(rec) and rec.get("recipients") == ["operator"]
+# Lines worth parsing for the pending scan: async acks, SendMessage calls and
+# results, hand-backs, task notifications, TaskStop, compact summaries.
+_PENDING_HINTS = (b"isAsync", b"Agent\"", b"Task\"", b"SendMessage", b"resumedAgentId", b"peer", b"tool-use-id",
+                  b"TaskStop", b"isCompactSummary")
+# A subagent with no stop record is counted as running for at most this long
+# after its launch or message: a killed or crashed agent leaves no hand-back.
+PENDING_MAX_MINUTES = 30
+# Status stops exempted per operator prompt; the next stop needs a reviewed
+# reply. Counted in reply-pending.jsonl by prompt uuid.
+STATUS_STOPS_MAX = 3
 
 
-def pending_panels(ctx, entries: list) -> list:
-    """Tool use ids of panel calls in the turn that have not completed, oldest first."""
-    calls, done = [], set()
-    for e in entries:
-        if e.get("type") == "assistant":
+def _exit_ts(agent: str):
+    """Time of the newest `exit` line in the kernel journal of `agent` (the
+    SubagentStop reflex writes it), or None when there is none or it cannot
+    be read. A missing record reads as still running, bounded by
+    PENDING_MAX_MINUTES and STATUS_STOPS_MAX."""
+    from datetime import datetime, timezone
+    try:
+        kp = _load_file("kernel_proc.py")
+        with open(kp.journal_path(agent), "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            fh.seek(max(0, size - 16384))
+            chunk = fh.read()
+    except Exception:
+        return None
+    for raw in reversed([c for c in chunk.split(b"\n") if c]):
+        try:
+            rec = json.loads(raw.decode("utf-8", "replace"))
+        except ValueError:
+            continue
+        if isinstance(rec, dict) and rec.get("kind") == "exit":
+            try:
+                return datetime.fromtimestamp(float(rec.get("ts")), timezone.utc)
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def _peer_from(entry: dict) -> str:
+    """The agent id of a hand-back entry (a user entry or a queued_command
+    attachment whose origin kind is peer), else ""."""
+    for o in (entry.get("origin"), (entry.get("attachment") or {}).get("origin")):
+        if isinstance(o, dict) and o.get("kind") == "peer" and o.get("from"):
+            return str(o["from"])
+    return ""
+
+
+def pending_agents(ctx, transcript: str, now, since=None) -> list:
+    """Subagents of this session still running, oldest launch first: an Agent
+    or Task call acknowledged as launched in the background (toolUseResult
+    isAsync true), or an agent resumed by SendMessage, with no hand-back (a
+    peer-origin entry from that agent), task notification naming the call or
+    TaskStop after its last launch and no kernel `exit` line since it
+    (_exit_ts), launched or messaged at most PENDING_MAX_MINUTES before `now`
+    and strictly after `since` (the operator prompt: an agent of an earlier
+    turn does not count unless messaged again in this one). Agents launched
+    before the newest compact summary are not counted. Any subagent counts:
+    a panel reviewer, a QA seat, a builder. OSError propagates."""
+    calls, sends, launched, done, tid2agent = {}, {}, {}, {}, {}
+    with open(transcript, "rb") as fh:
+        for raw in fh:
+            if not any(h in raw for h in _PENDING_HINTS):
+                continue
+            try:
+                e = json.loads(raw.decode("utf-8", errors="replace"))
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(e, dict) or e.get("isSidechain"):
+                continue
+            ts = ctx.send._ts(e.get("timestamp"))
+            if ts is None:
+                continue
+            if e.get("isCompactSummary"):
+                calls, sends, launched, done, tid2agent = {}, {}, {}, {}, {}
+                continue
+            who = _peer_from(e)
+            if who:
+                done[who] = ts
+                continue
+            if e.get("type") == "assistant":
+                for b in _blocks(e):
+                    if b.get("type") != "tool_use" or not b.get("id"):
+                        continue
+                    tin = b.get("input") if isinstance(b.get("input"), dict) else {}
+                    if b.get("name") in _AGENT_TOOLS:
+                        calls[str(b["id"])] = ts
+                    elif b.get("name") == "SendMessage" and tin.get("to"):
+                        sends[str(b["id"])] = str(tin["to"])
+                    elif b.get("name") == "TaskStop":
+                        for k in ("task_id", "agent_id", "id"):
+                            if tin.get(k):
+                                done[str(tin[k])] = ts
+                continue
+            if e.get("type") != "user":
+                continue
+            tur = e.get("toolUseResult") if isinstance(e.get("toolUseResult"), dict) else {}
             for b in _blocks(e):
-                if _valid_panel_call(ctx, b) and b.get("id"):
-                    calls.append(str(b["id"]))
+                if b.get("type") != "tool_result":
+                    continue
+                tid = str(b.get("tool_use_id") or "")
+                if tid in calls and tur.get("isAsync") is True:
+                    agent = str(tur.get("agentId") or tid)
+                    tid2agent[tid] = agent
+                    launched[agent] = ts
+                elif tid in sends and tur.get("success") is True:
+                    launched[sends[tid]] = ts
+            for tid in _TOOL_USE_ID.findall(ctx.send._entry_text(e)):
+                done[tid2agent.get(tid, tid)] = ts
+    from datetime import timedelta
+    floor = now - timedelta(minutes=PENDING_MAX_MINUTES)
+    out = []
+    for a, t in launched.items():
+        if t < floor or (since is not None and t <= since) or (a in done and done[a] >= t):
             continue
-        if e.get("type") != "user":
+        x = _exit_ts(a)
+        if x is not None and t <= x <= now:
             continue
-        results = [b for b in _blocks(e) if b.get("type") == "tool_result"]
-        if results:
-            tur = e.get("toolUseResult")
-            is_ack = isinstance(tur, dict) and tur.get("isAsync") is True
-            if not is_ack:
-                done.update(str(b.get("tool_use_id") or "") for b in results)
-            continue
-        done.update(_TOOL_USE_ID.findall(ctx.send._entry_text(e)))
-    return [i for i in calls if i not in done]
+        out.append((t, a))
+    return [a for _, a in sorted(out)]
+
+
+# A status line may not carry a result. Digits (outside provenance lines) and
+# outcome words in EN, ES and DE make it a claim, which needs the panel.
+_CLAIM_WORDS = re.compile(
+    r"(?<![\w-])(?:pass(?:ed|es)?|fail(?:ed|s)?|needs-work|merged?|deployed|released|shipped|"
+    r"published|sent|done|fixed|resolved|approved|completed?|finished|works|confirmed|verified|"
+    r"found|green|correct|clean|success(?:ful)?|ready|"
+    r"listos?|listas?|hech(?:o|a|as)|terminad[oa]s?|completad[oa]s?|mergead[oa]s?|fusionad[oa]s?|"
+    r"desplegad[oa]s?|publicad[oa]s?|liberad[oa]s?|enviad[oa]s?|mandé|mandad[oa]s?|"
+    r"arreglad[oa]s?|resuelt[oa]s?|aprobad[oa]s?|confirmad[oa]s?|verificad[oa]s?|funciona|"
+    r"pasó|pasaron|falló|fallaron|encontró|arreglé|corregí|envié|quedó|aprobó|"
+    r"fertig|erledigt|gemergt|veröffentlicht|veroeffentlicht|gesendet|behoben|bestanden|"
+    r"genehmigt|bestätigt|bestaetigt|gefunden|gelöst|geloest|korrekt)(?![\w-])", re.IGNORECASE)
+_DIGIT = re.compile(r"\d")
+
+
+def status_claim(text: str) -> str:
+    """The first claim marker in a status line, or "" when it carries none."""
+    m = _CLAIM_WORDS.search(text)
+    if m:
+        return m.group(0)
+    body = "\n".join(ln for ln in text.splitlines() if not _PROVENANCE.match(ln))
+    m = _DIGIT.search(body)
+    return m.group(0) if m else ""
 
 
 def _pending_path(ctx) -> Path:
     return ctx.rl.receipts_dir() / _PENDING_FILE
 
 
-def spent_ids(ctx) -> set:
+def status_stops(ctx, session_id: str, prompt_uuid: str) -> int:
+    """Status stops already exempted for this operator prompt. A ledger that
+    exists and cannot be read is an error."""
     p = _pending_path(ctx)
     if not p.exists():
-        return set()
+        return 0
     try:
         text = p.read_text(encoding="utf-8")
     except OSError as e:
         raise GateError(f"spent ledger unreadable: {p} ({type(e).__name__})")
-    out = set()
+    n = 0
     for ln in text.splitlines():
         try:
             r = json.loads(ln)
         except json.JSONDecodeError:
             continue
-        if isinstance(r, dict) and r.get("tool_use_id"):
-            out.add(str(r["tool_use_id"]))
-    return out
+        if isinstance(r, dict) and r.get("session_id") == session_id \
+                and r.get("prompt_uuid") == prompt_uuid:
+            n += 1
+    return n
 
 
-def spend(ctx, tool_use_id: str, session_id: str) -> None:
+def spend(ctx, tool_use_id: str, session_id: str, prompt_uuid: str = "") -> None:
     from datetime import datetime, timezone
     p = _pending_path(ctx)
     rec = {"kind": "reply-pending", "tool_use_id": tool_use_id, "session_id": session_id,
+           "prompt_uuid": prompt_uuid,
            "ts": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -353,16 +476,30 @@ def pass_reviewers(ctx, digest: str, session_id: str, prompt_ts: str, now) -> in
 # ---------------------------------------------------------------------------
 # Source_Class (FR-06)
 # ---------------------------------------------------------------------------
-QUORUM = {"SELF": 3, "SOURCED": 1}
+QUORUM = {"SELF": 3, "SOURCED": 1, "INPUT": 1}
 # A line that starts with the label; leading blanks, a quote marker and
-# markdown emphasis around the label are tolerated ("**Provenance:**").
-_PROVENANCE = re.compile(r"^[ \t>]*[*_]*(?:Provenance|Procedencia|Herkunft)[*_]*:(.*)$", re.MULTILINE)
-_BASIS = re.compile(r"(?:^|·|\|)\s*[*_]*Basis[*_]*\s*:\s*([^·|]*)", re.IGNORECASE)
-# A plain case-insensitive substring: `myself`, `self-evident` and a path such
-# as `selftest.py` are SELF too. Over-matching costs two more reviewers, never
-# a weaker check.
-_SELF_BASIS = re.compile(r"self|own reasoning|razonamiento propio|eigene Überlegung|eigene Ueberlegung",
-                         re.IGNORECASE)
+# markdown emphasis around the label are tolerated ("**Provenance:**"). The
+# label is followed by a colon or by a `·` field separator
+# ("Procedencia · Basis: ...").
+_PROVENANCE = re.compile(r"^[ \t>]*[*_]*(?:Provenance|Procedencia|Herkunft)[*_]*(?::|(?=[ \t]*·))(.*)$",
+                         re.MULTILINE)
+# The Basis field: the word Basis (any case) at the start of the line or of a
+# `·` / `|` field, then a colon or whitespace, then what it names. `Basis /path`
+# and `Basis: /path` are the same field; a bare `Basis` names nothing.
+_BASIS = re.compile(r"(?:^|·|\|)\s*[*_]*Basis[*_]*(?:\s*:|(?=\s)|$)\s*([^·|]*)", re.IGNORECASE)
+# A self source written as its own word: `self`, `SELF`, own reasoning (EN, ES,
+# DE). Bounded so that a longer token that merely contains it (`selftest.py`,
+# `self-review`, `myself`, `scripts/self_check`) does not match.
+_SELF_WORD = re.compile(
+    r"(?<![\w./\\-])(?:self|own reasoning|razonamiento propio|eigene Überlegung|eigene Ueberlegung)"
+    r"(?![\w./\\-])", re.IGNORECASE)
+# A Basis item that is nothing but a self source: `myself`, `self-evident`,
+# `my own reasoning`, `reasoning`. Compared whole, after trimming.
+_SELF_ITEM = re.compile(
+    r"(?:my\s+)?(?:own\s+)?(?:self|myself|self[- ]evident|reasoning|razonamiento(?: propio)?|"
+    r"eigene (?:Überlegung|Ueberlegung))", re.IGNORECASE)
+# Items of a Basis: separated by , ; + & or the word and / y / und.
+_ITEM_SPLIT = re.compile(r"\s*(?:[,;+&]|\band\b|\by\b|\bund\b)\s*", re.IGNORECASE)
 # A Basis that names nothing: compared after lower-casing and stripping blanks
 # and trailing punctuation. Any run of hyphens, en dashes or em dashes too.
 _NO_BASIS = {"none", "nothing", "n/a", "na"}
@@ -374,19 +511,125 @@ def _empty_basis(basis: str) -> bool:
     return not b or b in _NO_BASIS or bool(_DASHES.match(b))
 
 
+# A token that starts with `self` names a source only as a path or file name:
+# it contains a slash, or ends in a file extension. Backticked spans are paths.
+_BACKTICK = re.compile(r"`[^`]*`")
+_TOKEN_SPLIT = re.compile(r"[\s,;+&]+")
+_FILE_EXT = re.compile(r"\.[A-Za-z0-9]{1,6}(?::[\d,-]+)?$")
+
+
+def _self_token(basis: str) -> bool:
+    """True when a token outside backticks starts with `self` (any case) and
+    is not a path or file name: `self-review`, `self-assessment`, `SELF`."""
+    for tok in _TOKEN_SPLIT.split(_BACKTICK.sub(" ", basis)):
+        t = tok.strip("*_()[]\"'.:!?")
+        if not t.lower().startswith("self"):
+            continue
+        if "/" in t or "\\" in t or _FILE_EXT.search(tok.strip("*_()[]\"',;:!?")):
+            continue
+        return True
+    return False
+
+
+def _self_basis(basis: str) -> bool:
+    """True when the Basis names self or own reasoning as a source: a
+    standalone self word anywhere, a token that starts with `self` and is
+    not a path or file name (_self_token), or any item that is only a self
+    source. `myself` inside a longer item and `self` inside a path are not."""
+    if _SELF_WORD.search(basis) or _self_token(basis):
+        return True
+    for item in _ITEM_SPLIT.split(basis):
+        it = item.strip().strip("*_`()[]\"' ").rstrip(".,;:!? \t").strip()
+        if it and _SELF_ITEM.fullmatch(it):
+            return True
+    return False
+
+
 def _line_is_self(line: str) -> bool:
     m = _BASIS.search(line.strip().lstrip("*_ "))
     if not m:
         return True
     basis = m.group(1).strip().strip("*_ ")
-    return _empty_basis(basis) or bool(_SELF_BASIS.search(basis))
+    return _empty_basis(basis) or _self_basis(basis)
+
+
+# input-needed: a short reply that ends on ONE question for a fact only the
+# operator holds. The line names the unknown and ends with the question mark.
+INPUT_CAP = 60
+INPUT_CONTEXT_WORDS = 15
+_INPUT_LINE = re.compile(r"^[ \t]*[*_]*input-needed[*_]*[ \t]*:[ \t]*(?P<q>.*\S.*\?)[*_ \t]*$",
+                         re.IGNORECASE)
+_NO_MENU = "g__stop__no-menu-question.py"
+
+
+def _menu_or_consent(question: str) -> bool:
+    """True when the no-menu gate reads the question as a menu, a permission
+    or direction ask, or an irreducible operator step (consent, payment,
+    login, send-ok). An error loading it reads as True: the reply then keeps
+    its normal class, the stricter outcome."""
+    try:
+        nm = _load_file(_NO_MENU)
+        cfg = nm._load_config()
+        q = question.strip()
+        if not q.lstrip("¿").strip(" ?"):
+            return True
+        if nm.is_choice_question(q, cfg):
+            return True
+        return bool(nm._irreducible_object(nm._fold(nm._trim_tail(q)), cfg))
+    except Exception:
+        return True
+
+
+def input_needed(text: str) -> bool:
+    """True for a reply that only asks the operator for a fact. Outside the
+    footer (at most one provenance line, after the question) the reply is
+    exactly the `input-needed:` line, ending with the only `?` of the reply,
+    plus at most one context line before it of at most INPUT_CONTEXT_WORDS
+    words. Neither line carries a claim marker (status_claim), and the
+    question is neither a menu nor a consent ask (_menu_or_consent). The
+    marker check is a speed bump; the INPUT reply still has its reviewer."""
+    lines = (text or "").splitlines()
+    prov = [i for i, ln in enumerate(lines) if _PROVENANCE.match(ln)]
+    body = [(i, ln) for i, ln in enumerate(lines) if ln.strip() and i not in prov]
+    if not body or len(body) > 2 or len(prov) > 1:
+        return False
+    qi, qline = body[-1]
+    m = _INPUT_LINE.match(qline)
+    if not m or (prov and prov[0] < qi):
+        return False
+    if len(body) == 2 and len(body[0][1].split()) > INPUT_CONTEXT_WORDS:
+        return False
+    if sum(len(ln.split()) for _, ln in body) > INPUT_CAP:
+        return False
+    if sum(ln.count("?") for _, ln in body) != 1:
+        return False
+    if status_claim("\n".join(ln for _, ln in body)):
+        return False
+    return not _menu_or_consent(m.group("q"))
+
+
+def _explicit_self_basis(text: str) -> bool:
+    """True when a provenance line carries a Basis field that is empty or
+    names self (the stricter reading wins over INPUT)."""
+    for ln in _PROVENANCE.findall(text or ""):
+        m = _BASIS.search(ln.strip().lstrip("*_ "))
+        if m:
+            basis = m.group(1).strip().strip("*_ ")
+            if _empty_basis(basis) or _self_basis(basis):
+                return True
+    return False
 
 
 def source_class(text: str) -> str:
-    """SELF when the reply has no provenance line or when ANY provenance line
-    is SELF (no Basis field, a Basis that names nothing (see _empty_basis),
-    or a Basis containing self or own reasoning in EN, ES or DE). A later
-    SOURCED line, a code block included, never lifts an earlier SELF line."""
+    """INPUT for an input-needed reply (input_needed) whose footer, if any,
+    does not name self or an empty Basis; quorum 1 like SOURCED.
+    Otherwise SELF when the reply has no provenance line or when ANY
+    provenance line is SELF (no Basis field, a Basis that names nothing (see
+    _empty_basis), or a Basis that names self or own reasoning in EN, ES or
+    DE, see _self_basis). A later SOURCED line, a code block included, never
+    lifts an earlier SELF line."""
+    if input_needed(text) and not _explicit_self_basis(text):
+        return "INPUT"
     lines = _PROVENANCE.findall(text or "")
     if not lines or any(_line_is_self(ln) for ln in lines):
         return "SELF"
@@ -419,19 +662,17 @@ def decide(data: dict) -> tuple:
             raise GateError("no operator prompt found in the transcript")
         if _SKIP.search(prompt["text"]):
             return 0, ""
-        entries, newest = turn_after(ctx, transcript, prompt["uuid"])
+        _entries, newest = turn_after(ctx, transcript, prompt["uuid"])
     except OSError as e:
         raise GateError(f"transcript unreadable: {transcript} ({type(e).__name__})")
-    if len(msg.split()) <= STATUS_CAP:
-        pend = pending_panels(ctx, entries)
-        if pend:
-            spent = spent_ids(ctx)
-            if data.get("stop_hook_active") is True and any(i in spent for i in pend):
-                return 0, ""
-            fresh = [i for i in pend if i not in spent]
-            if fresh:
-                spend(ctx, fresh[-1], session_id)
-                return 0, ""
+    if len(msg.split()) <= STATUS_CAP and not status_claim(msg):
+        try:
+            pend = pending_agents(ctx, transcript, _now(ctx, newest), ctx.send._ts(prompt["ts"]))
+        except OSError as e:
+            raise GateError(f"transcript unreadable: {transcript} ({type(e).__name__})")
+        if pend and status_stops(ctx, session_id, prompt["uuid"]) < STATUS_STOPS_MAX:
+            spend(ctx, pend[-1], session_id, prompt["uuid"])
+            return 0, ""
     digest = ctx.pd.digest(msg, recipients=["operator"])
     cls = source_class(msg)
     need = QUORUM[cls]
@@ -443,14 +684,18 @@ def decide(data: dict) -> tuple:
         f"needs PASS receipts from {need} distinct reviewer(s) for its exact text, newer "
         f"than the operator's prompt, with a PASS deciding; it has {have} of {need}. "
         f"A reply is SOURCED only when every Provenance line has a Basis that names a "
-        f"source other than self or own reasoning. Digest: {digest}. "
-        f"Write the reply to a file, run `{_REQUEST_CMD}`, and hand that block to "
+        f"source other than self or own reasoning; an INPUT reply only asks, on a last "
+        f"line starting `input-needed:`, for a fact only the operator holds, and its "
+        f"reviewer confirms that fact is not available from context. Digest: {digest}. "
+        f"Write the reply to a file, run `{_REQUEST_CMD}` (it runs the other Stop gates on "
+        f"the draft first and prints no block when one would change the text), and hand that block to "
         f"{need} reviewer subagent(s) whose agent type matches "
         f"qa|review|reality|evidence|checker|verif|audit|panel (Reality Checker, Code "
         f"Reviewer, Evidence Collector; general-purpose, claude and fork do not count). "
         f"Each reviewer ends its report with the block, PANEL-VERDICT and PANEL-SHA256. "
-        f"Then emit exactly the reviewed text. While a reviewer runs, a status line of "
-        f"at most {STATUS_CAP} words may end the turn."
+        f"Then emit exactly the reviewed text. While a subagent runs, a status line of "
+        f"at most {STATUS_CAP} words with no result in it (no outcome word, no digit) may "
+        f"end the turn."
     )
 
 
@@ -533,8 +778,17 @@ def _seed_case(sandbox: Path, session: str, msg: str, fx: dict) -> None:
         rdir.mkdir(parents=True, exist_ok=True)
         with (rdir / _PENDING_FILE).open("a", encoding="utf-8") as fh:
             for tid in fx["spent"]:
-                fh.write(json.dumps({"kind": "reply-pending", "tool_use_id": tid,
-                                     "session_id": session}) + "\n")
+                rec = {"kind": "reply-pending", "session_id": session}
+                rec.update(tid if isinstance(tid, dict) else {"tool_use_id": tid})
+                fh.write(json.dumps(rec) + "\n")
+    for agent, when in (fx.get("kernel_exit") or {}).items():
+        # The SubagentStop reflex's `exit` line in the agent's kernel journal.
+        from datetime import datetime
+        jd = sandbox / ".claude" / ".cache" / "kernel" / "journal"
+        jd.mkdir(parents=True, exist_ok=True)
+        t = datetime.fromisoformat(when.replace("Z", "+00:00")).timestamp()
+        (jd / f"{agent}.jsonl").write_text(json.dumps(
+            {"seq": 1, "ts": t, "start_ts": t, "pid": agent, "kind": "exit"}) + "\n", encoding="utf-8")
     if fx.get("ledger") == "directory":
         (rdir / "global.jsonl").mkdir(parents=True, exist_ok=True)
     if fx.get("pending_ledger") == "directory":

@@ -104,6 +104,7 @@ _ALTERNATIVES = re.compile(r"\s(o|u|or)\s", re.IGNORECASE)
 _LIST_ITEM = re.compile(r"^\s*(\d{1,2}[.)]|[-*•]|[a-zA-Z][.)])\s+\S")
 _YN_SUFFIX = re.compile(r"[\(\[]\s*(y|yes|s|si|sí)\s*/\s*(n|no)\s*[\)\]]\s*$", re.IGNORECASE)
 _TAIL_PUNCT = "*_~)]}>»”\"'`.…"
+_INPUT_LABEL = re.compile(r"^[*_\s]*input-needed[*_]*\s*:\s*", re.IGNORECASE)
 
 # Built-in defaults, overridden key by key by the YAML when it is readable.
 # Kept here so a missing config never turns the gate off (a gate that depends
@@ -572,7 +573,9 @@ def is_choice_question(sentence: str, cfg: dict, prose: str = "", prev: str = ""
     ("Thoughts?", "How would you like to proceed?") is a menu only when `prev`,
     an earlier sentence of the final paragraph or a list right before offered
     alternatives."""
-    trimmed = _trim_tail(sentence.strip())
+    # The reply panel's `input-needed:` label marks a question for a fact; it
+    # never hides a menu, so the label is read past.
+    trimmed = _trim_tail(_INPUT_LABEL.sub("", sentence.strip(), count=1))
     body = _fold(_body(trimmed))
     offered = bool(prev) and _offers(prev, cfg) or bool(prose) and _offered_before(prose, sentence, cfg)
     if not trimmed.endswith("?"):

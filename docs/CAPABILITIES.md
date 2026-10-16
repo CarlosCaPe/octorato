@@ -9,7 +9,7 @@
 | Skills | 246 |
 | Agents | 167 |
 | Divisions | 13 |
-| Scripts: wired | 137 |
+| Scripts: wired | 138 |
 | Scripts: orphan | 7 |
 | Rules | 100 |
 | Hook entries | 58 |
@@ -499,7 +499,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (144)
+## Scripts (145)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -608,6 +608,7 @@
 | octorato-isomorphism.py | octorato-isomorphism , compute the invariant shared by the three Octorato anchors. | wired |
 | panel_digest.py | panel_digest.py: the digest a panel reviews and the outward-send gate checks. | wired |
 | panel_fixture_seed.py | panel_fixture_seed.py: seed panel receipts into an outward-send fixture home. | wired |
+| panel_preflight.py | panel_preflight.py: run the reply-text Stop gates on a draft BEFORE its panel. | wired |
 | proc_group.py | Kill a child's process group without ever killing our own. | wired |
 | publish-wiki.py | publish-wiki.py - publish docs/wiki/ to the public GitHub wiki. | wired |
 | qa-merge-gate.py | PreToolUse Bash hook , QA gate (FAIL-CLOSED for merge actions). | wired |
