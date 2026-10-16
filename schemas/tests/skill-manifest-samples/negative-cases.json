@@ -89,9 +89,9 @@
         "kind",
         "enum"
       ],
-      "why": "a kind outside skill|arm, which would route an install down a path that does not exist",
+      "why": "a kind outside skill|arm|plugin, which would route an install down a path that does not exist",
       "manifest": {
-        "kind": "plugin",
+        "kind": "extension",
         "name": "querymaster",
         "version": "1.4.0",
         "license": "MIT",
