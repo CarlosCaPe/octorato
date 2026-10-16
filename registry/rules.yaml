@@ -2119,6 +2119,36 @@ rules:
   - method: EXIT_CODE
     locator: grep -q '"g__shim__\*.py"' scripts/g__pretool__arming-surface.py
     expect: 0
+  # v11 spec 202610141000, T13 [AC-17], registered in T18: the Export_Guard
+  # joined the live set as `g__wrap__*.py`; its pair is in the same corpus.
+  - method: FILE_EXISTS
+    locator: registry/fixtures/ARCHITECTURE.arming-surface/violation_surface_export_guard.json
+    expect: present
+  - method: FILE_EXISTS
+    locator: registry/fixtures/ARCHITECTURE.arming-surface/benign_surface_export_guard.json
+    expect: present
+  - method: EXIT_CODE
+    locator: grep -q '"g__wrap__\*.py"' scripts/g__pretool__arming-surface.py
+    expect: 0
+  # v11 T15 [AC-17], registered in T18: the harness's plugins/ directory
+  # (registration files, installed trees, the signed Tracing_Wrapper). It is
+  # gitignored, so each benign twin writes the same relative path under the
+  # temporary HOME gate_selftest provides.
+  - method: FILE_EXISTS
+    locator: registry/fixtures/ARCHITECTURE.arming-surface/violation_surface_plugins_known_marketplaces.json
+    expect: present
+  - method: FILE_EXISTS
+    locator: registry/fixtures/ARCHITECTURE.arming-surface/benign_surface_plugins_known_marketplaces.json
+    expect: present
+  - method: FILE_EXISTS
+    locator: registry/fixtures/ARCHITECTURE.arming-surface/violation_surface_plugin_wrapper_tree.json
+    expect: present
+  - method: FILE_EXISTS
+    locator: registry/fixtures/ARCHITECTURE.arming-surface/benign_surface_plugin_wrapper_tree.json
+    expect: present
+  - method: EXIT_CODE
+    locator: grep -q '^    "plugins":$' scripts/g__pretool__arming-surface.py
+    expect: 0
   liveness_required: FIRES
 - id: FLOW.kernel-journal
   title: 'Kernel JOURNAL: no tool call runs unjournaled (append-only, hash-chained, per process)'
@@ -2761,5 +2791,187 @@ rules:
     expect: 0
   - method: ANCHOR_PRESENT
     locator: 'AC-07: THE Instruction_Sync SHALL read the Runtime_Registry and write `AGENTS.md`'
+    expect: present
+  liveness_required: PRESENT
+# v11 spec 202610141000 (opt-in tracing), T18 [AC-15]: phase 3 of the spec.
+# Same convention as T04 and T11: each rule anchors in the spec's own
+# acceptance criterion, so CLAUDE.md gains no prose. The arming-surface
+# additions (the guard, T13, and plugins/, T15) are proofs on
+# ARCHITECTURE.arming-surface above.
+- id: SECURITY.export-guard
+  title: 'Export_Guard: the upstream tracing hook starts only for an arm whose telemetry.export is allow'
+  category: SECURITY
+  source:
+    file: docs/specs/202610141000-v11-harness-independence-opt-in-tracing/feature.md
+    anchor: 'AC-10: IF the Arm_Resolution of the session finds no arm'
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  # Fires as every hook command of the Tracing_Wrapper plugin (kind plugin,
+  # SECURITY.tracing-wrapper-package), never from hooks.json, so firing_event is
+  # null. Closed means NO EXPORT: every read or parse error is a silent deny and
+  # the upstream process is never started. Liveness is its fixture selftest,
+  # which gate-liveness runs: 45 not spawned and 9 spawned.
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Gate
+    canonical_name: g__wrap__export-guard.py
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: scripts/g__wrap__export-guard.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/g__wrap__export-guard.py --selftest registry/fixtures/SECURITY.export-guard
+    expect: 0
+  - method: EXIT_CODE
+    locator: python3 -m unittest scripts/tests/test_export_guard.py
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: 'AC-10: IF the Arm_Resolution of the session finds no arm'
+    expect: present
+  - method: ANCHOR_PRESENT
+    locator: 'AC-11: WHERE the session''s arm has Export_Policy `allow`'
+    expect: present
+  liveness_required: FIRES
+- id: SECURITY.export-flip
+  title: 'Export_Flip_Gate: an agent write never sets an arm''s telemetry.export to allow'
+  category: SECURITY
+  source:
+    file: docs/specs/202610141000-v11-harness-independence-opt-in-tracing/feature.md
+    anchor: 'AC-16: IF a write would set an arm''s `telemetry.export` to `allow`'
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  # Structural for Write, Edit and MultiEdit (the file as it would be after the
+  # call, read with the guard's own strict reader); a speed bump for Bash, with
+  # its named residuals in the script header. Journals every refusal under this
+  # id (_KERNEL_RULE).
+  firing_mode:
+  - hook
+  mechanism:
+  - kind: Gate
+    canonical_name: g__pretool__export-flip.py
+    firing_event: PreToolUse
+    firing_matcher: Write|Edit|MultiEdit|NotebookEdit|Bash
+  proof:
+  - method: IN_HOOKS_JSON
+    locator: PreToolUse|Write|Edit|MultiEdit|NotebookEdit|Bash|g__pretool__export-flip.py
+    expect: present
+  - method: FILE_EXISTS
+    locator: scripts/g__pretool__export-flip.py
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/g__pretool__export-flip.py --selftest registry/fixtures/SECURITY.export-flip
+    expect: 0
+  - method: EXIT_CODE
+    locator: python3 -m unittest scripts/tests/test_export_flip.py
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: 'AC-16: IF a write would set an arm''s `telemetry.export` to `allow`'
+    expect: present
+  liveness_required: FIRES
+- id: SECURITY.tracing-wrapper-package
+  title: 'Tracing_Wrapper package: kind plugin, signed, every hook guarded, installed disabled, verified at push'
+  category: SECURITY
+  source:
+    file: docs/specs/202610141000-v11-harness-independence-opt-in-tracing/feature.md
+    anchor: 'AC-13: THE Package_Installer SHALL install the Tracing_Wrapper as kind `plugin`'
+  strength: GATE
+  gateable: true
+  enforcement: fail-closed
+  # `octo_pkg.py install --kind plugin` refuses a package whose hooks are not
+  # exactly the guarded upstream list, an unsigned one, and any install inside a
+  # session; `verify --all` (run by .githooks/pre-push) FAILs on a tree or harness
+  # copy that does not hash to its lock row and on the upstream installed outside
+  # the wrapper. Doctor check `tracing-plugins` reports the same ladder by name.
+  firing_mode:
+  - git-hook
+  - cli
+  - runner
+  mechanism:
+  - kind: Gate
+    canonical_name: octo_pkg.py
+    firing_event: PrePush
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: registry/fixtures/META.kernel-package/plugin-upstream/hooks/hooks.json
+    expect: present
+  - method: EXIT_CODE
+    locator: scripts/octo_pkg.py --selftest registry/fixtures/META.kernel-package
+    expect: 0
+  - method: EXIT_CODE
+    locator: python3 -m unittest scripts/tests/test_octo_pkg_plugin.py
+    expect: 0
+  - method: EXIT_CODE
+    locator: grep -q '("tracing-plugins", check_tracing_plugins)' scripts/brain_doctor.py
+    expect: 0
+  - method: EXIT_CODE
+    locator: python3 -m unittest scripts/tests/test_doctor_tracing.py
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: 'AC-13: THE Package_Installer SHALL install the Tracing_Wrapper as kind `plugin`'
+    expect: present
+  liveness_required: FIRES
+- id: SECURITY.tracing-switch
+  title: 'Doctor: the tracing switch is never on where an arm does not allow export'
+  category: SECURITY
+  source:
+    file: docs/specs/202610141000-v11-harness-independence-opt-in-tracing/feature.md
+    anchor: 'AC-12: THE Doctor SHALL fail when the tracing switch is set'
+  strength: DETECTOR
+  gateable: false
+  enforcement: n/a
+  v7_decision: 'v11 T18: a detector. Doctor check `tracing-switch` FAILs (exit 1) on TRACE_TO_LANGSMITH in a deny or absent arm''s project settings, or in the global settings while any arm is deny or absent; an arm''s own settings are not on the arming surface (plan.md, Risks), so nothing can refuse the write itself. The guard keeps the switch inert for a deny arm (SECURITY.export-guard).'
+  firing_mode:
+  - runner
+  mechanism:
+  - kind: Detector
+    canonical_name: brain_doctor.py
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: EXIT_CODE
+    locator: grep -q '("tracing-switch", check_tracing_switch)' scripts/brain_doctor.py
+    expect: 0
+  - method: FILE_EXISTS
+    locator: scripts/tests/test_doctor_tracing.py
+    expect: present
+  - method: EXIT_CODE
+    locator: python3 -m unittest scripts/tests/test_doctor_tracing.py
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: 'AC-12: THE Doctor SHALL fail when the tracing switch is set'
+    expect: present
+  liveness_required: PRESENT
+- id: ARCHITECTURE.tracing-latency-bench
+  title: 'Tracing latency bench: what the wrapper adds to each hook event, measured against the upstream alone'
+  category: ARCHITECTURE
+  source:
+    file: docs/specs/202610141000-v11-harness-independence-opt-in-tracing/feature.md
+    anchor: 'AC-14: WHEN LangSmith is unreachable'
+  strength: DETECTOR
+  gateable: false
+  enforcement: n/a
+  v7_decision: 'v11 T18: a measurement, not a gate. `g__wrap__export-guard.py --bench` records median and p95 per event and exits 1 when a bound is exceeded; the record lives in the spec directory and the verdict on it is the converge pass.'
+  firing_mode:
+  - cli
+  mechanism:
+  - kind: Detector
+    canonical_name: g__wrap__export-guard.py
+    firing_event: null
+    firing_matcher: null
+  proof:
+  - method: FILE_EXISTS
+    locator: docs/specs/202610141000-v11-harness-independence-opt-in-tracing/bench-tracing-wrapper.json
+    expect: present
+  - method: EXIT_CODE
+    locator: python3 -m unittest scripts/tests/test_export_guard_bench.py
+    expect: 0
+  - method: ANCHOR_PRESENT
+    locator: 'AC-14: WHEN LangSmith is unreachable'
     expect: present
   liveness_required: PRESENT

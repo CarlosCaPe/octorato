@@ -38,9 +38,9 @@ WHAT IT DECIDES ON, by tool:
 Everything else passes untouched. A payload that is not one JSON object, or
 any internal error, DENIES (fail-closed), with the reason.
 
-Not journaled yet. A gate that declares `_KERNEL_RULE` journals every refusal
-under that rule id, and the id must be registered in registry/rules.yaml
-(test_octo_replay); registration is task T18, which adds both together.
+Every refusal is journaled under `_KERNEL_RULE` (SECURITY.export-flip, registered
+in registry/rules.yaml by task T18) into the refusing process's kernel journal,
+fail-open: a journal that cannot be written never changes the verdict.
 
 No env unlock, on purpose: the flip is the operator's, made in his own
 editor or terminal, which no hook sees. An unlock variable would be exactly
@@ -91,6 +91,32 @@ _SH_REDIRECT = re.compile(r">\|?\s*[\"']?[^\s;&|<>\"']*(?<![A-Za-z0-9_.-])arm\.j
 _SH_PUT = re.compile(r"(?<![\w.-])(cp|mv|install|ln|rsync|tee|dd|truncate)(?![\w.-])")
 
 
+# -- v8 kernel journal (Phase 4, v8-kernel.md) --------------------------------
+_KERNEL_RULE = "SECURITY.export-flip"
+
+
+def _journal_deny(reason, payload=None) -> None:
+    """Mirror this refusal into the refusing process's journal.
+
+    FAIL-OPEN by contract: every error is swallowed and the verdict this gate
+    just reached is unchanged. kernel_proc is loaded by PATH through importlib,
+    not by name, so nothing on sys.path can shadow it. A payload that names no
+    process (unreadable stdin) journals nothing: a refusal written into the
+    wrong process's journal would be worse than none.
+    """
+    try:
+        import importlib.util
+        _path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kernel_proc.py")
+        _spec = importlib.util.spec_from_file_location("_kernel_proc_journal", _path)
+        _kp = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_kp)
+        _payload = payload if isinstance(payload, dict) else {}
+        _kp.journal_deny(_KERNEL_RULE, reason, _payload.get("tool_use_id"),
+                         _kp.resolve_pid(_payload))
+    except Exception:
+        pass
+
+
 def _deny(reason: str, payload=None) -> None:
     msg = (f"⛔ export-flip: {reason}. An arm's telemetry.export goes to `allow` only "
            f"by the operator's own hand, outside this session (v11 AC-16). Writing "
@@ -100,6 +126,7 @@ def _deny(reason: str, payload=None) -> None:
         "permissionDecision": "deny",
         "permissionDecisionReason": msg,
     }}, ensure_ascii=False))
+    _journal_deny(reason, payload)
 
 
 def _alias(name: str) -> str:
