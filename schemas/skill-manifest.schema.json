@@ -40,6 +40,18 @@
         }
       }
     },
+    "telemetry": {
+      "description": "Arm only: what this arm allows to leave it as telemetry. Absent, or present without `export`, means the same as `export: deny`.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "export": {
+          "description": "Export_Policy of the arm (v11 tracing spec, AC-09 and AC-16). `deny` (the template default): no trace of a session in this arm is started for a third-party trace service; scripts/g__wrap__export-guard.py never spawns the upstream tracing hook. `allow`: the upstream tracing hook runs for sessions in this arm, with its redaction on. Exactly these two strings; any other value is read by the guard as deny. Only the operator flips it to allow: scripts/g__pretool__export-flip.py denies an agent write that does.",
+          "type": "string",
+          "enum": ["deny", "allow"]
+        }
+      }
+    },
     "name": {
       "description": "Skill slug — lowercase kebab-case, matches the skills/<name>/ directory.",
       "type": "string",

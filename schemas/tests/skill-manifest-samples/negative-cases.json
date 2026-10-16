@@ -1144,6 +1144,108 @@
         }
       },
       "why": "A number for the URL. Both the scheme `pattern` and the `format` annotation are string-only, so neither of them rejects it."
+    },
+    {
+      "name": "telemetry-not-an-object",
+      "rule": [
+        "properties",
+        "telemetry",
+        "type"
+      ],
+      "manifest": {
+        "kind": "skill",
+        "name": "querymaster",
+        "version": "1.4.0",
+        "license": "MIT",
+        "description": "Global database query agent, dry-run by default across 6 engines.",
+        "capabilities": [
+          "Bash",
+          "Read"
+        ],
+        "dependencies": {
+          "token-efficient-prompting": ">=1.0.0"
+        },
+        "author": "octorato",
+        "homepage": "https://github.com/CarlosCaPe/octorato",
+        "tree_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "signature": {
+          "namespace": "octorato-pkg",
+          "signer": "octorato-release",
+          "file": "skill.json.sig"
+        },
+        "telemetry": "deny"
+      },
+      "why": "A bare string where the telemetry object goes."
+    },
+    {
+      "name": "telemetry-unknown-key",
+      "rule": [
+        "properties",
+        "telemetry",
+        "additionalProperties"
+      ],
+      "manifest": {
+        "kind": "skill",
+        "name": "querymaster",
+        "version": "1.4.0",
+        "license": "MIT",
+        "description": "Global database query agent, dry-run by default across 6 engines.",
+        "capabilities": [
+          "Bash",
+          "Read"
+        ],
+        "dependencies": {
+          "token-efficient-prompting": ">=1.0.0"
+        },
+        "author": "octorato",
+        "homepage": "https://github.com/CarlosCaPe/octorato",
+        "tree_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "signature": {
+          "namespace": "octorato-pkg",
+          "signer": "octorato-release",
+          "file": "skill.json.sig"
+        },
+        "telemetry": {
+          "exprt": "deny"
+        }
+      },
+      "why": "A typo of `export`. Accepted silently, it would leave the guard reading no field, which is deny, while the author believes a policy was written."
+    },
+    {
+      "name": "telemetry-export-not-a-policy",
+      "rule": [
+        "properties",
+        "telemetry",
+        "properties",
+        "export",
+        "enum"
+      ],
+      "manifest": {
+        "kind": "skill",
+        "name": "querymaster",
+        "version": "1.4.0",
+        "license": "MIT",
+        "description": "Global database query agent, dry-run by default across 6 engines.",
+        "capabilities": [
+          "Bash",
+          "Read"
+        ],
+        "dependencies": {
+          "token-efficient-prompting": ">=1.0.0"
+        },
+        "author": "octorato",
+        "homepage": "https://github.com/CarlosCaPe/octorato",
+        "tree_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "signature": {
+          "namespace": "octorato-pkg",
+          "signer": "octorato-release",
+          "file": "skill.json.sig"
+        },
+        "telemetry": {
+          "export": "Allow"
+        }
+      },
+      "why": "Not one of the two exact strings. The guard reads it as deny; the schema says so at install time."
     }
   ]
 }
