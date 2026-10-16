@@ -37,13 +37,17 @@ SOURCED = [
     "Provenance: BASIS: git log",
     "**Provenance:** **Basis** migration.log",
     "Provenance: Basis: scripts/selftest.py",
-    "Provenance: Basis: self-review of scripts/x.py, migration.log",
+    "Provenance: Basis: `self-review.md`, migration.log",
+    "Provenance: Basis: self_check.sh:12-40",
     "Provenance: Basis: git log, checked myself",
     "Provenance: Basis: /opt/selfhosted/run.log",
 ]
 
 SELF = [
     "Provenance: Basis: myself",
+    "Provenance: Basis: self-review",
+    "Provenance: Basis self-assessment",
+    "Provenance: Basis: self-review of scripts/x.py, migration.log",
     "Provenance: Basis: self-evident",
     "Provenance: Basis: SELF · Engine: main loop",
     "Provenance: Basis self",

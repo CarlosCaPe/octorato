@@ -511,11 +511,32 @@ def _empty_basis(basis: str) -> bool:
     return not b or b in _NO_BASIS or bool(_DASHES.match(b))
 
 
+# A token that starts with `self` names a source only as a path or file name:
+# it contains a slash, or ends in a file extension. Backticked spans are paths.
+_BACKTICK = re.compile(r"`[^`]*`")
+_TOKEN_SPLIT = re.compile(r"[\s,;+&]+")
+_FILE_EXT = re.compile(r"\.[A-Za-z0-9]{1,6}(?::[\d,-]+)?$")
+
+
+def _self_token(basis: str) -> bool:
+    """True when a token outside backticks starts with `self` (any case) and
+    is not a path or file name: `self-review`, `self-assessment`, `SELF`."""
+    for tok in _TOKEN_SPLIT.split(_BACKTICK.sub(" ", basis)):
+        t = tok.strip("*_()[]\"'.:!?")
+        if not t.lower().startswith("self"):
+            continue
+        if "/" in t or "\\" in t or _FILE_EXT.search(tok.strip("*_()[]\"',;:!?")):
+            continue
+        return True
+    return False
+
+
 def _self_basis(basis: str) -> bool:
     """True when the Basis names self or own reasoning as a source: a
-    standalone self word anywhere, or any item that is only a self source.
-    A word that merely contains `self` inside a longer token is not one."""
-    if _SELF_WORD.search(basis):
+    standalone self word anywhere, a token that starts with `self` and is
+    not a path or file name (_self_token), or any item that is only a self
+    source. `myself` inside a longer item and `self` inside a path are not."""
+    if _SELF_WORD.search(basis) or _self_token(basis):
         return True
     for item in _ITEM_SPLIT.split(basis):
         it = item.strip().strip("*_`()[]\"' ").rstrip(".,;:!? \t").strip()
