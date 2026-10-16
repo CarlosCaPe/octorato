@@ -13,6 +13,7 @@ import io
 import json
 import os
 import shutil
+import site
 import subprocess
 import tempfile
 import unittest
@@ -189,16 +190,23 @@ class TestTracingPlugins(unittest.TestCase):
             f"octorato-release {pub[0]} {pub[1]}\n", encoding="utf-8")
         env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
         env["HOME"] = str(self.tmp / "home")
+        # The child's HOME is a sandbox, so its user site (where pip --user put
+        # jsonschema, which octo_pkg needs to validate a manifest) would resolve
+        # under the sandbox and vanish. Pin it to the parent's own user base,
+        # computed at interpreter start from the real HOME. The pre-push runs the
+        # suite without PYTHONUSERBASE, which is where this failed.
+        env.setdefault("PYTHONUSERBASE", site.getuserbase())
         run = lambda *a: subprocess.run(
             ["python3", str(self.root / "scripts" / "octo_pkg.py"), "--brain", str(self.root), *a],
             env=env, capture_output=True, stdin=subprocess.DEVNULL, timeout=120)
         wrapper = self.tmp / "wrapper"
-        self.assertEqual(run("wrap-plugin", str(UPSTREAM), "--out", str(wrapper)).returncode, 0)
+        cp = run("wrap-plugin", str(UPSTREAM), "--out", str(wrapper))
+        self.assertEqual(cp.returncode, 0, cp.stderr.decode("utf-8", "replace"))
         subprocess.run(["ssh-keygen", "-Y", "sign", "-f", str(key), "-n", "octorato-pkg",
                         str(wrapper / "skill.json")], check=True, capture_output=True,
                        stdin=subprocess.DEVNULL, timeout=60)
         cp = run("install", "--kind", "plugin", str(wrapper))
-        self.assertEqual(cp.returncode, 0, cp.stderr)
+        self.assertEqual(cp.returncode, 0, cp.stderr.decode("utf-8", "replace"))
         self.tree = self.root / "plugins" / "octorato-local" / "octorato-tracing"
 
     def check(self):
