@@ -175,7 +175,8 @@ class HookPairSeam(HomeCase):
         self.msg = pd.Message("The fix is in.", [], ["operator"])
         self.cmd = f"{self.p['node']} {self.p['codex']} exec -m m1 'Review the block.'"
         self.env = {k: v for k, v in os.environ.items()
-                    if k not in er.POISON_ENV and k != "CLAUDE_PROJECT_DIR"}
+                    if k not in er.POISON_ENV}
+        self.env["CLAUDE_PROJECT_DIR"] = str(self.home / ".claude")
         self.now = T + dt.timedelta(minutes=10)
 
     def run_pair(self, verdict="PASS", cwd=None, write_session=True, mutate=None):
@@ -233,6 +234,7 @@ class HookPairSeam(HomeCase):
 
     def test_ac27_deny_arm_does_not_count_allow_arm_does(self):
         cwd = seed.seed_arm(self.home, "client", "deny")
+        self.env["CLAUDE_PROJECT_DIR"] = os.path.expanduser(cwd)
         self.assertIsNotNone(self.run_pair(cwd=os.path.expanduser(cwd)))
         self.assertEqual(rl.panel_receipts_for(self.msg.digest, self.session, self.now), [])
         (self.home / "arms" / "client" / "arm.json").write_text(
@@ -257,6 +259,19 @@ class HookPairSeam(HomeCase):
                    "transcript_path": str(self.home / "t.jsonl")}
         pend = er.pre_hook(payload, self.env)
         self.assertTrue(any("workspace config" in p for p in pend["pre_problems"]))
+
+    def test_project_dir_absent_and_dotenv_above_it_leave_no_receipt(self):
+        env = dict(self.env)
+        env.pop("CLAUDE_PROJECT_DIR")
+        payload = {"session_id": self.session, "tool_name": "Bash", "tool_use_id": self.tid,
+                   "tool_input": {"command": self.cmd}, "cwd": str(self.home / ".claude"),
+                   "transcript_path": str(self.home / "t.jsonl")}
+        self.assertIn("CLAUDE_PROJECT_DIR is absent from the hook environment",
+                      er.pre_hook(payload, env)["pre_problems"])
+        (self.home / "w" / "p").mkdir(parents=True)
+        (self.home / "w" / ".env").write_text("X=1\n", encoding="utf-8")
+        probs = er.workspace_problems(str(self.home / "w" / "p"), str(self.home / "w" / "p"))
+        self.assertTrue(any(p.endswith(os.path.join("w", ".env")) for p in probs), probs)
 
     def test_codex_subcommand_in_prompt_slot_is_refused(self):
         call, why = er.parse_call(f"{N} {CJS} exec resume", ENGINES)

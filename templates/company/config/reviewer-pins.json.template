@@ -4,16 +4,58 @@
   "engines": {
     "codex": {
       "entries": [
-        {"role": "interpreter", "path": "/opt/node/bin/node", "realpath": "/opt/node/bin/node", "kind": "file", "sha256": "<64 hex>", "pin_root": "/opt/node"},
-        {"role": "script", "path": "/opt/node/lib/node_modules/@openai/codex/bin/codex.js", "realpath": "/opt/node/lib/node_modules/@openai/codex/bin/codex.js", "kind": "file", "sha256": "<64 hex>", "pin_root": "/opt/node"},
-        {"role": "engine", "path": "/opt/node/lib/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex", "realpath": "/opt/node/lib/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex", "kind": "file", "sha256": "<64 hex>", "pin_root": "/opt/node"}
+        {
+          "role": "interpreter",
+          "path": "/opt/node/bin/node",
+          "realpath": "/opt/node/bin/node",
+          "kind": "file",
+          "sha256": "<64 hex>",
+          "pin_root": "/opt/node"
+        },
+        {
+          "role": "script",
+          "path": "/opt/node/lib/node_modules/@openai/codex/bin/codex.js",
+          "realpath": "/opt/node/lib/node_modules/@openai/codex/bin/codex.js",
+          "kind": "file",
+          "sha256": "<64 hex>",
+          "pin_root": "/opt/node"
+        },
+        {
+          "role": "engine",
+          "path": "/opt/node/lib/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
+          "realpath": "/opt/node/lib/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
+          "kind": "file",
+          "sha256": "<64 hex>",
+          "pin_root": "/opt/node"
+        }
       ]
     },
     "gemini": {
       "entries": [
-        {"role": "interpreter", "path": "/opt/node/bin/node", "realpath": "/opt/node/bin/node", "kind": "file", "sha256": "<64 hex>", "pin_root": "/opt/node"},
-        {"role": "script", "path": "/opt/node/lib/node_modules/@google/gemini-cli/bundle/gemini.js", "realpath": "/opt/node/lib/node_modules/@google/gemini-cli/bundle/gemini.js", "kind": "file", "sha256": "<64 hex>", "pin_root": "/opt/node"},
-        {"role": "engine", "path": "/opt/node/lib/node_modules/@google/gemini-cli/bundle", "realpath": "/opt/node/lib/node_modules/@google/gemini-cli/bundle", "kind": "dir", "sha256": "<64 hex over sorted (relative path, file sha256) pairs>", "pin_root": "/opt/node"}
+        {
+          "role": "interpreter",
+          "path": "/opt/node/bin/node",
+          "realpath": "/opt/node/bin/node",
+          "kind": "file",
+          "sha256": "<64 hex>",
+          "pin_root": "/opt/node"
+        },
+        {
+          "role": "script",
+          "path": "/opt/node/lib/node_modules/@google/gemini-cli/bundle/gemini.js",
+          "realpath": "/opt/node/lib/node_modules/@google/gemini-cli/bundle/gemini.js",
+          "kind": "file",
+          "sha256": "<64 hex>",
+          "pin_root": "/opt/node"
+        },
+        {
+          "role": "engine",
+          "path": "/opt/node/lib/node_modules/@google/gemini-cli/bundle",
+          "realpath": "/opt/node/lib/node_modules/@google/gemini-cli/bundle",
+          "kind": "dir",
+          "sha256": "<64 hex over sorted (relative path, file sha256) pairs>",
+          "pin_root": "/opt/node"
+        }
       ]
     }
   },
@@ -22,6 +64,8 @@
     "~/.bash_profile": null,
     "~/.profile": "<64 hex, or null when absent>",
     "~/.codex/config.toml": "<64 hex, or null when absent>",
-    "~/.gemini/settings.json": null
+    "~/.gemini/settings.json": null,
+    "~/.gemini/.env": null,
+    "~/.env": "<64 hex, or null when absent>"
   }
 }

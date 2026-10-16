@@ -73,7 +73,13 @@ ROLES = ("interpreter", "script", "engine")
 # time (absent recorded as null) and compared before and after every call.
 STARTUP_FILES = ("~/.bashrc", "~/.bash_profile", "~/.profile")
 CONFIG_FILES = {"codex": "~/.codex/config.toml", "gemini": "~/.gemini/settings.json"}
-PINNED_FILES = STARTUP_FILES + tuple(CONFIG_FILES[e] for e in ENGINES)
+# Gemini CLI's findEnvFile (gemini 0.62.0, bundle/chunk-KCP45VUB.js:16413) walks
+# from the workspace up to `/` taking the first `<dir>/.gemini/.env` (trusted
+# folders) or `<dir>/.env`, then falls back to `~/.gemini/.env` and `~/.env`.
+# The $HOME pair is pinned here; every other directory is walked by
+# workspace_problems.
+HOME_ENV_FILES = ("~/.gemini/.env", "~/.env")
+PINNED_FILES = STARTUP_FILES + tuple(CONFIG_FILES[e] for e in ENGINES) + HOME_ENV_FILES
 # Each of these, set in the hook's own environment, can make the call load
 # code the pins do not cover (a sourced script, a preloaded module).
 POISON_ENV = ("BASH_ENV", "ENV", "NODE_OPTIONS", "NODE_PATH",
@@ -87,10 +93,11 @@ POISON_ENV = ("BASH_ENV", "ENV", "NODE_OPTIONS", "NODE_PATH",
               "GEMINI_CLI_HOME", "GEMINI_CLI_SYSTEM_SETTINGS_PATH",
               "GEMINI_CLI_SYSTEM_DEFAULTS_PATH")
 # Workspace config the CLIs read from the call's directory and its parents.
-# None is pinned, so a receipt is refused while any of them exists between the
-# call's cwd and its project dir (the user-level copies under $HOME are pinned
-# above and excluded from this walk).
-WORKSPACE_CONFIG = (".gemini/settings.json", ".gemini/.env", ".codex")
+# None is pinned, so a receipt is refused while any of them exists in the
+# call's cwd or any ancestor up to `/` (the copies under $HOME are pinned
+# above and $HOME is skipped by the walk). `.env` is there because Gemini
+# CLI's findEnvFile loads a plain `<dir>/.env` on the same walk.
+WORKSPACE_CONFIG = (".gemini/settings.json", ".gemini/.env", ".env", ".codex")
 # `codex exec <word>`: a word in the prompt slot that codex reads as a
 # subcommand (codex --help and codex exec --help, codex-cli 0.159.3) makes
 # the call something other than a review of the prompt.
@@ -474,30 +481,27 @@ def check_problems(pins, engine: str, env=None, home_dir: str | None = None) -> 
 
 
 def workspace_problems(cwd: str, project_dir: str = "", home_dir: str | None = None) -> list:
-    """Unpinned workspace config between the call's cwd and its project dir:
-    from cwd up to and including the project dir when it contains cwd,
-    otherwise up to the filesystem root, never $HOME itself (its copies are
-    pinned). An unreadable or relative cwd is a problem too."""
+    """Unpinned workspace config in the call's cwd or any ancestor up to `/`,
+    skipping only $HOME (its copies are pinned). The session's project dir
+    must be known (CLAUDE_PROJECT_DIR in the hook environment): without it
+    the arm cannot be resolved, so the call is refused. A relative cwd is a
+    problem too."""
     home_dir = os.path.realpath(home_dir or home())
-    if not cwd or not os.path.isabs(cwd):
-        return ["the call names no absolute cwd"]
-    cur = os.path.realpath(cwd)
-    stop = os.path.realpath(project_dir) if project_dir and os.path.isabs(project_dir) else ""
-    if stop and not _contains(stop, cur):
-        stop = ""
     probs = []
+    if not project_dir or not os.path.isabs(project_dir):
+        probs.append("CLAUDE_PROJECT_DIR is absent from the hook environment")
+    if not cwd or not os.path.isabs(cwd):
+        return probs + ["the call names no absolute cwd"]
+    cur = os.path.realpath(cwd)
     while True:
         if cur != home_dir:
             for rel in WORKSPACE_CONFIG:
                 if os.path.lexists(os.path.join(cur, rel)):
                     probs.append(f"unpinned workspace config {os.path.join(cur, rel)}")
-        if stop and cur == stop:
-            break
         parent = os.path.dirname(cur)
         if parent == cur:
-            break
+            return probs
         cur = parent
-    return probs
 
 
 # ---------------------------------------------------------------------------
@@ -946,6 +950,9 @@ def _mutate(sb: str, p: dict, op: str) -> None:
     elif op == "edit_codex_config":
         with open(os.path.join(sb, ".codex", "config.toml"), "a", encoding="utf-8") as fh:
             fh.write("[model_providers.x]\nbase_url = 'http://127.0.0.1:9'\n")
+    elif op == "add_home_dotenv":
+        with open(os.path.join(sb, ".env"), "w", encoding="utf-8") as fh:
+            fh.write("GOOGLE_GEMINI_BASE_URL=http://127.0.0.1:9\n")
     elif op == "symlink_parent":
         real = os.path.join(sb, "opt", "realbin")
         os.rename(os.path.join(p["root"], "bin"), real)
@@ -967,7 +974,11 @@ def _hook_env(sb: str, extra: dict | None) -> dict:
         env.pop(k, None)
     env["HOME"] = env["USERPROFILE"] = sb
     env["CLAUDE_SESSION_ID"] = "__selftest__"
-    env.update({k: str(v) for k, v in (extra or {}).items()})
+    for k, v in (extra or {}).items():
+        if v is None:
+            env.pop(k, None)  # a fixture that needs the variable ABSENT
+        else:
+            env[k] = str(v)
     return env
 
 
@@ -1039,6 +1050,8 @@ def _run_fixture(path: str) -> list:
                     fh.write("{}\n")
         env_fx = dict(fx.get("env") or {})
         env_fx.setdefault("CLAUDE_PROJECT_DIR", work)
+        env_fx = {k: (v.replace("{{WORK}}", work) if isinstance(v, str) else v)
+                  for k, v in env_fx.items()}
         fx = dict(fx, env=env_fx)
         payload = {"session_id": "fx-external", "tool_name": "Bash", "tool_use_id": tid,
                    "tool_input": {"command": command}, "cwd": cwd,
