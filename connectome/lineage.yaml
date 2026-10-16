@@ -556,6 +556,30 @@ edges:
       The reply gate imports the no-menu gate's is_choice_question and
       _irreducible_object by file name, and the preflight names Stop gates
       by file name in its SKIP list: renaming either gate touches this edge.
+  - id: external-review-v11
+    concept: "external reviewer receipt: a review on another engine counts only through a hook-written receipt around a pinned call; it adds to a reply quorum, never forms one, never clears a send"
+    appears_in:
+      - docs/architecture/v11-reply-panel.md             # "External reviewers" section and R-05
+      - scripts/external_review.py                       # parser, pin checks, hook bodies, pin CLI, selftest
+      - scripts/r__pretool-bash__external-review.py      # pending receipt (PreToolUse Bash)
+      - scripts/r__posttool-bash__external-review.py     # complete receipt (PostToolUse Bash)
+      - scripts/receipt_ledger.py                        # external_panel_view, panel_pass_for drops external PASS, --selftest-external
+      - scripts/g__stop__reply-panel.py                  # quorum needs one harness PASS
+      - scripts/r__subagent-stop__qa-receipt.py          # external_reviewers from REVIEW-EXTERNAL lines
+      - scripts/panel_fixture_seed.py                    # seed_external_receipt, seed_reviewer_pair, seed_arm
+      - scripts/g__pretool__arming-surface.py            # pins, reviewers.yaml, registry/replay, external_review.py
+      - scripts/brain_doctor.py                          # reviewer-registry check
+      - registry/reviewers.yaml                          # Reviewer_Registry
+      - registry/rules.yaml                              # FLOW.external-review-receipt
+      - registry/fixtures/FLOW.external-review-receipt   # AC-21 fixtures
+      - templates/company/config/reviewer-pins.json.template
+      - scripts/tests/test_external_review.py
+      - hooks.json                                       # PreToolUse / PostToolUse Bash wiring
+    kind: appears_in
+    note: >-
+      The ledger re-parses the transcript's Bash command with the same parser
+      the hooks use (external_review.parse_call), so a change to the allowlist
+      or the raw-text deny list changes both what is written and what counts.
   - id: unsourced-absence-gate
     concept: "an absence claim (no origin / not recognized / never contracted) never ships outward without a seek receipt in the same turn"
     appears_in:

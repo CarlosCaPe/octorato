@@ -3160,6 +3160,58 @@ def check_runtime_doc_agreement(fix: bool, path: Path | None = None,
     return Result(key, PASS, f"{len(rows)} runtime(s) agree between registry and doc")
 
 
+REVIEWERS_PATH = CLAUDE_DIR / "registry" / "reviewers.yaml"
+_MACHINE_PATH = re.compile(r"(?:^|[\s\"'=(])(?:/home/|/Users/|/root/|[A-Za-z]:\\Users\\)|\$HOME\b")
+
+
+def _strings(obj):
+    if isinstance(obj, str):
+        yield obj
+    elif isinstance(obj, dict):
+        for k, v in obj.items():
+            yield str(k)
+            yield from _strings(v)
+    elif isinstance(obj, list):
+        for v in obj:
+            yield from _strings(v)
+
+
+def check_reviewer_registry(fix: bool, path: Path | None = None) -> Result:
+    """v11 phase 4 (FR-06, FR-07, AC-29). registry/reviewers.yaml parses with
+    the reader receipt_ledger uses (scripts/external_review.py), carries no
+    machine path (those live in the gitignored Reviewer_Pins), and holds no
+    `allowed` pair: an `allowed` pair rests on a Replay_Record that the AC-36
+    recompute (task T20) checks, and until that recompute exists this check
+    fails closed on any. It never reads or changes a runtime status: Codex CLI
+    and Gemini CLI stay census-only (runtime-census-evidence)."""
+    key = "reviewer-registry"
+    p = path or REVIEWERS_PATH
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_external_review_doctor", Path(__file__).resolve().parent / "external_review.py")
+        er = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(er)
+    except Exception as e:
+        return Result(key, FAIL, f"external_review.py unloadable: {e}",
+                      "restore scripts/external_review.py")
+    data, problems = er.load_reviewer_registry(p)
+    if data is None or problems:
+        return Result(key, FAIL, "; ".join(problems[:4]),
+                      "restore registry/reviewers.yaml (v11 spec 202610141000, T19)")
+    leaks = sorted({x for x in _strings(data) if _MACHINE_PATH.search(x)})
+    if leaks:
+        return Result(key, FAIL, f"machine path in the tracked registry: {leaks[0][:80]!r}",
+                      "keep machine paths in company/config/reviewer-pins.json only")
+    pairs = data.get("pairs") or []
+    allowed = [f"{x.get('engine')}/{x.get('model')}" for x in pairs if x.get("status") == "allowed"]
+    if allowed:
+        return Result(key, FAIL, f"`allowed` without the AC-36 replay recompute: {', '.join(allowed)}",
+                      "mark the pair `not-allowed` until its Replay_Record is recomputed (T20)")
+    return Result(key, PASS, f"{len(pairs)} engine/model pair(s), none allowed; runtime status "
+                  "stays census-only (FR-07)")
+
+
 # Results of the run in progress, by CHECKS key, so an `evidence` check named by
 # a runtime entry is read, not executed a second time (run_all fills it).
 _CURRENT_RUN: dict = {}
@@ -3499,6 +3551,7 @@ CHECKS = [
     ("runtime-registry", check_runtime_registry),
     ("runtime-doc-agreement", check_runtime_doc_agreement),
     ("runtime-census-evidence", check_runtime_census_evidence),
+    ("reviewer-registry", check_reviewer_registry),
     ("leak-guard", check_leak_guard),
     ("connectome-fresh", check_connectome_fresh),
     ("arms-config", check_arms_config),

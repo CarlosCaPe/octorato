@@ -9,10 +9,10 @@
 | Skills | 246 |
 | Agents | 167 |
 | Divisions | 13 |
-| Scripts: wired | 140 |
+| Scripts: wired | 143 |
 | Scripts: orphan | 7 |
-| Rules | 105 |
-| Hook entries | 59 |
+| Rules | 106 |
+| Hook entries | 61 |
 
 ## Skills (246)
 
@@ -499,7 +499,7 @@
 | Tool Evaluator | Expert technology assessment specialist focused on evaluating, testing, and recommending tools, software, and platforms ... |
 | Workflow Optimizer | Expert process improvement specialist focused on analyzing, optimizing, and automating workflows across all business fun... |
 
-## Scripts (147)
+## Scripts (150)
 
 | Script | Purpose | Status |
 |---|---|---|
@@ -548,6 +548,7 @@
 | delegate-check | delegate-check , Mandatory 2D Delegate pre-flight for the Octopus brain. Scans REGISTRY.md (agents) ... | wired |
 | delegate-gate.py | PreToolUse hook , involuntary delegation reflex (FAIL-OPEN, by design). | wired |
 | dimension-awareness-hook.py | dimension-awareness-hook.py , PreToolUse hook for 4D session dimension awareness | wired |
+| external_review.py | external_review.py: receipts for a review run on another engine (v11 phase 4). | wired |
 | eye-check.py | Eye Check Hook , Forces agent-browser usage for web tasks. Runs on every UserPromptSubmit. Pure loca... | wired |
 | finops-digest.py | finops-digest.py , the FinOps lens over Claude Code session logs. "Lo que no se mide, no crece." Exi... | wired |
 | friction_ledger.py | friction_ledger.py: every gate deny and Stop block, counted by the system (v10 FR-01). | wired |
@@ -618,8 +619,10 @@
 | querymaster-security-detector.py | QueryMaster security-canon detector (RULE #1 backing for SECURITY.querymaster-rules). | wired |
 | quickstart.py | quickstart.py , zero-to-alive for a brand-new Octorato user, in one command. | wired |
 | r__permission-denied__journal.py | r__permission-denied__journal.py: PermissionDenied reflex, the harness's own refusals. | wired |
+| r__posttool-bash__external-review.py | r__posttool-bash__external-review.py: complete an External_Review_Receipt (v11 AC-18). | wired |
 | r__posttool__receipt-seek.py | r__posttool__receipt-seek.py: PostToolUse reflex that writes a SEEK receipt. | wired |
 | r__posttool__sent-ledger.py | r__posttool__sent-ledger.py: PostToolUse reflex that records every message | wired |
+| r__pretool-bash__external-review.py | r__pretool-bash__external-review.py: open an External_Review_Receipt (v11 AC-18). | wired |
 | r__pretool-write__base-freshness.py | r__pretool-write__base-freshness.py: PreToolUse warner for a STALE EDIT BASE. | wired |
 | r__session__proc-register.py | r__session__proc-register.py: SessionStart reflex that opens a kernel process. | wired |
 | r__stop__friction-ledger.py | r__stop__friction-ledger.py: Stop reflex that keeps the Friction_Ledger current (v10 FR-01, AC-01). | wired |
@@ -651,7 +654,7 @@
 | wa-soporte.sh | Sends a WhatsApp through the SUPPORT channel, never through the operator's personal number. | wired |
 | watchdog.py | watchdog.py , observability surface 4 anomaly detector. Reads the JSONL trace files written by trace... | wired |
 
-## Rules (105)
+## Rules (106)
 
 ### ARCHITECTURE
 
@@ -720,6 +723,7 @@
 - FLOW.do-it-today
 - FLOW.done-is-a-verdict
 - FLOW.enforcement-scripts
+- FLOW.external-review-receipt
 - FLOW.figma-use-prerequisite
 - FLOW.friction-ledger
 - FLOW.friction-replay
@@ -793,8 +797,8 @@
 | Event | Wired Scripts |
 |---|---|
 | PermissionDenied | r__permission-denied__journal.py |
-| PostToolUse | budget-check.py, cadence-lint.py, canon-heal-hook.py, client-doc-lint-hook.py, d__posttool__delegation-ledger.py, impact-radius-hook.py, r__posttool__receipt-seek.py, r__posttool__sent-ledger.py, trace-hook.py |
-| PreToolUse | budget-check.py, config-ship-verify.py, delegate-gate.py, dimension-awareness-hook.py, g__pretool-bash__git-discipline.py, g__pretool-bash__tree-owner.py, g__pretool-mcp__chat-context.py, g__pretool-mcp__outward-send.py, g__pretool-write__tree-owner.py, g__pretool__arming-surface.py, g__pretool__export-flip.py, g__pretool__kernel.py, grafo-gate.py, qa-merge-gate.py, r__pretool-write__base-freshness.py, secrets-grep-guard.py, trace-hook.py |
+| PostToolUse | budget-check.py, cadence-lint.py, canon-heal-hook.py, client-doc-lint-hook.py, d__posttool__delegation-ledger.py, impact-radius-hook.py, r__posttool-bash__external-review.py, r__posttool__receipt-seek.py, r__posttool__sent-ledger.py, trace-hook.py |
+| PreToolUse | budget-check.py, config-ship-verify.py, delegate-gate.py, dimension-awareness-hook.py, g__pretool-bash__git-discipline.py, g__pretool-bash__tree-owner.py, g__pretool-mcp__chat-context.py, g__pretool-mcp__outward-send.py, g__pretool-write__tree-owner.py, g__pretool__arming-surface.py, g__pretool__export-flip.py, g__pretool__kernel.py, grafo-gate.py, qa-merge-gate.py, r__pretool-bash__external-review.py, r__pretool-write__base-freshness.py, secrets-grep-guard.py, trace-hook.py |
 | SessionStart | budget-check.py, merge-hooks.py, r__session__proc-register.py, session-isolation-hook.py |
 | Stop | cadence-stop-hook.py, claim-verify-stop.py, d__stop__wa-guardia.py, g__stop__defer-today.py, g__stop__delegation-audit.py, g__stop__draft-promise.py, g__stop__goal-anchor.py, g__stop__no-menu-question.py, g__stop__paste-ready-raw.py, g__stop__reply-panel.py, g__stop__unsourced-absence.py, g__stop__unsourced-attribute.py, grafo-ledger-check.py, no-pause-suggestion.py, r__stop__friction-ledger.py, source-attribution-check.py, trace-hook.py |
 | SubagentStart | r__subagent-start__proc-register.py |

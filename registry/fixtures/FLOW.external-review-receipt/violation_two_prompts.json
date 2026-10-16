@@ -1,0 +1,5 @@
+{
+  "command": "{{NODE}} {{CODEX}} exec -m review-model 'one' 'two'",
+  "expect_complete": 0,
+  "output": "Reviewed.\nPANEL-VERDICT: PASS\nPANEL-SHA256: 0000000000000000000000000000000000000000000000000000000000000000\n"
+}
