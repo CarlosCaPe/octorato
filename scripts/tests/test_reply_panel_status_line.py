@@ -76,11 +76,12 @@ def _summary(t):
 
 
 class PendingAgentsTests(unittest.TestCase):
-    def pend(self, rows, now="10:00:00"):
+    def pend(self, rows, now="10:00:00", since=None):
         with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False, encoding="utf-8") as fh:
             fh.write("".join(json.dumps(r) + "\n" for r in rows))
         try:
-            return RP.pending_agents(CTX, fh.name, CTX.send._ts(_ts(now)))
+            return RP.pending_agents(CTX, fh.name, CTX.send._ts(_ts(now)),
+                                     CTX.send._ts(_ts(since)) if since else None)
         finally:
             Path(fh.name).unlink()
 
@@ -121,6 +122,23 @@ class PendingAgentsTests(unittest.TestCase):
         self.assertEqual(self.pend([_agent("09:50:00", "t1"), _ack("09:50:01", "t1", "a1"),
                                     _summary("09:55:00")]), [])
 
+    def test_launch_before_the_prompt_does_not_count(self):
+        rows = [_agent("09:50:00", "t1"), _ack("09:50:01", "t1", "a1")]
+        self.assertEqual(self.pend(rows, since="09:55:00"), [])
+        self.assertEqual(self.pend(rows, since="09:45:00"), ["a1"])
+
+    def test_message_after_the_prompt_counts(self):
+        rows = [_agent("09:40:00", "t1"), _ack("09:40:01", "t1", "a1"), _handback("09:45:00", "a1"),
+                _send("09:56:00", "s1", "a1"), _sendres("09:56:01", "s1")]
+        self.assertEqual(self.pend(rows, since="09:55:00"), ["a1"])
+
+    def test_cap_is_thirty_minutes(self):
+        self.assertEqual(RP.PENDING_MAX_MINUTES, 30)
+        self.assertEqual(self.pend([_agent("09:20:00", "t1"), _ack("09:20:01", "t1", "a1")]), [])
+
+    def test_status_stop_cap(self):
+        self.assertEqual(RP.STATUS_STOPS_MAX, 3)
+
     def test_only_unfinished_of_several(self):
         rows = [_agent("09:50:00", "t1"), _ack("09:50:01", "t1", "a1"),
                 _agent("09:50:02", "t2"), _ack("09:50:03", "t2", "a2"), _handback("09:51:00", "a1")]
@@ -137,7 +155,8 @@ class StatusClaimTests(unittest.TestCase):
               "Sent the email; waiting on the reviewer.", "Codex found no regressions.",
               "Las correcciones están hechas.", "Listo, falta el revisor.", "Mandé el correo.",
               "Codex no encontró regresiones.", "Alles erledigt.", "Waiting on 2 reviewers.",
-              "Test suite NEEDS-WORK, re-running."]
+              "Test suite NEEDS-WORK, re-running.", "Ya lo arreglé en la rama.", "Das ist gelöst.",
+              "The branch is clean.", "Ready for review."]
 
     def test_clean_lines_carry_no_claim(self):
         for t in self.CLEAN:

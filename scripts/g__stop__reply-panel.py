@@ -24,17 +24,18 @@ THE DECISION (FR-03, checked in this order; the first that holds exits 0)
      empty: the gate cannot decide and exits 2.
   3. The operator's own prompt for this turn carries the word `panel-skip`
      (never printed by this gate, so its own feedback cannot read as a waiver).
-  4. A status line: the reply is at most 30 words, carries no claim marker
-     (status_claim: an outcome word such as passed / merged / listo /
-     erledigt, or a digit outside a provenance line), and a subagent of
-     this session is still running (pending_agents: an Agent or Task call
-     acknowledged as launched in the background, or an agent resumed by
-     SendMessage, with no hand-back, task notification or TaskStop since,
-     launched within PENDING_MAX_MINUTES, after the newest compact
-     summary). Any subagent counts: panel reviewer, QA seat or builder. The
-     newest pending id is appended to ~/.claude/.cache/receipts/
-     reply-pending.jsonl as an audit row; a ledger that cannot be written
-     is an error.
+  4. A status line: the reply is at most 30 words, a subagent launched or
+     messaged AFTER the operator prompt is still running, and fewer than
+     STATUS_STOPS_MAX (3) status stops were already exempted for this
+     prompt. Running (pending_agents): an Agent or Task call acknowledged as
+     a background launch, or an agent resumed by SendMessage, with no
+     hand-back, task notification, TaskStop or kernel `exit` line since,
+     launched or messaged within PENDING_MAX_MINUTES (30). Those two are the
+     boundary. The claim-word check (status_claim: an outcome word such as
+     passed / merged / arreglé / erledigt, or a digit outside a provenance
+     line) is an extra speed bump, not a boundary. Each exempted stop is
+     appended to ~/.claude/.cache/receipts/reply-pending.jsonl with the
+     prompt uuid; a ledger that cannot be read or written is an error.
   5. For digest(reply, recipients=["operator"]) in this session, the deciding
      receipt (receipt_ledger.panel_receipts_for, first entry) is a PASS whose
      verdict_ts is strictly newer than the operator prompt, and PASS receipts
@@ -241,9 +242,40 @@ def _blocks(entry: dict) -> list:
 # results, hand-backs, task notifications, TaskStop, compact summaries.
 _PENDING_HINTS = (b"isAsync", b"Agent\"", b"Task\"", b"SendMessage", b"resumedAgentId", b"peer", b"tool-use-id",
                   b"TaskStop", b"isCompactSummary")
-# A background subagent unseen for this long is not counted as running: a
-# killed or crashed agent leaves no hand-back.
-PENDING_MAX_MINUTES = 120
+# A subagent with no stop record is counted as running for at most this long
+# after its launch or message: a killed or crashed agent leaves no hand-back.
+PENDING_MAX_MINUTES = 30
+# Status stops exempted per operator prompt; the next stop needs a reviewed
+# reply. Counted in reply-pending.jsonl by prompt uuid.
+STATUS_STOPS_MAX = 3
+
+
+def _exit_ts(agent: str):
+    """Time of the newest `exit` line in the kernel journal of `agent` (the
+    SubagentStop reflex writes it), or None when there is none or it cannot
+    be read. A missing record reads as still running, bounded by
+    PENDING_MAX_MINUTES and STATUS_STOPS_MAX."""
+    from datetime import datetime, timezone
+    try:
+        kp = _load_file("kernel_proc.py")
+        with open(kp.journal_path(agent), "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            fh.seek(max(0, size - 16384))
+            chunk = fh.read()
+    except Exception:
+        return None
+    for raw in reversed([c for c in chunk.split(b"\n") if c]):
+        try:
+            rec = json.loads(raw.decode("utf-8", "replace"))
+        except ValueError:
+            continue
+        if isinstance(rec, dict) and rec.get("kind") == "exit":
+            try:
+                return datetime.fromtimestamp(float(rec.get("ts")), timezone.utc)
+            except (TypeError, ValueError):
+                return None
+    return None
 
 
 def _peer_from(entry: dict) -> str:
@@ -255,15 +287,17 @@ def _peer_from(entry: dict) -> str:
     return ""
 
 
-def pending_agents(ctx, transcript: str, now) -> list:
+def pending_agents(ctx, transcript: str, now, since=None) -> list:
     """Subagents of this session still running, oldest launch first: an Agent
     or Task call acknowledged as launched in the background (toolUseResult
     isAsync true), or an agent resumed by SendMessage, with no hand-back (a
     peer-origin entry from that agent), task notification naming the call or
-    TaskStop after its last launch, launched at most PENDING_MAX_MINUTES
-    before `now`. Agents launched before the newest compact summary are not
-    counted. Any subagent counts: a panel reviewer, a QA seat, a builder.
-    OSError propagates."""
+    TaskStop after its last launch and no kernel `exit` line since it
+    (_exit_ts), launched or messaged at most PENDING_MAX_MINUTES before `now`
+    and strictly after `since` (the operator prompt: an agent of an earlier
+    turn does not count unless messaged again in this one). Agents launched
+    before the newest compact summary are not counted. Any subagent counts:
+    a panel reviewer, a QA seat, a builder. OSError propagates."""
     calls, sends, launched, done, tid2agent = {}, {}, {}, {}, {}
     with open(transcript, "rb") as fh:
         for raw in fh:
@@ -316,7 +350,14 @@ def pending_agents(ctx, transcript: str, now) -> list:
                 done[tid2agent.get(tid, tid)] = ts
     from datetime import timedelta
     floor = now - timedelta(minutes=PENDING_MAX_MINUTES)
-    out = [(t, a) for a, t in launched.items() if t >= floor and not (a in done and done[a] >= t)]
+    out = []
+    for a, t in launched.items():
+        if t < floor or (since is not None and t <= since) or (a in done and done[a] >= t):
+            continue
+        x = _exit_ts(a)
+        if x is not None and t <= x <= now:
+            continue
+        out.append((t, a))
     return [a for _, a in sorted(out)]
 
 
@@ -325,13 +366,13 @@ def pending_agents(ctx, transcript: str, now) -> list:
 _CLAIM_WORDS = re.compile(
     r"(?<![\w-])(?:pass(?:ed|es)?|fail(?:ed|s)?|needs-work|merged?|deployed|released|shipped|"
     r"published|sent|done|fixed|resolved|approved|completed?|finished|works|confirmed|verified|"
-    r"found|green|"
+    r"found|green|correct|clean|success(?:ful)?|ready|"
     r"listos?|listas?|hech(?:o|a|as)|terminad[oa]s?|completad[oa]s?|mergead[oa]s?|fusionad[oa]s?|"
     r"desplegad[oa]s?|publicad[oa]s?|liberad[oa]s?|enviad[oa]s?|mandé|mandad[oa]s?|"
     r"arreglad[oa]s?|resuelt[oa]s?|aprobad[oa]s?|confirmad[oa]s?|verificad[oa]s?|funciona|"
-    r"pasó|pasaron|falló|fallaron|encontró|"
+    r"pasó|pasaron|falló|fallaron|encontró|arreglé|corregí|envié|quedó|aprobó|"
     r"fertig|erledigt|gemergt|veröffentlicht|veroeffentlicht|gesendet|behoben|bestanden|"
-    r"genehmigt|bestätigt|bestaetigt|gefunden)(?![\w-])", re.IGNORECASE)
+    r"genehmigt|bestätigt|bestaetigt|gefunden|gelöst|geloest|korrekt)(?![\w-])", re.IGNORECASE)
 _DIGIT = re.compile(r"\d")
 
 
@@ -349,10 +390,33 @@ def _pending_path(ctx) -> Path:
     return ctx.rl.receipts_dir() / _PENDING_FILE
 
 
-def spend(ctx, tool_use_id: str, session_id: str) -> None:
+def status_stops(ctx, session_id: str, prompt_uuid: str) -> int:
+    """Status stops already exempted for this operator prompt. A ledger that
+    exists and cannot be read is an error."""
+    p = _pending_path(ctx)
+    if not p.exists():
+        return 0
+    try:
+        text = p.read_text(encoding="utf-8")
+    except OSError as e:
+        raise GateError(f"spent ledger unreadable: {p} ({type(e).__name__})")
+    n = 0
+    for ln in text.splitlines():
+        try:
+            r = json.loads(ln)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(r, dict) and r.get("session_id") == session_id \
+                and r.get("prompt_uuid") == prompt_uuid:
+            n += 1
+    return n
+
+
+def spend(ctx, tool_use_id: str, session_id: str, prompt_uuid: str = "") -> None:
     from datetime import datetime, timezone
     p = _pending_path(ctx)
     rec = {"kind": "reply-pending", "tool_use_id": tool_use_id, "session_id": session_id,
+           "prompt_uuid": prompt_uuid,
            "ts": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -565,11 +629,11 @@ def decide(data: dict) -> tuple:
         raise GateError(f"transcript unreadable: {transcript} ({type(e).__name__})")
     if len(msg.split()) <= STATUS_CAP and not status_claim(msg):
         try:
-            pend = pending_agents(ctx, transcript, _now(ctx, newest))
+            pend = pending_agents(ctx, transcript, _now(ctx, newest), ctx.send._ts(prompt["ts"]))
         except OSError as e:
             raise GateError(f"transcript unreadable: {transcript} ({type(e).__name__})")
-        if pend:
-            spend(ctx, pend[-1], session_id)
+        if pend and status_stops(ctx, session_id, prompt["uuid"]) < STATUS_STOPS_MAX:
+            spend(ctx, pend[-1], session_id, prompt["uuid"])
             return 0, ""
     digest = ctx.pd.digest(msg, recipients=["operator"])
     cls = source_class(msg)
@@ -676,8 +740,17 @@ def _seed_case(sandbox: Path, session: str, msg: str, fx: dict) -> None:
         rdir.mkdir(parents=True, exist_ok=True)
         with (rdir / _PENDING_FILE).open("a", encoding="utf-8") as fh:
             for tid in fx["spent"]:
-                fh.write(json.dumps({"kind": "reply-pending", "tool_use_id": tid,
-                                     "session_id": session}) + "\n")
+                rec = {"kind": "reply-pending", "session_id": session}
+                rec.update(tid if isinstance(tid, dict) else {"tool_use_id": tid})
+                fh.write(json.dumps(rec) + "\n")
+    for agent, when in (fx.get("kernel_exit") or {}).items():
+        # The SubagentStop reflex's `exit` line in the agent's kernel journal.
+        from datetime import datetime
+        jd = sandbox / ".claude" / ".cache" / "kernel" / "journal"
+        jd.mkdir(parents=True, exist_ok=True)
+        t = datetime.fromisoformat(when.replace("Z", "+00:00")).timestamp()
+        (jd / f"{agent}.jsonl").write_text(json.dumps(
+            {"seq": 1, "ts": t, "start_ts": t, "pid": agent, "kind": "exit"}) + "\n", encoding="utf-8")
     if fx.get("ledger") == "directory":
         (rdir / "global.jsonl").mkdir(parents=True, exist_ok=True)
     if fx.get("pending_ledger") == "directory":
