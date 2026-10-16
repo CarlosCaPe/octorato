@@ -10,7 +10,7 @@ Claude Code has no hook that can stop text before it is displayed: "MessageDispl
 
 ## The protocol
 
-1. Write the reply to a file and run `python3 ~/.claude/scripts/panel_digest.py --panel-request --to operator --body-file <file>`. It prints the reviewer block (`PANEL-TO: operator`, `PANEL-BODY-BEGIN` ... `PANEL-BODY-END`, `PANEL-SHA256`).
+1. Write the reply to a file and run `python3 ~/.claude/scripts/panel_digest.py --panel-request --to operator --body-file <file>`. It first runs the preflight (`scripts/panel_preflight.py`): every other Stop hook that judges reply text runs on the draft, appended to a copy of the session transcript, and when one would block, no block is printed and the command exits 1, so the text the reviewers read is the text that ends the turn. It then prints the source class and quorum on stderr and the reviewer block (`PANEL-TO: operator`, `PANEL-BODY-BEGIN` ... `PANEL-BODY-END`, `PANEL-SHA256`) on stdout. `--preflight` runs only the check; `--no-preflight` skips it.
 2. Launch reviewer subagents with that block: three for a SELF reply, one for a SOURCED reply (see the quorum below). Its agent type must match `receipt_ledger.PANEL_AGENT_TYPE` (`qa|review|reality|evidence|checker|verif|audit|panel`: Reality Checker, Code Reviewer, Evidence Collector). general-purpose, claude and fork do not match. The reviewer repeats the block and ends with `PANEL-VERDICT: PASS | NEEDS-WORK` and `PANEL-SHA256`.
 3. `r__subagent-stop__qa-receipt.py` records a `panel` receipt only when the reviewer's own report carries the block and it recomputes to the stated digest. No new receipt machinery: a recipient is free text in `PANEL-TO`.
 4. Emit exactly the reviewed text as the final reply.

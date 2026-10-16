@@ -520,6 +520,7 @@ edges:
       - registry/rules.yaml                              # FLOW.receipt-ledger, COMMS.outward-send-gate, FLOW.qa-receipt, FLOW.panel-before-send, FLOW.sent-message-ledger
       - registry/fixtures/COMMS.outward-send-gate        # liveness proof of the send gate
       - scripts/panel_digest.py                          # panel digest shared by the gate and the main loop
+      - scripts/panel_preflight.py                       # runs the reply-text Stop gates on a draft before its panel (SKIP names Stop gates by file name)
       - scripts/panel_fixture_seed.py                    # seeds PASS panel receipts into send fixtures
       - scripts/r__posttool__sent-ledger.py              # sent-message ledger writer
       - registry/fixtures/FLOW.panel-before-send         # liveness proof of the panel check
