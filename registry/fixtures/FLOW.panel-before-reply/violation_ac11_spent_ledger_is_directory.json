@@ -4,11 +4,11 @@
   "cwd": "/home/user",
   "stop_hook_active": false,
   "last_assistant_message": "Panel running on the draft, the reply follows when it returns.",
-  "transcript_path": "violation_ac11_spent_ledger_unreadable_transcript.jsonl",
+  "transcript_path": "violation_ac11_spent_ledger_is_directory_transcript.jsonl",
   "_fixture": {
     "pending_ledger": "directory",
     "stderr_has": [
-      "spent ledger unreadable"
+      "spent ledger not writable"
     ]
   }
 }

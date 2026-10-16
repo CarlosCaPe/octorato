@@ -24,14 +24,17 @@ THE DECISION (FR-03, checked in this order; the first that holds exits 0)
      empty: the gate cannot decide and exits 2.
   3. The operator's own prompt for this turn carries the word `panel-skip`
      (never printed by this gate, so its own feedback cannot read as a waiver).
-  4. A Pending_Panel exists and the reply is at most 30 words: an `Agent` call
-     in this turn, after the operator prompt, whose subagent_type is a panel
-     reviewer, whose prompt carries a `PANEL-TO: operator` block that
-     panel_digest.recompute_from_report accepts, and which has not completed
-     (no task notification naming its tool use id, no tool_result for it whose
-     toolUseResult.isAsync is not true). Each one exempts ONE stop chain: its
-     id is recorded in ~/.claude/.cache/receipts/reply-pending.jsonl, and a
-     recorded id still exempts while stop_hook_active is true.
+  4. A status line: the reply is at most 30 words, carries no claim marker
+     (status_claim: an outcome word such as passed / merged / listo /
+     erledigt, or a digit outside a provenance line), and a subagent of
+     this session is still running (pending_agents: an Agent or Task call
+     acknowledged as launched in the background, or an agent resumed by
+     SendMessage, with no hand-back, task notification or TaskStop since,
+     launched within PENDING_MAX_MINUTES, after the newest compact
+     summary). Any subagent counts: panel reviewer, QA seat or builder. The
+     newest pending id is appended to ~/.claude/.cache/receipts/
+     reply-pending.jsonl as an audit row; a ledger that cannot be written
+     is an error.
   5. For digest(reply, recipients=["operator"]) in this session, the deciding
      receipt (receipt_ledger.panel_receipts_for, first entry) is a PASS whose
      verdict_ts is strictly newer than the operator prompt, and PASS receipts
@@ -225,7 +228,7 @@ def turn_after(ctx, transcript: str, prompt_uuid: str) -> tuple:
 
 
 # ---------------------------------------------------------------------------
-# Pending_Panel
+# Pending subagents and the status line
 # ---------------------------------------------------------------------------
 
 def _blocks(entry: dict) -> list:
@@ -233,64 +236,116 @@ def _blocks(entry: dict) -> list:
     return [b for b in c if isinstance(b, dict)] if isinstance(c, list) else []
 
 
-def _valid_panel_call(ctx, block: dict) -> bool:
-    if block.get("type") != "tool_use" or block.get("name") not in _AGENT_TOOLS:
-        return False
-    tin = block.get("input")
-    if not isinstance(tin, dict):
-        return False
-    stype, prompt = tin.get("subagent_type"), tin.get("prompt")
-    if not isinstance(stype, str) or not ctx.rl.PANEL_AGENT_TYPE.search(stype):
-        return False
-    if not isinstance(prompt, str):
-        return False
-    rec = ctx.pd.recompute_from_report(prompt)
-    return bool(rec) and rec.get("recipients") == ["operator"]
+# Lines worth parsing for the pending scan: async acks, SendMessage calls and
+# results, hand-backs, task notifications, TaskStop, compact summaries.
+_PENDING_HINTS = (b"isAsync", b"Agent\"", b"Task\"", b"SendMessage", b"resumedAgentId", b"peer", b"tool-use-id",
+                  b"TaskStop", b"isCompactSummary")
+# A background subagent unseen for this long is not counted as running: a
+# killed or crashed agent leaves no hand-back.
+PENDING_MAX_MINUTES = 120
 
 
-def pending_panels(ctx, entries: list) -> list:
-    """Tool use ids of panel calls in the turn that have not completed, oldest first."""
-    calls, done = [], set()
-    for e in entries:
-        if e.get("type") == "assistant":
+def _peer_from(entry: dict) -> str:
+    """The agent id of a hand-back entry (a user entry or a queued_command
+    attachment whose origin kind is peer), else ""."""
+    for o in (entry.get("origin"), (entry.get("attachment") or {}).get("origin")):
+        if isinstance(o, dict) and o.get("kind") == "peer" and o.get("from"):
+            return str(o["from"])
+    return ""
+
+
+def pending_agents(ctx, transcript: str, now) -> list:
+    """Subagents of this session still running, oldest launch first: an Agent
+    or Task call acknowledged as launched in the background (toolUseResult
+    isAsync true), or an agent resumed by SendMessage, with no hand-back (a
+    peer-origin entry from that agent), task notification naming the call or
+    TaskStop after its last launch, launched at most PENDING_MAX_MINUTES
+    before `now`. Agents launched before the newest compact summary are not
+    counted. Any subagent counts: a panel reviewer, a QA seat, a builder.
+    OSError propagates."""
+    calls, sends, launched, done, tid2agent = {}, {}, {}, {}, {}
+    with open(transcript, "rb") as fh:
+        for raw in fh:
+            if not any(h in raw for h in _PENDING_HINTS):
+                continue
+            try:
+                e = json.loads(raw.decode("utf-8", errors="replace"))
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(e, dict) or e.get("isSidechain"):
+                continue
+            ts = ctx.send._ts(e.get("timestamp"))
+            if ts is None:
+                continue
+            if e.get("isCompactSummary"):
+                calls, sends, launched, done, tid2agent = {}, {}, {}, {}, {}
+                continue
+            who = _peer_from(e)
+            if who:
+                done[who] = ts
+                continue
+            if e.get("type") == "assistant":
+                for b in _blocks(e):
+                    if b.get("type") != "tool_use" or not b.get("id"):
+                        continue
+                    tin = b.get("input") if isinstance(b.get("input"), dict) else {}
+                    if b.get("name") in _AGENT_TOOLS:
+                        calls[str(b["id"])] = ts
+                    elif b.get("name") == "SendMessage" and tin.get("to"):
+                        sends[str(b["id"])] = str(tin["to"])
+                    elif b.get("name") == "TaskStop":
+                        for k in ("task_id", "agent_id", "id"):
+                            if tin.get(k):
+                                done[str(tin[k])] = ts
+                continue
+            if e.get("type") != "user":
+                continue
+            tur = e.get("toolUseResult") if isinstance(e.get("toolUseResult"), dict) else {}
             for b in _blocks(e):
-                if _valid_panel_call(ctx, b) and b.get("id"):
-                    calls.append(str(b["id"]))
-            continue
-        if e.get("type") != "user":
-            continue
-        results = [b for b in _blocks(e) if b.get("type") == "tool_result"]
-        if results:
-            tur = e.get("toolUseResult")
-            is_ack = isinstance(tur, dict) and tur.get("isAsync") is True
-            if not is_ack:
-                done.update(str(b.get("tool_use_id") or "") for b in results)
-            continue
-        done.update(_TOOL_USE_ID.findall(ctx.send._entry_text(e)))
-    return [i for i in calls if i not in done]
+                if b.get("type") != "tool_result":
+                    continue
+                tid = str(b.get("tool_use_id") or "")
+                if tid in calls and tur.get("isAsync") is True:
+                    agent = str(tur.get("agentId") or tid)
+                    tid2agent[tid] = agent
+                    launched[agent] = ts
+                elif tid in sends and tur.get("success") is True:
+                    launched[sends[tid]] = ts
+            for tid in _TOOL_USE_ID.findall(ctx.send._entry_text(e)):
+                done[tid2agent.get(tid, tid)] = ts
+    from datetime import timedelta
+    floor = now - timedelta(minutes=PENDING_MAX_MINUTES)
+    out = [(t, a) for a, t in launched.items() if t >= floor and not (a in done and done[a] >= t)]
+    return [a for _, a in sorted(out)]
+
+
+# A status line may not carry a result. Digits (outside provenance lines) and
+# outcome words in EN, ES and DE make it a claim, which needs the panel.
+_CLAIM_WORDS = re.compile(
+    r"(?<![\w-])(?:pass(?:ed|es)?|fail(?:ed|s)?|needs-work|merged?|deployed|released|shipped|"
+    r"published|sent|done|fixed|resolved|approved|completed?|finished|works|confirmed|verified|"
+    r"found|green|"
+    r"listos?|listas?|hech(?:o|a|as)|terminad[oa]s?|completad[oa]s?|mergead[oa]s?|fusionad[oa]s?|"
+    r"desplegad[oa]s?|publicad[oa]s?|liberad[oa]s?|enviad[oa]s?|mandé|mandad[oa]s?|"
+    r"arreglad[oa]s?|resuelt[oa]s?|aprobad[oa]s?|confirmad[oa]s?|verificad[oa]s?|funciona|"
+    r"pasó|pasaron|falló|fallaron|encontró|"
+    r"fertig|erledigt|gemergt|veröffentlicht|veroeffentlicht|gesendet|behoben|bestanden|"
+    r"genehmigt|bestätigt|bestaetigt|gefunden)(?![\w-])", re.IGNORECASE)
+_DIGIT = re.compile(r"\d")
+
+
+def status_claim(text: str) -> str:
+    """The first claim marker in a status line, or "" when it carries none."""
+    m = _CLAIM_WORDS.search(text)
+    if m:
+        return m.group(0)
+    body = "\n".join(ln for ln in text.splitlines() if not _PROVENANCE.match(ln))
+    m = _DIGIT.search(body)
+    return m.group(0) if m else ""
 
 
 def _pending_path(ctx) -> Path:
     return ctx.rl.receipts_dir() / _PENDING_FILE
-
-
-def spent_ids(ctx) -> set:
-    p = _pending_path(ctx)
-    if not p.exists():
-        return set()
-    try:
-        text = p.read_text(encoding="utf-8")
-    except OSError as e:
-        raise GateError(f"spent ledger unreadable: {p} ({type(e).__name__})")
-    out = set()
-    for ln in text.splitlines():
-        try:
-            r = json.loads(ln)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(r, dict) and r.get("tool_use_id"):
-            out.add(str(r["tool_use_id"]))
-    return out
 
 
 def spend(ctx, tool_use_id: str, session_id: str) -> None:
@@ -450,19 +505,17 @@ def decide(data: dict) -> tuple:
             raise GateError("no operator prompt found in the transcript")
         if _SKIP.search(prompt["text"]):
             return 0, ""
-        entries, newest = turn_after(ctx, transcript, prompt["uuid"])
+        _entries, newest = turn_after(ctx, transcript, prompt["uuid"])
     except OSError as e:
         raise GateError(f"transcript unreadable: {transcript} ({type(e).__name__})")
-    if len(msg.split()) <= STATUS_CAP:
-        pend = pending_panels(ctx, entries)
+    if len(msg.split()) <= STATUS_CAP and not status_claim(msg):
+        try:
+            pend = pending_agents(ctx, transcript, _now(ctx, newest))
+        except OSError as e:
+            raise GateError(f"transcript unreadable: {transcript} ({type(e).__name__})")
         if pend:
-            spent = spent_ids(ctx)
-            if data.get("stop_hook_active") is True and any(i in spent for i in pend):
-                return 0, ""
-            fresh = [i for i in pend if i not in spent]
-            if fresh:
-                spend(ctx, fresh[-1], session_id)
-                return 0, ""
+            spend(ctx, pend[-1], session_id)
+            return 0, ""
     digest = ctx.pd.digest(msg, recipients=["operator"])
     cls = source_class(msg)
     need = QUORUM[cls]
@@ -481,8 +534,9 @@ def decide(data: dict) -> tuple:
         f"qa|review|reality|evidence|checker|verif|audit|panel (Reality Checker, Code "
         f"Reviewer, Evidence Collector; general-purpose, claude and fork do not count). "
         f"Each reviewer ends its report with the block, PANEL-VERDICT and PANEL-SHA256. "
-        f"Then emit exactly the reviewed text. While a reviewer runs, a status line of "
-        f"at most {STATUS_CAP} words may end the turn."
+        f"Then emit exactly the reviewed text. While a subagent runs, a status line of "
+        f"at most {STATUS_CAP} words with no result in it (no outcome word, no digit) may "
+        f"end the turn."
     )
 
 
