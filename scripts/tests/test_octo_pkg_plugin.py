@@ -188,8 +188,44 @@ class TestLayoutRefusals(PluginSandbox):
     def test_mcp_json_is_refused(self):
         out = self.wrap()
         (out / ".mcp.json").write_text("{}", encoding="utf-8")
-        with self.assertRaisesRegex(octo_pkg.PkgError, "MCP"):
+        with self.assertRaisesRegex(octo_pkg.PkgError, "carries"):
             octo_pkg.check_plugin_layout(out, self._manifest(out))
+
+    def test_qa_probe_every_unlisted_root_entry_is_refused(self):
+        """QA probe on 5845c59: `.lsp.json` passed wrap, sign, install and verify
+        while `.mcp.json` was refused. The allowlist refuses each of these, in the
+        upstream (wrap-plugin) and in a built wrapper (install and verify)."""
+        probes = {".lsp.json": "{}", ".mcp.json": "{}", "settings.json": "{}",
+                  "agents/a.md": "x", "commands/c.md": "x", "skills/s/SKILL.md": "x",
+                  "unknown.bin": "x"}
+        for rel, body in probes.items():
+            up = self.tmp / f"up-{rel.replace('/', '_')}"
+            shutil.copytree(UPSTREAM, up)
+            f = up / rel
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body, encoding="utf-8")
+            out = self.tmp / f"w-{rel.replace('/', '_')}"
+            self.assertEqual(self.main("wrap-plugin", str(up), "--out", str(out)), 1, rel)
+            self.assertFalse(out.exists(), rel)
+        built = self.wrap()
+        for rel, body in probes.items():
+            f = built / rel
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body, encoding="utf-8")
+            with self.assertRaisesRegex(octo_pkg.PkgError, "carries", msg=rel):
+                octo_pkg.check_plugin_layout(built, self._manifest(built))
+            top = built / rel.split("/")[0]
+            shutil.rmtree(top) if top.is_dir() else top.unlink()
+        octo_pkg.check_plugin_layout(built, self._manifest(built))   # clean again
+
+    def test_upstream_declaring_lsp_servers_is_refused(self):
+        up = self.tmp / "up-lsp"
+        shutil.copytree(UPSTREAM, up)
+        pj = up / ".claude-plugin" / "plugin.json"
+        data = json.loads(pj.read_text(encoding="utf-8"))
+        data["lspServers"] = {"x": {"command": "x"}}
+        pj.write_text(json.dumps(data), encoding="utf-8")
+        self.assertEqual(self.main("wrap-plugin", str(up), "--out", str(self.tmp / "w")), 1)
 
     def test_an_unguarded_command_is_refused(self):
         out = self.wrap()

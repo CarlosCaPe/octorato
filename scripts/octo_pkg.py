@@ -279,6 +279,20 @@ GUARD_PREFIX = 'python3 -I -S "${HOME}/.claude/scripts/g__wrap__export-guard.py"
 SESSION_ENV = "CLAUDECODE"
 _HOOK_ENTRY_KEYS = frozenset({"matcher", "hooks"})
 _HOOK_KEYS = frozenset({"type", "command", "timeout", "statusMessage"})
+# The ONLY entries a Tracing_Wrapper tree may carry, at its root and inside
+# `.claude-plugin/`. An allowlist, not a list of known-dangerous names: a plugin root
+# is a set of conventions the harness grows (`.mcp.json`, `.lsp.json`, `agents/`,
+# `commands/`, `skills/`, `settings.json`, ...), and every one of them is a way to run
+# something the guard never sees. A name this list does not hold is refused, so a
+# component the harness adds next year is refused too. The upstream's hook scripts
+# live under `hooks/`, beside the hook list; an upstream that keeps them elsewhere is
+# refused by wrap-plugin rather than wrapped with a loader nobody checked.
+PLUGIN_TOP_ALLOW = frozenset({".claude-plugin", "hooks", "skill.json", "skill.json.sig",
+                              "README.md", "LICENSE", "LICENSE.md", "LICENSE.txt"})
+PLUGIN_META_ALLOW = frozenset({"plugin.json", "upstream-plugin.json"})
+# plugin.json keys that start a process with the session; refused in the upstream's
+# manifest by wrap-plugin, and in the wrapper's by PLUGIN_JSON_KEYS (an allowlist).
+PLUGIN_SERVER_KEYS = frozenset({"mcpServers", "lspServers"})
 
 # The schema's own name pattern. Every package name is matched against it at BOTH
 # ends: when a manifest is read, and when the lockfile is read. The lock is a tracked
@@ -1236,6 +1250,29 @@ def wrap_hooks(upstream: dict) -> dict:
             "hooks": out}
 
 
+def _check_plugin_entries(root: Path, top_allow, meta_allow, dirs=(".claude-plugin", "hooks")) -> None:
+    """Refuse any root entry outside `top_allow` and any `.claude-plugin/` entry
+    outside `meta_allow`; `.claude-plugin` and `hooks` must be real directories."""
+    try:
+        top = sorted(p.name for p in root.iterdir())
+        meta_dir = root / ".claude-plugin"
+        meta = sorted(p.name for p in meta_dir.iterdir()) if meta_dir.is_dir() else []
+    except OSError as e:
+        raise PkgError(f"{root} cannot be listed: {e}")
+    extra = [n for n in top if n not in top_allow]
+    if extra:
+        raise PkgError(f"the plugin tree carries {extra}: a Tracing_Wrapper holds only "
+                       f"{sorted(top_allow)}; anything else (.mcp.json, .lsp.json, agents/, "
+                       f"commands/, skills/, settings.json) loads without the guard")
+    extra = [n for n in meta if n not in meta_allow]
+    if extra:
+        raise PkgError(f".claude-plugin/ carries {extra}; only {sorted(meta_allow)} belong there")
+    for d in dirs:
+        p = root / d
+        if p.is_symlink() or not p.is_dir():
+            raise PkgError(f"{d}/ is missing or not a directory")
+
+
 def check_plugin_layout(pkg_dir: Path, manifest: dict) -> dict:
     """Every structural rule a plugin package must meet, checked on the bytes in the
     staging area (or on an installed tree), before any signature is looked at.
@@ -1245,7 +1282,9 @@ def check_plugin_layout(pkg_dir: Path, manifest: dict) -> dict:
       - the octo manifest declares `kind: plugin`;
       - `.claude-plugin/plugin.json` is an object naming the same plugin, with no key
         outside PLUGIN_JSON_KEYS (no component path the guard would not see);
-      - no `.mcp.json` (an MCP server starts with the session, guard or not);
+      - its root and `.claude-plugin/` hold only PLUGIN_TOP_ALLOW and
+        PLUGIN_META_ALLOW: no `.mcp.json`, `.lsp.json`, `agents/`, `commands/`,
+        `skills/`, `settings.json` or any name the harness may load later;
       - `hooks/upstream-hooks.json` is the upstream's hook list and
         `hooks/hooks.json` is EXACTLY wrap_hooks() of it: same events, matchers,
         order and timeouts, every command guarded. So every event the wrapper
@@ -1265,9 +1304,7 @@ def check_plugin_layout(pkg_dir: Path, manifest: dict) -> dict:
     if extra:
         raise PkgError(f"{PLUGIN_MANIFEST_REL} carries {sorted(extra)}: a plugin package "
                        f"declares no component path, so nothing it loads bypasses the guard")
-    if stat_ok(lambda: (pkg_dir / ".mcp.json").exists(), False, ".mcp.json"):
-        raise PkgError("the package ships .mcp.json: an MCP server starts with the session "
-                       "and never passes through the guard")
+    _check_plugin_entries(pkg_dir, PLUGIN_TOP_ALLOW, PLUGIN_META_ALLOW)
     up_manifest = read_json(pkg_dir / PLUGIN_UPSTREAM_MANIFEST_REL, PLUGIN_UPSTREAM_MANIFEST_REL)
     if not isinstance(up_manifest, dict) or not isinstance(up_manifest.get("name"), str):
         raise PkgError(f"{PLUGIN_UPSTREAM_MANIFEST_REL} does not name the upstream plugin")
@@ -3196,9 +3233,12 @@ def cmd_wrap_plugin(brain: Brain, upstream: str, out: str, name: str) -> int:
     if not isinstance(version, str) or not _SEMVER_RE.match(version):
         raise PkgError(f"upstream version {version!r} is not semver; the wrapper carries "
                        f"the upstream version as its own")
-    if (src / ".mcp.json").exists() or "mcpServers" in up_manifest:
-        raise PkgError("the upstream ships MCP servers; the Tracing_Wrapper carries hooks "
-                       "only, and an MCP server would never pass through the guard")
+    servers = sorted(PLUGIN_SERVER_KEYS & set(up_manifest))
+    if servers:
+        raise PkgError(f"the upstream manifest declares {servers}; the Tracing_Wrapper "
+                       f"carries hooks only, and a server would never pass through the guard")
+    _check_plugin_entries(src, PLUGIN_TOP_ALLOW - {MANIFEST_NAME["plugin"], SIG_NAME},
+                          frozenset({"plugin.json"}), dirs=(".claude-plugin",))
     for reserved in (MANIFEST_NAME["plugin"], SIG_NAME, PLUGIN_UPSTREAM_HOOKS_REL,
                      PLUGIN_UPSTREAM_MANIFEST_REL):
         if (src / reserved).exists():
@@ -3892,6 +3932,22 @@ def _selftest_plugin_legs(brain: Brain, key: Path, upstream: Path, tmp: Path, ch
             rc = main(["--brain", root, "install", "--kind", "plugin", str(extra)])
         check("a signed, fully guarded wrapper that is not the upstream hook list is refused",
               rc == 1 and not pdest.exists())
+
+        # QA probe on 5845c59: a root `.lsp.json` (an LSP server starts with the
+        # session) passed while `.mcp.json` was refused. The root is an allowlist now,
+        # so it and every other unlisted entry is refused, signed or not, before the
+        # signature is read.
+        lsp = tmp / "wrapper-lsp"
+        shutil.copytree(wrapper, lsp)
+        (lsp / ".lsp.json").write_text('{"x": {"command": "x"}}\n', encoding="utf-8")
+        with contextlib.redirect_stdout(sink):
+            main(["--brain", root, "hash", str(lsp), "--write"])
+        _sign(key, lsp / "skill.json")
+        SIG_VERIFY_CALLS = 0
+        with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
+            rc = main(["--brain", root, "install", "--kind", "plugin", str(lsp)])
+        check("a signed wrapper carrying a root .lsp.json is refused before its signature is read",
+              rc == 1 and SIG_VERIFY_CALLS == 0 and not pdest.exists())
 
         with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
             main(["--brain", root, "install", "--kind", "plugin", str(wrapper)])
