@@ -54,7 +54,7 @@ rules:
   category: COMMS
   source:
     file: CLAUDE.md
-    anchor: '## Communication & Output Efficiency'
+    anchor: Human Cadence
   strength: GATE
   gateable: true
   enforcement: fail-closed
@@ -87,7 +87,7 @@ rules:
   category: COMMS
   source:
     file: CLAUDE.md
-    anchor: '## Communication & Output Efficiency'
+    anchor: Unsourced-attribute
   strength: GATE
   gateable: true
   enforcement: fail-closed
@@ -112,7 +112,7 @@ rules:
   category: COMMS
   source:
     file: CLAUDE.md
-    anchor: '## Communication & Output Efficiency'
+    anchor: Unsourced-absence
   strength: GATE
   gateable: true
   enforcement: fail-closed
@@ -136,7 +136,7 @@ rules:
   category: COMMS
   source:
     file: CLAUDE.md
-    anchor: '## Communication & Output Efficiency'
+    anchor: Deliverable-complete-before-send
   strength: GATE
   gateable: true
   enforcement: fail-closed
@@ -161,7 +161,7 @@ rules:
   category: FLOW
   source:
     file: CLAUDE.md
-    anchor: '## Best Tool First (MANDATORY)'
+    anchor: Do-it-today (do not put off until tomorrow what you can do today)
   strength: GATE
   gateable: true
   enforcement: fail-closed
@@ -186,7 +186,7 @@ rules:
   category: COMMS
   source:
     file: CLAUDE.md
-    anchor: '## Communication & Output Efficiency'
+    anchor: No menu questions
   strength: GATE
   gateable: true
   enforcement: fail-closed
@@ -211,7 +211,7 @@ rules:
   category: COMMS
   source:
     file: CLAUDE.md
-    anchor: '## Communication & Output Efficiency'
+    anchor: Paste-ready message is the deliverable
   strength: GATE
   gateable: true
   enforcement: fail-closed
@@ -235,7 +235,7 @@ rules:
   category: CODE
   source:
     file: CLAUDE.md
-    anchor: '## Code Change Discipline'
+    anchor: Adversarially verify the operator
   strength: GATE
   gateable: true
   enforcement: fail-closed
@@ -283,7 +283,7 @@ rules:
   category: CODE
   source:
     file: CLAUDE.md
-    anchor: '## Git & Version Control'
+    anchor: qa-merge-gate
   strength: GATE
   gateable: true
   enforcement: fail-closed
@@ -388,7 +388,7 @@ rules:
   category: GENERIC
   source:
     file: CLAUDE.md
-    anchor: '### Information Flow Rules'
+    anchor: The Brain Stays Generic
   strength: GATE
   gateable: true
   enforcement: fail-closed
@@ -417,7 +417,7 @@ rules:
   category: ARCHITECTURE
   source:
     file: CLAUDE.md
-    anchor: '#### Activation Modes'
+    anchor: Session/Instance Isolation
   strength: GATE
   gateable: true
   enforcement: fail-closed
@@ -467,7 +467,7 @@ rules:
   category: FLOW
   source:
     file: CLAUDE.md
-    anchor: '### Enforcement Tools (Mandatory Scripts)'
+    anchor: 2D Delegate Gate
   strength: REFLEX
   gateable: false
   enforcement: n/a
@@ -986,9 +986,6 @@ rules:
 - id: FLOW.prune-dead-cells
   title: Prune dead cells — lineage-doctor detects orphans at push
   category: FLOW
-  source:
-    file: CLAUDE.md
-    anchor: ULTRA RULE — Prune dead cells
   strength: DETECTOR
   gateable: false
   enforcement: n/a
@@ -1013,9 +1010,6 @@ rules:
 - id: FLOW.suggest-unlock
   title: Suggest the unlock — disclose capability gaps
   category: FLOW
-  source:
-    file: CLAUDE.md
-    anchor: ULTRA RULE — Suggest the unlock
   strength: PRESENCE
   firing_mode:
   - model
@@ -1097,14 +1091,12 @@ rules:
 - id: FLOW.4d-spec-enhancement
   title: 4D+S spec-driven enhancement — complexity classifier
   category: FLOW
+  strength: PRESENCE
+  firing_mode:
+  - model
   source:
     file: CLAUDE.md
     anchor: '### 4D+S — Spec-Driven Enhancement'
-  strength: REFLEX
-  gateable: false
-  enforcement: n/a
-  firing_mode:
-  - hook
   mechanism:
   - kind: Presence
     canonical_name: null
@@ -1992,10 +1984,8 @@ rules:
     anchor: '## Replay harness'
   strength: DETECTOR
   gateable: false
-
   enforcement: n/a
-
-  v7_decision: 'v10 phase 1 (2026-10-06): detector by design. The corpus is private and per machine, so a clone without it SKIPS; the replay is run by the builder of a gate change and its result is quoted in the PR, not forced at push.'
+  v7_decision: 'v10 phase 1 (2026-10-06): detector by design. The corpus is private and per machine, so a clone without it SKIPs; the replay is run by the builder of a gate change and its result is quoted in the PR, not forced at push.'
   firing_mode:
   - cli
   mechanism:
@@ -2569,7 +2559,7 @@ rules:
     locator: 'AC-17: THE Constitution SHALL contain no section written in a language other than English'
     expect: present
   liveness_required: FIRES
-# v11 spec 202610141000 (harness independence), T04 [AC-15]: registry-only rules:
+# v11 spec 202610141000 (harness independence), T04 [AC-15]. Registry-only rules:
 # each anchors in the spec's own acceptance criterion, so CLAUDE.md (near its
 # 12,000-token budget) gains no prose and registry-coverage is unchanged. The
 # arming-surface change (T03, AC-17) is registered as proofs on the existing
