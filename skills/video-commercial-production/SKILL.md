@@ -1,8 +1,3 @@
----
-name: video-commercial-production
-description: "Produces HD 9:16 video commercials from GSAP-animated HTML pages, capturing with Playwright and encoding with ffmpeg. Output works on WhatsApp, Instagram and TikTok. Triggers on 'video', 'comercial', 'MP4', 'Reel', 'video desde HTML', 'record animation'."
----
-
 # Video Commercial Production
 
 > Produce HD 9:16 portrait video commercials from GSAP-animated HTML pages using Playwright screen capture + ffmpeg encoding. Outputs are WhatsApp/Instagram/TikTok compatible.

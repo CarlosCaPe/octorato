@@ -243,7 +243,7 @@
 | theory-plus-practice-prompts | Any long technical document that explains a framework and demonstrates a case MUST carry runnable prompts with real data... |
 | timestamptz-standardization | Timestamp Standardization (timestamptz) |
 | toc-audit-commit-push | TOC Audit, Commit & Push Workflow |
-| token-efficient-prompting | Cuts output tokens by 50-75% without losing signal, removing flattery, filler, preamble and unrequested suggestions. Tri... |
+| token-efficient-prompting | Token-Efficient Prompting |
 | tos-safe-social-share-helper | Architectural pattern for cases where a client wants to "auto-publish to social platform X" but the platform's ToS forbi... |
 | tramite-mx-assistant | Assistant for MX government procedures: drives the portal with agent-browser, STOPS at captcha, OTP and card payment, an... |
 | transcribe | Transcribe audio files to text with optional diarization and known-speaker hints. Use when a user asks to transcribe spe... |
@@ -253,7 +253,7 @@
 | verify-generated-config-identifiers | Schema-valid generated config is not semantically correct: check every external identifier (metric, field, column, env k... |
 | verify-root-cause-before-claiming | Before telling anyone the CAUSE of a failure, verify it against the data, not against the symptom. A plausible unverifie... |
 | vibevoice-elevenlabs-alternative | Microsoft open-source speech synthesis model, local and real-time, a stand-in for ElevenLabs. MIT. For clients that cann... |
-| video-commercial-production | Produces HD 9:16 video commercials from GSAP-animated HTML pages, capturing with Playwright and encoding with ffmpeg. Ou... |
+| video-commercial-production | Video Commercial Production |
 | voice-and-cadence-consistency | Document Voice and Cadence Consistency |
 | wa-guardia | Watch mode over a messaging chat. Arms a watcher when a turn closes waiting on a reply from a third party, and reads wha... |
 | web-perf | Audits web performance with the Chrome DevTools MCP: Core Web Vitals (LCP, INP, CLS), render-blocking resources, network... |
