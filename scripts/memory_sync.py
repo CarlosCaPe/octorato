@@ -18,6 +18,10 @@ THE MORPHOLOGY (why this script is shaped the way it is):
   descends into a gitignored dir, so the two indexes never touch. Same wall as
   company/.
 
+  More than one memory dir? List the extra ones in `brain_memory.stores` as
+  {path, branch}. Each becomes its own nested repo on its own branch of the same
+  remote; nothing is copied between dirs.
+
   No config present? This SOFT-FAILS to local-only (the zero-config adopter default
   — memory still works on this machine, just isn't synced). Adopters opt in by
   creating their own private repo and writing one config file. BYO-backend by design.
@@ -70,15 +74,38 @@ def git(repo: Path, *args, check=True):
     return r.stdout.strip()
 
 
-def resolve_repo(cfg):
-    repo = (BRAIN_DIR / cfg["path"]).resolve()
+def list_stores(cfg):
+    """Expand the config into one store per nested repo.
+
+    The primary store is brain_memory itself. Optional `brain_memory.stores`
+    entries ({path, branch}, optional remote) add more memory dirs. Each one is
+    its OWN nested .git on its OWN branch, of the same private remote unless the
+    entry names another. Nothing is copied between dirs, so deletions and edits
+    from other machines stay git's job.
+    """
+    stores = [{"path": cfg["path"], "branch": cfg.get("branch", "main"), "remote": cfg["remote"]}]
+    for extra in cfg.get("stores") or []:
+        if not isinstance(extra, dict) or not extra.get("path") or not extra.get("branch"):
+            raise RuntimeError("brain_memory.stores: every entry needs a path and a branch")
+        store = {"path": extra["path"], "branch": extra["branch"],
+                 "remote": extra.get("remote") or cfg["remote"]}
+        for s in stores:
+            if (BRAIN_DIR / s["path"]).resolve() == (BRAIN_DIR / store["path"]).resolve():
+                raise RuntimeError(f"brain_memory.stores: path {store['path']} is listed twice")
+            if s["remote"] == store["remote"] and s["branch"] == store["branch"]:
+                raise RuntimeError(f"brain_memory.stores: branch {store['branch']} is used twice on one remote")
+        stores.append(store)
+    return stores
+
+
+def resolve_repo(store):
+    repo = (BRAIN_DIR / store["path"]).resolve()
     if not repo.is_dir():
         raise RuntimeError(f"memory path does not exist: {repo}")
     # Initialise the nested repo on first run (fresh machine / first adopter sync).
     if not (repo / ".git").exists():
-        branch = cfg.get("branch", "main")
-        git(repo, "init", "-b", branch)
-        git(repo, "remote", "add", "origin", cfg["remote"])
+        git(repo, "init", "-b", store["branch"])
+        git(repo, "remote", "add", "origin", store["remote"])
         print(f"  initialised nested repo at {repo.relative_to(BRAIN_DIR)} → origin")
     return repo
 
@@ -89,32 +116,46 @@ def cmd_status(cfg):
         print("  Memory works on this machine; it is not synced. To enable sync, create a")
         print("  PRIVATE repo and point company/config/memory.json at it. Never inside an arm.")
         return 0
-    repo = resolve_repo(cfg)
-    branch = git(repo, "rev-parse", "--abbrev-ref", "HEAD", check=False) or "?"
-    dirty = git(repo, "status", "--short", check=False)
-    print(f"memory_sync: synced store")
-    print(f"  remote: {cfg['remote']}")
-    print(f"  path:   {cfg['path']}  (branch {branch})")
-    print(f"  files:  {len(git(repo, 'ls-files', check=False).splitlines())}")
-    print(f"  state:  {'DIRTY — ' + str(len(dirty.splitlines())) + ' change(s)' if dirty else 'clean'}")
+    stores = list_stores(cfg)
+    print(f"memory_sync: {len(stores)} synced store(s)")
+    for store in stores:
+        repo = resolve_repo(store)
+        branch = git(repo, "rev-parse", "--abbrev-ref", "HEAD", check=False) or "?"
+        dirty = git(repo, "status", "--short", check=False)
+        print(f"  remote: {store['remote']}")
+        print(f"  path:   {store['path']}  (branch {branch})")
+        print(f"  files:  {len(git(repo, 'ls-files', check=False).splitlines())}")
+        print(f"  state:  {'DIRTY — ' + str(len(dirty.splitlines())) + ' change(s)' if dirty else 'clean'}")
     return 0
 
 
-def cmd_pull(cfg):
-    if cfg is None:
-        return cmd_status(cfg)
-    repo = resolve_repo(cfg)
-    branch = cfg.get("branch", "main")
-    print(f"memory_sync: pull --rebase origin/{branch} ...")
+def each_store(cfg, action):
+    """Run action on every store. One store failing does not skip the others;
+    the run still exits 1 so the failure is never silent."""
+    failed = 0
+    for store in list_stores(cfg):
+        try:
+            action(store)
+        except RuntimeError as e:
+            print(f"memory_sync FAIL [{store['path']}]: {e}", file=sys.stderr)
+            failed += 1
+    return 1 if failed else 0
+
+
+def pull_store(store):
+    repo = resolve_repo(store)
+    branch = store["branch"]
+    print(f"memory_sync: pull --rebase origin/{branch} ({store['path']}) ...")
+    if not git(repo, "ls-remote", "--heads", "origin", branch, check=False):
+        print("  (no remote branch yet; the first push creates it)")
+        return
     print("  " + (git(repo, "pull", "--rebase", "origin", branch) or "(up to date)"))
-    return 0
 
 
-def cmd_push(cfg):
-    if cfg is None:
-        return cmd_status(cfg)
-    repo = resolve_repo(cfg)
-    branch = cfg.get("branch", "main")
+def push_store(store):
+    repo = resolve_repo(store)
+    branch = store["branch"]
+    print(f"memory_sync: push {store['path']} → origin/{branch}")
     if git(repo, "status", "--short", check=False):
         git(repo, "add", "-A")  # nested repo's own index — never the parent's
         git(repo, "-c", "user.name=octorato-brain",
@@ -127,8 +168,19 @@ def cmd_push(cfg):
     if git(repo, "ls-remote", "--heads", "origin", branch, check=False):
         git(repo, "pull", "--rebase", "origin", branch)
     git(repo, "push", "-u", "origin", branch)
-    print(f"  pushed → {cfg['remote']}")
-    return 0
+    print(f"  pushed → {store['remote']} ({branch})")
+
+
+def cmd_pull(cfg):
+    if cfg is None:
+        return cmd_status(cfg)
+    return each_store(cfg, pull_store)
+
+
+def cmd_push(cfg):
+    if cfg is None:
+        return cmd_status(cfg)
+    return each_store(cfg, push_store)
 
 
 def main():

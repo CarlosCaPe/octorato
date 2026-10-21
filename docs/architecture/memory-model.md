@@ -90,6 +90,9 @@ from gitignored `company/config/memory.json`, never hardcoded (same precedent as
    `company/config/memory.json` (`brain_memory.remote` + `path`), then run
    `python3 scripts/memory_sync.py push`. The script `git init`s the nested repo on
    first run and pushes. No config → it soft-fails back to local-only.
+3. **More than one memory dir:** add `brain_memory.stores`, a list of
+   `{path, branch}` entries. Each dir gets its own nested repo on its own branch of
+   the same remote, and `status`/`pull`/`push` walk every store.
 
 ```bash
 python3 scripts/memory_sync.py status   # show config + nested-repo state
