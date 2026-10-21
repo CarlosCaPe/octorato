@@ -81,7 +81,9 @@ def list_stores(cfg):
     entries ({path, branch}, optional remote) add more memory dirs. Each one is
     its OWN nested .git on its OWN branch, of the same private remote unless the
     entry names another. Nothing is copied between dirs, so deletions and edits
-    from other machines stay git's job.
+    from other machines stay git's job. Store dirs may not nest inside each
+    other (the outer repo would swallow the inner one). Remotes are compared as
+    written, so spell one remote the same way in every entry.
     """
     stores = [{"path": cfg["path"], "branch": cfg.get("branch", "main"), "remote": cfg["remote"]}]
     for extra in cfg.get("stores") or []:
@@ -89,9 +91,13 @@ def list_stores(cfg):
             raise RuntimeError("brain_memory.stores: every entry needs a path and a branch")
         store = {"path": extra["path"], "branch": extra["branch"],
                  "remote": extra.get("remote") or cfg["remote"]}
+        new = (BRAIN_DIR / store["path"]).resolve()
         for s in stores:
-            if (BRAIN_DIR / s["path"]).resolve() == (BRAIN_DIR / store["path"]).resolve():
+            old = (BRAIN_DIR / s["path"]).resolve()
+            if old == new:
                 raise RuntimeError(f"brain_memory.stores: path {store['path']} is listed twice")
+            if old in new.parents or new in old.parents:
+                raise RuntimeError(f"brain_memory.stores: {store['path']} and {s['path']} nest inside each other")
             if s["remote"] == store["remote"] and s["branch"] == store["branch"]:
                 raise RuntimeError(f"brain_memory.stores: branch {store['branch']} is used twice on one remote")
         stores.append(store)
@@ -106,8 +112,39 @@ def resolve_repo(store):
     if not (repo / ".git").exists():
         git(repo, "init", "-b", store["branch"])
         git(repo, "remote", "add", "origin", store["remote"])
-        print(f"  initialised nested repo at {repo.relative_to(BRAIN_DIR)} → origin")
+        print(f"  initialised nested repo at {store['path']} → origin")
     return repo
+
+
+def check_branch(repo, branch):
+    """Refuse to sync a nested repo that sits on another branch: a pull would
+    rebase the wrong branch, a push would fail on a missing refspec."""
+    head = git(repo, "symbolic-ref", "--short", "HEAD", check=False)
+    if head != branch:
+        raise RuntimeError(f"nested repo is on branch {head or '?'}, config says {branch}; "
+                           f"run `git -C \"{repo}\" checkout -B {branch}` or fix the config")
+
+
+def remote_has_branch(repo, branch):
+    """True/False for the remote branch; an unreachable remote raises instead of
+    reading as 'no branch yet' (exit 2 is git's 'no matching ref')."""
+    r = subprocess.run(["git", "-C", str(repo), "ls-remote", "--exit-code", "--heads",
+                        "origin", f"refs/heads/{branch}"], capture_output=True, text=True)
+    if r.returncode == 0:
+        return True
+    if r.returncode == 2:
+        return False
+    raise RuntimeError((r.stderr or r.stdout).strip() or f"git ls-remote exited {r.returncode}")
+
+
+def status_store(store):
+    repo = resolve_repo(store)
+    branch = git(repo, "rev-parse", "--abbrev-ref", "HEAD", check=False) or "?"
+    dirty = git(repo, "status", "--short", check=False)
+    print(f"  remote: {store['remote']}")
+    print(f"  path:   {store['path']}  (branch {branch})")
+    print(f"  files:  {len(git(repo, 'ls-files', check=False).splitlines())}")
+    print(f"  state:  {'DIRTY — ' + str(len(dirty.splitlines())) + ' change(s)' if dirty else 'clean'}")
 
 
 def cmd_status(cfg):
@@ -116,17 +153,8 @@ def cmd_status(cfg):
         print("  Memory works on this machine; it is not synced. To enable sync, create a")
         print("  PRIVATE repo and point company/config/memory.json at it. Never inside an arm.")
         return 0
-    stores = list_stores(cfg)
-    print(f"memory_sync: {len(stores)} synced store(s)")
-    for store in stores:
-        repo = resolve_repo(store)
-        branch = git(repo, "rev-parse", "--abbrev-ref", "HEAD", check=False) or "?"
-        dirty = git(repo, "status", "--short", check=False)
-        print(f"  remote: {store['remote']}")
-        print(f"  path:   {store['path']}  (branch {branch})")
-        print(f"  files:  {len(git(repo, 'ls-files', check=False).splitlines())}")
-        print(f"  state:  {'DIRTY — ' + str(len(dirty.splitlines())) + ' change(s)' if dirty else 'clean'}")
-    return 0
+    print(f"memory_sync: {len(list_stores(cfg))} synced store(s)")
+    return each_store(cfg, status_store)
 
 
 def each_store(cfg, action):
@@ -146,7 +174,8 @@ def pull_store(store):
     repo = resolve_repo(store)
     branch = store["branch"]
     print(f"memory_sync: pull --rebase origin/{branch} ({store['path']}) ...")
-    if not git(repo, "ls-remote", "--heads", "origin", branch, check=False):
+    check_branch(repo, branch)
+    if not remote_has_branch(repo, branch):
         print("  (no remote branch yet; the first push creates it)")
         return
     print("  " + (git(repo, "pull", "--rebase", "origin", branch) or "(up to date)"))
@@ -156,16 +185,20 @@ def push_store(store):
     repo = resolve_repo(store)
     branch = store["branch"]
     print(f"memory_sync: push {store['path']} → origin/{branch}")
+    check_branch(repo, branch)
     if git(repo, "status", "--short", check=False):
         git(repo, "add", "-A")  # nested repo's own index — never the parent's
         git(repo, "-c", "user.name=octorato-brain",
             "-c", "user.email=octorato@local", "commit", "-m", "sync: brain memory")
         print("  committed local memory changes")
+    if not git(repo, "rev-parse", "--verify", "-q", "HEAD", check=False):
+        print("  (empty store, nothing to push yet)")
+        return
     # Commit first, THEN rebase onto the remote so a second machine doesn't
     # fork history (pull --rebase refuses on a dirty tree). Strict: a failed
     # rebase must abort the push, not push a forked tree. Skip when the
     # remote branch doesn't exist yet (first-ever push).
-    if git(repo, "ls-remote", "--heads", "origin", branch, check=False):
+    if remote_has_branch(repo, branch):
         git(repo, "pull", "--rebase", "origin", branch)
     git(repo, "push", "-u", "origin", branch)
     print(f"  pushed → {store['remote']} ({branch})")
