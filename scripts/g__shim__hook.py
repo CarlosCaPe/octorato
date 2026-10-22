@@ -211,10 +211,6 @@ def _shell_cwd(base: dict, ti: dict, key: str) -> str:
     return _path(base["cwd"], d, f"{key} is not a path")
 
 
-def _split_parts(path: str) -> list[str]:
-    return [p for p in re.split(r"[\\/]+", path) if p]
-
-
 def walked_realpath(path: str) -> str:
     """An absolute path resolved the way a POSIX walker opens it: each symlink
     BEFORE the `..` that follows it.
@@ -224,12 +220,25 @@ def walked_realpath(path: str) -> str:
     and its tools) walks the link first. Measured on Windows 11 with a native
     directory symlink: Python's open() of `proj/lnk/../x` writes `proj/x`, Git
     Bash's `echo > proj/lnk/../x` writes beside the link's target. Both run
-    there, so on Windows this is the second reading, next to os.path.realpath.
+    there, so on Windows this is a second reading, next to os.path.realpath.
+    The same walk lives in g__wrap__export-guard.py, which imports nothing;
+    the body below the docstring is kept identical (test_hook_shim pins it).
     """
     if os.name != "nt":
         return os.path.realpath(path)
+    import re
+    import stat as st
+
+    def parts(p):
+        return [x for x in re.split(r"[\\/]+", p) if x]
+
+    def mount_point(p):  # a junction or a volume mount point, on any Python 3
+        try:
+            return os.lstat(p).st_reparse_tag == st.IO_REPARSE_TAG_MOUNT_POINT
+        except (OSError, AttributeError):
+            return False
     drive, rest = os.path.splitdrive(path)
-    cur, todo, hops = drive + os.sep, _split_parts(rest), 0
+    cur, todo, hops = drive + os.sep, parts(rest), 0
     while todo:
         part = todo.pop(0)
         if part == ".":
@@ -238,7 +247,7 @@ def walked_realpath(path: str) -> str:
             cur = os.path.dirname(cur)
             continue
         nxt = os.path.join(cur, part)
-        if os.path.islink(nxt) or getattr(os.path, "isjunction", lambda _p: False)(nxt):
+        if os.path.islink(nxt) or mount_point(nxt):
             hops += 1
             if hops > 40:  # a loop: the Win32 reading is all there is
                 return os.path.realpath(path)
@@ -253,7 +262,7 @@ def walked_realpath(path: str) -> str:
             tdrive, trest = os.path.splitdrive(target)
             if tdrive or trest[:1] in ("\\", "/"):
                 cur = (tdrive or drive) + os.sep
-            todo = _split_parts(trest) + todo
+            todo = parts(trest) + todo
             continue
         cur = nxt
     return os.path.realpath(cur)

@@ -160,14 +160,22 @@ def _walked_realpath(path: str) -> str:
     directory symlink: Python's open() of `proj/lnk/../x` writes `proj/x`, Git
     Bash's `echo > proj/lnk/../x` writes beside the link's target. Both run
     there, so on Windows this is a second reading, next to os.path.realpath.
-    The same walk lives in g__shim__hook.py: this guard imports nothing.
+    The same walk lives in g__shim__hook.py, as this guard imports nothing;
+    the body below the docstring is kept identical (test_hook_shim pins it).
     """
     if os.name != "nt":
         return os.path.realpath(path)
     import re
+    import stat as st
 
     def parts(p):
         return [x for x in re.split(r"[\\/]+", p) if x]
+
+    def mount_point(p):  # a junction or a volume mount point, on any Python 3
+        try:
+            return os.lstat(p).st_reparse_tag == st.IO_REPARSE_TAG_MOUNT_POINT
+        except (OSError, AttributeError):
+            return False
     drive, rest = os.path.splitdrive(path)
     cur, todo, hops = drive + os.sep, parts(rest), 0
     while todo:
@@ -178,7 +186,7 @@ def _walked_realpath(path: str) -> str:
             cur = os.path.dirname(cur)
             continue
         nxt = os.path.join(cur, part)
-        if os.path.islink(nxt) or getattr(os.path, "isjunction", lambda _p: False)(nxt):
+        if os.path.islink(nxt) or mount_point(nxt):
             hops += 1
             if hops > 40:  # a loop: the Win32 reading is all there is
                 return os.path.realpath(path)
@@ -541,14 +549,6 @@ def _quantile(values: list, q: float) -> float:
     return s[max(0, math.ceil(q * len(s)) - 1)]
 
 
-def _bench(argv: list[str]) -> int:
-    """Measure what the Tracing_Wrapper adds to each hook event it registers (AC-14).
-
-      g__wrap__export-guard.py --bench <installed or built wrapper dir>
-                                [--events N] [--out FILE]
-
-    For EVERY event in the upstream's hook list (`hooks/upstream-hooks.json`, read
-    now, at measurement time), N consecutive runs of three variants of that event's
 def _posix_tool(name: str) -> str | None:
     """Git for Windows' `name` (sh, bash), or None. A PATH hit under the Windows
     directory or WindowsApps is skipped: there `bash` is the WSL launcher, and
@@ -584,6 +584,14 @@ def _posix_tool(name: str) -> str | None:
     return None
 
 
+def _bench(argv: list[str]) -> int:
+    """Measure what the Tracing_Wrapper adds to each hook event it registers (AC-14).
+
+      g__wrap__export-guard.py --bench <installed or built wrapper dir>
+                                [--events N] [--out FILE]
+
+    For EVERY event in the upstream's hook list (`hooks/upstream-hooks.json`, read
+    now, at measurement time), N consecutive runs of three variants of that event's
     hook list, interleaved so drift lands on all three alike:
       without     the upstream commands as the upstream registers them
       with-allow  the wrapper's commands, session in an arm that allows export, so
@@ -1023,13 +1031,13 @@ def _selftest(fdir: str | None = None) -> int:
 
 
 if __name__ == "__main__":
+    if sys.argv[1:2] in (["--bench"], ["--selftest"]):
+        # A tool run, not a hook: an error must surface, never read as a silent 0
+        # (exit 0 means "within bound" for the bench and PASS for the selftest).
+        sys.exit(main(sys.argv[1:]))
     try:
         sys.exit(main(sys.argv[1:]))
     except SystemExit:
         raise
     except BaseException:
         os._exit(0)  # never block a turn, never start the upstream on an error
-    if sys.argv[1:2] in (["--bench"], ["--selftest"]):
-        # A tool run, not a hook: an error must surface, never read as a silent 0
-        # (exit 0 means "within bound" for the bench and PASS for the selftest).
-        sys.exit(main(sys.argv[1:]))

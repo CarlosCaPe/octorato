@@ -109,6 +109,19 @@ class Translation(unittest.TestCase):
             want.append(os.path.join(os.path.realpath(real), "x"))
             self.assertEqual(got, list(dict.fromkeys(want)))
 
+    def test_walk_is_the_export_guards_walk(self):
+        """The export guard imports nothing, so it carries its own copy of the
+        walk; a fix to one copy alone would leave the two gates disagreeing."""
+        import ast
+
+        def body(path, name):
+            src = path.read_text(encoding="utf-8")
+            fn = next(n for n in ast.walk(ast.parse(src))
+                      if isinstance(n, ast.FunctionDef) and n.name == name)
+            return [ast.dump(s) for s in fn.body[1:]]  # [0] is the docstring
+        self.assertEqual(body(SCRIPTS / "g__shim__hook.py", "walked_realpath"),
+                         body(SCRIPTS / "g__wrap__export-guard.py", "_walked_realpath"))
+
 class GateVerdict(unittest.TestCase):
     def test_ask_and_stop_block(self):
         ask = json.dumps({"hookSpecificOutput": {"permissionDecision": "ask"}})
