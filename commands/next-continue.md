@@ -26,7 +26,7 @@ A send (message, mail, comment, post) always needs its panel PASS for the exact 
 
 When the operator writes `/next-continue send-ok`, sends whose panel PASS is recorded after that message become agent rows and go out. That `send-ok` waives the absence, attribute and promise checks only in the turn the operator's message opens; it never waives the panel. In turns opened by a reviewer hand-back it counts only as the send request. Before relying on it, verify that the argument of the slash command is read as the operator's own prompt by the send gate. If it is not, say so in the report and keep sends as operator rows.
 
-Never revoke or delete a sent message in a turn that cannot also send its replacement (see the memory "revoke then light note", gated exception).
+Never revoke or delete a sent message in a turn that cannot also send its replacement.
 
 ## The report
 
