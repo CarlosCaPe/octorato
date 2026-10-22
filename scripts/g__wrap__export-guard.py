@@ -565,7 +565,7 @@ def _bench(argv: list[str]) -> int:
             ok = True
             t0 = time.perf_counter()
             for c in cmds:
-                cp = subprocess.run(c, shell=True, input=payload, env=env,
+                cp = subprocess.run([sh, "-c", c], input=payload, env=env,
                                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                     timeout=120)
                 ok = ok and cp.returncode == 0 and cp.stdout == b""
@@ -635,6 +635,11 @@ def _bench(argv: list[str]) -> int:
 # --- selftest -------------------------------------------------------------------------
 
 _STUB = r"""import json, os, sys
+        # `sh -c` named, not shell=True: on Windows shell=True is cmd.exe, which
+        # cannot parse the POSIX quoting of a wrapped command; Git Bash's sh,
+        # found on PATH, reads it as /bin/sh does.
+        sh = "/bin/sh" if os.name != "nt" else (shutil.which("sh") or "sh")
+
 fds = []
 try:
     for n in os.listdir("/proc/self/fd"):
