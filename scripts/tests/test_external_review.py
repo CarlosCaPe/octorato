@@ -173,7 +173,7 @@ class HookPairSeam(HomeCase):
         seed.seed_reviewer_pair(self.home, "codex", "m1", "allowed")
         self.session, self.tid = "sess-seam", "toolu_seam_1"
         self.msg = pd.Message("The fix is in.", [], ["operator"])
-        self.cmd = f"{self.p['node']} {self.p['codex']} exec -m m1 'Review the block.'"
+        self.cmd = er._expand_cmd("{{NODE}} {{CODEX}} exec -m m1 'Review the block.'", self.p)
         self.env = {k: v for k, v in os.environ.items()
                     if k not in er.POISON_ENV}
         self.env["CLAUDE_PROJECT_DIR"] = str(self.home / ".claude")
