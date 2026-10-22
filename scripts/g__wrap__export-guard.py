@@ -24,7 +24,9 @@ ARM_RESOLUTION, as implemented.
      when the harness exports it, CLAUDE_PROJECT_DIR. Each is resolved to its
      REAL path (os.path.realpath: every symlink, `..` and `.` resolved by the
      filesystem, in that order, the way the kernel walks it), and must be an
-     existing directory.
+     existing directory. On Windows, where Win32 folds `..` before the walk
+     and Git Bash walks the symlink first, a directory with two different
+     readings must pass every rule below under both (_walked_realpath).
   2. A real path inside a brain resolves to NO arm, whatever arms-paths.json
      says. The brain paths are the real paths of `$HOME/.claude` and of the
      directory this script lives in (its parent's parent). A registered arm
@@ -148,6 +150,55 @@ def _contains(root: str, path: str) -> bool:
         return False
 
 
+def _walked_realpath(path: str) -> str:
+    """An absolute path resolved the way a POSIX walker opens it: each symlink
+    BEFORE the `..` that follows it.
+
+    That is os.path.realpath everywhere but Windows, where the Win32 API folds
+    `..` lexically before it touches the disk, while an MSYS program (Git Bash
+    and its tools) walks the link first. Measured on Windows 11 with a native
+    directory symlink: Python's open() of `proj/lnk/../x` writes `proj/x`, Git
+    Bash's `echo > proj/lnk/../x` writes beside the link's target. Both run
+    there, so on Windows this is a second reading, next to os.path.realpath.
+    The same walk lives in g__shim__hook.py: this guard imports nothing.
+    """
+    if os.name != "nt":
+        return os.path.realpath(path)
+    import re
+
+    def parts(p):
+        return [x for x in re.split(r"[\\/]+", p) if x]
+    drive, rest = os.path.splitdrive(path)
+    cur, todo, hops = drive + os.sep, parts(rest), 0
+    while todo:
+        part = todo.pop(0)
+        if part == ".":
+            continue
+        if part == "..":
+            cur = os.path.dirname(cur)
+            continue
+        nxt = os.path.join(cur, part)
+        if os.path.islink(nxt) or getattr(os.path, "isjunction", lambda _p: False)(nxt):
+            hops += 1
+            if hops > 40:  # a loop: the Win32 reading is all there is
+                return os.path.realpath(path)
+            target = os.readlink(nxt)
+            if target.startswith("\\\\?\\UNC\\"):
+                target = "\\\\" + target[8:]  # \\?\UNC\host\share -> \\host\share
+            elif target.startswith("\\\\?\\"):
+                target = target[4:]
+                if not os.path.splitdrive(target)[0]:
+                    cur = os.path.realpath(nxt)  # \\?\Volume{GUID}\: Win32 resolves it
+                    continue
+            tdrive, trest = os.path.splitdrive(target)
+            if tdrive or trest[:1] in ("\\", "/"):
+                cur = (tdrive or drive) + os.sep
+            todo = parts(trest) + todo
+            continue
+        cur = nxt
+    return os.path.realpath(cur)
+
+
 def _real_dir(path, what: str) -> str:
     if not isinstance(path, str) or not path:
         raise Deny(f"{what} is missing")
@@ -157,6 +208,17 @@ def _real_dir(path, what: str) -> str:
     if not os.path.isdir(real):
         raise Deny(f"{what} is not an existing directory: {path!r}")
     return real
+
+
+def _other_readings(path: str, real: str) -> list[str]:
+    """The session directory's other real path, when the OS has two (Windows,
+    see _walked_realpath) and they differ. It must not be missing either."""
+    walked = _walked_realpath(path)
+    if walked == real:
+        return []
+    if not os.path.isdir(walked):
+        raise Deny(f"{path!r} read through its symlinks is not an existing directory")
+    return [walked]
 
 
 def brain_paths(home: str) -> list[str]:
@@ -264,10 +326,14 @@ def decide(raw: bytes, *, home: str, project_dir: str | None) -> str:
     payload = _loads_object(text, "payload")
     cwd = _real_dir(payload.get("cwd"), "payload cwd")
     dirs = [cwd]
+    # A directory's second reading (Windows only, _walked_realpath) is held to
+    # every rule a session directory is: one session, one arm, whichever reads.
+    others = _other_readings(payload["cwd"], cwd)
     if project_dir is not None:
         dirs.append(_real_dir(project_dir, "CLAUDE_PROJECT_DIR"))
+        others += _other_readings(project_dir, dirs[-1])
     brains = brain_paths(home)
-    for d in dirs:
+    for d in dirs + others:
         if any(_contains(b, d) for b in brains):
             raise Deny(f"brain session ({d}): a brain path never resolves to an arm")
     roots = load_arm_roots(home, brains)
@@ -275,20 +341,28 @@ def decide(raw: bytes, *, home: str, project_dir: str | None) -> str:
         raise Deny("no arm registered")
     session_arm = None
     containing = set()
-    for d in dirs:
+    for i, d in enumerate(dirs + others):
         hits = [r for _n, r in roots if _contains(r, d)]
         if not hits:
             raise Deny(f"no arm contains {d}")
+        containing.update(hits)
+        if i >= len(dirs):
+            continue
         deepest = max(hits, key=len)
         if session_arm is None:
             session_arm = deepest
         elif deepest != session_arm:
             raise Deny(f"cwd and CLAUDE_PROJECT_DIR resolve to different arms "
                        f"({session_arm} vs {deepest})")
-        containing.update(hits)
     for root in sorted(containing):
         if export_policy(root) != ALLOW:
             raise Deny(f"Export_Policy of the arm at {root} is deny")
+    for d in others:
+        deepest = max((r for _n, r in roots if _contains(r, d)), key=len)
+        if deepest != session_arm:
+            raise Deny(f"{d}, a second reading of a session directory through its "
+                       f"symlinks, resolves to a different arm ({session_arm} vs {deepest})")
+    dirs += others
     # An arm.json BETWEEN a session directory and its arm root is an arm too,
     # registered or not: a client repo cloned into another arm's tree before
     # anyone registered it carries its own deny. Walk from each directory up to
@@ -561,6 +635,11 @@ def _bench(argv: list[str]) -> int:
                    LANGSMITH_ENDPOINT=f"http://127.0.0.1:{port}",
                    TRACE_TO_LANGSMITH="true")
 
+        # `sh -c` named, not shell=True: on Windows shell=True is cmd.exe, which
+        # cannot parse the POSIX quoting of a wrapped command; Git Bash's sh,
+        # found on PATH, reads it as /bin/sh does.
+        sh = "/bin/sh" if os.name != "nt" else (shutil.which("sh") or "sh")
+
         def run_list(cmds, payload):
             ok = True
             t0 = time.perf_counter()
@@ -635,11 +714,6 @@ def _bench(argv: list[str]) -> int:
 # --- selftest -------------------------------------------------------------------------
 
 _STUB = r"""import json, os, sys
-        # `sh -c` named, not shell=True: on Windows shell=True is cmd.exe, which
-        # cannot parse the POSIX quoting of a wrapped command; Git Bash's sh,
-        # found on PATH, reads it as /bin/sh does.
-        sh = "/bin/sh" if os.name != "nt" else (shutil.which("sh") or "sh")
-
 fds = []
 try:
     for n in os.listdir("/proc/self/fd"):

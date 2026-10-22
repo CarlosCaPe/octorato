@@ -211,6 +211,54 @@ def _shell_cwd(base: dict, ti: dict, key: str) -> str:
     return _path(base["cwd"], d, f"{key} is not a path")
 
 
+def _split_parts(path: str) -> list[str]:
+    return [p for p in re.split(r"[\\/]+", path) if p]
+
+
+def walked_realpath(path: str) -> str:
+    """An absolute path resolved the way a POSIX walker opens it: each symlink
+    BEFORE the `..` that follows it.
+
+    That is os.path.realpath everywhere but Windows, where the Win32 API folds
+    `..` lexically before it touches the disk, while an MSYS program (Git Bash
+    and its tools) walks the link first. Measured on Windows 11 with a native
+    directory symlink: Python's open() of `proj/lnk/../x` writes `proj/x`, Git
+    Bash's `echo > proj/lnk/../x` writes beside the link's target. Both run
+    there, so on Windows this is the second reading, next to os.path.realpath.
+    """
+    if os.name != "nt":
+        return os.path.realpath(path)
+    drive, rest = os.path.splitdrive(path)
+    cur, todo, hops = drive + os.sep, _split_parts(rest), 0
+    while todo:
+        part = todo.pop(0)
+        if part == ".":
+            continue
+        if part == "..":
+            cur = os.path.dirname(cur)
+            continue
+        nxt = os.path.join(cur, part)
+        if os.path.islink(nxt) or getattr(os.path, "isjunction", lambda _p: False)(nxt):
+            hops += 1
+            if hops > 40:  # a loop: the Win32 reading is all there is
+                return os.path.realpath(path)
+            target = os.readlink(nxt)
+            if target.startswith("\\\\?\\UNC\\"):
+                target = "\\\\" + target[8:]  # \\?\UNC\host\share -> \\host\share
+            elif target.startswith("\\\\?\\"):
+                target = target[4:]
+                if not os.path.splitdrive(target)[0]:
+                    cur = os.path.realpath(nxt)  # \\?\Volume{GUID}\: Win32 resolves it
+                    continue
+            tdrive, trest = os.path.splitdrive(target)
+            if tdrive or trest[:1] in ("\\", "/"):
+                cur = (tdrive or drive) + os.sep
+            todo = _split_parts(trest) + todo
+            continue
+        cur = nxt
+    return os.path.realpath(cur)
+
+
 def with_real_paths(calls: list[dict], home: str | None) -> list[dict]:
     """Each call, plus a twin with every path resolved through symlinks.
 
@@ -218,25 +266,34 @@ def with_real_paths(calls: list[dict], home: str | None) -> list[dict]:
     so the real target can be elsewhere. The twin is ADDED, never swapped in:
     a gate compares against its own spelling of the live root, and a realpath
     can move a path out of that spelling (a symlinked HOME) as easily as into
-    it. Any twin that denies blocks.
+    it. Any twin that denies blocks. On Windows a path has two readings (see
+    walked_realpath), so a call can carry two twins.
     """
     out = []
     for call in calls:
-        norm, twin = json.loads(json.dumps(call)), json.loads(json.dumps(call))
-        for n, t in ((norm, twin), (norm.get("tool_input") or {}, twin.get("tool_input") or {})):
-            for key in ("cwd", "file_path"):
-                v = n.get(key)
-                if not isinstance(v, str) or not v:
-                    continue
-                if os.path.isabs(v):
-                    n[key] = os.path.normpath(v)
-                if v.startswith("~") and home and (v == "~" or v[1] in "/\\"):
-                    v = home + v[1:]
-                if os.path.isabs(v):
-                    t[key] = os.path.realpath(v)
+        norm = json.loads(json.dumps(call))
+        twins = []
+        for resolve in (os.path.realpath, walked_realpath):
+            twin = json.loads(json.dumps(call))
+            # Read from the untouched call: `norm` is already normalized, `..` gone.
+            for src, n, t in ((call, norm, twin),
+                              (call.get("tool_input") or {}, norm.get("tool_input") or {},
+                               twin.get("tool_input") or {})):
+                for key in ("cwd", "file_path"):
+                    v = src.get(key)
+                    if not isinstance(v, str) or not v:
+                        continue
+                    if os.path.isabs(v):
+                        n[key] = os.path.normpath(v)
+                    if v.startswith("~") and home and (v == "~" or v[1] in "/\\"):
+                        v = home + v[1:]
+                    if os.path.isabs(v):
+                        t[key] = resolve(v)
+            twins.append(twin)
         out.append(norm)
-        if twin != norm:
-            out.append(twin)
+        for twin in twins:
+            if twin not in out:
+                out.append(twin)
     return out
 
 
