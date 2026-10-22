@@ -76,6 +76,22 @@ class TestBench(unittest.TestCase):
         cp, _ = self.bench(UPSTREAM)
         self.assertEqual(cp.returncode, 2)
 
+    def test_no_posix_sh_is_an_error_not_a_pass(self):
+        """PATH with no sh and no git (a bare PowerShell): never exit 0, the
+        bench's "within bound"; on Windows a named refusal and no record."""
+        empty = self.tmp / "empty-path"
+        empty.mkdir(exist_ok=True)
+        out = self.tmp / "no-sh.json"
+        cp = subprocess.run([sys.executable, str(GUARD), "--bench", str(self.wrapper),
+                             "--events", "1", "--out", str(out)],
+                            env=dict(os.environ, PATH=str(empty)), capture_output=True,
+                            stdin=subprocess.DEVNULL, timeout=600)
+        self.assertNotEqual(cp.returncode, 0, cp.stderr)
+        if os.name == "nt":
+            self.assertEqual(cp.returncode, 2, cp.stderr)
+            self.assertIn(b"no POSIX sh found", cp.stderr)
+            self.assertFalse(out.exists())
+
     def test_quantile_is_nearest_rank(self):
         import importlib.util
         spec = importlib.util.spec_from_file_location("guard_q", GUARD)

@@ -549,6 +549,41 @@ def _bench(argv: list[str]) -> int:
 
     For EVERY event in the upstream's hook list (`hooks/upstream-hooks.json`, read
     now, at measurement time), N consecutive runs of three variants of that event's
+def _posix_tool(name: str) -> str | None:
+    """Git for Windows' `name` (sh, bash), or None. A PATH hit under the Windows
+    directory or WindowsApps is skipped: there `bash` is the WSL launcher, and
+    from PowerShell System32 comes before Git on PATH. When PATH holds only
+    Git's cmd/ directory, the tool is found from `git --exec-path`
+    (<git>/mingw64/libexec/git-core -> <git>/usr/bin). Off Windows: which()."""
+    import shutil
+    if os.name != "nt":
+        return shutil.which(name)
+    skip = [os.path.normcase(d) for d in (
+        os.environ.get("SystemRoot") or os.environ.get("windir") or "",
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "WindowsApps"))
+        if os.path.isabs(d)]
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        hit = shutil.which(name, path=d) if d else None
+        if hit and not any(os.path.normcase(os.path.abspath(hit)).startswith(s + os.sep)
+                           for s in skip):
+            return hit
+    git = shutil.which("git")
+    if not git:
+        return None
+    import subprocess
+    try:
+        ep = subprocess.run([git, "--exec-path"], capture_output=True, text=True,
+                            timeout=10).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    root = os.path.normpath(os.path.join(ep, "..", "..", "..")) if ep else ""
+    for rel in (("usr", "bin"), ("bin",)):
+        cand = os.path.join(root, *rel, name + ".exe")
+        if root and os.path.isfile(cand):
+            return cand
+    return None
+
+
     hook list, interleaved so drift lands on all three alike:
       without     the upstream commands as the upstream registers them
       with-allow  the wrapper's commands, session in an arm that allows export, so
@@ -636,9 +671,17 @@ def _bench(argv: list[str]) -> int:
                    TRACE_TO_LANGSMITH="true")
 
         # `sh -c` named, not shell=True: on Windows shell=True is cmd.exe, which
-        # cannot parse the POSIX quoting of a wrapped command; Git Bash's sh,
-        # found on PATH, reads it as /bin/sh does.
-        sh = "/bin/sh" if os.name != "nt" else (shutil.which("sh") or "sh")
+        # cannot parse the POSIX quoting of a wrapped command; Git's sh reads it
+        # as /bin/sh does. Its directory goes first on PATH, as in Git Bash, so
+        # the wrapper's own `sh -c` finds it too.
+        sh = "/bin/sh" if os.name != "nt" else _posix_tool("sh")
+        if sh is None:
+            print("bench: no POSIX sh found (none on PATH outside the Windows system "
+                  "directories, none beside `git --exec-path`); install Git for "
+                  "Windows or run from Git Bash", file=sys.stderr)
+            return 2
+        if os.name == "nt":
+            env["PATH"] = os.path.dirname(sh) + os.pathsep + env.get("PATH", "")
 
         def run_list(cmds, payload):
             ok = True
@@ -986,3 +1029,7 @@ if __name__ == "__main__":
         raise
     except BaseException:
         os._exit(0)  # never block a turn, never start the upstream on an error
+    if sys.argv[1:2] in (["--bench"], ["--selftest"]):
+        # A tool run, not a hook: an error must surface, never read as a silent 0
+        # (exit 0 means "within bound" for the bench and PASS for the selftest).
+        sys.exit(main(sys.argv[1:]))
