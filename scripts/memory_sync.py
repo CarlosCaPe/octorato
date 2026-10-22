@@ -113,6 +113,13 @@ def resolve_repo(store):
         git(repo, "init", "-b", store["branch"])
         git(repo, "remote", "add", "origin", store["remote"])
         print(f"  initialised nested repo at {store['path']} → origin")
+    # An existing .git keeps whatever origin it was cloned or edited with; refuse
+    # to sync it unless that origin is the configured remote (never the wrong or
+    # the public repo).
+    origin = git(repo, "remote", "get-url", "origin", check=False)
+    if origin != store["remote"]:
+        raise RuntimeError(f"nested repo origin does not match the configured remote for {store['path']}; "
+                           f"fix it with `git -C \"{repo}\" remote set-url origin <configured remote>`")
     return repo
 
 
@@ -141,8 +148,7 @@ def status_store(store):
     repo = resolve_repo(store)
     branch = git(repo, "rev-parse", "--abbrev-ref", "HEAD", check=False) or "?"
     dirty = git(repo, "status", "--short", check=False)
-    print(f"  remote: {store['remote']}")
-    print(f"  path:   {store['path']}  (branch {branch})")
+    print(f"  path:  {store['path']}  (branch {branch})")
     print(f"  files:  {len(git(repo, 'ls-files', check=False).splitlines())}")
     print(f"  state:  {'DIRTY — ' + str(len(dirty.splitlines())) + ' change(s)' if dirty else 'clean'}")
 
@@ -165,7 +171,9 @@ def each_store(cfg, action):
         try:
             action(store)
         except RuntimeError as e:
-            print(f"memory_sync FAIL [{store['path']}]: {e}", file=sys.stderr)
+            # git's own stderr names the remote; never echo the URL.
+            msg = str(e).replace(store["remote"], "<remote>")
+            print(f"memory_sync FAIL [{store['path']}]: {msg}", file=sys.stderr)
             failed += 1
     return 1 if failed else 0
 
@@ -201,7 +209,7 @@ def push_store(store):
     if remote_has_branch(repo, branch):
         git(repo, "pull", "--rebase", "origin", branch)
     git(repo, "push", "-u", "origin", branch)
-    print(f"  pushed → {store['remote']} ({branch})")
+    print(f"  pushed → origin/{branch}")
 
 
 def cmd_pull(cfg):
