@@ -1604,12 +1604,13 @@ def _selftest_external() -> int:
           ("ext", "PASS", 4)], None, 2),
     ]
     fails = []
-    old_home = os.environ.get("HOME")
+    # os.path.expanduser reads USERPROFILE on Windows and ignores HOME: both move.
+    old_home = {k: os.environ.get(k) for k in ("HOME", "USERPROFILE")}
     for name, text, seeds, want_pass, want_exit in cases:
         sb = Path(tempfile.mkdtemp(prefix="ledger-external-selftest-"))
         session = f"fx-ledger-{name}"
         try:
-            os.environ["HOME"] = str(sb)
+            os.environ["HOME"] = os.environ["USERPROFILE"] = str(sb)
             msg = panel_digest.Message(text, [], ["operator"])
             for i, (who, verdict, minute) in enumerate(seeds):
                 if who == "ext":
@@ -1651,10 +1652,11 @@ def _selftest_external() -> int:
                 fails.append(f"{name}: reply gate exit {cp.returncode}, want {want_exit} "
                              f"({(cp.stderr or '').strip()[:120]})")
         finally:
-            if old_home is None:
-                os.environ.pop("HOME", None)
-            else:
-                os.environ["HOME"] = old_home
+            for k, v in old_home.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
             shutil.rmtree(sb, ignore_errors=True)
     if fails:
         print("selftest FAIL (receipt_ledger external, AC-38): " + "; ".join(fails),

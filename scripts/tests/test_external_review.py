@@ -58,14 +58,14 @@ class HomeCase(unittest.TestCase):
 
     def setUp(self):
         self.home = Path(os.path.realpath(tempfile.mkdtemp(prefix="ext-review-test-")))
-        self._old = os.environ.get("HOME")
-        os.environ["HOME"] = str(self.home)
+        # os.path.expanduser reads USERPROFILE on Windows and ignores HOME; both
+        # point at the throwaway HOME, or the code under test writes the real one.
+        self.env_home = mock.patch.dict(os.environ, {"HOME": str(self.home),
+                                                     "USERPROFILE": str(self.home)})
+        self.env_home.start()
 
     def tearDown(self):
-        if self._old is None:
-            os.environ.pop("HOME", None)
-        else:
-            os.environ["HOME"] = self._old
+        self.env_home.stop()
         shutil.rmtree(self.home, ignore_errors=True)
 
 
@@ -297,7 +297,7 @@ class QaReflex(HomeCase):
         return tp
 
     def _run(self, session, agent, tp):
-        env = dict(os.environ, HOME=str(self.home))
+        env = dict(os.environ, HOME=str(self.home), USERPROFILE=str(self.home))
         payload = {"session_id": session, "agent_id": agent, "agent_type": "Reality Checker",
                    "agent_transcript_path": str(tp)}
         subprocess.run([sys.executable, str(SCRIPTS / "r__subagent-stop__qa-receipt.py")],
