@@ -24,7 +24,7 @@ The operator asks this when they want the agent to finish its own part without b
 
 A send (message, mail, comment, post) always needs its panel PASS for the exact payload. `/next` treats every send as the operator's step, and so does this command by default.
 
-When the operator writes `/next-continue send-ok`, sends whose panel PASS is recorded after that message become agent rows and go out. That `send-ok` waives the absence, attribute and promise checks only in the turn the operator's message opens; it never waives the panel. In turns opened by a reviewer hand-back it counts only as the send request. Before relying on it, verify that the argument of the slash command is read as the operator's own prompt by the send gate. If it is not, say so in the report and keep sends as operator rows.
+A `send-ok` written as an argument of this slash command does NOT count: the send gate reads the operator's words only from a plain message, and the expanded command is not one (measured: the gate's prompt reader returns empty for a slash-command turn and returns `send-ok` for a plain `send-ok` message). So sends stay operator rows. When a send has its panel PASS, the report lists it with the step "write `send-ok` as a plain message". Once the operator sends that plain message, sends whose panel PASS is recorded after it become agent rows and go out. That `send-ok` waives the absence, attribute and promise checks only in the turn it opens; it never waives the panel. In turns opened by a reviewer hand-back it counts only as the send request.
 
 Never revoke or delete a sent message in a turn that cannot also send its replacement.
 
