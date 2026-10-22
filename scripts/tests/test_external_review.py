@@ -69,6 +69,21 @@ class HomeCase(unittest.TestCase):
         shutil.rmtree(self.home, ignore_errors=True)
 
 
+class PosixTool(unittest.TestCase):
+    def test_windows_system_bash_is_never_chosen(self):
+        """From PowerShell System32 precedes Git on PATH, and its bash.exe is the
+        WSL launcher: the AC-23 probe must never run there."""
+        sysroot = os.environ.get("SystemRoot") or os.environ.get("windir") or "/nonexistent"
+        path = os.path.join(sysroot, "System32") + os.pathsep + os.environ.get("PATH", "")
+        with mock.patch.dict(os.environ, {"PATH": path}):
+            got = er._posix_tool("bash")
+            if os.name != "nt":
+                self.assertEqual(got, shutil.which("bash"))
+            elif got is not None:
+                self.assertFalse(os.path.normcase(got).startswith(
+                    os.path.normcase(sysroot) + os.sep), got)
+
+
 class Parser(unittest.TestCase):
     def ok(self, cmd):
         call, why = er.parse_call(cmd, ENGINES)

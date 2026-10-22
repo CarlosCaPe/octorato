@@ -1014,15 +1014,50 @@ def _complete_rows(sb: str) -> list:
     return rows
 
 
+def _posix_tool(name: str) -> str | None:
+    """Git for Windows' `name` (sh, bash), or None. A PATH hit under the Windows
+    directory or WindowsApps is skipped: there `bash` is the WSL launcher, and
+    from PowerShell System32 comes before Git on PATH. When PATH holds only
+    Git's cmd/ directory, the tool is found from `git --exec-path`
+    (<git>/mingw64/libexec/git-core -> <git>/usr/bin). Off Windows: which().
+    The same lookup lives in g__wrap__export-guard.py, which imports nothing."""
+    import shutil
+    if os.name != "nt":
+        return shutil.which(name)
+    skip = [os.path.normcase(d) for d in (
+        os.environ.get("SystemRoot") or os.environ.get("windir") or "",
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "WindowsApps"))
+        if os.path.isabs(d)]
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        hit = shutil.which(name, path=d) if d else None
+        if hit and not any(os.path.normcase(os.path.abspath(hit)).startswith(s + os.sep)
+                           for s in skip):
+            return hit
+    git = shutil.which("git")
+    if not git:
+        return None
+    import subprocess
+    try:
+        ep = subprocess.run([git, "--exec-path"], capture_output=True, text=True,
+                            timeout=10).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    root = os.path.normpath(os.path.join(ep, "..", "..", "..")) if ep else ""
+    for rel in (("usr", "bin"), ("bin",)):
+        cand = os.path.join(root, *rel, name + ".exe")
+        if root and os.path.isfile(cand):
+            return cand
+    return None
+
+
 def _bash_argv_digests(command: str, sb: str) -> dict:
     """Run the command under a clean `bash --noprofile --norc -c` and read the
     argv digests the fake interpreter printed."""
-    import shutil
     import subprocess
     env = {"PATH": "/usr/bin:/bin", "HOME": sb}
-    # Resolved on PATH: a bare "bash" on Windows is looked up in System32 first,
-    # which is the WSL launcher, not the Bash the harness runs commands in.
-    bash = shutil.which("bash") or "bash"
+    # Not a bare "bash": on Windows that is looked up in System32 first, the WSL
+    # launcher, not the Git Bash the harness runs commands in (_posix_tool).
+    bash = _posix_tool("bash") or "bash"
     cp = subprocess.run([bash, "--noprofile", "--norc", "-c", command], capture_output=True,
                         text=True, env=env, cwd=sb, timeout=30)
     got = {}
