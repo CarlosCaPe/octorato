@@ -58,15 +58,30 @@ class HomeCase(unittest.TestCase):
 
     def setUp(self):
         self.home = Path(os.path.realpath(tempfile.mkdtemp(prefix="ext-review-test-")))
-        self._old = os.environ.get("HOME")
-        os.environ["HOME"] = str(self.home)
+        # os.path.expanduser reads USERPROFILE on Windows and ignores HOME; both
+        # point at the throwaway HOME, or the code under test writes the real one.
+        self.env_home = mock.patch.dict(os.environ, {"HOME": str(self.home),
+                                                     "USERPROFILE": str(self.home)})
+        self.env_home.start()
 
     def tearDown(self):
-        if self._old is None:
-            os.environ.pop("HOME", None)
-        else:
-            os.environ["HOME"] = self._old
+        self.env_home.stop()
         shutil.rmtree(self.home, ignore_errors=True)
+
+
+class PosixTool(unittest.TestCase):
+    def test_windows_system_bash_is_never_chosen(self):
+        """From PowerShell System32 precedes Git on PATH, and its bash.exe is the
+        WSL launcher: the AC-23 probe must never run there."""
+        sysroot = os.environ.get("SystemRoot") or os.environ.get("windir") or "/nonexistent"
+        path = os.path.join(sysroot, "System32") + os.pathsep + os.environ.get("PATH", "")
+        with mock.patch.dict(os.environ, {"PATH": path}):
+            got = er._posix_tool("bash")
+            if os.name != "nt":
+                self.assertEqual(got, shutil.which("bash"))
+            elif got is not None:
+                self.assertFalse(os.path.normcase(got).startswith(
+                    os.path.normcase(sysroot) + os.sep), got)
 
 
 class Parser(unittest.TestCase):
@@ -173,7 +188,7 @@ class HookPairSeam(HomeCase):
         seed.seed_reviewer_pair(self.home, "codex", "m1", "allowed")
         self.session, self.tid = "sess-seam", "toolu_seam_1"
         self.msg = pd.Message("The fix is in.", [], ["operator"])
-        self.cmd = f"{self.p['node']} {self.p['codex']} exec -m m1 'Review the block.'"
+        self.cmd = er._expand_cmd("{{NODE}} {{CODEX}} exec -m m1 'Review the block.'", self.p)
         self.env = {k: v for k, v in os.environ.items()
                     if k not in er.POISON_ENV}
         self.env["CLAUDE_PROJECT_DIR"] = str(self.home / ".claude")
@@ -297,7 +312,7 @@ class QaReflex(HomeCase):
         return tp
 
     def _run(self, session, agent, tp):
-        env = dict(os.environ, HOME=str(self.home))
+        env = dict(os.environ, HOME=str(self.home), USERPROFILE=str(self.home))
         payload = {"session_id": session, "agent_id": agent, "agent_type": "Reality Checker",
                    "agent_transcript_path": str(tp)}
         subprocess.run([sys.executable, str(SCRIPTS / "r__subagent-stop__qa-receipt.py")],

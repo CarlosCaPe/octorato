@@ -124,7 +124,8 @@ class _Env(unittest.TestCase):
             json.dumps(census(classes)), encoding="utf-8")
 
     def run_proj(self, script, *extra):
-        env = dict(os.environ, HOME=str(self.home))
+        # expanduser reads USERPROFILE on Windows and ignores HOME: set both.
+        env = dict(os.environ, HOME=str(self.home), USERPROFILE=str(self.home))
         cmd = [sys.executable, str(script), "--hooks", str(self.hooks), "--rules", str(self.rules),
                "--registry", str(self.registry), "--scripts-dir", str(self.scripts),
                "--shim-dir", "/opt/brain/scripts", *extra]

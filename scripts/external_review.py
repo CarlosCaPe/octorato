@@ -862,9 +862,10 @@ _DIGEST_PROMPTS = (
 
 
 def _sandbox_layout(sb: str) -> dict:
-    """Fake pinned CLIs inside a temp HOME. The fake `node` is a Python script
+    """Fake pinned CLIs inside a temp HOME. The fake `node` runs a Python script
     that prints the SHA-256 of every argv element, so Bash itself shows which
-    bytes it passed (AC-23)."""
+    bytes it passed (AC-23). It is a sh launcher, not a Python shebang: a
+    shebang line cannot quote, and a Windows interpreter path holds a space."""
     root = os.path.join(sb, "opt", "nodeprefix")
     p = {"root": root,
          "node": os.path.join(root, "bin", "node"),
@@ -876,11 +877,15 @@ def _sandbox_layout(sb: str) -> dict:
     p["bundle"] = os.path.dirname(p["gemini"])
     for k in ("node", "codex", "vendor", "gemini"):
         os.makedirs(os.path.dirname(p[k]), exist_ok=True)
-    with open(p["node"], "w", encoding="utf-8") as fh:
-        fh.write(f"#!{sys.executable}\nimport hashlib, sys\n"
+    digest_py = os.path.join(sb, "argv_digest.py")
+    with open(digest_py, "w", encoding="utf-8") as fh:
+        fh.write("import hashlib, sys\n"
                  "for i, a in enumerate(sys.argv):\n"
                  "    print(f'ARGV-SHA256 {i} ' + hashlib.sha256(a.encode('utf-8', "
                  "'surrogateescape')).hexdigest())\n")
+    with open(p["node"], "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(f"#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(digest_py)} "
+                 "\"$@\"\n")
     os.chmod(p["node"], 0o755)
     with open(p["codex"], "w", encoding="utf-8") as fh:
         fh.write("#!/usr/bin/env node\n// launcher\n")
@@ -962,8 +967,11 @@ def _mutate(sb: str, p: dict, op: str) -> None:
 
 
 def _expand_cmd(text: str, p: dict) -> str:
+    """Each placeholder becomes one shell word: a sandbox path with a space or
+    a backslash in it (a Windows profile directory) is single-quoted, as an
+    operator would type it; a plain POSIX path is left as it is."""
     for k in ("node", "codex", "gemini", "root"):
-        text = text.replace("{{" + k.upper() + "}}", p[k])
+        text = text.replace("{{" + k.upper() + "}}", shlex.quote(p[k]))
     return text
 
 
@@ -1006,12 +1014,51 @@ def _complete_rows(sb: str) -> list:
     return rows
 
 
+def _posix_tool(name: str) -> str | None:
+    """Git for Windows' `name` (sh, bash), or None. A PATH hit under the Windows
+    directory or WindowsApps is skipped: there `bash` is the WSL launcher, and
+    from PowerShell System32 comes before Git on PATH. When PATH holds only
+    Git's cmd/ directory, the tool is found from `git --exec-path`
+    (<git>/mingw64/libexec/git-core -> <git>/usr/bin). Off Windows: which().
+    The same lookup lives in g__wrap__export-guard.py, which imports nothing."""
+    import shutil
+    if os.name != "nt":
+        return shutil.which(name)
+    skip = [os.path.normcase(d) for d in (
+        os.environ.get("SystemRoot") or os.environ.get("windir") or "",
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "WindowsApps"))
+        if os.path.isabs(d)]
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        hit = shutil.which(name, path=d) if d else None
+        if hit and not any(os.path.normcase(os.path.abspath(hit)).startswith(s + os.sep)
+                           for s in skip):
+            return hit
+    git = shutil.which("git")
+    if not git:
+        return None
+    import subprocess
+    try:
+        ep = subprocess.run([git, "--exec-path"], capture_output=True, text=True,
+                            timeout=10).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    root = os.path.normpath(os.path.join(ep, "..", "..", "..")) if ep else ""
+    for rel in (("usr", "bin"), ("bin",)):
+        cand = os.path.join(root, *rel, name + ".exe")
+        if root and os.path.isfile(cand):
+            return cand
+    return None
+
+
 def _bash_argv_digests(command: str, sb: str) -> dict:
     """Run the command under a clean `bash --noprofile --norc -c` and read the
     argv digests the fake interpreter printed."""
     import subprocess
     env = {"PATH": "/usr/bin:/bin", "HOME": sb}
-    cp = subprocess.run(["bash", "--noprofile", "--norc", "-c", command], capture_output=True,
+    # Not a bare "bash": on Windows that is looked up in System32 first, the WSL
+    # launcher, not the Git Bash the harness runs commands in (_posix_tool).
+    bash = _posix_tool("bash") or "bash"
+    cp = subprocess.run([bash, "--noprofile", "--norc", "-c", command], capture_output=True,
                         text=True, env=env, cwd=sb, timeout=30)
     got = {}
     for ln in cp.stdout.splitlines():
@@ -1094,8 +1141,9 @@ def _digest_checks(fixture_commands: list) -> list:
         p = _sandbox_layout(sb)
         engines = {"codex": (p["node"], p["codex"]), "gemini": (p["node"], p["gemini"])}
         cmds = [_expand_cmd(c, p) for c in fixture_commands]
-        cmds += [f"{p['node']} {p['codex']} exec -m m1 {q}" for q in _DIGEST_PROMPTS]
-        cmds += [f"{p['node']} {p['gemini']} -m m1 -p {q}" for q in _DIGEST_PROMPTS]
+        node, codex, gemini = (shlex.quote(p[k]) for k in ("node", "codex", "gemini"))
+        cmds += [f"{node} {codex} exec -m m1 {q}" for q in _DIGEST_PROMPTS]
+        cmds += [f"{node} {gemini} -m m1 -p {q}" for q in _DIGEST_PROMPTS]
         checked, fixed = 0, len(cmds) - len(_DIGEST_PROMPTS) * 2
         for n, cmd in enumerate(cmds):
             call, why = parse_call(cmd, engines)
