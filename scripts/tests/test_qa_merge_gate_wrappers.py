@@ -200,5 +200,100 @@ class AMalformedSpecDegradesInsteadOfCrashing(unittest.TestCase):
         self.assertTrue(GATE._find_publish_subcmd("sudo -E ls; " + MERGE))
 
 
+class AWrapperThatMovesTheDirectoryIsNotJudgedByTheSessionCwd(unittest.TestCase):
+    """QA measured it on the approved path: with OCTO_MERGE_APPROVE exported
+    for another PR and the session in an UNPROTECTED repo, the peel dropped
+    `sudo -D <protected>` as an ordinary value, the scope reader judged the
+    session cwd, and the merge of the protected repo was allowed. The gate
+    before the peel denied it. A wrapper's directory option must make the
+    target unreadable, as `env -C` does.
+
+    The gate runs as the hook does, in a subprocess, with HOME pointing at a
+    temp dir that holds a protected brain repo and an unprotected one."""
+
+    PUSH = "git push origin " + "main"
+
+    def setUp(self):
+        import shutil
+        import tempfile
+        self.tmp = Path(tempfile.mkdtemp(prefix="gate-wrapper-cwd-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.brain = self.tmp / ".claude"
+        self.other = self.tmp / "other"
+        for repo, slug in ((self.brain, "CarlosCaPe/octorato"), (self.other, "someone/else")):
+            (repo / ".git").mkdir(parents=True)
+            (repo / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+            (repo / ".git" / "config").write_text(
+                f'[remote "origin"]\n\turl = https://github.com/{slug}.git\n')
+
+    def _rc(self, command: str, approve: str = "7") -> int:
+        import json
+        import os
+        import subprocess
+        import sys
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("OCTO_MERGE_APPROVE", "OCTO_QA_OK", "GH_REPO")}
+        env.update({"HOME": str(self.tmp), "USERPROFILE": str(self.tmp)})
+        if approve:
+            env["OCTO_MERGE_APPROVE"] = approve
+        payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command},
+                              "cwd": str(self.other)})
+        return subprocess.run([sys.executable, str(SCRIPTS / "qa-merge-gate.py")],
+                              input=payload, capture_output=True, text=True,
+                              env=env, cwd=str(SCRIPTS), timeout=60).returncode
+
+    def test_the_unprotected_cwd_alone_is_allowed(self):
+        """The control: the same merge with no directory option is out of
+        scope, so the denials below are the directory option's doing."""
+        self.assertEqual(self._rc(MERGE + " --squash"), 0)
+
+    def test_sudo_chdir_into_a_protected_repo_is_denied(self):
+        b = str(self.brain)
+        for command in (f"sudo -D {b} {MERGE} --squash",
+                        f"sudo --chdir={b} {self.PUSH}",
+                        f"sudo --chdir {b} {MERGE}",
+                        f"sudo --chd={b} {MERGE}",
+                        f"sudo -nD {b} {self.PUSH}",
+                        f"sudo -D{b} {MERGE}",
+                        f"sudo -u root -D {b} {MERGE}",
+                        f"timeout 5 sudo -D {b} {MERGE}",
+                        f"sudo -D {b} gh api -X PUT repos/o/r/pulls/9/merge"):
+            with self.subTest(command=command):
+                self.assertEqual(self._rc(command), 2, command)
+
+    def test_a_wrapper_that_adds_arguments_or_moves_home_is_unreadable(self):
+        """`xargs` appends arguments the gate cannot see (`-R <protected>` from
+        stdin), and `sudo -i` starts a login shell in another directory. From
+        an unprotected cwd with another PR approved, both must deny, as the
+        gate before the peel did."""
+        for command in (f"printf -- '-R CarlosCaPe/octorato' | xargs {MERGE}",
+                        f"xargs -0n1 {MERGE}",
+                        f"timeout 5 xargs {self.PUSH}",
+                        f"sudo -i {MERGE}",
+                        f"sudo -iu root {MERGE}",
+                        f"sudo --login {self.PUSH}"):
+            with self.subTest(command=command):
+                self.assertEqual(self._rc(command), 2, command)
+
+    def test_a_plain_wrapper_in_an_unprotected_repo_reads_like_the_bare_command(self):
+        """The other side: a wrapper that changes nothing about the target is
+        judged as the bare command is, so it is not denied for being wrapped."""
+        for command in (f"timeout 5 {MERGE}", f"sudo -nu root {MERGE}", f"nice -n 5 {self.PUSH}"):
+            with self.subTest(command=command):
+                self.assertEqual(self._rc(command), self._rc(MERGE if "merge" in command else self.PUSH))
+
+    def test_a_cd_behind_a_wrapper_does_not_move_the_cwd(self):
+        """`sudo cd <dir>` runs nothing in this shell; reading it as a move
+        would let `sudo -n cd <unprotected> && <merge>` judge the wrong repo."""
+        command = f"cd {self.brain} && sudo -n cd {self.other} && {MERGE}"
+        self.assertEqual(self._rc(command), 2)
+
+    def test_chrt_takes_its_scheduling_values(self):
+        for command in (f"chrt -T 1000 -f 50 {MERGE}", f"chrt -P 5 -D 3 50 {MERGE}",
+                        f"chrt --sched-runtime 1000 -f 50 {MERGE}"):
+            with self.subTest(command=command):
+                self.assertTrue(GATE._find_publish_subcmds(command), command)
+
+
 if __name__ == "__main__":
     unittest.main()

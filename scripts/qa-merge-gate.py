@@ -316,7 +316,14 @@ def _effective_cwds(cmd: str, matched_sub: str, session_cwd: str) -> list:
         for raw in reading:
             if raw == matched_sub:
                 break
-            cwd = _apply_dir_change(_strip_leading(raw).strip(), raw, cwd)
+            notes = set()
+            moved = _apply_dir_change(_strip_leading(raw, notes).strip(), raw, cwd)
+            # A wrapper runs its command in a child process (or fails, for a
+            # builtin like `cd`), so a directory change behind one, or a
+            # wrapper's own `-D`/`--chdir`, is not read: unknown.
+            if notes and (moved != cwd or notes & {"cd", "args"}):
+                moved = None
+            cwd = moved
         if cwd not in out:
             out.append(cwd)
     return out
@@ -532,7 +539,7 @@ def _env_with_option(matched_sub: str) -> bool:
 
 def _scope_current(cmd: str, matched_sub: str, session_cwd: str):
     """The current scope reader (see _is_protected_target)."""
-    if _env_with_option(matched_sub):
+    if _env_with_option(matched_sub) or _wrapper_hides_target(matched_sub):
         return None
     sub = _strip_leading(matched_sub)
 
@@ -781,7 +788,8 @@ _EXTRA_WRAPPERS = {
     "doas": {"valued": ("-u", "-C"), "cd": (), "arg": 0},
     "flock": {"valued": ("-w", "--wait", "--timeout", "-E", "--conflict-exit-code"),
               "cd": (), "arg": 1},
-    "chrt": {"valued": ("-p", "--pid"), "cd": (), "arg": 1},
+    "chrt": {"valued": ("-p", "--pid", "-T", "--sched-runtime", "-P", "--sched-period",
+                        "-D", "--sched-deadline"), "cd": (), "arg": 1},
 }
 # Names only, so the cheap test that decides whether to import costs a set hit.
 # `env` is deliberately NOT here. Its flags change what the command is: the
@@ -828,7 +836,6 @@ def _wrapper_specs() -> dict:
 
 
 _ENV_ASSIGN_TOKEN = re.compile(r"^[A-Za-z_]\w*=")
-_SHORT_CLUSTER = re.compile(r"^-[A-Za-z0-9]+$")
 _WRAPPER_HEAD = re.compile(r"^([^\s;&|]+)(\s+)")
 # A token is a run of quoted segments and unquoted non-space characters, so
 # `-u "car los"` is TWO tokens and not four. `\S+` split it at the space and
@@ -838,10 +845,32 @@ _WRAPPER_HEAD = re.compile(r"^([^\s;&|]+)(\s+)")
 _WRAPPER_TOKEN = re.compile(r"""^((?:"[^"]*"|'[^']*'|[^\s"'])+)(\s*)""")
 
 
-def _peel_wrapper(s: str):
+# Flags that move the directory WITHOUT taking a value: `sudo -i` runs a login
+# shell, which starts in the target user's home, not in the session cwd.
+_DIR_MOVING_FLAGS = {"sudo": ("-i", "--login")}
+# Wrappers that append arguments the gate cannot see (stdin, `-a file`), so
+# `printf -- '-R o/r' | xargs gh pr merge 1` can name any repo.
+_ARG_ADDING_WRAPPERS = frozenset({"xargs"})
+
+
+def _long_option_matches(name: str, options) -> bool:
+    """True when the long option *name* is one of *options* or an abbreviation
+    getopt_long would accept for one (`--chd` for `--chdir`)."""
+    return any(o.startswith("--") and (o == name or (len(name) > 3 and o.startswith(name)))
+               for o in options)
+
+
+def _peel_wrapper(s: str, notes=None):
     """*s* with ONE leading wrapper (its flags, their values, its positionals)
     removed, or None when it does not start with one. Basename-matched, so
-    `/usr/bin/timeout` peels exactly as `timeout` does."""
+    `/usr/bin/timeout` peels exactly as `timeout` does.
+
+    *notes*, when given, is a set that records what the peel saw: "wrapper"
+    for any peel, and "cd" when an option of the wrapper's `cd` class (`sudo
+    -D`, `--chdir`, in any spelling: bare, attached, clustered, abbreviated)
+    was consumed. That option moves the directory the command runs in, so the
+    scope reader must not judge the session cwd for it; dropping it silently
+    made `sudo -D <protected> gh pr merge` read as the unprotected cwd."""
     head = _WRAPPER_HEAD.match(s)
     if not head:
         return None
@@ -851,7 +880,18 @@ def _peel_wrapper(s: str):
     spec = _wrapper_specs().get(name)
     if not isinstance(spec, dict):
         return None          # unknown or unusable: leave the sub-command alone
-    takes_value = set(spec.get("valued", ())) | set(spec.get("cd", ()))
+    cd_opts = set(spec.get("cd", ()))
+    takes_value = set(spec.get("valued", ())) | cd_opts
+    if notes is not None:
+        notes.add("wrapper")
+        if name in _ARG_ADDING_WRAPPERS:
+            notes.add("args")
+    moves = _DIR_MOVING_FLAGS.get(name, ())
+
+    def note_cd():
+        if notes is not None:
+            notes.add("cd")
+
     rest = s[head.end():]
     eat = spec.get("arg", 0)
     while rest:
@@ -859,23 +899,45 @@ def _peel_wrapper(s: str):
         if not tok:
             break
         word = tok.group(1)
-        if word.startswith("-"):
+        if word == "--":
+            rest = rest[tok.end():]
+            continue
+        if word.startswith("--"):
             rest = rest[tok.end():]
             # `--flag=value` carries its own value; only the bare spelling of a
             # value-taking flag reaches for the next token.
-            if "=" not in word and word in takes_value:
+            opt = word.split("=", 1)[0]
+            if _long_option_matches(opt, cd_opts) or _long_option_matches(opt, moves):
+                note_cd()
+            if "=" not in word and _long_option_matches(opt, takes_value):
                 nxt = _WRAPPER_TOKEN.match(rest)
                 if nxt:
                     rest = rest[nxt.end():]
-            elif _SHORT_CLUSTER.match(word):
+            continue
+        if word.startswith("-"):
+            rest = rest[tok.end():]
+            if word in moves:
+                note_cd()
+            if word in takes_value:
+                if word in cd_opts:
+                    note_cd()
+                nxt = _WRAPPER_TOKEN.match(rest)
+                if nxt:
+                    rest = rest[nxt.end():]
+            elif len(word) > 1:
                 # A short cluster is read the way getopt reads it: the first
                 # value-taking letter takes the rest of the word, or the next
                 # word when it is the last letter. `env -iu X cmd` and
                 # `sudo -nu root cmd` end on `-u`, so `X`/`root` is its value,
                 # not the command; matching the whole word only (`-iu`) made
                 # the value the command and lost the publish verb behind it.
+                # An attached value (`-D/tmp`) is the same rule.
                 for k in range(1, len(word)):
+                    if "-" + word[k] in moves:
+                        note_cd()
                     if "-" + word[k] in takes_value:
+                        if "-" + word[k] in cd_opts:
+                            note_cd()
                         if k == len(word) - 1:
                             nxt = _WRAPPER_TOKEN.match(rest)
                             if nxt:
@@ -893,15 +955,16 @@ def _peel_wrapper(s: str):
     return rest
 
 
-def _strip_leading(s: str) -> str:
+def _strip_leading(s: str, notes=None) -> str:
     """Return *s* with leading grouping / env-assignments / redirections / the
     `env` wrapper (and its flags+assigns) / the `command` builtin / reserved
-    words / any command-taking wrapper (`timeout`, `sudo`, `flock`, ...) removed."""
+    words / any command-taking wrapper (`timeout`, `sudo`, `flock`, ...) removed.
+    *notes* is passed to `_peel_wrapper` (see there)."""
     s = s.lstrip()
     prev = None
     while s != prev:
         prev = s
-        peeled = _peel_wrapper(s)
+        peeled = _peel_wrapper(s, notes)
         if peeled is not None:
             s = peeled
             continue
@@ -920,6 +983,17 @@ def _strip_leading(s: str) -> str:
                         break
                     s = s[m2.end():]
     return s
+
+
+def _wrapper_hides_target(sub: str) -> bool:
+    """True when a wrapper in front of *sub* changes what the target is in a
+    way the gate does not read: a directory option (`sudo -D <dir>`,
+    `--chdir=<dir>`, clustered or abbreviated), a flag that moves the
+    directory (`sudo -i`), or a wrapper that appends arguments the gate cannot
+    see (`xargs`). Like `env -C`, it makes the target unreadable."""
+    notes = set()
+    _strip_leading(sub, notes)
+    return bool(notes & {"cd", "args"})
 
 
 def _split_master(cmd: str) -> list[str]:
