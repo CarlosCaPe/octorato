@@ -763,10 +763,11 @@ _W_LABEL = re.compile(r"^\(?[^\s()|;&]+(?:\|[^\s()|;&]+)*\)\s*")
 # cold numbers. Small either way, but it is per Bash call and the unwrapped 99%
 # should not pay it.
 #
-# The peel of the ten SHARED wrappers depends on that module importing
-# `kernel_proc` from its own directory. Where it cannot, the fallback leaves
-# only the five local extras and says nothing: every `timeout`, `sudo` and `env`
-# spelling quietly stops being peeled. That is the safe direction (the gate
+# The peel of the nine SHARED wrappers it uses (all but `env`, see
+# _PEEL_EXCLUDED) depends on that module importing `kernel_proc` from its own
+# directory. Where it cannot, the fallback leaves only the five local extras
+# and says nothing: every `timeout` and `sudo` spelling quietly stops being
+# peeled. That is the safe direction (the gate
 # returns to where it was) and it is silent, which is the part worth knowing.
 _SHARED_PARSER = Path(__file__).resolve().parent / "g__pretool-bash__tree-owner.py"
 
@@ -783,8 +784,14 @@ _EXTRA_WRAPPERS = {
     "chrt": {"valued": ("-p", "--pid"), "cd": (), "arg": 1},
 }
 # Names only, so the cheap test that decides whether to import costs a set hit.
+# `env` is deliberately NOT here. Its flags change what the command is: the
+# value of `-S`/`--split-string` IS the command line, so a table that reads it
+# as a plain value discards the merge (`timeout 5 env -S gh pr merge 1` went
+# through). env stays on the _W_ENV/_W_ENVARG path below, exactly as before
+# this peel existed, so no env spelling can be read more loosely than that.
+_PEEL_EXCLUDED = frozenset({"env"})
 _WRAPPER_NAMES = frozenset({
-    "env", "sudo", "command", "nohup", "exec", "time", "nice", "timeout",
+    "sudo", "command", "nohup", "exec", "time", "nice", "timeout",
     "stdbuf", "xargs", "setsid", "ionice", "doas", "flock", "chrt",
 })
 _WRAPPER_SPECS = None
@@ -812,7 +819,7 @@ def _wrapper_specs() -> dict:
             # gate failed OPEN for the WHOLE command, the bare publish in a
             # later sub-command included. A table this gate does not own is
             # untrusted input like any other.
-            if isinstance(entry, dict):
+            if isinstance(entry, dict) and name not in _PEEL_EXCLUDED:
                 specs[name] = entry
     except Exception:
         pass

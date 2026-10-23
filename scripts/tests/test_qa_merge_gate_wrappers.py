@@ -59,6 +59,8 @@ class WrapperSpecsDoNotDrift(unittest.TestCase):
         specs = GATE._wrapper_specs()
         for name, shared in PARSER._WRAPPERS.items():
             with self.subTest(wrapper=name):
+                if name in GATE._PEEL_EXCLUDED:
+                    continue  # pinned by test_env_is_left_to_the_env_path
                 self.assertIn(name, specs, f"{name} is peeled by the shared "
                                            f"parser and not by the merge gate")
                 self.assertEqual(specs[name], shared,
@@ -81,9 +83,26 @@ class WrapperSpecsDoNotDrift(unittest.TestCase):
         self.assertEqual(specs["timeout"]["arg"], 1)
         self.assertEqual(specs["flock"]["arg"], 1)
         self.assertEqual(specs["chrt"]["arg"], 1)
-        for name in ("sudo", "nohup", "env", "time", "nice"):
+        for name in ("sudo", "nohup", "time", "nice"):
             with self.subTest(wrapper=name):
                 self.assertEqual(specs[name]["arg"], 0)
+
+    def test_env_is_left_to_the_env_path(self):
+        """`env` is not a plain wrapper: the value of `-S`/`--split-string` IS
+        the command line, so the shared table (which reads it as a value)
+        discarded the merge behind any prefix. The gate leaves env to its own
+        `_W_ENV`/`_W_ENVARG` path; this pins that it stays excluded."""
+        self.assertEqual(GATE._PEEL_EXCLUDED, frozenset({"env"}))
+        self.assertNotIn("env", GATE._wrapper_specs())
+        self.assertNotIn("env", GATE._WRAPPER_NAMES)
+        self.assertIsNone(GATE._peel_wrapper("env -S " + MERGE))
+
+    def test_env_split_string_behind_a_prefix_is_still_a_publish(self):
+        for prefix in ("timeout 5 ", "command ", "nohup ", "sudo -n ", "( ", "! "):
+            for env in ("env -S ", "env -iS ", "env --split-string ", "env -iu X "):
+                command = prefix + env + MERGE
+                with self.subTest(command=command):
+                    self.assertTrue(GATE._find_publish_subcmds(command), command)
 
 
 class ThePeelReachesTheCommand(unittest.TestCase):
