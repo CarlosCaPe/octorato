@@ -124,16 +124,25 @@ def emits_block(returncode: int, stdout: str) -> bool:
 # frameworks load) the leg is the old `subprocess.run`, unchanged.
 # ---------------------------------------------------------------------------
 _FORK_OK = sys.platform.startswith("linux") and hasattr(os, "fork")
-# The subprocess.run this module was imported with. A caller that replaces
-# subprocess.run (runtime_census routes every leg through the hook shim that
-# way) is asking to see each leg, and a forked leg never reaches it. So while
-# subprocess.run is not this one, every leg is spawned through the replacement.
-_REAL_RUN = subprocess.run
 _CODE_CACHE: dict = {}
 # Env names that change how a fresh interpreter starts. A leg that sets one of
 # these differently from this process is spawned, not forked. PYTHONUSERBASE
 # and HOME are handled in the child (they only move the user site).
 _START_ENV = ("LANG", "LC_ALL", "LC_CTYPE")
+
+
+def _run_replaced() -> bool:
+    """Whether subprocess.run is something other than the stdlib's own.
+
+    A caller that replaces subprocess.run (runtime_census routes every leg
+    through the hook shim that way) is asking to see each leg, and a forked leg
+    never reaches it. The answer is read from the object itself, not from an
+    identity captured at import: runtime_census swaps subprocess.run BEFORE a
+    gate's selftest first imports this module, so an import-time capture would
+    hold the replacement and call it real."""
+    r = subprocess.run
+    return not (getattr(r, "__module__", None) == "subprocess"
+                and getattr(r, "__qualname__", None) == "run")
 
 
 class LegResult:
@@ -543,7 +552,7 @@ def run_scripts(legs: list, workers: int = 1) -> list:
     # each child spawning its own probe interpreter.
     # The replacement check comes before the probe: the probe itself calls
     # subprocess.run, and a router that stands in for it would see the probe.
-    if not _FORK_OK or subprocess.run is not _REAL_RUN or not _starts_like_fresh():
+    if not _FORK_OK or _run_replaced() or not _starts_like_fresh():
         return [_spawn(leg) for leg in legs]
 
     import io

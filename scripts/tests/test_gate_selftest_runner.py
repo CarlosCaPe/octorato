@@ -123,7 +123,7 @@ class Deadline(_Base):
             try:
                 with open("/proc/%d/stat" % gc) as fh:
                     state = fh.read().rsplit(")", 1)[1].split()[0]
-            except FileNotFoundError:
+            except (FileNotFoundError, ProcessLookupError):
                 return
             if state == "Z":     # killed, waiting for init to reap it
                 return
@@ -515,6 +515,44 @@ class ReplacedRun(_Base):
             subprocess.run = real
             if real_fork is not None:
                 os.fork = real_fork
+        self.assertEqual(forks, [])
+        self.assertEqual(seen, [[sys.executable, script]] * 3)
+        self.assertEqual([(r.returncode, r.stdout) for r in got], [(2, DENY)] * 3)
+
+    def test_a_run_replaced_before_the_first_import_sees_every_leg(self):
+        # runtime_census swaps subprocess.run and only then runs the gate's
+        # selftest, which is what first imports gate_selftest. Whatever the
+        # module looks at to decide "replaced" must not be read at import.
+        script = self.gate("import sys\nsys.exit(0)\n")
+        legs = [self.leg(script) for _ in range(3)]
+        real = subprocess.run
+        real_fork = os.fork if hasattr(os, "fork") else None
+        saved_mod = sys.modules.pop("gate_selftest", None)
+        seen, forks = [], []
+
+        def router(args, *a, **kw):
+            seen.append(list(args))
+            return subprocess.CompletedProcess(args, 2, DENY, "")
+
+        def no_fork():
+            forks.append(1)
+            raise AssertionError("a leg was forked while subprocess.run was replaced")
+
+        subprocess.run = router
+        if real_fork is not None:
+            os.fork = no_fork
+        try:
+            import gate_selftest as fresh
+            self.assertIsNot(fresh, saved_mod)
+            got = fresh.run_scripts(legs, workers=2)
+        finally:
+            subprocess.run = real
+            if real_fork is not None:
+                os.fork = real_fork
+            if saved_mod is not None:
+                sys.modules["gate_selftest"] = saved_mod
+            else:
+                sys.modules.pop("gate_selftest", None)
         self.assertEqual(forks, [])
         self.assertEqual(seen, [[sys.executable, script]] * 3)
         self.assertEqual([(r.returncode, r.stdout) for r in got], [(2, DENY)] * 3)
