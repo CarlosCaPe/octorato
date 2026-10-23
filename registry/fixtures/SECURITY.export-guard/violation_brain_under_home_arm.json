@@ -1,0 +1,28 @@
+{
+  "arms_paths": {
+    "home": "."
+  },
+  "files": {
+    "arm.json": {
+      "kind": "arm",
+      "name": "home",
+      "version": "1.0.0",
+      "license": "proprietary",
+      "telemetry": {
+        "export": "allow"
+      }
+    }
+  },
+  "dirs": [
+    ".claude/scripts"
+  ],
+  "payload": {
+    "session_id": "sess-guard",
+    "hook_event_name": "Stop",
+    "cwd": "{{SANDBOX}}/.claude/scripts"
+  },
+  "_comment": "HOME registered as an allow arm: a cwd in the brain is still a brain session.",
+  "_setup": {
+    "expect_reason": "brain session"
+  }
+}

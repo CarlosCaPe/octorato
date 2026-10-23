@@ -22,6 +22,13 @@ Each event becomes one JSONL line in the gitignored
     {"v": 1, "key", "uuid", "ts", "session", "agent", "kind", "event", "gate",
      "code", "tool", "input_sha256", "input_chars"}
 
+A goal-anchor Stop block also carries `seen_uuid` and `seen_bytes` (v10 T19):
+the uuid of the last transcript record the gate read and the byte offset its
+read stopped at, taken from the gate's own read receipt
+(`~/.claude/.cache/goal-anchor/receipts/<session>.jsonl`), so a replay can cut
+that Stop exactly where the live gate did. Both are null when no receipt
+matches (every block from before the receipt existed).
+
 What is NEVER stored: the reason text, the tool input, a message body, a prompt.
 `input_sha256` is the sha256 of the input serialised as sorted-key JSON and cut
 to 1,200 characters (AC-01), so two identical denied calls share a digest and
@@ -29,6 +36,9 @@ nothing about the call can be read back from the line alone. The digest is
 UNSALTED: a short input (`ls`, `git status`) can be recovered by hashing
 guesses, so the ledger is a local, gitignored file and never leaves the
 machine. `input_chars` is the length before the cut. For a Stop block the "input" is the assistant text the block refused.
+That text was written BEFORE the block, so an incremental read carries a bounded
+lookback (`LOOKBACK_BYTES` before the saved offset, whole lines) as context: the
+digest and the tool_use lookup may search it, but no event is emitted from it.
 
 Hook latency rides along in monthly `latency-YYYY-MM.jsonl` files beside it: the harness writes a
 `durationMs` on a hook attachment and on `stop_hook_summary.hookInfos`, but only
@@ -58,6 +68,7 @@ Stdlib only. Library users: `ingest_paths()`, `read_ledger()`, `read_latency()`.
 from __future__ import annotations
 
 import argparse
+import calendar
 import glob
 import hashlib
 import json
@@ -77,6 +88,10 @@ REPO = HERE.parent
 SIGNATURES = REPO / "registry" / "friction-signatures.json"
 HOOKS_JSON = REPO / "hooks.json"
 INPUT_CUT = 1200
+# Context read before the saved offset on an incremental ingest. The assistant
+# text a Stop refused sat at most 342 KB before the block on every live Stop of
+# 2026-10-12 (median 7 KB), so 1 MiB covers the walk-back with room.
+LOOKBACK_BYTES = 1024 * 1024
 
 _PRE_RE = re.compile(r"^PreToolUse:(\S+) hook error: ?(.*)", re.S)
 _CMD_RE = re.compile(r"^\[([^\]]+)\]: ?(.*)", re.S)
@@ -167,6 +182,52 @@ def digest(obj) -> tuple[str | None, int]:
         return None, 0
     s = obj if isinstance(obj, str) else json.dumps(obj, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(s[:INPUT_CUT].encode("utf-8")).hexdigest(), len(s)
+
+
+# ── goal-anchor read receipts (v10 T19) ────────────────────────────────────
+
+GOAL_ANCHOR = "g__stop__goal-anchor.py"
+RECEIPT_MATCH_SECONDS = 120
+
+
+def receipts_dir() -> Path:
+    return Path(os.path.expanduser("~")) / ".claude" / ".cache" / "goal-anchor" / "receipts"
+
+
+def read_receipts(session: str, root: Path | None = None) -> list:
+    """The goal-anchor read receipts of one session, in file order."""
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", session or "")[:120] or "unknown"
+    return [r for r in _read_jsonl((root or receipts_dir()) / f"{safe}.jsonl") if isinstance(r, dict)]
+
+
+def _epoch(ts: str):
+    try:
+        return calendar.timegm(time.strptime((ts or "")[:19], "%Y-%m-%dT%H:%M:%S")) + \
+            (float("0" + ts[19:23]) if ts[19:20] == "." else 0.0)
+    except (ValueError, TypeError):
+        return None
+
+
+def match_block_receipt(receipts: list, digest_hex: str | None, ts: str) -> dict | None:
+    """The receipt of the gate run that produced a block recorded at `ts`.
+
+    Only `block` receipts written at or before the block's record qualify (the
+    harness writes the record after the hook returns). The one whose
+    `reply_digest` equals the ledger's digest of the refused reply wins; with
+    none, the latest block receipt within RECEIPT_MATCH_SECONDS. Else None.
+    """
+    t = _epoch(ts)
+    if t is None:
+        return None
+    cands = []
+    for r in receipts:
+        rt = _epoch(r.get("ts") or "")
+        if r.get("decision") == "block" and rt is not None and t - RECEIPT_MATCH_SECONDS <= rt <= t:
+            cands.append((rt, r))
+    if not cands:
+        return None
+    same = [c for c in cands if digest_hex and c[1].get("reply_digest") == digest_hex]
+    return max(same or cands, key=lambda c: c[0])[1]
 
 
 # ── hooks.json label map (latency) ──────────────────────────────────────────
@@ -300,10 +361,16 @@ def _last_assistant_text(buf: bytes, before: int) -> str:
     return ""
 
 
-def scan_bytes(buf: bytes, with_latency: bool = True) -> tuple[list, list]:
-    """(events, latency samples) from a chunk of whole transcript lines."""
+def scan_bytes(buf: bytes, with_latency: bool = True, skip: int = 0) -> tuple[list, list]:
+    """(events, latency samples) from a chunk of whole transcript lines.
+
+    The first `skip` bytes are context already ingested: the Stop digest and the
+    tool_use lookup may read them, but no event or latency row comes from them.
+    """
     events, pending = [], {}
     for pos, line in _lines_with(buf, _EVENT_MARKERS):
+        if pos < skip:
+            continue
         try:
             d = json.loads(line)
         except ValueError:
@@ -318,9 +385,17 @@ def scan_bytes(buf: bytes, with_latency: bool = True) -> tuple[list, list]:
             reason = be.get("blockingError") or ""
             gate, code = attribute_block(be.get("command") or a.get("command") or "", reason)
             h, n = digest(_last_assistant_text(buf, pos) or None)
-            events.append({**base, "key": uuid, "kind": "stop-block",
-                           "event": a.get("hookEvent") or "Stop", "gate": gate, "code": code,
-                           "tool": None, "input_sha256": h, "input_chars": n})
+            row = {**base, "key": uuid, "kind": "stop-block",
+                   "event": a.get("hookEvent") or "Stop", "gate": gate, "code": code,
+                   "tool": None, "input_sha256": h, "input_chars": n}
+            if gate == GOAL_ANCHOR:
+                try:
+                    rc = match_block_receipt(read_receipts(base["session"]), h, base["ts"])
+                except Exception:  # a receipt is a bonus; the event is recorded anyway
+                    rc = None
+                row["seen_uuid"] = (rc or {}).get("last_uuid")
+                row["seen_bytes"] = (rc or {}).get("bytes")
+            events.append(row)
             continue
         if d.get("type") != "user":
             continue
@@ -359,13 +434,15 @@ def scan_bytes(buf: bytes, with_latency: bool = True) -> tuple[list, list]:
                 e["tool"] = name
             h, n = digest(inp)
             e["input_sha256"], e["input_chars"] = h, n
-    lat = scan_latency(buf) if with_latency else []
+    lat = scan_latency(buf, skip) if with_latency else []
     return events, lat
 
 
-def scan_latency(buf: bytes) -> list:
+def scan_latency(buf: bytes, skip: int = 0) -> list:
     out = []
-    for _, line in _lines_with(buf, [_LATENCY_MARKER]):
+    for pos, line in _lines_with(buf, [_LATENCY_MARKER]):
+        if pos < skip:
+            continue
         try:
             d = json.loads(line)
         except ValueError:
@@ -497,6 +574,13 @@ def ingest_paths(paths, incremental: bool = True, with_latency: bool = True,
                 if want > budget:
                     want, pending = budget, True
             with open(p, "rb") as fh:
+                ctx = b""
+                if start > 0:  # bounded lookback, whole lines, never re-ledgered
+                    lb = min(start, LOOKBACK_BYTES)
+                    fh.seek(start - lb)
+                    ctx = fh.read(lb)
+                    if lb < start:
+                        ctx = ctx[ctx.find(b"\n") + 1:]
                 fh.seek(start)
                 buf = fh.read(want)
                 cut = buf.rfind(b"\n")
@@ -508,7 +592,7 @@ def ingest_paths(paths, incremental: bool = True, with_latency: bool = True,
             if cut == -1:
                 continue  # no whole line yet
             buf = buf[:cut + 1]
-            ev, lat = scan_bytes(buf, with_latency)
+            ev, lat = scan_bytes(ctx + buf, with_latency, skip=len(ctx))
             if ev:
                 if seen_e is None:
                     seen_e = _keys(ledger)

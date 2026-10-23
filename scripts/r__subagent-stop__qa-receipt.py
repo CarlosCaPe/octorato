@@ -22,6 +22,11 @@ or the panel protocol (FLOW.panel-before-send)
     PANEL-VERDICT: PASS | NEEDS-WORK
     PANEL-SHA256: <64 hex>       (recomputed from the block; recorded only if equal)
 
+and, on a qa or panel receipt, any number of
+
+    REVIEW-EXTERNAL: <tool_use_id>  (a review this reviewer ran on another
+                                     engine through a pinned call, v11 AC-28)
+
 this hook, running in the harness process, appends a receipt to the global
 ledger with the agent id, type, the harness-written agent transcript path and
 the harness `uuid` and `timestamp` of the transcript entry the report came
@@ -45,7 +50,30 @@ import json
 import os
 import sys
 
+# Hook payloads are UTF-8 JSON; the Windows default (cp1252) mangles any
+# non-ASCII character before it is read.
+try:
+    sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+except (AttributeError, ValueError):
+    pass
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+
+def _add_external(rl, record: dict, report: str, kind: str, verdict: str) -> None:
+    """v11 AC-28: a reviewer that ran part of its review on another engine
+    names each External_Review_Receipt on a `REVIEW-EXTERNAL: <tool_use_id>`
+    line. Every named receipt of this session that passes the ledger's checks
+    (all of AC-24 except the digest match, and AC-27) and whose stored output
+    ends on the same verdict as this report adds its engine and requested
+    model to the receipt as `external_reviewers`. The agent type, the verdict
+    and everything qa-merge-gate requires are unchanged. Fail-open."""
+    try:
+        ext = rl.external_reviewers_for(report, record.get("session_id") or "", kind, verdict)
+    except Exception:
+        return
+    if ext:
+        record["external_reviewers"] = ext
 
 
 def main() -> int:
@@ -103,11 +131,13 @@ def main() -> int:
                 record = dict(base, kind=kind, verdict=verdict, digest=scope,
                               recipients=got["recipients"],
                               attachments=[h for h, _ in got["attachments"]], **anchor)
+                _add_external(receipt_ledger, record, source, kind, verdict)
                 receipt_ledger.append_global(record)
                 continue
             record = dict(base, kind=kind, verdict=verdict, scope=scope, **anchor)
             if kind == "qa":
                 record["head"] = receipt_ledger.parse_qa_head(source)
+                _add_external(receipt_ledger, record, source, kind, verdict)
             receipt_ledger.append_global(record)
     except Exception:
         return 0

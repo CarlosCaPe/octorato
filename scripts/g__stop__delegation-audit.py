@@ -33,6 +33,13 @@ import os
 import sys
 from pathlib import Path
 
+# Hook payloads are UTF-8 JSON; the Windows default (cp1252) mangles any
+# non-ASCII character before it is read.
+try:
+    sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+except (AttributeError, ValueError):
+    pass
+
 FETCH_CALLS_MIN = 6
 FETCH_BYTES_MIN = 40_000
 WAIVER = "delegation-ok"

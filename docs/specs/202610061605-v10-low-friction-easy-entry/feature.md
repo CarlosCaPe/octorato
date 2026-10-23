@@ -1,6 +1,6 @@
 # Feature: v10, Low Friction and Easy Entry
 
-> **Status:** approved
+> **Status:** converged
 > **Spec-Format:** ears-1
 > **Date:** 2026-10-06
 > **Classification:** LARGE (score 13: 10+ files, new feature, architectural decision, multiple modules)
@@ -39,6 +39,8 @@ Every acceptance criterion names one of these components as its subject.
 - **Constitution**: the tracked `CLAUDE.md` at the brain root.
 - **Dashboard**: a new `octo dash` subcommand that writes one self-contained HTML page from local state.
 - **Status_Line**: a new status line script registered for Claude Code.
+- **Delegate_Check**: `scripts/delegate-check`, the 2D Q3 verdict (ACTIVATE, LOAD or SELF).
+- **Heartbeat**: `scripts/connectome-heartbeat.py`, the UserPromptSubmit reflex that injects the 2D Q1 lean on every prompt.
 - **Fresh_Clone_Test**: a new CI job that installs the brain from a clean clone in a container and times it.
 
 ## User Stories
@@ -82,6 +84,10 @@ The Constitution keeps the rules every session needs and moves the long mechanis
 
 `octo dash` renders specs with task and converge state, open pull requests with QA receipts, the gate receipt, live kernel processes and the friction report into one HTML page, offline and from local data. A Status_Line shows the gate receipt, live process count and the active spec.
 
+### FR-09: A SELF verdict asks for the live source
+
+A SELF answer comes from recall or stored memory, and recall is usually stale or wrong: an operator word that names a project gets matched to an old memory instead of the live tree. The Delegate_Check and the Heartbeat therefore never show a bare SELF. They carry a demand to name the live source checked (the file listing, git, the chat, the live system) before the answer. With a populated graph the Delegate_Check rarely returns SELF, so it also carries the demand on any explicit opinion request, and the Heartbeat, which runs on every prompt, carries it whenever it leans SELF.
+
 ## Acceptance Criteria
 
 - [ ] AC-01: WHEN any PreToolUse deny or Stop block registered in `hooks.json` fires, THE Friction_Ledger SHALL receive one line carrying the gate name, session id, tool name, reason code and a digest of the input truncated to 1,200 characters.
@@ -93,7 +99,7 @@ The Constitution keeps the rules every session needs and moves the long mechanis
 - [ ] AC-07: WHEN a Bash command only reads the support script (help flag, cat, grep, sed -n) and makes no request to a bridge, THE Send_Gate SHALL allow it.
 - [ ] AC-08: THE Send_Gate SHALL keep denying every labelled true-positive case of the Replay_Harness corpus, across all of its checks: send ask, panel receipt, absence, attribute, promise and thread.
 - [ ] AC-09: IF a prompt consists only of an acknowledgement or a hatch token of at most three words, THEN THE Goal_Anchor SHALL keep the previous root goal instead of anchoring the prompt.
-- [ ] AC-10: WHEN the Replay_Harness replays the Stop-hook corpus, THE Goal_Anchor SHALL block on at most 25% of the turns it blocked on in the baseline, with every labelled true-positive case still blocked.
+- [ ] AC-10: WHEN the Replay_Harness replays the Stop-hook corpus, THE Goal_Anchor SHALL block on at most 25% of the turns it blocked on in the baseline at the gate revision the baseline names, with every labelled true-positive case still blocked, the violation legs of the gate's fixture directory counting as labelled true positives whenever the corpus holds none. (Amended 2026-10-13 together with AC-25: the corpus holds no honest true positive, so the fixture legs carry that clause.)
 - [ ] AC-11: THE Budget_Check SHALL answer a PreToolUse call in at most 300 ms at the median and 1 s at p95, measured over 100 consecutive calls on the operator's machine.
 - [ ] AC-12: WHEN a pull request's head changes only by merging master into it (a rebase is re-reviewed in full), THE Base_Update_Verifier SHALL confirm, against the remote master read through `gh` and not a local ref, that the pull request's diff over its merge base is byte-identical to the diff of the head that holds the QA PASS, and SHALL record a QA receipt for the new head only when they match.
 - [ ] AC-13: THE Merge_Gate SHALL keep deciding on the receipt that names the pinned head, unchanged, with no carry of a PASS from one head to another.
@@ -105,7 +111,10 @@ The Constitution keeps the rules every session needs and moves the long mechanis
 - [ ] AC-19: THE Dashboard SHALL write one self-contained HTML file showing specs with task and converge state, open pull requests with their newest QA verdict and pinned head, the gate receipt, live kernel processes and the friction report, reading pull requests only from a local snapshot that `octo dash --refresh` takes and printing that snapshot's age.
 - [ ] AC-20: THE Status_Line SHALL show the gate receipt state, the live process count and the active spec, and SHALL return in at most 200 ms at the median and 500 ms at p95 over 100 consecutive calls.
 - [ ] AC-21: THE Guard_Stop SHALL block only on a turn that itself made a message send.
-- [ ] AC-22: IF the Budget_Check cache is older than 15 minutes, THEN THE Budget_Check SHALL recompute synchronously and keep its current fail-closed decision.
+- [ ] AC-22: IF the Budget_Check cache is older than 15 minutes but from the current month and at most 24 hours old, THEN THE Budget_Check SHALL answer from that cache within the AC-11 bound, start one background refresh and keep its fail-closed decision on the cached spend; IF the cache is missing, from another month, stamped in the future, unreadable or older than 24 hours, THEN THE Budget_Check SHALL recompute synchronously.
+- [ ] AC-23: WHEN the Delegate_Check returns SELF or the task is an explicit opinion request, THE Delegate_Check SHALL print a line that calls the answer about 99% likely stale or hallucinated and asks for the live source checked, and SHALL NOT print it for an ACTIVATE or LOAD verdict on a task that is not an opinion request; its `--selftest` SHALL fail when that line is removed.
+- [ ] AC-24: WHEN the Heartbeat leans SELF, including when no neuron matches the prompt, THE Heartbeat SHALL include the same live-source line in its injected context, and SHALL NOT include it when it leans ACTIVATE or LOAD; its `--selftest` SHALL fail when that line is removed.
+- [ ] AC-25: WHEN the Replay_Harness rates the Goal_Anchor's fidelity, THE Replay_Harness SHALL rate it on the receipt-era Stops alone (those the gate recorded a read receipt for), SHALL mark it low-fidelity while fewer than 100 such Stops are in the window or fewer than 90% of their recorded decisions are reproduced, and SHALL report the pre-receipt history rate without letting it decide the mark. (Added 2026-10-13: pre-receipt history cannot be rebuilt by any replay, so it measured the transcript tail, not the gate.)
 
 ## Technical Scope
 
@@ -137,3 +146,6 @@ v10.0.0 ships when every criterion above has a CONVERGED verdict and the Frictio
 - 2026-10-06: QA failed the in-gate receipt carry (local master ref is agent-writable). AC-12 and AC-13 now move the re-review to a remote-reading verifier and keep the merge gate unchanged. Send_Ask no longer accepts bare go-aheads.
 - 2026-10-07: AC-12 narrowed to merge-only base updates; a rebase rewrites the reviewed commits and gets a full QA.
 - 2026-10-07: QA consistency pass: Technical Scope no longer lists the rejected merge-gate carry, FR-05 and the verifier term say merge-only, AC-03 names what the tracked baseline holds.
+- 2026-10-09: FR-09 and AC-23 added: a SELF verdict carries a demand for the live source, after an answer built from a stale memory instead of the live tree.
+- 2026-10-09: QA found the Delegate_Check SELF branch unreachable against the live graph (every opinion phrasing tried returned LOAD). AC-23 now also fires on an explicit opinion request, and AC-24 puts the line on the Heartbeat, the path that reaches every prompt.
+- 2026-10-09: AC-22 amended by the operator: the converge pass found AC-11 and AC-22 pulling against each other in live use (p95 10 s, 5 timeouts at 10 s on the first spawn after an idle spell). AC-11 keeps its 1 s p95; a stale cache of this month, at most 24 hours old, now answers at once and refreshes in the background, and only a missing, foreign-month, future-stamped, torn or 24-hour-old cache is recomputed synchronously.

@@ -210,7 +210,8 @@ def run_gate_selftest(script_path, fixture_dir) -> int:
         shutil.rmtree(sandbox, ignore_errors=True)
 
     if failures:
-        print("selftest FAIL: " + "; ".join(failures), file=sys.stderr)
+        print(f"selftest FAIL: {len(violations)} block + {len(benigns)} allow "
+              f"({script.name} vs {fdir.name}): " + "; ".join(failures), file=sys.stderr)
         return 1
     print(f"selftest PASS: {len(violations)} block + {len(benigns)} allow "
           f"({script.name} vs {fdir.name})")

@@ -1,0 +1,5 @@
+{
+  "command": "{{NODE}} {{CODEX}} exec --skip-git-repo-check -m review-model -c model_providers.x.base_url=http://127.0.0.1:9 'Review this block and end with the panel lines.'",
+  "expect_complete": 0,
+  "output": "Reviewed.\nPANEL-VERDICT: PASS\nPANEL-SHA256: 0000000000000000000000000000000000000000000000000000000000000000\n"
+}

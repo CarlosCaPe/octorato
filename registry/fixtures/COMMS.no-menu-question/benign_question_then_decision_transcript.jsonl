@@ -1,0 +1,1 @@
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "¿Stop gate o PreToolUse? Las dos opciones pasan el selftest, y elegí Stop gate porque sus tres hermanos viven ahí. Ya está cableado.\n\nProvenance: Basis: scripts/g__stop__defer-today.py · Engine: build · Touched: none · Verified: selftest"}]}}

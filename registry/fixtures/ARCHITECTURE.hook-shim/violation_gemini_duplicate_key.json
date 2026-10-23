@@ -1,0 +1,8 @@
+{
+  "harness": "gemini-cli",
+  "gate": "g__pretool__arming-surface.py",
+  "payload_raw": "{\"hook_event_name\": \"BeforeTool\", \"cwd\": \"/tmp\", \"tool_name\": \"write_file\", \"tool_input\": {\"file_path\": \"{{SANDBOX}}/.claude/hooks.json\", \"file_path\": \"/tmp/x\", \"content\": \"{}\"}}",
+  "_setup": {
+    "expect_reason": "repeats key"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "harness": "gemini-cli",
+  "gate": "g__pretool__arming-surface.py",
+  "payload": {
+    "session_id": "sess-shim",
+    "transcript_path": "",
+    "cwd": "{{SANDBOX}}/wt/shim",
+    "hook_event_name": "BeforeTool",
+    "timestamp": "1970-01-01T00:00:00Z",
+    "tool_name": "write_file",
+    "tool_input": {
+      "file_path": "{{SANDBOX}}/wt/shim/settings.json",
+      "content": "x\n"
+    }
+  },
+  "status": "gap",
+  "_setup": {
+    "expect_reason": "not `supported`"
+  }
+}

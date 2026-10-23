@@ -107,6 +107,10 @@ CLI
     panel_digest.py --body-file F [--to R ...] [--attach P ...] [--mention M ...]
     panel_digest.py --tool-input F.json --tool-name NAME
     either form plus --panel-request prints the reviewer block instead
+    --body-file F --to operator --preflight runs the reply-text Stop gates on F
+    (panel_preflight.py) and prints each verdict, the source class and quorum;
+    exit 1 when one would block. --panel-request --to operator runs the same
+    preflight first and prints no block when it fails (--no-preflight skips it).
 A mail's body file is the subject line, then the body (then htmlBody).
 """
 from __future__ import annotations
@@ -121,6 +125,13 @@ import shlex
 import stat
 import sys
 from pathlib import Path
+
+# Hook payloads are UTF-8 JSON; the Windows default (cp1252) mangles any
+# non-ASCII character before it is read.
+try:
+    sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+except (AttributeError, ValueError):
+    pass
 
 _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
@@ -188,8 +199,22 @@ def norm_mentions(mentions) -> list:
     return sorted({str(m).strip().lower() for m in mentions if str(m).strip()})
 
 
+def _bash_tilde(path: str) -> str:
+    """Expand a leading `~` or `~/` to $HOME, the way bash does.
+
+    The scanner lets only those two prefixes through, and bash reads both from
+    $HOME. Python's expanduser agrees on POSIX, but on Windows it reads
+    USERPROFILE and ignores HOME, so under Git Bash with HOME pointed elsewhere
+    the gate hashed a different file than the one the script would attach.
+    Every other form goes to expanduser unchanged."""
+    home = os.environ.get("HOME")
+    if home is not None and (path == "~" or path.startswith("~/")):
+        return home + path[1:]          # bash: HOME set (even empty) wins
+    return os.path.expanduser(path)
+
+
 def file_sha256(path: str) -> str:
-    p = Path(os.path.expanduser(str(path)))
+    p = Path(_bash_tilde(str(path)))
     try:
         st = os.stat(p)
     except OSError as e:
@@ -655,12 +680,46 @@ def _cli(argv: list) -> int:
     ap.add_argument("--tool-name", default="", help="send tool name, with --tool-input")
     ap.add_argument("--panel-request", action="store_true",
                     help="print the reviewer block (recipients, attachments, body, digest)")
+    ap.add_argument("--preflight", action="store_true",
+                    help="with --to operator: run the reply-text Stop gates on the body "
+                         "(panel_preflight.py), print each verdict, the source class and quorum")
+    ap.add_argument("--transcript", help="session transcript for --preflight (default: this session's)")
+    ap.add_argument("--no-preflight", action="store_true",
+                    help="--panel-request --to operator without the preflight; a Stop gate may "
+                         "then force an edit to the reviewed text (R-04)")
     a = ap.parse_args(argv)
     try:
+        reply = (not a.tool_input) and a.to == ["operator"]
+        if a.preflight or (a.panel_request and reply and not a.no_preflight):
+            if not reply:
+                raise PanelDigestError("--preflight judges a reply: it needs --body-file and "
+                                       "--to operator as the only recipient")
+            import panel_preflight
+            text = Path(a.body_file).read_text(encoding="utf-8") if a.body_file else sys.stdin.read()
+            try:
+                res = panel_preflight.run(text, a.transcript)
+            except panel_preflight.PreflightError as e:
+                raise PanelDigestError(f"preflight: {e}")
+            if a.preflight:
+                print(panel_preflight.report(res))
+                return 1 if res["blocked"] else 0
+            if res["blocked"]:
+                print(panel_preflight.report(res), file=sys.stderr)
+                print("panel_digest: no panel request: a Stop gate would change this text after "
+                      "its review. Fix the draft and run --panel-request again.", file=sys.stderr)
+                return 1
+            print(f"PREFLIGHT: PASS, source class {res['class']}, reply panel quorum {res['quorum']}",
+                  file=sys.stderr)
+            a.body_file, text_in = None, text
+        else:
+            text_in = None
         if a.tool_input:
             msgs = message_parts(a.tool_name, json.loads(Path(a.tool_input).read_text(encoding="utf-8")))
         else:
-            text = Path(a.body_file).read_text(encoding="utf-8") if a.body_file else sys.stdin.read()
+            if text_in is not None:
+                text = text_in
+            else:
+                text = Path(a.body_file).read_text(encoding="utf-8") if a.body_file else sys.stdin.read()
             if not a.to:
                 raise PanelDigestError("--to is required: the recipient is part of the digest")
             msgs = [Message(text, [(file_sha256(p), p) for p in a.attach], a.to, a.mention)]

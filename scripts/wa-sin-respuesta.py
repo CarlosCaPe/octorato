@@ -635,7 +635,7 @@ def token_gmail(secretos=None, lector=None):
 def gmail_get(ruta, at, **params):
     url = f"{GMAIL_API}/{ruta}"
     if params:
-        url += "?" + urllib.parse.urlencode(params)
+        url += "?" + urllib.parse.urlencode(params, doseq=True)
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {at}"})
     with urllib.request.urlopen(req, timeout=30) as r:
         return json.loads(r.read().decode())
@@ -670,6 +670,43 @@ def es_autorespuesta(cabeceras, extracto):
     return any(f in t for f in FRASES_AUTO)
 
 
+DESCARTADOS = {"TRASH", "SPAM"}
+
+
+SERIE_CALENDARIO = "x-ms-exchange-calendar-series-instance-id"
+ASUNTOS_INVITACION = ("invitation:", "updated invitation:", "invitación:",
+                      "invitación actualizada:")
+
+
+def es_invitacion(msg):
+    """True when the headers say this is a meeting request, not just a mail
+    with an .ics attached. A question that carries a calendar file must still
+    count as waiting: that false green is the worst failure of this sentry.
+    Exchange stamps meeting requests with a calendar series id (measured Oct 9:
+    present on both invites, absent on normal mails with attachments); Google
+    Calendar invites start their subject with "Invitation:"."""
+    cab = {h["name"].lower(): h["value"]
+           for h in (msg.get("payload") or {}).get("headers", [])}
+    if cab.get(SERIE_CALENDARIO):
+        return True
+    return cab.get("subject", "").strip().lower().startswith(ASUNTOS_INVITACION)
+
+
+def sin_descartados(msgs, invitaciones=frozenset()):
+    """The thread without the client mails nobody waits on: those sent to Trash
+    or Spam, and calendar invitations (their ids in `invitaciones`). A reply of
+    mine stays even when trashed: it was delivered, so it still proves the
+    thread was answered."""
+    salida = []
+    for m in msgs or []:
+        etiquetas = set(m.get("labelIds") or [])
+        if "SENT" in etiquetas:
+            salida.append(m)
+        elif not DESCARTADOS & etiquetas and m.get("id") not in invitaciones:
+            salida.append(m)
+    return salida
+
+
 def arranca_hilo(msgs):
     """(mensaje donde arranco la espera, cuantos pendientes) de un hilo.
 
@@ -699,16 +736,35 @@ def hilos_gmail(remitente, dias, secretos=None):
     respuesta posterior no es silencio.
     """
     at = token_gmail(secretos)
-    q = f"in:all newer_than:{dias}d from:{remitente}"
+    # `in:all` does NOT leave out Trash and Spam on the API (measured Oct 9:
+    # 23 of the 25 results for one sender were in Trash). A trashed mail is a
+    # handled mail, and it also ate the 25 slots a real mail needed.
+    q = f"in:all -in:trash -in:spam newer_than:{dias}d from:{remitente}"
     d = gmail_get("messages", at, q=q, maxResults=25)
     hilos = {}
     for m in d.get("messages") or []:
         hilos[m["threadId"]] = None
+    # A calendar invitation asks for an RSVP, not an email reply. The metadata
+    # view does not show MIME parts, but search does: `filename:ics` gives the
+    # candidates, and `es_invitacion` keeps only real meeting requests. This
+    # search is an enrichment: if it fails, nothing is dropped (an extra alert
+    # is better than a blind sender).
+    try:
+        inv = gmail_get("messages", at, q=f"{q} filename:ics", maxResults=25)
+        candidatas = {m["id"] for m in inv.get("messages") or []}
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        print(f"AVISO: sin filtro de invitaciones para {remitente}: {e}",
+              file=sys.stderr)
+        candidatas = set()
     salida = []
     for tid in hilos:
         th = gmail_get(f"threads/{tid}", at, format="metadata",
-                       metadataHeaders="Auto-Submitted")
-        msgs = th.get("messages") or []
+                       metadataHeaders=["Auto-Submitted", "Subject",
+                                        "X-MS-Exchange-Calendar-Series-Instance-Id"])
+        crudos = th.get("messages") or []
+        invitaciones = {m["id"] for m in crudos
+                        if m.get("id") in candidatas and es_invitacion(m)}
+        msgs = sin_descartados(crudos, invitaciones)
         if not msgs:
             continue
         ultimo_msg = msgs[-1]
@@ -1427,6 +1483,57 @@ def selftest():
     arranca, cuantos = arranca_hilo([m for m in hilo_insiste if "INBOX" in m["labelIds"]])
     if arranca["id"] != "m2" or cuantos != 3:
         fallos.append("un hilo sin respuesta mia deberia arrancar en el primero")
+    casos += 1
+    # a thread whose mails all went to Trash is handled: nothing left to wait on
+    if sin_descartados([{"id": "t1", "labelIds": ["UNREAD", "TRASH"]},
+                        {"id": "t2", "labelIds": ["SPAM"]}]):
+        fallos.append("a trashed or spam mail still counts as waiting")
+    casos += 1
+    # trash in the middle of a live thread is dropped, the inbox mails stay
+    vivos = sin_descartados(hilo_insiste + [{"id": "t3", "labelIds": ["TRASH"]}])
+    if [m["id"] for m in vivos] != ["m1", "m2", "m3", "m4"]:
+        fallos.append("dropping trash also dropped live mails")
+    casos += 1
+    # my reply was trashed afterwards: the thread is still answered
+    arranca, cuantos = arranca_hilo(sin_descartados(hilo_insiste + [
+        {"id": "m5", "internalDate": "500", "labelIds": ["SENT", "TRASH"]}]))
+    if cuantos != 0:
+        fallos.append("a trashed reply of mine reopened the thread")
+    casos += 1
+    # the client's last mail is trashed: the wait still starts at the first live one
+    arranca, cuantos = arranca_hilo(sin_descartados(hilo_insiste + [
+        {"id": "t4", "internalDate": "500", "labelIds": ["INBOX", "TRASH"]}]))
+    if arranca["id"] != "m2" or cuantos != 3:
+        fallos.append("a trashed client mail changed where the wait starts")
+    casos += 1
+    # a thread that is only a calendar invitation is not waiting on a reply
+    if sin_descartados([{"id": "i1", "labelIds": ["INBOX", "UNREAD"]}], {"i1"}):
+        fallos.append("a calendar invitation still counts as waiting")
+    casos += 1
+    # an invitation after a real question does not hide the question
+    arranca, cuantos = arranca_hilo(sin_descartados(hilo_insiste + [
+        {"id": "i2", "internalDate": "500", "labelIds": ["INBOX"]}], {"i2"}))
+    if arranca["id"] != "m2" or cuantos != 3:
+        fallos.append("an invitation changed where the wait starts")
+    casos += 1
+    # a reply of mine is kept even if its id were among the invitations
+    if not sin_descartados([{"id": "s1", "labelIds": ["SENT"]}], {"s1"}):
+        fallos.append("a reply of mine was dropped as an invitation")
+    casos += 1
+    # an Exchange meeting request is an invitation
+    if not es_invitacion({"payload": {"headers": [
+            {"name": "X-MS-Exchange-Calendar-Series-Instance-Id", "value": "BAAA"}]}}):
+        fallos.append("an Exchange meeting request was not seen as an invitation")
+    casos += 1
+    # a Google Calendar invite is an invitation
+    if not es_invitacion({"payload": {"headers": [
+            {"name": "Subject", "value": "Invitation: UAT @ Tue 13 Oct"}]}}):
+        fallos.append("a Google Calendar invite was not seen as an invitation")
+    casos += 1
+    # a real question with an .ics attached is NOT an invitation
+    if es_invitacion({"payload": {"headers": [
+            {"name": "Subject", "value": "RE: can you make this slot?"}]}}):
+        fallos.append("a question with an .ics was silenced as an invitation")
 
     # un remitente sin ningun hilo callado va SANO, en null. Sin esto no hay
     # verdes de correo.

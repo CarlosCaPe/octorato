@@ -1,0 +1,8 @@
+Reviewed the message.
+PANEL-TO: someone@example.test
+PANEL-BODY-BEGIN
+Monthly report
+Hi, the report is attached and the numbers match the invoice.
+PANEL-BODY-END
+PANEL-VERDICT: PASS
+PANEL-SHA256: a3e17a4b68ad9b8c656f57bcd2127b5d485258655e300ae044c83d24040142a6

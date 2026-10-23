@@ -5,5 +5,8 @@
   "license": "proprietary",
   "description": "{{ONE_LINE_DESCRIPTION}}",
   "dependencies": {},
-  "homepage": "{{ARM_REPO_URL}}"
+  "homepage": "{{ARM_REPO_URL}}",
+  "telemetry": {
+    "export": "deny"
+  }
 }

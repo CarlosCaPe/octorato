@@ -42,6 +42,8 @@ That second command does every setup step, in this order, and is safe to run aga
 | 7 | Health check | Runs `brain_doctor.py --fast`, the quick profile (under 30 seconds on a populated machine). The full check, which proves every gate blocks, is `python3 ~/.claude/scripts/brain_doctor.py`. |
 | 8 | First spec | Writes an example spec and checks it with `spec_lint.py`. |
 
+One run on a clean clone took <!--canon:v10.quickstart.measured-->21 s<!--/canon-->; a busy machine takes longer (one run at load average 13.8 took <!--canon:v10.quickstart.loaded-->80 s<!--/canon-->). A CI job runs it on a fresh clone for every change to the install path and fails past <!--canon:v10.quickstart.ci_budget-->5 minutes<!--/canon-->.
+
 If step 4, 5 or 8 fails, quickstart says which one and exits non-zero. A health-check finding is reported but does not stop the install, because a fresh clone is expected to miss optional parts (a private blocklist, optional Python packages listed in `requirements.txt`).
 
 ---
@@ -187,6 +189,30 @@ Every session and every subagent runs as a kernel process: a pid, a parent, a wo
 `octo dash` writes one self-contained HTML page to `~/.claude/.cache/dash/index.html` and prints its path. It shows every spec with its status, task count and newest converge verdict, the open pull requests with their newest QA verdict and the head that verdict pinned next to the current head, the gate receipt, the live kernel processes and the friction report when one exists. Pull requests come only from a local snapshot, so the page opens offline and says how old that snapshot is; `octo dash --refresh` takes a new one with `gh`.
 
 The status line shows the same three things in one row at the bottom of Claude Code: the gate receipt (`ok`, `dirty`, `none`), the live process count, and the active spec (the one your cwd is in, otherwise the newest one not yet converged). Quickstart and `ai-pull` register it through `scripts/merge-hooks.py` when you have no status line yet. Once one is set, the script only replaces a value it wrote itself, so a status line you configured, wrapped or re-padded stays as you left it.
+
+### How to see which check is getting in your way
+
+A check that refuses legitimate work is a bug, so the brain counts its own refusals. At every Stop a reflex reads what Claude Code already wrote to the session transcript and adds one line per refusal to `~/.claude/.cache/friction/ledger.jsonl`: the check, the session, the tool, a reason code and a digest of the input. The text of your prompt or message is never stored.
+
+```bash
+octo friction            # the last 7 days
+octo friction --days 30  # a longer window
+octo friction --json     # the same report as JSON
+```
+
+Per check it prints how many times it refused, the median and p95 hook latency, and, when the replay corpus has labels for it, the share of labelled refusals that were false. On a fresh install the ledger is empty and the command says so; to fill it from past sessions, run `python3 ~/.claude/scripts/friction_ledger.py backfill --since YYYY-MM-DD`. A dash in the latency column means the harness recorded no duration, not that the hook was fast.
+
+When you change a check, `python3 ~/.claude/scripts/replay_harness.py replay` runs it against a private corpus of real past cases and fails if a refusal labelled correct now allows. The corpus holds real prompts, so it stays in the gitignored `company/friction-corpus/`; on a clone without it, `replay` prints SKIP. Method and limits: [`docs/architecture/v10-friction.md`](../architecture/v10-friction.md).
+
+### How to re-review a pull request after "Update branch"
+
+A QA pass approves one commit. When master moves and you update a pull request from it, the head changes and the old pass no longer applies, even though the patch may be the same. In Claude Code, run:
+
+```text
+/requa <pr>
+```
+
+It runs as a reviewer subagent. It reads master from GitHub (never from a local branch), checks that the new head is a merge of the reviewed head and a master commit, and compares the two patches with `scripts/requa.py`. Only on an identical patch does it write a QA receipt for the new head. Any other difference, or a rebase, means a full review. `/requa` never merges and never changes the merge gate.
 
 ### How to install a skill someone else wrote
 

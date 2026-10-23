@@ -1,0 +1,8 @@
+{
+  "harness": "codex-cli",
+  "gate": "g__pretool__arming-surface.py",
+  "payload_raw": "",
+  "_setup": {
+    "expect_reason": "not JSON"
+  }
+}

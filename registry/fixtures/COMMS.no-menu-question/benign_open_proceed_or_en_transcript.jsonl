@@ -1,0 +1,1 @@
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "I can deploy now, and wait for QA. How would you like to proceed?\n\nProvenance: Basis: scripts/g__stop__no-menu-question.py · Engine: build · Touched: none · Verified: selftest"}]}}

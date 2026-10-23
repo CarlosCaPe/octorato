@@ -1,0 +1,1 @@
+{"tool_name": "Bash", "tool_input": {"command": "sudo -nu root gh pr merge 1"}, "cwd": "/nonexistent/repo"}
