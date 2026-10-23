@@ -544,7 +544,7 @@ def guarda(res, nota=""):
 
 def _lee_vistos():
     try:
-        with open(AVISOS_VISTOS) as f:
+        with open(AVISOS_VISTOS, encoding="utf-8") as f:
             d = json.load(f)
         return d if isinstance(d, dict) else {}
     except (OSError, ValueError):
@@ -555,7 +555,7 @@ def _guarda_vistos(d):
     try:
         os.makedirs(os.path.dirname(AVISOS_VISTOS), exist_ok=True)
         tmp = AVISOS_VISTOS + ".tmp"
-        with open(tmp, "w") as f:
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(d, f)
         os.replace(tmp, AVISOS_VISTOS)
     except OSError as e:
