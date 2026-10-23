@@ -169,6 +169,13 @@ def _run_replaced() -> bool:
     return not (r.__globals__ is vars(subprocess) and r.__code__.co_name == "run")
 
 
+class LegRunnerError(RuntimeError):
+    """A forked leg whose gate never ran: its supervisor failed (EAGAIN on the
+    gate's fork, say) and exited 1 with no output. That is no verdict at all,
+    and a non-zero exit read as one would make an unblocking gate's violation
+    leg read as blocked, so it is raised, never returned as a LegResult."""
+
+
 class LegResult:
     """The fields of subprocess.CompletedProcess a selftest reads."""
     __slots__ = ("returncode", "stdout", "stderr")
@@ -789,6 +796,15 @@ def run_scripts(legs: list, workers: int = 1) -> list:
                     raw += chunk
                 os.close(info_r)
                 gate_pid = int(raw) if raw.strip().isdigit() else None
+            if gate_pid is None:
+                # The supervisor closed its end without naming a gate: it died
+                # before the gate could run, so nothing decided this leg.
+                os.close(out_r)
+                os.close(err_r)
+                _, status = os.waitpid(pid, 0)
+                raise LegRunnerError(
+                    "leg %s: the supervisor exited (status %d) before its gate "
+                    "ran" % (script, status))
             timeout = leg.get("timeout")
             running[pid] = {
                 "i": i, "gate": gate_pid, "exited": False,
@@ -914,7 +930,11 @@ def run_gate_selftest(script_path, fixture_dir) -> int:
         failures = []
         rule = _kernel_rule_of(script)
         for vf in violations:
-            rc, out = _run_leg(script, _prep_payload(vf, fdir, sandbox), sandbox)
+            try:
+                rc, out = _run_leg(script, _prep_payload(vf, fdir, sandbox), sandbox)
+            except LegRunnerError as exc:
+                failures.append(f"{vf.name} never reached the gate: {exc}")
+                continue
             if not emits_block(rc, out):
                 failures.append(f"{vf.name} did NOT block (rc={rc})")
         # v8 Phase 4: a gate that refuses must also RECORD the refusal. The
@@ -931,7 +951,11 @@ def run_gate_selftest(script_path, fixture_dir) -> int:
             elif rule not in journaled:
                 failures.append(f"journaled deny rule {journaled[0]!r} != {rule!r}")
         for bf in benigns:
-            rc, out = _run_leg(script, _prep_payload(bf, fdir, sandbox), sandbox)
+            try:
+                rc, out = _run_leg(script, _prep_payload(bf, fdir, sandbox), sandbox)
+            except LegRunnerError as exc:
+                failures.append(f"{bf.name} never reached the gate: {exc}")
+                continue
             if emits_block(rc, out):
                 failures.append(f"{bf.name} WAS blocked (must allow, rc={rc})")
     finally:

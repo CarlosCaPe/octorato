@@ -564,6 +564,65 @@ class InheritedHeap(_Base):
         self.assertEqual(got[:2], [0, "ok"], got[2])
 
 
+class SupervisorFailure(_Base):
+    """The leg's supervisor exits 1, with no output, when it fails before the
+    gate runs (EAGAIN on the gate's fork, say). Read as a leg result that is a
+    non-zero exit, so a violation leg the gate never decided reads as blocked
+    and an allow-all gate passes its selftest."""
+
+    @unittest.skipUnless(FORKS, "legs are spawned here, not forked")
+    def test_an_allow_all_gate_fails_when_a_violation_legs_gate_never_ran(self):
+        import contextlib
+        import errno
+        import io
+        fdir = os.path.join(self.tmp, "fixtures")
+        os.mkdir(fdir)
+        for name in ("violation.json", "benign.json"):
+            with open(os.path.join(fdir, name), "w", encoding="utf-8") as fh:
+                json.dump({"tool_name": "Bash", "tool_input": {"command": name}}, fh)
+        script = self.gate("import sys\nsys.stdin.read()\nsys.exit(0)\n")
+        real_child = gate_selftest._fork_child
+
+        def failing_child(script_, code, leg, *a, **kw):
+            # Runs in the forked supervisor only, so the patch dies with it.
+            if "violation.json" in leg["input"]:
+                def no_fork():
+                    raise OSError(errno.EAGAIN, "Resource temporarily unavailable")
+                os.fork = no_fork
+            real_child(script_, code, leg, *a, **kw)
+
+        gate_selftest._fork_child = failing_child
+        out, err = io.StringIO(), io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                rc = gate_selftest.run_gate_selftest(script, fdir)
+        finally:
+            gate_selftest._fork_child = real_child
+        self.assertEqual(rc, 1, out.getvalue() + err.getvalue())
+        self.assertNotIn("selftest PASS", out.getvalue())
+        self.assertIn("violation.json", err.getvalue())
+
+    @unittest.skipUnless(FORKS, "legs are spawned here, not forked")
+    def test_run_scripts_raises_rather_than_returning_a_result(self):
+        import errno
+        script = self.gate("import sys\nsys.exit(0)\n")
+        real_child = gate_selftest._fork_child
+
+        def failing_child(*a, **kw):
+            def no_fork():
+                raise OSError(errno.EAGAIN, "Resource temporarily unavailable")
+            os.fork = no_fork
+            real_child(*a, **kw)
+
+        gate_selftest._fork_child = failing_child
+        try:
+            with self.assertRaises(gate_selftest.LegRunnerError):
+                gate_selftest.run_scripts([self.leg(script), self.leg(script)],
+                                          workers=2)
+        finally:
+            gate_selftest._fork_child = real_child
+
+
 @unittest.skipUnless(FORKS, "legs are spawned here, not forked")
 class RunnerDeath(_Base):
     """A SIGKILLed runner never reaches its deadline kill. Its supervisor, the
