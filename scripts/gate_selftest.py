@@ -327,6 +327,19 @@ def _fork_child(script: str, code, leg: dict, fds: tuple, close: list,
                     os.close(fd)
                 except OSError:
                     pass
+        # A spawned leg runs with close_fds=True: it holds 0, 1, 2 and nothing
+        # else. The fork inherits every fd this process has open (a caller's
+        # log file, a socket, a lock, another tool's pipe), so close them all
+        # except info_w, which the supervisor still needs. closerange uses
+        # close_range(2) where the kernel has it, so a high fd limit is cheap.
+        # No fd can be opened at or above the soft RLIMIT_NOFILE, which is
+        # what SC_OPEN_MAX reports.
+        try:
+            top = max(256, os.sysconf("SC_OPEN_MAX"))
+        except (ValueError, OSError):
+            top = 65536
+        os.closerange(3, info_w)
+        os.closerange(info_w + 1, top)
         libc = _libc()
         if libc:
             libc.prctl(_PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0)

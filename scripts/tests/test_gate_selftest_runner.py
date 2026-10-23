@@ -484,6 +484,36 @@ class UserSite(_Base):
         self.assertEqual(got["fork"], got["spawn"])
 
 
+@unittest.skipUnless(FORKS, "legs are spawned here, not forked")
+class InheritedFds(_Base):
+    """A spawned leg runs with close_fds=True. A forked one must not hold any
+    fd of the runner's either, or a gate could write to the caller's log, lock
+    or socket, and a pipe it holds would keep a reader waiting on EOF."""
+
+    def test_a_leg_does_not_see_the_parents_other_fds(self):
+        fd = os.open(os.path.join(self.tmp, "held"), os.O_RDWR | os.O_CREAT)
+        os.set_inheritable(fd, True)
+        r, w = os.pipe()
+        try:
+            script = self.gate(f"""
+                import os
+                seen = []
+                for fd in ({fd}, {r}, {w}):
+                    try:
+                        os.fstat(fd)
+                        seen.append(fd)
+                    except OSError:
+                        pass
+                print("held" if seen else "none", end="")
+                """)
+            got = self.both(script)
+        finally:
+            for x in (fd, r, w):
+                os.close(x)
+        self.assertEqual(got[1], (0, "none"))     # subprocess.run
+        self.assertEqual(got[0], got[1])          # the fork matches it
+
+
 class ReplacedRun(_Base):
     """runtime_census replaces subprocess.run to route every leg through the
     hook shim. A forked leg would bypass the replacement and the census would
